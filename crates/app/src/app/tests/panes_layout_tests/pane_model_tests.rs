@@ -27,20 +27,20 @@ fn switching_tabs_preserves_everything_each_one_owns() {
         .center();
     click_chart(&mut app, &ctx, point);
     assert_eq!(app.active_tab().focused_side(), PaneSide::Time(0));
-    let slots = app.active_tab().flow_pane.slots();
+    let slots = app.active_tab().flow().slots();
     app.active_tab_mut()
         .flow_pane
         .model
         .viewport
         .pan_pixels(120.0, slots);
-    let first_bars = app.active_tab().flow_pane.series_state().bars().len();
+    let first_bars = app.active_tab().flow_series().state().bars().len();
     let first_edge = app
         .active_tab()
         .flow_pane
         .model
         .viewport
         .right_edge_bar(slots);
-    let first_drawings = app.active_tab().focused_pane().drawings.items().len();
+    let first_drawings = app.active_tab().focused_pane().pane.drawings.items().len();
     assert_eq!(first_drawings, 1, "the drawing landed on the focused pane");
 
     let _ends = open_second_tab(&mut app, &ctx, "ETHUSDT");
@@ -54,7 +54,7 @@ fn switching_tabs_preserves_everything_each_one_owns() {
     app.apply_tab_action(TabAction::Activate(0));
     run_frame(&mut app, &ctx);
     assert_eq!(
-        app.active_tab().flow_pane.series_state().bars().len(),
+        app.active_tab().flow_series().state().bars().len(),
         first_bars
     );
     assert_eq!(
@@ -62,14 +62,14 @@ fn switching_tabs_preserves_everything_each_one_owns() {
             .flow_pane
             .model
             .viewport
-            .right_edge_bar(app.active_tab().flow_pane.slots()),
+            .right_edge_bar(app.active_tab().flow().slots()),
         first_edge,
         "the viewport came back where it was left"
     );
     assert_eq!(app.active_tab().canvas.layout, CanvasLayout::TimeAndFlow);
     assert_eq!(app.active_tab().focused_side(), PaneSide::Time(0));
     assert_eq!(
-        app.active_tab().focused_pane().drawings.items().len(),
+        app.active_tab().focused_pane().pane.drawings.items().len(),
         first_drawings,
         "and its marks with it"
     );

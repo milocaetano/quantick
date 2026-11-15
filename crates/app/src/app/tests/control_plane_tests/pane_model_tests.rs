@@ -9,7 +9,7 @@ fn the_scripted_pan_settles_on_the_projection_margin() {
     let (mut app, _cmd_rx) = app_with_history(400);
     let ctx = egui::Context::default();
     run_frame(&mut app, &ctx);
-    let slots = app.active_tab().flow_pane.slots();
+    let slots = app.active_tab().flow().slots();
     let newest = (slots - 1) as f32;
 
     app.chrome.harness.arm_candle_width(40.0);

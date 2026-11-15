@@ -13,7 +13,8 @@ use super::gateway::ControlAccess;
 use crate::{
     app::control_host::ControlPort,
     drawings::{self, Drawings},
-    pane::{ChartPane, PaneSide},
+    pane::PaneSide,
+    tab::Tab,
 };
 
 impl AnnotatePort for dyn ControlPort {
@@ -36,43 +37,51 @@ impl AnnotatePort for dyn ControlPort {
         self.tab_reads().new_drawing(tool)
     }
     fn pane_mut(&mut self, index: usize, side: AnnotatedSide) -> &mut dyn AnnotatedPane {
-        self.tabs_mut().pane_mut(index, pane_side(side))
+        let tab = self
+            .tabs_mut()
+            .tab_at_mut(index)
+            .expect("annotate addresses a live tab");
+        tab.annotated = pane_side(side);
+        tab
     }
 }
 
-impl AnnotatedPane for ChartPane {
+/// The tab, aimed at the pane `Tab::annotated` names: a pane reads its slots
+/// through the series its tab session keeps for it, so the tab is what an
+/// annotation writes through.
+impl AnnotatedPane for Tab {
     fn pane_id(&self) -> u64 {
-        self.id
+        self.pane(self.annotated).id
     }
     fn layout_id(&self) -> Option<u64> {
-        ChartPane::layout_id(self).map(|id| id.0)
+        self.pane(self.annotated).layout_id().map(|id| id.0)
     }
     fn pagination_revision(&self) -> u64 {
-        ChartPane::pagination_revision(self)
+        self.pane(self.annotated).pagination_revision()
     }
     fn slots(&self) -> usize {
-        ChartPane::slots(self)
+        self.pane(self.annotated).slots()
     }
     fn slot_at_time(&self, time_ms: i64) -> Option<usize> {
-        ChartPane::slot_at_time(self, time_ms)
+        self.pane(self.annotated).slot_at_time(time_ms)
     }
     fn slot_open_time(&self, slot: usize) -> Option<i64> {
-        ChartPane::slot_open_time(self, slot)
+        self.pane(self.annotated).slot_open_time(slot)
     }
     fn anchor_time(&self, bar: f32) -> Option<i64> {
-        self.series_read().anchor_time(bar)
+        self.pane(self.annotated).series_read().anchor_time(bar)
     }
     fn drawings(&self) -> &Drawings {
-        &self.drawings
+        &self.pane(self.annotated).pane.drawings
     }
     fn drawings_mut(&mut self) -> &mut Drawings {
-        &mut self.drawings
+        &mut self.pane_mut(self.annotated).pane.drawings
     }
     /// The tab sweeps what rode a removed drawing on this same frame
     /// ([`crate::tab::Tab::apply_strategy_cleanup`]); a pane holds none.
     fn sweep_orphans(&mut self) {}
     fn band_refusal(&self, band: &drawings::DrawingBand) -> Option<&'static str> {
-        ChartPane::band_refusal(self, band)
+        self.pane(self.annotated).band_refusal(band)
     }
 }
 

@@ -53,7 +53,7 @@ fn human_script_operations_mirror_two_panes_and_save_once() {
         "pane-local slot numbers collide"
     );
     for side in [PaneSide::Flow, PaneSide::Time(0)] {
-        let views = app.active_tab().pane(side).indicators.all();
+        let views = app.active_tab().pane(side).pane.indicators.all();
         assert_eq!(views.len(), 1);
         assert!(views[0].error.is_none());
         assert!(views[0].label().contains("EMA"));
@@ -73,7 +73,7 @@ fn human_script_operations_mirror_two_panes_and_save_once() {
     assert!(pane_set(&app, PaneSide::Flow).is_empty());
     assert!(app.runtime.indicators.registry.slot_kinds().is_empty());
     for side in [PaneSide::Flow, PaneSide::Time(0)] {
-        assert!(app.active_tab().pane(side).indicators.all().is_empty());
+        assert!(app.active_tab().pane(side).pane.indicators.all().is_empty());
     }
 }
 
@@ -174,7 +174,7 @@ fn invalid_control_script_leaves_both_panes_layout_and_save_intent_unchanged() {
             LayoutSave::Wait
         );
         for side in [PaneSide::Flow, PaneSide::Time(0)] {
-            assert_eq!(app.active_tab().pane(side).indicators.all().len(), 1);
+            assert_eq!(app.active_tab().pane(side).pane.indicators.all().len(), 1);
         }
     }
 }
@@ -216,7 +216,7 @@ fn invalid_library_script_retains_mirrored_error_slots_for_repair() {
         }
     );
     for side in [PaneSide::Flow, PaneSide::Time(0)] {
-        let views = app.active_tab().pane(side).indicators.all();
+        let views = app.active_tab().pane(side).pane.indicators.all();
         assert_eq!(views.len(), 1);
         assert!(
             views[0].error.is_some(),
@@ -249,7 +249,7 @@ fn native_toolbar_operations_mirror_two_panes_and_save_once() {
         }
         assert_eq!(pane_set(&app, PaneSide::Flow).len(), 1);
         for side in [PaneSide::Flow, PaneSide::Time(0)] {
-            let views = app.active_tab().pane(side).indicators.all();
+            let views = app.active_tab().pane(side).pane.indicators.all();
             assert_eq!(views.len(), 1);
             assert_eq!(views[0].error.is_some(), has_error);
         }
@@ -265,7 +265,7 @@ fn native_toolbar_operations_mirror_two_panes_and_save_once() {
         assert!(app.runtime.indicators.registry.slot_kinds().is_empty());
         assert!(pane_set(&app, PaneSide::Flow).is_empty());
         for side in [PaneSide::Flow, PaneSide::Time(0)] {
-            assert!(app.active_tab().pane(side).indicators.all().is_empty());
+            assert!(app.active_tab().pane(side).pane.indicators.all().is_empty());
         }
     }
 }

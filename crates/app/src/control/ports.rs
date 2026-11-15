@@ -263,7 +263,7 @@ impl AnalysisPort for dyn ControlPort {
                 .panes()
                 .map(|(pane, side)| AnalysisPaneEntry {
                     side: pane_side_dto(side),
-                    pane,
+                    pane: pane.pane,
                 })
                 .collect();
             visit(tab_id, &panes);
@@ -322,7 +322,7 @@ impl OrderflowEngine for OrderflowView {
 /// order-flow scopes read a pane.
 struct OrderflowPaneRead<'a> {
     tab: &'a Tab,
-    pane: &'a ChartPane,
+    pane: crate::pane::PaneRef<'a>,
     window: &'a crate::footprint_config::FootprintConfig,
 }
 

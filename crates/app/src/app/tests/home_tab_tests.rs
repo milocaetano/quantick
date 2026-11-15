@@ -717,7 +717,7 @@ fn home_runs_feeds_stands_chart_keys_down_and_restores_the_same_canvas() {
     assert!(!ids.iter().any(|id| id.starts_with("pane.")), "{ids:?}");
     assert!(ids.iter().any(|id| id == "tab_strip.home"));
     let tab = app.active_tab();
-    assert!(!crate::control::chart::viewport_snapshot(&tab.flow_pane).geometry_available);
+    assert!(!crate::control::chart::viewport_snapshot(tab.flow()).geometry_available);
     assert_eq!(tab.canvas.split_fraction, 0.35, "Home writes no split");
     assert_eq!(tab.last_canvas_width(), width, "nor a canvas size");
 
@@ -1016,7 +1016,7 @@ fn the_menu_seam_refuses_chart_commands_on_home_and_keeps_the_rest() {
     let _second = two_tabs(&mut app, &ctx);
     let preset = &crate::canvas_layout::LAYOUT_PRESETS[2];
     let layout = app.active_tab().canvas.layout;
-    let legend = app.active_tab().focused_pane().legend_collapsed;
+    let legend = app.active_tab().focused_pane().pane.legend_collapsed;
     let context = app.active_tab().canvas.folds().0;
     assert_ne!(layout, preset_layout(2));
 
@@ -1031,7 +1031,7 @@ fn the_menu_seam_refuses_chart_commands_on_home_and_keeps_the_rest() {
     assert_eq!(app.runtime.tabs.len(), 2);
     let tab = app.active_tab();
     assert_eq!(tab.canvas.layout, layout);
-    assert_eq!(tab.focused_pane().legend_collapsed, legend);
+    assert_eq!(tab.focused_pane().pane.legend_collapsed, legend);
     assert_eq!(tab.canvas.folds().0, context);
     assert!(tab.paper.is_flat());
     assert!(!tab.tape().settings_panel.is_open(), "as Ctrl+Shift+O");

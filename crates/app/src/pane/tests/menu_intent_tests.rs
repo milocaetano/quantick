@@ -24,7 +24,7 @@ const SCREEN: egui::Rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::
 /// One frame of the layer menu, drawn the way the pane draws it; returns the
 /// intents it answered with, unapplied.
 fn menu_frame(
-    pane: &mut ChartPane,
+    pane: &mut crate::pane::PaneMut<'_>,
     ctx: &egui::Context,
     events: Vec<egui::Event>,
 ) -> Vec<PaneMenuIntent> {
@@ -32,7 +32,7 @@ fn menu_frame(
 }
 
 fn menu_frame_over(
-    pane: &mut ChartPane,
+    pane: &mut crate::pane::PaneMut<'_>,
     ctx: &egui::Context,
     events: Vec<egui::Event>,
     strategies: &mut crate::strategy_anchors::TabStrategies,
@@ -62,7 +62,11 @@ fn menu_frame_over(
 }
 
 /// Lay the menu out, then click the drawing-section entry named `label`.
-fn click_entry(pane: &mut ChartPane, ctx: &egui::Context, label: &str) -> Vec<PaneMenuIntent> {
+fn click_entry(
+    pane: &mut crate::pane::PaneMut<'_>,
+    ctx: &egui::Context,
+    label: &str,
+) -> Vec<PaneMenuIntent> {
     let _ = menu_frame(pane, ctx, Vec::new());
     let pos = pane
         .context_menu
@@ -92,19 +96,20 @@ fn tool(id: &str) -> drawings::DrawingTool {
         .unwrap_or_else(|| panic!("the {id} tool is registered"))
 }
 
-fn pane_with_rectangle() -> (ChartPane, DrawingId) {
+fn pane_with_rectangle() -> (crate::pane::PaneParts, DrawingId) {
     let rectangle = tool("rectangle");
-    let mut pane = ChartPane::flow(1, BarSpec::Tick(50), "TESTUSDT".to_owned());
+    let mut parts = crate::pane::PaneParts::flow(1, BarSpec::Tick(50), "TESTUSDT".to_owned());
+    let mut pane = parts.at();
     pane.drawings.place(rectangle, ChartPoint::at(1.0, 100.0));
     pane.drawings.place(rectangle, ChartPoint::at(5.0, 110.0));
     pane.drawings.select(None);
     assert_eq!(pane.drawings.items().len(), 1);
     let id = pane.drawings.items()[0].id;
     with_strategies(|strategies| *strategies = Default::default());
-    (pane, id)
+    (parts, id)
 }
 
-fn apply(pane: &mut ChartPane, intents: Vec<PaneMenuIntent>) {
+fn apply(pane: &mut crate::pane::PaneMut<'_>, intents: Vec<PaneMenuIntent>) {
     with_strategies(|strategies| {
         with_chrome_over(Tool::Pointer, strategies, |chrome| {
             pane.apply_menu_intents(intents, chrome)
@@ -113,7 +118,7 @@ fn apply(pane: &mut ChartPane, intents: Vec<PaneMenuIntent>) {
 }
 
 /// A strategy riding `drawing`, armed straight on the anchors.
-fn arm_strategy(pane: &mut ChartPane, drawing: DrawingId) {
+fn arm_strategy(pane: &mut crate::pane::PaneMut<'_>, drawing: DrawingId) {
     let instance = crate::strategy_anchors::AnchoredInstance {
         drawing,
         preset: "BF".to_owned(),
@@ -147,7 +152,10 @@ fn arm_strategy(pane: &mut ChartPane, drawing: DrawingId) {
     });
 }
 
-fn strategy_state(pane: &ChartPane, drawing: DrawingId) -> Option<quantick_strategy::ArmedState> {
+fn strategy_state(
+    pane: &crate::pane::PaneMut<'_>,
+    drawing: DrawingId,
+) -> Option<quantick_strategy::ArmedState> {
     with_strategies(|strategies| {
         (strategies.anchors(pane.id))
             .and_then(|anchors| anchors.for_drawing(drawing))
@@ -155,13 +163,14 @@ fn strategy_state(pane: &ChartPane, drawing: DrawingId) -> Option<quantick_strat
     })
 }
 
-fn popup_request(pane: &ChartPane) -> Option<DrawingId> {
+fn popup_request(pane: &crate::pane::PaneMut<'_>) -> Option<DrawingId> {
     with_strategies(|strategies| strategies.pane(pane.id)?.popup_request())
 }
 
 #[test]
 fn the_drawing_section_intents_write_the_drawing() {
-    let (mut pane, id) = pane_with_rectangle();
+    let (mut parts, id) = pane_with_rectangle();
+    let mut pane = parts.at();
     apply(
         &mut pane,
         vec![
@@ -183,7 +192,8 @@ fn the_drawing_section_intents_write_the_drawing() {
 
 #[test]
 fn delete_removes_an_unlocked_drawing_and_spares_a_locked_one() {
-    let (mut pane, id) = pane_with_rectangle();
+    let (mut parts, id) = pane_with_rectangle();
+    let mut pane = parts.at();
     arm_strategy(&mut pane, id);
     apply(
         &mut pane,
@@ -215,7 +225,8 @@ fn delete_removes_an_unlocked_drawing_and_spares_a_locked_one() {
 
 #[test]
 fn intents_for_a_drawing_that_is_gone_do_nothing() {
-    let (mut pane, id) = pane_with_rectangle();
+    let (mut parts, id) = pane_with_rectangle();
+    let mut pane = parts.at();
     apply(&mut pane, vec![PaneMenuIntent::DeleteDrawing(id)]);
     assert!(pane.drawings.items().is_empty());
     // Every drawing intent at the stale id: no panic, nothing written.
@@ -243,13 +254,15 @@ fn intents_for_a_drawing_that_is_gone_do_nothing() {
 
 #[test]
 fn a_closing_menu_commits_the_rename_in_flight_and_only_a_changed_one() {
-    let (mut pane, id) = pane_with_rectangle();
+    let (mut parts, id) = pane_with_rectangle();
+    let mut pane = parts.at();
 
     pane.model.menu.drawing = Some(id);
     pane.model.menu.rename = String::new();
     assert!(
-        pane.context_menu
-            .close(&mut pane.model, &pane.drawings)
+        pane.pane
+            .context_menu
+            .close(&mut pane.pane.model, &pane.pane.drawings)
             .is_empty(),
         "an untouched name asks for nothing"
     );
@@ -260,7 +273,10 @@ fn a_closing_menu_commits_the_rename_in_flight_and_only_a_changed_one() {
 
     pane.model.menu.drawing = Some(id);
     pane.model.menu.rename = "vwap anchor".to_owned();
-    let commit = pane.context_menu.close(&mut pane.model, &pane.drawings);
+    let commit = pane
+        .pane
+        .context_menu
+        .close(&mut pane.pane.model, &pane.pane.drawings);
     apply(&mut pane, commit.into_iter().collect());
     assert_eq!(
         pane.drawings.items()[0].name.as_deref(),
@@ -271,7 +287,8 @@ fn a_closing_menu_commits_the_rename_in_flight_and_only_a_changed_one() {
 #[test]
 fn the_menus_delete_lets_go_of_the_drawing_and_its_half_typed_name() {
     let ctx = egui::Context::default();
-    let (mut pane, id) = pane_with_rectangle();
+    let (mut parts, id) = pane_with_rectangle();
+    let mut pane = parts.at();
     pane.model.menu.drawing = Some(id);
     pane.model.menu.rename = "half typed".to_owned();
 
@@ -285,8 +302,9 @@ fn the_menus_delete_lets_go_of_the_drawing_and_its_half_typed_name() {
     assert_eq!(pane.model.menu.drawing, None);
     assert!(pane.model.menu.rename.is_empty());
     assert!(
-        pane.context_menu
-            .close(&mut pane.model, &pane.drawings)
+        pane.pane
+            .context_menu
+            .close(&mut pane.pane.model, &pane.pane.drawings)
             .is_empty()
     );
 }
@@ -294,7 +312,8 @@ fn the_menus_delete_lets_go_of_the_drawing_and_its_half_typed_name() {
 #[test]
 fn a_drawing_deleted_under_the_open_menu_drops_its_section_and_name() {
     let ctx = egui::Context::default();
-    let (mut pane, id) = pane_with_rectangle();
+    let (mut parts, id) = pane_with_rectangle();
+    let mut pane = parts.at();
     pane.model.menu.drawing = Some(id);
     pane.model.menu.rename = "half typed".to_owned();
     assert!(pane.drawings.remove_by_id(id));
@@ -318,7 +337,8 @@ fn a_drawing_deleted_under_the_open_menu_drops_its_section_and_name() {
 #[test]
 fn the_strategy_seat_answers_each_click_with_its_intent() {
     let ctx = egui::Context::default();
-    let (mut pane, id) = pane_with_rectangle();
+    let (mut parts, id) = pane_with_rectangle();
+    let mut pane = parts.at();
     pane.model.menu.drawing = Some(id);
     arm_strategy(&mut pane, id);
 
@@ -345,7 +365,8 @@ fn the_strategy_seat_answers_each_click_with_its_intent() {
 #[test]
 fn strategy_intents_leave_an_unswept_strategy_alone_once_its_drawing_is_gone() {
     use quantick_strategy::ArmedState;
-    let (mut pane, id) = pane_with_rectangle();
+    let (mut parts, id) = pane_with_rectangle();
+    let mut pane = parts.at();
     arm_strategy(&mut pane, id);
     // Removed without the orphan sweep: the instance is still on the anchors.
     assert!(pane.drawings.remove_by_id(id));
@@ -364,7 +385,8 @@ fn strategy_intents_leave_an_unswept_strategy_alone_once_its_drawing_is_gone() {
 #[test]
 fn an_unchanged_rename_blur_records_nothing() {
     let ctx = egui::Context::default();
-    let (mut pane, id) = pane_with_rectangle();
+    let (mut parts, id) = pane_with_rectangle();
+    let mut pane = parts.at();
     pane.model.menu.drawing = Some(id);
     pane.model.menu.rename = String::new();
     // Focus the field, then click away from it: the blur of an untouched
@@ -407,7 +429,8 @@ fn an_unchanged_rename_blur_records_nothing() {
 
 #[test]
 fn a_layer_intent_is_the_layer_setter() {
-    let mut pane = ChartPane::flow(1, BarSpec::Tick(50), "TESTUSDT".to_owned());
+    let mut parts = crate::pane::PaneParts::flow(1, BarSpec::Tick(50), "TESTUSDT".to_owned());
+    let mut pane = parts.at();
     let style = crate::style::ChartStyle::default();
     let layer = ChartLayer::PointerPrice;
     let before = pane.layer_visible(layer, &style);
@@ -423,7 +446,8 @@ fn a_layer_intent_is_the_layer_setter() {
 
 #[test]
 fn the_tape_intents_write_the_lanes_own_fields() {
-    let mut pane = ChartPane::flow(1, BarSpec::Tick(50), "TESTUSDT".to_owned());
+    let mut parts = crate::pane::PaneParts::flow(1, BarSpec::Tick(50), "TESTUSDT".to_owned());
+    let mut pane = parts.at();
     let window = LaneWindow::Fixed { ms: 60_000 };
     let ignore = !pane
         .orderflow
@@ -444,7 +468,8 @@ fn the_tape_intents_write_the_lanes_own_fields() {
 
 #[test]
 fn a_place_arms_the_pointer_and_opens_the_caret_as_before() {
-    let mut pane = pane_of_prints(20, 1);
+    let mut parts = pane_of_prints(20, 1);
+    let mut pane = parts.at();
     with_chrome(Tool::Crosshair, |chrome| {
         pane.apply_menu_intent(
             PaneMenuIntent::Place {
@@ -461,7 +486,8 @@ fn a_place_arms_the_pointer_and_opens_the_caret_as_before() {
 
 #[test]
 fn chrome_intents_raise_the_hosts_flags() {
-    let mut pane = pane_with_indicator("rsi", vec![vec![1.0, 2.0]]);
+    let mut parts = pane_with_indicator("rsi", vec![vec![1.0, 2.0]]);
+    let mut pane = parts.at();
     let slot = pane.indicators.all()[0].slot;
     with_chrome(Tool::Pointer, |chrome| {
         pane.apply_menu_intent(PaneMenuIntent::OpenFootprintSettings, chrome);
@@ -486,7 +512,8 @@ fn chrome_intents_raise_the_hosts_flags() {
 #[test]
 fn strategy_intents_drive_the_instance_on_the_drawing() {
     use quantick_strategy::ArmedState;
-    let (mut pane, id) = pane_with_rectangle();
+    let (mut parts, id) = pane_with_rectangle();
+    let mut pane = parts.at();
 
     apply(&mut pane, vec![PaneMenuIntent::StrategyAdd(id)]);
     assert_eq!(popup_request(&pane), Some(id));
@@ -507,7 +534,8 @@ fn strategy_intents_drive_the_instance_on_the_drawing() {
 
 #[test]
 fn shared_model_selection_tracks_copy_reorder_remove_and_undo_by_identity() {
-    let (mut pane, original) = pane_with_rectangle();
+    let (mut parts, original) = pane_with_rectangle();
+    let mut pane = parts.at();
     apply(&mut pane, vec![PaneMenuIntent::SelectDrawing(original)]);
     assert_eq!(pane.model.selection.get(), Some(original));
     let copy = pane.drawings.duplicate_selected(2.0).expect("copy").copy;
@@ -548,7 +576,7 @@ fn pointer_events(pos: egui::Pos2, pressed: bool) -> Vec<egui::Event> {
         },
     ]
 }
-fn traced(pane: &ChartPane, label: &str) -> egui::Pos2 {
+fn traced(pane: &crate::pane::PaneMut<'_>, label: &str) -> egui::Pos2 {
     pane.context_menu
         .menu_rects
         .iter()
@@ -560,7 +588,8 @@ fn traced(pane: &ChartPane, label: &str) -> egui::Pos2 {
 #[test]
 fn native_tape_menu_real_widgets_emit_layer_preset_and_custom_duration_intents() {
     let ctx = egui::Context::default();
-    let mut pane = ChartPane::flow(1, BarSpec::Tick(50), "TESTUSDT".into());
+    let mut parts = crate::pane::PaneParts::flow(1, BarSpec::Tick(50), "TESTUSDT".into());
+    let mut pane = parts.at();
     pane.orderflow.as_mut().unwrap().edit_config(|config| {
         config.live_lane.native_tape = true;
         config.live_lane.show_aggressions = true;

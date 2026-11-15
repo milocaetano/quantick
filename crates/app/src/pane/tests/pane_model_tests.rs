@@ -8,7 +8,8 @@ use quantick_chart_interaction::pane::CanvasHit;
 /// trusted from the diff — the two are computed in different files.
 #[test]
 fn the_axis_tag_and_the_control_cursor_name_one_bar() {
-    let mut pane = pane_with_timed_bars(200);
+    let mut parts = pane_with_timed_bars(200);
+    let mut pane = parts.at();
     let ctx = egui::Context::default();
     let _ = drive_navigation(&mut pane, &ctx, TEST_PLOT, Vec::new());
     let areas = test_areas(&pane, TEST_PLOT);
@@ -47,7 +48,7 @@ fn the_axis_tag_and_the_control_cursor_name_one_bar() {
 
 /// Lay out `pane`'s bands on [`TEST_PLOT`] the way a drawn frame would,
 /// so the price-band hit tests have a band to find.
-fn lay_out_bands(pane: &mut ChartPane) -> PlotAreas {
+fn lay_out_bands(pane: &mut crate::pane::PaneMut<'_>) -> PlotAreas {
     let areas = test_areas(pane, TEST_PLOT);
     pane.frame.bands = crate::bands::BandGeometry {
         auto_range: pane.frame.auto_range,
@@ -66,7 +67,8 @@ fn lay_out_bands(pane: &mut ChartPane) -> PlotAreas {
 /// nor reads as empty canvas.
 #[test]
 fn the_bare_candles_end_at_the_lane_divider() {
-    let mut pane = pane_with_timed_bars(200);
+    let mut parts = pane_with_timed_bars(200);
+    let mut pane = parts.at();
     let ctx = egui::Context::default();
     let _ = drive_navigation(&mut pane, &ctx, TEST_PLOT, Vec::new());
     let divider = TEST_PLOT.center().x;
@@ -89,8 +91,9 @@ fn the_bare_candles_end_at_the_lane_divider() {
 
 /// A pane panned into history at `px_per_bar`, laid out and banded, with
 /// the projection its hit tests read through.
-fn panned_pane(ctx: &egui::Context, px_per_bar: f32) -> (ChartPane, PlotAreas) {
-    let mut pane = pane_with_timed_bars(200);
+fn panned_pane(ctx: &egui::Context, px_per_bar: f32) -> (crate::pane::PaneParts, PlotAreas) {
+    let mut parts = pane_with_timed_bars(200);
+    let mut pane = parts.at();
     // Every fixture bar spans 1..2: on a 0..3 axis it sits mid-band.
     pane.frame.auto_range = Some((0.0, 3.0));
     pane.model.viewport.set_px_per_bar(px_per_bar);
@@ -101,12 +104,12 @@ fn panned_pane(ctx: &egui::Context, px_per_bar: f32) -> (ChartPane, PlotAreas) {
         !pane.model.viewport.follows_live(),
         "the fixture is in history"
     );
-    (pane, areas)
+    (parts, areas)
 }
 
 /// Where a fixture candle sits a few bars left of the view's right edge:
 /// 1.5 is inside every fixture bar's body.
-fn on_a_candle(pane: &ChartPane) -> egui::Pos2 {
+fn on_a_candle(pane: &crate::pane::PaneMut<'_>) -> egui::Pos2 {
     let (_, right, total, scale) = pane.hit_test().last_projection().expect("drawn");
     let viewport = &pane.model.viewport;
     let slot = viewport.right_edge_bar(total) as usize - 3;
@@ -114,7 +117,7 @@ fn on_a_candle(pane: &ChartPane) -> egui::Pos2 {
 }
 
 /// The view's spacing and right edge, which a candle double click keeps.
-fn view(pane: &ChartPane) -> (f32, f32) {
+fn view(pane: &crate::pane::PaneMut<'_>) -> (f32, f32) {
     let viewport = &pane.model.viewport;
     (viewport.px_per_bar(), viewport.right_edge_bar(pane.slots()))
 }
@@ -124,7 +127,8 @@ fn view(pane: &ChartPane) -> (f32, f32) {
 #[test]
 fn a_double_click_on_a_candle_opens_the_chart_settings_and_keeps_the_view() {
     let ctx = egui::Context::default();
-    let (mut pane, _) = panned_pane(&ctx, 40.0);
+    let (mut parts, _) = panned_pane(&ctx, 40.0);
+    let mut pane = parts.at();
     let before = view(&pane);
     let on_the_candle = on_a_candle(&pane);
     assert_eq!(
@@ -142,7 +146,8 @@ fn a_double_click_on_a_candle_opens_the_chart_settings_and_keeps_the_view() {
 #[test]
 fn a_click_off_the_canvas_then_one_on_a_candle_is_no_double_click() {
     let ctx = egui::Context::default();
-    let (mut pane, areas) = panned_pane(&ctx, 40.0);
+    let (mut parts, areas) = panned_pane(&ctx, 40.0);
+    let mut pane = parts.at();
     let before = view(&pane);
     let on_the_candle = on_a_candle(&pane);
     let off_the_canvas = egui::pos2(areas.price_gutter.center().x, on_the_candle.y);
@@ -169,7 +174,7 @@ fn a_click_off_the_canvas_then_one_on_a_candle_is_no_double_click() {
 }
 
 /// Well above every fixture candle (1..2) on the 0..3 axis.
-fn open_canvas(pane: &ChartPane, areas: &PlotAreas) -> egui::Pos2 {
+fn open_canvas(pane: &crate::pane::PaneMut<'_>, areas: &PlotAreas) -> egui::Pos2 {
     let (_, _, _, scale) = pane.hit_test().last_projection().expect("drawn");
     egui::pos2(areas.chart.center().x, scale.y(2.6))
 }
@@ -180,7 +185,8 @@ fn open_canvas(pane: &ChartPane, areas: &PlotAreas) -> egui::Pos2 {
 #[test]
 fn a_double_click_on_empty_canvas_returns_to_live_and_keeps_the_spacing() {
     let ctx = egui::Context::default();
-    let (mut pane, areas) = panned_pane(&ctx, 40.0);
+    let (mut parts, areas) = panned_pane(&ctx, 40.0);
+    let mut pane = parts.at();
     let open_canvas = open_canvas(&pane, &areas);
     for round in ["first", "second"] {
         assert_eq!(
@@ -206,7 +212,8 @@ fn a_double_click_on_empty_canvas_returns_to_live_and_keeps_the_spacing() {
 #[test]
 fn a_triple_click_on_empty_canvas_also_zooms_the_candles_in() {
     let ctx = egui::Context::default();
-    let (mut pane, areas) = panned_pane(&ctx, 20.0);
+    let (mut parts, areas) = panned_pane(&ctx, 20.0);
+    let mut pane = parts.at();
     let open_canvas = open_canvas(&pane, &areas);
     let mut asked = false;
     for (click, pressed) in [(1, true), (1, false), (2, true), (2, false)] {

@@ -3,7 +3,7 @@
 //! declares, and the one walk every projection takes over a tab's panes.
 
 use crate::{
-    pane::{ChartPane, PaneSide},
+    pane::PaneSide,
     tab::{CanvasLayout, Tab},
 };
 
@@ -34,13 +34,12 @@ pub(crate) fn layout_dto(layout: CanvasLayout) -> CanvasLayoutDto {
 /// One rule for every projection that walks a tab's canvases: a pane the
 /// cursor can resolve against is a pane the scene lists, because both ask
 /// here, and both ask `Tab::drawn_panes`, which the focus asks too.
-pub(crate) fn visible_panes(tab: &Tab) -> Vec<(&ChartPane, PaneSide)> {
+pub(crate) fn visible_panes(tab: &Tab) -> Vec<(crate::pane::PaneRef<'_>, PaneSide)> {
     let drawn = tab.drawn_panes();
-    let time = (tab.time_panes.iter().enumerate()).map(|(slot, time)| (time, PaneSide::Time(slot)));
-    let flow = std::iter::once((&tab.flow_pane, PaneSide::Flow));
-    time.chain(flow)
-        .filter(|(_, side)| drawn.shows(*side))
-        .collect()
+    let shown = tab.panes().filter(|(_, side)| drawn.shows(*side));
+    // Context panes first, the flow pane last: the order they are drawn.
+    let (flow, time): (Vec<_>, Vec<_>) = shown.partition(|(_, side)| *side == PaneSide::Flow);
+    time.into_iter().chain(flow).collect()
 }
 
 #[cfg(test)]

@@ -29,15 +29,16 @@ fn prints(first_id: u64, prices: Vec<i64>) -> Vec<quantick_engine::Trade> {
 }
 
 /// A flow pane cutting 3-tick bricks: on a one-point grid, two points tall.
-fn renko_pane() -> ChartPane {
+fn renko_pane() -> crate::pane::PaneParts {
     let renko = BUILTIN_BARS.parse("renko:3").unwrap();
-    ChartPane::flow(1, renko, "WINV26".to_owned())
+    crate::pane::PaneParts::flow(1, renko, "WINV26".to_owned())
 }
 
 #[test]
 fn repeated_history_publications_preserve_fractional_pan_and_future_projection() {
     for projection in [false, true] {
-        let mut pane = renko_pane();
+        let mut parts = renko_pane();
+        let mut pane = parts.at();
         pane.ingest_backfill(&prints(1000, (1000..1400).collect()));
         for first in [800, 600, 400] {
             let slots = pane.slots();
@@ -74,7 +75,8 @@ fn repeated_history_publications_preserve_fractional_pan_and_future_projection()
 
 #[test]
 fn a_renko_pane_appends_every_brick_the_print_that_reads_the_step_cuts() {
-    let mut pane = renko_pane();
+    let mut parts = renko_pane();
+    let mut pane = parts.at();
     // A climb of one point a print: sixty-three distances read no step.
     let climb = prints(0, (100..=164).collect());
     for trade in &climb[..64] {
@@ -107,13 +109,14 @@ fn a_renko_pane_appends_every_brick_the_print_that_reads_the_step_cuts() {
 #[test]
 fn bricks_cut_from_held_prints_reach_no_strategy_and_no_live_close() {
     use crate::indicator_worker::{IndicatorEvent, IndicatorSource};
-    let mut pane = renko_pane();
+    let mut parts = renko_pane();
+    let mut pane = parts.at();
     pane.add_indicator(IndicatorSource::Native {
         id: "native.cvd".to_owned(),
         values: Vec::new(),
     });
     // Everything the worker published for the commands sent so far.
-    let settled = |pane: &ChartPane| {
+    let settled = |pane: &crate::pane::PaneMut<'_>| {
         pane.indicator_worker.flush();
         pane.indicator_worker.drain_events()
     };
@@ -130,7 +133,7 @@ fn bricks_cut_from_held_prints_reach_no_strategy_and_no_live_close() {
     let _ = settled(&pane);
     pane.ingest_live_trade_observed(&tape[64], &mut |_, _, slot| queued.push(slot));
     assert_eq!(pane.closed_slots(), 34);
-    assert_eq!(pane.state.backfill_boundary(), Some(31));
+    assert_eq!(pane.series.state().backfill_boundary(), Some(31));
     let events = settled(&pane);
     let rebuilt: Vec<usize> = events
         .iter()
@@ -170,7 +173,9 @@ fn older_history_that_reshapes_bricks_keeps_marks_and_view_on_their_market_time(
     held.extend(102..=105);
     let held = prints(older.len() as u64, held);
 
-    let mut pane = renko_pane();
+    let mut parts = renko_pane();
+
+    let mut pane = parts.at();
     pane.ingest_backfill(&held);
     assert_eq!(pane.closed_slots(), 2);
     let first = pane.closed_bar(0).expect("a brick").clone();
@@ -234,7 +239,8 @@ fn older_history_shifts_a_tick_panes_view_and_marks_by_the_bars_it_added() {
     let older: Vec<_> = (0..20)
         .map(|id| at(id, 1_700_000_000_000 + id as i64))
         .collect();
-    let mut pane = ChartPane::flow(1, BarSpec::Tick(2), "WINV26".to_owned());
+    let mut parts = crate::pane::PaneParts::flow(1, BarSpec::Tick(2), "WINV26".to_owned());
+    let mut pane = parts.at();
     pane.ingest_backfill(&newer);
     assert_eq!(pane.closed_slots(), 20);
     let line = drawings::DRAWING_TOOLS
@@ -246,7 +252,7 @@ fn older_history_shifts_a_tick_panes_view_and_marks_by_the_bars_it_added() {
             .place(line, ChartPoint::at_time(7.25, 101.0, Some(shared_ms)))
     );
     let px = pane.model.viewport.px_per_bar();
-    pane.model.viewport.pan_pixels(px * 10.5, pane.slots());
+    pane.pane.model.viewport.pan_pixels(px * 10.5, pane.slots());
     let edge = pane.model.viewport.right_edge_bar(pane.slots());
     assert!((edge - 8.5).abs() < 1e-3, "parked half a bar off bar 8");
 

@@ -105,7 +105,7 @@ pub(super) fn apply_launch_phase(
     // launch from now on. Same rule the indicator state follows.
     let staged_layers = app
         .active_tab()
-        .flow_pane
+        .flow()
         .layer_read()
         .mask(&app.runtime.style);
     app.runtime.workspace.layers_mut().record(staged_layers);
@@ -121,7 +121,7 @@ fn price_axis(app: &mut QuantickApp, env: &ScenarioInputs) {
     else {
         return;
     };
-    let pane = &mut app.active_tab_mut().flow_pane;
+    let mut pane = app.active_tab_mut().flow_mut();
     pane.sync_price_axis_mode();
     pane.price_view.set_manual_range(low, high);
 }
@@ -142,7 +142,7 @@ fn book_and_strip(app: &mut QuantickApp, env: &ScenarioInputs) {
         .var("QUANTICK_LIVE_STRIP_AUTOSTART")
         .is_some_and(|value| value == "1")
     {
-        app.active_tab_mut().flow_pane.set_layer_visible(
+        app.active_tab_mut().flow_mut().set_layer_visible(
             crate::chart_layers::ChartLayer::LiveStrip,
             true,
             &mut Default::default(),
@@ -241,7 +241,7 @@ fn tape(app: &mut QuantickApp, env: &ScenarioInputs) {
         .is_some_and(|value| value.trim() == "1")
     {
         let tab = app.active_tab_mut();
-        for pane in tab.panes_mut() {
+        for mut pane in tab.panes_mut() {
             pane.price_view.set_inverted(true);
         }
     }
@@ -379,7 +379,7 @@ fn indicator(app: &mut QuantickApp, env: &ScenarioInputs) {
         .var("QUANTICK_INDICATORS_AUTOSTART")
         .is_some_and(|value| value == "1")
     {
-        let pane = &mut app.active_tab_mut().flow_pane;
+        let mut pane = app.active_tab_mut().flow_mut();
         for id in AUTOSTART_NATIVES {
             pane.add_indicator(IndicatorSource::Native {
                 id: (*id).to_owned(),
@@ -397,7 +397,7 @@ fn indicator(app: &mut QuantickApp, env: &ScenarioInputs) {
         .is_some_and(|value| value == "1")
     {
         super::indicator_manager::IndicatorState::set_legend_collapsed(
-            app.focused_pane_mut(),
+            app.focused_pane_mut().pane,
             true,
         );
     }

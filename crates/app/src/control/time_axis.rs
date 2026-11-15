@@ -1,7 +1,7 @@
 //! `chart.time_axis.reset`: a time strip's, or open canvas's, double- and triple-click by name.
 use super::actions::ActionRegistry;
 use super::gateway::ControlAccess;
-use super::price_axis::{invalid, pane};
+use super::price_axis::invalid;
 use crate::app::{TabsMutPort, TabsPort};
 use quantick_control::wire::ActorContext;
 use quantick_control::{error::ControlError, registry::RegistryError};
@@ -22,7 +22,7 @@ fn reset<P: TabsPort + TabsMutPort + ?Sized>(
     value: &Value,
 ) -> Result<Value, ControlError> {
     let input: TimeAxisResetInput = serde_json::from_value(value.clone()).map_err(invalid)?;
-    let pane = pane(app, input.tab_id, input.pane_id)?;
+    let mut pane = super::price_axis::pane_at(app, input.tab_id, input.pane_id)?;
     let tape = input.axis == TimeAxis::Tape;
     let applied = match input.to {
         TimeAxisTarget::Opening => pane.reset_time_axis(tape),
@@ -30,7 +30,7 @@ fn reset<P: TabsPort + TabsMutPort + ?Sized>(
         centre => !tape && pane.live_centre(centre == TimeAxisTarget::LiveCentreZoomIn),
     };
     input.to.outcome(applied).map_err(invalid)?;
-    let viewport = super::chart::viewport_snapshot(pane);
+    let viewport = super::chart::viewport_snapshot(pane.view());
     serde_json::to_value(TimeAxisResetResult {
         tab_id: input.tab_id,
         pane_id: input.pane_id,

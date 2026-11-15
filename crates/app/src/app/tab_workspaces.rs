@@ -14,7 +14,7 @@ use quantick_workspace::book_upkeep::{self, TabRecipeHost};
 use super::control_host::LayoutPort as _;
 use super::workspace_runtime::WorkspaceRuntime as Runtime;
 use super::{ArrangementHost, QuantickApp, layout_wiring::LayoutAdapter};
-use crate::pane::{ChartPane, PaneSide};
+use crate::pane::PaneSide;
 use crate::tab::{CanvasCollapseRestore, LegendFold};
 
 fn layer_states(layers: &BTreeMap<String, bool>) -> BTreeMap<ChartLayer, bool> {
@@ -122,7 +122,7 @@ impl TabRecipeHost for BookTabs<'_> {
     }
     fn pin_tab_footprint(&mut self, id: u64) {
         let (window, tabs) = (&self.0.runtime.footprint_config, &mut self.0.runtime.tabs);
-        for pane in tabs
+        for mut pane in tabs
             .by_id_mut(id)
             .into_iter()
             .flat_map(|tab| tab.panes_mut())
@@ -141,7 +141,7 @@ impl TabRecipeHost for BookTabs<'_> {
     }
     fn tab_drawing_keys(&self, id: u64) -> Vec<DrawingKey> {
         let panes = self.0.runtime.tabs.by_id(id).into_iter();
-        let keys = panes.flat_map(|tab| tab.panes().map(|(pane, _)| &pane.layout));
+        let keys = panes.flat_map(|tab| tab.panes().map(|(pane, _)| &pane.pane.layout));
         Vec::from_iter(keys.filter_map(|layout| layout.drawings_key.clone()))
     }
     fn recipe_market(&mut self) -> Option<&mut MarketSettingsStore> {
@@ -153,10 +153,11 @@ impl TabRecipeHost for BookTabs<'_> {
 pub(super) fn live_recipe(runtime: &Runtime, id: u64) -> Option<WorkspaceRecipe> {
     let tab = runtime.tabs.by_id(id)?;
     let saved = super::arrangement_adapter::saved_tab_of(tab);
-    let pane_layers = |pane: &ChartPane| recipe_layers(pane.layer_read().states(&runtime.style));
+    let pane_layers =
+        |pane: crate::pane::PaneRef<'_>| recipe_layers(pane.layer_read().states(&runtime.style));
     let context = tab.panes().filter(|(_, side)| *side != PaneSide::Flow);
     let context_layers = context.map(|(pane, _)| pane_layers(pane)).collect();
-    let layers = (pane_layers(&tab.flow_pane), context_layers);
+    let layers = (pane_layers(tab.flow()), context_layers);
     let window = &runtime.footprint_config;
     let style = Some(tab.flow_pane.footprint_config(window).style.id().to_owned());
     let layouts = runtime.workspace.layouts().book();
@@ -223,7 +224,7 @@ fn apply_recipe_switches(runtime: &mut Runtime, id: u64, recipe: &WorkspaceRecip
     let Some(tab) = runtime.tabs.by_id_mut(id) else {
         return;
     };
-    for (pane, side) in tab.panes_with_sides_mut() {
+    for (mut pane, side) in tab.panes_with_sides_mut() {
         pane.layer_write()
             .apply_states(&layer_states(recipe.for_pane(side.index()).1));
         if let Some(style) = style {

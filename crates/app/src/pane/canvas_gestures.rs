@@ -23,132 +23,6 @@ pub(super) struct CanvasInput<'r> {
 }
 
 impl ChartPane {
-    /// Pan, zoom and the double click. Answers whether a double click landed
-    /// on a candle, which asks the window for the chart settings.
-    pub(super) fn handle_canvas_gestures(&mut self, ui: &egui::Ui, input: CanvasInput<'_>) -> bool {
-        let CanvasInput {
-            chart,
-            area,
-            total,
-            primary_free,
-            scroll_taken,
-        } = input;
-        let (tape_only, native_tape) = self.tape_modes();
-        // Tape only has no divider to grab: its left edge is the canvas's.
-        let divider = self.frame.lane_divider_x.filter(|_| !tape_only);
-        let handle = super::lane_rail::lane_handle(self, area);
-        let on_divider = |at: egui::Pos2| handle.is_some_and(|rect| rect.x_range().contains(at.x));
-        let over_tape = |position: egui::Pos2| {
-            native_tape && (tape_only || divider.is_some_and(|x| position.x > x))
-        };
-        let (press, pressed_at, travel, middle_down, delta, scroll, any_click) = ui.input(|i| {
-            let p = &i.pointer;
-            let travel = p.latest_pos().zip(p.press_origin());
-            (
-                p.press_origin(),
-                p.press_start_time(),
-                travel.map_or(egui::Vec2::ZERO, |(now, from)| now - from),
-                p.middle_down(),
-                p.delta(),
-                i.raw_scroll_delta.y,
-                p.any_click(),
-            )
-        });
-        // Over the tape the sideways part of a drag is its time, and only a
-        // drag that set off sideways may move it.
-        let moves_time = self
-            .model
-            .tape_drag
-            .moves_time(pressed_at, [travel.x, travel.y]);
-        let side = |delta: egui::Vec2, tape: bool| {
-            if !tape || moves_time {
-                delta
-            } else {
-                egui::vec2(0.0, delta.y)
-            }
-        };
-        // Primary only: the secondary drag is the quick range's
-        // (`pane/quick_range.rs`), and the middle button pans below.
-        if total > 0
-            && primary_free
-            && chart.dragged_by(egui::PointerButton::Primary)
-            && !chart.interact_pointer_pos().is_some_and(on_divider)
-        {
-            let tape = press.is_some_and(over_tape);
-            self.pan_canvas(side(chart.drag_delta(), tape), total, tape);
-        }
-        // The middle button pans always, mid-placement included: a trader who
-        // drops one end of a trend line must be able to go find the other.
-        // Like the primary drag, it pans the side it was pressed on.
-        let hover = chart
-            .hover_pos()
-            .filter(|position| area.contains(*position) && !on_divider(*position));
-        if total > 0
-            && middle_down
-            && let Some(position) = hover
-        {
-            let tape = over_tape(press.unwrap_or(position));
-            self.pan_canvas(side(delta, tape), total, tape);
-            ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
-        }
-        // Not with a tool armed: two placement clicks are two anchors. Only a pair of canvas clicks
-        // counts (`DoubleClickGate`): over the tape it returns the tape to live; on an overlay's
-        // line it opens that line; on a candle the Candles settings, the view kept; on open canvas,
-        // the divider or a drawing live at the candles' zoom with the last price centred, and the
-        // third click there zooms in too; already live, the double click zooms in itself
-        // (`Model::live_centre`). The tape follows the same rule on its own side.
-        let mut open_settings = false;
-        let on_canvas = chart.clicked() && primary_free;
-        let repeat = CanvasRepeat::of(chart.double_clicked(), chart.triple_clicked());
-        let click = WindowClick::of(any_click, on_canvas, repeat);
-        let pass = ui.ctx().cumulative_pass_nr();
-        if let Some(repeat) = self.model.double_click.observe(pass, click) {
-            // The triple zooms where its double centred: no target read off the view it moved.
-            let at = chart
-                .interact_pointer_pos()
-                .filter(|_| repeat == CanvasRepeat::Double);
-            let overlay = at
-                .and_then(|position| self.hit_test().overlay_plot_at(position))
-                .map(|slot| slot.0);
-            let tape = at.is_some_and(over_tape);
-            // The lane divider is a handle, as it is for the drag above:
-            // grabbing it twice is neither a candle nor open canvas.
-            let canvas = at
-                .filter(|at| !tape && overlay.is_none() && !on_divider(*at))
-                .and_then(|at| self.hit_test().canvas_hit(at));
-            open_settings = repeat.opens_chart_settings(canvas);
-            navigate(
-                self,
-                quantick_chart_interaction::pane::Intent::ReturnToLive {
-                    tape,
-                    tape_live: self
-                        .orderflow
-                        .as_ref()
-                        .is_some_and(|t| t.tape_end().is_live()),
-                    overlay,
-                    canvas,
-                    repeat: Some(repeat),
-                },
-            );
-        }
-        if chart.hovered() && !scroll_taken && scroll.abs() > 0.0 {
-            // Scroll up (positive) zooms in.
-            let factor = 2.0_f32.powf(scroll / SCROLL_ZOOM_PX);
-            // Any lane past the divider takes the wheel: the ordinary lane the
-            // native tape leaves when switched off zooms its window too.
-            let over_lane = |at: egui::Pos2| divider.is_some_and(|x| at.x > x);
-            let tape = tape_only || chart.hover_pos().is_some_and(over_lane);
-            navigate(
-                self,
-                quantick_chart_interaction::pane::Intent::Zoom {
-                    factor,
-                    tape: tape && self.orderflow.is_some(),
-                },
-            );
-        }
-        open_settings
-    }
-
     /// Whether the pane has the time axis `tape` names: the candles' always,
     /// the tape's only where its strip is laid out past the lane divider.
     /// The one rule the strip's double-click and `chart.time_axis.reset` share.
@@ -253,5 +127,130 @@ pub(super) fn navigate(pane: &mut ChartPane, intent: quantick_chart_interaction:
             }
             Effect::Menu(_) => unreachable!("navigation adapter receives only gesture intents"),
         }
+    }
+}
+
+impl super::PaneMut<'_> {
+    /// Pan, zoom and the double click. Answers whether a double click landed
+    /// on a candle, which asks the window for the chart settings.
+    pub(super) fn handle_canvas_gestures(&mut self, ui: &egui::Ui, input: CanvasInput<'_>) -> bool {
+        let CanvasInput {
+            chart,
+            area,
+            total,
+            primary_free,
+            scroll_taken,
+        } = input;
+        let (tape_only, native_tape) = self.tape_modes();
+        // Tape only has no divider to grab: its left edge is the canvas's.
+        let divider = self.pane.frame.lane_divider_x.filter(|_| !tape_only);
+        let handle = super::lane_rail::lane_handle(self, area);
+        let on_divider = |at: egui::Pos2| handle.is_some_and(|rect| rect.x_range().contains(at.x));
+        let over_tape = |position: egui::Pos2| {
+            native_tape && (tape_only || divider.is_some_and(|x| position.x > x))
+        };
+        let (press, pressed_at, travel, middle_down, delta, scroll, any_click) = ui.input(|i| {
+            let p = &i.pointer;
+            let travel = p.latest_pos().zip(p.press_origin());
+            (
+                p.press_origin(),
+                p.press_start_time(),
+                travel.map_or(egui::Vec2::ZERO, |(now, from)| now - from),
+                p.middle_down(),
+                p.delta(),
+                i.raw_scroll_delta.y,
+                p.any_click(),
+            )
+        });
+        // Over the tape the sideways part of a drag is its time, and only a
+        // drag that set off sideways may move it.
+        let moves_time = self
+            .pane
+            .model
+            .tape_drag
+            .moves_time(pressed_at, [travel.x, travel.y]);
+        let side = |delta: egui::Vec2, tape: bool| {
+            if !tape || moves_time {
+                delta
+            } else {
+                egui::vec2(0.0, delta.y)
+            }
+        };
+        // Primary only: the secondary drag is the quick range's
+        // (`pane/quick_range.rs`), and the middle button pans below.
+        if total > 0
+            && primary_free
+            && chart.dragged_by(egui::PointerButton::Primary)
+            && !chart.interact_pointer_pos().is_some_and(on_divider)
+        {
+            let tape = press.is_some_and(over_tape);
+            self.pan_canvas(side(chart.drag_delta(), tape), total, tape);
+        }
+        // The middle button pans always, mid-placement included: a trader who
+        // drops one end of a trend line must be able to go find the other.
+        // Like the primary drag, it pans the side it was pressed on.
+        let hover = chart
+            .hover_pos()
+            .filter(|position| area.contains(*position) && !on_divider(*position));
+        if total > 0
+            && middle_down
+            && let Some(position) = hover
+        {
+            let tape = over_tape(press.unwrap_or(position));
+            self.pan_canvas(side(delta, tape), total, tape);
+            ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+        }
+        // Not with a tool armed: two placement clicks are two anchors. Only a pair of canvas clicks
+        // counts (`DoubleClickGate`): over the tape it returns the tape to live; on an overlay's
+        // line it opens that line; on a candle the Candles settings, the view kept; on open canvas,
+        // the divider or a drawing live at the candles' zoom with the last price centred, and the
+        // third click there zooms in too; already live, the double click zooms in itself
+        // (`Model::live_centre`). The tape follows the same rule on its own side.
+        let mut open_settings = false;
+        let on_canvas = chart.clicked() && primary_free;
+        let repeat = CanvasRepeat::of(chart.double_clicked(), chart.triple_clicked());
+        let click = WindowClick::of(any_click, on_canvas, repeat);
+        let pass = ui.ctx().cumulative_pass_nr();
+        if let Some(repeat) = self.pane.model.double_click.observe(pass, click) {
+            // The triple zooms where its double centred: no target read off the view it moved.
+            let at = chart
+                .interact_pointer_pos()
+                .filter(|_| repeat == CanvasRepeat::Double);
+            let overlay = at
+                .and_then(|position| self.hit_test().overlay_plot_at(position))
+                .map(|slot| slot.0);
+            let tape = at.is_some_and(over_tape);
+            // The lane divider is a handle, as it is for the drag above:
+            // grabbing it twice is neither a candle nor open canvas.
+            let canvas = at
+                .filter(|at| !tape && overlay.is_none() && !on_divider(*at))
+                .and_then(|at| self.hit_test().canvas_hit(at));
+            open_settings = repeat.opens_chart_settings(canvas);
+            let tape_live = (self.pane.orderflow.as_ref()).is_some_and(|t| t.tape_end().is_live());
+            navigate(
+                self,
+                quantick_chart_interaction::pane::Intent::ReturnToLive {
+                    tape,
+                    tape_live,
+                    overlay,
+                    canvas,
+                    repeat: Some(repeat),
+                },
+            );
+        }
+        if chart.hovered() && !scroll_taken && scroll.abs() > 0.0 {
+            // Scroll up (positive) zooms in.
+            let factor = 2.0_f32.powf(scroll / SCROLL_ZOOM_PX);
+            // Any lane past the divider takes the wheel: the ordinary lane the
+            // native tape leaves when switched off zooms its window too.
+            let over_lane = |at: egui::Pos2| divider.is_some_and(|x| at.x > x);
+            let tape = tape_only || chart.hover_pos().is_some_and(over_lane);
+            let tape = tape && self.pane.orderflow.is_some();
+            navigate(
+                self,
+                quantick_chart_interaction::pane::Intent::Zoom { factor, tape },
+            );
+        }
+        open_settings
     }
 }

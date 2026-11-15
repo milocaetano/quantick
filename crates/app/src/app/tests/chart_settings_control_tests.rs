@@ -247,7 +247,7 @@ fn a_double_click_on_the_candles_opens_the_candles_tab() {
     let (mut app, _commands) = app_with_history(200);
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
-    let pane = &app.active_tab().flow_pane;
+    let pane = app.active_tab().flow();
     let pane_id = pane.id;
     let chart = pane.frame.chart_area.expect("the canvas laid out");
     assert!(!app.surfaces.chart_settings.model_state.is_open());
@@ -322,7 +322,7 @@ fn the_footprint_entry_points_open_the_footprint_tab() {
     );
     app.surfaces.chart_settings.model_state.close();
     // The footprint glyph's right click on the pane's header.
-    app.active_tab_mut().flow_pane.apply_header_intent(
+    app.active_tab_mut().flow_mut().apply_header_intent(
         quantick_chart::pane_header::HeaderIntent::OpenLayerSettings(
             quantick_chart::pane_header::LayerToggle::Footprint,
         ),
@@ -502,7 +502,7 @@ fn a_double_click_on_the_lane_divider_opens_no_settings() {
     app.active_tab_mut().tape_mut().flush_for_test();
     run_frame_at(&mut app, &ctx, TEST_WINDOW);
     run_frame_at(&mut app, &ctx, TEST_WINDOW);
-    let pane = &app.active_tab().flow_pane;
+    let pane = app.active_tab().flow();
     let chart = pane.frame.chart_area.expect("the canvas laid out");
     let divider = pane.frame.lane_divider_x.expect("the tape lane is visible");
     // Just on the candles' side of the line, inside the handle.

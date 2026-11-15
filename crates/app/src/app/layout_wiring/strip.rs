@@ -32,11 +32,12 @@ impl LayoutAdapter<'_> {
         self.persist_changed_drawings();
         self.clear_indicators();
         for tab in self.tabs.iter_mut() {
-            for pane in tab.panes_mut() {
+            for mut pane in tab.panes_mut() {
                 pane.drawings.take_all();
                 pane.layout.drawings_key = None;
                 pane.layout.drawings_source = None;
-                pane.request_opening_layout(pane.layout_id());
+                let layout = pane.layout_id();
+                pane.request_opening_layout(layout);
                 pane.layout.view = quantick_workspace::session::LayoutView::default();
             }
         }

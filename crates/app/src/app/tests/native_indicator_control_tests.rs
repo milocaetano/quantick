@@ -107,6 +107,7 @@ fn native_control_edits_share_layout_persistence() {
         run_frame(&mut app, &ctx);
         if app
             .focused_pane()
+            .pane
             .indicators
             .all()
             .iter()

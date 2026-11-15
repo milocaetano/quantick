@@ -15,7 +15,7 @@ fn strip_app_with(launch: AppLaunch) -> (QuantickApp, egui::Context, egui::Rect,
     for _ in 0..3 {
         run_frame(&mut app, &ctx);
     }
-    let pane = &app.active_tab().flow_pane;
+    let pane = app.active_tab().flow();
     let history = pane.frame.time_strip.expect("the draw published the strip");
     let chart = pane.frame.chart_area.expect("the canvas laid out");
     let lane = egui::Rect::from_min_max(
@@ -189,7 +189,7 @@ fn a_held_drag_that_leaves_the_strip_never_shows_two_crosshairs() {
 #[test]
 fn the_jump_to_live_chip_shows_only_its_hand() {
     let (mut app, ctx, history, _) = strip_app();
-    let pane = &mut app.active_tab_mut().flow_pane;
+    let mut pane = app.active_tab_mut().flow_mut();
     let slots = pane.slots();
     pane.model.viewport.pan_pixels(200.0, slots);
     run_frame(&mut app, &ctx);

@@ -17,7 +17,7 @@ fn a_drawing_can_be_selected_from_its_stroke_and_moved_without_panning() {
         .flow_pane
         .model
         .viewport
-        .right_edge_bar(app.active_tab().flow_pane.slots());
+        .right_edge_bar(app.active_tab().flow().slots());
     // Clear of the inspector: the panel is opaque to presses by
     // contract, so a proof about dragging must not start under it.
     let start = canvas_point_clear_of_inspector(&mut app, &ctx, 300.0);
@@ -37,7 +37,7 @@ fn a_drawing_can_be_selected_from_its_stroke_and_moved_without_panning() {
             .flow_pane
             .model
             .viewport
-            .right_edge_bar(app.active_tab().flow_pane.slots()),
+            .right_edge_bar(app.active_tab().flow().slots()),
         viewport_before,
         "moving a drawing must not pan the market underneath it"
     );

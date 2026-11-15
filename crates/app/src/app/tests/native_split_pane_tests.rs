@@ -16,7 +16,7 @@ fn native_split(app: &mut QuantickApp) {
 
 fn facts(app: &QuantickApp) -> LayerFacts {
     let capabilities = app.active_tab().capabilities(&app.config);
-    app.active_tab().flow_pane.layer_facts(Some(capabilities))
+    app.active_tab().flow().layer_facts(Some(capabilities))
 }
 
 #[test]
@@ -25,7 +25,7 @@ fn the_native_tape_sits_beside_the_candles_behind_a_draggable_divider() {
     let (mut app, _commands) = app_with_history(200);
     native_split(&mut app);
     run_frame(&mut app, &ctx);
-    let pane = &app.active_tab().flow_pane;
+    let pane = app.active_tab().flow();
     let chart = pane.frame.chart_rect.expect("the canvas laid out");
     let divider = pane
         .frame
@@ -84,7 +84,7 @@ fn dragging_the_candles_pans_them_and_the_shared_axis_but_never_the_tapes_time()
     native_split(&mut app);
     run_frame(&mut app, &ctx);
     let (chart, divider, total) = {
-        let pane = &app.active_tab().flow_pane;
+        let pane = app.active_tab().flow();
         let total =
             pane.series_state().bars().len() + usize::from(pane.series_state().partial().is_some());
         (
@@ -104,7 +104,7 @@ fn dragging_the_candles_pans_them_and_the_shared_axis_but_never_the_tapes_time()
         .right_edge_bar(total);
     drag_sized(&mut app, &ctx, TEST_WINDOW, start, end);
     run_frame(&mut app, &ctx);
-    let pane = &app.active_tab().flow_pane;
+    let pane = app.active_tab().flow();
     assert!(
         pane.model.viewport.right_edge_bar(total) < edge,
         "the candles moved back through history"
@@ -145,10 +145,10 @@ fn candles_only_time_labels_stand_under_their_bars() {
     // A spacing the rail's 8 px is no whole number of bars of, so a shifted label
     // cannot land on a neighbour.
     let px_per_bar = 11.0;
-    let flow = &mut app.active_tab_mut().flow_pane;
+    let mut flow = app.active_tab_mut().flow_mut();
     flow.model.viewport.set_px_per_bar(px_per_bar);
     let output = run_frame(&mut app, &ctx);
-    let pane = &app.active_tab().flow_pane;
+    let pane = app.active_tab().flow();
     let frame = &pane.frame;
     let strip = frame.time_strip.expect("the draw published the strip");
     let candles_right = frame.candles_right.expect("the rail");

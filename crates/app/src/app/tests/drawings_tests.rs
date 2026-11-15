@@ -15,7 +15,7 @@ mod placement_characterization {
         let (mut app, _commands) = app_with_history(200);
         let ctx = egui::Context::default();
         run_frame(&mut app, &ctx);
-        let pane = &app.active_tab().flow_pane;
+        let pane = app.active_tab().flow();
         let chart = pane.frame.chart_area.unwrap();
         let slot = pane.slots() - 30;
         let right = pane.frame.candles_right.unwrap_or(chart.right());
@@ -51,7 +51,7 @@ mod placement_characterization {
             ],
         );
         run_frame_with_events(&mut app, &ctx, vec![pointer_button(action, false)]);
-        let pane = &app.active_tab().flow_pane;
+        let pane = app.active_tab().flow();
         assert_eq!(pane.drawings.items().len(), 1);
         let drawing = &pane.drawings.items()[0];
         assert_eq!(drawing.tool.id(), "anchored-vwap");
@@ -157,7 +157,7 @@ fn a_secondary_drag_is_temporary_until_it_is_dismissed_or_converted() {
         .frame
         .chart_area
         .expect("the first frame laid out the chart");
-    let pane = &app.active_tab().flow_pane;
+    let pane = app.active_tab().flow();
     let history_right = pane.frame.candles_right.unwrap_or(chart.right());
     let start = egui::pos2(
         pane.model
@@ -392,7 +392,10 @@ fn independent_annotations_do_not_run_the_temporary_conversion_plan() {
             serde_json::json!({"anchors": points}),
         )
         .unwrap();
-        assert_eq!(app.active_tab().drawing_pane().drawings.items().len(), 1);
+        assert_eq!(
+            app.active_tab().drawing_pane().pane.drawings.items().len(),
+            1
+        );
         assert!(
             crate::app::control_quick_range(&app).unwrap().enabled,
             "an independent annotation does not complete the temporary range"
@@ -464,7 +467,14 @@ fn quick_range_serialization_failure_keeps_range_without_refusal_toast() {
         },
         Instant::now(),
     );
-    assert!(app.active_tab().drawing_pane().drawings.items().is_empty());
+    assert!(
+        app.active_tab()
+            .drawing_pane()
+            .pane
+            .drawings
+            .items()
+            .is_empty()
+    );
     assert!(app.surfaces.toast.model_state.message().is_none());
     let retry = app
         .surfaces
@@ -492,7 +502,7 @@ fn quick_range_action_refusal_finishes_the_token_and_explains_the_retry() {
         .quick_range()
         .convert(QuickRangeAction::Profile)
         .unwrap();
-    app.active_tab_mut().flow_pane.rebuild_bars();
+    app.active_tab_mut().flow_mut().rebuild_bars();
     app.surfaces.toast.model_state = Default::default();
     app.resolve_drawing_response(
         DrawingChromeAsk {
@@ -501,7 +511,14 @@ fn quick_range_action_refusal_finishes_the_token_and_explains_the_retry() {
         },
         Instant::now(),
     );
-    assert!(app.active_tab().drawing_pane().drawings.items().is_empty());
+    assert!(
+        app.active_tab()
+            .drawing_pane()
+            .pane
+            .drawings
+            .items()
+            .is_empty()
+    );
     assert_eq!(
         app.surfaces.toast.model_state.message(),
         Some("The drawing could not be placed; the temporary range is still available.")
@@ -516,7 +533,7 @@ fn quick_range_action_refusal_finishes_the_token_and_explains_the_retry() {
 /// Where a secondary drag starts and ends on the flow pane: bar 80.5 and bar
 /// 160.5, above and below the chart's middle.
 pub(super) fn quick_range_ends(app: &QuantickApp) -> (egui::Rect, egui::Pos2, egui::Pos2) {
-    let pane = &app.active_tab().flow_pane;
+    let pane = app.active_tab().flow();
     let chart = pane
         .frame
         .chart_area
@@ -542,7 +559,7 @@ fn quick_range_never_starts_in_the_live_tape_lane() {
     app.active_tab_mut().tape_mut().record_trade(&trade(201));
     app.active_tab_mut().tape_mut().flush_for_test();
     run_frame_at(&mut app, &ctx, TEST_WINDOW);
-    let pane = &app.active_tab().flow_pane;
+    let pane = app.active_tab().flow();
     let chart = pane.frame.chart_area.unwrap();
     let divider = pane.frame.lane_divider_x.expect("the tape lane is visible");
     assert!(divider < chart.right());
@@ -768,7 +785,7 @@ fn a_resumed_session_keeps_the_timeline_and_marks_the_hole() {
         .unwrap();
     let tab_id = app.runtime.tabs.active_id();
     app.active_tab_mut().drain_feed(tab_id);
-    let held = app.active_tab().flow_pane.series_state().trades().len();
+    let held = app.active_tab().flow_series().state().trades().len();
     let floor = app
         .active_tab()
         .link
@@ -801,7 +818,7 @@ fn a_resumed_session_keeps_the_timeline_and_marks_the_hole() {
 
     let tab = app.active_tab();
     assert_eq!(
-        tab.flow_pane.series_state().trades().len(),
+        tab.flow_series().state().trades().len(),
         held + 1,
         "the replayed window is overlap, not three new prints"
     );
@@ -918,7 +935,7 @@ fn the_drawing_section_of_the_menu_acts_on_the_clicked_object() {
         .find(|tool| tool.id() == "rectangle")
         .expect("the rectangle tool is registered");
     {
-        let pane = &mut app.active_tab_mut().flow_pane;
+        let mut pane = app.active_tab_mut().flow_mut();
         pane.drawings
             .place(rectangle, drawings::ChartPoint::at(1.0, 100.0));
         pane.drawings
@@ -1069,7 +1086,7 @@ fn rearm_after_a_series_reset_rewarms_the_ruler_from_the_chart() {
         .find(|tool| tool.id() == "rectangle")
         .expect("the rectangle tool is registered");
     {
-        let pane = &mut app.active_tab_mut().flow_pane;
+        let mut pane = app.active_tab_mut().flow_mut();
         pane.drawings
             .place(rectangle, drawings::ChartPoint::at(0.0, 100.0));
         pane.drawings
@@ -1157,7 +1174,7 @@ fn extend_right_keeps_the_region_active_past_the_drawn_end() {
         .find(|tool| tool.id() == "rectangle")
         .expect("the rectangle tool is registered");
     {
-        let pane = &mut app.active_tab_mut().flow_pane;
+        let mut pane = app.active_tab_mut().flow_mut();
         // The drawn span ends at slot 2; the force bars land past it.
         pane.drawings
             .place(rectangle, drawings::ChartPoint::at(0.0, 100.0));
@@ -1208,7 +1225,7 @@ fn extend_right_keeps_the_region_active_past_the_drawn_end() {
     // Turn on extend right — the drawn band now runs to the chart's
     // edge, and the region with it.
     {
-        let pane = &mut app.active_tab_mut().flow_pane;
+        let mut pane = app.active_tab_mut().flow_mut();
         let index = pane.drawings.index_of(drawing).expect("drawing lives");
         pane.drawings.items_mut()[index]
             .payload
@@ -2080,7 +2097,7 @@ fn a_shared_drawing_is_painted_on_the_other_pane_of_the_tab() {
     // Anchored on a real bar, so the anchor carries a real market time.
     let slot = 100;
     let anchored = {
-        let pane = &app.active_tab().flow_pane;
+        let pane = app.active_tab().flow();
         let time = pane.slot_open_time(slot).expect("a closed bar has a time");
         let price = pane
             .closed_bar(slot)
@@ -2088,7 +2105,7 @@ fn a_shared_drawing_is_painted_on_the_other_pane_of_the_tab() {
             .expect("the bar has a close");
         drawings::ChartPoint::at_time(slot as f32 + 0.5, price, Some(time))
     };
-    let pane = &mut app.active_tab_mut().flow_pane;
+    let mut pane = app.active_tab_mut().flow_mut();
     assert!(pane.drawings.place_with(
         drawing_tool("horizontal-line"),
         &drawings::DrawingBand::Price,
@@ -2285,14 +2302,14 @@ fn a_local_drag_of_a_shared_mark_carries_time_and_commits_one_undo() {
         .expect("placed line")
         .scope = drawings::DrawingScope::AllCharts;
     let start = canvas_point_clear_of_inspector(&mut app, &ctx, 300.0);
-    let pane = &app.active_tab().flow_pane;
+    let pane = app.active_tab().flow();
     let before = pane.drawings.items()[0].points[0];
     let undo_before = pane.drawings.undo_depth();
     let viewport_before = pane.model.viewport.right_edge_bar(pane.slots());
 
     drag_chart(&mut app, &ctx, start, start + egui::vec2(40.0, 40.0));
 
-    let pane = &app.active_tab().flow_pane;
+    let pane = app.active_tab().flow();
     let after = pane.drawings.items()[0].points[0];
     assert!(
         after.bar > before.bar,
@@ -2578,7 +2595,7 @@ fn a_parked_context_bar_greets_the_next_drawing_too() {
     // A finished object with the tool disarmed is what a trader has in
     // hand when they reach for the bar.
     app.surfaces.toolrail.arm(Tool::Pointer);
-    app.drawing_pane_mut().drawings.select(Some(avwap));
+    app.drawing_pane_mut().pane.drawings.select(Some(avwap));
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
     let bar = app
@@ -2604,7 +2621,7 @@ fn a_parked_context_bar_greets_the_next_drawing_too() {
         .expect("still up")
         .min;
 
-    app.drawing_pane_mut().drawings.select(Some(profile));
+    app.drawing_pane_mut().pane.drawings.select(Some(profile));
     // The mirror is written only when the bar actually draws, and none of
     // the host's early returns clear it — so a stale value would answer
     // for a bar that stopped appearing, which is the regression this test
@@ -2680,6 +2697,7 @@ fn a_parked_context_bar_greets_the_next_drawing_too() {
     let chart = app
         .active_tab()
         .drawing_pane()
+        .pane
         .frame
         .chart_area
         .expect("the pane drew");
@@ -2687,6 +2705,7 @@ fn a_parked_context_bar_greets_the_next_drawing_too() {
         chart,
         app.active_tab()
             .drawing_pane()
+            .pane
             .frame
             .candles_right
             .unwrap_or(chart.right()),
@@ -2802,6 +2821,7 @@ fn the_inspector_hook_survives_the_demo_that_runs_before_it() {
     assert!(
         app.active_tab()
             .drawing_pane()
+            .pane
             .drawings
             .selected()
             .is_some(),
@@ -2821,6 +2841,7 @@ fn a_narrow_chart_opens_the_inspector_pinned_until_the_pin_is_touched() {
     run_sized_frame(&mut app, &ctx, narrow, Vec::new());
     assert!(
         app.focused_pane()
+            .pane
             .frame
             .chart_area
             .is_some_and(|chart| chart.width() < INSPECTOR_AUTO_PIN_CHART_WIDTH_PX),
@@ -2958,7 +2979,12 @@ fn the_object_manager_opens_beside_the_rail() {
     let manager = ctx
         .memory(|memory| memory.area_rect(egui::Id::new("drawing_manager")))
         .expect("the manager is open");
-    let chart = app.focused_pane().frame.chart_area.expect("chart laid out");
+    let chart = app
+        .focused_pane()
+        .pane
+        .frame
+        .chart_area
+        .expect("chart laid out");
     // Default dock is Left: the manager opens one gap inboard of the
     // rail's inner edge, aligned with its leading (top) end.
     assert!(
@@ -3611,7 +3637,7 @@ fn rectangle_anchor_resizes_while_the_settings_window_stays_non_modal() {
         .flow_pane
         .model
         .viewport
-        .right_edge_bar(app.active_tab().flow_pane.slots());
+        .right_edge_bar(app.active_tab().flow().slots());
 
     open_inspector(&mut app, &ctx);
     let inspector = painted_text(&run_frame(&mut app, &ctx));
@@ -3645,7 +3671,7 @@ fn rectangle_anchor_resizes_while_the_settings_window_stays_non_modal() {
             .flow_pane
             .model
             .viewport
-            .right_edge_bar(app.active_tab().flow_pane.slots()),
+            .right_edge_bar(app.active_tab().flow().slots()),
         viewport_before,
         "resizing a drawing must not pan the chart"
     );
@@ -3678,7 +3704,7 @@ fn locked_drawing_rejects_geometry_and_keyboard_delete() {
         .flow_pane
         .model
         .viewport
-        .right_edge_bar(app.active_tab().flow_pane.slots());
+        .right_edge_bar(app.active_tab().flow().slots());
     drag_chart(
         &mut app,
         &ctx,
@@ -3695,7 +3721,7 @@ fn locked_drawing_rejects_geometry_and_keyboard_delete() {
             .flow_pane
             .model
             .viewport
-            .right_edge_bar(app.active_tab().flow_pane.slots()),
+            .right_edge_bar(app.active_tab().flow().slots()),
         viewport_before,
         "a drag on a locked drawing is the chart's pan"
     );
@@ -3758,7 +3784,7 @@ fn a_source_reset_keeps_the_marks_and_re_anchors_them_by_market_time() {
         "the instant it was placed at is what survives"
     );
     assert_eq!(
-        app.active_tab().flow_pane.slot_at_time(anchor_time),
+        app.active_tab().flow().slot_at_time(anchor_time),
         Some(slot_of(point.bar)),
         "and the bar it sits on is that instant, re-asked of the new series"
     );
@@ -4243,7 +4269,7 @@ fn a_flow_chart_recut_hides_a_mark_kept_to_it_until_it_returns() {
     place_level(&mut app, PaneSide::Flow, 50.0);
     set_scope_on(&mut app, PaneSide::Flow, drawings::DrawingScope::ThisChart);
     run_frame(&mut app, &ctx);
-    let drawn_at = *app.active_tab().flow_pane.series_state().spec();
+    let drawn_at = *app.active_tab().flow_series().state().spec();
 
     app.active_tab_mut()
         .pane_mut(PaneSide::Flow)
@@ -4432,7 +4458,7 @@ fn a_context_chart_with_a_strategy_armed_keeps_its_drawings_through_a_recut() {
         .into_iter()
         .find(|tool| tool.id() == "rectangle")
         .unwrap();
-    let pane = app.active_tab_mut().pane_mut(PaneSide::Time(0));
+    let mut pane = app.active_tab_mut().pane_mut(PaneSide::Time(0));
     pane.drawings.place(rectangle, ChartPoint::at(0.0, 100.0));
     pane.drawings.place(rectangle, ChartPoint::at(30.0, 110.0));
     let drawing = pane.drawings.items()[0].id;
@@ -4476,7 +4502,7 @@ fn armed_rectangle(app: &mut QuantickApp, side: PaneSide) -> drawings::DrawingId
         .into_iter()
         .find(|tool| tool.id() == "rectangle")
         .unwrap();
-    let pane = app.active_tab_mut().pane_mut(side);
+    let mut pane = app.active_tab_mut().pane_mut(side);
     pane.drawings.place(rectangle, ChartPoint::at(0.0, 100.0));
     pane.drawings.place(rectangle, ChartPoint::at(30.0, 110.0));
     let drawing = pane.drawings.items().last().unwrap().id;
@@ -4738,7 +4764,12 @@ fn a_drawing_keeps_its_id_across_a_layout_round_trip() {
     let second = app.layout_adapter().create_layout(None).expect("second");
     assert_eq!(app.layout_state().layouts().active_id(), second);
     app.layout_adapter().switch_layout(first).expect("back");
-    let items = app.active_tab().pane(PaneSide::Time(0)).drawings.items();
+    let items = app
+        .active_tab()
+        .pane(PaneSide::Time(0))
+        .pane
+        .drawings
+        .items();
     assert_eq!(items.len(), 1);
     assert_eq!(items[0].id, id, "the level came back under its own id");
 }
@@ -5148,10 +5179,10 @@ fn the_same_handler_places_the_traders_object_and_the_agents() {
     // The trader's own: the note hook takes the click path's own door.
     app.surfaces.drawing_chrome.set_pending_text_note(true);
     run_frame(&mut app, &ctx);
-    let after_trader = app.active_tab().drawing_pane().drawings.items().len();
+    let after_trader = app.active_tab().drawing_pane().pane.drawings.items().len();
     assert_eq!(after_trader, 1, "the trader placed one object");
     assert!(
-        app.active_tab().drawing_pane().drawings.items()[0]
+        app.active_tab().drawing_pane().pane.drawings.items()[0]
             .author
             .is_none(),
         "the trader's own object carries no author"
@@ -5177,7 +5208,7 @@ fn the_same_handler_places_the_traders_object_and_the_agents() {
     assert_eq!(result["author"]["actor_kind"], "agent");
     assert_eq!(result["tool_id"], "text");
 
-    let items = app.active_tab().drawing_pane().drawings.items();
+    let items = app.active_tab().drawing_pane().pane.drawings.items();
     assert_eq!(items.len(), 2, "both operators placed through one door");
     let agent_object = items
         .iter()

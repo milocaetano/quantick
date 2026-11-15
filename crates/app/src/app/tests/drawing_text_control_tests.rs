@@ -2,7 +2,7 @@
 use super::*;
 
 pub(super) fn target(app: &QuantickApp) -> Value {
-    let pane = &app.active_tab().flow_pane;
+    let pane = app.active_tab().flow();
     json!({
         "tab_id": app.runtime.tabs.active_id().to_string(),
         "pane_id": pane.id.to_string(),
@@ -16,7 +16,7 @@ fn text_repeat_requires_authority_and_key_and_replays_once() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = app_with_history(20);
     run_frame(&mut app, &ctx);
-    let pane = &mut app.active_tab_mut().flow_pane;
+    let mut pane = app.active_tab_mut().flow_mut();
     pane.drawings.place(
         crate::drawings::DrawingTool::by_id("text").unwrap(),
         ChartPoint::at(1.0, 100.0),
@@ -108,7 +108,7 @@ fn text_repeat_requires_authority_and_key_and_replays_once() {
         readback(&mut app, &ctx, &mut client, CAPABILITY),
         vec![placed]
     );
-    let pane = &mut app.active_tab_mut().flow_pane;
+    let mut pane = app.active_tab_mut().flow_mut();
     assert_eq!(
         pane.drawings.items()[1]
             .author

@@ -24,6 +24,15 @@ pub(super) fn pane<P: TabsPort + TabsMutPort + ?Sized>(
     tab_id: WireU64,
     pane_id: WireU64,
 ) -> Result<&mut ChartPane, ControlError> {
+    pane_at(app, tab_id, pane_id).map(|at| at.pane)
+}
+
+/// [`pane`], beside the series its tab keeps for it.
+pub(super) fn pane_at<P: TabsPort + TabsMutPort + ?Sized>(
+    app: &mut P,
+    tab_id: WireU64,
+    pane_id: WireU64,
+) -> Result<crate::pane::PaneMut<'_>, ControlError> {
     let tab_id = Some(tab_id);
     let index = layout::tab_index(app, layout::TabTarget { tab_id })?;
     let tab = app.tabs_mut().tab_at_mut(index);
@@ -41,7 +50,7 @@ fn set<P: TabsPort + TabsMutPort + ?Sized>(
 ) -> Result<Value, ControlError> {
     let input: PriceAxisInput = serde_json::from_value(value.clone()).map_err(invalid)?;
     let range = input.mode.range()?;
-    let pane = pane(app, input.tab_id, input.pane_id)?;
+    let mut pane = pane_at(app, input.tab_id, input.pane_id)?;
     pane.sync_price_axis_mode();
     match range {
         Some((low, high)) => {
@@ -49,7 +58,7 @@ fn set<P: TabsPort + TabsMutPort + ?Sized>(
         }
         None => pane.price_view.reset(),
     }
-    let viewport = super::chart::viewport_snapshot(pane);
+    let viewport = super::chart::viewport_snapshot(pane.view());
     let (tab_id, pane_id) = (input.tab_id, input.pane_id);
     serde_json::to_value(PriceAxisResult {
         tab_id,

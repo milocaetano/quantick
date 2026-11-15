@@ -33,6 +33,7 @@ impl quantick_chart::indicator_registry::IndicatorViewHost for IndicatorViewAdap
             .by_id_mut(target.tab)?
             .pane_at_mut(target.side.index())
             .filter(|pane| pane.id == target.pane)?
+            .pane
             .indicators
             .view_mut(target.slot)
     }

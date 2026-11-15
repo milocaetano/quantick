@@ -40,7 +40,6 @@ use super::deal_recording_wiring as deals;
 use super::tab_workspaces::BookTabs;
 use crate::config::AppConfig;
 use crate::drawings;
-use crate::pane::ChartPane;
 use crate::style::ChartStyle;
 use crate::tab::Tab;
 use crate::timezone::TzOffset;
@@ -503,16 +502,6 @@ impl<'a> TabsMut<'a> {
         self.tabs.get_mut(active).map(|tab| &mut tab.paper)
     }
 
-    /// One pane, by tab position and side — the mutable half of
-    /// [`TabReads::tabs`], for the actions that place objects.
-    pub(crate) fn pane_mut(
-        self,
-        tab_index: usize,
-        side: crate::pane::PaneSide,
-    ) -> &'a mut ChartPane {
-        self.tabs.runtime_mut(tab_index).pane_mut(side)
-    }
-
     /// File what an action changed for each tab's asset now, so the next
     /// read reports it as the store holds it ([`Tab::sync_asset_bubbles`]).
     pub(crate) fn file_asset_bubbles(self) {
@@ -854,7 +843,7 @@ impl quantick_control_handlers::market_palette::MarketPaletteHost for QuantickAp
                 symbol: tab.symbol.clone(),
                 asset: self.config.market_asset(&tab.feed_id, &tab.symbol),
                 workspace: book.tab_row(tabs.id_at(index)).0,
-                bar: tab.flow_pane.series_state().spec().to_config_string(),
+                bar: tab.flow_series().state().spec().to_config_string(),
                 context_bars: super::arrangement_adapter::saved_tab_of(tab).context_bars,
                 replay: tab.link.replay.is_some(),
                 streaming: tab.link.latest_trade_ms.is_some(),
@@ -871,8 +860,8 @@ impl quantick_control_handlers::market_palette::MarketPaletteHost for QuantickAp
             workspaces: book.book().list().into_iter().map(|row| row.name).collect(),
             inherited_bar: Some(
                 self.active_tab()
-                    .flow_pane
-                    .series_state()
+                    .flow_series()
+                    .state()
                     .spec()
                     .to_config_string(),
             ),
@@ -1098,9 +1087,10 @@ impl ScriptsPort for QuantickApp {
             runtime.tabs[active].focused_side(),
         );
         let pane = runtime.tabs.runtime_mut(active).pane_mut(target.1);
-        let attached = runtime
-            .indicators
-            .attach_script(pane, target, name, source, by_operator);
+        let attached =
+            runtime
+                .indicators
+                .attach_script(pane.pane, target, name, source, by_operator);
         let owner = attached.target;
         self.indicator_wiring()
             .apply_indicator_edit(IndicatorEdit::Attached(attached));

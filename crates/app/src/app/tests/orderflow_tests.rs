@@ -19,7 +19,7 @@ fn switching_only_the_imbalance_unit_recuts_the_series() {
     app.active_tab_mut().apply_spec_changes();
     app.active_tab_mut().apply_spec_changes();
     assert_eq!(
-        app.active_tab().flow_pane.series_state().spec(),
+        app.active_tab().flow_series().state().spec(),
         &BarSpec::Imbalance(crate::state::ImbalanceUnit::Trades, 100),
         "the kind switch lands on the default trades unit first"
     );
@@ -42,7 +42,7 @@ fn switching_only_the_imbalance_unit_recuts_the_series() {
     );
     app.active_tab_mut().apply_spec_changes();
     assert_eq!(
-        app.active_tab().flow_pane.series_state().spec(),
+        app.active_tab().flow_series().state().spec(),
         &BarSpec::Imbalance(crate::state::ImbalanceUnit::Volume, 100),
         "a unit-only change rebuilds the series"
     );
@@ -133,7 +133,7 @@ fn one_book_drain_uses_one_clock_observation() {
 #[test]
 fn a_source_with_no_book_never_banks_the_heatmap_as_switched_off() {
     let (app, _commands) = app_without_depth();
-    let pane = &app.active_tab().flow_pane;
+    let pane = app.active_tab().flow();
     assert!(
         !pane.layer_visible(ChartLayer::Heatmap, &app.runtime.style),
         "with no book there is nothing to draw, which is the renderer's answer"
@@ -193,7 +193,7 @@ fn a_region_the_tape_walked_past_says_so_on_the_badge_and_keeps_listening() {
     // A band drawn over the bars in front of the trader, ending at slot
     // 4 — past the (empty) tape at arm time, so arming accepts it.
     {
-        let pane = &mut app.active_tab_mut().flow_pane;
+        let mut pane = app.active_tab_mut().flow_mut();
         pane.drawings
             .place(rectangle, drawings::ChartPoint::at(0.0, 105.0));
         pane.drawings
@@ -256,7 +256,7 @@ fn a_region_the_tape_walked_past_says_so_on_the_badge_and_keeps_listening() {
             tab.anchors_on(crate::pane::PaneSide::Flow),
             &tab.flow_pane.drawings,
             drawing,
-            tab.flow_pane.closed_slots(),
+            tab.flow().closed_slots(),
         )
     };
     assert!(
@@ -310,7 +310,9 @@ fn a_right_click_on_the_tape_configures_the_tape_without_losing_the_chart() {
 
     let menu_frame = |app: &mut QuantickApp, on_tape: bool| {
         with_flow_pane(app, |pane, chrome| {
-            pane.context_menu.aim_at_tape(&mut pane.model, on_tape);
+            pane.pane
+                .context_menu
+                .aim_at_tape(&mut pane.pane.model, on_tape);
             let _ = ctx.run(
                 egui::RawInput {
                     screen_rect: Some(screen),
@@ -566,7 +568,7 @@ fn depth_channel_updates_heatmap_without_mutating_candles() {
 
     let (mut app, _evt_tx, mut cmd_rx, book_tx) = test_app();
     let generation = take_capture_start(&mut cmd_rx);
-    let bars_before = app.active_tab().flow_pane.series_state().bars().len();
+    let bars_before = app.active_tab().flow_series().state().bars().len();
     book_tx
         .try_send(DepthEvent::Snapshot {
             symbol: "TESTUSDT".to_owned(),
@@ -591,7 +593,7 @@ fn depth_channel_updates_heatmap_without_mutating_candles() {
     assert_eq!(book.bid_levels, 1);
     assert_eq!(book.ask_levels, 1);
     assert_eq!(
-        app.active_tab().flow_pane.series_state().bars().len(),
+        app.active_tab().flow_series().state().bars().len(),
         bars_before
     );
 }
@@ -621,17 +623,17 @@ fn one_tape_feeds_both_panes_and_each_cuts_it_its_own_way() {
     let time = app.active_tab().time_pane().expect("time pane");
     assert_eq!(
         time.series_state().trades().len(),
-        app.active_tab().flow_pane.series_state().trades().len(),
+        app.active_tab().flow_series().state().trades().len(),
         "both panes hold the same tape"
     );
     assert_ne!(
         time.series_state().bars().len(),
-        app.active_tab().flow_pane.series_state().bars().len(),
+        app.active_tab().flow_series().state().bars().len(),
         "tick(1) and M1 cannot agree on a bar count over the same trades"
     );
 
     // And a live trade after the split reaches both of them.
-    let flow_before = app.active_tab().flow_pane.series_state().trades().len();
+    let flow_before = app.active_tab().flow_series().state().trades().len();
     let time_before = app
         .active_tab()
         .time_pane()
@@ -643,7 +645,7 @@ fn one_tape_feeds_both_panes_and_each_cuts_it_its_own_way() {
     app.active_tab_mut()
         .ingest_live_trade_at(&trade, trade.timestamp_ms);
     assert_eq!(
-        app.active_tab().flow_pane.series_state().trades().len(),
+        app.active_tab().flow_series().state().trades().len(),
         flow_before + 1
     );
     assert_eq!(
@@ -674,7 +676,8 @@ fn an_index_magnitude_tape_keeps_the_five_point_grouping_it_already_had() {
     assert_eq!(
         app.active_tab()
             .pane(PaneSide::Flow)
-            .series_state()
+            .series
+            .state()
             .footprint_group(),
         Decimal::from(5),
         "sizing from the tape's magnitude moved a grouping the tick had settled",

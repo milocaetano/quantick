@@ -7,6 +7,7 @@ use smallvec::SmallVec;
 
 use quantick_engine::DealSample;
 
+use super::pane_workers::{lend, lend_all, lend_mut};
 use super::{CanvasCollapseRestore, CanvasLayout, LegendFold, Tab};
 use crate::canvas_layout::{MAX_CANVAS_PANES, MAX_CONTEXT_PANES, PaneIdAllocator, PaneKind};
 use crate::config::AppConfig;
@@ -15,7 +16,7 @@ use crate::deal_recording_ui::{self, DealChip};
 use crate::loading::LoadingTask;
 use crate::metrics;
 use crate::orderflow_view::OrderflowView;
-use crate::pane::{ChartPane, PaneIndex, PaneSide, clamp_pane_fraction};
+use crate::pane::{ChartPane, PaneIndex, PaneMut, PaneRef, PaneSide, clamp_pane_fraction};
 use crate::state::BarKind;
 use crate::style::ChartStyle;
 use quantick_chart_interaction::pane_focus::{DrawnPanes, resolve_focus};
@@ -80,19 +81,56 @@ impl Tab {
 
     /// The pane at `index`: `0` is the flow pane, `1..` the context stack.
     #[must_use]
-    pub fn pane_at(&self, index: PaneIndex) -> Option<&ChartPane> {
-        match index {
-            0 => Some(&self.flow_pane),
-            other => self.time_panes.get(other - 1),
-        }
+    pub fn pane_at(&self, index: PaneIndex) -> Option<PaneRef<'_>> {
+        let pane = match index {
+            0 => &self.flow_pane,
+            other => self.time_panes.get(other - 1)?,
+        };
+        Some(lend(pane, &self.session, &self.pane_workers))
     }
 
     /// The pane at `index`, mutably.
-    pub fn pane_at_mut(&mut self, index: PaneIndex) -> Option<&mut ChartPane> {
-        match index {
-            0 => Some(&mut self.flow_pane),
-            other => self.time_panes.get_mut(other - 1),
-        }
+    pub fn pane_at_mut(&mut self, index: PaneIndex) -> Option<PaneMut<'_>> {
+        let pane = match index {
+            0 => &mut self.flow_pane,
+            other => self.time_panes.get_mut(other - 1)?,
+        };
+        Some(lend_mut(pane, &mut self.session, &mut self.pane_workers))
+    }
+
+    /// The flow pane beside its series and workers.
+    #[must_use]
+    pub fn flow(&self) -> PaneRef<'_> {
+        lend(&self.flow_pane, &self.session, &self.pane_workers)
+    }
+
+    /// See [`Self::flow`].
+    pub fn flow_mut(&mut self) -> PaneMut<'_> {
+        lend_mut(
+            &mut self.flow_pane,
+            &mut self.session,
+            &mut self.pane_workers,
+        )
+    }
+
+    /// Stack a context pane built outside the layout path, its series and
+    /// workers opened with it.
+    #[cfg(test)]
+    pub(crate) fn push_time_pane(&mut self, pane: ChartPane) {
+        super::pane_workers::open(&mut self.session, &mut self.pane_workers, &pane);
+        self.time_panes.push(pane);
+    }
+
+    /// The flow pane's bars, as the tab session holds them.
+    #[must_use]
+    pub fn flow_series(&self) -> &quantick_session::PaneSeries {
+        self.flow().series
+    }
+
+    /// See [`Self::flow_series`].
+    #[cfg(test)]
+    pub fn flow_series_mut(&mut self) -> &mut quantick_session::PaneSeries {
+        self.flow_mut().series
     }
 
     /// The first context pane, if this tab has built one.
@@ -101,13 +139,13 @@ impl Tab {
     /// layouts show one. The ones that show more reach for `time_panes`
     /// directly; this is the convenience, not the truth.
     #[must_use]
-    pub fn time_pane(&self) -> Option<&ChartPane> {
-        self.time_panes.first()
+    pub fn time_pane(&self) -> Option<PaneRef<'_>> {
+        self.pane_at(1)
     }
 
     /// The first context pane, mutably.
-    pub fn time_pane_mut(&mut self) -> Option<&mut ChartPane> {
-        self.time_panes.first_mut()
+    pub fn time_pane_mut(&mut self) -> Option<PaneMut<'_>> {
+        self.pane_at_mut(1)
     }
 
     /// Whether this tab has built any context pane at all.
@@ -197,11 +235,12 @@ impl Tab {
 
     /// The pane on `side`, falling back to the flow pane when the time pane
     /// has never been opened.
-    pub fn pane(&self, side: PaneSide) -> &ChartPane {
-        match side {
+    pub fn pane(&self, side: PaneSide) -> PaneRef<'_> {
+        let pane = match side {
             PaneSide::Time(slot) => self.time_panes.get(slot).unwrap_or(&self.flow_pane),
             PaneSide::Flow => &self.flow_pane,
-        }
+        };
+        lend(pane, &self.session, &self.pane_workers)
     }
 
     /// See [`Self::pane`].
@@ -224,11 +263,12 @@ impl Tab {
         }
     }
 
-    pub fn pane_mut(&mut self, side: PaneSide) -> &mut ChartPane {
-        match side {
+    pub fn pane_mut(&mut self, side: PaneSide) -> PaneMut<'_> {
+        let pane = match side {
             PaneSide::Time(slot) => self.time_panes.get_mut(slot).unwrap_or(&mut self.flow_pane),
             PaneSide::Flow => &mut self.flow_pane,
-        }
+        };
+        lend_mut(pane, &mut self.session, &mut self.pane_workers)
     }
 
     /// Every side this tab can address, flow first — the order
@@ -240,12 +280,12 @@ impl Tab {
     }
 
     /// The pane every chrome surface reads from — see [`Self::focused_side`].
-    pub fn focused_pane(&self) -> &ChartPane {
+    pub fn focused_pane(&self) -> PaneRef<'_> {
         self.pane(self.focused_side())
     }
 
     /// See [`Self::focused_pane`].
-    pub fn focused_pane_mut(&mut self) -> &mut ChartPane {
+    pub fn focused_pane_mut(&mut self) -> PaneMut<'_> {
         self.pane_mut(self.focused_side())
     }
 
@@ -289,12 +329,12 @@ impl Tab {
     }
 
     /// The pane every drawing surface reads from — see [`Self::drawing_side`].
-    pub fn drawing_pane(&self) -> &ChartPane {
+    pub fn drawing_pane(&self) -> PaneRef<'_> {
         self.pane(self.drawing_side())
     }
 
     /// See [`Self::drawing_pane`].
-    pub fn drawing_pane_mut(&mut self) -> &mut ChartPane {
+    pub fn drawing_pane_mut(&mut self) -> PaneMut<'_> {
         self.pane_mut(self.drawing_side())
     }
 
@@ -305,42 +345,41 @@ impl Tab {
     /// An iterator and not a `Vec`: this is walked per frame by the control
     /// plane's journal comparison, which must not touch the allocator on a
     /// quiet frame.
-    pub fn panes(&self) -> impl Iterator<Item = (&ChartPane, PaneSide)> {
-        std::iter::once((&self.flow_pane, PaneSide::Flow)).chain(
-            self.time_panes
-                .iter()
-                .enumerate()
-                .map(|(slot, time)| (time, PaneSide::Time(slot))),
-        )
+    pub fn panes(&self) -> impl Iterator<Item = (PaneRef<'_>, PaneSide)> {
+        let (session, workers) = (&self.session, &self.pane_workers);
+        std::iter::once((&self.flow_pane, PaneSide::Flow))
+            .chain(
+                self.time_panes
+                    .iter()
+                    .enumerate()
+                    .map(|(slot, time)| (time, PaneSide::Time(slot))),
+            )
+            .map(move |(pane, side)| (lend(pane, session, workers), side))
     }
 
     /// Every pane holding this market's bars, on screen or not. One tape, and
     /// however many charts the layout has ever shown read off it.
-    pub fn panes_with_sides_mut(&mut self) -> impl Iterator<Item = (&mut ChartPane, PaneSide)> {
-        let Self {
-            flow_pane,
-            time_panes,
-            ..
-        } = self;
-        std::iter::once((flow_pane, PaneSide::Flow)).chain(
-            time_panes
-                .iter_mut()
-                .enumerate()
-                .map(|(slot, pane)| (pane, PaneSide::Time(slot))),
-        )
+    pub fn panes_with_sides_mut(&mut self) -> impl Iterator<Item = (PaneMut<'_>, PaneSide)> {
+        self.panes_mut()
+            .enumerate()
+            .map(|(index, pane)| (pane, PaneSide::from_index(index)))
     }
 
     /// See [`Self::panes_with_sides_mut`], without the addresses.
-    pub fn panes_mut(&mut self) -> impl Iterator<Item = &mut ChartPane> {
-        // Destructured rather than borrowed field by field: the flow pane and
-        // the context stack are two disjoint parts of `self`, and the compiler
-        // only knows that when it is told in one pattern.
+    pub fn panes_mut(&mut self) -> impl Iterator<Item = PaneMut<'_>> {
+        // Destructured rather than borrowed field by field: the panes, the
+        // session holding their series and their workers are disjoint parts
+        // of `self`, and the compiler only knows that when it is told in one
+        // pattern.
         let Self {
             flow_pane,
             time_panes,
+            session,
+            pane_workers,
             ..
         } = self;
-        std::iter::once(flow_pane).chain(time_panes.iter_mut())
+        let panes = std::iter::once(flow_pane).chain(time_panes.iter_mut());
+        lend_all(panes, session, pane_workers)
     }
 
     /// The flow pane's tape.
@@ -367,7 +406,7 @@ impl Tab {
     /// the replay's playhead ([`quantick_feed::replay::ReplayLink::clock_after`]),
     /// or the host's monotonic instant on a live feed.
     pub(crate) fn update_tape_clock_at(&mut self, monotonic_ms: u64) {
-        let applied = self.flow_pane.series_state().trades();
+        let applied = self.flow_series().state().trades();
         let applied_ms = applied.last().map(|trade| trade.timestamp_ms);
         match self
             .link
@@ -393,29 +432,12 @@ impl Tab {
         covers_seam: bool,
         seam: Option<SeamTrace>,
     ) -> bool {
-        let Some(pane) = self.pane_at_mut(index) else {
+        let Some(mut pane) = self.pane_at_mut(index) else {
             return false;
         };
         let had = seam.and_then(|_| pane.series_state().venue_lead().cloned());
         let changed = pane.install_venue_history(bars, lead, covers_seam);
-        let seated = pane.series_state().venue_lead();
-        if let Some(seam) = seam
-            && (had.as_ref() != seated
-                || seated.is_none() && seam.token != "nothing_before_first_trade")
-        {
-            tracing::info!(
-                target: "quantick::app",
-                schema_version = 1_u8,
-                event_code = "SEAM_LEAD",
-                pane = pane.id,
-                interval_ms = seam.interval_ms,
-                first_print_ms = seam.first_print_ms,
-                lead_open_ms = seated.map_or(0, |bar| bar.open_time),
-                lead_trades = seated.map_or(0, |bar| bar.trade_count),
-                action = if seated.is_some() { "merged_into_seam_bar" } else { seam.token },
-                "the venue's history of the seam bucket before the first trade"
-            );
-        }
+        (pane.series).trace_seam_lead(pane.id, had.as_ref(), seam);
         changed
     }
 }
@@ -437,9 +459,7 @@ impl Tab {
     /// every pane either way, so a later switch to `trades` cuts from it.
     pub fn observe_deal_counter(&mut self, sample: DealSample) {
         let resumed = self.deal_recorder.observe(sample, metrics::wall_clock_ms());
-        for pane in self.panes_mut() {
-            pane.series_state_mut().observe_deals(sample);
-        }
+        self.session.observe_deals(sample);
         // A rotation into a day whose file exists resumes it, as a start
         // does: what the file holds reaches the panes.
         self.retain_deal_samples(&resumed);
@@ -457,29 +477,24 @@ impl Tab {
         if samples.is_empty() {
             return;
         }
-        for pane in self.panes_mut() {
-            pane.series_state_mut().observe_deals_batch(samples);
-        }
         // The retained series changed under the bars. Only a pane cutting
         // by deals reads it now; the others replay it on their next switch,
         // and a rebuild over a day of prints is not free. A rewrite of the
         // series is a rewrite: the view, the marks, the indicators and the
         // strategies follow it the way they follow a spec switch.
-        for index in 0..self.pane_count() {
-            // The rule the builder cuts under, not the selector: a combo
-            // mid-flick has moved the selector a frame ahead of the bars.
-            let cutting_deals = self
-                .pane_at(index)
-                .is_some_and(|pane| pane.series_state().spec().kind().needs_deal_counter());
-            if cutting_deals {
-                // The series was rewritten under the bars, not the rule
-                // that cuts them: what a replay seek says when it disarms.
-                self.recut_pane_with(
-                    index,
-                    quantick_strategy::DisarmReason::TimelineReset,
-                    |pane| pane.rebuild_bars(),
-                );
-            }
+        for id in self.session.retain_deals(samples) {
+            let Some(index) = (0..self.pane_count())
+                .find(|&at| self.pane_at(at).is_some_and(|pane| pane.id == id))
+            else {
+                continue;
+            };
+            // The series was rewritten under the bars, not the rule
+            // that cuts them: what a replay seek says when it disarms.
+            self.recut_pane_with(
+                index,
+                quantick_strategy::DisarmReason::TimelineReset,
+                |pane| pane.rebuild_bars(),
+            );
         }
     }
 
@@ -537,7 +552,7 @@ impl Tab {
         let view = self
             .deal_recorder
             .chip_view(self.link.replay.is_some(), self.link.latest_trade_ms);
-        let pane = &self.flow_pane;
+        let pane = self.flow();
         deal_recording_ui::chip_for(
             &view,
             pane.spec.spec().definition(),
@@ -584,11 +599,13 @@ impl Tab {
     pub(crate) fn pane_with_strategies(
         &mut self,
         side: PaneSide,
-    ) -> (&mut ChartPane, &mut crate::strategy_anchors::PaneStrategies) {
+    ) -> (PaneMut<'_>, &mut crate::strategy_anchors::PaneStrategies) {
         let Self {
             flow_pane,
             time_panes,
             strategies,
+            session,
+            pane_workers,
             ..
         } = self;
         let pane = match side {
@@ -596,6 +613,7 @@ impl Tab {
             PaneSide::Flow => flow_pane,
         };
         let strategies = strategies.pane_mut(pane.id);
+        let pane = lend_mut(pane, session, pane_workers);
         (pane, strategies)
     }
 
@@ -632,12 +650,12 @@ impl Tab {
         preset_label: String,
     ) -> Result<(), String> {
         let (pane, strategies) = self.pane_with_strategies(side);
-        let pane = &*pane;
+        let pane = pane.view();
         let (replaced_cleanup, cue) = strategies.arm(
             drawing,
             form,
             preset_label,
-            || crate::pane::strategies::check_arm(pane, drawing),
+            || crate::pane::strategies::check_arm(&pane, drawing),
             |depth| pane.series_read().warmup_bars(depth),
         )?;
         for command in replaced_cleanup {
@@ -667,7 +685,7 @@ impl Tab {
     /// because bars that already closed cannot be reopened.
     pub fn reset_market_state(&mut self, keep_readings: bool) {
         self.session.timeline_reset();
-        for pane in self.panes_mut() {
+        for mut pane in self.panes_mut() {
             pane.reset_series_with(keep_readings);
             // Indicators follow the chart into the empty state; the refill's
             // Backfilled event replays them (replay seek funnels through here,
@@ -772,18 +790,29 @@ impl Tab {
             Some(seat) => Some(self.canvas.fresh_pane(seat, ids)),
             None => self.canvas.take_pending_pane(slot, ids),
         };
-        let Some(mut pane) = pane else {
+        let Some(mut chart) = pane else {
             return;
         };
+        // Built beside the tab and handed to it whole: it seeds from the flow
+        // pane's series, which the same session holds.
+        let mut series = quantick_session::PaneSeries::new(chart.spec.spec());
+        let mut workers = super::pane_workers::PaneWorkers::default();
+        let mut pane = crate::pane::PaneAt {
+            pane: &mut chart,
+            series: &mut series,
+            workers: &mut workers,
+        };
+        let flow = self.flow();
+        let state = flow.series.state();
         pane.seed_from(
-            self.flow_pane.series_state().trades(),
-            self.flow_pane.series_state().backfill_trade_count(),
-            self.flow_pane.series_state().deal_samples(),
+            state.trades(),
+            state.backfill_trade_count(),
+            state.deal_samples(),
         );
         // Seeded from what the flow pane shows, so it also takes every page
         // the flow pane holds unpublished — a run's held pages, a recut in
         // progress — and publishes the same tape its siblings will.
-        for page in self.flow_pane.unpublished_history() {
+        for page in flow.unpublished_history() {
             pane.receive_history(page, true);
         }
         pane.hold_history(self.session.history_reach_running());
@@ -796,16 +825,21 @@ impl Tab {
         // Headless policy selects inheritable switches and marks their effects
         // as opening state, so feature owners do not create user undo entries.
         pane.layer_write()
-            .inherit_states(&self.flow_pane.layer_read().states(style));
+            .inherit_states(&flow.layer_read().states(style));
         pane.price_view
             .set_inverted(self.flow_pane.price_view.is_inverted());
+        let id = chart.id;
+        if let Some(seat) = reseed {
+            // Whatever rode the chart this one replaces goes with it.
+            let gone = self.time_panes[seat].id;
+            self.strategies.forget_pane(gone);
+            super::pane_workers::close(&mut self.session, &mut self.pane_workers, gone);
+        }
+        *self.session.open_pane(id, chart.spec.spec()) = series;
+        self.pane_workers.insert(id, workers);
         match reseed {
-            Some(seat) => {
-                // Whatever rode the chart this one replaces goes with it.
-                self.strategies.forget_pane(self.time_panes[seat].id);
-                self.time_panes[seat] = pane;
-            }
-            None => self.time_panes.push(pane),
+            Some(seat) => self.time_panes[seat] = chart,
+            None => self.time_panes.push(chart),
         }
         // One pane per frame, for the reason the first one waits a frame at
         // all: seeding replays every retained trade, and building three at
@@ -932,7 +966,7 @@ impl Tab {
         // `capture_arrangement` would then persist that `false` over the
         // trader's choice.
         self.canvas.time_pane_opening_legend_collapsed = legends.time;
-        if let Some(time) = self.time_pane_mut() {
+        if let Some(mut time) = self.time_pane_mut() {
             time.legend_collapsed = legends.time;
         }
     }
@@ -966,11 +1000,12 @@ impl Tab {
     /// The panes run this independently: each pane's own header governs that
     /// pane (§11), so a change to one must not rebuild the chart beside it.
     fn apply_spec_change_at(&mut self, index: PaneIndex) {
-        let Some(pane) = self.pane_at_mut(index) else {
+        let Some(mut pane) = self.pane_at_mut(index) else {
             return;
         };
+        let current = *pane.series_state().spec();
         if let quantick_engine::bar_selection::SelectionEffect::Rebuild(desired) =
-            pane.spec.settle(*pane.series_state().spec())
+            pane.spec.settle(current)
         {
             self.recut_pane_with(
                 index,
@@ -997,7 +1032,7 @@ impl Tab {
             deal_counter: capabilities.deal_counter,
             deal_count: !pane.series_state().deal_samples().is_empty(),
         };
-        let pane = self.pane_at_mut(index).expect("pane checked above");
+        let mut pane = self.pane_at_mut(index).expect("pane checked above");
         let effect = pane.spec.update(
             quantick_engine::bar_selection::SelectionCommand::Replace(spec),
             inputs,
@@ -1022,10 +1057,10 @@ impl Tab {
         &mut self,
         index: PaneIndex,
         reason: quantick_strategy::DisarmReason,
-        recut: impl FnOnce(&mut ChartPane),
+        recut: impl FnOnce(&mut PaneMut<'_>),
     ) {
         {
-            let Some(pane) = self.pane_at_mut(index) else {
+            let Some(mut pane) = self.pane_at_mut(index) else {
                 return;
             };
             // Where the user is looking, in market time — the one thing a
@@ -1039,7 +1074,7 @@ impl Tab {
             // the new cut and have to be re-derived from the market time
             // each anchor carries.
             let old_slots = pane.slots();
-            recut(pane);
+            recut(&mut pane);
             // The venue prefix folds to the new interval before the view
             // is reanchored: the market time the user was looking at has
             // to resolve against the series they will be looking at.
@@ -1052,10 +1087,10 @@ impl Tab {
             // frame, with no coalescing in the worker, is the cost of
             // sending both.
             let refolded = self.refold_history_prefix().rebuilt_panes & (1 << index) != 0;
-            if !refolded && let Some(pane) = self.pane_at_mut(index) {
+            if !refolded && let Some(mut pane) = self.pane_at_mut(index) {
                 pane.send_indicator_rebuild();
             }
-            let Some(pane) = self.pane_at_mut(index) else {
+            let Some(mut pane) = self.pane_at_mut(index) else {
                 return;
             };
             let slot = anchor.and_then(|ms| pane.slot_at_time(ms));
@@ -1083,19 +1118,20 @@ impl Tab {
 /// Every pane holding this market's bars, as the session reads them: flow
 /// first, then the context stack, the order an `InstallPrefix` addresses.
 pub(super) fn pane_views<'a>(
-    flow: &'a ChartPane,
-    context: &'a [ChartPane],
+    panes: impl Iterator<Item = &'a ChartPane>,
+    series: impl Fn(u64) -> Option<&'a quantick_session::PaneSeries>,
+    workers: &'a super::pane_workers::PaneWorkerBook,
 ) -> SmallVec<[PaneView<'a>; MAX_CANVAS_PANES]> {
-    std::iter::once(flow)
-        .chain(context)
-        .map(|pane| PaneView {
-            interval_ms: pane.series_state().spec().time_interval_ms(),
-            first_print_open_ms: pane.series_state().first_print_open_ms(),
-            first_bar: pane.series_state().bars().first(),
-            partial: pane.series_state().partial(),
-            rebuild_pending: pane.history_pending(),
-            rebuild_failed: pane.history_failed(),
-            first_visible_slot: pane.visible_slots().map(|(start, _)| start),
+    panes
+        .map(|pane| {
+            let at = crate::pane::PaneAt {
+                pane,
+                series: series(pane.id).expect("a pane's series opens with the pane"),
+                workers: &workers[&pane.id],
+            };
+            let first_visible = at.visible_slots().map(|(start, _)| start);
+            at.series
+                .view(at.history_pending(), at.history_failed(), first_visible)
         })
         .collect()
 }

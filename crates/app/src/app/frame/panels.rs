@@ -140,12 +140,12 @@ pub(super) fn draw_dock(
 /// off this one and painted on that one.
 pub(super) fn center_flow_pane_on_trade(tab: &mut Tab, opened: i64, closed: i64) {
     let covered = tab
-        .flow_pane
+        .flow()
         .covering_slot_at_time(opened)
-        .zip(tab.flow_pane.covering_slot_at_time(closed));
+        .zip(tab.flow().covering_slot_at_time(closed));
     match covered {
         Some((entry, exit)) => {
-            let pane = &mut tab.flow_pane;
+            let mut pane = tab.flow_mut();
             if let Some(area) = pane.frame.chart_area {
                 let slots = pane.slots();
                 let mid = (entry + exit) as f32 / 2.0;

@@ -5,7 +5,7 @@ use quantick_control::{error::ControlError, wire::WireU64};
 use quantick_control_handlers::bubble_preset::{TickBubblePort, TickSpherePane, WornSpheres};
 impl TickBubblePort for dyn ControlPort {
     fn tick_sphere_pane(&mut self, tab: u64, id: u64) -> Result<TickSpherePane, ControlError> {
-        let pane = pane(self, WireU64::new(tab), WireU64::new(id))?;
+        let pane = super::price_axis::pane_at(self, WireU64::new(tab), WireU64::new(id))?;
         let asset = pane.orderflow.as_ref().and_then(|owner| owner.asset());
         let asset_mode = asset.is_some_and(|asset| asset.mode().is_some());
         let tick_chart = pane.series_state().tick_membership().is_some();

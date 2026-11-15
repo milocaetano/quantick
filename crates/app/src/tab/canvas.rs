@@ -168,7 +168,9 @@ impl Tab {
             let plot = self.lead_pane().plot_style(chrome.style, ui.ctx());
             let fill = crate::pane::background_color(&plot);
             ui.painter().rect_filled(area, 0.0, fill);
-            return self.panes_mut().for_each(|p| p.frame.layout_strip = None);
+            return self
+                .panes_mut()
+                .for_each(|p| p.pane.frame.layout_strip = None);
         }
         let columns = self.canvas.column_painted();
         self.canvas.mirror_split(columns);
@@ -380,7 +382,7 @@ impl Tab {
             live_trades: self.link.live_trades,
             empty_pane,
             any_bars,
-            flow_bars: self.flow_pane.slots() > 0,
+            flow_bars: self.flow().slots() > 0,
             book: self.tape().connection_book(),
             fraction: None,
         };
@@ -388,7 +390,7 @@ impl Tab {
         let feed = self.connection.state();
         self.tape_mut().observe_market(feed);
         let spoken = self.connection.spoken_link(now_ms);
-        self.flow_pane.hold_tape_window(spoken);
+        self.flow_mut().hold_tape_window(spoken);
     }
 
     /// The pane whose header asked for the indicator library this frame. Taken in
@@ -396,7 +398,7 @@ impl Tab {
     /// on a tab left behind.
     pub(crate) fn take_indicator_picker_request(&mut self) -> Option<PaneSide> {
         self.panes_with_sides_mut()
-            .fold(None, |asked, (pane, side)| {
+            .fold(None, |asked, (mut pane, side)| {
                 pane.take_indicator_picker_request()
                     .then_some(side)
                     .or(asked)
@@ -415,7 +417,7 @@ impl Tab {
         let now_ms = crate::metrics::wall_clock_ms();
         let seam_words = self.connection.seam_line(&self.symbol, now_ms);
         let link = self.connection.spoken_link(now_ms);
-        for (pane, side) in self.panes_with_sides_mut() {
+        for (mut pane, side) in self.panes_with_sides_mut() {
             if !drawn(side) {
                 continue;
             }
@@ -456,7 +458,7 @@ impl Tab {
     ) {
         let chip = self.connection.chip();
         let slot = self.connection.slot(self.session.history_note());
-        let pane = &mut self.flow_pane;
+        let mut pane = self.flow_mut();
         let snapshot = quantick_ui_model::pane_header::Snapshot {
             identity: PaneIdentity::OrderFlow,
             bars: pane.spec.spec(),
@@ -520,7 +522,7 @@ impl Tab {
                 rebuilding: (self.loading).is_active(crate::loading::LoadingTask::BarRebuild),
                 link: self.connection.spoken_link(crate::metrics::wall_clock_ms()),
             };
-            let pane = &mut self.flow_pane;
+            let mut pane = self.flow_mut();
             chrome.surfaces.pane_header.update_scoped(
                 pane.id,
                 quantick_ui_model::pane_header::Intent::RefreshFlow(pane.flow_header_state()),
@@ -549,7 +551,7 @@ impl Tab {
             self.focus = PaneSide::Flow;
         }
         if let Some(request) = effect.request {
-            self.flow_pane.apply_header_intent(request, chrome.layers);
+            self.flow_mut().apply_header_intent(request, chrome.layers);
         }
     }
 
@@ -663,6 +665,8 @@ impl Tab {
             link,
             paper_drag_pane,
             focus,
+            session,
+            pane_workers,
             ..
         } = self;
         // Cleared before the loop, set by whichever panes it actually walks: a
@@ -695,8 +699,10 @@ impl Tab {
             .as_mut()
             .map(|tape| tape.capture_grouping_now())
         {
-            for pane in time_panes.iter_mut() {
-                pane.series_state_mut().set_footprint_group(base);
+            for pane in time_panes.iter() {
+                let series = session.series_mut(pane.id);
+                let series = series.expect("a pane's series opens with the pane");
+                series.state_mut().set_footprint_group(base);
             }
         }
         // Context panes carry addresses `1..`, the flow pane `0` — the order
@@ -777,7 +783,15 @@ impl Tab {
         });
         let mut walk: SmallVec<[_; MAX_CANVAS_PANES]> = context.chain(flow).collect();
         walk.sort_by_key(|&(.., side)| side != trading_pane);
-        for (pane, rect, strip, side) in walk {
+        let (panes, places): (
+            SmallVec<[_; MAX_CANVAS_PANES]>,
+            SmallVec<[_; MAX_CANVAS_PANES]>,
+        ) = walk
+            .into_iter()
+            .map(|(pane, rect, strip, side)| (pane, (rect, strip, side)))
+            .unzip();
+        let panes = super::pane_workers::lend_all(panes.into_iter(), session, pane_workers);
+        for (mut pane, (rect, strip, side)) in panes.zip(places) {
             pane.frame.layout_strip = Some(strip);
             chrome.side = PaneSide::from_index(side);
             chrome.paper_takes_input = side == trading_pane;
@@ -935,7 +949,7 @@ impl Tab {
     /// would paint twice and its fill read darker than it is.
     pub(crate) fn mirror_owners(&self, viewer: PaneIndex) -> impl Iterator<Item = PaneIndex> + '_ {
         let key = move |pane: PaneIndex| {
-            let key = self.pane_at(pane)?.layout.drawings_key.as_ref();
+            let key = self.pane_at(pane)?.pane.layout.drawings_key.as_ref();
             key.map(|key| &key.market)
         };
         (0..self.pane_count()).filter(move |&owner| {
@@ -974,7 +988,7 @@ impl Tab {
             }
             if let Some(edit) = interaction.edit {
                 if matches!(edit, SharedEdit::Select(_))
-                    && let Some(pane) = self.pane_at_mut(*actor)
+                    && let Some(mut pane) = self.pane_at_mut(*actor)
                 {
                     // A selection taken on a mirror is dropped on the pane
                     // that took it, so the tab never holds two.
@@ -1056,7 +1070,7 @@ impl Tab {
             return;
         }
         // A capsule governs its own pane the same way.
-        let on_capsule = |pane: &crate::pane::ChartPane| {
+        let on_capsule = |pane: crate::pane::PaneRef<'_>| {
             let mut capsules = pane.frame.capsules.iter().flatten();
             capsules.any(|capsule| capsule.contains(position))
         };

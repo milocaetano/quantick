@@ -6,10 +6,10 @@ const CAPABILITY: &str = "chart.price_axis.set";
 #[test]
 fn a_manual_price_range_is_reported_before_the_first_automatic_fit() {
     let (mut app, _events, _commands, _book) = test_app();
-    let pane = &mut app.active_tab_mut().flow_pane;
+    let mut pane = app.active_tab_mut().flow_mut();
     assert!(pane.frame.auto_range.is_none());
     assert!(pane.price_view.set_manual_range(90.0, 110.0));
-    let snapshot = crate::control::chart::viewport_snapshot(pane);
+    let snapshot = crate::control::chart::viewport_snapshot(pane.view());
     assert!(!snapshot.price_auto_fit);
     let range = snapshot
         .price_range
@@ -54,7 +54,7 @@ fn enable_tape(app: &mut QuantickApp) {
         ChartLayer::TapeOnly,
     ] {
         app.active_tab_mut()
-            .flow_pane
+            .flow_mut()
             .set_layer_visible(layer, true, &mut Default::default());
     }
 }
@@ -94,7 +94,8 @@ fn the_price_axis_call_holds_manual_tape_framing_and_reads_it_back_without_movin
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
     let pane_id = app.active_tab().flow_pane.id;
-    let left_before = crate::control::chart::viewport_snapshot(&app.active_tab().time_panes[0]);
+    let left_before =
+        crate::control::chart::viewport_snapshot(app.active_tab().pane_at(1).unwrap());
     let directory = gateway_test_directory("price-axis-control");
     grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.layout");
     enable_test_gateway(&mut app, &ctx, &directory, 4);
@@ -131,7 +132,7 @@ fn the_price_axis_call_holds_manual_tape_framing_and_reads_it_back_without_movin
     let mut next = trade(41);
     next.price = Decimal::from(145);
     {
-        let pane = &mut app.active_tab_mut().flow_pane;
+        let mut pane = app.active_tab_mut().flow_mut();
         pane.series_state_mut().ingest_live(&next);
         pane.orderflow.as_mut().unwrap().record_trade(&next);
     }
@@ -140,7 +141,7 @@ fn the_price_axis_call_holds_manual_tape_framing_and_reads_it_back_without_movin
     assert_eq!(readback["price_auto_fit"], false);
     assert_eq!(readback["price_range"], result["viewport"]["price_range"]);
     assert_eq!(
-        crate::control::chart::viewport_snapshot(&app.active_tab().time_panes[0]),
+        crate::control::chart::viewport_snapshot(app.active_tab().pane_at(1).unwrap()),
         left_before
     );
     let payload = input(&app, json!({"kind":"auto"}));
@@ -164,7 +165,7 @@ fn the_price_axis_action_validates_authority_target_and_range_before_mutation() 
     let (mut app, _commands) = app_with_history(10);
     enable_tape(&mut app);
     run_frame(&mut app, &ctx);
-    let before = crate::control::chart::viewport_snapshot(&app.active_tab().flow_pane);
+    let before = crate::control::chart::viewport_snapshot(app.active_tab().flow());
     let directory = gateway_test_directory("price-axis-validation");
     grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.layout");
     enable_test_gateway(&mut app, &ctx, &directory, 4);
@@ -192,7 +193,7 @@ fn the_price_axis_action_validates_authority_target_and_range_before_mutation() 
         let (invalid, _) = unkeyed_call(&mut app, &mut client, CAPABILITY, payload);
         assert_eq!(error_code(&invalid), Some(codes::INVALID_REQUEST));
         assert_eq!(
-            crate::control::chart::viewport_snapshot(&app.active_tab().flow_pane),
+            crate::control::chart::viewport_snapshot(app.active_tab().flow()),
             before
         );
     }
@@ -206,7 +207,7 @@ fn the_tape_price_gutter_accepts_drag_and_wheel_without_changing_its_time_window
     enable_tape(&mut app);
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
-    let pane = &app.active_tab().flow_pane;
+    let pane = app.active_tab().flow();
     let gutter = pane.frame.price_gutter.expect("the painted price gutter");
     let auto = pane.frame.auto_range.unwrap();
     let window = pane
@@ -222,7 +223,7 @@ fn the_tape_price_gutter_accepts_drag_and_wheel_without_changing_its_time_window
         gutter.center() + egui::vec2(0.0, 60.0),
     );
     run_frame(&mut app, &ctx);
-    let pane = &app.active_tab().flow_pane;
+    let pane = app.active_tab().flow();
     assert!(
         !pane.price_view.is_auto(),
         "the tape's own gutter takes manual control"
@@ -242,7 +243,7 @@ fn the_tape_price_gutter_accepts_drag_and_wheel_without_changing_its_time_window
         ],
     );
     run_frame(&mut app, &ctx);
-    let pane = &app.active_tab().flow_pane;
+    let pane = app.active_tab().flow();
     let wheeled = pane.price_view.resolve(auto);
     assert!(wheeled.1 - wheeled.0 < dragged.1 - dragged.0);
     assert_eq!(
@@ -261,9 +262,9 @@ fn entering_tape_through_layers_or_a_source_preset_discards_candle_manual_framin
         let ctx = egui::Context::default();
         let (mut app, _commands) = app_with_history(40);
         run_frame(&mut app, &ctx);
-        let pane = &mut app.active_tab_mut().flow_pane;
-        pane.price_view
-            .pan(10_000.0, pane.frame.auto_range.unwrap());
+        let mut pane = app.active_tab_mut().flow_mut();
+        let auto = pane.frame.auto_range.unwrap();
+        pane.price_view.pan(10_000.0, auto);
         if source_preset {
             assert!(
                 pane.orderflow
@@ -275,7 +276,7 @@ fn entering_tape_through_layers_or_a_source_preset_discards_candle_manual_framin
             enable_tape(&mut app);
         }
         run_frame(&mut app, &ctx);
-        let pane = &app.active_tab().flow_pane;
+        let pane = app.active_tab().flow();
         assert!(
             pane.price_view.is_auto(),
             "every mode-entry door starts at the tape's own fit"
@@ -301,7 +302,7 @@ fn the_time_axis_reset_call_matches_the_strip_double_click_and_reads_it_back() {
     let opened = app.active_tab().flow_pane.model.viewport.px_per_bar();
     let window = app.active_tab().tape().live_lane_window();
     {
-        let pane = &mut app.active_tab_mut().flow_pane;
+        let mut pane = app.active_tab_mut().flow_mut();
         pane.model.viewport.zoom(3.0);
         pane.orderflow.as_mut().unwrap().zoom_live_lane(2.0);
     }
@@ -348,7 +349,7 @@ fn the_live_centre_calls_match_the_canvas_double_and_triple_click() {
     let (mut app, _commands) = app_with_history(200);
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
-    let pane = &mut app.active_tab_mut().flow_pane;
+    let pane = app.active_tab_mut().flow_mut();
     let pane_id = pane.id;
     let last = pane
         .series_state()
@@ -418,7 +419,7 @@ fn the_live_centre_call_refuses_a_tape_only_pane() {
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
     assert!(app.active_tab().tape().cached_config().tape_only());
-    let pane = &mut app.active_tab_mut().flow_pane;
+    let mut pane = app.active_tab_mut().flow_mut();
     let pane_id = pane.id;
     pane.model.viewport.pan_pixels(640.0, 200);
     let before = pane.price_view.manual_range();
@@ -438,7 +439,7 @@ fn the_live_centre_call_refuses_a_tape_only_pane() {
         let message = &response_error(&refused).message;
         assert!(message.contains("tape-only"), "{to}: {message}");
         run_frame(&mut app, &ctx);
-        let pane = &app.active_tab().flow_pane;
+        let pane = app.active_tab().flow();
         assert!(!pane.model.viewport.follows_live(), "{to}: nothing moved");
         assert_eq!(
             pane.price_view.manual_range(),
@@ -459,7 +460,7 @@ fn the_live_overview_call_returns_the_candles_to_a_live_overview() {
     // The second frame lays the candles out against the lane the first drew.
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
-    let pane = &mut app.active_tab_mut().flow_pane;
+    let mut pane = app.active_tab_mut().flow_mut();
     let pane_id = pane.id;
     let candles_px = pane.model.candles_px;
     assert!(candles_px > 0.0, "the candles laid out");

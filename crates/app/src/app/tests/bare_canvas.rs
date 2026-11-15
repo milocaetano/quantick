@@ -10,7 +10,7 @@ pub(super) fn app_with_history_and_launch(
     launch: AppLaunch,
 ) -> (QuantickApp, mpsc::Receiver<FeedCommand>) {
     let (mut app, commands) = super::app_with_history_and_launch(count, launch);
-    app.active_tab_mut().flow_pane.set_layer_visible(
+    app.active_tab_mut().flow_mut().set_layer_visible(
         ChartLayer::TapeChart,
         false,
         &mut Default::default(),

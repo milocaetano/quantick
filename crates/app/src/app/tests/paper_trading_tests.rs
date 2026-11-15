@@ -373,16 +373,13 @@ fn one_ui_drain_uses_one_observation_for_single_and_batched_trades() {
     assert_eq!(app.active_tab().link.live_trades, 3);
     assert_eq!(app.active_tab().link.trade_arrival_ms(), Some(75));
     assert_eq!(
-        app.active_tab()
-            .flow_pane
-            .series_state()
-            .timeline_revision(),
+        app.active_tab().flow_series().state().timeline_revision(),
         3
     );
     assert_eq!(
         app.active_tab()
-            .flow_pane
-            .series_state()
+            .flow_series()
+            .state()
             .partial()
             .map(|bar| bar.trade_count),
         Some(3)
@@ -399,7 +396,7 @@ fn one_ui_drain_uses_one_observation_for_single_and_batched_trades() {
 #[test]
 fn a_source_that_fills_neither_half_gets_no_live_strip() {
     let (app, _commands) = app_without_depth();
-    let pane = &app.active_tab().flow_pane;
+    let pane = app.active_tab().flow();
     assert!(
         pane.layers.requested(ChartLayer::LiveStrip),
         "the shipped config switched it on, which is what makes the gate matter"
@@ -452,7 +449,7 @@ fn an_armed_rectangle_fires_on_the_force_bar_inside_it() {
         .find(|tool| tool.id() == "rectangle")
         .expect("the rectangle tool is registered");
     {
-        let pane = &mut app.active_tab_mut().flow_pane;
+        let mut pane = app.active_tab_mut().flow_mut();
         pane.drawings
             .place(rectangle, drawings::ChartPoint::at(0.0, 100.0));
         pane.drawings
@@ -585,7 +582,7 @@ fn the_signal_alarm_sounds_mid_bar_and_places_nothing() {
         .find(|tool| tool.id() == "rectangle")
         .expect("the rectangle tool is registered");
     {
-        let pane = &mut app.active_tab_mut().flow_pane;
+        let mut pane = app.active_tab_mut().flow_mut();
         pane.drawings
             .place(rectangle, drawings::ChartPoint::at(0.0, 100.0));
         pane.drawings
@@ -764,7 +761,7 @@ fn arming_a_region_that_already_ended_is_refused() {
         .find(|tool| tool.id() == "rectangle")
         .expect("the rectangle tool is registered");
     {
-        let pane = &mut app.active_tab_mut().flow_pane;
+        let mut pane = app.active_tab_mut().flow_mut();
         pane.drawings
             .place(rectangle, drawings::ChartPoint::at(0.0, 99.0));
         pane.drawings
@@ -793,7 +790,7 @@ fn arming_a_region_that_already_ended_is_refused() {
     // on the newest *closed* bar (slot 15 of 16) still cannot cover
     // the next bar to close (slot 16) — refused, not armed dead.
     {
-        let pane = &mut app.active_tab_mut().flow_pane;
+        let mut pane = app.active_tab_mut().flow_mut();
         pane.drawings
             .place(rectangle, drawings::ChartPoint::at(0.0, 99.0));
         pane.drawings
@@ -813,7 +810,7 @@ fn arming_a_region_that_already_ended_is_refused() {
         .expect_err("a span ending on the newest closed bar covers no future bar");
     // One anchored past the next slot arms fine without extend right.
     {
-        let pane = &mut app.active_tab_mut().flow_pane;
+        let mut pane = app.active_tab_mut().flow_mut();
         pane.drawings
             .place(rectangle, drawings::ChartPoint::at(0.0, 99.0));
         pane.drawings
@@ -834,7 +831,7 @@ fn arming_a_region_that_already_ended_is_refused() {
 
     // The same dead drawing with extend right on arms fine.
     {
-        let pane = &mut app.active_tab_mut().flow_pane;
+        let mut pane = app.active_tab_mut().flow_mut();
         let index = pane.drawings.index_of(drawing).expect("drawing lives");
         pane.drawings.items_mut()[index]
             .payload
@@ -886,7 +883,7 @@ fn delete_all_sweeps_the_armed_instances_pending_entries() {
         .find(|tool| tool.id() == "rectangle")
         .expect("the rectangle tool is registered");
     {
-        let pane = &mut app.active_tab_mut().flow_pane;
+        let mut pane = app.active_tab_mut().flow_mut();
         pane.drawings
             .place(rectangle, drawings::ChartPoint::at(0.0, 105.0));
         pane.drawings
@@ -983,7 +980,7 @@ fn a_force_bar_that_never_crossed_the_region_leaves_no_order_in_it() {
         .find(|tool| tool.id() == "rectangle")
         .expect("the rectangle tool is registered");
     {
-        let pane = &mut app.active_tab_mut().flow_pane;
+        let mut pane = app.active_tab_mut().flow_mut();
         pane.drawings
             .place(rectangle, drawings::ChartPoint::at(0.0, 105.0));
         pane.drawings
@@ -1022,11 +1019,12 @@ fn a_force_bar_that_never_crossed_the_region_leaves_no_order_in_it() {
     // silently stops testing wick-versus-body — the only thing it is
     // here for.
     assert_eq!(
-        tab.flow_pane.closed_slots(),
+        tab.flow().closed_slots(),
         3,
         "the three fixture bars closed as three bars"
     );
-    let trigger = tab.flow_pane.closed_bar(2).expect("the trigger bar closed");
+    let flow = tab.flow();
+    let trigger = flow.closed_bar(2).expect("the trigger bar closed");
     assert_eq!(
         (trigger.open, trigger.high, trigger.close),
         (
@@ -1088,7 +1086,7 @@ fn a_resting_retest_limit_stands_down_over_a_manual_position() {
         .find(|tool| tool.id() == "rectangle")
         .expect("the rectangle tool is registered");
     {
-        let pane = &mut app.active_tab_mut().flow_pane;
+        let mut pane = app.active_tab_mut().flow_mut();
         pane.drawings
             .place(rectangle, drawings::ChartPoint::at(0.0, 105.0));
         pane.drawings
@@ -1189,7 +1187,7 @@ fn co_triggered_instances_do_not_stack_orders() {
         .find(|tool| tool.id() == drawings::RECTANGLE_TOOL_ID)
         .expect("the rectangle tool is registered");
     {
-        let pane = &mut app.active_tab_mut().flow_pane;
+        let mut pane = app.active_tab_mut().flow_mut();
         pane.drawings
             .place(rectangle, drawings::ChartPoint::at(0.0, 100.0));
         pane.drawings
@@ -1263,7 +1261,7 @@ fn a_timeline_reset_disarms_the_armed_instances_by_name() {
         .find(|tool| tool.id() == "rectangle")
         .expect("the rectangle tool is registered");
     {
-        let pane = &mut app.active_tab_mut().flow_pane;
+        let mut pane = app.active_tab_mut().flow_mut();
         pane.drawings
             .place(rectangle, drawings::ChartPoint::at(0.0, 100.0));
         pane.drawings
@@ -1727,6 +1725,7 @@ fn a_position_that_no_longer_fits_is_repaired_for_drawing_and_kept_in_the_file()
     let chart = app
         .active_tab()
         .drawing_pane()
+        .pane
         .frame
         .chart_area
         .expect("the pane has been laid out");
@@ -1978,7 +1977,7 @@ fn a_buy_mark_lands_free_and_its_magnet_grabs_the_bars_low() {
     let anchor = place(&mut app, 380.0);
     let candle = app
         .active_tab()
-        .flow_pane
+        .flow()
         .closed_bar(slot_of(anchor.bar))
         .expect("the click landed on a bar")
         .clone();
@@ -2007,7 +2006,7 @@ fn a_magnetic_sell_mark_grabs_the_bars_high() {
     let anchor = app.active_tab().flow_pane.drawings.items()[0].points[0];
     let candle = app
         .active_tab()
-        .flow_pane
+        .flow()
         .closed_bar(slot_of(anchor.bar))
         .expect("the click landed on a bar")
         .clone();
@@ -2131,7 +2130,7 @@ fn duplicating_a_band_carries_its_armed_strategy_but_not_its_state() {
     // edge before anything can be armed on it — the same refusal a
     // trader meets, and the way they answer it.
     {
-        let pane = &mut app.active_tab_mut().flow_pane;
+        let mut pane = app.active_tab_mut().flow_mut();
         let index = pane.drawings.index_of(source).expect("drawing lives");
         pane.drawings.items_mut()[index]
             .payload
@@ -2159,7 +2158,7 @@ fn duplicating_a_band_carries_its_armed_strategy_but_not_its_state() {
         .expect("the region arms");
     // Select the band again — arming leaves the dialog, not a selection.
     {
-        let pane = &mut app.active_tab_mut().flow_pane;
+        let mut pane = app.active_tab_mut().flow_mut();
         let index = pane.drawings.index_of(source).expect("drawing lives");
         pane.drawings.select(Some(index));
     }
@@ -2171,7 +2170,7 @@ fn duplicating_a_band_carries_its_armed_strategy_but_not_its_state() {
         egui::Modifiers::COMMAND,
     );
 
-    let pane = &app.active_tab().flow_pane;
+    let pane = app.active_tab().flow();
     assert_eq!(pane.drawings.items().len(), 2, "the band was duplicated");
     let copy = pane.drawings.items()[1].id;
     assert_ne!(copy, source);
@@ -2456,7 +2455,7 @@ fn a_chart_cut_by_trades_takes_the_venue_lead_in_only_when_asked() {
         "the time pane wears the prefix, as it always has"
     );
     assert_eq!(
-        tab.flow_pane.seam_slot(),
+        tab.flow().seam_slot(),
         0,
         "and the tick chart beside it is untouched by default"
     );
@@ -2464,7 +2463,7 @@ fn a_chart_cut_by_trades_takes_the_venue_lead_in_only_when_asked() {
     app.runtime.history.venue_lead_in = true;
     app.drain_tabs();
     assert_eq!(
-        app.active_tab().flow_pane.seam_slot(),
+        app.active_tab().flow().seam_slot(),
         120,
         "switched on, the tick chart carries the venue's own minutes"
     );
@@ -2477,7 +2476,7 @@ fn a_chart_cut_by_trades_takes_the_venue_lead_in_only_when_asked() {
     app.runtime.history.venue_lead_in = false;
     app.drain_tabs();
     assert_eq!(
-        app.active_tab().flow_pane.seam_slot(),
+        app.active_tab().flow().seam_slot(),
         0,
         "and switching it back off takes them away again"
     );
@@ -2682,7 +2681,7 @@ fn drawing_owner_cleanup_case(operation: &str, focused_owner: bool) {
         .find(|tool| tool.id() == "rectangle")
         .expect("the rectangle tool is registered");
     {
-        let pane = &mut app.active_tab_mut().flow_pane;
+        let mut pane = app.active_tab_mut().flow_mut();
         pane.drawings
             .place(rectangle, drawings::ChartPoint::at(0.0, 105.0));
         pane.drawings
@@ -2723,7 +2722,7 @@ fn drawing_owner_cleanup_case(operation: &str, focused_owner: bool) {
     // The other pane has its own drawing and armed instance, but no selection.
     // The owner is Flow even when keyboard focus is on Time(0).
     {
-        let other = &mut app.active_tab_mut().time_panes[0];
+        let mut other = app.active_tab_mut().pane_at_mut(1).unwrap();
         other
             .drawings
             .place(rectangle, drawings::ChartPoint::at(0.0, 205.0));
@@ -2805,7 +2804,7 @@ fn drawing_owner_cleanup_case(operation: &str, focused_owner: bool) {
             .is_empty(),
         "owner strategy removed immediately"
     );
-    let other = &app.active_tab().time_panes[0];
+    let other = app.active_tab().pane_at(1).unwrap();
     assert_eq!(other.drawings.items().len(), 1);
     assert_eq!(other.drawings.items()[0].id, other_id);
     assert!(
@@ -2928,6 +2927,7 @@ fn the_aim_is_echoed_in_the_other_pane_of_the_split() {
         let rect = |app: &QuantickApp, side| {
             app.active_tab()
                 .pane(side)
+                .pane
                 .frame
                 .chart_area
                 .expect("the pane reported its rect")

@@ -73,7 +73,7 @@ fn folded_flow_and_upper_context_have_no_stale_geometry_or_scene_canvases() {
 
     let tab = app.active_tab();
     assert_eq!(tab.focused_side(), PaneSide::Time(1));
-    for pane in [&tab.flow_pane, &tab.time_panes[0]] {
+    for pane in [tab.flow(), tab.pane_at(1).unwrap()] {
         assert!(pane.frame.chart_area.is_none());
         assert!(pane.frame.plot_area.is_none());
         assert!(pane.frame.price_gutter.is_none());
@@ -240,23 +240,23 @@ fn the_heatmap_lamp_reads_the_switch_not_the_capture() {
 fn the_scripted_click_lands_on_the_pane_it_names() {
     let (mut app, _events, _commands, _book) = test_app();
     assert_eq!(
-        ContextMenuPane::Tape.scripted_position(&app.active_tab().flow_pane),
+        ContextMenuPane::Tape.scripted_position(&app.active_tab().flow()),
         None,
         "nothing has drawn yet, so there is no geometry to click"
     );
 
     let rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1000.0, 400.0));
     {
-        let pane = &mut app.active_tab_mut().flow_pane;
+        let mut pane = app.active_tab_mut().flow_mut();
         pane.frame.chart_rect = Some(rect);
         pane.frame.lane_divider_x = Some(700.0);
     }
     let tape = ContextMenuPane::Tape
-        .scripted_position(&app.active_tab().flow_pane)
+        .scripted_position(&app.active_tab().flow())
         .expect("a drawn tape can be clicked");
     assert!(tape.x > 700.0 && tape.x < 1000.0, "{tape:?}");
     let chart = ContextMenuPane::Chart
-        .scripted_position(&app.active_tab().flow_pane)
+        .scripted_position(&app.active_tab().flow())
         .expect("and so can the candles");
     assert!(chart.x > 0.0 && chart.x < 700.0, "{chart:?}");
     assert!(
@@ -272,12 +272,12 @@ fn the_scripted_click_lands_on_the_pane_it_names() {
     // No lane: the candles still answer, the tape has nothing to open.
     app.active_tab_mut().flow_pane.frame.lane_divider_x = None;
     assert_eq!(
-        ContextMenuPane::Tape.scripted_position(&app.active_tab().flow_pane),
+        ContextMenuPane::Tape.scripted_position(&app.active_tab().flow()),
         None
     );
     assert!(
         ContextMenuPane::Chart
-            .scripted_position(&app.active_tab().flow_pane)
+            .scripted_position(&app.active_tab().flow())
             .is_some()
     );
 }
@@ -547,20 +547,21 @@ fn the_scripted_view_targets_visible_tick_candles_beside_an_independent_tape() {
     app.active_tab_mut().apply_spec_changes();
     for layer in [ChartLayer::TapeChart, ChartLayer::TapeOnly] {
         app.active_tab_mut()
-            .flow_pane
+            .flow_mut()
             .set_layer_visible(layer, true, &mut Default::default());
     }
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
     assert!(app.active_tab().shows_context_charts());
     assert_eq!(
-        app.active_tab().time_panes[0].series_state().spec(),
+        app.active_tab().pane_at(1).unwrap().series.state().spec(),
         &crate::state::BarSpec::Tick(2)
     );
     assert!(app.active_tab().tape().cached_config().tape_only());
-    assert!(app.active_tab().time_panes[0].slots() > 0);
-    let flow_before = crate::control::chart::viewport_snapshot(&app.active_tab().flow_pane);
-    let candles_before = crate::control::chart::viewport_snapshot(&app.active_tab().time_panes[0]);
+    assert!(app.active_tab().pane_at(1).unwrap().slots() > 0);
+    let flow_before = crate::control::chart::viewport_snapshot(app.active_tab().flow());
+    let candles_before =
+        crate::control::chart::viewport_snapshot(app.active_tab().pane_at(1).unwrap());
     let tape_before = app.active_tab().tape().cached_config().clone();
 
     app.chrome.harness.arm_candle_width(40.0);
@@ -569,12 +570,13 @@ fn the_scripted_view_targets_visible_tick_candles_beside_an_independent_tape() {
         .harness
         .apply_scripted_view(&mut app.runtime.tabs);
 
-    let candles_after = crate::control::chart::viewport_snapshot(&app.active_tab().time_panes[0]);
+    let candles_after =
+        crate::control::chart::viewport_snapshot(app.active_tab().pane_at(1).unwrap());
     assert_eq!(candles_after.pixels_per_bar.as_str(), "40");
     assert!(!candles_after.follows_live);
     assert_ne!(candles_after.right_edge_bar, candles_before.right_edge_bar);
     assert_eq!(
-        crate::control::chart::viewport_snapshot(&app.active_tab().flow_pane),
+        crate::control::chart::viewport_snapshot(app.active_tab().flow()),
         flow_before,
         "candle hooks cannot alter the right tape viewport"
     );
@@ -628,7 +630,7 @@ fn bubble_toggle_needs_no_feed_command_and_leaves_capture_alone() {
         "aggregate trades already flow; no feed command is needed"
     );
 
-    app.active_tab_mut().flow_pane.set_layer_visible(
+    app.active_tab_mut().flow_mut().set_layer_visible(
         crate::chart_layers::ChartLayer::Heatmap,
         false,
         &mut Default::default(),
@@ -669,8 +671,8 @@ fn the_saved_workspace_describes_the_window_that_saved_it() {
     assert_eq!(
         tab.flow_bars,
         app.active_tab()
-            .flow_pane
-            .series_state()
+            .flow_series()
+            .state()
             .spec()
             .to_config_string(),
         "the recorded rule is the one the pane is actually on"
@@ -708,7 +710,8 @@ fn a_bitcoin_magnitude_tape_groups_the_profile_by_the_dollar() {
     assert_eq!(
         app.active_tab()
             .pane(PaneSide::Flow)
-            .series_state()
+            .series
+            .state()
             .footprint_group(),
         Decimal::from(1),
         "an $80k market stayed on the cent-wide rows its tick names",
@@ -1000,7 +1003,7 @@ fn refused_handshake_code(
 /// enough; a bounded number is.
 fn settle_flow_pane(app: &mut QuantickApp, ctx: &egui::Context) {
     let observed = |app: &QuantickApp| {
-        let pane = &app.active_tab().flow_pane;
+        let pane = app.active_tab().flow();
         (
             pane.series_state().timeline_revision(),
             crate::control::chart::viewport_snapshot(pane),
@@ -1576,7 +1579,7 @@ fn observer_journals_indicator_and_drawing_changes_without_the_trader_text() {
 
     // Attach an indicator the way the worker delivers one.
     {
-        let pane = &mut app.active_tab_mut().flow_pane;
+        let mut pane = app.active_tab_mut().flow_mut();
         let slot = pane.indicators.allocate_slot("native.cvd");
         let descriptor = quantick_indicators::IndicatorDescriptor {
             title: "CVD".to_owned(),
@@ -1601,7 +1604,7 @@ fn observer_journals_indicator_and_drawing_changes_without_the_trader_text() {
 
     // Place a drawing, name it with the canary, then lock it.
     let (time, price) = {
-        let pane = &app.active_tab().flow_pane;
+        let pane = app.active_tab().flow();
         let bar = pane.closed_bar(60).expect("fixture bar");
         (
             pane.slot_open_time(60).expect("fixture market time"),
@@ -1609,7 +1612,7 @@ fn observer_journals_indicator_and_drawing_changes_without_the_trader_text() {
         )
     };
     {
-        let flow = &mut app.active_tab_mut().flow_pane;
+        let mut flow = app.active_tab_mut().flow_mut();
         assert!(flow.drawings.place_with(
             drawing_tool("horizontal-line"),
             &drawings::DrawingBand::Price,
@@ -1629,7 +1632,7 @@ fn observer_journals_indicator_and_drawing_changes_without_the_trader_text() {
     );
 
     {
-        let flow = &mut app.active_tab_mut().flow_pane;
+        let mut flow = app.active_tab_mut().flow_mut();
         let selected = flow.drawings.selected().expect("still selected");
         flow.drawings
             .items_mut()
@@ -1793,7 +1796,7 @@ fn observer_projects_each_pane_indicator_with_its_inputs_and_latest_reading() {
     // Deliver an indicator the way the worker does: allocate the slot the
     // UI owns, then apply the rebuild delta the worker sends back.
     {
-        let pane = &mut app.active_tab_mut().flow_pane;
+        let mut pane = app.active_tab_mut().flow_mut();
         let slot = pane.indicators.allocate_slot("native.ema");
         let descriptor = quantick_indicators::IndicatorDescriptor {
             title: "EMA".to_owned(),
@@ -3037,7 +3040,7 @@ fn an_assistants_object_and_interruption_arrive_from_a_launch() {
         .queue_notification("popup:look at 108k".to_owned());
     run_frame(&mut app, &ctx);
 
-    let items = app.active_tab().drawing_pane().drawings.items();
+    let items = app.active_tab().drawing_pane().pane.drawings.items();
     assert_eq!(items.len(), 1, "the hook placed one object");
     let author = items[0]
         .author
@@ -3069,7 +3072,7 @@ fn the_trader_takes_back_every_object_an_assistant_placed_in_one_action() {
     run_frame(&mut app, &ctx);
     app.surfaces.drawing_chrome.set_pending_text_note(true);
     run_frame(&mut app, &ctx);
-    let mine = app.active_tab().drawing_pane().drawings.items()[0].id;
+    let mine = app.active_tab().drawing_pane().pane.drawings.items()[0].id;
 
     let anchor = newest_anchor(&app);
     let placed = ["first", "second"]
@@ -3092,31 +3095,40 @@ fn the_trader_takes_back_every_object_an_assistant_placed_in_one_action() {
         .collect::<Vec<_>>();
     // A local action is the trader's own hand, so nothing is authored yet.
     assert_eq!(
-        app.active_tab().drawing_pane().drawings.authored_count(),
+        app.active_tab()
+            .drawing_pane()
+            .pane
+            .drawings
+            .authored_count(),
         0,
         "an object the trader placed is never labelled as an assistant's"
     );
 
     // Now the same action with an agent's actor, as the gateway calls it.
     let removed = {
-        let pane = app.active_tab_mut().drawing_pane_mut();
+        let mut pane = app.active_tab_mut().drawing_pane_mut();
         pane.drawings.remove_authored()
     };
     assert_eq!(removed, 0, "there is nothing of an assistant's to remove");
 
     stamp_agent_author(&mut app, &placed);
     assert_eq!(
-        app.active_tab().drawing_pane().drawings.authored_count(),
+        app.active_tab()
+            .drawing_pane()
+            .pane
+            .drawings
+            .authored_count(),
         2,
         "two objects are now an assistant's"
     );
     let removed = app
         .active_tab_mut()
         .drawing_pane_mut()
+        .pane
         .drawings
         .remove_authored();
     assert_eq!(removed, 2, "one gesture takes back both");
-    let items = app.active_tab().drawing_pane().drawings.items();
+    let items = app.active_tab().drawing_pane().pane.drawings.items();
     assert_eq!(items.len(), 1, "the trader's own object stays");
     assert_eq!(items[0].id, mine);
 }
@@ -3246,6 +3258,7 @@ plot(close)
     assert_eq!(
         app.tab_reads().tabs()[traders_index]
             .focused_pane()
+            .pane
             .indicators
             .all()
             .len(),
@@ -3295,7 +3308,7 @@ fn a_fixed_range_profile_is_reachable_as_an_annotation_capability() {
         .expect("the fixed-range profile action is registered");
 
     assert_eq!(result["tool_id"], crate::frvp::TOOL_ID);
-    let drawings = app.active_tab().drawing_pane().drawings.items();
+    let drawings = app.active_tab().drawing_pane().pane.drawings.items();
     assert_eq!(drawings.len(), 1);
     assert_eq!(drawings[0].tool.id(), crate::frvp::TOOL_ID);
 }
@@ -3336,7 +3349,7 @@ fn both_fibonacci_tools_dock_through_the_annotation_registry() {
             .expect("the Fibonacci capability is registered");
 
         assert_eq!(result["tool_id"], tool_id);
-        let drawings = app.active_tab().drawing_pane().drawings.items();
+        let drawings = app.active_tab().drawing_pane().pane.drawings.items();
         assert_eq!(drawings.len(), 1);
         assert_eq!(drawings[0].tool.id(), tool_id);
         assert_eq!(drawings[0].points.len(), anchor_count);
@@ -3675,7 +3688,7 @@ fn observer_cursor_resolves_the_exact_bar_under_the_pointer() {
     run_frame(&mut app, &ctx);
     let expected_slot = 20usize;
     let position = {
-        let pane = &app.active_tab().flow_pane;
+        let pane = app.active_tab().flow();
         let chart = pane.frame.chart_area.expect("the pane reported its rect");
         let right = pane.frame.candles_right.unwrap_or_else(|| chart.right());
         egui::pos2(
@@ -3757,7 +3770,7 @@ fn the_control_the_cursor_resolves_to_is_one_the_scene_names() {
     let (mut app, _commands) = app_with_history(40);
     run_frame(&mut app, &ctx);
     let position = {
-        let pane = &app.active_tab().flow_pane;
+        let pane = app.active_tab().flow();
         let chart = pane.frame.chart_area.expect("the pane reported its rect");
         chart.center()
     };
@@ -3926,14 +3939,14 @@ fn observer_resolves_mirrored_drawings_without_leaking_user_text() {
     let (mut app, _commands) = split_app(&ctx, 200);
     let slot = 100;
     let (time, price) = {
-        let pane = &app.active_tab().flow_pane;
+        let pane = app.active_tab().flow();
         let bar = pane.closed_bar(slot).expect("fixture bar");
         (
             pane.slot_open_time(slot).expect("fixture market time"),
             rust_decimal::prelude::ToPrimitive::to_f64(&bar.close).unwrap(),
         )
     };
-    let flow = &mut app.active_tab_mut().flow_pane;
+    let mut flow = app.active_tab_mut().flow_mut();
     assert!(flow.drawings.place_with(
         drawing_tool("horizontal-line"),
         &drawings::DrawingBand::Price,
@@ -4093,7 +4106,7 @@ fn observer_chart_pagination_allows_append_but_rejects_prefix_changes() {
     );
 
     app.active_tab_mut()
-        .flow_pane
+        .flow_mut()
         .prepend_history(std::slice::from_ref(&trade(0)));
     let error = chart_window(&app, &instance, &query, Some(&cursor)).unwrap_err();
     assert_eq!(error.code.as_str(), codes::PAGE_STALE);
@@ -4482,7 +4495,7 @@ fn no_token_user_path_user_text_or_redacted_config_key_reaches_an_evidence_bundl
             .into_iter()
             .find(|tool| tool.holds_text())
             .expect("the note tool holds text");
-        let pane = app.active_tab_mut().drawing_pane_mut();
+        let mut pane = app.active_tab_mut().drawing_pane_mut();
         assert_eq!(
             pane.drawings.items().len(),
             1,
@@ -5414,11 +5427,7 @@ fn feed_status_carries_the_deal_recorder_and_the_capability_moves_it() {
     );
     assert_eq!(loaded["recording"]["state"], "recorded", "{loaded}");
     assert_eq!(
-        app.active_tab()
-            .flow_pane
-            .series_state()
-            .deal_samples()
-            .len(),
+        app.active_tab().flow_series().state().deal_samples().len(),
         3,
         "the live reading and the file's two"
     );
@@ -5433,7 +5442,7 @@ fn feed_status_carries_the_deal_recorder_and_the_capability_moves_it() {
         .unwrap();
     assert_eq!(changed["changed"], true);
     assert_eq!(
-        app.active_tab().flow_pane.series_state().spec(),
+        app.active_tab().flow_series().state().spec(),
         &BarSpec::Trades(2_500),
         "the named call reaches the same pane rule the REC popover changes"
     );
@@ -5469,13 +5478,13 @@ fn incremental_lane_dense_frame_benchmark() {
         app.active_tab_mut().flow_pane.spec.set(spec);
         app.active_tab_mut().apply_spec_changes();
         app.active_tab_mut().apply_spec_changes();
-        assert_eq!(app.active_tab().flow_pane.series_state().spec(), &spec);
+        assert_eq!(app.active_tab().flow_series().state().spec(), &spec);
         assert!(
             app.active_tab_mut()
                 .tape_mut()
                 .apply_preset("dense tape btc", false)
         );
-        app.active_tab_mut().flow_pane.add_indicator(
+        app.active_tab_mut().flow_mut().add_indicator(
             crate::indicator_worker::IndicatorSource::Native {
                 id: "native.cvd".to_owned(),
                 values: Vec::new(),
@@ -5494,7 +5503,7 @@ fn incremental_lane_dense_frame_benchmark() {
         let mut started = Instant::now();
         for frame in 0..WARMUP + FRAMES {
             if frame == WARMUP {
-                let pane = &app.active_tab().flow_pane;
+                let pane = app.active_tab().flow();
                 measured_traffic = pane.indicator_worker.lane_traffic_for_test();
                 measured_updates = pane.indicator_worker.partial_updates_for_test();
                 assert!(
@@ -5523,7 +5532,7 @@ fn incremental_lane_dense_frame_benchmark() {
             saw_lane,
             "CVD produces live lane samples during drawn frames"
         );
-        let pane = &mut app.active_tab_mut().flow_pane;
+        let mut pane = app.active_tab_mut().flow_mut();
         pane.indicator_worker.flush();
         pane.apply_indicator_events();
         let traffic = pane.indicator_worker.lane_traffic_for_test() - measured_traffic;

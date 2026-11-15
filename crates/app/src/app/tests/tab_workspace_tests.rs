@@ -128,7 +128,7 @@ fn a_switch_to_a_two_pane_recipe_reaches_both_context_panes() {
     set_tab_workspace(&mut app, second, "Two").expect("a known workspace");
     frames(&mut app, 5);
     let tab = app.runtime.tabs.by_id_mut(second).expect("an open tab");
-    for pane in tab.panes_mut() {
+    for mut pane in tab.panes_mut() {
         pane.indicator_worker.flush();
         pane.apply_indicator_events();
     }
@@ -184,7 +184,7 @@ fn footprint_style_and_layers_stay_on_their_tab_until_save_to() {
         .show_pane_indicators(edited, PaneSide::Flow, &[ema()]);
     let (layer, on) = some_layer(&app, edited, 0);
     let tab = app.runtime.tabs.by_id_mut(edited).expect("an open tab");
-    tab.flow_pane
+    tab.flow_mut()
         .layer_write()
         .apply_states(&std::collections::BTreeMap::from([(layer, !on)]));
     frames(&mut app, 3);
@@ -479,7 +479,8 @@ fn a_context_pane_layer_edit_lands_on_that_pane_in_the_copy() {
         .find(|known| known.id() == layer)
         .expect("a registered layer");
     let tab = app.runtime.tabs.by_id_mut(first).expect("an open tab");
-    tab.time_panes[0]
+    tab.pane_at_mut(1)
+        .unwrap()
         .layer_write()
         .apply_states(&std::collections::BTreeMap::from([(layer_id, !was)]));
     observe_tab(&mut app, first);
@@ -598,7 +599,7 @@ const THREE_PANES: [PaneSide; 3] = [PaneSide::Flow, PaneSide::Time(0), PaneSide:
 /// How many indicators each of the active tab's three panes shows.
 fn three_counts(app: &mut QuantickApp) -> [usize; 3] {
     settle_indicators(app);
-    THREE_PANES.map(|side| app.active_tab().pane(side).indicators.all().len())
+    THREE_PANES.map(|side| app.active_tab().pane(side).pane.indicators.all().len())
 }
 
 /// The copy every one of the active tab's three panes holds: one, or a panic.
@@ -797,11 +798,11 @@ fn a_heal_on_one_tab_never_reaches_another_through_autosave() {
     assert_eq!(strip(&app, a, PaneSide::Time(0)), levels);
     let shows = |app: &mut QuantickApp, tab: u64, side| {
         let tab = app.runtime.tabs.by_id_mut(tab).expect("an open tab");
-        for pane in tab.panes_mut() {
+        for mut pane in tab.panes_mut() {
             pane.indicator_worker.flush();
             pane.apply_indicator_events();
         }
-        tab.pane(side).indicators.all().len()
+        tab.pane(side).pane.indicators.all().len()
     };
     assert_eq!(shows(&mut app, b, PaneSide::Time(0)), 2, "B healed");
     let store = &mut app.runtime.workspace.book;
@@ -1094,7 +1095,7 @@ fn a_flow_bar_size_change_never_counts_as_a_drawing_edit() {
         price: 100.0,
         time_ms: Some(time),
     };
-    let flow = app.active_tab_mut().pane_mut(PaneSide::Flow);
+    let mut flow = app.active_tab_mut().pane_mut(PaneSide::Flow);
     assert!(flow.drawings.place(tool, point), "a level places");
     frames(&mut app, 2);
     save_tab_to(&mut app, tab).expect("saved");
@@ -1110,7 +1111,7 @@ fn a_flow_bar_size_change_never_counts_as_a_drawing_edit() {
     );
     frames(&mut app, 3);
     let bars = |app: &QuantickApp| {
-        let marks = app.active_tab().pane(PaneSide::Flow).drawings.items();
+        let marks = app.active_tab().pane(PaneSide::Flow).pane.drawings.items();
         marks
             .iter()
             .map(|mark| mark.points[0].bar)
@@ -1158,8 +1159,8 @@ fn a_workspace_switch_restores_the_timeframes_it_saved() {
     };
     let shown = |app: &QuantickApp| {
         let tab = app.active_tab();
-        let rule = |pane: &crate::pane::ChartPane| pane.series_state().spec().to_config_string();
-        (rule(&tab.flow_pane), rule(&tab.time_panes[0]))
+        let rule = |pane: crate::pane::PaneRef<'_>| pane.series_state().spec().to_config_string();
+        (rule(tab.flow()), rule(tab.pane_at(1).unwrap()))
     };
     put(&mut app, "tick:2000", "time:300000");
     let a = shown(&app);
@@ -1196,8 +1197,12 @@ fn a_new_tab_on_a_market_opens_on_the_timeframe_it_remembers() {
         .set_pane_bar_spec(1, hour.expect("a time bar"))
         .expect("the time pane takes it");
     frames(&mut app, 2);
-    let shown = app.active_tab().time_panes[0]
-        .series_state()
+    let shown = app
+        .active_tab()
+        .pane_at(1)
+        .unwrap()
+        .series
+        .state()
         .spec()
         .to_config_string();
     let market = (
@@ -1214,11 +1219,7 @@ fn a_new_tab_on_a_market_opens_on_the_timeframe_it_remembers() {
     // the trader adds one, stands on the market's timeframe.
     app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
     frames(&mut app, 3);
-    let opened = app
-        .active_tab()
-        .time_panes
-        .first()
-        .expect("a context chart");
+    let opened = app.active_tab().time_pane().expect("a context chart");
     assert_eq!(opened.series_state().spec().to_config_string(), shown);
 }
 
@@ -1926,7 +1927,7 @@ fn frames_until(
             return true;
         }
         frames(app, 1);
-        for pane in app.runtime.tabs.iter_mut().flat_map(|tab| tab.panes_mut()) {
+        for mut pane in app.runtime.tabs.iter_mut().flat_map(|tab| tab.panes_mut()) {
             pane.indicator_worker.flush();
             pane.apply_indicator_events();
         }

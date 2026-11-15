@@ -6,7 +6,7 @@
 //! Each is an owner type holding the per-frame context its passes share —
 //! geometry, painter, viewport, the resolved dress — built once by the
 //! orchestrator, and each method takes only the one field it writes. That is
-//! what lets them run under the frame's borrows of `self.state`: a `&mut self`
+//! what lets them run under the frame's borrows of the series: a `&mut self`
 //! method could not, and a free function handed every input separately would
 //! take a dozen of them.
 

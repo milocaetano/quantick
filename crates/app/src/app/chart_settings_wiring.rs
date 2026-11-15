@@ -23,7 +23,7 @@ impl LayerWiring<'_> {
             .and_then(|tab| {
                 tab.panes()
                     .find(|(pane, _)| pane.id == target.pane_id)
-                    .map(|(pane, _)| pane)
+                    .map(|(pane, _)| pane.pane)
             })
             .ok_or(PresetError::Refused(
                 "the addressed chart pane no longer exists; open settings on a live pane",

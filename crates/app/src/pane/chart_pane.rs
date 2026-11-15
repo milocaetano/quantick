@@ -24,7 +24,7 @@ use crate::orderflow_view::OrderflowView;
 use crate::pane_header::draw_docked_capsule;
 use crate::plot_area::{PlotAreas, plot_split_with_metrics};
 use crate::price_view::PriceView;
-use crate::state::{BarConfiguration, BarSpec, ChartState, SpecSelector};
+use crate::state::{BarConfiguration, BarSpec, SpecSelector};
 use crate::style::ChartStyle;
 use crate::toolrail::Tool;
 
@@ -57,8 +57,6 @@ pub struct ChartPane {
     /// gesture state egui keeps on our behalf, so two panes sharing an id
     /// would share a drag.
     pub id: u64,
-    pub(super) state: ChartState,
-    pub(super) history_worker: history_worker::HistoryWorker,
     /// The tape, and everything read off it: the live lane, the heatmap, the bubbles, the live
     /// strip. `None` is what makes a time pane a time pane: §11 keeps the flow layers on the flow
     /// pane, and a pane that never draws them has no business running a book worker thread.
@@ -110,18 +108,6 @@ pub struct ChartPane {
     // Pointer position over the plot this frame, for the crosshair.
     pub hover_pos: Option<egui::Pos2>,
 
-    /// Venue candles in front of the trade-derived series, folded to this pane's interval.
-    ///
-    /// Deliberately outside `ChartState`, which rebuilds its bars from retained trades on every
-    /// spec change and would eat a prefix kept inside it on the first chip click. It is composed
-    /// with the engine's bars where they are read ([`Self::slots`], [`Self::closed_bar`], the
-    /// rebuild payload, the draw).
-    ///
-    /// Non-empty on any pane cutting by a foldable time interval: the split's time pane, and the
-    /// flow pane whenever its spec is `BarSpec::Time` (audit S1). A venue candle has no tape, so
-    /// the flow layers draw nothing over it.
-    pub(super) history_prefix: quantick_chart::venue_history::VenueHistory,
-
     /// Where the position HUD anchors this frame: the chart rect and price scale, cached by the
     /// draw while the paper layer is painted on the pane that owns order entry. The HUD draws in
     /// `tab.rs`, where the paper host is mutably reachable outside the chrome's shared borrow.
@@ -157,14 +143,6 @@ impl ChartPane {
         view
     }
 
-    /// The `[start, end)` slots the last frame showed; `None` before it laid the pane out.
-    pub(crate) fn visible_slots(&self) -> Option<(usize, usize)> {
-        let chart = self.frame.chart_area?;
-        let width = self.frame.candles_right.unwrap_or_else(|| chart.right()) - chart.left();
-        let view = self.shown_viewport();
-        Some(view.visible_range(width.max(0.0), self.slots()))
-    }
-
     /// The jump-to-live chip this pane offers on `strip`. On a tape-only pane
     /// the stored view waits unseen, so there is no way back to offer.
     pub(super) fn shown_live_chip(&self, strip: egui::Rect) -> Option<egui::Rect> {
@@ -172,15 +150,6 @@ impl ChartPane {
             return None;
         }
         super::lane_rail::live_chip(self, strip)
-    }
-
-    /// What the bubble size rule reads about this pane, the facts its size
-    /// sliders and `orderflow.bubbles.size.set` both judge; `None` without
-    /// an order-flow view.
-    pub(crate) fn bubble_scale_facts(&self) -> Option<BubbleScalePane> {
-        let config = self.orderflow.as_ref()?.cached_config();
-        let tick_chart = self.state.tick_membership().is_some();
-        Some(BubbleScalePane::of(config, tick_chart))
     }
 
     /// Every mode-entry path starts at its own fit, including source presets:
@@ -201,149 +170,12 @@ impl ChartPane {
         }
     }
 
-    /// The bars this pane cuts from the tape, read-only.
-    pub(crate) fn series_state(&self) -> &ChartState {
-        &self.state
-    }
-    /// The bars this pane cuts from the tape, for the few writers outside the series passes.
-    pub(crate) fn series_state_mut(&mut self) -> &mut ChartState {
-        &mut self.state
-    }
-    /// Hold the tape's window on what the feed says, measured against this pane's bars.
-    pub(crate) fn hold_tape_window(
-        &mut self,
-        spoken: Option<quantick_chart::connection_state::Link>,
-    ) {
-        if let Some(view) = self.orderflow.as_mut() {
-            view.hold_tape_window(spoken, &self.state);
-        }
-    }
-    /// The venue candles folded in front of the trade-derived bars.
-    pub(crate) fn venue_prefix(&self) -> &quantick_chart::venue_history::VenueHistory {
-        &self.history_prefix
-    }
-
-    pub(crate) fn series_read(&self) -> gesture::PaneSeriesRead<'_> {
-        gesture::PaneSeriesRead {
-            history_prefix: &self.history_prefix,
-            state: &self.state,
-            spec: &self.spec,
-        }
-    }
-    /// The layer answers — see [`layers::PaneLayerRead`].
-    pub(crate) fn layer_read(&self) -> layers::PaneLayerRead<'_> {
-        layers::PaneLayerRead {
-            layers: &self.layers,
-            orderflow: self.orderflow.as_ref(),
-            state: &self.state,
-            footprint: &self.presentation.footprint,
-            style: &self.presentation.candles,
-            drawings: &self.drawings,
-        }
-    }
-    /// The layer switches — see [`layers::PaneLayerWrite`].
-    pub(crate) fn layer_write(&mut self) -> layers::PaneLayerWrite<'_> {
-        layers::PaneLayerWrite {
-            pane: self.id,
-            layers: &mut self.layers,
-            orderflow: self.orderflow.as_mut(),
-            state: &self.state,
-            presentation: &mut self.presentation,
-            drawings: &mut self.drawings,
-        }
-    }
-    // The hot layer calls, each one line onto the view that owns its rule.
-    pub(crate) fn layer_facts(&self, capabilities: Option<FeedCapabilities>) -> LayerFacts {
-        self.layer_read().facts(capabilities)
-    }
-    pub fn layer_switched_on(&self, layer: ChartLayer, style: &ChartStyle) -> bool {
-        self.layer_read().switched_on(layer, style)
-    }
-    pub fn layer_visible(&self, layer: ChartLayer, style: &ChartStyle) -> bool {
-        self.layer_read().visible(layer, style)
-    }
-    pub fn layer_blocked(&self, layer: ChartLayer, feed: FeedCapabilities) -> Option<LayerBlock> {
-        self.layer_read().blocked(layer, feed)
-    }
-    pub fn set_layer_visible(&mut self, layer: ChartLayer, on: bool, out: &mut LayerActions) {
-        self.layer_write().set_visible(layer, on, out);
-    }
-    pub(crate) fn drawing_projection(&self) -> gesture::DrawingProjection<'_> {
-        gesture::DrawingProjection {
-            series: self.series_read(),
-            viewport: &self.model.viewport,
-            indicators: &self.indicators,
-        }
-    }
-
-    /// The last frame's geometry, lent out for a hit test — see
-    /// [`PaneHitTest`].
-    pub(crate) fn hit_test(&self) -> PaneHitTest<'_> {
-        PaneHitTest {
-            frame: &self.frame,
-            price_view: &self.price_view,
-            drawings: &self.drawings,
-            orderflow: self.orderflow.as_ref(),
-            hover_pos: self.hover_pos,
-            projection: self.drawing_projection(),
-        }
-    }
-
-    /// This pane's store beside the projection an edit from another pane
-    /// resolves through — see [`SharedMarksMut`].
-    pub(crate) fn shared_marks_mut(&mut self) -> SharedMarksMut<'_> {
-        SharedMarksMut {
-            projection: gesture::DrawingProjection {
-                series: gesture::PaneSeriesRead {
-                    history_prefix: &self.history_prefix,
-                    state: &self.state,
-                    spec: &self.spec,
-                },
-                viewport: &self.model.viewport,
-                indicators: &self.indicators,
-            },
-            drawings: &mut self.drawings,
-        }
-    }
-
-    /// This pane's store and its gesture's copy of the anchors, beside the
-    /// series they anchor to — see [`gesture::PaneMarksMut`].
-    pub(super) fn marks_mut(&mut self) -> gesture::PaneMarksMut<'_> {
-        gesture::PaneMarksMut {
-            drawings: &mut self.drawings,
-            gestures: &mut self.gestures,
-            series: gesture::PaneSeriesRead {
-                history_prefix: &self.history_prefix,
-                state: &self.state,
-                spec: &self.spec,
-            },
-        }
-    }
-
     /// The marks this pane lends its companions: its store and the object
     /// its editor holds — see [`SharedSource`].
     pub(crate) fn shared_source(&self) -> SharedSource<'_> {
         SharedSource {
             drawings: &self.drawings,
             content_editing: self.gestures.content_editing,
-        }
-    }
-
-    /// One pane's side of the quick range — see [`quick_range::QuickRangeView`].
-    pub(super) fn quick_range_view(
-        &self,
-        tab: u64,
-        side: PaneSide,
-    ) -> quick_range::QuickRangeView<'_> {
-        quick_range::QuickRangeView {
-            owner: crate::surfaces::drawing_chrome::QuickRangeOwner {
-                tab,
-                side,
-                pane: self.id,
-                revision: self.pagination_revision(),
-                layout: self.layout_id().map(|id| id.0),
-            },
-            projection: self.drawing_projection(),
         }
     }
 
@@ -387,8 +219,6 @@ impl ChartPane {
         Self {
             id,
             spec: selector,
-            state: ChartState::new(spec),
-            history_worker: Default::default(),
             orderflow,
             indicator_worker: IndicatorWorker::spawn(),
             indicators: IndicatorViews::new(),
@@ -407,7 +237,6 @@ impl ChartPane {
             price_view: PriceView::new(),
             price_band_label: std::sync::Arc::from(bands::PRICE_BAND_LABEL),
             hover_pos: None,
-            history_prefix: quantick_chart::venue_history::VenueHistory::default(),
             paper_hud_anchor: None,
             context_menu: PaneContextMenu::default(),
             drawings,
@@ -436,30 +265,6 @@ impl ChartPane {
         self.presentation.footprint.config.resolve(window)
     }
 
-    /// Put this pane on `spec` outright, selectors included. Startup-scoped: the caller is a
-    /// workspace restoring the bar rule this pane was last read on, into a pane that has not drawn
-    /// a frame yet; a live change goes through [`SpecSelector::pending`] so the frame carrying it
-    /// paints the loading overlay before the rebuild replays the tape.
-    ///
-    /// The selectors move with the spec because the header's bars menu reads them: setting the state alone
-    /// would restore a chart whose own controls disagreed with it, and the first touch of the
-    /// parameter would snap it back to a rule the trader never chose.
-    pub fn set_spec(&mut self, spec: impl Into<BarConfiguration>) {
-        let spec = spec.into();
-        let changed = self.state.spec() != &spec;
-        self.spec.set(spec);
-        self.state.set_spec(spec);
-        if changed {
-            self.bump_pagination_revision();
-        }
-    }
-
-    /// Re-cut every retained print from the retained deal-counter readings.
-    pub fn rebuild_bars(&mut self) {
-        self.state.rebuild_bars();
-        self.bump_pagination_revision();
-    }
-
     /// Revision protecting the closed-bar prefix exposed through paginated
     /// chart-window reads. Live appends do not advance it; rewrites do.
     #[must_use]
@@ -486,32 +291,6 @@ impl ChartPane {
         egui::Id::new((name, self.id))
     }
 
-    /// Width reserved for the live strip this frame. The aggression histogram runs on the trade
-    /// stream every source provides (replay included), so without book data the strip degrades to
-    /// that histogram alone. No tape, or the tape alone, has no strip: it is the trail's (§11).
-    pub fn live_strip_width(&self, capabilities: FeedCapabilities) -> f32 {
-        // Both halves of the strip come from the source: resting depth and the aggressions landing
-        // into it. A source producing neither fills none of it, and the band would be an empty rect
-        // narrowing the candles for good. Passed in rather than cached on the pane, for the reason
-        // `layer_blocked` states: the running feed is resolved once per frame by the caller, and a
-        // copy here would be one more thing to keep in step when MetaTrader narrows its
-        // capabilities mid-session.
-        let beside = self.beside_strip_width(capabilities);
-        if self.tape_modes().0 { 0.0 } else { beside }
-    }
-
-    /// The strip the trail carries beside the tape in either view: tape only measures the
-    /// beside view it returns to with it.
-    pub(super) fn beside_strip_width(&self, capabilities: FeedCapabilities) -> f32 {
-        let (layer, facts) = (ChartLayer::LiveStrip, self.layer_facts(Some(capabilities)));
-        let on = quantick_layers::LayerState::effective(layer, self.layers.requested(layer), facts);
-        if on {
-            crate::live_strip::LIVE_STRIP_WIDTH_PX
-        } else {
-            0.0
-        }
-    }
-
     /// The palette this pane paints with: order flow takes the plot surface's.
     pub fn palette(&self, ctx: &egui::Context) -> std::sync::Arc<crate::theme::Palette> {
         let get = || crate::theme::get(ctx);
@@ -533,20 +312,6 @@ impl ChartPane {
     pub(crate) fn plot_lane_view(&self) -> Option<quantick_orderflow::LaneView> {
         let lane = &self.orderflow.as_ref()?.cached_config().live_lane;
         Some(lane.drag_close.map_or(lane.shown_view(), |_| lane.view()))
-    }
-
-    /// This pane's regions inside `area`, carved once so the input handler and
-    /// the renderer can never disagree about a boundary; `lay_out` puts the strip on the trail.
-    pub(super) fn plot_areas(&self, area: egui::Rect, capabilities: FeedCapabilities) -> PlotAreas {
-        let mut sizing = [PaneSizing::Auto; crate::indicators::MAX_PANES];
-        let mut areas = plot_split_with_metrics(
-            area,
-            gutter_strip_px(self.plot_lane_view(), self.live_strip_width(capabilities)),
-            self.indicators.pane_sizing(&mut sizing),
-            self.frame.axis_metrics,
-        );
-        areas.capsules = self.frame.capsules;
-        areas
     }
 
     /// Why a call takes no anchor on `band`: the last carve's collapse, else the shared rule.
@@ -589,6 +354,382 @@ impl ChartPane {
             .map(|band| drawings::pos(band.rect.center()))
     }
 
+    /// The HUD anchor cached by the last draw, if the paper layer was
+    /// painted on the pane that owns order entry.
+    #[must_use]
+    pub fn paper_hud_anchor(&self) -> Option<(egui::Rect, PriceScale)> {
+        self.paper_hud_anchor
+    }
+}
+
+#[cfg(test)]
+impl ChartPane {
+    pub(crate) fn request_indicator_guide(&mut self, slot: SlotId, enabled: bool) {
+        self.model.pending_indicator_guide = Some((slot.0, enabled));
+    }
+
+    /// Stand in for the gesture that raises a settings request, so the app's
+    /// side of the wiring can be tested without driving egui through a pane
+    /// layout it would have to re-derive.
+    pub fn request_settings(&mut self, slot: SlotId) {
+        self.model.pending_settings = Some(slot.0);
+    }
+}
+
+/// The menus' door into the pane: the read-only view they draw from, and the
+/// one place every [`PaneMenuIntent`] they answer with is applied.
+impl ChartPane {
+    /// Where the chart-layer submenu button was painted — see
+    /// [`PaneContextMenu::chart_layers_center`].
+    #[cfg(any(feature = "scenario-harness", test))]
+    pub(crate) fn chart_layers_menu_center(&self) -> Option<egui::Pos2> {
+        self.context_menu.chart_layers_center()
+    }
+}
+
+/// What a time pane's capsule and the tape's seam read from the window.
+pub(crate) struct SideChrome<'a> {
+    pub style: &'a ChartStyle,
+    pub capabilities: FeedCapabilities,
+    pub tz: quantick_civil::TzOffset,
+    /// The word the feed speaks this frame, if any yet.
+    pub link: Option<quantick_chart::connection_state::Link>,
+    /// What the empty part of a tape with nothing coming says.
+    pub seam_words: Option<String>,
+}
+
+/// What the flow pane's side headers read from its tab this frame.
+pub(crate) struct SideRowChrome<'a> {
+    pub style: &'a ChartStyle,
+    pub capabilities: FeedCapabilities,
+    pub tz: quantick_civil::TzOffset,
+    pub inputs: BarInputAvailability,
+    /// The bars are being rebuilt.
+    pub rebuilding: bool,
+    /// The word the feed speaks this frame: the TAPE plate's tooltip says it.
+    pub link: Option<quantick_chart::connection_state::Link>,
+}
+
+impl<P: super::LentPane, S: super::LentSeries, W: super::LentWorkers> super::PaneAt<P, S, W> {
+    /// The `[start, end)` slots the last frame showed; `None` before it laid the pane out.
+    pub(crate) fn visible_slots(&self) -> Option<(usize, usize)> {
+        let chart = self.pane.frame.chart_area?;
+        let width = self
+            .pane
+            .frame
+            .candles_right
+            .unwrap_or_else(|| chart.right())
+            - chart.left();
+        let view = self.shown_viewport();
+        Some(view.visible_range(width.max(0.0), self.slots()))
+    }
+
+    /// What the bubble size rule reads about this pane, the facts its size
+    /// sliders and `orderflow.bubbles.size.set` both judge; `None` without
+    /// an order-flow view.
+    pub(crate) fn bubble_scale_facts(&self) -> Option<BubbleScalePane> {
+        let config = self.pane.orderflow.as_ref()?.cached_config();
+        let tick_chart = self.series.state().tick_membership().is_some();
+        Some(BubbleScalePane::of(config, tick_chart))
+    }
+
+    /// The layer answers — see [`layers::PaneLayerRead`].
+    pub(crate) fn layer_read(&self) -> layers::PaneLayerRead<'_> {
+        layers::PaneLayerRead {
+            layers: &self.pane.layers,
+            orderflow: self.pane.orderflow.as_ref(),
+            state: &self.series.state(),
+            footprint: &self.pane.presentation.footprint,
+            style: &self.pane.presentation.candles,
+            drawings: &self.pane.drawings,
+        }
+    }
+
+    pub(crate) fn drawing_projection(&self) -> gesture::DrawingProjection<'_> {
+        gesture::DrawingProjection {
+            series: self.series_read(),
+            viewport: &self.pane.model.viewport,
+            indicators: &self.pane.indicators,
+        }
+    }
+
+    /// Where the tape's seam stands, on a live tape with nothing coming.
+    fn seam_x(
+        &self,
+        state: &FlowHeaderState,
+        chrome: &SideChrome<'_>,
+        side: egui::Rect,
+    ) -> Option<f32> {
+        use quantick_chart::market_fold::{last_print_ms, seam_shown, tape_seam_x};
+        let shown = seam_shown(state.shown_view, chrome.link);
+        let owner = self.pane.orderflow.as_ref().filter(|_| shown)?;
+        let now = owner
+            .cached_live_end_ms()
+            .filter(|_| owner.tape_end().is_live())?;
+        let times = (
+            now,
+            last_print_ms(&self.series.state())?,
+            owner.live_lane_window_ms(self.series.state().bars()),
+        );
+        tape_seam_x(
+            owner.cached_config(),
+            [side.left(), side.width(), side.height()],
+            times,
+        )
+    }
+
+    // The hot layer calls, each one line onto the view that owns its rule.
+    pub(crate) fn layer_facts(&self, capabilities: Option<FeedCapabilities>) -> LayerFacts {
+        self.layer_read().facts(capabilities)
+    }
+
+    pub fn layer_switched_on(&self, layer: ChartLayer, style: &ChartStyle) -> bool {
+        self.layer_read().switched_on(layer, style)
+    }
+
+    pub fn layer_visible(&self, layer: ChartLayer, style: &ChartStyle) -> bool {
+        self.layer_read().visible(layer, style)
+    }
+
+    pub fn layer_blocked(&self, layer: ChartLayer, feed: FeedCapabilities) -> Option<LayerBlock> {
+        self.layer_read().blocked(layer, feed)
+    }
+
+    /// The last frame's geometry, lent out for a hit test — see
+    /// [`PaneHitTest`].
+    pub(crate) fn hit_test(&self) -> PaneHitTest<'_> {
+        PaneHitTest {
+            frame: &self.pane.frame,
+            price_view: &self.pane.price_view,
+            drawings: &self.pane.drawings,
+            orderflow: self.pane.orderflow.as_ref(),
+            hover_pos: self.pane.hover_pos,
+            projection: self.drawing_projection(),
+        }
+    }
+
+    /// One pane's side of the quick range — see [`quick_range::QuickRangeView`].
+    pub(super) fn quick_range_view(
+        &self,
+        tab: u64,
+        side: PaneSide,
+    ) -> quick_range::QuickRangeView<'_> {
+        quick_range::QuickRangeView {
+            owner: crate::surfaces::drawing_chrome::QuickRangeOwner {
+                tab,
+                side,
+                pane: self.pane.id,
+                revision: self.pagination_revision(),
+                layout: self.layout_id().map(|id| id.0),
+            },
+            projection: self.drawing_projection(),
+        }
+    }
+
+    /// The tape's seam, over the tape just drawn.
+    fn draw_tape_marks(&self, ui: &egui::Ui, chart: egui::Rect, top: f32, chrome: &SideChrome<'_>) {
+        let Some(state) = self.flow_header_state() else {
+            return;
+        };
+        let (left, right, split) = (chart.left(), chart.right(), self.pane.frame.lane_divider_x);
+        let sides = flow_sides(Some(state.shown_view), left, right, split);
+        let Some((_, left, right)) = sides
+            .into_iter()
+            .flatten()
+            .find(|(side, ..)| *side == CapsuleSide::Tape)
+        else {
+            return;
+        };
+        let side_rect = egui::Rect::from_x_y_ranges(left..=right, top..=chart.bottom());
+        if let Some(x) = self.seam_x(&state, chrome, side_rect) {
+            let held = self
+                .pane
+                .orderflow
+                .as_ref()
+                .and_then(|tape| tape.book_held_at_ms());
+            let line = chrome.seam_words.as_deref();
+            let words = quantick_chart::market_fold::seam_words(line, held, chrome.tz);
+            crate::pane_header::draw_tape_seam(ui, side_rect, x, words.lines());
+        }
+    }
+
+    /// The view and sizes a flow pane's chrome shows; `None` without an
+    /// order-flow view. A sample is there only while its target is on, the one
+    /// size rule `orderflow.bubbles.size.set` judges by too.
+    pub(crate) fn flow_header_state(&self) -> Option<FlowHeaderState> {
+        let owner = self.pane.orderflow.as_ref()?;
+        let facts = self.bubble_scale_facts()?;
+        let scale = |sample: BubbleSample| {
+            let target = target(sample);
+            facts
+                .may_scale(target)
+                .then(|| owner.bubble_display_scale(target.into()))
+        };
+        Some(FlowHeaderState::of(
+            &owner.cached_config().live_lane,
+            scale(BubbleSample::Candle),
+            scale(BubbleSample::Tape),
+            self.pane.frame.lane_reference_ms,
+            owner.lane_window_setting(),
+        ))
+    }
+
+    /// The strip the trail carries beside the tape in either view: tape only measures the
+    /// beside view it returns to with it.
+    pub(super) fn beside_strip_width(&self, capabilities: FeedCapabilities) -> f32 {
+        let (layer, facts) = (ChartLayer::LiveStrip, self.layer_facts(Some(capabilities)));
+        let on =
+            quantick_layers::LayerState::effective(layer, self.pane.layers.requested(layer), facts);
+        if on {
+            crate::live_strip::LIVE_STRIP_WIDTH_PX
+        } else {
+            0.0
+        }
+    }
+
+    /// One layer glyph: its lamp the *switch*, not what the source lets through
+    /// it, with what blocks it beside it, read through the calls the pane's layer
+    /// menu and `layers.visibility.set` read.
+    pub(crate) fn header_glyph(
+        &self,
+        toggle: LayerToggle,
+        style: &ChartStyle,
+        capabilities: FeedCapabilities,
+    ) -> LayerGlyph {
+        LayerGlyph {
+            toggle,
+            on: self.layer_switched_on(toggle.layer(), style),
+            blocked: self.layer_blocked(toggle.layer(), capabilities),
+        }
+    }
+
+    /// Width reserved for the live strip this frame. The aggression histogram runs on the trade
+    /// stream every source provides (replay included), so without book data the strip degrades to
+    /// that histogram alone. No tape, or the tape alone, has no strip: it is the trail's (§11).
+    pub fn live_strip_width(&self, capabilities: FeedCapabilities) -> f32 {
+        // Both halves of the strip come from the source: resting depth and the aggressions landing
+        // into it. A source producing neither fills none of it, and the band would be an empty rect
+        // narrowing the candles for good. Passed in rather than cached on the pane, for the reason
+        // `layer_blocked` states: the running feed is resolved once per frame by the caller, and a
+        // copy here would be one more thing to keep in step when MetaTrader narrows its
+        // capabilities mid-session.
+        let beside = self.beside_strip_width(capabilities);
+        if self.tape_modes().0 { 0.0 } else { beside }
+    }
+
+    /// This pane's regions inside `area`, carved once so the input handler and
+    /// the renderer can never disagree about a boundary; `lay_out` puts the strip on the trail.
+    pub(super) fn plot_areas(&self, area: egui::Rect, capabilities: FeedCapabilities) -> PlotAreas {
+        let mut sizing = [PaneSizing::Auto; crate::indicators::MAX_PANES];
+        let mut areas = plot_split_with_metrics(
+            area,
+            gutter_strip_px(self.plot_lane_view(), self.live_strip_width(capabilities)),
+            self.pane.indicators.pane_sizing(&mut sizing),
+            self.pane.frame.axis_metrics,
+        );
+        areas.capsules = self.pane.frame.capsules;
+        areas
+    }
+}
+
+impl super::PaneMut<'_> {
+    /// The menu component beside the read-only view it draws from, borrowed
+    /// apart so the menu can own its state while it reads the pane's.
+    pub(crate) fn menu_parts<'a>(
+        &'a mut self,
+        capabilities: FeedCapabilities,
+        style: &'a crate::style::ChartStyle,
+        strategies: Option<&'a crate::strategy_anchors::PaneStrategies>,
+    ) -> (
+        &'a mut PaneContextMenu,
+        &'a mut quantick_chart_interaction::pane::Model,
+        PaneMenuView<'a>,
+    ) {
+        let tape = self
+            .pane
+            .orderflow
+            .as_ref()
+            .filter(|_| self.pane.model.menu.on_tape)
+            .map(|orderflow| TapeMenuView {
+                window: orderflow.live_lane_window(),
+                reference_ms: self.pane.frame.lane_reference_ms,
+                window_setting: orderflow.lane_window_setting(),
+            });
+        let flow_opening = self
+            .pane
+            .orderflow
+            .as_ref()
+            .filter(|owner| {
+                self.series.state().tick_membership().is_some() && owner.flow_execution_active()
+            })
+            .map(|owner| owner.ignore_flow_opening());
+        let view = PaneMenuView {
+            drawings: &self.pane.drawings,
+            indicators: &self.pane.indicators,
+            strategies,
+            series: self.series.read(&self.pane.spec),
+            layers: layers::PaneLayerRead {
+                layers: &self.pane.layers,
+                orderflow: self.pane.orderflow.as_ref(),
+                state: &self.series.state(),
+                footprint: &self.pane.presentation.footprint,
+                style: &self.pane.presentation.candles,
+                drawings: &self.pane.drawings,
+            },
+            capabilities,
+            style,
+            flow_opening,
+            flow_settings: self.pane.orderflow.is_some(),
+            tape,
+        };
+        (&mut self.pane.context_menu, &mut self.pane.model, view)
+    }
+
+    /// Hold the tape's window on what the feed says, measured against this pane's bars.
+    pub(crate) fn hold_tape_window(
+        &mut self,
+        spoken: Option<quantick_chart::connection_state::Link>,
+    ) {
+        if let Some(view) = self.pane.orderflow.as_mut() {
+            view.hold_tape_window(spoken, &self.series.state());
+        }
+    }
+
+    /// The layer switches — see [`layers::PaneLayerWrite`].
+    pub(crate) fn layer_write(&mut self) -> layers::PaneLayerWrite<'_> {
+        layers::PaneLayerWrite {
+            pane: self.pane.id,
+            layers: &mut self.pane.layers,
+            orderflow: self.pane.orderflow.as_mut(),
+            state: &self.series.state(),
+            presentation: &mut self.pane.presentation,
+            drawings: &mut self.pane.drawings,
+        }
+    }
+
+    /// This pane's store beside the projection an edit from another pane
+    /// resolves through — see [`SharedMarksMut`].
+    pub(crate) fn shared_marks_mut(&mut self) -> SharedMarksMut<'_> {
+        SharedMarksMut {
+            projection: gesture::DrawingProjection {
+                series: self.series.read(&self.pane.spec),
+                viewport: &self.pane.model.viewport,
+                indicators: &self.pane.indicators,
+            },
+            drawings: &mut self.pane.drawings,
+        }
+    }
+
+    /// This pane's store and its gesture's copy of the anchors, beside the
+    /// series they anchor to — see [`gesture::PaneMarksMut`].
+    pub(super) fn marks_mut(&mut self) -> gesture::PaneMarksMut<'_> {
+        gesture::PaneMarksMut {
+            drawings: &mut self.pane.drawings,
+            gestures: &mut self.pane.gestures,
+            series: self.series.read(&self.pane.spec),
+        }
+    }
+
     /// Handle mouse navigation, TradingView-style:
     /// - drag the candles → pan time (x, moves the whole chart) and price (y);
     /// - scroll over them → zoom time;
@@ -616,20 +757,20 @@ impl ChartPane {
         let magnet = chrome.toolrail.magnet();
         // Remembered for inspector placement and manager centring: the pane
         // where drawings live, already free of both axes and the live lane.
-        self.frame.axis_metrics = crate::theme::get(ui.ctx()).resolved.axis_metrics();
-        self.frame.plot_area = Some(area);
+        self.pane.frame.axis_metrics = crate::theme::get(ui.ctx()).resolved.axis_metrics();
+        self.pane.frame.plot_area = Some(area);
         let areas = self.plot_areas(area, chrome.capabilities);
-        self.frame.chart_area = Some(areas.chart);
-        let candles_right = self.frame.candles_right.unwrap_or(areas.chart.right());
-        self.model.candles_px = candles_right - areas.chart.left();
+        self.pane.frame.chart_area = Some(areas.chart);
+        let candles_right = self.pane.frame.candles_right.unwrap_or(areas.chart.right());
+        self.pane.model.candles_px = candles_right - areas.chart.left();
         // One carve, consumed by placement, hit-testing, dragging and — after
         // the panes have drawn — painting.
         let bands = crate::bands::BandGeometry {
-            auto_range: self.frame.auto_range,
-            price_view: &self.price_view,
-            candles_right: self.frame.candles_right,
-            indicators: &self.indicators,
-            price_label: &self.price_band_label,
+            auto_range: self.pane.frame.auto_range,
+            price_view: &self.pane.price_view,
+            candles_right: self.pane.frame.candles_right,
+            indicators: &self.pane.indicators,
+            price_label: &self.pane.price_band_label,
         }
         .bands(&areas);
         let tool_armed = self.handle_placement(ui, &areas, &bands, chrome);
@@ -645,12 +786,12 @@ impl ChartPane {
         // every band, and the candles' own response would report `None` for a
         // pointer one pane below them.
         if !tool_armed {
-            self.hover_pos = chart.hover_pos();
+            self.pane.hover_pos = chart.hover_pos();
         }
         // The paper lines and the right-click price live on the candles, and
         // only there: an order is a price, not a value on someone's oscillator.
         let price_band = &bands[0];
-        let history_right = self.frame.candles_right.unwrap_or(areas.chart.right());
+        let history_right = self.pane.frame.candles_right.unwrap_or(areas.chart.right());
         self.quick_range_view(chrome.tab, chrome.side).handle(
             ui,
             (&bands, &areas),
@@ -689,30 +830,26 @@ impl ChartPane {
         let paper_layer_visible = self.layer_visible(ChartLayer::PaperTrading, chrome.style);
         let paper_gesture = primary_button::PaperArbitration {
             projection: &self.drawing_projection(),
-            drawings: &self.drawings,
+            drawings: &self.pane.drawings,
             layer_visible: paper_layer_visible,
             lane_handle: super::lane_rail::lane_handle(self, areas.chart),
         }
         .handle(ui, chrome, &areas, &bands, &pointer, tool_armed);
         let projection = gesture::DrawingProjection {
-            series: gesture::PaneSeriesRead {
-                history_prefix: &self.history_prefix,
-                state: &self.state,
-                spec: &self.spec,
-            },
-            viewport: &self.model.viewport,
-            indicators: &self.indicators,
+            series: self.series.read(&self.pane.spec),
+            viewport: &self.pane.model.viewport,
+            indicators: &self.pane.indicators,
         };
         // Any strategy instance bound to a drawing holds it, armed or not:
         // its extent is that strategy's window.
-        let anchors = chrome.strategies.anchors(self.id);
+        let anchors = chrome.strategies.anchors(self.pane.id);
         let held = |id| anchors.is_some_and(|anchors| anchors.for_drawing(id).is_some());
-        let outcome = self.gestures.handle_pointer_tool(
-            &mut self.drawings,
+        let outcome = self.pane.gestures.handle_pointer_tool(
+            &mut self.pane.drawings,
             &projection,
             gesture::PointerFrame {
                 bands: &bands,
-                cached_bands: &self.frame.bands,
+                cached_bands: &self.pane.frame.bands,
                 pointer: &pointer,
                 on_pane_chrome: pointer_position
                     .is_some_and(|position| primary_button::pane_chrome_hit(&areas, position)),
@@ -751,7 +888,7 @@ impl ChartPane {
             },
         );
         if candle_settings {
-            self.presentation.candles.request_editor();
+            self.pane.presentation.candles.request_editor();
             chrome.layers.open_chart_settings = true;
         }
 
@@ -773,6 +910,7 @@ impl ChartPane {
         let placement_id = self.interaction_id("drawing_placement");
         #[cfg(any(feature = "drawing-harness", test))]
         let hand = self
+            .pane
             .gestures
             .parked_hand
             .map(|hand| (hand.constrain, hand.position));
@@ -789,23 +927,19 @@ impl ChartPane {
             parked_position: hand.map(|hand| hand.1),
         };
         let placement = gesture_input::update_placement(
-            &mut self.gestures,
-            &mut self.drawings,
+            &mut self.pane.gestures,
+            &mut self.pane.drawings,
             &gesture::DrawingProjection {
-                series: gesture::PaneSeriesRead {
-                    history_prefix: &self.history_prefix,
-                    state: &self.state,
-                    spec: &self.spec,
-                },
-                viewport: &self.model.viewport,
-                indicators: &self.indicators,
+                series: self.series.read(&self.pane.spec),
+                viewport: &self.pane.model.viewport,
+                indicators: &self.pane.indicators,
             },
             gesture_input::PlacementInput {
                 ui,
                 areas,
                 bands,
                 id: placement_id,
-                history_right: self.frame.candles_right.unwrap_or(areas.chart.right()),
+                history_right: self.pane.frame.candles_right.unwrap_or(areas.chart.right()),
             },
             options,
             gesture::PlacementDefaults {
@@ -814,7 +948,7 @@ impl ChartPane {
             },
         );
         if let Some(position) = placement.hover_position {
-            self.hover_pos = position.map(drawings::pos);
+            self.pane.hover_pos = position.map(drawings::pos);
         }
         if placement.completion.arm_pointer {
             chrome.toolrail.arm(Tool::Pointer);
@@ -823,119 +957,6 @@ impl ChartPane {
             *chrome.begin_text_edit = true;
         }
         placement.tool_armed
-    }
-
-    /// The HUD anchor cached by the last draw, if the paper layer was
-    /// painted on the pane that owns order entry.
-    #[must_use]
-    pub fn paper_hud_anchor(&self) -> Option<(egui::Rect, PriceScale)> {
-        self.paper_hud_anchor
-    }
-}
-
-#[cfg(test)]
-impl ChartPane {
-    pub(crate) fn request_indicator_guide(&mut self, slot: SlotId, enabled: bool) {
-        self.model.pending_indicator_guide = Some((slot.0, enabled));
-    }
-
-    /// Stand in for the gesture that raises a settings request, so the app's
-    /// side of the wiring can be tested without driving egui through a pane
-    /// layout it would have to re-derive.
-    pub fn request_settings(&mut self, slot: SlotId) {
-        self.model.pending_settings = Some(slot.0);
-    }
-}
-
-/// The menus' door into the pane: the read-only view they draw from, and the
-/// one place every [`PaneMenuIntent`] they answer with is applied.
-impl ChartPane {
-    /// The menu component beside the read-only view it draws from, borrowed
-    /// apart so the menu can own its state while it reads the pane's.
-    pub(crate) fn menu_parts<'a>(
-        &'a mut self,
-        capabilities: FeedCapabilities,
-        style: &'a crate::style::ChartStyle,
-        strategies: Option<&'a crate::strategy_anchors::PaneStrategies>,
-    ) -> (
-        &'a mut PaneContextMenu,
-        &'a mut quantick_chart_interaction::pane::Model,
-        PaneMenuView<'a>,
-    ) {
-        let tape = self
-            .orderflow
-            .as_ref()
-            .filter(|_| self.model.menu.on_tape)
-            .map(|orderflow| TapeMenuView {
-                window: orderflow.live_lane_window(),
-                reference_ms: self.frame.lane_reference_ms,
-                window_setting: orderflow.lane_window_setting(),
-            });
-        let flow_opening = self
-            .orderflow
-            .as_ref()
-            .filter(|owner| self.state.tick_membership().is_some() && owner.flow_execution_active())
-            .map(|owner| owner.ignore_flow_opening());
-        let view = PaneMenuView {
-            drawings: &self.drawings,
-            indicators: &self.indicators,
-            strategies,
-            series: gesture::PaneSeriesRead {
-                history_prefix: &self.history_prefix,
-                state: &self.state,
-                spec: &self.spec,
-            },
-            layers: layers::PaneLayerRead {
-                layers: &self.layers,
-                orderflow: self.orderflow.as_ref(),
-                state: &self.state,
-                footprint: &self.presentation.footprint,
-                style: &self.presentation.candles,
-                drawings: &self.drawings,
-            },
-            capabilities,
-            style,
-            flow_opening,
-            flow_settings: self.orderflow.is_some(),
-            tape,
-        };
-        (&mut self.context_menu, &mut self.model, view)
-    }
-
-    /// Where the chart-layer submenu button was painted — see
-    /// [`PaneContextMenu::chart_layers_center`].
-    #[cfg(any(feature = "scenario-harness", test))]
-    pub(crate) fn chart_layers_menu_center(&self) -> Option<egui::Pos2> {
-        self.context_menu.chart_layers_center()
-    }
-
-    /// The layer menu, drawn and applied: what the right-click opens.
-    pub fn draw_layer_menu(&mut self, ui: &mut egui::Ui, chrome: &mut PaneChrome<'_>) {
-        let intents = {
-            let strategies = chrome.strategies.pane(self.id);
-            let (menu, model, view) =
-                self.menu_parts(chrome.capabilities, chrome.style, strategies);
-            let hosts = PaneMenuHosts {
-                paper: &mut *chrome.paper,
-            };
-            menu.draw_layer_menu(ui, &view, model, hosts)
-        };
-        self.apply_menu_intents(intents, chrome);
-    }
-
-    /// One layer's checkbox in an axis's own menu, applied like the layer
-    /// menu's.
-    pub(super) fn layer_menu_switch(
-        &mut self,
-        ui: &mut egui::Ui,
-        layer: ChartLayer,
-        chrome: &mut PaneChrome<'_>,
-    ) {
-        let row = self
-            .layer_read()
-            .row(layer, chrome.capabilities, chrome.style);
-        let intent = self.context_menu.layer_checkbox(ui, row);
-        self.apply_menu_intents(intent, chrome);
     }
 
     /// The secondary click on the canvas: what the press resolves (the price,
@@ -959,64 +980,40 @@ impl ChartPane {
                 areas,
                 bands,
                 &self.drawing_projection(),
-                &self.drawings,
-                &self.frame,
+                &self.pane.drawings,
+                &self.pane.frame,
                 self.slots(),
             )
         {
-            let select = self
-                .context_menu
-                .open_at(&mut self.model, press, &self.drawings);
+            let select =
+                self.pane
+                    .context_menu
+                    .open_at(&mut self.pane.model, press, &self.pane.drawings);
             self.apply_menu_intents(select, chrome);
         }
         // Right-click: what is on this canvas, and what is not. Secondary
         // button only, so it shares no gesture with the pan, the zoom or the
         // drawing tools — a pan that ends anywhere never opens it.
         chart.context_menu(|ui| self.draw_layer_menu(ui, chrome));
-        let count = self.drawings.items().len();
-        let clear = self.context_menu.draw_clear_objects_confirm(
-            &mut self.model,
+        let count = self.pane.drawings.items().len();
+        let clear = self.pane.context_menu.draw_clear_objects_confirm(
+            &mut self.pane.model,
             &chart.ctx,
             areas.chart,
             count,
-            self.id,
+            self.pane.id,
         );
         self.apply_menu_intents(clear, chrome);
         // While the menu is open the pointer is reading it, not the chart, so
         // no crosshair chases it across the candles behind it.
         if chart.context_menu_opened() {
-            self.hover_pos = None;
+            self.pane.hover_pos = None;
         } else {
-            let commit = self.context_menu.close(&mut self.model, &self.drawings);
+            let commit = self
+                .pane
+                .context_menu
+                .close(&mut self.pane.model, &self.pane.drawings);
             self.apply_menu_intents(commit, chrome);
-        }
-    }
-
-    /// Apply a frame's menu intents in the order they were asked.
-    pub(crate) fn apply_menu_intents(
-        &mut self,
-        intents: impl IntoIterator<Item = PaneMenuIntent>,
-        chrome: &mut PaneChrome<'_>,
-    ) {
-        for intent in intents {
-            self.apply_menu_intent(intent, chrome);
-        }
-    }
-
-    pub(crate) fn apply_menu_intent(
-        &mut self,
-        choice: PaneMenuIntent,
-        chrome: &mut PaneChrome<'_>,
-    ) {
-        use quantick_chart_interaction::pane::{Effect, Intent, update};
-        let id = choice.drawing_id();
-        let drawing = id
-            .and_then(|id| self.drawings.index_of(id))
-            .map(|index| super::context_menu::drawing_fact(&self.drawings.items()[index]));
-        for effect in update(&mut self.model, Intent::Menu { choice, drawing }) {
-            if let Effect::Menu(intent) = effect {
-                self.execute_menu_effect(intent, chrome);
-            }
         }
     }
 
@@ -1034,17 +1031,19 @@ impl ChartPane {
             PaneMenuIntent::SetLayerVisible { layer, visible } => {
                 self.set_layer_visible(layer, visible, chrome.layers);
             }
-            PaneMenuIntent::SetPriceInverted(inverted) => self.price_view.set_inverted(inverted),
+            PaneMenuIntent::SetPriceInverted(inverted) => {
+                self.pane.price_view.set_inverted(inverted)
+            }
             PaneMenuIntent::SetBarProgress(on) => chrome.layers.bar_progress = Some(on),
             PaneMenuIntent::SetIgnoreFlowOpening(ignore) => {
-                if let Some(owner) = self.orderflow.as_mut() {
+                if let Some(owner) = self.pane.orderflow.as_mut() {
                     owner.set_ignore_flow_opening(ignore);
                 }
             }
             PaneMenuIntent::OpenFootprintSettings => chrome.layers.open_footprint_settings = true,
             PaneMenuIntent::OpenLayerSettings(layer) => chrome.layers.open_layer_tab = Some(layer),
             PaneMenuIntent::SetLaneWindow(window) => {
-                if let Some(orderflow) = self.orderflow.as_mut() {
+                if let Some(orderflow) = self.pane.orderflow.as_mut() {
                     orderflow.set_live_lane_window(window);
                 }
             }
@@ -1055,8 +1054,8 @@ impl ChartPane {
                 else {
                     return;
                 };
-                let completion = self.gestures.place_point(
-                    &mut self.drawings,
+                let completion = self.pane.gestures.place_point(
+                    &mut self.pane.drawings,
                     tool,
                     &drawings::DrawingBand::Price,
                     point,
@@ -1073,44 +1072,47 @@ impl ChartPane {
                 }
             }
             PaneMenuIntent::ToggleIndicatorHidden(slot) => {
-                self.indicators.toggle_hidden(SlotId(slot));
+                self.pane.indicators.toggle_hidden(SlotId(slot));
                 chrome.layers.indicators_changed = true;
             }
             PaneMenuIntent::SelectDrawing(id) => {
-                if let Some(index) = self.drawings.index_of(id) {
-                    self.drawings.select(Some(index));
+                if let Some(index) = self.pane.drawings.index_of(id) {
+                    self.pane.drawings.select(Some(index));
                 }
             }
             PaneMenuIntent::RenameDrawing { id, name } => {
-                if let Some(index) = self.drawings.index_of(id) {
-                    self.drawings.rename_at(index, &name);
+                if let Some(index) = self.pane.drawings.index_of(id) {
+                    self.pane.drawings.rename_at(index, &name);
                 }
             }
             PaneMenuIntent::SetDrawingLocked { id, locked } => {
-                if let Some(index) = self.drawings.index_of(id) {
-                    self.drawings.set_locked_at(index, locked);
+                if let Some(index) = self.pane.drawings.index_of(id) {
+                    self.pane.drawings.set_locked_at(index, locked);
                 }
             }
             PaneMenuIntent::SetDrawingHidden { id, hidden } => {
-                if let Some(index) = self.drawings.index_of(id) {
-                    self.drawings.set_hidden_at(index, hidden);
+                if let Some(index) = self.pane.drawings.index_of(id) {
+                    self.pane.drawings.set_hidden_at(index, hidden);
                 }
             }
             PaneMenuIntent::DeleteDrawing(id) => {
-                let Some(index) = self.drawings.index_of(id) else {
+                let Some(index) = self.pane.drawings.index_of(id) else {
                     return;
                 };
-                self.drawings.select(Some(index));
-                if self.drawings.delete_selected(false) == drawings::DeleteOutcome::Deleted {
+                self.pane.drawings.select(Some(index));
+                if self.pane.drawings.delete_selected(false) == drawings::DeleteOutcome::Deleted {
                     // The instance dies with its drawing, immediately — not
                     // on the next closed bar, which a quiet tape may never
                     // bring.
-                    chrome.strategies.pane_mut(self.id).remove_for_drawing(id);
+                    chrome
+                        .strategies
+                        .pane_mut(self.pane.id)
+                        .remove_for_drawing(id);
                 }
             }
             PaneMenuIntent::StrategyAdd(id) => {
-                if self.drawings.index_of(id).is_some() {
-                    chrome.strategies.pane_mut(self.id).request_popup(id);
+                if self.pane.drawings.index_of(id).is_some() {
+                    chrome.strategies.pane_mut(self.pane.id).request_popup(id);
                 }
             }
             // The drawing went without its strategy being swept yet: the
@@ -1118,75 +1120,44 @@ impl ChartPane {
             PaneMenuIntent::StrategyDisarm(id)
             | PaneMenuIntent::StrategyRearm(id)
             | PaneMenuIntent::StrategyRemove(id)
-                if self.drawings.index_of(id).is_none() => {}
-            PaneMenuIntent::StrategyDisarm(id) => chrome.strategies.pane_mut(self.id).disarm(id),
+                if self.pane.drawings.index_of(id).is_none() => {}
+            PaneMenuIntent::StrategyDisarm(id) => {
+                chrome.strategies.pane_mut(self.pane.id).disarm(id)
+            }
             PaneMenuIntent::StrategyRearm(id) => {
                 let series = self.series_read();
-                (chrome.strategies.pane_mut(self.id)).rearm(id, |depth| series.warmup_bars(depth));
+                (chrome.strategies.pane_mut(self.pane.id))
+                    .rearm(id, |depth| series.warmup_bars(depth));
             }
             PaneMenuIntent::StrategyRemove(id) => {
-                chrome.strategies.pane_mut(self.id).remove_for_drawing(id);
+                chrome
+                    .strategies
+                    .pane_mut(self.pane.id)
+                    .remove_for_drawing(id);
             }
             PaneMenuIntent::ObjectsAsk(action) => {
                 use quantick_chart_interaction::pane::ObjectAction;
                 let mut ask = crate::surfaces::drawing_chrome::DrawingChromeAsk::default();
                 match action {
-                    ObjectAction::Select(id) => ask.manager_select = self.drawings.index_of(id),
+                    ObjectAction::Select(id) => {
+                        ask.manager_select = self.pane.drawings.index_of(id)
+                    }
                     ObjectAction::ToggleHidden(id) => {
-                        ask.manager_toggle_hidden = self.drawings.index_of(id)
+                        ask.manager_toggle_hidden = self.pane.drawings.index_of(id)
                     }
                     ObjectAction::ToggleLocked(id) => {
-                        ask.manager_toggle_locked = self.drawings.index_of(id)
+                        ask.manager_toggle_locked = self.pane.drawings.index_of(id)
                     }
                     ObjectAction::BringToFront(id) => {
-                        ask.manager_bring_to_front = self.drawings.index_of(id)
+                        ask.manager_bring_to_front = self.pane.drawings.index_of(id)
                     }
-                    ObjectAction::Delete(id) => ask.manager_delete = self.drawings.index_of(id),
+                    ObjectAction::Delete(id) => {
+                        ask.manager_delete = self.pane.drawings.index_of(id)
+                    }
                     ObjectAction::DeleteAll => ask.delete_all = true,
                 }
-                chrome.drawing_chrome.ask_from_menu(self.id, ask);
+                chrome.drawing_chrome.ask_from_menu(self.pane.id, ask);
             }
-        }
-    }
-}
-
-/// What a time pane's capsule and the tape's seam read from the window.
-pub(crate) struct SideChrome<'a> {
-    pub style: &'a ChartStyle,
-    pub capabilities: FeedCapabilities,
-    pub tz: quantick_civil::TzOffset,
-    /// The word the feed speaks this frame, if any yet.
-    pub link: Option<quantick_chart::connection_state::Link>,
-    /// What the empty part of a tape with nothing coming says.
-    pub seam_words: Option<String>,
-}
-
-/// What the flow pane's side headers read from its tab this frame.
-pub(crate) struct SideRowChrome<'a> {
-    pub style: &'a ChartStyle,
-    pub capabilities: FeedCapabilities,
-    pub tz: quantick_civil::TzOffset,
-    pub inputs: BarInputAvailability,
-    /// The bars are being rebuilt.
-    pub rebuilding: bool,
-    /// The word the feed speaks this frame: the TAPE plate's tooltip says it.
-    pub link: Option<quantick_chart::connection_state::Link>,
-}
-
-impl ChartPane {
-    /// One layer glyph: its lamp the *switch*, not what the source lets through
-    /// it, with what blocks it beside it, read through the calls the pane's layer
-    /// menu and `layers.visibility.set` read.
-    pub(crate) fn header_glyph(
-        &self,
-        toggle: LayerToggle,
-        style: &ChartStyle,
-        capabilities: FeedCapabilities,
-    ) -> LayerGlyph {
-        LayerGlyph {
-            toggle,
-            on: self.layer_switched_on(toggle.layer(), style),
-            blocked: self.layer_blocked(toggle.layer(), capabilities),
         }
     }
 
@@ -1200,13 +1171,13 @@ impl ChartPane {
         chrome: &SideChrome<'_>,
         model: &quantick_ui_model::pane_header::State,
     ) -> Option<quantick_ui_model::pane_header::Intent> {
-        self.frame.capsules = [None; 2];
+        self.pane.frame.capsules = [None; 2];
         // Nothing on the chart, nothing to switch: the overlay owns it.
         if self.slots() == 0 {
             return None;
         }
-        let chart = self.frame.chart_rect?;
-        let area = self.frame.area.unwrap_or(chart);
+        let chart = self.pane.frame.chart_rect?;
+        let area = self.pane.frame.area.unwrap_or(chart);
         if side == PaneSide::Flow {
             self.draw_tape_marks(ui, chart, area.top(), chrome);
             return None;
@@ -1218,37 +1189,11 @@ impl ChartPane {
         let right = area.right() - quantick_workspace::canvas::PANE_MENU_BUTTON_PX;
         let header =
             egui::Rect::from_x_y_ranges(area.left()..=right, area.top() - height..=area.top());
-        let (mut intent, painted) = (None, &mut self.frame.header_controls);
-        let at = (CapsuleSide::Time, self.id);
-        self.frame.capsules[0] =
+        let (mut intent, painted) = (None, &mut self.pane.frame.header_controls);
+        let at = (CapsuleSide::Time, self.pane.id);
+        self.pane.frame.capsules[0] =
             draw_docked_capsule(ui, &capsule, header, at, painted, &mut intent, model);
         intent
-    }
-
-    /// The tape's seam, over the tape just drawn.
-    fn draw_tape_marks(&self, ui: &egui::Ui, chart: egui::Rect, top: f32, chrome: &SideChrome<'_>) {
-        let Some(state) = self.flow_header_state() else {
-            return;
-        };
-        let (left, right, split) = (chart.left(), chart.right(), self.frame.lane_divider_x);
-        let sides = flow_sides(Some(state.shown_view), left, right, split);
-        let Some((_, left, right)) = sides
-            .into_iter()
-            .flatten()
-            .find(|(side, ..)| *side == CapsuleSide::Tape)
-        else {
-            return;
-        };
-        let side_rect = egui::Rect::from_x_y_ranges(left..=right, top..=chart.bottom());
-        if let Some(x) = self.seam_x(&state, chrome, side_rect) {
-            let held = self
-                .orderflow
-                .as_ref()
-                .and_then(|tape| tape.book_held_at_ms());
-            let line = chrome.seam_words.as_deref();
-            let words = quantick_chart::market_fold::seam_words(line, held, chrome.tz);
-            crate::pane_header::draw_tape_seam(ui, side_rect, x, words.lines());
-        }
     }
 
     /// The row of side headers under the band, split where this frame's chart split:
@@ -1264,6 +1209,7 @@ impl ChartPane {
         use crate::pane_header::{BarsPart, SideHeader, draw_side_header};
         // An open settings panel takes the end of the row with the end of the chart.
         let row = self
+            .pane
             .frame
             .area
             .map_or(row, |area| row.with_max_x(area.right()));
@@ -1276,7 +1222,12 @@ impl ChartPane {
         crate::pane_header::paint_rule(ui, row);
         let state = self.flow_header_state();
         let shown = state.map(|state| state.shown_view);
-        let headers = side_headers(shown, row.left(), row.right(), self.frame.lane_divider_x);
+        let headers = side_headers(
+            shown,
+            row.left(),
+            row.right(),
+            self.pane.frame.lane_divider_x,
+        );
         let bars = model.header.as_ref().expect("flow band refreshed header");
         let (mut intent, mut indicators) = (None, false);
         for (index, (side, left, right)) in headers.into_iter().flatten().enumerate() {
@@ -1285,19 +1236,19 @@ impl ChartPane {
             let glyph = |toggle| self.header_glyph(toggle, chrome.style, chrome.capabilities);
             let capsule = Some(Capsule::of(side, glyph, scale))
                 .filter(|capsule| parts.capsule && self.slots() > 0 && !capsule.is_empty());
-            let (chart, tz, link) = (&self.state, chrome.tz, chrome.link);
+            let (chart, tz, link) = (&self.series.state(), chrome.tz, chrome.link);
             // How far the side's data reaches, and on the tape whether more is coming.
             let clock =
                 move || SideLabel::of(side, chart, tz, link).map_or_else(String::new, |l| l.text());
             let header = SideHeader {
                 which: side,
-                salt: self.id,
+                salt: self.pane.id,
                 pad_left: parts.pad_left,
                 plate: parts.plate,
                 clock: &clock,
                 bars: parts.bars.then_some(BarsPart {
                     header: bars,
-                    selection: &mut self.spec,
+                    selection: &mut self.pane.spec,
                     inputs: chrome.inputs,
                     rebuilding: chrome.rebuilding,
                 }),
@@ -1305,57 +1256,72 @@ impl ChartPane {
                 capsule,
             };
             let rect = egui::Rect::from_x_y_ranges(left..=right, row.y_range());
-            let painted = &mut self.frame.header_controls;
+            let painted = &mut self.pane.frame.header_controls;
             indicators |= draw_side_header(ui, rect, header, painted, &mut intent, model);
         }
         super::lane_rail::paint_flow_divider(self, ui, row.top(), shown);
         (intent, indicators)
     }
 
-    /// Where the tape's seam stands, on a live tape with nothing coming.
-    fn seam_x(
-        &self,
-        state: &FlowHeaderState,
-        chrome: &SideChrome<'_>,
-        side: egui::Rect,
-    ) -> Option<f32> {
-        use quantick_chart::market_fold::{last_print_ms, seam_shown, tape_seam_x};
-        let shown = seam_shown(state.shown_view, chrome.link);
-        let owner = self.orderflow.as_ref().filter(|_| shown)?;
-        let now = owner
-            .cached_live_end_ms()
-            .filter(|_| owner.tape_end().is_live())?;
-        let times = (
-            now,
-            last_print_ms(&self.state)?,
-            owner.live_lane_window_ms(self.state.bars()),
-        );
-        tape_seam_x(
-            owner.cached_config(),
-            [side.left(), side.width(), side.height()],
-            times,
-        )
+    pub fn set_layer_visible(&mut self, layer: ChartLayer, on: bool, out: &mut LayerActions) {
+        self.layer_write().set_visible(layer, on, out);
     }
 
-    /// The view and sizes a flow pane's chrome shows; `None` without an
-    /// order-flow view. A sample is there only while its target is on, the one
-    /// size rule `orderflow.bubbles.size.set` judges by too.
-    pub(crate) fn flow_header_state(&self) -> Option<FlowHeaderState> {
-        let owner = self.orderflow.as_ref()?;
-        let facts = self.bubble_scale_facts()?;
-        let scale = |sample: BubbleSample| {
-            let target = target(sample);
-            facts
-                .may_scale(target)
-                .then(|| owner.bubble_display_scale(target.into()))
+    /// The layer menu, drawn and applied: what the right-click opens.
+    pub fn draw_layer_menu(&mut self, ui: &mut egui::Ui, chrome: &mut PaneChrome<'_>) {
+        let intents = {
+            let strategies = chrome.strategies.pane(self.pane.id);
+            let (menu, model, view) =
+                self.menu_parts(chrome.capabilities, chrome.style, strategies);
+            let hosts = PaneMenuHosts {
+                paper: &mut *chrome.paper,
+            };
+            menu.draw_layer_menu(ui, &view, model, hosts)
         };
-        Some(FlowHeaderState::of(
-            &owner.cached_config().live_lane,
-            scale(BubbleSample::Candle),
-            scale(BubbleSample::Tape),
-            self.frame.lane_reference_ms,
-            owner.lane_window_setting(),
-        ))
+        self.apply_menu_intents(intents, chrome);
+    }
+
+    /// One layer's checkbox in an axis's own menu, applied like the layer
+    /// menu's.
+    pub(super) fn layer_menu_switch(
+        &mut self,
+        ui: &mut egui::Ui,
+        layer: ChartLayer,
+        chrome: &mut PaneChrome<'_>,
+    ) {
+        let row = self
+            .layer_read()
+            .row(layer, chrome.capabilities, chrome.style);
+        let intent = self.pane.context_menu.layer_checkbox(ui, row);
+        self.apply_menu_intents(intent, chrome);
+    }
+
+    pub(crate) fn apply_menu_intent(
+        &mut self,
+        choice: PaneMenuIntent,
+        chrome: &mut PaneChrome<'_>,
+    ) {
+        use quantick_chart_interaction::pane::{Effect, Intent, update};
+        let id = choice.drawing_id();
+        let drawing = id
+            .and_then(|id| self.pane.drawings.index_of(id))
+            .map(|index| super::context_menu::drawing_fact(&self.pane.drawings.items()[index]));
+        for effect in update(&mut self.pane.model, Intent::Menu { choice, drawing }) {
+            if let Effect::Menu(intent) = effect {
+                self.execute_menu_effect(intent, chrome);
+            }
+        }
+    }
+
+    /// Apply a frame's menu intents in the order they were asked.
+    pub(crate) fn apply_menu_intents(
+        &mut self,
+        intents: impl IntoIterator<Item = PaneMenuIntent>,
+        chrome: &mut PaneChrome<'_>,
+    ) {
+        for intent in intents {
+            self.apply_menu_intent(intent, chrome);
+        }
     }
 
     /// Carry out a press on this pane's header, through the door each control
@@ -1373,22 +1339,22 @@ impl ChartPane {
             }
             HeaderIntent::ToggleSettings => actions.toggle_settings = true,
             HeaderIntent::SetLights(on) => {
-                if let Some(owner) = self.orderflow.as_mut() {
+                if let Some(owner) = self.pane.orderflow.as_mut() {
                     owner.settings_panel.set_lights(on);
                 }
             }
             HeaderIntent::SetLaneWindow(window) => {
-                if let Some(owner) = self.orderflow.as_mut() {
+                if let Some(owner) = self.pane.orderflow.as_mut() {
                     owner.set_live_lane_window(window);
                 }
             }
             HeaderIntent::SetView(view) => {
-                if let Some(owner) = self.orderflow.as_mut() {
+                if let Some(owner) = self.pane.orderflow.as_mut() {
                     owner.set_lane_view(view);
                 }
             }
             HeaderIntent::SetSample(sample, scale) => {
-                if let Some(owner) = self.orderflow.as_mut() {
+                if let Some(owner) = self.pane.orderflow.as_mut() {
                     owner.set_bubble_display_scale(target(sample).into(), scale);
                 }
             }

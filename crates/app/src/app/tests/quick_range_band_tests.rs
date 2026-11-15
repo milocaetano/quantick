@@ -36,7 +36,7 @@ fn cvd_pane() -> Pane {
 }
 
 fn x_at(app: &QuantickApp, bar: f32) -> f32 {
-    let pane = &app.active_tab().flow_pane;
+    let pane = app.active_tab().flow();
     let chart = pane.frame.chart_area.expect("the chart was laid out");
     let history_right = pane.frame.candles_right.unwrap_or(chart.right());
     pane.model

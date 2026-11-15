@@ -106,7 +106,7 @@ pub(super) fn draw_stage(
     surfaces: &mut crate::surfaces::Surfaces,
 ) -> bool {
     tab.update_tape_clock_at((ctx.input(|input| input.time).max(0.0) * 1_000.0) as u64);
-    for pane in tab.panes_mut() {
+    for mut pane in tab.panes_mut() {
         pane.frame.clear_hidden();
     }
     egui::CentralPanel::default()

@@ -34,7 +34,7 @@ fn profile_fixture_unadopted(ctx: &egui::Context, collapsed: bool) -> QuantickAp
         app.active_tab_mut()
             .set_pane_bar_spec(side.index(), BUILTIN_BARS.parse(spec).unwrap())
             .unwrap();
-        let pane = app.active_tab_mut().pane_mut(side);
+        let mut pane = app.active_tab_mut().pane_mut(side);
         for layer in [
             ChartLayer::Footprint,
             ChartLayer::CandleAggression,
@@ -73,7 +73,7 @@ fn profile_fixture_unadopted(ctx: &egui::Context, collapsed: bool) -> QuantickAp
     app
 }
 
-fn place_profile(pane: &mut ChartPane, start: f32, end: f32) {
+fn place_profile(pane: &mut crate::pane::PaneMut<'_>, start: f32, end: f32) {
     let tool = crate::drawings::DRAWING_TOOLS
         .into_iter()
         .find(|tool| tool.id() == crate::frvp::TOOL_ID)
@@ -94,8 +94,8 @@ fn place_profile(pane: &mut ChartPane, start: f32, end: f32) {
     pane.drawings.select(None);
 }
 
-fn output(pane: &ChartPane) -> ProfileOutput<'_> {
-    pane.drawings.items()[0]
+fn output(pane: crate::pane::PaneRef<'_>) -> ProfileOutput<'_> {
+    pane.pane.drawings.items()[0]
         .payload
         .as_any()
         .downcast_ref::<crate::drawings::FrvpPayload>()
@@ -106,7 +106,7 @@ fn output(pane: &ChartPane) -> ProfileOutput<'_> {
         .output()
 }
 
-fn profile(pane: &ChartPane) -> (&VolumeProfile, LevelPrices) {
+fn profile(pane: crate::pane::PaneRef<'_>) -> (&VolumeProfile, LevelPrices) {
     let result = output(pane);
     assert!(!result.folding);
     assert_eq!(result.bars_approximated, 0);
@@ -119,7 +119,7 @@ fn profile(pane: &ChartPane) -> (&VolumeProfile, LevelPrices) {
 fn assert_market_grid(app: &QuantickApp) {
     for side in SIDES {
         assert_eq!(
-            app.active_tab().pane(side).series_state().footprint_group(),
+            app.active_tab().pane(side).series.state().footprint_group(),
             Decimal::from(5),
             "{side:?} must inherit the instrument capture grid"
         );
@@ -134,9 +134,9 @@ fn collapsed_flow_adopts_published_grid_before_context_profiles_draw() {
     let before = app.active_tab_mut().tape_mut().base_capture_grouping();
     assert_ne!(before, Decimal::from(5), "the view mirror must start stale");
     for side in [PaneSide::Time(0), PaneSide::Time(1)] {
-        let pane = app.active_tab_mut().pane_mut(side);
+        let mut pane = app.active_tab_mut().pane_mut(side);
         let end = pane.slots().saturating_sub(1) as f32;
-        place_profile(pane, 0.0, end);
+        place_profile(&mut pane, 0.0, end);
     }
     // Fix the summary clock so diagnostics cannot adopt the worker's grid.
     let now = Instant::now();
@@ -149,7 +149,14 @@ fn collapsed_flow_adopts_published_grid_before_context_profiles_draw() {
         },
         |ctx| app.draw_frame(ctx, now),
     );
-    assert!(app.active_tab().pane(PaneSide::Flow).frame.area.is_none());
+    assert!(
+        app.active_tab()
+            .pane(PaneSide::Flow)
+            .pane
+            .frame
+            .area
+            .is_none()
+    );
     assert_eq!(app.health.last_summary, now);
     for side in [PaneSide::Time(0), PaneSide::Time(1)] {
         let pane = app.active_tab().pane(side);
@@ -178,10 +185,10 @@ fn equal_prints_and_bounds_match_profiles_on_non_first_renko_context() {
     let ctx = egui::Context::default();
     let mut app = profile_fixture(&ctx, false);
     for side in SIDES {
-        let pane = app.active_tab_mut().pane_mut(side);
+        let mut pane = app.active_tab_mut().pane_mut(side);
         assert_eq!(pane.series_state().trades().len(), 96);
         let end = pane.slots().saturating_sub(1) as f32;
-        place_profile(pane, 0.0, end);
+        place_profile(&mut pane, 0.0, end);
     }
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
@@ -229,7 +236,7 @@ fn equal_prints_and_bounds_match_profiles_on_non_first_renko_context() {
     // its row map. Measure closed ranges after the whole-tape comparison:
     // the forming ladder has its own scheduled snapshot cadence.
     for side in SIDES {
-        let pane = app.active_tab_mut().pane_mut(side);
+        let mut pane = app.active_tab_mut().pane_mut(side);
         pane.drawings.items_mut()[0].points[1].bar =
             pane.series_state().bars().len().saturating_sub(1) as f32;
     }
@@ -256,7 +263,7 @@ fn equal_prints_and_bounds_match_profiles_on_non_first_renko_context() {
     let anchors: Vec<_> = SIDES
         .iter()
         .map(|side| {
-            app.active_tab().pane(*side).drawings.items()[0]
+            app.active_tab().pane(*side).pane.drawings.items()[0]
                 .points
                 .clone()
         })
@@ -290,7 +297,11 @@ fn equal_prints_and_bounds_match_profiles_on_non_first_renko_context() {
 fn restored_collapsed_contexts_inherit_grid_before_they_draw_and_after_recut() {
     let ctx = egui::Context::default();
     let mut app = profile_fixture(&ctx, true);
-    place_profile(app.active_tab_mut().pane_mut(PaneSide::Flow), 0.0, 23.0);
+    place_profile(
+        &mut app.active_tab_mut().pane_mut(PaneSide::Flow),
+        0.0,
+        23.0,
+    );
     run_frame(&mut app, &ctx);
     assert!(
         app.active_tab()
@@ -343,7 +354,7 @@ fn different_first_candle_bounds_keep_their_actual_print_volumes() {
     let ctx = egui::Context::default();
     let mut app = profile_fixture(&ctx, false);
     for side in [PaneSide::Flow, PaneSide::Time(1)] {
-        place_profile(app.active_tab_mut().pane_mut(side), 0.0, 0.0);
+        place_profile(&mut app.active_tab_mut().pane_mut(side), 0.0, 0.0);
     }
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
@@ -369,7 +380,7 @@ fn different_first_candle_bounds_keep_their_actual_print_volumes() {
         }
     );
     for (side, trades, end_ms) in [(PaneSide::Flow, 4, 1_400), (PaneSide::Time(1), 2, 1_200)] {
-        let bar = &app.active_tab().pane(side).series_state().bars()[0];
+        let bar = &app.active_tab().pane(side).series.state().bars()[0];
         assert_eq!(
             (bar.open_time, bar.close_time, bar.trade_count),
             (1_100, end_ms, trades)

@@ -97,7 +97,7 @@ fn stress_without_a_flow_anchor_retries_then_uses_the_real_delivery_path() {
     }
     assert!(app.active_tab().time_pane().unwrap().slots() >= 12);
     let flow = std::mem::replace(
-        app.active_tab_mut().flow_pane.series_state_mut(),
+        app.active_tab_mut().flow_series_mut().state_mut(),
         crate::state::ChartState::new(crate::state::BarSpec::Tick(1)),
     );
     crate::app::demo_hooks::apply_frvp_demo(&mut app);
@@ -116,7 +116,7 @@ fn stress_without_a_flow_anchor_retries_then_uses_the_real_delivery_path() {
             .items()
             .is_empty()
     );
-    *app.active_tab_mut().flow_pane.series_state_mut() = flow;
+    *app.active_tab_mut().flow_series_mut().state_mut() = flow;
     crate::app::demo_hooks::apply_frvp_demo(&mut app);
     assert!(
         app.surfaces
@@ -175,7 +175,7 @@ fn nine_hook_case(case: &str, env: Env) {
             }
             crate::app::demo_hooks::apply_drawing_demo(&mut app);
             assert!(!app.surfaces.drawing_chrome.demos().gallery_requested());
-            let pane = &app.active_tab().flow_pane;
+            let pane = app.active_tab().flow();
             assert!(pane.drawings.items().len() >= drawings::DRAWING_TOOLS.len());
             if case != "recut" {
                 let first = &pane.drawings.items()[0];
@@ -229,7 +229,7 @@ fn nine_hook_case(case: &str, env: Env) {
                 );
             }
             if case == "bands" {
-                let pane = &app.active_tab().flow_pane;
+                let pane = app.active_tab().flow();
                 let band_drawings: Vec<_> = pane
                     .drawings
                     .items()
@@ -290,7 +290,7 @@ fn nine_hook_case(case: &str, env: Env) {
                     .draft_requested()
                     .is_none()
             );
-            let pane = &app.active_tab().flow_pane;
+            let pane = app.active_tab().flow();
             assert_eq!(
                 pane.drawings.draft_len(),
                 if case == "draft-zero" { 0 } else { 2 }
@@ -331,7 +331,7 @@ fn nine_hook_case(case: &str, env: Env) {
                     .profile_requested()
                     .is_none()
             );
-            let pane = &app.active_tab().flow_pane;
+            let pane = app.active_tab().flow();
             let ranges: &[(f32, f32)] = if case == "compare" {
                 &[(150.0, 174.0), (175.0, 199.0)]
             } else {
@@ -353,7 +353,7 @@ fn nine_hook_case(case: &str, env: Env) {
         "avwap" => {
             crate::app::demo_hooks::apply_avwap_demo(&mut app);
             assert!(!app.surfaces.drawing_chrome.demos().avwap_requested());
-            let pane = &app.active_tab().flow_pane;
+            let pane = app.active_tab().flow();
             assert_eq!(pane.drawings.items().len(), 1);
             let drawing = &pane.drawings.items()[0];
             assert_eq!(

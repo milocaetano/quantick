@@ -97,7 +97,7 @@ fn i1_preview_and_discard_keep_the_original_target_and_committed_values() {
     update_indicator_settings(&mut app, Intent::Preview);
     settle_indicators(&mut app);
     assert_eq!(
-        app.active_tab().pane(target.side).indicators.all()[0].input_values[0],
+        app.active_tab().pane(target.side).pane.indicators.all()[0].input_values[0],
         InputValue::Int(37)
     );
     assert_eq!(
@@ -129,7 +129,7 @@ fn i1_preview_and_discard_keep_the_original_target_and_committed_values() {
     update_indicator_settings(&mut app, Intent::Close);
     settle_indicators(&mut app);
     assert_eq!(
-        app.active_tab().pane(target.side).indicators.all()[0].input_values,
+        app.active_tab().pane(target.side).pane.indicators.all()[0].input_values,
         before
     );
     assert_eq!(
@@ -173,7 +173,7 @@ fn i1_preset_keeps_an_invalid_cell_position_before_a_valid_neighbor() {
             SavedInput::Source("open".to_owned()),
         ]
     ));
-    let specs = app.active_tab().pane(target.side).indicators.all()[0]
+    let specs = app.active_tab().pane(target.side).pane.indicators.all()[0]
         .descriptor
         .inputs
         .clone();
@@ -285,7 +285,8 @@ fn i1_origin_watch_observes_file_time_only_after_layout_mirroring() {
         .runtime
         .indicators
         .add_library(
-            app.runtime
+            &mut app
+                .runtime
                 .tabs
                 .runtime_mut(app.runtime.tabs.active_index())
                 .pane_mut(target.1),

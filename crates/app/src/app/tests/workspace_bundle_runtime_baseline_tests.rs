@@ -22,7 +22,7 @@ fn bundle_runtime_baseline_idle_and_pending_picker_do_no_allocating_work() {
                 app.runtime
                     .workspace
                     .picker_mut()
-                    .open_export(&tab.symbol, tab.flow_pane.series_state().spec());
+                    .open_export(&tab.symbol, tab.flow_series().state().spec());
             }
         }
         let work = crate::work_meter::tally().since(before);

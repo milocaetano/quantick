@@ -12,7 +12,7 @@ fn drawing_toolbar_avoids_manager() {
         &[egui::pos2(400.0, 300.0), egui::pos2(600.0, 400.0)],
     );
     app.surfaces.toolrail.arm(Tool::Pointer);
-    app.drawing_pane_mut().drawings.select(Some(index));
+    app.drawing_pane_mut().pane.drawings.select(Some(index));
     for parked in [false, true] {
         if parked {
             app.surfaces
@@ -21,8 +21,14 @@ fn drawing_toolbar_avoids_manager() {
                 .set_manual(egui::pos2(55.0, 190.0));
         }
         for (locked, hidden) in [(false, false), (true, false), (false, true)] {
-            app.drawing_pane_mut().drawings.set_locked_at(index, locked);
-            app.drawing_pane_mut().drawings.set_hidden_at(index, hidden);
+            app.drawing_pane_mut()
+                .pane
+                .drawings
+                .set_locked_at(index, locked);
+            app.drawing_pane_mut()
+                .pane
+                .drawings
+                .set_hidden_at(index, hidden);
             app.surfaces.drawing_chrome.set_manager_open(true);
             app.surfaces.drawing_chrome.forget_context_bar_rect();
             for _ in 0..3 {
@@ -281,9 +287,12 @@ fn drawing_text_and_forms_remain_readable_inspector() {
                 let count = if id == "anchored-vwap" { 1 } else { 2 };
                 let index = place_drawing(&mut app, &ctx, id, &anchors[..count]);
                 app.surfaces.toolrail.arm(Tool::Pointer);
-                app.drawing_pane_mut().drawings.select(Some(index));
+                app.drawing_pane_mut().pane.drawings.select(Some(index));
                 let locked = id == "trend-line";
-                app.drawing_pane_mut().drawings.set_locked_at(index, locked);
+                app.drawing_pane_mut()
+                    .pane
+                    .drawings
+                    .set_locked_at(index, locked);
                 app.surfaces.drawing_chrome.set_inspector_pinned(true);
                 app.surfaces.drawing_chrome.set_inspector_open(true);
                 app.surfaces.drawing_chrome.set_inspector_tab(if locked {
@@ -368,15 +377,19 @@ fn drawing_text_and_forms_remain_readable_authored_notes() {
             ] {
                 let authored =
                     quantick_appearance::PremultipliedRgba::from_premultiplied(color.to_array());
-                app.drawing_pane_mut().drawings.select(Some(index));
-                let drawing = app.drawing_pane_mut().drawings.selected_mut().unwrap();
+                app.drawing_pane_mut().pane.drawings.select(Some(index));
+                let drawing = app.drawing_pane_mut().pane.drawings.selected_mut().unwrap();
                 drawing.style.color = authored;
                 drawing
                     .tool
                     .set_inline_text(drawing.payload.as_mut(), "Authored annotation".into());
                 for (selected, locked) in [(false, false), (true, false), (true, true)] {
-                    app.drawing_pane_mut().drawings.set_locked_at(index, locked);
                     app.drawing_pane_mut()
+                        .pane
+                        .drawings
+                        .set_locked_at(index, locked);
+                    app.drawing_pane_mut()
+                        .pane
                         .drawings
                         .select(selected.then_some(index));
                     let mut output = run_frame(&mut app, &ctx);
@@ -413,15 +426,18 @@ fn drawing_text_and_forms_remain_readable_authored_notes() {
                         "canvas foreground resolution, then bare-label shading"
                     );
                     assert_eq!(
-                        app.active_tab().drawing_pane().drawings.items()[index]
+                        app.active_tab().drawing_pane().pane.drawings.items()[index]
                             .style
                             .color,
                         authored
                     );
                 }
-                app.drawing_pane_mut().drawings.set_locked_at(index, false);
-                app.drawing_pane_mut().drawings.select(Some(index));
-                let drawing = app.active_tab().drawing_pane().drawings.items()[index].clone();
+                app.drawing_pane_mut()
+                    .pane
+                    .drawings
+                    .set_locked_at(index, false);
+                app.drawing_pane_mut().pane.drawings.select(Some(index));
+                let drawing = app.active_tab().drawing_pane().pane.drawings.items()[index].clone();
                 let tab = app.runtime.tabs.active_id();
                 let side = app.active_tab().focused_side();
                 assert!(
@@ -488,7 +504,7 @@ fn drawing_text_and_forms_remain_readable_authored_notes() {
                     resolved.to_array()
                 );
                 assert_eq!(
-                    app.active_tab().drawing_pane().drawings.items()[index]
+                    app.active_tab().drawing_pane().pane.drawings.items()[index]
                         .style
                         .color,
                     authored

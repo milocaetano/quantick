@@ -32,7 +32,7 @@ use quantick_feed::{
 };
 use quantick_layers::ChartLayer;
 use quantick_session::{
-    Act, Delivery, Effect, FeedRequest, Msg, OlderCandles, Refusal, TabView, Wait, WaitChange,
+    Act, Delivery, Effect, FeedRequest, OlderCandles, Refusal, TabView, Wait, WaitChange,
 };
 use quantick_stores::bubble_asset_store::{AssetBinding, SharedAssetBubbles};
 
@@ -42,6 +42,8 @@ struct LiveTradeOwners<'a> {
     strategies: &'a mut crate::strategy_anchors::TabStrategies,
     flow: &'a mut crate::pane::ChartPane,
     context: &'a mut [crate::pane::ChartPane],
+    session: &'a mut quantick_session::TabSession,
+    workers: &'a mut super::pane_workers::PaneWorkerBook,
     pending_sounds: &'a mut Vec<crate::audio::Cue>,
     observer: &'a mut dyn super::alerts::Observer,
     received_at_ms: i64,
@@ -60,7 +62,9 @@ impl LiveTradeOwners<'_> {
             match stage {
                 LiveTradeStage::PaperTrade => self.paper.on_trade(trade),
                 LiveTradeStage::PaneTrades => {
-                    for pane in std::iter::once(&mut *self.flow).chain(self.context.iter_mut()) {
+                    let panes = std::iter::once(&mut *self.flow).chain(self.context.iter_mut());
+                    let session = &mut *self.session;
+                    for mut pane in super::pane_workers::lend_all(panes, session, self.workers) {
                         pane.ingest_live_trade_observed(trade, &mut |pane, bar, slot| {
                             self.strategies.queue_closed(pane.id, bar, slot);
                             self.observer.pane(
@@ -73,7 +77,7 @@ impl LiveTradeOwners<'_> {
                             );
                         });
                         self.observer.pane(
-                            super::alerts::facts(pane),
+                            super::alerts::facts(pane.view()),
                             Some(super::alerts::Observation {
                                 trade,
                                 received_at_ms: self.received_at_ms,
@@ -92,7 +96,11 @@ impl LiveTradeOwners<'_> {
                     super::strategies::evaluate(
                         self.paper,
                         self.strategies,
-                        (&*self.flow, &*self.context),
+                        std::iter::once(&*self.flow)
+                            .chain(self.context.iter())
+                            .map(|pane| {
+                                super::pane_workers::lend(pane, self.session, self.workers)
+                            }),
                         self.pending_sounds,
                         now_ms,
                     );
@@ -328,7 +336,7 @@ impl Tab {
 
         // Rebuild every pane from scratch for the new stream, each keeping its
         // own bar spec. Retained trades from the old symbol must not leak in.
-        for pane in self.panes_mut() {
+        for mut pane in self.panes_mut() {
             pane.presentation.candles.market_changed();
             pane.reset_series();
         }
@@ -338,7 +346,7 @@ impl Tab {
         // switch and price does not, so without this a BTC level would paint
         // at full strength over an index chart, at a number that means
         // nothing there (§D7b).
-        for pane in self.panes_mut() {
+        for mut pane in self.panes_mut() {
             pane.drawings.mark_market_changed();
         }
         // The regions those instances watched belong to the market that just
@@ -410,7 +418,7 @@ impl Tab {
 
     fn set_candle_aggression(&mut self, on: bool) {
         let state = std::collections::BTreeMap::from([(ChartLayer::CandleAggression, on)]);
-        self.flow_pane.layer_write().apply_states(&state);
+        self.flow_mut().layer_write().apply_states(&state);
     }
 
     /// Open wearing the layout the feed declares, if it declares one.
@@ -502,7 +510,7 @@ impl Tab {
                     observer,
                 ),
                 TabDrainStage::ApplyIndicatorResults => {
-                    for pane in self.panes_mut() {
+                    for mut pane in self.panes_mut() {
                         pane.apply_indicator_events();
                     }
                 }
@@ -570,7 +578,7 @@ impl Tab {
                 SourceDrainStage::PublishLatestPartial => {
                     // Additional final publication; event handlers retain their own sends.
                     if live {
-                        for pane in self.panes_mut() {
+                        for mut pane in self.panes_mut() {
                             pane.publish_partial();
                         }
                     }
@@ -578,7 +586,7 @@ impl Tab {
                 SourceDrainStage::LandGap => self.land_demo_gap(),
                 SourceDrainStage::SettleReanchors => {
                     // Empty panes retain debt; populated panes use this drain's bars.
-                    for pane in self.panes_mut() {
+                    for mut pane in self.panes_mut() {
                         pane.settle_pending_reanchor();
                     }
                 }
@@ -598,7 +606,7 @@ impl Tab {
         let mut live = false;
         let (mut received_at_ms, mut refilled) = (None, 0);
         // Venue candles landing before the first print meet it at the seam.
-        let printless = self.flow_pane.series_state().trades().is_empty();
+        let printless = self.flow_series().state().trades().is_empty();
         loop {
             match self.link.events.try_recv() {
                 Ok(FeedEvent::Backfilled(trades)) => {
@@ -620,7 +628,7 @@ impl Tab {
                     }
                     // One tape, every pane: the split multiplies views of the
                     // market, never the stream behind them.
-                    for pane in self.panes_mut() {
+                    for mut pane in self.panes_mut() {
                         pane.ingest_backfill(&trades);
                     }
                 }
@@ -634,7 +642,7 @@ impl Tab {
                     // chart already holds in front of the bars it duplicates.
                     // The run's own reply is not that window: it takes the
                     // ordinary path below, judged on what it brought.
-                    let oldest = self.flow_pane.series_state().trades().first();
+                    let oldest = self.flow_series().state().trades().first();
                     let oldest_ms = oldest.map(|trade| trade.timestamp_ms);
                     if self.link.resume_floor_ms.is_some()
                         && !self.session.answers_run(&trades, oldest_ms)
@@ -657,7 +665,7 @@ impl Tab {
                     let mut pending = false;
                     // Each pane cuts the older trades into its own bars, so
                     // each shifts its own anchors by its own count.
-                    for pane in self.panes_mut() {
+                    for mut pane in self.panes_mut() {
                         pending |= pane.receive_history(std::sync::Arc::clone(&trades), defer);
                     }
                     // The first engine bar just moved backwards in time, and
@@ -689,7 +697,7 @@ impl Tab {
                     let trades = std::sync::Arc::new(trades);
                     let defer = self.defer_history(trades.len());
                     let mut pending = false;
-                    for pane in self.panes_mut() {
+                    for mut pane in self.panes_mut() {
                         pending |= pane.receive_history(std::sync::Arc::clone(&trades), defer);
                     }
                     if !pending {
@@ -758,7 +766,7 @@ impl Tab {
             }
         }
         if printless
-            && !self.flow_pane.series_state().trades().is_empty()
+            && !self.flow_series().state().trades().is_empty()
             && self.session.holds_venue_candles()
         {
             self.refold_history_prefix();
@@ -776,7 +784,7 @@ impl Tab {
 
     fn poll_history_publication(&mut self) {
         let mut ready = true;
-        for pane in self.panes_mut() {
+        for mut pane in self.panes_mut() {
             ready &= pane.prepare_history();
         }
         if self.panes().any(|(pane, _)| pane.history_failed()) {
@@ -787,7 +795,7 @@ impl Tab {
         }
         let mut changed = false;
         let mut pending = false;
-        for pane in self.panes_mut() {
+        for mut pane in self.panes_mut() {
             if ready {
                 changed |= pane.install_history();
             }
@@ -891,6 +899,8 @@ impl Tab {
             strategies: &mut self.strategies,
             flow: &mut self.flow_pane,
             context: &mut self.time_panes,
+            session: &mut self.session,
+            workers: &mut self.pane_workers,
             pending_sounds: &mut self.pending_alarm_sounds,
             observer,
             received_at_ms,
@@ -976,7 +986,7 @@ impl Tab {
     /// running. The live selection is untouched, so closing the replay comes
     /// back to exactly the feed and symbol that were streaming before.
     pub fn open_replay(&mut self, config: &AppConfig, request: quantick_feed::ReplayRequest) {
-        for pane in self.panes_mut() {
+        for mut pane in self.panes_mut() {
             pane.presentation.candles.market_changed();
         }
         tracing::info!(
@@ -1016,7 +1026,7 @@ impl Tab {
         // panes for it drops the readings with the series: the live market's
         // are put aside, to come back with it.
         self.deal_recorder
-            .stash(self.flow_pane.series_state().deal_samples().to_vec());
+            .stash(self.flow_series().state().deal_samples().to_vec());
         self.reset_market_state(false);
     }
 
@@ -1025,7 +1035,7 @@ impl Tab {
         if self.link.replay.take().is_none() {
             return;
         }
-        for pane in self.panes_mut() {
+        for mut pane in self.panes_mut() {
             pane.presentation.candles.market_changed();
         }
         let (feed_id, symbol) = self.active.clone();
@@ -1115,7 +1125,7 @@ impl Tab {
         let handle = spawn(provider, &self.symbol, &config.metatrader, shelf_dir());
         self.attach_resuming(handle);
         // A feed that refills a reconnect hole starts from where the chart ends.
-        if let Some(seam) = feed::ResumeSeam::of_tape(self.flow_pane.series_state().trades()) {
+        if let Some(seam) = feed::ResumeSeam::of_tape(self.flow_series().state().trades()) {
             let _ = self.link.commands.try_send(FeedCommand::ResumeAfter(seam));
         }
         // The book from the dropped socket is gone with it. Nothing is reset
@@ -1222,9 +1232,12 @@ impl Tab {
             flow_pane,
             time_panes,
             strategies,
+            session,
+            pane_workers,
             ..
         } = self;
-        for pane in std::iter::once(flow_pane).chain(time_panes.iter_mut()) {
+        let panes = std::iter::once(flow_pane).chain(time_panes.iter_mut());
+        for mut pane in super::pane_workers::lend_all(panes, session, pane_workers) {
             for trade in trades {
                 pane.ingest_live_trade_observed(trade, &mut |pane, bar, slot| {
                     if to_strategies {
@@ -1248,7 +1261,7 @@ impl Tab {
         let Some(silence_ms) = self.link.pending_demo_gap_ms else {
             return;
         };
-        let bars = self.flow_pane.series_state().bars();
+        let bars = self.flow_series().state().bars();
         // Two bars at least: a seam is a boundary, and a boundary needs a bar
         // on each side of it.
         if bars.len() < 2 {
@@ -1377,11 +1390,11 @@ impl Tab {
                     let changed = self.install_prefix(pane, bars, lead, covers_seam, seam);
                     run.rebuilt_panes |= u32::from(changed) << pane;
                 }
-                Effect::HoldPages(held) => {
-                    self.panes_mut().for_each(|pane| pane.hold_history(held))
-                }
+                Effect::HoldPages(held) => self
+                    .panes_mut()
+                    .for_each(|mut pane| pane.hold_history(held)),
                 Effect::RetryRebuilds => {
-                    for pane in self.panes_mut() {
+                    for mut pane in self.panes_mut() {
                         pane.retry_history();
                     }
                 }
@@ -1406,25 +1419,31 @@ impl Tab {
         judged: Judged<'_>,
         act: Act<'_>,
     ) -> Result<Vec<Effect>, Refusal> {
-        let panes = pane_views(&self.flow_pane, &self.time_panes);
-        let tab = TabView {
-            symbol: &self.symbol,
-            capabilities: judged.capabilities,
-            feed_pages: self.link.feed_capabilities.borrow().history_paging,
-            panes: &panes,
-            tape: self.flow_pane.series_state().trades(),
-            history_wait: self.loading.is_active(LoadingTask::History),
-            outages: &|| self.link.feed_gaps.iter().map(|gap| gap.outage()).collect(),
-            provider: judged
-                .config
-                .and_then(|config| config.provider_of(&self.feed_id)),
-            page_step: self.history_step,
-            reach_bounds: judged
-                .config
-                .map(|config| config.history.reach_bounds())
-                .unwrap_or_default(),
-        };
-        self.session.dispatch(Msg { act, tab: &tab }, judged.now)
+        let flow_id = self.flow_pane.id;
+        let panes = std::iter::once(&self.flow_pane).chain(&self.time_panes);
+        let (link, workers) = (&self.link, &self.pane_workers);
+        let history_wait = self.loading.is_active(LoadingTask::History);
+        let (symbol, feed_id, page_step) = (&self.symbol, &self.feed_id, self.history_step);
+        self.session
+            .dispatch_reading(act, judged.now, |series, judge| {
+                let panes = pane_views(panes, |id| series.get(&id), workers);
+                let tab = TabView {
+                    symbol,
+                    capabilities: judged.capabilities,
+                    feed_pages: link.feed_capabilities.borrow().history_paging,
+                    panes: &panes,
+                    tape: series[&flow_id].state().trades(),
+                    history_wait,
+                    outages: &|| link.feed_gaps.iter().map(|gap| gap.outage()).collect(),
+                    provider: judged.config.and_then(|config| config.provider_of(feed_id)),
+                    page_step,
+                    reach_bounds: judged
+                        .config
+                        .map(|config| config.history.reach_bounds())
+                        .unwrap_or_default(),
+                };
+                judge(&tab)
+            })
     }
 
     /// Send one request the session phrased, and say what the channel did.
@@ -1463,7 +1482,8 @@ impl Tab {
     /// when it could not, which of the reasons it is.
     #[must_use]
     pub fn older_candles(&self, capabilities: FeedCapabilities) -> OlderCandles {
-        let panes = pane_views(&self.flow_pane, &self.time_panes);
+        let panes = std::iter::once(&self.flow_pane).chain(&self.time_panes);
+        let panes = pane_views(panes, |id| self.session.series(id), &self.pane_workers);
         self.session.older_candles(capabilities, &panes)
     }
 

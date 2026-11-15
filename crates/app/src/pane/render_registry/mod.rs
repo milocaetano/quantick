@@ -164,7 +164,7 @@ pub(super) fn standard() -> &'static RenderRegistry {
 pub(super) mod probe {
     //! An additive package: no edits to built-in identities, policy or dispatch.
     use super::*;
-    use crate::{pane::ChartPane, style::ChartStyle};
+    use crate::style::ChartStyle;
     use quantick_engine::BarSpec;
     use quantick_layers::LayerActions;
     use quantick_layers::{
@@ -191,12 +191,13 @@ pub(super) mod probe {
         layers: &[LAYER],
         contributions: &[],
     };
-    fn installed() -> ChartPane {
-        let mut pane = ChartPane::flow(1, BarSpec::Tick(100), "TEST".to_owned());
+    fn installed() -> crate::pane::PaneParts {
+        let mut parts = crate::pane::PaneParts::flow(1, BarSpec::Tick(100), "TEST".to_owned());
+        let mut pane = parts.at();
         install(&mut pane);
-        pane
+        parts
     }
-    pub(in crate::pane) fn install(pane: &mut ChartPane) {
+    pub(in crate::pane) fn install(pane: &mut crate::pane::ChartPane) {
         let packages: Vec<_> = PACKAGES.iter().copied().chain([PACKAGE]).collect();
         let registry = Box::leak(Box::new(RenderRegistry::new(&packages).unwrap()));
         pane.layers = LayerState::new(registry.layers());
@@ -204,7 +205,8 @@ pub(super) mod probe {
     }
     #[test]
     fn new_package_reaches_production_discovery_operation_and_persistence() {
-        let mut pane = installed();
+        let mut parts = installed();
+        let mut pane = parts.at();
         let style = ChartStyle::default();
         let catalog = pane.layers.registry();
         assert_eq!(catalog.layers().len(), 28);
@@ -218,7 +220,8 @@ pub(super) mod probe {
         let restored = quantick_layers::LayerDocument::parse(&text)
             .unwrap()
             .resolve(pane.layers.registry());
-        let mut second = installed();
+        let mut second_parts = installed();
+        let mut second = second_parts.at();
         second.layer_write().apply_states(&restored);
         assert!(second.layer_visible(discovered, &style));
         second.set_layer_visible(discovered, false, &mut LayerActions::default());

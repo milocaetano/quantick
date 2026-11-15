@@ -84,7 +84,7 @@ fn alert_socket_reads_report_storage_failure_and_recovery() {
 fn draft(app: &QuantickApp) -> Value {
     let context = super::super::alerts_runtime::context(
         app.active_tab(),
-        &app.active_tab().flow_pane,
+        app.active_tab().flow(),
         app.runtime.tabs.active_id(),
         0,
     );
@@ -348,12 +348,14 @@ fn alert_socket_target_binding_and_reopen() {
         &[egui::pos2(500.0, 300.0), egui::pos2(650.0, 420.0)],
     );
     app.surfaces.toolrail.arm(Tool::Pointer);
-    app.drawing_pane_mut().drawings.select(Some(index));
+    app.drawing_pane_mut().pane.drawings.select(Some(index));
     run_frame(&mut app, &ctx);
     let selector = schema::DrawingSelector {
         tab_id: app.runtime.tabs.active_id(),
         pane_id: app.active_tab().drawing_pane().id,
-        drawing_id: app.active_tab().drawing_pane().drawings.items()[index].id.0,
+        drawing_id: app.active_tab().drawing_pane().pane.drawings.items()[index]
+            .id
+            .0,
     };
     let directory = gateway_test_directory("alerts-target");
     grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.layout");
@@ -409,7 +411,7 @@ fn alert_socket_target_binding_and_reopen() {
     click_chart(&mut app, &ctx, button);
     run_frame(&mut app, &ctx);
     assert_eq!(
-        json!(app.active_tab().drawing_pane().drawings.items()[index].durable_identity),
+        json!(app.active_tab().drawing_pane().pane.drawings.items()[index].durable_identity),
         target
     );
     let mut spec = draft(&app);
@@ -436,7 +438,7 @@ fn alert_socket_target_binding_and_reopen() {
         .tabs
         .iter_with_ids()
         .flat_map(|(_, tab)| tab.panes())
-        .flat_map(|(pane, _)| pane.drawings.items())
+        .flat_map(|(pane, _)| pane.pane.drawings.items())
         .filter(|drawing| json!(drawing.durable_identity) == target)
         .count();
     assert!(

@@ -70,7 +70,7 @@ impl LayoutAdapter<'_> {
                     return;
                 };
                 self.indicators
-                    .remove(Some(tab.pane_mut(target.side)), target);
+                    .remove(Some(tab.pane_mut(target.side).pane), target);
                 target
             }
             IndicatorEdit::Inputs(target, values) => {
@@ -149,7 +149,7 @@ impl LayoutAdapter<'_> {
                     index.and_then(|index| self.indicators.script_library.file_info(index));
                 let slot = match read {
                     Some(Ok(text)) => {
-                        let pane = self.pane_mut_at(tab, side)?;
+                        let mut pane = self.pane_mut_at(tab, side)?;
                         pane.add_indicator(IndicatorSource::Script {
                             name: name.clone(),
                             text,
@@ -169,7 +169,7 @@ impl LayoutAdapter<'_> {
                         }
                         // The same error slot the menu's own add builds, so a
                         // script the trader fixes and reloads keeps its place.
-                        let pane = self.pane_mut_at(tab, side)?;
+                        let mut pane = self.pane_mut_at(tab, side)?;
                         let slot = pane.indicators.allocate_slot(format!("script.{name}"));
                         pane.indicators.apply(IndicatorEvent::Rebuilt {
                             slot,
@@ -234,7 +234,8 @@ impl LayoutAdapter<'_> {
         let pane = self
             .tabs
             .by_id_mut(target.tab)
-            .and_then(|tab| tab.pane_at_mut(target.side.index()));
+            .and_then(|tab| tab.pane_at_mut(target.side.index()))
+            .map(|pane| pane.pane);
         self.indicators.registry.remove(pane, target);
     }
 
@@ -427,7 +428,8 @@ impl LayoutAdapter<'_> {
         let Some(hidden) = self
             .pane_at(origin.tab, origin.side)
             .and_then(|pane| {
-                pane.indicators
+                pane.pane
+                    .indicators
                     .all()
                     .iter()
                     .find(|view| view.slot == origin.slot)
@@ -446,7 +448,7 @@ impl LayoutAdapter<'_> {
             let owner = self
                 .slot_at(tab, side, slot)
                 .expect("existing indicator pane");
-            let Some(pane) = self.pane_mut_at(tab, side) else {
+            let Some(mut pane) = self.pane_mut_at(tab, side) else {
                 continue;
             };
             let live = pane
@@ -509,7 +511,8 @@ impl LayoutAdapter<'_> {
         let Some(style) = self
             .pane_at(origin.tab, origin.side)
             .and_then(|pane| {
-                pane.indicators
+                pane.pane
+                    .indicators
                     .all()
                     .iter()
                     .find(|view| view.slot == origin.slot)
@@ -535,7 +538,7 @@ impl LayoutAdapter<'_> {
                 .expect("existing indicator pane");
             match self
                 .pane_mut_at(tab, side)
-                .and_then(|pane| pane.indicators.view_mut(slot))
+                .and_then(|pane| pane.pane.indicators.view_mut(slot))
             {
                 Some(view) => view.style = style.clone(),
                 None => {

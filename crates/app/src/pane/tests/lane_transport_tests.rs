@@ -6,8 +6,6 @@ use rust_decimal::Decimal;
 use crate::indicator_worker::LaneTransport;
 use crate::state::BarSpec;
 
-use super::*;
-
 fn print(id: u64, timestamp_ms: i64) -> Trade {
     Trade {
         agg_id: id,
@@ -18,13 +16,13 @@ fn print(id: u64, timestamp_ms: i64) -> Trade {
     }
 }
 
-fn publish(pane: &mut ChartPane) -> usize {
+fn publish(pane: &mut crate::pane::PaneMut<'_>) -> usize {
     let before = pane.indicator_worker.lane_traffic_for_test();
     pane.publish_partial();
     pane.indicator_worker.lane_traffic_for_test() - before
 }
 
-fn retained(pane: &ChartPane) -> usize {
+fn retained(pane: &crate::pane::PaneMut<'_>) -> usize {
     pane.indicator_worker.flush();
     pane.indicator_worker.retained_lane_for_test().0
 }
@@ -33,7 +31,8 @@ fn retained(pane: &ChartPane) -> usize {
 fn producer_transport_is_new_prints_independent_of_old_history() {
     for old_count in [0_u64, 1_024, 8_192] {
         for count in [128_u64, 256] {
-            let mut pane = ChartPane::time(1, 60_000);
+            let mut parts = crate::pane::PaneParts::time(1, 60_000);
+            let mut pane = parts.at();
             let old: Vec<_> = (0..old_count).map(|id| print(id, id as i64)).collect();
             pane.ingest_backfill(&old);
             assert!(pane.lane.set_rungs(8));
@@ -62,7 +61,8 @@ fn producer_transport_is_new_prints_independent_of_old_history() {
 
 #[test]
 fn producer_close_rebuild_lane_toggle_and_empty_updates_preserve_the_run() {
-    let mut pane = ChartPane::time(1, 60_000);
+    let mut parts = crate::pane::PaneParts::time(1, 60_000);
+    let mut pane = parts.at();
     pane.lane.set_rungs(8);
     pane.ingest_backfill(&(1..=3).map(|id| print(id, id as i64)).collect::<Vec<_>>());
     assert_eq!(retained(&pane), 3, "backfill cold-seeds once");
@@ -87,7 +87,7 @@ fn producer_close_rebuild_lane_toggle_and_empty_updates_preserve_the_run() {
     assert_eq!(publish(&mut pane), 2);
     assert_eq!(retained(&pane), 3);
     pane.ingest_live_trade(&print(8, 8));
-    assert!(pane.state.partial().is_none());
+    assert!(pane.series.state().partial().is_none());
     assert_eq!(publish(&mut pane), 0);
     assert_eq!(
         retained(&pane),
@@ -114,7 +114,7 @@ fn producer_close_rebuild_lane_toggle_and_empty_updates_preserve_the_run() {
     assert_eq!(publish(&mut pane), 0, "resize does not duplicate the seed");
     assert_eq!(retained(&pane), 2);
     assert_eq!(
-        pane.state.trades().len(),
+        pane.series.state().trades().len(),
         10,
         "transport never changes trade retention"
     );
@@ -122,7 +122,8 @@ fn producer_close_rebuild_lane_toggle_and_empty_updates_preserve_the_run() {
 
 #[test]
 fn producer_prepend_rewind_and_repeated_rebuild_seed_the_recut_partial_once() {
-    let mut pane = ChartPane::time(1, 60_000);
+    let mut parts = crate::pane::PaneParts::time(1, 60_000);
+    let mut pane = parts.at();
     pane.lane.set_rungs(8);
     pane.ingest_backfill(&(3..=5).map(|id| print(id, id as i64)).collect::<Vec<_>>());
     assert_eq!(retained(&pane), 3);

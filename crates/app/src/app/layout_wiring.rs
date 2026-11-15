@@ -73,7 +73,7 @@ fn facts_of(pane: &ChartPane) -> PaneFacts {
 }
 
 /// Re-anchor what a pane took from the store, once it has bars to anchor on.
-fn settle_marks(pane: &mut ChartPane) {
+fn settle_marks(pane: &mut crate::pane::PaneMut<'_>) {
     if pane.slots() == 0 {
         pane.defer_reanchor();
     } else {
@@ -84,8 +84,9 @@ fn settle_marks(pane: &mut ChartPane) {
 }
 
 /// A pane's side of the market store (see `quantick_drawings::PaneMarks`).
-fn marks_of(pane: &mut ChartPane) -> PaneMarks<'_, BarConfiguration> {
+fn marks_of<'a>(pane: &'a mut crate::pane::PaneMut<'_>) -> PaneMarks<'a, BarConfiguration> {
     let now = *pane.series_state().spec();
+    let pane = &mut *pane.pane;
     let (drawings, layout) = (&mut pane.drawings, &mut pane.layout);
     let rule = BarConfiguration::to_config_string;
     PaneMarks {
@@ -125,7 +126,7 @@ impl<'a> LayoutRead<'a> {
             .tabs
             .by_id(tab)
             .and_then(|tab| tab.pane_at(side.index()))
-            .and_then(ChartPane::layout_id);
+            .and_then(|pane| pane.layout_id());
         self.session
             .book()
             .strip_layout(self.session.resolve_layout(named))
@@ -191,7 +192,7 @@ impl LayoutAdapter<'_> {
         if pane.layout.drawings_key.as_ref() != Some(&key) || pane.layout.is_behind() {
             return Err(Error::SourceChanged);
         }
-        if facts_of(pane).gesture_in_flight {
+        if facts_of(&pane).gesture_in_flight {
             return Err(Error::Busy);
         }
         let id = quantick_drawings::DrawingId(selector.drawing_id);
@@ -221,7 +222,7 @@ impl LayoutAdapter<'_> {
                     .drawings_key
                     .as_ref()
                     .is_some_and(|held| held.market == key.market)
-                    && facts_of(pane).gesture_in_flight
+                    && facts_of(&pane).gesture_in_flight
             })
         {
             return Err(Error::Busy);
@@ -288,7 +289,7 @@ impl LayoutAdapter<'_> {
             // chart kept its indicators while `slot_kinds` was cleared out from
             // under them, and the imported set stacked on top.
             for pane in tab.panes_mut() {
-                strip(pane);
+                strip(pane.pane);
             }
         }
         self.indicators.registry.clear();
@@ -359,7 +360,7 @@ impl LayoutAdapter<'_> {
     fn pane_own_layout(&self, tab: u64, side: PaneSide) -> LayoutId {
         self.store
             .session()
-            .resolve_layout(self.pane_at(tab, side).and_then(ChartPane::layout_id))
+            .resolve_layout(self.pane_at(tab, side).and_then(|pane| pane.layout_id()))
     }
 
     /// Every seeded pane on its workspace's copy of its strip layout; see
@@ -391,7 +392,7 @@ impl LayoutAdapter<'_> {
         let pane = self.pane_at(tab, side).ok_or(LayoutError::Unknown)?;
         let (id, named) = (pane.id, pane.layout_id());
         let view = self.store.session_mut().register_in(tab, id, named);
-        if let Some(pane) = self.pane_mut_at(tab, side) {
+        if let Some(mut pane) = self.pane_mut_at(tab, side) {
             pane.layout.view = view;
             pane.layout.opening = None;
         }
@@ -424,7 +425,7 @@ impl LayoutAdapter<'_> {
                 layout,
                 self.tabs.iter_with_ids().flat_map(|(tab_id, tab)| {
                     tab.panes()
-                        .map(move |(pane, side)| ((tab_id, side), &pane.layout.view))
+                        .map(move |(pane, side)| ((tab_id, side), &pane.pane.layout.view))
                 }),
             )
             .collect()
@@ -434,11 +435,11 @@ impl LayoutAdapter<'_> {
     fn refresh_layout_label(&mut self, tab: u64, side: PaneSide) {
         let name = self
             .pane_at(tab, side)
-            .and_then(ChartPane::layout_id)
+            .and_then(|pane| pane.layout_id())
             .and_then(|id| self.layouts().get(self.layouts().strip_layout(id)))
             .map(|layout| layout.name.clone())
             .unwrap_or_default();
-        if let Some(pane) = self.pane_mut_at(tab, side) {
+        if let Some(mut pane) = self.pane_mut_at(tab, side) {
             pane.layout.label = name;
         }
     }
@@ -456,7 +457,7 @@ impl LayoutAdapter<'_> {
     /// Whether a pane can be swapped under the trader right now; see [`facts_of`].
     fn pane_facts(&self, tab: u64, side: PaneSide) -> PaneFacts {
         self.pane_at(tab, side)
-            .map_or(PaneFacts::default(), facts_of)
+            .map_or(PaneFacts::default(), |pane| facts_of(&pane))
     }
 
     /// Make `id` the layout one pane shows.
@@ -573,7 +574,7 @@ impl LayoutAdapter<'_> {
         let facts = self
             .tabs
             .iter()
-            .flat_map(|tab| tab.panes().map(|(pane, _)| (pane.id, facts_of(pane))));
+            .flat_map(|tab| tab.panes().map(|(pane, _)| (pane.id, facts_of(&pane))));
         let selections = self.store.session().plan_delete(id, facts)?;
         for selection in selections {
             let (tab, side) = self
@@ -735,14 +736,14 @@ impl LayoutAdapter<'_> {
     /// context slot the stack does not have with the *flow* pane, so a bad
     /// address would silently retarget an indicator, a drawing set or a
     /// layout onto the wrong chart instead of being refused.
-    fn pane_mut_at(&mut self, tab: u64, side: PaneSide) -> Option<&mut ChartPane> {
+    fn pane_mut_at(&mut self, tab: u64, side: PaneSide) -> Option<crate::pane::PaneMut<'_>> {
         self.tabs
             .by_id_mut(tab)
             .and_then(|candidate| candidate.pane_at_mut(side.index()))
     }
 
     /// See [`Self::pane_mut_at`].
-    fn pane_at(&self, tab: u64, side: PaneSide) -> Option<&ChartPane> {
+    fn pane_at(&self, tab: u64, side: PaneSide) -> Option<crate::pane::PaneRef<'_>> {
         self.tabs
             .by_id(tab)
             .and_then(|candidate| candidate.pane_at(side.index()))
@@ -817,7 +818,7 @@ impl LayoutAdapter<'_> {
         &mut self,
         tab: u64,
         side: PaneSide,
-    ) -> Option<(&mut ChartPane, &mut MarketSettings)> {
+    ) -> Option<(crate::pane::PaneMut<'_>, &mut MarketSettings)> {
         let pane = self.tabs.by_id_mut(tab)?.pane_at_mut(side.index())?;
         Some((pane, self.store.market_mut().settings_mut()))
     }
@@ -825,10 +826,10 @@ impl LayoutAdapter<'_> {
     /// Serialise what a pane holds into the market store under the key the pane
     /// says it holds, and empty the pane.
     fn put_away_drawings(&mut self, tab: u64, side: PaneSide) -> PaneWrite {
-        let Some((pane, market)) = self.pane_and_store(tab, side) else {
+        let Some((mut pane, market)) = self.pane_and_store(tab, side) else {
             return PaneWrite::default();
         };
-        marks_of(pane).put_away(market)
+        marks_of(&mut pane).put_away(market)
     }
 
     /// Adopt the drawings of the pane's current market and role. A context
@@ -844,7 +845,7 @@ impl LayoutAdapter<'_> {
             .iter()
             .flat_map(|tab| tab.panes())
             .any(|(pane, _)| {
-                pane.layout.drawings_key.as_ref() == Some(&key) && facts_of(pane).gesture_in_flight
+                pane.layout.drawings_key.as_ref() == Some(&key) && facts_of(&pane).gesture_in_flight
             });
         let market = self.store.market_mut();
         let claimed = !busy && market.settings_mut().claim_for(&key, side.index());
@@ -855,7 +856,7 @@ impl LayoutAdapter<'_> {
         let source = self.tabs.by_id(tab).map(Self::market_of);
         let source = source.map(|(venue, symbol)| (venue.to_owned(), symbol.to_owned()));
         self.adopt_marks(tab, side, &key, PaneSync::Adopt);
-        let Some(pane) = self.pane_mut_at(tab, side) else {
+        let Some(mut pane) = self.pane_mut_at(tab, side) else {
             return;
         };
         pane.layout.drawings_key = Some(key);
@@ -869,11 +870,11 @@ impl LayoutAdapter<'_> {
     /// Take what `key` shows at the pane's held bars from the store, the `sync`
     /// way (`quantick_drawings::PaneSync`).
     fn adopt_marks(&mut self, tab: u64, side: PaneSide, key: &DrawingKey, sync: PaneSync) {
-        let Some((pane, market)) = self.pane_and_store(tab, side) else {
+        let Some((mut pane, market)) = self.pane_and_store(tab, side) else {
             return;
         };
-        marks_of(pane).sync(sync, market, key);
-        settle_marks(pane);
+        marks_of(&mut pane).sync(sync, market, key);
+        settle_marks(&mut pane);
     }
 
     /// A contract roll's half of the drawings. Contracts of one asset are one
@@ -958,14 +959,14 @@ impl LayoutAdapter<'_> {
             })
             .collect();
         for (tab, side) in changed {
-            let Some((pane, market)) = self.pane_and_store(tab, side) else {
+            let Some((mut pane, market)) = self.pane_and_store(tab, side) else {
                 continue;
             };
-            let Some((key, write)) = marks_of(pane).persist(market) else {
+            let Some((key, write)) = marks_of(&mut pane).persist(market) else {
                 continue;
             };
             if write.merged {
-                settle_marks(pane);
+                settle_marks(&mut pane);
             }
             if write.changed() {
                 self.mark_market_dirty();
@@ -977,8 +978,8 @@ impl LayoutAdapter<'_> {
     /// Each frame before a write: `quantick_drawings::PaneMarks::follow_store`.
     fn follow_quiet_recuts(&mut self) {
         let store = self.store.market();
-        for pane in self.tabs.iter_mut().flat_map(|tab| tab.panes_mut()) {
-            marks_of(pane).follow_store(store);
+        for mut pane in self.tabs.iter_mut().flat_map(|tab| tab.panes_mut()) {
+            marks_of(&mut pane).follow_store(store);
         }
     }
 
@@ -993,11 +994,12 @@ impl LayoutAdapter<'_> {
             .iter_with_ids()
             .flat_map(|(id, tab)| tab.panes().map(move |(pane, side)| (id, side, pane)))
             .filter(|&(id, side, p)| writer.map_or(p.layout.is_behind(), |at| at != (id, side)))
-            .map(|(id, side, pane)| (id, side, facts_of(pane).gesture_in_flight))
+            .map(|(id, side, pane)| (id, side, facts_of(&pane).gesture_in_flight))
             .collect();
         let reach = write.map(|(_, _, key, write)| (key, write));
         for (tab, side, busy) in twins {
-            let follow = |pane: &mut ChartPane| marks_of(pane).follow_write(reach, busy);
+            let follow =
+                |mut pane: crate::pane::PaneMut<'_>| marks_of(&mut pane).follow_write(reach, busy);
             if let Some((key, sync)) = self.pane_mut_at(tab, side).and_then(follow) {
                 self.leave_pane_gestures(tab, side);
                 self.adopt_marks(tab, side, &key, sync);

@@ -117,6 +117,7 @@ fn a_context_charts_footprint_door_edits_that_chart() {
     let target = app
         .active_tab()
         .pane(side)
+        .pane
         .frame
         .chart_area
         .expect("the split laid out the context chart")

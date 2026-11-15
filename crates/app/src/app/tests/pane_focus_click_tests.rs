@@ -131,6 +131,7 @@ fn arrange(app: &mut QuantickApp, ctx: &egui::Context, arrangement: &Arrangement
 fn chart_centre(app: &QuantickApp, side: PaneSide, name: &str) -> egui::Pos2 {
     app.active_tab()
         .pane(side)
+        .pane
         .frame
         .chart_area
         .unwrap_or_else(|| panic!("{name}: {side:?} is drawn and has a chart"))
@@ -146,7 +147,7 @@ fn frames_around(
     side: PaneSide,
 ) -> usize {
     let border = crate::theme::get(ctx).widget_active_border();
-    let Some(chart) = app.active_tab().pane(side).frame.chart_area else {
+    let Some(chart) = app.active_tab().pane(side).pane.frame.chart_area else {
         return 0;
     };
     output

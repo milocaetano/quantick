@@ -147,7 +147,7 @@ fn the_channel_keeps_the_leg_and_takes_its_width_from_the_next_click() {
             .unwrap();
         click_quick_range_action(&mut app, &ctx, Action::Channel);
         run_frame(&mut app, &ctx);
-        let pane = &app.active_tab().flow_pane;
+        let pane = app.active_tab().flow();
         assert!(pane.drawings.items().is_empty(), "nothing placed yet");
         let draft = pane.drawings.draft().expect("the leg is a pending channel");
         assert_eq!(draft.tool.id(), "parallel-channel");
@@ -192,7 +192,7 @@ fn horizontal_levels_capability_places_one_line_per_distinct_price() {
         assert_eq!(annotations.len(), expected);
         assert_eq!(annotations[0]["anchors"][0]["slot"], "1", "the earlier bar");
         assert_eq!(annotations[0]["anchors"][0]["price"], prices[0]);
-        let placed = &app.active_tab().drawing_pane().drawings;
+        let placed = &app.active_tab().drawing_pane().pane.drawings;
         assert_eq!(placed.items().len(), expected);
         assert!(
             placed
@@ -232,7 +232,7 @@ fn each_shape_capability_places_its_own_tool() {
             )
             .unwrap();
         assert_eq!(result["tool_id"], tool, "{capability}");
-        let placed = app.active_tab().drawing_pane().drawings.items();
+        let placed = app.active_tab().drawing_pane().pane.drawings.items();
         assert_eq!(placed.len(), 1);
         assert_eq!(placed[0].points.len(), count);
     }
@@ -299,7 +299,7 @@ fn one_horizontal_levels_call_is_one_undo_step() {
         anchor["price"] = json!(price);
         anchor["bar_position"] = json!(bar);
     }
-    let depth = app.active_tab().drawing_pane().drawings.undo_depth();
+    let depth = app.active_tab().drawing_pane().pane.drawings.undo_depth();
     app.control_action(
         crate::control::HORIZONTAL_LEVELS_CAPABILITY_ID,
         1,
@@ -307,7 +307,7 @@ fn one_horizontal_levels_call_is_one_undo_step() {
         json!({ "anchors": anchors }),
     )
     .unwrap();
-    let drawings = &mut app.active_tab_mut().drawing_pane_mut().drawings;
+    let drawings = &mut app.active_tab_mut().drawing_pane_mut().pane.drawings;
     let placed = drawings.items().to_vec();
     assert_eq!(placed.len(), 2);
     assert_eq!(drawings.undo_depth(), depth + 1, "one step for both lines");
@@ -323,7 +323,7 @@ fn hand_line(app: &mut QuantickApp, price: f64) {
     let mut fresh = Some(app.tab_reads().new_drawing(tool));
     let point = crate::drawings::ChartPoint::at_time(1.5, price, None);
     let band = crate::drawings::DrawingBand::Price;
-    let drawings = &mut app.active_tab_mut().drawing_pane_mut().drawings;
+    let drawings = &mut app.active_tab_mut().drawing_pane_mut().pane.drawings;
     assert!(drawings.place_with(tool, &band, point, |_| fresh.take().unwrap()));
 }
 
@@ -345,7 +345,7 @@ fn fail_on_the_second_line(app: &mut QuantickApp) {
     };
     // A trend line takes two anchors: one leaves it unfinished.
     let placements = vec![placement("horizontal-line"), placement("trend-line")];
-    let drawings = &mut app.active_tab_mut().drawing_pane_mut().drawings;
+    let drawings = &mut app.active_tab_mut().drawing_pane_mut().pane.drawings;
     let refused = update(drawings, DrawingIntent::PlaceAll(placements));
     assert!(matches!(
         refused.as_slice(),
@@ -360,14 +360,14 @@ fn a_failed_later_line_leaves_items_undo_redo_and_selection_as_they_were() {
     run_frame(&mut app, &ctx);
     hand_line(&mut app, 101.0);
     hand_line(&mut app, 99.0);
-    let drawings = &mut app.active_tab_mut().drawing_pane_mut().drawings;
+    let drawings = &mut app.active_tab_mut().drawing_pane_mut().pane.drawings;
     let both = drawings.items().to_vec();
     assert!(drawings.undo(), "a redo step to keep");
     drawings.select(Some(0));
     let kept = drawings.items().to_vec();
     let depth = drawings.undo_depth();
     fail_on_the_second_line(&mut app);
-    let drawings = &mut app.active_tab_mut().drawing_pane_mut().drawings;
+    let drawings = &mut app.active_tab_mut().drawing_pane_mut().pane.drawings;
     assert_eq!(drawings.items(), &kept[..], "no orphan first line");
     assert_eq!(drawings.undo_depth(), depth, "no undo step brings it back");
     assert_eq!(drawings.selected(), Some(0), "the selection stays");
@@ -381,14 +381,14 @@ fn a_failed_call_at_the_undo_limit_keeps_the_oldest_step() {
     let (mut app, _commands) = app_with_history(8);
     run_frame(&mut app, &ctx);
     hand_line(&mut app, 101.0);
-    let drawings = &mut app.active_tab_mut().drawing_pane_mut().drawings;
+    let drawings = &mut app.active_tab_mut().drawing_pane_mut().pane.drawings;
     let mut locked = false;
     while drawings.undo_depth() < crate::drawings::UNDO_HISTORY_LIMIT {
         locked = !locked;
         drawings.set_locked_at(0, locked);
     }
     fail_on_the_second_line(&mut app);
-    let drawings = &mut app.active_tab_mut().drawing_pane_mut().drawings;
+    let drawings = &mut app.active_tab_mut().drawing_pane_mut().pane.drawings;
     assert_eq!(drawings.undo_depth(), crate::drawings::UNDO_HISTORY_LIMIT);
     while drawings.undo() {}
     assert!(

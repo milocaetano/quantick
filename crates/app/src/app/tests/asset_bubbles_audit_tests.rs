@@ -550,7 +550,7 @@ fn win(app: &QuantickApp) -> (BubblePreset, bool, bool, bool) {
     let tab = app.active_tab();
     (
         look(app),
-        tab.flow_pane
+        tab.flow()
             .layer_switched_on(ChartLayer::CandleAggression, &app.runtime.style),
         tab.tape().ignore_flow_opening(),
         layer_on(app, ChartLayer::Bubbles),

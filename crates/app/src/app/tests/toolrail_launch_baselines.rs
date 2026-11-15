@@ -192,7 +192,7 @@ fn draft_uses_the_tool_selected_during_construction() {
     ));
     app.active_tab_mut().flow_pane.frame.auto_range = Some((90.0, 110.0));
     crate::app::demo_hooks::apply_drawing_draft(&mut app);
-    let pane = &app.active_tab().flow_pane;
+    let pane = app.active_tab().flow();
     assert_eq!(pane.drawings.draft_len(), 2);
     let points = &pane.drawings.draft().unwrap().points;
     assert_eq!(points[0], ChartPoint::at_time(141.5, 99.4, Some(15_200)));

@@ -296,7 +296,7 @@ fn a_cut_with_the_retest_preset_rests_a_limit_and_cancels_at_the_target() {
         .find(|tool| tool.id() == "rectangle")
         .expect("the rectangle tool is registered");
     {
-        let pane = &mut app.active_tab_mut().flow_pane;
+        let mut pane = app.active_tab_mut().flow_mut();
         pane.drawings
             .place(rectangle, drawings::ChartPoint::at(0.0, 105.0));
         pane.drawings
@@ -413,7 +413,7 @@ fn parking_the_properties_popup_autosaves_it_to_the_workspace() {
     let tabs_when_saved = ui_state::load(app.runtime.workspace.ui_state_path()).tabs;
     // Drift away from the saved cockpit, the way a session does — a bar
     // rule, which is recorded per tab, so a full capture would show here.
-    app.active_tab_mut().flow_pane.set_spec(BarSpec::Tick(500));
+    app.active_tab_mut().flow_mut().set_spec(BarSpec::Tick(500));
     run_frame(&mut app, &ctx);
     draw_horizontal_line(&mut app, &ctx, 300.0);
 
@@ -702,7 +702,7 @@ fn a_restored_workspace_puts_the_window_back() {
         "the saved focus wins over the pane the layout switch revealed"
     );
     assert_eq!(
-        tab.flow_pane.series_state().spec(),
+        tab.flow_series().state().spec(),
         &BarSpec::Dollar(rust_decimal::Decimal::from(250_000)),
         "the flow pane opens on the rule the workspace recorded"
     );
@@ -1042,7 +1042,7 @@ fn renaming_a_layout_renames_it_on_every_pane_that_shows_it() {
     );
     for side in [PaneSide::Flow, PaneSide::Time(0)] {
         assert_eq!(
-            app.active_tab().pane(side).layout.label,
+            app.active_tab().pane(side).pane.layout.label,
             "opening",
             "the rename reached {side:?}"
         );

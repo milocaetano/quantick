@@ -22,7 +22,7 @@ use super::PointerCompass;
 /// of something the frame already holds — nothing is cloned into it, and no
 /// bar is walked to fill it. It is the narrow context the painters read
 /// instead of the pane's whole state, and the reason they can be `&self`
-/// while the slices of `self.state` stay borrowed across the frame.
+/// while the slices of the series stay borrowed across the frame.
 pub(super) struct DrawFrame<'a> {
     pub(super) painter: &'a egui::Painter,
     pub(super) areas: &'a PlotAreas,

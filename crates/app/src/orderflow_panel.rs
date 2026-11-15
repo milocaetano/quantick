@@ -54,9 +54,14 @@ pub(crate) fn draw(
     folds: &mut AssetFolds,
 ) -> egui::Rect {
     let symbol = tab.symbol.as_str();
-    let pane = &mut tab.flow_pane;
+    let at = crate::tab::pane_workers::lend_mut(
+        &mut tab.flow_pane,
+        &mut tab.session,
+        &mut tab.pane_workers,
+    );
+    let tick_chart = at.series_state().tick_membership().is_some();
+    let pane = at.pane;
     let id = pane.id;
-    let tick_chart = pane.series_state().tick_membership().is_some();
     let painted = &mut pane.frame.header_controls;
     let view = pane.orderflow.as_mut().expect("the flow pane keeps a tape");
     if !view.settings_panel.is_open() {

@@ -21,8 +21,7 @@ fn tab(id: u64, dir: &std::path::Path) -> crate::tab::Tab {
         },
         dir.to_path_buf(),
     );
-    tab.time_panes
-        .push(crate::pane::ChartPane::time(id + 1, 60_000));
+    tab.push_time_pane(crate::pane::ChartPane::time(id + 1, 60_000));
     tab
 }
 #[test]
@@ -40,17 +39,27 @@ fn bar_switch_host_targets_stable_tab_and_pane_and_preserves_refusal_toast() {
     };
     apply_bar_switch(&mut tabs, &mut toast, request);
     assert_eq!(
-        tabs.by_id(10).unwrap().time_panes[0].series_state().spec(),
+        tabs.by_id(10)
+            .unwrap()
+            .pane_at(1)
+            .unwrap()
+            .series
+            .state()
+            .spec(),
         &crate::state::BarSpec::Time(300_000)
     );
     assert_eq!(
-        tabs.by_id(active).unwrap().time_panes[0]
-            .series_state()
+        tabs.by_id(active)
+            .unwrap()
+            .pane_at(1)
+            .unwrap()
+            .series
+            .state()
             .spec(),
         &crate::state::BarSpec::Time(60_000)
     );
     assert_eq!(
-        tabs.by_id(10).unwrap().flow_pane.series_state().spec(),
+        tabs.by_id(10).unwrap().flow_series().state().spec(),
         &crate::state::BarSpec::Tick(50)
     );
     assert_eq!(tabs.active_id(), active);
@@ -64,7 +73,13 @@ fn bar_switch_host_targets_stable_tab_and_pane_and_preserves_refusal_toast() {
         },
     );
     assert_eq!(
-        tabs.by_id(10).unwrap().time_panes[0].series_state().spec(),
+        tabs.by_id(10)
+            .unwrap()
+            .pane_at(1)
+            .unwrap()
+            .series
+            .state()
+            .spec(),
         &crate::state::BarSpec::Time(300_000)
     );
     assert_eq!(

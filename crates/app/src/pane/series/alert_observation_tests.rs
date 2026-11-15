@@ -1,10 +1,11 @@
-use super::ChartPane;
 use quantick_engine::{Side, Trade, bar_registry::BUILTIN_BARS};
 use rust_decimal::Decimal;
 
 #[test]
 fn committed_observer_excludes_held_history_and_preserves_equal_time_closes() {
-    let mut pane = ChartPane::flow(1, BUILTIN_BARS.parse("renko:3").unwrap(), "TEST".to_owned());
+    let mut parts =
+        crate::pane::PaneParts::flow(1, BUILTIN_BARS.parse("renko:3").unwrap(), "TEST".to_owned());
+    let mut pane = parts.at();
     let trade = |id: u64, price: i64| Trade {
         agg_id: id,
         timestamp_ms: 1000 + id as i64,
@@ -29,5 +30,5 @@ fn committed_observer_excludes_held_history_and_preserves_equal_time_closes() {
         closes.iter().map(|(_, slot)| *slot).collect::<Vec<_>>(),
         [31, 32, 33]
     );
-    assert_eq!(pane.state.backfill_boundary(), Some(31));
+    assert_eq!(pane.series.state().backfill_boundary(), Some(31));
 }

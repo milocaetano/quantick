@@ -46,6 +46,7 @@ pub(super) fn set_numeric_input(
     let target = attached_target(app, id).ok_or("script is not attached to the focused pane")?;
     let view = app
         .focused_pane()
+        .pane
         .indicators
         .all()
         .iter()

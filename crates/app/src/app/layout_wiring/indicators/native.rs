@@ -84,7 +84,7 @@ impl quantick_control_handlers::native_indicator::NativePort for LayoutAdapter<'
             wire::Prepared::Style(plot, style) => {
                 let view = self
                     .pane_mut_at(tab, side)
-                    .and_then(|p| p.indicators.view_mut(slot))
+                    .and_then(|p| p.pane.indicators.view_mut(slot))
                     .ok_or("indicator view closed")?;
                 view.style.set(
                     plot,
@@ -100,7 +100,7 @@ impl quantick_control_handlers::native_indicator::NativePort for LayoutAdapter<'
             }
             wire::Prepared::Hidden(hidden) => {
                 self.pane_mut_at(tab, side)
-                    .and_then(|p| p.indicators.view_mut(slot))
+                    .and_then(|p| p.pane.indicators.view_mut(slot))
                     .ok_or("indicator view closed")?
                     .hidden = hidden;
                 IndicatorEdit::Hidden(owner)

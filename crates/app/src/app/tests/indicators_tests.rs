@@ -14,11 +14,11 @@ fn selected_cvd_line() -> (QuantickApp, egui::Context, usize, egui::Pos2) {
     let anchor = pane_body(&app, 0).center();
     let index = place_drawing(&mut app, &ctx, "horizontal-line", &[anchor]);
     app.surfaces.toolrail.arm(Tool::Pointer);
-    app.drawing_pane_mut().drawings.select(Some(index));
+    app.drawing_pane_mut().pane.drawings.select(Some(index));
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
     assert!(matches!(
-        app.active_tab().drawing_pane().drawings.items()[index].band,
+        app.active_tab().drawing_pane().pane.drawings.items()[index].band,
         drawings::DrawingBand::Indicator(_)
     ));
     (app, ctx, index, anchor)
@@ -31,6 +31,7 @@ fn automatic_indicator_bar_stays_in_its_band_clear_of_the_header_and_price_foote
     let price = app
         .active_tab()
         .drawing_pane()
+        .pane
         .frame
         .chart_area
         .expect("price chart drawn");
@@ -60,6 +61,7 @@ fn selected_indicator_bounds_use_the_drawn_band_scale() {
     let chart = app
         .active_tab()
         .drawing_pane()
+        .pane
         .frame
         .chart_area
         .expect("price chart drawn");
@@ -264,7 +266,7 @@ fn the_indicator_set_restores_from_disk_and_saves_back() {
     // Let the worker answer the adds, so the views the snapshot reads
     // exist — a settled edit reads what is on screen.
     app.active_tab_mut().flow_pane.indicator_worker.flush();
-    app.active_tab_mut().flow_pane.apply_indicator_events();
+    app.active_tab_mut().flow_mut().apply_indicator_events();
     app.layout_adapter().apply_pending_indicator_state();
     app.layout_adapter().flush_layouts();
     let crate::layouts::Loaded::Book(book) = crate::layouts::load(&layouts_path) else {
@@ -443,7 +445,7 @@ fn a_mouse_vertical_line_is_per_indicator_mirrored_and_saved() {
     app.service_indicator_requests();
 
     for side in [PaneSide::Flow, PaneSide::Time(0)] {
-        let views = app.active_tab().pane(side).indicators.all();
+        let views = app.active_tab().pane(side).pane.indicators.all();
         assert!(views[0].mouse_vertical_line, "CVD follows on {side:?}");
         assert!(!views[1].mouse_vertical_line, "EMA stays off on {side:?}");
     }
@@ -732,7 +734,7 @@ fn the_second_context_pane_takes_focus_bars_and_indicators() {
         .pane(PaneSide::Time(0))
         .series_state()
         .spec();
-    let pane = app.active_tab_mut().focused_pane_mut();
+    let mut pane = app.active_tab_mut().focused_pane_mut();
     pane.spec
         .update(
             quantick_engine::bar_selection::SelectionCommand::Select(

@@ -14,7 +14,7 @@ pub(crate) use quantick_control_schema::interaction::{
 
 use crate::{
     drawings::{Drawing, DrawingBand},
-    pane::{ChartPane, ControlDrawingHit, ControlPointerHit, PaneSide},
+    pane::{ControlDrawingHit, ControlPointerHit, PaneSide},
     tab::Tab,
 };
 
@@ -132,7 +132,7 @@ fn pointer_snapshot<P: TabsPort + ?Sized>(
     app: &P,
     tab_id: u64,
     tab: &Tab,
-    pane: &ChartPane,
+    pane: crate::pane::PaneRef<'_>,
     side: PaneSide,
     hit: ControlPointerHit,
 ) -> PointerSnapshot {
@@ -236,7 +236,7 @@ pub(crate) fn selection_snapshot<P: TabsPort + ?Sized>(app: &P) -> SelectionSnap
 }
 
 fn drawing_selection(
-    pane: &ChartPane,
+    pane: crate::pane::PaneRef<'_>,
     side: PaneSide,
     index: usize,
     drawing: &Drawing,
@@ -259,7 +259,7 @@ fn drawing_selection(
 }
 
 fn drawing_hit_snapshot(
-    owner: &ChartPane,
+    owner: crate::pane::PaneRef<'_>,
     owner_side: PaneSide,
     mirrored: bool,
     hit: ControlDrawingHit,
@@ -292,7 +292,7 @@ fn active_tab<P: TabsPort + ?Sized>(app: &P) -> &Tab {
 
 fn shared_drawing_hit(
     tab: &Tab,
-    pane: &ChartPane,
+    pane: crate::pane::PaneRef<'_>,
     side: PaneSide,
     position: eframe::egui::Pos2,
 ) -> Option<DrawingHitSnapshot> {

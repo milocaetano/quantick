@@ -155,7 +155,7 @@ impl ArrangementAdapter<'_> {
         let spec = spec.unwrap_or_else(|| {
             self.config
                 .startup_spec_for(&feed_id)
-                .unwrap_or_else(|| *self.active_tab().flow_pane.series_state().spec())
+                .unwrap_or_else(|| *self.active_tab().flow_series().state().spec())
         });
         let trades_dir = self.workspace.trades_dir().to_path_buf();
         // Cmd trading is app-wide (the trades-dir rule): a new tab starts
@@ -189,7 +189,7 @@ impl ArrangementAdapter<'_> {
         let inherited_capital = self.active_tab().paper.account().capital().clone();
         let inherited_money = self.active_tab().paper.account().instrument_money().clone();
         let inherited_pnl = self.active_tab().paper.account().pnl_settings().clone();
-        let inherited_layers = self.active_tab().flow_pane.layer_read().states(self.style);
+        let inherited_layers = self.active_tab().flow().layer_read().states(self.style);
         let flow_inverted = self.active_tab().flow_pane.price_view.is_inverted();
         let time_inverted = self
             .active_tab()
@@ -233,7 +233,7 @@ impl ArrangementAdapter<'_> {
         // preset it just put on: opening a second market is not a request to
         // bring back the chrome they switched off.
         self.active_tab_mut()
-            .flow_pane
+            .flow_mut()
             .layer_write()
             .apply_states(&inherited_layers);
         // The scripted footprint/zoom hooks reach tabs opened later too: the
@@ -453,7 +453,7 @@ pub(super) fn saved_tab_of(tab: &Tab) -> ui_state::SavedTab {
         context_panes_collapsed: tab.canvas.context_collapsed_slots(),
         focus: Some(ui_state::SavedFocus::from_side(tab.focused_side()).0),
         focus_slot: ui_state::SavedFocus::from_side(tab.focused_side()).1,
-        flow_bars: tab.flow_pane.series_state().spec().to_config_string(),
+        flow_bars: tab.flow_series().state().spec().to_config_string(),
         // Only a pane that exists has an interval worth recording; a
         // tab that never showed the split restores on the default,
         // which is what it had.
@@ -461,9 +461,9 @@ pub(super) fn saved_tab_of(tab: &Tab) -> ui_state::SavedTab {
             .time_pane()
             .map(|pane| pane.series_state().spec().to_config_string()),
         context_bars: tab
-            .time_panes
-            .iter()
-            .map(|pane| pane.series_state().spec().to_config_string())
+            .panes()
+            .filter(|(_, side)| *side != crate::pane::PaneSide::Flow)
+            .map(|(pane, _)| pane.series_state().spec().to_config_string())
             .collect(),
         flow_layout: tab.flow_pane.layout_id().map(|layout| layout.0),
         context_layouts: tab

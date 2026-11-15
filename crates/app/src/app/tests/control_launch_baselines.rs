@@ -208,7 +208,14 @@ fn constructor_case(case: &str, env: Env) {
             recorded.named("CONTROL_SCOPE_HOOK_REFUSED").len(),
             usize::from(case == "C19")
         );
-        assert!(app.active_tab().drawing_pane().drawings.items().is_empty());
+        assert!(
+            app.active_tab()
+                .drawing_pane()
+                .pane
+                .drawings
+                .items()
+                .is_empty()
+        );
         let access = app.control.control_access.as_mut().unwrap();
         assert!(!access.is_enabled());
         assert!(!access.needs_frame_service());
@@ -421,7 +428,10 @@ fn recipient(case: &str, env: Env, recorded: &RecordedEvents) {
                     .count(),
                 1
             );
-            assert_eq!(app.active_tab().drawing_pane().drawings.items().len(), 1);
+            assert_eq!(
+                app.active_tab().drawing_pane().pane.drawings.items().len(),
+                1
+            );
             let mark = journal
                 .iter()
                 .position(|event| event["kind"] == "attention.mark.created")
@@ -445,7 +455,7 @@ fn recipient(case: &str, env: Env, recorded: &RecordedEvents) {
             assert_eq!(projected.as_array().unwrap().len(), 1);
             assert_eq!(
                 projected[0]["drawing_id"],
-                app.active_tab().drawing_pane().drawings.items()[0]
+                app.active_tab().drawing_pane().pane.drawings.items()[0]
                     .id
                     .0
                     .to_string()
@@ -500,6 +510,7 @@ fn recipient(case: &str, env: Env, recorded: &RecordedEvents) {
                 empty
                     .active_tab()
                     .drawing_pane()
+                    .pane
                     .drawings
                     .items()
                     .is_empty()
@@ -516,7 +527,7 @@ fn recipient(case: &str, env: Env, recorded: &RecordedEvents) {
                 .unwrap();
             run_frame(&mut empty, &ctx);
             assert!(empty.control.scenarios.pending().annotation.is_none());
-            let drawings = empty.active_tab().drawing_pane().drawings.items();
+            let drawings = empty.active_tab().drawing_pane().pane.drawings.items();
             assert_eq!(drawings.len(), 1);
             assert_eq!(drawings[0].author.as_ref().unwrap().actor_kind, "agent");
             assert_eq!(
@@ -528,12 +539,28 @@ fn recipient(case: &str, env: Env, recorded: &RecordedEvents) {
             assert_eq!(drawings[0].points[0].time_ms, Some(1800));
             assert_eq!(drawings[0].points[0].bar, 7.5);
             run_frame(&mut empty, &ctx);
-            assert_eq!(empty.active_tab().drawing_pane().drawings.items().len(), 1);
+            assert_eq!(
+                empty
+                    .active_tab()
+                    .drawing_pane()
+                    .pane
+                    .drawings
+                    .items()
+                    .len(),
+                1
+            );
         }
         "F06" => {
             assert!(app.control.scenarios.pending().annotation.is_none());
             run_frame(&mut app, &ctx);
-            assert!(app.active_tab().drawing_pane().drawings.items().is_empty());
+            assert!(
+                app.active_tab()
+                    .drawing_pane()
+                    .pane
+                    .drawings
+                    .items()
+                    .is_empty()
+            );
             assert!(app.control.scenarios.pending().annotation.is_none());
         }
         "F01" => {
@@ -873,7 +900,7 @@ fn combined_owned_instance(app: &mut QuantickApp, ctx: &egui::Context, recorded:
 }
 
 fn assert_combined_actions(app: &QuantickApp) {
-    let items = app.active_tab().drawing_pane().drawings.items();
+    let items = app.active_tab().drawing_pane().pane.drawings.items();
     assert_eq!(items.len(), 1);
     assert_eq!(
         items[0].tool.inline_text(items[0].payload.as_ref()),
@@ -916,7 +943,7 @@ fn strategy_popup_host_routes_audition_refusal_and_successful_arm() {
         .into_iter()
         .find(|tool| tool.id() == "rectangle")
         .unwrap();
-    let pane = &mut app.active_tab_mut().flow_pane;
+    let mut pane = app.active_tab_mut().flow_mut();
     pane.drawings
         .place(rectangle, drawings::ChartPoint::at(0.0, 100.0));
     pane.drawings

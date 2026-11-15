@@ -162,7 +162,7 @@ fn assert_complete_flow_fixture(app: &mut QuantickApp, observer: &mut LocalClien
 }
 
 fn fit_flow_fixture(app: &mut QuantickApp) {
-    let pane = &mut app.active_tab_mut().flow_pane;
+    let mut pane = app.active_tab_mut().flow_mut();
     pane.model.viewport.set_px_per_bar(1.0);
     assert!(pane.price_view.set_manual_range(99.0, 103.0));
 }
@@ -350,7 +350,7 @@ fn assert_regional_circles(
     let marks = snapshot["marks"].as_array().unwrap();
     let number = |mark: &Value, field: &str| mark[field].as_str().unwrap().parse::<f64>().unwrap();
     assert!(marks.iter().all(|mark| mark["opening_oversized"] == false));
-    let pane = &app.active_tab().flow_pane;
+    let pane = app.active_tab().flow();
     let rect = pane.frame.chart_rect.unwrap();
     let right = pane.frame.candles_right.unwrap_or(rect.right());
     let (low, high) = pane.price_view.resolve(pane.frame.auto_range.unwrap());

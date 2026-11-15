@@ -8,7 +8,7 @@ use quantick_control_handlers::alerts::AlertDefinitionsPort;
 fn spec(app: &QuantickApp) -> AlertSpec {
     let tab = app.active_tab();
     let context =
-        super::super::alerts_runtime::context(tab, &tab.flow_pane, app.runtime.tabs.active_id(), 0);
+        super::super::alerts_runtime::context(tab, tab.flow(), app.runtime.tabs.active_id(), 0);
     AlertSpec {
         version: quantick_alerts::FORMAT_VERSION,
         id: AlertId(0),
@@ -145,20 +145,22 @@ fn alert_target_binding_end_to_end() {
         &[egui::pos2(500.0, 300.0), egui::pos2(650.0, 420.0)],
     );
     app.surfaces.toolrail.arm(Tool::Pointer);
-    app.drawing_pane_mut().drawings.select(Some(index));
+    app.drawing_pane_mut().pane.drawings.select(Some(index));
     run_frame(&mut app, &ctx);
     let output = run_frame(&mut app, &ctx);
     let button = painted_text_center(&output, "Create alert").expect("drawing alert action");
     click_chart(&mut app, &ctx, button);
     run_frame(&mut app, &ctx);
-    let target = app.active_tab().drawing_pane().drawings.items()[index]
+    let target = app.active_tab().drawing_pane().pane.drawings.items()[index]
         .durable_identity
         .clone()
         .unwrap();
     let selector = quantick_control_schema::alerts::DrawingSelector {
         tab_id: app.runtime.tabs.active_id(),
         pane_id: app.active_tab().drawing_pane().id,
-        drawing_id: app.active_tab().drawing_pane().drawings.items()[index].id.0,
+        drawing_id: app.active_tab().drawing_pane().pane.drawings.items()[index]
+            .id
+            .0,
     };
     assert_eq!(app.alert_resolve_target(selector).unwrap(), target);
     let mut rule = spec(&app);
@@ -186,12 +188,12 @@ fn alert_target_binding_end_to_end() {
         },
     );
     assert_eq!(
-        app.active_tab().drawing_pane().drawings.selected(),
+        app.active_tab().drawing_pane().pane.drawings.selected(),
         Some(index)
     );
     // A second tab of the same persisted source is a known mirror, not an
     // ambiguous identity. Locate keeps the currently focused valid copy.
-    let target = app.active_tab().drawing_pane().drawings.items()[index]
+    let target = app.active_tab().drawing_pane().pane.drawings.items()[index]
         .durable_identity
         .clone()
         .unwrap();
@@ -202,6 +204,7 @@ fn alert_target_binding_end_to_end() {
     let mirror_index = app
         .active_tab()
         .drawing_pane()
+        .pane
         .drawings
         .items()
         .iter()
@@ -209,6 +212,7 @@ fn alert_target_binding_end_to_end() {
         .expect("persisted mirror carries the same target");
     app.active_tab_mut()
         .focused_pane_mut()
+        .pane
         .drawings
         .select(None);
     super::super::alerts_runtime::apply_alert_request(
@@ -220,7 +224,7 @@ fn alert_target_binding_end_to_end() {
     );
     assert_eq!(app.runtime.tabs.active_id(), focused);
     assert_eq!(
-        app.active_tab().drawing_pane().drawings.selected(),
+        app.active_tab().drawing_pane().pane.drawings.selected(),
         Some(mirror_index)
     );
 }
@@ -268,7 +272,7 @@ fn alert_native_dense_tape_no_fire() {
             close: None,
         })
     };
-    runtime.pane(crate::tab::alerts::facts(&tab.flow_pane), observation());
+    runtime.pane(crate::tab::alerts::facts(tab.flow()), observation());
     assert_eq!(
         runtime.core.book.views().unwrap()[0].status,
         quantick_alerts::AlertStatus::Monitoring
@@ -276,7 +280,7 @@ fn alert_native_dense_tape_no_fire() {
     let before = crate::work_meter::tally();
     let started = std::time::Instant::now();
     for _ in 0..100_000 {
-        runtime.pane(crate::tab::alerts::facts(&tab.flow_pane), observation());
+        runtime.pane(crate::tab::alerts::facts(tab.flow()), observation());
     }
     let elapsed = started.elapsed();
     let spent = crate::work_meter::tally().since(before);
@@ -290,7 +294,7 @@ fn alert_native_dense_tape_no_fire() {
     let base_started = std::time::Instant::now();
     for _ in 0..100_000 {
         std::hint::black_box(&mut baseline)
-            .pane(crate::tab::alerts::facts(&tab.flow_pane), observation());
+            .pane(crate::tab::alerts::facts(tab.flow()), observation());
     }
     eprintln!(
         "alerts_native_dense_tape observations=100000 adapter_us={} scaffold_us={} allocations={} bytes={}",
@@ -480,7 +484,7 @@ fn the_context_bar_yields_to_the_open_alert_surface() {
         &[egui::pos2(500.0, 300.0), egui::pos2(700.0, 420.0)],
     );
     app.surfaces.toolrail.arm(Tool::Pointer);
-    app.drawing_pane_mut().drawings.select(Some(rectangle));
+    app.drawing_pane_mut().pane.drawings.select(Some(rectangle));
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
     assert!(
@@ -581,7 +585,7 @@ fn tab_keeps_the_focused_control_visible_in_a_short_alert_editor() {
     let (app, _commands) = app_with_history(200);
     let tab = app.active_tab();
     let context =
-        super::super::alerts_runtime::context(tab, &tab.flow_pane, app.runtime.tabs.active_id(), 0);
+        super::super::alerts_runtime::context(tab, tab.flow(), app.runtime.tabs.active_id(), 0);
     let book = quantick_alerts::AlertBook::default();
     let mut surface = crate::surfaces::alerts::new_surface();
     surface.open_drawing(None);
@@ -652,7 +656,7 @@ fn alerts_manager_owns_delete_keys_in_its_viewport() {
             let chart = egui::pos2(500.0, 300.0);
             let drawing = place_drawing(&mut app, &ctx, "horizontal-line", &[chart]);
             app.surfaces.toolrail.arm(Tool::Pointer);
-            app.drawing_pane_mut().drawings.select(Some(drawing));
+            app.drawing_pane_mut().pane.drawings.select(Some(drawing));
             app.apply_menu_command(super::super::menu_bar::MenuCommand::OpenAlerts);
             if hide_strip {
                 app.surfaces.dock.toggle_visible();
@@ -674,8 +678,8 @@ fn alerts_manager_owns_delete_keys_in_its_viewport() {
                 &ctx,
                 true
             ));
-            assert_eq!(app.drawing_pane_mut().drawings.items().len(), 1);
-            assert!(app.drawing_pane_mut().drawings.selected().is_some());
+            assert_eq!(app.drawing_pane_mut().pane.drawings.items().len(), 1);
+            assert!(app.drawing_pane_mut().pane.drawings.selected().is_some());
 
             let other = egui::ViewportId::from_hash_of("alerts-other-window");
             let mut input = egui::RawInput {
@@ -696,7 +700,7 @@ fn alerts_manager_owns_delete_keys_in_its_viewport() {
                 vec![egui::Event::PointerMoved(chart), key_press(key)],
             );
             assert!(
-                app.drawing_pane_mut().drawings.items().is_empty(),
+                app.drawing_pane_mut().pane.drawings.items().is_empty(),
                 "{key:?} over the chart still deletes its selected drawing"
             );
         }

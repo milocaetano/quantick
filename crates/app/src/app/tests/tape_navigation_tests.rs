@@ -36,7 +36,7 @@ fn split_app(ctx: &egui::Context) -> (QuantickApp, egui::Pos2, egui::Pos2) {
     // The worker publishes what it retains; wait for it, then read it.
     app.active_tab_mut().tape_mut().flush_for_test();
     run_frame(&mut app, ctx);
-    let pane = &app.active_tab().flow_pane;
+    let pane = app.active_tab().flow();
     let chart = pane.frame.chart_rect.expect("the canvas laid out");
     let divider = pane.frame.lane_divider_x.expect("the divider");
     let y = chart.center().y;
@@ -47,7 +47,7 @@ fn split_app(ctx: &egui::Context) -> (QuantickApp, egui::Pos2, egui::Pos2) {
 
 /// What the candles show: their zoom and where their right edge is.
 fn candles_view(app: &QuantickApp) -> (f32, f32) {
-    let pane = &app.active_tab().flow_pane;
+    let pane = app.active_tab().flow();
     let total =
         pane.series_state().bars().len() + usize::from(pane.series_state().partial().is_some());
     (
@@ -109,7 +109,7 @@ fn a_vertical_drag_over_the_tape_takes_manual_y_and_the_candles_follow_the_axis(
         tape + egui::vec2(0.0, 90.0),
     );
     run_frame(&mut app, &ctx);
-    let pane = &app.active_tab().flow_pane;
+    let pane = app.active_tab().flow();
     assert!(!pane.price_view.is_auto(), "the shared axis is manual now");
     assert_eq!(candles_view(&app), before, "the candles did not pan");
     assert_eq!(app.active_tab().tape().tape_end(), TapeEnd::Live);
@@ -134,7 +134,7 @@ fn a_vertical_drag_over_the_candles_pans_the_shared_axis_and_never_the_tape() {
         candles + egui::vec2(0.0, 90.0),
     );
     run_frame(&mut app, &ctx);
-    let pane = &app.active_tab().flow_pane;
+    let pane = app.active_tab().flow();
     assert!(!pane.price_view.is_auto(), "manual Y from the candles");
     let primary = pane.price_view.resolve(auto);
     assert_eq!(candles_view(&app), before, "a vertical drag pans no bars");
@@ -160,7 +160,7 @@ fn a_vertical_drag_over_the_candles_pans_the_shared_axis_and_never_the_tape() {
         &ctx,
         vec![egui::Event::PointerMoved(end), middle(end, false)],
     );
-    let pane = &app.active_tab().flow_pane;
+    let pane = app.active_tab().flow();
     assert_ne!(
         pane.price_view.resolve(auto),
         primary,
@@ -315,7 +315,7 @@ fn a_double_click_in_tape_only_returns_the_tape_to_live() {
     run_frame(&mut app, &ctx);
     assert!(app.active_tab().tape().cached_config().tape_only());
     assert_eq!(app.active_tab().tape().tape_end(), held);
-    let pane = &mut app.active_tab_mut().flow_pane;
+    let mut pane = app.active_tab_mut().flow_mut();
     let auto = pane.frame.auto_range.expect("fitted");
     pane.price_view.pan_screen(40.0, 0.5, auto);
     assert!(!pane.price_view.is_auto());
@@ -353,7 +353,7 @@ fn a_drag_far_into_the_past_stops_at_the_retained_tape() {
         run_frame(&mut app, &ctx);
     }
     let view = app.active_tab().tape();
-    let window = view.live_lane_window_ms(app.active_tab().flow_pane.series_state().bars());
+    let window = view.live_lane_window_ms(app.active_tab().flow_series().state().bars());
     let retained = view
         .tape_retained_from_ms()
         .expect("the tape reports retention");
@@ -508,7 +508,7 @@ fn a_drag_in_tape_only_pans_the_price_axis_and_the_tapes_time() {
         .expect("the canvas laid out");
     let at = chart.center();
     let range = |app: &QuantickApp| {
-        let pane = &app.active_tab().flow_pane;
+        let pane = app.active_tab().flow();
         pane.price_view
             .resolve(pane.frame.auto_range.expect("fitted"))
     };
@@ -666,11 +666,11 @@ fn double_click_then_vertical_pan_works_on_both_sides_and_orientations() {
                     } else {
                         (90.455, 111.545)
                     };
-                    let pane = &mut app.active_tab_mut().flow_pane;
+                    let mut pane = app.active_tab_mut().flow_mut();
                     assert!(pane.price_view.set_manual_range(manual.0, manual.1));
                     pane.price_view.set_inverted(inverted);
                     pane.model.viewport.zoom(1.375);
-                    pane.model.viewport.pan_pixels(64.0, pane.slots());
+                    pane.pane.model.viewport.pan_pixels(64.0, pane.slots());
                     app.active_tab_mut()
                         .tape_mut()
                         .set_live_lane_window(quantick_orderflow::LaneWindow::Fixed { ms: 3_000 });
@@ -708,7 +708,7 @@ fn double_click_then_vertical_pan_works_on_both_sides_and_orientations() {
                     // below reaches the chart.
                     assert!(!app.surfaces.chart_settings.model_state.is_open());
                     run_frame(&mut app, &ctx);
-                    let pane = &app.active_tab().flow_pane;
+                    let pane = app.active_tab().flow();
                     if on_tape {
                         assert_eq!(
                             pane.price_view.manual_range(),
@@ -716,7 +716,7 @@ fn double_click_then_vertical_pan_works_on_both_sides_and_orientations() {
                             "the tape's double click preserves exact price framing"
                         );
                     } else {
-                        assert_last_price_centred(pane);
+                        assert_last_price_centred(&pane);
                     }
                     assert_eq!(pane.price_view.is_inverted(), inverted);
                     assert_eq!(pane.model.viewport.px_per_bar(), candles_px);
@@ -747,7 +747,7 @@ fn double_click_then_vertical_pan_works_on_both_sides_and_orientations() {
                     } else {
                         drag_sized(&mut app, &ctx, TEST_WINDOW, at, at + egui::vec2(0.0, dy));
                     }
-                    let pane = &app.active_tab().flow_pane;
+                    let pane = app.active_tab().flow();
                     let after_y = pane.price_view.scale(auto, 0.0, height).y(price);
                     assert!(!pane.price_view.is_auto());
                     assert_eq!(pane.price_view.is_inverted(), inverted);
@@ -767,7 +767,7 @@ fn double_click_then_vertical_pan_works_on_both_sides_and_orientations() {
 
 /// The pane holds a manual price range centred on its last price, with
 /// every bar of the frame's auto-fit still on the axis.
-fn assert_last_price_centred(pane: &crate::pane::ChartPane) {
+fn assert_last_price_centred(pane: &crate::pane::PaneRef<'_>) {
     use rust_decimal::prelude::ToPrimitive as _;
     let newest = pane
         .series_state()
@@ -790,20 +790,20 @@ fn an_empty_canvas_double_click_returns_to_live_at_its_spacing_with_the_last_pri
         let (mut app, _commands) = app_with_history(200);
         switch_layer(&mut app, ChartLayer::TapeChart, false);
         run_frame(&mut app, &ctx);
-        let pane = &mut app.active_tab_mut().flow_pane;
+        let mut pane = app.active_tab_mut().flow_mut();
         let manual = (98.25, 104.75);
         assert!(pane.price_view.set_manual_range(manual.0, manual.1));
         pane.price_view.set_inverted(inverted);
         pane.model.viewport.set_px_per_bar(23.0);
-        pane.model.viewport.pan_pixels(120.0, pane.slots());
+        pane.pane.model.viewport.pan_pixels(120.0, pane.slots());
         run_frame(&mut app, &ctx);
-        let pane = &app.active_tab().flow_pane;
+        let pane = app.active_tab().flow();
         assert!(!pane.model.viewport.follows_live());
         let at = pane.frame.chart_rect.unwrap().center();
         click_sized(&mut app, &ctx, TEST_WINDOW, at);
         click_sized(&mut app, &ctx, TEST_WINDOW, at);
         run_frame(&mut app, &ctx);
-        let pane = &app.active_tab().flow_pane;
+        let pane = app.active_tab().flow();
         assert!(pane.model.viewport.follows_live());
         assert_eq!(
             pane.model.viewport.right_edge_bar(pane.slots()),
@@ -811,7 +811,7 @@ fn an_empty_canvas_double_click_returns_to_live_at_its_spacing_with_the_last_pri
         );
         assert_eq!(pane.model.viewport.px_per_bar(), 23.0, "spacing kept");
         assert_ne!(pane.price_view.manual_range(), Some(manual));
-        assert_last_price_centred(pane);
+        assert_last_price_centred(&pane);
         assert_eq!(pane.price_view.is_inverted(), inverted);
     }
 }
@@ -959,7 +959,7 @@ fn held_at(
 }
 
 fn lane_rect(app: &QuantickApp) -> egui::Rect {
-    let pane = &app.active_tab().flow_pane;
+    let pane = app.active_tab().flow();
     let chart = pane.frame.chart_rect.expect("the canvas laid out");
     let divider = pane.frame.lane_divider_x.expect("the divider");
     egui::Rect::from_min_max(egui::pos2(divider + 1.0, chart.top()), chart.max)
@@ -1050,7 +1050,7 @@ fn the_cursor_reads_the_book_a_held_tape_paints() {
 /// The cells under a cursor walked down the middle of `lane`, asked the way
 /// the control plane's pointer asks, with the geometry the frame painted.
 fn lane_cells(app: &QuantickApp, lane: egui::Rect) -> Vec<crate::orderflow_view::FlowCellHit> {
-    let pane = &app.active_tab().flow_pane;
+    let pane = app.active_tab().flow();
     let chart = pane.frame.chart_rect.expect("the canvas laid out");
     // The pointer's own reading: the candles' edge, as `control_pointer_hit` passes it.
     let history_right = pane.frame.candles_right.unwrap_or(chart.right());
@@ -1076,7 +1076,7 @@ fn lane_cells(app: &QuantickApp, lane: egui::Rect) -> Vec<crate::orderflow_view:
 fn the_cursor_reads_the_live_tape_unmoved_by_the_strip() {
     let ctx = egui::Context::default();
     let mut app = recorded_book(&ctx);
-    let flow = &mut app.active_tab_mut().flow_pane;
+    let mut flow = app.active_tab_mut().flow_mut();
     flow.set_layer_visible(ChartLayer::LiveStrip, true, &mut Default::default());
     for _ in 0..3 {
         app.active_tab_mut().tape_mut().flush_for_test();
@@ -1084,7 +1084,7 @@ fn the_cursor_reads_the_live_tape_unmoved_by_the_strip() {
     }
     assert!(app.active_tab().tape().tape_end().is_live(), "a live tape");
     let strip = crate::live_strip::LIVE_STRIP_WIDTH_PX;
-    let pane = &app.active_tab().flow_pane;
+    let pane = app.active_tab().flow();
     let divider = pane.frame.lane_divider_x.expect("the divider");
     assert_eq!(
         pane.frame.candles_right,
@@ -1104,7 +1104,7 @@ fn the_cursor_reads_the_live_tape_unmoved_by_the_strip() {
     let read: Vec<_> = columns.iter().map(|x| lane_cells(&app, at(x))).collect();
     // The painted tape alone, measured from the divider with no strip to subtract.
     app.active_tab_mut().tape_mut().trail_strip_px = 0.0;
-    let pane = &app.active_tab().flow_pane;
+    let pane = app.active_tab().flow();
     let chart = pane.frame.chart_rect.expect("laid out");
     let painted: Vec<Vec<_>> = columns
         .iter()
@@ -1193,11 +1193,11 @@ fn a_previewed_close_with_the_strip_shown_keeps_the_chart_and_reopens_under_the_
     use quantick_orderflow::LaneView;
     let ctx = egui::Context::default();
     let (mut app, _, _) = split_app(&ctx);
-    let flow = &mut app.active_tab_mut().flow_pane;
+    let mut flow = app.active_tab_mut().flow_mut();
     flow.set_layer_visible(ChartLayer::LiveStrip, true, &mut Default::default());
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
-    let pane = &app.active_tab().flow_pane;
+    let pane = app.active_tab().flow();
     let chart = pane.frame.chart_rect.expect("the canvas laid out");
     let open = pane.frame.lane_divider_x.expect("the divider");
     let strip = crate::live_strip::LIVE_STRIP_WIDTH_PX;
@@ -1269,7 +1269,7 @@ fn dragging_the_divider_to_an_edge_is_that_view_and_its_rail_reopens_at_the_defa
     use quantick_orderflow::{LANE_FOLD_RAIL_PX, LaneView};
     let ctx = egui::Context::default();
     let (mut app, _, _) = split_app(&ctx);
-    let pane = &app.active_tab().flow_pane;
+    let pane = app.active_tab().flow();
     let chart = pane.frame.chart_rect.expect("the canvas laid out");
     let open = pane.frame.lane_divider_x.expect("the divider");
     let y = chart.center().y;
@@ -1370,7 +1370,7 @@ fn a_drag_closed_side_reopens_by_the_layer_switch_at_the_default() {
     use quantick_orderflow::config::DEFAULT_LIVE_LANE_SHARE;
     let ctx = egui::Context::default();
     let (mut app, _, _) = split_app(&ctx);
-    let pane = &app.active_tab().flow_pane;
+    let pane = app.active_tab().flow();
     let chart = pane.frame.chart_rect.unwrap();
     let open = pane.frame.lane_divider_x.unwrap();
     let y = chart.center().y;
@@ -1382,7 +1382,7 @@ fn a_drag_closed_side_reopens_by_the_layer_switch_at_the_default() {
     );
     assert_eq!(view_of(&app), LaneView::CandlesOnly);
     let mut actions = quantick_layers::LayerActions::default();
-    app.active_tab_mut().flow_pane.set_layer_visible(
+    app.active_tab_mut().flow_mut().set_layer_visible(
         quantick_layers::ChartLayer::TapeChart,
         true,
         &mut actions,
@@ -1518,7 +1518,7 @@ fn closed_candles_keep_their_view_and_leave_the_strip_to_their_rail() {
     use quantick_orderflow::{LANE_FOLD_RAIL_PX, LaneFold};
     let ctx = egui::Context::default();
     let (mut app, _, _) = split_app(&ctx);
-    let pane = &mut app.active_tab_mut().flow_pane;
+    let mut pane = app.active_tab_mut().flow_mut();
     let total =
         pane.series_state().bars().len() + usize::from(pane.series_state().partial().is_some());
     // Pushed into the projection margin: room only the full candle pane has.
@@ -1829,7 +1829,7 @@ fn wheel_over_the_tape_with_the_bubble_settings_open(preset: &str) {
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
     assert!(app.active_tab().tape().settings_panel.is_open());
-    let pane = &app.active_tab().flow_pane;
+    let pane = app.active_tab().flow();
     let chart = pane.frame.chart_rect.expect("the canvas laid out");
     let divider = pane.frame.lane_divider_x.expect("the divider");
     let tape = egui::pos2((divider + chart.right()) / 2.0, chart.center().y);
@@ -1870,7 +1870,7 @@ fn the_wheel_over_the_ordinary_lane_zooms_its_window_not_the_candles() {
         config.lane_enabled() && !config.native_tape(),
         "the ordinary lane"
     );
-    let pane = &app.active_tab().flow_pane;
+    let pane = app.active_tab().flow();
     let chart = pane.frame.chart_rect.expect("the canvas laid out");
     let divider = pane
         .frame

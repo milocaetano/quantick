@@ -738,7 +738,7 @@ fn drawing_clipboard_targets_the_focused_pane_and_repeated_pastes_do_not_overlap
         std::slice::from_ref(&source),
         "paste leaves the source pane untouched"
     );
-    let pasted = app.active_tab().pane(PaneSide::Flow).drawings.items();
+    let pasted = app.active_tab().pane(PaneSide::Flow).pane.drawings.items();
     assert_eq!(pasted.len(), 2);
     assert_eq!(pasted[0].tool, source.tool);
     assert_eq!(pasted[1].tool, source.tool);
@@ -752,7 +752,11 @@ fn drawing_clipboard_targets_the_focused_pane_and_repeated_pastes_do_not_overlap
         "each paste advances from the clipboard source"
     );
     assert_eq!(
-        app.active_tab().pane(PaneSide::Flow).drawings.selected(),
+        app.active_tab()
+            .pane(PaneSide::Flow)
+            .pane
+            .drawings
+            .selected(),
         Some(1),
         "each paste selects the new drawing"
     );
@@ -765,7 +769,12 @@ fn drawing_clipboard_targets_the_focused_pane_and_repeated_pastes_do_not_overlap
             egui::Modifiers::COMMAND,
         );
         assert_eq!(
-            app.active_tab().pane(PaneSide::Flow).drawings.items().len(),
+            app.active_tab()
+                .pane(PaneSide::Flow)
+                .pane
+                .drawings
+                .items()
+                .len(),
             expected_len,
             "each undo removes exactly one pasted drawing"
         );

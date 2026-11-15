@@ -49,8 +49,7 @@ fn worker_summary_cadence_cost() {
 
     tab.flow_pane.id = 902;
     tab.time_panes.clear();
-    tab.time_panes
-        .push(crate::pane::ChartPane::time(900, 60_000));
+    tab.push_time_pane(crate::pane::ChartPane::time(900, 60_000));
     let opening = app.runtime.tabs.plan_open();
     app.runtime.tabs.append(opening, tab);
     app.runtime.tabs.select(0);

@@ -71,11 +71,10 @@ fn set_scope<P: TabsPort + TabsMutPort + ?Sized>(
     scope::call(
         input,
         move |tab, pane| {
-            let pane = super::price_axis::pane(app, tab, pane)?;
-            let bars = pane
-                .layout
-                .drawings_spec
-                .unwrap_or(*pane.series_state().spec());
+            let at = super::price_axis::pane_at(app, tab, pane)?;
+            let spec = *at.series_state().spec();
+            let pane = at.pane;
+            let bars = pane.layout.drawings_spec.unwrap_or(spec);
             Ok((&mut pane.drawings, bars.to_config_string()))
         },
         journal(access, actor),

@@ -792,7 +792,7 @@ impl AppRig {
         app.active_tab_mut().flow_pane.spec.set(*spec);
         app.active_tab_mut().apply_spec_changes();
         app.active_tab_mut().apply_spec_changes();
-        assert_eq!(app.active_tab().flow_pane.series_state().spec(), spec);
+        assert_eq!(app.active_tab().flow_series().state().spec(), spec);
         assert!(
             app.active_tab_mut()
                 .tape_mut()
@@ -800,7 +800,7 @@ impl AppRig {
             "the dense preset puts a lane on screen"
         );
         app.active_tab_mut()
-            .flow_pane
+            .flow_mut()
             .add_indicator(IndicatorSource::Native {
                 id: "native.cvd".to_owned(),
                 values: Vec::new(),

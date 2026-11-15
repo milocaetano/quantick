@@ -1034,7 +1034,7 @@ pub(super) fn sync_appearance(
         crate::theme::sync(ctx, &runtime.appearance);
     }
     presets.sync_theme(&runtime.appearance);
-    for pane in runtime.tabs.iter_mut().flat_map(|tab| tab.panes_mut()) {
+    for mut pane in runtime.tabs.iter_mut().flat_map(|tab| tab.panes_mut()) {
         let surface = pane.surface();
         pane.presentation
             .candles

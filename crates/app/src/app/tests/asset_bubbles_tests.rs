@@ -17,7 +17,7 @@ pub(super) fn look(app: &QuantickApp) -> BubblePreset {
 
 fn candle_aggression(app: &QuantickApp) -> bool {
     app.active_tab()
-        .flow_pane
+        .flow()
         .layer_switched_on(ChartLayer::CandleAggression, &app.runtime.style)
 }
 
@@ -185,7 +185,7 @@ fn candle_aggression_on_a_win_tab_does_not_reach_a_btc_tab_after_a_restart() {
     win.runtime.workspace.set_chart_layers_path(path.clone());
     let mask = win
         .active_tab()
-        .flow_pane
+        .flow()
         .layer_read()
         .mask(&win.runtime.style);
     win.runtime.workspace.layers_mut().record(mask);

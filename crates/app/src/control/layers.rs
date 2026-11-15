@@ -11,7 +11,6 @@ use super::{
 };
 
 use crate::app::{ChromePort, LayersPort, TabsPort};
-use crate::pane::ChartPane;
 
 use quantick_control::{
     error::{ControlError, codes},
@@ -27,7 +26,7 @@ use serde_json::Value;
 fn read_layer<P: TabsPort + ChromePort + ?Sized>(
     app: &P,
     tab: &crate::tab::Tab,
-    pane: &ChartPane,
+    pane: crate::pane::PaneRef<'_>,
     layer: ChartLayer,
 ) -> LayerSnapshot {
     LayerSnapshot::from_policy(

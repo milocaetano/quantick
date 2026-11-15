@@ -5,7 +5,7 @@ fn the_load_older_hook_keeps_its_action_while_opening_history_is_publishing() {
     let (mut app, events, mut commands, _book) = test_app();
     while commands.try_recv().is_ok() {}
     let tab_id = app.runtime.tabs.active_id();
-    for pane in app.active_tab_mut().panes_mut() {
+    for mut pane in app.active_tab_mut().panes_mut() {
         pane.hold_history_publication(true);
     }
     // MT5 opens the feed with an empty reply, then translates its initial
@@ -18,8 +18,8 @@ fn the_load_older_hook_keeps_its_action_while_opening_history_is_publishing() {
         .unwrap();
     events.try_send(FeedEvent::Live(trade(60_000))).unwrap();
     app.active_tab_mut().drain_feed(tab_id);
-    assert!(app.active_tab().flow_pane.slots() > 0);
-    assert!(app.active_tab().flow_pane.history_pending());
+    assert!(app.active_tab().flow().slots() > 0);
+    assert!(app.active_tab().flow().history_pending());
     assert!(
         app.active_tab()
             .loading
@@ -37,11 +37,11 @@ fn the_load_older_hook_keeps_its_action_while_opening_history_is_publishing() {
         "early live bars must not consume an action refused during publication"
     );
 
-    for pane in app.active_tab_mut().panes_mut() {
+    for mut pane in app.active_tab_mut().panes_mut() {
         pane.hold_history_publication(false);
     }
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
-    while app.active_tab().flow_pane.history_pending() {
+    while app.active_tab().flow().history_pending() {
         app.active_tab_mut().drain_feed(tab_id);
         assert!(std::time::Instant::now() < deadline);
         std::thread::yield_now();
@@ -67,12 +67,14 @@ fn benchmark_history_frame_work() {
         for _ in 0..5 {
             let recent: Vec<_> = (page..page + held).map(trade).collect();
             let older: Vec<_> = (0..page).map(trade).collect();
-            let mut serial = crate::pane::ChartPane::time(1, 60_000);
+            let mut serial_parts = crate::pane::PaneParts::time(1, 60_000);
+            let mut serial = serial_parts.at();
             serial.ingest_backfill(&recent);
             let start = std::time::Instant::now();
             serial.prepend_history(&older);
             serial_times.push(start.elapsed().as_secs_f64() * 1000.0);
-            let mut asynchronous = crate::pane::ChartPane::time(2, 60_000);
+            let mut asynchronous_parts = crate::pane::PaneParts::time(2, 60_000);
+            let mut asynchronous = asynchronous_parts.at();
             asynchronous.ingest_backfill(&recent);
             let start = std::time::Instant::now();
             asynchronous.receive_history(std::sync::Arc::new(older), true);
@@ -141,8 +143,7 @@ fn repeated_history_requests_are_coalesced_while_one_reply_is_outstanding() {
 fn large_history_publishes_coherent_panes_and_preserves_the_live_tail() {
     let (mut app, events, _commands, _book) = test_app();
     app.active_tab_mut()
-        .time_panes
-        .push(crate::pane::ChartPane::time(999, 60_000));
+        .push_time_pane(crate::pane::ChartPane::time(999, 60_000));
     let tab_id = app.runtime.tabs.active_id();
     events
         .try_send(FeedEvent::Backfilled(
@@ -161,8 +162,8 @@ fn large_history_publishes_coherent_panes_and_preserves_the_live_tail() {
     loop {
         app.active_tab_mut().drain_feed(tab_id);
         let tab = app.active_tab();
-        let flow = tab.flow_pane.series_state().trades().len();
-        let time = tab.time_panes[0].series_state().trades().len();
+        let flow = tab.flow_series().state().trades().len();
+        let time = tab.pane_at(1).unwrap().series.state().trades().len();
         assert_eq!(flow, time, "panes publish the same source in one drain");
         if flow == 100_001 {
             break;
@@ -177,11 +178,11 @@ fn large_history_publishes_coherent_panes_and_preserves_the_live_tail() {
     assert!(!tab.loading.is_active(LoadingTask::HistoryRebuild));
     assert!(!tab.loading.is_active(LoadingTask::History));
     assert_eq!(
-        tab.flow_pane.series_state().trades()[0].agg_id,
+        tab.flow_series().state().trades()[0].agg_id,
         trade(0).agg_id
     );
     assert_eq!(
-        tab.flow_pane.series_state().trades().last().unwrap().agg_id,
+        tab.flow_series().state().trades().last().unwrap().agg_id,
         trade(100_000).agg_id
     );
 }
@@ -191,11 +192,12 @@ fn mixed_size_panes_share_admission_and_settle_the_history_reply_once() {
     let (mut app, events, _commands, _book) = test_app();
     let tab = app.active_tab_mut();
     tab.time_panes.clear();
-    tab.time_panes
-        .push(crate::pane::ChartPane::time(999, 60_000));
-    tab.flow_pane
+    tab.push_time_pane(crate::pane::ChartPane::time(999, 60_000));
+    tab.flow_mut()
         .ingest_backfill(&(100..105).map(trade).collect::<Vec<_>>());
-    tab.time_panes[0].ingest_backfill(&(100..60_100).map(trade).collect::<Vec<_>>());
+    tab.pane_at_mut(1)
+        .unwrap()
+        .ingest_backfill(&(100..60_100).map(trade).collect::<Vec<_>>());
     tab.loading.set_active(LoadingTask::History, true);
     let tab_id = app.runtime.tabs.active_id();
     events
@@ -205,8 +207,8 @@ fn mixed_size_panes_share_admission_and_settle_the_history_reply_once() {
     loop {
         app.active_tab_mut().drain_feed(tab_id);
         let tab = app.active_tab();
-        let flow_added = tab.flow_pane.series_state().trades().len() - 5;
-        let time_added = tab.time_panes[0].series_state().trades().len() - 60_000;
+        let flow_added = tab.flow_series().state().trades().len() - 5;
+        let time_added = tab.pane_at(1).unwrap().series.state().trades().len() - 60_000;
         assert_eq!(
             flow_added, time_added,
             "the small pane waits for the large pane"
@@ -214,8 +216,8 @@ fn mixed_size_panes_share_admission_and_settle_the_history_reply_once() {
         // The reply ends the request's wait at once; the panes publish
         // together when the shared recut lands.
         if !tab.loading.is_active(LoadingTask::History)
-            && !tab.flow_pane.history_pending()
-            && !tab.time_panes[0].history_pending()
+            && !tab.flow().history_pending()
+            && !tab.pane_at(1).unwrap().history_pending()
         {
             assert_eq!(flow_added, 100);
             break;
@@ -226,4 +228,61 @@ fn mixed_size_panes_share_admission_and_settle_the_history_reply_once() {
         );
         std::thread::yield_now();
     }
+}
+
+/// The history worker recuts a pane whose spec changed beside the frame; what
+/// it rebuilds lands in the tab session under that pane's id, and the pane
+/// draws from there.
+#[test]
+fn history_recut_lands_in_the_tab_session() {
+    let (mut app, events, _commands, _book) = test_app();
+    let tab_id = app.runtime.tabs.active_id();
+    let tab = app.active_tab_mut();
+    tab.push_time_pane(crate::pane::ChartPane::time(999, 60_000));
+    tab.loading.set_active(LoadingTask::History, true);
+    let recent: Vec<_> = (50_000..100_000).map(trade).collect();
+    tab.pane_at_mut(1).unwrap().ingest_backfill(&recent);
+    tab.set_pane_bar_spec(1, crate::state::BarSpec::Time(300_000))
+        .expect("a time interval is always available");
+    events
+        .try_send(FeedEvent::HistoryPrepended(
+            (0..50_000).map(trade).collect(),
+        ))
+        .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    loop {
+        app.active_tab_mut().drain_feed(tab_id);
+        let pane = app.active_tab().pane_at(1).unwrap();
+        if !pane.history_pending() && pane.series.state().trades().len() == 100_000 {
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline, "the recut completed");
+        std::thread::yield_now();
+    }
+    let tab = app.active_tab();
+    let pane = tab.pane_at(1).unwrap();
+    let series = tab
+        .session
+        .series(999)
+        .expect("the session holds the pane's series");
+    assert!(
+        std::ptr::eq(series, pane.series),
+        "the pane reads the session's series"
+    );
+    assert_eq!(
+        series.state().spec(),
+        &crate::state::BarConfiguration::from(crate::state::BarSpec::Time(300_000))
+    );
+    assert_eq!(series.state().trades()[0].agg_id, trade(0).agg_id);
+    let mut alone = crate::state::ChartState::new(crate::state::BarSpec::Time(300_000));
+    alone.ingest_backfill(&(0..100_000).map(trade).collect::<Vec<_>>());
+    assert_eq!(
+        series.state().bars(),
+        alone.bars(),
+        "the recut is the whole tape"
+    );
+    assert_eq!(
+        pane.slots(),
+        series.closed_slots() + usize::from(alone.partial().is_some())
+    );
 }

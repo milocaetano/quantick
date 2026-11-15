@@ -116,7 +116,7 @@ fn extent(app: &QuantickApp) -> (bool, bool) {
 /// The drawn rectangle's left and right side on screen, wherever the
 /// placement snapped its anchors.
 fn drawn_sides(app: &QuantickApp) -> (f32, f32) {
-    let pane = &app.active_tab().flow_pane;
+    let pane = app.active_tab().flow();
     let chart = pane
         .frame
         .chart_area
@@ -357,13 +357,13 @@ fn an_extended_outline_band_leaves_the_charts_double_click_to_the_chart() {
         assert_eq!(extent(&app), (true, true));
         wait_out_the_click_sequence(&mut app, &ctx);
         {
-            let pane = &mut app.active_tab_mut().flow_pane;
+            let mut pane = app.active_tab_mut().flow_mut();
             let slots = pane.slots();
             pane.model.viewport.pan_pixels(120.0, slots);
         }
         run_frame(&mut app, &ctx);
         assert!(!app.active_tab().flow_pane.model.viewport.follows_live());
-        let pane = &app.active_tab().flow_pane;
+        let pane = app.active_tab().flow();
         let chart = pane.frame.chart_area.expect("the chart was painted");
         let ys: Vec<_> = pane.drawings.items()[0]
             .points
@@ -480,7 +480,7 @@ fn a_drag_inside_a_locked_filled_rectangle_pans_the_chart() {
         .drawings
         .set_selected_locked(true);
     let edge = |app: &QuantickApp| {
-        let pane = &app.active_tab().flow_pane;
+        let pane = app.active_tab().flow();
         pane.model.viewport.right_edge_bar(pane.slots())
     };
     let before = edge(&app);

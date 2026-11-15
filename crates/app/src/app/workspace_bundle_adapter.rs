@@ -53,7 +53,7 @@ impl WorkspaceBundleAdapter<'_> {
         crate::chart_layers::maintain(
             self.arrangement.workspace,
             self.arrangement.tabs.id_at(active),
-            &self.arrangement.tabs[active].flow_pane,
+            self.arrangement.tabs[active].flow(),
             self.arrangement.style,
         );
     }

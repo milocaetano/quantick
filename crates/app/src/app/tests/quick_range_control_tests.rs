@@ -139,7 +139,10 @@ fn exact_range_validation_is_atomic_for_every_action() {
             .unwrap();
         assert_eq!(result["anchors"][0]["slot"], "0");
         assert_eq!(result["anchors"][1]["slot"], "7");
-        assert_eq!(app.active_tab().drawing_pane().drawings.items().len(), 1);
+        assert_eq!(
+            app.active_tab().drawing_pane().pane.drawings.items().len(),
+            1
+        );
     }
 }
 
@@ -200,6 +203,7 @@ fn all_actions_resolve_fractional_market_and_first_future_slots_exactly() {
         let drawing = app
             .active_tab()
             .drawing_pane()
+            .pane
             .drawings
             .items()
             .last()
@@ -217,7 +221,7 @@ fn quick_range_wire_round_trip_preserves_near_boundary_coordinates_for_all_actio
             let ctx = egui::Context::default();
             let (mut app, _commands) = app_with_history(8);
             if duplicate_times {
-                let pane = &mut app.active_tab_mut().flow_pane;
+                let mut pane = app.active_tab_mut().flow_mut();
                 pane.reset_series();
                 let prints: Vec<_> = (1..=8)
                     .map(|id| {
@@ -231,7 +235,7 @@ fn quick_range_wire_round_trip_preserves_near_boundary_coordinates_for_all_actio
             run_frame(&mut app, &ctx);
             let tab_id = app.runtime.tabs.active_id();
             let tab = app.active_tab();
-            let pane = &tab.flow_pane;
+            let pane = tab.flow();
             let future = pane.slots() as f32 - 0.4996;
             let request = PlaceRequest {
                 id: 1,
@@ -337,11 +341,11 @@ fn exact_range_remote_calls_preserve_grants_authorship_and_idempotency_policy() 
             if granted {
                 assert_eq!(success_result(&response)["anchors"][0]["slot"], "0");
                 assert_eq!(
-                    app.active_tab().drawing_pane().drawings.items().len(),
+                    app.active_tab().drawing_pane().pane.drawings.items().len(),
                     index + 1
                 );
                 assert!(
-                    app.active_tab().drawing_pane().drawings.items()[index]
+                    app.active_tab().drawing_pane().pane.drawings.items()[index]
                         .author
                         .is_some()
                 );
@@ -366,7 +370,7 @@ fn exact_range_remote_calls_preserve_grants_authorship_and_idempotency_policy() 
                         .contains("forbids idempotency keys")
                 );
                 assert_eq!(
-                    app.active_tab().drawing_pane().drawings.items().len(),
+                    app.active_tab().drawing_pane().pane.drawings.items().len(),
                     index + 1
                 );
             } else {
@@ -374,7 +378,14 @@ fn exact_range_remote_calls_preserve_grants_authorship_and_idempotency_policy() 
                     response_error(&response).code.as_str(),
                     codes::PERMISSION_DENIED
                 );
-                assert!(app.active_tab().drawing_pane().drawings.items().is_empty());
+                assert!(
+                    app.active_tab()
+                        .drawing_pane()
+                        .pane
+                        .drawings
+                        .items()
+                        .is_empty()
+                );
             }
         }
         disable_test_gateway(&mut app, &ctx);

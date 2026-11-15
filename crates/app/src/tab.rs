@@ -37,6 +37,7 @@ pub(crate) mod canvas;
 pub(crate) mod context_resize;
 mod feed;
 pub(crate) mod layout;
+pub(crate) mod pane_workers;
 mod panes;
 mod strategies;
 
@@ -196,6 +197,12 @@ pub struct Tab {
     /// only one bar-building path. `MAX_CONTEXT_PANES` is what bounds that
     /// cost.
     pub time_panes: SmallVec<[ChartPane; MAX_CONTEXT_PANES]>,
+    /// The threads each pane's series is worked on beside the frame, keyed
+    /// by pane id; the series themselves live in [`Self::session`].
+    pub(crate) pane_workers: pane_workers::PaneWorkerBook,
+    /// The pane a control call annotates through this tab — see the
+    /// `AnnotatedPane` impl in `control::annotate`.
+    pub(crate) annotated: PaneSide,
     /// The strategies armed on the panes' drawings, keyed by pane id.
     pub strategies: crate::strategy_anchors::TabStrategies,
     /// `SYMBOL · venue`, as the strip shows it — see [`Self::chip_label`].
@@ -238,6 +245,10 @@ impl Tab {
         // The feed starts backfilling the moment it is spawned, so the tab
         // opens with that one load already in flight.
         loading.begin(LoadingTask::History);
+        let flow_pane = ChartPane::flow(flow_pane_id, spec, symbol.clone());
+        let mut session = quantick_session::TabSession::new();
+        let mut workers = pane_workers::PaneWorkerBook::new();
+        pane_workers::open(&mut session, &mut workers, &flow_pane);
         Self {
             active: (feed_id.clone(), symbol.clone()),
             feed_id,
@@ -246,12 +257,14 @@ impl Tab {
             deal_recorder: DealRecorder::placeholder(symbol.clone()),
             history_step: 2000,
             history_trades: 0,
-            session: quantick_session::TabSession::new(),
+            session,
+            pane_workers: workers,
+            annotated: PaneSide::Flow,
             loading,
             pending_alarm_sounds: Vec::new(),
             paper: PaperTrading::with_trades_dir(trades_dir),
             paper_drag_pane: None,
-            flow_pane: ChartPane::flow(flow_pane_id, spec, symbol.clone()),
+            flow_pane,
             chip_label: String::new(),
             time_panes: SmallVec::new(),
             strategies: Default::default(),
@@ -349,7 +362,7 @@ impl Tab {
     /// What cannot survive is a gesture in flight: a half-finished drag is
     /// holding pixel coordinates of bars that no longer exist there.
     fn drop_overlay_gestures(&mut self) {
-        for pane in self.panes_mut() {
+        for mut pane in self.panes_mut() {
             pane.gestures.hover = None;
             pane.gestures.press_position = None;
             pane.gestures.press_started_empty = false;

@@ -50,7 +50,7 @@ mod shared_routing_tests {
             ),
         );
         for slot in 0..context {
-            tab.time_panes.push(ChartPane::time(
+            tab.push_time_pane(ChartPane::time(
                 100 + slot as u64,
                 crate::time_header::DEFAULT_INTERVAL_MS,
             ));
@@ -355,7 +355,7 @@ mod move_pane_tests {
             ),
         );
         for slot in 0..context {
-            tab.time_panes.push(ChartPane::time(
+            tab.push_time_pane(ChartPane::time(
                 200 + slot as u64,
                 crate::time_header::DEFAULT_INTERVAL_MS,
             ));
@@ -674,7 +674,7 @@ mod collapse_path_tests {
     #[test]
     fn collapsing_never_takes_focus_off_the_only_chart_on_screen() {
         let mut tab = tab();
-        tab.time_panes.push(ChartPane::time(
+        tab.push_time_pane(ChartPane::time(
             300,
             crate::time_header::DEFAULT_INTERVAL_MS,
         ));

@@ -59,7 +59,7 @@ fn at_x(app: &QuantickApp, x: f32) -> egui::Pos2 {
 
 /// The middle of the tape lane, a quarter down the plot.
 fn on_the_tape(app: &QuantickApp) -> egui::Pos2 {
-    let pane = &app.active_tab().flow_pane;
+    let pane = app.active_tab().flow();
     let chart = pane.frame.chart_area.expect("the pane laid out");
     let divider = pane
         .frame
@@ -120,7 +120,7 @@ fn shift_and_alt_rest_an_order_at_the_pointer_price_over_the_tape() {
 fn tape_only_aims_across_the_whole_plot() {
     let ctx = egui::Context::default();
     let mut app = tape_app(&ctx, TapeMode::Only);
-    let pane = &app.active_tab().flow_pane;
+    let pane = app.active_tab().flow();
     let chart = pane.frame.chart_area.expect("the pane laid out");
     let divider = pane.frame.lane_divider_x.expect("the tape takes the plot");
     assert!((divider - chart.left()).abs() < 1.0, "no candles beside it");

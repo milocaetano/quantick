@@ -162,6 +162,31 @@ impl PaneSeries {
     }
 }
 
+impl PaneSeries {
+    /// Log the seam bar pane `pane` holds after a prefix install, when it
+    /// changed from `had` or says why it holds no lead.
+    pub fn trace_seam_lead(&self, pane: u64, had: Option<&Bar>, seam: Option<crate::SeamTrace>) {
+        let seated = self.state.venue_lead();
+        let Some(seam) = seam else {
+            return;
+        };
+        if had != seated || seated.is_none() && seam.token != "nothing_before_first_trade" {
+            tracing::info!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "SEAM_LEAD",
+                pane,
+                interval_ms = seam.interval_ms,
+                first_print_ms = seam.first_print_ms,
+                lead_open_ms = seated.map_or(0, |bar| bar.open_time),
+                lead_trades = seated.map_or(0, |bar| bar.trade_count),
+                action = if seated.is_some() { "merged_into_seam_bar" } else { seam.token },
+                "the venue's history of the seam bucket before the first trade"
+            );
+        }
+    }
+}
+
 /// What one live print closed — see [`PaneSeries::ingest_live`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LiveCloses {
@@ -198,6 +223,28 @@ impl TabSession {
     /// See [`Self::series`].
     pub fn series_mut(&mut self, id: u64) -> Option<&mut PaneSeries> {
         self.series.get_mut(&id)
+    }
+
+    /// One deal-counter reading, retained by every pane's series.
+    pub fn observe_deals(&mut self, sample: DealSample) {
+        for series in self.series.values_mut() {
+            series.state.observe_deals(sample);
+        }
+    }
+
+    /// Readings a recording resumed, retained by every pane's series; answers
+    /// the panes cutting by deals, whose bars the readings rewrote.
+    pub fn retain_deals(&mut self, samples: &[DealSample]) -> Vec<u64> {
+        let mut rewritten = Vec::new();
+        for (id, series) in &mut self.series {
+            series.state.observe_deals_batch(samples);
+            // The rule the builder cuts under, not the selector: a combo
+            // mid-flick has moved the selector a frame ahead of the bars.
+            if series.state.spec().kind().needs_deal_counter() {
+                rewritten.push(*id);
+            }
+        }
+        rewritten
     }
 
     /// Every pane's series at once, by id: what a walk over several panes

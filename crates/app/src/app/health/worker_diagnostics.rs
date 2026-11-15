@@ -17,7 +17,7 @@ pub(super) fn emit_if_due(
     }
     for (tab_id, tab) in tabs.iter_with_ids() {
         for (pane, side) in tab.panes() {
-            for (kind, progress) in pane_workers(pane) {
+            for (kind, progress) in pane_workers(pane.pane) {
                 record(tab_id, pane.id, side.index(), kind, progress);
             }
         }

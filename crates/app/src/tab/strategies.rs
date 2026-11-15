@@ -10,15 +10,15 @@
 use smallvec::SmallVec;
 
 use crate::canvas_layout::MAX_CANVAS_PANES;
-use crate::pane::ChartPane;
+use crate::pane::PaneRef;
 use quantick_session::strategies::{Forming, Print};
 
 /// Evaluate the panes against the print the paper account has already consumed.
 /// The supplied clock only governs alarms; commands still acknowledge immediately.
-pub(super) fn evaluate(
+pub(super) fn evaluate<'a>(
     paper: &mut crate::paper_trading::PaperTrading,
     strategies: &mut crate::strategy_anchors::TabStrategies,
-    (flow_pane, time_panes): (&ChartPane, &[ChartPane]),
+    panes: impl Iterator<Item = PaneRef<'a>>,
     pending_sounds: &mut Vec<crate::audio::Cue>,
     now_ms: i64,
 ) {
@@ -26,8 +26,7 @@ pub(super) fn evaluate(
     let events = paper.account_mut().drain_bot_events();
     // Flow first, then the context stack: a strategy armed on the second
     // stacked chart has to trade and ring like one armed on the first.
-    let panes: SmallVec<[&ChartPane; MAX_CANVAS_PANES]> =
-        std::iter::once(flow_pane).chain(time_panes).collect();
+    let panes: SmallVec<[PaneRef<'a>; MAX_CANVAS_PANES]> = panes.collect();
     let ids: SmallVec<[u64; MAX_CANVAS_PANES]> = panes.iter().map(|pane| pane.id).collect();
     let pane = |id: u64| panes.iter().copied().find(|pane| pane.id == id);
     let answer = strategies.evaluate(

@@ -555,6 +555,7 @@ fn workspace_lifetime_deferred_state_waits_for_its_stable_pane_not_a_replacement
         .by_id(target.tab)
         .unwrap()
         .pane(target.side)
+        .pane
         .indicators
         .all()
         .iter()
@@ -586,6 +587,7 @@ fn workspace_lifetime_deferred_state_waits_for_its_stable_pane_not_a_replacement
         .by_id(target.tab)
         .unwrap()
         .pane(target.side)
+        .pane
         .indicators
         .all()
         .iter()

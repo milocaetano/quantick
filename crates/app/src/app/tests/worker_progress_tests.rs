@@ -45,8 +45,7 @@ fn existing_summary_entrypoint_emits_owned_normal_degraded_and_recovered_workers
     app.runtime.tabs = app.runtime.tabs.with_fixture_identity(41);
     let mut tab = other.runtime.tabs.into_single_runtime();
 
-    tab.time_panes
-        .push(crate::pane::ChartPane::time(900, 60_000));
+    tab.push_time_pane(crate::pane::ChartPane::time(900, 60_000));
     let indicator_clock = Gate::new();
     let indicator_hold = indicator_clock.hold(Phase::Applying);
     let book_clock = Gate::new();

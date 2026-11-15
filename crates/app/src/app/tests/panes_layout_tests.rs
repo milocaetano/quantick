@@ -298,7 +298,7 @@ fn dragging_the_price_gutter_leaves_every_pane_alone() {
 
     let untouched = pane_range(&app, flow);
     let gutter = {
-        let pane = &app.active_tab().flow_pane;
+        let pane = app.active_tab().flow();
         plot_split(
             pane.frame.plot_area.expect("a frame has been drawn"),
             pane.live_strip_width(app.active_tab().capabilities(&app.config)),
@@ -407,7 +407,7 @@ fn the_axis_menu_hook_lands_on_the_gutter() {
     let (mut app, _cmd_rx) = app_with_history(50);
     let ctx = egui::Context::default();
     assert_eq!(
-        ContextMenuPane::Axis.scripted_position(&app.active_tab().flow_pane),
+        ContextMenuPane::Axis.scripted_position(&app.active_tab().flow()),
         None,
         "no draw yet, so no gutter to click"
     );
@@ -419,7 +419,7 @@ fn the_axis_menu_hook_lands_on_the_gutter() {
         .price_gutter
         .expect("the draw published the gutter");
     let position = ContextMenuPane::Axis
-        .scripted_position(&app.active_tab().flow_pane)
+        .scripted_position(&app.active_tab().flow())
         .expect("one frame published it");
     assert!(gutter.contains(position));
     let chart = app
@@ -457,7 +457,7 @@ fn the_time_menu_hook_lands_on_the_time_strip() {
     let (mut app, _cmd_rx) = app_with_history(50);
     let ctx = egui::Context::default();
     assert_eq!(
-        ContextMenuPane::Time.scripted_position(&app.active_tab().flow_pane),
+        ContextMenuPane::Time.scripted_position(&app.active_tab().flow()),
         None,
         "no draw yet, so no strip to click"
     );
@@ -469,7 +469,7 @@ fn the_time_menu_hook_lands_on_the_time_strip() {
         .time_strip
         .expect("the draw published the strip");
     let position = ContextMenuPane::Time
-        .scripted_position(&app.active_tab().flow_pane)
+        .scripted_position(&app.active_tab().flow())
         .expect("one frame published it");
     assert!(strip.contains(position));
     let chart = app
@@ -668,8 +668,7 @@ fn the_notice_lands_on_the_pane_that_is_waiting() {
     // The venue's candles reach the time pane; no trade reaches anything,
     // so the flow pane stays empty exactly as it did on screen.
     app.active_tab_mut()
-        .time_panes
-        .first_mut()
+        .time_pane_mut()
         .expect("the split built one")
         .install_history_prefix(venue_history(120));
     run_frame(&mut app, &ctx);
@@ -801,7 +800,7 @@ fn unsharing_removes_the_copy_from_the_other_pane() {
 
     let slot = 100;
     let anchored = {
-        let pane = &app.active_tab().flow_pane;
+        let pane = app.active_tab().flow();
         let time = pane.slot_open_time(slot).expect("a closed bar has a time");
         let price = pane
             .closed_bar(slot)
@@ -809,7 +808,7 @@ fn unsharing_removes_the_copy_from_the_other_pane() {
             .expect("the bar has a close");
         drawings::ChartPoint::at_time(slot as f32 + 0.5, price, Some(time))
     };
-    let pane = &mut app.active_tab_mut().flow_pane;
+    let mut pane = app.active_tab_mut().flow_mut();
     pane.drawings.place_with(
         drawing_tool("horizontal-line"),
         &drawings::DrawingBand::Price,
@@ -851,7 +850,7 @@ fn a_parked_context_bar_is_repaired_into_the_pane_it_reappears_on() {
         &[egui::pos2(700.0, 300.0)],
     );
     app.surfaces.toolrail.arm(Tool::Pointer);
-    app.drawing_pane_mut().drawings.select(Some(line));
+    app.drawing_pane_mut().pane.drawings.select(Some(line));
     run_frame(&mut app, &ctx);
 
     // Parked far to the right of what either pane of a split will offer.
@@ -872,6 +871,7 @@ fn a_parked_context_bar_is_repaired_into_the_pane_it_reappears_on() {
     let chart = app
         .active_tab()
         .drawing_pane()
+        .pane
         .frame
         .chart_area
         .expect("the pane holding the selection drew");
@@ -1002,10 +1002,11 @@ fn the_focused_pane_hands_the_pointer_to_the_simulator() {
         rust_decimal::prelude::ToPrimitive::to_f64(&fill.price).expect("the fill price is finite");
 
     for side in [PaneSide::Time(0), PaneSide::Flow] {
-        app.active_tab_mut().pane_mut(side).price_view.reset();
+        app.active_tab_mut().pane_mut(side).pane.price_view.reset();
         let chart = app
             .active_tab()
             .pane(side)
+            .pane
             .frame
             .chart_area
             .expect("the pane reported its rect");
@@ -1017,7 +1018,7 @@ fn the_focused_pane_hands_the_pointer_to_the_simulator() {
         drag_chart(&mut app, &ctx, start, start + egui::vec2(0.0, 40.0));
 
         assert!(
-            app.active_tab().pane(side).price_view.is_auto(),
+            app.active_tab().pane(side).pane.price_view.is_auto(),
             "{side:?}: the entry line owns the gesture on the pane the \
                  press focused — the chart must not pan under it"
         );
@@ -1146,6 +1147,7 @@ fn a_batch_of_prints_publishes_one_forming_bar_per_pane() {
         .map(|side| {
             app.active_tab()
                 .pane(side)
+                .pane
                 .indicator_worker
                 .partial_updates_for_test()
         })
@@ -1159,6 +1161,7 @@ fn a_batch_of_prints_publishes_one_forming_bar_per_pane() {
         let sent = app
             .active_tab()
             .pane(side)
+            .pane
             .indicator_worker
             .partial_updates_for_test()
             - before;
@@ -1196,8 +1199,8 @@ fn a_pane_opened_late_keeps_the_backfill_boundary_honest() {
     assert_eq!(
         time.series_state().backfill_trade_count(),
         app.active_tab()
-            .flow_pane
-            .series_state()
+            .flow_series()
+            .state()
             .backfill_trade_count(),
         "the live prints must not become history in the second view"
     );
@@ -1210,7 +1213,7 @@ fn a_pane_opened_late_keeps_the_backfill_boundary_honest() {
 fn the_time_panes_bars_menu_moves_only_its_own_spec() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = split_app(&ctx, 200);
-    let flow_spec = *app.active_tab().flow_pane.series_state().spec();
+    let flow_spec = *app.active_tab().flow_series().state().spec();
     assert_eq!(
         app.active_tab()
             .pane(PaneSide::Time(0))
@@ -1246,7 +1249,7 @@ fn the_time_panes_bars_menu_moves_only_its_own_spec() {
         "clicking {label} must re-cut the time pane"
     );
     assert_eq!(
-        app.active_tab().flow_pane.series_state().spec(),
+        app.active_tab().flow_series().state().spec(),
         &flow_spec,
         "and must leave the chart beside it alone"
     );
@@ -1545,7 +1548,8 @@ fn a_window_that_opens_on_the_split_focuses_the_flow_chart() {
     assert_eq!(
         app.active_tab()
             .focused_pane()
-            .series_state()
+            .series
+            .state()
             .spec()
             .summary(),
         "tick(50)",
@@ -1624,11 +1628,11 @@ fn the_bars_selectors_govern_the_focused_pane() {
     app.active_tab_mut().set_layout(CanvasLayout::Time);
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
-    let flow_spec = *app.active_tab().flow_pane.series_state().spec();
+    let flow_spec = *app.active_tab().flow_series().state().spec();
 
     // The exact selector fields the pane's bars menu edits, written through
     // the same deferred-spec path.
-    let pane = app.active_tab_mut().focused_pane_mut();
+    let mut pane = app.active_tab_mut().focused_pane_mut();
     pane.spec
         .update(
             quantick_engine::bar_selection::SelectionCommand::Select(
@@ -1651,7 +1655,7 @@ fn the_bars_selectors_govern_the_focused_pane() {
         "the change lands on the chart on screen"
     );
     assert_eq!(
-        app.active_tab().flow_pane.series_state().spec(),
+        app.active_tab().flow_series().state().spec(),
         &flow_spec,
         "and not on the hidden one"
     );
@@ -1706,7 +1710,7 @@ fn a_feed_declaring_layout_and_bars_opens_wearing_them() {
 
     assert_eq!(app.active_tab().canvas.layout, CanvasLayout::Time);
     assert_eq!(
-        app.active_tab().flow_pane.series_state().spec(),
+        app.active_tab().flow_series().state().spec(),
         &BarSpec::Time(300_000),
         "the flow pane opened on the declared spec"
     );
@@ -1760,7 +1764,7 @@ fn a_new_tab_takes_the_feeds_declared_defaults_over_inheritance() {
         None,
     );
     assert_eq!(
-        app.active_tab().flow_pane.series_state().spec(),
+        app.active_tab().flow_series().state().spec(),
         &BarSpec::Tick(7),
         "the declaration wins over the inherited spec"
     );
@@ -1773,7 +1777,7 @@ fn a_new_tab_takes_the_feeds_declared_defaults_over_inheritance() {
         None,
     );
     assert_eq!(
-        app.active_tab().flow_pane.series_state().spec(),
+        app.active_tab().flow_series().state().spec(),
         &BarSpec::Tick(7),
         "a feed declaring nothing still inherits from the tab you were on"
     );
@@ -2136,7 +2140,7 @@ fn the_keyboard_deletes_from_the_focused_pane() {
 fn the_status_bar_follows_the_focused_pane() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = split_app(&ctx, 200);
-    let time = app.active_tab_mut().pane_mut(PaneSide::Time(0));
+    let mut time = app.active_tab_mut().pane_mut(PaneSide::Time(0));
     assert!(time.price_view.set_manual_range(99.0, 103.0));
 
     let point = pane_point(&app, PaneSide::Flow);
@@ -3014,7 +3018,7 @@ fn the_flow_pane_cutting_time_bars_earns_the_venue_prefix() {
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
     assert_eq!(
-        *app.active_tab().flow_pane.series_state().spec(),
+        *app.active_tab().flow_series().state().spec(),
         BarSpec::Time(crate::time_header::DEFAULT_INTERVAL_MS),
         "bars → time opens on 1m, not one second"
     );
@@ -3033,7 +3037,7 @@ fn the_flow_pane_cutting_time_bars_earns_the_venue_prefix() {
     app.drain_tabs();
     let tab = app.active_tab();
     assert_eq!(
-        tab.flow_pane.seam_slot(),
+        tab.flow().seam_slot(),
         120,
         "the venue candles stand in front of the bars cut from prints"
     );
@@ -3053,7 +3057,7 @@ fn the_flow_pane_cutting_time_bars_earns_the_venue_prefix() {
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
     assert_eq!(
-        app.active_tab().flow_pane.seam_slot(),
+        app.active_tab().flow().seam_slot(),
         0,
         "a pane that stopped cutting by time carries no venue candles"
     );
@@ -3214,7 +3218,7 @@ fn a_background_tab_keeps_ingesting() {
     app.apply_tab_action(TabAction::Activate(0));
     assert_eq!(app.runtime.tabs.active_index(), 0);
 
-    let before = app.runtime.tabs[1].flow_pane.series_state().trades().len();
+    let before = app.runtime.tabs[1].flow_series().state().trades().len();
     // Push into the background tab's own channel, then run the window's
     // drain — not that tab's, which would prove nothing about the loop.
     for id in 900..905 {
@@ -3223,7 +3227,7 @@ fn a_background_tab_keeps_ingesting() {
     app.drain_tabs();
 
     assert_eq!(
-        app.runtime.tabs[1].flow_pane.series_state().trades().len(),
+        app.runtime.tabs[1].flow_series().state().trades().len(),
         before + 5,
         "a tab off screen still takes in what its feed sent"
     );

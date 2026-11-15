@@ -144,7 +144,7 @@ impl quantick_control_handlers::alerts::AlertDefinitionsPort for super::Quantick
 
 pub(crate) fn context(
     tab: &crate::tab::Tab,
-    pane: &crate::pane::ChartPane,
+    pane: crate::pane::PaneRef<'_>,
     tab_id: u64,
     display_offset_minutes: i32,
 ) -> crate::surfaces::alerts::Context {
@@ -245,7 +245,7 @@ pub(super) fn apply_alert_request(
             app.runtime.tabs.select(*tab_index);
             if let Some(tab) = app.runtime.tabs.get_mut(*tab_index) {
                 tab.aim_drawing_at(*pane_id);
-                if let Some(pane) = tab.panes_mut().find(|pane| pane.id == *pane_id) {
+                if let Some(mut pane) = tab.panes_mut().find(|pane| pane.id == *pane_id) {
                     pane.drawings.select(Some(*index));
                 }
             }

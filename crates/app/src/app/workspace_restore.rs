@@ -63,7 +63,7 @@ impl ArrangementAdapter<'_> {
                             self.tabs
                                 .by_id_mut(id.0)
                                 .expect("adopted runtime exists")
-                                .flow_pane
+                                .flow_mut()
                                 .set_spec(spec);
                         }
                     } else {

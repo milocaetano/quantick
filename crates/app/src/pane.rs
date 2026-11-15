@@ -47,7 +47,6 @@ mod frame;
 mod frame_layout;
 mod frame_stages;
 mod gesture_input;
-mod history_worker;
 pub(crate) mod lane_rail;
 mod layers;
 mod render_registry;
@@ -88,6 +87,7 @@ pub(crate) use quantick_drawings::gesture::{SharedMarksMut, SharedSource};
 // on a drawing in `drag`, the placement plate in `hint`, the pane's
 // decoration in `painting` and the axis claims in `price_axis`. The leaves
 // are private, so the names below stay the only address for all of them.
+mod at;
 mod chart_pane;
 mod chrome;
 mod drag;
@@ -95,6 +95,9 @@ mod hint;
 mod painting;
 mod price_axis;
 
+#[cfg(test)]
+pub(crate) use at::PaneParts;
+pub(crate) use at::{LentPane, LentSeries, LentWorkers, PaneAt, PaneMut, PaneRef};
 pub use chart_pane::ChartPane;
 use chart_pane::DrawPass;
 pub(crate) use chart_pane::{SideChrome, SideRowChrome};

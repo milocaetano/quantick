@@ -1,12 +1,12 @@
 //! Filesystem and window effects around the headless layer session.
 use super::{load, save};
-use crate::{pane::ChartPane, style::ChartStyle, tab::Tab, workspace_store::WorkspaceStore};
+use crate::{style::ChartStyle, tab::Tab, workspace_store::WorkspaceStore};
 use quantick_layers::LayerSource;
 
 pub(crate) fn maintain(
     workspace: &mut WorkspaceStore,
     tab: u64,
-    pane: &ChartPane,
+    pane: crate::pane::PaneRef<'_>,
     style: &ChartStyle,
 ) {
     let mask = pane.layer_read().mask(style);
@@ -51,7 +51,7 @@ pub(crate) fn restore(
                 style.canvas.grid_enabled = visible;
             }
         }
-        for pane in tabs.iter_mut().flat_map(Tab::panes_mut) {
+        for mut pane in tabs.iter_mut().flat_map(Tab::panes_mut) {
             pane.layer_write().apply_states(&defaults);
         }
         tracing::info!(target: "quantick::app", schema_version = 1_u8,
@@ -61,6 +61,6 @@ pub(crate) fn restore(
     }
     workspace.layers_mut().rebaseline(
         tabs.id_at(active),
-        tabs[active].flow_pane.layer_read().mask(style),
+        tabs[active].flow().layer_read().mask(style),
     );
 }

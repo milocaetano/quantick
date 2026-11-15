@@ -11,11 +11,7 @@ pub(crate) use quantick_control_schema::chart::*;
 use quantick_engine::Bar;
 
 use crate::{
-    app::control_host::ControlPort,
-    config::AppConfig,
-    pane::{ChartPane, PaneSide},
-    state::ChartState,
-    tab::Tab,
+    app::control_host::ControlPort, config::AppConfig, pane::PaneSide, state::ChartState, tab::Tab,
 };
 
 use super::types::{DecimalRange, canonical_f32, canonical_f64, wire_usize};
@@ -90,7 +86,7 @@ fn entry<'a>(
 /// One pane with the tab and config its reads consult.
 struct PaneRead<'a> {
     tab: &'a Tab,
-    pane: &'a ChartPane,
+    pane: crate::pane::PaneRef<'a>,
     config: &'a AppConfig,
 }
 
@@ -139,7 +135,7 @@ impl ChartPaneSource for PaneRead<'_> {
     }
 }
 
-pub(crate) fn viewport_snapshot(pane: &ChartPane) -> ViewportSnapshot {
+pub(crate) fn viewport_snapshot(pane: crate::pane::PaneRef<'_>) -> ViewportSnapshot {
     let total = pane.slots();
     let (start, end) = pane.visible_slots().unwrap_or((0, 0));
     let price_range = pane.price_view.manual_range().or(pane.frame.auto_range);
@@ -191,7 +187,7 @@ fn provenance_context(tab: &Tab, config: &AppConfig) -> BarProvenanceContext {
 /// both put it.
 pub(crate) fn bar_snapshot(
     tab: &Tab,
-    pane: &ChartPane,
+    pane: crate::pane::PaneRef<'_>,
     slot: usize,
     bar: &Bar,
     state: BarStateDto,

@@ -124,7 +124,7 @@ impl LayerWiring<'_> {
                 .collect::<Vec<_>>()
                 .into_iter()
                 .find_map(|side| {
-                    let pane = tab.pane_mut(side);
+                    let mut pane = tab.pane_mut(side);
                     pane.presentation.candles.take_editor_request().then_some(
                         quantick_chart::pane_style::StyleTarget {
                             tab_id,
@@ -155,7 +155,7 @@ impl LayerWiring<'_> {
                     .config
                     .set_own(Some((*edited).clone()));
                 *self.footprint_config = *edited;
-                for pane in self.tabs.iter_mut().flat_map(|tab| tab.panes_mut()) {
+                for mut pane in self.tabs.iter_mut().flat_map(|tab| tab.panes_mut()) {
                     pane.presentation
                         .footprint
                         .config
@@ -181,9 +181,9 @@ impl LayerWiring<'_> {
     pub(crate) fn maintain(&mut self, ctx: &egui::Context) {
         let tab_id = self.tabs.id_at(self.tabs.active_index());
         let tab = self.tabs.runtime_mut(self.tabs.active_index());
-        chart_layers::maintain(self.workspace, tab_id, &tab.flow_pane, self.style);
+        chart_layers::maintain(self.workspace, tab_id, tab.flow(), self.style);
         if tab.tape_mut().settle_old_tape_fold() {
-            let states = tab.flow_pane.layer_read().states(self.style);
+            let states = tab.flow().layer_read().states(self.style);
             chart_layers::save(self.workspace.chart_layers_path(), &states);
         }
         if !ctx.input(|input| input.pointer.any_down()) {

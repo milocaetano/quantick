@@ -296,31 +296,27 @@ fn time_strip(
 /// [`ChartPane::handle_navigation`], registered after the chart body so each handle takes the
 /// drag that would otherwise pan behind it.
 pub(super) fn handle_axis_gestures(
-    pane: &mut ChartPane,
+    pane: &mut super::PaneMut<'_>,
     ui: &egui::Ui,
     areas: &PlotAreas,
     chrome: &mut PaneChrome<'_>,
 ) {
-    let auto = pane.frame.auto_range;
+    let auto = pane.pane.frame.auto_range;
     super::lane_rail::handle_lane_divider(pane, ui, areas.chart);
 
     // Bottom time strip: drag or scroll to zoom. The segment under the
     // lane zooms the lane's window, the rest zooms the candle spacing —
     // each pane's own time axis, under the pane it belongs to.
-    let (history_strip, lane_strip) = split_time_strip(areas.time_strip, pane.frame.lane_divider_x);
-    let time = time_strip(
-        pane,
-        ui,
-        history_strip,
-        pane.interaction_id("time_nav"),
-        false,
-    );
+    let (history_strip, lane_strip) =
+        split_time_strip(areas.time_strip, pane.pane.frame.lane_divider_x);
+    let id = pane.interaction_id("time_nav");
+    let time = time_strip(pane, ui, history_strip, id, false);
     // The time axis's own menu, the price gutter's twin: what an axis
     // writes is switched from that axis. This one had no menu at all until
     // the compass gave it something to say.
     time.context_menu(|ui| {
         #[cfg(test)]
-        pane.context_menu.layer_menu_rects.clear();
+        pane.pane.context_menu.layer_menu_rects.clear();
         pane.layer_menu_switch(ui, ChartLayer::PointerTime, chrome);
     });
     // Jump-to-live (audit F6): panned into history, the way back is one click at the axis' live
@@ -333,7 +329,7 @@ pub(super) fn handle_axis_gestures(
         );
         if chip.hovered() {
             // The hand alone: no painted crosshair chases it on the strip.
-            pane.hover_pos = None;
+            pane.pane.hover_pos = None;
             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
         }
         if chip.clicked() {
@@ -352,9 +348,9 @@ pub(super) fn handle_axis_gestures(
     // A lane strip exists only where a lane does, so this is flow-pane
     // only by construction — the tape is what draws the segment.
     if let Some(lane_strip) = lane_strip
-        && pane.orderflow.is_some()
+        && pane.pane.orderflow.is_some()
     {
-        let id = egui::Id::new(("lane_time_nav", pane.id));
+        let id = egui::Id::new(("lane_time_nav", pane.pane.id));
         time_strip(pane, ui, lane_strip, id, true);
     }
 
@@ -364,13 +360,13 @@ pub(super) fn handle_axis_gestures(
         ui,
         pane.interaction_id("price_nav"),
         areas.price_gutter,
-        &mut pane.model,
+        &mut pane.pane.model,
         ScaleTarget::Price,
         ScaleView {
-            view: &mut pane.price_view,
+            view: &mut pane.pane.price_view,
             auto,
         },
-        auto.map(|(lo, hi)| pane.frame.flip_span.unwrap_or(hi - lo)),
+        auto.map(|(lo, hi)| pane.pane.frame.flip_span.unwrap_or(hi - lo)),
     );
     // The axis's own menu: about the scale and what is written on it, not the canvas (the layer
     // menu stays the canvas's right-click). The compass's price half is offered here because
@@ -378,16 +374,16 @@ pub(super) fn handle_axis_gestures(
     // switches appears.
     price_gutter.context_menu(|ui| {
         #[cfg(test)]
-        pane.context_menu.layer_menu_rects.clear();
+        pane.pane.context_menu.layer_menu_rects.clear();
         use quantick_chart_interaction::pane_menu::{bar_progress_entry, inverted_entry};
         let entries = [
             bar_progress_entry(chrome.price_tag.on),
-            inverted_entry(pane.price_view.is_inverted()),
+            inverted_entry(pane.pane.price_view.is_inverted()),
         ];
         let intents = super::menu_renderer::render(
             ui,
-            &mut pane.context_menu,
-            &mut pane.model,
+            &mut pane.pane.context_menu,
+            &mut pane.pane.model,
             &entries,
             None,
         );
@@ -401,7 +397,7 @@ pub(super) fn handle_axis_gestures(
 /// and the dividers between them. One arm of [`ChartPane::handle_navigation`], registered last
 /// so the later claim wins every overlap with the pan that covers the band.
 pub(super) fn handle_indicator_pane_gestures(
-    pane: &mut ChartPane,
+    pane: &mut super::PaneMut<'_>,
     ui: &egui::Ui,
     areas: &PlotAreas,
     chrome: &mut PaneChrome<'_>,
@@ -411,9 +407,10 @@ pub(super) fn handle_indicator_pane_gestures(
     // The same gesture, once per pane, over the gutter band beside it. Keyed by slot *and* pane
     // id: slots are allocated per pane, so a split's two charts can hold the same slot number
     // and a slot-only id would make one pane's axis answer for the other's.
-    let pane_id = pane.id;
+    let pane_id = pane.pane.id;
     let mut pane_time_gesture = PaneGesture::default();
     for ((view, gutter), body) in pane
+        .pane
         .indicators
         .visible_panes_mut()
         .zip(&areas.pane_gutters)
@@ -423,7 +420,7 @@ pub(super) fn handle_indicator_pane_gestures(
             ui,
             egui::Id::new(("pane_price_nav", pane_id, view.slot)),
             *gutter,
-            &mut pane.model,
+            &mut pane.pane.model,
             ScaleTarget::Indicator(view.slot.0),
             ScaleView {
                 view: &mut view.scale,
@@ -438,7 +435,7 @@ pub(super) fn handle_indicator_pane_gestures(
                 ui,
                 egui::Id::new(("pane_pan", pane_id, view.slot)),
                 body.rect,
-                &mut pane.model,
+                &mut pane.pane.model,
                 view.slot.0,
                 ScaleView {
                     view: &mut view.scale,
@@ -451,7 +448,7 @@ pub(super) fn handle_indicator_pane_gestures(
             if let Some(enabled) = crate::indicator_guide::menu(&response, view.mouse_vertical_line)
             {
                 let _ = update(
-                    &mut pane.model,
+                    &mut pane.pane.model,
                     Intent::Indicator(IndicatorGesture::Guide {
                         slot: view.slot.0,
                         enabled,
@@ -483,13 +480,13 @@ pub(super) fn handle_indicator_pane_gestures(
             }
             if header.double_clicked() {
                 let _ = update(
-                    &mut pane.model,
+                    &mut pane.pane.model,
                     Intent::Indicator(IndicatorGesture::Settings(view.slot.0)),
                 );
             }
         }
         for effect in update(
-            &mut pane.model,
+            &mut pane.pane.model,
             Intent::Indicator(IndicatorGesture::Disclosure {
                 slot: view.slot.0,
                 clicked: disclosure.clicked(),
@@ -531,6 +528,7 @@ pub(super) fn handle_indicator_pane_gestures(
     // registered after both its panes.
     let plot = areas.chart;
     for (view, slot) in pane
+        .pane
         .indicators
         .visible_panes_mut()
         .zip(&areas.indicator_panes)
@@ -542,7 +540,7 @@ pub(super) fn handle_indicator_pane_gestures(
             plot,
         ) {
             for effect in update(
-                &mut pane.model,
+                &mut pane.pane.model,
                 Intent::Indicator(IndicatorGesture::Divider {
                     slot: view.slot.0,
                     reset,

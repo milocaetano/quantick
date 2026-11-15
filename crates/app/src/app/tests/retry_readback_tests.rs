@@ -1018,7 +1018,7 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
             "market.open" => json!({
                 "feed": app.active_tab().feed_id,
                 "symbol": app.active_tab().symbol,
-                "bar": app.active_tab().flow_pane.series_state().spec().to_config_string(),
+                "bar": app.active_tab().flow_series().state().spec().to_config_string(),
                 "workspace": app.runtime.workspace.book.tab_row(app.runtime.tabs.active_id()).0,
             }),
             "catalog.remove" => {
@@ -1099,7 +1099,7 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
             }
             "chart.time_axis.reset" => {
                 // A zoomed candle axis, so the reset has somewhere to go.
-                let pane = &mut app.active_tab_mut().flow_pane;
+                let mut pane = app.active_tab_mut().flow_mut();
                 pane.model.viewport.zoom(3.0);
                 json!({
                     "tab_id": app.runtime.tabs.active_id().to_string(),
@@ -1219,6 +1219,7 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
                 let at = app
                     .active_tab()
                     .drawing_pane()
+                    .pane
                     .frame
                     .chart_area
                     .expect("the pane reported its rect")
@@ -1233,7 +1234,7 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
                 })
             }
             "annotate.text.set" => {
-                let pane = &mut app.active_tab_mut().flow_pane;
+                let mut pane = app.active_tab_mut().flow_mut();
                 pane.drawings.place(
                     crate::drawings::DrawingTool::by_id("text").unwrap(),
                     ChartPoint::at(1.0, 100.0),
@@ -1246,7 +1247,7 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
                 run_frame(&mut app, &ctx);
                 place_level(&mut app, PaneSide::Flow, 100.0);
                 run_frame(&mut app, &ctx);
-                let pane = &app.active_tab().flow_pane;
+                let pane = app.active_tab().flow();
                 json!({
                     "tab_id": app.runtime.tabs.active_id().to_string(),
                     "pane_id": pane.id.to_string(),

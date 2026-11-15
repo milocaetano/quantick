@@ -189,7 +189,7 @@ struct HealthSummary<'a> {
     style: &'a crate::style::ChartStyle,
     style_revision: u64,
     candle_preset: &'static str,
-    pane: &'a crate::pane::ChartPane,
+    pane: crate::pane::PaneRef<'a>,
     geometry: WindowGeometry,
     book: OrderflowHealth,
     envelope: envelope::EnvelopeReading,
@@ -258,7 +258,7 @@ impl<'a> HealthSummary<'a> {
             worker_output_blocked = self.envelope.output_blocked,
             retained_trades = self.envelope.retained_trades,
             live_rate = self.envelope.live_rate,
-            bar_spec = self.tab.flow_pane.series_state().spec().summary(),
+            bar_spec = self.tab.flow_series().state().spec().summary(),
             // Both facts the tape states about its own prices — the grid they
             // land on and the magnitude they land at — and the row width the
             // ladder ended up drawing from them. A validation run reads all
@@ -268,17 +268,17 @@ impl<'a> HealthSummary<'a> {
             // chart is drawing rows finer than the instrument can trade at".
             tape_price_step = self
                 .tab
-                .flow_pane
-                .series_state()
+                .flow_series()
+                .state()
                 .tape_price_step()
                 .map_or_else(|| "unknown".to_owned(), |step| step.to_string()),
             tape_reference_price = self
                 .tab
-                .flow_pane
-                .series_state()
+                .flow_series()
+                .state()
                 .tape_reference_price()
                 .map_or_else(|| "unknown".to_owned(), |price| price.to_string()),
-            footprint_rows = %self.tab.flow_pane.series_state().footprint_group(),
+            footprint_rows = %self.tab.flow_series().state().footprint_group(),
             canvas_layout = ?self.tab.canvas.layout,
             screen_pt_w = self.geometry.screen.x,
             screen_pt_h = self.geometry.screen.y,

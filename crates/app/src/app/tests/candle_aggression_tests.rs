@@ -46,19 +46,21 @@ pub(super) fn context_fixture(
         .unwrap();
     app.active_tab_mut().apply_spec_changes();
     app.active_tab_mut().apply_spec_changes();
-    app.active_tab_mut().time_panes[0].set_layer_visible(
-        ChartLayer::Footprint,
-        false,
-        &mut Default::default(),
-    );
+    app.active_tab_mut()
+        .pane_at_mut(1)
+        .unwrap()
+        .set_layer_visible(ChartLayer::Footprint, false, &mut Default::default());
     run_frame(&mut app, ctx);
     assert_eq!(
-        app.active_tab().time_panes[0].series_state().spec(),
+        app.active_tab().pane_at(1).unwrap().series.state().spec(),
         &BarSpec::Tick(4)
     );
     assert_eq!(
-        app.active_tab().time_panes[0]
-            .series_state()
+        app.active_tab()
+            .pane_at(1)
+            .unwrap()
+            .series
+            .state()
             .tape_price_step(),
         Some(Decimal::from(5))
     );
@@ -115,7 +117,7 @@ fn candle_aggression_opt_in_preserves_candles_and_the_right_tape() {
     // Ink and tape configuration are both read at this settled state.
     settle_workers(&mut app);
     let before = run_frame(&mut app, &ctx);
-    let left = &app.active_tab().time_panes[0];
+    let left = app.active_tab().pane_at(1).unwrap();
     assert!(
         left.series_state().bar_footprints().is_empty(),
         "no consumer allocates ladders yet"
@@ -124,12 +126,15 @@ fn candle_aggression_opt_in_preserves_candles_and_the_right_tape() {
     let ink = candle_ink(&before, chart);
     assert!(!ink.is_empty(), "the test observes actual candle paint");
     let tape = format!("{:?}", app.active_tab().tape().cached_config());
-    app.active_tab_mut().time_panes[0].set_layer_visible(layer, true, &mut Default::default());
+    app.active_tab_mut()
+        .pane_at_mut(1)
+        .unwrap()
+        .set_layer_visible(layer, true, &mut Default::default());
     let after = run_frame(&mut app, &ctx);
     // Anything the toggle sent the book worker is published before the
     // right tape is compared, so a change it caused cannot hide in flight.
     settle_workers(&mut app);
-    let left = &app.active_tab().time_panes[0];
+    let left = app.active_tab().pane_at(1).unwrap();
     assert!(
         left.orderflow.is_none(),
         "context panes never acquire a book worker"
@@ -147,14 +152,20 @@ fn candle_aggression_opt_in_preserves_candles_and_the_right_tape() {
     );
     assert!(
         !app.active_tab()
-            .flow_pane
+            .flow()
             .layer_switched_on(layer, &app.runtime.style)
     );
-    app.active_tab_mut().time_panes[0].set_layer_visible(layer, false, &mut Default::default());
+    app.active_tab_mut()
+        .pane_at_mut(1)
+        .unwrap()
+        .set_layer_visible(layer, false, &mut Default::default());
     run_frame(&mut app, &ctx);
     assert!(
-        app.active_tab().time_panes[0]
-            .series_state()
+        app.active_tab()
+            .pane_at(1)
+            .unwrap()
+            .series
+            .state()
             .bar_footprints()
             .is_empty(),
         "the last consumer releases the ladders"
@@ -165,11 +176,10 @@ fn candle_aggression_opt_in_preserves_candles_and_the_right_tape() {
 fn candle_aggression_keeps_same_millisecond_tick_ownership_and_current_partial() {
     let ctx = egui::Context::default();
     let (mut app, events, _commands) = context_fixture(&ctx);
-    app.active_tab_mut().time_panes[0].set_layer_visible(
-        ChartLayer::CandleAggression,
-        true,
-        &mut Default::default(),
-    );
+    app.active_tab_mut()
+        .pane_at_mut(1)
+        .unwrap()
+        .set_layer_visible(ChartLayer::CandleAggression, true, &mut Default::default());
     run_frame(&mut app, &ctx);
     for (id, price, quantity, side) in [
         (21, 120, 1, Side::Buy),
@@ -183,7 +193,7 @@ fn candle_aggression_keeps_same_millisecond_tick_ownership_and_current_partial()
             .unwrap();
     }
     run_frame(&mut app, &ctx);
-    let state = app.active_tab().time_panes[0].series_state();
+    let state = app.active_tab().pane_at(1).unwrap().series.state();
     assert_eq!(state.bars().len(), 6);
     assert_eq!(
         row_totals(&state.bar_footprints()[5]),
@@ -199,7 +209,7 @@ fn candle_aggression_keeps_same_millisecond_tick_ownership_and_current_partial()
         .try_send(FeedEvent::Live(print(26, 10_000, 145, 16, Side::Buy)))
         .unwrap();
     let output = run_frame(&mut app, &ctx);
-    let left = &app.active_tab().time_panes[0];
+    let left = app.active_tab().pane_at(1).unwrap();
     assert_eq!(
         row_totals(left.series_state().partial_footprint().unwrap()),
         (Decimal::from(25), Decimal::ZERO, 2)
@@ -269,7 +279,7 @@ fn candle_aggression_is_reachable_by_the_existing_named_layer_action() {
 fn candle_aggression_paints_after_co_enabled_footprint_plates() {
     let ctx = egui::Context::default();
     let (mut app, _events, _commands) = context_fixture(&ctx);
-    let left = &mut app.active_tab_mut().time_panes[0];
+    let mut left = app.active_tab_mut().pane_at_mut(1).unwrap();
     left.model.viewport.zoom(5.0);
     left.set_footprint_override(Some(crate::footprint_config::FootprintConfig {
         style: crate::footprint_config::FootprintStyle::Split,

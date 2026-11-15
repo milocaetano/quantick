@@ -58,7 +58,7 @@ fn additive_layer_traverses_discovery_admission_and_common_operation() {
     assert_eq!(success_result(&grid)["layer"]["scope"], "pane");
     assert!(
         !app.active_tab()
-            .flow_pane
+            .flow()
             .layer_switched_on(ChartLayer::Grid, &app.runtime.style)
     );
     let payload = layer_input(&app, "tape_chart", false);
@@ -95,7 +95,7 @@ fn omitted_pane_mutations_have_correlated_once_only_and_noop_journal_readback() 
         .to_string();
     let pane_id = target.flow_pane.id.to_string();
     let visible = !target
-        .flow_pane
+        .flow()
         .layer_switched_on(ChartLayer::Crosshair, &app.runtime.style);
     let directory = gateway_test_directory("layers-omitted-readback");
     grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.layout");
@@ -327,7 +327,7 @@ fn price_and_time_grids_switch_apart_through_the_layer_door() {
         assert_eq!(success_result(&response)["layer"]["requested"], visible);
         run_frame(&mut app, &ctx);
     }
-    let pane = &app.active_tab().flow_pane;
+    let pane = app.active_tab().flow();
     assert!(pane.layer_switched_on(ChartLayer::TimeGrid, &app.runtime.style));
     assert!(!pane.layer_switched_on(ChartLayer::Grid, &app.runtime.style));
     let authored = pane.presentation.candles.authored().unwrap();
@@ -365,7 +365,7 @@ fn light_time_grid_reads_and_switches_as_the_theme_paints_it() {
         &directory,
         &options("cockpit", &["cockpit", "cockpit.layout"]),
     );
-    let pane = &app.active_tab().flow_pane;
+    let pane = app.active_tab().flow();
     let painted = pane
         .plot_style(&app.runtime.style, &ctx)
         .canvas

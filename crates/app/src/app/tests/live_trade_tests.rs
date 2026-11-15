@@ -8,7 +8,7 @@ fn armed_app() -> (QuantickApp, mpsc::Sender<FeedEvent>, drawings::DrawingId) {
         .into_iter()
         .find(|tool| tool.id() == "rectangle")
         .unwrap();
-    let pane = &mut app.active_tab_mut().flow_pane;
+    let mut pane = app.active_tab_mut().flow_mut();
     pane.drawings.place(rectangle, ChartPoint::at(0.0, 100.0));
     pane.drawings.place(rectangle, ChartPoint::at(30.0, 110.0));
     let drawing = pane.drawings.items()[0].id;
@@ -93,8 +93,8 @@ fn live_trade_mutant_fills_on_the_trigger_print_instead_of_the_next_print() {
     ingest(&mut canonical, &trades[199..200]);
     let bar = canonical
         .active_tab()
-        .flow_pane
-        .series_state()
+        .flow_series()
+        .state()
         .bars()
         .last()
         .unwrap();
@@ -160,14 +160,14 @@ fn armed_strategy_on_a_stacked_pane_reaches_paper() {
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
     let side = PaneSide::Time(0);
-    let spec = *app.active_tab().flow_pane.series_state().spec();
+    let spec = *app.active_tab().flow_series().state().spec();
     app.active_tab_mut().pane_mut(side).set_spec(spec);
     app.active_tab_mut().apply_spec_changes();
     let rectangle = drawings::DRAWING_TOOLS
         .into_iter()
         .find(|tool| tool.id() == "rectangle")
         .unwrap();
-    let pane = app.active_tab_mut().pane_mut(side);
+    let mut pane = app.active_tab_mut().pane_mut(side);
     pane.drawings.place(rectangle, ChartPoint::at(0.0, 100.0));
     pane.drawings.place(rectangle, ChartPoint::at(30.0, 110.0));
     let drawing = pane.drawings.items()[0].id;
@@ -313,10 +313,7 @@ fn live_trade_resume_paths_seed_the_mark_without_filling_a_queued_order() {
             app.active_tab().paper.account().mark_price(),
             Some(trades[200].price)
         );
-        assert_eq!(
-            app.active_tab().flow_pane.series_state().trades().len(),
-            201
-        );
+        assert_eq!(app.active_tab().flow_series().state().trades().len(), 201);
         assert!(matches!(
             app.active_tab()
                 .anchors_on(crate::pane::PaneSide::Flow)
@@ -359,7 +356,7 @@ fn live_trade_resume_does_not_evaluate_a_new_force_bar() {
         .unwrap();
     let tab_id = app.runtime.tabs.active_id();
     app.active_tab_mut().drain_feed(tab_id);
-    assert_eq!(app.active_tab().flow_pane.series_state().bars().len(), 4);
+    assert_eq!(app.active_tab().flow_series().state().bars().len(), 4);
     assert!(
         crate::pane::strategies::drawing_region(&app.active_tab().flow_pane.drawings, drawing, 3)
             .unwrap()
@@ -436,7 +433,7 @@ fn a_refill_feeds_the_bars_and_the_mark_never_a_fill_a_strategy_or_the_latency()
 
     let tab = app.active_tab();
     assert_eq!(
-        tab.flow_pane.series_state().bars().len(),
+        tab.flow_series().state().bars().len(),
         4,
         "the hole builds bars"
     );

@@ -58,7 +58,7 @@ fn replay_clock_uses_applied_prints_to_bound_playhead_motion_and_pause() {
     let (mut app, _events, _commands, _book) = test_app();
     enable_tape_only(&mut app);
     app.active_tab_mut().link.replay = Some(link);
-    app.active_tab_mut().flow_pane.ingest_backfill(&[first]);
+    app.active_tab_mut().flow_mut().ingest_backfill(&[first]);
 
     replay_support::set_position_ms(&status, start + 1_000);
     app.active_tab_mut().update_tape_clock_at(10_000);
@@ -95,10 +95,10 @@ fn a_tape_with_nothing_coming_holds_its_window_until_the_link_or_a_print_frees_i
     tab.update_tape_clock_at(10_000);
     let window = tab
         .tape()
-        .live_lane_window_ms(tab.flow_pane.series_state().bars());
+        .live_lane_window_ms(tab.flow_series().state().bars());
     let cap = at + window * 45 / 100;
     let hold = |tab: &mut crate::tab::Tab, link| {
-        tab.flow_pane.hold_tape_window(Some(link));
+        tab.flow_mut().hold_tape_window(Some(link));
     };
 
     tab.update_tape_clock_at(11_000);
@@ -136,7 +136,7 @@ fn a_tape_with_nothing_coming_holds_its_window_until_the_link_or_a_print_frees_i
 fn time_left(app: &QuantickApp) -> Option<i64> {
     let tab = app.active_tab();
     let clock_ms = tab.tape().market_now_ms();
-    match tab.flow_pane.series_state().bar_progress_at(clock_ms)? {
+    match tab.flow_series().state().bar_progress_at(clock_ms)? {
         quantick_chart::bar_progress::BarProgressReading::Remaining { remaining_ms, .. } => {
             Some(remaining_ms)
         }
@@ -151,7 +151,7 @@ fn time_left(app: &QuantickApp) -> Option<i64> {
 fn the_time_countdown_reads_the_market_clock_live_and_replayed() {
     let (mut app, _events, _commands, _book) = test_app();
     app.active_tab_mut()
-        .flow_pane
+        .flow_mut()
         .set_spec(quantick_engine::BarSpec::Time(60_000));
     let print = trade(1);
     app.active_tab_mut().ingest_live_trade_at(&print, 10_000);
@@ -176,11 +176,11 @@ fn the_time_countdown_reads_the_market_clock_live_and_replayed() {
     let status = std::sync::Arc::clone(&link.status);
     let (mut app, _events, _commands, _book) = test_app();
     app.active_tab_mut()
-        .flow_pane
+        .flow_mut()
         .set_spec(quantick_engine::BarSpec::Time(60_000));
     app.active_tab_mut().link.replay = Some(link);
     app.active_tab_mut()
-        .flow_pane
+        .flow_mut()
         .ingest_backfill(std::slice::from_ref(&first));
     replay_support::set_position_ms(&status, first.timestamp_ms + 20_000);
     app.active_tab_mut().update_tape_clock_at(10_000);
@@ -210,7 +210,7 @@ fn a_background_tab_summary_reads_its_trades_time_not_a_stopped_clock() {
     let (mut app, _events, _commands, _book) = test_app();
     let first = app.runtime.tabs.active_id();
     app.active_tab_mut()
-        .flow_pane
+        .flow_mut()
         .set_spec(quantick_engine::BarSpec::Time(60_000));
     app.active_tab_mut().ingest_live_trade_at(&trade(1), 10_000);
     app.active_tab_mut().update_tape_clock_at(10_000);

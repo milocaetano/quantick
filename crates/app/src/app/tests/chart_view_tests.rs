@@ -16,12 +16,12 @@ fn the_pointer_hook_parks_the_mouse_among_the_candles() {
     assert_eq!(
         app.chrome
             .harness
-            .scripted_pointer_pos(&app.active_tab().flow_pane),
+            .scripted_pointer_pos(&app.active_tab().flow()),
         None,
         "no draw yet, so no candle area to be a fraction of"
     );
     run_frame(&mut app, &ctx);
-    let pane = &app.active_tab().flow_pane;
+    let pane = app.active_tab().flow();
     let candles = crate::bands::drawing_area(
         pane.frame.chart_rect.expect("the canvas laid out"),
         pane.frame.lane_divider_x,
@@ -29,7 +29,7 @@ fn the_pointer_hook_parks_the_mouse_among_the_candles() {
     let position = app
         .chrome
         .harness
-        .scripted_pointer_pos(&app.active_tab().flow_pane)
+        .scripted_pointer_pos(&app.active_tab().flow())
         .expect("one frame published it");
     assert!(candles.contains(position), "{position:?} vs {candles:?}");
     assert!((position.x - candles.center().x).abs() < 0.5);
@@ -114,14 +114,14 @@ fn bar_spec_change_defers_one_frame_and_shows_the_rebuild() {
     app.active_tab_mut().apply_spec_changes();
     assert!(app.active_tab().loading.is_active(LoadingTask::BarRebuild));
     assert_eq!(
-        app.active_tab().flow_pane.series_state().spec(),
+        app.active_tab().flow_series().state().spec(),
         &BarSpec::Tick(50),
         "the arming frame must paint the overlay before the rebuild runs"
     );
 
     app.active_tab_mut().apply_spec_changes();
     assert_eq!(
-        app.active_tab().flow_pane.series_state().spec(),
+        app.active_tab().flow_series().state().spec(),
         &BarSpec::Tick(100)
     );
     assert_eq!(
@@ -138,13 +138,13 @@ fn a_deal_count_change_recuts_the_bars() {
 
     let (mut app, _evt_tx, _cmd_rx, _book_tx) = test_app();
     {
-        let pane = &mut app.active_tab_mut().flow_pane;
+        let mut pane = app.active_tab_mut().flow_mut();
         pane.spec.set(BarSpec::Trades(20));
     }
     app.active_tab_mut().apply_spec_changes();
     app.active_tab_mut().apply_spec_changes();
     assert_eq!(
-        app.active_tab().flow_pane.series_state().spec(),
+        app.active_tab().flow_series().state().spec(),
         &BarSpec::Trades(20)
     );
 
@@ -166,7 +166,7 @@ fn a_deal_count_change_recuts_the_bars() {
             });
             readings.next();
         }
-        tab.flow_pane.series_state_mut().ingest_live(&Trade {
+        tab.flow_series_mut().state_mut().ingest_live(&Trade {
             agg_id: i + 1,
             timestamp_ms: at,
             price: rust_decimal::Decimal::from(100),
@@ -175,7 +175,7 @@ fn a_deal_count_change_recuts_the_bars() {
         });
     }
     assert_eq!(
-        tab.flow_pane.series_state().bars().len(),
+        tab.flow_series().state().bars().len(),
         3,
         "every 20 deals: 160, 180 and 200"
     );
@@ -188,11 +188,11 @@ fn a_deal_count_change_recuts_the_bars() {
     app.active_tab_mut().apply_spec_changes();
     app.active_tab_mut().apply_spec_changes();
     assert_eq!(
-        app.active_tab().flow_pane.series_state().spec(),
+        app.active_tab().flow_series().state().spec(),
         &BarSpec::Trades(40)
     );
     assert_eq!(
-        app.active_tab().flow_pane.series_state().bars().len(),
+        app.active_tab().flow_series().state().bars().len(),
         2,
         "every 40 deals: 160 and 200"
     );
@@ -212,7 +212,7 @@ fn a_still_moving_selector_keeps_deferring_the_rebuild() {
         .retain(crate::state::BarSpec::Tick(200)); // the drag continues
     app.active_tab_mut().apply_spec_changes();
     assert_eq!(
-        app.active_tab().flow_pane.series_state().spec(),
+        app.active_tab().flow_series().state().spec(),
         &BarSpec::Tick(50),
         "no rebuild mid-gesture"
     );
@@ -220,7 +220,7 @@ fn a_still_moving_selector_keeps_deferring_the_rebuild() {
 
     app.active_tab_mut().apply_spec_changes();
     assert_eq!(
-        app.active_tab().flow_pane.series_state().spec(),
+        app.active_tab().flow_series().state().spec(),
         &BarSpec::Tick(200)
     );
     assert!(!app.active_tab().loading.is_active(LoadingTask::BarRebuild));
@@ -519,7 +519,7 @@ fn nothing_the_corner_does_throws_a_chart_away() {
         .unwrap();
     let tab_id = app.runtime.tabs.active_id();
     app.active_tab_mut().drain_feed(tab_id);
-    let held = app.active_tab().flow_pane.series_state().trades().len();
+    let held = app.active_tab().flow_series().state().trades().len();
     assert!(held > 0, "the chart has something to lose");
 
     app.active_tab_mut().link.forced_stall = Some(quantick_feed::stall::ForcedStall::Silent);
@@ -537,7 +537,7 @@ fn nothing_the_corner_does_throws_a_chart_away() {
     run_frame(&mut app, &ctx);
 
     assert_eq!(
-        app.active_tab().flow_pane.series_state().trades().len(),
+        app.active_tab().flow_series().state().trades().len(),
         held,
         "a stall, a chip and a popup are things to read, not things that reset a chart"
     );
@@ -561,7 +561,7 @@ fn a_rebuild_leaves_a_live_view_at_the_live_edge() {
             .flow_pane
             .model
             .viewport
-            .right_edge_bar(app.active_tab().flow_pane.slots()),
+            .right_edge_bar(app.active_tab().flow().slots()),
         9.0
     );
 }
@@ -596,7 +596,7 @@ fn escape_drops_the_selection_and_leaves_the_parked_bar_parked() {
         &[egui::pos2(700.0, 460.0)],
     );
     app.surfaces.toolrail.arm(Tool::Pointer);
-    app.drawing_pane_mut().drawings.select(Some(line));
+    app.drawing_pane_mut().pane.drawings.select(Some(line));
     run_frame(&mut app, &ctx);
     let parked = egui::pos2(320.0, 240.0);
     app.surfaces
@@ -619,7 +619,7 @@ fn escape_drops_the_selection_and_leaves_the_parked_bar_parked() {
     );
     run_frame(&mut app, &ctx);
     assert_eq!(
-        app.active_tab().drawing_pane().drawings.selected(),
+        app.active_tab().drawing_pane().pane.drawings.selected(),
         None,
         "the press does what the trader aimed it at: the selection goes"
     );
@@ -634,7 +634,7 @@ fn escape_drops_the_selection_and_leaves_the_parked_bar_parked() {
     // against where it was actually drawn before the press rather than
     // against the parked point itself, so the test says "unchanged" and
     // not "happens to need no repair at this window size".
-    app.drawing_pane_mut().drawings.select(Some(other));
+    app.drawing_pane_mut().pane.drawings.select(Some(other));
     app.surfaces.drawing_chrome.forget_context_bar_rect();
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
@@ -728,7 +728,7 @@ fn a_rebuilt_chart_still_paints_itself() {
     let (mut app, _cmd_rx) = app_with_history(400);
     let ctx = egui::Context::default();
     run_frame(&mut app, &ctx); // one frame to settle the layout
-    let slots = app.active_tab().flow_pane.slots();
+    let slots = app.active_tab().flow().slots();
     app.active_tab_mut()
         .flow_pane
         .model
@@ -794,7 +794,7 @@ fn squeezing_shows_more_bars_and_never_merges_any() {
                 .viewport
                 .set_px_per_bar(px_per_bar);
             let output = run_frame(&mut app, &ctx);
-            let pane = &app.active_tab().flow_pane;
+            let pane = app.active_tab().flow();
             let area = crate::bands::drawing_area(
                 pane.frame.chart_rect.expect("the chart was painted"),
                 pane.frame.lane_divider_x,
@@ -864,7 +864,7 @@ fn pushing_the_chart_left_clears_a_window_and_keeps_the_series_on_screen() {
     run_frame(&mut app, &ctx);
 
     app.active_tab_mut().flow_pane.model.viewport.zoom(8.0); // 64 px candles: only a dozen fit
-    let slots = app.active_tab().flow_pane.slots();
+    let slots = app.active_tab().flow().slots();
     app.active_tab_mut()
         .flow_pane
         .model
@@ -896,7 +896,7 @@ fn candle_appearance_change_is_render_only() {
     let (mut app, _evt_tx, mut cmd_rx, _book_tx) = test_app();
     take_capture_start(&mut cmd_rx);
     let capture_epoch = app.active_tab().link.book_capture_epoch;
-    let bar_spec = *app.active_tab().flow_pane.series_state().spec();
+    let bar_spec = *app.active_tab().flow_series().state().spec();
 
     app.runtime.style.apply_preset(CandlePreset::OutlineOnly);
     app.runtime.style_revision = app.runtime.style_revision.saturating_add(1);
@@ -906,7 +906,7 @@ fn candle_appearance_change_is_render_only() {
         Some(CandlePreset::OutlineOnly),
     );
 
-    assert_eq!(app.active_tab().flow_pane.series_state().spec(), &bar_spec);
+    assert_eq!(app.active_tab().flow_series().state().spec(), &bar_spec);
     assert!(app.active_tab().tape().enabled());
     assert_eq!(app.active_tab().link.book_capture_epoch, capture_epoch);
     assert!(
@@ -951,7 +951,7 @@ fn a_restored_bar_rule_moves_the_selector_that_edits_it() {
             }],
             None,
         ));
-    let pane = &app.active_tab().flow_pane;
+    let pane = app.active_tab().flow();
     assert_eq!(pane.series_state().spec(), &BarSpec::Tick(377));
     assert_eq!(
         pane.spec.retained(crate::state::BarKind::Tick),

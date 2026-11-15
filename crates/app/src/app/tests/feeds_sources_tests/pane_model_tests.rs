@@ -9,7 +9,7 @@ use super::*;
 fn a_rebuild_keeps_the_view_on_the_market_time_it_was_showing() {
     let (mut app, _cmd_rx) = app_with_history(400);
     // Pan back to bar 200 of 400 and remember what the edge was showing.
-    let slots = app.active_tab().flow_pane.slots();
+    let slots = app.active_tab().flow().slots();
     app.active_tab_mut()
         .flow_pane
         .model
@@ -18,7 +18,7 @@ fn a_rebuild_keeps_the_view_on_the_market_time_it_was_showing() {
     assert!(!app.active_tab().flow_pane.model.viewport.follows_live());
     let was_showing = app
         .active_tab()
-        .flow_pane
+        .flow()
         .right_edge_time()
         .expect("a bar under the edge");
 
@@ -29,9 +29,9 @@ fn a_rebuild_keeps_the_view_on_the_market_time_it_was_showing() {
         .retain(crate::state::BarSpec::Tick(40));
     app.active_tab_mut().apply_spec_changes();
     app.active_tab_mut().apply_spec_changes();
-    assert_eq!(app.active_tab().flow_pane.series_state().bars().len(), 10);
+    assert_eq!(app.active_tab().flow_series().state().bars().len(), 10);
 
-    let slots = app.active_tab().flow_pane.slots();
+    let slots = app.active_tab().flow().slots();
     let (start, end) = app
         .active_tab()
         .flow_pane
@@ -44,10 +44,10 @@ fn a_rebuild_keeps_the_view_on_the_market_time_it_was_showing() {
     );
     let now_showing = app
         .active_tab()
-        .flow_pane
+        .flow()
         .right_edge_time()
         .expect("still on a bar");
-    let bar = &app.active_tab().flow_pane.series_state().bars()[app
+    let bar = &app.active_tab().flow_series().state().bars()[app
         .active_tab()
         .flow_pane
         .model

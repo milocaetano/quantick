@@ -5,7 +5,7 @@ use quantick_control_schema::alerts::{DrawingSelector, TargetResolveError};
 fn legacy(app: &mut QuantickApp) -> DrawingSelector {
     app.layout_adapter().seed_new_panes();
     let tab_id = app.runtime.tabs.active_id();
-    let pane = app
+    let mut pane = app
         .runtime
         .tabs
         .by_id_mut(tab_id)
@@ -63,7 +63,7 @@ fn alert_target_binding_failure() {
     ));
     app.layout_adapter().store.market_mut().set_blocked(false);
     let target = app.alert_resolve_target(selector).unwrap();
-    let pane = app
+    let mut pane = app
         .runtime
         .tabs
         .by_id_mut(selector.tab_id)
@@ -77,7 +77,7 @@ fn alert_target_binding_failure() {
         app.alert_resolve_target(selector),
         Err(TargetResolveError::Missing)
     );
-    let pane = app
+    let mut pane = app
         .runtime
         .tabs
         .by_id_mut(selector.tab_id)
@@ -91,7 +91,7 @@ fn alert_target_binding_failure() {
 fn alert_target_binding_failure_ambiguous_selector() {
     let (mut app, ..) = test_app();
     let selector = legacy(&mut app);
-    let pane = app
+    let mut pane = app
         .runtime
         .tabs
         .by_id_mut(selector.tab_id)
@@ -118,7 +118,7 @@ fn alert_target_binding_bottom_edge_button_commits_selected_rectangle() {
         &[egui::pos2(500.0, 300.0), egui::pos2(650.0, 420.0)],
     );
     app.surfaces.toolrail.arm(Tool::Pointer);
-    app.drawing_pane_mut().drawings.select(Some(index));
+    app.drawing_pane_mut().pane.drawings.select(Some(index));
     app.surfaces
         .drawing_chrome
         .context_bar_mut()
@@ -126,7 +126,13 @@ fn alert_target_binding_bottom_edge_button_commits_selected_rectangle() {
     run_frame(&mut app, &ctx);
     let output = run_frame(&mut app, &ctx);
     let button = painted_text_center(&output, "Create alert").expect("visible alert action");
-    let chart = app.active_tab().drawing_pane().frame.chart_area.unwrap();
+    let chart = app
+        .active_tab()
+        .drawing_pane()
+        .pane
+        .frame
+        .chart_area
+        .unwrap();
     assert!(
         chart.contains(button),
         "bottom-edge action remains inside its chart: {button:?}"
@@ -136,7 +142,7 @@ fn alert_target_binding_bottom_edge_button_commits_selected_rectangle() {
         "bottom-edge action leaves the chart annotation line clear: {button:?}"
     );
     click_chart(&mut app, &ctx, button);
-    let target = app.active_tab().drawing_pane().drawings.items()[index]
+    let target = app.active_tab().drawing_pane().pane.drawings.items()[index]
         .durable_identity
         .clone()
         .expect("click promoted selected target");
@@ -158,7 +164,7 @@ fn alert_target_binding_offers_every_straight_line() {
         run_frame(&mut app, &ctx);
         let index = place_drawing(&mut app, &ctx, tool, anchors);
         app.surfaces.toolrail.arm(Tool::Pointer);
-        app.drawing_pane_mut().drawings.select(Some(index));
+        app.drawing_pane_mut().pane.drawings.select(Some(index));
         run_frame(&mut app, &ctx);
         let output = run_frame(&mut app, &ctx);
         let button = painted_text_center(&output, "Create alert")

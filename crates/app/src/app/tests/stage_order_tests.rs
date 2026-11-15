@@ -73,7 +73,7 @@ fn indicator_settings_preset_and_preview_effects_settle_once_before_legends() {
     app.apply_toolbar_action(ToolbarAction::AddNative("native.ema"));
     settle_indicators(&mut app);
     let side = PaneSide::Time(0);
-    let slot = app.active_tab().pane(side).indicators.all()[0].slot;
+    let slot = app.active_tab().pane(side).pane.indicators.all()[0].slot;
     let tab = app.runtime.tabs.active_id();
     app.indicator_wiring().apply_indicator_legend_action(
         tab,
@@ -101,7 +101,7 @@ fn indicator_settings_preset_and_preview_effects_settle_once_before_legends() {
             SavedInput::Source("removed-source".to_owned())
         ],
     ));
-    let before_values = app.active_tab().pane(side).indicators.all()[0]
+    let before_values = app.active_tab().pane(side).pane.indicators.all()[0]
         .input_values
         .clone();
     let _ = phase(&mut app, &ctx, Vec::new());
@@ -114,6 +114,7 @@ fn indicator_settings_preset_and_preview_effects_settle_once_before_legends() {
     let accepted = app
         .active_tab()
         .pane(side)
+        .pane
         .indicator_worker
         .progress()
         .counts
@@ -122,6 +123,7 @@ fn indicator_settings_preset_and_preview_effects_settle_once_before_legends() {
     assert_eq!(
         app.active_tab()
             .pane(side)
+            .pane
             .indicator_worker
             .progress()
             .counts
@@ -156,6 +158,7 @@ fn indicator_settings_preset_and_preview_effects_settle_once_before_legends() {
     assert_eq!(
         app.active_tab()
             .pane(side)
+            .pane
             .indicator_worker
             .progress()
             .counts
@@ -165,7 +168,7 @@ fn indicator_settings_preset_and_preview_effects_settle_once_before_legends() {
     );
     settle_indicators(&mut app);
     assert_eq!(
-        app.active_tab().pane(side).indicators.all()[0].input_values,
+        app.active_tab().pane(side).pane.indicators.all()[0].input_values,
         vec![InputValue::Int(37), InputValue::Source(SourceId::Close)],
         "the addressed worker replays the preset values into the real view"
     );
@@ -184,6 +187,7 @@ fn indicator_settings_preset_and_preview_effects_settle_once_before_legends() {
     let before_save = app
         .active_tab()
         .pane(side)
+        .pane
         .indicator_worker
         .progress()
         .counts
@@ -192,6 +196,7 @@ fn indicator_settings_preset_and_preview_effects_settle_once_before_legends() {
     assert_eq!(
         app.active_tab()
             .pane(side)
+            .pane
             .indicator_worker
             .progress()
             .counts
@@ -220,6 +225,7 @@ fn indicator_settings_preset_and_preview_effects_settle_once_before_legends() {
     let before_close = app
         .active_tab()
         .pane(side)
+        .pane
         .indicator_worker
         .progress()
         .counts
@@ -247,6 +253,7 @@ fn indicator_settings_preset_and_preview_effects_settle_once_before_legends() {
     assert_eq!(
         app.active_tab()
             .pane(side)
+            .pane
             .indicator_worker
             .progress()
             .counts
@@ -258,6 +265,7 @@ fn indicator_settings_preset_and_preview_effects_settle_once_before_legends() {
     assert_eq!(
         app.active_tab()
             .pane(side)
+            .pane
             .indicator_worker
             .progress()
             .counts
@@ -267,7 +275,7 @@ fn indicator_settings_preset_and_preview_effects_settle_once_before_legends() {
     );
     settle_indicators(&mut app);
     assert_eq!(
-        app.active_tab().pane(side).indicators.all()[0].input_values,
+        app.active_tab().pane(side).pane.indicators.all()[0].input_values,
         before_values
     );
 }
@@ -466,6 +474,7 @@ fn the_pinned_inspector_before_the_demo_misses_the_selection_it_made() {
         assert!(
             app.active_tab()
                 .drawing_pane()
+                .pane
                 .drawings
                 .selected()
                 .is_some(),
@@ -473,6 +482,7 @@ fn the_pinned_inspector_before_the_demo_misses_the_selection_it_made() {
         );
         app.active_tab()
             .drawing_pane()
+            .pane
             .frame
             .chart_area
             .expect("the canvas drew")
@@ -531,7 +541,7 @@ fn the_frame_and_tab_drain_plans_add_no_heap_work_to_a_dense_intake() {
         events
             .try_send(FeedEvent::LiveBatch(dense_prints(8_001, 8_513)))
             .unwrap();
-        let slots = app.active_tab().flow_pane.slots();
+        let slots = app.active_tab().flow().slots();
         let policy = app.runtime.history.policy(app.runtime.tz, true);
         let before = crate::work_meter::tally();
         with_config(&mut app, |tab, config| {
@@ -544,7 +554,7 @@ fn the_frame_and_tab_drain_plans_add_no_heap_work_to_a_dense_intake() {
         let work = crate::work_meter::tally().since(before);
         assert!(slots > 80, "a dense series before the live batch");
         assert!(
-            app.active_tab().flow_pane.slots() > slots,
+            app.active_tab().flow().slots() > slots,
             "the live batch landed in the intake being counted"
         );
         work
@@ -629,7 +639,7 @@ fn the_evidence_hook_before_the_annotation_captures_a_window_without_it() {
             app.control.scenarios.queue_evidence("all".to_owned());
             staged_frame(&mut app, &ctx, order);
             assert_eq!(
-                app.active_tab().drawing_pane().drawings.items().len(),
+                app.active_tab().drawing_pane().pane.drawings.items().len(),
                 1,
                 "the annotation landed on this frame either way"
             );
@@ -676,7 +686,7 @@ fn the_surfaces_before_the_indicator_dialog_paint_a_preview_it_just_replaced() {
         app.apply_toolbar_action(crate::toolbar::ToolbarAction::AddNative("native.ema"));
         settle_indicators(&mut app);
         let side = PaneSide::Time(0);
-        let slot = app.active_tab().pane(side).indicators.all()[0].slot;
+        let slot = app.active_tab().pane(side).pane.indicators.all()[0].slot;
         let tab = app.runtime.tabs.active_id();
         app.indicator_wiring().apply_indicator_legend_action(
             tab,

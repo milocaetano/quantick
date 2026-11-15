@@ -228,8 +228,8 @@ fn bubble_reset_wears_the_factory_look_and_is_authorized_retry_safe() {
     app.active_tab_mut().apply_spec_changes();
     assert!(
         app.active_tab()
-            .flow_pane
-            .series_state()
+            .flow_series()
+            .state()
             .tick_membership()
             .is_none()
     );

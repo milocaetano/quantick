@@ -5,7 +5,7 @@ use super::*;
 const CAPABILITY: &str = "annotate.drawing_scope.set";
 
 fn scope_call(app: &QuantickApp, index: usize, scope: &str) -> serde_json::Value {
-    let pane = &app.active_tab().flow_pane;
+    let pane = app.active_tab().flow();
     json!({
         "tab_id": app.runtime.tabs.active_id().to_string(),
         "pane_id": pane.id.to_string(),
@@ -40,7 +40,7 @@ fn a_drawing_is_kept_to_its_chart_by_a_named_call() {
     place_level(&mut app, PaneSide::Flow, 100.0);
     run_frame(&mut app, &ctx);
     let (directory, mut client) = cockpit(&mut app, &ctx, "drawing-scope-control");
-    let drawn_at = *app.active_tab().flow_pane.series_state().spec();
+    let drawn_at = *app.active_tab().flow_series().state().spec();
 
     let call = scope_call(&app, 0, "this_chart");
     let (kept, _) = unkeyed_call(&mut app, &mut client, CAPABILITY, call.clone());
@@ -76,7 +76,7 @@ fn all_charts_without_market_time_is_refused_by_the_call() {
     run_frame(&mut app, &ctx);
     let tool = crate::drawings::DrawingTool::by_id("horizontal-line").unwrap();
     let past_the_newest = ChartPoint::at(500.0, 100.0);
-    let flow = &mut app.active_tab_mut().flow_pane;
+    let mut flow = app.active_tab_mut().flow_mut();
     assert!(flow.drawings.place(tool, past_the_newest));
     run_frame(&mut app, &ctx);
     let (directory, mut client) = cockpit(&mut app, &ctx, "drawing-scope-refusal");

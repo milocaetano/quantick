@@ -20,7 +20,7 @@ fn input_and_an_unfinished_drawing_survive_publication_on_every_pane() {
         (150_000, crate::pane::PaneSide::Time(0)),
         (50_000, crate::pane::PaneSide::Time(1)),
     ] {
-        for pane in app.active_tab_mut().panes_mut() {
+        for mut pane in app.active_tab_mut().panes_mut() {
             pane.hold_history_publication(true);
         }
         app.active_tab_mut().loading.begin(LoadingTask::History);
@@ -31,9 +31,9 @@ fn input_and_an_unfinished_drawing_survive_publication_on_every_pane() {
             .unwrap();
         app.active_tab_mut().drain_feed(tab_id);
         assert!(app.active_tab().pane(side).history_pending());
-        let chart = app.active_tab().pane(side).frame.chart_rect.unwrap();
+        let chart = app.active_tab().pane(side).pane.frame.chart_rect.unwrap();
         let at = chart.min + chart.size() * egui::vec2(0.4, 0.4);
-        let old_zoom = app.active_tab().pane(side).model.viewport.px_per_bar();
+        let old_zoom = app.active_tab().pane(side).pane.model.viewport.px_per_bar();
         run_frame_with_events(
             &mut app,
             &ctx,
@@ -46,19 +46,24 @@ fn input_and_an_unfinished_drawing_survive_publication_on_every_pane() {
                 },
             ],
         );
-        let zoom = app.active_tab().pane(side).model.viewport.px_per_bar();
+        let zoom = app.active_tab().pane(side).pane.model.viewport.px_per_bar();
         assert_ne!(zoom, old_zoom);
-        let gutter = app.active_tab().pane(side).frame.price_gutter.unwrap();
+        let gutter = app.active_tab().pane(side).pane.frame.price_gutter.unwrap();
         drag_chart(
             &mut app,
             &ctx,
             gutter.center(),
             gutter.center() - egui::vec2(0.0, 32.0),
         );
-        let price = app.active_tab().pane(side).price_view.resolve((0.0, 0.0));
-        assert!(!app.active_tab().pane(side).price_view.is_auto());
+        let price = app
+            .active_tab()
+            .pane(side)
+            .pane
+            .price_view
+            .resolve((0.0, 0.0));
+        assert!(!app.active_tab().pane(side).pane.price_view.is_auto());
         // Context charts on one bar rule hold one set: the last pane's line is here too.
-        let held = app.active_tab().pane(side).drawings.items().len();
+        let held = app.active_tab().pane(side).pane.drawings.items().len();
         app.surfaces
             .toolrail
             .arm(Tool::Drawing(drawing_tool("trend-line")));
@@ -66,6 +71,7 @@ fn input_and_an_unfinished_drawing_survive_publication_on_every_pane() {
         let anchor = app
             .active_tab()
             .pane(side)
+            .pane
             .drawings
             .draft()
             .expect("first click starts the draft")
@@ -75,7 +81,7 @@ fn input_and_an_unfinished_drawing_survive_publication_on_every_pane() {
             app.active_tab().pane(side).history_pending(),
             "the inputs preceded publication"
         );
-        for pane in app.active_tab_mut().panes_mut() {
+        for mut pane in app.active_tab_mut().panes_mut() {
             pane.hold_history_publication(false);
         }
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
@@ -97,8 +103,11 @@ fn input_and_an_unfinished_drawing_survive_publication_on_every_pane() {
         assert_eq!(published.price, anchor.price);
         assert_eq!(ctx.memory(|memory| memory.focused()), focus);
         click_chart(&mut app, &ctx, at + egui::vec2(35.0, 20.0));
-        assert!(app.active_tab().pane(side).drawings.draft().is_none());
-        assert_eq!(app.active_tab().pane(side).drawings.items().len(), held + 1);
+        assert!(app.active_tab().pane(side).pane.drawings.draft().is_none());
+        assert_eq!(
+            app.active_tab().pane(side).pane.drawings.items().len(),
+            held + 1
+        );
     }
 }
 
@@ -128,7 +137,7 @@ fn a_held_chart_drag_survives_repeated_history_publications() {
         });
         run_frame(&mut app, &ctx);
         run_frame(&mut app, &ctx);
-        let chart = app.active_tab().pane(side).frame.chart_rect.unwrap();
+        let chart = app.active_tab().pane(side).pane.frame.chart_rect.unwrap();
         let start = chart.min + chart.size() * egui::vec2(0.2, 0.2);
         run_frame_with_events(
             &mut app,
@@ -154,7 +163,7 @@ fn a_held_chart_drag_survives_repeated_history_publications() {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
         loop {
             run_frame_with_events(&mut app, &ctx, vec![egui::Event::PointerMoved(held)]);
-            if !app.active_tab().flow_pane.history_pending() {
+            if !app.active_tab().flow().history_pending() {
                 break;
             }
             assert!(std::time::Instant::now() < deadline);

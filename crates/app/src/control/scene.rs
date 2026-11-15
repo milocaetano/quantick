@@ -537,7 +537,7 @@ fn push_pane_headers<P: TabsPort + ChromePort + ?Sized>(
                 capability_id: Some(capability.to_owned()),
             });
         }
-        let Some((closed, rect)) = crate::pane::lane_rail::painted_rail(pane) else {
+        let Some((closed, rect)) = crate::pane::lane_rail::painted_rail(&pane) else {
             continue;
         };
         let bounds = rect_bounds(rect);
@@ -772,7 +772,7 @@ fn push_panes(
         if side == focused {
             focused_pane_id = Some(pane.id);
         }
-        let bounds = pane_bounds(pane);
+        let bounds = pane_bounds(&pane);
         controls.push(SceneControlSnapshot {
             control_id: pane_canvas_control_id(pane.id),
             label: format!("{} chart", side.title()),

@@ -28,7 +28,7 @@ fn fixture(ctx: &egui::Context, source: &str) -> QuantickApp {
         app.active_tab_mut()
             .set_pane_bar_spec(side.index(), crate::state::BarSpec::Tick(1))
             .unwrap();
-        let pane = app.active_tab_mut().pane_mut(side);
+        let mut pane = app.active_tab_mut().pane_mut(side);
         assert!(pane.price_view.set_manual_range(92.345, 113.28));
         for layer in [
             ChartLayer::Footprint,
@@ -207,6 +207,7 @@ fn inherited_light_time_grid_aligns_at_each_dpi_without_moving_prices_or_exclude
                 style.ownership.grid = Inheritance::Explicit;
                 app.active_tab_mut()
                     .pane_mut(side)
+                    .pane
                     .presentation
                     .candles
                     .set(style);
@@ -274,7 +275,7 @@ fn the_time_labels_are_laid_out_once_per_pane_and_frame() {
     let output = run_frame(&mut app, &ctx);
     let painted = SIDES
         .into_iter()
-        .filter(|&side| app.active_tab().pane(side).frame.chart_rect.is_some())
+        .filter(|&side| app.active_tab().pane(side).pane.frame.chart_rect.is_some())
         .count();
     let grids = SIDES
         .into_iter()

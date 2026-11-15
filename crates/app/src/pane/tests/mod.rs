@@ -43,7 +43,8 @@ mod tape_only_tests;
 /// not from a second copy of the lane's geometry.
 #[test]
 fn a_right_click_is_the_tapes_only_on_the_tapes_side_of_the_divider() {
-    let mut pane = ChartPane::flow(1, BarSpec::Tick(50), "TESTUSDT".to_owned());
+    let mut parts = crate::pane::PaneParts::flow(1, BarSpec::Tick(50), "TESTUSDT".to_owned());
+    let mut pane = parts.at();
 
     // No lane drawn yet: there is one pane, and every click is its.
     assert!(!pane.frame.click_on_tape(0.0));
@@ -68,7 +69,8 @@ fn a_right_click_is_the_tapes_only_on_the_tapes_side_of_the_divider() {
 
 #[test]
 fn the_strip_and_the_lane_marks_each_keep_the_projection_alive() {
-    let mut pane = ChartPane::flow(1, BarSpec::Tick(50), "TESTUSDT".to_owned());
+    let mut parts = crate::pane::PaneParts::flow(1, BarSpec::Tick(50), "TESTUSDT".to_owned());
+    let mut pane = parts.at();
     let mut discarded = LayerActions::default();
     pane.set_layer_visible(ChartLayer::LiveStrip, false, &mut discarded);
     pane.set_layer_visible(ChartLayer::LaneMarks, false, &mut discarded);
@@ -96,7 +98,8 @@ fn the_strip_and_the_lane_marks_each_keep_the_projection_alive() {
 #[test]
 fn a_chart_follows_the_window_until_it_is_configured_itself() {
     use crate::footprint_config::{FootprintConfig, FootprintStyle};
-    let mut pane = ChartPane::flow(1, BarSpec::Tick(50), "TESTUSDT".to_owned());
+    let mut parts = crate::pane::PaneParts::flow(1, BarSpec::Tick(50), "TESTUSDT".to_owned());
+    let mut pane = parts.at();
     let window = FootprintConfig::default();
     assert_eq!(pane.footprint_config(&window), &window, "virgin follows");
 
@@ -124,7 +127,8 @@ fn a_chart_follows_the_window_until_it_is_configured_itself() {
 /// `draw_chart` feeds into `set_footprint_enabled`.
 #[test]
 fn a_range_profile_drawing_wants_the_footprint_ladders() {
-    let mut pane = ChartPane::flow(1, BarSpec::Tick(50), "TESTUSDT".to_owned());
+    let mut parts = crate::pane::PaneParts::flow(1, BarSpec::Tick(50), "TESTUSDT".to_owned());
+    let mut pane = parts.at();
     assert!(!pane.wants_range_profile(), "empty store wants nothing");
 
     let frvp = crate::drawings::DRAWING_TOOLS
@@ -164,7 +168,8 @@ fn a_range_profile_drawing_wants_the_footprint_ladders() {
 #[test]
 fn a_range_profile_wants_the_ladders_without_asking_for_the_layer() {
     let style = crate::style::ChartStyle::default();
-    let mut pane = ChartPane::flow(1, BarSpec::Tick(50), "TESTUSDT".to_owned());
+    let mut parts = crate::pane::PaneParts::flow(1, BarSpec::Tick(50), "TESTUSDT".to_owned());
+    let mut pane = parts.at();
     let frvp = crate::drawings::DRAWING_TOOLS
         .into_iter()
         .find(|tool| tool.id() == crate::frvp::TOOL_ID)
@@ -481,7 +486,8 @@ fn the_tape_axis_speaks_only_when_the_tape_is_behind() {
 #[test]
 fn the_drawing_band_stops_at_the_live_lane() {
     let chart = egui::Rect::from_min_max(egui::pos2(60.0, 80.0), egui::pos2(1_000.0, 700.0));
-    let mut pane = ChartPane::flow(1, BarSpec::Tick(50), "TESTUSDT".to_owned());
+    let mut parts = crate::pane::PaneParts::flow(1, BarSpec::Tick(50), "TESTUSDT".to_owned());
+    let mut pane = parts.at();
 
     pane.frame.lane_divider_x = None;
     assert_eq!(
@@ -524,15 +530,16 @@ fn print_at(index: u64) -> quantick_engine::Trade {
 }
 
 /// A pane holding `count` of those prints, `per_bar` of them to a bar.
-fn pane_of_prints(count: u64, per_bar: u64) -> ChartPane {
-    let mut pane = ChartPane::flow(1, BarSpec::Tick(per_bar), "TESTUSDT".to_owned());
+fn pane_of_prints(count: u64, per_bar: u64) -> crate::pane::PaneParts {
+    let mut parts = crate::pane::PaneParts::flow(1, BarSpec::Tick(per_bar), "TESTUSDT".to_owned());
+    let mut pane = parts.at();
     let trades: Vec<_> = (0..count).map(print_at).collect();
     pane.ingest_backfill(&trades);
-    pane
+    parts
 }
 
 /// A mark placed on the bar at `slot`, shared with the tab's other panes.
-fn shared_mark_at(pane: &mut ChartPane, slot: usize, price: f64) {
+fn shared_mark_at(pane: &mut crate::pane::PaneMut<'_>, slot: usize, price: f64) {
     let time = pane.slot_open_time(slot).expect("the slot holds a bar");
     #[allow(clippy::cast_precision_loss)]
     let point = ChartPoint::at_time(slot as f32 + 0.5, price, Some(time));
@@ -554,7 +561,8 @@ fn shared_mark_at(pane: &mut ChartPane, slot: usize, price: f64) {
 /// the one path test.
 #[test]
 fn an_edit_from_the_other_pane_lands_on_this_panes_own_bars() {
-    let mut pane = pane_of_prints(20, 1);
+    let mut parts = pane_of_prints(20, 1);
+    let mut pane = parts.at();
     shared_mark_at(&mut pane, 4, 100.0);
 
     // The other chart reports where it put the handle in market time; this
@@ -580,7 +588,8 @@ fn an_edit_from_the_other_pane_lands_on_this_panes_own_bars() {
 #[test]
 fn older_history_puts_an_off_series_mark_back_on_its_bar() {
     for as_prefix in [false, true] {
-        let mut pane = ChartPane::flow(1, BarSpec::Tick(1), "TESTUSDT".to_owned());
+        let mut parts = crate::pane::PaneParts::flow(1, BarSpec::Tick(1), "TESTUSDT".to_owned());
+        let mut pane = parts.at();
         pane.ingest_backfill(&(10..20).map(print_at).collect::<Vec<_>>());
         let line = drawings::DRAWING_TOOLS
             .into_iter()
@@ -594,7 +603,7 @@ fn older_history_puts_an_off_series_mark_back_on_its_bar() {
         assert!(pane.drawings.items()[0].off_series, "the tape misses it");
 
         if as_prefix {
-            let older = pane_of_prints(10, 1).series_read().closed_bars();
+            let older = pane_of_prints(10, 1).view().series_read().closed_bars();
             assert!(pane.install_history_prefix(older));
         } else {
             pane.prepend_history(&(0..10).map(print_at).collect::<Vec<_>>());
@@ -614,7 +623,8 @@ fn ingesting_prints_hands_the_tape_grid_to_the_order_flow_engine() {
     // the engine willing, and the ladder still draws the wrong rows if
     // nothing carries the answer between them. Nothing else in the suite
     // would notice that call going missing.
-    let mut pane = ChartPane::flow(1, BarSpec::Tick(1000), "WINV26".to_owned());
+    let mut parts = crate::pane::PaneParts::flow(1, BarSpec::Tick(1000), "WINV26".to_owned());
+    let mut pane = parts.at();
     assert!(
         pane.orderflow.is_some(),
         "a flow pane is the one that owns the engine under test",
@@ -643,7 +653,10 @@ fn ingesting_prints_hands_the_tape_grid_to_the_order_flow_engine() {
         });
     }
 
-    assert_eq!(pane.state.tape_price_step(), Some(Decimal::from(5)));
+    assert_eq!(
+        pane.series.state().tape_price_step(),
+        Some(Decimal::from(5))
+    );
     let after = pane
         .orderflow
         .as_mut()
@@ -658,7 +671,8 @@ fn backfilled_history_hands_the_tape_grid_over_too() {
     // History arrives as one batch before the first live print, so a chart
     // wired only on the live path draws its whole first screen on the
     // wrong rows and then quietly corrects itself.
-    let mut pane = ChartPane::flow(1, BarSpec::Tick(1000), "WDOU26".to_owned());
+    let mut parts = crate::pane::PaneParts::flow(1, BarSpec::Tick(1000), "WDOU26".to_owned());
+    let mut pane = parts.at();
     let history: Vec<quantick_engine::Trade> = [
         "5216.0", "5216.5", "5217.0", "5216.5", "5215.5", "5217.5", "5218.0", "5217.0", "5216.0",
         "5215.5",
@@ -682,13 +696,18 @@ fn backfilled_history_hands_the_tape_grid_over_too() {
         Some("0.5".parse::<Decimal>().unwrap()),
     );
 }
-fn pane_with_indicator(kind: &str, columns: Vec<Vec<f64>>) -> ChartPane {
-    let mut pane = ChartPane::flow(1, BarSpec::Tick(50), "TESTUSDT".to_owned());
+fn pane_with_indicator(kind: &str, columns: Vec<Vec<f64>>) -> crate::pane::PaneParts {
+    let mut parts = crate::pane::PaneParts::flow(1, BarSpec::Tick(50), "TESTUSDT".to_owned());
+    let mut pane = parts.at();
     add_indicator_view(&mut pane, kind, columns);
-    pane
+    parts
 }
 
-fn add_indicator_view(pane: &mut ChartPane, kind: &str, columns: Vec<Vec<f64>>) -> SlotId {
+fn add_indicator_view(
+    pane: &mut crate::pane::PaneMut<'_>,
+    kind: &str,
+    columns: Vec<Vec<f64>>,
+) -> SlotId {
     let slot = pane.indicators.allocate_slot(kind);
     let descriptor = quantick_indicators::IndicatorDescriptor {
         title: kind.to_owned(),
@@ -715,7 +734,7 @@ fn add_indicator_view(pane: &mut ChartPane, kind: &str, columns: Vec<Vec<f64>>) 
     slot
 }
 
-fn test_areas(pane: &ChartPane, rect: egui::Rect) -> PlotAreas {
+fn test_areas(pane: &crate::pane::PaneMut<'_>, rect: egui::Rect) -> PlotAreas {
     pane.plot_areas(rect, crate::config::FeedCapabilities::none())
 }
 
@@ -734,7 +753,8 @@ const TEST_PLOT: egui::Rect = egui::Rect {
 /// is zoomed — the defect this test exists to make impossible.
 #[test]
 fn a_band_scale_is_the_range_its_curve_was_drawn_with() {
-    let mut pane = pane_with_indicator("native.cvd", vec![vec![0.0, 40.0, -20.0]]);
+    let mut parts = pane_with_indicator("native.cvd", vec![vec![0.0, 40.0, -20.0]]);
+    let mut pane = parts.at();
     let auto = (-100.0, 100.0);
     {
         let view = pane
@@ -776,12 +796,13 @@ fn a_band_scale_is_the_range_its_curve_was_drawn_with() {
 
 /// Build a pane holding one *overlay* indicator, with the projection a
 /// frame would have cached, so the pick can be asked where its line is.
-fn pane_with_overlay(values: Vec<f64>) -> ChartPane {
-    let mut pane = ChartPane::flow(1, BarSpec::Tick(50), "TESTUSDT".to_owned());
+fn pane_with_overlay(values: Vec<f64>) -> crate::pane::PaneParts {
+    let mut parts = crate::pane::PaneParts::flow(1, BarSpec::Tick(50), "TESTUSDT".to_owned());
+    let mut pane = parts.at();
     // Plot rows map 1:1 onto bar slots, so the fixture needs the bars the
     // columns describe — without them the x mapping has nothing to place
     // the curve on, which is exactly what a chart before its first bar is.
-    pane.history_prefix = (0..values.len())
+    *pane.series.prefix_mut() = (0..values.len())
         .map(|_| quantick_engine::Bar {
             open_time: 0,
             close_time: 0,
@@ -821,7 +842,7 @@ fn pane_with_overlay(values: Vec<f64>) -> ChartPane {
     pane.frame.chart_top = TEST_PLOT.top();
     pane.frame.chart_height = TEST_PLOT.height();
     pane.frame.auto_range = Some((0.0, 100.0));
-    pane
+    parts
 }
 
 /// The slot a stored fractional anchor sits on, asked of the one owner.
@@ -838,9 +859,10 @@ fn slot_of(bar: f32) -> usize {
 /// A pane holding `count` closed bars, each opening one minute after the
 /// last — so a test can ask what time a slot is and get an answer that
 /// could only have come from that slot.
-fn pane_with_timed_bars(count: usize) -> ChartPane {
-    let mut pane = ChartPane::flow(1, BarSpec::Tick(50), "TESTUSDT".to_owned());
-    pane.history_prefix = (0..count)
+fn pane_with_timed_bars(count: usize) -> crate::pane::PaneParts {
+    let mut parts = crate::pane::PaneParts::flow(1, BarSpec::Tick(50), "TESTUSDT".to_owned());
+    let mut pane = parts.at();
+    *pane.series.prefix_mut() = (0..count)
         .map(|index| quantick_engine::Bar {
             open_time: BAR_ZERO_MS + index as i64 * 60_000,
             close_time: BAR_ZERO_MS + index as i64 * 60_000 + 59_999,
@@ -857,7 +879,7 @@ fn pane_with_timed_bars(count: usize) -> ChartPane {
     pane.frame.chart_top = TEST_PLOT.top();
     pane.frame.chart_height = TEST_PLOT.height();
     pane.frame.auto_range = Some((0.0, 100.0));
-    pane
+    parts
 }
 
 /// When the fixture's first bar opened. An arbitrary instant, named once
@@ -875,7 +897,7 @@ const BAR_ZERO_MS: i64 = 1_700_000_000_000;
 /// is pointed at a path that does not exist, so the fixture reads nothing
 /// off the developer's disk.
 fn drive_navigation(
-    pane: &mut ChartPane,
+    pane: &mut crate::pane::PaneMut<'_>,
     ctx: &egui::Context,
     area: egui::Rect,
     events: Vec<egui::Event>,
@@ -886,7 +908,7 @@ fn drive_navigation(
 /// [`drive_navigation`], also answering whether the frame asked the window
 /// for the chart settings.
 fn drive_navigation_asking(
-    pane: &mut ChartPane,
+    pane: &mut crate::pane::PaneMut<'_>,
     ctx: &egui::Context,
     area: egui::Rect,
     events: Vec<egui::Event>,
@@ -999,9 +1021,9 @@ fn with_chrome_over<R>(
 /// Run `paint` with that chrome and hand back everything it put on the
 /// canvas.
 fn painted_with_tool(
-    pane: &ChartPane,
+    pane: &crate::pane::PaneMut<'_>,
     tool: Tool,
-    paint: impl Fn(&ChartPane, &egui::Painter, &PaneChrome<'_>),
+    paint: impl Fn(&crate::pane::PaneMut<'_>, &egui::Painter, &PaneChrome<'_>),
 ) -> String {
     with_chrome(tool, |chrome| {
         painted(|painter| paint(pane, painter, chrome))
@@ -1014,14 +1036,17 @@ fn painted_with_tool(
 /// time half, which the crosshair has never drawn.
 #[test]
 fn the_armed_crosshair_keeps_the_price_tag_to_itself() {
-    let mut pane = pane_with_timed_bars(200);
+    let mut parts = pane_with_timed_bars(200);
+    let mut pane = parts.at();
     let areas = test_areas(&pane, TEST_PLOT);
     let scale = test_scale();
     let mut discarded = quantick_layers::LayerActions::default();
     // The time half off, so this measures the price half alone.
     pane.set_layer_visible(ChartLayer::PointerTime, false, &mut discarded);
     pane.hover_pos = Some(areas.chart.center());
-    let compass = |pane: &ChartPane, painter: &egui::Painter, chrome: &PaneChrome<'_>| {
+    let compass = |pane: &crate::pane::PaneMut<'_>,
+                   painter: &egui::Painter,
+                   chrome: &PaneChrome<'_>| {
         if let Some(decided) = {
             let price_on =
                 pane.layer_visible(quantick_layers::ChartLayer::PointerPrice, chrome.style);
@@ -1091,7 +1116,7 @@ fn the_armed_crosshair_keeps_the_price_tag_to_itself() {
 
 /// Every level the pane would write on the price axis this frame.
 /// Every level the pane would write on the price axis this frame.
-fn axis_levels_of(pane: &ChartPane, scale: &PriceScale) -> Vec<PriceAxisLevel> {
+fn axis_levels_of(pane: &crate::pane::PaneMut<'_>, scale: &PriceScale) -> Vec<PriceAxisLevel> {
     let mut levels = Vec::new();
     price_axis::price_axis_levels(
         &pane.drawing_projection(),
@@ -1124,7 +1149,8 @@ fn a_tenth_of_a_pixel() -> f64 {
 /// where the line meets the gutter.
 #[test]
 fn a_horizontal_level_marks_itself_on_the_price_axis() {
-    let mut pane = pane_with_timed_bars(200);
+    let mut parts = pane_with_timed_bars(200);
+    let mut pane = parts.at();
     let scale = test_scale();
     let red = egui::Color32::from_rgb(200, 40, 40);
     for (id, price) in [("horizontal-line", 150.0_f64), ("horizontal-ray", 120.0)] {
@@ -1155,7 +1181,8 @@ fn a_horizontal_level_marks_itself_on_the_price_axis() {
 /// moves, and it goes when the objects go.
 #[test]
 fn an_axis_tag_follows_its_object_and_leaves_with_it() {
-    let mut pane = pane_with_timed_bars(200);
+    let mut parts = pane_with_timed_bars(200);
+    let mut pane = parts.at();
     let scale = test_scale();
     let tool = drawings::DrawingTool::by_id("horizontal-line").expect("a registered tool");
     assert!(pane.drawings.place(tool, ChartPoint::at(100.0, 150.0)));
@@ -1199,7 +1226,8 @@ fn an_axis_tag_follows_its_object_and_leaves_with_it() {
 /// sees, so the order in the shape list *is* the rule.
 #[test]
 fn the_live_price_is_painted_over_a_level_and_not_under_it() {
-    let mut pane = pane_with_timed_bars(60);
+    let mut parts = pane_with_timed_bars(60);
+    let mut pane = parts.at();
     let scale = test_scale();
     // A level at the same price the last-price chip will report, which is
     // the only interesting case: anywhere else they do not overlap.
@@ -1251,7 +1279,8 @@ fn the_live_price_is_painted_over_a_level_and_not_under_it() {
 /// explicitly not making.
 #[test]
 fn a_tag_wears_the_same_honesty_fade_its_stroke_does() {
-    let mut pane = pane_with_timed_bars(200);
+    let mut parts = pane_with_timed_bars(200);
+    let mut pane = parts.at();
     let scale = test_scale();
     let tool = drawings::DrawingTool::by_id("horizontal-line").expect("a registered tool");
     assert!(pane.drawings.place(tool, ChartPoint::at(100.0, 150.0)));
@@ -1278,7 +1307,8 @@ fn a_tag_wears_the_same_honesty_fade_its_stroke_does() {
 /// it on the price gutter would put a CVD reading where a price goes.
 #[test]
 fn a_level_drawn_on_an_indicator_band_never_reaches_the_price_axis() {
-    let mut pane = pane_with_indicator("native.cvd", vec![vec![0.0, 40.0, -20.0]]);
+    let mut parts = pane_with_indicator("native.cvd", vec![vec![0.0, 40.0, -20.0]]);
+    let mut pane = parts.at();
     pane.frame.chart_area = Some(TEST_PLOT);
     pane.frame.auto_range = Some((0.0, 100.0));
     let band = DrawingBand::Indicator(crate::bands::pane_key(
@@ -1301,7 +1331,7 @@ fn a_level_drawn_on_an_indicator_band_never_reaches_the_price_axis() {
 /// A right-click at `pos`, driven through the pane's own input pass, and
 /// A right-click at `pos`, driven through the pane's own input pass, and
 /// one more frame for the menu it opened to draw itself.
-fn right_click_menu(pane: &mut ChartPane, ctx: &egui::Context, pos: egui::Pos2) {
+fn right_click_menu(pane: &mut crate::pane::PaneMut<'_>, ctx: &egui::Context, pos: egui::Pos2) {
     for pressed in [true, false] {
         let events = vec![
             egui::Event::PointerMoved(pos),
@@ -1324,7 +1354,8 @@ fn right_click_menu(pane: &mut ChartPane, ctx: &egui::Context, pos: egui::Pos2) 
 #[test]
 fn a_right_drag_survives_a_stale_divider_left_of_the_band() {
     let ctx = egui::Context::default();
-    let mut pane = pane_with_timed_bars(200);
+    let mut parts = pane_with_timed_bars(200);
+    let mut pane = parts.at();
     let _ = drive_navigation(&mut pane, &ctx, TEST_PLOT, Vec::new());
     let areas = test_areas(&pane, TEST_PLOT);
     pane.frame.lane_divider_x = Some(areas.chart.left() - 40.0);
@@ -1350,7 +1381,8 @@ fn a_right_drag_survives_a_stale_divider_left_of_the_band() {
 #[test]
 fn each_axis_offers_the_half_of_the_compass_it_wears() {
     let ctx = egui::Context::default();
-    let mut pane = pane_with_timed_bars(200);
+    let mut parts = pane_with_timed_bars(200);
+    let mut pane = parts.at();
     // One frame to publish the geometry the menus are opened on.
     let _ = drive_navigation(&mut pane, &ctx, TEST_PLOT, Vec::new());
     let areas = test_areas(&pane, TEST_PLOT);
@@ -1396,7 +1428,8 @@ fn each_axis_offers_the_half_of_the_compass_it_wears() {
 #[test]
 fn the_axis_menu_entry_switches_the_layer_it_names() {
     let ctx = egui::Context::default();
-    let mut pane = pane_with_timed_bars(200);
+    let mut parts = pane_with_timed_bars(200);
+    let mut pane = parts.at();
     let style = crate::style::ChartStyle::default();
     let _ = drive_navigation(&mut pane, &ctx, TEST_PLOT, Vec::new());
     let areas = test_areas(&pane, TEST_PLOT);
@@ -1437,7 +1470,8 @@ fn the_axis_menu_entry_switches_the_layer_it_names() {
 #[test]
 fn the_axis_menu_first_row_switches_the_price_tag_progress() {
     let ctx = egui::Context::default();
-    let mut pane = pane_with_timed_bars(200);
+    let mut parts = pane_with_timed_bars(200);
+    let mut pane = parts.at();
     let _ = drive_navigation(&mut pane, &ctx, TEST_PLOT, Vec::new());
     let areas = test_areas(&pane, TEST_PLOT);
     right_click_menu(&mut pane, &ctx, areas.price_gutter.center());
@@ -1474,7 +1508,7 @@ fn the_axis_menu_first_row_switches_the_price_tag_progress() {
 /// A double click at `pos`, as two press/release pairs in two frames —
 /// egui reports the second as `double_clicked`.
 fn double_click_at(
-    pane: &mut ChartPane,
+    pane: &mut crate::pane::PaneMut<'_>,
     ctx: &egui::Context,
     area: egui::Rect,
     pos: egui::Pos2,
@@ -1485,7 +1519,7 @@ fn double_click_at(
 /// [`double_click_at`], also answering whether it asked for the chart
 /// settings.
 fn double_click_asking(
-    pane: &mut ChartPane,
+    pane: &mut crate::pane::PaneMut<'_>,
     ctx: &egui::Context,
     area: egui::Rect,
     pos: egui::Pos2,
@@ -1523,7 +1557,8 @@ fn press_at(pos: egui::Pos2, pressed: bool) -> Vec<egui::Event> {
 #[test]
 fn a_double_click_on_a_pane_header_asks_for_that_indicators_settings() {
     let ctx = egui::Context::default();
-    let mut pane = pane_with_indicator("native.cvd", vec![vec![0.0, 40.0, -20.0]]);
+    let mut parts = pane_with_indicator("native.cvd", vec![vec![0.0, 40.0, -20.0]]);
+    let mut pane = parts.at();
     // One frame to lay the pane out, so the header rect is real.
     let _ = drive_navigation(&mut pane, &ctx, TEST_PLOT, Vec::new());
     let areas = test_areas(&pane, TEST_PLOT);
@@ -1563,7 +1598,8 @@ fn a_double_click_on_a_pane_header_asks_for_that_indicators_settings() {
 #[test]
 fn a_double_click_on_a_collapsed_strip_opens_it_and_asks_for_its_settings() {
     let ctx = egui::Context::default();
-    let mut pane = pane_with_indicator("native.cvd", vec![vec![0.0, 40.0]]);
+    let mut parts = pane_with_indicator("native.cvd", vec![vec![0.0, 40.0]]);
+    let mut pane = parts.at();
     pane.indicators
         .visible_panes_mut()
         .next()
@@ -1590,7 +1626,8 @@ fn a_double_click_on_a_collapsed_strip_opens_it_and_asks_for_its_settings() {
     );
 
     // The single click either way is exactly what it was.
-    let mut plain = pane_with_indicator("native.cvd", vec![vec![0.0, 40.0]]);
+    let mut plain_parts = pane_with_indicator("native.cvd", vec![vec![0.0, 40.0]]);
+    let mut plain = plain_parts.at();
     plain
         .indicators
         .visible_panes_mut()
@@ -1623,7 +1660,12 @@ fn a_double_click_on_a_collapsed_strip_opens_it_and_asks_for_its_settings() {
 
 /// One press and release at `pos`, far enough apart in frames that egui
 /// reports a plain click rather than half of a double one.
-fn single_click_at(pane: &mut ChartPane, ctx: &egui::Context, area: egui::Rect, pos: egui::Pos2) {
+fn single_click_at(
+    pane: &mut crate::pane::PaneMut<'_>,
+    ctx: &egui::Context,
+    area: egui::Rect,
+    pos: egui::Pos2,
+) {
     for pressed in [true, false] {
         let events = vec![
             egui::Event::PointerMoved(pos),
@@ -1652,7 +1694,8 @@ fn single_click_at(pane: &mut ChartPane, ctx: &egui::Context, area: egui::Rect, 
 #[test]
 fn a_double_click_on_an_overlays_line_asks_for_that_overlay() {
     let ctx = egui::Context::default();
-    let mut pane = pane_with_overlay(vec![50.0; 8]);
+    let mut parts = pane_with_overlay(vec![50.0; 8]);
+    let mut pane = parts.at();
     let _ = drive_navigation(&mut pane, &ctx, TEST_PLOT, Vec::new());
     let expected = pane.indicators.all()[0].slot;
     let (chart, right, total, scale) = pane
@@ -1683,7 +1726,8 @@ fn a_double_click_on_an_overlays_line_asks_for_that_overlay() {
 fn volume_body_double_click_opens_settings_but_between_columns_does_not() {
     use quantick_indicators::Indicator;
     let ctx = egui::Context::default();
-    let mut pane = pane_with_overlay(vec![20.0; 8]);
+    let mut parts = pane_with_overlay(vec![20.0; 8]);
+    let mut pane = parts.at();
     let slot = pane.indicators.all()[0].slot;
     let view = pane.indicators.view_mut(slot).unwrap();
     view.kind = std::sync::Arc::from("native.volume");
@@ -1713,7 +1757,8 @@ fn volume_body_double_click_opens_settings_but_between_columns_does_not() {
 /// every trader already uses — quietly stops working.
 #[test]
 fn a_double_click_on_an_overlays_line_picks_that_overlay_and_nothing_else() {
-    let mut pane = pane_with_overlay(vec![50.0; 6]);
+    let mut parts = pane_with_overlay(vec![50.0; 6]);
+    let mut pane = parts.at();
     let slot = pane.indicators.all()[0].slot;
     let (chart, right, total, scale) = pane
         .hit_test()
@@ -1757,7 +1802,8 @@ fn a_double_click_on_an_overlays_line_picks_that_overlay_and_nothing_else() {
 /// a gap in what can be grabbed — the NaN break the renderer honours.
 #[test]
 fn the_pick_honours_hidden_indicators_and_nan_gaps() {
-    let mut pane = pane_with_overlay(vec![50.0, f64::NAN, 50.0, 50.0]);
+    let mut parts = pane_with_overlay(vec![50.0, f64::NAN, 50.0, 50.0]);
+    let mut pane = parts.at();
     let slot = pane.indicators.all()[0].slot;
     let (chart, right, total, scale) = pane
         .hit_test()
@@ -1795,7 +1841,8 @@ fn the_pick_honours_hidden_indicators_and_nan_gaps() {
 /// something else.
 #[test]
 fn the_pane_header_is_chrome_and_never_overlaps_the_chevron() {
-    let pane = pane_with_indicator("native.cvd", vec![vec![0.0, 40.0]]);
+    let mut parts = pane_with_indicator("native.cvd", vec![vec![0.0, 40.0]]);
+    let pane = parts.at();
     let areas = test_areas(&pane, TEST_PLOT);
     let slot = areas.indicator_panes.first().expect("one pane");
     let header = indicator_render::pane_header_rect(slot.rect, slot.collapsed, slot.header_height);
@@ -1826,7 +1873,8 @@ fn the_pane_header_is_chrome_and_never_overlaps_the_chevron() {
 /// order itself — or arming a tool silently kills both controls.
 #[test]
 fn the_chevron_and_the_divider_are_never_drawing_surfaces() {
-    let pane = pane_with_indicator("native.cvd", vec![vec![0.0, 1.0]]);
+    let mut parts = pane_with_indicator("native.cvd", vec![vec![0.0, 1.0]]);
+    let pane = parts.at();
     let areas = test_areas(&pane, TEST_PLOT);
     let slot = areas.indicator_panes.first().expect("one indicator pane");
     let chevron = indicator_render::pane_disclosure_rect(slot.rect, slot.collapsed);
@@ -1849,7 +1897,8 @@ fn the_chevron_and_the_divider_are_never_drawing_surfaces() {
 /// at the mirror of the price under the pointer.
 #[test]
 fn the_price_band_scale_turns_over_with_the_chart() {
-    let mut pane = ChartPane::flow(1, BarSpec::Tick(50), "TESTUSDT".to_owned());
+    let mut parts = crate::pane::PaneParts::flow(1, BarSpec::Tick(50), "TESTUSDT".to_owned());
+    let mut pane = parts.at();
     pane.frame.auto_range = Some((100.0, 110.0));
     let areas = test_areas(&pane, TEST_PLOT);
     let upright = crate::bands::BandGeometry {
@@ -1886,7 +1935,8 @@ fn the_price_band_scale_turns_over_with_the_chart() {
 /// which is the most-drawn level on a signed series.
 #[test]
 fn the_band_magnet_takes_the_panes_own_values_and_zero() {
-    let view_holder = pane_with_indicator("native.cvd", vec![vec![40.0], vec![-15.0]]);
+    let mut view_holder_parts = pane_with_indicator("native.cvd", vec![vec![40.0], vec![-15.0]]);
+    let view_holder = view_holder_parts.at();
     let view = view_holder
         .indicators
         .visible_panes()
@@ -2033,7 +2083,7 @@ fn the_rung_budget_follows_the_lane_and_is_zero_without_one() {
 /// release. egui reads a drag from the movement *between* frames, so a
 /// single frame carrying both the press and the move reports no delta.
 fn drag_across(
-    pane: &mut ChartPane,
+    pane: &mut crate::pane::PaneMut<'_>,
     ctx: &egui::Context,
     area: egui::Rect,
     from: egui::Pos2,
@@ -2076,13 +2126,14 @@ fn drag_across(
 #[test]
 fn dragging_the_time_strip_zooms_the_pane_it_belongs_to() {
     let ctx = egui::Context::default();
-    for (label, mut pane) in [
+    for (label, mut parts) in [
         (
             "flow",
-            ChartPane::flow(1, BarSpec::Tick(50), "TESTUSDT".to_owned()),
+            crate::pane::PaneParts::flow(1, BarSpec::Tick(50), "TESTUSDT".to_owned()),
         ),
-        ("time", ChartPane::time(2, 60_000)),
+        ("time", crate::pane::PaneParts::time(2, 60_000)),
     ] {
+        let mut pane = parts.at();
         let start = test_areas(&pane, TEST_PLOT).time_strip.center();
 
         let before = pane.model.viewport.px_per_bar();
@@ -2154,7 +2205,8 @@ fn every_paused_region_has_a_word_for_the_badge_and_shuts_the_gate() {
     // The gate half of "one rule, two readers": whenever there is a
     // word, `strategy_region` refuses — so the badge can never paint a
     // running bot over a region every bar is being refused against.
-    let mut pane = ChartPane::flow(1, BarSpec::Tick(50), "TESTUSDT".to_owned());
+    let mut parts = crate::pane::PaneParts::flow(1, BarSpec::Tick(50), "TESTUSDT".to_owned());
+    let mut pane = parts.at();
     pane.drawings
         .place(rectangle, drawings::ChartPoint::at(0.0, 100.0));
     pane.drawings
@@ -2198,7 +2250,8 @@ fn a_paused_regions_badge_says_the_specific_thing_and_not_the_general_one() {
         .into_iter()
         .find(|tool| tool.id() == drawings::RECTANGLE_TOOL_ID)
         .expect("the rectangle tool is registered");
-    let mut pane = ChartPane::flow(1, BarSpec::Tick(50), "TESTUSDT".to_owned());
+    let mut parts = crate::pane::PaneParts::flow(1, BarSpec::Tick(50), "TESTUSDT".to_owned());
+    let mut pane = parts.at();
     pane.drawings
         .place(rectangle, drawings::ChartPoint::at(0.0, 100.0));
     pane.drawings
@@ -2283,7 +2336,8 @@ fn the_badge_names_the_rulers_own_refusal_and_not_only_an_older_bars() {
         .into_iter()
         .find(|tool| tool.id() == drawings::RECTANGLE_TOOL_ID)
         .expect("the rectangle tool is registered");
-    let mut pane = ChartPane::flow(1, BarSpec::Tick(50), "TESTUSDT".to_owned());
+    let mut parts = crate::pane::PaneParts::flow(1, BarSpec::Tick(50), "TESTUSDT".to_owned());
+    let mut pane = parts.at();
     pane.drawings
         .place(rectangle, drawings::ChartPoint::at(0.0, 180_300.0));
     pane.drawings
@@ -2382,24 +2436,32 @@ fn a_reset_drops_the_readings_unless_the_market_is_the_same() {
         time_ms: 1_000,
         session_deals: 5_000_400,
     };
-    let mut pane = pane_of_prints(4, 2);
-    pane.state.observe_deals(reading);
+    let mut parts = pane_of_prints(4, 2);
+    let mut pane = parts.at();
+    pane.series.state_mut().observe_deals(reading);
     pane.reset_series_with(true);
     assert_eq!(
-        pane.state.deal_samples(),
+        pane.series.state().deal_samples(),
         &[reading],
         "the same market keeps them"
     );
-    assert!(pane.state.bars().is_empty(), "the series itself is gone");
+    assert!(
+        pane.series.state().bars().is_empty(),
+        "the series itself is gone"
+    );
     pane.reset_series();
     assert!(
-        pane.state.deal_samples().is_empty(),
+        pane.series.state().deal_samples().is_empty(),
         "a new market starts clean"
     );
 }
 
-fn g6_badge_pane() -> (ChartPane, crate::strategy_anchors::StrategyAnchors) {
-    let mut pane = ChartPane::flow(1, BarSpec::Tick(50), "TESTUSDT".to_owned());
+fn g6_badge_pane() -> (
+    crate::pane::PaneParts,
+    crate::strategy_anchors::StrategyAnchors,
+) {
+    let mut parts = crate::pane::PaneParts::flow(1, BarSpec::Tick(50), "TESTUSDT".to_owned());
+    let mut pane = parts.at();
     let rectangle = drawings::DRAWING_TOOLS
         .into_iter()
         .find(|tool| tool.id() == drawings::RECTANGLE_TOOL_ID)
@@ -2435,7 +2497,7 @@ fn g6_badge_pane() -> (ChartPane, crate::strategy_anchors::StrategyAnchors) {
     };
     let mut anchors = crate::strategy_anchors::StrategyAnchors::default();
     assert!(anchors.arm(instance).is_empty());
-    (pane, anchors)
+    (parts, anchors)
 }
 fn g6_badge_band(top: f32) -> bands::Band {
     let rect = egui::Rect::from_min_max(egui::pos2(10.0, top), egui::pos2(400.0, top + 200.0));
@@ -2453,7 +2515,10 @@ fn g6_badge_band(top: f32) -> bands::Band {
     }
 }
 fn g6_badge_output(
-    (pane, anchors): (&ChartPane, &crate::strategy_anchors::StrategyAnchors),
+    (pane, anchors): (
+        &crate::pane::PaneMut<'_>,
+        &crate::strategy_anchors::StrategyAnchors,
+    ),
     band: &bands::Band,
     pass: DrawPass,
 ) -> egui::FullOutput {
@@ -2482,7 +2547,8 @@ fn g6_badge_output(
 fn g6_characterization_hidden_badges_and_actual_stage_order() {
     let band = g6_badge_band(20.0);
     for (hidden, all_hidden) in [(false, false), (true, false), (false, true)] {
-        let (mut pane, anchors) = g6_badge_pane();
+        let (mut parts, anchors) = g6_badge_pane();
+        let mut pane = parts.at();
         pane.drawings.items_mut()[0].hidden = hidden;
         let rectangle = drawings::DRAWING_TOOLS
             .into_iter()
@@ -2523,7 +2589,8 @@ fn g6_characterization_hidden_badges_and_actual_stage_order() {
 }
 #[test]
 fn g6_characterization_all_bands_has_one_clipped_badge() {
-    let (mut pane, anchors) = g6_badge_pane();
+    let (mut parts, anchors) = g6_badge_pane();
+    let mut pane = parts.at();
     // Retained object fixture, not a new strategy arming capability.
     pane.drawings.items_mut()[0].band = DrawingBand::AllBands;
     let bands = [g6_badge_band(20.0), g6_badge_band(250.0)];
@@ -2555,11 +2622,12 @@ fn g6_characterization_all_bands_has_one_clipped_badge() {
 }
 #[test]
 fn g6_characterization_band_metadata_precedes_cached_geometry() {
-    let mut pane = pane_with_indicator("native.cvd", vec![vec![1.0]]);
+    let mut parts = pane_with_indicator("native.cvd", vec![vec![1.0]]);
+    let mut pane = parts.at();
     let view = &pane.indicators.all()[0];
     let slot = view.slot;
     let key = crate::bands::pane_key(view);
-    let mut drawing = g6_badge_pane().0.drawings.items()[0].clone();
+    let mut drawing = g6_badge_pane().0.pane.drawings.items()[0].clone();
     drawing.band = DrawingBand::Indicator(key);
     assert!(pane.frame.bands.is_empty());
     assert!(matches!(
@@ -2627,7 +2695,8 @@ fn g6_characterization_mutable_contribution_keeps_original_stage_decisions() {
             }),
         ],
     };
-    let (mut pane, anchors) = g6_badge_pane();
+    let (mut parts, anchors) = g6_badge_pane();
+    let mut pane = parts.at();
     pane.layer_renderers = REGISTRY.get_or_init(|| RenderRegistry::new(&[PACKAGE]).unwrap());
     let band = g6_badge_band(20.0);
     let under = g6_badge_output((&pane, &anchors), &band, DrawPass::UnderCandles);
@@ -2658,7 +2727,7 @@ fn g6_characterization_mutable_contribution_keeps_original_stage_decisions() {
     );
 }
 
-fn finish_prefix_indicators(pane: &mut ChartPane) {
+fn finish_prefix_indicators(pane: &mut crate::pane::PaneMut<'_>) {
     let (tx, rx) = std::sync::mpsc::channel();
     pane.indicator_worker
         .send(crate::indicator_worker::WorkerCommand::Flush(tx));
@@ -2668,10 +2737,12 @@ fn finish_prefix_indicators(pane: &mut ChartPane) {
 
 #[test]
 fn prefix_install_preserves_composed_series_effects() {
-    let mut pane = ChartPane::flow(1, BarSpec::Tick(1), "TESTUSDT".to_owned());
+    let mut parts = crate::pane::PaneParts::flow(1, BarSpec::Tick(1), "TESTUSDT".to_owned());
+    let mut pane = parts.at();
     pane.ingest_backfill(&(10..20).map(print_at).collect::<Vec<_>>());
     shared_mark_at(&mut pane, 4, 100.0);
-    pane.model.viewport.pan_pixels(20.0, pane.slots());
+    let slots = pane.slots();
+    pane.model.viewport.pan_pixels(20.0, slots);
     pane.add_indicator(crate::indicator_worker::IndicatorSource::Script {
         name: "Close".to_owned(),
         text: "indicator(\"Close\")\nplot(close)".to_owned(),
@@ -2679,7 +2750,7 @@ fn prefix_install_preserves_composed_series_effects() {
     finish_prefix_indicators(&mut pane);
     let edge = pane.model.viewport.right_edge_bar(pane.slots());
     let point = pane.drawings.items()[0].points[0];
-    let mut prefix = pane_of_prints(4, 1).series_read().closed_bars();
+    let mut prefix = pane_of_prints(4, 1).view().series_read().closed_bars();
     for (index, bar) in prefix.iter_mut().enumerate() {
         let price = Decimal::from(101 + index as u64);
         bar.open = price;
@@ -2704,7 +2775,7 @@ fn prefix_install_preserves_composed_series_effects() {
         (prefix[..2].to_vec(), None, true, 2),
         (prefix[..2].to_vec(), Some(prefix[0].clone()), true, 2),
     ] {
-        let old_count = pane.history_prefix.len();
+        let old_count = pane.series.prefix().len();
         let old_column = pane.indicators.all()[0].columns[0].clone();
         assert_eq!(pane.install_venue_history(bars, lead, false), changed);
         let aligned = &pane.indicators.all()[0].columns[0];
@@ -2737,9 +2808,10 @@ fn prefix_install_preserves_composed_series_effects() {
 #[test]
 fn prefix_install_rejects_history_from_before_reset_or_recut() {
     for reset in [true, false] {
-        let mut pane = ChartPane::flow(1, BarSpec::Tick(1), "TESTUSDT".to_owned());
+        let mut parts = crate::pane::PaneParts::flow(1, BarSpec::Tick(1), "TESTUSDT".to_owned());
+        let mut pane = parts.at();
         pane.ingest_backfill(&(10..20).map(print_at).collect::<Vec<_>>());
-        pane.install_history_prefix(pane_of_prints(2, 1).series_read().closed_bars());
+        pane.install_history_prefix(pane_of_prints(2, 1).view().series_read().closed_bars());
         pane.receive_history(std::sync::Arc::new((2..10).map(print_at).collect()), true);
         // Produce a candidate but leave it unpublished across the change.
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
@@ -2752,9 +2824,9 @@ fn prefix_install_rejects_history_from_before_reset_or_recut() {
             pane.ingest_backfill(&(30..34).map(print_at).collect::<Vec<_>>());
             assert!(pane.prepare_history());
             assert!(!pane.install_history());
-            assert_eq!(pane.state.trades().len(), 4);
+            assert_eq!(pane.series.state().trades().len(), 4);
             assert_eq!(pane.slot_open_time(0), Some(TAPE_START_MS + 30_000));
-            assert!(pane.history_prefix.is_empty());
+            assert!(pane.series.prefix().is_empty());
         } else {
             pane.set_spec(BarSpec::Tick(2));
             assert!(
@@ -2767,9 +2839,9 @@ fn prefix_install_rejects_history_from_before_reset_or_recut() {
                 std::thread::yield_now();
             }
             assert!(pane.install_history());
-            assert_eq!(pane.state.spec(), &BarSpec::Tick(2));
-            assert_eq!(pane.state.trades().len(), 18);
-            assert_eq!(pane.state.bars().len(), 9);
+            assert_eq!(pane.series.state().spec(), &BarSpec::Tick(2));
+            assert_eq!(pane.series.state().trades().len(), 18);
+            assert_eq!(pane.series.state().bars().len(), 9);
         }
     }
 }
@@ -2777,8 +2849,10 @@ fn prefix_install_rejects_history_from_before_reset_or_recut() {
 #[test]
 fn prefix_install_preserves_live_and_replay_results() {
     let trades: Vec<_> = (10..20).map(print_at).collect();
-    let mut live = ChartPane::flow(1, BarSpec::Tick(1), "TESTUSDT".to_owned());
-    let mut replay = ChartPane::flow(2, BarSpec::Tick(1), "TESTUSDT".to_owned());
+    let mut live_parts = crate::pane::PaneParts::flow(1, BarSpec::Tick(1), "TESTUSDT".to_owned());
+    let mut live = live_parts.at();
+    let mut replay_parts = crate::pane::PaneParts::flow(2, BarSpec::Tick(1), "TESTUSDT".to_owned());
+    let mut replay = replay_parts.at();
     for trade in &trades {
         live.ingest_live_trade(trade);
     }
@@ -2790,10 +2864,11 @@ fn prefix_install_preserves_live_and_replay_results() {
     let baseline = live.series_read().closed_bars();
     for pane in [&mut live, &mut replay] {
         shared_mark_at(pane, 4, 100.0);
-        pane.model.viewport.pan_pixels(20.0, pane.slots());
+        let slots = pane.slots();
+        pane.model.viewport.pan_pixels(20.0, slots);
         let edge = pane.model.viewport.right_edge_bar(pane.slots());
         let point = pane.drawings.items()[0].points[0];
-        let prefix = pane_of_prints(4, 1).series_read().closed_bars();
+        let prefix = pane_of_prints(4, 1).view().series_read().closed_bars();
         assert!(pane.install_history_prefix(prefix.clone()));
         assert_eq!(&pane.series_read().closed_bars()[4..], baseline.as_slice());
         assert_eq!(pane.model.viewport.right_edge_bar(pane.slots()), edge + 4.0);

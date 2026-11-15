@@ -9,11 +9,7 @@ use quantick_control::{
     wire::WireU64,
 };
 
-use crate::{
-    loading::LoadingTask,
-    pane::{ChartPane, PaneSide},
-    tab::Tab,
-};
+use crate::{loading::LoadingTask, pane::PaneSide, tab::Tab};
 
 use super::{
     registry::{CaptureContext, ProjectionRegistry, ProjectionRegistryError},
@@ -125,7 +121,7 @@ fn tape_health(tab: &Tab) -> Option<TapeHealthSnapshot> {
     })
 }
 
-fn pane_health(pane: &ChartPane, side: PaneSide) -> PaneHealthSnapshot {
+fn pane_health(pane: crate::pane::PaneRef<'_>, side: PaneSide) -> PaneHealthSnapshot {
     PaneHealthSnapshot::from_indicators(
         pane.id,
         crate::control::pane_side_dto(side),

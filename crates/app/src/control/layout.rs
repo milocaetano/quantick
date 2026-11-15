@@ -111,7 +111,7 @@ impl LayoutTab for Tab {
         std::mem::replace(&mut self.focus, side) != side
     }
     fn bars_mut(&mut self, pane: usize) -> Option<&mut SpecSelector> {
-        self.pane_at_mut(pane).map(|chart| &mut chart.spec)
+        self.pane_at_mut(pane).map(|chart| &mut chart.pane.spec)
     }
     fn set_pane_bar_spec(&mut self, pane: usize, spec: BarConfiguration) -> Result<bool, String> {
         Tab::set_pane_bar_spec(self, pane, spec).map_err(|error| error.to_string())

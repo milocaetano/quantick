@@ -137,7 +137,7 @@ fn spiked_app(ctx: &egui::Context, spike: Option<u64>, share: f32) -> QuantickAp
     tab.tape_mut()
         .edit_config(|config| config.live_lane.width_share = share);
     let mut effects = Default::default();
-    tab.flow_pane
+    tab.flow_mut()
         .set_layer_visible(ChartLayer::LiveStrip, true, &mut effects);
     for agg_id in 201..=400 {
         let trade = narrow_trade(agg_id, spike);
@@ -166,7 +166,7 @@ fn trade_left_of_the_beside_window(ctx: &egui::Context) -> u64 {
         None,
         quantick_orderflow::config::DEFAULT_LIVE_LANE_SHARE,
     );
-    let pane = &app.active_tab().flow_pane;
+    let pane = app.active_tab().flow();
     let chart = pane.frame.chart_rect.expect("laid out");
     let width = pane.frame.candles_right.expect("candles") - chart.left();
     let total =

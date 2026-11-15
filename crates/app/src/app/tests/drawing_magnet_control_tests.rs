@@ -166,10 +166,10 @@ fn a_drawings_own_magnet_is_set_by_a_named_call_and_read_back() {
         "horizontal-line",
         &[egui::pos2(700.0, 300.0)],
     );
-    let drawing_id = app.active_tab().drawing_pane().drawings.items()[index].id;
+    let drawing_id = app.active_tab().drawing_pane().pane.drawings.items()[index].id;
     let pane_id = app.active_tab().drawing_pane().id;
     let own = |app: &QuantickApp| {
-        let drawings = &app.active_tab().drawing_pane().drawings;
+        let drawings = &app.active_tab().drawing_pane().pane.drawings;
         drawings.items()[drawings.index_of(drawing_id).unwrap()].magnet
     };
     assert!(!own(&app), "an object's magnet opens off");
@@ -295,7 +295,7 @@ fn the_object_magnet_moves_only_the_named_panes_drawing_when_ids_collide() {
     let ctx = egui::Context::default();
     let (mut app, _commands, _) = split_with_a_shared_line(&ctx);
     let flow_id = app.active_tab().flow_pane.drawings.items()[0].id;
-    let time = app
+    let mut time = app
         .active_tab_mut()
         .time_pane_mut()
         .expect("the split built it");
@@ -322,7 +322,7 @@ fn the_object_magnet_moves_only_the_named_panes_drawing_when_ids_collide() {
         };
         (
             of(&tab.flow_pane.drawings),
-            of(&tab.time_pane().unwrap().drawings),
+            of(&tab.time_pane().unwrap().pane.drawings),
         )
     };
 
@@ -377,7 +377,7 @@ fn a_tool_that_snaps_by_its_own_rule_refuses_the_object_magnet() {
         response_error(&refused).context.details,
         Some(json!({"reason": "tool_snaps_by_its_own_rule", "tool_id": "anchored-vwap"}))
     );
-    assert!(!app.active_tab().drawing_pane().drawings.items()[index].magnet);
+    assert!(!app.active_tab().drawing_pane().pane.drawings.items()[index].magnet);
     assert!(
         object_magnet_events(&app).is_empty(),
         "a refusal journals nothing"
@@ -385,7 +385,7 @@ fn a_tool_that_snaps_by_its_own_rule_refuses_the_object_magnet() {
 
     // A stale flag (an older build, a hand-edited layout) reads back off,
     // since no drag honours it, and turning it off is accepted and clears it.
-    app.drawing_pane_mut().drawings.items_mut()[index].magnet = true;
+    app.drawing_pane_mut().pane.drawings.items_mut()[index].magnet = true;
     let (response, _) = unkeyed_call(
         &mut app,
         &mut client,
@@ -407,7 +407,7 @@ fn a_tool_that_snaps_by_its_own_rule_refuses_the_object_magnet() {
     off["enabled"] = json!(false);
     let (cleared, _) = unkeyed_call(&mut app, &mut client, OBJECT_CAPABILITY, off.clone());
     assert_eq!(success_result(&cleared)["changed"], json!(true));
-    assert!(!app.active_tab().drawing_pane().drawings.items()[index].magnet);
+    assert!(!app.active_tab().drawing_pane().pane.drawings.items()[index].magnet);
     let (again, _) = unkeyed_call(&mut app, &mut client, OBJECT_CAPABILITY, off);
     assert_eq!(success_result(&again)["changed"], json!(false));
     disable_test_gateway(&mut app, &ctx);
@@ -433,7 +433,7 @@ fn hand_flip_own_magnet(app: &mut QuantickApp, ctx: &egui::Context) -> usize {
 }
 
 fn own_magnet_at(app: &QuantickApp, index: usize) -> bool {
-    app.active_tab().drawing_pane().drawings.items()[index].magnet
+    app.active_tab().drawing_pane().pane.drawings.items()[index].magnet
 }
 
 /// A hand on the context bar's magnet slot leaves the same journal event a
@@ -468,7 +468,7 @@ fn a_hand_flip_of_a_drawings_own_magnet_journals_like_the_call() {
         "the trader's own hand"
     );
     assert!(
-        app.drawing_pane_mut().drawings.undo(),
+        app.drawing_pane_mut().pane.drawings.undo(),
         "the flip is one undo step"
     );
     assert!(!own_magnet_at(&app, index), "undo takes it back");
@@ -490,7 +490,7 @@ fn a_hand_flip_of_a_drawings_own_magnet_lands_without_a_gateway() {
         "the rail's magnet never moves"
     );
     assert!(
-        app.drawing_pane_mut().drawings.undo(),
+        app.drawing_pane_mut().pane.drawings.undo(),
         "the flip is one undo step"
     );
     assert!(!own_magnet_at(&app, index), "undo takes it back");

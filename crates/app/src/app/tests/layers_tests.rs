@@ -11,7 +11,7 @@ fn stale_grid_menu_target_does_not_redirect_to_the_focused_chart() {
     app.layer_wiring().apply_actions();
     assert!(
         app.active_tab()
-            .flow_pane
+            .flow()
             .layer_switched_on(ChartLayer::Grid, &app.runtime.style)
     );
     assert_eq!(app.runtime.style_revision, before);
@@ -19,7 +19,7 @@ fn stale_grid_menu_target_does_not_redirect_to_the_focused_chart() {
     app.layer_wiring().apply_actions();
     assert!(
         !app.active_tab()
-            .flow_pane
+            .flow()
             .layer_switched_on(ChartLayer::Grid, &app.runtime.style)
     );
     assert!(app.runtime.style_revision > before);
@@ -186,7 +186,7 @@ fn layer_visibility_survives_a_restart() {
     app.runtime.workspace.set_chart_layers_path(path.clone());
     let mask = app
         .active_tab()
-        .flow_pane
+        .flow()
         .layer_read()
         .mask(&app.runtime.style);
     app.runtime.workspace.layers_mut().record(mask);
@@ -195,7 +195,7 @@ fn layer_visibility_survives_a_restart() {
     switch_layer(&mut app, ChartLayer::Grid, false);
     // Switched through the pane's own door rather than the menu: the save must
     // follow the state, not the widget that moved it.
-    app.active_tab_mut().flow_pane.set_layer_visible(
+    app.active_tab_mut().flow_mut().set_layer_visible(
         crate::chart_layers::ChartLayer::Heatmap,
         true,
         &mut Default::default(),
@@ -212,7 +212,7 @@ fn layer_visibility_survives_a_restart() {
     assert_eq!(
         app.runtime.workspace.layers().mask(),
         app.active_tab()
-            .flow_pane
+            .flow()
             .layer_read()
             .mask(&app.runtime.style),
         "a settled canvas writes nothing further"
@@ -265,7 +265,7 @@ fn a_new_tab_opens_on_the_layers_the_user_left_showing() {
     app.runtime.workspace.set_chart_layers_path(path.clone());
     let mask = app
         .active_tab()
-        .flow_pane
+        .flow()
         .layer_read()
         .mask(&app.runtime.style);
     app.runtime.workspace.layers_mut().record(mask);
@@ -342,7 +342,7 @@ fn inherited_drawing_visibility_opens_without_undo_but_user_changes_are_undoable
     switch_layer(&mut app, ChartLayer::Drawings, false);
     app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
     run_frame(&mut app, &ctx);
-    let pane = &mut app.active_tab_mut().time_panes[0];
+    let mut pane = app.active_tab_mut().pane_at_mut(1).unwrap();
     assert!(pane.drawings.all_hidden());
     assert_eq!(pane.drawings.undo_depth(), 0);
     assert!(!pane.drawings.undo());
@@ -516,11 +516,11 @@ fn the_layer_menu_offers_every_layer_and_its_switches_work() {
     // recording has no book, and the entry says so instead of offering a
     // switch that would do nothing.
     let full = app.active_tab().capabilities(&app.config);
-    let pane = &app.active_tab().flow_pane;
+    let pane = app.active_tab().flow();
     assert!(pane.layer_blocked(ChartLayer::Heatmap, full).is_none());
     let (mut quote_only, _commands) = app_without_depth();
     let quotes = quote_only.active_tab().capabilities(&quote_only.config);
-    let pane = &quote_only.active_tab().flow_pane;
+    let pane = quote_only.active_tab().flow();
     assert!(
         pane.layer_blocked(ChartLayer::Heatmap, quotes).is_some(),
         "a source with no book cannot promise a heatmap"
@@ -647,7 +647,8 @@ fn the_chart_menu_leads_with_anchored_vwap_and_nests_display_controls() {
 fn the_time_pane_offers_the_flow_layers_as_drawn_elsewhere() {
     let (app, _events, _commands, _book) = test_app();
     let capabilities = app.active_tab().capabilities(&app.config);
-    let time = ChartPane::time(99, 60_000);
+    let mut time_parts = crate::pane::PaneParts::time(99, 60_000);
+    let time = time_parts.at();
     for layer in [
         ChartLayer::Heatmap,
         ChartLayer::Bubbles,
@@ -828,7 +829,7 @@ fn the_trade_paint_layer_switch_stops_the_marks() {
     );
     assert!(
         app.active_tab()
-            .flow_pane
+            .flow()
             .layer_visible(ChartLayer::PaperTrading, &app.runtime.style),
         "hiding closed-trade history leaves the live paper layer alone"
     );
@@ -996,14 +997,14 @@ fn hidden_drawing_neither_paints_nor_hit_tests() {
         .flow_pane
         .model
         .viewport
-        .right_edge_bar(app.active_tab().flow_pane.slots());
+        .right_edge_bar(app.active_tab().flow().slots());
     drag_chart(&mut app, &ctx, stroke_position, egui::pos2(640.0, 260.0));
     assert_ne!(
         app.active_tab()
             .flow_pane
             .model
             .viewport
-            .right_edge_bar(app.active_tab().flow_pane.slots()),
+            .right_edge_bar(app.active_tab().flow().slots()),
         viewport_before,
         "over a hidden drawing the gesture belongs to the chart again"
     );
@@ -1018,14 +1019,14 @@ fn hiding_the_heatmap_never_stops_the_recorder() {
     take_capture_start(&mut cmd_rx);
     let gaps_before = app.active_tab_mut().tape_mut().health().gaps;
 
-    app.active_tab_mut().flow_pane.set_layer_visible(
+    app.active_tab_mut().flow_mut().set_layer_visible(
         crate::chart_layers::ChartLayer::Heatmap,
         true,
         &mut Default::default(),
     );
     assert!(app.active_tab().tape().depth_visible());
 
-    app.active_tab_mut().flow_pane.set_layer_visible(
+    app.active_tab_mut().flow_mut().set_layer_visible(
         crate::chart_layers::ChartLayer::Heatmap,
         false,
         &mut Default::default(),
@@ -1043,7 +1044,7 @@ fn hiding_the_heatmap_never_stops_the_recorder() {
         "showing or hiding the map sends no feed command"
     );
 
-    app.active_tab_mut().flow_pane.set_layer_visible(
+    app.active_tab_mut().flow_mut().set_layer_visible(
         crate::chart_layers::ChartLayer::Heatmap,
         true,
         &mut Default::default(),
@@ -1064,17 +1065,17 @@ fn the_time_pane_has_no_tape_and_no_flow_layers() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = split_app(&ctx, 200);
 
-    app.active_tab_mut().flow_pane.set_layer_visible(
+    app.active_tab_mut().flow_mut().set_layer_visible(
         crate::chart_layers::ChartLayer::LiveStrip,
         true,
         &mut Default::default(),
     );
-    app.active_tab_mut().flow_pane.set_layer_visible(
+    app.active_tab_mut().flow_mut().set_layer_visible(
         crate::chart_layers::ChartLayer::Heatmap,
         true,
         &mut Default::default(),
     );
-    app.active_tab_mut().flow_pane.set_layer_visible(
+    app.active_tab_mut().flow_mut().set_layer_visible(
         crate::chart_layers::ChartLayer::Bubbles,
         true,
         &mut Default::default(),
@@ -1130,7 +1131,8 @@ fn both_panes_group_the_ladders_at_the_market_bucket_even_with_the_layer_hidden(
     assert_eq!(
         app.active_tab()
             .pane(PaneSide::Flow)
-            .series_state()
+            .series
+            .state()
             .footprint_group(),
         Decimal::new(1, 1),
         "the fixture's ten-cent tape grid is published before the scenario"
@@ -1141,7 +1143,8 @@ fn both_panes_group_the_ladders_at_the_market_bucket_even_with_the_layer_hidden(
     let market_bucket = app
         .active_tab()
         .pane(PaneSide::Flow)
-        .series_state()
+        .series
+        .state()
         .footprint_group();
 
     // The state the defect lived in: the layer off on both panes, and a
@@ -1158,7 +1161,7 @@ fn both_panes_group_the_ladders_at_the_market_bucket_even_with_the_layer_hidden(
         .find(|tool| tool.id() == crate::frvp::TOOL_ID)
         .expect("frvp is registered");
     {
-        let time = app.active_tab_mut().pane_mut(PaneSide::Time(0));
+        let mut time = app.active_tab_mut().pane_mut(PaneSide::Time(0));
         assert!(
             !time
                 .drawings
@@ -1194,7 +1197,8 @@ fn both_panes_group_the_ladders_at_the_market_bucket_even_with_the_layer_hidden(
     let flow_group = app
         .active_tab()
         .pane(PaneSide::Flow)
-        .series_state()
+        .series
+        .state()
         .footprint_group();
     assert_eq!(
         time_group, flow_group,
@@ -1254,7 +1258,7 @@ fn a_layer_the_source_cannot_draw_says_why_in_a_code_not_a_sentence() {
     // lives on in the gate every named read shares.
     let ids = scene_control_ids(&scene);
     let caps = app.active_tab().capabilities(&app.config);
-    let flow = &app.active_tab().flow_pane;
+    let flow = app.active_tab().flow();
     for (layer, id, code) in [
         (
             ChartLayer::Bubbles,

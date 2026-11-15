@@ -34,7 +34,7 @@ fn ohlc(bar: u64) -> [f64; 4] {
 /// has printed its open, high and low so far.
 fn app_with_candles() -> (QuantickApp, mpsc::Receiver<FeedCommand>) {
     let (mut app, evt_tx, cmd_rx, _book_tx) = test_app_with_launch(AppLaunch::default());
-    app.active_tab_mut().flow_pane.set_layer_visible(
+    app.active_tab_mut().flow_mut().set_layer_visible(
         ChartLayer::LiveStrip,
         false,
         &mut Default::default(),
@@ -65,7 +65,7 @@ fn app_with_candles() -> (QuantickApp, mpsc::Receiver<FeedCommand>) {
     let tab_id = app.runtime.tabs.active_id();
     app.active_tab_mut().drain_feed(tab_id);
     assert_eq!(
-        app.active_tab().flow_pane.series_state().bars().len() as u64,
+        app.active_tab().flow_series().state().bars().len() as u64,
         CLOSED_BARS
     );
     (app, cmd_rx)
@@ -73,7 +73,7 @@ fn app_with_candles() -> (QuantickApp, mpsc::Receiver<FeedCommand>) {
 
 /// The screen x of fractional bar `bar` on the flow pane.
 fn bar_x(app: &QuantickApp, bar: f32) -> f32 {
-    let pane = &app.active_tab().flow_pane;
+    let pane = app.active_tab().flow();
     let chart = pane.frame.chart_area.expect("the pane reported its rect");
     let history_right = pane.frame.candles_right.unwrap_or(chart.right());
     pane.model

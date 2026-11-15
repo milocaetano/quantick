@@ -5,7 +5,6 @@ use quantick_engine::Bar;
 use rust_decimal::Decimal;
 
 use crate::orderflow_view::LiveLane;
-use crate::pane::ChartPane;
 use crate::pane::frame_layout::{FrameLayout, Series};
 use crate::price_view::PriceView;
 use crate::state::BarSpec;
@@ -31,7 +30,8 @@ fn bar(low: i64, high: i64, close: i64) -> Bar {
 /// one axis includes both sources, and manual Y still belongs to the trader.
 #[test]
 fn a_native_split_pane_fits_the_shared_axis_to_visible_candles_and_tape() {
-    let pane = ChartPane::flow(1, BarSpec::Tick(50), "WINV26".to_owned());
+    let mut parts = crate::pane::PaneParts::flow(1, BarSpec::Tick(50), "WINV26".to_owned());
+    let pane = parts.at();
     let rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1_000.0, 600.0));
     let chart = pane
         .plot_areas(rect, crate::config::FeedCapabilities::none())

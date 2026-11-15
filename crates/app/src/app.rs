@@ -122,7 +122,6 @@ use crate::harness::ContextMenuPane;
 use crate::loading::LoadingTask;
 #[cfg(test)]
 use crate::metrics;
-use crate::pane::ChartPane;
 #[cfg(test)]
 use crate::pane::{self, DRAWING_ANCHOR_RADIUS_PX};
 #[cfg(test)]
@@ -324,12 +323,12 @@ impl QuantickApp {
     }
 
     /// The pane the chrome speaks for: the active tab's focused pane (§11).
-    pub(super) fn focused_pane(&self) -> &ChartPane {
+    pub(super) fn focused_pane(&self) -> crate::pane::PaneRef<'_> {
         self.active_tab().focused_pane()
     }
 
     /// See [`Self::focused_pane`].
-    pub(super) fn focused_pane_mut(&mut self) -> &mut ChartPane {
+    pub(super) fn focused_pane_mut(&mut self) -> crate::pane::PaneMut<'_> {
         self.active_tab_mut().focused_pane_mut()
     }
 
@@ -341,7 +340,7 @@ impl QuantickApp {
     /// through here, so an object selected on either of its two charts is
     /// edited and deleted from either of them.
     #[cfg(test)]
-    pub(super) fn drawing_pane_mut(&mut self) -> &mut ChartPane {
+    pub(super) fn drawing_pane_mut(&mut self) -> crate::pane::PaneMut<'_> {
         self.active_tab_mut().drawing_pane_mut()
     }
 

@@ -2,7 +2,7 @@ use super::*;
 
 fn profile_app() -> (QuantickApp, mpsc::Receiver<FeedCommand>, egui::Context) {
     let (mut app, events, commands, _book) = test_app();
-    let pane = &mut app.active_tab_mut().flow_pane;
+    let mut pane = app.active_tab_mut().flow_mut();
     for layer in [ChartLayer::LiveStrip, ChartLayer::TapeChart] {
         pane.set_layer_visible(layer, false, &mut Default::default());
     }
@@ -10,8 +10,8 @@ fn profile_app() -> (QuantickApp, mpsc::Receiver<FeedCommand>, egui::Context) {
     app.active_tab_mut().apply_spec_changes();
     app.active_tab_mut().apply_spec_changes();
     app.active_tab_mut()
-        .flow_pane
-        .series_state_mut()
+        .flow_series_mut()
+        .state_mut()
         .set_footprint_enabled(true);
     let trades = (1..=200)
         .map(|id| {
@@ -23,12 +23,12 @@ fn profile_app() -> (QuantickApp, mpsc::Receiver<FeedCommand>, egui::Context) {
     events.try_send(FeedEvent::Backfilled(trades)).unwrap();
     let tab_id = app.runtime.tabs.active_id();
     app.active_tab_mut().drain_feed(tab_id);
-    assert_eq!(app.active_tab().flow_pane.series_state().bars().len(), 200);
+    assert_eq!(app.active_tab().flow_series().state().bars().len(), 200);
     let tool = crate::drawings::DRAWING_TOOLS
         .into_iter()
         .find(|tool| tool.id() == crate::frvp::TOOL_ID)
         .unwrap();
-    let pane = &mut app.active_tab_mut().flow_pane;
+    let mut pane = app.active_tab_mut().flow_mut();
     pane.drawings.place(tool, ChartPoint::at(80.0, 110.0));
     pane.drawings.place(tool, ChartPoint::at(160.0, 100.0));
     let payload = pane.drawings.items_mut()[0]
@@ -53,7 +53,7 @@ fn profile_app() -> (QuantickApp, mpsc::Receiver<FeedCommand>, egui::Context) {
 }
 
 fn target(app: &QuantickApp, bar: f32, price: f64) -> egui::Pos2 {
-    let pane = &app.active_tab().flow_pane;
+    let pane = app.active_tab().flow();
     let chart = pane.frame.chart_area.unwrap();
     let right = pane.frame.candles_right.unwrap_or(chart.right());
     let (low, high) = pane.frame.auto_range.unwrap();
@@ -71,7 +71,7 @@ fn target(app: &QuantickApp, bar: f32, price: f64) -> egui::Pos2 {
 }
 
 fn profile_handle(app: &QuantickApp, index: usize) -> egui::Pos2 {
-    let pane = &app.active_tab().flow_pane;
+    let pane = app.active_tab().flow();
     let chart = pane.frame.chart_area.unwrap();
     let scale = pane
         .price_view

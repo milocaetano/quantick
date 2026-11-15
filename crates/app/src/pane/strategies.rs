@@ -16,7 +16,7 @@ use crate::drawings::{self, Drawing, Drawings};
 use crate::state::dec_from_f64;
 use crate::theme;
 
-use super::{ChartPane, region_pause};
+use super::region_pause;
 
 /// Resolve the drawing an instance is anchored to into the kernel's
 /// terms, for the bar that closed at `slot`: the price band between the
@@ -46,7 +46,10 @@ pub fn drawing_region(
 /// a programmatic caller comes through, and it must not be able to arm what
 /// the menu would refuse — the wrong shape, another band, a drawing with no
 /// footing here, or one nobody can see.
-pub(crate) fn check_arm(pane: &ChartPane, drawing: drawings::DrawingId) -> Result<(), String> {
+pub(crate) fn check_arm(
+    pane: &super::PaneRef<'_>,
+    drawing: drawings::DrawingId,
+) -> Result<(), String> {
     let drawings = &pane.drawings;
     let Some(index) = drawings.index_of(drawing) else {
         return Err("the drawing is gone".to_owned());

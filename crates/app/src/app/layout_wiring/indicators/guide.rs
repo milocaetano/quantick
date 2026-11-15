@@ -37,7 +37,7 @@ fn set_at(app: &mut LayoutAdapter<'_>, origin: TabSlot, enabled: bool) -> bool {
     };
     if let Some(view) = app
         .pane_mut_at(origin.tab, origin.side)
-        .and_then(|pane| pane.indicators.view_mut(origin.slot))
+        .and_then(|pane| pane.pane.indicators.view_mut(origin.slot))
         .filter(|view| !view.descriptor.overlay)
     {
         view.mouse_vertical_line = enabled;
@@ -51,7 +51,7 @@ fn set_at(app: &mut LayoutAdapter<'_>, origin: TabSlot, enabled: bool) -> bool {
         if let Some(slot) = app.layout_slots_at(tab, side).get(index).copied()
             && let Some(view) = app
                 .pane_mut_at(tab, side)
-                .and_then(|pane| pane.indicators.view_mut(slot))
+                .and_then(|pane| pane.pane.indicators.view_mut(slot))
             && !view.descriptor.overlay
         {
             view.mouse_vertical_line = enabled;

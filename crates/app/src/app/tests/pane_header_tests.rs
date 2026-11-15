@@ -61,7 +61,7 @@ fn the_bars_control_changes_only_its_own_pane_and_leaves_focus_alone() {
     run_frame(&mut app, &ctx);
     app.active_tab_mut().focus = PaneSide::Time(0);
     run_frame(&mut app, &ctx);
-    let time_before = *app.active_tab().time_panes[0].series_state().spec();
+    let time_before = *app.active_tab().pane_at(1).unwrap().series.state().spec();
     let time_selected = app.active_tab().time_panes[0].spec.selected_id();
 
     let control = control_of(&app, &ctx, PaneSide::Flow);
@@ -80,10 +80,10 @@ fn the_bars_control_changes_only_its_own_pane_and_leaves_focus_alone() {
     let tab = app.active_tab();
     assert_eq!(tab.flow_pane.spec.selected_id(), "volume");
     assert!(
-        tab.flow_pane.series_state().spec().id() == "volume",
+        tab.flow_series().state().spec().id() == "volume",
         "the chart rebuilt on what the header says"
     );
-    assert_eq!(tab.time_panes[0].series_state().spec(), &time_before);
+    assert_eq!(tab.pane_at(1).unwrap().series.state().spec(), &time_before);
     assert_eq!(tab.time_panes[0].spec.selected_id(), time_selected);
     assert_eq!(tab.focus, PaneSide::Time(0));
 }
@@ -99,8 +99,8 @@ fn stacked_panes_each_own_their_menu_and_focus_never_moves() {
     app.active_tab_mut().focus = PaneSide::Flow;
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
-    let upper = *app.active_tab().time_panes[0].series_state().spec();
-    let flow = *app.active_tab().flow_pane.series_state().spec();
+    let upper = *app.active_tab().pane_at(1).unwrap().series.state().spec();
+    let flow = *app.active_tab().flow_series().state().spec();
 
     let control = control_of(&app, &ctx, PaneSide::Time(1));
     assert_ne!(control, control_of(&app, &ctx, PaneSide::Time(0)));
@@ -122,15 +122,16 @@ fn stacked_panes_each_own_their_menu_and_focus_never_moves() {
     run_frame(&mut app, &ctx);
 
     let tab = app.active_tab();
-    assert_eq!(tab.time_panes[1].series_state().spec().id(), "volume");
-    assert_eq!(tab.time_panes[0].series_state().spec(), &upper);
-    assert_eq!(tab.flow_pane.series_state().spec(), &flow);
+    assert_eq!(tab.pane_at(2).unwrap().series.state().spec().id(), "volume");
+    assert_eq!(tab.pane_at(1).unwrap().series.state().spec(), &upper);
+    assert_eq!(tab.flow_series().state().spec(), &flow);
     assert_eq!(tab.focus, PaneSide::Flow);
 }
 
 fn control_rect(app: &QuantickApp, side: PaneSide, control: HeaderControl) -> Option<egui::Rect> {
     app.active_tab()
         .pane(side)
+        .pane
         .frame
         .header_controls
         .iter()
@@ -166,7 +167,7 @@ fn flow_fixture(ctx: &egui::Context) -> (QuantickApp, impl Sized) {
 
 fn on(app: &QuantickApp, layer: ChartLayer) -> bool {
     let style = &app.runtime.style;
-    app.active_tab().flow_pane.layer_switched_on(layer, style)
+    app.active_tab().flow().layer_switched_on(layer, style)
 }
 
 fn press_key(
@@ -208,7 +209,7 @@ fn drag(app: &mut QuantickApp, ctx: &egui::Context, from: egui::Pos2, to: egui::
 fn each_pane_paints_only_the_controls_it_accepts() {
     let ctx = egui::Context::default();
     let (app, _ends) = flow_fixture(&ctx);
-    let flow = &app.active_tab().flow_pane;
+    let flow = app.active_tab().flow();
     let area = flow.frame.area.expect("flow chart");
     let divider = flow.frame.lane_divider_x.expect("the tape is beside");
     for control in [TRAIL, TAPE] {
@@ -487,7 +488,7 @@ fn candles_hidden_take_their_capsule_keep_their_state_and_the_strip_waits() {
     assert_eq!(toggles.map(|toggle| on(&app, toggle.layer())), states);
 
     let caps = app.active_tab().capabilities(&app.config);
-    let flow = &app.active_tab().flow_pane;
+    let flow = app.active_tab().flow();
     for toggle in toggles {
         assert!(
             flow.layer_blocked(toggle.layer(), caps).is_some(),
@@ -501,7 +502,7 @@ fn candles_hidden_take_their_capsule_keep_their_state_and_the_strip_waits() {
     assert_eq!(control_rect(&app, PaneSide::Flow, strip), None);
     let strip_before = on(&app, ChartLayer::LiveStrip);
     let actions = &mut Default::default();
-    let flow = &mut app.active_tab_mut().flow_pane;
+    let mut flow = app.active_tab_mut().flow_mut();
     flow.set_layer_visible(ChartLayer::LiveStrip, !strip_before, actions);
     run_frame(&mut app, &ctx);
     assert_ne!(
@@ -509,7 +510,7 @@ fn candles_hidden_take_their_capsule_keep_their_state_and_the_strip_waits() {
         strip_before,
         "the strip moved"
     );
-    let flow = &app.active_tab().flow_pane;
+    let flow = app.active_tab().flow();
     assert_eq!(
         flow.live_strip_width(caps),
         0.0,
@@ -763,7 +764,7 @@ fn the_header_is_painted_in_all_three_views() {
             let painted = control_rect(&app, PaneSide::Flow, HeaderControl::Layer(toggle));
             assert_eq!(painted.is_some(), side, "{view:?}: {toggle:?}");
         }
-        let flow = &app.active_tab().flow_pane;
+        let flow = app.active_tab().flow();
         let chart = flow.frame.area.expect("flow chart");
         assert!(button.bottom() <= chart.top(), "{view:?}: off the chart");
         let band = flow
@@ -791,7 +792,7 @@ fn charted_fixture(ctx: &egui::Context) -> (QuantickApp, impl Sized) {
 
 /// What the candles show: their zoom and where their right edge is.
 fn candle_viewport(app: &QuantickApp) -> (f32, f32) {
-    let pane = &app.active_tab().flow_pane;
+    let pane = app.active_tab().flow();
     let total =
         pane.series_state().bars().len() + usize::from(pane.series_state().partial().is_some());
     (
@@ -852,7 +853,7 @@ fn the_window_projection_reads_the_same_frames_chart_reference() {
     let (mut app, _ends) = charted_fixture(&ctx);
     app.active_tab_mut().flow_pane.frame.clear_hidden();
     run_frame(&mut app, &ctx);
-    let pane = &app.active_tab().flow_pane;
+    let pane = app.active_tab().flow();
     let scope = pane.id;
     let current = pane.flow_header_state().expect("flow header");
     assert!(
@@ -901,7 +902,7 @@ fn a_wheel_over_the_header_is_private_and_the_chart_below_it_still_zooms() {
         1.0
     );
 
-    let flow = &app.active_tab().flow_pane;
+    let flow = app.active_tab().flow();
     let chart = flow.frame.area.expect("flow chart");
     let below = egui::pos2(chart.left() + 100.0, chart.center().y);
     wheel(&mut app, below);
@@ -1056,8 +1057,8 @@ fn a_panned_view_survives_tape_only_and_the_way_back() {
     for pan in [400.0, -120.0] {
         let ctx = egui::Context::default();
         let (mut app, _commands) = charted_fixture(&ctx);
-        let pane = &mut app.active_tab_mut().flow_pane;
-        pane.model.viewport.pan_pixels(pan, pane.slots());
+        let pane = app.active_tab_mut().flow_mut();
+        pane.pane.model.viewport.pan_pixels(pan, pane.slots());
         run_frame(&mut app, &ctx);
         let placed = candle_viewport(&app);
         assert!(!app.active_tab().flow_pane.model.viewport.follows_live());
@@ -1065,7 +1066,7 @@ fn a_panned_view_survives_tape_only_and_the_way_back() {
         press_key(&mut app, &ctx, egui::Key::T, mods);
         assert_eq!(view_of(&app), LaneView::TapeOnly);
         run_frame(&mut app, &ctx);
-        let flow = &app.active_tab().flow_pane;
+        let flow = app.active_tab().flow();
         assert!(flow.shown_viewport().follows_live(), "the frame reads live");
         assert!(!flow.model.viewport.follows_live(), "the view waits");
         assert_eq!(candle_viewport(&app), placed, "pan {pan}: hidden");
@@ -1103,7 +1104,7 @@ fn candles_closed_are_tape_only_and_the_last_lit_rule_sees_them() {
     run_frame(&mut app, &ctx);
     assert_eq!(view_of(&app), LaneView::TapeOnly);
     let caps = app.active_tab().capabilities(&app.config);
-    let flow = &app.active_tab().flow_pane;
+    let flow = app.active_tab().flow();
     assert_eq!(
         toggles.map(|toggle| flow.layer_blocked(toggle.layer(), caps)),
         [Some(quantick_layers::blocks::TAPE_ONLY_CANDLES); 3],
@@ -1327,18 +1328,18 @@ fn an_indicator_pane_gesture_in_tape_only_leaves_the_candles_following_live() {
 fn a_snapshot_in_tape_only_names_the_slots_on_screen() {
     let ctx = egui::Context::default();
     let (mut app, _ends) = charted_fixture(&ctx);
-    let pane = &mut app.active_tab_mut().flow_pane;
-    pane.model.viewport.pan_pixels(400.0, pane.slots());
+    let pane = app.active_tab_mut().flow_mut();
+    pane.pane.model.viewport.pan_pixels(400.0, pane.slots());
     run_frame(&mut app, &ctx);
-    let total = app.active_tab().flow_pane.slots();
-    let panned = crate::control::chart::viewport_snapshot(&app.active_tab().flow_pane);
+    let total = app.active_tab().flow().slots();
+    let panned = crate::control::chart::viewport_snapshot(app.active_tab().flow());
     assert!(panned.visible_end_slot_exclusive.0 < total as u64, "panned");
 
     app.active_tab_mut()
         .tape_mut()
         .set_lane_view(LaneView::TapeOnly);
     run_frame(&mut app, &ctx);
-    let flow = &app.active_tab().flow_pane;
+    let flow = app.active_tab().flow();
     assert!(!flow.model.viewport.follows_live(), "the stored view waits");
     let snapshot = crate::control::chart::viewport_snapshot(flow);
     assert!(snapshot.follows_live);
@@ -1357,7 +1358,7 @@ fn the_header_lists_only_controls_wholly_inside_the_strip() {
         for _ in 0..2 {
             run_frame_at(&mut app, &ctx, size);
         }
-        let flow = &app.active_tab().flow_pane;
+        let flow = app.active_tab().flow();
         let Some(chart) = flow.frame.area else {
             continue;
         };
@@ -1415,7 +1416,7 @@ fn the_indicators_glyph_opens_the_library_on_its_own_pane() {
         app.active_tab_mut().focus = focus;
         run_frame(&mut app, &ctx);
         run_frame(&mut app, &ctx);
-        let before = app.active_tab().pane(side).indicators.all().len();
+        let before = app.active_tab().pane(side).pane.indicators.all().len();
 
         let glyph = glyph_of(&app, &ctx, side);
         click_chart(&mut app, &ctx, glyph.center());
@@ -1432,7 +1433,7 @@ fn the_indicators_glyph_opens_the_library_on_its_own_pane() {
         app.apply_toolbar_action(crate::toolbar::ToolbarAction::AddNative("native.ema"));
         settle_indicators(&mut app);
         assert_eq!(
-            app.active_tab().pane(side).indicators.all().len(),
+            app.active_tab().pane(side).pane.indicators.all().len(),
             before + 1
         );
     }
@@ -2356,7 +2357,7 @@ fn the_flow_pane_wears_its_band_frame_and_side_headers() {
     };
     let ctx = egui::Context::default();
     let (app, _ends) = flow_fixture(&ctx);
-    let flow = &app.active_tab().flow_pane;
+    let flow = app.active_tab().flow();
     let area = flow.frame.area.expect("flow chart");
     let row_top = area.top() - SIDE_HEADER_HEIGHT_PX;
     let band_top = row_top - BAND_HEIGHT_PX;
@@ -2423,7 +2424,7 @@ fn the_flow_pane_wears_its_band_frame_and_side_headers() {
 fn the_side_headers_follow_a_dragged_divider() {
     let ctx = egui::Context::default();
     let (mut app, _ends) = flow_fixture(&ctx);
-    let flow = &app.active_tab().flow_pane;
+    let flow = app.active_tab().flow();
     let before = flow.frame.lane_divider_x.expect("the split");
     let y = flow.frame.area.expect("flow chart").center().y;
     drag(
@@ -2538,7 +2539,7 @@ fn the_flow_time_axis_stands_on_the_frame_tone() {
         .iter()
         .for_each(|clipped| rects(&clipped.shape, &mut painted));
     let axis_of = |side| {
-        let frame = &app.active_tab().pane(side).frame;
+        let frame = &app.active_tab().pane(side).pane.frame;
         let (area, strip) = (
             frame.area.expect("drawn"),
             frame.time_strip.expect("an axis"),
@@ -2974,7 +2975,7 @@ fn the_live_strip_stands_on_the_trail() {
     let (mut app, _ends) = flow_fixture(&ctx);
     let width = crate::live_strip::LIVE_STRIP_WIDTH_PX;
     let shown = |app: &mut QuantickApp, on: bool| {
-        let flow = &mut app.active_tab_mut().flow_pane;
+        let mut flow = app.active_tab_mut().flow_mut();
         flow.set_layer_visible(ChartLayer::LiveStrip, on, &mut Default::default());
         run_frame(app, &ctx);
         run_frame(app, &ctx);
@@ -3018,7 +3019,7 @@ fn the_live_strip_stands_on_the_trail() {
         .set_lane_view(LaneView::TapeOnly);
     let (chart, _, _) = shown(&mut app, true);
     let caps = app.active_tab().capabilities(&app.config);
-    assert_eq!(app.active_tab().flow_pane.live_strip_width(caps), 0.0);
+    assert_eq!(app.active_tab().flow().live_strip_width(caps), 0.0);
     assert_eq!(chart.right(), gutter.left(), "no column on the tape alone");
     assert!(on(&app, ChartLayer::LiveStrip), "the switch is kept");
 }
@@ -3099,6 +3100,7 @@ fn only_the_focused_pane_of_a_split_wears_the_focus_frame() {
     let area = |app: &QuantickApp, side: PaneSide| {
         app.active_tab()
             .pane(side)
+            .pane
             .frame
             .chart_area
             .expect("a drawn pane")

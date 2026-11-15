@@ -27,18 +27,17 @@ fn click(app: &mut QuantickApp, ctx: &egui::Context, at: egui::Pos2) {
 }
 
 fn hit(app: &QuantickApp, at: egui::Pos2) -> Option<CanvasHit> {
-    app.active_tab().flow_pane.hit_test().canvas_hit(at)
+    app.active_tab().flow().hit_test().canvas_hit(at)
 }
 
 /// The candles back `40` bars into history at `px_per_bar`; with
 /// `far_prices`, under a manual range far above every bar, so the whole
 /// canvas is open.
 fn into_history(app: &mut QuantickApp, ctx: &egui::Context, px_per_bar: f32, far_prices: bool) {
-    let pane = &mut app.active_tab_mut().flow_pane;
+    let mut pane = app.active_tab_mut().flow_mut();
     pane.model.viewport.set_px_per_bar(px_per_bar);
-    pane.model
-        .viewport
-        .pan_pixels(40.0 * px_per_bar, pane.slots());
+    let slots = pane.slots();
+    pane.model.viewport.pan_pixels(40.0 * px_per_bar, slots);
     if far_prices {
         assert!(pane.price_view.set_manual_range(10_000.0, 20_000.0));
     }
@@ -71,7 +70,7 @@ fn open_canvas(app: &QuantickApp) -> egui::Pos2 {
 /// A point on a candle `back` bars left of the view's right edge — clear
 /// of the lane handle there.
 fn a_candle(app: &QuantickApp, back: usize) -> egui::Pos2 {
-    let pane = &app.active_tab().flow_pane;
+    let pane = app.active_tab().flow();
     let (area, right, total, _) = pane.hit_test().last_projection().expect("drawn");
     let viewport = &pane.model.viewport;
     let x = viewport.x_center(viewport.right_edge_bar(total) as usize - back, right, total);
@@ -98,10 +97,10 @@ fn a_real_double_click_on_open_canvas_centres_the_live_price_at_its_spacing() {
     click(&mut app, &ctx, at);
     click(&mut app, &ctx, at);
     assert!(ctx.input(|input| input.pointer.button_double_clicked(PRIMARY)));
-    let pane = &app.active_tab().flow_pane;
+    let pane = app.active_tab().flow();
     assert!(pane.model.viewport.follows_live());
     assert_eq!(pane.model.viewport.px_per_bar(), 20.0, "spacing kept");
-    assert_last_price_centred(pane);
+    assert_last_price_centred(&pane);
     assert!(!app.surfaces.chart_settings.model_state.is_open());
 }
 
@@ -122,14 +121,14 @@ fn a_real_double_click_while_live_zooms_in_each_time() {
         click(&mut app, &ctx, open);
         click(&mut app, &ctx, open);
         assert!(ctx.input(|input| input.pointer.button_double_clicked(PRIMARY)));
-        let pane = &app.active_tab().flow_pane;
+        let pane = app.active_tab().flow();
         assert!(pane.model.viewport.follows_live());
         assert_eq!(
             pane.model.viewport.px_per_bar(),
             expected,
             "one zoom a pair"
         );
-        assert_last_price_centred(pane);
+        assert_last_price_centred(&pane);
         assert!(!app.surfaces.chart_settings.model_state.is_open());
     }
 }
@@ -162,10 +161,10 @@ fn a_real_triple_click_doubles_the_spacing_though_its_double_moved_a_candle_unde
     );
     click(&mut app, &ctx, live_candle);
     assert!(ctx.input(|input| input.pointer.button_triple_clicked(PRIMARY)));
-    let pane = &app.active_tab().flow_pane;
+    let pane = app.active_tab().flow();
     assert!(pane.model.viewport.follows_live());
     assert_eq!(pane.model.viewport.px_per_bar(), 40.0, "the triple doubles");
-    assert_last_price_centred(pane);
+    assert_last_price_centred(&pane);
     run_frame(&mut app, &ctx);
     assert!(
         !app.surfaces.chart_settings.model_state.is_open(),
@@ -194,7 +193,7 @@ fn a_real_double_click_on_a_candle_opens_its_settings_and_the_next_click_zooms_n
     app.surfaces.chart_settings.model_state.close();
     click(&mut app, &ctx, open);
     assert!(ctx.input(|input| input.pointer.button_triple_clicked(PRIMARY)));
-    let pane = &app.active_tab().flow_pane;
+    let pane = app.active_tab().flow();
     assert_eq!(candles_view(&app), before, "no zoom, no return to live");
     assert!(!pane.model.viewport.follows_live());
     assert!(pane.price_view.is_auto(), "no centred price");
@@ -208,9 +207,9 @@ fn a_real_double_click_on_the_tape_returns_it_to_live_and_then_zooms_the_tape_on
     let ctx = egui::Context::default();
     let (mut app, tape, candles) = split_app(&ctx);
     let manual = (90.455, 111.545);
-    let pane = &mut app.active_tab_mut().flow_pane;
+    let mut pane = app.active_tab_mut().flow_mut();
     assert!(pane.price_view.set_manual_range(manual.0, manual.1));
-    pane.model.viewport.pan_pixels(64.0, pane.slots());
+    pane.pane.model.viewport.pan_pixels(64.0, pane.slots());
     app.active_tab_mut()
         .tape_mut()
         .set_tape_end(TapeEnd::Past { end_ms: 30_000 });
@@ -247,7 +246,7 @@ fn a_real_double_click_on_the_tape_returns_it_to_live_and_then_zooms_the_tape_on
         "live, the double click zooms the tape again"
     );
     assert!(app.active_tab().tape().tape_end().is_live());
-    let pane = &app.active_tab().flow_pane;
+    let pane = app.active_tab().flow();
     assert_eq!(candles_view(&app), before, "the candles never moved");
     assert!(!pane.model.viewport.follows_live());
     assert_eq!(
@@ -278,11 +277,11 @@ fn a_single_click_then_a_quick_real_double_click_still_centres() {
         ctx.input(|input| input.pointer.button_triple_clicked(PRIMARY)),
         "the toolkit counted three"
     );
-    let pane = &app.active_tab().flow_pane;
+    let pane = app.active_tab().flow();
     assert!(
         pane.model.viewport.follows_live(),
         "the double click's return"
     );
     assert_eq!(pane.model.viewport.px_per_bar(), 20.0, "no zoom");
-    assert_last_price_centred(pane);
+    assert_last_price_centred(&pane);
 }

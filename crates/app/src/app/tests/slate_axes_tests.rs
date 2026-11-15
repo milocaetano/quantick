@@ -66,7 +66,7 @@ fn slate_plot_boundaries_survive_empty_narrow_and_tape_only_layouts() {
             .unwrap();
         for size in [TEST_WINDOW, MIN_WINDOW] {
             for tape_only in [false, true] {
-                app.active_tab_mut().flow_pane.set_layer_visible(
+                app.active_tab_mut().flow_mut().set_layer_visible(
                     ChartLayer::TapeOnly,
                     tape_only,
                     &mut Default::default(),
@@ -150,7 +150,7 @@ fn slate_crosshair_keeps_plot_lines_and_light_axis_tags_separate() {
     run_frame(&mut app, &ctx);
     let output = settled_flow_frame(&mut app, &ctx);
     assert_boundaries(&app, &ctx, &output);
-    let pane = &app.active_tab().flow_pane;
+    let pane = app.active_tab().flow();
     let chart = pane.frame.chart_rect.unwrap();
     let point = egui::pos2(
         (chart.left() + pane.frame.candles_right.unwrap()) / 2.0,

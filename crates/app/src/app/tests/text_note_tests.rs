@@ -78,7 +78,7 @@ fn inline_note_moves_out_of_the_chart_with_its_anchor_during_pan_and_zoom() {
             .unwrap()
     };
     let first = editor(&ctx);
-    let total = app.active_tab().flow_pane.slots();
+    let total = app.active_tab().flow().slots();
     app.active_tab_mut()
         .flow_pane
         .model

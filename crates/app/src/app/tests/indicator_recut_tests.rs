@@ -3,7 +3,7 @@
 
 use super::*;
 
-fn finish_indicator_commands(pane: &mut pane::ChartPane) {
+fn finish_indicator_commands(pane: &mut pane::PaneMut<'_>) {
     let (tx, rx) = std::sync::mpsc::channel();
     pane.indicator_worker
         .send(crate::indicator_worker::WorkerCommand::Flush(tx));
@@ -35,25 +35,28 @@ fn a_spec_change_rebuilds_its_pane_when_only_the_neighbour_prefix_moves() {
         quantick_feed::OhlcvSlice::Last { complete: true },
     );
 
-    let flow = &mut app.active_tab_mut().flow_pane;
+    let mut flow = app.active_tab_mut().flow_mut();
     flow.add_indicator(crate::indicator_worker::IndicatorSource::Script {
         name: "Rows".to_owned(),
         text: "indicator(\"Rows\")\nplot(close)".to_owned(),
     });
-    finish_indicator_commands(flow);
+    finish_indicator_commands(&mut flow);
     let before = flow.indicators.all()[0].rows;
 
     // The neighbour's next refold has something to change.
-    app.active_tab_mut().time_panes[0].install_history_prefix(venue_history(10));
+    app.active_tab_mut()
+        .pane_at_mut(1)
+        .unwrap()
+        .install_history_prefix(venue_history(10));
 
     let spec = BarSpec::Tick(7);
     app.active_tab_mut().flow_pane.spec.retain(spec);
     app.active_tab_mut().apply_spec_changes();
     app.active_tab_mut().apply_spec_changes();
 
-    let flow = &mut app.active_tab_mut().flow_pane;
+    let mut flow = app.active_tab_mut().flow_mut();
     assert_eq!(flow.series_state().spec(), &spec, "the bars were re-cut");
-    finish_indicator_commands(flow);
+    finish_indicator_commands(&mut flow);
     let expected = flow.series_read().closed_bars();
     let bars = expected.len();
     assert_eq!(flow.indicators.all()[0].columns[0].len(), bars);
@@ -80,14 +83,14 @@ fn indicator_rows_cut_under_another_rule_heal_once_the_worker_settles() {
         .unwrap();
     app.active_tab_mut()
         .drain_feed_with_clock(tab_id, || 100_000);
-    let flow = &mut app.active_tab_mut().flow_pane;
+    let mut flow = app.active_tab_mut().flow_mut();
     flow.add_indicator(crate::indicator_worker::IndicatorSource::Script {
         name: "Rows".to_owned(),
         text: "indicator(\"Rows\")
 plot(close)"
             .to_owned(),
     });
-    finish_indicator_commands(flow);
+    finish_indicator_commands(&mut flow);
 
     // The startup-scoped setter sends no rebuild: the bars move, the rows do not.
     flow.set_spec(BarSpec::Tick(7));
@@ -95,7 +98,7 @@ plot(close)"
     assert_ne!(flow.indicators.all()[0].rows, bars, "out of step");
 
     flow.apply_indicator_events();
-    finish_indicator_commands(flow);
+    finish_indicator_commands(&mut flow);
     assert_eq!(flow.indicators.all()[0].rows, bars, "healed");
 }
 
@@ -120,19 +123,19 @@ fn a_context_pane_spec_change_rebuilds_it_when_only_the_flow_prefix_moves() {
         quantick_feed::OhlcvSlice::Last { complete: true },
     );
     app.active_tab_mut()
-        .flow_pane
+        .flow_mut()
         .install_history_prefix(venue_history(10));
 
     // The chart's selector moves off time, so the pane leaves its prefix too; the
     // rows are read against what it holds once the worker has answered.
-    let time = &mut app.active_tab_mut().time_panes[0];
+    let mut time = app.active_tab_mut().pane_at_mut(1).unwrap();
     time.add_indicator(crate::indicator_worker::IndicatorSource::Script {
         name: "Rows".to_owned(),
         text: "indicator(\"Rows\")
 plot(close)"
             .to_owned(),
     });
-    finish_indicator_commands(time);
+    finish_indicator_commands(&mut time);
     time.spec
         .update(
             quantick_engine::bar_selection::SelectionCommand::Select(
@@ -144,8 +147,8 @@ plot(close)"
     app.active_tab_mut().apply_spec_changes();
     app.active_tab_mut().apply_spec_changes();
 
-    let time = &mut app.active_tab_mut().time_panes[0];
-    finish_indicator_commands(time);
+    let mut time = app.active_tab_mut().pane_at_mut(1).unwrap();
+    finish_indicator_commands(&mut time);
     let expected = time.series_read().closed_bars();
     assert_eq!(time.indicators.all()[0].columns[0].len(), expected.len());
     for (value, bar) in time.indicators.all()[0].columns[0].iter().zip(&expected) {

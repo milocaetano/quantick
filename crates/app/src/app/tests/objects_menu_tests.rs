@@ -11,7 +11,7 @@ fn place_rectangles(app: &mut QuantickApp, count: usize) {
         .into_iter()
         .find(|tool| tool.id() == "rectangle")
         .expect("the rectangle tool is registered");
-    let pane = &mut app.active_tab_mut().flow_pane;
+    let mut pane = app.active_tab_mut().flow_mut();
     for offset in 0..count {
         let first = offset as f32 * 10.0;
         pane.drawings
@@ -45,9 +45,11 @@ fn rows_frame(app: &mut QuantickApp, ctx: &egui::Context, events: Vec<egui::Even
     with_flow_pane(app, |pane, chrome| {
         let _ = ctx.run(input(events), |ctx| {
             egui::CentralPanel::default().show(ctx, |ui| {
-                let ask = pane
-                    .context_menu
-                    .draw_object_rows(ui, &pane.drawings, &pane.indicators);
+                let ask = pane.pane.context_menu.draw_object_rows(
+                    ui,
+                    &pane.pane.drawings,
+                    &pane.pane.indicators,
+                );
                 pane.apply_menu_intents(ask, chrome);
             });
         });
@@ -85,12 +87,12 @@ fn confirm_frame(
     with_flow_pane(app, |pane, chrome| {
         ctx.run(input(events), |ctx| {
             let count = pane.drawings.items().len();
-            let ask = pane.context_menu.draw_clear_objects_confirm(
-                &mut pane.model,
+            let ask = pane.pane.context_menu.draw_clear_objects_confirm(
+                &mut pane.pane.model,
                 ctx,
                 SCREEN,
                 count,
-                pane.id,
+                pane.pane.id,
             );
             pane.apply_menu_intents(ask, chrome);
         })
@@ -235,7 +237,7 @@ fn a_menu_ask_applies_on_its_own_chart_and_so_does_the_undo() {
         .into_iter()
         .find(|tool| tool.id() == "rectangle")
         .expect("the rectangle tool is registered");
-    let time = app.active_tab_mut().pane_mut(PaneSide::Time(0));
+    let mut time = app.active_tab_mut().pane_mut(PaneSide::Time(0));
     for first in [1.0, 11.0] {
         time.drawings
             .place(rectangle, drawings::ChartPoint::at(first, 100.0));

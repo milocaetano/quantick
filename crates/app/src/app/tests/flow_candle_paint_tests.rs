@@ -22,7 +22,7 @@ fn painted_bodies(output: &egui::FullOutput, colour: egui::Color32) -> Vec<(usiz
 fn flow_keeps_configured_fills_indicator_alpha_and_one_candle_pass_beneath_bubbles() {
     let ctx = egui::Context::default();
     let (mut app, events, _commands, _book) = test_app();
-    app.active_tab_mut().flow_pane.set_layer_visible(
+    app.active_tab_mut().flow_mut().set_layer_visible(
         ChartLayer::LiveStrip,
         false,
         &mut Default::default(),
@@ -49,7 +49,7 @@ fn flow_keeps_configured_fills_indicator_alpha_and_one_candle_pass_beneath_bubbl
     let tab_id = app.runtime.tabs.active_id();
     app.active_tab_mut().drain_feed(tab_id);
     native_split(&mut app);
-    app.active_tab_mut().flow_pane.set_layer_visible(
+    app.active_tab_mut().flow_mut().set_layer_visible(
         ChartLayer::Footprint,
         false,
         &mut Default::default(),
@@ -59,7 +59,7 @@ fn flow_keeps_configured_fills_indicator_alpha_and_one_candle_pass_beneath_bubbl
     app.runtime.style.ownership.fill_opacity = quantick_appearance::Inheritance::Explicit;
     app.runtime.style.candles.forming_opacity = 0.5;
     settled_frame(&mut app, &ctx);
-    let pane = &mut app.active_tab_mut().flow_pane;
+    let mut pane = app.active_tab_mut().flow_mut();
     pane.model.viewport.set_px_per_bar(45.0);
     assert!(pane.price_view.set_manual_range(99.0, 103.0));
     assert_eq!(pane.series_state().bars().len(), 4);
@@ -227,7 +227,7 @@ fn flow_keeps_configured_fills_indicator_alpha_and_one_candle_pass_beneath_bubbl
         app.active_tab().tape().flow_execution_frame().unwrap().dots,
         facts
     );
-    let pane = &app.active_tab().flow_pane;
+    let pane = app.active_tab().flow();
     let plain = pane
         .series_state()
         .bars()
@@ -288,7 +288,7 @@ fn assert_footprint_layering(
     app.runtime.style.candles.body_mode = crate::style::CandleBodyMode::Filled;
     app.runtime.style.canvas.background = [13, 17, 23];
     app.runtime.style.ownership.background = quantick_appearance::Inheritance::Explicit;
-    let pane = &mut app.active_tab_mut().flow_pane;
+    let mut pane = app.active_tab_mut().flow_mut();
     pane.presentation
         .footprint
         .config
@@ -464,7 +464,7 @@ fn flow_legend_puts_no_key_on_the_tape_and_preserves_depth_and_hide_switches() {
     app.active_tab_mut().tape_mut().set_legend_visible(false);
     assert!(keys(&settled_flow_frame(&mut app, &ctx)).is_empty());
     app.active_tab_mut().tape_mut().set_legend_visible(true);
-    app.active_tab_mut().flow_pane.set_layer_visible(
+    app.active_tab_mut().flow_mut().set_layer_visible(
         ChartLayer::TapeChart,
         false,
         &mut Default::default(),
@@ -503,14 +503,14 @@ fn theme_switches_keep_bookmap_candles_translucent_beneath_bubbles_and_time_cand
             .unwrap();
         run_frame(&mut app, &ctx);
         let output = settled_flow_frame(&mut app, &ctx);
-        let pane = &app.active_tab().flow_pane;
+        let pane = app.active_tab().flow();
         let area = pane.frame.area.unwrap();
         let current_geometry = (
             area,
             pane.frame.chart_rect,
             pane.frame.lane_divider_x,
             pane.frame.candles_right,
-            app.active_tab().time_pane().unwrap().frame.area,
+            app.active_tab().time_pane().unwrap().pane.frame.area,
         );
         // The panes keep their places in every theme. Inside them Light sizes
         // its axes as TradingView does, so only a return to Dark must give
@@ -594,7 +594,14 @@ fn theme_switches_keep_bookmap_candles_translucent_beneath_bubbles_and_time_cand
         };
         assert!(output.shapes.iter().any(|shape| matches!(&shape.shape,
             egui::Shape::Rect(rect) if rect.rect == plot && rect.fill == background)));
-        let time = app.active_tab().time_pane().unwrap().frame.area.unwrap();
+        let time = app
+            .active_tab()
+            .time_pane()
+            .unwrap()
+            .pane
+            .frame
+            .area
+            .unwrap();
         let rgba = app
             .runtime
             .style

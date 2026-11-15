@@ -25,7 +25,7 @@ pub(in crate::app) fn observe(
     };
     for (tab_id, tab) in tabs.iter_with_ids() {
         for (pane, _side) in tab.panes() {
-            for (_kind, progress) in pane_workers(pane) {
+            for (_kind, progress) in pane_workers(pane.pane) {
                 reading.add(&progress);
             }
             let retained = pane.series_state().trades().len();

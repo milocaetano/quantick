@@ -186,7 +186,7 @@ impl QuantickApp {
             // there it would erase the fold on every launch.
             ToolbarAction::AddNative(id) => {
                 crate::app::indicator_manager::IndicatorState::set_legend_collapsed(
-                    self.focused_pane_mut(),
+                    self.focused_pane_mut().pane,
                     false,
                 );
                 let target = (
@@ -195,7 +195,7 @@ impl QuantickApp {
                 );
                 let tabs = &mut self.runtime.tabs;
                 let pane = tabs.runtime_mut(tabs.active_index()).pane_mut(target.1);
-                let attached = self.runtime.indicators.attach_native(pane, target, id);
+                let attached = self.runtime.indicators.attach_native(pane.pane, target, id);
                 self.indicator_wiring()
                     .apply_indicator_edit(IndicatorEdit::Attached(attached));
             }
@@ -215,7 +215,7 @@ impl QuantickApp {
             }
             ToolbarAction::AddScriptIndicator(index) => {
                 crate::app::indicator_manager::IndicatorState::set_legend_collapsed(
-                    self.focused_pane_mut(),
+                    self.focused_pane_mut().pane,
                     false,
                 );
                 let target = (
@@ -224,7 +224,11 @@ impl QuantickApp {
                 );
                 let tabs = &mut self.runtime.tabs;
                 let pane = tabs.runtime_mut(tabs.active_index()).pane_mut(target.1);
-                if let Some((_, added)) = self.runtime.indicators.add_library(pane, target, index) {
+                if let Some((_, added)) = self
+                    .runtime
+                    .indicators
+                    .add_library(pane.pane, target, index)
+                {
                     if let Some(attached) = added.attachment {
                         self.indicator_wiring()
                             .apply_indicator_edit(IndicatorEdit::Attached(attached));

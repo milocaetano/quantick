@@ -123,12 +123,12 @@ impl Harness {
     ) {
         let (_, tab) = active_with_id(tabs);
         tab.paper.account_mut().report.push_scroll_probe(raw_input);
-        let flow = &tab.flow_pane;
-        if let Some(position) = self.scripted_pointer_pos(flow) {
+        let flow = tab.flow();
+        if let Some(position) = self.scripted_pointer_pos(&flow) {
             raw_input.events.push(egui::Event::PointerMoved(position));
         }
         if let Some(stress) = self.stress_input.as_mut() {
-            stress.drive(flow, raw_input);
+            stress.drive(&flow, raw_input);
         }
     }
 
@@ -155,11 +155,12 @@ impl Harness {
             return;
         }
         let tab = active_with_id(tabs).1;
-        let pane = if tab.shows_context_charts() && tab.tape().cached_config().tape_only() {
-            &mut tab.time_panes[0]
+        let side = if tab.shows_context_charts() && tab.tape().cached_config().tape_only() {
+            crate::pane::PaneSide::Time(0)
         } else {
-            &mut tab.flow_pane
+            crate::pane::PaneSide::Flow
         };
+        let mut pane = tab.pane_mut(side);
         if let Some(px) = width {
             pane.model.viewport.open_at_px_per_bar(px);
         }
@@ -189,7 +190,7 @@ impl Harness {
             return;
         };
         let (_, tab) = active_with_id(tabs);
-        if tab.flow_pane.slots() == 0 {
+        if tab.flow().slots() == 0 {
             // Nothing charted yet. Wait, but not forever.
             if self.spend_load_older_frame().gave_up {
                 tracing::warn!(
@@ -255,7 +256,7 @@ impl Harness {
         // settled verdict over a request still in flight, with the spinner
         // turning above it. That is the dishonesty this branch removes, and a
         // hook has no business manufacturing it for a capture.
-        if tab.flow_pane.slots() == 0
+        if tab.flow().slots() == 0
             || tab.session.history_note().is_some()
             || tab.loading.is_active(LoadingTask::History)
         {
@@ -263,8 +264,8 @@ impl Harness {
         }
         // The ending's real sentence, from the chart's real oldest print.
         let oldest = tab
-            .flow_pane
-            .series_state()
+            .flow_series()
+            .state()
             .trades()
             .first()
             .map(|trade| trade.timestamp_ms);

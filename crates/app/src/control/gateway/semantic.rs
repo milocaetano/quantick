@@ -45,7 +45,7 @@ impl SemanticTab for TabRead<'_> {
     /// order both analysis scopes publish.
     fn visit_panes(&self, visit: &mut dyn FnMut(PaneSideDto, &dyn AnalysisPane)) {
         for (pane, side) in self.tab.panes() {
-            visit(pane_side_dto(side), pane);
+            visit(pane_side_dto(side), pane.pane);
         }
     }
 }

@@ -66,7 +66,7 @@ fn indicator_picker_control_opens_searches_inspects_and_closes_without_attaching
     );
     let closed = success_result(&call(&mut app, &mut client, json!({"action":"close"})));
     assert_eq!(closed["open"], false);
-    assert!(app.focused_pane().indicators.all().is_empty());
+    assert!(app.focused_pane().pane.indicators.all().is_empty());
     disable_test_gateway(&mut app, &ctx);
 }
 

@@ -21,12 +21,12 @@ fn source_drain_reset_retains_empty_anchor_debt_then_settles_populated_series() 
         .try_send(FeedEvent::Backfilled(prints(100, 250)))
         .unwrap();
     app.active_tab_mut().drain_feed(tab_id);
-    assert_eq!(app.active_tab().flow_pane.slots(), 3);
+    assert_eq!(app.active_tab().flow().slots(), 3);
     let tool = drawings::DRAWING_TOOLS
         .into_iter()
         .find(|tool| tool.id() == "rectangle")
         .unwrap();
-    let pane = &mut app.active_tab_mut().flow_pane;
+    let mut pane = app.active_tab_mut().flow_mut();
     pane.drawings.place(tool, ChartPoint::at(1.5, 100.0));
     pane.drawings.place(tool, ChartPoint::at(2.5, 110.0));
     pane.drawings.set_times(
@@ -37,7 +37,7 @@ fn source_drain_reset_retains_empty_anchor_debt_then_settles_populated_series() 
     assert_eq!(before, (1.5, Some(trade(175).timestamp_ms), false));
     events.try_send(FeedEvent::Reset).unwrap();
     app.active_tab_mut().drain_feed(tab_id);
-    assert_eq!(app.active_tab().flow_pane.slots(), 0);
+    assert_eq!(app.active_tab().flow().slots(), 0);
     assert_eq!(anchor(&app), before);
     app.active_tab_mut().drain_feed(tab_id);
     assert_eq!(
@@ -50,7 +50,7 @@ fn source_drain_reset_retains_empty_anchor_debt_then_settles_populated_series() 
         .try_send(FeedEvent::Backfilled(prints(50, 250)))
         .unwrap();
     app.active_tab_mut().drain_feed(tab_id);
-    assert_eq!(app.active_tab().flow_pane.slots(), 4);
+    assert_eq!(app.active_tab().flow().slots(), 4);
     let settled = anchor(&app);
     assert_eq!(settled, (2.5, Some(trade(175).timestamp_ms), false));
     // A real user edit after settlement survives another empty drain: debt is gone.
@@ -183,7 +183,7 @@ fn source_drain_same_interpreter_early_reanchor_leaves_real_coordinates_stale() 
             .into_iter()
             .find(|tool| tool.id() == "rectangle")
             .unwrap();
-        let pane = &mut app.active_tab_mut().flow_pane;
+        let mut pane = app.active_tab_mut().flow_mut();
         pane.drawings.place(tool, ChartPoint::at(1.5, 100.0));
         pane.drawings.place(tool, ChartPoint::at(2.5, 110.0));
         pane.drawings.set_times(
@@ -217,7 +217,7 @@ fn source_drain_same_interpreter_early_reanchor_leaves_real_coordinates_stale() 
                 SourceDrainPlan::stages(),
             );
         }
-        assert_eq!(app.active_tab().flow_pane.slots(), 4);
+        assert_eq!(app.active_tab().flow().slots(), 4);
         assert_eq!(
             anchor(&app),
             (if early { 1.5 } else { 2.5 }, Some(18500), false)
@@ -231,7 +231,7 @@ fn source_drain_same_interpreter_early_reanchor_leaves_real_coordinates_stale() 
     }
 }
 
-fn finish_indicator_commands(pane: &mut pane::ChartPane) {
+fn finish_indicator_commands(pane: &mut pane::PaneMut<'_>) {
     let (tx, rx) = std::sync::mpsc::channel();
     pane.indicator_worker
         .send(crate::indicator_worker::WorkerCommand::Flush(tx));
@@ -249,12 +249,12 @@ fn source_drain_same_interpreter_early_publication_omits_the_actual_worker_previ
     for early in [false, true] {
         let (mut app, events, _commands, _book) = test_app();
         let tab_id = app.runtime.tabs.active_id();
-        let pane = &mut app.active_tab_mut().flow_pane;
+        let mut pane = app.active_tab_mut().flow_mut();
         pane.add_indicator(crate::indicator_worker::IndicatorSource::Script {
             name: "Drain close".to_owned(),
             text: "indicator(\"Drain close\")\nplot(close)".to_owned(),
         });
-        finish_indicator_commands(pane);
+        finish_indicator_commands(&mut pane);
         assert_eq!(pane.indicators.all().len(), 1);
         assert!(pane.indicators.all()[0].error.is_none());
         assert!(pane.indicators.all()[0].preview.is_none());
@@ -282,7 +282,7 @@ fn source_drain_same_interpreter_early_publication_omits_the_actual_worker_previ
                 SourceDrainPlan::stages(),
             );
         }
-        let pane = &mut app.active_tab_mut().flow_pane;
+        let mut pane = app.active_tab_mut().flow_mut();
         assert_eq!(pane.series_state().trades().len(), 2);
         let partial = pane.series_state().partial().unwrap();
         assert_eq!(
@@ -293,7 +293,7 @@ fn source_drain_same_interpreter_early_publication_omits_the_actual_worker_previ
             pane.indicator_worker.partial_updates_for_test() - before,
             usize::from(!early)
         );
-        finish_indicator_commands(pane);
+        finish_indicator_commands(&mut pane);
         let view = &pane.indicators.all()[0];
         assert!(view.error.is_none());
         if early {
@@ -343,7 +343,7 @@ fn the_source_drain_plan_adds_no_heap_work_to_a_dense_drain() {
         events
             .try_send(FeedEvent::LiveBatch(prints(8_001, 8_513)))
             .unwrap();
-        let slots = app.active_tab().flow_pane.slots();
+        let slots = app.active_tab().flow().slots();
         let before = crate::work_meter::tally();
         if planned {
             app.active_tab_mut().drain_feed_with_clock(tab_id, || 0);
@@ -354,7 +354,7 @@ fn the_source_drain_plan_adds_no_heap_work_to_a_dense_drain() {
         let work = crate::work_meter::tally().since(before);
         assert!(slots > 80, "a dense series before the live batch");
         assert!(
-            app.active_tab().flow_pane.slots() > slots,
+            app.active_tab().flow().slots() > slots,
             "the live batch landed in the drain being counted"
         );
         work

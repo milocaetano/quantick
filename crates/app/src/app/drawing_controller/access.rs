@@ -2,7 +2,7 @@
 //! tabs, feeds, layouts or paper state moves into the controller.
 use crate::app::arrangement_host::ArrangementHost;
 use crate::drawings;
-use crate::pane::{ChartPane, PaneSide};
+use crate::pane::{PaneMut, PaneRef, PaneSide};
 use crate::surfaces::drawing_chrome::DrawingChromeExt as _;
 
 pub(crate) struct DrawingReadAccess<'a> {
@@ -12,10 +12,10 @@ impl<'a> DrawingReadAccess<'a> {
     pub(crate) fn new(tabs: &'a ArrangementHost) -> Self {
         Self { tabs }
     }
-    fn pane(&self) -> &ChartPane {
+    fn pane(&self) -> PaneRef<'_> {
         self.tabs[self.tabs.active_index()].drawing_pane()
     }
-    fn focused(&self) -> &ChartPane {
+    fn focused(&self) -> PaneRef<'_> {
         self.tabs[self.tabs.active_index()].focused_pane()
     }
     pub(super) fn current_range_owner(
@@ -60,7 +60,7 @@ pub(super) struct ChromeFacts {
 }
 impl DrawingReadAccess<'_> {
     pub(super) fn drawings(&self) -> &drawings::Drawings {
-        &self.pane().drawings
+        &self.pane().pane.drawings
     }
     pub(super) fn chart_area(&self) -> Option<eframe::egui::Rect> {
         self.pane().frame.chart_area
@@ -72,10 +72,10 @@ impl DrawingReadAccess<'_> {
         self.pane().frame.candles_right.unwrap_or(chart.right())
     }
     pub(super) fn band(&self, drawing: &drawings::Drawing) -> Option<&crate::bands::Band> {
-        crate::bands::band_of(self.pane().frame.cached_bands(), drawing)
+        crate::bands::band_of(self.pane().pane.frame.cached_bands(), drawing)
     }
     pub(super) fn band_label(&self, drawing: &drawings::Drawing) -> crate::bands::BandLabel {
-        crate::bands::label_for(&self.pane().indicators, drawing)
+        crate::bands::label_for(&self.pane().pane.indicators, drawing)
     }
     pub(super) fn projected_points(
         &self,
@@ -117,10 +117,10 @@ impl<'a> DrawingAccess<'a> {
     pub(crate) fn new(tabs: &'a mut ArrangementHost) -> Self {
         Self { tabs }
     }
-    fn pane(&self) -> &ChartPane {
+    fn pane(&self) -> PaneRef<'_> {
         self.tabs[self.tabs.active_index()].drawing_pane()
     }
-    fn pane_mut(&mut self) -> &mut ChartPane {
+    fn pane_mut(&mut self) -> PaneMut<'_> {
         self.tab_mut().drawing_pane_mut()
     }
     fn tab_mut(&mut self) -> &mut crate::tab::Tab {
@@ -149,7 +149,13 @@ impl<'a> DrawingAccess<'a> {
         side: PaneSide,
         index: usize,
     ) -> Option<&drawings::Drawing> {
-        self.tabs.by_id(tab)?.pane(side).drawings.items().get(index)
+        self.tabs
+            .by_id(tab)?
+            .pane(side)
+            .pane
+            .drawings
+            .items()
+            .get(index)
     }
     pub(super) fn record(
         &mut self,
@@ -178,7 +184,7 @@ impl<'a> DrawingAccess<'a> {
         let active = self.tabs.active_index();
         let tab = self.tabs.runtime_mut(active);
         let focused = tab.focused_side();
-        for pane in tab.panes_mut() {
+        for mut pane in tab.panes_mut() {
             pane.drawings.select(None);
         }
         let _ = tab.pane_mut(focused).drawings.paste(drawing, offset);
@@ -240,10 +246,10 @@ impl<'a> DrawingAccess<'a> {
 
 impl DrawingAccess<'_> {
     pub(super) fn drawings(&self) -> &drawings::Drawings {
-        &self.pane().drawings
+        &self.pane().pane.drawings
     }
     pub(super) fn drawings_mut(&mut self) -> &mut drawings::Drawings {
-        &mut self.pane_mut().drawings
+        &mut self.pane_mut().pane.drawings
     }
     pub(super) fn remove_strategy(&mut self, id: drawings::DrawingId) {
         let tab = self.tab_mut();
@@ -281,8 +287,9 @@ impl DrawingAccess<'_> {
         self.pane_mut().retime_selected();
     }
     pub(super) fn center_on_drawing(&mut self, index: usize) {
-        let pane = self.pane_mut();
-        let slots = pane.slots();
+        let at = self.pane_mut();
+        let slots = at.slots();
+        let pane = at.pane;
         if let Some(chart) = pane.frame.chart_area {
             let points = &pane.drawings.items()[index].points;
             if !points.is_empty() {

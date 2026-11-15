@@ -76,7 +76,7 @@ impl IndicatorWiring<'_> {
             self.runtime
                 .tabs
                 .by_id(target.tab)
-                .map(|tab| &tab.pane(target.side).indicator_worker)
+                .map(|tab| &tab.pane(target.side).pane.indicator_worker)
         });
         if let Some(edit) = change.deliver(worker) {
             self.apply_indicator_edit(edit);
@@ -95,7 +95,7 @@ impl IndicatorWiring<'_> {
         };
         if let Some(edit) = self.runtime.indicators.legend_action(
             &mut self.surfaces.indicator_settings,
-            tab.pane_mut(side),
+            tab.pane_mut(side).pane,
             (tab_id, side),
             action,
         ) {
@@ -128,7 +128,7 @@ impl IndicatorWiring<'_> {
         let requests: SmallVec<[(PaneSide, SlotId); MAX_CANVAS_PANES]> = (self.runtime)
             .active_tab_mut()
             .panes_with_sides_mut()
-            .filter_map(|(pane, side)| pane.take_settings_request().map(|slot| (side, slot)))
+            .filter_map(|(mut pane, side)| pane.take_settings_request().map(|slot| (side, slot)))
             .collect();
         for (side, slot) in requests {
             self.apply_indicator_legend_action(tab_id, side, LegendAction::OpenSettings(slot));
@@ -140,7 +140,7 @@ impl IndicatorWiring<'_> {
         let mut guides = Vec::new();
         #[cfg(any(feature = "scenario-harness", test))]
         if let Some(index) = self.harness.indicator_mouse_line() {
-            let flow = &self.runtime.active_tab().flow_pane;
+            let flow = self.runtime.active_tab().flow();
             let target = flow
                 .indicators
                 .all()
@@ -151,7 +151,7 @@ impl IndicatorWiring<'_> {
                 guides.push(guide(pane_id, slot, true));
             }
         }
-        for (pane, _) in self.runtime.active_tab_mut().panes_with_sides_mut() {
+        for (mut pane, _) in self.runtime.active_tab_mut().panes_with_sides_mut() {
             let request = pane.take_indicator_guide_request();
             guides.extend(request.map(|(slot, enabled)| guide(pane.id, slot, enabled)));
         }
@@ -179,7 +179,7 @@ impl IndicatorWiring<'_> {
                 .by_id_mut(target.tab)
                 .and_then(|tab| tab.pane_at_mut(target.side.index()))
                 .filter(|pane| pane.id == target.pane)
-                .and_then(|pane| pane.indicators.view_mut(target.slot))
+                .and_then(|pane| pane.pane.indicators.view_mut(target.slot))
         });
         let kind = valid_target.and_then(|target| self.runtime.indicators.registry.kind(target));
         let mut facet =
@@ -220,7 +220,7 @@ impl IndicatorWiring<'_> {
             for action in self.runtime.indicators.draw_legend(
                 &self.surfaces.indicator_settings.model_state,
                 ctx,
-                pane,
+                pane.pane,
                 (tab_id, side),
                 visible,
                 position_open,

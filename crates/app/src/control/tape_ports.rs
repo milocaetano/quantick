@@ -18,7 +18,7 @@ fn tape(port: &mut dyn ControlPort, tab: u64, id: u64) -> Result<&mut OrderflowV
 }
 impl BubbleScalePort for dyn ControlPort {
     fn bubble_scale_pane(&mut self, tab: u64, id: u64) -> Result<BubbleScalePane, ControlError> {
-        let pane = pane(self, WireU64::new(tab), WireU64::new(id))?;
+        let pane = super::price_axis::pane_at(self, WireU64::new(tab), WireU64::new(id))?;
         pane.bubble_scale_facts().ok_or_else(|| invalid(NO_VIEW))
     }
     fn set_bubble_scale(

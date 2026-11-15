@@ -6,7 +6,6 @@ use quantick_engine::Bar;
 use rust_decimal::Decimal;
 
 use crate::orderflow_view::LiveLane;
-use crate::pane::ChartPane;
 use crate::pane::frame_layout::{FrameLayout, Series};
 use crate::price_view::PriceView;
 use crate::state::BarSpec;
@@ -31,7 +30,8 @@ fn bar(low: i64, high: i64, close: i64) -> Bar {
 /// every candle in view still decides it.
 #[test]
 fn a_tape_only_pane_fits_the_tape_and_the_candles_beside_it() {
-    let pane = ChartPane::flow(1, BarSpec::Tick(50), "TESTUSDT".to_owned());
+    let mut parts = crate::pane::PaneParts::flow(1, BarSpec::Tick(50), "TESTUSDT".to_owned());
+    let pane = parts.at();
     let rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1_000.0, 600.0));
     let areas = pane.plot_areas(rect, crate::config::FeedCapabilities::none());
     let chart = areas.chart;
@@ -127,7 +127,9 @@ fn a_tape_only_pane_fits_the_tape_and_the_candles_beside_it() {
 fn tape_only_reserves_no_forming_candle_volume_profile_strip() {
     use quantick_layers::{ChartLayer, LayerActions};
 
-    let mut pane = ChartPane::flow(1, BarSpec::Tick(50), "TESTUSDT".to_owned());
+    let mut parts = crate::pane::PaneParts::flow(1, BarSpec::Tick(50), "TESTUSDT".to_owned());
+
+    let mut pane = parts.at();
     let capabilities = crate::config::FeedCapabilities {
         transport: true,
         traded_volume: true,
@@ -165,7 +167,9 @@ fn the_tape_alone_wears_no_key() {
     };
     use quantick_orderflow::{DisplayGrouping, EffectiveGrouping, HeatmapProjection};
 
-    let pane = ChartPane::flow(1, BarSpec::Tick(50), "TESTUSDT".to_owned());
+    let mut parts = crate::pane::PaneParts::flow(1, BarSpec::Tick(50), "TESTUSDT".to_owned());
+
+    let pane = parts.at();
     let projection = HeatmapProjection::empty(
         true,
         EffectiveGrouping::resolve(DisplayGrouping::Native, Decimal::ONE, Decimal::from(100)),

@@ -34,7 +34,7 @@ fn confirmed_feed_loss_reaches_gap_and_health_snapshots_without_changing_trades(
     events.blocking_send(FeedEvent::Live(trade(14))).unwrap();
     let tab_id = app.runtime.tabs.active_id();
     app.active_tab_mut().drain_feed(tab_id);
-    assert_eq!(app.active_tab().flow_pane.series_state().trades().len(), 1);
+    assert_eq!(app.active_tab().flow_series().state().trades().len(), 1);
     assert_eq!(
         app.active_tab().link.feed_gaps.len(),
         quantick_feed::MAX_REMEMBERED_GAPS
@@ -315,8 +315,8 @@ fn a_reconnect_refill_is_charted_whole_whatever_reaches_the_tab_first() {
 
         let tab = app.active_tab();
         let times: Vec<i64> = tab
-            .flow_pane
-            .series_state()
+            .flow_series()
+            .state()
             .trades()
             .iter()
             .map(|trade| trade.timestamp_ms)
@@ -700,7 +700,7 @@ fn a_click_on_the_popup_never_reaches_the_chart() {
 
     // The headline's own row: painted text, which registers no widget.
     let on_the_sentence = egui::pos2(popup.center().x, popup.top() + 12.0);
-    let held = app.active_tab().flow_pane.series_state().trades().len();
+    let held = app.active_tab().flow_series().state().trades().len();
     let before = {
         let viewport = &app.active_tab().flow_pane.model.viewport;
         (viewport.px_per_bar(), viewport.right_edge_bar(held))
@@ -789,14 +789,14 @@ fn a_resume_floor_never_outlives_the_event_it_filtered() {
             ..trade(2)
         },
     ];
-    let held = app.active_tab().flow_pane.series_state().trades().len();
+    let held = app.active_tab().flow_series().state().trades().len();
     events
         .blocking_send(FeedEvent::HistoryPrepended(older))
         .unwrap();
     let tab_id = app.runtime.tabs.active_id();
     app.active_tab_mut().drain_feed(tab_id);
     assert_eq!(
-        app.active_tab().flow_pane.series_state().trades().len(),
+        app.active_tab().flow_series().state().trades().len(),
         held + 2,
         "load older must not be swallowed by a floor from a past reconnect"
     );
@@ -901,7 +901,7 @@ fn a_finer_spec_follows_the_same_market_time_forward() {
         .retain(crate::state::BarSpec::Tick(40));
     app.active_tab_mut().apply_spec_changes();
     app.active_tab_mut().apply_spec_changes();
-    let slots = app.active_tab().flow_pane.slots();
+    let slots = app.active_tab().flow().slots();
     app.active_tab_mut()
         .flow_pane
         .model
@@ -909,7 +909,7 @@ fn a_finer_spec_follows_the_same_market_time_forward() {
         .pan_pixels(5.0 * 8.0, slots); // back to bar 4 of 10
     let was_showing = app
         .active_tab()
-        .flow_pane
+        .flow()
         .right_edge_time()
         .expect("a bar under the edge");
 
@@ -919,21 +919,18 @@ fn a_finer_spec_follows_the_same_market_time_forward() {
         .retain(crate::state::BarSpec::Tick(1));
     app.active_tab_mut().apply_spec_changes();
     app.active_tab_mut().apply_spec_changes();
-    assert_eq!(app.active_tab().flow_pane.series_state().bars().len(), 400);
+    assert_eq!(app.active_tab().flow_series().state().bars().len(), 400);
     let edge = app
         .active_tab()
         .flow_pane
         .model
         .viewport
-        .right_edge_bar(app.active_tab().flow_pane.slots());
+        .right_edge_bar(app.active_tab().flow().slots());
     assert_eq!(
         edge, 160.0,
         "bar 4 of tick(40) opens on trade 161 — bar 160 of tick(1)"
     );
-    assert_eq!(
-        app.active_tab().flow_pane.right_edge_time(),
-        Some(was_showing)
-    );
+    assert_eq!(app.active_tab().flow().right_edge_time(), Some(was_showing));
 }
 
 #[test]
@@ -1354,7 +1351,7 @@ fn progressive_slices_paint_as_they_arrive_and_the_wait_ends_on_the_last() {
     // following pane is immune by construction — its right edge *is* the
     // newest bar — so this is where the guarantee has to be proven.
     {
-        let pane = app.active_tab_mut().pane_mut(PaneSide::Time(0));
+        let mut pane = app.active_tab_mut().pane_mut(PaneSide::Time(0));
         let total = pane.slots();
         pane.model.viewport.pan_pixels(200.0, total);
         assert!(
@@ -1746,7 +1743,7 @@ fn a_replay_installs_its_downloaded_context_without_a_press() {
     app.runtime.history.venue_lead_in = true;
     app.drain_tabs();
     assert_eq!(
-        app.active_tab().flow_pane.seam_slot(),
+        app.active_tab().flow().seam_slot(),
         3,
         "the previous session sits in front of the tick chart's own bars"
     );
@@ -1766,7 +1763,7 @@ fn yesterday_pages_to_the_previous_open_and_the_chart_holds_still_while_it_does(
     let ctx = egui::Context::default();
     let (mut app, events, mut commands) = history_app(&ctx);
     drain_load_older(&mut commands);
-    let bars_before = app.active_tab().flow_pane.series_state().bars().len();
+    let bars_before = app.active_tab().flow_series().state().bars().len();
 
     app.apply_toolbar_action(crate::toolbar::ToolbarAction::LoadHistory(
         history_reach::HistoryReach::Sessions(1),
@@ -1794,7 +1791,7 @@ fn yesterday_pages_to_the_previous_open_and_the_chart_holds_still_while_it_does(
         app.drain_tabs();
         if index < 2 {
             assert_eq!(
-                app.active_tab().flow_pane.series_state().bars().len(),
+                app.active_tab().flow_series().state().bars().len(),
                 bars_before,
                 "page {index}: the visible bars do not move while the run pages"
             );
@@ -1969,7 +1966,7 @@ fn cancel_stops_paging_keeps_what_arrived_and_says_where() {
     let ctx = egui::Context::default();
     let (mut app, events, mut commands) = history_app(&ctx);
     drain_load_older(&mut commands);
-    let held = app.active_tab().flow_pane.series_state().trades().len();
+    let held = app.active_tab().flow_series().state().trades().len();
     app.apply_toolbar_action(crate::toolbar::ToolbarAction::LoadHistory(
         history_reach::HistoryReach::Sessions(5),
     ));
@@ -2003,7 +2000,7 @@ fn cancel_stops_paging_keeps_what_arrived_and_says_where() {
         ))
         .unwrap();
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    while app.active_tab().flow_pane.series_state().trades().len() != held + 90
+    while app.active_tab().flow_series().state().trades().len() != held + 90
         && std::time::Instant::now() < deadline
     {
         app.drain_tabs();
@@ -2014,7 +2011,7 @@ fn cancel_stops_paging_keeps_what_arrived_and_says_where() {
         "nothing more is asked"
     );
     assert_eq!(
-        app.active_tab().flow_pane.series_state().trades().len(),
+        app.active_tab().flow_series().state().trades().len(),
         held + 90,
         "every page that arrived is kept"
     );
@@ -2154,7 +2151,7 @@ fn a_run_stops_the_moment_the_venue_says_its_record_ends() {
 fn the_venue_prefix_is_counted_apart_from_the_built_bars() {
     let ctx = egui::Context::default();
     let (mut app, events, _commands) = history_app(&ctx);
-    let venue_bars = |app: &QuantickApp, side| app.active_tab().pane(side).venue_prefix().len();
+    let venue_bars = |app: &QuantickApp, side| app.active_tab().pane(side).series.prefix().len();
     assert_eq!(
         venue_bars(&app, PaneSide::Time(0)),
         0,
@@ -2446,7 +2443,7 @@ fn a_market_without_a_bar_opens_on_the_active_tab_bar_the_footer_showed() {
     let ctx = egui::Context::default();
     let (mut app, _cmd_rx) = app_with_history(50);
     let active = quantick_engine::bar_registry::BUILTIN_BARS.parse("volume:13");
-    app.active_tab_mut().flow_pane.set_spec(active.unwrap());
+    app.active_tab_mut().flow_mut().set_spec(active.unwrap());
     type_into_palette(&mut app, &ctx, "ETHUSDT");
     let snapshot = MarketPaletteHost::market_snapshot(&app);
     let listing = quantick_workspace::market_list::list_markets(&snapshot.world(), "ETHUSDT");
@@ -2460,8 +2457,8 @@ fn a_market_without_a_bar_opens_on_the_active_tab_bar_the_footer_showed() {
     assert_eq!(app.active_tab().symbol, "ETHUSDT");
     assert_eq!(
         app.active_tab()
-            .flow_pane
-            .series_state()
+            .flow_series()
+            .state()
             .spec()
             .to_config_string(),
         "volume:13"
@@ -2647,20 +2644,8 @@ fn the_same_market_can_be_open_twice() {
         app.runtime.tabs[1].flow_pane.id
     );
     // Separate engines: what one holds says nothing about the other.
-    assert!(
-        !app.runtime.tabs[0]
-            .flow_pane
-            .series_state()
-            .bars()
-            .is_empty()
-    );
-    assert!(
-        app.runtime.tabs[1]
-            .flow_pane
-            .series_state()
-            .bars()
-            .is_empty()
-    );
+    assert!(!app.runtime.tabs[0].flow_series().state().bars().is_empty());
+    assert!(app.runtime.tabs[1].flow_series().state().bars().is_empty());
 }
 
 /// A market order takes no price, and saying otherwise is refused before

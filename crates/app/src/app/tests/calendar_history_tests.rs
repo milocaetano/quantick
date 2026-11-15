@@ -42,6 +42,7 @@ fn set_time_pane(app: &mut QuantickApp, interval_ms: i64) {
 fn set_pane(app: &mut QuantickApp, side: PaneSide, interval_ms: i64) {
     let tab = app.active_tab_mut();
     tab.pane_mut(side)
+        .pane
         .spec
         .retain(crate::state::BarSpec::Time(interval_ms));
     tab.apply_spec_changes();

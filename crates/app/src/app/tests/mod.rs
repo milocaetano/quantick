@@ -231,7 +231,7 @@ impl QuantickApp {
     #[must_use]
     fn heatmap_lamp_on(&self) -> bool {
         self.active_tab()
-            .flow_pane
+            .flow()
             .layer_switched_on(ChartLayer::Heatmap, &self.runtime.style)
     }
 }
@@ -322,7 +322,7 @@ fn pane_is_auto(app: &QuantickApp, slot: SlotId) -> bool {
 
 /// The gutter band beside pane `index`, computed the way the frame does.
 fn pane_gutter(app: &QuantickApp, index: usize) -> egui::Rect {
-    let pane = &app.active_tab().flow_pane;
+    let pane = app.active_tab().flow();
     let areas = plot_split(
         pane.frame.plot_area.expect("a frame has been drawn"),
         pane.live_strip_width(app.active_tab().capabilities(&app.config)),
@@ -335,7 +335,7 @@ fn pane_gutter(app: &QuantickApp, index: usize) -> egui::Rect {
 /// The plot band of pane `index` — where its curve is drawn, as opposed to
 /// the gutter where its numbers are.
 fn pane_body(app: &QuantickApp, index: usize) -> egui::Rect {
-    let pane = &app.active_tab().flow_pane;
+    let pane = app.active_tab().flow();
     let areas = plot_split(
         pane.frame.plot_area.expect("a frame has been drawn"),
         pane.live_strip_width(app.active_tab().capabilities(&app.config)),
@@ -348,13 +348,13 @@ fn pane_body(app: &QuantickApp, index: usize) -> egui::Rect {
 /// The bar the viewport has at its right edge — how far the chart is
 /// panned along time.
 fn right_edge(app: &QuantickApp) -> f32 {
-    let pane = &app.active_tab().flow_pane;
+    let pane = app.active_tab().flow();
     pane.model.viewport.right_edge_bar(pane.slots())
 }
 
 /// The pane band as the last drawn frame carved it.
 fn pane_slots(app: &QuantickApp) -> Vec<crate::indicators::PaneSlot> {
-    let pane = &app.active_tab().flow_pane;
+    let pane = app.active_tab().flow();
     plot_split(
         pane.frame.plot_area.expect("a frame has been drawn"),
         pane.live_strip_width(app.active_tab().capabilities(&app.config)),
@@ -578,7 +578,7 @@ fn app_with_history_and_launch(
     let (mut app, evt_tx, cmd_rx, _book_tx) = test_app_with_launch(launch);
     // Omit the forming-bar strip. Drawing fixtures also turn off the tape in
     // bare_canvas; native-tape fixtures retain its shipped source setting.
-    app.active_tab_mut().flow_pane.set_layer_visible(
+    app.active_tab_mut().flow_mut().set_layer_visible(
         ChartLayer::LiveStrip,
         false,
         &mut Default::default(),
@@ -594,7 +594,7 @@ fn app_with_history_and_launch(
     let tab_id = app.runtime.tabs.active_id();
     app.active_tab_mut().drain_feed(tab_id);
     assert_eq!(
-        app.active_tab().flow_pane.series_state().bars().len() as u64,
+        app.active_tab().flow_series().state().bars().len() as u64,
         count
     );
     (app, cmd_rx)
@@ -645,7 +645,7 @@ fn tape_menu_entries() -> usize {
 /// The active tab's flow pane beside the chrome a canvas frame hands it.
 fn with_flow_pane<R>(
     app: &mut QuantickApp,
-    body: impl FnOnce(&mut ChartPane, &mut pane::PaneChrome<'_>) -> R,
+    body: impl FnOnce(&mut pane::PaneMut<'_>, &mut pane::PaneChrome<'_>) -> R,
 ) -> R {
     let capabilities = app.active_tab().capabilities(&app.config);
     let side_inferred = app.active_tab().side_note(&app.config).is_some();
@@ -690,7 +690,12 @@ fn with_flow_pane<R>(
         footprint: footprint_config,
         layers: &mut workspace.layers_mut().actions,
     };
-    body(&mut tab.flow_pane, &mut chrome)
+    let mut flow = crate::tab::pane_workers::lend_mut(
+        &mut tab.flow_pane,
+        &mut tab.session,
+        &mut tab.pane_workers,
+    );
+    body(&mut flow, &mut chrome)
 }
 
 /// Switch a layer exactly as the menu does, including the hop the app makes
@@ -705,7 +710,7 @@ fn switch_layer(app: &mut QuantickApp, layer: ChartLayer, visible: bool) {
 /// Whether the active tab's flow pane is painting `layer`.
 fn layer_on(app: &QuantickApp, layer: ChartLayer) -> bool {
     app.active_tab()
-        .flow_pane
+        .flow()
         .layer_visible(layer, &app.runtime.style)
 }
 
@@ -1140,7 +1145,7 @@ fn split_with_a_shared_line(
     // else — and without it the time pane holds a single bar, most of its
     // chart is empty space no instant can be named in, and every gesture
     // below silently does nothing.
-    let pane = app
+    let mut pane = app
         .active_tab_mut()
         .time_pane_mut()
         .expect("two frames is enough for the deferred layout to build it");
@@ -1171,7 +1176,7 @@ fn split_with_a_shared_line(
     let slot = 100;
     let time = app
         .active_tab()
-        .flow_pane
+        .flow()
         .slot_open_time(slot)
         .expect("a closed bar has a time");
     app.active_tab_mut().flow_pane.drawings.place_with(
@@ -1474,7 +1479,7 @@ pub(super) fn split_app(
 /// Let every pane's indicator worker finish what it was sent, then apply
 /// its events — the two steps the frame loop takes, made deterministic.
 pub(super) fn settle_indicators(app: &mut QuantickApp) {
-    for pane in app.active_tab_mut().panes_mut() {
+    for mut pane in app.active_tab_mut().panes_mut() {
         pane.indicator_worker.flush();
         pane.apply_indicator_events();
     }
@@ -1874,7 +1879,7 @@ fn place_range_profile_with_the_layer_off(app: &mut QuantickApp) {
         .into_iter()
         .find(|tool| tool.id() == crate::frvp::TOOL_ID)
         .expect("frvp is registered");
-    let pane = app.active_tab_mut().pane_mut(PaneSide::Flow);
+    let mut pane = app.active_tab_mut().pane_mut(PaneSide::Flow);
     pane.set_layer_visible(
         ChartLayer::Footprint,
         false,
@@ -2152,7 +2157,7 @@ fn remote_call_with_key(
 /// own actor does when an agent calls the same action. Named by id, so a
 /// test can never accidentally relabel the trader's own drawing.
 fn stamp_agent_author(app: &mut QuantickApp, ids: &[u64]) {
-    let pane = app.active_tab_mut().drawing_pane_mut();
+    let mut pane = app.active_tab_mut().drawing_pane_mut();
     let count = pane.drawings.items().len();
     for index in 0..count {
         if ids.contains(&pane.drawings.items()[index].id.0) {
@@ -2402,7 +2407,7 @@ fn loaded_observer_workspace(bars: u64) -> (QuantickApp, mpsc::Receiver<FeedComm
     // Indicators: delivered the way the worker delivers them, with a full
     // committed column so the "latest reading" walk has rows to reach.
     for index in 0..BENCH_INDICATORS_PER_PANE {
-        let pane = &mut app.active_tab_mut().flow_pane;
+        let mut pane = app.active_tab_mut().flow_mut();
         let slot = pane.indicators.allocate_slot("native.ema");
         let descriptor = quantick_indicators::IndicatorDescriptor {
             title: format!("EMA {index}"),
@@ -2441,7 +2446,7 @@ fn loaded_observer_workspace(bars: u64) -> (QuantickApp, mpsc::Receiver<FeedComm
     for index in 0..BENCH_DRAWINGS_PER_PANE {
         let slot = index % (bars as usize).max(1);
         let (time, price) = {
-            let pane = &app.active_tab().flow_pane;
+            let pane = app.active_tab().flow();
             let Some(bar) = pane.closed_bar(slot) else {
                 break;
             };
@@ -2450,7 +2455,7 @@ fn loaded_observer_workspace(bars: u64) -> (QuantickApp, mpsc::Receiver<FeedComm
                 rust_decimal::prelude::ToPrimitive::to_f64(&bar.close).unwrap_or(0.0),
             )
         };
-        let flow = &mut app.active_tab_mut().flow_pane;
+        let mut flow = app.active_tab_mut().flow_mut();
         flow.drawings.place_with(
             drawing_tool("horizontal-line"),
             &drawings::DrawingBand::Price,
@@ -2685,7 +2690,7 @@ fn measure_max_chart_window_capture_us() -> BestBatches {
 fn hover_bar(app: &mut QuantickApp, ctx: &egui::Context, slot: usize) {
     run_frame(app, ctx);
     let position = {
-        let pane = &app.active_tab().flow_pane;
+        let pane = app.active_tab().flow();
         let chart = pane.frame.chart_area.expect("the pane reported its rect");
         let right = pane.frame.candles_right.unwrap_or_else(|| chart.right());
         egui::pos2(
@@ -2956,7 +2961,8 @@ fn attach_script_for_test(
         app.runtime
             .tabs
             .runtime_mut(app.runtime.tabs.active_index())
-            .pane_mut(target.1),
+            .pane_mut(target.1)
+            .pane,
         target,
         name,
         text,
@@ -2978,7 +2984,8 @@ fn add_library_for_test(app: &mut QuantickApp, index: usize) -> Option<SlotId> {
         app.active_tab().focused_side(),
     );
     let (slot, added) = app.runtime.indicators.add_library(
-        app.runtime
+        &mut app
+            .runtime
             .tabs
             .runtime_mut(app.runtime.tabs.active_index())
             .pane_mut(target.1),

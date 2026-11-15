@@ -1,11 +1,11 @@
 //! Requested tape layout does not depend on market data arriving.
-use crate::pane::ChartPane;
 use crate::state::BarSpec;
 use eframe::egui;
 
 #[test]
 fn the_requested_tape_boundary_survives_missing_book_and_clock() {
-    let mut pane = ChartPane::flow(1, BarSpec::Tick(50), "WINV26".to_owned());
+    let mut parts = crate::pane::PaneParts::flow(1, BarSpec::Tick(50), "WINV26".to_owned());
+    let mut pane = parts.at();
     let chart = egui::Rect::from_min_size(egui::pos2(20.0, 30.0), egui::vec2(1000.0, 600.0));
     let flow = pane
         .orderflow
@@ -51,7 +51,8 @@ fn the_requested_tape_boundary_survives_missing_book_and_clock() {
 /// band above it. Without a carved row it stays on the chart.
 #[test]
 fn the_divider_grab_stops_at_the_carved_side_row() {
-    let mut pane = ChartPane::flow(1, BarSpec::Tick(50), "WINV26".to_owned());
+    let mut parts = crate::pane::PaneParts::flow(1, BarSpec::Tick(50), "WINV26".to_owned());
+    let mut pane = parts.at();
     pane.orderflow.as_mut().unwrap().set_lane_enabled(true);
     for height in [40.0, 60.0, 600.0] {
         let body = egui::Rect::from_min_size(egui::pos2(20.0, 30.0), egui::vec2(1000.0, height));
