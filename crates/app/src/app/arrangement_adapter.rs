@@ -155,7 +155,7 @@ impl ArrangementAdapter<'_> {
         let spec = spec.unwrap_or_else(|| {
             self.config
                 .startup_spec_for(&feed_id)
-                .unwrap_or_else(|| *self.active_tab().flow_pane.state.spec())
+                .unwrap_or_else(|| *self.active_tab().flow_pane.series_state().spec())
         });
         let trades_dir = self.workspace.trades_dir().to_path_buf();
         // Cmd trading is app-wide (the trades-dir rule): a new tab starts
@@ -453,17 +453,17 @@ pub(super) fn saved_tab_of(tab: &Tab) -> ui_state::SavedTab {
         context_panes_collapsed: tab.canvas.context_collapsed_slots(),
         focus: Some(ui_state::SavedFocus::from_side(tab.focused_side()).0),
         focus_slot: ui_state::SavedFocus::from_side(tab.focused_side()).1,
-        flow_bars: tab.flow_pane.state.spec().to_config_string(),
+        flow_bars: tab.flow_pane.series_state().spec().to_config_string(),
         // Only a pane that exists has an interval worth recording; a
         // tab that never showed the split restores on the default,
         // which is what it had.
         time_bars: tab
             .time_pane()
-            .map(|pane| pane.state.spec().to_config_string()),
+            .map(|pane| pane.series_state().spec().to_config_string()),
         context_bars: tab
             .time_panes
             .iter()
-            .map(|pane| pane.state.spec().to_config_string())
+            .map(|pane| pane.series_state().spec().to_config_string())
             .collect(),
         flow_layout: tab.flow_pane.layout_id().map(|layout| layout.0),
         context_layouts: tab

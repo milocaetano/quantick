@@ -14,7 +14,7 @@ fn previous_close_minute(before_minute: i64) -> i64 {
 
 /// The newest print the chart holds: where a reconnect's floor would sit.
 fn live_edge_ms(app: &QuantickApp) -> i64 {
-    let trades = app.active_tab().flow_pane.state.trades();
+    let trades = app.active_tab().flow_pane.series_state().trades();
     trades
         .get(trades.len() - 1)
         .expect("a charted tape")
@@ -97,7 +97,7 @@ fn a_pane_opened_during_a_run_ends_with_the_whole_tape() {
     let tab = app.active_tab();
     let flow: Vec<i64> = tab
         .flow_pane
-        .state
+        .series_state()
         .trades()
         .iter()
         .map(|trade| trade.timestamp_ms)
@@ -105,7 +105,7 @@ fn a_pane_opened_during_a_run_ends_with_the_whole_tape() {
     let time: Vec<i64> = tab
         .time_pane()
         .expect("split")
-        .state
+        .series_state()
         .trades()
         .iter()
         .map(|trade| trade.timestamp_ms)
@@ -323,7 +323,7 @@ fn a_press_after_a_failed_rebuild_retries_and_queues_the_target() {
     );
     assert!(app.active_tab().session.history_reach_running());
     assert_eq!(
-        app.active_tab().flow_pane.state.trades().len(),
+        app.active_tab().flow_pane.series_state().trades().len(),
         320,
         "the retried rebuild kept the page"
     );

@@ -48,7 +48,8 @@ fn split_app(ctx: &egui::Context) -> (QuantickApp, egui::Pos2, egui::Pos2) {
 /// What the candles show: their zoom and where their right edge is.
 fn candles_view(app: &QuantickApp) -> (f32, f32) {
     let pane = &app.active_tab().flow_pane;
-    let total = pane.state.bars().len() + usize::from(pane.state.partial().is_some());
+    let total =
+        pane.series_state().bars().len() + usize::from(pane.series_state().partial().is_some());
     (
         pane.model.viewport.px_per_bar(),
         pane.model.viewport.right_edge_bar(total),
@@ -352,7 +353,7 @@ fn a_drag_far_into_the_past_stops_at_the_retained_tape() {
         run_frame(&mut app, &ctx);
     }
     let view = app.active_tab().tape();
-    let window = view.live_lane_window_ms(app.active_tab().flow_pane.state.bars());
+    let window = view.live_lane_window_ms(app.active_tab().flow_pane.series_state().bars());
     let retained = view
         .tape_retained_from_ms()
         .expect("the tape reports retention");
@@ -768,7 +769,10 @@ fn double_click_then_vertical_pan_works_on_both_sides_and_orientations() {
 /// every bar of the frame's auto-fit still on the axis.
 fn assert_last_price_centred(pane: &crate::pane::ChartPane) {
     use rust_decimal::prelude::ToPrimitive as _;
-    let newest = pane.state.partial().or(pane.state.bars().last());
+    let newest = pane
+        .series_state()
+        .partial()
+        .or(pane.series_state().bars().last());
     let last = newest.unwrap().close.to_f64().unwrap();
     let (low, high) = pane.price_view.manual_range().expect("a held frame");
     assert!(
@@ -1515,7 +1519,8 @@ fn closed_candles_keep_their_view_and_leave_the_strip_to_their_rail() {
     let ctx = egui::Context::default();
     let (mut app, _, _) = split_app(&ctx);
     let pane = &mut app.active_tab_mut().flow_pane;
-    let total = pane.state.bars().len() + usize::from(pane.state.partial().is_some());
+    let total =
+        pane.series_state().bars().len() + usize::from(pane.series_state().partial().is_some());
     // Pushed into the projection margin: room only the full candle pane has.
     pane.model.viewport.pan_pixels(-300.0, total);
     run_frame(&mut app, &ctx);

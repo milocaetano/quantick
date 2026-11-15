@@ -46,8 +46,8 @@ pub(super) fn evaluate(
         |id| {
             let pane = pane(id)?;
             Some(Forming {
-                bar: pane.state.partial().cloned()?,
-                progress: (pane.state.bar_progress_at(None))
+                bar: pane.series_state().partial().cloned()?,
+                progress: (pane.series_state().bar_progress_at(None))
                     .and_then(quantick_chart::bar_progress::BarProgressReading::fixed_progress),
                 slot: pane.closed_slots(),
             })

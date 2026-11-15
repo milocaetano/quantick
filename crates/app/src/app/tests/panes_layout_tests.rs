@@ -1111,7 +1111,7 @@ fn enabling_the_split_paints_before_it_seeds() {
         .time_pane()
         .expect("the next frame builds it");
     assert!(
-        !time.state.trades().is_empty(),
+        !time.series_state().trades().is_empty(),
         "seeded from the market the flow pane already holds"
     );
     assert!(
@@ -1189,13 +1189,16 @@ fn a_pane_opened_late_keeps_the_backfill_boundary_honest() {
 
     let time = app.active_tab().time_pane().expect("time pane");
     assert_eq!(
-        time.state.trades().len(),
+        time.series_state().trades().len(),
         103,
         "the new pane opens showing the market, not an empty chart"
     );
     assert_eq!(
-        time.state.backfill_trade_count(),
-        app.active_tab().flow_pane.state.backfill_trade_count(),
+        time.series_state().backfill_trade_count(),
+        app.active_tab()
+            .flow_pane
+            .series_state()
+            .backfill_trade_count(),
         "the live prints must not become history in the second view"
     );
 }
@@ -1207,9 +1210,12 @@ fn a_pane_opened_late_keeps_the_backfill_boundary_honest() {
 fn the_time_panes_bars_menu_moves_only_its_own_spec() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = split_app(&ctx, 200);
-    let flow_spec = *app.active_tab().flow_pane.state.spec();
+    let flow_spec = *app.active_tab().flow_pane.series_state().spec();
     assert_eq!(
-        app.active_tab().pane(PaneSide::Time(0)).state.spec(),
+        app.active_tab()
+            .pane(PaneSide::Time(0))
+            .series_state()
+            .spec(),
         &BarSpec::Time(time_header::DEFAULT_INTERVAL_MS),
         "the time pane opens on M1, not on the flow selector's interval"
     );
@@ -1232,12 +1238,15 @@ fn the_time_panes_bars_menu_moves_only_its_own_spec() {
     run_frame(&mut app, &ctx);
 
     assert_eq!(
-        app.active_tab().pane(PaneSide::Time(0)).state.spec(),
+        app.active_tab()
+            .pane(PaneSide::Time(0))
+            .series_state()
+            .spec(),
         &BarSpec::Time(expected_ms),
         "clicking {label} must re-cut the time pane"
     );
     assert_eq!(
-        app.active_tab().flow_pane.state.spec(),
+        app.active_tab().flow_pane.series_state().spec(),
         &flow_spec,
         "and must leave the chart beside it alone"
     );
@@ -1258,7 +1267,7 @@ fn the_time_layout_shows_the_timeframe_chart_alone() {
     let tab = app.active_tab();
     let time = tab.time_pane().expect("the pane was built");
     assert_eq!(
-        time.state.trades().len(),
+        time.series_state().trades().len(),
         200,
         "and seeded, so it opens showing the market"
     );
@@ -1534,7 +1543,11 @@ fn a_window_that_opens_on_the_split_focuses_the_flow_chart() {
         "a fresh window's controls speak for the chart quantick is built around"
     );
     assert_eq!(
-        app.active_tab().focused_pane().state.spec().summary(),
+        app.active_tab()
+            .focused_pane()
+            .series_state()
+            .spec()
+            .summary(),
         "tick(50)",
         "and so does the pane those controls drive"
     );
@@ -1611,7 +1624,7 @@ fn the_bars_selectors_govern_the_focused_pane() {
     app.active_tab_mut().set_layout(CanvasLayout::Time);
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
-    let flow_spec = *app.active_tab().flow_pane.state.spec();
+    let flow_spec = *app.active_tab().flow_pane.series_state().spec();
 
     // The exact selector fields the pane's bars menu edits, written through
     // the same deferred-spec path.
@@ -1632,13 +1645,13 @@ fn the_bars_selectors_govern_the_focused_pane() {
         app.active_tab()
             .time_pane()
             .expect("time pane")
-            .state
+            .series_state()
             .spec(),
         &BarSpec::Time(300_000),
         "the change lands on the chart on screen"
     );
     assert_eq!(
-        app.active_tab().flow_pane.state.spec(),
+        app.active_tab().flow_pane.series_state().spec(),
         &flow_spec,
         "and not on the hidden one"
     );
@@ -1693,7 +1706,7 @@ fn a_feed_declaring_layout_and_bars_opens_wearing_them() {
 
     assert_eq!(app.active_tab().canvas.layout, CanvasLayout::Time);
     assert_eq!(
-        app.active_tab().flow_pane.state.spec(),
+        app.active_tab().flow_pane.series_state().spec(),
         &BarSpec::Time(300_000),
         "the flow pane opened on the declared spec"
     );
@@ -1703,7 +1716,7 @@ fn a_feed_declaring_layout_and_bars_opens_wearing_them() {
         app.active_tab()
             .time_pane()
             .expect("built the frame after startup")
-            .state
+            .series_state()
             .spec(),
         &BarSpec::Time(300_000),
         "the timeframe pane opens on the declared interval too"
@@ -1747,7 +1760,7 @@ fn a_new_tab_takes_the_feeds_declared_defaults_over_inheritance() {
         None,
     );
     assert_eq!(
-        app.active_tab().flow_pane.state.spec(),
+        app.active_tab().flow_pane.series_state().spec(),
         &BarSpec::Tick(7),
         "the declaration wins over the inherited spec"
     );
@@ -1760,7 +1773,7 @@ fn a_new_tab_takes_the_feeds_declared_defaults_over_inheritance() {
         None,
     );
     assert_eq!(
-        app.active_tab().flow_pane.state.spec(),
+        app.active_tab().flow_pane.series_state().spec(),
         &BarSpec::Tick(7),
         "a feed declaring nothing still inherits from the tab you were on"
     );
@@ -2748,7 +2761,7 @@ fn leaving_the_split_keeps_the_time_panes_work_and_its_bars() {
     let before = app
         .active_tab()
         .pane(PaneSide::Time(0))
-        .state
+        .series_state()
         .trades()
         .len();
     let trade = trade(700);
@@ -2757,7 +2770,7 @@ fn leaving_the_split_keeps_the_time_panes_work_and_its_bars() {
     assert_eq!(
         app.active_tab()
             .pane(PaneSide::Time(0))
-            .state
+            .series_state()
             .trades()
             .len(),
         before + 1,
@@ -3001,7 +3014,7 @@ fn the_flow_pane_cutting_time_bars_earns_the_venue_prefix() {
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
     assert_eq!(
-        *app.active_tab().flow_pane.state.spec(),
+        *app.active_tab().flow_pane.series_state().spec(),
         BarSpec::Time(crate::time_header::DEFAULT_INTERVAL_MS),
         "bars → time opens on 1m, not one second"
     );
@@ -3201,7 +3214,7 @@ fn a_background_tab_keeps_ingesting() {
     app.apply_tab_action(TabAction::Activate(0));
     assert_eq!(app.runtime.tabs.active_index(), 0);
 
-    let before = app.runtime.tabs[1].flow_pane.state.trades().len();
+    let before = app.runtime.tabs[1].flow_pane.series_state().trades().len();
     // Push into the background tab's own channel, then run the window's
     // drain — not that tab's, which would prove nothing about the loop.
     for id in 900..905 {
@@ -3210,7 +3223,7 @@ fn a_background_tab_keeps_ingesting() {
     app.drain_tabs();
 
     assert_eq!(
-        app.runtime.tabs[1].flow_pane.state.trades().len(),
+        app.runtime.tabs[1].flow_pane.series_state().trades().len(),
         before + 5,
         "a tab off screen still takes in what its feed sent"
     );

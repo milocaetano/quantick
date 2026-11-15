@@ -8,7 +8,7 @@ impl TickBubblePort for dyn ControlPort {
         let pane = pane(self, WireU64::new(tab), WireU64::new(id))?;
         let asset = pane.orderflow.as_ref().and_then(|owner| owner.asset());
         let asset_mode = asset.is_some_and(|asset| asset.mode().is_some());
-        let tick_chart = pane.state.tick_membership().is_some();
+        let tick_chart = pane.series_state().tick_membership().is_some();
         Ok(TickSpherePane::new(tick_chart, asset_mode))
     }
     fn wear_tick_spheres(

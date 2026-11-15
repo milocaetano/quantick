@@ -40,7 +40,7 @@ fn a_drawing_is_kept_to_its_chart_by_a_named_call() {
     place_level(&mut app, PaneSide::Flow, 100.0);
     run_frame(&mut app, &ctx);
     let (directory, mut client) = cockpit(&mut app, &ctx, "drawing-scope-control");
-    let drawn_at = *app.active_tab().flow_pane.state.spec();
+    let drawn_at = *app.active_tab().flow_pane.series_state().spec();
 
     let call = scope_call(&app, 0, "this_chart");
     let (kept, _) = unkeyed_call(&mut app, &mut client, CAPABILITY, call.clone());

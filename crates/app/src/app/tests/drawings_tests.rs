@@ -768,7 +768,7 @@ fn a_resumed_session_keeps_the_timeline_and_marks_the_hole() {
         .unwrap();
     let tab_id = app.runtime.tabs.active_id();
     app.active_tab_mut().drain_feed(tab_id);
-    let held = app.active_tab().flow_pane.state.trades().len();
+    let held = app.active_tab().flow_pane.series_state().trades().len();
     let floor = app
         .active_tab()
         .link
@@ -801,7 +801,7 @@ fn a_resumed_session_keeps_the_timeline_and_marks_the_hole() {
 
     let tab = app.active_tab();
     assert_eq!(
-        tab.flow_pane.state.trades().len(),
+        tab.flow_pane.series_state().trades().len(),
         held + 1,
         "the replayed window is overlap, not three new prints"
     );
@@ -4167,7 +4167,11 @@ fn a_context_chart_recut_to_other_bars_puts_its_level_away_until_it_returns() {
     );
     set_scope_on(&mut app, PaneSide::Flow, drawings::DrawingScope::ThisChart);
     run_frame(&mut app, &ctx);
-    let drawn_at = *app.active_tab().pane(PaneSide::Time(0)).state.spec();
+    let drawn_at = *app
+        .active_tab()
+        .pane(PaneSide::Time(0))
+        .series_state()
+        .spec();
 
     app.active_tab_mut()
         .pane_mut(PaneSide::Time(0))
@@ -4239,7 +4243,7 @@ fn a_flow_chart_recut_hides_a_mark_kept_to_it_until_it_returns() {
     place_level(&mut app, PaneSide::Flow, 50.0);
     set_scope_on(&mut app, PaneSide::Flow, drawings::DrawingScope::ThisChart);
     run_frame(&mut app, &ctx);
-    let drawn_at = *app.active_tab().flow_pane.state.spec();
+    let drawn_at = *app.active_tab().flow_pane.series_state().spec();
 
     app.active_tab_mut()
         .pane_mut(PaneSide::Flow)
@@ -4316,7 +4320,11 @@ fn two_context_charts_on_one_bar_rule_mirror_a_shared_mark_once() {
         .set_layout(CanvasLayout::TimeTimeAndFlow);
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
-    let bars = *app.active_tab().pane(PaneSide::Time(0)).state.spec();
+    let bars = *app
+        .active_tab()
+        .pane(PaneSide::Time(0))
+        .series_state()
+        .spec();
     app.active_tab_mut()
         .pane_mut(PaneSide::Time(1))
         .set_spec(bars);
@@ -4380,7 +4388,11 @@ points = [{ time_ms = 1000, price = 200.0, bar = 3.0 }]
         .set_layout(CanvasLayout::TimeTimeAndFlow);
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
-    let bars = *app.active_tab().pane(PaneSide::Time(0)).state.spec();
+    let bars = *app
+        .active_tab()
+        .pane(PaneSide::Time(0))
+        .series_state()
+        .spec();
     app.active_tab_mut()
         .pane_mut(PaneSide::Time(1))
         .set_spec(bars);
@@ -4496,7 +4508,11 @@ fn a_twin_edit_does_not_move_a_chart_held_by_a_strategy() {
         .set_layout(CanvasLayout::TimeTimeAndFlow);
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
-    let bars = *app.active_tab().pane(PaneSide::Time(0)).state.spec();
+    let bars = *app
+        .active_tab()
+        .pane(PaneSide::Time(0))
+        .series_state()
+        .spec();
     app.active_tab_mut()
         .pane_mut(PaneSide::Time(1))
         .set_spec(bars);
@@ -4773,7 +4789,7 @@ fn moving_a_context_chart_moves_its_drawings_and_slots_with_it() {
             bars: app
                 .active_tab()
                 .pane(PaneSide::Time(1))
-                .state
+                .series_state()
                 .spec()
                 .to_config_string(),
         }),
@@ -5010,7 +5026,7 @@ fn the_seam_and_the_backfill_divider_mark_different_slots() {
     let pane = app.active_tab().pane(PaneSide::Time(0));
     let seam = pane.seam_slot();
     let backfill = pane
-        .state
+        .series_state()
         .backfill_boundary()
         .expect("the pane took a backfill batch");
     assert_eq!(seam, 120);

@@ -554,7 +554,7 @@ fn the_scripted_view_targets_visible_tick_candles_beside_an_independent_tape() {
     run_frame(&mut app, &ctx);
     assert!(app.active_tab().shows_context_charts());
     assert_eq!(
-        app.active_tab().time_panes[0].state.spec(),
+        app.active_tab().time_panes[0].series_state().spec(),
         &crate::state::BarSpec::Tick(2)
     );
     assert!(app.active_tab().tape().cached_config().tape_only());
@@ -668,7 +668,11 @@ fn the_saved_workspace_describes_the_window_that_saved_it() {
     assert_eq!(tab.focus, Some(ui_state::SavedFocus::Flow));
     assert_eq!(
         tab.flow_bars,
-        app.active_tab().flow_pane.state.spec().to_config_string(),
+        app.active_tab()
+            .flow_pane
+            .series_state()
+            .spec()
+            .to_config_string(),
         "the recorded rule is the one the pane is actually on"
     );
     assert!(
@@ -704,7 +708,7 @@ fn a_bitcoin_magnitude_tape_groups_the_profile_by_the_dollar() {
     assert_eq!(
         app.active_tab()
             .pane(PaneSide::Flow)
-            .state
+            .series_state()
             .footprint_group(),
         Decimal::from(1),
         "an $80k market stayed on the cent-wide rows its tick names",
@@ -998,7 +1002,7 @@ fn settle_flow_pane(app: &mut QuantickApp, ctx: &egui::Context) {
     let observed = |app: &QuantickApp| {
         let pane = &app.active_tab().flow_pane;
         (
-            pane.state.timeline_revision(),
+            pane.series_state().timeline_revision(),
             crate::control::chart::viewport_snapshot(pane),
         )
     };
@@ -5410,7 +5414,11 @@ fn feed_status_carries_the_deal_recorder_and_the_capability_moves_it() {
     );
     assert_eq!(loaded["recording"]["state"], "recorded", "{loaded}");
     assert_eq!(
-        app.active_tab().flow_pane.state.deal_samples().len(),
+        app.active_tab()
+            .flow_pane
+            .series_state()
+            .deal_samples()
+            .len(),
         3,
         "the live reading and the file's two"
     );
@@ -5425,7 +5433,7 @@ fn feed_status_carries_the_deal_recorder_and_the_capability_moves_it() {
         .unwrap();
     assert_eq!(changed["changed"], true);
     assert_eq!(
-        app.active_tab().flow_pane.state.spec(),
+        app.active_tab().flow_pane.series_state().spec(),
         &BarSpec::Trades(2_500),
         "the named call reaches the same pane rule the REC popover changes"
     );
@@ -5461,7 +5469,7 @@ fn incremental_lane_dense_frame_benchmark() {
         app.active_tab_mut().flow_pane.spec.set(spec);
         app.active_tab_mut().apply_spec_changes();
         app.active_tab_mut().apply_spec_changes();
-        assert_eq!(app.active_tab().flow_pane.state.spec(), &spec);
+        assert_eq!(app.active_tab().flow_pane.series_state().spec(), &spec);
         assert!(
             app.active_tab_mut()
                 .tape_mut()

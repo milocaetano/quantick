@@ -226,7 +226,13 @@ fn bubble_reset_wears_the_factory_look_and_is_authorized_retry_safe() {
     app.active_tab_mut().flow_pane.spec.set(volume);
     app.active_tab_mut().apply_spec_changes();
     app.active_tab_mut().apply_spec_changes();
-    assert!(app.active_tab().flow_pane.state.tick_membership().is_none());
+    assert!(
+        app.active_tab()
+            .flow_pane
+            .series_state()
+            .tick_membership()
+            .is_none()
+    );
     app.active_tab_mut()
         .tape_mut()
         .edit_config(|config| config.volume_dots.tick_bubbles = None);

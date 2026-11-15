@@ -727,7 +727,11 @@ fn the_second_context_pane_takes_focus_bars_and_indicators() {
     );
 
     // The focused pane's selector fields, as its bars menu edits them.
-    let top_spec = *app.active_tab().pane(PaneSide::Time(0)).state.spec();
+    let top_spec = *app
+        .active_tab()
+        .pane(PaneSide::Time(0))
+        .series_state()
+        .spec();
     let pane = app.active_tab_mut().focused_pane_mut();
     pane.spec
         .update(
@@ -741,12 +745,18 @@ fn the_second_context_pane_takes_focus_bars_and_indicators() {
     app.active_tab_mut().apply_spec_changes();
     app.active_tab_mut().apply_spec_changes();
     assert_eq!(
-        app.active_tab().pane(PaneSide::Time(1)).state.spec(),
+        app.active_tab()
+            .pane(PaneSide::Time(1))
+            .series_state()
+            .spec(),
         &BarSpec::Time(900_000),
         "the bar rule changed on the bottom chart"
     );
     assert_eq!(
-        app.active_tab().pane(PaneSide::Time(0)).state.spec(),
+        app.active_tab()
+            .pane(PaneSide::Time(0))
+            .series_state()
+            .spec(),
         &top_spec,
         "and the top chart kept its own"
     );

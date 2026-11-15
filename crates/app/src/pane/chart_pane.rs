@@ -57,7 +57,7 @@ pub struct ChartPane {
     /// gesture state egui keeps on our behalf, so two panes sharing an id
     /// would share a drag.
     pub id: u64,
-    pub state: ChartState,
+    pub(super) state: ChartState,
     pub(super) history_worker: history_worker::HistoryWorker,
     /// The tape, and everything read off it: the live lane, the heatmap, the bubbles, the live
     /// strip. `None` is what makes a time pane a time pane: §11 keeps the flow layers on the flow
@@ -120,7 +120,7 @@ pub struct ChartPane {
     /// Non-empty on any pane cutting by a foldable time interval: the split's time pane, and the
     /// flow pane whenever its spec is `BarSpec::Time` (audit S1). A venue candle has no tape, so
     /// the flow layers draw nothing over it.
-    pub history_prefix: quantick_chart::venue_history::VenueHistory,
+    pub(super) history_prefix: quantick_chart::venue_history::VenueHistory,
 
     /// Where the position HUD anchors this frame: the chart rect and price scale, cached by the
     /// draw while the paper layer is painted on the pane that owns order entry. The HUD draws in
@@ -199,6 +199,28 @@ impl ChartPane {
             self.price_view.reset();
             self.frame.auto_range = None;
         }
+    }
+
+    /// The bars this pane cuts from the tape, read-only.
+    pub(crate) fn series_state(&self) -> &ChartState {
+        &self.state
+    }
+    /// The bars this pane cuts from the tape, for the few writers outside the series passes.
+    pub(crate) fn series_state_mut(&mut self) -> &mut ChartState {
+        &mut self.state
+    }
+    /// Hold the tape's window on what the feed says, measured against this pane's bars.
+    pub(crate) fn hold_tape_window(
+        &mut self,
+        spoken: Option<quantick_chart::connection_state::Link>,
+    ) {
+        if let Some(view) = self.orderflow.as_mut() {
+            view.hold_tape_window(spoken, &self.state);
+        }
+    }
+    /// The venue candles folded in front of the trade-derived bars.
+    pub(crate) fn venue_prefix(&self) -> &quantick_chart::venue_history::VenueHistory {
+        &self.history_prefix
     }
 
     pub(crate) fn series_read(&self) -> gesture::PaneSeriesRead<'_> {

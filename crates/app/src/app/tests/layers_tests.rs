@@ -1130,7 +1130,7 @@ fn both_panes_group_the_ladders_at_the_market_bucket_even_with_the_layer_hidden(
     assert_eq!(
         app.active_tab()
             .pane(PaneSide::Flow)
-            .state
+            .series_state()
             .footprint_group(),
         Decimal::new(1, 1),
         "the fixture's ten-cent tape grid is published before the scenario"
@@ -1141,7 +1141,7 @@ fn both_panes_group_the_ladders_at_the_market_bucket_even_with_the_layer_hidden(
     let market_bucket = app
         .active_tab()
         .pane(PaneSide::Flow)
-        .state
+        .series_state()
         .footprint_group();
 
     // The state the defect lived in: the layer off on both panes, and a
@@ -1171,13 +1171,13 @@ fn both_panes_group_the_ladders_at_the_market_bucket_even_with_the_layer_hidden(
         // And put its ladders deliberately out of step, which is exactly
         // what a pane with no tape of its own drifts to when nothing hands
         // it the market's grid.
-        time.state
+        time.series_state_mut()
             .set_footprint_group(market_bucket * Decimal::from(100));
     }
     assert_ne!(
         app.active_tab()
             .pane(PaneSide::Time(0))
-            .state
+            .series_state()
             .footprint_group(),
         market_bucket,
         "the panes really start out disagreeing, or this proves nothing"
@@ -1189,12 +1189,12 @@ fn both_panes_group_the_ladders_at_the_market_bucket_even_with_the_layer_hidden(
     let time_group = app
         .active_tab()
         .pane(PaneSide::Time(0))
-        .state
+        .series_state()
         .footprint_group();
     let flow_group = app
         .active_tab()
         .pane(PaneSide::Flow)
-        .state
+        .series_state()
         .footprint_group();
     assert_eq!(
         time_group, flow_group,

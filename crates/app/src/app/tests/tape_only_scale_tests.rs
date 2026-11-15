@@ -169,9 +169,10 @@ fn trade_left_of_the_beside_window(ctx: &egui::Context) -> u64 {
     let pane = &app.active_tab().flow_pane;
     let chart = pane.frame.chart_rect.expect("laid out");
     let width = pane.frame.candles_right.expect("candles") - chart.left();
-    let total = pane.state.bars().len() + usize::from(pane.state.partial().is_some());
+    let total =
+        pane.series_state().bars().len() + usize::from(pane.series_state().partial().is_some());
     let (start, _) = pane.model.viewport.visible_range(width, total);
-    let left = &pane.state.bars()[start - 1];
+    let left = &pane.series_state().bars()[start - 1];
     u64::try_from((left.open_time - 1_000) / 100).expect("a fixture trade")
 }
 

@@ -94,7 +94,7 @@ fn live_trade_mutant_fills_on_the_trigger_print_instead_of_the_next_print() {
     let bar = canonical
         .active_tab()
         .flow_pane
-        .state
+        .series_state()
         .bars()
         .last()
         .unwrap();
@@ -160,7 +160,7 @@ fn armed_strategy_on_a_stacked_pane_reaches_paper() {
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
     let side = PaneSide::Time(0);
-    let spec = *app.active_tab().flow_pane.state.spec();
+    let spec = *app.active_tab().flow_pane.series_state().spec();
     app.active_tab_mut().pane_mut(side).set_spec(spec);
     app.active_tab_mut().apply_spec_changes();
     let rectangle = drawings::DRAWING_TOOLS
@@ -245,11 +245,14 @@ fn live_trade_batches_preserve_per_print_fills_panes_and_one_arrival_clock_per_d
         for ((left, left_side), (right, right_side)) in left.into_iter().zip(right) {
             assert_eq!(left_side, right_side);
             assert_eq!(
-                left.state.trades().iter().collect::<Vec<_>>(),
-                right.state.trades().iter().collect::<Vec<_>>()
+                left.series_state().trades().iter().collect::<Vec<_>>(),
+                right.series_state().trades().iter().collect::<Vec<_>>()
             );
-            assert_eq!(left.state.bars(), right.state.bars());
-            assert_eq!(left.state.partial(), right.state.partial());
+            assert_eq!(left.series_state().bars(), right.series_state().bars());
+            assert_eq!(
+                left.series_state().partial(),
+                right.series_state().partial()
+            );
         }
     }
     assert_eq!((single_clock_reads, batch_clock_reads), (5, 5));
@@ -310,7 +313,10 @@ fn live_trade_resume_paths_seed_the_mark_without_filling_a_queued_order() {
             app.active_tab().paper.account().mark_price(),
             Some(trades[200].price)
         );
-        assert_eq!(app.active_tab().flow_pane.state.trades().len(), 201);
+        assert_eq!(
+            app.active_tab().flow_pane.series_state().trades().len(),
+            201
+        );
         assert!(matches!(
             app.active_tab()
                 .anchors_on(crate::pane::PaneSide::Flow)
@@ -353,7 +359,7 @@ fn live_trade_resume_does_not_evaluate_a_new_force_bar() {
         .unwrap();
     let tab_id = app.runtime.tabs.active_id();
     app.active_tab_mut().drain_feed(tab_id);
-    assert_eq!(app.active_tab().flow_pane.state.bars().len(), 4);
+    assert_eq!(app.active_tab().flow_pane.series_state().bars().len(), 4);
     assert!(
         crate::pane::strategies::drawing_region(&app.active_tab().flow_pane.drawings, drawing, 3)
             .unwrap()
@@ -429,7 +435,11 @@ fn a_refill_feeds_the_bars_and_the_mark_never_a_fill_a_strategy_or_the_latency()
         .drain_feed_with_clock(tab_id, || panic!("refilled history is not live arrival"));
 
     let tab = app.active_tab();
-    assert_eq!(tab.flow_pane.state.bars().len(), 4, "the hole builds bars");
+    assert_eq!(
+        tab.flow_pane.series_state().bars().len(),
+        4,
+        "the hole builds bars"
+    );
     assert_eq!((tab.link.live_trades, tab.history_trades), (150, 50));
     assert_eq!(
         tab.paper.account().mark_price(),

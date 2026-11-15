@@ -51,14 +51,14 @@ fn pulling_older_trades_re_trims_the_venue_prefix() {
 
     let pane = app.active_tab().pane(PaneSide::Time(0));
     let first_engine = pane
-        .state
+        .series_state()
         .bars()
         .first()
-        .or_else(|| pane.state.partial())
+        .or_else(|| pane.series_state().partial())
         .expect("the pane holds bars")
         .open_time;
     assert!(
-        pane.history_prefix.iter().all(|bar| bar.open_time
+        pane.venue_prefix().iter().all(|bar| bar.open_time
             < quantick_feed::candles::bucket_start(
                 first_engine,
                 quantick_feed::OHLCV_BASE_INTERVAL_MS

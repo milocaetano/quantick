@@ -598,7 +598,7 @@ impl Tab {
         let mut live = false;
         let (mut received_at_ms, mut refilled) = (None, 0);
         // Venue candles landing before the first print meet it at the seam.
-        let printless = self.flow_pane.state.trades().is_empty();
+        let printless = self.flow_pane.series_state().trades().is_empty();
         loop {
             match self.link.events.try_recv() {
                 Ok(FeedEvent::Backfilled(trades)) => {
@@ -634,7 +634,7 @@ impl Tab {
                     // chart already holds in front of the bars it duplicates.
                     // The run's own reply is not that window: it takes the
                     // ordinary path below, judged on what it brought.
-                    let oldest = self.flow_pane.state.trades().first();
+                    let oldest = self.flow_pane.series_state().trades().first();
                     let oldest_ms = oldest.map(|trade| trade.timestamp_ms);
                     if self.link.resume_floor_ms.is_some()
                         && !self.session.answers_run(&trades, oldest_ms)
@@ -758,7 +758,7 @@ impl Tab {
             }
         }
         if printless
-            && !self.flow_pane.state.trades().is_empty()
+            && !self.flow_pane.series_state().trades().is_empty()
             && self.session.holds_venue_candles()
         {
             self.refold_history_prefix();
@@ -769,7 +769,7 @@ impl Tab {
     fn defer_history(&self, count: usize) -> bool {
         self.panes().any(|(pane, _)| {
             pane.history_pending()
-                || pane.state.trades().len() + count
+                || pane.series_state().trades().len() + count
                     > quantick_chart::history_publication::HISTORY_WORKER_TRADES
         })
     }
@@ -1016,7 +1016,7 @@ impl Tab {
         // panes for it drops the readings with the series: the live market's
         // are put aside, to come back with it.
         self.deal_recorder
-            .stash(self.flow_pane.state.deal_samples().to_vec());
+            .stash(self.flow_pane.series_state().deal_samples().to_vec());
         self.reset_market_state(false);
     }
 
@@ -1115,7 +1115,7 @@ impl Tab {
         let handle = spawn(provider, &self.symbol, &config.metatrader, shelf_dir());
         self.attach_resuming(handle);
         // A feed that refills a reconnect hole starts from where the chart ends.
-        if let Some(seam) = feed::ResumeSeam::of_tape(self.flow_pane.state.trades()) {
+        if let Some(seam) = feed::ResumeSeam::of_tape(self.flow_pane.series_state().trades()) {
             let _ = self.link.commands.try_send(FeedCommand::ResumeAfter(seam));
         }
         // The book from the dropped socket is gone with it. Nothing is reset
@@ -1248,7 +1248,7 @@ impl Tab {
         let Some(silence_ms) = self.link.pending_demo_gap_ms else {
             return;
         };
-        let bars = self.flow_pane.state.bars();
+        let bars = self.flow_pane.series_state().bars();
         // Two bars at least: a seam is a boundary, and a boundary needs a bar
         // on each side of it.
         if bars.len() < 2 {
@@ -1412,7 +1412,7 @@ impl Tab {
             capabilities: judged.capabilities,
             feed_pages: self.link.feed_capabilities.borrow().history_paging,
             panes: &panes,
-            tape: self.flow_pane.state.trades(),
+            tape: self.flow_pane.series_state().trades(),
             history_wait: self.loading.is_active(LoadingTask::History),
             outages: &|| self.link.feed_gaps.iter().map(|gap| gap.outage()).collect(),
             provider: judged

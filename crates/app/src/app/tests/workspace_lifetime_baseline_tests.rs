@@ -83,7 +83,7 @@ fn workspace_lifetime_frame_baseline() {
             .tabs()
             .iter()
             .flat_map(|tab| tab.panes())
-            .map(|(pane, _)| pane.state.trades().len())
+            .map(|(pane, _)| pane.series_state().trades().len())
             .sum();
         let retained_tape_bytes: usize = app
             .tab_reads()
@@ -91,7 +91,8 @@ fn workspace_lifetime_frame_baseline() {
             .iter()
             .flat_map(|tab| tab.panes())
             .map(|(pane, _)| {
-                pane.state.trades().capacity() * std::mem::size_of::<quantick_engine::Trade>()
+                pane.series_state().trades().capacity()
+                    * std::mem::size_of::<quantick_engine::Trade>()
             })
             .sum();
         assert_eq!(

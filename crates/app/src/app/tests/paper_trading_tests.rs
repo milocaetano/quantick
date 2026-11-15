@@ -372,11 +372,17 @@ fn one_ui_drain_uses_one_observation_for_single_and_batched_trades() {
     // every tab, in `drain_tabs`.
     assert_eq!(app.active_tab().link.live_trades, 3);
     assert_eq!(app.active_tab().link.trade_arrival_ms(), Some(75));
-    assert_eq!(app.active_tab().flow_pane.state.timeline_revision(), 3);
     assert_eq!(
         app.active_tab()
             .flow_pane
-            .state
+            .series_state()
+            .timeline_revision(),
+        3
+    );
+    assert_eq!(
+        app.active_tab()
+            .flow_pane
+            .series_state()
             .partial()
             .map(|bar| bar.trade_count),
         Some(3)

@@ -85,7 +85,7 @@ fn input_and_an_unfinished_drawing_survive_publication_on_every_pane() {
             std::thread::yield_now();
         }
         let pane = app.active_tab().pane(side);
-        assert_eq!(pane.state.trades()[0].agg_id, first);
+        assert_eq!(pane.series_state().trades()[0].agg_id, first);
         assert_eq!(pane.model.viewport.px_per_bar(), zoom);
         assert_eq!(pane.price_view.resolve((0.0, 0.0)), price);
         let published = pane
@@ -161,7 +161,7 @@ fn a_held_chart_drag_survives_repeated_history_publications() {
             std::thread::yield_now();
         }
         let pane = app.active_tab().pane(side);
-        assert_eq!(pane.state.trades()[0].agg_id, first);
+        assert_eq!(pane.series_state().trades()[0].agg_id, first);
         assert!(
             (pane.slots() as f32 - pane.model.viewport.right_edge_bar(pane.slots()) - distance)
                 .abs()

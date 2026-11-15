@@ -97,7 +97,7 @@ fn stress_without_a_flow_anchor_retries_then_uses_the_real_delivery_path() {
     }
     assert!(app.active_tab().time_pane().unwrap().slots() >= 12);
     let flow = std::mem::replace(
-        &mut app.active_tab_mut().flow_pane.state,
+        app.active_tab_mut().flow_pane.series_state_mut(),
         crate::state::ChartState::new(crate::state::BarSpec::Tick(1)),
     );
     crate::app::demo_hooks::apply_frvp_demo(&mut app);
@@ -116,7 +116,7 @@ fn stress_without_a_flow_anchor_retries_then_uses_the_real_delivery_path() {
             .items()
             .is_empty()
     );
-    app.active_tab_mut().flow_pane.state = flow;
+    *app.active_tab_mut().flow_pane.series_state_mut() = flow;
     crate::app::demo_hooks::apply_frvp_demo(&mut app);
     assert!(
         app.surfaces
@@ -126,7 +126,7 @@ fn stress_without_a_flow_anchor_retries_then_uses_the_real_delivery_path() {
             .is_none()
     );
     let pane = app.active_tab().time_pane().unwrap();
-    assert!(pane.history_prefix.len() > 24_000);
+    assert!(pane.venue_prefix().len() > 24_000);
     assert_eq!(pane.drawings.items().len(), 1);
 }
 
@@ -437,7 +437,7 @@ fn nine_hook_case(case: &str, env: Env) {
                     .is_none()
             );
             let pane = app.active_tab().time_pane().unwrap();
-            assert!(pane.history_prefix.len() > 24_000);
+            assert!(pane.venue_prefix().len() > 24_000);
             assert_eq!(pane.drawings.items().len(), 1);
             let points = &pane.drawings.items()[0].points;
             assert_eq!(points[0].bar, 0.0);

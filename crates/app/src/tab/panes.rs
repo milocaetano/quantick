@@ -367,7 +367,7 @@ impl Tab {
     /// the replay's playhead ([`quantick_feed::replay::ReplayLink::clock_after`]),
     /// or the host's monotonic instant on a live feed.
     pub(crate) fn update_tape_clock_at(&mut self, monotonic_ms: u64) {
-        let applied = self.flow_pane.state.trades();
+        let applied = self.flow_pane.series_state().trades();
         let applied_ms = applied.last().map(|trade| trade.timestamp_ms);
         match self
             .link
@@ -396,9 +396,9 @@ impl Tab {
         let Some(pane) = self.pane_at_mut(index) else {
             return false;
         };
-        let had = seam.and_then(|_| pane.state.venue_lead().cloned());
+        let had = seam.and_then(|_| pane.series_state().venue_lead().cloned());
         let changed = pane.install_venue_history(bars, lead, covers_seam);
-        let seated = pane.state.venue_lead();
+        let seated = pane.series_state().venue_lead();
         if let Some(seam) = seam
             && (had.as_ref() != seated
                 || seated.is_none() && seam.token != "nothing_before_first_trade")
@@ -438,7 +438,7 @@ impl Tab {
     pub fn observe_deal_counter(&mut self, sample: DealSample) {
         let resumed = self.deal_recorder.observe(sample, metrics::wall_clock_ms());
         for pane in self.panes_mut() {
-            pane.state.observe_deals(sample);
+            pane.series_state_mut().observe_deals(sample);
         }
         // A rotation into a day whose file exists resumes it, as a start
         // does: what the file holds reaches the panes.
@@ -458,7 +458,7 @@ impl Tab {
             return;
         }
         for pane in self.panes_mut() {
-            pane.state.observe_deals_batch(samples);
+            pane.series_state_mut().observe_deals_batch(samples);
         }
         // The retained series changed under the bars. Only a pane cutting
         // by deals reads it now; the others replay it on their next switch,
@@ -470,7 +470,7 @@ impl Tab {
             // mid-flick has moved the selector a frame ahead of the bars.
             let cutting_deals = self
                 .pane_at(index)
-                .is_some_and(|pane| pane.state.spec().kind().needs_deal_counter());
+                .is_some_and(|pane| pane.series_state().spec().kind().needs_deal_counter());
             if cutting_deals {
                 // The series was rewritten under the bars, not the rule
                 // that cuts them: what a replay seek says when it disarms.
@@ -541,8 +541,8 @@ impl Tab {
         deal_recording_ui::chip_for(
             &view,
             pane.spec.spec().definition(),
-            pane.state.deal_samples().last().is_some(),
-            pane.state.uncounted_trades(),
+            pane.series_state().deal_samples().last().is_some(),
+            pane.series_state().uncounted_trades(),
         )
     }
 }
@@ -738,7 +738,7 @@ impl Tab {
             schema_version = 1_u8,
             event_code = "CANVAS_LAYOUT",
             layout = ?layout,
-            time_pane_bars = self.time_pane().map(|pane| pane.state.bars().len()),
+            time_pane_bars = self.time_pane().map(|pane| pane.series_state().bars().len()),
             action = if self.canvas.pending_context_panes > 0 {
                 "build_time_pane_next_frame"
             } else {
@@ -776,9 +776,9 @@ impl Tab {
             return;
         };
         pane.seed_from(
-            self.flow_pane.state.trades(),
-            self.flow_pane.state.backfill_trade_count(),
-            self.flow_pane.state.deal_samples(),
+            self.flow_pane.series_state().trades(),
+            self.flow_pane.series_state().backfill_trade_count(),
+            self.flow_pane.series_state().deal_samples(),
         );
         // Seeded from what the flow pane shows, so it also takes every page
         // the flow pane holds unpublished — a run's held pages, a recut in
@@ -970,7 +970,7 @@ impl Tab {
             return;
         };
         if let quantick_engine::bar_selection::SelectionEffect::Rebuild(desired) =
-            pane.spec.settle(*pane.state.spec())
+            pane.spec.settle(*pane.series_state().spec())
         {
             self.recut_pane_with(
                 index,
@@ -995,7 +995,7 @@ impl Tab {
         let inputs = quantick_engine::bar_selection::BarInputAvailability {
             traded_volume: capabilities.traded_volume,
             deal_counter: capabilities.deal_counter,
-            deal_count: !pane.state.deal_samples().is_empty(),
+            deal_count: !pane.series_state().deal_samples().is_empty(),
         };
         let pane = self.pane_at_mut(index).expect("pane checked above");
         let effect = pane.spec.update(
@@ -1004,7 +1004,7 @@ impl Tab {
         )?;
         let spec = pane.spec.spec();
         if effect == quantick_engine::bar_selection::SelectionEffect::Unchanged
-            && pane.state.spec() == &spec
+            && pane.series_state().spec() == &spec
         {
             return Ok(false);
         }
@@ -1089,10 +1089,10 @@ pub(super) fn pane_views<'a>(
     std::iter::once(flow)
         .chain(context)
         .map(|pane| PaneView {
-            interval_ms: pane.state.spec().time_interval_ms(),
-            first_print_open_ms: pane.state.first_print_open_ms(),
-            first_bar: pane.state.bars().first(),
-            partial: pane.state.partial(),
+            interval_ms: pane.series_state().spec().time_interval_ms(),
+            first_print_open_ms: pane.series_state().first_print_open_ms(),
+            first_bar: pane.series_state().bars().first(),
+            partial: pane.series_state().partial(),
             rebuild_pending: pane.history_pending(),
             rebuild_failed: pane.history_failed(),
             first_visible_slot: pane.visible_slots().map(|(start, _)| start),

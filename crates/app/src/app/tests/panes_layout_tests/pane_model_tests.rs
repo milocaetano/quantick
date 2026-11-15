@@ -33,7 +33,7 @@ fn switching_tabs_preserves_everything_each_one_owns() {
         .model
         .viewport
         .pan_pixels(120.0, slots);
-    let first_bars = app.active_tab().flow_pane.state.bars().len();
+    let first_bars = app.active_tab().flow_pane.series_state().bars().len();
     let first_edge = app
         .active_tab()
         .flow_pane
@@ -53,7 +53,10 @@ fn switching_tabs_preserves_everything_each_one_owns() {
 
     app.apply_tab_action(TabAction::Activate(0));
     run_frame(&mut app, &ctx);
-    assert_eq!(app.active_tab().flow_pane.state.bars().len(), first_bars);
+    assert_eq!(
+        app.active_tab().flow_pane.series_state().bars().len(),
+        first_bars
+    );
     assert_eq!(
         app.active_tab()
             .flow_pane

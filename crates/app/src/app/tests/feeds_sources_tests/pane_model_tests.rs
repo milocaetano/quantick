@@ -29,7 +29,7 @@ fn a_rebuild_keeps_the_view_on_the_market_time_it_was_showing() {
         .retain(crate::state::BarSpec::Tick(40));
     app.active_tab_mut().apply_spec_changes();
     app.active_tab_mut().apply_spec_changes();
-    assert_eq!(app.active_tab().flow_pane.state.bars().len(), 10);
+    assert_eq!(app.active_tab().flow_pane.series_state().bars().len(), 10);
 
     let slots = app.active_tab().flow_pane.slots();
     let (start, end) = app
@@ -47,12 +47,13 @@ fn a_rebuild_keeps_the_view_on_the_market_time_it_was_showing() {
         .flow_pane
         .right_edge_time()
         .expect("still on a bar");
-    let bar = &app.active_tab().flow_pane.state.bars()[app
+    let bar = &app.active_tab().flow_pane.series_state().bars()[app
         .active_tab()
         .flow_pane
         .model
         .viewport
-        .right_edge_bar(slots) as usize];
+        .right_edge_bar(slots)
+        as usize];
     assert!(
         bar.open_time <= was_showing && was_showing <= bar.close_time,
         "the edge bar ({}..{}) must span the time it was showing ({was_showing})",

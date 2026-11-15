@@ -162,8 +162,8 @@ fn source_drain_intrinsic_and_final_publication_counts_are_literal() {
             );
             eprintln!(
                 "SOURCE_PUBLICATION case={label} pane={side:?} partial_sends={sent} clocks={clocks} trades={} partial={:?}",
-                pane.state.trades().len(),
-                pane.state.partial()
+                pane.series_state().trades().len(),
+                pane.series_state().partial()
             );
         }
     }
@@ -283,8 +283,8 @@ fn source_drain_same_interpreter_early_publication_omits_the_actual_worker_previ
             );
         }
         let pane = &mut app.active_tab_mut().flow_pane;
-        assert_eq!(pane.state.trades().len(), 2);
-        let partial = pane.state.partial().unwrap();
+        assert_eq!(pane.series_state().trades().len(), 2);
+        let partial = pane.series_state().partial().unwrap();
         assert_eq!(
             (partial.open, partial.close, partial.close_time),
             (Decimal::new(1001, 1), Decimal::new(1002, 1), 11200)

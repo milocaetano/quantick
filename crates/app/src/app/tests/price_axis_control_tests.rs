@@ -132,7 +132,7 @@ fn the_price_axis_call_holds_manual_tape_framing_and_reads_it_back_without_movin
     next.price = Decimal::from(145);
     {
         let pane = &mut app.active_tab_mut().flow_pane;
-        pane.state.ingest_live(&next);
+        pane.series_state_mut().ingest_live(&next);
         pane.orderflow.as_mut().unwrap().record_trade(&next);
     }
     run_frame(&mut app, &ctx);
@@ -350,7 +350,14 @@ fn the_live_centre_calls_match_the_canvas_double_and_triple_click() {
     run_frame(&mut app, &ctx);
     let pane = &mut app.active_tab_mut().flow_pane;
     let pane_id = pane.id;
-    let last = pane.state.bars().last().unwrap().close.to_f64().unwrap();
+    let last = pane
+        .series_state()
+        .bars()
+        .last()
+        .unwrap()
+        .close
+        .to_f64()
+        .unwrap();
     let directory = gateway_test_directory("time-axis-live-centre");
     grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.layout");
     enable_test_gateway(&mut app, &ctx, &directory, 4);

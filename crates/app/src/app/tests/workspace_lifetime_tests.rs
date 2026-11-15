@@ -92,7 +92,11 @@ fn workspace_lifetime_native_rebind_retains_the_full_runtime_and_drains_without_
                     (
                         id,
                         pane.id,
-                        pane.state.trades().iter().next().map(std::ptr::from_ref),
+                        pane.series_state()
+                            .trades()
+                            .iter()
+                            .next()
+                            .map(std::ptr::from_ref),
                         pane.indicator_worker.progress().instance,
                         pane.orderflow
                             .as_ref()

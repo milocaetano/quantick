@@ -138,7 +138,7 @@ fn a_whole_preset_and_tick_set_agree_on_spheres() {
         app.active_tab_mut().flow_pane.spec.set(spec);
         app.active_tab_mut().apply_spec_changes();
         app.active_tab_mut().apply_spec_changes();
-        let membership = app.active_tab().flow_pane.state.tick_membership();
+        let membership = app.active_tab().flow_pane.series_state().tick_membership();
         assert_eq!(membership.is_some(), tick_chart, "{spec:?}");
         app.active_tab_mut()
             .tape_mut()

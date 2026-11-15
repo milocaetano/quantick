@@ -303,7 +303,7 @@ fn frame_tail_recovery_refusals_never_spawn_or_reset_and_reconnect_keeps_the_pos
         paper.seed(&print(0, 100));
         paper.market(quantick_engine::Side::Buy);
         paper.on_trade(&print(1, 100));
-        let tape_before = app.active_tab().flow_pane.state.trades().len();
+        let tape_before = app.active_tab().flow_pane.series_state().trades().len();
         if refused == "replay" {
             app.active_tab_mut().link.replay =
                 Some(quantick_feed::replay::test_support::detached_link(
@@ -339,7 +339,10 @@ fn frame_tail_recovery_refusals_never_spawn_or_reset_and_reconnect_keeps_the_pos
         }
         assert_eq!(calls.get(), usize::from(refused == "reconnect"));
         assert!(app.active_tab().paper.position_summary().is_some());
-        assert_eq!(app.active_tab().flow_pane.state.trades().len(), tape_before);
+        assert_eq!(
+            app.active_tab().flow_pane.series_state().trades().len(),
+            tape_before
+        );
         assert!(app.active_tab().paper.session_trades().is_empty());
         assert!(
             !app.active_tab_mut()

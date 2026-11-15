@@ -114,13 +114,16 @@ fn bar_spec_change_defers_one_frame_and_shows_the_rebuild() {
     app.active_tab_mut().apply_spec_changes();
     assert!(app.active_tab().loading.is_active(LoadingTask::BarRebuild));
     assert_eq!(
-        app.active_tab().flow_pane.state.spec(),
+        app.active_tab().flow_pane.series_state().spec(),
         &BarSpec::Tick(50),
         "the arming frame must paint the overlay before the rebuild runs"
     );
 
     app.active_tab_mut().apply_spec_changes();
-    assert_eq!(app.active_tab().flow_pane.state.spec(), &BarSpec::Tick(100));
+    assert_eq!(
+        app.active_tab().flow_pane.series_state().spec(),
+        &BarSpec::Tick(100)
+    );
     assert_eq!(
         app.active_tab().flow_pane.drawings.items().len(),
         1,
@@ -141,7 +144,7 @@ fn a_deal_count_change_recuts_the_bars() {
     app.active_tab_mut().apply_spec_changes();
     app.active_tab_mut().apply_spec_changes();
     assert_eq!(
-        app.active_tab().flow_pane.state.spec(),
+        app.active_tab().flow_pane.series_state().spec(),
         &BarSpec::Trades(20)
     );
 
@@ -163,7 +166,7 @@ fn a_deal_count_change_recuts_the_bars() {
             });
             readings.next();
         }
-        tab.flow_pane.state.ingest_live(&Trade {
+        tab.flow_pane.series_state_mut().ingest_live(&Trade {
             agg_id: i + 1,
             timestamp_ms: at,
             price: rust_decimal::Decimal::from(100),
@@ -172,7 +175,7 @@ fn a_deal_count_change_recuts_the_bars() {
         });
     }
     assert_eq!(
-        tab.flow_pane.state.bars().len(),
+        tab.flow_pane.series_state().bars().len(),
         3,
         "every 20 deals: 160, 180 and 200"
     );
@@ -185,11 +188,11 @@ fn a_deal_count_change_recuts_the_bars() {
     app.active_tab_mut().apply_spec_changes();
     app.active_tab_mut().apply_spec_changes();
     assert_eq!(
-        app.active_tab().flow_pane.state.spec(),
+        app.active_tab().flow_pane.series_state().spec(),
         &BarSpec::Trades(40)
     );
     assert_eq!(
-        app.active_tab().flow_pane.state.bars().len(),
+        app.active_tab().flow_pane.series_state().bars().len(),
         2,
         "every 40 deals: 160 and 200"
     );
@@ -209,14 +212,17 @@ fn a_still_moving_selector_keeps_deferring_the_rebuild() {
         .retain(crate::state::BarSpec::Tick(200)); // the drag continues
     app.active_tab_mut().apply_spec_changes();
     assert_eq!(
-        app.active_tab().flow_pane.state.spec(),
+        app.active_tab().flow_pane.series_state().spec(),
         &BarSpec::Tick(50),
         "no rebuild mid-gesture"
     );
     assert!(app.active_tab().loading.is_active(LoadingTask::BarRebuild));
 
     app.active_tab_mut().apply_spec_changes();
-    assert_eq!(app.active_tab().flow_pane.state.spec(), &BarSpec::Tick(200));
+    assert_eq!(
+        app.active_tab().flow_pane.series_state().spec(),
+        &BarSpec::Tick(200)
+    );
     assert!(!app.active_tab().loading.is_active(LoadingTask::BarRebuild));
 }
 
@@ -513,7 +519,7 @@ fn nothing_the_corner_does_throws_a_chart_away() {
         .unwrap();
     let tab_id = app.runtime.tabs.active_id();
     app.active_tab_mut().drain_feed(tab_id);
-    let held = app.active_tab().flow_pane.state.trades().len();
+    let held = app.active_tab().flow_pane.series_state().trades().len();
     assert!(held > 0, "the chart has something to lose");
 
     app.active_tab_mut().link.forced_stall = Some(quantick_feed::stall::ForcedStall::Silent);
@@ -531,7 +537,7 @@ fn nothing_the_corner_does_throws_a_chart_away() {
     run_frame(&mut app, &ctx);
 
     assert_eq!(
-        app.active_tab().flow_pane.state.trades().len(),
+        app.active_tab().flow_pane.series_state().trades().len(),
         held,
         "a stall, a chip and a popup are things to read, not things that reset a chart"
     );
@@ -890,7 +896,7 @@ fn candle_appearance_change_is_render_only() {
     let (mut app, _evt_tx, mut cmd_rx, _book_tx) = test_app();
     take_capture_start(&mut cmd_rx);
     let capture_epoch = app.active_tab().link.book_capture_epoch;
-    let bar_spec = *app.active_tab().flow_pane.state.spec();
+    let bar_spec = *app.active_tab().flow_pane.series_state().spec();
 
     app.runtime.style.apply_preset(CandlePreset::OutlineOnly);
     app.runtime.style_revision = app.runtime.style_revision.saturating_add(1);
@@ -900,7 +906,7 @@ fn candle_appearance_change_is_render_only() {
         Some(CandlePreset::OutlineOnly),
     );
 
-    assert_eq!(app.active_tab().flow_pane.state.spec(), &bar_spec);
+    assert_eq!(app.active_tab().flow_pane.series_state().spec(), &bar_spec);
     assert!(app.active_tab().tape().enabled());
     assert_eq!(app.active_tab().link.book_capture_epoch, capture_epoch);
     assert!(
@@ -946,7 +952,7 @@ fn a_restored_bar_rule_moves_the_selector_that_edits_it() {
             None,
         ));
     let pane = &app.active_tab().flow_pane;
-    assert_eq!(pane.state.spec(), &BarSpec::Tick(377));
+    assert_eq!(pane.series_state().spec(), &BarSpec::Tick(377));
     assert_eq!(
         pane.spec.retained(crate::state::BarKind::Tick),
         &crate::state::BarSpec::Tick(377),
