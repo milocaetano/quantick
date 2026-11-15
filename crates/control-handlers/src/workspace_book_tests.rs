@@ -570,8 +570,9 @@ fn colour_set_takes_a_free_colour_and_swaps_a_held_one_only_when_asked() {
     let refused = colour_set(&mut host, &mut access, &actor, &held).unwrap_err();
     assert_eq!(detail(&refused), "workspace.colour_taken");
     let details = refused.context.details.as_ref().unwrap();
-    assert_eq!(details["owner"], "Default");
+    assert_eq!(details["owners"], json!(["Default"]));
     assert_eq!(details["owner_would_get"], SKY.clone());
+    assert!(refused.message.contains("Default"), "{}", refused.message);
     assert_eq!(
         (host.writes, access.events.len()),
         (writes + 1, journaled + 1)

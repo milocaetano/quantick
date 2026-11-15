@@ -3,6 +3,7 @@
 //! and the stored `[colours]` table reads leniently, value by value.
 use super::*;
 use crate::arrangement_document::DeclaredLayout;
+use crate::workspace_colour::ColourTaken;
 use crate::workspace_colour::WorkspaceColour::{self, Custom};
 
 fn preset(index: u8) -> WorkspaceColour {
@@ -112,10 +113,10 @@ fn a_taken_colour_is_refused_without_swap_and_swapped_with_it() {
     let refused = book.set_colour("Swing", preset(4), false);
     assert_eq!(
         refused,
-        Err(WorkspaceRefusal::ColourTaken {
+        Err(WorkspaceRefusal::ColourTaken(ColourTaken::Held {
             owner: DEFAULT_WORKSPACE.to_owned(),
             owner_would_get: preset(1),
-        })
+        }))
     );
     assert_eq!(refused.unwrap_err().code(), "workspace.colour_taken");
     assert_eq!(book.colour("Swing"), Some(preset(1)), "nothing moved");
@@ -269,4 +270,27 @@ fn a_tab_not_yet_adopted_wears_defaults_colour() {
     assert_eq!(book.tab_colour(1), Some(preset(0)));
     assert_eq!(book.tab_workspace(7), DEFAULT_WORKSPACE);
     assert_eq!(book.tab_colour(7), Some(preset(4)));
+}
+
+/// Cobalt's Light value on A and its Dark value on B: C asking for Cobalt is
+/// refused even with `swap`, and a reload keeps every colour as it was.
+#[test]
+fn a_colour_two_workspaces_match_is_refused_and_a_reload_keeps_everything() {
+    let mut book = book();
+    for name in ["A", "B", "C"] {
+        book.create(1, name).unwrap();
+    }
+    book.set_colour("A", Custom([0x2F, 0x5B, 0xD8]), false).unwrap();
+    book.set_colour("B", Custom([0x73, 0x93, 0xF5]), false).unwrap();
+    let before = colours(&book);
+    let refused = book.set_colour("C", preset(0), true).unwrap_err();
+    let owners = vec!["A".to_owned(), "B".to_owned()];
+    assert_eq!(
+        refused,
+        WorkspaceRefusal::ColourTaken(ColourTaken::HeldByMany { owners })
+    );
+    assert!(refused.to_string().contains("A and B"), "{refused}");
+    assert_eq!(colours(&book), before);
+    assert_eq!(colours(&reload(&book)), before, "a reload changes nothing");
+    assert_unique(&book);
 }

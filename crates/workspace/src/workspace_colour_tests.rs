@@ -229,8 +229,11 @@ fn settle_keeps_held_colours_and_drops_duplicates_and_strangers() {
 fn a_taken_colour_is_refused_without_swap_and_swapped_with_it() {
     let mut colours = settled(&["Default", "Scalp", "Swing"]);
     let taken = pick(&mut colours, "Swing", preset(0), false).unwrap_err();
-    assert_eq!(taken.owner, "Scalp");
-    assert_eq!(taken.owner_would_get, preset(1), "Swing's own, Orchid");
+    let held = ColourTaken::Held {
+        owner: "Scalp".to_owned(),
+        owner_would_get: preset(1),
+    };
+    assert_eq!(taken, held, "Swing's own, Orchid, goes to Scalp");
     assert_eq!(colours["Swing"], preset(1), "nothing changed");
     let swap = pick(&mut colours, "Swing", preset(0), true).unwrap();
     assert_eq!(swap.swapped_with.as_deref(), Some("Scalp"));
@@ -245,7 +248,7 @@ fn a_taken_colour_is_refused_without_swap_and_swapped_with_it() {
     // A custom equal to a held preset's Dark value is that preset.
     let dark_slate = WorkspaceColour::Custom([0xA3, 0xAD, 0xBA]);
     let refused = pick(&mut colours, "Swing", dark_slate, false).unwrap_err();
-    assert_eq!(refused.owner, "Default");
+    assert_eq!(refused.owners(), ["Default"]);
 }
 
 #[test]
@@ -271,4 +274,52 @@ fn initials_tell_apart_names_alike_past_four_characters() {
     assert_eq!(initials("Scalp", &["Scalp", "Scalper"]), "Sca1");
     assert_eq!(initials("Swing2", &["Swing", "Swing2"]), "Swi2");
     assert_eq!(initials("Default", &["Default", "Scalp", "Scalper"]), "D");
+}
+
+/// Identical is not transitive: Cobalt matches one custom equal to its Light
+/// value and another equal to its Dark value, which match neither each other
+/// nor anything else. Taking Cobalt would leave a second holder, so it is
+/// refused with and without `swap`, naming both, and nothing moves.
+#[test]
+fn a_colour_two_workspaces_match_is_refused_even_with_swap() {
+    let light = WorkspaceColour::Custom([0x2F, 0x5B, 0xD8]);
+    let dark = WorkspaceColour::Custom([0x73, 0x93, 0xF5]);
+    let mut colours = Colours::from([
+        ("A".to_owned(), light),
+        ("B".to_owned(), dark),
+        ("C".to_owned(), preset(9)),
+    ]);
+    let before = colours.clone();
+    for swap in [false, true] {
+        let refused = pick(&mut colours, "C", preset(0), swap).unwrap_err();
+        let owners = vec!["A".to_owned(), "B".to_owned()];
+        assert_eq!(refused, ColourTaken::HeldByMany { owners }, "swap {swap}");
+        assert_eq!(colours, before, "nothing moved, swap {swap}");
+    }
+    // A colour only one of them matches still swaps.
+    let swapped = pick(&mut colours, "C", light, true).unwrap();
+    assert_eq!(swapped.swapped_with.as_deref(), Some("A"));
+    assert_eq!((colours["A"], colours["C"]), (preset(9), light));
+}
+
+/// A swap whose give-back would match a third workspace is refused, naming
+/// the owner, what it would get and the third.
+#[test]
+fn a_swap_whose_give_back_matches_a_third_workspace_is_refused() {
+    let mauve_light = WorkspaceColour::Custom([0x8A, 0x6A, 0x8E]);
+    let mut colours = Colours::from([
+        ("A".to_owned(), preset(0)),
+        ("C".to_owned(), preset(9)),
+        ("D".to_owned(), mauve_light),
+    ]);
+    let before = colours.clone();
+    let refused = pick(&mut colours, "C", preset(0), true).unwrap_err();
+    let clash = ColourTaken::SwapClashes {
+        owner: "A".to_owned(),
+        owner_would_get: preset(9),
+        other: "D".to_owned(),
+    };
+    assert_eq!(refused, clash);
+    assert_eq!(refused.owners(), ["A"]);
+    assert_eq!(colours, before);
 }

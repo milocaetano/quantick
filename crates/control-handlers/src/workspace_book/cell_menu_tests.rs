@@ -519,3 +519,18 @@ fn every_row_carries_its_colour_and_the_scene_names_it() {
     cache.menu(&book, 1, "Ctrl+S", &live(), false, label);
     assert_eq!(cache.builds, 2, "the theme");
 }
+
+/// A row with no summary still names its colour in the scene.
+#[test]
+fn a_row_without_a_summary_still_names_its_colour() {
+    let menu = menu_of(&desk(false), 1);
+    let mut row = menu.list[0].clone();
+    row.summary.clear();
+    let said = row.scene_control("toolbar", None).description;
+    let colour = row.colour.clone().expect("a colour");
+    assert_eq!(said, Some(colour.words));
+    let mut header = menu.current.clone();
+    (header.summary.clear(), header.dot = true);
+    let said = header.scene_control("toolbar", None).description.unwrap();
+    assert!(said.starts_with(UNSAVED) && said.contains(" \u{b7} "), "{said}");
+}
