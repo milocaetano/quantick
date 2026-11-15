@@ -100,7 +100,8 @@ fn a_first_run_on_a_two_context_desk_seeds_after_every_pane_stands() {
 }
 
 /// A recipe of two context panes reaches the second pane too, which is built a
-/// frame after the first.
+/// frame after the first. Its panes share one strip layout, so the fuller set
+/// lands on all three; that heal is no edit, so the tab reads clean.
 #[test]
 fn a_switch_to_a_two_pane_recipe_reaches_both_context_panes() {
     let layouts = crate::scratch::ScratchFile::new("workspace-two-context-switch", "layouts.toml");
@@ -111,30 +112,50 @@ fn a_switch_to_a_two_pane_recipe_reaches_both_context_panes() {
     let (layer, on) = some_layer(&app, first, 2);
     let mut two = live_recipe(&app.runtime, first).expect("an open tab");
     assert_eq!(two.context_panes.len(), 2);
+    two.flow_indicators = Vec::new();
+    two.context_panes[0].indicators = Vec::new();
     two.context_panes[1].indicators = vec![ema()];
     two.context_panes[1]
         .layers
         .insert(layer.id().to_owned(), !on);
+    let own = app.runtime.workspace.book.tab_row(first).0;
     let book = app.runtime.workspace.book.book_mut();
     book.observe(first, &two).expect("held");
     book.save_as(first, "Two").expect("a free name");
+    // The saving tab never showed `two`: off Two, it holds none of its sets.
+    set_tab_workspace(&mut app, first, &own).expect("its own workspace");
 
     set_tab_workspace(&mut app, second, "Two").expect("a known workspace");
     frames(&mut app, 5);
+    let tab = app.runtime.tabs.by_id_mut(second).expect("an open tab");
+    for pane in tab.panes_mut() {
+        pane.indicator_worker.flush();
+        pane.apply_indicator_events();
+    }
+    let built = tab.pane(PaneSide::Time(1)).indicators.all().len();
+    assert_eq!(built, 1, "the pane built a frame later shows its indicator");
     let live = live_recipe(&app.runtime, second).expect("an open tab");
     assert_eq!(live.context_panes.len(), 2);
     assert_eq!(live.context_panes[1].indicators, [ema()], "the second pane");
+    assert_eq!(
+        live.flow_indicators,
+        [ema()],
+        "one set for the strip layout"
+    );
     assert_eq!(live.context_panes[1].layers.get(layer.id()), Some(&!on));
     assert_eq!(
         app.runtime.workspace.book.tab_row(second),
-        ("Two".to_owned(), false)
+        ("Two".to_owned(), false),
+        "a heal on landing is no edit"
     );
 }
 
-/// The footprint style, the indicators and the layers are the tab's: an edit on
-/// one tab reaches another on the same workspace only by Save to.
+/// The footprint style and the layers are the tab's: an edit on one tab
+/// reaches another on the same workspace only by Save to. So do indicators on
+/// a strip layout the other tab does not show; on one it shows they are the
+/// workspace's: see `an_indicator_added_on_a_flow_pane_reaches_every_pane…`.
 #[test]
-fn footprint_style_indicators_and_layers_stay_on_their_tab_until_save_to() {
+fn footprint_style_and_layers_stay_on_their_tab_until_save_to() {
     let layouts = crate::scratch::ScratchFile::new("workspace-no-leak-all", "layouts.toml");
     let (mut app, first, second) = two_tabs(&layouts);
     for tab in [first, second] {
@@ -143,6 +164,12 @@ fn footprint_style_indicators_and_layers_stay_on_their_tab_until_save_to() {
     frames(&mut app, 3);
     let edited = app.runtime.tabs.active_id();
     let other = if edited == first { second } else { first };
+    let session = app.runtime.workspace.layouts_mut().session_mut();
+    let apart = session.create(Some("Apart")).expect("a free name");
+    app.layout_adapter()
+        .switch_pane_layout(other, PaneSide::Flow, apart)
+        .expect("a known layout");
+    frames(&mut app, 2);
     let before = live_recipe(&app.runtime, other).expect("an open tab");
 
     let window = app.runtime.footprint_config.clone();
@@ -291,7 +318,7 @@ fn chip_and_snapshot_read_one_state() {
             (symbol, venue),
             (status.symbol.as_str(), status.venue.as_str())
         );
-        let capsule = crate::app::capsule_wiring::CapsuleState::of(&app, &egui::Context::default());
+        let capsule = crate::app::chrome::capsule::snapshot(&app, &egui::Context::default());
         assert_eq!(capsule.marks().1, app.tab_workspace_row(tab).1);
     }
     assert!(app.tab_workspace_row(first).1 && !app.tab_workspace_row(second).1);
@@ -309,7 +336,7 @@ fn autosave_on_never_marks_an_edit() {
     frames(&mut app, 2);
     assert!(!app.runtime.workspace.book.tab_row(first).1);
     assert!(
-        !crate::app::capsule_wiring::CapsuleState::of(&app, &egui::Context::default())
+        !crate::app::chrome::capsule::snapshot(&app, &egui::Context::default())
             .marks()
             .1
     );
@@ -535,11 +562,11 @@ fn the_real_frame_adopts_a_restored_tab_on_its_saved_workspace() {
     );
 }
 
-/// The panes of one tab on one strip layout share the tab's copy: an indicator
-/// added on the flow pane reaches the tab's context pane, and never a pane of
-/// another tab on the same workspace and the same strip layout.
+/// The panes of every tab on one workspace and one strip layout share one
+/// copy: an indicator added on one tab's flow pane reaches its context pane
+/// and both panes of the other tab, and both tabs read the one held edit.
 #[test]
-fn an_indicator_added_on_a_flow_pane_reaches_its_tabs_context_pane_and_no_other_tab() {
+fn an_indicator_added_on_a_flow_pane_reaches_every_pane_of_its_layout_in_both_tabs() {
     let layouts = crate::scratch::ScratchFile::new("workspace-mirror-in-tab", "layouts.toml");
     let (mut app, first, second) = two_tabs(&layouts);
     let a = app.runtime.tabs.active_id();
@@ -583,10 +610,232 @@ fn an_indicator_added_on_a_flow_pane_reaches_its_tabs_context_pane_and_no_other_
         "its own context pane"
     );
     let after = [PaneSide::Flow, PaneSide::Time(0)].map(|side| count(&app, b, side));
-    assert_eq!(after, other, "never another tab");
+    assert_eq!(after, other.map(|count| count + 1), "and the other tab's");
+    observe_tab(&mut app, b);
     let store = &app.runtime.workspace.book;
     assert!(store.tab_row(a).1, "the edit marks its tab");
-    assert!(!store.tab_row(b).1, "and no other");
+    assert!(store.tab_row(b).1, "and the other, which shows it");
+}
+
+const THREE_PANES: [PaneSide; 3] = [PaneSide::Flow, PaneSide::Time(0), PaneSide::Time(1)];
+
+/// How many indicators each of the active tab's three panes shows.
+fn three_counts(app: &mut QuantickApp) -> [usize; 3] {
+    settle_indicators(app);
+    THREE_PANES.map(|side| app.active_tab().pane(side).indicators.all().len())
+}
+
+/// The copy every one of the active tab's three panes holds: one, or a panic.
+fn one_copy(app: &QuantickApp) -> quantick_workspace::layout_document::LayoutId {
+    let held = THREE_PANES.map(|side| app.active_tab().pane(side).layout_id().expect("seeded"));
+    assert!(held.iter().all(|id| *id == held[0]), "one copy: {held:?}");
+    held[0]
+}
+
+/// The trader's Force report: inside one tab, the panes on one strip layout
+/// show one set. A recipe giving three panes three sets lands the fullest on
+/// all of them; the tab reads clean and autosave owes the stored recipe
+/// nothing. An add or a removal on a context pane then reaches the flow pane
+/// and the other context pane.
+#[test]
+fn a_recipe_of_three_sets_lands_one_and_an_edit_reaches_every_pane_of_the_tab() {
+    let layouts = crate::scratch::ScratchFile::new("workspace-one-set-a-tab", "layouts.toml");
+    let (mut app, first, second) = two_tabs(&layouts);
+    let a = app.runtime.tabs.active_id();
+    let b = if a == first { second } else { first };
+    let tab = app.runtime.tabs.by_id_mut(b).expect("an open tab");
+    tab.set_layout(CanvasLayout::TimeTimeAndFlow);
+    frames(&mut app, 4);
+    let mut three = live_recipe(&app.runtime, b).expect("an open tab");
+    assert_eq!(three.context_panes.len(), 2);
+    three.flow_indicators = vec![ema()];
+    three.context_panes[0].indicators = Vec::new();
+    let cvd = quantick_workspace::indicator_document::SavedIndicator {
+        kind: quantick_workspace::indicator_document::SavedKind::native("native.cvd"),
+        ..ema()
+    };
+    three.context_panes[1].indicators = vec![ema(), cvd.clone()];
+    let own = app.runtime.workspace.book.tab_row(b).0;
+    let book = app.runtime.workspace.book.book_mut();
+    book.observe(b, &three).expect("held");
+    book.save_as(b, "Three").expect("a free name");
+    let stored = book.recipe("Three").cloned();
+    // The saving tab never showed `three`: off Three, it holds none of its sets.
+    set_tab_workspace(&mut app, b, &own).expect("its own workspace");
+    app.runtime.workspace.book.book_mut().set_autosave(true);
+
+    // Edits made while autosave was off are behind us: what is due from here
+    // on is the landing's alone.
+    let quiet = std::time::Instant::now() + quantick_workspace::workspace_sync::AUTOSAVE_QUIET;
+    app.runtime.workspace.book.sync_mut().take_due(quiet);
+    set_tab_workspace(&mut app, a, "Three").expect("a known workspace");
+    frames(&mut app, 5);
+    let store = &mut app.runtime.workspace.book;
+    assert_eq!(store.tab_row(a), ("Three".to_owned(), false), "no edit");
+    let later = std::time::Instant::now() + quantick_workspace::workspace_sync::AUTOSAVE_QUIET;
+    let due = store.sync_mut().take_due(later);
+    assert!(due.is_empty(), "nothing of the landing to write: {due:?}");
+    assert_eq!(store.book().recipe("Three").cloned(), stored, "as saved");
+    let copy = one_copy(&app);
+    assert_eq!(three_counts(&mut app), [2; 3], "the fullest set");
+    let set = &app
+        .layout_state()
+        .layouts()
+        .get(copy)
+        .expect("held")
+        .indicators;
+    assert_eq!(set, &[ema(), cvd]);
+
+    app.active_tab_mut().focus = PaneSide::Time(1);
+    app.apply_toolbar_action(ToolbarAction::AddNative("native.cvd"));
+    frames(&mut app, 2);
+    assert_eq!(three_counts(&mut app), [3; 3], "an add reaches every pane");
+    let slot = app.active_tab().pane(PaneSide::Time(0)).indicators.all()[0].slot;
+    app.active_tab_mut().focus = PaneSide::Time(0);
+    app.apply_toolbar_action(ToolbarAction::RemoveIndicator(slot.0));
+    frames(&mut app, 2);
+    assert_eq!(three_counts(&mut app), [2; 3], "and so does a removal");
+    assert_eq!(one_copy(&app), copy);
+}
+
+/// Bring `saved` back as the whole desk, as a launch reads it: on a market no
+/// open tab shows, so its panes open fresh on the layouts it names.
+fn restore_desk(
+    app: &mut QuantickApp,
+    mut saved: quantick_workspace::arrangement_document::SavedTab,
+    symbol: &str,
+) {
+    symbol.clone_into(&mut saved.symbol);
+    let config = app.config.clone();
+    let desk = ui_state::Workspace::new(true, None, 0, vec![saved], None);
+    app.arrangement_adapter()
+        .restore_workspace(desk.restore(&config));
+    frames(app, 4);
+}
+
+/// A stored file like the trader's: the flow pane and two context panes of one
+/// tab on three copies of one strip layout, each with another set. Brought
+/// back, all three show the fullest set, a context pane's, on one copy, and
+/// the file saved from that reads back the same.
+#[test]
+fn a_desk_on_twin_copies_comes_back_on_the_fullest_set() {
+    let layouts = crate::scratch::ScratchFile::new("workspace-twin-copies", "layouts.toml");
+    let (mut app, _, _) = two_tabs(&layouts);
+    app.active_tab_mut()
+        .set_layout(CanvasLayout::TimeTimeAndFlow);
+    frames(&mut app, 4);
+    let flow = app.active_tab().flow_pane.layout_id().expect("seeded");
+    let mut book = app.layout_state().layouts().clone();
+    let native = |id: &str| quantick_workspace::indicator_document::SavedIndicator {
+        kind: quantick_workspace::indicator_document::SavedKind::native(id),
+        ..ema()
+    };
+    let fullest = vec![ema(), native("native.cvd"), native("native.volume")];
+    let sets = [
+        vec![ema()],
+        fullest.clone(),
+        vec![ema(), native("native.cvd")],
+    ];
+    let copies = sets.map(|set| {
+        let copy = book.make_private_copy(flow).expect("a known layout");
+        book.get_mut(copy).expect("just made").indicators = set;
+        copy
+    });
+    let mut saved = crate::app::arrangement_adapter::saved_tab_of(app.active_tab());
+    saved.flow_layout = Some(copies[0].0);
+    saved.context_layouts = vec![copies[1].0, copies[2].0];
+    app.runtime.workspace.layouts_mut().set_book(book);
+
+    restore_desk(&mut app, saved, "ETHUSDT");
+    assert_eq!(one_copy(&app), copies[1], "the fullest copy");
+    assert_eq!(three_counts(&mut app), [3; 3]);
+    let book = app.layout_state().layouts();
+    assert_eq!(book.get(copies[1]).expect("held").indicators, fullest);
+    assert!(book.get(copies[0]).is_none() && book.get(copies[2]).is_none());
+
+    let saved = crate::app::arrangement_adapter::saved_tab_of(app.active_tab());
+    assert_eq!(
+        saved.context_layouts, [copies[1].0; 2],
+        "the desk names one copy"
+    );
+    let text = toml::to_string(app.layout_state().layouts()).expect("a book writes");
+    let reread = quantick_workspace::layout_document::parse(&text).expect("and reads back");
+    let (mut app, _evt, _cmd, _book) = test_app();
+    let relaunch = crate::scratch::ScratchFile::new("workspace-twin-relaunch", "layouts.toml");
+    app.runtime
+        .workspace
+        .set_layouts_path(relaunch.to_path_buf());
+    app.runtime.workspace.layouts_mut().set_book(reread);
+    restore_desk(&mut app, saved, "ETHUSDT");
+    assert_eq!(one_copy(&app), copies[1], "after a relaunch too");
+    assert_eq!(three_counts(&mut app), [3; 3]);
+}
+
+/// The review's case: workspace W saved from tab A, whose flow pane is on the
+/// strip layout tab B shows everywhere and whose context pane is on Levels on
+/// purpose. B lands W healed, and autosave on rewrites nothing: W stays as
+/// saved and A's Levels pane keeps its own set.
+#[test]
+fn a_heal_on_one_tab_never_reaches_another_through_autosave() {
+    let layouts = crate::scratch::ScratchFile::new("workspace-heal-stays", "layouts.toml");
+    let (mut app, first, second) = two_tabs(&layouts);
+    let a = app.runtime.tabs.active_id();
+    let b = if a == first { second } else { first };
+    for tab in [a, b] {
+        let tab = app.runtime.tabs.by_id_mut(tab).expect("an open tab");
+        tab.set_layout(CanvasLayout::TimeAndFlow);
+    }
+    frames(&mut app, 3);
+    let session = app.runtime.workspace.layouts_mut().session_mut();
+    let levels = session.create(Some("Levels")).expect("a free name");
+    app.layout_adapter()
+        .switch_pane_layout(a, PaneSide::Time(0), levels)
+        .expect("a known layout");
+    app.active_tab_mut().focus = PaneSide::Flow;
+    app.apply_toolbar_action(ToolbarAction::AddNative("native.ema"));
+    app.apply_toolbar_action(ToolbarAction::AddNative("native.cvd"));
+    settle_indicators(&mut app);
+    frames(&mut app, 2);
+    observe_tab(&mut app, a);
+    let book = app.runtime.workspace.book.book_mut();
+    book.save_as(a, "W").expect("a free name");
+    book.set_autosave(true);
+    let w = book.recipe("W").cloned().expect("saved");
+    assert_eq!(w.flow_indicators.len(), 2);
+    assert!(
+        w.context_panes[0].indicators.is_empty(),
+        "Levels holds none"
+    );
+
+    // Edits made while autosave was off are behind us: what is due from here
+    // on is the landing's alone.
+    let quiet = std::time::Instant::now() + quantick_workspace::workspace_sync::AUTOSAVE_QUIET;
+    app.runtime.workspace.book.sync_mut().take_due(quiet);
+    set_tab_workspace(&mut app, b, "W").expect("a known workspace");
+    frames(&mut app, 5);
+    let strip = |app: &QuantickApp, tab, side| app.layout_state().pane_layout(tab, side);
+    assert_eq!(
+        strip(&app, b, PaneSide::Flow),
+        strip(&app, b, PaneSide::Time(0))
+    );
+    assert_eq!(strip(&app, a, PaneSide::Time(0)), levels);
+    let shows = |app: &mut QuantickApp, tab: u64, side| {
+        let tab = app.runtime.tabs.by_id_mut(tab).expect("an open tab");
+        for pane in tab.panes_mut() {
+            pane.indicator_worker.flush();
+            pane.apply_indicator_events();
+        }
+        tab.pane(side).indicators.all().len()
+    };
+    assert_eq!(shows(&mut app, b, PaneSide::Time(0)), 2, "B healed");
+    let store = &mut app.runtime.workspace.book;
+    assert_eq!(store.tab_row(b), ("W".to_owned(), false), "no edit");
+    let later = std::time::Instant::now() + quantick_workspace::workspace_sync::AUTOSAVE_QUIET;
+    let due = store.sync_mut().take_due(later);
+    assert!(due.is_empty(), "nothing of the landing to write: {due:?}");
+    frames(&mut app, 2);
+    assert_eq!(app.runtime.workspace.book.book().recipe("W"), Some(&w));
+    assert_eq!(shows(&mut app, a, PaneSide::Time(0)), 0, "A's Levels pane");
 }
 
 /// `layout.tab.switch` as a script calls it, answered as the wire answers.
@@ -730,7 +979,7 @@ fn chip_and_status_cell_read_one_state() {
     for (index, tab) in [first, second].into_iter().enumerate() {
         app.runtime.tabs.select(index);
         assert_eq!(app.runtime.tabs.active_id(), tab);
-        let capsule = crate::app::capsule_wiring::CapsuleState::of(&app, &egui::Context::default());
+        let capsule = crate::app::chrome::capsule::snapshot(&app, &egui::Context::default());
         let (workspace, modified) = app.runtime.workspace.book.tab_row(tab);
         let (name, unsaved, _) = capsule.marks();
         assert_eq!((name.to_owned(), unsaved), (workspace, modified));
@@ -1078,4 +1327,857 @@ fn an_exit_with_held_edits_asks_and_esc_keeps_the_app() {
         app.runtime.workspace.book.tab_row(first).1,
         "the edit stays held"
     );
+}
+
+/// A workspace saved before rails carried its column fold only as a flag, no
+/// canvas: applied to a tab it lands as one rail and the tab reads clean.
+#[test]
+fn an_old_folded_recipe_lands_as_one_rail_and_reads_clean() {
+    let layouts = crate::scratch::ScratchFile::new("workspace-old-fold", "layouts.toml");
+    let (mut app, first, second) = two_tabs(&layouts);
+    let tab = app.runtime.tabs.by_id_mut(first).expect("an open tab");
+    tab.set_layout(CanvasLayout::TimeAndFlow);
+    frames(&mut app, 4);
+    let mut old = live_recipe(&app.runtime, first).expect("an open tab");
+    (old.canvas, old.context_collapsed, old.flow_collapsed) = (None, true, false);
+    let book = app.runtime.workspace.book.book_mut();
+    book.observe(first, &old).expect("held");
+    book.save_as(first, "Folded").expect("a free name");
+
+    set_tab_workspace(&mut app, second, "Folded").expect("a known workspace");
+    frames(&mut app, 5);
+    let tab = app.runtime.tabs.by_id(second).expect("an open tab");
+    assert_eq!(tab.canvas.folds(), (true, false), "the column is folded");
+    assert!(
+        tab.canvas.column_painted(),
+        "on the column painter's own rail"
+    );
+    assert_eq!(
+        app.runtime.workspace.book.tab_row(second),
+        ("Folded".to_owned(), false),
+        "and the tab reads clean"
+    );
+}
+
+/// A workspace saved before rails with a canvas *and* the column fold as a
+/// flag: the fold flags were cleared only by a layout pick or a divider drag,
+/// so a maximized chart kept the canvas with no rail beside
+/// `context_collapsed`. Applied to a tab it lands as one rail and the tab
+/// reads clean.
+#[test]
+fn an_old_folded_recipe_with_a_canvas_lands_as_one_rail_and_reads_clean() {
+    let layouts = crate::scratch::ScratchFile::new("workspace-old-fold-canvas", "layouts.toml");
+    let (mut app, first, second) = two_tabs(&layouts);
+    let tab = app.runtime.tabs.by_id_mut(first).expect("an open tab");
+    tab.set_layout(CanvasLayout::TimeAndFlow);
+    frames(&mut app, 4);
+    let mut old = live_recipe(&app.runtime, first).expect("an open tab");
+    let preset = crate::canvas_layout::preset("time+flow").expect("registered");
+    // As the base saved it: the tree's shares mirror the column split.
+    let mut canvas =
+        quantick_workspace::canvas::CanvasState::from_preset_split(preset, old.split_fraction);
+    assert_eq!(canvas.maximize(1), Ok(true), "the flow chart maximized");
+    (old.canvas, old.context_collapsed, old.flow_collapsed) = (Some(canvas), true, false);
+    // Read back as the base wrote it.
+    let old: quantick_workspace::workspace_recipe::WorkspaceRecipe =
+        toml::from_str(&toml::to_string(&old).expect("a recipe writes")).expect("and reads");
+    let book = app.runtime.workspace.book.book_mut();
+    book.observe(first, &old).expect("held");
+    book.save_as(first, "Folded max").expect("a free name");
+
+    set_tab_workspace(&mut app, second, "Folded max").expect("a known workspace");
+    frames(&mut app, 5);
+    let tab = app.runtime.tabs.by_id(second).expect("an open tab");
+    assert_eq!(tab.canvas.folds(), (true, false), "the column is folded");
+    assert_eq!(tab.canvas.state.railed().len(), 1, "on one rail");
+    assert_eq!(
+        tab.canvas.state.maximized(),
+        Some(1),
+        "under the maximized flow"
+    );
+    assert_eq!(
+        app.runtime.workspace.book.tab_row(second),
+        ("Folded max".to_owned(), false),
+        "and the tab reads clean"
+    );
+    for _ in 0..2 {
+        frames(&mut app, 3);
+        assert!(!app.runtime.workspace.book.tab_row(second).1, "still clean");
+    }
+}
+
+/// The same old save with the flow chart floated or minimized instead: no
+/// rail can stand beside it, so the fold flag reads as no fold, the tab
+/// lands clean and stays clean, and the save reads back as itself.
+#[test]
+fn an_old_fold_flag_with_nowhere_to_rail_lands_clean() {
+    use quantick_workspace::canvas::{CanvasRect, CanvasState};
+    use quantick_workspace::workspace_recipe::WorkspaceRecipe;
+    for (case, float) in [("floated", true), ("minimized", false)] {
+        let file = format!("workspace-old-fold-{case}");
+        let layouts = crate::scratch::ScratchFile::new(&file, "layouts.toml");
+        let (mut app, first, second) = two_tabs(&layouts);
+        let tab = app.runtime.tabs.by_id_mut(first).expect("an open tab");
+        tab.set_layout(CanvasLayout::TimeAndFlow);
+        frames(&mut app, 4);
+        let mut old = live_recipe(&app.runtime, first).expect("an open tab");
+        let preset = crate::canvas_layout::preset("time+flow").expect("registered");
+        let mut canvas = CanvasState::from_preset_split(preset, old.split_fraction);
+        let moved = if float {
+            canvas.float(1, CanvasRect::new(100.0, 100.0, 400.0, 300.0))
+        } else {
+            canvas.minimize(1)
+        };
+        assert_eq!(moved, Ok(true), "{case}");
+        (old.canvas, old.context_collapsed, old.flow_collapsed) = (Some(canvas), true, false);
+        let read = |recipe: &WorkspaceRecipe| -> WorkspaceRecipe {
+            toml::from_str(&toml::to_string(recipe).expect("a recipe writes")).expect("and reads")
+        };
+        let old = read(&old);
+        assert!(!old.context_collapsed, "{case}: no rail, no fold");
+        assert_eq!(read(&old), old, "{case}: a second read is the first");
+        let name = format!("Folded {case}");
+        let book = app.runtime.workspace.book.book_mut();
+        book.observe(first, &old).expect("held");
+        book.save_as(first, &name).expect("a free name");
+
+        set_tab_workspace(&mut app, second, &name).expect("a known workspace");
+        frames(&mut app, 5);
+        let tab = app.runtime.tabs.by_id(second).expect("an open tab");
+        assert_eq!(tab.canvas.folds(), (false, false), "{case}");
+        let row = app.runtime.workspace.book.tab_row(second);
+        assert_eq!(row, (name.clone(), false), "{case}: the tab reads clean");
+        for _ in 0..2 {
+            frames(&mut app, 3);
+            assert!(
+                !app.runtime.workspace.book.tab_row(second).1,
+                "{case}: still clean"
+            );
+        }
+    }
+}
+
+/// The window size the trader's desk runs at.
+const FULL_HD: egui::Vec2 = egui::vec2(1920.0, 1000.0);
+
+/// The cell's menu on the first frame it is shown.
+struct Shown {
+    /// The menu's rect and the capsule name's.
+    menu: egui::Rect,
+    name: egui::Rect,
+    /// Each row in view by scene id, with the rect the scene publishes.
+    rows: Vec<(String, egui::Rect)>,
+}
+
+impl Shown {
+    fn row(&self, id: &str) -> Option<egui::Rect> {
+        let mut rows = self.rows.iter();
+        rows.find(|(row, _)| row == id).map(|(_, rect)| *rect)
+    }
+
+    fn listed(&self) -> Vec<egui::Rect> {
+        let rows = self
+            .rows
+            .iter()
+            .filter(|(id, _)| id.contains(".workspace."));
+        rows.map(|(_, rect)| *rect).collect()
+    }
+}
+
+/// Frames at full HD until the cell's menu is shown, as the scene reads it.
+fn until_shown(app: &mut QuantickApp, ctx: &egui::Context) -> Shown {
+    let tab = app.runtime.tabs.active_id();
+    for _ in 0..6 {
+        run_frame_at(app, ctx, FULL_HD);
+        assert!(app.chrome.window_menu.tab_workspace.chip_menu_on(tab));
+        let drawn = &app.chrome.window_menu.cell_rows;
+        let Some(((menu_row, menu), rows)) = drawn.split_first() else {
+            continue;
+        };
+        assert_eq!(menu_row.scene_id(), "workspace_menu");
+        let rows = rows.iter().map(|(row, rect)| (row.scene_id(), *rect));
+        let name = (app.chrome.toolbar_controls.iter())
+            .find(|control| control.id == "toolbar.capsule.workspace")
+            .expect("the capsule's name")
+            .rect;
+        let rows = rows.collect();
+        return Shown {
+            menu: *menu,
+            name,
+            rows,
+        };
+    }
+    panic!("the menu was never shown");
+}
+
+/// Open the cell's menu and run it to its first shown frame.
+fn open_cell_menu(app: &mut QuantickApp, ctx: &egui::Context) -> Shown {
+    let tab = app.runtime.tabs.active_id();
+    app.chrome.window_menu.tab_workspace.toggle_chip_menu(tab);
+    until_shown(app, ctx)
+}
+
+/// Workspaces `Desk 01`.. on the first tab until the book holds `count`.
+fn fill_book(app: &mut QuantickApp, tab: u64, count: usize) {
+    let book = app.runtime.workspace.book.book_mut();
+    for n in 1.. {
+        if book.list().len() >= count {
+            break;
+        }
+        book.create(tab, &format!("Desk {n:02}"))
+            .expect("a fresh name");
+    }
+}
+
+/// How many area states egui keeps in `ctx`'s memory.
+fn stored_areas(ctx: &egui::Context) -> usize {
+    let areas = ctx.memory(|memory| format!("{:?}", memory.areas()));
+    areas.matches("AreaState").count()
+}
+
+/// Opening the menu again and again leaves egui no area state per opening.
+#[test]
+fn reopening_the_cell_menu_keeps_one_area_state_per_tab() {
+    let layouts = crate::scratch::ScratchFile::new("workspace-menu-reopen", "layouts.toml");
+    let (mut app, _, _) = two_tabs(&layouts);
+    app.runtime.tabs.select(0);
+    let ctx = egui::Context::default();
+    let cycle = |app: &mut QuantickApp, count: usize| {
+        for _ in 0..count {
+            open_cell_menu(app, &ctx);
+            app.chrome.window_menu.tab_workspace.close_chip_menu();
+            run_frame_at(app, &ctx, FULL_HD);
+        }
+    };
+    cycle(&mut app, 2);
+    let settled = stored_areas(&ctx);
+    cycle(&mut app, 30);
+    assert_eq!(stored_areas(&ctx), settled, "30 more openings");
+}
+
+/// The scene lists the greyed Save unavailable, with the reason a client can
+/// branch on, and the rows a press reaches as available.
+#[test]
+fn the_scene_lists_a_greyed_row_unavailable_with_its_reason() {
+    use quantick_control_handlers::workspace_book::cell_menu::NO_EDITS_REASON;
+    let layouts = crate::scratch::ScratchFile::new("workspace-menu-scene", "layouts.toml");
+    let (mut app, _, _) = two_tabs(&layouts);
+    app.runtime.tabs.select(0);
+    let ctx = egui::Context::default();
+    open_cell_menu(&mut app, &ctx);
+    let scene = crate::control::scene_snapshot(&app);
+    let control = |id: &str| {
+        let mut controls = scene.controls.iter();
+        controls.find(|control| control.control_id == id).expect(id)
+    };
+    let save = control("toolbar.workspace_menu.save");
+    assert!(!save.availability.available);
+    assert_eq!(save.availability.reason.as_deref(), Some(NO_EDITS_REASON));
+    assert!(save.bounds.is_some());
+    let menu = control("toolbar.workspace_menu");
+    assert!(menu.selected && menu.availability.available);
+    assert!(control("toolbar.workspace_menu.new").availability.available);
+}
+
+/// Workspaces named `Flow Mini Index Morning Desk NN` until the book holds `count`.
+fn fill_named(app: &mut QuantickApp, tab: u64, count: usize) {
+    let book = app.runtime.workspace.book.book_mut();
+    for n in 1.. {
+        if book.list().len() >= count {
+            break;
+        }
+        book.create(tab, &format!("Flow Mini Index Morning Desk {n:02}"))
+            .expect("a fresh name");
+    }
+}
+
+/// The model's height for the menu `shown` hangs, with `workspaces` rows.
+fn model_height(shown: &Shown, workspaces: usize) -> f32 {
+    use quantick_session::workspace_menu::{MenuBounds, chip_menu_layout};
+    let at = |r: egui::Rect| MenuBounds::new(r.left(), r.top(), r.right(), r.bottom());
+    let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, FULL_HD);
+    chip_menu_layout(at(screen), at(shown.name), workspaces, workspaces).height
+}
+
+/// Designer B at the trader's nine workspaces, in Dark and in Light: 320
+/// wide, no taller than the model, 4 below the capsule's name with its right
+/// edge on the name's, every row in view.
+#[test]
+fn the_cell_menu_is_designer_b_s_size_in_dark_and_light() {
+    use quantick_session::workspace_menu::{CHIP_MENU_DROP_PT, CHIP_MENU_WIDTH_PT};
+    for theme in [
+        quantick_appearance::Builtin::Dark,
+        quantick_appearance::Builtin::Light,
+    ] {
+        let layouts = crate::scratch::ScratchFile::new("workspace-menu-b-size", "layouts.toml");
+        let (mut app, first, _) = two_tabs(&layouts);
+        app.runtime.appearance.apply_builtin(theme, false).unwrap();
+        app.runtime.tabs.select(0);
+        fill_book(&mut app, first, 9);
+        let ctx = egui::Context::default();
+        let shown = open_cell_menu(&mut app, &ctx);
+        let (menu, name) = (shown.menu, shown.name);
+        eprintln!("{theme:?}, 9 workspaces: {menu:?} under {name:?}");
+        assert!(
+            (menu.width() - CHIP_MENU_WIDTH_PT).abs() < 0.5,
+            "{theme:?}: {} wide",
+            menu.width()
+        );
+        let most = model_height(&shown, 9);
+        assert_eq!(most, 482.0);
+        assert!(
+            (menu.height() - most).abs() < 0.5,
+            "{theme:?}: {} tall, the model says {most}",
+            menu.height()
+        );
+        assert_eq!(menu.min, menu.min.round(), "{theme:?}: on whole pixels");
+        assert!((menu.right() - name.right()).abs() < 1.0, "{theme:?}");
+        assert!((menu.top() - name.bottom() - CHIP_MENU_DROP_PT).abs() < 1.0);
+        assert_eq!(shown.listed().len(), 9, "{theme:?}: every row in view");
+    }
+}
+
+/// Thirty workspaces: the list scrolls under a fixed header and footer, the
+/// filter stands over it, the tab's own row is in view on open, and the
+/// scene reads the header, the rows with their summaries, the filter and
+/// the footer.
+#[test]
+fn the_scene_reads_the_header_rows_filter_and_footer() {
+    let layouts = crate::scratch::ScratchFile::new("workspace-menu-b-scene", "layouts.toml");
+    let (mut app, first, _) = two_tabs(&layouts);
+    app.runtime.tabs.select(0);
+    fill_book(&mut app, first, 30);
+    let ctx = egui::Context::default();
+    let shown = open_cell_menu(&mut app, &ctx);
+    let (painted, most) = (shown.menu.height(), model_height(&shown, 30));
+    assert_eq!(most, 523.0);
+    assert!(
+        (painted - most).abs() < 0.5,
+        "painted {painted}, the model {most}"
+    );
+    let field = shown.row("workspace_menu.filter").expect("the filter");
+    for row in shown.listed() {
+        assert!(row.top() >= field.bottom() + 4.0, "{row:?} under {field:?}");
+        assert_eq!(row.min.y, row.min.y.round(), "{row:?} on a whole pixel");
+    }
+    let top_row = shown.listed()[0];
+    assert_eq!(
+        (field.left(), field.right()),
+        (top_row.left(), top_row.right()),
+        "one extent"
+    );
+    let scene = crate::control::scene_snapshot(&app);
+    let control = |id: &str| {
+        let mut controls = scene.controls.iter();
+        controls.find(|control| control.control_id == id)
+    };
+    for part in [
+        "",
+        ".current",
+        ".save",
+        ".save_as",
+        ".rename",
+        ".filter",
+        ".autosave",
+        ".new",
+        ".manage",
+    ] {
+        let id = format!("toolbar.workspace_menu{part}");
+        let found = control(&id).unwrap_or_else(|| panic!("{id} in the scene"));
+        assert!(found.bounds.is_some(), "{id} drawn");
+    }
+    let current = control("toolbar.workspace_menu.current").unwrap();
+    assert!(
+        current
+            .description
+            .as_deref()
+            .is_some_and(|said| said.contains("tab"))
+    );
+    let rows: Vec<_> = (scene.controls.iter())
+        .filter(|control| {
+            control
+                .control_id
+                .starts_with("toolbar.workspace_menu.workspace.")
+        })
+        .collect();
+    assert!(
+        (9..=11).contains(&rows.len()),
+        "{} rows in view",
+        rows.len()
+    );
+    assert!(
+        rows.iter().all(|row| row.description.is_some()),
+        "summaries"
+    );
+    let (own, _) = app.runtime.workspace.book.tab_row(first);
+    let lit = rows
+        .iter()
+        .find(|row| row.selected)
+        .expect("the tab's own row in view");
+    assert_eq!(lit.label, own);
+    let footer = shown.row("workspace_menu.new").expect("New");
+    for row in shown.listed() {
+        assert!(
+            row.bottom() <= footer.top(),
+            "{row:?} over the footer {footer:?}"
+        );
+    }
+}
+
+/// Every name that fits the row paints whole over its summary, at nine
+/// workspaces and at thirty.
+#[test]
+fn names_that_fit_paint_whole_over_their_summaries() {
+    for count in [9, 30] {
+        let layouts = crate::scratch::ScratchFile::new("workspace-menu-b-names", "layouts.toml");
+        let (mut app, _, second) = two_tabs(&layouts);
+        fill_named(&mut app, second, count);
+        app.runtime.tabs.select(0);
+        let ctx = egui::Context::default();
+        let shown = open_cell_menu(&mut app, &ctx);
+        let output = run_frame_sized(&mut app, &ctx, FULL_HD, Vec::new(), egui::Modifiers::NONE);
+        let scene = crate::control::scene_snapshot(&app);
+        let rows = (scene.controls.iter()).filter(|control| {
+            control
+                .control_id
+                .starts_with("toolbar.workspace_menu.workspace.")
+        });
+        let mut checked = 0;
+        for row in rows {
+            let painted = painted_rows(&output, &row.label);
+            let whole = painted
+                .iter()
+                .any(|(text, cut, _)| *text == row.label && !cut);
+            assert!(whole, "{count}: {} whole: {painted:?}", row.label);
+            let summary = row.description.clone().expect("a summary");
+            let under = painted_rows(&output, &summary);
+            assert!(!under.is_empty(), "{count}: {summary} painted");
+            checked += 1;
+        }
+        eprintln!("{count} workspaces: {checked} rows in {:?}", shown.menu);
+        assert!(checked >= 9, "{count}: {checked} rows checked");
+    }
+}
+
+/// A click on a row puts the tab on that workspace and closes the menu; a
+/// click on the tab's own row only closes it.
+#[test]
+fn a_click_on_a_row_switches_the_tab_and_closes_the_menu() {
+    let layouts = crate::scratch::ScratchFile::new("workspace-menu-b-click", "layouts.toml");
+    let (mut app, first, _) = two_tabs(&layouts);
+    app.runtime.tabs.select(0);
+    fill_book(&mut app, first, 9);
+    let ctx = egui::Context::default();
+    let shown = open_cell_menu(&mut app, &ctx);
+    let default = shown
+        .row("workspace_menu.workspace.Default")
+        .expect("Default");
+    click_sized(&mut app, &ctx, FULL_HD, default.center());
+    run_frame_at(&mut app, &ctx, FULL_HD);
+    let store = &app.runtime.workspace.book;
+    assert_eq!(store.tab_row(first).0, "Default");
+    let menu = &app.chrome.window_menu.tab_workspace;
+    assert!(!menu.chip_menu_on(first), "the menu closed");
+    let shown = open_cell_menu(&mut app, &ctx);
+    let own = shown
+        .row("workspace_menu.workspace.Default")
+        .expect("its own");
+    click_sized(&mut app, &ctx, FULL_HD, own.center());
+    run_frame_at(&mut app, &ctx, FULL_HD);
+    assert_eq!(app.runtime.workspace.book.tab_row(first).0, "Default");
+    assert!(!app.chrome.window_menu.tab_workspace.chip_menu_on(first));
+}
+
+/// Down then Enter in the open menu switches to the row after the tab's own.
+#[test]
+fn down_and_enter_switch_to_the_next_workspace() {
+    let layouts = crate::scratch::ScratchFile::new("workspace-menu-b-keys", "layouts.toml");
+    let (mut app, first, _) = two_tabs(&layouts);
+    app.runtime.tabs.select(0);
+    fill_book(&mut app, first, 9);
+    set_tab_workspace(&mut app, first, "Default").expect("a known workspace");
+    let ctx = egui::Context::default();
+    open_cell_menu(&mut app, &ctx);
+    let next = app.runtime.workspace.book.book().list()[1].name.clone();
+    for key in [egui::Key::ArrowDown, egui::Key::Enter] {
+        let events = vec![key_press(key)];
+        run_frame_sized(&mut app, &ctx, FULL_HD, events, egui::Modifiers::NONE);
+    }
+    run_frame_at(&mut app, &ctx, FULL_HD);
+    assert_eq!(app.runtime.workspace.book.tab_row(first).0, next);
+    assert!(!app.chrome.window_menu.tab_workspace.chip_menu_on(first));
+}
+
+/// Open the `?` menu and its Workspace submenu at the test window's size:
+/// the menu's rect, the submenu's and the last frame painted.
+fn open_workspace_submenu(
+    app: &mut QuantickApp,
+    ctx: &egui::Context,
+) -> (egui::Rect, egui::Rect, egui::FullOutput) {
+    use quantick_control_schema::window_menu::KEBAB_CONTROL;
+    run_frame(app, ctx);
+    let kebab = app.chrome.title_bar.control_rect(KEBAB_CONTROL).unwrap();
+    click_sized(app, ctx, TEST_WINDOW, kebab.center());
+    let output = run_frame(app, ctx);
+    let row = painted_text_center(&output, "Workspace").expect("the Workspace row");
+    click_sized(app, ctx, TEST_WINDOW, row);
+    run_frame(app, ctx);
+    let output = run_frame(app, ctx);
+    let pane = |level: usize| {
+        let id = egui::Id::new(("window_menu_pane", level));
+        ctx.memory(|memory| memory.area_rect(id)).expect("a pane")
+    };
+    (pane(0), pane(1), output)
+}
+
+/// The `?` menu's Workspace submenu keeps to the window with thirty
+/// workspaces: twelve rows scroll, the rows after them stay in view.
+#[test]
+fn the_window_menu_workspace_submenu_stays_inside_the_window() {
+    let layouts = crate::scratch::ScratchFile::new("workspace-submenu-bounded", "layouts.toml");
+    let (mut app, first, _) = two_tabs(&layouts);
+    app.runtime.tabs.select(0);
+    fill_book(&mut app, first, 30);
+    let ctx = egui::Context::default();
+    let (_, submenu, output) = open_workspace_submenu(&mut app, &ctx);
+    eprintln!("window submenu, 30 workspaces: {submenu:?}");
+    let window = egui::Rect::from_min_size(egui::Pos2::ZERO, TEST_WINDOW);
+    assert!(window.contains_rect(submenu), "{submenu:?}");
+    for row in [
+        "Manage workspaces\u{2026}",
+        "Layouts",
+        "Save as new\u{2026}",
+    ] {
+        let at = painted_text_center(&output, row).unwrap_or_else(|| panic!("{row}"));
+        assert!(submenu.contains(at), "{row} at {at:?} out of {submenu:?}");
+    }
+    let listed = painted_text(&output)
+        .iter()
+        .filter(|text| text.starts_with("Desk "))
+        .count();
+    assert!(listed <= 13, "{listed} workspace rows painted");
+}
+
+/// Where the Workspace submenu meets the `?` menu, the menu is on top, as
+/// it was before the rows were shared, and nine workspaces list whole.
+#[test]
+fn the_window_menu_covers_its_workspace_submenu_and_lists_nine_whole() {
+    let layouts = crate::scratch::ScratchFile::new("workspace-submenu-order", "layouts.toml");
+    let (mut app, first, _) = two_tabs(&layouts);
+    app.runtime.tabs.select(0);
+    fill_book(&mut app, first, 9);
+    let ctx = egui::Context::default();
+    let (menu, submenu, output) = open_workspace_submenu(&mut app, &ctx);
+    let overlap = menu.intersect(submenu);
+    eprintln!("menu {menu:?}, submenu {submenu:?}, overlap {overlap:?}");
+    if overlap.is_positive() {
+        let top = ctx.layer_id_at(overlap.center()).expect("a layer");
+        let menu_layer = egui::LayerId::new(
+            egui::Order::Foreground,
+            egui::Id::new(("window_menu_pane", 0)),
+        );
+        assert_eq!(top, menu_layer, "the submenu draws over the menu");
+    }
+    let names = app.runtime.workspace.book.book().list();
+    for row in names {
+        assert!(
+            painted_text_center(&output, &row.name).is_some(),
+            "{}",
+            row.name
+        );
+    }
+}
+
+/// Texts `output` painted that start with `prefix`, each with whether it
+/// was cut short and where it was painted.
+fn painted_rows(output: &egui::FullOutput, prefix: &str) -> Vec<(String, bool, egui::Rect)> {
+    type Found = Vec<(String, bool, egui::Rect)>;
+    fn walk(shape: &egui::Shape, prefix: &str, found: &mut Found) {
+        match shape {
+            egui::Shape::Text(text) if text.galley.text().starts_with(prefix) => {
+                let at = text.visual_bounding_rect();
+                found.push((text.galley.text().to_owned(), text.galley.elided, at));
+            }
+            egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| walk(s, prefix, found)),
+            _ => {}
+        }
+    }
+    let mut found = Vec::new();
+    for clipped in &output.shapes {
+        walk(&clipped.shape, prefix, &mut found);
+    }
+    found
+}
+
+/// The kinds each pane of `tab` shows, flow first, as the observer's
+/// `analysis.indicators` scope reads them: how the rule is checked without a
+/// mouse.
+fn scope_kinds(app: &QuantickApp, tab: u64) -> Vec<Vec<String>> {
+    let mut registry = crate::control::standard_registry().unwrap();
+    let scope = observer_scope("analysis.indicators");
+    let capture = registry
+        .capture(app, &observer_instance(), std::slice::from_ref(&scope))
+        .unwrap()
+        .into_serialized()
+        .unwrap();
+    let tabs = capture.scopes[&scope].value["tabs"].clone();
+    let tabs = tabs.as_array().expect("tabs");
+    let id = tab.to_string();
+    let entry = tabs
+        .iter()
+        .find(|entry| entry["tab_id"] == id.as_str())
+        .expect("the tab");
+    let panes = entry["panes"].as_array().expect("panes").iter();
+    panes
+        .map(|pane| {
+            let views = pane["indicators"].as_array().expect("indicators").iter();
+            views
+                .map(|view| view["kind"].as_str().unwrap_or_default().to_owned())
+                .collect()
+        })
+        .collect()
+}
+
+/// Frames until `done` holds, at most `limit` of them: the indicator workers
+/// answer on threads of their own. Answers whether it held.
+fn frames_until(
+    app: &mut QuantickApp,
+    limit: usize,
+    mut done: impl FnMut(&QuantickApp) -> bool,
+) -> bool {
+    for _ in 0..limit {
+        if done(app) {
+            return true;
+        }
+        frames(app, 1);
+        for pane in app.runtime.tabs.iter_mut().flat_map(|tab| tab.panes_mut()) {
+            pane.indicator_worker.flush();
+            pane.apply_indicator_events();
+        }
+    }
+    done(app)
+}
+
+fn native(id: &str) -> quantick_workspace::indicator_document::SavedIndicator {
+    quantick_workspace::indicator_document::SavedIndicator {
+        kind: quantick_workspace::indicator_document::SavedKind::native(id),
+        ..ema()
+    }
+}
+
+/// Tab `a` holds an unsaved CVD on its layout; tab `b`, on a workspace of its
+/// own with two kinds there, is put on `a`'s. Through real frames `b` shows
+/// what `a` shows, as the `analysis.indicators` scope reads both, the stored
+/// recipe stays as saved, and the held edit, the workspace's, marks both.
+#[test]
+fn a_tab_put_on_a_held_workspace_shows_what_its_tab_shows() {
+    let layouts = crate::scratch::ScratchFile::new("workspace-land-on-held", "layouts.toml");
+    let (mut app, first, second) = two_tabs(&layouts);
+    let a = app.runtime.tabs.active_id();
+    let b = if a == first { second } else { first };
+    frames(&mut app, 2);
+    observe_tab(&mut app, a);
+    let book = app.runtime.workspace.book.book_mut();
+    book.save_as(a, "Pair").expect("a free name");
+    let stored = book.recipe("Pair").cloned();
+    app.active_tab_mut().focus = PaneSide::Flow;
+    app.apply_toolbar_action(ToolbarAction::AddNative("native.cvd"));
+    let theirs = [ema(), native("native.volume")];
+    app.layout_adapter()
+        .show_pane_indicators(b, PaneSide::Flow, &theirs);
+    let cvd = "native.cvd".to_owned();
+    let shown = frames_until(&mut app, 50, |app| {
+        scope_kinds(app, a)[0].contains(&cvd) && scope_kinds(app, b)[0].len() == 2
+    });
+    assert!(
+        shown,
+        "a {:?}, b {:?}",
+        scope_kinds(&app, a),
+        scope_kinds(&app, b)
+    );
+    assert_ne!(scope_kinds(&app, a)[0], scope_kinds(&app, b)[0]);
+
+    set_tab_workspace(&mut app, b, "Pair").expect("a known workspace");
+    let same = frames_until(&mut app, 50, |app| {
+        scope_kinds(app, a)[0] == scope_kinds(app, b)[0]
+    });
+    assert!(
+        same,
+        "a {:?}, b {:?}",
+        scope_kinds(&app, a),
+        scope_kinds(&app, b)
+    );
+    let store = &app.runtime.workspace.book;
+    assert_eq!(store.book().recipe("Pair").cloned(), stored, "as saved");
+    assert!(store.tab_row(a).1, "the held edit is a's");
+    assert!(store.tab_row(b).1, "and the workspace's, held on b too");
+}
+
+/// The defect the report's reproduction found: a save from the second tab of
+/// a workspace wrote its own set over the first tab's. Both tabs show the
+/// first tab's add, so the second tab's save writes it.
+#[test]
+fn a_save_from_the_second_tab_keeps_the_first_tabs_add() {
+    let layouts = crate::scratch::ScratchFile::new("workspace-second-save", "layouts.toml");
+    let (mut app, first, second) = two_tabs(&layouts);
+    let a = app.runtime.tabs.active_id();
+    let b = if a == first { second } else { first };
+    frames(&mut app, 2);
+    observe_tab(&mut app, a);
+    app.runtime
+        .workspace
+        .book
+        .book_mut()
+        .save_as(a, "Pair")
+        .expect("a free name");
+    set_tab_workspace(&mut app, b, "Pair").expect("a known workspace");
+    frames(&mut app, 3);
+    app.active_tab_mut().focus = PaneSide::Flow;
+    app.apply_toolbar_action(ToolbarAction::AddNative("native.ema"));
+    let ema = "native.ema".to_owned();
+    let same = frames_until(&mut app, 50, |app| {
+        let shows = |tab| scope_kinds(app, tab)[0].contains(&ema);
+        shows(a) && shows(b)
+    });
+    assert!(
+        same,
+        "a {:?}, b {:?}",
+        scope_kinds(&app, a),
+        scope_kinds(&app, b)
+    );
+    let saved = save_tab_to(&mut app, b).expect("saved");
+    assert!(saved.changed);
+    let recipe = app.runtime.workspace.book.book().recipe("Pair").cloned();
+    let kinds: Vec<_> = (recipe.expect("saved").flow_indicators.iter())
+        .map(|entry| entry.kind.stable_name().to_owned())
+        .collect();
+    assert_eq!(kinds, scope_kinds(&app, a)[0], "what both tabs show");
+    assert!(!app.runtime.workspace.book.tab_row(a).1);
+}
+
+/// A tab on a workspace other than Default, landing on it the frame its menu
+/// opens, keeps the menu open: by the toggle and by a click on the capsule's
+/// name, on either tab of the strip.
+#[test]
+fn the_cell_menu_stays_open_on_a_tab_on_another_workspace() {
+    for index in [0, 1] {
+        let layouts = crate::scratch::ScratchFile::new("workspace-menu-b-stays", "layouts.toml");
+        let (mut app, first, _) = two_tabs(&layouts);
+        app.runtime.tabs.select(0);
+        fill_book(&mut app, first, 4);
+        app.runtime.tabs.select(index);
+        let tab = app.runtime.tabs.active_id();
+        let name = app
+            .runtime
+            .workspace
+            .book
+            .book()
+            .list()
+            .last()
+            .unwrap()
+            .name
+            .clone();
+        assert_ne!(name, "Default");
+        set_tab_workspace(&mut app, tab, &name).expect("a known workspace");
+        app.chrome.window_menu.tab_workspace.toggle_chip_menu(tab);
+        let ctx = egui::Context::default();
+        for frame in 0..12 {
+            run_frame_at(&mut app, &ctx, FULL_HD);
+            let on = app.chrome.window_menu.tab_workspace.chip_menu_on(tab);
+            assert!(on, "tab {index}: closed on frame {frame}");
+        }
+        assert_eq!(app.runtime.workspace.book.tab_row(tab).0, name);
+        app.chrome.window_menu.tab_workspace.toggle_chip_menu(tab);
+        run_frame_at(&mut app, &ctx, FULL_HD);
+        let name = (app.chrome.toolbar_controls.iter())
+            .find(|control| control.id == "toolbar.capsule.workspace")
+            .expect("the capsule's name")
+            .rect;
+        click_sized(&mut app, &ctx, FULL_HD, name.center());
+        for frame in 0..12 {
+            run_frame_at(&mut app, &ctx, FULL_HD);
+            let on = app.chrome.window_menu.tab_workspace.chip_menu_on(tab);
+            assert!(on, "tab {index}: clicked open, closed on frame {frame}");
+        }
+    }
+}
+
+/// The panes' drawings on the active tab, all told.
+fn drawings(app: &QuantickApp) -> usize {
+    let panes = app.active_tab().panes();
+    panes.map(|(pane, _)| pane.drawings.items().len()).sum()
+}
+
+/// A click outside the open menu closes it and reaches nothing under it:
+/// the window's top layer there is the menu's shield, and an armed drawing
+/// tool draws nothing.
+#[test]
+fn a_click_outside_closes_the_menu_and_goes_no_further() {
+    use crate::toolrail::Tool;
+    let layouts = crate::scratch::ScratchFile::new("workspace-menu-b-outside", "layouts.toml");
+    let (mut app, first, _) = two_tabs(&layouts);
+    app.runtime.tabs.select(0);
+    fill_book(&mut app, first, 9);
+    let ctx = egui::Context::default();
+    open_cell_menu(&mut app, &ctx);
+    let chart = egui::pos2(400.0, 500.0);
+    let top = ctx.layer_id_at(chart).expect("a layer");
+    assert_eq!(top.order, egui::Order::Middle, "the shield takes the click");
+    let tool = Tool::Drawing(drawing_tool("horizontal-line"));
+    app.surfaces.toolrail.arm(tool);
+    click_sized(&mut app, &ctx, FULL_HD, chart);
+    run_frame_at(&mut app, &ctx, FULL_HD);
+    assert!(
+        !app.chrome.window_menu.tab_workspace.chip_menu_on(first),
+        "closed"
+    );
+    assert_eq!(drawings(&app), 0, "the click went no further");
+}
+
+/// Only the switch and its label toggle Autosave: a click on the row's
+/// state words changes nothing and leaves the menu open.
+#[test]
+fn only_the_switch_toggles_autosave() {
+    let layouts = crate::scratch::ScratchFile::new("workspace-menu-b-switch", "layouts.toml");
+    let (mut app, first, _) = two_tabs(&layouts);
+    app.runtime.tabs.select(0);
+    fill_book(&mut app, first, 9);
+    let ctx = egui::Context::default();
+    let shown = open_cell_menu(&mut app, &ctx);
+    let before = app.runtime.workspace.book.book().autosave();
+    let switch = shown.row("workspace_menu.autosave").expect("the toggle");
+    let words = egui::pos2(shown.menu.right() - 20.0, switch.center().y);
+    assert!(
+        !switch.contains(words),
+        "the state words lie outside the toggle"
+    );
+    click_sized(&mut app, &ctx, FULL_HD, words);
+    run_frame_at(&mut app, &ctx, FULL_HD);
+    assert_eq!(app.runtime.workspace.book.book().autosave(), before);
+    assert!(
+        app.chrome.window_menu.tab_workspace.chip_menu_on(first),
+        "still open"
+    );
+    click_sized(&mut app, &ctx, FULL_HD, switch.center());
+    run_frame_at(&mut app, &ctx, FULL_HD);
+    assert_eq!(app.runtime.workspace.book.book().autosave(), !before);
+}
+
+/// Typed into the filter, Enter switches to the first match.
+#[test]
+fn enter_in_the_filter_switches_to_the_first_match() {
+    let layouts = crate::scratch::ScratchFile::new("workspace-menu-b-enter", "layouts.toml");
+    let (mut app, first, _) = two_tabs(&layouts);
+    app.runtime.tabs.select(0);
+    fill_book(&mut app, first, 14);
+    let ctx = egui::Context::default();
+    let shown = open_cell_menu(&mut app, &ctx);
+    assert!(shown.row("workspace_menu.filter").is_some());
+    let typed = vec![egui::Event::Text("desk 05".to_owned())];
+    run_frame_sized(&mut app, &ctx, FULL_HD, typed, egui::Modifiers::NONE);
+    assert_eq!(app.chrome.window_menu.tab_workspace.filter, "desk 05");
+    let enter = vec![key_press(egui::Key::Enter)];
+    run_frame_sized(&mut app, &ctx, FULL_HD, enter, egui::Modifiers::NONE);
+    run_frame_at(&mut app, &ctx, FULL_HD);
+    assert_eq!(app.runtime.workspace.book.tab_row(first).0, "Desk 05");
 }

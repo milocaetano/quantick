@@ -8,9 +8,7 @@
 
 use eframe::egui;
 
-use super::{DrawingChromeAsk, DrawingChromeSurface, DrawingEdit, DrawingEnv};
-use crate::drawings::Drawing;
-use crate::pane::PaneSide;
+use super::{Chrome, DrawingChromeAsk, DrawingEnv};
 use crate::theme;
 
 /// Id of the on-chart note editor's floating area. One editor at a time —
@@ -18,70 +16,11 @@ use crate::theme;
 const INLINE_TEXT_AREA_ID: &str = "inline-text-editor";
 /// What an empty note's field says before anything is typed.
 pub(crate) const INLINE_TEXT_HINT: &str = "Add text";
-/// Width of the field. Wide enough for a sentence, narrow enough that it does
-/// not cover the price it is annotating.
-const INLINE_TEXT_WIDTH_PX: f32 = 180.0;
-/// Type size the editor falls back to when the tool declares none.
-const INLINE_TEXT_FALLBACK_PX: f32 = 12.0;
-/// Line height as a multiple of the type size, and the frame's own vertical
-/// padding — together, how tall the one-line field stands. Used to decide
-/// whether it still fits above the anchor.
-const INLINE_TEXT_LINE_FACTOR: f32 = 1.4;
-const INLINE_TEXT_FRAME_PAD_PX: f32 = 10.0;
 
-/// The editor's state: at most one open edit.
-#[derive(Default)]
-pub(crate) struct InlineEditor {
-    edit: Option<DrawingEdit>,
-}
-
-impl InlineEditor {
-    /// Which note is being typed, by index alone — what a second operator
-    /// reads to know the keyboard belongs to an object.
-    pub fn editing_index(&self) -> Option<usize> {
-        self.edit.as_ref().map(|edit| edit.index)
-    }
-
-    /// The full target, which is what every pane needs to stand exactly one
-    /// object down: an index alone names a different object on each pane.
-    pub fn target(&self) -> Option<(u64, PaneSide, usize)> {
-        self.edit
-            .as_ref()
-            .map(|edit| (edit.tab, edit.side, edit.index))
-    }
-
-    /// Open the editor on this object.
-    ///
-    /// Refused for an object that holds no words or is locked: a locked
-    /// object's geometry and content are both protected, and an editor that
-    /// opened and then dropped every keystroke would be worse than none.
-    pub fn begin(&mut self, tab: u64, side: PaneSide, index: usize, drawing: &Drawing) -> bool {
-        if drawing.locked || !drawing.tool.holds_text() {
-            return false;
-        }
-        // Typing is one edit: the note as it stands is kept here and recorded
-        // when the editor closes, so undo takes back the note, not the last
-        // letter of it.
-        self.edit = Some(DrawingEdit {
-            tab,
-            side,
-            index,
-            before: drawing.clone(),
-        });
-        true
-    }
-
-    /// Close the editor, handing back what the undo history is owed — on the
-    /// pane the note actually lives on, which is not necessarily the one in
-    /// front when it closes.
-    pub fn end(&mut self) -> Option<DrawingEdit> {
-        self.edit.take()
-    }
-}
 
 /// Draw this frame.
 pub(crate) fn draw(
-    chrome: &mut DrawingChromeSurface,
+    chrome: &mut Chrome,
     ctx: &egui::Context,
     env: &DrawingEnv<'_>,
 ) -> DrawingChromeAsk {
@@ -97,11 +36,7 @@ pub(crate) fn draw(
     ask
 }
 
-fn draw_inner(
-    chrome: &mut DrawingChromeSurface,
-    ctx: &egui::Context,
-    env: &DrawingEnv<'_>,
-) -> DrawingChromeAsk {
+fn draw_inner(chrome: &mut Chrome, ctx: &egui::Context, env: &DrawingEnv<'_>) -> DrawingChromeAsk {
     let palette = theme::get(ctx);
     // The `QUANTICK_TEXT_NOTE` hook: the placement rules — where the middle
     // of the visible window is, what the saved defaults say a note opens
@@ -112,121 +47,119 @@ fn draw_inner(
     // that would photograph nothing at all.
     let mut ask = DrawingChromeAsk {
         #[cfg(any(feature = "drawing-harness", test))]
-        place_text_note: chrome.scenario.note_requested(),
+        place_text_note: chrome.state().scenario.note_requested(),
         ..DrawingChromeAsk::default()
     };
     // A placement that asked for the caret gets it here, on the frame it
     // happened: the object it made is the selected one.
-    if std::mem::take(&mut chrome.pending_text_edit)
-        && let Some(selected) = env.selected.as_ref()
-    {
-        chrome
-            .inline
-            .begin(env.tab, env.side, selected.index, selected.drawing);
+    if chrome.pending_text_edit {
+        let edit = env.selected.as_ref().map(|selected| super::DrawingEdit {
+            tab: env.tab,
+            side: env.side,
+            index: selected.index,
+            before: selected.drawing.clone(),
+        });
+        ask.merge(chrome.emit(super::Intent::BeginPendingInline(edit)));
     }
-    let Some((tab, side, index)) = chrome.inline.target() else {
-        return ask;
-    };
-    // The object can go away underneath the editor — undo, delete, a tab
-    // switch, a click that moves the selection to the other pane. Any of
-    // those ends the editor, and it must not write into whatever now sits at
-    // that index: the note is only in front while its own tab and pane are
-    // the ones every drawing surface is reading.
-    let close = |ask: &mut DrawingChromeAsk, chrome: &mut DrawingChromeSurface| {
-        ask.record_inline_edit = chrome.inline.end().map(Box::new);
-    };
-    if env.tab != tab || env.side != side || env.selected_index() != Some(index) {
-        close(&mut ask, chrome);
+    ask.merge(chrome.emit(super::Intent::ObserveInline {
+        tab: env.tab,
+        side: env.side,
+        selected: env.selected_index(),
+        visible: env.chart_area.is_some() && env.selected_bbox.is_some(),
+        editable: env.selected.as_ref().is_some_and(|selected| {
+            !selected.drawing.locked
+                && selected
+                    .drawing
+                    .tool
+                    .inline_text(selected.drawing.payload.as_ref())
+                    .is_some()
+        }),
+    }));
+    if chrome.inline.target().is_none() {
         return ask;
     }
     let (Some(chart), Some(bbox), Some(selected)) =
         (env.chart_area, env.selected_bbox, env.selected.as_ref())
     else {
-        close(&mut ask, chrome);
         return ask;
     };
     let drawing = selected.drawing;
     let tool = drawing.tool;
     let Some(text) = tool.inline_text(drawing.payload.as_ref()) else {
-        close(&mut ask, chrome);
         return ask;
     };
     // Read once, and only what the field needs: this runs every frame the
     // editor is open, and the drawing behind it carries a boxed payload.
     let mut buffer = text.to_owned();
     let before = buffer.clone();
-    let size_px = tool
-        .glyph_size(drawing)
-        .map_or(INLINE_TEXT_FALLBACK_PX, |size| size.px);
-    let color = crate::drawings::to_color32(palette.resolved.legible_drawing(drawing.style.color));
+    let Some(payload) = drawing
+        .payload
+        .as_any()
+        .downcast_ref::<quantick_drawings::TextPayload>()
+    else {
+        ask.merge(chrome.emit(super::Intent::EndInline));
+        return ask;
+    };
     if drawing.locked {
-        close(&mut ask, chrome);
+        ask.merge(chrome.emit(super::Intent::EndInline));
         return ask;
     }
-
-    // Where the words are painted — above the anchor — unless there is no
-    // room up there, in which case it opens below it instead. A field pinned
-    // upward against the top of the chart lands on the flow legend and covers
-    // the very key it is annotating; flipping keeps both readable, the way a
-    // popover does.
-    //
-    // Constrained to the chart either way, like every other floating drawing
-    // surface: the object stands down while the editor is up, so a field that
-    // ran off the window would leave the trader typing blind into a widget
-    // they cannot see.
-    let field_height = size_px * INLINE_TEXT_LINE_FACTOR + INLINE_TEXT_FRAME_PAD_PX;
-    let (position, pivot) = if bbox.bottom() - field_height < chart.top() {
-        (bbox.left_top(), egui::Align2::LEFT_TOP)
+    let format = payload.format();
+    let legacy = payload.appearance == quantick_drawings::text::TextAppearance::default();
+    let color = crate::drawings::to_color32(if legacy {
+        palette.resolved.legible_drawing(drawing.style.color)
     } else {
-        (
-            egui::pos2(bbox.left(), bbox.bottom()),
-            egui::Align2::LEFT_BOTTOM,
-        )
+        drawing.style.color
+    });
+    // Reverse the measured body bounds to recover the chart anchor. Navigation changes this
+    // projection every frame; the editor must never clamp or flip at an edge.
+    let anchor = quantick_drawings::text::anchor_from_bounds(
+        crate::drawings::px_rect(bbox.shrink(crate::pane::DRAWING_ANCHOR_RADIUS_PX)),
+        payload.appearance,
+    );
+    let bounds =
+        crate::drawings::egui_rect(payload.bounds(anchor, &crate::drawings::text::TextFonts(ctx)));
+    let pad = payload.appearance.padding();
+    let background = if legacy {
+        crate::drawings::text_backing(&palette, color, palette.chrome()).unwrap_or(palette.chrome())
+    } else {
+        payload
+            .appearance
+            .background
+            .map_or(egui::Color32::TRANSPARENT, |rgba| {
+                egui::Color32::from_rgba_unmultiplied(rgba[0], rgba[1], rgba[2], rgba[3])
+            })
     };
     let inner = egui::Area::new(egui::Id::new(INLINE_TEXT_AREA_ID))
         .order(egui::Order::Foreground)
-        .fixed_pos(position)
-        .pivot(pivot)
-        .constrain_to(chart)
+        .fixed_pos(bounds.min)
+        .constrain(false)
         .show(ctx, |ui| {
-            // A frame around it, in the accent: over a candle chart an
-            // unframed field is a rectangle of dark on dark, and the one
-            // thing this surface has to say is "the keyboard is here now".
-            // The fill is opaque for the same reason — words typed over wicks
-            // are words nobody can read back.
+            ui.set_clip_rect(chart);
             egui::Frame::none()
-                .fill(
-                    crate::drawings::text_backing(&palette, color, palette.chrome())
-                        .unwrap_or(palette.chrome()),
-                )
+                .fill(background)
                 .stroke(egui::Stroke::new(1.0_f32, palette.accent()))
-                .rounding(egui::Rounding::same(3.0))
-                .inner_margin(egui::Margin::symmetric(4.0, 2.0))
+                .inner_margin(egui::Margin::same(pad))
                 .show(ui, |ui| {
+                    let mut layouter = |ui: &egui::Ui, text: &str, _width: f32| {
+                        crate::drawings::text::layout(ui.ctx(), text, format, color)
+                    };
                     let response = ui.add(
                         egui::TextEdit::multiline(&mut buffer)
-                            .font(egui::FontId::new(
-                                size_px,
-                                match drawing
-                                    .payload
-                                    .as_any()
-                                    .downcast_ref::<quantick_drawings::TextPayload>()
-                                    .map(|payload| payload.family)
-                                {
-                                    Some(quantick_drawings::FontFamily::Monospace) => {
-                                        egui::FontFamily::Monospace
-                                    }
-                                    _ => egui::FontFamily::Proportional,
-                                },
-                            ))
+                            .font(crate::drawings::text::font_id(format))
+                            .layouter(&mut layouter)
                             .text_color(color)
                             .hint_text(INLINE_TEXT_HINT)
                             .desired_rows(1)
+                            .margin(0.0)
                             .frame(false)
-                            .desired_width(INLINE_TEXT_WIDTH_PX),
+                            .desired_width(
+                                format
+                                    .appearance
+                                    .wrap_width_px
+                                    .unwrap_or(bounds.width() - 2.0 * pad),
+                            ),
                     );
-                    // The caret on the first frame: a field that opens
-                    // unfocused asks for a click nobody was told about.
                     if !response.has_focus() && ui.memory(|memory| memory.focused().is_none()) {
                         response.request_focus();
                     }
@@ -252,63 +185,7 @@ fn draw_inner(
         ctx.memory_mut(|memory| memory.surrender_focus(inner.id));
     }
     if escaped || inner.lost_focus() {
-        close(&mut ask, chrome);
+        ask.merge(chrome.emit(super::Intent::EndInline));
     }
     ask
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::drawings::{ChartPoint, DRAWING_TOOLS, DrawingBand, Drawings};
-
-    fn note() -> Drawing {
-        let tool = DRAWING_TOOLS
-            .into_iter()
-            .find(|tool| tool.holds_text())
-            .expect("a tool that holds text");
-        let mut store = Drawings::default();
-        store.place_on(tool, &DrawingBand::Price, ChartPoint::at(1.0, 10.0));
-        store.items()[0].clone()
-    }
-
-    #[test]
-    fn a_locked_note_refuses_the_caret() {
-        let mut editor = InlineEditor::default();
-        let mut drawing = note();
-        drawing.locked = true;
-        assert!(
-            !editor.begin(1, PaneSide::Flow, 0, &drawing),
-            "an editor that opened and then dropped every keystroke is worse than none"
-        );
-        assert_eq!(editor.target(), None);
-    }
-
-    /// The caret belongs to words. A rectangle has none, and an editor that
-    /// opened over one would take the keyboard for nothing.
-    #[test]
-    fn an_object_without_words_refuses_the_caret() {
-        let mut editor = InlineEditor::default();
-        let mut wordless = note();
-        wordless.tool = DRAWING_TOOLS
-            .into_iter()
-            .find(|tool| !tool.holds_text())
-            .expect("a tool that holds no text");
-        assert!(!editor.begin(1, PaneSide::Flow, 0, &wordless));
-        assert_eq!(editor.target(), None);
-    }
-
-    /// The whole reason the target carries a tab and a pane: closing hands
-    /// back the pane the note lives on, not the one in front.
-    #[test]
-    fn closing_hands_back_the_pane_the_note_lives_on() {
-        let mut editor = InlineEditor::default();
-        assert!(editor.begin(7, PaneSide::Time(0), 3, &note()));
-        let closed = editor.end().expect("the editor was open");
-        assert_eq!(
-            (closed.tab, closed.side, closed.index),
-            (7, PaneSide::Time(0), 3)
-        );
-        assert!(editor.end().is_none(), "closing twice owes nothing twice");
-    }
 }

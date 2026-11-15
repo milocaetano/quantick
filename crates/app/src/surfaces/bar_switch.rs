@@ -1,144 +1,81 @@
-//! The quick bar switch, as a [`Surface`] — ProfitChart's type-a-number
-//! period search.
-//!
-//! A bare digit typed over the focused chart opens a list of every bar the
-//! number can mean (`15` minutes, seconds, hours, ticks, volume, dollar,
-//! imbalance, trades, Renko); a letter after it (`2000t`, `1d`) keeps the kinds
-//! that declare it. The engine's registry reads the query and writes the list;
-//! this file only reads keys and draws it. Enter applies the highlighted row
-//! to the pane it opened over through `layout.pane.set_bar_spec`'s own path,
-//! so an agent reaches the same outcome by that capability.
-
-use eframe::egui;
-use quantick_engine::bar_registry::{BUILTIN_BARS, BarConfiguration, quick_query_text};
-
-use super::{Surface, SurfaceEnv, SurfaceResponse};
-use crate::pane::PaneSide;
+//! Paint the quick bar switch; engine-backed decisions live in ui-model.
+use super::{SurfaceEnv, SurfaceResponse, ViewContext};
 use crate::theme;
+use eframe::egui;
+pub(crate) use quantick_ui_model::bar_switch::BarSwitchRequest;
+use quantick_ui_model::bar_switch::{Intent, Model, State};
 
-/// How far below the chart's top edge the list opens.
 const TOP_MARGIN_PX: f32 = 24.0;
-/// Wide enough for the longest row, `123456789 Imbalance (Dollar)`.
 const WIDTH_PX: f32 = 260.0;
 
-/// One bar change the trader chose: which pane, and the rule.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct BarSwitchRequest {
-    pub tab: u64,
-    pub side: PaneSide,
-    pub config: BarConfiguration,
-}
-
-#[derive(Debug)]
-struct Open {
-    query: String,
-    selected: usize,
-    tab: u64,
-    side: PaneSide,
-    /// Opened by the harness hook on the first frame, before the workspace's
-    /// focus has settled: it follows the focused pane rather than closing
-    /// when focus lands somewhere else.
-    follows_focus: bool,
-    /// Focus is requested once, on the frame the list opens.
-    focus_pending: bool,
-}
-
-/// Closed until a digit is typed over a chart.
 #[derive(Default)]
-pub(crate) struct BarSwitchSurface {
-    open: Option<Open>,
-}
-
-/// The digits of one frame's typed text, if that text is only digits.
-fn typed_digits(events: &[egui::Event]) -> Option<String> {
-    let text: String = events
-        .iter()
-        .filter_map(|event| match event {
-            egui::Event::Text(text) => Some(text.as_str()),
-            _ => None,
-        })
-        .collect();
-    (!text.is_empty() && text.bytes().all(|byte| byte.is_ascii_digit())).then_some(text)
-}
-
-impl BarSwitchSurface {
-    /// Open over `side` of tab `tab` with `query` typed.
-    pub fn open(&mut self, tab: u64, side: PaneSide, query: &str) {
-        self.open = Some(Open {
-            query: quick_query_text(query),
-            selected: 0,
-            tab,
-            side,
-            follows_focus: false,
-            focus_pending: true,
-        });
-    }
-
-    /// [`Self::open`] for the harness hook: the popup follows the focused
-    /// pane instead of closing when it moves.
-    #[cfg(any(feature = "scenario-harness", test))]
-    pub fn open_following_focus(&mut self, tab: u64, side: PaneSide, query: &str) {
-        self.open(tab, side, query);
-        if let Some(open) = self.open.as_mut() {
-            open.follows_focus = true;
-        }
-    }
-
-    /// Open on a bare digit when no widget holds the keyboard.
-    fn open_on_digit(&mut self, ctx: &egui::Context, env: &SurfaceEnv<'_>) {
-        if ctx.memory(|memory| memory.focused().is_some()) {
-            return;
-        }
-        let digits = ctx.input(|input| {
-            let bare = !input.modifiers.ctrl && !input.modifiers.command && !input.modifiers.alt;
-            bare.then(|| typed_digits(&input.events)).flatten()
-        });
-        if let Some(digits) = digits {
-            self.open(env.active_tab, env.focused_side, &digits);
-        }
-    }
-}
-
-#[cfg(test)]
-impl BarSwitchSurface {
-    pub fn is_open(&self) -> bool {
-        self.open.is_some()
-    }
-
-    /// What the typed text offers, in the order shown.
-    pub fn candidates(&self) -> Vec<BarConfiguration> {
-        self.open
-            .as_ref()
-            .map(|open| BUILTIN_BARS.quick_matches(&open.query))
-            .unwrap_or_default()
-    }
-}
-
-impl Surface for BarSwitchSurface {
+pub(crate) struct View;
+impl super::View<Model> for View {
     fn id(&self) -> &'static str {
         "bar_switch"
     }
-
-    fn draw(&mut self, ctx: &egui::Context, env: &SurfaceEnv<'_>) -> SurfaceResponse {
-        let palette = theme::get(ctx);
-        if self.open.is_none() {
-            self.open_on_digit(ctx, env);
-        }
-        let id = self.id();
-        let Some(open) = self.open.as_mut() else {
-            return SurfaceResponse::default();
+    fn paint(
+        &mut self,
+        _: &State,
+        _: &mut ViewContext<'_>,
+        _: Option<&SurfaceEnv<'_>>,
+    ) -> Option<Intent> {
+        None
+    }
+    fn paint_updated(
+        &mut self,
+        session: &mut quantick_ui_model::UpdateSession<'_, Model>,
+        target: &mut ViewContext<'_>,
+        env: Option<&SurfaceEnv<'_>>,
+    ) {
+        let Some(env) = env else {
+            return;
         };
+        let ctx = target.context();
+        let palette = theme::get(ctx);
+        let id = self.id();
         let query_id = egui::Id::new(id).with("query");
-        // The switch answers for the pane it opened over: once another pane
-        // is focused, nothing it holds applies.
-        if open.follows_focus {
-            open.tab = env.active_tab;
-            open.side = env.focused_side;
+        let text: String = if session.state().open().is_none()
+            && !ctx.memory(|memory| memory.focused().is_some())
+        {
+            ctx.input(|input| {
+                input
+                    .events
+                    .iter()
+                    .filter_map(|event| {
+                        if let egui::Event::Text(text) = event {
+                            Some(text.as_str())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect()
+            })
+        } else {
+            String::new()
+        };
+        let address_changed = session
+            .state()
+            .open()
+            .is_some_and(|open| open.tab != env.active_tab || open.side != env.focused_side);
+        if address_changed || (session.state().open().is_none() && !text.is_empty()) {
+            session.update(Intent::Observe {
+                tab: env.active_tab,
+                side: env.focused_side,
+                text,
+                widget_focused: ctx.memory(|memory| memory.focused().is_some()),
+                modified: ctx.input(|input| {
+                    input.modifiers.ctrl || input.modifiers.command || input.modifiers.alt
+                }),
+            });
         }
-        let pane_moved = env.active_tab != open.tab || env.focused_side != open.side;
-        // Keys are the switch's only while its field holds the keyboard; once
-        // focus is elsewhere they belong to whoever holds it.
-        let typing = !pane_moved && ctx.memory(|memory| memory.has_focus(query_id));
+        if session.state().open().is_none() {
+            if address_changed {
+                ctx.memory_mut(|memory| memory.surrender_focus(query_id));
+            }
+            return;
+        }
+        let typing = ctx.memory(|memory| memory.has_focus(query_id));
         let (escape, enter, down, up) = ctx.input(|input| {
             (
                 input.key_pressed(egui::Key::Escape),
@@ -147,7 +84,6 @@ impl Surface for BarSwitchSurface {
                 typing && input.key_pressed(egui::Key::ArrowUp),
             )
         });
-        let mut candidates = Vec::new();
         let mut clicked = None;
         let mut window = egui::Window::new("Bars")
             .id(egui::Id::new(id))
@@ -162,19 +98,21 @@ impl Surface for BarSwitchSurface {
             }
             None => window.anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 96.0)),
         };
-        let asked = open.query.clone();
+
         let shown = window.show(ctx, |ui| {
+            let open = session.state().open().expect("open switch");
+            let mut query = open.query.clone();
+            let focus_pending = open.focus_pending;
             let edit = ui.add(
-                egui::TextEdit::singleline(&mut open.query)
+                egui::TextEdit::singleline(&mut query)
                     .id(query_id)
                     .hint_text("bar size")
                     .desired_width(f32::INFINITY),
             );
-            if open.focus_pending {
-                open.focus_pending = false;
+            if focus_pending {
                 edit.request_focus();
                 if let Some(mut state) = egui::TextEdit::load_state(ctx, edit.id) {
-                    let end = egui::text::CCursor::new(open.query.chars().count());
+                    let end = egui::text::CCursor::new(query.chars().count());
                     state
                         .cursor
                         .set_char_range(Some(egui::text::CCursorRange::one(end)));
@@ -193,23 +131,14 @@ impl Surface for BarSwitchSurface {
                     },
                 );
             });
-            open.query = quick_query_text(&open.query);
-            // Read after the edit: a letter and Enter in one frame answer the
-            // list the letter asked for.
-            candidates = BUILTIN_BARS.quick_matches(&open.query);
-            // A new query is a new list: a highlight kept by index would land
-            // on a different kind (15's fourth row is tick, 150's is volume).
-            if open.query != asked {
-                open.selected = 0;
+            if query != open.query || down || up {
+                session.update(Intent::Edit { query, down, up });
             }
-            let last = candidates.len().saturating_sub(1);
-            if down {
-                open.selected = (open.selected + 1).min(last);
+            if focus_pending {
+                session.update(Intent::FocusRequested);
             }
-            if up {
-                open.selected = open.selected.saturating_sub(1);
-            }
-            open.selected = open.selected.min(last);
+            let open = session.state().open().expect("editing keeps switch open");
+            let candidates = &open.candidates;
             if candidates.is_empty() {
                 ui.label(egui::RichText::new("no bar at this size").color(palette.text_support()));
             }
@@ -220,37 +149,39 @@ impl Surface for BarSwitchSurface {
                 }
             }
         });
-        let chosen = clicked
-            .filter(|_| !pane_moved)
-            .or((enter && !candidates.is_empty()).then_some(open.selected));
-        let request = chosen.map(|index| BarSwitchRequest {
-            tab: open.tab,
-            side: open.side,
-            config: candidates[index],
-        });
-        // It closes with its pane, or once the keyboard went elsewhere while
-        // the pointer is off the list (a row being pressed holds focus for
-        // the frame before its click lands).
         let over_list = shown.is_some_and(|shown| shown.response.contains_pointer());
+        let open = session.state().open().expect("painting keeps switch open");
         let abandoned =
             !open.focus_pending && !ctx.memory(|memory| memory.has_focus(query_id)) && !over_list;
-        if escape || request.is_some() || open.query.is_empty() || pane_moved || abandoned {
-            self.open = None;
+        if clicked.is_some() || enter || escape || abandoned || open.query.is_empty() {
+            session.update(Intent::Finish {
+                clicked,
+                enter,
+                escape,
+                abandoned,
+            });
+        }
+        if session.state().open().is_none() {
             ctx.memory_mut(|memory| memory.surrender_focus(query_id));
         }
-        SurfaceResponse {
-            bar_switch: request,
-            ..SurfaceResponse::default()
-        }
     }
-
     #[cfg(any(feature = "scenario-harness", test))]
-    fn apply_env_hook(&mut self, env: &SurfaceEnv<'_>) {
-        if let Some(query) =
-            crate::hooks::captured::var("QUANTICK_BAR_SWITCH").filter(|query| !query.is_empty())
-        {
-            self.open_following_focus(env.active_tab, env.focused_side, &query);
-        }
+    fn apply_env_hook(&mut self, env: &SurfaceEnv<'_>) -> Option<Intent> {
+        crate::hooks::captured::var("QUANTICK_BAR_SWITCH")
+            .filter(|query| !query.is_empty())
+            .map(|query| Intent::Open {
+                tab: env.active_tab,
+                side: env.focused_side,
+                query,
+                follows_focus: true,
+            })
+    }
+}
+
+pub(crate) fn effects(request: Option<BarSwitchRequest>) -> SurfaceResponse {
+    SurfaceResponse {
+        bar_switch: request,
+        ..SurfaceResponse::default()
     }
 }
 

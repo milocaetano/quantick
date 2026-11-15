@@ -15,7 +15,7 @@
 //! [`crate::layout_document::LayoutBook`], so an edit on a shared id would
 //! reach every tab holding it, and a workspace's whole promise is that nothing
 //! reaches another tab until Save to.
-use crate::canvas::{CanvasState, preset};
+use crate::canvas::{CanvasState, PaneKind, PaneTree, preset};
 use crate::indicator_document::SavedIndicator;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -123,6 +123,7 @@ pub struct ContextPaneRecipe {
 
 /// One saved way of reading a market.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(from = "StoredRecipe")]
 pub struct WorkspaceRecipe {
     /// Which charts the canvas shows.
     pub layout: DeclaredLayout,
@@ -167,6 +168,83 @@ pub struct WorkspaceRecipe {
     /// `layout` names, as [`Self::canvas_state`] reads it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub canvas: Option<CanvasState>,
+}
+
+/// A recipe as a save holds it, healed as it is read: a canvas saved before
+/// rails, beside a column fold flag that outlived a maximize, a float or an
+/// add, carries that fold as its rail where it can ([`CanvasState::with_folds`]),
+/// and the flags then say what the canvas folds, so the tab it opens and the
+/// save read alike.
+#[derive(Deserialize)]
+struct StoredRecipe {
+    layout: DeclaredLayout,
+    #[serde(default)]
+    split_fraction: Option<f32>,
+    #[serde(default)]
+    context_collapsed: bool,
+    #[serde(default)]
+    flow_collapsed: bool,
+    #[serde(default)]
+    context_heights: Vec<f32>,
+    #[serde(default)]
+    context_panes_collapsed: Vec<bool>,
+    #[serde(default)]
+    flow_indicators: Vec<SavedIndicator>,
+    #[serde(default)]
+    context_panes: Vec<ContextPaneRecipe>,
+    #[serde(default)]
+    layers: BTreeMap<String, bool>,
+    #[serde(default)]
+    footprint_style: Option<String>,
+    #[serde(default)]
+    flow_bars: Option<String>,
+    #[serde(default, rename = "context_bars")]
+    legacy_context_bars: Vec<String>,
+    #[serde(default)]
+    canvas: Option<CanvasState>,
+}
+
+impl From<StoredRecipe> for WorkspaceRecipe {
+    fn from(stored: StoredRecipe) -> Self {
+        let StoredRecipe {
+            layout,
+            split_fraction,
+            context_collapsed,
+            flow_collapsed,
+            context_heights,
+            context_panes_collapsed,
+            flow_indicators,
+            context_panes,
+            layers,
+            footprint_style,
+            flow_bars,
+            legacy_context_bars,
+            canvas,
+        } = stored;
+        let canvas = canvas.map(|canvas| canvas.with_folds(context_collapsed, flow_collapsed));
+        // With a canvas the flags are its readback, as a live tab writes them:
+        // a fold it could not place (its flow pane floated or minimized) is no
+        // fold, and the flags and the canvas never disagree after a read.
+        let (context_collapsed, flow_collapsed) = (canvas.as_ref()).map_or(
+            (context_collapsed, flow_collapsed),
+            CanvasState::flow_side_folds,
+        );
+        Self {
+            layout,
+            split_fraction,
+            context_collapsed,
+            flow_collapsed,
+            context_heights,
+            context_panes_collapsed,
+            flow_indicators,
+            context_panes,
+            layers,
+            footprint_style,
+            flow_bars,
+            legacy_context_bars,
+            canvas,
+        }
+    }
 }
 
 impl Default for WorkspaceRecipe {
@@ -244,29 +322,29 @@ impl WorkspaceRecipe {
         }
     }
 
-    /// One line the workspace menu shows beside the name: the panes, then the
-    /// indicator count when there is one, e.g. `Time · Flow · 3 ind`. The factory `Default` names no
-    /// arrangement, so it says what it means instead.
+    /// One line the workspace menu and `workspace.list` show beside the name:
+    /// [`Self::summary_of`] the canvas it shows.
     #[must_use]
     pub fn summary(&self) -> String {
+        self.summary_of(self.canvas_state().tree())
+    }
+
+    /// What this recipe holds on a canvas laid out as `tree`: its panes'
+    /// kinds, timeframe charts first, then its indicators, even none, e.g.
+    /// `Time · Flow · 3 ind`. The factory `Default` names no arrangement, so
+    /// it says what it means instead.
+    #[must_use]
+    pub fn summary_of(&self, tree: &PaneTree) -> String {
         if self.is_factory() {
             return FACTORY_SUMMARY.to_owned();
         }
-        let mut parts: Vec<String> = (0..self.layout.context_panes())
-            .map(|_| CONTEXT_PANE_LABEL.to_owned())
-            .collect();
-        if self.layout != DeclaredLayout::Time {
-            parts.push("Flow".to_owned());
-        }
-        let indicators = self.flow_indicators.len()
-            + self
-                .context_panes
-                .iter()
-                .map(|pane| pane.indicators.len())
-                .sum::<usize>();
-        if indicators > 0 {
-            parts.push(format!("{indicators} ind"));
-        }
+        let kinds: Vec<PaneKind> = tree.panes().into_iter().map(|(_, kind)| kind).collect();
+        let count = |kind| kinds.iter().filter(|held| **held == kind).count();
+        let mut parts = vec![CONTEXT_PANE_LABEL; count(PaneKind::Time)];
+        parts.extend((count(PaneKind::Flow) > 0).then_some("Flow"));
+        let panes = self.context_panes.iter().map(|pane| pane.indicators.len());
+        let indicators = format!("{} ind", self.flow_indicators.len() + panes.sum::<usize>());
+        parts.push(&indicators);
         parts.join(SUMMARY_SEPARATOR)
     }
 

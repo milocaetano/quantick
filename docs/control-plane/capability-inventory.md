@@ -50,6 +50,8 @@ capability that cannot change application state.
 | `annotate.parallel_channel.create` | 1 | `annotate` | no | `annotate`, `annotate.chart` |
 | `annotate.rectangle.create` | 1 | `annotate` | no | `annotate`, `annotate.chart` |
 | `annotate.remove` | 1 | `annotate` | no | `annotate`, `annotate.chart` |
+| `annotate.text.repeat` | 1 | `annotate` | no | `cockpit`, `cockpit.layout` |
+| `annotate.text.set` | 1 | `annotate` | no | `cockpit`, `cockpit.layout` |
 | `annotate.trend_line.create` | 1 | `annotate` | no | `annotate`, `annotate.chart` |
 | `annotate.zone.create` | 1 | `annotate` | no | `annotate`, `annotate.chart` |
 | `appearance.apply` | 1 | `appearance` | no | `cockpit`, `cockpit.layout` |
@@ -65,6 +67,7 @@ capability that cannot change application state.
 | `canvas.pane.resize` | 1 | `canvas` | no | `cockpit`, `cockpit.layout` |
 | `canvas.pane.restore` | 1 | `canvas` | no | `cockpit`, `cockpit.layout` |
 | `canvas.pane.return` | 1 | `canvas` | no | `cockpit`, `cockpit.layout` |
+| `canvas.seam.drag` | 1 | `canvas` | no | `cockpit`, `cockpit.layout` |
 | `canvas.widget.add` | 1 | `canvas` | no | `cockpit`, `cockpit.layout` |
 | `canvas.window_menu.open` | 1 | `canvas` | no | `cockpit`, `cockpit.layout` |
 | `catalog.remove` | 1 | `catalog` | no | `cockpit`, `cockpit.desk` |
@@ -174,7 +177,6 @@ capability that cannot change application state.
 | `widget.open` | 1 | `widget` | no | `cockpit`, `cockpit.layout` |
 | `widget.read` | 1 | `widget` | yes | `observe`, `observe.orderflow` |
 | `workspace.autosave.set` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
-| `workspace.colour.set` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
 | `workspace.delete` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
 | `workspace.list` | 1 | `workspace` | yes | `observe`, `observe.workspace` |
 | `workspace.new` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
@@ -183,4 +185,4 @@ capability that cannot change application state.
 | `workspace.save_as` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
 | `workspace.save_to` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
 
-158 capabilities registered.
+160 capabilities registered.

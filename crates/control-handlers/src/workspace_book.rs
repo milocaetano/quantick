@@ -49,6 +49,8 @@ use crate::dock::ActionDock;
 use crate::notify::NotifyAccess;
 use crate::tabs::TabDirectory;
 
+pub mod cell_menu;
+
 fn unavailable() -> ControlError {
     ControlError::invalid_request("the workspaces are unavailable")
 }
@@ -150,9 +152,6 @@ pub trait WorkspaceBookHost {
 /// still lands, and nothing is journaled.
 pub type Journal<'a, A> = Option<(&'a mut A, &'a ActorContext)>;
 
-/// A workspace row's command, its colour the palette's own slot.
-pub type RowCommand = WorkspaceCommand<WorkspaceColour>;
-
 /// Carry out what a workspace row asked for, through the same steps the
 /// control call takes, so a row leaves the call's journal row. Answers what
 /// to tell the trader, naming the tabs.
@@ -162,7 +161,7 @@ pub fn apply_row_command<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
     menu: &mut WorkspaceMenuState,
     tab: u64,
     symbol: &str,
-    command: RowCommand,
+    command: WorkspaceCommand,
 ) -> Option<String> {
     let note = match command {
         WorkspaceCommand::BeginSaveAs => {
@@ -207,9 +206,6 @@ pub fn apply_row_command<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
         }),
         WorkspaceCommand::SetAutosave(on) => {
             autosave_journaled(host, &mut to, on, tab).map(|(_, saved)| saved_notes(host, &saved))
-        }
-        WorkspaceCommand::SetColour(name, colour) => {
-            colour_journaled(host, &mut to, &name, colour).map(|_| None)
         }
         WorkspaceCommand::Delete(name) => delete_journaled(host, &mut to, &name).map(|gone| {
             gone.changed.then(|| {
@@ -426,6 +422,10 @@ pub fn save_tab_to<H: WorkspaceBookHost + ?Sized>(
     tab: u64,
 ) -> Result<SaveOutcome, ControlError> {
     let before = book(app)?.clone();
+    // What its panes show, which every tab on the workspace shows.
+    if let Some(store) = app.workspace_store() {
+        store.take_shown_sets(tab);
+    }
     let saved = written(app, |book| book.save_to(tab), |saved| saved.changed);
     if saved.as_ref().is_err_and(failed_write) {
         note_failed(app, tab);
@@ -543,6 +543,10 @@ pub fn save_tab_as<H: WorkspaceBookHost + ?Sized>(
         .clone()
         .save_as(tab, name)
         .map_err(|refusal| refused(&refusal))?;
+    // What its panes show, held edits of the workspace's included.
+    if let Some(store) = app.workspace_store() {
+        store.take_shown_sets(tab);
+    }
     let mut outcome = written(app, |book| book.save_as(tab, name), |saved| saved.changed)?;
     outcome.changed |= commit_market_whole(app, tab, before, outcome.changed)?;
     Ok(outcome)

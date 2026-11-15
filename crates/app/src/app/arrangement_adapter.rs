@@ -2,11 +2,13 @@
 use super::ArrangementHost;
 use crate::config::AppConfig;
 use crate::state::BarConfiguration;
+use crate::surfaces::drawing_chrome::DrawingChromeExt as _;
 use crate::tab::Tab;
 use crate::timezone::TzOffset;
 use crate::ui_state::{self, SavedFocusExt};
 use quantick_feed::{self as feed, FeedHandle, history_reach};
 
+use crate::toolrail::ToolRailExt as _;
 pub(crate) struct ArrangementAdapter<'a> {
     pub(super) tabs: &'a mut ArrangementHost,
     pub(super) config: &'a AppConfig,
@@ -18,7 +20,7 @@ pub(crate) struct ArrangementAdapter<'a> {
     pub(super) harness: &'a crate::harness::Harness,
     pub(super) toolrail: &'a mut crate::toolrail::ToolRail,
     pub(super) tz: &'a mut TzOffset,
-    pub(super) dock: &'a mut crate::dock::Dock,
+    pub(super) dock: &'a mut crate::surfaces::dock::DockSurface,
     pub(super) show_perf: &'a mut bool,
     pub(super) record_deals: &'a mut Option<bool>,
     pub(super) history: &'a mut quantick_session::HistorySettings,
@@ -36,7 +38,7 @@ pub(crate) struct ArrangementRead<'a> {
     pub(super) config: &'a AppConfig,
     pub(super) toolrail: &'a crate::toolrail::ToolRail,
     pub(super) tz: &'a TzOffset,
-    pub(super) dock: &'a crate::dock::Dock,
+    pub(super) dock: &'a quantick_ui_model::dock::State,
     pub(super) show_perf: bool,
     pub(super) record_deals: Option<bool>,
     pub(super) history: &'a quantick_session::HistorySettings,
@@ -445,8 +447,8 @@ pub(super) fn saved_tab_of(tab: &Tab) -> ui_state::SavedTab {
         symbol: tab.symbol.clone(),
         layout: tab.canvas.layout.into(),
         split_fraction: Some(tab.canvas.split_fraction),
-        context_collapsed: tab.canvas.context_collapsed,
-        flow_collapsed: tab.canvas.flow_collapsed,
+        context_collapsed: tab.canvas.folds().0,
+        flow_collapsed: tab.canvas.folds().1,
         context_heights: tab.canvas.context_height_shares(),
         context_panes_collapsed: tab.canvas.context_collapsed_slots(),
         focus: Some(ui_state::SavedFocus::from_side(tab.focused_side()).0),

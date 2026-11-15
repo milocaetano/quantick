@@ -39,6 +39,7 @@
 //! allocates on a quiet frame.
 
 use crate::state::BarConfiguration;
+use crate::surfaces::drawing_chrome::DrawingChromeExt as _;
 use quantick_drawings::{PaneMarks, PaneSync};
 use quantick_workspace::market_settings::{MarketSettings, PaneWrite};
 use quantick_workspace::session::{LayoutEffect, PaneFacts, Selection};
@@ -147,10 +148,12 @@ pub(crate) struct LayoutAdapter<'a> {
     pub(super) active: usize,
     pub(super) indicators: &'a mut super::indicator_manager::IndicatorState,
     pub(super) store: &'a mut crate::workspace_store::LayoutStore,
+    pub(super) book: &'a quantick_stores::workspaces::WorkspaceBookStore,
     pub(super) drawing_chrome: &'a mut crate::surfaces::DrawingChromeSurface,
     pub(super) toast: &'a mut crate::surfaces::ToastSurface,
-    pub(super) rename: &'a mut Option<super::chrome::LayoutRename>,
-    pub(super) delete_confirm: &'a mut Option<LayoutId>,
+    pub(super) indicator_settings:
+        &'a mut crate::surfaces::indicator_settings::IndicatorSettingsSurface,
+    pub(super) dialogs: &'a mut crate::surfaces::layout_dialogs::LayoutDialogsSurface,
 }
 
 /// The layouts and the market store this cockpit opens with, the drawings an
@@ -296,7 +299,7 @@ impl LayoutAdapter<'_> {
         &self.tabs[self.active]
     }
     fn note_workspace(&mut self, message: String) {
-        self.toast.note(message, Instant::now());
+        crate::surfaces::toast::note(self.toast, message, Instant::now());
     }
     fn end_inline_text_edit(&mut self) {
         self.drawing_chrome.commit_inline_text(self.tabs);
@@ -359,24 +362,17 @@ impl LayoutAdapter<'_> {
             .resolve_layout(self.pane_at(tab, side).and_then(ChartPane::layout_id))
     }
 
-    /// Every seeded pane on its tab's copy of its strip layout; see
+    /// Every seeded pane on its workspace's copy of its strip layout; see
     /// [`quantick_workspace::session::LayoutSession::own_copies`].
     pub(in crate::app) fn own_indicator_copies(&mut self) {
+        let (held, book) = (self.book.tab_holdings(), self.book.book());
+        (self.store.session_mut()).hold_workspaces(held, |tab| book.differs(tab));
         let panes = self
             .tabs
             .iter_with_ids()
             .flat_map(|(id, tab)| tab.panes().map(move |(pane, _)| (id, pane.id)));
         let owned = self.store.session_mut().own_copies(panes);
-        let reshow: Vec<_> = owned
-            .reshow
-            .iter()
-            .filter_map(|id| self.pane_address(*id))
-            .collect();
-        for (tab, side) in reshow {
-            let layout = self.layouts().get(self.pane_own_layout(tab, side));
-            let set = layout.map(|layout| layout.indicators.clone());
-            self.show_pane_indicators(tab, side, &set.unwrap_or_default());
-        }
+        self.show_sets(self.store.session().sets_of(owned.reshow));
         if owned.changed {
             self.mark_layouts_dirty();
         }
@@ -711,14 +707,13 @@ impl LayoutAdapter<'_> {
             return false;
         }
         self.indicators.registry.move_context_pane(tab_id, from, to);
-        if self.indicators.indicator_settings_target.tab == tab_id {
-            self.indicators.indicator_settings_target.side =
-                quantick_chart::indicator_registry::remap_side(
-                    self.indicators.indicator_settings_target.side,
-                    from,
-                    to,
-                );
-        }
+        self.indicator_settings.update(
+            quantick_ui_model::indicator_settings::Intent::ContextPaneMoved {
+                tab: tab_id,
+                from,
+                to,
+            },
+        );
         true
     }
 

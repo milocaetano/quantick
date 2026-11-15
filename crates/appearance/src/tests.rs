@@ -1052,3 +1052,43 @@ fn bare_drawing_text_is_shaded_until_it_reads() {
     let dark = ResolvedTheme::default();
     assert_eq!(dark.drawing_text_ink(pale), pale);
 }
+
+/// The capsule's workspace menu wears the tokens designer B names, in Dark
+/// and in Light: one role, the token each theme draws it in.
+#[test]
+fn the_workspace_menu_wears_designer_b_s_tokens_in_both_themes() {
+    let hex = |theme: &ResolvedTheme, token: Token| {
+        let [r, g, b, _] = theme.color(token).to_array();
+        format!("#{r:02X}{g:02X}{b:02X}")
+    };
+    let dark = [
+        "#171B26", "#1E2330", "#2E3648", "#2E3648", "#232936", "#2E3648", "#2B3F63", "#D2DAE2",
+        "#8692A4", "#6E7887", "#8AB4F8", "#10141D",
+    ];
+    let light = [
+        "#FFFFFF", "#F1F4F8", "#E1E6EE", "#9AA1AB", "#FFFFFF", "#E2E2E2", "#D6E6FB", "#202020",
+        "#555555", "#707070", "#245DB1", "#F7F7F7",
+    ];
+    for (theme, want) in [
+        (ResolvedTheme::default(), dark),
+        (ResolvedTheme::parse(LIGHT).unwrap(), light),
+    ] {
+        let menu = workspace_menu::chrome(theme.dark);
+        let got = [
+            menu.ground,
+            menu.block,
+            menu.block_edge,
+            menu.edge,
+            menu.control,
+            menu.hover,
+            menu.current,
+            menu.ink,
+            menu.support,
+            menu.faint,
+            menu.accent,
+            menu.inset,
+        ]
+        .map(|token| hex(&theme, token));
+        assert_eq!(got, want, "{}", theme.name);
+    }
+}

@@ -8,7 +8,8 @@
 
 use super::drop::{Corner, DockTarget, park_rect};
 use super::presets::{LayoutPreset, MAX_CANVAS_PANES, PaneKind, matching_preset, timeframes_with};
-use super::tree::{CanvasRect, PaneSlot, PaneTree};
+use super::rail::Reopen;
+use super::tree::{CanvasRect, PaneSlot, PaneTree, Pin};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
@@ -120,6 +121,7 @@ impl std::fmt::Display for CanvasRefusal {
 
 /// One tab's canvas.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(from = "Stored")]
 pub struct CanvasState {
     /// The next slot a new pane takes. Only rises, so a slot the saved
     /// workspace holds is never handed to a different pane.
@@ -128,6 +130,15 @@ pub struct CanvasState {
     maximized: Option<PaneSlot>,
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     minimized: BTreeSet<PaneSlot>,
+    /// The panes a seam drag or a collapse call put away to a rail
+    /// ([`super::rail`]). Apart from `minimized`: a strip folded inside a
+    /// rail is a strip again when the rail opens.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    railed: BTreeSet<PaneSlot>,
+    /// What each seam fold took from its open partner, which a restore
+    /// gives back ([`super::rail`]); only while that rail stands.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(super) reopen: Vec<Reopen>,
     tree: PaneTree,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     floating: Vec<FloatingPane>,
@@ -141,6 +152,8 @@ impl CanvasState {
             next_slot: preset.kinds.len() as PaneSlot,
             maximized: None,
             minimized: BTreeSet::new(),
+            railed: BTreeSet::new(),
+            reopen: Vec::new(),
             tree: preset.tree.clone(),
             floating: Vec::new(),
         }
@@ -159,6 +172,56 @@ impl CanvasState {
     #[must_use]
     pub fn minimized(&self) -> &BTreeSet<PaneSlot> {
         &self.minimized
+    }
+
+    /// The folded panes shown as a rail rather than a strip.
+    #[must_use]
+    pub fn railed(&self) -> &BTreeSet<PaneSlot> {
+        &self.railed
+    }
+
+    /// How `slot` holds its extent when the tree is carved.
+    pub(super) fn pin(&self, slot: PaneSlot) -> Pin {
+        if self.railed.contains(&slot) {
+            Pin::Rail
+        } else if self.minimized.contains(&slot) {
+            Pin::Strip(MINIMIZED_STRIP_PX)
+        } else {
+            Pin::Open
+        }
+    }
+
+    /// Fold `slots` to one rail, or open them; answers whether any changed.
+    /// A strip among them stays a strip.
+    pub(super) fn set_railed(&mut self, slots: &[PaneSlot], railed: bool) -> bool {
+        let mut changed = false;
+        for slot in slots {
+            changed |= if railed {
+                self.railed.insert(*slot)
+            } else {
+                self.railed.remove(slot)
+            };
+        }
+        self.prune_reopen();
+        changed
+    }
+
+    /// Forget what a fold took for every rail that no longer stands.
+    fn prune_reopen(&mut self) {
+        let railed = &self.railed;
+        self.reopen.retain(|reopen| railed.contains(&reopen.folded));
+    }
+
+    /// Whether `slot` is folded, to its strip or to a rail.
+    #[must_use]
+    pub fn folded(&self, slot: PaneSlot) -> bool {
+        self.minimized.contains(&slot) || self.railed.contains(&slot)
+    }
+
+    /// How many docked panes stand open.
+    fn open_count(&self) -> usize {
+        let panes = self.tree.panes().into_iter();
+        panes.filter(|(slot, _)| !self.folded(*slot)).count()
     }
 
     #[must_use]
@@ -189,7 +252,7 @@ impl CanvasState {
         if self.tree.holds(slot) {
             return Some(if self.maximized == Some(slot) {
                 PaneMode::Maximized
-            } else if self.minimized.contains(&slot) {
+            } else if self.folded(slot) {
                 PaneMode::Minimized
             } else {
                 PaneMode::Docked
@@ -223,10 +286,7 @@ impl CanvasState {
         if let Some(slot) = self.maximized {
             return vec![(slot, area)];
         }
-        let minimized = &self.minimized;
-        self.tree.rects_with(area, &|slot| {
-            minimized.contains(&slot).then_some(MINIMIZED_STRIP_PX)
-        })
+        self.tree.rects_with(area, &|slot| self.pin(slot))
     }
 
     /// Lay the docked panes out as `preset`. Each place of the preset takes a
@@ -279,6 +339,8 @@ impl CanvasState {
         self.next_slot = next;
         self.maximized = None;
         self.minimized.clear();
+        self.railed.clear();
+        self.reopen.clear();
         changed
     }
 
@@ -288,10 +350,12 @@ impl CanvasState {
     /// Not docked, or the last unfolded pane.
     pub fn minimize(&mut self, slot: PaneSlot) -> Result<bool, CanvasRefusal> {
         self.docked(slot)?;
-        if self.minimized.contains(&slot) {
+        // On a rail it is already put away: nothing to do, whatever else
+        // stands open.
+        if self.minimized.contains(&slot) || self.railed.contains(&slot) {
             return Ok(false);
         }
-        if self.tree.len() - self.minimized.len() <= 1 {
+        if self.open_count() <= 1 {
             return Err(CanvasRefusal::LastOpenPane);
         }
         if self.maximized == Some(slot) {
@@ -310,12 +374,14 @@ impl CanvasState {
         if self.maximized == Some(slot) {
             return Ok(false);
         }
+        // A rail stays: restoring the chart puts it back folded.
         self.minimized.remove(&slot);
         self.maximized = Some(slot);
         Ok(true)
     }
 
-    /// Unfold a minimized pane, or bring a maximized one back to its place.
+    /// Bring a maximized pane back to its place, folded if it was; else
+    /// unfold a minimized pane, or every pane of the rail it folded to.
     ///
     /// # Errors
     /// The canvas holds no such pane.
@@ -323,14 +389,11 @@ impl CanvasState {
         if !self.holds(slot) {
             return Err(CanvasRefusal::UnknownPane(slot));
         }
-        if self.minimized.remove(&slot) {
-            return Ok(true);
-        }
         if self.maximized == Some(slot) {
             self.maximized = None;
             return Ok(true);
         }
-        Ok(false)
+        Ok(self.unrail(slot) || self.minimized.remove(&slot))
     }
 
     /// Take a pane off the canvas. Removing the last docked flow pane lays
@@ -443,6 +506,8 @@ impl CanvasState {
                 };
                 let tree = self.tree.replaced(&swapped);
                 self.minimized.remove(&other);
+                self.railed.remove(&other);
+                self.prune_reopen();
                 let (slot, kind) = (other, other_kind);
                 self.floating.push(FloatingPane { slot, kind, host });
                 tree
@@ -503,7 +568,7 @@ impl CanvasState {
     #[must_use]
     pub fn strips(&self, canvas: CanvasRect) -> Vec<CanvasRect> {
         (self.rects(canvas).into_iter())
-            .filter_map(|(held, strip)| self.minimized.contains(&held).then_some(strip))
+            .filter_map(|(held, strip)| self.folded(held).then_some(strip))
             .collect()
     }
 
@@ -600,12 +665,15 @@ impl CanvasState {
             .ok_or(CanvasRefusal::LastDockedPane)?;
         self.tree = tree;
         self.minimized.remove(&slot);
+        self.railed.remove(&slot);
         if self.maximized == Some(slot) {
             self.maximized = None;
         }
-        if self.minimized.len() >= self.tree.len() {
+        if self.open_count() == 0 {
             self.minimized.clear();
+            self.railed.clear();
         }
+        self.prune_reopen();
         Ok(kind)
     }
 
@@ -644,4 +712,44 @@ impl CanvasState {
 #[must_use]
 pub fn remove_needs_confirm(saved: &CanvasState, live: &CanvasState, slot: PaneSlot) -> bool {
     saved.holds(slot) && live.holds(slot)
+}
+
+/// A canvas as a save holds it, healed as it is read: a rail naming a pane
+/// the tree lost, or leaving no pane open, is dropped rather than keeping a
+/// column layout on the tree painter for good.
+#[derive(Deserialize)]
+struct Stored {
+    next_slot: PaneSlot,
+    #[serde(default)]
+    maximized: Option<PaneSlot>,
+    #[serde(default)]
+    minimized: BTreeSet<PaneSlot>,
+    #[serde(default)]
+    railed: BTreeSet<PaneSlot>,
+    #[serde(default)]
+    reopen: Vec<Reopen>,
+    tree: PaneTree,
+    #[serde(default)]
+    floating: Vec<FloatingPane>,
+}
+
+impl From<Stored> for CanvasState {
+    fn from(stored: Stored) -> Self {
+        let mut state = Self {
+            next_slot: stored.next_slot,
+            maximized: stored.maximized,
+            minimized: stored.minimized,
+            railed: stored.railed,
+            reopen: stored.reopen,
+            tree: stored.tree,
+            floating: stored.floating,
+        };
+        let tree = &state.tree;
+        state.railed.retain(|slot| tree.holds(*slot));
+        if state.open_count() == 0 {
+            state.railed.clear();
+        }
+        state.prune_reopen();
+        state
+    }
 }

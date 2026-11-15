@@ -7,14 +7,16 @@
 use eframe::egui;
 
 use crate::app::arrangement_host::ArrangementHost;
-use crate::app::drawing_controller::DrawingController;
 use crate::config::AppConfig;
-use crate::dock::{Dock, DockEnv, DockResponse};
 use crate::loading::LoadingTask;
-use crate::replay_view::{ReplayAction, ReplayView};
+use crate::replay_view::ReplayAction;
+use crate::surfaces::drawing_chrome::DrawingChromeExt as _;
+use crate::surfaces::replay_browser::{ReplayBrowser, ReplayBrowserExt as _};
+use crate::surfaces::{BorrowedSurfaceEnv, PaperPanelEnv, SurfaceResponse};
+use crate::surfaces::{HostEffect, Surfaces, ViewContext};
 use crate::tab::Tab;
 use crate::timezone::TzOffset;
-use crate::toolrail::ToolRail;
+use quantick_ui_model::tool_rail::{Effect, Facts, Intent};
 
 /// The browser window and, while the *active* tab plays a session, its
 /// transport bar. A background tab's recording keeps advancing on its own
@@ -22,7 +24,7 @@ use crate::toolrail::ToolRail;
 /// at a time (§11).
 pub(super) fn draw_replay_browser(
     ctx: &egui::Context,
-    replay_view: &mut ReplayView,
+    surfaces: &mut Surfaces,
     tabs: &ArrangementHost,
     config: &AppConfig,
 ) -> Option<ReplayAction> {
@@ -36,7 +38,7 @@ pub(super) fn draw_replay_browser(
     // source itself answers: offering a Binance pair to a MetaTrader
     // exporter would be a click that can only end in a refusal, and
     // the chart behind this window is often on another venue entirely.
-    let serves = replay_view.download_provider();
+    let serves = surfaces.replay_browser.download_provider();
     let market = crate::replay_view::MarketMenu {
         current: (config.provider_of(&tab.feed_id) == Some(serves)).then_some(tab.symbol.as_str()),
         catalogue: config
@@ -46,24 +48,58 @@ pub(super) fn draw_replay_browser(
             .flat_map(|feed| feed.symbols.iter().map(String::as_str))
             .collect(),
     };
-    replay_view.draw(ctx, tab.link.replay.as_ref(), &market)
+    surfaces
+        .replay_browser
+        .bind_pass(tab.link.replay.as_ref(), &market);
+    let response = surfaces.draw_slot_unscoped(
+        quantick_ui_model::Slot::EarlyEdgePanels,
+        &mut ViewContext { ctx, ui: None },
+    );
+    crate::surfaces::replay_browser::take_action(&mut surfaces.replay_browser, response)
 }
 
 /// The drawing rail, listing and managing the focused pane's objects: what
 /// a click on the canvas would act on.
 pub(super) fn draw_drawing_rail(
     ctx: &egui::Context,
-    toolrail: &mut ToolRail,
+    surfaces: &mut Surfaces,
     tabs: &mut ArrangementHost,
-    drawings: &mut DrawingController,
 ) {
     let side = tabs[tabs.active_index()].focused_side();
-    // The flag lives with the window it opens, so it travels through a local
-    // rather than a `&mut` handed out of the surface.
-    let mut manager_open = drawings.chrome.manager_open();
     let tab = tabs.runtime_mut(tabs.active_index());
-    toolrail.draw(ctx, &mut tab.pane_mut(side).drawings, &mut manager_open);
-    drawings.chrome.set_manager_open(manager_open);
+    let drawings = &mut tab.pane_mut(side).drawings;
+    surfaces.toolrail.update(Intent::Observe(Facts {
+        count: drawings.items().len(),
+        draft: drawings.draft().is_some(),
+        draft_len: drawings.draft_len(),
+        all_hidden: drawings.all_hidden(),
+        all_locked: drawings.all_locked(),
+        manager_open: surfaces.drawing_chrome.manager_open(),
+    }));
+    let response = surfaces.draw_slot_unscoped(
+        quantick_ui_model::Slot::EdgePanels,
+        &mut ViewContext { ctx, ui: None },
+    );
+    settle_rail_effects(response, drawings, &mut surfaces.drawing_chrome);
+}
+
+pub(in crate::app) fn settle_rail_effects(
+    response: crate::surfaces::SurfaceResponse,
+    drawings: &mut crate::drawings::Drawings,
+    chrome: &mut crate::surfaces::DrawingChromeSurface,
+) {
+    for effect in response.model_effects {
+        if let HostEffect::ToolRail(effects) = effect {
+            for effect in effects {
+                match effect {
+                    Effect::SetAllHidden(hidden) => drawings.set_all_hidden(hidden),
+                    Effect::SetAllLocked(locked) => drawings.set_all_locked(locked),
+                    Effect::SetManagerOpen(open) => chrome.set_manager_open(open),
+                    Effect::UnknownFavorites(_) => {}
+                }
+            }
+        }
+    }
 }
 
 /// The right dock. The Trading tab speaks for the market on screen: one tab,
@@ -71,30 +107,23 @@ pub(super) fn draw_drawing_rail(
 /// and the session panel beside it.
 pub(super) fn draw_dock(
     ctx: &egui::Context,
-    dock: &mut Dock,
+    surfaces: &mut Surfaces,
     tabs: &mut ArrangementHost,
-    replay_view: &mut ReplayView,
     tz: TzOffset,
     alerts_open: bool,
-) -> DockResponse {
+) -> SurfaceResponse {
     let Tab { link, paper, .. } = tabs.runtime_mut(tabs.active_index());
-    let mut response = crate::dock::draw(
-        dock,
-        ctx,
-        &mut DockEnv {
-            alerts_open,
-            replay_view,
-            replay: link.replay.as_ref(),
-            paper,
-            tz,
-        },
-    );
-    // A session edit is app-wide: every tab's live file is refused and every
-    // ledger re-reads. The answer goes to the toast lane.
-    if let Some(edit) = response.journal_edit.take() {
-        let _ = super::super::paper_wiring::apply_journal_edit_across(tabs, &edit);
-    }
-    response
+    let mut env = BorrowedSurfaceEnv::Paper(PaperPanelEnv {
+        alerts_open,
+        replay: link.replay.as_ref(),
+        paper,
+        timezone: tz,
+    });
+    surfaces.draw_slot_unscoped_with_env(
+        quantick_ui_model::Slot::LateEdgePanels,
+        &mut ViewContext { ctx, ui: None },
+        Some(&mut env),
+    )
 }
 
 /// The ledger's jump-to-trade: center the flow pane on the round trip's
@@ -170,11 +199,43 @@ pub(super) fn observe_connections(
 
 /// Waits owned by other components, mirrored level-style each frame so the
 /// overlay needs no push notifications from either.
-pub(super) fn mirror_loading_waits(replay_view: &ReplayView, tabs: &mut ArrangementHost) {
+pub(super) fn mirror_loading_waits(replay_view: &ReplayBrowser, tabs: &mut ArrangementHost) {
     let replay_loading = replay_view.is_loading();
     let tab = tabs.runtime_mut(tabs.active_index());
     let book_syncing = tab.tape().is_syncing();
     tab.loading
         .set_active(LoadingTask::ReplaySession, replay_loading);
     tab.loading.set_active(LoadingTask::BookSync, book_syncing);
+}
+
+/// Paint the full borrowed drawing pass before resolving its host effects.
+pub(super) fn draw_pinned_inspector(
+    ctx: &egui::Context,
+    drawings: &crate::app::drawing_controller::DrawingController,
+    surfaces: &mut Surfaces,
+    tabs: &ArrangementHost,
+) -> crate::surfaces::drawing_chrome::DrawingChromeAsk {
+    use crate::app::drawing_controller::DrawingReadAccess;
+    let response = {
+        let host = DrawingReadAccess::new(tabs);
+        let env = drawings.pinned_env(
+            ctx,
+            &host,
+            &surfaces.toolrail,
+            surfaces.drawing_chrome.inspector_pinned(),
+        );
+        let mut borrowed = crate::surfaces::BorrowedSurfaceEnv::Drawings(&env);
+        surfaces.draw_slot_unscoped_with_env(
+            quantick_ui_model::Slot::PinnedInspector,
+            &mut crate::surfaces::ViewContext { ctx, ui: None },
+            Some(&mut borrowed),
+        )
+    };
+    let mut ask = crate::surfaces::drawing_chrome::DrawingChromeAsk::default();
+    for effect in response.model_effects {
+        if let quantick_ui_model::HostEffect::DrawingChrome(effect) = effect {
+            ask.merge(effect);
+        }
+    }
+    ask
 }

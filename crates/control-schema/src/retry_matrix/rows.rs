@@ -22,6 +22,7 @@ pub const FAMILIES: &[&[Readback]] = &[
     crate::native_indicator::READBACKS,
     crate::drawing_magnet::READBACKS,
     crate::drawing_scope::READBACKS,
+    crate::drawing_text::READBACKS,
     feed::READBACKS,
     crate::history::READBACKS,
     indicator_guide::READBACKS,

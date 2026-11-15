@@ -5,7 +5,7 @@ use crate::script_library::{
 
 pub const DEBOUNCE_MS: u64 = 350;
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, PartialEq)]
 pub struct ScriptEditor {
     pub document: Option<ScriptDocument>,
     pub diagnostics: Option<String>,

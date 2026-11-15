@@ -10,26 +10,10 @@ use eframe::egui;
 
 use super::object_row::{delete_all_question, object_row};
 use super::{
-    DRAWING_MANAGER_DEFAULT_POSITION, DRAWING_MANAGER_GAP_PX, DrawingChromeAsk,
-    DrawingChromeSurface, DrawingEnv, INSPECTOR_DEFAULT_WIDTH_PX, INSPECTOR_FALLBACK_HEIGHT_PX,
-    MANAGER_AREA_ID, clamp_into_chart,
+    Chrome, DRAWING_MANAGER_DEFAULT_POSITION, DRAWING_MANAGER_GAP_PX, DrawingChromeAsk, DrawingEnv,
+    INSPECTOR_DEFAULT_WIDTH_PX, INSPECTOR_FALLBACK_HEIGHT_PX, MANAGER_AREA_ID, clamp_into_chart,
 };
 use crate::toolrail::ToolboxDock;
-
-/// The manager's own state.
-#[derive(Default)]
-pub(crate) struct Manager {
-    /// Whether the window is on screen.
-    pub open: bool,
-    /// Whether it was on screen last frame, which is what tells an opening
-    /// from a frame in the middle of a session: only the opening frame places
-    /// the window.
-    was_open: bool,
-    /// The count-bearing gate is showing and awaiting its answer.
-    confirm_delete_all: bool,
-    #[cfg(test)]
-    pub action_rects: Vec<(usize, &'static str, egui::Rect)>,
-}
 
 /// Where the object manager opens: one gap inboard of the rail's inner edge,
 /// aligned with the rail's leading end, clamped into the chart — beside the
@@ -56,19 +40,19 @@ fn target_position(
 
 /// Draw this frame.
 pub(crate) fn draw(
-    chrome: &mut DrawingChromeSurface,
+    chrome: &mut Chrome,
     ctx: &egui::Context,
     env: &DrawingEnv<'_>,
 ) -> DrawingChromeAsk {
     let mut ask = DrawingChromeAsk::default();
     if !chrome.manager.open {
-        chrome.manager.was_open = false;
+        chrome.emit(super::Intent::ManagerFrame { visible: false });
         return ask;
     }
     let just_opened = !chrome.manager.was_open;
-    chrome.manager.was_open = true;
+    chrome.emit(super::Intent::ManagerFrame { visible: true });
     #[cfg(test)]
-    chrome.manager.action_rects.clear();
+    chrome.view.manager_rects.clear();
     let mut open = true;
     let mut confirm_delete_all = chrome.manager.confirm_delete_all;
     let rows = env.manager_rows;
@@ -116,7 +100,7 @@ pub(crate) fn draw(
                 for index in (0..count).rev() {
                     let rects = object_row(ui, &rows[index], index, &mut ask);
                     #[cfg(test)]
-                    chrome.manager.action_rects.extend(
+                    chrome.view.manager_rects.extend(
                         rects
                             .into_iter()
                             .map(|(label, rect)| (index, label, rect)),
@@ -146,8 +130,10 @@ pub(crate) fn draw(
             });
         }
     });
-    chrome.manager.confirm_delete_all = confirm_delete_all;
-    chrome.manager.open = open;
+    chrome.emit(super::Intent::ManagerAnswer {
+        open,
+        confirm_delete_all,
+    });
     ask
 }
 

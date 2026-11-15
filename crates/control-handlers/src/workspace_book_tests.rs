@@ -485,7 +485,7 @@ fn list_names_every_workspace_with_its_summary_and_tabs() {
         json!([
             { "name": "Default", "summary": "as the feed opens", "tabs": ["2"],
               "colour": "steel" },
-            { "name": "Scalp", "summary": "Flow", "tabs": ["1"], "colour": "violet" },
+            { "name": "Scalp", "summary": "Flow · 0 ind", "tabs": ["1"], "colour": "violet" },
         ])
     );
 }
@@ -942,7 +942,7 @@ fn row(
     access: &mut FakeAccess,
     actor: &ActorContext,
     menu: &mut WorkspaceMenuState,
-    command: RowCommand,
+    command: WorkspaceCommand,
 ) -> Option<String> {
     apply_row_command(host, Some((access, actor)), menu, 1, "SYM1", command)
 }

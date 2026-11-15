@@ -307,9 +307,18 @@ pub fn production_flags(source: &str) -> Vec<bool> {
 /// the ratchet is how a guard becomes noise. The sibling guards skip
 /// `target/` too — this one did not, until a review pointed at the
 /// divergence.
+///
+/// A `tests.rs` or `*_tests.rs` file is a test module moved out of its parent
+/// (`#[cfg(test)] mod tests;`). Inline, those lines were never counted; moved
+/// to a sibling file they would have been, so moving tests out of a
+/// production file raised the ratchet it was meant to relieve. The headless
+/// guard and the cycle guard already read the `*_tests.rs` half of this.
 pub fn tracked(relative: &str) -> bool {
+    let file = relative.rsplit('/').next().unwrap_or(relative);
     relative.starts_with("crates/")
         && relative.ends_with(".rs")
+        && file != "tests.rs"
+        && !file.ends_with("_tests.rs")
         && !relative
             .split('/')
             .any(|part| part == "tests" || part == "target")
@@ -866,6 +875,8 @@ mod tests {
         for path in [
             "docs/README.md",
             "crates/guards/tests/guards.rs",
+            "crates/app/src/toolbar/tests.rs",
+            "crates/app/src/indicator_worker/fold_tests.rs",
             "crates/app/target/debug/build/probe/src/vendored.rs",
             "Cargo.toml",
         ] {

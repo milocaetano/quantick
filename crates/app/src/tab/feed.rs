@@ -888,10 +888,8 @@ impl Tab {
         observer: &mut dyn super::alerts::Observer,
     ) {
         super::alerts::observe_alert_lifecycle(self, observer);
-        self.link.latest_trade_latency_ms =
-            metrics::feed_lag_ms(received_at_ms, Some(trade.timestamp_ms));
-        self.link.latest_trade_ms = Some(trade.timestamp_ms);
-        self.link.live_trades += 1;
+        self.link
+            .observe_live_trade(received_at_ms, trade.timestamp_ms);
         // The simulator taps the same per-trade point the bar engine does, so
         // paper trading works identically on a live feed and a replay — and on
         // a tab the user is not looking at, whose position keeps marking

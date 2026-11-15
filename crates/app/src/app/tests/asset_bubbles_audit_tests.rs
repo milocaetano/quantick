@@ -151,7 +151,13 @@ fn an_export_names_the_changes_saving_off_holds_back() {
     );
     let file = crate::scratch::ScratchFile::new("asset-export-held", "workspace.qws.toml");
     app.workspace_bundle_adapter().export_workspace_to(&file);
-    let message = app.surfaces.toast.message().unwrap_or_default().to_owned();
+    let message = app
+        .surfaces
+        .toast
+        .model_state
+        .message()
+        .unwrap_or_default()
+        .to_owned();
     assert!(message.contains("not included"), "{message}");
     assert!(message.contains("WIN*"), "{message}");
     assert!(

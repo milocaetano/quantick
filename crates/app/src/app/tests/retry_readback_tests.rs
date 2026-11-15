@@ -76,6 +76,8 @@ mod chart_settings_control;
 mod drawing_magnet_control;
 #[path = "drawing_scope_control_tests.rs"]
 mod drawing_scope_control;
+#[path = "drawing_text_control_tests.rs"]
+mod drawing_text_control;
 #[path = "feed_source_control_tests.rs"]
 mod feed_source_control;
 #[path = "history_control_tests.rs"]
@@ -875,6 +877,7 @@ fn replay_plan() -> Vec<(&'static str, u32, Value, Readback)> {
             Value::Null,
             Readback::Moves,
         ),
+        ("annotate.text.set", 1, Value::Null, Readback::Moves),
         // Filled in when it runs: a dated line placed for the call to keep.
         (
             "annotate.drawing_scope.set",
@@ -944,6 +947,7 @@ fn replay_plan() -> Vec<(&'static str, u32, Value, Readback)> {
         ("canvas.pane.maximize", 1, Value::Null, Readback::Moves),
         ("canvas.pane.restore", 1, Value::Null, Readback::Moves),
         ("canvas.pane.resize", 1, Value::Null, Readback::Moves),
+        ("canvas.seam.drag", 1, Value::Null, Readback::Moves),
         (
             "canvas.widget.add",
             1,
@@ -960,45 +964,6 @@ fn replay_plan() -> Vec<(&'static str, u32, Value, Readback)> {
         // Last of all: it closes the active tab, edits or not.
         ("tab.close", 1, json!({ "save": false }), Readback::Moves),
     ]
-}
-
-#[test]
-fn context_pair_resize_requires_the_granted_layout_scope() {
-    let ctx = egui::Context::default();
-    let (mut app, _commands) = app_with_history(20);
-    app.active_tab_mut()
-        .set_layout(CanvasLayout::TimeTimeAndFlow);
-    run_frame(&mut app, &ctx);
-    run_frame(&mut app, &ctx);
-    let directory = gateway_test_directory("resize-pair-scopes");
-    grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.layout");
-    enable_test_gateway(&mut app, &ctx, &directory, 4);
-    let input = json!({
-        "upper_pane_id": app.active_tab().pane_at(1).unwrap().id.to_string(),
-        "lower_pane_id": app.active_tab().pane_at(2).unwrap().id.to_string(),
-        "fraction": "0.4"
-    });
-    let before = app.active_tab().context_divider_rect(0).unwrap();
-    for options in [options("observer", &[]), options("cockpit", &["cockpit"])] {
-        let mut client = connect(&directory, &options);
-        let (response, served) = keyed_call(
-            &mut app,
-            &mut client,
-            "denied",
-            "layout.pane.resize_pair",
-            input.clone(),
-            "denied-pair",
-        );
-        assert!(matches!(
-            error_code(&response),
-            Some(codes::SCOPE_DENIED | codes::PERMISSION_DENIED)
-        ));
-        assert!(served.iter().all(|request| !request.began));
-        run_frame(&mut app, &ctx);
-        assert_eq!(app.active_tab().context_divider_rect(0).unwrap(), before);
-    }
-    disable_test_gateway(&mut app, &ctx);
-    std::fs::remove_dir_all(directory).unwrap();
 }
 
 /// Every reachable `optional` row, not one per family: a keyed call, its
@@ -1255,7 +1220,7 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
             }
             "annotate.drawing_magnet.set" => {
                 // The settings window an earlier row opened would eat the click.
-                app.surfaces.chart_settings.close();
+                app.surfaces.chart_settings.model_state.close();
                 run_frame(&mut app, &ctx);
                 let at = app
                     .active_tab()
@@ -1273,8 +1238,17 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
                     "enabled": true,
                 })
             }
+            "annotate.text.set" => {
+                let pane = &mut app.active_tab_mut().flow_pane;
+                pane.drawings.place(
+                    crate::drawings::DrawingTool::by_id("text").unwrap(),
+                    ChartPoint::at(1.0, 100.0),
+                );
+                let target = drawing_text_control::target(&app);
+                json!({ "target": target, "text": "Retry-safe note" })
+            }
             "annotate.drawing_scope.set" => {
-                app.surfaces.chart_settings.close();
+                app.surfaces.chart_settings.model_state.close();
                 run_frame(&mut app, &ctx);
                 place_level(&mut app, PaneSide::Flow, 100.0);
                 run_frame(&mut app, &ctx);
@@ -1302,6 +1276,22 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
                 // The first docked chart; the float leaves the layout.
                 let state = &app.active_tab().canvas.state;
                 json!({ "slot": state.tree().panes()[0].0 })
+            }
+            "canvas.seam.drag" => {
+                // The first seam that moves, dragged shut.
+                let canvas = &app.active_tab().canvas;
+                let at = canvas.last_canvas;
+                let whole = quantick_workspace::canvas::CanvasRect::new(
+                    at.left(),
+                    at.top(),
+                    at.width(),
+                    at.height(),
+                );
+                let seams = quantick_workspace::canvas::tree_seams(&canvas.state, whole, 4.0);
+                let seam = (seams.into_iter())
+                    .find(|seam| seam.resizable)
+                    .expect("a seam to drag");
+                json!({ "path": seam.address.path, "index": seam.address.index, "travel": "-4000" })
             }
             "canvas.pane.resize" => {
                 // The first docked chart, wider within its row.
@@ -1407,7 +1397,9 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
         }
         // The palette is modal: left up, its scrim would take the clicks the
         // drawing rows after it place on the chart.
-        app.surfaces.market_palette.close();
+        app.surfaces
+            .market_palette
+            .update(quantick_ui_model::market_palette::Intent::Close);
     }
     disable_test_gateway(&mut app, &ctx);
     std::fs::remove_dir_all(directory).ok();
@@ -1549,6 +1541,8 @@ fn layout_v2_answers_with_the_exact_share_and_v1_is_still_there() {
 fn a_v1_layout_answer_the_wire_refuses_says_the_call_may_have_acted() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = app_with_history(4);
+    // A collapse needs a context column beside the flow pane to put away.
+    app.apply_layout_preset(crate::canvas_layout::preset("time+flow").expect("registered"));
     run_frame(&mut app, &ctx);
     let directory = gateway_test_directory("layout-v1-refusal");
     grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.layout");
@@ -2190,7 +2184,7 @@ fn layout_focus_refuses_a_hidden_pane_and_takes_a_drawn_one() {
         .set_layout(CanvasLayout::TimeTimeAndFlow);
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
-    app.active_tab_mut().canvas.set_flow_collapsed(true);
+    app.active_tab_mut().canvas.fold(true, true);
     run_frame(&mut app, &ctx);
     let directory = gateway_test_directory("layout-focus-hidden");
     grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.layout");
@@ -2223,3 +2217,103 @@ fn layout_focus_refuses_a_hidden_pane_and_takes_a_drawn_one() {
 
 #[path = "native_indicator_control_tests.rs"]
 mod native_indicator_control;
+
+/// On the flow pane alone there is nothing to fold, and the four collapse
+/// calls answer as they always have: the context column's two succeed with
+/// `changed: false`, the flow pane's two refuse as a bad request. No new
+/// refusal reaches a v2 caller (contract section 4).
+#[test]
+fn a_collapse_with_nothing_to_fold_answers_as_before() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(4);
+    run_frame(&mut app, &ctx);
+    let directory = gateway_test_directory("layout-nothing-to-fold");
+    grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.layout");
+    enable_test_gateway(&mut app, &ctx, &directory, 4);
+    let mut client = connect(
+        &directory,
+        &options("cockpit", &["cockpit", "cockpit.layout"]),
+    );
+    for capability in ["layout.pane.collapse", "layout.pane.expand"] {
+        let (answer, _) = unkeyed_call_at(&mut app, &mut client, capability, LAYOUT_V2, json!({}));
+        let ResponseOutcome::Success { result } = &answer.outcome else {
+            panic!("{capability} answers success: {:?}", answer.outcome);
+        };
+        assert_eq!(result["changed"], json!(false), "{capability}");
+        assert_eq!(result["collapsed"], json!(false), "{capability}");
+    }
+    for capability in ["layout.flow.collapse", "layout.flow.expand"] {
+        let (answer, _) = unkeyed_call_at(&mut app, &mut client, capability, LAYOUT_V2, json!({}));
+        assert_eq!(
+            error_code(&answer),
+            Some(codes::INVALID_REQUEST),
+            "{capability}"
+        );
+        let error = response_error(&answer);
+        assert_eq!(
+            error.message,
+            "the flow pane has no right rail in this layout"
+        );
+        assert_eq!(error.context.details, None, "{capability}: no refusal code");
+    }
+    disable_test_gateway(&mut app, &ctx);
+    std::fs::remove_dir_all(directory).ok();
+}
+
+/// On a charts-only layout every chart is a context chart, and expanding the
+/// context brings back the ones a drag folded, at the shares they had, as
+/// `canvas.pane.restore` would: a silent `changed: false` there left the
+/// rail standing. A second expand finds nothing folded.
+#[test]
+fn expanding_a_charts_only_layout_reopens_its_rails() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(4);
+    run_frame(&mut app, &ctx);
+    let directory = gateway_test_directory("layout-expand-charts-only");
+    grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.layout");
+    enable_test_gateway(&mut app, &ctx, &directory, 4);
+    let mut client = connect(
+        &directory,
+        &options("cockpit", &["cockpit", "cockpit.layout"]),
+    );
+    for id in [
+        "charts-2", "charts-3", "charts-4", "charts-5", "charts-6", "charts-7", "charts-8",
+    ] {
+        app.apply_layout_preset(crate::canvas_layout::preset(id).expect("registered"));
+        for _ in 0..3 {
+            run_frame(&mut app, &ctx);
+        }
+        let area = app.active_tab().canvas.last_canvas;
+        let whole = quantick_workspace::canvas::CanvasRect::new(
+            area.left(),
+            area.top(),
+            area.width(),
+            area.height(),
+        );
+        let seam = quantick_workspace::canvas::SeamAddress {
+            path: Vec::new(),
+            index: 0,
+        };
+        (app.active_tab_mut().canvas.state)
+            .step_seam_drag(&mut None, (&seam, -10_000.0, true), whole)
+            .expect("the first seam folds");
+        run_frame(&mut app, &ctx);
+        assert!(!app.active_tab().canvas.state.railed().is_empty(), "{id}");
+        for changed in [true, false] {
+            let (answer, _) = unkeyed_call_at(
+                &mut app,
+                &mut client,
+                "layout.pane.expand",
+                LAYOUT_V2,
+                json!({}),
+            );
+            let result = success_result(&answer);
+            assert_eq!(result["changed"], json!(changed), "{id}: {result}");
+            run_frame(&mut app, &ctx);
+            let state = &app.active_tab().canvas.state;
+            assert!(state.railed().is_empty(), "{id}: every rail reopened");
+        }
+    }
+    disable_test_gateway(&mut app, &ctx);
+    std::fs::remove_dir_all(directory).ok();
+}

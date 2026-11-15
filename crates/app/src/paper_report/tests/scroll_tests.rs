@@ -20,26 +20,32 @@ fn enlarged_populated_report_footer_is_reached_by_wheel_input() {
     appearance.apply(&format!("{}\n[typography.body]\nsize = 25\n[typography.monospace]\nsize = 24\n[typography.small]\nsize = 18", quantick_appearance::LIGHT)).unwrap();
     crate::theme::sync(&ctx, &appearance);
     assert_eq!(crate::theme::get(&ctx).body_font(12.5).size, 25.0);
-    let mut state = ReportState {
-        report_open: true,
-        ..Default::default()
-    };
-    state.calendar.open = true;
-    state.report = Some(LoadedHistory {
-        rows: (0..40)
-            .map(|i| {
-                row(
-                    if i == 39 { "LAST" } else { "TEST" },
-                    None,
-                    trade_at(1_792_580_296_000 + i * 1000, i + 1),
-                )
-            })
-            .collect(),
-        files: 1,
-        unreadable_files: 0,
-        problem_rows: 0,
-        sessions: Default::default(),
-    });
+    let mut state = ReportState::default();
+    state.update(Intent::Open(String::new()));
+    state.update(Intent::Calendar(
+        quantick_paper::report::calendar::CalendarState {
+            open: true,
+            ..Default::default()
+        },
+    ));
+    state.update(Intent::LoadedReport(LoadedReport {
+        history: LoadedHistory {
+            rows: (0..40)
+                .map(|i| {
+                    row(
+                        if i == 39 { "LAST" } else { "TEST" },
+                        None,
+                        trade_at(1_792_580_296_000 + i * 1000, i + 1),
+                    )
+                })
+                .collect(),
+            files: 1,
+            unreadable_files: 0,
+            problem_rows: 0,
+            sessions: Default::default(),
+        },
+        symbols: Vec::new(),
+    }));
     let env = ReportEnv {
         symbol: "TEST",
         dir: std::path::Path::new("."),
@@ -75,7 +81,7 @@ fn enlarged_populated_report_footer_is_reached_by_wheel_input() {
             state.draw_window(ctx, TzOffset::new(0), &env);
         });
         if frame == 100 {
-            initial = state.scroll_probe.1;
+            initial = state.adapter.view.scroll_probe.1;
         }
         saw_last_row |=
             text_rect(&output.shapes, "LAST").is_some_and(|(rect, clip)| clip.contains_rect(rect));
@@ -84,11 +90,13 @@ fn enlarged_populated_report_footer_is_reached_by_wheel_input() {
     let (before, clip_before) = initial.expect("the layout emits its clipped footer");
     assert!(
         state
+            .adapter
+            .view
             .scroll_probe
             .1
             .is_some_and(|(rect, clip)| clip.contains_rect(rect)),
         "wheel path must expose footer: before={initial:?} after={:?}, events={wheel_events}",
-        state.scroll_probe.1
+        state.adapter.view.scroll_probe.1
     );
     let (after, clip_after) = final_footer.expect("footer remains painted");
     assert!(

@@ -11,7 +11,7 @@ use quantick_chart::pane_header::{PaneHeader, PaneIdentity};
 use quantick_engine::bar_selection::BarInputAvailability;
 use quantick_workspace::canvas::{
     CanvasRect, FloatHost, PaneKind, PaneSlot, SplitAxis, slot_seat, strip_label, tree_bands,
-    tree_seams,
+    tree_rails, tree_seams,
 };
 use smallvec::SmallVec;
 
@@ -23,11 +23,18 @@ use crate::pane::{
 };
 use crate::{floating_panes, theme};
 
+/// The resize cursor over a seam laying charts top to bottom, then side by side.
+const CURSORS: [egui::CursorIcon; 2] = [
+    egui::CursorIcon::ResizeVertical,
+    egui::CursorIcon::ResizeHorizontal,
+];
+
 impl Tab {
     /// Lay the canvas out from the model's tree and spend each band's header,
     /// as the column painter does for its own bands.
     pub(super) fn draw_tree(
         &mut self,
+        tab_id: u64,
         ui: &mut egui::Ui,
         area: egui::Rect,
         chrome: &mut CanvasChrome<'_>,
@@ -42,7 +49,8 @@ impl Tab {
             canvas,
             CANVAS_DIVIDER_PX,
         );
-        let bands = bands.into_iter().map(|band| {
+        // A rail is painted over its whole node with the seams.
+        let bands = bands.into_iter().filter(|band| !band.railed).map(|band| {
             let at = egui::Rect::from_min_size(
                 egui::pos2(band.rect.x, band.rect.y),
                 egui::vec2(band.rect.w, band.rect.h),
@@ -82,9 +90,16 @@ impl Tab {
         for &(side, rect, minimized, slot) in &bands {
             if minimized {
                 let name = self.strip_name(side);
-                let door = crate::pane_menu::strip(ui, rect, &name, slot, &mut self.canvas.menus);
-                let (at, menus) = ((slot, &self.canvas.state), &mut self.canvas.menus);
-                crate::pane_menu::button(ui, door, at, menus, palette.text_muted());
+                chrome.surfaces.remove_chart.with_scoped_updates(
+                    tab_id,
+                    |_| {},
+                    |_, session| {
+                        let menus = &mut self.canvas.menus;
+                        let door = crate::pane_menu::strip(ui, rect, &name, slot, menus, session);
+                        let (at, ink) = ((slot, &self.canvas.state), palette.text_muted());
+                        crate::pane_menu::button(ui, door, at, menus, ink, session);
+                    },
+                );
                 continue;
             }
             let PaneSide::Time(slot) = side else {
@@ -103,14 +118,21 @@ impl Tab {
                 pane_areas.body,
                 palette.layout(crate::time_header::HEIGHT_PX),
             );
-            self.draw_time_header(ui, slot, areas.header, bar_inputs, job_slot.take());
+            self.draw_time_header(
+                ui,
+                slot,
+                areas.header,
+                bar_inputs,
+                job_slot.take(),
+                (tab_id, chrome.surfaces),
+            );
             rects.context_charts[slot] = Some((areas.chart, pane_areas.layout_strip));
         }
         if rects.pane_bands.len() + usize::from(flow_band.is_some()) > 1 {
             self.focus_from_pointer(ui, &focus_bands, flow_band.unwrap_or(egui::Rect::NOTHING));
         }
         if let Some(band) = flow_band {
-            self.draw_flow_band(ui, (band, 0.0), chrome, &mut rects);
+            self.draw_flow_band(tab_id, ui, (band, 0.0), chrome, &mut rects);
         }
         let frame = CanvasFrame {
             area,
@@ -129,39 +151,41 @@ impl Tab {
 
     /// The seams between the docked bands, painted as the column painter's
     /// dividers and dragged as they are: a resize cursor over each, and a
-    /// drag moving it through the canvas model. After the panes, so a seam's
-    /// grab margin wins over the chart beside it.
+    /// drag moving it through the canvas model, folding a side to its rail
+    /// at the edge. Then every rail, as the column painter paints its own.
+    /// After the panes, so a seam's grab margin wins over the chart beside it.
     pub(super) fn draw_tree_seams(&mut self, tab_id: u64, ui: &egui::Ui, area: egui::Rect) {
         let palette = theme::get(ui.ctx());
         let canvas = CanvasRect::new(area.left(), area.top(), area.width(), area.height());
+        let rect =
+            |at: CanvasRect| egui::Rect::from_min_size((at.x, at.y).into(), (at.w, at.h).into());
+        let mut hot = None;
         for seam in tree_seams(&self.canvas.state, canvas, CANVAS_DIVIDER_PX) {
-            let at = egui::Rect::from_min_size(
-                egui::pos2(seam.rect.x, seam.rect.y),
-                egui::vec2(seam.rect.w, seam.rect.h),
-            );
             ui.painter()
-                .rect_filled(at, egui::Rounding::ZERO, palette.border());
+                .rect_filled(rect(seam.rect), egui::Rounding::ZERO, palette.border());
             if !seam.resizable {
                 continue;
             }
             let row = seam.axis == SplitAxis::Row;
-            let margin = CANVAS_DIVIDER_HANDLE_PX;
-            let (grab, cursor) = if row {
-                (egui::vec2(margin, 0.0), egui::CursorIcon::ResizeHorizontal)
-            } else {
-                (egui::vec2(0.0, margin), egui::CursorIcon::ResizeVertical)
-            };
             let id = egui::Id::new(("tree_seam", tab_id, &seam.address));
-            let handle = ui.interact(at.expand2(grab), id, egui::Sense::drag());
+            let grab = rect(seam.grab(CANVAS_DIVIDER_HANDLE_PX));
+            let handle = ui.interact(grab, id, egui::Sense::drag());
             if handle.hovered() || handle.dragged() {
-                ui.ctx().set_cursor_icon(cursor);
+                ui.ctx().set_cursor_icon(CURSORS[usize::from(row)]);
+                hot = hot.or(seam.rail.map(|rail| rail.slot));
             }
-            // Every step the pointer took, as the column divider adds them up:
-            // an off-centre grab never jumps the seam.
-            let step = [handle.drag_delta().y, handle.drag_delta().x][usize::from(row)];
-            if handle.dragged() && step.abs() > f32::EPSILON {
-                let _ = (self.canvas.state).move_seam(&seam.address, step, canvas);
-            }
+            // Every step the pointer took since the press, as the column
+            // divider adds them up: an off-centre grab never jumps the seam,
+            // and travel past a floor still reaches the fold.
+            let (state, held) = (&mut self.canvas.state, &mut self.canvas.seam_drag);
+            state.seam_hand(held, (&seam.address, super::hand(&handle, row)), canvas);
+        }
+        for rail in tree_rails(&self.canvas.state, canvas, CANVAS_DIVIDER_PX) {
+            let (at, across) = (rect(rail.rect), rail.axis == SplitAxis::Column);
+            let edges = [[at.left(), at.right()], [at.top(), at.bottom()]][usize::from(across)];
+            let edge = (edges[usize::from(rail.meets_after)], across);
+            super::paint_rail(ui.painter(), at, edge, hot == Some(rail.slot));
+            self.canvas.menus.publish_rail(rail.control_id(), at);
         }
     }
 
@@ -175,6 +199,7 @@ impl Tab {
     /// points kept for a floating pane's grip) and its panel.
     fn draw_flow_band(
         &mut self,
+        tab_id: u64,
         ui: &mut egui::Ui,
         (band, grip): (egui::Rect, f32),
         chrome: &mut CanvasChrome<'_>,
@@ -195,7 +220,7 @@ impl Tab {
             palette.flow_surface(),
         );
         let header = areas.band.with_min_x(areas.band.min.x + grip);
-        self.draw_flow_header(ui, header, chrome);
+        self.draw_flow_header(tab_id, ui, header, chrome);
         rects.flow_side_row = Some((areas.side_row, bar_inputs));
         self.flow_pane.frame.side_row = Some(areas.side_row);
         rects.flow_areas = Some(PaneAreas {
@@ -292,7 +317,14 @@ impl Tab {
                 let height = palette.layout(crate::time_header::HEIGHT_PX);
                 let areas = split_pane_header(content, height);
                 let header = areas.header.with_min_x(areas.header.min.x + grip);
-                self.draw_time_header(ui, seat, header, bar_inputs, None);
+                self.draw_time_header(
+                    ui,
+                    seat,
+                    header,
+                    bar_inputs,
+                    None,
+                    (tab_id, chrome.surfaces),
+                );
                 rects.context_charts[seat] = Some((areas.chart, egui::Rect::NOTHING));
                 rects.pane_bands.push((side, content));
             }
@@ -301,7 +333,7 @@ impl Tab {
                 ui.painter().rect_filled(content, 0.0, palette.chrome());
                 return;
             }
-            PaneSide::Flow => self.draw_flow_band(ui, (content, grip), chrome, &mut rects),
+            PaneSide::Flow => self.draw_flow_band(tab_id, ui, (content, grip), chrome, &mut rects),
         }
         // A window's own coordinates mean nothing to the canvas's readers.
         let bands = rects.pane_bands.iter().filter(|_| !windowed);

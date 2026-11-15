@@ -117,10 +117,10 @@ fn alert_target_binding_bottom_edge_button_commits_selected_rectangle() {
         "rectangle",
         &[egui::pos2(500.0, 300.0), egui::pos2(650.0, 420.0)],
     );
-    app.toolrail.arm(Tool::Pointer);
+    app.surfaces.toolrail.arm(Tool::Pointer);
     app.drawing_pane_mut().drawings.select(Some(index));
-    app.drawings
-        .chrome
+    app.surfaces
+        .drawing_chrome
         .context_bar_mut()
         .set_manual(egui::pos2(500.0, 10000.0));
     run_frame(&mut app, &ctx);
@@ -157,7 +157,7 @@ fn alert_target_binding_offers_every_straight_line() {
         let (mut app, _commands) = app_with_history(200);
         run_frame(&mut app, &ctx);
         let index = place_drawing(&mut app, &ctx, tool, anchors);
-        app.toolrail.arm(Tool::Pointer);
+        app.surfaces.toolrail.arm(Tool::Pointer);
         app.drawing_pane_mut().drawings.select(Some(index));
         run_frame(&mut app, &ctx);
         let output = run_frame(&mut app, &ctx);

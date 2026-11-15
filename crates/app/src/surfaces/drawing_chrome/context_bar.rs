@@ -8,9 +8,7 @@
 
 use eframe::egui;
 
-use super::{
-    DrawingChromeAsk, DrawingChromeSurface, DrawingEnv, InspectorActions, clamp_into_chart,
-};
+use super::{Chrome, DrawingChromeAsk, DrawingEnv, InspectorActions, clamp_into_chart};
 use crate::drawings::{self, DrawingAuthor};
 
 /// The bar's own state: the widget's, plus the rectangle a test reads back.
@@ -92,24 +90,14 @@ fn avoid_panels(
 
 /// Draw this frame.
 pub(crate) fn draw(
-    chrome: &mut DrawingChromeSurface,
+    chrome: &mut Chrome,
     ctx: &egui::Context,
     env: &DrawingEnv<'_>,
 ) -> DrawingChromeAsk {
     let mut ask = DrawingChromeAsk::default();
     let selection = env.selected_index();
-    if chrome.bar.bar.note_selection(selection) {
-        // A new object is a new question: the panel the last one opened does
-        // not follow the selection around.
-        chrome.shared.open = false;
-    }
-    // …except when the object just placed asked for it. Applied after the
-    // reset above, because the placement that made the request also made the
-    // selection change that clears it.
-    if std::mem::take(&mut chrome.pending_open_settings) {
-        chrome.shared.open = true;
-        chrome.shared.last_selection = None;
-    }
+    let changed = chrome.view.bar.bar.note_selection(selection);
+    chrome.emit(super::Intent::SelectionChanged { changed });
     let Some(selected) = env.selected.as_ref() else {
         return ask;
     };
@@ -141,10 +129,10 @@ pub(crate) fn draw(
     // Suppressed means suppressed: nothing below this line runs, so the bar
     // cannot measure a world the gesture that suppressed it is still moving.
     // That is the rule the drag gestures already learned.
-    if GestureInput::read(ctx).suppresses(&mut chrome.bar.bar) {
+    if GestureInput::read(ctx).suppresses(&mut chrome.view.bar.bar) {
         return ask;
     }
-    let chart_area = if chrome.bar.bar.manual_position().is_none() {
+    let chart_area = if chrome.view.bar.bar.manual_position().is_none() {
         env.automatic_bar_area.or(env.chart_area)
     } else {
         env.chart_area
@@ -182,9 +170,11 @@ pub(crate) fn draw(
         settings_available: !chrome.shared.pinned,
         confirming_delete: chrome.shared.delete_confirm && locked,
         tool_name: tool.name(),
-        draw_again: tool.freehand().then(|| drawings::context_bar::DrawAgain {
-            glyph: tool.icon(),
-            hover: tool.hover_text(),
+        draw_again: (tool.freehand() || tool.holds_text()).then(|| {
+            drawings::context_bar::DrawAgain {
+                glyph: tool.icon(),
+                hover: tool.hover_text(),
+            }
         }),
     };
     let size = drawings::context_bar::bar_size(&drawings::context_bar::slots(
@@ -199,7 +189,7 @@ pub(crate) fn draw(
     let inspector = (chrome.shared.open && !chrome.shared.pinned)
         .then(|| ctx.memory(|memory| memory.area_rect(egui::Id::new(super::INSPECTOR_AREA_ID))))
         .flatten();
-    let placement = Placement::resolve(&chrome.bar.bar, env, chart, bbox, occupied, inspector);
+    let placement = Placement::resolve(&chrome.view.bar.bar, env, chart, bbox, occupied, inspector);
     if inspector.is_some_and(|rect| {
         rect.intersects(egui::Rect::from_min_size(placement.position, occupied))
     }) {
@@ -217,7 +207,7 @@ pub(crate) fn draw(
                     .size()
             }) + egui::vec2(2.0 * style.spacing.button_padding.x, 0.0);
             let compact =
-                Placement::resolve(&chrome.bar.bar, env, chart, bbox, compact_size, inspector);
+                Placement::resolve(&chrome.view.bar.bar, env, chart, bbox, compact_size, inspector);
             let compact_rect = egui::Rect::from_min_size(compact.position, compact_size);
             if chart.contains_rect(compact_rect)
                 && inspector.is_none_or(|rect| !rect.intersects(compact_rect))
@@ -231,7 +221,7 @@ pub(crate) fn draw(
         return ask;
     }
     let intent = drawings::context_bar::show(
-        &mut chrome.bar.bar,
+        &mut chrome.view.bar.bar,
         ctx,
         placement.position,
         placement.popover_bounds,
@@ -249,13 +239,14 @@ pub(crate) fn draw(
     let glyph_after = object.glyph_size;
     #[cfg(test)]
     {
-        chrome.bar.last_drawn_rect = chrome.bar.bar.last_rect();
+        chrome.view.bar.last_drawn_rect = chrome.view.bar.bar.last_rect();
     }
 
     if intent.reset_position {
-        chrome.bar.bar.clear_manual();
+        chrome.view.bar.bar.clear_manual();
     } else if intent.drag_delta != egui::Vec2::ZERO {
         chrome
+            .view
             .bar
             .bar
             .set_manual(placement.position + intent.drag_delta);
@@ -274,13 +265,14 @@ pub(crate) fn draw(
         ask.edited = Some(Box::new(edit.applied_to(drawing)));
     }
     if intent.open_settings {
-        chrome.shared.open = true;
+        chrome.emit(super::Intent::OpenSettings);
         // Place against the object the way a fresh selection would.
-        chrome.shared.last_selection = None;
+        chrome.emit(super::Intent::SelectionChanged { changed: false });
     }
     ask.duplicate |= intent.duplicate;
     if intent.draw_again {
         ask.draw_again = Some(tool);
+        ask.merge(chrome.emit(super::Intent::RepeatEndsInline));
     }
     ask.merge(super::apply_actions(chrome, ctx, actions, index, env));
     ask
@@ -311,7 +303,8 @@ fn alert_action(
                 )
                 .clicked()
             {
-                ask.alert_target = Some(quantick_control_schema::alerts::DrawingSelector {
+                let readbacks = ask.readbacks.get_or_insert_with(Default::default);
+                readbacks.alert_target = Some(quantick_control_schema::alerts::DrawingSelector {
                     tab_id: env.tab,
                     pane_id: env.pane_id,
                     drawing_id,
@@ -504,115 +497,4 @@ impl BarEdit {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn full_action_footprint_keeps_the_inspector_title_reachable() {
-        let size = egui::vec2(364.0, 61.0);
-        let wanted = egui::pos2(47.0, 268.0);
-        for bottom in [400.0, 800.0] {
-            let chart = egui::Rect::from_min_max(egui::pos2(47.0, 88.0), egui::pos2(900.0, bottom));
-            let legend = egui::Rect::from_min_max(chart.min, egui::pos2(600.0, 150.0));
-            let inspector = egui::Rect::from_min_max(
-                egui::pos2(288.0, 294.0),
-                egui::pos2(620.0, bottom.min(535.0)),
-            );
-            let object =
-                egui::Rect::from_min_max(egui::pos2(47.0, 250.0), egui::pos2(900.0, 251.0));
-            let placed = egui::Rect::from_min_size(
-                avoid_panels(
-                    wanted,
-                    size,
-                    chart,
-                    [Some(legend), Some(inspector)],
-                    Some(object),
-                ),
-                size,
-            );
-            assert!(chart.contains_rect(placed));
-            assert!(!placed.intersects(legend));
-            assert!(!placed.intersects(inspector));
-            assert!(!placed.intersects(object));
-        }
-    }
-
-    #[test]
-    fn crowded_panel_fallback_keeps_the_action_footprint_in_the_viewport() {
-        let chart = egui::Rect::from_min_size(egui::pos2(47.0, 88.0), egui::vec2(400.0, 100.0));
-        let size = egui::vec2(364.0, 61.0);
-        let parked = egui::pos2(900.0, 900.0);
-        let placed = avoid_panels(parked, size, chart, [Some(chart), None], None);
-        assert!(chart.contains_rect(egui::Rect::from_min_size(placed, size)));
-        assert_eq!(placed, clamp_into_chart(parked, size, chart));
-    }
-
-    #[test]
-    fn automatic_and_parked_bars_avoid_the_measured_legend_and_lane() {
-        for width in [650.0, 1000.0, 1500.0] {
-            let chart = egui::Rect::from_min_size(egui::pos2(60.0, 88.0), egui::vec2(width, 700.0));
-            let size = egui::vec2(460.0, 40.0);
-            let lane = chart.right() - 100.0;
-            let reachable = bounds(chart, lane, size);
-            let legend = egui::Rect::from_min_size(
-                chart.min + egui::vec2(6.0, 42.0),
-                egui::vec2(500.0, 65.0),
-            );
-            let bbox = chart.shrink(10.0);
-            for wanted in [
-                drawings::context_bar::place(chart, lane, bbox, size),
-                legend.min,
-                egui::pos2(4000.0, legend.top()),
-            ] {
-                let placed = egui::Rect::from_min_size(
-                    avoid_panels(wanted, size, reachable, [Some(legend), None], None),
-                    size,
-                );
-                assert!(!placed.intersects(legend), "{placed:?} / {legend:?}");
-                assert!(reachable.contains_rect(placed));
-                assert!(placed.right() <= lane);
-            }
-        }
-    }
-
-    /// The live lane is off limits to the bar however it got where it is.
-    ///
-    /// `context_bar::place` has kept clear of that strip since it was written
-    /// — it is where the price the trader is reading is being formed, and
-    /// losing sight of it is the trader's first veto. A parked bar is placed
-    /// by a different rule, so the bound both rules clamp into is what keeps
-    /// them honest: without it the repair would happily pin a parked bar at
-    /// the pane's own right edge, on top of the forming column, for every
-    /// object of the session.
-    #[test]
-    fn the_context_bar_bound_takes_the_live_lane_off_the_pane() {
-        let chart = egui::Rect::from_min_max(egui::pos2(60.0, 88.0), egui::pos2(1284.0, 832.0));
-        let size = egui::vec2(292.0, 40.0);
-        let divider = 900.0;
-
-        let reachable = bounds(chart, divider, size);
-        assert_eq!(
-            reachable.right(),
-            divider,
-            "the lane is not the bar's to use"
-        );
-        assert_eq!(
-            clamp_into_chart(egui::pos2(3000.0, 400.0), size, reachable).x,
-            divider - size.x,
-            "a bar parked out past the lane is repaired to its inner edge"
-        );
-
-        // No lane on this pane: the chart's own edge is the answer, exactly as
-        // the automatic rule takes `chart.right()` when the divider is None.
-        assert_eq!(bounds(chart, chart.right(), size).right(), chart.right());
-
-        // A lane wider than the history area leaves nothing to place in. The
-        // pane's edge beats an empty rectangle — the same call `place` makes.
-        let all_lane = bounds(chart, chart.left() + 10.0, size);
-        assert!(
-            all_lane.width() >= size.x.min(chart.width()),
-            "a bar still has somewhere to go: {all_lane:?}"
-        );
-        assert!(chart.contains_rect(all_lane), "and it is inside the pane");
-    }
-}
+mod tests;

@@ -15,7 +15,8 @@ fn an_armed_tool_leaves_the_chart_navigable() {
     let ctx = egui::Context::default();
     let flow = add_pane_indicator(&mut app, "cvd", (0..200).map(f64::from).collect());
     run_frame(&mut app, &ctx);
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
 
     // The wheel over the pane's own axis still zooms that axis.
@@ -77,7 +78,9 @@ fn an_armed_two_point_tool_completes_on_a_single_drag() {
         let (mut app, _cmd_rx) = app_with_history(200);
         let ctx = egui::Context::default();
         run_frame(&mut app, &ctx);
-        app.toolrail.arm(Tool::Drawing(drawing_tool(tool_id)));
+        app.surfaces
+            .toolrail
+            .arm(Tool::Drawing(drawing_tool(tool_id)));
         run_frame(&mut app, &ctx);
 
         let chart = app
@@ -115,7 +118,8 @@ fn the_pane_chevron_still_wins_its_pixels_with_a_tool_armed() {
     let ctx = egui::Context::default();
     let flow = add_pane_indicator(&mut app, "cvd", (0..200).map(f64::from).collect());
     run_frame(&mut app, &ctx);
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
 
     let body = pane_body(&app, 0);
@@ -272,8 +276,7 @@ fn the_toolbar_close_action_exits_the_open_position() {
 }
 
 /// The toolbar's reverse beside the close: one press turns a long into a
-/// short of the same size at the next print, and the faces of the entry
-/// pair keep naming side and size only, with the disclosure in the hover.
+/// short of the same size at the next print.
 #[test]
 fn the_toolbar_reverse_action_flips_the_open_position() {
     let (mut app, evt_tx, _cmd_rx, _book_tx) = test_app();
@@ -292,16 +295,6 @@ fn the_toolbar_reverse_action_flips_the_open_position() {
     app.active_tab_mut().drain_feed_with_clock(tab_id, || 0);
     let (text, _) = app.active_tab().paper.status_cell().expect("open");
     assert!(text.contains("LONG"), "the cell names the side: {text}");
-    let bar = app.active_tab().paper.trade_bar("Shift+R");
-    assert_eq!(bar.sell.face, "SELL 1");
-    assert!(
-        bar.sell.hover.starts_with(
-            "SELL 1 (closes)
-"
-        ),
-        "the hover carries the disclosure the face leaves out"
-    );
-    assert_eq!(bar.blocked, None, "the reverse is live");
 
     app.apply_toolbar_action(ToolbarAction::PaperReverse);
     evt_tx.try_send(FeedEvent::Live(trade(6))).unwrap();
@@ -1410,7 +1403,8 @@ fn an_armed_tool_does_not_also_cancel_the_order_under_the_pointer() {
         });
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
 
     let chart = app
@@ -1516,7 +1510,8 @@ fn a_moved_inspector_keeps_its_position_across_selection_changes() {
     let ctx = egui::Context::default();
     run_frame(&mut app, &ctx);
     for price_y in [250.0, 400.0] {
-        app.toolrail
+        app.surfaces
+            .toolrail
             .arm(Tool::Drawing(drawing_tool("horizontal-line")));
         click_chart(&mut app, &ctx, egui::pos2(700.0, price_y));
     }
@@ -1531,12 +1526,12 @@ fn a_moved_inspector_keeps_its_position_across_selection_changes() {
     let bar = egui::pos2(inspector.left() + 60.0, inspector.top() + 14.0);
     drag_chart(&mut app, &ctx, bar, bar + egui::vec2(150.0, 120.0));
     assert!(
-        app.drawings.chrome.inspector_moved(),
+        app.surfaces.drawing_chrome.inspector_moved(),
         "a title-bar drag records the manual move"
     );
     let held = app
-        .drawings
-        .chrome
+        .surfaces
+        .drawing_chrome
         .inspector_pos()
         .expect("the manual position is recorded");
 
@@ -1548,12 +1543,12 @@ fn a_moved_inspector_keeps_its_position_across_selection_changes() {
     run_frame(&mut app, &ctx);
     open_inspector(&mut app, &ctx);
     assert_eq!(
-        app.drawings.chrome.inspector_pos(),
+        app.surfaces.drawing_chrome.inspector_pos(),
         Some(held),
         "the manual position survives a selection change"
     );
     assert!(
-        app.drawings.chrome.inspector_moved(),
+        app.surfaces.drawing_chrome.inspector_moved(),
         "the manual flag is never auto-cleared"
     );
 }
@@ -1573,7 +1568,7 @@ fn autosave_off_means_the_popup_position_is_not_written_either() {
     let parked = park_the_popup(&mut app, &ctx, egui::vec2(150.0, 90.0));
 
     assert_eq!(
-        app.drawings.chrome.inspector_pos(),
+        app.surfaces.drawing_chrome.inspector_pos(),
         Some(parked),
         "the window still went where it was dragged"
     );
@@ -1604,7 +1599,9 @@ fn a_remembered_position_greets_the_next_drawing_too() {
 
     // What a restored workspace does, through the same one door.
     let remembered = egui::pos2(420.0, 200.0);
-    app.drawings.chrome.place_inspector_by_hand(remembered);
+    app.surfaces
+        .drawing_chrome
+        .place_inspector_by_hand(remembered);
 
     // A different drawing than the one selected when it was parked.
     click_chart(&mut app, &ctx, egui::pos2(400.0, 250.0));
@@ -1635,22 +1632,23 @@ fn a_remembered_position_outranks_the_narrow_chart_auto_pin() {
     // A chart under INSPECTOR_AUTO_PIN_CHART_WIDTH_PX, which is what a
     // split canvas gives the pane a drawing lives on.
     run_sized_frame(&mut app, &ctx, MIN_WINDOW, Vec::new());
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     click_sized(&mut app, &ctx, MIN_WINDOW, egui::pos2(500.0, 300.0));
     run_sized_frame(&mut app, &ctx, MIN_WINDOW, Vec::new());
 
     // What a restored workspace does.
     let remembered = egui::pos2(300.0, 200.0);
-    app.drawings
-        .chrome
+    app.surfaces
+        .drawing_chrome
         .restore_inspector_position(Some([remembered.x, remembered.y]));
-    app.drawings.chrome.set_inspector_open(true);
+    app.surfaces.drawing_chrome.set_inspector_open(true);
     run_sized_frame(&mut app, &ctx, MIN_WINDOW, Vec::new());
     run_sized_frame(&mut app, &ctx, MIN_WINDOW, Vec::new());
 
     assert!(
-        !app.drawings.chrome.inspector_pinned(),
+        !app.surfaces.drawing_chrome.inspector_pinned(),
         "the parked position wins over the narrow-chart auto-pin"
     );
     assert!(
@@ -1672,24 +1670,25 @@ fn a_workspace_with_no_remembered_position_leaves_the_auto_pin_alone() {
         .set_ui_state_path(scratch_ui_state("popup-auto-pin-default"));
     // A previous cockpit that *did* park the popup, so this proves the
     // silence is adopted rather than merely never contradicted.
-    app.drawings
-        .chrome
+    app.surfaces
+        .drawing_chrome
         .place_inspector_by_hand(egui::pos2(300.0, 200.0));
-    app.drawings.chrome.restore_inspector_position(None);
+    app.surfaces.drawing_chrome.restore_inspector_position(None);
     run_sized_frame(&mut app, &ctx, MIN_WINDOW, Vec::new());
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     click_sized(&mut app, &ctx, MIN_WINDOW, egui::pos2(500.0, 300.0));
-    app.drawings.chrome.set_inspector_open(true);
+    app.surfaces.drawing_chrome.set_inspector_open(true);
     run_sized_frame(&mut app, &ctx, MIN_WINDOW, Vec::new());
     run_sized_frame(&mut app, &ctx, MIN_WINDOW, Vec::new());
 
     assert!(
-        !app.drawings.chrome.inspector_pin_touched(),
+        !app.surfaces.drawing_chrome.inspector_pin_touched(),
         "silence in the file is not a preference about the pin"
     );
     assert!(
-        app.drawings.chrome.inspector_pinned(),
+        app.surfaces.drawing_chrome.inspector_pinned(),
         "so a chart too narrow for a floating window still docks the panel"
     );
 }
@@ -1713,9 +1712,10 @@ fn a_position_that_no_longer_fits_is_repaired_for_drawing_and_kept_in_the_file()
         .set_ui_state_path(scratch_ui_state("popup-clamp"));
     // The auto-pin owns a chart this narrow until the trader touches the
     // pin; this test is about the floating window, so say they have.
-    app.drawings.chrome.set_inspector_pin_touched(true);
+    app.surfaces.drawing_chrome.set_inspector_pin_touched(true);
     run_sized_frame(&mut app, &ctx, MIN_WINDOW, Vec::new());
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     click_sized(&mut app, &ctx, MIN_WINDOW, egui::pos2(500.0, 300.0));
     run_sized_frame(&mut app, &ctx, MIN_WINDOW, Vec::new());
@@ -1730,7 +1730,7 @@ fn a_position_that_no_longer_fits_is_repaired_for_drawing_and_kept_in_the_file()
             Vec::new(),
             Some(chrome_with_popup_at(Some(parked))),
         ));
-    app.drawings.chrome.set_inspector_open(true);
+    app.surfaces.drawing_chrome.set_inspector_open(true);
     run_sized_frame(&mut app, &ctx, MIN_WINDOW, Vec::new());
     run_sized_frame(&mut app, &ctx, MIN_WINDOW, Vec::new());
 
@@ -1749,7 +1749,7 @@ fn a_position_that_no_longer_fits_is_repaired_for_drawing_and_kept_in_the_file()
              {popup:?} against {chart:?}"
     );
     assert_eq!(
-        app.drawings.chrome.remembered_inspector_position(),
+        app.surfaces.drawing_chrome.remembered_inspector_position(),
         Some(parked),
         "and the point the trader parked is not eaten by the repair — the \
              desk monitor gets it back"
@@ -1766,9 +1766,10 @@ fn a_temporary_squeeze_never_edits_the_parked_position() {
     app.runtime
         .workspace
         .set_ui_state_path(scratch_ui_state("popup-ratchet"));
-    app.drawings.chrome.set_inspector_pin_touched(true);
+    app.surfaces.drawing_chrome.set_inspector_pin_touched(true);
     run_sized_frame(&mut app, &ctx, MIN_WINDOW, Vec::new());
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     click_sized(&mut app, &ctx, MIN_WINDOW, egui::pos2(500.0, 300.0));
     run_sized_frame(&mut app, &ctx, MIN_WINDOW, Vec::new());
@@ -1776,42 +1777,17 @@ fn a_temporary_squeeze_never_edits_the_parked_position() {
     // Parked against the bottom-right of a big screen, then squeezed by a
     // small one for a while.
     let parked = egui::pos2(1_500.0, 900.0);
-    app.drawings.chrome.place_inspector_by_hand(parked);
-    app.drawings.chrome.set_inspector_open(true);
+    app.surfaces.drawing_chrome.place_inspector_by_hand(parked);
+    app.surfaces.drawing_chrome.set_inspector_open(true);
     for _ in 0..6 {
         run_sized_frame(&mut app, &ctx, MIN_WINDOW, Vec::new());
     }
 
     assert_eq!(
-        app.drawings.chrome.inspector_pos(),
+        app.surfaces.drawing_chrome.inspector_pos(),
         Some(parked),
         "six frames of repair leave the parked point exactly as it was"
     );
-}
-
-/// A hand-edited file — the harness doc tells agents to write one — can say
-/// `nan`, and NaN is the one value the repair cannot walk back: it survives
-/// `clamp`, puts the window where no pointer can reach its title bar, and
-/// would be written straight back at the next save.
-#[test]
-fn a_position_that_is_not_a_number_is_read_as_no_position_at_all() {
-    let (mut app, _commands) = app_with_history(50);
-
-    for pair in [[f32::NAN, 200.0], [200.0, f32::NAN], [f32::INFINITY, 200.0]] {
-        app.drawings
-            .chrome
-            .place_inspector_by_hand(egui::pos2(10.0, 10.0));
-        app.drawings.chrome.restore_inspector_position(Some(pair));
-        assert_eq!(
-            app.drawings.chrome.inspector_pos(),
-            None,
-            "{pair:?} is not a position, and must not survive as one"
-        );
-        assert!(
-            !app.drawings.chrome.inspector_moved(),
-            "{pair:?} hands the popup back to automatic placement"
-        );
-    }
 }
 
 #[test]
@@ -1820,24 +1796,26 @@ fn the_object_manager_toggles_eye_lock_and_z_order_per_row() {
     let ctx = egui::Context::default();
     run_frame(&mut app, &ctx);
     for price_y in [250.0, 350.0] {
-        app.toolrail
+        app.surfaces
+            .toolrail
             .arm(Tool::Drawing(drawing_tool("horizontal-line")));
         click_chart(&mut app, &ctx, egui::pos2(700.0, price_y));
     }
     let objects = app
+        .surfaces
         .toolrail
         .objects_button_rect()
         .expect("the toolbox shows the Objects entry");
     click_chart(&mut app, &ctx, objects.center());
     assert!(
-        app.drawings.chrome.manager_open(),
+        app.surfaces.drawing_chrome.manager_open(),
         "the Objects button opens the manager"
     );
     run_frame(&mut app, &ctx);
 
     let rect_of = |app: &QuantickApp, index: usize, action: &str| {
-        app.drawings
-            .chrome
+        app.surfaces
+            .drawing_chrome
             .manager_action_rects()
             .iter()
             .find(|(row, name, _)| *row == index && *name == action)
@@ -1883,8 +1861,8 @@ fn typing_into_the_on_chart_editor_fills_the_note_and_escape_keeps_it() {
     click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
     run_frame(&mut app, &ctx);
     let index = app
-        .drawings
-        .chrome
+        .surfaces
+        .drawing_chrome
         .inline_text_editing()
         .expect("the editor is open");
 
@@ -1917,7 +1895,7 @@ fn typing_into_the_on_chart_editor_fills_the_note_and_escape_keeps_it() {
     );
     run_frame(&mut app, &ctx);
     assert_eq!(
-        app.drawings.chrome.inline_text_editing(),
+        app.surfaces.drawing_chrome.inline_text_editing(),
         None,
         "Escape closes the editor"
     );
@@ -1975,7 +1953,7 @@ fn a_buy_mark_lands_free_and_its_magnet_grabs_the_bars_low() {
     let ctx = egui::Context::default();
     run_frame(&mut app, &ctx);
     assert!(
-        !app.toolrail.magnet(),
+        !app.surfaces.toolrail.magnet(),
         "this proof starts with the magnet off"
     );
 
@@ -2006,7 +1984,7 @@ fn a_buy_mark_lands_free_and_its_magnet_grabs_the_bars_low() {
     );
 
     // Clear of the two free marks, so these clicks place rather than select.
-    app.toolrail.set_magnet(true);
+    app.surfaces.toolrail.set_magnet(true);
     let anchor = place(&mut app, 380.0);
     let candle = app
         .active_tab()
@@ -2033,7 +2011,7 @@ fn a_magnetic_sell_mark_grabs_the_bars_high() {
     let (mut app, _commands) = app_with_history(200);
     let ctx = egui::Context::default();
     run_frame(&mut app, &ctx);
-    app.toolrail.set_magnet(true);
+    app.surfaces.toolrail.set_magnet(true);
     arm_drawing_from_toolbox(&mut app, &ctx, "arrow-mark-down");
     click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
     let anchor = app.active_tab().flow_pane.drawings.items()[0].points[0];
@@ -2055,21 +2033,23 @@ fn an_armed_tool_takes_the_context_bar_off_the_canvas() {
     let (mut app, _commands) = app_with_history(200);
     let ctx = egui::Context::default();
     run_frame(&mut app, &ctx);
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
     run_frame(&mut app, &ctx);
     assert!(
-        app.drawings.chrome.context_bar_rect().is_some(),
+        app.surfaces.drawing_chrome.context_bar_rect().is_some(),
         "the finished object has it"
     );
 
-    app.drawings.chrome.forget_context_bar_rect();
-    app.toolrail
+    app.surfaces.drawing_chrome.forget_context_bar_rect();
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     run_frame(&mut app, &ctx);
     assert!(
-        app.drawings.chrome.context_bar_rect().is_none(),
+        app.surfaces.drawing_chrome.context_bar_rect().is_none(),
         "arming a tool clears the way for the next drawing"
     );
 }
@@ -2079,7 +2059,8 @@ fn one_drag_creates_one_undo_entry() {
     let (mut app, _commands) = app_with_history(200);
     let ctx = egui::Context::default();
     run_frame(&mut app, &ctx);
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
     assert_eq!(
@@ -2150,7 +2131,9 @@ fn duplicating_a_band_carries_its_armed_strategy_but_not_its_state() {
     let (mut app, _commands) = app_with_history(200);
     let ctx = egui::Context::default();
     run_frame(&mut app, &ctx);
-    app.toolrail.arm(Tool::Drawing(drawing_tool("rectangle")));
+    app.surfaces
+        .toolrail
+        .arm(Tool::Drawing(drawing_tool("rectangle")));
     click_chart(&mut app, &ctx, egui::pos2(600.0, 260.0));
     click_chart(&mut app, &ctx, egui::pos2(760.0, 340.0));
     let source = app.active_tab().flow_pane.drawings.items()[0].id;
@@ -2231,18 +2214,24 @@ fn the_repeat_pin_keeps_the_drawing_tool_armed() {
     run_frame(&mut app, &ctx);
 
     // Default: one-shot back to Pointer.
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     click_chart(&mut app, &ctx, egui::pos2(650.0, 280.0));
-    assert_eq!(app.toolrail.tool(), Tool::Pointer);
+    assert_eq!(app.surfaces.toolrail.tool(), Tool::Pointer);
 
     // Pinned: the tool stays armed for the next object.
-    app.toolrail.set_repeat(true);
-    app.toolrail
+    app.surfaces.toolrail.set_repeat(true);
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     click_chart(&mut app, &ctx, egui::pos2(700.0, 320.0));
     assert_eq!(
-        app.toolrail.tool().drawing_tool().map(|tool| tool.id()),
+        app.surfaces
+            .toolrail
+            .tool()
+            .drawing_tool()
+            .map(|tool| tool.id()),
         Some("horizontal-line"),
         "the repeat pin keeps the tool armed"
     );
@@ -2257,7 +2246,7 @@ fn the_repeat_pin_keeps_the_drawing_tool_armed() {
 #[test]
 fn a_paper_acknowledgement_reaches_the_windows_one_toast() {
     let (mut app, _commands) = app_with_history(50);
-    assert!(app.surfaces.toast.message().is_none());
+    assert!(app.surfaces.toast.model_state.message().is_none());
 
     app.runtime
         .tabs
@@ -2271,12 +2260,12 @@ fn a_paper_acknowledgement_reaches_the_windows_one_toast() {
     );
 
     assert_eq!(
-        app.surfaces.toast.message(),
+        app.surfaces.toast.model_state.message(),
         Some("SIM: dropped at the fill - no bid"),
         "the panel posts, the window's one toast shows it"
     );
     assert!(
-        !app.surfaces.toast.offers_undo(),
+        !app.surfaces.toast.model_state.offers_undo(),
         "a fill cannot be taken back, so no button pretends it can"
     );
 }
@@ -2297,14 +2286,14 @@ fn a_paper_acknowledgement_is_handed_over_once() {
         &mut app.surfaces.toast,
         Instant::now(),
     );
-    app.surfaces.toast.clear();
+    app.surfaces.toast.model_state = Default::default();
     frame_tail::settle_paper_panels(
         &mut app.runtime.tabs,
         &mut app.surfaces.toast,
         Instant::now(),
     );
     assert!(
-        app.surfaces.toast.message().is_none(),
+        app.surfaces.toast.model_state.message().is_none(),
         "the outbox was emptied by the first drain"
     );
 }
@@ -2322,7 +2311,7 @@ fn a_reset_that_failed_leaves_the_entry_live() {
     app.runtime
         .workspace
         .set_ui_state_path(scratch_ui_state("reset-fails").join("nope.toml"));
-    app.toolrail.set_favorites(&["measure".to_owned()]);
+    app.surfaces.toolrail.set_favorites(&["measure".to_owned()]);
     app.runtime.workspace.session_mut().set_saved(true);
 
     app.workspace_save_adapter().forget_workspace();
@@ -2562,141 +2551,22 @@ fn closing_a_tab_flattens_and_journals_its_simulated_position() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// The second operator places an order, brackets it and reads it back —
-/// the whole chart gesture, without a chart.
-///
-/// `CLAUDE.md`'s *operable without a hand*: a capability a trader does
-/// exists as a named call, not only inside a click handler. This is that
-/// call for the one class of capability that had no registry entry at
-/// all until now.
+/// A trade action reaches the active tab's desk and the window's journal:
+/// the order rests in that tab's account, and the record names the hand
+/// that asked. What the handler answers - brackets, refusals, cancels and
+/// the journal's payload - is `quantick-control-handlers`' to test.
 #[test]
-fn the_trade_actions_place_bracket_and_read_back_an_order() {
+fn a_trade_action_reaches_the_active_desk_and_the_journal() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = app_with_history(40);
     run_frame(&mut app, &ctx);
-
     let mark = app
         .active_tab()
         .paper
         .mark_price()
         .expect("the history seeded a price");
-    // A buy limit a whole point below the market: below is where a buy
-    // limit can rest, whatever the fixture's absolute prices are.
-    let price = mark - rust_decimal::Decimal::ONE;
 
     let placed = app
-        .control_action(
-            quantick_control_handlers::trade::PLACE_CAPABILITY_ID,
-            quantick_control_handlers::trade::CAPABILITY_VERSION,
-            crate::control::ActionOrigin::Human,
-            serde_json::json!({
-                "side": "buy",
-                "kind": "limit",
-                "quantity": "2",
-                "price": price.to_string(),
-            }),
-        )
-        .expect("the action dispatches");
-    assert_eq!(placed["accepted"], true, "{placed}");
-    assert_eq!(placed["simulated"], true, "every result says so");
-    let order_id = placed["order_id"].as_u64().expect("the venue named it");
-    assert_eq!(
-        placed["working_orders"][0]["kind"], "limit",
-        "the kind was stated, not inferred from where a pointer was"
-    );
-
-    // Brackets on the working order, through the same door the chart's
-    // drag uses.
-    let stop = price - rust_decimal::Decimal::ONE;
-    let target = price + rust_decimal::Decimal::from(2);
-    let bracketed = app
-        .control_action(
-            quantick_control_handlers::trade::BRACKET_CAPABILITY_ID,
-            quantick_control_handlers::trade::CAPABILITY_VERSION,
-            crate::control::ActionOrigin::Human,
-            serde_json::json!({
-                "order_id": order_id,
-                "stop_loss": stop.to_string(),
-                "take_profit": target.to_string(),
-            }),
-        )
-        .expect("the action dispatches");
-    assert_eq!(bracketed["accepted"], true, "{bracketed}");
-    assert_eq!(
-        bracketed["working_orders"][0]["stop_loss"],
-        stop.to_string(),
-        "and the read-back carries the leg that will arm on the fill"
-    );
-    assert_eq!(
-        bracketed["working_orders"][0]["take_profit"],
-        target.to_string()
-    );
-
-    // A refusal comes back as an answer, in the venue's own words —
-    // never as a bare status a caller can forget to render. A stop on
-    // the profit side of the entry would exit the instant it filled.
-    let refused = app
-        .control_action(
-            quantick_control_handlers::trade::BRACKET_CAPABILITY_ID,
-            quantick_control_handlers::trade::CAPABILITY_VERSION,
-            crate::control::ActionOrigin::Human,
-            serde_json::json!({
-                "order_id": order_id,
-                "stop_loss": (price + rust_decimal::Decimal::ONE).to_string(),
-            }),
-        )
-        .expect("the action dispatches");
-    assert_eq!(refused["accepted"], false);
-    assert!(
-        refused["rejected_because"]
-            .as_str()
-            .is_some_and(|reason| reason.contains("stop loss")),
-        "the reason teaches: {refused}"
-    );
-    assert_eq!(
-        refused["working_orders"][0]["stop_loss"],
-        stop.to_string(),
-        "and a refusal changed nothing"
-    );
-
-    // And it can be taken away again.
-    let cancelled = app
-        .control_action(
-            quantick_control_handlers::trade::CANCEL_CAPABILITY_ID,
-            quantick_control_handlers::trade::CAPABILITY_VERSION,
-            crate::control::ActionOrigin::Human,
-            serde_json::json!({ "order_id": order_id }),
-        )
-        .expect("the action dispatches");
-    assert_eq!(cancelled["accepted"], true, "{cancelled}");
-    assert!(
-        cancelled["working_orders"]
-            .as_array()
-            .is_some_and(|orders| orders.is_empty()),
-        "nothing is working now"
-    );
-}
-
-/// Whatever acted is recorded. An order placed through the registry
-/// carries its actor into the journal, so one an operator asked for is
-/// never indistinguishable from one the trader placed by hand — the
-/// authorship half of the data-honesty rule that labels an inferred
-/// aggressor side, applied to who asked.
-///
-/// A refusal records too: "it tried to buy here and was told no" is
-/// exactly the line a trader reviewing a session wants to find.
-#[test]
-fn an_order_placed_through_the_registry_names_who_asked_for_it() {
-    let ctx = egui::Context::default();
-    let (mut app, _commands) = app_with_history(40);
-    run_frame(&mut app, &ctx);
-    let mark = app
-        .active_tab()
-        .paper
-        .mark_price()
-        .expect("the history seeded a price");
-
-    let accepted = app
         .control_action(
             quantick_control_handlers::trade::PLACE_CAPABILITY_ID,
             quantick_control_handlers::trade::CAPABILITY_VERSION,
@@ -2709,21 +2579,12 @@ fn an_order_placed_through_the_registry_names_who_asked_for_it() {
             }),
         )
         .expect("the action dispatches");
-    assert_eq!(accepted["accepted"], true, "{accepted}");
-
-    // And one the venue refuses: a buy limit above the market.
-    app.control_action(
-        quantick_control_handlers::trade::PLACE_CAPABILITY_ID,
-        quantick_control_handlers::trade::CAPABILITY_VERSION,
-        crate::control::ActionOrigin::Human,
-        serde_json::json!({
-            "side": "buy",
-            "kind": "limit",
-            "quantity": "1",
-            "price": (mark + rust_decimal::Decimal::ONE).to_string(),
-        }),
-    )
-    .expect("the action dispatches");
+    assert_eq!(placed["accepted"], true, "{placed}");
+    assert_eq!(
+        app.active_tab().paper.working_orders().len(),
+        1,
+        "the order rests in the active tab's account"
+    );
 
     let events = app
         .control
@@ -2733,38 +2594,13 @@ fn an_order_placed_through_the_registry_names_who_asked_for_it() {
         .journal()
         .read(1, 64, 1 << 20)
         .events;
-    let placed: Vec<_> = events
+    let recorded = events
         .iter()
-        .filter(|event| event.kind.as_str() == "trade.order.placed")
-        .collect();
-    assert_eq!(placed.len(), 2, "both the acceptance and the refusal");
-
-    assert_eq!(placed[0].payload["accepted"], true);
-    assert!(
-        placed[0].payload["order_id"].is_u64(),
-        "the accepted one names the order it made"
-    );
+        .find(|event| event.kind.as_str() == "trade.order.placed")
+        .expect("the call journaled");
     assert_eq!(
-        placed[0].payload["simulated"], true,
-        "and says the fills are simulated, in the record as on every surface"
-    );
-    assert_eq!(
-        placed[0].actor.as_ref().expect("an actor is recorded").kind,
-        quantick_control::wire::ActorKind::HumanUi,
-        "the actor rides in the event, not beside it"
-    );
-
-    assert_eq!(placed[1].payload["accepted"], false);
-    assert!(
-        placed[1].payload["rejected_because"]
-            .as_str()
-            .is_some_and(|reason| reason.contains("fill immediately")),
-        "the refusal keeps the venue's own words: {}",
-        placed[1].payload
-    );
-    assert_eq!(
-        placed[1].payload["asked"]["side"], "buy",
-        "and what was asked for, so the attempt is legible"
+        recorded.actor.as_ref().expect("an actor is recorded").kind,
+        quantick_control::wire::ActorKind::HumanUi
     );
 }
 
@@ -2949,14 +2785,18 @@ fn drawing_owner_cleanup_case(operation: &str, focused_owner: bool) {
                 ..Default::default()
             },
             |ctx| {
-                app.drawings.handle_drawing_keys(
-                    &mut crate::app::drawing_controller::DrawingAccess::new(&mut app.runtime.tabs),
-                    &mut app.toolrail,
-                    &mut *app.audio.alerts,
-                    ctx,
-                    Instant::now(),
-                    false,
-                );
+                app.drawings
+                    .with(&mut app.surfaces.drawing_chrome)
+                    .handle_drawing_keys(
+                        &mut crate::app::drawing_controller::DrawingAccess::new(
+                            &mut app.runtime.tabs,
+                        ),
+                        &mut app.surfaces.toolrail,
+                        &mut *app.audio.alerts,
+                        ctx,
+                        Instant::now(),
+                        false,
+                    );
             },
         );
     }

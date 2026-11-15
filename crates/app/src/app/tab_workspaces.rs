@@ -42,7 +42,7 @@ pub(super) fn as_hand<I: IntoIterator<Item = String>>(
     let notes = act(app, access.as_mut().zip(hand.as_ref()));
     app.control.control_access = access;
     for message in notes {
-        app.surfaces.toast.note(message, Instant::now());
+        crate::surfaces::toast::note(&mut app.surfaces.toast, message, Instant::now());
     }
 }
 
@@ -102,8 +102,8 @@ impl TabRecipeHost for BookTabs<'_> {
         if let Some(tab) = app.runtime.tabs.by_id(id) {
             let canvas = (
                 quantick_workspace::canvas::signal(&tab.canvas.state),
-                tab.canvas.context_collapsed,
-                tab.canvas.flow_collapsed,
+                tab.canvas.folds().0,
+                tab.canvas.folds().1,
             );
             (canvas, tab.canvas.split_fraction.to_bits()).hash(&mut hash);
             tab.canvas.context_collapsed_slots().hash(&mut hash);
@@ -183,7 +183,7 @@ fn apply_recipe_canvas(runtime: &mut Runtime, id: u64, recipe: &WorkspaceRecipe)
         time: tab.time_pane().is_some_and(|pane| pane.legend_collapsed),
     };
     tab.restore_canvas(
-        super::canvas_wiring::recipe_layout(recipe),
+        crate::tab::CanvasLayout::of_recipe(recipe),
         recipe.split_fraction,
         CanvasCollapseRestore {
             context: recipe.context_collapsed,
@@ -195,7 +195,7 @@ fn apply_recipe_canvas(runtime: &mut Runtime, id: u64, recipe: &WorkspaceRecipe)
         &intervals,
         legends,
     );
-    tab.canvas.state = super::canvas_wiring::recipe_state(recipe);
+    tab.canvas.state = quantick_workspace::canvas_layout::recipe_canvas(recipe);
     let mut monitors = quantick_platform::monitors();
     monitors.push(quantick_control_handlers::canvas::PRIMARY_MONITOR.to_owned());
     let area = super::canvas_wiring::tab_area(&tab.canvas);
@@ -232,22 +232,17 @@ fn apply_recipe_switches(runtime: &mut Runtime, id: u64, recipe: &WorkspaceRecip
 }
 
 fn apply_recipe_indicators(mut layouts: LayoutAdapter<'_>, id: u64, recipe: &WorkspaceRecipe) {
-    let sides: Vec<_> = (layouts.tabs.by_id(id).into_iter())
-        .flat_map(|tab| tab.panes().map(|(pane, side)| (pane.id, side)))
-        .collect();
     layouts.own_indicator_copies();
-    let sets = sides
-        .iter()
-        .map(|(pane, side)| (*pane, recipe.for_pane(side.index()).0));
-    layouts.store.session_mut().part_copies(sets);
-    for (_, side) in sides {
-        layouts.show_pane_indicators(id, side, recipe.for_pane(side.index()).0);
-    }
+    let panes = layouts.tabs.by_id(id).map(|tab| tab.panes());
+    let sets = panes.into_iter().flatten();
+    let sets = sets.map(|(pane, side)| (pane.id, recipe.for_pane(side.index()).0));
+    let shown = layouts.store.session_mut().landing_sets(sets);
+    layouts.show_sets(shown);
 }
 
 /// Carry out what a workspace row or the toolbar asked for, on what the active
 /// tab shows now, journaled as the trader's hand.
-pub(super) fn apply_workspace_command(app: &mut QuantickApp, command: ops::RowCommand) {
+pub(super) fn apply_workspace_command(app: &mut QuantickApp, command: WorkspaceCommand) {
     let tab = app.runtime.tabs.active_id();
     book_upkeep::watch_tab(&mut BookTabs(app), tab, Instant::now());
     let symbol = app.active_tab().symbol.clone();

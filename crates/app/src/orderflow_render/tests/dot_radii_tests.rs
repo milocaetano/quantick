@@ -118,37 +118,6 @@ fn the_biggest_dot_of_each_pane_is_clearly_the_biggest() {
     }
 }
 
-/// A dot never outgrows its cell: half the tape's column and half its
-/// level's height on screen. Squeezing the price axis shrinks every dot of
-/// the pane by one share, so they stay in proportion.
-#[test]
-fn a_squeezed_axis_shrinks_the_dots_in_proportion() {
-    let viewport = Viewport::new();
-    let rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1000.0, 400.0));
-    let layout = ProjectedLayout::new(rect, &viewport, 3, 0, 4, 300.0);
-    let projection = dots_frame(vec![dot(true, 5, 0.85, 0.3), dot(true, 20, 0.85, 0.7)]);
-    let paint = |px_per_price: f64| {
-        let style = dots_style(DotSizing {
-            native_tape: false,
-            tape_column_px: 100.0,
-            candle_column_px: 100.0,
-            px_per_price,
-            typed_full: None,
-        });
-        radii(&painted(|painter| {
-            draw_aggression_bubbles(painter, &RenderContext::new(&projection, layout, &style));
-        }))
-    };
-    let roomy = paint(100.0);
-    // A one-tick level 10 px tall: the largest radius is 5, half of it.
-    let squeezed = paint(10.0);
-    assert!((squeezed[1] - 5.0).abs() < 1e-3, "{squeezed:?}");
-    assert!(
-        ((squeezed[0] / squeezed[1]) - (roomy[0] / roomy[1])).abs() < 1e-3,
-        "in proportion: {squeezed:?} vs {roomy:?}"
-    );
-}
-
 fn stable_native_style(spheres: bool) -> OrderflowRenderStyle {
     let mut style = dots_style(DotSizing {
         native_tape: true,

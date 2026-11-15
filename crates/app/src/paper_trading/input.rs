@@ -8,8 +8,6 @@
 
 use eframe::egui;
 use quantick_engine::Side;
-#[cfg(test)]
-use quantick_paper::desk::PaperDrag;
 use quantick_paper::desk::{ChartCommand, ChartFrame, CursorHint, HeldKeys, PriceAxis};
 use quantick_sim::EntryKind;
 
@@ -199,10 +197,5 @@ impl PaperTrading {
         self.desk
             .gesture
             .control_at(&self.account, point(pointer), bounds(chart), &Axis(scale))
-    }
-
-    /// Which line sits under the pointer; see `quantick_paper::desk::line_at`.
-    pub(super) fn line_at(&self, pointer: egui::Pos2, scale: &PriceScale) -> Option<PaperDrag> {
-        quantick_paper::desk::line_at(&self.account, point(pointer), &Axis(scale))
     }
 }

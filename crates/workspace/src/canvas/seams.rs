@@ -10,6 +10,9 @@
 //! open child past it, and the strip slides along.
 
 use super::bands::inset_seams;
+use super::metrics::COLLAPSED_HIT_PX;
+#[cfg(doc)]
+use super::metrics::COLLAPSED_PANE_WIDTH_PX;
 use super::presets::{LayoutPreset, PaneKind};
 use super::state::{CanvasRefusal, CanvasState};
 use super::tree::{CanvasRect, PaneSlot, PaneTree, SplitAxis};
@@ -37,10 +40,69 @@ pub struct TreeSeam {
     pub axis: SplitAxis,
     /// The gap between the two neighbours' bands, `divider` thick.
     pub rect: CanvasRect,
-    /// Whether it moves: it pairs the nearest open children on each side,
-    /// sliding any folded strip between them along; false when one side has
-    /// only folded charts up to the split's end.
+    /// Whether a drag moves it: it pairs the nearest open or railed child on
+    /// each side, sliding any minimized strip between them along; false when
+    /// one side has only strips up to the split's end.
     pub resizable: bool,
+    /// The rail folded right beside it, which dragging it reopens.
+    pub rail: Option<SeamRail>,
+}
+
+/// A node a seam drag folded shut, painted as one rail.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SeamRail {
+    /// The first pane it folded, in reading order: what a restore names.
+    pub slot: PaneSlot,
+    /// Where it paints: its tree rectangle less half a divider on each seam,
+    /// [`COLLAPSED_PANE_WIDTH_PX`] along `axis`.
+    pub rect: CanvasRect,
+    /// The axis of the split it folded in: a `Row` rail is vertical.
+    pub axis: SplitAxis,
+    /// Whether the open side it meets lies after it along `axis`.
+    pub meets_after: bool,
+}
+
+impl SeamRail {
+    /// The scene's name for the rail: its restore, as the strip's is.
+    #[must_use]
+    pub fn control_id(&self) -> String {
+        format!("pane_menu.{}.rail", self.slot)
+    }
+}
+
+impl TreeSeam {
+    /// What takes the drag: the seam with `handle` points either side, or,
+    /// beside a rail, the rail's [`COLLAPSED_HIT_PX`] from its outer edge
+    /// through the seam, as the column painter's rail reaches.
+    #[must_use]
+    pub fn grab(&self, handle: f32) -> CanvasRect {
+        let (at, row) = (self.rect, self.axis == SplitAxis::Row);
+        let (start, end) = if row {
+            (at.x - handle, at.right() + handle)
+        } else {
+            (at.y - handle, at.bottom() + handle)
+        };
+        let (start, end) = match self.rail {
+            Some(rail) if rail.meets_after => {
+                let outer = if row { rail.rect.x } else { rail.rect.y };
+                (outer, end.max(outer + COLLAPSED_HIT_PX))
+            }
+            Some(rail) => {
+                let outer = if row {
+                    rail.rect.right()
+                } else {
+                    rail.rect.bottom()
+                };
+                (start.min(outer - COLLAPSED_HIT_PX), outer)
+            }
+            None => (start, end),
+        };
+        if row {
+            CanvasRect::new(start, at.y, end - start, at.h)
+        } else {
+            CanvasRect::new(at.x, start, at.w, end - start)
+        }
+    }
 }
 
 /// Every seam of `state`'s docked tree when the canvas is `area` with
@@ -87,7 +149,11 @@ fn collect(
             SplitAxis::Row => CanvasRect::new(before.right() - half, cross.y, divider, cross.h),
             SplitAxis::Column => CanvasRect::new(cross.x, before.bottom() - half, cross.w, divider),
         };
-        let resizable = partners(state, children, index).is_some();
+        let pair = partners(state, children, index);
+        let beside = |at: usize| {
+            let railed = railed(state, &children[at]) && pair.is_some();
+            railed.then(|| rail_of(&children[at], rects, (area, divider), *axis, at < index + 1))
+        };
         out.push(TreeSeam {
             address: SeamAddress {
                 path: path.clone(),
@@ -95,38 +161,103 @@ fn collect(
             },
             axis: *axis,
             rect,
-            resizable,
+            resizable: pair.is_some(),
+            rail: beside(index).or_else(|| beside(index + 1)),
         });
     }
     for (index, child) in children.iter().enumerate() {
+        if railed(state, child) {
+            continue;
+        }
         path.push(index);
         collect(state, child, rects, (area, divider), path, out);
         path.pop();
     }
 }
 
-/// Whether `child` is folded to a strip its split holds: a folded pane, or a
-/// split whose every pane is folded.
-fn pinned(state: &CanvasState, child: &PaneTree) -> bool {
+/// Every rail of `state`'s docked tree on a canvas of `area` with `divider`
+/// points between neighbours: what the window paints over the folded nodes.
+#[must_use]
+pub fn tree_rails(state: &CanvasState, area: CanvasRect, divider: f32) -> Vec<SeamRail> {
+    fn walk(
+        state: &CanvasState,
+        node: &PaneTree,
+        at: (&[(PaneSlot, CanvasRect)], CanvasRect, f32),
+        out: &mut Vec<SeamRail>,
+    ) {
+        let PaneTree::Split { axis, children, .. } = node else {
+            return;
+        };
+        for (index, child) in children.iter().enumerate() {
+            if railed(state, child) {
+                out.push(rail_of(
+                    child,
+                    at.0,
+                    (at.1, at.2),
+                    *axis,
+                    index + 1 < children.len(),
+                ));
+            } else {
+                walk(state, child, at, out);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    // Nothing folded, nothing to carve: the frame's usual case costs nothing.
+    if state.maximized().is_none() && !state.railed().is_empty() {
+        let rects = state.rects(area);
+        walk(state, state.tree(), (&rects, area, divider), &mut out);
+    }
+    out
+}
+
+/// `node`, folded in a split along `axis`, as the rail it paints.
+fn rail_of(
+    node: &PaneTree,
+    rects: &[(PaneSlot, CanvasRect)],
+    (area, divider): (CanvasRect, f32),
+    axis: SplitAxis,
+    meets_after: bool,
+) -> SeamRail {
+    SeamRail {
+        slot: node.panes().first().map_or(0, |(slot, _)| *slot),
+        rect: inset_seams(bounds(node, rects), area, divider),
+        axis,
+        meets_after,
+    }
+}
+
+/// Whether `child` is folded: a pane minimized to its strip or railed, or a
+/// split whose every pane is.
+pub(super) fn pinned(state: &CanvasState, child: &PaneTree) -> bool {
     match child {
-        PaneTree::Pane { slot, .. } => state.minimized().contains(slot),
+        PaneTree::Pane { slot, .. } => state.folded(*slot),
         PaneTree::Split { children, .. } => children.iter().all(|child| pinned(state, child)),
     }
 }
 
-/// The two open children the seam after child `index` trades between: the
-/// nearest unfolded one at or before it and the nearest after it. A strip
-/// between them keeps its extent and slides along. `None` when either side
-/// is folded to the split's end.
-fn partners(state: &CanvasState, children: &[PaneTree], index: usize) -> Option<(usize, usize)> {
-    let open = |at: &usize| !pinned(state, &children[*at]);
-    let first = (0..=index).rev().find(open)?;
-    let second = (index + 1..children.len()).find(open)?;
+/// Whether `child` is folded to one rail.
+pub(super) fn railed(state: &CanvasState, child: &PaneTree) -> bool {
+    !state.railed().is_empty() && child.railed(&|slot| state.pin(slot))
+}
+
+/// The two children the seam after child `index` trades between: the
+/// nearest open or railed one at or before it and the nearest after it. A
+/// strip between them keeps its extent and slides along. `None` when either
+/// side holds only strips up to the split's end.
+pub(super) fn partners(
+    state: &CanvasState,
+    children: &[PaneTree],
+    index: usize,
+) -> Option<(usize, usize)> {
+    let partner = |at: &usize| !pinned(state, &children[*at]) || railed(state, &children[*at]);
+    let first = (0..=index).rev().find(partner)?;
+    let second = (index + 1..children.len()).find(partner)?;
     Some((first, second))
 }
 
 /// The rectangle `node`'s panes cover.
-fn bounds(node: &PaneTree, rects: &[(PaneSlot, CanvasRect)]) -> CanvasRect {
+pub(super) fn bounds(node: &PaneTree, rects: &[(PaneSlot, CanvasRect)]) -> CanvasRect {
     let mut covered = (node.panes().into_iter())
         .filter_map(|(slot, _)| rects.iter().find(|(held, _)| *held == slot))
         .map(|(_, rect)| *rect);
@@ -146,7 +277,7 @@ fn union(a: CanvasRect, b: CanvasRect) -> CanvasRect {
     )
 }
 
-fn extent(rect: CanvasRect, axis: SplitAxis) -> f32 {
+pub(super) fn extent(rect: CanvasRect, axis: SplitAxis) -> f32 {
     match axis {
         SplitAxis::Row => rect.w,
         SplitAxis::Column => rect.h,
@@ -154,7 +285,7 @@ fn extent(rect: CanvasRect, axis: SplitAxis) -> f32 {
 }
 
 /// How many panes `node` lays one after another along `axis`.
-fn along(node: &PaneTree, axis: SplitAxis) -> usize {
+pub(super) fn along(node: &PaneTree, axis: SplitAxis) -> usize {
     match node {
         PaneTree::Pane { .. } => 1,
         PaneTree::Split {
@@ -172,14 +303,17 @@ fn along(node: &PaneTree, axis: SplitAxis) -> usize {
     }
 }
 
-fn node_at<'tree>(tree: &'tree PaneTree, path: &[usize]) -> Option<&'tree PaneTree> {
+pub(super) fn node_at<'tree>(tree: &'tree PaneTree, path: &[usize]) -> Option<&'tree PaneTree> {
     path.iter().try_fold(tree, |node, index| match node {
         PaneTree::Split { children, .. } => children.get(*index),
         PaneTree::Pane { .. } => None,
     })
 }
 
-fn node_at_mut<'tree>(tree: &'tree mut PaneTree, path: &[usize]) -> Option<&'tree mut PaneTree> {
+pub(super) fn node_at_mut<'tree>(
+    tree: &'tree mut PaneTree,
+    path: &[usize],
+) -> Option<&'tree mut PaneTree> {
     path.iter().try_fold(tree, |node, index| match node {
         PaneTree::Split { children, .. } => children.to_mut().get_mut(*index),
         PaneTree::Pane { .. } => None,
@@ -242,6 +376,10 @@ impl CanvasState {
         let (at_first, at_second) =
             partners(self, children, seam.index).ok_or(CanvasRefusal::NoSeam)?;
         let (first, second) = (&children[at_first], &children[at_second]);
+        // A rail reopens by a drag ([`Self::drag_seam`]), never by a nudge.
+        if railed(self, first) || railed(self, second) {
+            return Err(CanvasRefusal::NoSeam);
+        }
         let first_share = shares[at_first].max(0.0);
         let pair_share = first_share + shares[at_second].max(0.0);
         if pair_share <= f32::EPSILON {
@@ -406,7 +544,10 @@ impl CanvasState {
     pub fn saved_form(&self, preset: &LayoutPreset, split: f32, columns: bool) -> Option<Self> {
         let (mut state, mut split) = (self.clone(), split);
         state.mirror_split(preset, &mut split, columns);
-        let plain = columns && state == Self::from_preset_split(preset, Some(split));
+        // A column fold is the save's own two flags: rebuilt, not carried.
+        let (context, flow) = state.flow_side_folds();
+        let rebuilt = Self::from_preset_split(preset, Some(split)).with_folds(context, flow);
+        let plain = columns && state == rebuilt;
         (!plain).then_some(state)
     }
 

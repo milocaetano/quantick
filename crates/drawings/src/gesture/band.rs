@@ -185,3 +185,7 @@ pub fn magnet_value_of(
         .min_by(|left, right| left.0.total_cmp(&right.0))
         .map(|(_, value)| value)
 }
+
+#[cfg(test)]
+#[path = "band_tests.rs"]
+mod tests;

@@ -42,13 +42,13 @@ The three exclusion classes are closed:
 
 | Outcome | Behaviours |
 | --- | --- |
-| Reachable by capability | 130 |
+| Reachable by capability | 132 |
 | Excluded: `authority` | 4 |
 | Excluded: `ui_only_by_decision` | 7 |
 | Excluded: `pending_capability` | 43 |
-| **Total** | **184** |
+| **Total** | **186** |
 
-100 of the 184 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 84 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
+100 of the 186 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 86 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
 
 ## Behaviours
 
@@ -106,6 +106,7 @@ The three exclusion classes are closed:
 | `canvas.pane.pop_out` | Open a chart in its own OS window | a chart header's ⋯ menu, Open in new window; a floating chart's grip dragged past the window's edge | `canvas.pane.pop_out` | — |
 | `canvas.pane.return` | Bring a chart from its own window back over the canvas | the chart window's ⋯ menu, Return to canvas; closing that window | `canvas.pane.return` | — |
 | `canvas.pane.resize` | Resize docked charts of a canvas layout | drag the divider between two docked charts of a layout the canvas tree lays out | `canvas.pane.resize` | — |
+| `canvas.seam.drag` | Fold a docked chart to its rail, or reopen it, by its seam | drag a seam of a layout the canvas tree lays out to the canvas edge, or a rail back | `canvas.seam.drag` | — |
 | `dock.tab.open` | Open a panel — session, trading or trades | window menu, Panels, the dock's own strip | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
 | `dock.toggle` | Show or hide the panels dock | toolbar sidebar button, window menu, Ctrl+Shift+B | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
 | `layer.bubbles.toggle` | Switch the aggression bubbles on or off | trail capsule glyph, pane right-click layer menu, Ctrl+B | `layers.visibility.set` | — |
@@ -198,6 +199,8 @@ The three exclusion classes are closed:
 | `tool.trend-line` | Arm the trend line | tool rail, family flyout, canvas right-click | `annotate.trend_line.create` | — |
 | `tool.triangle` | Arm the triangle | tool rail, family flyout, canvas right-click | — | `pending_capability` — no `annotate.*` capability places this shape; only text, arrow, rectangle, fixed-range profile, the two Fibonacci tools, trend line, horizontal line and parallel channel have one. Tracked in issue 401 |
 | `tool.vertical-line` | Arm the vertical line | tool rail, family flyout, canvas right-click | — | `pending_capability` — no `annotate.*` capability places this shape; only text, arrow, rectangle, fixed-range profile, the two Fibonacci tools, trend line, horizontal line and parallel channel have one. Tracked in issue 401 |
+| `drawing.text.properties` | Edit a note's words, font, size, color, background, border and wrapping | inline editor, text properties tab and size slider | `annotate.text.set` | — |
+| `drawing.text.repeat` | Place another independent note in the selected style | the text properties bar T button | `annotate.text.repeat` | — |
 | `attention.mark.create` | Take a mark of what is under the pointer | Ctrl+M | `attention.mark.create` | — |
 | `drawing.remove` | Delete a drawing | the object context bar, the canvas right-click menu (drawing section and objects submenu), the object manager, Delete | `annotate.remove` | — |
 | `drawing.duplicate` | Copy a drawing: duplicate it in place, or copy it and paste it on any chart | the object context bar's Duplicate button, Ctrl+D; on the focused pane, Ctrl+C then Ctrl+V or any native copy and paste (Windows: Ctrl+Insert, Shift+Insert) | — | `pending_capability` — no capability copies an object; `annotate.*` places four shapes afresh, so an operator re-creates a copy rather than duplicating one. Tracked in issue 401 |
@@ -229,7 +232,6 @@ The three exclusion classes are closed:
 | `workspace.autosave.set` | Turn auto save layout changes on or off | the capsule's workspace menu, Auto save | `workspace.autosave.set` | — |
 | `workspace.rename` | Rename a workspace | window menu, Workspace, Rename, or a row's Rename in Manage workspaces | `workspace.rename` | — |
 | `workspace.manage` | List every workspace with its tabs, to rename or delete one (its tabs move to Default), Delete confirmed in the row | window menu, Workspace, Manage workspaces…, or the capsule's workspace menu | `workspace.list`, `workspace.rename`, `workspace.delete` | — |
-| `workspace.colour.set` | Give a workspace a colour, swapping with the workspace holding it | the capsule's workspace menu, the swatches under the workspaces | `workspace.colour.set` | — |
 | `workspace.list` | List the workspaces and the tabs using each | window menu, Workspace, whose list names each workspace | `workspace.list` | — |
 | `window.menu.open` | Open the window menu | the kebab button on the title strip, F10 | — | `ui_only_by_decision` — the menu holds rows, and every row names its own behaviour; an operator calls those directly, and a transient popup is not state worth driving |
 | `settings.open` | Open the Settings window on a section | window menu, Ctrl+Comma, the status-bar clock; the Agent on pill opens the section a call is refused | `settings.open` | — |
@@ -260,7 +262,7 @@ matrix fails the build.
 | `hotkey` | 25 |
 | `menu_entry` | 47 |
 | `scripted_menu` | 0 |
-| `authored` | 86 |
+| `authored` | 88 |
 
 ## Appendix: rows no registry stands behind
 
@@ -306,6 +308,7 @@ declares nothing here is a guard failure.
 | `canvas.pane.pop_out` | a row of the chart's ⋯ menu, whose rows are `PaneMenuItem`, not an action enum |
 | `canvas.pane.return` | a row of the chart's ⋯ menu, whose rows are `PaneMenuItem`, not an action enum |
 | `canvas.pane.resize` | a drag on a seam the canvas model's `tree_seams` lists |
+| `canvas.seam.drag` | a drag on a seam or rail, as workspace.summary lists each tab's canvas.seams |
 | `layer.footprint.settings.open` | a capsule glyph's right click and the pane menu's entry, not entries in the toolbar's action enum |
 | `layer.candle_aggression.toggle` | the per-pane candle aggression layer is opt-in and has no glyph on a capsule or header |
 | `layer.tape_only.toggle` | the per-pane order-flow menu and settings checkbox are not pane header LayerToggle entries |
@@ -340,6 +343,8 @@ declares nothing here is a guard failure.
 | `trade.ticket.strategy.select` | the Trading panel strategy selector |
 | `feed.connection_state` | a readout painted from one state, with no control of its own |
 | `toolrail.magnet.toggle` | the rail's magnet button and its More menu entry are widgets, not registry entries |
+| `drawing.text.properties` | the text properties widgets |
+| `drawing.text.repeat` | the text properties bar repeat button |
 | `drawing.remove` | the object context bar, the canvas right-click menu and the object manager rows, resolved per click |
 | `drawing.duplicate` | the Duplicate button, Ctrl+D and the native copy and paste events are read per frame by `app/drawing_input.rs` and the context bar, not entries in a hotkey registry |
 | `drawing.quick_range_profile` | a secondary-button drag read per frame by `pane/quick_range.rs`, and the action bar `surfaces/drawing_chrome/quick_range.rs` lays out over it; neither is an entry in a registry the drift guard walks |
@@ -355,7 +360,6 @@ declares nothing here is a guard failure.
 | `drawing.scope.toggle` | the context bar's sharing button and the inspector checkbox are widgets, not registry entries |
 | `drawing.hide` | Alt+H is read per frame by `app/drawing_controller/input.rs`; the Hide and Show buttons on the menu and manager rows are widgets, not hotkey registry entries |
 | `drawing.clear_all` | a menu entry and a manager button that ask the same question |
-| `workspace.colour.set` | the swatch row under the capsule's workspace menu is neither a menu-bar entry nor a toolbar action |
 
 ## Appendix: registry entries that are not behaviours
 

@@ -23,6 +23,9 @@ use serde_json::{Value, json};
 pub const PRESSED_TRIGGER: &str = "notice_roll";
 /// The journal's `trigger` for a roll a restored tab made by itself.
 pub const AUTOMATIC_TRIGGER: &str = "workspace_restore";
+/// The journal's `trigger` for a `feed.contract.roll` call off a contract the
+/// feed reports unlisted: the notice's roll, asked for by a caller.
+pub const CAPABILITY_TRIGGER: &str = "capability";
 
 /// What tab `index` needs from the window to roll off an unlisted contract.
 pub trait UnlistedContractPort: ContractRollPort {
@@ -210,7 +213,7 @@ fn settle_tab<H: UnlistedContractPort + ?Sized>(
 /// roll memory is as it was: nothing decided, no licence moved, the offer
 /// kept. The caller resolved `to` first, so the feed offers it and the carry
 /// [`apply`] makes before the switch runs only where the switch can land.
-fn roll_off<H: UnlistedContractPort + ?Sized>(
+pub(super) fn roll_off<H: UnlistedContractPort + ?Sized>(
     host: &mut H,
     index: usize,
     from: &str,

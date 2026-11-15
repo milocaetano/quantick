@@ -55,6 +55,7 @@ const SCRATCH_MODULES: &[&str] = &[
     "crates/paper/src/scratch.rs",
     "crates/replay/src/scratch.rs",
     "crates/stores/src/scratch.rs",
+    "crates/ui-model/src/scratch.rs",
     "crates/strategy/src/scratch.rs",
 ];
 

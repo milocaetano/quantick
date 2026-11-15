@@ -28,7 +28,7 @@ pub(crate) fn flow_pane_shown(tab: &Tab) -> bool {
             .iter()
             .any(|(side, _)| *side == crate::pane::PaneSide::Flow);
     }
-    tab.canvas.layout.shows_flow() && !tab.canvas.flow_collapsed
+    tab.canvas.layout.shows_flow() && !tab.canvas.folds().1
 }
 
 /// Open the tab's panel on `section`.

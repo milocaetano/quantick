@@ -182,3 +182,56 @@ mod edge_tests {
         assert_eq!(lit, [(12.0 + halo / 2.0, halo, 7, 1.0), rim]);
     }
 }
+
+#[cfg(test)]
+mod resolve_tests {
+    use super::*;
+    use crate::config::HeatmapTheme;
+
+    type Rgba = [u8; 4];
+
+    fn resolved(bubbles: &BubbleStyle) -> (Palette<Rgba>, BubbleColors<Rgba>) {
+        let palette = Palette::for_theme(HeatmapTheme::Bookmap, |color| color);
+        let opaque = |[r, g, b]: [u8; 3]| [r, g, b, 255];
+        let colors = BubbleColors::resolve(&palette, bubbles, opaque, |[r, g, b, _]| [r, g, b]);
+        (palette, colors)
+    }
+
+    /// An untouched side keeps the theme's colour, and the trail follows the
+    /// front unless it is overridden itself.
+    #[test]
+    fn colours_fall_back_to_the_theme_and_the_trail_follows_the_front() {
+        let (palette, default) = resolved(&BubbleStyle::default());
+        assert_eq!((default.buy, default.sell), (palette.buy, palette.sell));
+        assert_eq!(default.trail, palette.consumption);
+        let (palette, overridden) = resolved(&BubbleStyle {
+            buy_color: Some([1, 2, 3]),
+            front_color: Some([9, 9, 9]),
+            ..BubbleStyle::default()
+        });
+        assert_eq!(overridden.buy, [1, 2, 3, 255]);
+        assert_eq!(overridden.sell, palette.sell);
+        assert_eq!(overridden.trail, [9, 9, 9, 255]);
+    }
+
+    /// The crown is its own side's colour pushed toward white, never a third
+    /// hue, unless the panel overrode the consumption colour.
+    #[test]
+    fn a_crown_follows_its_own_side_unless_the_panel_overrode_it() {
+        let (_, colors) = resolved(&BubbleStyle::default());
+        for (side, base) in [(Side::Buy, colors.buy), (Side::Sell, colors.sell)] {
+            let crown = colors.crown_for_side(side);
+            assert_ne!(crown, base);
+            assert!((0..3).all(|channel| crown[channel] >= base[channel]));
+        }
+        assert_ne!(
+            colors.crown_for_side(Side::Buy),
+            colors.crown_for_side(Side::Sell)
+        );
+        let (_, overridden) = resolved(&BubbleStyle {
+            front_color: Some([10, 20, 30]),
+            ..BubbleStyle::default()
+        });
+        assert_eq!(overridden.crown_for_side(Side::Buy), [10, 20, 30, 255]);
+    }
+}

@@ -44,7 +44,9 @@ pub use canvas::CanvasChrome;
 pub(crate) use canvas::paint_rail;
 #[cfg(test)]
 pub use quantick_session::HISTORY_NOTE_LINGER;
-pub use quantick_session::{HistoryPolicy, OlderCandles};
+pub use quantick_session::HistoryPolicy;
+#[cfg(test)]
+pub use quantick_session::OlderCandles;
 
 /// Each UI capture epoch reserves room for reconnect generations. This keeps
 /// late events from an aborted task below the next accepted generation floor.
@@ -446,7 +448,8 @@ impl Tab {
 
     pub(crate) fn flow_rail_rect(&self) -> Option<egui::Rect> {
         self.canvas
-            .flow_collapsed
+            .folds()
+            .1
             .then_some(self.collapsed_rail)
             .flatten()
     }

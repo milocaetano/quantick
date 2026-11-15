@@ -27,6 +27,7 @@ pub mod gesture;
 pub mod icons;
 pub mod palette;
 pub mod presets;
+pub mod text;
 
 mod clipboard;
 mod collection;
@@ -49,13 +50,13 @@ mod update;
 #[cfg(test)]
 mod scratch;
 
-pub use color::{RgbaExt, TRANSPARENT, WHITE, rgba_premultiplied, rgba_unmultiplied};
+pub use color::{RgbaExt, TRANSPARENT, WHITE, opaque, rgba_premultiplied, rgba_unmultiplied};
 pub use context::{AxisLevels, DrawContext, Handles, ValueUnit};
 #[cfg(any(test, feature = "test-support"))]
 pub use defaults::NullPresetHost;
 pub use defaults::{
-    PresetHost, has_saved_default, new_drawing_from_defaults, remember_last_style,
-    reset_tool_default, save_tool_default,
+    PresetHost, has_saved_default, new_drawing_from_defaults, prepare_repeat, remember_last_style,
+    repeat_opening, reset_tool_default, save_tool_default,
 };
 pub use family::{
     AnchorSnap, BodySnap, Constrain, IconDots, IconLetter, IconStrokes, ToolFamily, ToolShortcut,
@@ -74,10 +75,7 @@ pub use payload::{DrawingPayload, NoPayload};
 pub use placement::reanchor_points;
 pub use rect::{Align, Align2, PxRange, PxRect};
 pub use saved::{SavedDrawingExt, pane_marks, store_marks};
-pub use scene::{
-    FontFamily, FontSpec, MarkScene, MarkShape, Stroke, TextMetrics, UNMEASURED, Unmeasured,
-    dashed_segment_within,
-};
+pub use scene::{MarkScene, MarkShape, Stroke, dashed_segment_within};
 pub use store::{Drawings, PlacementBatch, UNDO_HISTORY_LIMIT, UndoEntry};
 pub use style::{
     CLAMPED_OPACITY, DEFAULT_DRAWING_COLOR, DEFAULT_DRAWING_FILL_ALPHA, DEFAULT_DRAWING_WIDTH_PX,
@@ -86,6 +84,7 @@ pub use style::{
     SELECTED_ANCHOR_RING_WIDTH_PX, SELECTION_HALO_COLOR, SELECTION_HALO_EXTRA_WIDTH_PX,
     drawing_fill, drawing_stroke, faded_style, painted_color, painted_style,
 };
+pub use text::{FontFamily, FontSpec, TextMetrics, UNMEASURED, Unmeasured};
 pub use tool::{DrawingTool, MarkTool, PointerHint};
 pub use tools::*;
 pub use update::{DrawingEffect, DrawingIntent, Placement, PlacementFailure, update};
@@ -134,3 +133,6 @@ pub(crate) mod test_prelude {
 }
 
 mod identity;
+
+#[cfg(test)]
+mod text_tests;

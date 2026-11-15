@@ -1,4 +1,6 @@
+use crate::surfaces::drawing_chrome::DrawingChromeExt as _;
 use crate::theme;
+use crate::toolrail::ToolRailExt as _;
 mod pane_model_tests;
 
 // The `pane.rs` unit tests, moved out of the file so a session opening
@@ -20,7 +22,6 @@ use crate::indicator_worker::{MAX_LANE_RUNGS, SlotId};
 use crate::indicators::PaneSizing;
 use crate::orderflow_view::OrderflowView;
 use crate::plot_area::PlotAreas;
-use crate::pointer_compass;
 use crate::state::BarSpec;
 use crate::toolrail::Tool;
 use crate::viewport::Viewport;
@@ -28,7 +29,6 @@ use crate::viewport::Viewport;
 use super::painting::{LIVE_CHIP_MARGIN_PX, LIVE_CHIP_VPAD_PX, LIVE_CHIP_WIDTH_PX};
 use super::*;
 
-mod calendar_slot_tests;
 mod menu_intent_tests;
 mod native_split_tests;
 mod tape_only_tests;
@@ -508,25 +508,6 @@ fn the_drawing_band_stops_at_the_live_lane() {
     assert!(degenerate.right() >= degenerate.left());
 }
 
-/// A pane cutting one bar per trade, with `count` bars a second apart —
-/// so a market instant and a slot are the same statement, and a test can
-/// say which bar it means by naming the moment.
-fn pane_of_seconds(count: u64) -> ChartPane {
-    use rust_decimal::Decimal;
-    let mut pane = ChartPane::flow(1, BarSpec::Tick(1), "TESTUSDT".to_owned());
-    let trades: Vec<_> = (0..count)
-        .map(|index| quantick_engine::Trade {
-            agg_id: index,
-            timestamp_ms: 1_700_000_000_000 + index as i64 * 1_000,
-            price: Decimal::from(100),
-            quantity: Decimal::ONE,
-            side: quantick_engine::Side::Buy,
-        })
-        .collect();
-    pane.ingest_backfill(&trades);
-    pane
-}
-
 /// The fixture tape's first print.
 const TAPE_START_MS: i64 = 1_700_000_000_000;
 
@@ -542,157 +523,12 @@ fn print_at(index: u64) -> quantick_engine::Trade {
     }
 }
 
-/// A pane holding `count` of those prints, `per_bar` of them to a bar —
-/// the fixture the covering-slot edges are read off.
+/// A pane holding `count` of those prints, `per_bar` of them to a bar.
 fn pane_of_prints(count: u64, per_bar: u64) -> ChartPane {
     let mut pane = ChartPane::flow(1, BarSpec::Tick(per_bar), "TESTUSDT".to_owned());
     let trades: Vec<_> = (0..count).map(print_at).collect();
     pane.ingest_backfill(&trades);
     pane
-}
-
-/// The lookup the trade marks are painted through answers only inside
-/// the tape: the first print to the last, edges included.
-#[test]
-fn a_covering_slot_answers_only_inside_the_tape() {
-    // Ten prints a second apart, four to a bar: two closed bars and a
-    // forming one holding the last two.
-    let pane = pane_of_prints(10, 4);
-    let newest = TAPE_START_MS + 9_000;
-
-    assert_eq!(
-        pane.covering_slot_at_time(TAPE_START_MS - 1),
-        None,
-        "a millisecond before the first print is not on this tape"
-    );
-    assert_eq!(
-        pane.covering_slot_at_time(TAPE_START_MS),
-        Some(0),
-        "the first print itself is"
-    );
-    assert_eq!(
-        pane.covering_slot_at_time(TAPE_START_MS + 2_500),
-        Some(0),
-        "so is an instant between two prints of the first bar"
-    );
-    assert_eq!(
-        pane.covering_slot_at_time(TAPE_START_MS + 4_000),
-        Some(1),
-        "the second bar opens on its own first print"
-    );
-    assert_eq!(
-        pane.covering_slot_at_time(newest),
-        Some(2),
-        "the forming bar answers for its last print"
-    );
-    assert_eq!(
-        pane.covering_slot_at_time(newest + 1),
-        None,
-        "a millisecond past it is not covered"
-    );
-    assert_eq!(
-        pane.covering_slot_at_time(newest + 3_600_000),
-        None,
-        "and neither is an hour past it"
-    );
-}
-
-/// A pane whose venue candles are all it has yet: the window is the
-/// prefix's own, so an instant inside it still finds its candle. A
-/// session fill cannot land there in practice — a fill needs a print,
-/// and a print puts a bar on the tape — but the lookup answers for the
-/// bars a pane holds, whoever cut them.
-#[test]
-fn a_venue_prefix_covers_its_own_instants() {
-    use rust_decimal::Decimal;
-    let mut pane = pane_of_prints(0, 4);
-    pane.history_prefix = (0..2)
-        .map(|index: i64| quantick_engine::Bar {
-            open_time: TAPE_START_MS - 120_000 + index * 60_000,
-            close_time: TAPE_START_MS - 61_000 + index * 60_000,
-            open: Decimal::from(100),
-            high: Decimal::from(100),
-            low: Decimal::from(100),
-            close: Decimal::from(100),
-            buy_volume: Decimal::ONE,
-            sell_volume: Decimal::ZERO,
-            trade_count: 1,
-        })
-        .collect();
-
-    assert_eq!(
-        pane.covering_slot_at_time(TAPE_START_MS - 121_000),
-        None,
-        "before the oldest venue candle"
-    );
-    assert_eq!(
-        pane.covering_slot_at_time(TAPE_START_MS - 90_000),
-        Some(0),
-        "inside the first one"
-    );
-    assert_eq!(
-        pane.covering_slot_at_time(TAPE_START_MS - 30_000),
-        Some(1),
-        "inside the second"
-    );
-    assert_eq!(
-        pane.covering_slot_at_time(TAPE_START_MS),
-        None,
-        "and past the newest candle, where the tape has not started yet"
-    );
-}
-
-#[test]
-fn an_empty_pane_covers_no_instant_at_all() {
-    let pane = pane_of_prints(0, 4);
-    assert_eq!(pane.covering_slot_at_time(TAPE_START_MS), None);
-}
-
-/// The other lookup clamps, on purpose: a drawing anchor being re-hung
-/// wants the closest bar and is told it was clamped. Pinned here so the
-/// two answers cannot quietly converge.
-#[test]
-fn the_clamping_lookup_still_clamps() {
-    let pane = pane_of_prints(10, 4);
-    let newest = TAPE_START_MS + 9_000;
-    assert_eq!(
-        pane.slot_at_time(newest + 3_600_000),
-        Some(2),
-        "an hour past the tape lands on the newest slot"
-    );
-    assert_eq!(
-        pane.slot_at_time(TAPE_START_MS - 3_600_000),
-        Some(0),
-        "an hour before it lands on the oldest"
-    );
-}
-
-/// The replay seek's shape: the round trips survive the rebuild (they
-/// happened), the bars do not. A fill the rebuilt tape has not reached
-/// gets no bar until it does — instead of parking on the edge one and
-/// accumulating there as the replay runs on.
-#[test]
-fn a_fill_ahead_of_the_tape_waits_for_it() {
-    let fill = TAPE_START_MS + 6_000;
-    let mut pane = pane_of_prints(4, 4);
-    assert_eq!(
-        pane.covering_slot_at_time(fill),
-        None,
-        "the rebuilt tape stops two prints short of the fill"
-    );
-    assert_eq!(
-        pane.slot_at_time(fill),
-        Some(0),
-        "which is exactly where the clamping lookup would have parked it"
-    );
-    for index in 4..8 {
-        pane.ingest_live_trade(&print_at(index));
-    }
-    assert_eq!(
-        pane.covering_slot_at_time(fill),
-        Some(1),
-        "the tape reaches the instant and the bar holding it answers"
-    );
 }
 
 /// A mark placed on the bar at `slot`, shared with the tab's other panes.
@@ -713,9 +549,12 @@ fn shared_mark_at(pane: &mut ChartPane, slot: usize, price: f64) {
         .scope = drawings::DrawingScope::AllCharts;
 }
 
+/// The pane hands an edit from another pane to its marks through its own
+/// series: where that lands is `quantick-drawings`' `shared_tests`; this is
+/// the one path test.
 #[test]
 fn an_edit_from_the_other_pane_lands_on_this_panes_own_bars() {
-    let mut pane = pane_of_seconds(20);
+    let mut pane = pane_of_prints(20, 1);
     shared_mark_at(&mut pane, 4, 100.0);
 
     // The other chart reports where it put the handle in market time; this
@@ -732,104 +571,6 @@ fn an_edit_from_the_other_pane_lands_on_this_panes_own_bars() {
     assert_eq!(point.time_ms, Some(moved_to));
     assert_eq!(slot_of(point.bar), 11, "resolved into this pane");
     assert!((point.price - 101.5).abs() < f64::EPSILON);
-}
-
-#[test]
-fn a_body_drag_from_the_other_pane_moves_every_anchor_by_the_same_time() {
-    let mut pane = pane_of_seconds(20);
-    shared_mark_at(&mut pane, 4, 100.0);
-    let before = pane.drawings.items()[0].points[0];
-
-    pane.shared_marks_mut().apply_edit(SharedEdit::Translate {
-        index: 0,
-        delta_ms: 3_000,
-        delta_price: 2.0,
-    });
-
-    let after = pane.drawings.items()[0].points[0];
-    assert_eq!(
-        after.time_ms,
-        before.time_ms.map(|time| time + 3_000),
-        "the drag is said in market time"
-    );
-    assert_eq!(
-        slot_of(after.bar),
-        7,
-        "and three seconds is three bars on a one-trade-per-bar cut"
-    );
-    assert!((after.price - 102.0).abs() < f64::EPSILON);
-}
-
-#[test]
-fn a_locked_mark_refuses_an_edit_from_the_other_pane_too() {
-    let mut pane = pane_of_seconds(20);
-    shared_mark_at(&mut pane, 4, 100.0);
-    pane.drawings
-        .selected_mut()
-        .expect("the mark is selected")
-        .locked = true;
-    let before = pane.drawings.items()[0].points.clone();
-
-    pane.shared_marks_mut().apply_edit(SharedEdit::Translate {
-        index: 0,
-        delta_ms: 3_000,
-        delta_price: 2.0,
-    });
-    let moved_to = pane.slot_open_time(11).expect("the slot holds a bar");
-    pane.shared_marks_mut().apply_edit(SharedEdit::MoveAnchor {
-        index: 0,
-        anchor: 0,
-        time_ms: moved_to,
-        price: 101.5,
-    });
-
-    assert_eq!(
-        pane.drawings.items()[0].points,
-        before,
-        "a lock protects the geometry from both charts, not just its own"
-    );
-}
-
-#[test]
-fn a_drag_this_pane_cannot_place_moves_nothing_at_all() {
-    let mut pane = pane_of_seconds(20);
-    shared_mark_at(&mut pane, 4, 100.0);
-    let before = pane.drawings.items()[0].points.clone();
-
-    // Back past the first bar this pane holds: there is no slot for it,
-    // and half a shape on a bar and half on an instant is not an option.
-    pane.shared_marks_mut().apply_edit(SharedEdit::Translate {
-        index: 0,
-        delta_ms: -600_000,
-        delta_price: 0.0,
-    });
-
-    assert_eq!(pane.drawings.items()[0].points, before);
-}
-
-#[test]
-fn a_recut_keeps_the_mark_on_its_own_instant() {
-    let mut pane = pane_of_seconds(20);
-    shared_mark_at(&mut pane, 6, 100.0);
-    let placed_at = pane.drawings.items()[0].points[0]
-        .time_ms
-        .expect("placed on a bar");
-    let old_slots = pane.slots();
-
-    // Two trades per bar: the same tape, half the bars.
-    pane.spec.retain(crate::state::BarSpec::Tick(2));
-    let spec = pane.spec.spec();
-    pane.state.set_spec(spec);
-    pane.reanchor_drawings(old_slots);
-
-    let point = pane.drawings.items()[0].points[0];
-    assert_eq!(point.time_ms, Some(placed_at), "the instant is untouched");
-    assert_eq!(
-        pane.slot_at_time(placed_at),
-        Some(slot_of(point.bar)),
-        "the bar is that instant, re-asked of the new cut"
-    );
-    assert!(!pane.drawings.items()[0].off_series);
 }
 
 /// The trader's report: after a timeframe switch a rectangle stayed as
@@ -1123,76 +864,6 @@ fn pane_with_timed_bars(count: usize) -> ChartPane {
 /// so a failure prints a difference rather than two magic numbers.
 const BAR_ZERO_MS: i64 = 1_700_000_000_000;
 
-/// The mission in one assertion: point at a candle, learn *its* time.
-///
-/// Every pixel of the candle, because the left half is where this used to
-/// answer with the bar before it — see
-/// `every_pixel_of_a_candle_names_that_candle`, which holds the rule this
-/// reads through.
-#[test]
-fn the_compass_names_the_candle_under_the_pointer() {
-    let pane = pane_with_timed_bars(200);
-    let (right, total) = (TEST_PLOT.right(), pane.slots());
-    let width = pane.model.viewport.candle_width();
-    for slot in [120_usize, 199] {
-        let centre = pane.model.viewport.x_center(slot, right, total);
-        for x in [
-            centre - width / 2.0 + 0.01,
-            centre,
-            centre + width / 2.0 - 0.01,
-        ] {
-            assert_eq!(
-                pane.series_read()
-                    .pointer_bar(&pane.model.viewport, x, right, total),
-                Some(pointer_compass::PointerBar {
-                    slot,
-                    open_time_unix_ms: BAR_ZERO_MS + slot as i64 * 60_000,
-                    interval_ms: pane.state.spec().time_interval_ms(),
-                }),
-                "every pixel of candle {slot} reads candle {slot}'s own instant"
-            );
-        }
-    }
-}
-
-/// Data honesty: the empty canvas past the newest bar holds no bar, and
-/// neither does the tape's own band. Nothing is marked in either place
-/// rather than the nearest candle's clock being stretched over it.
-#[test]
-fn the_compass_names_no_time_where_there_is_no_bar() {
-    let pane = pane_with_timed_bars(200);
-    let (right, total) = (TEST_PLOT.right(), pane.slots());
-    assert_eq!(
-        pane.series_read()
-            .pointer_bar(&pane.model.viewport, right + 60.0, right, total),
-        None,
-        "the projection margin is future the tape has not written"
-    );
-    let oldest = pane.model.viewport.x_center(0, right, total);
-    assert_eq!(
-        pane.series_read()
-            .pointer_bar(&pane.model.viewport, oldest - 60.0, right, total),
-        None,
-        "and before the first bar there is nothing either"
-    );
-    // The lane is a rolling window of market time, not bar slots: a bar
-    // time written under it would be the wrong axis's answer.
-    let divider = right - 150.0;
-    assert_eq!(
-        pane.series_read()
-            .pointer_bar(&pane.model.viewport, right - 40.0, divider, total),
-        None
-    );
-    let empty = pane_with_timed_bars(0);
-    assert_eq!(
-        empty
-            .series_read()
-            .pointer_bar(&empty.model.viewport, 500.0, right, 0),
-        None,
-        "and a chart with no bars at all names none"
-    );
-}
-
 /// Drive `handle_navigation` for one frame with the given pointer events,
 /// Drive `handle_navigation` for one frame with the given pointer events,
 /// and hand back whatever settings request the gestures raised.
@@ -1220,7 +891,7 @@ fn drive_navigation_asking(
     area: egui::Rect,
     events: Vec<egui::Event>,
 ) -> (Option<SlotId>, quantick_layers::LayerActions) {
-    let mut toolrail = crate::toolrail::ToolRail::new();
+    let mut toolrail = crate::toolrail::ToolRail::new_rail();
     let presets = drawings::presets::PresetStore::load_from(
         crate::scratch::thread_dir("pane-presets").join("no-such.toml"),
     );
@@ -1229,7 +900,7 @@ fn drive_navigation_asking(
     let mut paper = crate::paper_trading::PaperTrading::new();
     let footprint = crate::footprint_config::FootprintConfig::default();
     let mut layers = quantick_layers::LayerActions::default();
-    let mut drawing_chrome = crate::surfaces::DrawingChromeSurface::default();
+    let mut drawing_chrome = crate::surfaces::drawing_chrome::new_owner();
     let input = egui::RawInput {
         screen_rect: Some(egui::Rect::from_min_size(
             egui::pos2(0.0, 0.0),
@@ -1278,7 +949,7 @@ fn drive_navigation_asking(
 /// that does not exist, so the fixture reads nothing off the developer's
 /// disk.
 fn with_chrome<R>(tool: Tool, body: impl FnOnce(&mut PaneChrome<'_>) -> R) -> R {
-    let mut toolrail = crate::toolrail::ToolRail::new();
+    let mut toolrail = crate::toolrail::ToolRail::new_rail();
     toolrail.arm(tool);
     let presets = drawings::presets::PresetStore::load_from(
         crate::scratch::thread_dir("pane-presets").join("no-such.toml"),
@@ -1288,7 +959,7 @@ fn with_chrome<R>(tool: Tool, body: impl FnOnce(&mut PaneChrome<'_>) -> R) -> R 
     let mut paper = crate::paper_trading::PaperTrading::new();
     let footprint = crate::footprint_config::FootprintConfig::default();
     let mut layers = quantick_layers::LayerActions::default();
-    let mut drawing_chrome = crate::surfaces::DrawingChromeSurface::default();
+    let mut drawing_chrome = crate::surfaces::drawing_chrome::new_owner();
     body(&mut PaneChrome {
         tab: 1,
         side: PaneSide::Flow,
@@ -2136,109 +1807,6 @@ fn the_pane_header_is_chrome_and_never_overlaps_the_chevron() {
     assert!(!indicator_render::pane_header_rect(slot.rect, true, slot.header_height).is_positive());
 }
 
-/// A CVD level and a price level can be one pixel apart on screen and
-/// mean unrelated things, so a pick never crosses a band.
-#[test]
-fn hit_testing_never_crosses_bands() {
-    let mut pane = pane_with_indicator("native.cvd", vec![vec![0.0, 1.0, 2.0]]);
-    pane.indicators
-        .visible_panes_mut()
-        .next()
-        .expect("one pane")
-        .last_auto = Some((-10.0, 10.0));
-    pane.frame.auto_range = Some((100.0, 110.0));
-    let areas = test_areas(&pane, TEST_PLOT);
-    let bands = crate::bands::BandGeometry {
-        auto_range: pane.frame.auto_range,
-        price_view: &pane.price_view,
-        candles_right: pane.frame.candles_right,
-        indicators: &pane.indicators,
-        price_label: &pane.price_band_label,
-    }
-    .bands(&areas);
-    let (price, indicator) = (&bands[0], &bands[1]);
-
-    let key = indicator.key.clone();
-    pane.drawings.place_on(
-        drawings::DRAWING_TOOLS
-            .into_iter()
-            .find(|tool| tool.id() == "horizontal-line")
-            .expect("the horizontal line is registered"),
-        &key,
-        ChartPoint::at(1.0, 0.0),
-    );
-    let scale = indicator.scale.expect("a drawable band");
-    let on_the_level = egui::pos2(indicator.rect.center().x, scale.y(0.0));
-    assert_eq!(
-        pane.drawing_projection().drawing_at(
-            &pane.drawings,
-            drawings::px(on_the_level),
-            indicator,
-            indicator.rect.right(),
-            3
-        ),
-        Some(0),
-        "found on its own band"
-    );
-    // The same object, asked for from the price band: a horizontal line
-    // spans the whole width, so only the band rule can rule it out.
-    let in_price_band = egui::pos2(price.rect.center().x, price.rect.center().y);
-    assert_eq!(
-        pane.drawing_projection().drawing_at(
-            &pane.drawings,
-            drawings::px(in_price_band),
-            price,
-            price.rect.right(),
-            3
-        ),
-        None,
-        "a CVD level is not a price level"
-    );
-}
-
-/// A vertical line marks an instant, so it belongs to no band and is
-/// painted through all of them — as ONE object. Modelling it as one per
-/// band would leave a half-deleted line behind every delete.
-#[test]
-fn a_time_only_object_is_one_item_that_every_band_paints() {
-    let mut pane = pane_with_indicator("native.cvd", vec![vec![0.0, 1.0]]);
-    pane.indicators
-        .visible_panes_mut()
-        .next()
-        .expect("one pane")
-        .last_auto = Some((-10.0, 10.0));
-    pane.frame.auto_range = Some((100.0, 110.0));
-    let areas = test_areas(&pane, TEST_PLOT);
-    let bands = crate::bands::BandGeometry {
-        auto_range: pane.frame.auto_range,
-        price_view: &pane.price_view,
-        candles_right: pane.frame.candles_right,
-        indicators: &pane.indicators,
-        price_label: &pane.price_band_label,
-    }
-    .bands(&areas);
-    let vertical = drawings::DRAWING_TOOLS
-        .into_iter()
-        .find(|tool| tool.id() == "vertical-line")
-        .expect("the vertical line is registered");
-    // Placed while pointing at the *indicator* band, and still not owned
-    // by it.
-    pane.drawings
-        .place_on(vertical, &bands[1].key, ChartPoint::at(1.0, 0.0));
-    assert_eq!(
-        pane.drawings.items().len(),
-        1,
-        "one object, not one per band"
-    );
-    assert_eq!(pane.drawings.items()[0].band, DrawingBand::AllBands);
-    for band in &bands {
-        assert!(
-            bands::drawing_in_band(&pane.drawings.items()[0], band),
-            "every band paints its own clipped segment"
-        );
-    }
-}
-
 /// egui gives an overlapping rect to whoever registers last, and both the
 /// chevron and the divider register after the canvas. The drawing path
 /// reads the raw pointer instead of a response, so it has to honour that
@@ -2261,112 +1829,6 @@ fn the_chevron_and_the_divider_are_never_drawing_surfaces() {
         !super::primary_button::pane_chrome_hit(&areas, slot.rect.center()),
         "the middle of the pane is canvas"
     );
-}
-
-/// Remove an indicator and add it back — the most common thing a trader
-/// does to a pane — and its drawings have to come home. Keyed on the slot
-/// id (a monotonic counter) they would orphan every single time.
-#[test]
-fn a_band_key_survives_remove_and_re_add() {
-    let mut pane = ChartPane::flow(1, BarSpec::Tick(50), "TESTUSDT".to_owned());
-    let first = add_indicator_view(&mut pane, "native.cvd", vec![vec![0.0]]);
-    let before = crate::bands::pane_key(pane.indicators.all().first().expect("one view"));
-    pane.indicators.remove(first);
-    add_indicator_view(&mut pane, "native.cvd", vec![vec![0.0]]);
-    let after = crate::bands::pane_key(pane.indicators.all().first().expect("one view"));
-    assert_eq!(before, after, "the same pane, so the same key");
-
-    // And a different indicator must never inherit it.
-    add_indicator_view(&mut pane, "script.zigzag.pine", vec![vec![0.0]]);
-    let other = crate::bands::pane_key(pane.indicators.all().last().expect("two views"));
-    assert_ne!(before, other);
-}
-
-/// Removing one pane must not renumber the ones that outlive it.
-///
-/// With a positional ordinal, removing the first of two CVD panes turns
-/// the survivor into `{cvd, 0}` — the removed pane's key — so it starts
-/// painting the *other* pane's annotations on its own axis while its own
-/// go parked. That is one pane's marks shown on another's value scale.
-#[test]
-fn removing_a_pane_does_not_renumber_the_one_that_outlives_it() {
-    let mut pane = ChartPane::flow(1, BarSpec::Tick(50), "TESTUSDT".to_owned());
-    let first = add_indicator_view(&mut pane, "native.cvd", vec![vec![0.0]]);
-    add_indicator_view(&mut pane, "native.cvd", vec![vec![0.0]]);
-    let survivor = crate::bands::pane_key(pane.indicators.all().last().expect("two views"));
-    pane.indicators.remove(first);
-    assert_eq!(
-        crate::bands::pane_key(pane.indicators.all().first().expect("one view left")),
-        survivor,
-        "the surviving pane keeps the key its drawings were placed with"
-    );
-
-    // And the ordinal the removed pane left behind is what a re-added one
-    // takes, so *its* drawings come home instead of piling onto the
-    // survivor's.
-    add_indicator_view(&mut pane, "native.cvd", vec![vec![0.0]]);
-    let readded = crate::bands::pane_key(pane.indicators.all().last().expect("two views"));
-    assert_ne!(readded, survivor);
-    assert_eq!(readded.ordinal, 0);
-}
-
-/// A drawing whose indicator is off the chart is parked: kept, but not
-/// painted and not pickable. `band_of` answering `None` is what every
-/// caller reads to mean that.
-#[test]
-fn a_parked_drawing_belongs_to_no_band_on_screen() {
-    let mut pane = pane_with_indicator("native.cvd", vec![vec![0.0, 1.0]]);
-    pane.indicators
-        .visible_panes_mut()
-        .next()
-        .expect("one pane")
-        .last_auto = Some((-10.0, 10.0));
-    pane.frame.auto_range = Some((100.0, 110.0));
-    let areas = test_areas(&pane, TEST_PLOT);
-    let carved = crate::bands::BandGeometry {
-        auto_range: pane.frame.auto_range,
-        price_view: &pane.price_view,
-        candles_right: pane.frame.candles_right,
-        indicators: &pane.indicators,
-        price_label: &pane.price_band_label,
-    }
-    .bands(&areas);
-    let key = carved[1].key.clone();
-    pane.drawings.place_on(
-        drawings::DRAWING_TOOLS
-            .into_iter()
-            .find(|tool| tool.id() == "horizontal-line")
-            .expect("registered"),
-        &key,
-        ChartPoint::at(1.0, 0.0),
-    );
-
-    // The indicator goes away; the object does not.
-    let slot = pane.indicators.all().first().expect("one view").slot;
-    pane.indicators.remove(slot);
-    let areas = test_areas(&pane, TEST_PLOT);
-    let carved = crate::bands::BandGeometry {
-        auto_range: pane.frame.auto_range,
-        price_view: &pane.price_view,
-        candles_right: pane.frame.candles_right,
-        indicators: &pane.indicators,
-        price_label: &pane.price_band_label,
-    }
-    .bands(&areas);
-    assert_eq!(carved.len(), 1, "only the price band is left");
-    assert_eq!(pane.drawings.items().len(), 1, "the object is kept");
-    assert!(
-        bands::band_of(&carved, &pane.drawings.items()[0]).is_none(),
-        "parked: no band on screen owns it, so nothing paints or picks it"
-    );
-    assert!(
-        !bands::drawing_in_band(&pane.drawings.items()[0], &carved[0]),
-        "and it certainly does not fall back onto the price band"
-    );
-    assert!(matches!(
-        crate::bands::label_for(&pane.indicators, &pane.drawings.items()[0]),
-        BandLabel::Parked(_)
-    ));
 }
 
 /// The drawings read the candles through the band's scale, so the band
@@ -2405,22 +1867,6 @@ fn the_price_band_scale_turns_over_with_the_chart() {
         scale.y(100.0) < scale.y(110.0),
         "low prices ride at the top of the band"
     );
-}
-
-/// Two instances of one kind are told apart by ordinal, in add order.
-#[test]
-fn two_panes_of_the_same_kind_get_different_keys() {
-    let mut pane = ChartPane::flow(1, BarSpec::Tick(50), "TESTUSDT".to_owned());
-    add_indicator_view(&mut pane, "native.cvd", vec![vec![0.0]]);
-    add_indicator_view(&mut pane, "native.cvd", vec![vec![0.0]]);
-    let keys: Vec<_> = pane
-        .indicators
-        .all()
-        .iter()
-        .map(crate::bands::pane_key)
-        .collect();
-    assert_eq!(keys[0].ordinal, 0);
-    assert_eq!(keys[1].ordinal, 1);
 }
 
 /// On a band the magnet snaps to the pane's own numbers — and to zero,

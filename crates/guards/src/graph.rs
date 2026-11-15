@@ -56,6 +56,32 @@ use crate::Finding;
 /// same shape in prose and in a diagram, for a reader; this is the copy a
 /// review cites, because it is the copy that can fail.
 pub const ALLOWED: &[(&str, &[&str])] = &[
+    (
+        "ui-model",
+        &[
+            "alerts",
+            "control",
+            "strategy",
+            "indicators",
+            "drawings",
+            "appearance",
+            "control-handlers",
+            "chart-interaction",
+            "control-schema",
+            "session",
+            "stores",
+            "chart",
+            "engine",
+            "orderflow",
+            "civil",
+            "paper",
+            "replay",
+            "sources",
+            "workspace",
+            "sim",
+            "trading",
+        ],
+    ),
     ("alerts", &["civil", "workspace"]),
     ("appearance", &[]),
     ("anchored-studies", &["engine", "indicators"]),
@@ -114,6 +140,7 @@ pub const ALLOWED: &[(&str, &[&str])] = &[
             "engine",
             "indicators",
             "layers",
+            "operability",
             "orderbook",
             "orderflow",
             "pine",
@@ -180,6 +207,7 @@ pub const ALLOWED: &[(&str, &[&str])] = &[
         "feed",
         &[
             "engine",
+            "operability",
             "orderbook",
             "replay",
             "sources",

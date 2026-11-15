@@ -23,7 +23,9 @@ fn rolling_app() -> (QuantickApp, mpsc::Receiver<FeedCommand>) {
 /// The popup open on the active tab, over `notice`, settled for a click.
 fn popup_over(app: &mut QuantickApp, ctx: &egui::Context, notice: FeedNotice) -> egui::FullOutput {
     app.active_tab_mut().link.notice = notice;
-    app.chrome.feed_popup_tab = Some(app.runtime.tabs.active_id());
+    let tab = app.runtime.tabs.active_id();
+    let _ = (app.surfaces.feed_notice)
+        .update(quantick_ui_model::feed_notice::Intent::InitializeOpen(tab));
     for _ in 0..3 {
         run_frame(app, ctx);
     }
@@ -88,11 +90,12 @@ fn the_popup_offers_the_roll_and_its_press_lands_on_the_next_contract() {
     run_frame(&mut app, &ctx);
     assert_eq!(app.active_tab().active.1, "ETHUSDT");
     assert_eq!(
-        app.surfaces.toast.message(),
+        app.surfaces.toast.model_state.message(),
         Some("TESTUSDT is no longer listed; rolled to ETHUSDT")
     );
     assert_eq!(
-        app.chrome.feed_popup_tab, None,
+        app.surfaces.feed_notice.model_state.open(),
+        None,
         "a pressed control closes it"
     );
     assert_eq!(
@@ -276,7 +279,7 @@ fn a_restored_tab_rolls_itself_once_and_says_so() {
     run_frame(&mut app, &ctx);
     assert_eq!(app.active_tab().active.1, "ETHUSDT");
     assert_eq!(
-        app.surfaces.toast.message(),
+        app.surfaces.toast.model_state.message(),
         Some("TESTUSDT is no longer listed; rolled to ETHUSDT")
     );
     // The explanation stays on the tab, not alarming, and is readable on the
@@ -415,4 +418,58 @@ fn a_hand_switch_takes_a_restored_tab_over() {
         !app.active_tab().link.auto_roll.is_armed(),
         "the trader picked the contract; it waits for a press from here on"
     );
+}
+
+/// `feed.contract.roll` as an agent calls it, and the journal it left.
+fn roll_by_agent(app: &mut QuantickApp) -> (serde_json::Value, Vec<serde_json::Value>) {
+    let mut access = crate::control::ControlAccess::new();
+    let actor = crate::app::control_host::tests::fake::FakeWindow::assistant();
+    let input = serde_json::json!({
+        "tab_id": app.runtime.tabs.active_id().to_string(),
+        "from_symbol": "TESTUSDT",
+    });
+    let result =
+        crate::control::invoke_action(app, &mut access, &actor, "feed.contract.roll", input)
+            .expect("the roll runs");
+    let journal = access.journal().read(1, 256, 1 << 20).events;
+    let payloads = journal.into_iter().map(|event| event.payload).collect();
+    (result, payloads)
+}
+
+/// An agent's roll off the contract the feed reports unlisted — the scene's
+/// `feed_status.roll` — says what the notice's Roll says: the status bar's
+/// note, `feed.status`'s `rolled_from`, and a journaled `trigger`. A roll off
+/// a listed contract is the plain calendar roll, with neither.
+#[test]
+fn an_agent_roll_off_an_unlisted_contract_leaves_the_notice_s_note() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = rolling_app();
+    run_frame(&mut app, &ctx);
+    app.active_tab_mut().link.notice = unlisted("TESTUSDT");
+    run_frame(&mut app, &ctx);
+    let (result, journal) = roll_by_agent(&mut app);
+    assert_eq!(result["symbol"], "ETHUSDT");
+    run_frame(&mut app, &ctx);
+    assert_eq!(app.active_tab().active.1, "ETHUSDT");
+    assert_eq!(
+        status_lead(&app).note.as_deref(),
+        Some("TESTUSDT is no longer listed; rolled to ETHUSDT")
+    );
+    assert_eq!(notice_view(&app)["rolled_from"], "TESTUSDT");
+    assert_eq!(journal.len(), 1);
+    assert_eq!(journal[0]["trigger"], "capability");
+    assert_eq!(journal[0]["contract_roll"], result);
+
+    let (mut app, _commands) = rolling_app();
+    run_frame(&mut app, &ctx);
+    let (result, journal) = roll_by_agent(&mut app);
+    assert_eq!(result["symbol"], "ETHUSDT");
+    run_frame(&mut app, &ctx);
+    assert_eq!(
+        status_lead(&app).note,
+        None,
+        "a listed contract says nothing"
+    );
+    assert!(notice_view(&app).get("rolled_from").is_none());
+    assert!(journal[0].get("trigger").is_none());
 }

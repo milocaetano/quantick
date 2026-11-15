@@ -136,5 +136,5 @@ pub(super) fn paint_lane_rail(pane: &ChartPane, painter: &egui::Painter, chart: 
     let hit = span(chart, (rail.hit_from_px, rail.hit_to_px));
     let hover = painter.ctx().pointer_hover_pos();
     let hot = hover.is_some_and(|at| hit.contains(at));
-    crate::tab::paint_rail(painter, paint, chart.left() + rail.edge_px(), hot);
+    crate::tab::paint_rail(painter, paint, (chart.left() + rail.edge_px(), false), hot);
 }

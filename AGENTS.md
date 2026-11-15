@@ -13,18 +13,19 @@
 
 ## The map
 
-Cargo workspace: `crates/`. One-way edges: `crates/guards/src/graph.rs`.
+`crates/` workspace. Edges: `crates/guards/src/graph.rs`.
 `app`, `backtest`, `mcp` and `guards` are leaves; `guards` has no edges.
 
 | Crate | Depends on | What it owns |
 | --- | --- | --- |
-| `app` | every crate but the other leaves, `trading` and `sources` | The desktop chart (egui). |
+| `app` | every crate but the other leaves, `trading` and `sources` | Desktop chart. |
 | `backtest` | strategy, pine, indicators, replay, sim, paper (dev), engine | Recorded sessions to performance, using the chart engine. |
 | `mcp` | control-local, control | The MCP adapter; stdout carries MCP frames only. |
 | `guards` | — | Size, context, cycle and UI-free ratchets; English and encoding scans. |
-| `control-handlers` | alerts, control*, chart*, civil, drawings, engine, orderflow, paper, replay, session, sim, sources, stores, workspace | Port-bound handlers. |
+| `control-handlers` | alerts, control*, chart*, civil, drawings, engine, orderflow, paper, replay, session, sim, sources, stores, workspace | Port handlers. |
 | `control-schema` | control, control-host, stores, pine, layers, trading, orderflow, indicators, orderbook, engine | Control-plane schemas over the domain crates. |
 | `stores` | alerts, appearance, chart, sources, workspace, orderflow, indicators, engine | Cockpit documents: catalogue, symbols, footprint, presets, scripts, arrangement, home, bundle. |
+| `ui-model` | none | UI model contract and catalog. |
 | `alerts` | civil, workspace | Alerts and sounds. |
 | `appearance` | — | Colors and typography. |
 | `chart` | appearance, chart-interaction, civil, orderflow, indicator-session, indicators, engine, workspace | Chart model. |
@@ -36,7 +37,7 @@ Cargo workspace: `crates/`. One-way edges: `crates/guards/src/graph.rs`.
 | `control-host` | control, engine | Projection registry, admission, idempotency store, event journal. Told the time. |
 | `indicators` | engine | The `Indicator` trait (commit/preview, rollback), incremental `ta.*` kernels, draw objects. |
 | `replay` | civil, engine | Recorded sessions: CSV, folder scan, deal recorder, playback clock; told the time. Test support is `replay::test_support`. |
-| `paper` | sim, trading, replay, workspace, civil, engine | One paper account (orders, risk sizing, journal, home, report), three drivers. |
+| `paper` | sim, trading, replay, workspace, civil, engine | Paper account, risk, journal and report; three drivers. |
 | `sim` | trading, engine | `TradingVenue` impl; fills only on what the tape proves, never on quotes. |
 | `trading` | engine | Venue-neutral order vocabulary and the `TradingVenue` port. |
 | `feed` | feed-*, sources, replay, orderbook, engine | The `FeedEvent`/`FeedCommand` port, its adapters, session export. Owns runtimes, threads, clock. |
@@ -49,6 +50,6 @@ Cargo workspace: `crates/`. One-way edges: `crates/guards/src/graph.rs`.
 | `civil` | — | Civil dates and the display offset the journal, report and axis share. |
 | `workspace` | — | Layout documents and pane membership transitions. |
 | `chart-interaction` | layers, orderflow | Pane state, menus, quick ranges, anchors. |
-| `layers` | — | Layer catalog, visibility, availability, inheritance, persistence policy. |
+| `layers` | — | Layers, visibility, availability, inheritance, persistence. |
 | `backpressure` | — | Owner-to-worker admission (park, fold, never drop), progress; told the time. |
-| `operability` | — | Each UI behaviour and the capability reaching it, or its exclusion. |
+| `operability` | — | UI behaviours, capabilities and exclusions. |

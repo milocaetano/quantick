@@ -7,19 +7,23 @@
 //! shortcuts are re-exported to `super` for the tests that name them.
 
 use super::arrangement_adapter::StripAsk;
-use super::title_bar::draw as draw_title_bar;
 use super::{GatewayPort, LayersPort, LayoutPort};
 use crate::orderflow_panel as panel;
+use crate::surfaces::replay_browser::ReplayBrowserExt as _;
+use crate::surfaces::toast;
+use crate::toolrail::ToolRailExt as _;
 use crate::{chart_layers::shortcuts, tabstrip::TabAction, timezone::TzOffset};
 use crate::{surfaces::ChartSettingsTab::Candles, surfaces::MarketPaletteSurface};
 use eframe::egui;
 use quantick_control_schema::settings_sections::SettingsSection;
-use quantick_control_schema::window_menu::KEBAB_CONTROL;
 use quantick_session::{close_queue::CloseScope, workspace_menu::WorkspaceCommand};
+use quantick_ui_model::access_panel::Intent as AccessPanelIntent;
+use quantick_ui_model::market_palette::Intent as PaletteIntent;
+use std::time::Instant;
 
 use super::QuantickApp;
 pub(super) use commands::MenuCommand;
-pub(in crate::app) use menus::{KEBAB_GLYPH, MenuDoor, WindowMenuState};
+pub(in crate::app) use menus::{MenuDoor, WindowMenuState};
 
 mod commands;
 mod menus;
@@ -173,10 +177,10 @@ pub(super) fn settle_strip(
             bar: tab.flow_pane.state.spec().to_config_string(),
             context_bars: super::arrangement_adapter::saved_tab_of(&tab).context_bars,
         };
-        palette.recent.closed(closed);
+        palette.update(PaletteIntent::Remember(closed));
     }
     if open {
-        palette.open("", None);
+        palette.update(PaletteIntent::open("", None));
     }
 }
 
@@ -216,7 +220,7 @@ impl QuantickApp {
     pub(super) fn handle_tab_keys(&mut self, ctx: &egui::Context) {
         self.read_view_keys(ctx);
         let mut keys = super::home_wiring::read_tab_keys(ctx);
-        if !self.surfaces.market_palette.is_open() {
+        if !self.surfaces.market_palette.model_state.is_open() {
             if std::mem::take(&mut keys.close_tab) && !self.chrome.title_bar.surface.is_home() {
                 self.apply_tab_action(TabAction::Close(self.runtime.tabs.active_index()));
             }
@@ -257,11 +261,17 @@ impl QuantickApp {
             .chrome
             .window_menu
             .opened_from(ctx.viewport_id(), MenuDoor::Kebab);
-        let access = self.control.control_access.as_ref();
-        self.chrome.title_bar.agent_on =
-            access.is_some_and(crate::control::ControlAccess::is_enabled);
-        let market = (&self.runtime, &self.config);
-        let action = draw_title_bar(ctx, market, &mut self.chrome.title_bar);
+        self.chrome.title_bar.agent_on = self
+            .control
+            .control_access
+            .as_ref()
+            .is_some_and(crate::control::ControlAccess::is_enabled);
+        let action = super::title_bar::draw(
+            ctx,
+            &self.runtime.tabs,
+            &mut self.chrome.title_bar,
+            &mut self.surfaces,
+        );
         super::native_windows::apply_tab_action(self, action);
         if std::mem::take(&mut self.chrome.title_bar.kebab_clicked) {
             self.chrome.window_menu.toggle(ctx.viewport_id(), false);
@@ -298,12 +308,12 @@ impl QuantickApp {
                     ..Default::default()
                 },
             ),
-            MenuCommand::OpenReplayBrowser => self.replay_view.open_browser(),
+            MenuCommand::OpenReplayBrowser => self.surfaces.replay_browser.open_browser(),
             MenuCommand::CloseReplay => {
                 let (tab, config) = self.active_with_config();
                 tab.close_replay(config);
             }
-            MenuCommand::ToggleDock => self.dock.toggle_visible(),
+            MenuCommand::ToggleDock => self.surfaces.dock.toggle_visible(),
             MenuCommand::ToggleLayer(layer) => {
                 let pane = self.focused_pane();
                 let capabilities = self.active_tab().capabilities(&self.config);
@@ -317,14 +327,12 @@ impl QuantickApp {
             }
             MenuCommand::ToggleContextCharts => {
                 let canvas = &mut self.active_tab_mut().canvas;
-                canvas.set_context_collapsed(!canvas.context_collapsed && canvas.column_painted());
+                canvas.fold(false, !canvas.folds().0 && canvas.column_painted());
             }
             MenuCommand::ApplyLayoutPreset(preset) => self.apply_layout_preset(preset),
             MenuCommand::SwitchLayoutIndex(index) => {
                 if let Err(error) = self.layout_adapter().switch_layout_index(index) {
-                    self.surfaces
-                        .toast
-                        .note(error.to_string(), std::time::Instant::now());
+                    toast::note(&mut self.surfaces.toast, error.to_string(), Instant::now());
                 }
             }
             MenuCommand::Strip(action) => self.layout_adapter().apply_strip_action(action),
@@ -367,9 +375,9 @@ impl QuantickApp {
                     .account_mut()
                     .cancel_all_orders();
             }
-            MenuCommand::SetToolboxDock(dock) => self.toolrail.set_dock(dock),
-            MenuCommand::ToggleToolbox => self.toolrail.toggle_visible(),
-            MenuCommand::OpenDockTab(tab) => self.dock.open_tab(tab),
+            MenuCommand::SetToolboxDock(dock) => self.surfaces.toolrail.set_dock(dock),
+            MenuCommand::ToggleToolbox => self.surfaces.toolrail.toggle_visible(),
+            MenuCommand::OpenDockTab(tab) => self.surfaces.dock.open_tab(tab),
             MenuCommand::OpenOrderFlowPanel(s) => panel::open_on(self.active_tab_mut(), s),
             MenuCommand::SetShowPerf(show) => self.health.show_perf = show,
             MenuCommand::SetProgressiveHistory(on) => self.runtime.history.progressive_history = on,
@@ -377,11 +385,11 @@ impl QuantickApp {
             MenuCommand::SetTimezone(tz) => self.runtime.tz = tz,
             MenuCommand::OpenAppearance => self.layer_wiring().open_settings(Candles),
             MenuCommand::OpenAgentAccess => {
-                if let Some(access) = self.control.control_access.as_mut() {
-                    access.open_panel();
+                if self.control.control_access.is_some() {
+                    self.surfaces.access_panel.update(AccessPanelIntent::Open);
                 }
             }
-            MenuCommand::OpenReplayFormatHelp => self.replay_view.open_format_help(),
+            MenuCommand::OpenReplayFormatHelp => self.surfaces.replay_browser.open_format_help(),
             // Carried out by `apply_menu_command_on`, which knows the window.
             MenuCommand::ToggleWindowMenu
             | MenuCommand::OpenSettings(_)
@@ -392,32 +400,50 @@ impl QuantickApp {
 
 /// The menu's panes, each handed exactly the state it shows.
 fn draw_window_menu(app: &mut QuantickApp, ctx: &egui::Context, commands: &mut Vec<MenuCommand>) {
-    let door = match app.chrome.window_menu.door() {
-        MenuDoor::Kebab => app.chrome.title_bar.control_rect(KEBAB_CONTROL),
-        MenuDoor::Toolbar => app.chrome.window_menu.toolbar_door,
+    super::chrome::menu_bar::draw(app, ctx, commands);
+}
+
+pub(in crate::app) fn menu_shortcuts(
+    ctx: &egui::Context,
+) -> Vec<(quantick_ui_model::chrome_menu_bar::Shortcut, String)> {
+    use quantick_control_schema::window_menu::RowId;
+    use quantick_ui_model::chrome_menu_bar::Shortcut;
+    [
+        RowId::SaveToWorkspace,
+        RowId::SaveDesk,
+        RowId::TogglePanels,
+        RowId::MarketReplay,
+        RowId::Settings,
+    ]
+    .into_iter()
+    .map(Shortcut::Row)
+    .chain(
+        (0..LAYOUT_PRESET_KEYS.len())
+            .flat_map(|index| [Shortcut::Layout(index), Shortcut::Preset(index)]),
+    )
+    .chain([Shortcut::Context, Shortcut::Legend])
+    .filter_map(|key| menu_shortcut(ctx, key).map(|text| (key, text)))
+    .collect()
+}
+pub(crate) fn menu_shortcut(
+    ctx: &egui::Context,
+    shortcut: quantick_ui_model::chrome_menu_bar::Shortcut,
+) -> Option<String> {
+    use quantick_control_schema::window_menu::RowId;
+    use quantick_ui_model::chrome_menu_bar::Shortcut;
+    let binding = match shortcut {
+        Shortcut::Row(RowId::SaveToWorkspace) => SAVE_TO_WORKSPACE_SHORTCUT,
+        Shortcut::Row(RowId::SaveDesk) => SAVE_WORKSPACE_SHORTCUT,
+        Shortcut::Row(RowId::TogglePanels) => DOCK_SHORTCUT,
+        Shortcut::Row(RowId::MarketReplay) => REPLAY_SHORTCUT,
+        Shortcut::Row(RowId::Settings) => SETTINGS_SHORTCUT,
+        Shortcut::Row(_) => return None,
+        Shortcut::Layout(index) => layout_tab_shortcut(index)?,
+        Shortcut::Preset(index) => layout_preset_shortcut(index)?,
+        Shortcut::Context => COLLAPSE_CONTEXT_SHORTCUT,
+        Shortcut::Legend => LEGEND_SHORTCUT,
     };
-    let Some(door) = door else {
-        return;
-    };
-    let mut state = std::mem::take(&mut app.chrome.window_menu);
-    let workspace = workspace_rows::WorkspaceRows::of(app);
-    menus::WindowMenu {
-        workspace,
-        chart_shown: !app.chrome.title_bar.surface.is_home(),
-        replaying: app.active_tab().link.replay.is_some(),
-        layouts: app.layout_state(),
-        tab: app.active_tab(),
-        dock_visible: app.dock.visible(),
-        dock_tab: app.dock.tab(),
-        toolrail: &app.toolrail,
-        panel_folds: app.runtime.tabs.panel_folds(),
-        startup_saved: app.runtime.workspace.session().saved(),
-        save_on_exit: app.runtime.workspace.session().save_on_exit(),
-        recent: app.runtime.workspace.recent_on_disk(),
-        focus_live_row: std::cell::Cell::new(false),
-    }
-    .show(ctx, &mut state, door, commands);
-    app.chrome.window_menu = state;
+    Some(shortcut_text(ctx, &binding))
 }
 
 /// The capsule's workspace name: a click, or Ctrl+Shift+O from anywhere in
@@ -435,17 +461,20 @@ pub(super) fn workspace_cell(
     );
     let pressed = ctx.input_mut(|input| input.consume_shortcut(&WORKSPACE_MENU_SHORTCUT));
     let mut menu = std::mem::take(&mut app.chrome.window_menu.tab_workspace);
+    let mut cache = std::mem::take(&mut app.chrome.window_menu.cell_cache);
     let open = menu.follow_cell(tab, cell.is_some(), &window, clicked || pressed);
     let mut commands = Vec::new();
-    if let Some(cell) = cell.filter(|_| open) {
+    let drawn = cell.filter(|_| open).map(|cell| {
         let keys = shortcut_text(ctx, &SAVE_TO_WORKSPACE_SHORTCUT);
-        let rows = workspace_rows::WorkspaceRows::of(app);
-        rows.chip_menu(ctx, cell, &mut menu, keys, &mut commands);
-    }
+        let rows = (&mut menu, &mut cache);
+        workspace_rows::chip_menu(app, ctx, cell, rows, keys, &mut commands)
+    });
     app.chrome.window_menu.tab_workspace = menu;
+    app.chrome.window_menu.cell_cache = cache;
     for command in commands {
         apply_menu_command_on(app, ctx, command);
     }
+    app.chrome.window_menu.cell_rows = drawn.unwrap_or_default();
 }
 
 /// The commands that need to know which window asked, then all the others.

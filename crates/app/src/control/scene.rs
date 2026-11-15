@@ -44,6 +44,7 @@
 //! regions read existing frame state. A capture builds the list twice, once for
 //! module revision and once for scope, as other capture-derived projections do.
 
+use crate::toolrail::ToolRailExt as _;
 pub(crate) use quantick_control_schema::scene::*;
 
 use crate::app::{ChromePort, TabsPort};
@@ -55,7 +56,6 @@ use quantick_control::{
 };
 
 use eframe::egui;
-use quantick_chart::pane_header::{HeaderControl, SideRefusal, SideSegment, side_description};
 use quantick_control_handlers::feed_status::{FeedStatusView, feed_status_controls};
 use quantick_control_schema::orderflow_settings as settings;
 
@@ -260,6 +260,9 @@ const COVERED_REGIONS: [SceneOwnerKindDto; 6] = [
 fn push_toolbar<P: ChromePort + ?Sized>(controls: &mut Vec<SceneControlSnapshot>, app: &P) {
     let owner = (SceneOwnerKindDto::Toolbar, TOOLBAR_OWNER_ID.to_owned());
     push_drawn(controls, app.chrome_reads().toolbar, owner);
+    for (row, rect) in app.chrome_reads().cell_menu() {
+        controls.push(row.scene_control(TOOLBAR_OWNER_ID, rect_bounds(*rect).into_snapshot()));
+    }
 }
 
 /// Controls a surface published as it drew them, under `owner`.
@@ -504,55 +507,14 @@ fn push_pane_headers<P: TabsPort + ChromePort + ?Sized>(
     let owner = (SceneOwnerKindDto::Tab, tab_control_id(tab_id));
     push_drawn(controls, &tab.canvas.menus.drawn, owner);
     for (pane, _) in tab.panes() {
+        let flow = pane.flow_header_state();
         for &(control, rect) in &pane.frame.header_controls {
-            let (label, role, selected, blocked, capability, description) = match control {
-                HeaderControl::Side(side) => {
-                    let segment = pane
-                        .flow_header_state()
-                        .map(|state| SideSegment::of(side, &state));
-                    (
-                        segment.map_or("", SideSegment::word),
-                        SceneRoleDto::Toggle,
-                        segment.is_some_and(|segment| {
-                            segment.ink == quantick_chart::pane_header::SegmentInk::Lit
-                        }),
-                        segment
-                            .and_then(|segment| segment.refusal)
-                            .map(SideRefusal::code),
-                        quantick_control_schema::tape_view_set::TAPE_VIEW_SET_CAPABILITY_ID,
-                        // What a side shows, whatever its key reads, as its tooltip says.
-                        Some(side_description(side)),
-                    )
-                }
-                HeaderControl::Layer(toggle) => (
-                    toggle.name(),
-                    SceneRoleDto::Toggle,
-                    pane.layer_switched_on(toggle.layer(), style),
-                    pane.layer_blocked(toggle.layer(), capabilities)
-                        .map(|block| block.code),
-                    quantick_control_schema::layers::SET_VISIBILITY_CAPABILITY_ID,
-                    None,
-                ),
-                HeaderControl::TapeWindow => (
-                    quantick_chart::flow_band::WINDOW_SELECTOR_NAME,
-                    SceneRoleDto::Action,
-                    false,
-                    None,
-                    quantick_control_schema::tape_view::TAPE_VIEW_CAPABILITY_ID,
-                    None,
-                ),
-                HeaderControl::Sample(sample) => (
-                    sample.name(),
-                    SceneRoleDto::Action,
-                    false,
-                    None,
-                    quantick_control_schema::bubble_scale::BUBBLE_SCALE_CAPABILITY_ID,
-                    None,
-                ),
-                HeaderControl::Settings(control) => {
-                    settings::scene_row(control, &tab.tape().settings_panel, folds, &tab.symbol)
-                }
+            let glyph = |toggle| pane.header_glyph(toggle, style, capabilities);
+            let panel = |control| {
+                settings::scene_row(control, &tab.tape().settings_panel, folds, &tab.symbol)
             };
+            let (label, role, selected, blocked, capability, description) =
+                quantick_ui_model::pane_header::scene_row(control, flow.as_ref(), glyph, panel);
             let bounds = rect_bounds(rect);
             controls.push(SceneControlSnapshot {
                 control_id: format!("pane.{}.header.{}", pane.id, control.id_in_header()),
