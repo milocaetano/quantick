@@ -585,7 +585,7 @@ fn each_listed_workspace_says_its_panes_interval_and_indicator_count() {
         rows,
         [
             ("Default".to_owned(), "as the feed opens".to_owned()),
-            ("Scalp".to_owned(), "Time · Flow".to_owned()),
+            ("Scalp".to_owned(), "Time · Flow · 0 ind".to_owned()),
             ("Swing".to_owned(), "Time · Time · Flow · 4 ind".to_owned()),
         ]
     );
@@ -1019,4 +1019,19 @@ fn a_switch_drops_its_own_edit_beside_a_shared_indicator_edit() {
 fn a_switch_keeps_quiet_over_an_indicator_edit_another_tab_holds() {
     let dropped = switch_away(|_, copy| copy.flow_indicators = vec![ema()]);
     assert!(!dropped.dropped_edits);
+}
+
+/// A summary reads the canvas the recipe shows, not the layout it declared:
+/// a flow recipe whose saved canvas is a lone timeframe chart says so.
+#[test]
+fn a_summary_names_the_panes_of_the_canvas_it_shows() {
+    let preset = crate::canvas::preset("time").expect("a preset");
+    let saved = WorkspaceRecipe {
+        canvas: Some(crate::canvas::CanvasState::from_preset(preset)),
+        flow_indicators: vec![ema()],
+        ..recipe(DeclaredLayout::Flow)
+    };
+    assert_eq!(saved.summary(), "Time · 1 ind");
+    let tree = crate::canvas::preset("time+flow").expect("a preset").tree;
+    assert_eq!(saved.summary_of(tree), "Time · Flow · 1 ind");
 }
