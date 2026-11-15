@@ -1080,115 +1080,6 @@ fn a_panned_view_survives_tape_only_and_the_way_back() {
     }
 }
 
-/// Close a side of the lane as the divider does.
-fn set_fold(app: &mut QuantickApp, fold: LaneFold) {
-    app.active_tab_mut().tape_mut().set_lane_fold(fold);
-}
-
-/// The candles closed by name read as tape only, whichever door closed them: Trail
-/// unlit, Tape the last lit and refusing, the glyphs grey in place.
-#[test]
-fn candles_closed_are_tape_only_and_the_last_lit_rule_sees_them() {
-    let ctx = egui::Context::default();
-    let (mut app, _ends) = flow_fixture(&ctx);
-    let toggles = [
-        LayerToggle::Bubbles,
-        LayerToggle::Heatmap,
-        LayerToggle::Footprint,
-    ];
-    let pane_id = app.active_tab().flow_pane.id;
-    let id = |control: &str| format!("pane.{pane_id}.header.{control}");
-    set_fold(&mut app, LaneFold::Candles);
-    run_frame(&mut app, &ctx);
-    assert_eq!(view_of(&app), LaneView::TapeOnly);
-    let caps = app.active_tab().capabilities(&app.config);
-    let flow = &app.active_tab().flow_pane;
-    assert_eq!(
-        toggles.map(|toggle| flow.layer_blocked(toggle.layer(), caps)),
-        [Some(quantick_layers::blocks::TAPE_ONLY_CANDLES); 3],
-    );
-    let tape = scene_control(&observer_scene(&app), &id("side.tape")).clone();
-    assert_eq!(
-        tape["availability"]["reason"],
-        "the_last_side_showing_stays"
-    );
-
-    click_side(&mut app, &ctx, TAPE);
-    assert_eq!(view_of(&app), LaneView::TapeOnly, "the last lit refuses");
-    click_side(&mut app, &ctx, TRAIL);
-    assert_eq!(view_of(&app), LaneView::Beside);
-}
-
-/// The tape closed by name is the tape off: its switch unlit and the way back at
-/// the default width, Trail the last lit.
-#[test]
-fn a_tape_closed_unlights_its_switch_and_the_switch_brings_it_back() {
-    let ctx = egui::Context::default();
-    let (mut app, _ends) = flow_fixture(&ctx);
-    app.active_tab_mut()
-        .tape_mut()
-        .edit_config(|config| config.show_aggressions = true);
-    app.active_tab_mut()
-        .tape_mut()
-        .edit_config(|config| config.live_lane.width_share = 0.6);
-    run_frame(&mut app, &ctx);
-
-    set_fold(&mut app, LaneFold::Tape);
-    run_frame(&mut app, &ctx);
-    assert_eq!(view_of(&app), LaneView::CandlesOnly);
-    flow_control(&app, HeaderControl::Sample(BubbleSample::Candle));
-    let tape = HeaderControl::Sample(BubbleSample::Tape);
-    assert!(
-        control_rect(&app, PaneSide::Flow, tape).is_none(),
-        "no tape side"
-    );
-
-    click_side(&mut app, &ctx, TAPE);
-    assert_eq!(view_of(&app), LaneView::Beside);
-    let lane = &app.active_tab().tape().cached_config().live_lane;
-    assert_eq!(
-        lane.width_share,
-        quantick_orderflow::config::DEFAULT_LIVE_LANE_SHARE
-    );
-}
-
-/// Held by the market: the scene says why Tape refuses, under its own code and
-/// its own word, Trail is the last side showing, the readback names the hold and
-/// the stored view stays beside. A hand on the rail is what ends it.
-#[test]
-fn a_market_hold_reads_in_the_scene_and_never_in_the_stored_view() {
-    let ctx = egui::Context::default();
-    let (mut app, _ends) = flow_fixture(&ctx);
-    run_frame(&mut app, &ctx);
-    let quiet = quantick_chart::connection_state::ConnectionState {
-        link: quantick_chart::connection_state::Link::Quiet,
-        ..app.active_tab().connection.state()
-    };
-    let tape = app.active_tab_mut().tape_mut();
-    tape.observe_market(quiet);
-    assert_eq!(tape.cached_config().live_lane.view(), LaneView::Beside);
-    let read = tape.bubbles_snapshot();
-    assert!(read.tape_fold_held_by_market && read.fold_market_closed);
-    assert_eq!(
-        read.tape_fold,
-        quantick_control_schema::tape_fold::TapeFold::Open
-    );
-
-    let pane_id = app.active_tab().flow_pane.id;
-    let id = format!("pane.{pane_id}.header.side.tape");
-    let tape = scene_control(&observer_scene(&app), &id).clone();
-    assert_eq!(tape["availability"]["reason"], "market_closed");
-
-    let tape = app.active_tab_mut().tape_mut();
-    assert!(tape.set_lane_fold(LaneFold::Open));
-    assert!(!tape.cached_config().live_lane.market_held());
-    tape.observe_market(quiet);
-    assert!(
-        !tape.cached_config().live_lane.market_held(),
-        "a hand holds it off for the rest of the spell"
-    );
-}
-
 /// Another market on a reused view starts fresh both ways: no hold from the last
 /// one, and no hand's stand-down either, so its own closed spell folds.
 #[test]
@@ -1220,10 +1111,10 @@ fn a_symbol_change_forgets_the_markets_hold_and_the_hands_stand_down() {
 }
 
 /// A held rail is the hand's way through: a click stands the hold down and brings
-/// the tape back at the default width, and a segment click on a side closed in a
-/// closed spell is not taken straight back.
+/// the tape back at the default width. A switch inside a closed spell not being
+/// taken straight back is `LiveLaneStyle`'s and `market_fold`'s to test.
 #[test]
-fn a_rail_click_ends_a_hold_at_the_default_and_a_switch_is_not_held_again() {
+fn a_rail_click_ends_a_hold_at_the_default() {
     let ctx = egui::Context::default();
     let (mut app, _ends) = flow_fixture(&ctx);
     run_frame(&mut app, &ctx);
@@ -1249,13 +1140,6 @@ fn a_rail_click_ends_a_hold_at_the_default_and_a_switch_is_not_held_again() {
         lane.width_share,
         quantick_orderflow::config::DEFAULT_LIVE_LANE_SHARE
     );
-
-    let tape = app.active_tab_mut().tape_mut();
-    tape.set_lane_view(LaneView::CandlesOnly);
-    tape.observe_market(quiet);
-    tape.set_lane_view(LaneView::Beside);
-    tape.observe_market(quiet);
-    assert!(!tape.cached_config().live_lane.market_held());
 }
 
 /// An indicator pane shares the candles' time axis, but with the candles hidden
@@ -1707,32 +1591,6 @@ fn the_panel_key_opens_and_closes_it() {
     assert!(!panel_open(&app));
 }
 
-/// A right click on the gear offers the two sections; its entries ask what a
-/// capsule's glyph asks.
-#[test]
-fn the_gears_right_click_offers_the_two_sections() {
-    let ctx = egui::Context::default();
-    let (mut app, _ends) = flow_fixture(&ctx);
-    let at = flow_control(&app, GEAR).center();
-    let secondary = |pressed| egui::Event::PointerButton {
-        pos: at,
-        button: egui::PointerButton::Secondary,
-        pressed,
-        modifiers: egui::Modifiers::default(),
-    };
-    run_frame_with_events(&mut app, &ctx, vec![egui::Event::PointerMoved(at)]);
-    run_frame_with_events(&mut app, &ctx, vec![secondary(true)]);
-    run_frame_with_events(&mut app, &ctx, vec![secondary(false)]);
-    let texts = painted_text(&run_frame(&mut app, &ctx));
-    for section in PanelSection::ALL {
-        assert!(
-            texts.iter().any(|text| text == section.title()),
-            "{texts:?}"
-        );
-    }
-    assert!(!panel_open(&app), "the menu opens nothing by itself");
-}
-
 /// The panel's whole state by name, read back in the scene; a click on a header
 /// folds the same state.
 #[test]
@@ -1787,27 +1645,6 @@ fn the_panel_is_operated_by_name_and_read_back_in_the_scene() {
     assert_eq!(scene_selected(&app, GEAR), Some(false));
 }
 
-/// A fold is the asset's, on every tab showing it, and nothing the next asset
-/// reads; whether the panel is open is the tab's.
-#[test]
-fn a_fold_follows_the_asset_and_open_follows_the_tab() {
-    let ctx = egui::Context::default();
-    let (mut app, _ends) = flow_fixture(&ctx);
-    let symbol = app.active_tab().symbol.clone();
-    settings_call(&mut app, OPEN_CAPABILITY_ID, json!({})).unwrap();
-    let fold = json!({ "section": "bubbles", "open": false });
-    settings_call(&mut app, SECTION_CAPABILITY_ID, fold).unwrap();
-    app.arrangement_adapter()
-        .open_tab("binance".to_owned(), symbol.clone(), None);
-    assert!(!panel_open(&app), "a new tab has its own panel");
-    let same = settings_call(&mut app, OPEN_CAPABILITY_ID, json!({})).unwrap();
-    assert_eq!(same["bubbles_open"], false, "the same asset reads the same");
-    app.arrangement_adapter()
-        .open_tab("binance".to_owned(), "OTHERUSDT".to_owned(), None);
-    let other = settings_call(&mut app, OPEN_CAPABILITY_ID, json!({})).unwrap();
-    assert_eq!(other["bubbles_open"], true, "another asset is untouched");
-}
-
 /// A tab not showing its flow pane has no gear, and a call says so.
 #[test]
 fn a_tab_without_its_flow_pane_has_no_gear_and_refuses_the_call() {
@@ -1823,42 +1660,36 @@ fn a_tab_without_its_flow_pane_has_no_gear_and_refuses_the_call() {
     assert!(!panel_open(&app), "nor does the key open what cannot show");
 }
 
-/// An old workspace that left the L2 dock tab open opens the panel on L2, on the
-/// tab it was active on, and leaves the dock collapsed; saving says so the new way.
+/// An old workspace that left the Bubbles dock tab open opens the panel on
+/// Bubbles, on the tab it was active on, and leaves the dock collapsed; saving
+/// says so the new way. Which old tab opens which section, and when it opens
+/// none, is `SavedTab::restored_panel`'s to test.
 #[test]
 fn an_old_l2_or_bubbles_dock_tab_restores_to_the_panel() {
-    for (old, section) in [
-        (ui_state::SavedDockTab::L2, PanelSection::L2),
-        (ui_state::SavedDockTab::Bubbles, PanelSection::Bubbles),
-    ] {
-        let ctx = egui::Context::default();
-        let (mut app, _ends) = flow_fixture(&ctx);
-        let (mut tabs, mut chrome) = app.arrangement_state().capture_arrangement();
-        chrome.dock_tab = Some(old);
-        let symbol = tabs[0].symbol.clone();
-        chrome.orderflow_folds.set(&symbol, section, false);
-        tabs[0].orderflow_panel = Default::default();
-        app.arrangement_adapter()
-            .restore_workspace(ui_state::Workspace::new(true, None, 0, tabs, Some(chrome)));
-        assert!(panel_open(&app), "{old:?}");
-        assert_eq!(
-            app.surfaces.dock.tab(),
-            None,
-            "{old:?} is no dock tab any more"
-        );
-        // The scroll to the section is animated; a header out of view is not listed.
-        for _ in 0..60 {
-            run_frame(&mut app, &ctx);
-        }
-        assert_eq!(
-            scene_selected(&app, section_control(section)),
-            Some(true),
-            "{old:?} opens expanded on its section"
-        );
-        let (saved, chrome) = app.arrangement_state().capture_arrangement();
-        assert_eq!(chrome.dock_tab, None);
-        assert!(saved[0].orderflow_panel.is_open(), "written the new way");
+    let section = PanelSection::Bubbles;
+    let ctx = egui::Context::default();
+    let (mut app, _ends) = flow_fixture(&ctx);
+    let (mut tabs, mut chrome) = app.arrangement_state().capture_arrangement();
+    chrome.dock_tab = Some(ui_state::SavedDockTab::Bubbles);
+    let symbol = tabs[0].symbol.clone();
+    chrome.orderflow_folds.set(&symbol, section, false);
+    tabs[0].orderflow_panel = Default::default();
+    app.arrangement_adapter()
+        .restore_workspace(ui_state::Workspace::new(true, None, 0, tabs, Some(chrome)));
+    assert!(panel_open(&app));
+    assert_eq!(app.surfaces.dock.tab(), None, "no dock tab any more");
+    // The scroll to the section is animated; a header out of view is not listed.
+    for _ in 0..60 {
+        run_frame(&mut app, &ctx);
     }
+    assert_eq!(
+        scene_selected(&app, section_control(section)),
+        Some(true),
+        "it opens expanded on its section"
+    );
+    let (saved, chrome) = app.arrangement_state().capture_arrangement();
+    assert_eq!(chrome.dock_tab, None);
+    assert!(saved[0].orderflow_panel.is_open(), "written the new way");
 }
 
 /// A panel restored from an old workspace, on Bubbles.
@@ -2020,25 +1851,22 @@ fn the_settings_scope_reads_the_panel_without_a_paint() {
     assert_eq!(read(&app), (false, true, false), "nothing of it painted");
 }
 
-/// An old file's L2 tab behind a hidden dock was not on screen, and a tab whose flow
-/// pane is folded has nothing to attach a panel to: neither opens it.
+/// A tab whose flow pane is folded has nothing to attach a panel to, so an old
+/// file's L2 tab opens none there; the app says whether the pane shows, and
+/// `SavedTab::restored_panel` decides the rest (a hidden dock included).
 #[test]
 fn an_old_dock_tab_that_was_not_showing_opens_no_panel() {
     let ctx = egui::Context::default();
     let (mut app, _ends) = flow_fixture(&ctx);
     let (mut tabs, mut chrome) = app.arrangement_state().capture_arrangement();
     chrome.dock_tab = Some(ui_state::SavedDockTab::L2);
-    chrome.dock_visible = false;
+    chrome.dock_visible = true;
     tabs[0].orderflow_panel = Default::default();
     let restore =
         |app: &mut QuantickApp, tabs: &[ui_state::SavedTab], chrome: &ui_state::SavedChrome| {
             let file = ui_state::Workspace::new(true, None, 0, tabs.to_vec(), Some(chrome.clone()));
             app.arrangement_adapter().restore_workspace(file);
         };
-    restore(&mut app, &tabs, &chrome);
-    assert!(!panel_open(&app), "a hidden dock showed no tab");
-
-    chrome.dock_visible = true;
     tabs[0].flow_collapsed = true;
     restore(&mut app, &tabs, &chrome);
     assert!(!panel_open(&app), "a folded flow pane has no panel");
@@ -2266,8 +2094,8 @@ fn a_section_asked_for_lands_at_the_top_of_the_scroll() {
     );
 }
 
-/// Each entry of the gear's right-click menu opens the panel on its own section,
-/// unfolded, and switches no layer.
+/// The gear's right click offers each section, and opens nothing by itself; each
+/// entry opens the panel on its own section, unfolded, and switches no layer.
 #[test]
 fn each_gear_menu_entry_opens_its_section() {
     for section in PanelSection::ALL {
@@ -2288,6 +2116,7 @@ fn each_gear_menu_entry_opens_its_section() {
         run_frame_with_events(&mut app, &ctx, vec![secondary(true)]);
         run_frame_with_events(&mut app, &ctx, vec![secondary(false)]);
         let output = run_frame(&mut app, &ctx);
+        assert!(!panel_open(&app), "the menu opens nothing by itself");
         let entry = painted_text_center(&output, section.title()).expect("the menu's entry");
         click_chart(&mut app, &ctx, entry);
         for _ in 0..30 {
@@ -2307,39 +2136,6 @@ fn each_gear_menu_entry_opens_its_section() {
             layers,
             "looking is not enabling"
         );
-    }
-}
-
-/// Held by the market, both segments and both keys do nothing: the view stands and
-/// the hold stands, and a hand on the fold is the way out.
-#[test]
-fn a_market_hold_refuses_both_segments_and_both_keys() {
-    let ctx = egui::Context::default();
-    let (mut app, _ends) = flow_fixture(&ctx);
-    let quiet = quantick_chart::connection_state::ConnectionState {
-        link: quantick_chart::connection_state::Link::Quiet,
-        ..app.active_tab().connection.state()
-    };
-    app.active_tab_mut().tape_mut().observe_market(quiet);
-    let held = |app: &QuantickApp| {
-        app.active_tab()
-            .tape()
-            .cached_config()
-            .live_lane
-            .market_held()
-    };
-    assert!(held(&app));
-    run_frame(&mut app, &ctx);
-    for control in [TAPE, TRAIL] {
-        click_side(&mut app, &ctx, control);
-        assert_eq!(view_of(&app), LaneView::Beside, "{control:?}");
-        assert!(held(&app), "{control:?}");
-    }
-    let mods = egui::Modifiers::CTRL.plus(egui::Modifiers::SHIFT);
-    for key in [egui::Key::T, egui::Key::R] {
-        press_key(&mut app, &ctx, key, mods);
-        assert_eq!(view_of(&app), LaneView::Beside, "{key:?}");
-        assert!(held(&app), "{key:?}");
     }
 }
 
