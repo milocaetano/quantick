@@ -68,9 +68,9 @@ impl AnnotatedPane for ChartPane {
     fn drawings_mut(&mut self) -> &mut Drawings {
         &mut self.drawings
     }
-    fn sweep_orphans(&mut self) {
-        self.strategies.sweep_orphans(&self.drawings);
-    }
+    /// The tab sweeps what rode a removed drawing on this same frame
+    /// ([`crate::tab::Tab::apply_strategy_cleanup`]); a pane holds none.
+    fn sweep_orphans(&mut self) {}
     fn band_refusal(&self, band: &drawings::DrawingBand) -> Option<&'static str> {
         ChartPane::band_refusal(self, band)
     }

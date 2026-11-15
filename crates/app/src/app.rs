@@ -340,6 +340,7 @@ impl QuantickApp {
     /// The inspector, the keyboard, the object manager and the toast all read
     /// through here, so an object selected on either of its two charts is
     /// edited and deleted from either of them.
+    #[cfg(test)]
     pub(super) fn drawing_pane_mut(&mut self) -> &mut ChartPane {
         self.active_tab_mut().drawing_pane_mut()
     }

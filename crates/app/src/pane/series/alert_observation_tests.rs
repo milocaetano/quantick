@@ -30,8 +30,4 @@ fn committed_observer_excludes_held_history_and_preserves_equal_time_closes() {
         [31, 32, 33]
     );
     assert_eq!(pane.state.backfill_boundary(), Some(31));
-    assert!(
-        pane.strategies.pending.is_empty(),
-        "observer never steals or creates strategy work"
-    );
 }

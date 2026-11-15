@@ -332,9 +332,10 @@ pub(super) fn apply_strategy_demo(app: &mut QuantickApp) {
             // a force bar happens to be half-formed — so the scene
             // stages the mark itself rather than waiting for a market
             // that may not oblige before the shutter.
-            let pane = app.active_tab_mut().pane_mut(pane::PaneSide::Flow);
-            if let Some(instance) = pane.strategies.anchors.for_drawing_mut(drawing_id) {
-                instance.mark = crate::strategy_anchors::AlarmMark::Preview;
+            let (pane, strategies) =
+                (app.active_tab_mut()).pane_with_strategies(pane::PaneSide::Flow);
+            if let Some(instance) = strategies.anchors.for_drawing_mut(drawing_id) {
+                instance.mark = quantick_strategy::anchors::AlarmMark::Preview;
             }
             // Placing a drawing selects it, and a selected drawing raises
             // the context bar across its own top edge — which is where

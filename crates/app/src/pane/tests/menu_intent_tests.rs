@@ -1,11 +1,23 @@
 //! The menus' one apply site: an intent in, the pane's state out — and, for
 //! the drawing section, the intent a real click on the menu produces.
 
+use std::cell::RefCell;
+
 use quantick_orderflow::LaneWindow;
 
 use super::*;
 use crate::drawings::DrawingId;
 use crate::pane::menus::{PaneMenuHosts, PaneMenuIntent};
+
+thread_local! {
+    /// The tab strategies the pane under test arms into; every
+    /// [`pane_with_rectangle`] opens them empty.
+    static STRATEGIES: RefCell<crate::strategy_anchors::TabStrategies> = RefCell::default();
+}
+
+fn with_strategies<R>(body: impl FnOnce(&mut crate::strategy_anchors::TabStrategies) -> R) -> R {
+    STRATEGIES.with_borrow_mut(body)
+}
 
 const SCREEN: egui::Rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(400.0, 700.0));
 
@@ -16,7 +28,16 @@ fn menu_frame(
     ctx: &egui::Context,
     events: Vec<egui::Event>,
 ) -> Vec<PaneMenuIntent> {
-    with_chrome(Tool::Pointer, |chrome| {
+    with_strategies(|strategies| menu_frame_over(pane, ctx, events, strategies))
+}
+
+fn menu_frame_over(
+    pane: &mut ChartPane,
+    ctx: &egui::Context,
+    events: Vec<egui::Event>,
+    strategies: &mut crate::strategy_anchors::TabStrategies,
+) -> Vec<PaneMenuIntent> {
+    with_chrome_over(Tool::Pointer, strategies, |chrome| {
         let mut intents = Vec::new();
         let _ = ctx.run(
             egui::RawInput {
@@ -26,7 +47,9 @@ fn menu_frame(
             },
             |ctx| {
                 egui::CentralPanel::default().show(ctx, |ui| {
-                    let (menu, model, view) = pane.menu_parts(chrome.capabilities, chrome.style);
+                    let strategies = chrome.strategies.pane(pane.id);
+                    let (menu, model, view) =
+                        pane.menu_parts(chrome.capabilities, chrome.style, strategies);
                     let hosts = PaneMenuHosts {
                         paper: &mut *chrome.paper,
                     };
@@ -77,12 +100,15 @@ fn pane_with_rectangle() -> (ChartPane, DrawingId) {
     pane.drawings.select(None);
     assert_eq!(pane.drawings.items().len(), 1);
     let id = pane.drawings.items()[0].id;
+    with_strategies(|strategies| *strategies = Default::default());
     (pane, id)
 }
 
 fn apply(pane: &mut ChartPane, intents: Vec<PaneMenuIntent>) {
-    with_chrome(Tool::Pointer, |chrome| {
-        pane.apply_menu_intents(intents, chrome)
+    with_strategies(|strategies| {
+        with_chrome_over(Tool::Pointer, strategies, |chrome| {
+            pane.apply_menu_intents(intents, chrome)
+        })
     });
 }
 
@@ -110,14 +136,27 @@ fn arm_strategy(pane: &mut ChartPane, drawing: DrawingId) {
         cue: crate::audio::Cue::default(),
         mark: crate::strategy_anchors::AlarmMark::Quiet,
     };
-    assert!(pane.strategies.anchors.arm(instance).is_empty());
+    with_strategies(|strategies| {
+        assert!(
+            strategies
+                .pane_mut(pane.id)
+                .anchors
+                .arm(instance)
+                .is_empty()
+        );
+    });
 }
 
 fn strategy_state(pane: &ChartPane, drawing: DrawingId) -> Option<quantick_strategy::ArmedState> {
-    pane.strategies
-        .anchors
-        .for_drawing(drawing)
-        .map(|instance| instance.armed.state().clone())
+    with_strategies(|strategies| {
+        (strategies.anchors(pane.id))
+            .and_then(|anchors| anchors.for_drawing(drawing))
+            .map(|instance| instance.armed.state().clone())
+    })
+}
+
+fn popup_request(pane: &ChartPane) -> Option<DrawingId> {
+    with_strategies(|strategies| strategies.pane(pane.id)?.popup_request())
 }
 
 #[test]
@@ -199,7 +238,7 @@ fn intents_for_a_drawing_that_is_gone_do_nothing() {
     );
     assert!(pane.drawings.items().is_empty());
     assert_eq!(pane.drawings.selected(), None);
-    assert_eq!(pane.strategies.popup_request, None);
+    assert_eq!(popup_request(&pane), None);
 }
 
 #[test]
@@ -450,7 +489,7 @@ fn strategy_intents_drive_the_instance_on_the_drawing() {
     let (mut pane, id) = pane_with_rectangle();
 
     apply(&mut pane, vec![PaneMenuIntent::StrategyAdd(id)]);
-    assert_eq!(pane.strategies.popup_request, Some(id));
+    assert_eq!(popup_request(&pane), Some(id));
 
     arm_strategy(&mut pane, id);
     apply(&mut pane, vec![PaneMenuIntent::StrategyDisarm(id)]);

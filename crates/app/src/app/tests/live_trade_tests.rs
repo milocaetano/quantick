@@ -148,6 +148,61 @@ fn live_trade_mutant_fills_on_the_trigger_print_instead_of_the_next_print() {
     assert_ne!(early.avg_price, correct.avg_price);
 }
 
+/// A strategy armed on a stacked context chart trades like one armed on the
+/// flow chart: the tab queues that pane's closes, and the paper account
+/// receives the entry its force bar asks for.
+#[test]
+fn armed_strategy_on_a_stacked_pane_reaches_paper() {
+    let ctx = egui::Context::default();
+    let (mut app, _events, _commands, _book) = test_app();
+    app.active_tab_mut()
+        .set_layout(crate::tab::CanvasLayout::TimeAndFlow);
+    run_frame(&mut app, &ctx);
+    run_frame(&mut app, &ctx);
+    let side = PaneSide::Time(0);
+    let spec = *app.active_tab().flow_pane.state.spec();
+    app.active_tab_mut().pane_mut(side).set_spec(spec);
+    app.active_tab_mut().apply_spec_changes();
+    let rectangle = drawings::DRAWING_TOOLS
+        .into_iter()
+        .find(|tool| tool.id() == "rectangle")
+        .unwrap();
+    let pane = app.active_tab_mut().pane_mut(side);
+    pane.drawings.place(rectangle, ChartPoint::at(0.0, 100.0));
+    pane.drawings.place(rectangle, ChartPoint::at(30.0, 110.0));
+    let drawing = pane.drawings.items()[0].id;
+    let mut form =
+        crate::strategy_presets::StoredPreset::starting_point(quantick_engine::Side::Buy);
+    form.window = 3;
+    form.min_range = "0".to_owned();
+    app.runtime
+        .tabs
+        .runtime_mut(app.runtime.tabs.active_index())
+        .arm_strategy_instance(
+            &mut *app.audio.alerts,
+            side,
+            drawing,
+            &form,
+            "BF".to_owned(),
+        )
+        .unwrap();
+    let flow = app.active_tab().flow_pane.id;
+    assert!(
+        (app.active_tab().strategies.anchors(flow)).is_none_or(|anchors| anchors.is_empty()),
+        "the strategy rides the stacked chart alone"
+    );
+
+    let trades = scenario();
+    ingest(&mut app, &trades[..200]);
+    assert!(
+        !app.active_tab().paper.is_flat(),
+        "the stacked chart's force bar queued the entry"
+    );
+    ingest(&mut app, &trades[200..]);
+    let opened = position(&app).expect("the next print fills the entry");
+    assert_eq!(opened.opened_agg_id, 201);
+}
+
 #[test]
 fn live_trade_batches_preserve_per_print_fills_panes_and_one_arrival_clock_per_drain() {
     let trades = scenario();
@@ -210,9 +265,7 @@ fn live_trade_batches_preserve_per_print_fills_panes_and_one_arrival_clock_per_d
         );
         assert_eq!(
             app.active_tab()
-                .flow_pane
-                .strategies
-                .anchors
+                .anchors_on(crate::pane::PaneSide::Flow)
                 .for_drawing(drawing)
                 .unwrap()
                 .armed
@@ -260,9 +313,7 @@ fn live_trade_resume_paths_seed_the_mark_without_filling_a_queued_order() {
         assert_eq!(app.active_tab().flow_pane.state.trades().len(), 201);
         assert!(matches!(
             app.active_tab()
-                .flow_pane
-                .strategies
-                .anchors
+                .anchors_on(crate::pane::PaneSide::Flow)
                 .for_drawing(drawing)
                 .unwrap()
                 .armed
@@ -324,9 +375,7 @@ fn live_trade_resume_does_not_evaluate_a_new_force_bar() {
     );
     assert!(matches!(
         app.active_tab()
-            .flow_pane
-            .strategies
-            .anchors
+            .anchors_on(crate::pane::PaneSide::Flow)
             .for_drawing(drawing)
             .unwrap()
             .armed
@@ -424,8 +473,7 @@ fn live_trade_clock_is_read_only_when_an_alarm_is_present() {
     let setup = form.to_kernel().unwrap().alarm.unwrap();
     let instance = app
         .active_tab_mut()
-        .flow_pane
-        .strategies
+        .strategies_on(crate::pane::PaneSide::Flow)
         .anchors
         .instances
         .iter_mut()
