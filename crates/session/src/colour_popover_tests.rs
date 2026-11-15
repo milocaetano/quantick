@@ -103,10 +103,6 @@ fn the_swap_question_takes_no_reflex_enter() {
         popover.keys(keys(&[Key::Space]), 18, Some(3)),
         KeyAct::Cancel
     );
-    assert_eq!(
-        popover.keys(keys(&[Key::Escape]), 18, Some(3)),
-        KeyAct::Close
-    );
     popover.back();
     assert_eq!((popover.asked.as_deref(), popover.focus), (None, None));
 }
@@ -171,7 +167,7 @@ fn custom_opens_on_its_words_and_the_question_returns_to_it() {
     assert!(popover.custom);
     assert_eq!(
         (popover.hex.as_str(), popover.hsv),
-        ("#A887F2", [0.7, 0.4, 0.9])
+        ("#A887F2", Some([0.7, 0.4, 0.9]))
     );
     popover.ask("#5DBDEB");
     popover.back();
@@ -225,4 +221,22 @@ fn a_staged_menu_opens_on_the_tab_first_presented() {
     assert!(menu.colour.is_some());
     menu.toggle_chip_menu(9);
     assert!(!menu.follow_cell(9, true, &[9], false), "only once");
+}
+
+/// Esc on the swap question does what Cancel does, back to the grid; a
+/// second Esc closes the popover; a third the menu.
+#[test]
+fn esc_steps_back_from_the_question_then_the_popover_then_the_menu() {
+    let mut menu = WorkspaceMenuState::default();
+    menu.toggle_chip_menu(7);
+    menu.toggle_colour();
+    let popover = menu.colour.as_mut().unwrap();
+    popover.ask("sky");
+    assert_eq!(popover.keys(keys(&[Key::Escape]), 18, Some(3)), KeyAct::Cancel);
+    popover.back();
+    assert_eq!(popover.keys(keys(&[Key::Escape]), 18, Some(3)), KeyAct::Close);
+    menu.colour = None;
+    assert!(menu.chip_menu_on(7), "the menu stays after the popover closes");
+    menu.settle(None, true, false);
+    assert!(!menu.chip_menu_on(7), "the third Esc closes the menu");
 }

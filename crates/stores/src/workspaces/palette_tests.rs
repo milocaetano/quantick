@@ -120,6 +120,7 @@ fn a_held_colour_asks_to_swap_in_its_own_words() {
         question.words,
         "#5DBDEB is Sky, used by Scalp. Swap? Scalp becomes Violet."
     );
+    assert_eq!(question.colour, preset(2), "the swap takes Sky itself");
     let mut book = book;
     book.set_colour("Scalp", WorkspaceColour::Custom(BLUE), false)
         .unwrap();

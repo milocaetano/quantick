@@ -47,7 +47,7 @@ fn header(book: &WorkspaceBook, dark: bool) -> Vec<Piece> {
 }
 
 fn drawn(book: &WorkspaceBook, state: &ColourPopover, dark: bool) -> Popover {
-    popover(book, "Flow", state, dark, &measure).unwrap()
+    popover(book, "Flow", &mut state.clone(), dark, &measure).unwrap()
 }
 
 fn keyed<'a>(marks: &'a Popover, key: &str) -> &'a Piece {
@@ -286,4 +286,155 @@ fn the_header_swatch_is_a_sixteen_point_press() {
             .any(|mark| matches!(mark, Mark::Colour { .. })),
         "the swatch paints the colour"
     );
+}
+
+fn handle(marks: &Popover) -> Area {
+    let square = keyed(marks, "square");
+    let found = square.marks.iter().find_map(|mark| match mark {
+        Mark::Box(plate) if plate.fill.is_none() && plate.at.w == 10.0 => Some(plate.at),
+        _ => None,
+    });
+    found.expect("the marker")
+}
+
+fn plates(piece: &Piece) -> Vec<Plate> {
+    let found = piece.marks.iter().filter_map(|mark| match mark {
+        Mark::Box(plate) => Some(*plate),
+        _ => None,
+    });
+    found.collect()
+}
+
+/// A question whose colour freed under it is left in the state too, so the
+/// keys answer the grid that is drawn.
+#[test]
+fn a_freed_question_is_left_where_it_is_drawn() {
+    let mut book = mock(true);
+    let mut state = ColourPopover::default();
+    state.ask("sky");
+    book.set_colour("Scalp", WorkspaceColour::preset(6).unwrap(), false)
+        .unwrap();
+    let marks = popover(&book, "Flow", &mut state, true, &measure).unwrap();
+    assert_eq!(state.asked, None);
+    assert!(marks.cells.len() == 18, "the grid");
+}
+
+/// A malformed field keeps the picker on the last valid colour; one staged
+/// malformed from the start shows the current colour.
+#[test]
+fn a_malformed_field_keeps_the_last_valid_picker() {
+    let book = mock(true);
+    let mut state = ColourPopover::default();
+    state.open_custom("#62B8EA".to_owned(), [0.0, 0.0, 0.0]);
+    let valid = handle(&popover(&book, "Flow", &mut state, true, &measure).unwrap());
+    state.hex = "#62B8E".to_owned();
+    let broken = popover(&book, "Flow", &mut state, true, &measure).unwrap();
+    assert_eq!(handle(&broken), valid);
+    let mut staged = ColourPopover {
+        custom: true,
+        hex: "#3A7BD".to_owned(),
+        ..ColourPopover::default()
+    };
+    let current = handle(&popover(&book, "Flow", &mut staged, true, &measure).unwrap());
+    let mut violet = ColourPopover::default();
+    violet.open_custom("#A887F2".to_owned(), [0.0; 3]);
+    let expected = handle(&popover(&book, "Flow", &mut violet, true, &measure).unwrap());
+    assert_eq!(current, expected, "Violet as Dark paints it");
+}
+
+/// The question's chips show what each workspace will be painted in the
+/// theme: a typed Sky value swaps Sky itself.
+#[test]
+fn the_question_chips_paint_each_workspace_s_new_colour_in_the_theme() {
+    for dark in [true, false] {
+        let mut state = ColourPopover::default();
+        state.ask("#5DBDEB");
+        let marks = drawn(&mock(true), &state, dark);
+        let chips: Vec<[u8; 3]> = (keyed(&marks, "question").marks.iter())
+            .filter_map(|mark| match mark {
+                Mark::Colour { rgb, .. } => Some(*rgb),
+                _ => None,
+            })
+            .collect();
+        let sky = WorkspaceColour::preset(2).unwrap().rgb(dark);
+        let violet = WorkspaceColour::preset(3).unwrap().rgb(dark);
+        assert_eq!(chips, [sky, violet], "dark {dark}");
+    }
+}
+
+/// The popover hangs below the header's words, and the question ends on a
+/// row boundary of the list behind it.
+#[test]
+fn the_popover_clears_the_header_and_the_question_ends_on_a_row() {
+    use crate::workspace_menu::{HEAD_PT, SWATCH_BOTTOM_PT};
+    use quantick_session::workspace_menu::{CHIP_MENU_BORDER_PT, CHIP_MENU_ROW_PT};
+    let pieces = header(&mock(true), true);
+    let swatch = pieces
+        .iter()
+        .find(|piece| piece.row.as_ref().is_some_and(|row| row.key == "colour"))
+        .unwrap();
+    assert_eq!(swatch.at.y + swatch.at.h - 4.0, SWATCH_BOTTOM_PT);
+    let current = pieces
+        .iter()
+        .find(|piece| piece.row.as_ref().is_some_and(|row| row.key == "current"))
+        .unwrap();
+    let summary = current.marks.iter().filter_map(|mark| match mark {
+        Mark::Text(words) => Some(words.y + words.size * 0.6),
+        _ => None,
+    });
+    let words_end = summary.fold(0.0_f32, f32::max);
+    let top = SWATCH_BOTTOM_PT + DROP_PT;
+    assert!(top >= words_end, "{top} under {words_end}");
+    let mut state = ColourPopover::default();
+    state.ask("sky");
+    let marks = drawn(&mock(true), &state, true);
+    let bottom = top + marks.size[1] + 2.0 * CHIP_MENU_BORDER_PT - HEAD_PT;
+    assert!(bottom > 0.0 && bottom % CHIP_MENU_ROW_PT == 0.0, "{bottom}");
+}
+
+/// Custom's field wears the accent's 1 pt focus border, its preview chip
+/// the popover's border, and a disabled Apply no accent at all.
+#[test]
+fn the_field_the_chip_and_a_disabled_apply_wear_their_edges() {
+    let accent = quantick_appearance::Token::Accent;
+    for dark in [true, false] {
+        let ink = quantick_appearance::workspace_menu::chrome(dark);
+        let mut state = ColourPopover::default();
+        state.open_custom("#3A3550".to_owned(), [0.0; 3]);
+        let marks = drawn(&mock(true), &state, dark);
+        assert!(plates(keyed(&marks, "hex")).iter().any(|p| p.edge == Some(accent)));
+        assert!(plates(keyed(&marks, "preview")).iter().any(|p| p.edge == Some(ink.edge)));
+        state.hex = "#3A7BD".to_owned();
+        let marks = drawn(&mock(true), &state, dark);
+        let apply = keyed(&marks, "apply");
+        assert!(plates(apply).iter().all(|p| p.fill != Some(accent) && p.edge != Some(accent)));
+        let label = apply.marks.iter().find_map(|mark| match mark {
+            Mark::Text(words) => Some(words.ink),
+            _ => None,
+        });
+        assert_eq!(label, Some(ink.faint));
+    }
+}
+
+/// A swatch's initials and check are pure black or pure white, whichever
+/// reads more, and reach 4.5:1 on every preset in both themes.
+#[test]
+fn swatch_marks_read_on_every_preset_in_both_themes() {
+    use quantick_appearance::{PremultipliedRgba, contrast::contrast_ratio};
+    let rgb = |[r, g, b]: [u8; 3]| PremultipliedRgba::from_rgb(r, g, b);
+    for dark in [true, false] {
+        for index in 0..16 {
+            let fill = WorkspaceColour::preset(index).unwrap().rgb(dark);
+            let ink = mono_ink(fill);
+            assert!(ink == [0; 3] || ink == [255; 3]);
+            let ratio = contrast_ratio(rgb(ink), rgb(fill));
+            assert!(ratio >= 4.5, "{index} dark {dark}: {ratio}");
+        }
+    }
+    let marks = drawn(&mock(true), &ColourPopover::default(), true);
+    let initials = keyed(&marks, "sky").marks.iter().find_map(|mark| match mark {
+        Mark::Text(words) if words.text == "Sc" => words.rgb,
+        _ => None,
+    });
+    assert_eq!(initials, Some(mono_ink(WorkspaceColour::preset(2).unwrap().rgb(true))));
 }
