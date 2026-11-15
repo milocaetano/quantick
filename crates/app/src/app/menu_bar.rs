@@ -465,8 +465,7 @@ pub(super) fn workspace_cell(
     let mut commands = Vec::new();
     let drawn = cell.filter(|_| open).map(|cell| {
         let keys = shortcut_text(ctx, &SAVE_TO_WORKSPACE_SHORTCUT);
-        let rows = workspace_rows::WorkspaceRows::of(app);
-        rows.chip_menu(ctx, cell, &mut menu, keys, &mut commands)
+        workspace_rows::chip_menu(app, ctx, cell, &mut menu, keys, &mut commands)
     });
     app.chrome.window_menu.tab_workspace = menu;
     for command in commands {

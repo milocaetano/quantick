@@ -74,7 +74,7 @@ pub mod stack;
 mod stack_tests;
 
 pub use column::{ColumnFrame, column_frame};
-pub use named::CanvasLayout;
+pub use named::{CanvasLayout, recipe_canvas};
 pub use split::{Span, Split, split};
 pub use stack::{
     ContextPairResult, ContextResizeError, ContextStack, ResizeContextPair, StackFrame,

@@ -86,7 +86,3 @@ impl WindowMenuState {
         self.keyboard = false;
     }
 }
-
-pub(super) fn flat_rows(ui: &mut egui::Ui) {
-    crate::surfaces::chrome_menu_bar::flat_rows(ui);
-}

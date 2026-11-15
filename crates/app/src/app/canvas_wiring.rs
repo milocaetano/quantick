@@ -1,5 +1,5 @@
 //! The window's side of the `canvas.*` capabilities: the active tab's
-//! [`CanvasState`] and its save, lent to `quantick_control_handlers::canvas`,
+//! `CanvasState` and its save, lent to `quantick_control_handlers::canvas`,
 //! which acts and answers. A layout pick goes through the one path every
 //! picker takes.
 
@@ -8,9 +8,8 @@ use quantick_control::error::ControlError;
 use quantick_control_handlers::canvas::{self, CanvasAct, CanvasHost};
 use quantick_control_schema::canvas::CanvasResult;
 use quantick_stores::workspaces::WorkspaceRecipe;
-use quantick_workspace::canvas::{CanvasRect, CanvasState, WidgetSpec, add_menu, slot_seat};
-
-use crate::tab::CanvasLayout;
+use quantick_workspace::canvas::{CanvasRect, WidgetSpec, add_menu, slot_seat};
+use quantick_workspace::canvas_layout::recipe_canvas;
 
 use super::QuantickApp;
 use super::menu_bar::MenuDoor;
@@ -67,7 +66,7 @@ impl CanvasHost for QuantickApp {
 
 /// Act on the active tab's canvas against its save, and read it back.
 fn answer(app: &mut QuantickApp, act: CanvasAct) -> Result<CanvasResult, ControlError> {
-    let (area, saved) = (canvas_area(app), saved_recipe(app).map(recipe_state));
+    let (area, saved) = (canvas_area(app), saved_recipe(app).map(recipe_canvas));
     let (canvas, monitor_of) = (&app.active_tab().canvas, crate::floating_panes::monitor_of);
     let (origin, scale) = (canvas.floats.origin, canvas.floats.scale);
     let place = (&canvas.state, area);
@@ -146,7 +145,7 @@ pub(super) fn settle_canvas(app: &mut QuantickApp, ctx: &egui::Context) {
     if !app.surfaces.remove_chart.scoped(scope).0.has_pick() && pending.is_none() && !escape {
         return;
     }
-    let saved = saved_recipe(app).map(recipe_state);
+    let saved = saved_recipe(app).map(recipe_canvas);
     let book = &app.runtime.workspace.book;
     let (name, autosave) = (
         book.tab_row(app.runtime.tabs.active_id()).0,
@@ -281,23 +280,4 @@ pub(super) fn with_canvas(
     let (state, split) = (&canvas.state, canvas.split_fraction);
     recipe.canvas = state.saved_form(preset, split, columns);
     recipe
-}
-
-/// The layout a recipe opens on: its saved canvas's preset, else its
-/// declared layout.
-#[must_use]
-pub(super) fn recipe_layout(recipe: &WorkspaceRecipe) -> CanvasLayout {
-    (recipe.canvas.as_ref())
-        .and_then(CanvasState::preset)
-        .map(CanvasLayout::from_preset)
-        .unwrap_or_else(|| CanvasLayout::from(recipe.layout))
-}
-
-/// The canvas model a recipe restores, saved or rebuilt, its fold flags in.
-#[must_use]
-pub(super) fn recipe_state(recipe: &WorkspaceRecipe) -> CanvasState {
-    let (preset, split) = (recipe_layout(recipe).preset(), recipe.split_fraction);
-    let rebuilt = || CanvasState::from_preset_split(preset, split);
-    let state = (recipe.canvas.clone()).unwrap_or_else(rebuilt);
-    state.with_folds(recipe.context_collapsed, recipe.flow_collapsed)
 }

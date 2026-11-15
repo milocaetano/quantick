@@ -2,8 +2,6 @@
 //! menu, the Manage workspaces dialog whose delete asks twice, the dialog that
 //! asks for a name and the close that asks per tab holding edits.
 
-use std::collections::BTreeMap;
-
 use crate::close_queue::{CloseAnswer, CloseQueue, CloseScope};
 
 /// What a workspace row or the dialog asked the window to do.
@@ -89,14 +87,21 @@ impl ManageDialog {
 }
 
 /// The menus' state across frames.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct WorkspaceMenuState {
     /// The tab whose cell opened the menu, while it is open. The menu shows
     /// and acts in the window presenting that tab, so a torn-off window's
     /// cell never reaches another window's tab.
     pub chip_menu: Option<u64>,
-    /// How the open menu is measured, afresh on every opening.
-    pub chip_sizing: ChipSizing,
+    /// The words typed in the open menu's filter field.
+    pub filter: String,
+    /// The list row, among those the filter shows, that Up and Down moved
+    /// to and Enter takes.
+    pub focus: Option<usize>,
+    /// The list's scroll offset as last drawn, in points.
+    pub scroll: f32,
+    /// The next frame scrolls the list to the focus, else the current row.
+    reveal: bool,
     pub manage: Option<ManageDialog>,
     pub dialog: Option<NameDialog>,
     pub close: CloseQueue,
@@ -107,7 +112,73 @@ impl WorkspaceMenuState {
     /// on that tab, or close it when it was already open there.
     pub fn toggle_chip_menu(&mut self, tab: u64) {
         self.chip_menu = (self.chip_menu != Some(tab)).then_some(tab);
-        self.chip_sizing = ChipSizing::default();
+        self.filter.clear();
+        (self.focus, self.scroll, self.reveal) = (None, 0.0, true);
+    }
+
+    /// The filter's words changed: its first match takes the focus, so Enter
+    /// takes it; an empty filter leaves no row focused.
+    pub fn filter_changed(&mut self) {
+        self.focus = (!self.filter.trim().is_empty()).then_some(0);
+        (self.scroll, self.reveal) = (0.0, true);
+    }
+
+    /// Up (`down` false) or Down among `rows` list rows, from the focus or
+    /// else the tab's `current` row; it stops at either end.
+    pub fn move_focus(&mut self, down: bool, rows: usize, current: Option<usize>) {
+        let last = rows.checked_sub(1);
+        self.focus = match (self.focus.or(current), last) {
+            (_, None) => None,
+            (None, Some(last)) => Some(if down { 0 } else { last }),
+            (Some(at), Some(last)) if down => Some((at + 1).min(last)),
+            (Some(at), Some(last)) => Some(at.min(last).saturating_sub(1)),
+        };
+        self.reveal = true;
+    }
+
+    /// A frame's Down, Up and Enter among `rows` list rows: the focus moved
+    /// from the tab's `current` row, and the row Enter takes, if pressed.
+    pub fn keys(
+        &mut self,
+        pressed: [bool; 3],
+        rows: usize,
+        current: Option<usize>,
+    ) -> Option<usize> {
+        let [down, up, enter] = pressed;
+        if down || up {
+            self.move_focus(down, rows, current);
+        }
+        enter.then(|| self.enter(rows)).flatten()
+    }
+
+    /// The row Enter takes among `rows`: the focused one, while the list
+    /// still holds it.
+    #[must_use]
+    pub fn enter(&self, rows: usize) -> Option<usize> {
+        self.focus.filter(|&at| at < rows)
+    }
+
+    /// The list was drawn scrolled to `offset` points.
+    pub fn scrolled(&mut self, offset: f32) {
+        self.scroll = offset;
+    }
+
+    /// The offset the list scrolls to this frame, if an opening or a moved
+    /// focus asks: the least move that shows the focus, else the `current`
+    /// row, whole in a list `view_pt` tall.
+    pub fn reveal(&mut self, current: Option<usize>, view_pt: f32) -> Option<f32> {
+        if !std::mem::take(&mut self.reveal) {
+            return None;
+        }
+        let top = self.focus.or(current).unwrap_or(0) as f32 * CHIP_MENU_ROW_PT;
+        let view = (view_pt - CHIP_MENU_LIST_PAD_PT).max(CHIP_MENU_ROW_PT);
+        let offset = if top < self.scroll {
+            top
+        } else {
+            self.scroll.max(top + CHIP_MENU_ROW_PT - view)
+        };
+        self.scroll = offset;
+        Some(offset)
     }
 
     pub fn close_chip_menu(&mut self) {
@@ -221,99 +292,50 @@ impl WorkspaceMenuState {
     }
 }
 
-/// The widest the cell's menu draws, in points: a workspace name of about
-/// twenty characters beside its one-line summary. A longer name is cut short
-/// in its row and reads whole on hover.
-pub const CHIP_MENU_MAX_WIDTH_PT: f32 = 360.0;
-/// The narrowest the cell's menu draws, in points.
-pub const CHIP_MENU_MIN_WIDTH_PT: f32 = 200.0;
+/// The cell's menu's width, in points (designer B): fixed, so nothing in
+/// it is measured before it shows.
+pub const CHIP_MENU_WIDTH_PT: f32 = 320.0;
 /// How far below the capsule the menu hangs, in points.
 pub const CHIP_MENU_DROP_PT: f32 = 4.0;
-/// The unsaved dot's centre in from the Save row's left edge, in points:
-/// inside the row, in the padding before its text.
-pub const CHIP_MENU_DOT_INSET_PT: f32 = 5.0;
-/// What the menu keeps clear of the window's edges, in points: room for the
-/// small differences between the measured rows and the drawn ones.
+/// What the menu keeps clear of the window's bottom edge, in points.
 pub const CHIP_MENU_EDGE_PT: f32 = 8.0;
+/// The menu's border, each side.
+pub const CHIP_MENU_BORDER_PT: f32 = 1.0;
+/// The header block that never scrolls: the current line and its buttons.
+pub const CHIP_MENU_HEADER_PT: f32 = 81.0;
+/// The WORKSPACES caption over the list.
+pub const CHIP_MENU_CAPTION_PT: f32 = 24.0;
+/// One workspace row: its name over its summary.
+pub const CHIP_MENU_ROW_PT: f32 = 34.0;
+/// The list's padding either side and below its last row.
+pub const CHIP_MENU_LIST_PAD_PT: f32 = 4.0;
+/// The tallest the list draws: nine and a half rows, so the cut row says
+/// there is more below.
+pub const CHIP_MENU_LIST_MAX_PT: f32 = 323.0;
+/// From this many workspaces a filter field stands over the list.
+pub const CHIP_MENU_FILTER_FROM: usize = 13;
+/// The filter field and the gap under it.
+pub const CHIP_MENU_FILTER_PT: f32 = 28.0;
+/// The footer block that never scrolls: Autosave, then New and Manage.
+pub const CHIP_MENU_FOOTER_PT: f32 = 65.0;
 /// The workspace rows the list keeps in view however short the window. Below
 /// that the menu overruns the window and is pushed up rather than show none.
 pub const CHIP_MENU_MIN_LIST_ROWS: usize = 3;
-/// The most workspace rows the list shows at once, fewer in a short window;
-/// the rest scroll, so a long list never makes the menu a tall panel.
+/// The most workspace rows the window menu's Workspace submenu shows at once.
 pub const CHIP_MENU_MAX_LIST_ROWS: usize = 12;
-/// The rows that never scroll: auto save and its line, Save, Save as,
-/// Rename, the WORKSPACES caption, New and Manage.
-pub const CHIP_MENU_FIXED_ROWS: usize = 8;
 /// The least of a row's caption worth showing cut short, in points; with
 /// less room beside the whole name the caption is dropped.
 pub const CHIP_MENU_MIN_CAPTION_PT: f32 = 24.0;
-/// The separators between the menu's groups.
-pub const CHIP_MENU_SEPARATORS: usize = 3;
 /// The height egui gives a horizontal separator, before the gap after it.
 pub const CHIP_MENU_SEPARATOR_PT: f32 = 6.0;
 
-/// How the open cell menu is measured. A UI sizes the menu from its last
-/// frame, so the frame after an opening, or after its rows' words change,
-/// lays every row out whole and unseen, no wider than the floor but for what
-/// a row asks, so a rule spanning the menu cannot carry an old width. The
-/// next frame settles at the capped width, unseen too, so the first frame
-/// shown is placed by the width it shows. The frames after it draw, and a
-/// row whose whole width does not fit its room has its name cut short.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct ChipSizing {
-    /// The signature of the rows last measured; `None` before any frame.
-    measured: Option<u64>,
-    pass: ChipPass,
-    /// Each row's whole width, in points rounded up, by scene key.
-    whole: BTreeMap<String, u32>,
+/// Whether `filter` keeps the workspace `name`: any part of it, whatever
+/// its case; an empty filter keeps every name.
+#[must_use]
+pub fn filter_matches(filter: &str, name: &str) -> bool {
+    name.to_lowercase().contains(&filter.trim().to_lowercase())
 }
 
-/// Which frame of the open menu this is.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-enum ChipPass {
-    /// Unseen: every row laid out whole.
-    Measure,
-    /// Unseen: laid out at the capped width.
-    Settle,
-    #[default]
-    Draw,
-}
-
-impl ChipSizing {
-    /// A frame of the menu begins for rows whose signature is `rows`:
-    /// answers whether it measures, and whether it is shown.
-    pub fn frame(&mut self, rows: u64) -> (bool, bool) {
-        self.pass = if self.measured != Some(rows) {
-            self.measured = Some(rows);
-            self.whole.clear();
-            ChipPass::Measure
-        } else if self.pass == ChipPass::Measure {
-            ChipPass::Settle
-        } else {
-            ChipPass::Draw
-        };
-        (self.measuring(), self.pass == ChipPass::Draw)
-    }
-
-    /// Whether this frame lays the rows out whole.
-    #[must_use]
-    pub fn measuring(&self) -> bool {
-        self.pass == ChipPass::Measure
-    }
-
-    /// A row under `key` that asked `desired_pt`: on the measuring frame its
-    /// whole width, kept, answering false; after it, whether that whole
-    /// width is more than `room_pt`, so its name is cut short.
-    pub fn cut(&mut self, key: &str, desired_pt: f32, room_pt: f32) -> bool {
-        if self.measuring() {
-            self.whole.insert(key.to_owned(), desired_pt.ceil() as u32);
-            return false;
-        }
-        self.whole
-            .get(key)
-            .is_some_and(|&whole| whole as f32 > room_pt.ceil())
-    }
-}
 /// How a press row's caption shares the row with its name.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum CaptionFit {
@@ -393,44 +415,53 @@ impl MenuMetrics {
     }
 }
 
-/// The size the cell's menu may take this frame.
+/// The cell's menu's size this frame, in points.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct ChipMenuBudget {
-    pub min_width: f32,
-    pub max_width: f32,
-    /// The workspace list's height, at most [`CHIP_MENU_MAX_LIST_ROWS`]
-    /// rows; the rest of the menu never scrolls.
+pub struct ChipMenuLayout {
+    pub width: f32,
+    /// The filter field stands over the list.
+    pub filter: bool,
+    /// The list's height, its padding in: the only part that scrolls.
     pub list_height: f32,
     /// Whether the list holds more rows than that height shows.
     pub scrolls: bool,
-    /// The whole menu's height: over the room below the capsule only when
-    /// the window cannot hold [`CHIP_MENU_MIN_LIST_ROWS`] rows.
-    pub max_height: f32,
+    /// The whole menu, its border in: over the room below the capsule only
+    /// when the window cannot hold [`CHIP_MENU_MIN_LIST_ROWS`] rows.
+    pub height: f32,
 }
 
-impl ChipMenuBudget {
-    /// The width the menu's frame may take: the floor on the frame that
-    /// measures it, so a rule spanning the menu cannot carry an old width,
-    /// and the cap on the frames that draw.
-    #[must_use]
-    pub const fn width(&self, measuring: bool) -> f32 {
-        if measuring {
-            self.min_width
-        } else {
-            self.max_width
-        }
-    }
-
-    /// The height the list may take: [`Self::list_height`] while it scrolls,
-    /// and unbounded while every row shows, so a row measured a little short
-    /// never clips the list it ends.
-    #[must_use]
-    pub const fn list_max(&self) -> f32 {
-        if self.scrolls {
-            self.list_height
-        } else {
-            f32::INFINITY
-        }
+/// The cell's menu on `screen`, hanging below `anchor`, for `workspaces`
+/// in all of which the filter shows `shown`: [`CHIP_MENU_WIDTH_PT`] wide or
+/// the window's width, and ending [`CHIP_MENU_EDGE_PT`] above the window's
+/// bottom, the list shrinking to scroll first.
+#[must_use]
+pub fn chip_menu_layout(
+    screen: MenuBounds,
+    anchor: MenuBounds,
+    workspaces: usize,
+    shown: usize,
+) -> ChipMenuLayout {
+    let filter = workspaces >= CHIP_MENU_FILTER_FROM;
+    let fixed = CHIP_MENU_HEADER_PT
+        + CHIP_MENU_CAPTION_PT
+        + if filter { CHIP_MENU_FILTER_PT } else { 0.0 }
+        + CHIP_MENU_FOOTER_PT
+        + 2.0 * CHIP_MENU_BORDER_PT;
+    let room = screen.bottom - CHIP_MENU_EDGE_PT - anchor.bottom - CHIP_MENU_DROP_PT;
+    let rows = |count: usize| count as f32 * CHIP_MENU_ROW_PT + CHIP_MENU_LIST_PAD_PT;
+    let whole = rows(shown);
+    let floor = rows(shown.min(CHIP_MENU_MIN_LIST_ROWS));
+    let list_height = whole
+        .min(CHIP_MENU_LIST_MAX_PT)
+        .min(room - fixed)
+        .max(floor);
+    let window = (screen.right - screen.left - 2.0 * CHIP_MENU_EDGE_PT).max(0.0);
+    ChipMenuLayout {
+        width: CHIP_MENU_WIDTH_PT.min(window),
+        filter,
+        list_height,
+        scrolls: list_height < whole,
+        height: fixed + list_height,
     }
 }
 
@@ -443,37 +474,6 @@ pub fn list_cap(rows: usize, metrics: MenuMetrics) -> f32 {
         CHIP_MENU_MAX_LIST_ROWS as f32 * metrics.row_pt
     } else {
         f32::INFINITY
-    }
-}
-
-/// What the cell's menu may take on `screen`, hanging below `anchor` with
-/// `workspaces` rows in its list: no wider than [`CHIP_MENU_MAX_WIDTH_PT`] or
-/// the window, and no lower than the window's bottom edge, the list shrinking
-/// to scroll first.
-#[must_use]
-pub fn chip_menu_budget(
-    screen: MenuBounds,
-    anchor: MenuBounds,
-    workspaces: usize,
-    metrics: MenuMetrics,
-) -> ChipMenuBudget {
-    let window_width = (screen.right - screen.left - 2.0 * CHIP_MENU_EDGE_PT).max(0.0);
-    let max_width = CHIP_MENU_MAX_WIDTH_PT.min(window_width);
-    let top = anchor.bottom + CHIP_MENU_DROP_PT;
-    let room = (screen.bottom - CHIP_MENU_EDGE_PT - top).max(0.0);
-    let fixed = CHIP_MENU_FIXED_ROWS as f32 * metrics.row_pt
-        + CHIP_MENU_SEPARATORS as f32 * metrics.separator_pt
-        + metrics.frame_pt;
-    let whole = workspaces as f32 * metrics.row_pt;
-    let floor = workspaces.min(CHIP_MENU_MIN_LIST_ROWS) as f32 * metrics.row_pt;
-    let most = CHIP_MENU_MAX_LIST_ROWS as f32 * metrics.row_pt;
-    let list_height = (room - fixed).min(most).min(whole).max(floor);
-    ChipMenuBudget {
-        min_width: CHIP_MENU_MIN_WIDTH_PT.min(max_width),
-        max_width,
-        list_height,
-        scrolls: list_height < whole,
-        max_height: fixed + list_height,
     }
 }
 
@@ -764,13 +764,25 @@ mod tests {
         assert_eq!(empty.focus, None);
     }
 
+    /// One frame's keys: Down moves from the tab's row, Enter takes the
+    /// focus; Enter with no focus takes nothing.
+    #[test]
+    fn a_frame_s_down_then_enter_take_the_next_row() {
+        let mut state = opened();
+        assert_eq!(state.keys([false, false, true], 9, Some(3)), None);
+        assert_eq!(state.keys([true, false, false], 9, Some(3)), None);
+        assert_eq!(state.keys([false, false, true], 9, Some(3)), Some(4));
+        assert_eq!(state.keys([false, true, true], 9, Some(3)), Some(3));
+    }
+
     /// A focus moved out of view scrolls the list to it.
     #[test]
     fn a_moved_focus_is_scrolled_into_view() {
         let mut state = opened();
         let view = CHIP_MENU_LIST_MAX_PT;
         state.reveal(Some(0), view);
-        state.move_focus(false, 30, Some(0));
+        state.move_focus(false, 30, None);
+        assert_eq!(state.focus, Some(29), "Up from no row is the last");
         let offset = state.reveal(Some(0), view).expect("the focus moved");
         let top = 29.0 * CHIP_MENU_ROW_PT;
         assert!(top >= offset && top + CHIP_MENU_ROW_PT <= offset + view);
@@ -807,7 +819,10 @@ mod tests {
         state.toggle_chip_menu(7);
         assert!(state.filter.is_empty());
         assert_eq!((state.focus, state.scroll), (None, 0.0));
-        assert!(state.reveal(Some(0), 100.0).is_some(), "a new opening reveals");
+        assert!(
+            state.reveal(Some(0), 100.0).is_some(),
+            "a new opening reveals"
+        );
     }
 
     #[test]
