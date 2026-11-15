@@ -47,10 +47,10 @@ use crate::{orderflow_panel::open_on, ui_state::PanelSection};
 #[cfg(any(feature = "scenario-harness", test))]
 use quantick_feed::history_reach;
 
+#[cfg(any(feature = "scenario-harness", test))]
+use super::AUTOSTART_NATIVES;
 use super::LayoutPort;
 use super::QuantickApp;
-#[cfg(any(feature = "scenario-harness", test))]
-use super::{AUTOSTART_NATIVES, parse_tape_window};
 
 /// Run the launch phase over a constructed app, in the order this module
 /// fixes. Called once, from `new_with_workspace`, after the saved workspace
@@ -293,7 +293,7 @@ fn tape(app: &mut QuantickApp, env: &ScenarioInputs) {
     // the default instead of an invented window. Navigation held for the
     // run, never filed: it reaches the asset a replay autostart switches to.
     if let Some(value) = env.var("QUANTICK_TAPE_WINDOW")
-        && let Some(window) = parse_tape_window(value.trim())
+        && let Some(window) = quantick_orderflow::LaneWindow::parse(&value)
     {
         let tape = app.active_tab_mut().tape_mut();
         tape.hold_for_run(|held| held.window = Some(window));

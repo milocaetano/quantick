@@ -89,7 +89,7 @@ fn snapshot<P: TabsPort + HealthPort + ?Sized>(app: &P) -> HealthSnapshot {
                         .filter_map(|task| {
                             let count = tab.loading.count(task);
                             (count > 0).then(|| LoadingTaskSnapshot {
-                                task: loading_task_id(task).to_owned(),
+                                task: task.id().to_owned(),
                                 operation_count: wire_usize(count),
                             })
                         })
@@ -140,17 +140,6 @@ fn pane_health(pane: &ChartPane, side: PaneSide) -> PaneHealthSnapshot {
             }),
         pane.orderflow.as_ref().map(|view| view.cached_health()),
     )
-}
-
-const fn loading_task_id(task: LoadingTask) -> &'static str {
-    match task {
-        LoadingTask::History => "history",
-        LoadingTask::BarRebuild => "bar_rebuild",
-        LoadingTask::BookSync => "book_sync",
-        LoadingTask::ReplaySession => "replay_session",
-        LoadingTask::VenueHistory => "venue_history",
-        LoadingTask::HistoryRebuild => "history_rebuild",
-    }
 }
 
 /// The health projection driven through the tabs and health families of a

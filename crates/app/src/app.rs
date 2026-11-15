@@ -101,7 +101,6 @@ use crate::window_scale;
 use quantick_feed::FeedHandle;
 
 #[cfg(any(feature = "scenario-harness", test))]
-use quantick_orderflow::LaneWindow;
 use quantick_stores::bubble_asset_store::open_asset_bubbles;
 
 // Names the window's own code no longer reads: the nine modules above took the
@@ -148,39 +147,6 @@ const FIRST_TAB_ID: u64 = 0;
 /// every existing capture shows.
 #[cfg(any(feature = "scenario-harness", test))]
 const AUTOSTART_NATIVES: &[&str] = &["native.ema", "native.cvd"];
-
-/// Read a tape window off `QUANTICK_TAPE_WINDOW`.
-///
-/// `auto` follows the bars; a duration pins it, in the units a human would
-/// type (`90s`, `2min`, `120000ms`, or bare milliseconds). `None` for anything
-/// else, so a typo leaves the tape at its default rather than photographing an
-/// invented window. The value is clamped by the setter, not here — one owner
-/// for the drawable range.
-#[cfg(any(feature = "scenario-harness", test))]
-fn parse_tape_window(value: &str) -> Option<LaneWindow> {
-    let value = value.trim().to_ascii_lowercase();
-    if value == "auto" {
-        return Some(LaneWindow::default());
-    }
-    let (number, scale) = if let Some(rest) = value.strip_suffix("ms") {
-        (rest, 1)
-    } else if let Some(rest) = value.strip_suffix("min") {
-        (rest, 60_000)
-    } else if let Some(rest) = value.strip_suffix('m') {
-        (rest, 60_000)
-    } else if let Some(rest) = value.strip_suffix('s') {
-        (rest, 1_000)
-    } else {
-        (value.as_str(), 1)
-    };
-    let parsed = number.trim().parse::<f64>().ok()?;
-    if !parsed.is_finite() || parsed <= 0.0 {
-        return None;
-    }
-    Some(LaneWindow::Fixed {
-        ms: (parsed * f64::from(scale)).round() as i64,
-    })
-}
 
 /// Read-only frame observations exposed to on-demand semantic projections.
 pub(crate) struct ControlFrameMetrics {

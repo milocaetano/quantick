@@ -128,9 +128,36 @@ impl LoadingTracker {
     }
 }
 
+impl LoadingTask {
+    /// The word the health snapshot names the wait by.
+    #[must_use]
+    pub const fn id(self) -> &'static str {
+        match self {
+            Self::History => "history",
+            Self::BarRebuild => "bar_rebuild",
+            Self::BookSync => "book_sync",
+            Self::ReplaySession => "replay_session",
+            Self::VenueHistory => "venue_history",
+            Self::HistoryRebuild => "history_rebuild",
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Each wait has its own snapshot word.
+    #[test]
+    fn each_task_names_itself_once() {
+        let ids = LoadingTask::ALL.map(LoadingTask::id);
+        assert_eq!(ids[0], "history");
+        assert_eq!(ids[5], "history_rebuild");
+        let mut unique = ids.to_vec();
+        unique.sort_unstable();
+        unique.dedup();
+        assert_eq!(unique.len(), ids.len());
+    }
 
     #[test]
     fn counts_overlapping_operations_and_drains_to_zero() {

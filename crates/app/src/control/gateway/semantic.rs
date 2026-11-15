@@ -14,7 +14,6 @@ use quantick_control_schema::interaction::SelectionSnapshot;
 use crate::app::ControlWindow;
 use crate::tab::Tab;
 
-use super::super::feed::connection_state;
 use super::super::interaction::{selection_identity, selection_snapshot};
 use super::super::{PaneSideDto, pane_side_dto};
 
@@ -35,7 +34,7 @@ impl SemanticTab for TabRead<'_> {
         &self.tab.active.1
     }
     fn connection(&self) -> &'static str {
-        connection_state(self.tab.link.feed_connection)
+        self.tab.link.feed_connection.word()
     }
     fn replay(&self) -> Option<(bool, bool)> {
         let replay = self.tab.link.replay.as_ref()?;
