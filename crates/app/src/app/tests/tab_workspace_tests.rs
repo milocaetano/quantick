@@ -1754,8 +1754,13 @@ fn names_that_fit_paint_whole_over_their_summaries() {
                 .iter()
                 .any(|(text, cut, _)| *text == row.label && !cut);
             assert!(whole, "{count}: {} whole: {painted:?}", row.label);
-            let summary = row.description.clone().expect("a summary");
-            let under = painted_rows(&output, &summary);
+            // The scene ends the summary with the colour's words, which the
+            // row paints as its slot, not as text.
+            let said = row.description.clone().expect("a summary");
+            let summary = said
+                .rsplit_once(" \u{b7} ")
+                .map_or(said.as_str(), |(s, _)| s);
+            let under = painted_rows(&output, summary);
             assert!(!under.is_empty(), "{count}: {summary} painted");
             checked += 1;
         }
@@ -2187,12 +2192,23 @@ fn enter_in_the_filter_switches_to_the_first_match() {
     assert_eq!(app.runtime.workspace.book.tab_row(first).0, "Desk 05");
 }
 
-/// Every shape `output` paints in `colour`: rect fills, rect edges and text.
+/// Every shape `output` paints in `colour`: rect fills (also while a menu
+/// fades in, its opacity aside), rect edges and text.
 fn painted_in(output: &egui::FullOutput, colour: egui::Color32) -> [usize; 3] {
     fn walk(shape: &egui::Shape, colour: egui::Color32, found: &mut [usize; 3]) {
+        // Premultiplied by the fade's alpha: each channel back over it.
+        let near =
+            |c: u8, want: u8, a: u8| (u32::from(c) * 255 / u32::from(a)).abs_diff(want.into()) <= 2;
+        let faded = |fill: egui::Color32| {
+            let a = fill.a();
+            a > 0
+                && near(fill.r(), colour.r(), a)
+                && near(fill.g(), colour.g(), a)
+                && near(fill.b(), colour.b(), a)
+        };
         match shape {
             egui::Shape::Rect(rect) => {
-                found[0] += usize::from(rect.fill == colour);
+                found[0] += usize::from(faded(rect.fill));
                 found[1] += usize::from(rect.stroke.color == colour);
             }
             egui::Shape::Text(text) => found[2] += usize::from(text.fallback_color == colour),
@@ -2232,7 +2248,9 @@ fn a_colour_set_by_call_reads_alike_on_every_surface() {
     );
     assert_eq!(set["colour"], wire);
     let listed = call("workspace.list", json!({}));
-    assert_eq!(listed["workspaces"][1]["colour"], wire);
+    let rows = listed["workspaces"].as_array().unwrap();
+    let scalp = rows.iter().find(|row| row["name"] == "Scalp").unwrap();
+    assert_eq!(scalp["colour"], wire);
     let custom = egui::Color32::from_rgb(0x3A, 0x7B, 0xD5);
 
     let ctx = egui::Context::default();
