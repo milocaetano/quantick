@@ -2366,3 +2366,67 @@ fn a_colour_set_by_call_reads_alike_on_every_surface() {
             .any(|row| row["name"] == "Scalp" && row["colour"] == wire)
     );
 }
+
+/// The fill painted last at `at`, clip included: what the eye sees there.
+fn top_fill_at(output: &egui::FullOutput, at: egui::Pos2) -> Option<egui::Color32> {
+    fn walk(
+        shape: &egui::Shape,
+        clip: egui::Rect,
+        at: egui::Pos2,
+        top: &mut Option<egui::Color32>,
+    ) {
+        match shape {
+            egui::Shape::Rect(rect)
+                if rect.fill.a() > 0 && rect.rect.contains(at) && clip.contains(at) =>
+            {
+                *top = Some(rect.fill);
+            }
+            egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| walk(s, clip, at, top)),
+            _ => {}
+        }
+    }
+    let mut top = None;
+    for clipped in &output.shapes {
+        walk(&clipped.shape, clipped.clip_rect, at, &mut top);
+    }
+    top
+}
+
+/// The capsule's 4 pt bar is the same at rest, under the pointer and with
+/// its workspace menu open: the hover fill never paints over it.
+#[test]
+fn the_capsule_keeps_its_bar_at_rest_hovered_and_open() {
+    use crate::control::ActionOrigin;
+    use serde_json::json;
+    let layouts = crate::scratch::ScratchFile::new("workspace-capsule-bar", "layouts.toml");
+    let (mut app, first, _) = two_tabs(&layouts);
+    app.runtime.tabs.select(0);
+    for (id, input) in [
+        ("workspace.save_as", json!({ "name": "Scalp" })),
+        (
+            "workspace.colour.set",
+            json!({ "name": "Scalp", "colour": "#3A7BD5" }),
+        ),
+    ] {
+        app.control_action(id, 1, ActionOrigin::Human, input)
+            .unwrap();
+    }
+    let custom = egui::Color32::from_rgb(0x3A, 0x7B, 0xD5);
+    let ctx = egui::Context::default();
+    run_frame_at(&mut app, &ctx, FULL_HD);
+    let (_, capsule) = tab_and_capsule(&app, first);
+    let edge = egui::pos2(capsule.left() + 2.0, capsule.center().y);
+    let hover = app.chrome.capsule.miniature.center();
+    let none = egui::Modifiers::NONE;
+    let output = run_frame_sized(&mut app, &ctx, FULL_HD, Vec::new(), none);
+    assert_eq!(top_fill_at(&output, edge), Some(custom), "at rest");
+    let moved = vec![egui::Event::PointerMoved(hover)];
+    run_frame_sized(&mut app, &ctx, FULL_HD, moved, none);
+    let output = run_frame_sized(&mut app, &ctx, FULL_HD, Vec::new(), none);
+    assert_eq!(top_fill_at(&output, edge), Some(custom), "hovered");
+    app.chrome.window_menu.tab_workspace.toggle_chip_menu(first);
+    run_frame_sized(&mut app, &ctx, FULL_HD, Vec::new(), none);
+    let output = run_frame_sized(&mut app, &ctx, FULL_HD, Vec::new(), none);
+    assert!(app.chrome.window_menu.tab_workspace.chip_menu_on(first));
+    assert_eq!(top_fill_at(&output, edge), Some(custom), "menu open");
+}

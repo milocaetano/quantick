@@ -37,31 +37,30 @@ fn the_capsule_name_reads_on_every_preset_tint_in_both_themes() {
     }
 }
 
-/// The open tab's symbol wears the colour at 3:1 or more on the tab's sheet;
-/// below that it keeps the tab's normal ink. Of the presets only Light Ice
-/// and Light Blossom fall back.
+/// Every preset, in both themes, paints the open tab's symbol in its own
+/// colour at 3:1 or more on the tab's sheet, and the capsule's border at 3:1
+/// on the toolbar around it and on the capsule's tint: no preset falls back.
 #[test]
-fn the_open_tabs_symbol_wears_the_colour_only_where_it_reads() {
-    let mut fallbacks = Vec::new();
+fn no_preset_falls_back_on_the_open_tab_or_the_capsule_in_either_theme() {
     for theme in themes() {
         let sheet = theme.color(Token::ToolbarSheet);
         for colour in presets() {
             let painted = colour.rgb(theme.dark);
-            match symbol_ink(colour, &theme) {
-                Some(ink) => {
-                    assert_eq!(ink, painted);
-                    let ratio = contrast_ratio(rgb(ink), sheet);
-                    assert!(ratio >= 3.0, "{} {}: {ratio}", theme.name, colour.name());
-                }
-                None => {
-                    assert!(contrast_ratio(rgb(painted), sheet) < 3.0);
-                    fallbacks.push(format!("{} {}", theme.name, colour.name()));
-                }
-            }
+            let name = format!("{} {}", theme.name, colour.name());
+            assert_eq!(symbol_ink(colour, &theme), Some(painted), "{name}");
+            let ratio = contrast_ratio(rgb(painted), sheet);
+            assert!(ratio >= 3.0, "{name} symbol and border: {ratio}");
+            let tint = PremultipliedRgba::from_premultiplied(capsule_fill(colour, &theme));
+            let ratio = contrast_ratio(rgb(painted), tint);
+            assert!(ratio >= 3.0, "{name} border on its tint: {ratio}");
         }
     }
-    assert_eq!(fallbacks, ["Light Ice", "Light Blossom"]);
-    // A custom colour is held to the same floor.
+}
+
+/// Only a custom colour can fall short on the open tab: below 3:1 its symbol
+/// keeps the tab's normal ink.
+#[test]
+fn a_custom_colour_below_the_floor_falls_back_to_the_tabs_ink() {
     let pale = WorkspaceColour::Custom([0xEE, 0xEE, 0xEE]);
     let [dark, light] = themes();
     assert_eq!(symbol_ink(pale, &dark), Some([0xEE; 3]));

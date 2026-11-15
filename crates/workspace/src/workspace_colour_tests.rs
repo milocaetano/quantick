@@ -48,7 +48,8 @@ fn the_palette_pins_sixteen_names_to_their_indices_and_values() {
         (4, "#56606E", "#A3ADBA"),
         (8, "#2C2F9E", "#8085F2"),
         (12, "#252B36", "#E3E7EE"),
-        (15, "#CF6FB6", "#F4B3DD"),
+        (14, "#668AB4", "#B3DBF5"),
+        (15, "#C963AE", "#F4B3DD"),
     ];
     for (index, light, dark) in pins {
         assert_eq!(hex(preset(index).rgb(false)), light);
@@ -322,4 +323,34 @@ fn a_swap_whose_give_back_matches_a_third_workspace_is_refused() {
     assert_eq!(refused, clash);
     assert_eq!(refused.owners(), ["A"]);
     assert_eq!(colours, before);
+}
+
+/// Within each theme every two presets stay at least this far apart in
+/// OKLab: Light's closest pair is Sky and Ice (0.062), Dark's Cobalt and
+/// Ultramarine (0.0365, the designer's pair).
+const LIGHT_PAIR_FLOOR: f64 = 0.06;
+const DARK_PAIR_FLOOR: f64 = 0.035;
+
+#[test]
+fn every_two_presets_stay_apart_within_each_theme() {
+    let distance = |a: Rgb, b: Rgb| {
+        let ([l1, a1, b1], [l2, a2, b2]) = (oklab(a), oklab(b));
+        ((l1 - l2).powi(2) + (a1 - a2).powi(2) + (b1 - b2).powi(2)).sqrt()
+    };
+    for (dark, floor, closest) in [
+        (false, LIGHT_PAIR_FLOOR, ("Sky", "Ice")),
+        (true, DARK_PAIR_FLOOR, ("Cobalt", "Ultramarine")),
+    ] {
+        let mut pairs = Vec::new();
+        for a in 0..16_u8 {
+            for b in a + 1..16 {
+                let gap = distance(preset(a).rgb(dark), preset(b).rgb(dark));
+                pairs.push((gap, NAMES[a as usize], NAMES[b as usize]));
+            }
+        }
+        pairs.sort_by(|x, y| x.0.total_cmp(&y.0));
+        let (gap, a, b) = pairs[0];
+        assert!(gap >= floor, "dark {dark}: {a} and {b} are {gap}");
+        assert_eq!((a, b), closest, "dark {dark}: {gap}");
+    }
 }

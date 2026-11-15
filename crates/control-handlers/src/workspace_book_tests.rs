@@ -1478,3 +1478,26 @@ fn the_window_s_last_tab_asks_nothing_and_keeps_its_edits() {
         "nothing in flight"
     );
 }
+
+/// Two workspaces match the asked colour (one Cobalt's Light value, one its
+/// Dark value): refused even with `swap`, both named, nothing to give back.
+#[test]
+fn colour_set_names_every_owner_when_two_hold_the_colour() {
+    let (mut host, mut access, actor) = parts();
+    for name in ["A", "B", "C"] {
+        save_as(&mut host, &mut access, &actor, &json!({ "name": name })).unwrap();
+    }
+    for (name, colour) in [("A", "#2F5BD8"), ("B", "#7393F5")] {
+        let value = json!({ "name": name, "colour": colour });
+        colour_set(&mut host, &mut access, &actor, &value).unwrap();
+    }
+    let writes = host.writes;
+    let value = json!({ "name": "C", "colour": "cobalt", "swap": true });
+    let refused = colour_set(&mut host, &mut access, &actor, &value).unwrap_err();
+    assert_eq!(detail(&refused), "workspace.colour_taken");
+    let details = refused.context.details.as_ref().unwrap();
+    assert_eq!(details["owners"], json!(["A", "B"]));
+    assert!(details.get("owner_would_get").is_none(), "{details}");
+    assert!(refused.message.contains("A and B"), "{}", refused.message);
+    assert_eq!(host.writes, writes, "nothing written");
+}

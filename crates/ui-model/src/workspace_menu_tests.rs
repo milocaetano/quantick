@@ -282,3 +282,38 @@ fn the_colour_fills_the_slot_in_every_row_and_the_header() {
         );
     }
 }
+
+/// The selection and hover fills start one point past the colour slot, so
+/// the slot stands on the panel and never sinks into the highlight; the
+/// geometry is the same in both themes.
+#[test]
+fn the_row_highlight_starts_past_the_colour_slot() {
+    let menu = menu(false, false);
+    let own = menu.list.iter().find(|row| row.on).unwrap();
+    let other = menu.list.iter().find(|row| !row.on).unwrap();
+    for dark in [true, false] {
+        let lit = row(own, 310.0, false, dark);
+        let slot = (lit.marks.iter())
+            .find_map(|mark| match mark {
+                Mark::Colour { at, .. } => Some(*at),
+                _ => None,
+            })
+            .expect("a slot");
+        let Mark::Box(back) = &lit.marks[0] else {
+            panic!("a box")
+        };
+        assert_eq!(back.at.x, slot.x + slot.w + 1.0, "dark {dark}");
+        assert_eq!(
+            back.at.x + back.at.w,
+            lit.at.x + lit.at.w,
+            "to the row's end"
+        );
+        let hovered = row(other, 310.0, false, dark).hover.unwrap();
+        assert_eq!(hovered.at, back.at, "hover takes the same box");
+        let focused = row(other, 310.0, true, dark);
+        let Mark::Box(ring) = &focused.marks[0] else {
+            panic!("a box")
+        };
+        assert_eq!(ring.at, back.at, "and the focus ring");
+    }
+}
