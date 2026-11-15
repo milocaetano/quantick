@@ -15,19 +15,21 @@ use quantick_control::{
 };
 use quantick_control_host::journal::NewEvent;
 use quantick_control_schema::window_menu as text;
-use quantick_control_schema::workspace::MODULE_ID;
+use quantick_control_schema::workspace::{MODULE_ID, WorkspaceColourDto, WorkspaceColourRow};
 use quantick_control_schema::workspace_book::{
     LAST_TAB_CODE, TAB_CLOSED_EVENT_KIND, TAB_NOT_READY_CODE, TAB_WORKSPACE_SET_EVENT_KIND,
     TabCloseInput, TabCloseResult, TabWorkspaceSetInput, TabWorkspaceSetResult, UNSAVED_EDITS_CODE,
-    WORKSPACE_AUTOSAVE_SET_EVENT_KIND, WORKSPACE_CREATED_EVENT_KIND, WORKSPACE_DELETED_EVENT_KIND,
-    WORKSPACE_RENAMED_EVENT_KIND, WORKSPACE_SAVED_EVENT_KIND, WRITE_FAILED_CODE,
-    WorkspaceAutosaveInput, WorkspaceAutosaveResult, WorkspaceDeleteInput, WorkspaceDeleteResult,
+    WORKSPACE_AUTOSAVE_SET_EVENT_KIND, WORKSPACE_COLOUR_SET_EVENT_KIND,
+    WORKSPACE_CREATED_EVENT_KIND, WORKSPACE_DELETED_EVENT_KIND, WORKSPACE_RENAMED_EVENT_KIND,
+    WORKSPACE_SAVED_EVENT_KIND, WRITE_FAILED_CODE, WorkspaceAutosaveInput, WorkspaceAutosaveResult,
+    WorkspaceColourSetInput, WorkspaceColourSetResult, WorkspaceDeleteInput, WorkspaceDeleteResult,
     WorkspaceEntry, WorkspaceListInput, WorkspaceListResult, WorkspaceNewInput, WorkspaceNewResult,
     WorkspaceRenameInput, WorkspaceRenameResult, WorkspaceSaveAsInput, WorkspaceSaveResult,
     WorkspaceTabInput, tab_close_descriptor, tab_workspace_set_descriptor,
-    workspace_autosave_set_descriptor, workspace_delete_descriptor, workspace_list_descriptor,
-    workspace_new_descriptor, workspace_rename_descriptor, workspace_revert_descriptor,
-    workspace_save_as_descriptor, workspace_save_to_descriptor,
+    workspace_autosave_set_descriptor, workspace_colour_set_descriptor,
+    workspace_delete_descriptor, workspace_list_descriptor, workspace_new_descriptor,
+    workspace_rename_descriptor, workspace_revert_descriptor, workspace_save_as_descriptor,
+    workspace_save_to_descriptor,
 };
 use quantick_session::close_queue::{
     CloseAnswer, CloseQuestion, CloseQueue, CloseScope, CloseStep,
@@ -36,8 +38,9 @@ use quantick_session::prompt::Prompt;
 use quantick_session::workspace_menu::{NameDialogMode, WorkspaceCommand, WorkspaceMenuState};
 use quantick_stores::market_settings::{self, DrawingKey, MarketSettingsStore};
 use quantick_stores::workspaces::{
-    CreateOutcome, DEFAULT_WORKSPACE, DeleteOutcome, RenameOutcome, SaveOutcome, SetOutcome,
-    UnsavedEdits, Unsynced, WorkspaceBook, WorkspaceBookStore, WorkspaceRecipe, WorkspaceRefusal,
+    ColourOutcome, ColourTaken, CreateOutcome, DEFAULT_WORKSPACE, DeleteOutcome, RenameOutcome,
+    SaveOutcome, SetOutcome, UnsavedEdits, Unsynced, WorkspaceBook, WorkspaceBookStore,
+    WorkspaceColour, WorkspaceRecipe, WorkspaceRefusal,
 };
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -107,6 +110,21 @@ pub trait WorkspaceBookHost {
             || (DEFAULT_WORKSPACE.to_owned(), false),
             |state| (state.workspace.to_owned(), state.modified),
         )
+    }
+    /// The colour of the tab's workspace, `Default`'s for a tab the book has
+    /// not adopted yet: [`WorkspaceBook::tab_colour`], which the strip and the
+    /// capsule paint too.
+    fn tab_workspace_colour(&self, tab: u64) -> Option<WorkspaceColourDto> {
+        self.workspace_book_ref()?.tab_colour(tab).map(Into::into)
+    }
+    /// Every workspace's colour, `Default` first, as the snapshot reads them.
+    fn workspace_colours(&self) -> Vec<WorkspaceColourRow> {
+        let rows = self.workspace_book_ref().map(WorkspaceBook::list);
+        let row = |row: quantick_stores::workspaces::WorkspaceListing| WorkspaceColourRow {
+            colour: row.colour.into(),
+            name: row.name,
+        };
+        rows.unwrap_or_default().into_iter().map(row).collect()
     }
     /// Whether layout edits are written through, as the snapshot reads it.
     fn workspace_autosave(&self) -> bool {
@@ -254,6 +272,7 @@ where
     registry.register_outside_replay(tab_close_descriptor(), close)?;
     registry.register_outside_replay(workspace_rename_descriptor(), rename)?;
     registry.register_outside_replay(workspace_delete_descriptor(), delete)?;
+    registry.register_outside_replay(workspace_colour_set_descriptor(), colour_set)?;
     registry.register_outside_replay(workspace_list_descriptor(), list)
 }
 
@@ -273,7 +292,20 @@ fn refused(refusal: &WorkspaceRefusal) -> ControlError {
         return not_ready(*tab);
     }
     let mut error = ControlError::invalid_request(refusal.to_string());
-    error.context.details = Some(json!({ "code": refusal.code() }));
+    let mut details = json!({ "code": refusal.code() });
+    if let WorkspaceRefusal::ColourTaken(taken) = refusal {
+        details["owners"] = json!(taken.owners());
+        if let ColourTaken::Held {
+            owner_would_get, ..
+        }
+        | ColourTaken::SwapClashes {
+            owner_would_get, ..
+        } = taken
+        {
+            details["owner_would_get"] = json!(WorkspaceColourDto::from(*owner_would_get));
+        }
+    }
+    error.context.details = Some(details);
     error
 }
 
@@ -965,6 +997,38 @@ fn rename_journaled<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
     Ok(outcome)
 }
 
+/// Give a workspace a colour, taking it from its holder only with `swap`,
+/// and write the book.
+///
+/// # Errors
+/// No workspace has the name, the colour is held and `swap` is false, no
+/// book, or the write failed.
+pub fn set_workspace_colour<H: WorkspaceBookHost + ?Sized>(
+    app: &mut H,
+    name: &str,
+    colour: WorkspaceColour,
+    swap: bool,
+) -> Result<ColourOutcome, ControlError> {
+    let set = |book: &mut WorkspaceBook| book.set_colour(name, colour, swap);
+    written(app, set, |set| set.changed)
+}
+
+fn colour_journaled<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
+    app: &mut H,
+    to: &mut Journal<'_, A>,
+    name: &str,
+    (colour, swap): (WorkspaceColour, bool),
+) -> Result<ColourOutcome, ControlError> {
+    let outcome = set_workspace_colour(app, name, colour, swap)?;
+    if outcome.changed {
+        let payload = json!({ "workspace": name, "colour": colour.key(),
+            "swapped_with": outcome.swapped_with,
+            "holder_colour": outcome.holder_colour.map(WorkspaceColour::key) });
+        journal(to, WORKSPACE_COLOUR_SET_EVENT_KIND, payload);
+    }
+    Ok(outcome)
+}
+
 fn delete_journaled<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
     app: &mut H,
     to: &mut Journal<'_, A>,
@@ -1121,6 +1185,25 @@ fn delete<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
     })
 }
 
+fn colour_set<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
+    app: &mut H,
+    access: &mut A,
+    actor: &ActorContext,
+    value: &Value,
+) -> Result<Value, ControlError> {
+    let WorkspaceColourSetInput { name, colour, swap } = input(value)?;
+    let invalid = || refused(&WorkspaceRefusal::ColourInvalid(colour.clone()));
+    let picked = WorkspaceColour::parse(&colour).ok_or_else(invalid)?;
+    let outcome = colour_journaled(app, &mut Some((access, actor)), &name, (picked, swap))?;
+    answer(&WorkspaceColourSetResult {
+        workspace: outcome.workspace,
+        colour: picked.into(),
+        changed: outcome.changed,
+        swapped_with: outcome.swapped_with,
+        holder_colour: outcome.holder_colour.map(Into::into),
+    })
+}
+
 fn list<H: WorkspaceBookHost + ?Sized, A>(
     app: &mut H,
     _: &mut A,
@@ -1135,6 +1218,7 @@ fn list<H: WorkspaceBookHost + ?Sized, A>(
         .map(|row| WorkspaceEntry {
             tabs: wires(&row.tabs),
             summary: book_ref.summary(&row.name),
+            colour: Some(row.colour.into()),
             name: row.name,
         })
         .collect();

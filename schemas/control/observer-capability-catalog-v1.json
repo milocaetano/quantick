@@ -29578,6 +29578,149 @@
         "status": "available"
       },
       "confirmation_class": "none",
+      "description": "Gives a workspace a colour: one of the sixteen presets by name (cobalt, orchid, sky, violet, slate, fuchsia, petrol, lavender, ultramarine, mauve, denim, grape, ink, plum, ice, blossom) or a custom #RRGGBB. The open tab paints its symbol in it, the capsule its tint, border and left bar, and the workspace menu its row's and header's slot. No two workspaces hold identical colours (the same value in either theme): a colour another workspace holds is refused with workspace.colour_taken, its details listing the holders in owners and, for a single holder, the colour it would get in owner_would_get. With swap true a single holder takes this workspace's old colour, named in swapped_with and holder_colour; two or more holders, or a swap that would give the holder a colour a third workspace matches, are refused even with swap. A new workspace takes the next free colour and a deleted one frees its own. Read the colours with workspace.list or on each tab of workspace.summary. A name no workspace has is refused with workspace.unknown, a colour that is neither a preset nor #RRGGBB with workspace.colour_invalid.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 4096
+      },
+      "id": "workspace.colour.set",
+      "idempotency": "optional",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "Give a workspace a colour: a preset's name or a custom `#RRGGBB`.",
+        "properties": {
+          "colour": {
+            "description": "A preset's name in any case (`sky`, `slate`, ...) or `#RRGGBB`.",
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "swap": {
+            "default": false,
+            "description": "Take a colour another workspace holds, giving it this one's own.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name",
+          "colour"
+        ],
+        "title": "WorkspaceColourSetInput",
+        "type": "object"
+      },
+      "module": "workspace",
+      "output_schema": {
+        "$defs": {
+          "WorkspaceColourDto": {
+            "description": "A workspace's colour as the wire reads it: a preset names itself and its\nindex (`{\"preset\": \"sky\", \"index\": 2, ...}`), a custom colour its hex\n(`{\"custom\": \"#3A7BD5\", ...}`); both give the value painted in each theme.\nNo two workspaces hold identical colours (`workspace.colour.set`).",
+            "properties": {
+              "custom": {
+                "description": "The custom colour's `#RRGGBB`; absent on a preset.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "dark": {
+                "description": "`#RRGGBB` painted in the Dark theme.",
+                "type": "string"
+              },
+              "index": {
+                "description": "The preset's place in the palette, as files store it.",
+                "format": "uint8",
+                "maximum": 255,
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "light": {
+                "description": "`#RRGGBB` painted in the Light theme.",
+                "type": "string"
+              },
+              "preset": {
+                "description": "The preset's name in lower case; absent on a custom colour.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "light",
+              "dark"
+            ],
+            "type": "object"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "The colour the workspace now holds, and the workspace it swapped with.",
+        "properties": {
+          "changed": {
+            "description": "`false` when the workspace already held it: nothing is written.",
+            "type": "boolean"
+          },
+          "colour": {
+            "$ref": "#/$defs/WorkspaceColourDto"
+          },
+          "holder_colour": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WorkspaceColourDto"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "The colour `swapped_with` holds now: the one the workspace gave up."
+          },
+          "swapped_with": {
+            "description": "The workspace that held the colour, with `swap`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "workspace": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace",
+          "colour",
+          "changed"
+        ],
+        "title": "WorkspaceColourSetResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.desk"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "The call names the colour it wants, so a repeat answers changed false and writes nothing.",
+      "title": "Give a workspace a colour",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
       "description": "Deletes a workspace and moves the tabs on it to Default. A tab with unsaved edits keeps them, marked Default •. Default cannot be deleted.",
       "destructive": false,
       "dry_run_supported": false,
@@ -29662,7 +29805,7 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Lists every saved workspace with a one-line summary (panes, intervals, indicator count) and the open tabs using it, Default first. Which workspace a tab uses and whether it holds edits is also on each tab in workspace.summary.",
+      "description": "Lists every saved workspace with a one-line summary (panes, intervals, indicator count), its colour and the open tabs using it, Default first. Which workspace a tab uses and whether it holds edits is also on each tab in workspace.summary.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "observe",
@@ -29687,9 +29830,63 @@
             "pattern": "^(0|[1-9][0-9]*)$",
             "type": "string"
           },
+          "WorkspaceColourDto": {
+            "description": "A workspace's colour as the wire reads it: a preset names itself and its\nindex (`{\"preset\": \"sky\", \"index\": 2, ...}`), a custom colour its hex\n(`{\"custom\": \"#3A7BD5\", ...}`); both give the value painted in each theme.\nNo two workspaces hold identical colours (`workspace.colour.set`).",
+            "properties": {
+              "custom": {
+                "description": "The custom colour's `#RRGGBB`; absent on a preset.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "dark": {
+                "description": "`#RRGGBB` painted in the Dark theme.",
+                "type": "string"
+              },
+              "index": {
+                "description": "The preset's place in the palette, as files store it.",
+                "format": "uint8",
+                "maximum": 255,
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "light": {
+                "description": "`#RRGGBB` painted in the Light theme.",
+                "type": "string"
+              },
+              "preset": {
+                "description": "The preset's name in lower case; absent on a custom colour.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "light",
+              "dark"
+            ],
+            "type": "object"
+          },
           "WorkspaceEntry": {
             "description": "One workspace and the tabs using it.",
             "properties": {
+              "colour": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WorkspaceColourDto"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Its colour. Additive: absent from a build that predates colours."
+              },
               "name": {
                 "type": "string"
               },
@@ -37107,6 +37304,64 @@
             "pattern": "^(0|[1-9][0-9]*)$",
             "type": "string"
           },
+          "WorkspaceColourDto": {
+            "description": "A workspace's colour as the wire reads it: a preset names itself and its\nindex (`{\"preset\": \"sky\", \"index\": 2, ...}`), a custom colour its hex\n(`{\"custom\": \"#3A7BD5\", ...}`); both give the value painted in each theme.\nNo two workspaces hold identical colours (`workspace.colour.set`).",
+            "properties": {
+              "custom": {
+                "description": "The custom colour's `#RRGGBB`; absent on a preset.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "dark": {
+                "description": "`#RRGGBB` painted in the Dark theme.",
+                "type": "string"
+              },
+              "index": {
+                "description": "The preset's place in the palette, as files store it.",
+                "format": "uint8",
+                "maximum": 255,
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "light": {
+                "description": "`#RRGGBB` painted in the Light theme.",
+                "type": "string"
+              },
+              "preset": {
+                "description": "The preset's name in lower case; absent on a custom colour.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "light",
+              "dark"
+            ],
+            "type": "object"
+          },
+          "WorkspaceColourRow": {
+            "description": "One workspace's colour.",
+            "properties": {
+              "colour": {
+                "$ref": "#/$defs/WorkspaceColourDto"
+              },
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "colour"
+            ],
+            "type": "object"
+          },
           "WorkspacePane": {
             "properties": {
               "collapsed": {
@@ -37242,6 +37497,18 @@
                 "default": "",
                 "description": "The workspace this tab uses. Additive; empty from a build that predates\nit.",
                 "type": "string"
+              },
+              "workspace_colour": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WorkspaceColourDto"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "That workspace's colour: the open tab's symbol and the capsule wear\nit. Additive."
               }
             },
             "required": [
@@ -37349,6 +37616,14 @@
             "description": "Native presentation order, independent of the retained runtime storage indices below.",
             "items": {
               "$ref": "#/$defs/MarketWindowSnapshot"
+            },
+            "type": "array"
+          },
+          "workspaces": {
+            "default": [],
+            "description": "Every workspace and its colour, `Default` first, then by name.\nAdditive; empty from a build that predates workspace colours.",
+            "items": {
+              "$ref": "#/$defs/WorkspaceColourRow"
             },
             "type": "array"
           }

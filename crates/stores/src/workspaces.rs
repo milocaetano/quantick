@@ -1,5 +1,8 @@
 //! The workspaces file: validation and guarded disk persistence, beside the
 //! layouts file. The book itself is [`quantick_workspace::workspace_book`].
+use quantick_appearance::{
+    PremultipliedRgba, ResolvedTheme, Token, contrast::contrast_ratio, tab_strip,
+};
 use quantick_workspace::book_upkeep::UpkeepSave;
 use quantick_workspace::write_refusal::guard_write;
 use std::path::{Path, PathBuf};
@@ -9,8 +12,30 @@ pub use quantick_workspace::workspace_book::{
     RenameOutcome, SaveOutcome, SeedTab, SetOutcome, TabWorkspaceState, UnsavedEdits, Unsynced,
     WORKSPACES_FILE, WorkspaceBook, WorkspaceListing, WorkspaceRefusal, capture_recipe, parse_book,
 };
+pub use quantick_workspace::workspace_colour::{
+    ColourOutcome, ColourTaken, Rgb, WorkspaceColour, hex,
+};
 pub use quantick_workspace::workspace_recipe::{ContextPaneRecipe, WorkspaceRecipe};
 pub use quantick_workspace::workspace_sync::{TabAdoption, TabRecipeSync};
+
+/// The capsule's fill on `theme`: its control fill tinted toward the
+/// workspace's colour, which the name keeps 4.5:1 on for every preset.
+#[must_use]
+pub fn capsule_fill(colour: WorkspaceColour, theme: &ResolvedTheme) -> [u8; 4] {
+    let base = theme.color(Token::Control).to_array();
+    tab_strip::workspace_tint(base, colour.rgb(theme.dark))
+}
+
+/// The open tab's symbol ink on `theme`: the workspace's colour while it keeps
+/// [`tab_strip::WORKSPACE_SYMBOL_CONTRAST`] on the tab's sheet, else `None`,
+/// the tab's normal ink.
+#[must_use]
+pub fn symbol_ink(colour: WorkspaceColour, theme: &ResolvedTheme) -> Option<Rgb> {
+    let [r, g, b] = colour.rgb(theme.dark);
+    let sheet = theme.color(tab_strip::tab_fill(true));
+    let ratio = contrast_ratio(PremultipliedRgba::from_rgb(r, g, b), sheet);
+    (ratio >= tab_strip::WORKSPACE_SYMBOL_CONTRAST).then_some([r, g, b])
+}
 
 /// The file beside a layouts file.
 #[must_use]
@@ -336,3 +361,6 @@ mod tests {
         assert!(!path.with_extension("toml.tmp").exists());
     }
 }
+
+#[cfg(test)]
+mod colour_ink_tests;

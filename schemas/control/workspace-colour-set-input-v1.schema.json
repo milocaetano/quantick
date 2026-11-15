@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Give a workspace a colour: a preset's name or a custom `#RRGGBB`.",
+  "properties": {
+    "colour": {
+      "description": "A preset's name in any case (`sky`, `slate`, ...) or `#RRGGBB`.",
+      "type": "string"
+    },
+    "name": {
+      "type": "string"
+    },
+    "swap": {
+      "default": false,
+      "description": "Take a colour another workspace holds, giving it this one's own.",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "name",
+    "colour"
+  ],
+  "title": "WorkspaceColourSetInput",
+  "type": "object"
+}

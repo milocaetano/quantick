@@ -4,6 +4,7 @@ fn test_capsule() -> quantick_ui_model::chrome_toolbar::Capsule {
     quantick_ui_model::chrome_toolbar::Capsule {
         tree: crate::canvas_layout::LAYOUT_PRESETS[0].tree.clone(),
         workspace: "Default".into(),
+        colour: None,
         unsaved: false,
         marks: Default::default(),
         menu_open: false,

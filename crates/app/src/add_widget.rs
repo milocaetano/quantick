@@ -171,6 +171,7 @@ fn row(
         rect,
         selected: false,
         capability: Some(capability),
+        description: None,
     });
     ready && response.clicked()
 }

@@ -116,6 +116,7 @@ mod published_schema_compatibility_tests;
 mod quick_range_band_tests;
 mod quick_range_control_tests;
 mod quick_range_shape_tests;
+mod rail_paint_tests;
 mod rectangle_extend_tests;
 mod retry_readback_tests;
 mod screenshot_evidence_tests;
@@ -401,6 +402,7 @@ fn test_config() -> AppConfig {
             default_layout: None,
             default_bars: None,
             record_deals: false,
+            short_name: None,
         }],
         metatrader: Default::default(),
         paper: Default::default(),
@@ -1955,6 +1957,7 @@ fn two_metatrader_feeds() -> AppConfig {
                 default_layout: None,
                 default_bars: None,
                 record_deals: false,
+                short_name: None,
             },
             FeedConfig {
                 id: "b3".to_string(),
@@ -1971,6 +1974,7 @@ fn two_metatrader_feeds() -> AppConfig {
                 default_layout: None,
                 default_bars: None,
                 record_deals: false,
+                short_name: None,
             },
         ],
         metatrader: crate::config::MetaTraderSettings {

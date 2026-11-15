@@ -9,13 +9,13 @@
 //! folded strip beside a seam is skipped: the seam trades with the nearest
 //! open child past it, and the strip slides along.
 
-use super::bands::inset_seams;
 use super::metrics::COLLAPSED_HIT_PX;
 #[cfg(doc)]
 use super::metrics::COLLAPSED_PANE_WIDTH_PX;
 use super::presets::{LayoutPreset, PaneKind};
+use super::rail_look::{RailHolds, RailLook};
 use super::state::{CanvasRefusal, CanvasState};
-use super::tree::{CanvasRect, PaneSlot, PaneTree, SplitAxis};
+use super::tree::{CanvasRect, PaneSlot, PaneTree, SplitAxis, inset_seams};
 
 /// A boundary that moved less than this many points did not move.
 const STILL_PX: f32 = 0.01;
@@ -60,6 +60,8 @@ pub struct SeamRail {
     pub axis: SplitAxis,
     /// Whether the open side it meets lies after it along `axis`.
     pub meets_after: bool,
+    /// The panes folded behind it.
+    pub holds: RailHolds,
 }
 
 impl SeamRail {
@@ -67,6 +69,28 @@ impl SeamRail {
     #[must_use]
     pub fn control_id(&self) -> String {
         format!("pane_menu.{}.rail", self.slot)
+    }
+
+    /// How it is drawn on a canvas of `area`: flat when folded across a
+    /// column, its chevron toward the open side it meets.
+    #[must_use]
+    pub fn look(&self, area: CanvasRect) -> RailLook {
+        let flat = self.axis == SplitAxis::Column;
+        RailLook::on(
+            self.rect,
+            area,
+            (flat, self.meets_after),
+            self.holds.panes(),
+        )
+    }
+}
+
+impl TreeSeam {
+    /// Whether the window paints it as a divider line: not beside a rail,
+    /// whose own edge is the one line there, the gutter left to the canvas.
+    #[must_use]
+    pub const fn is_line(&self) -> bool {
+        self.rail.is_none()
     }
 }
 
@@ -224,6 +248,7 @@ fn rail_of(
         rect: inset_seams(bounds(node, rects), area, divider),
         axis,
         meets_after,
+        holds: RailHolds::of(node.panes().into_iter().map(|(_, kind)| kind)),
     }
 }
 

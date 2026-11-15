@@ -962,6 +962,7 @@ fn changing_feed_falls_back_to_a_valid_symbol() {
                 default_layout: None,
                 default_bars: None,
                 record_deals: false,
+                short_name: None,
             },
             FeedConfig {
                 id: "b".to_string(),
@@ -978,6 +979,7 @@ fn changing_feed_falls_back_to_a_valid_symbol() {
                 default_layout: None,
                 default_bars: None,
                 record_deals: false,
+                short_name: None,
             },
         ],
         metatrader: Default::default(),

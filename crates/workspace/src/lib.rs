@@ -19,6 +19,7 @@ pub mod orderflow_panel;
 pub mod pane_layout;
 pub mod session;
 pub mod workspace_book;
+pub mod workspace_colour;
 pub mod workspace_commit;
 pub mod workspace_document;
 pub mod workspace_recipe;

@@ -52,7 +52,8 @@ fn a_new_tab_opens_on_default_clean_and_default_is_always_listed() {
         book.list(),
         [WorkspaceListing {
             name: "Default".to_owned(),
-            tabs: vec![1]
+            tabs: vec![1],
+            colour: crate::workspace_colour::WorkspaceColour::Preset(4),
         }]
     );
     let parsed = parse_book("version = 1\n").unwrap();

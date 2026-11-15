@@ -18,15 +18,6 @@ impl crate::surfaces::View<Model> for View {
     ) -> Option<Intent> {
         let snapshot = state.snapshot.as_ref()?;
         let ui = target.ui.as_deref_mut()?;
-        let chips: Vec<_> = snapshot
-            .chips
-            .iter()
-            .map(|chip| crate::tabstrip::TabChip {
-                id: chip.id,
-                label: &chip.label,
-                feed: chip.feed,
-            })
-            .collect();
         self.drawn.allow_close_last = snapshot.allow_close_last;
         let root = self
             .root
@@ -34,7 +25,7 @@ impl crate::surfaces::View<Model> for View {
             .unwrap_or_else(|| crate::theme::get(ui.ctx()));
         crate::tabstrip::draw(
             ui,
-            &chips,
+            &snapshot.chips,
             snapshot.active,
             &snapshot.surface,
             (&mut self.drawn, &root),

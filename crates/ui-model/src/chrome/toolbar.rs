@@ -69,6 +69,8 @@ pub use ToolbarAction as Action;
 pub struct Capsule {
     pub tree: PaneTree,
     pub workspace: String,
+    /// The workspace's colour: the capsule's tint, border and left bar.
+    pub colour: Option<quantick_stores::workspaces::WorkspaceColour>,
     pub unsaved: bool,
     pub marks: LayoutMarks,
     pub menu_open: bool,

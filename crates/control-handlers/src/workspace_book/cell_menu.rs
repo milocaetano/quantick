@@ -20,7 +20,7 @@ use quantick_control_schema::window_menu::{RowId, row_of};
 use quantick_control_schema::workspace_book as calls;
 use quantick_session::workspace_menu::{CHIP_MENU_FILTER_FROM, WorkspaceCommand, filter_matches};
 use quantick_stores::workspaces::{
-    DEFAULT_WORKSPACE, WorkspaceBook, WorkspaceListing, WorkspaceRecipe,
+    DEFAULT_WORKSPACE, Rgb, WorkspaceBook, WorkspaceColour, WorkspaceListing, WorkspaceRecipe,
 };
 use quantick_workspace::canvas::PaneTree;
 use quantick_workspace::canvas_layout::recipe_canvas;
@@ -79,6 +79,23 @@ pub enum RowKind {
     Filter,
 }
 
+/// A workspace's colour as one theme paints it: the value its slot fills
+/// and the words the scene ends its row with (`Sky #5DBDEB`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RowColour {
+    pub rgb: Rgb,
+    pub words: String,
+}
+
+impl RowColour {
+    fn of(colour: WorkspaceColour, dark: bool) -> Self {
+        Self {
+            rgb: colour.rgb(dark),
+            words: colour.describe(dark),
+        }
+    }
+}
+
 /// One row of the menu.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CellRow {
@@ -105,6 +122,8 @@ pub struct CellRow {
     pub capability: Option<&'static str>,
     /// The layout its miniature pictures.
     pub tree: Option<PaneTree>,
+    /// A workspace's colour, on its row and the header.
+    pub colour: Option<RowColour>,
 }
 
 impl CellRow {
@@ -123,6 +142,7 @@ impl CellRow {
             command: None,
             capability: None,
             tree: None,
+            colour: None,
         }
     }
 
@@ -181,11 +201,11 @@ impl CellRow {
         bounds: Option<SceneBoundsSnapshot>,
     ) -> SceneControlSnapshot {
         let marked = self.kind == RowKind::Current && self.dot;
-        let description = match (self.summary.is_empty(), marked) {
-            (true, _) => None,
-            (false, false) => Some(self.summary.clone()),
-            (false, true) => Some(format!("{}{SEPARATOR}{UNSAVED}", self.summary)),
-        };
+        let summary = Some(self.summary.as_str()).filter(|said| !said.is_empty());
+        let unsaved = marked.then_some(UNSAVED);
+        let colour = self.colour.as_ref().map(|colour| colour.words.as_str());
+        let parts: Vec<&str> = [summary, unsaved, colour].into_iter().flatten().collect();
+        let description = (!parts.is_empty()).then(|| parts.join(SEPARATOR));
         SceneControlSnapshot {
             control_id: format!("{owner}.{}", self.scene_id()),
             label: self.label.clone(),
@@ -305,14 +325,15 @@ fn held_in(
 }
 
 /// The menu as `book` stands for `tab`: `keys` the save shortcut's words,
-/// `live` the layout the tab shows, `label` a tab's words where an edit is
-/// held.
+/// `live` the layout the tab shows, `dark` the theme its colours paint in,
+/// `label` a tab's words where an edit is held.
 #[must_use]
 pub fn cell_menu(
     book: &WorkspaceBook,
     tab: u64,
     keys: &str,
     live: &PaneTree,
+    dark: bool,
     label: impl Fn(u64) -> String,
 ) -> CellMenu {
     let (workspace, modified) = state_of(book, tab);
@@ -332,6 +353,7 @@ pub fn cell_menu(
                 command: (!on).then(|| WorkspaceCommand::Set(row.name.clone())),
                 capability: Some(calls::TAB_WORKSPACE_SET_CAPABILITY_ID),
                 tree: Some(tree),
+                colour: Some(RowColour::of(row.colour, dark)),
                 ..CellRow::new(
                     RowKind::Workspace,
                     &format!("workspace.{}", row.name),
@@ -352,6 +374,9 @@ pub fn cell_menu(
         dot: modified && !auto,
         capability: Some(MENU_CAPABILITY_ID),
         tree: Some(live.clone()),
+        colour: book
+            .colour(workspace)
+            .map(|colour| RowColour::of(colour, dark)),
         ..CellRow::new(RowKind::Current, "current", workspace)
     };
     CellMenu {
@@ -446,12 +471,16 @@ fn foot(auto: bool, keys: &str) -> Vec<CellRow> {
     ]
 }
 
+/// What the rows were built from: the book, the tab, the shortcut's words,
+/// the live layout, the theme and the tabs' labels.
+type CellMenuRead = (WorkspaceBook, u64, String, PaneTree, bool, Vec<String>);
+
 /// The open menu's rows, built once and again only when what they read
-/// changes: the book, the tab, the shortcut's words, the live layout or the
-/// tabs' labels. A quiet frame borrows the last build.
+/// changes: the book, the tab, the shortcut's words, the live layout, the
+/// theme or the tabs' labels. A quiet frame borrows the last build.
 #[derive(Debug, Default)]
 pub struct CellMenuCache {
-    read: Option<(WorkspaceBook, u64, String, PaneTree, Vec<String>)>,
+    read: Option<CellMenuRead>,
     menu: Option<CellMenu>,
     /// How many times the rows were built.
     pub builds: usize,
@@ -465,20 +494,28 @@ impl CellMenuCache {
         tab: u64,
         keys: &str,
         live: &PaneTree,
+        dark: bool,
         label: impl Fn(u64) -> String,
     ) -> &CellMenu {
         let labels: Vec<String> = book.tab_workspaces().map(|(held, _)| label(held)).collect();
-        let read = (book, tab, keys, live, &labels);
-        let same =
-            (self.read.as_ref()).is_some_and(|(b, t, k, l, ls)| (b, *t, k.as_str(), l, ls) == read);
+        let read = (book, tab, keys, live, dark, &labels);
+        let same = (self.read.as_ref())
+            .is_some_and(|(b, t, k, l, d, ls)| (b, *t, k.as_str(), l, *d, ls) == read);
         if !same {
-            let owned = (book.clone(), tab, keys.to_owned(), live.clone(), labels);
+            let owned = (
+                book.clone(),
+                tab,
+                keys.to_owned(),
+                live.clone(),
+                dark,
+                labels,
+            );
             (self.read, self.menu) = (Some(owned), None);
         }
         let builds = &mut self.builds;
         self.menu.get_or_insert_with(|| {
             *builds += 1;
-            cell_menu(book, tab, keys, live, label)
+            cell_menu(book, tab, keys, live, dark, label)
         })
     }
 }
