@@ -164,6 +164,43 @@ pub struct TapeHealthSnapshot {
     pub dominant_hop: Option<String>,
     /// How many live prints the split covers.
     pub sampled_prints: WireU64,
+    /// Drain-receipt-to-paper-trading delay over the newest live prints;
+    /// `None` before the feed session's first live print.
+    pub intake_lag: Option<IntakeLagSnapshot>,
+}
+
+/// How long live prints waited inside one window drain before paper trading
+/// saw them: the drain's receipt stamp (taken at its first live print) to the
+/// paper-trading stage, per print, over a bounded window of the newest prints
+/// (nearest-rank). Time spent queued before the drain began is not included;
+/// `arrival_latency_ms` carries that. Wall-clock milliseconds: sub-millisecond
+/// handling reads zero, and a forward clock step reads as lag.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct IntakeLagSnapshot {
+    #[schemars(extend("x-unit" = "milliseconds"))]
+    pub p50_ms: i64,
+    #[schemars(extend("x-unit" = "milliseconds"))]
+    pub p99_ms: i64,
+    #[schemars(extend("x-unit" = "milliseconds"))]
+    pub max_ms: i64,
+    /// Prints the window covers.
+    pub samples: WireU64,
+    /// Of the prints the window covers, those whose stage stamp preceded the
+    /// receipt stamp (a wall-clock step back), counted as zero lag rather than
+    /// dropped.
+    pub clamped: WireU64,
+}
+
+impl From<quantick_operability::intake_lag::IntakeLagSummary> for IntakeLagSnapshot {
+    fn from(lag: quantick_operability::intake_lag::IntakeLagSummary) -> Self {
+        Self {
+            p50_ms: lag.p50_ms,
+            p99_ms: lag.p99_ms,
+            max_ms: lag.max_ms,
+            samples: WireU64::new(lag.samples),
+            clamped: WireU64::new(lag.clamped),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
