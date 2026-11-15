@@ -67,6 +67,8 @@ pub use crate::canvas::{
 };
 
 pub mod column;
+#[cfg(test)]
+mod column_tests;
 pub mod named;
 pub mod split;
 pub mod stack;

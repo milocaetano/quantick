@@ -1,10 +1,10 @@
 //! A folded pane's rail paints the workspace's marks (band, the edges the
 //! window's chrome does not already draw, a chevron toward the open side and
-//! a tick per pane behind it) in the theme's rail tokens, on both painters,
+//! a dash per pane behind it) in the theme's rail tokens, on both painters,
 //! upright and flat, in Dark and in Light, lit only while the pointer is on
 //! its hit area and no other drag is under way. The seam beside a rail is no
 //! line; a divider between two open panes paints as before; the rail keeps
-//! its 8 px and the pane beside it its place; its hover words reach the scene.
+//! its 8 px and the pane beside it comes up to it; its words reach the scene.
 use super::*;
 
 use crate::canvas_layout::{CANVAS_DIVIDER_PX, COLLAPSED_PANE_WIDTH_PX, LAYOUT_PRESETS};
@@ -127,7 +127,7 @@ fn the_column_painters_rails_share_the_chrome_line_and_point_the_way_they_open()
             let look = RailLook {
                 flat: false,
                 opens_forward: !flow,
-                ticks: 1,
+                dashes: 1,
                 on_chrome: [!flow, flow],
             };
             assert_rail(&output, rail, look, (source, false));
@@ -144,7 +144,7 @@ fn the_column_painters_rails_share_the_chrome_line_and_point_the_way_they_open()
 }
 
 /// The tree painter's rails: the flow at the window's right edge, the
-/// whole context side of grid4+flow behind one rail with four ticks, and
+/// whole context side of grid4+flow behind one rail with four dashes, and
 /// the flow folded flat under the toolbar. The seam beside each is no
 /// line: nothing of the border's colour stands between rail and pane.
 #[test]
@@ -157,7 +157,7 @@ fn the_tree_painters_rails_paint_one_band_and_leave_their_seam_unlined() {
                 RailLook {
                     flat: false,
                     opens_forward: false,
-                    ticks: 1,
+                    dashes: 1,
                     on_chrome: [false, true],
                 },
             ),
@@ -167,7 +167,7 @@ fn the_tree_painters_rails_paint_one_band_and_leave_their_seam_unlined() {
                 RailLook {
                     flat: false,
                     opens_forward: true,
-                    ticks: 4,
+                    dashes: 4,
                     on_chrome: [true, false],
                 },
             ),
@@ -177,7 +177,7 @@ fn the_tree_painters_rails_paint_one_band_and_leave_their_seam_unlined() {
                 RailLook {
                     flat: true,
                     opens_forward: true,
-                    ticks: 1,
+                    dashes: 1,
                     on_chrome: [true, false],
                 },
             ),
@@ -240,7 +240,7 @@ fn the_column_painters_flat_context_rail_paints_and_lights_on_its_hit_area() {
         let look = RailLook {
             flat: true,
             opens_forward: true,
-            ticks: 1,
+            dashes: 1,
             on_chrome: [true, false],
         };
         assert_rail(&output, rail, look, (source, false));
@@ -274,7 +274,7 @@ fn a_rail_lights_only_while_the_pointer_is_on_its_hit_area() {
         let look = RailLook {
             flat: false,
             opens_forward: false,
-            ticks: 1,
+            dashes: 1,
             on_chrome: [false, true],
         };
         let reach = egui::pos2(rail.left() - 10.0, rail.center().y);
@@ -299,6 +299,40 @@ fn a_rail_lights_only_while_the_pointer_is_on_its_hit_area() {
         );
         let away = egui::pos2(rail.left() - 60.0, rail.center().y);
         assert_rail(&hover(&mut app, &ctx, away), rail, look, (source, false));
+    }
+}
+
+/// A drag that began elsewhere, panning the chart, passes over the rail:
+/// the rail stays at rest, as the one rule for every painter says.
+#[test]
+fn a_rail_stays_at_rest_while_another_drag_passes_over_it() {
+    for source in [DARK, LIGHT] {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = split_app(&ctx, 200);
+        dress(&mut app, &ctx, source);
+        assert!(app.active_tab_mut().canvas.fold(true, true));
+        run_frame(&mut app, &ctx);
+        let rail = app.active_tab().flow_rail_rect().expect("the flow's rail");
+        let look = RailLook {
+            flat: false,
+            opens_forward: false,
+            dashes: 1,
+            on_chrome: [false, true],
+        };
+        let from = egui::pos2(rail.left() - 400.0, rail.center().y);
+        let moved = |at| vec![egui::Event::PointerMoved(at)];
+        run_frame_with_events(&mut app, &ctx, moved(from));
+        let press = vec![egui::Event::PointerMoved(from), pointer_button(from, true)];
+        run_frame_with_events(&mut app, &ctx, press);
+        let mut output = None;
+        for step in 1..=12 {
+            let at = from.lerp(rail.center(), step as f32 / 12.0);
+            output = Some(run_frame_with_events(&mut app, &ctx, moved(at)));
+        }
+        assert!(ctx.dragged_id().is_some(), "the chart's drag is under way");
+        assert_rail(&output.unwrap(), rail, look, (source, false));
+        let release = vec![pointer_button(rail.center(), false)];
+        run_frame_with_events(&mut app, &ctx, release);
     }
 }
 
@@ -332,9 +366,9 @@ fn a_divider_between_open_panes_paints_as_before() {
     }
 }
 
-/// The pane beside a rail stands where it stood before the rail was
-/// restyled, to the byte, on both painters: the paint changed, the geometry
-/// did not. The numbers are the base's, on the test window.
+/// The pane beside a rail comes up to it: 4 px wider than on the base,
+/// where a gutter stood between them, on both painters; the rail itself
+/// stands where it stood. The numbers are the test window's.
 #[test]
 fn the_pane_beside_a_rail_keeps_the_place_it_had() {
     let ctx = egui::Context::default();
@@ -345,7 +379,7 @@ fn the_pane_beside_a_rail_keeps_the_place_it_had() {
     let tab = app.active_tab();
     let rail = egui::Rect::from_min_max(egui::pos2(1356.0, 80.0), egui::pos2(1364.0, 872.0));
     assert_eq!(tab.flow_rail_rect(), Some(rail), "column rail");
-    let beside = egui::Rect::from_min_max(egui::pos2(44.0, 114.0), egui::pos2(1352.0, 844.0));
+    let beside = egui::Rect::from_min_max(egui::pos2(44.0, 114.0), egui::pos2(1356.0, 844.0));
     assert_eq!(
         tab.time_panes[0].frame.area,
         Some(beside),
@@ -363,6 +397,6 @@ fn the_pane_beside_a_rail_keeps_the_place_it_had() {
         CanvasRect::new(1356.0, 80.0, 8.0, 792.0),
         "tree rail"
     );
-    let beside = egui::Rect::from_min_max(egui::pos2(701.0, 114.0), egui::pos2(1352.0, 844.0));
+    let beside = egui::Rect::from_min_max(egui::pos2(701.0, 114.0), egui::pos2(1356.0, 844.0));
     assert_eq!(tab.time_panes[1].frame.area, Some(beside), "tree neighbour");
 }
