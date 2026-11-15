@@ -142,10 +142,6 @@ pub fn draw(
         None => (palette.control(), stroke),
     };
     painter.rect(whole, ROUNDING_PX, fill, edge);
-    if model.colour.is_some() {
-        let bar = painter.with_clip_rect(whole.with_max_x(whole.left() + BAR));
-        bar.rect_filled(whole, ROUNDING_PX, edge.color);
-    }
     for (part, response, lit) in [
         (miniature, &layout, model.popover_open),
         (name_rect, &menu, model.menu_open),
@@ -153,6 +149,10 @@ pub fn draw(
         if lit || response.hovered() {
             painter.rect_filled(part.shrink(1.0), ROUNDING_PX, fill);
         }
+    }
+    if model.colour.is_some() {
+        let bar = painter.with_clip_rect(whole.with_max_x(whole.left() + BAR));
+        bar.rect_filled(whole, ROUNDING_PX, edge.color);
     }
     painter.vline(miniature.right() + 0.5, whole.y_range().shrink(4.0), stroke);
     let face = egui::Rect::from_center_size(miniature.center(), MINIATURE);

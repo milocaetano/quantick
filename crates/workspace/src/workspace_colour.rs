@@ -38,7 +38,9 @@ const fn preset(name: &'static str, light: u32, dark: u32) -> Preset {
 
 /// The palette. A file stores an index, so the order never changes: no
 /// green, red, gold or orange, which already mean buy, sell, the POC and
-/// unsaved edits.
+/// unsaved edits. Light Ice and Light Blossom are darker than the first
+/// proposal (#5E9FD0, #CF6FB6) so every preset keeps 3:1 as the open tab's
+/// symbol and the capsule's border, 0.06 OKLab clear of the other Light values.
 pub const PRESETS: [Preset; 16] = [
     preset("Cobalt", 0x2F_5B_D8, 0x73_93_F5),
     preset("Orchid", 0xA6_3D_A0, 0xDA_7B_D4),
@@ -54,8 +56,8 @@ pub const PRESETS: [Preset; 16] = [
     preset("Grape", 0x6E_24_96, 0xBE_78_E6),
     preset("Ink", 0x25_2B_36, 0xE3_E7_EE),
     preset("Plum", 0x6B_2A_5E, 0xB8_6F_A6),
-    preset("Ice", 0x5E_9F_D0, 0xB3_DB_F5),
-    preset("Blossom", 0xCF_6F_B6, 0xF4_B3_DD),
+    preset("Ice", 0x66_8A_B4, 0xB3_DB_F5),
+    preset("Blossom", 0xC9_63_AE, 0xF4_B3_DD),
 ];
 
 /// `Default`'s colour while it is free: Slate, the steel grey-blue.
@@ -316,7 +318,9 @@ pub enum ColourTaken {
     /// transitive: a custom equal to a preset's Light value and another equal
     /// to its Dark value both match that preset), so no swap frees it.
     HeldByMany { owners: Vec<String> },
-    /// A swap would give `owner` a colour identical to `other`'s.
+    /// A swap would give `owner` a colour identical to `other`'s. A settled
+    /// book never holds two identical colours, so this cannot arise from one;
+    /// it guards a hand-edited or otherwise unsettled set.
     SwapClashes {
         owner: String,
         owner_would_get: WorkspaceColour,

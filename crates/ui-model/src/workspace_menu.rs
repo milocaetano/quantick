@@ -30,6 +30,9 @@ const CAPTION_PT: f32 = 10.0;
 /// corner radius.
 const SLOT_PT: f32 = 3.0 + 8.0;
 const SLOT_HEIGHT_PT: f32 = 22.0;
+const SLOT_WIDTH_PT: f32 = 3.0;
+/// The panel showing between a row's colour slot and its highlight.
+const HIGHLIGHT_GAP_PT: f32 = 1.0;
 const SLOT_RADIUS_PT: f32 = 1.5;
 /// The miniatures: the header's as large as the capsule's, a row's smaller.
 const MINI_HEADER: [f32; 2] = [40.0, 14.0];
@@ -236,7 +239,7 @@ fn entry(
     let slot = area(
         at.x,
         at.y + (at.h - SLOT_HEIGHT_PT) / 2.0,
-        3.0,
+        SLOT_WIDTH_PT,
         SLOT_HEIGHT_PT,
     );
     marks.extend(row.colour.as_ref().map(|colour| Mark::Colour {
@@ -387,7 +390,11 @@ pub fn row(row: &CellRow, width: f32, focused: bool, dark: bool) -> Piece {
         (false, false) => None,
     };
     let ring = if focused { Some(ink.accent) } else { None };
-    let mut marks = vec![plate(at, RADIUS, back, ring)];
+    // The selection, hover and focus start past the colour slot, so the slot
+    // stands on the panel and never sinks into the highlight.
+    let from = 2.0 * PAD + SLOT_WIDTH_PT + HIGHLIGHT_GAP_PT;
+    let lit = area(from, 0.0, at.x + at.w - from, CHIP_MENU_ROW_PT);
+    let mut marks = vec![plate(lit, RADIUS, back, ring)];
     let (status, y) = (width - PAD - 8.0 - STATUS_PT, CHIP_MENU_ROW_PT / 2.0);
     if row.on {
         marks.push(text(status + 1.0, y, CHECK, 12.0, ink.accent, STATUS_PT));
@@ -405,7 +412,7 @@ pub fn row(row: &CellRow, width: f32, focused: bool, dark: bool) -> Piece {
         at,
         row: Some(row.clone()),
         press: true,
-        hover: hover(at, ink.hover).filter(|_| !row.on),
+        hover: hover(lit, ink.hover).filter(|_| !row.on),
         marks,
     }
 }
