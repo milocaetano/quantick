@@ -110,7 +110,7 @@ impl ChartPaneSource for PaneRead<'_> {
         self.pane.closed_bar(slot)
     }
     fn venue_prefix(&self) -> &[Bar] {
-        &self.pane.venue_prefix()
+        self.pane.venue_prefix()
     }
     fn slot_open_time(&self, slot: usize) -> Option<i64> {
         self.pane.slot_open_time(slot)

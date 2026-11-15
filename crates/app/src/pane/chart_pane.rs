@@ -413,7 +413,7 @@ pub(crate) struct SideRowChrome<'a> {
 impl<P: super::LentPane, S: super::LentSeries, W: super::LentWorkers> super::PaneAt<P, S, W> {
     /// The `[start, end)` slots the last frame showed; `None` before it laid the pane out.
     pub(crate) fn visible_slots(&self) -> Option<(usize, usize)> {
-        let chart = self.pane.frame.chart_area?;
+        let chart = self.frame.chart_area?;
         let width = self
             .pane
             .frame
@@ -428,7 +428,7 @@ impl<P: super::LentPane, S: super::LentSeries, W: super::LentWorkers> super::Pan
     /// sliders and `orderflow.bubbles.size.set` both judge; `None` without
     /// an order-flow view.
     pub(crate) fn bubble_scale_facts(&self) -> Option<BubbleScalePane> {
-        let config = self.pane.orderflow.as_ref()?.cached_config();
+        let config = self.orderflow.as_ref()?.cached_config();
         let tick_chart = self.series.state().tick_membership().is_some();
         Some(BubbleScalePane::of(config, tick_chart))
     }
@@ -436,20 +436,20 @@ impl<P: super::LentPane, S: super::LentSeries, W: super::LentWorkers> super::Pan
     /// The layer answers — see [`layers::PaneLayerRead`].
     pub(crate) fn layer_read(&self) -> layers::PaneLayerRead<'_> {
         layers::PaneLayerRead {
-            layers: &self.pane.layers,
-            orderflow: self.pane.orderflow.as_ref(),
-            state: &self.series.state(),
-            footprint: &self.pane.presentation.footprint,
-            style: &self.pane.presentation.candles,
-            drawings: &self.pane.drawings,
+            layers: &self.layers,
+            orderflow: self.orderflow.as_ref(),
+            state: self.series.state(),
+            footprint: &self.presentation.footprint,
+            style: &self.presentation.candles,
+            drawings: &self.drawings,
         }
     }
 
     pub(crate) fn drawing_projection(&self) -> gesture::DrawingProjection<'_> {
         gesture::DrawingProjection {
             series: self.series_read(),
-            viewport: &self.pane.model.viewport,
-            indicators: &self.pane.indicators,
+            viewport: &self.model.viewport,
+            indicators: &self.indicators,
         }
     }
 
@@ -462,13 +462,13 @@ impl<P: super::LentPane, S: super::LentSeries, W: super::LentWorkers> super::Pan
     ) -> Option<f32> {
         use quantick_chart::market_fold::{last_print_ms, seam_shown, tape_seam_x};
         let shown = seam_shown(state.shown_view, chrome.link);
-        let owner = self.pane.orderflow.as_ref().filter(|_| shown)?;
+        let owner = self.orderflow.as_ref().filter(|_| shown)?;
         let now = owner
             .cached_live_end_ms()
             .filter(|_| owner.tape_end().is_live())?;
         let times = (
             now,
-            last_print_ms(&self.series.state())?,
+            last_print_ms(self.series.state())?,
             owner.live_lane_window_ms(self.series.state().bars()),
         );
         tape_seam_x(
@@ -499,11 +499,11 @@ impl<P: super::LentPane, S: super::LentSeries, W: super::LentWorkers> super::Pan
     /// [`PaneHitTest`].
     pub(crate) fn hit_test(&self) -> PaneHitTest<'_> {
         PaneHitTest {
-            frame: &self.pane.frame,
-            price_view: &self.pane.price_view,
-            drawings: &self.pane.drawings,
-            orderflow: self.pane.orderflow.as_ref(),
-            hover_pos: self.pane.hover_pos,
+            frame: &self.frame,
+            price_view: &self.price_view,
+            drawings: &self.drawings,
+            orderflow: self.orderflow.as_ref(),
+            hover_pos: self.hover_pos,
             projection: self.drawing_projection(),
         }
     }
@@ -518,7 +518,7 @@ impl<P: super::LentPane, S: super::LentSeries, W: super::LentWorkers> super::Pan
             owner: crate::surfaces::drawing_chrome::QuickRangeOwner {
                 tab,
                 side,
-                pane: self.pane.id,
+                pane: self.id,
                 revision: self.pagination_revision(),
                 layout: self.layout_id().map(|id| id.0),
             },
@@ -531,7 +531,7 @@ impl<P: super::LentPane, S: super::LentSeries, W: super::LentWorkers> super::Pan
         let Some(state) = self.flow_header_state() else {
             return;
         };
-        let (left, right, split) = (chart.left(), chart.right(), self.pane.frame.lane_divider_x);
+        let (left, right, split) = (chart.left(), chart.right(), self.frame.lane_divider_x);
         let sides = flow_sides(Some(state.shown_view), left, right, split);
         let Some((_, left, right)) = sides
             .into_iter()
@@ -557,7 +557,7 @@ impl<P: super::LentPane, S: super::LentSeries, W: super::LentWorkers> super::Pan
     /// order-flow view. A sample is there only while its target is on, the one
     /// size rule `orderflow.bubbles.size.set` judges by too.
     pub(crate) fn flow_header_state(&self) -> Option<FlowHeaderState> {
-        let owner = self.pane.orderflow.as_ref()?;
+        let owner = self.orderflow.as_ref()?;
         let facts = self.bubble_scale_facts()?;
         let scale = |sample: BubbleSample| {
             let target = target(sample);
@@ -569,7 +569,7 @@ impl<P: super::LentPane, S: super::LentSeries, W: super::LentWorkers> super::Pan
             &owner.cached_config().live_lane,
             scale(BubbleSample::Candle),
             scale(BubbleSample::Tape),
-            self.pane.frame.lane_reference_ms,
+            self.frame.lane_reference_ms,
             owner.lane_window_setting(),
         ))
     }
@@ -578,8 +578,7 @@ impl<P: super::LentPane, S: super::LentSeries, W: super::LentWorkers> super::Pan
     /// beside view it returns to with it.
     pub(super) fn beside_strip_width(&self, capabilities: FeedCapabilities) -> f32 {
         let (layer, facts) = (ChartLayer::LiveStrip, self.layer_facts(Some(capabilities)));
-        let on =
-            quantick_layers::LayerState::effective(layer, self.pane.layers.requested(layer), facts);
+        let on = quantick_layers::LayerState::effective(layer, self.layers.requested(layer), facts);
         if on {
             crate::live_strip::LIVE_STRIP_WIDTH_PX
         } else {
@@ -624,10 +623,10 @@ impl<P: super::LentPane, S: super::LentSeries, W: super::LentWorkers> super::Pan
         let mut areas = plot_split_with_metrics(
             area,
             gutter_strip_px(self.plot_lane_view(), self.live_strip_width(capabilities)),
-            self.pane.indicators.pane_sizing(&mut sizing),
-            self.pane.frame.axis_metrics,
+            self.indicators.pane_sizing(&mut sizing),
+            self.frame.axis_metrics,
         );
-        areas.capsules = self.pane.frame.capsules;
+        areas.capsules = self.frame.capsules;
         areas
     }
 }
@@ -671,7 +670,7 @@ impl super::PaneMut<'_> {
             layers: layers::PaneLayerRead {
                 layers: &self.pane.layers,
                 orderflow: self.pane.orderflow.as_ref(),
-                state: &self.series.state(),
+                state: self.series.state(),
                 footprint: &self.pane.presentation.footprint,
                 style: &self.pane.presentation.candles,
                 drawings: &self.pane.drawings,
@@ -691,7 +690,7 @@ impl super::PaneMut<'_> {
         spoken: Option<quantick_chart::connection_state::Link>,
     ) {
         if let Some(view) = self.pane.orderflow.as_mut() {
-            view.hold_tape_window(spoken, &self.series.state());
+            view.hold_tape_window(spoken, self.series.state());
         }
     }
 
@@ -701,7 +700,7 @@ impl super::PaneMut<'_> {
             pane: self.pane.id,
             layers: &mut self.pane.layers,
             orderflow: self.pane.orderflow.as_mut(),
-            state: &self.series.state(),
+            state: self.series.state(),
             presentation: &mut self.pane.presentation,
             drawings: &mut self.pane.drawings,
         }
@@ -757,20 +756,20 @@ impl super::PaneMut<'_> {
         let magnet = chrome.toolrail.magnet();
         // Remembered for inspector placement and manager centring: the pane
         // where drawings live, already free of both axes and the live lane.
-        self.pane.frame.axis_metrics = crate::theme::get(ui.ctx()).resolved.axis_metrics();
-        self.pane.frame.plot_area = Some(area);
+        self.frame.axis_metrics = crate::theme::get(ui.ctx()).resolved.axis_metrics();
+        self.frame.plot_area = Some(area);
         let areas = self.plot_areas(area, chrome.capabilities);
-        self.pane.frame.chart_area = Some(areas.chart);
-        let candles_right = self.pane.frame.candles_right.unwrap_or(areas.chart.right());
-        self.pane.model.candles_px = candles_right - areas.chart.left();
+        self.frame.chart_area = Some(areas.chart);
+        let candles_right = self.frame.candles_right.unwrap_or(areas.chart.right());
+        self.model.candles_px = candles_right - areas.chart.left();
         // One carve, consumed by placement, hit-testing, dragging and — after
         // the panes have drawn — painting.
         let bands = crate::bands::BandGeometry {
-            auto_range: self.pane.frame.auto_range,
-            price_view: &self.pane.price_view,
-            candles_right: self.pane.frame.candles_right,
-            indicators: &self.pane.indicators,
-            price_label: &self.pane.price_band_label,
+            auto_range: self.frame.auto_range,
+            price_view: &self.price_view,
+            candles_right: self.frame.candles_right,
+            indicators: &self.indicators,
+            price_label: &self.price_band_label,
         }
         .bands(&areas);
         let tool_armed = self.handle_placement(ui, &areas, &bands, chrome);
@@ -786,12 +785,12 @@ impl super::PaneMut<'_> {
         // every band, and the candles' own response would report `None` for a
         // pointer one pane below them.
         if !tool_armed {
-            self.pane.hover_pos = chart.hover_pos();
+            self.hover_pos = chart.hover_pos();
         }
         // The paper lines and the right-click price live on the candles, and
         // only there: an order is a price, not a value on someone's oscillator.
         let price_band = &bands[0];
-        let history_right = self.pane.frame.candles_right.unwrap_or(areas.chart.right());
+        let history_right = self.frame.candles_right.unwrap_or(areas.chart.right());
         self.quick_range_view(chrome.tab, chrome.side).handle(
             ui,
             (&bands, &areas),
@@ -830,7 +829,7 @@ impl super::PaneMut<'_> {
         let paper_layer_visible = self.layer_visible(ChartLayer::PaperTrading, chrome.style);
         let paper_gesture = primary_button::PaperArbitration {
             projection: &self.drawing_projection(),
-            drawings: &self.pane.drawings,
+            drawings: &self.drawings,
             layer_visible: paper_layer_visible,
             lane_handle: super::lane_rail::lane_handle(self, areas.chart),
         }
@@ -888,7 +887,7 @@ impl super::PaneMut<'_> {
             },
         );
         if candle_settings {
-            self.pane.presentation.candles.request_editor();
+            self.presentation.candles.request_editor();
             chrome.layers.open_chart_settings = true;
         }
 
@@ -948,7 +947,7 @@ impl super::PaneMut<'_> {
             },
         );
         if let Some(position) = placement.hover_position {
-            self.pane.hover_pos = position.map(drawings::pos);
+            self.hover_pos = position.map(drawings::pos);
         }
         if placement.completion.arm_pointer {
             chrome.toolrail.arm(Tool::Pointer);
@@ -980,8 +979,8 @@ impl super::PaneMut<'_> {
                 areas,
                 bands,
                 &self.drawing_projection(),
-                &self.pane.drawings,
-                &self.pane.frame,
+                &self.drawings,
+                &self.frame,
                 self.slots(),
             )
         {
@@ -1031,19 +1030,17 @@ impl super::PaneMut<'_> {
             PaneMenuIntent::SetLayerVisible { layer, visible } => {
                 self.set_layer_visible(layer, visible, chrome.layers);
             }
-            PaneMenuIntent::SetPriceInverted(inverted) => {
-                self.pane.price_view.set_inverted(inverted)
-            }
+            PaneMenuIntent::SetPriceInverted(inverted) => self.price_view.set_inverted(inverted),
             PaneMenuIntent::SetBarProgress(on) => chrome.layers.bar_progress = Some(on),
             PaneMenuIntent::SetIgnoreFlowOpening(ignore) => {
-                if let Some(owner) = self.pane.orderflow.as_mut() {
+                if let Some(owner) = self.orderflow.as_mut() {
                     owner.set_ignore_flow_opening(ignore);
                 }
             }
             PaneMenuIntent::OpenFootprintSettings => chrome.layers.open_footprint_settings = true,
             PaneMenuIntent::OpenLayerSettings(layer) => chrome.layers.open_layer_tab = Some(layer),
             PaneMenuIntent::SetLaneWindow(window) => {
-                if let Some(orderflow) = self.pane.orderflow.as_mut() {
+                if let Some(orderflow) = self.orderflow.as_mut() {
                     orderflow.set_live_lane_window(window);
                 }
             }
@@ -1072,47 +1069,44 @@ impl super::PaneMut<'_> {
                 }
             }
             PaneMenuIntent::ToggleIndicatorHidden(slot) => {
-                self.pane.indicators.toggle_hidden(SlotId(slot));
+                self.indicators.toggle_hidden(SlotId(slot));
                 chrome.layers.indicators_changed = true;
             }
             PaneMenuIntent::SelectDrawing(id) => {
-                if let Some(index) = self.pane.drawings.index_of(id) {
-                    self.pane.drawings.select(Some(index));
+                if let Some(index) = self.drawings.index_of(id) {
+                    self.drawings.select(Some(index));
                 }
             }
             PaneMenuIntent::RenameDrawing { id, name } => {
-                if let Some(index) = self.pane.drawings.index_of(id) {
-                    self.pane.drawings.rename_at(index, &name);
+                if let Some(index) = self.drawings.index_of(id) {
+                    self.drawings.rename_at(index, &name);
                 }
             }
             PaneMenuIntent::SetDrawingLocked { id, locked } => {
-                if let Some(index) = self.pane.drawings.index_of(id) {
-                    self.pane.drawings.set_locked_at(index, locked);
+                if let Some(index) = self.drawings.index_of(id) {
+                    self.drawings.set_locked_at(index, locked);
                 }
             }
             PaneMenuIntent::SetDrawingHidden { id, hidden } => {
-                if let Some(index) = self.pane.drawings.index_of(id) {
-                    self.pane.drawings.set_hidden_at(index, hidden);
+                if let Some(index) = self.drawings.index_of(id) {
+                    self.drawings.set_hidden_at(index, hidden);
                 }
             }
             PaneMenuIntent::DeleteDrawing(id) => {
-                let Some(index) = self.pane.drawings.index_of(id) else {
+                let Some(index) = self.drawings.index_of(id) else {
                     return;
                 };
-                self.pane.drawings.select(Some(index));
-                if self.pane.drawings.delete_selected(false) == drawings::DeleteOutcome::Deleted {
+                self.drawings.select(Some(index));
+                if self.drawings.delete_selected(false) == drawings::DeleteOutcome::Deleted {
                     // The instance dies with its drawing, immediately — not
                     // on the next closed bar, which a quiet tape may never
                     // bring.
-                    chrome
-                        .strategies
-                        .pane_mut(self.pane.id)
-                        .remove_for_drawing(id);
+                    chrome.strategies.pane_mut(self.id).remove_for_drawing(id);
                 }
             }
             PaneMenuIntent::StrategyAdd(id) => {
-                if self.pane.drawings.index_of(id).is_some() {
-                    chrome.strategies.pane_mut(self.pane.id).request_popup(id);
+                if self.drawings.index_of(id).is_some() {
+                    chrome.strategies.pane_mut(self.id).request_popup(id);
                 }
             }
             // The drawing went without its strategy being swept yet: the
@@ -1120,43 +1114,33 @@ impl super::PaneMut<'_> {
             PaneMenuIntent::StrategyDisarm(id)
             | PaneMenuIntent::StrategyRearm(id)
             | PaneMenuIntent::StrategyRemove(id)
-                if self.pane.drawings.index_of(id).is_none() => {}
-            PaneMenuIntent::StrategyDisarm(id) => {
-                chrome.strategies.pane_mut(self.pane.id).disarm(id)
-            }
+                if self.drawings.index_of(id).is_none() => {}
+            PaneMenuIntent::StrategyDisarm(id) => chrome.strategies.pane_mut(self.id).disarm(id),
             PaneMenuIntent::StrategyRearm(id) => {
                 let series = self.series_read();
-                (chrome.strategies.pane_mut(self.pane.id))
-                    .rearm(id, |depth| series.warmup_bars(depth));
+                (chrome.strategies.pane_mut(self.id)).rearm(id, |depth| series.warmup_bars(depth));
             }
             PaneMenuIntent::StrategyRemove(id) => {
-                chrome
-                    .strategies
-                    .pane_mut(self.pane.id)
-                    .remove_for_drawing(id);
+                chrome.strategies.pane_mut(self.id).remove_for_drawing(id);
             }
             PaneMenuIntent::ObjectsAsk(action) => {
                 use quantick_chart_interaction::pane::ObjectAction;
                 let mut ask = crate::surfaces::drawing_chrome::DrawingChromeAsk::default();
                 match action {
-                    ObjectAction::Select(id) => {
-                        ask.manager_select = self.pane.drawings.index_of(id)
-                    }
+                    ObjectAction::Select(id) => ask.manager_select = self.drawings.index_of(id),
                     ObjectAction::ToggleHidden(id) => {
-                        ask.manager_toggle_hidden = self.pane.drawings.index_of(id)
+                        ask.manager_toggle_hidden = self.drawings.index_of(id)
                     }
                     ObjectAction::ToggleLocked(id) => {
-                        ask.manager_toggle_locked = self.pane.drawings.index_of(id)
+                        ask.manager_toggle_locked = self.drawings.index_of(id)
                     }
                     ObjectAction::BringToFront(id) => {
-                        ask.manager_bring_to_front = self.pane.drawings.index_of(id)
+                        ask.manager_bring_to_front = self.drawings.index_of(id)
                     }
-                    ObjectAction::Delete(id) => {
-                        ask.manager_delete = self.pane.drawings.index_of(id)
-                    }
+                    ObjectAction::Delete(id) => ask.manager_delete = self.drawings.index_of(id),
                     ObjectAction::DeleteAll => ask.delete_all = true,
                 }
-                chrome.drawing_chrome.ask_from_menu(self.pane.id, ask);
+                chrome.drawing_chrome.ask_from_menu(self.id, ask);
             }
         }
     }
@@ -1171,13 +1155,13 @@ impl super::PaneMut<'_> {
         chrome: &SideChrome<'_>,
         model: &quantick_ui_model::pane_header::State,
     ) -> Option<quantick_ui_model::pane_header::Intent> {
-        self.pane.frame.capsules = [None; 2];
+        self.frame.capsules = [None; 2];
         // Nothing on the chart, nothing to switch: the overlay owns it.
         if self.slots() == 0 {
             return None;
         }
-        let chart = self.pane.frame.chart_rect?;
-        let area = self.pane.frame.area.unwrap_or(chart);
+        let chart = self.frame.chart_rect?;
+        let area = self.frame.area.unwrap_or(chart);
         if side == PaneSide::Flow {
             self.draw_tape_marks(ui, chart, area.top(), chrome);
             return None;
@@ -1222,12 +1206,7 @@ impl super::PaneMut<'_> {
         crate::pane_header::paint_rule(ui, row);
         let state = self.flow_header_state();
         let shown = state.map(|state| state.shown_view);
-        let headers = side_headers(
-            shown,
-            row.left(),
-            row.right(),
-            self.pane.frame.lane_divider_x,
-        );
+        let headers = side_headers(shown, row.left(), row.right(), self.frame.lane_divider_x);
         let bars = model.header.as_ref().expect("flow band refreshed header");
         let (mut intent, mut indicators) = (None, false);
         for (index, (side, left, right)) in headers.into_iter().flatten().enumerate() {
@@ -1236,13 +1215,13 @@ impl super::PaneMut<'_> {
             let glyph = |toggle| self.header_glyph(toggle, chrome.style, chrome.capabilities);
             let capsule = Some(Capsule::of(side, glyph, scale))
                 .filter(|capsule| parts.capsule && self.slots() > 0 && !capsule.is_empty());
-            let (chart, tz, link) = (&self.series.state(), chrome.tz, chrome.link);
+            let (chart, tz, link) = (self.series.state(), chrome.tz, chrome.link);
             // How far the side's data reaches, and on the tape whether more is coming.
             let clock =
                 move || SideLabel::of(side, chart, tz, link).map_or_else(String::new, |l| l.text());
             let header = SideHeader {
                 which: side,
-                salt: self.pane.id,
+                salt: self.id,
                 pad_left: parts.pad_left,
                 plate: parts.plate,
                 clock: &clock,
@@ -1270,7 +1249,7 @@ impl super::PaneMut<'_> {
     /// The layer menu, drawn and applied: what the right-click opens.
     pub fn draw_layer_menu(&mut self, ui: &mut egui::Ui, chrome: &mut PaneChrome<'_>) {
         let intents = {
-            let strategies = chrome.strategies.pane(self.pane.id);
+            let strategies = chrome.strategies.pane(self.id);
             let (menu, model, view) =
                 self.menu_parts(chrome.capabilities, chrome.style, strategies);
             let hosts = PaneMenuHosts {
@@ -1292,7 +1271,7 @@ impl super::PaneMut<'_> {
         let row = self
             .layer_read()
             .row(layer, chrome.capabilities, chrome.style);
-        let intent = self.pane.context_menu.layer_checkbox(ui, row);
+        let intent = self.context_menu.layer_checkbox(ui, row);
         self.apply_menu_intents(intent, chrome);
     }
 
@@ -1304,9 +1283,9 @@ impl super::PaneMut<'_> {
         use quantick_chart_interaction::pane::{Effect, Intent, update};
         let id = choice.drawing_id();
         let drawing = id
-            .and_then(|id| self.pane.drawings.index_of(id))
-            .map(|index| super::context_menu::drawing_fact(&self.pane.drawings.items()[index]));
-        for effect in update(&mut self.pane.model, Intent::Menu { choice, drawing }) {
+            .and_then(|id| self.drawings.index_of(id))
+            .map(|index| super::context_menu::drawing_fact(&self.drawings.items()[index]));
+        for effect in update(&mut self.model, Intent::Menu { choice, drawing }) {
             if let Effect::Menu(intent) = effect {
                 self.execute_menu_effect(intent, chrome);
             }
@@ -1339,22 +1318,22 @@ impl super::PaneMut<'_> {
             }
             HeaderIntent::ToggleSettings => actions.toggle_settings = true,
             HeaderIntent::SetLights(on) => {
-                if let Some(owner) = self.pane.orderflow.as_mut() {
+                if let Some(owner) = self.orderflow.as_mut() {
                     owner.settings_panel.set_lights(on);
                 }
             }
             HeaderIntent::SetLaneWindow(window) => {
-                if let Some(owner) = self.pane.orderflow.as_mut() {
+                if let Some(owner) = self.orderflow.as_mut() {
                     owner.set_live_lane_window(window);
                 }
             }
             HeaderIntent::SetView(view) => {
-                if let Some(owner) = self.pane.orderflow.as_mut() {
+                if let Some(owner) = self.orderflow.as_mut() {
                     owner.set_lane_view(view);
                 }
             }
             HeaderIntent::SetSample(sample, scale) => {
-                if let Some(owner) = self.pane.orderflow.as_mut() {
+                if let Some(owner) = self.orderflow.as_mut() {
                     owner.set_bubble_display_scale(target(sample).into(), scale);
                 }
             }

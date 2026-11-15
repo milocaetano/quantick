@@ -301,14 +301,13 @@ pub(super) fn handle_axis_gestures(
     areas: &PlotAreas,
     chrome: &mut PaneChrome<'_>,
 ) {
-    let auto = pane.pane.frame.auto_range;
+    let auto = pane.frame.auto_range;
     super::lane_rail::handle_lane_divider(pane, ui, areas.chart);
 
     // Bottom time strip: drag or scroll to zoom. The segment under the
     // lane zooms the lane's window, the rest zooms the candle spacing —
     // each pane's own time axis, under the pane it belongs to.
-    let (history_strip, lane_strip) =
-        split_time_strip(areas.time_strip, pane.pane.frame.lane_divider_x);
+    let (history_strip, lane_strip) = split_time_strip(areas.time_strip, pane.frame.lane_divider_x);
     let id = pane.interaction_id("time_nav");
     let time = time_strip(pane, ui, history_strip, id, false);
     // The time axis's own menu, the price gutter's twin: what an axis
@@ -316,7 +315,7 @@ pub(super) fn handle_axis_gestures(
     // the compass gave it something to say.
     time.context_menu(|ui| {
         #[cfg(test)]
-        pane.pane.context_menu.layer_menu_rects.clear();
+        pane.context_menu.layer_menu_rects.clear();
         pane.layer_menu_switch(ui, ChartLayer::PointerTime, chrome);
     });
     // Jump-to-live (audit F6): panned into history, the way back is one click at the axis' live
@@ -329,7 +328,7 @@ pub(super) fn handle_axis_gestures(
         );
         if chip.hovered() {
             // The hand alone: no painted crosshair chases it on the strip.
-            pane.pane.hover_pos = None;
+            pane.hover_pos = None;
             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
         }
         if chip.clicked() {
@@ -348,9 +347,9 @@ pub(super) fn handle_axis_gestures(
     // A lane strip exists only where a lane does, so this is flow-pane
     // only by construction — the tape is what draws the segment.
     if let Some(lane_strip) = lane_strip
-        && pane.pane.orderflow.is_some()
+        && pane.orderflow.is_some()
     {
-        let id = egui::Id::new(("lane_time_nav", pane.pane.id));
+        let id = egui::Id::new(("lane_time_nav", pane.id));
         time_strip(pane, ui, lane_strip, id, true);
     }
 
@@ -374,11 +373,11 @@ pub(super) fn handle_axis_gestures(
     // switches appears.
     price_gutter.context_menu(|ui| {
         #[cfg(test)]
-        pane.pane.context_menu.layer_menu_rects.clear();
+        pane.context_menu.layer_menu_rects.clear();
         use quantick_chart_interaction::pane_menu::{bar_progress_entry, inverted_entry};
         let entries = [
             bar_progress_entry(chrome.price_tag.on),
-            inverted_entry(pane.pane.price_view.is_inverted()),
+            inverted_entry(pane.price_view.is_inverted()),
         ];
         let intents = super::menu_renderer::render(
             ui,
@@ -407,7 +406,7 @@ pub(super) fn handle_indicator_pane_gestures(
     // The same gesture, once per pane, over the gutter band beside it. Keyed by slot *and* pane
     // id: slots are allocated per pane, so a split's two charts can hold the same slot number
     // and a slot-only id would make one pane's axis answer for the other's.
-    let pane_id = pane.pane.id;
+    let pane_id = pane.id;
     let mut pane_time_gesture = PaneGesture::default();
     for ((view, gutter), body) in pane
         .pane

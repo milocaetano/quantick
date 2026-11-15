@@ -546,8 +546,7 @@ fn workspace_lifetime_deferred_state_waits_for_its_stable_pane_not_a_replacement
         .tabs
         .by_id_mut(target.tab)
         .unwrap()
-        .pane_mut(target.side)
-        .id = target.pane + 1000;
+        .rekey_pane(target.side, target.pane + 1000);
     app.layout_adapter().apply_pending_indicator_state();
     let view = app
         .runtime
@@ -578,8 +577,7 @@ fn workspace_lifetime_deferred_state_waits_for_its_stable_pane_not_a_replacement
         .tabs
         .by_id_mut(target.tab)
         .unwrap()
-        .pane_mut(target.side)
-        .id = target.pane;
+        .rekey_pane(target.side, target.pane);
     app.layout_adapter().apply_pending_indicator_state();
     let view = app
         .runtime

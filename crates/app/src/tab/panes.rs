@@ -121,6 +121,23 @@ impl Tab {
         self.time_panes.push(pane);
     }
 
+    /// Give the pane on `side` a new id, its series and workers moving with
+    /// it: how a test stands in for a pane replaced under a stable slot.
+    #[cfg(test)]
+    pub(crate) fn rekey_pane(&mut self, side: PaneSide, id: u64) {
+        let old = self.pane(side).id;
+        let series = self.session.close_pane(old).expect("the pane's series");
+        let workers = self.pane_workers.remove(&old).expect("the pane's workers");
+        let spec = *series.state().spec();
+        *self.session.open_pane(id, spec) = series;
+        self.pane_workers.insert(id, workers);
+        let pane = match side {
+            PaneSide::Time(slot) => self.time_panes.get_mut(slot).unwrap_or(&mut self.flow_pane),
+            PaneSide::Flow => &mut self.flow_pane,
+        };
+        pane.id = id;
+    }
+
     /// The flow pane's bars, as the tab session holds them.
     #[must_use]
     pub fn flow_series(&self) -> &quantick_session::PaneSeries {

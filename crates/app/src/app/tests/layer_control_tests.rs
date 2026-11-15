@@ -83,7 +83,7 @@ fn omitted_pane_mutations_have_correlated_once_only_and_noop_journal_readback() 
         let (other, _, _, _) = test_app();
         let mut tab = other.runtime.tabs.into_single_runtime();
 
-        tab.flow_pane.id = id + 1000;
+        tab.rekey_pane(PaneSide::Flow, id + 1000);
         let opening = app.runtime.tabs.plan_open();
         app.runtime.tabs.append(opening, tab);
     }

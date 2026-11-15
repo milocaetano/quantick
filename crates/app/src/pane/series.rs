@@ -48,7 +48,7 @@ impl<P: super::LentPane, S: super::LentSeries, W: super::LentWorkers> super::Pan
     }
     /// The composed reads — see `quantick_chart::pane_series::PaneSeriesRead`.
     pub(crate) fn series_read(&self) -> quantick_drawings::gesture::PaneSeriesRead<'_> {
-        self.series.read(&self.pane.spec)
+        self.series.read(&self.spec)
     }
     // The slot reads, each one line onto the composed series that owns its
     // rule and its documentation.
@@ -80,8 +80,7 @@ impl<P: super::LentPane, S: super::LentSeries, W: super::LentWorkers> super::Pan
         self.series_read().covered_window()
     }
     pub fn right_edge_time(&self) -> Option<i64> {
-        self.series_read()
-            .right_edge_time(&self.pane.model.viewport)
+        self.series_read().right_edge_time(&self.model.viewport)
     }
 
     pub fn history_pending(&self) -> bool {
@@ -99,6 +98,7 @@ impl<P: super::LentPane, S: super::LentSeries, W: super::LentWorkers> super::Pan
 impl super::PaneMut<'_> {
     /// The bars this pane cuts from the tape, for the few writers outside the
     /// series passes.
+    #[cfg(test)]
     pub(crate) fn series_state_mut(&mut self) -> &mut ChartState {
         self.series.state_mut()
     }
@@ -114,7 +114,7 @@ impl super::PaneMut<'_> {
     pub fn set_spec(&mut self, spec: impl Into<crate::state::BarConfiguration>) {
         let spec = spec.into();
         let changed = self.series.state().spec() != &spec;
-        self.pane.spec.set(spec);
+        self.spec.set(spec);
         self.series.state_mut().set_spec(spec);
         if changed {
             self.pane.bump_pagination_revision();
@@ -131,11 +131,11 @@ impl super::PaneMut<'_> {
     /// command behind spec switches, prepended history and source resets, so
     /// indicators inherit correct behavior for every rebuild path.
     pub fn send_indicator_rebuild(&mut self) {
-        if let Some(owner) = self.pane.orderflow.as_mut() {
+        if let Some(owner) = self.orderflow.as_mut() {
             owner.reset_flow_executions();
         }
-        self.pane.lane.reset();
-        self.pane.indicator_worker.send(IndicatorCommand::Rebuild(
+        self.lane.reset();
+        self.indicator_worker.send(IndicatorCommand::Rebuild(
             self.series.closed_bars(),
             self.series.state().partial().cloned(),
         ));
@@ -157,12 +157,10 @@ impl super::PaneMut<'_> {
         for effect in change.install_effects() {
             match effect {
                 PrefixInstallEffect::ShiftViewport(delta) => {
-                    self.pane.model.viewport.shift_right_edge(delta)
+                    self.model.viewport.shift_right_edge(delta)
                 }
                 PrefixInstallEffect::ShiftDrawings(delta) => self.marks_mut().shift_bars(delta),
-                PrefixInstallEffect::ShiftIndicatorRows(added) => {
-                    self.pane.indicators.shift_rows(added)
-                }
+                PrefixInstallEffect::ShiftIndicatorRows(added) => self.indicators.shift_rows(added),
                 PrefixInstallEffect::RebuildIndicators => self.send_indicator_rebuild(),
             }
         }
@@ -173,20 +171,20 @@ impl super::PaneMut<'_> {
     pub fn apply_indicator_events(&mut self) {
         self.pane.drain_indicator_events();
         let bars = self.series.closed_slots();
-        if self.pane.indicators.row_drift(bars).is_none() {
+        if self.indicators.row_drift(bars).is_none() {
             return;
         }
         // Behind is normal while the worker has work. Idle, and with what it had
         // already published taken in, a difference means a rebuild was missed.
-        let counts = self.pane.indicator_worker.progress().counts;
+        let counts = self.indicator_worker.progress().counts;
         if counts.queued + counts.inflight + counts.parked + counts.deferred == 0 {
             self.pane.drain_indicator_events();
-            if let Some(rows) = self.pane.indicators.answer_row_drift(bars) {
+            if let Some(rows) = self.indicators.answer_row_drift(bars) {
                 tracing::warn!(
                     target: "quantick::app",
                     schema_version = 1_u8,
                     event_code = "INDICATOR_ROWS_DRIFT",
-                    pane = self.pane.id,
+                    pane = self.id,
                     rows,
                     bars,
                     action = "rebuild_indicators",
@@ -224,12 +222,11 @@ impl super::PaneMut<'_> {
             self.pane.bump_pagination_revision();
         }
         self.series.state_mut().ingest_backfill(trades);
-        self.pane.lane.reset();
-        self.pane
-            .indicator_worker
+        self.lane.reset();
+        self.indicator_worker
             .send(IndicatorCommand::Backfilled(self.series.closed_bars()));
         let partial = self.partial_command();
-        self.pane.indicator_worker.send(partial);
+        self.indicator_worker.send(partial);
         self.publish_tape_price_step();
     }
 
@@ -249,10 +246,7 @@ impl super::PaneMut<'_> {
     /// change how many bars it holds.
     fn history_anchor(&self) -> Option<(Option<i64>, f32, usize)> {
         let path_dependent = self.series.state().spec().definition().path_dependent;
-        path_dependent.then(|| {
-            self.series_read()
-                .history_view_anchor(&self.pane.model.viewport)
-        })
+        path_dependent.then(|| self.series_read().history_view_anchor(&self.model.viewport))
     }
 
     fn finish_history_prepend(&mut self, added: usize, anchor: Option<(Option<i64>, f32, usize)>) {
@@ -261,17 +255,17 @@ impl super::PaneMut<'_> {
             // different number of bricks, so the view and the marks go back
             // to market time.
             let slot = edge_time.and_then(|ms| self.slot_at_time(ms));
-            self.pane.model.viewport.reanchor_history(slot, offset);
+            self.model.viewport.reanchor_history(slot, offset);
             self.reanchor_drawings(old_slots);
         } else {
             // Older bars shift every index up by `added`; keep the view steady.
-            self.pane.model.viewport.shift_right_edge(added as isize);
+            self.model.viewport.shift_right_edge(added as isize);
             self.marks_mut().shift_bars(added as isize);
         }
         // Indicator columns shift with them: the rebuild below is a round-trip
         // away, and until it lands every value would otherwise be drawn
         // `added` slots off its own candle.
-        self.pane.indicators.shift_rows(added);
+        self.indicators.shift_rows(added);
         self.publish_tape_price_step();
         // Older trades re-cut every bar; replay from scratch.
         self.send_indicator_rebuild();
@@ -332,7 +326,7 @@ impl super::PaneMut<'_> {
 
     pub fn settle_pending_reanchor(&mut self) {
         let slots = self.slots();
-        let Some(old_slots) = self.pane.model.history.settle_reanchor(slots) else {
+        let Some(old_slots) = self.model.history.settle_reanchor(slots) else {
             return;
         };
         self.reanchor_drawings(old_slots);
@@ -371,18 +365,18 @@ impl super::PaneMut<'_> {
     /// rebuild of the same market.
     pub fn reset_series_with(&mut self, keep_readings: bool) {
         self.workers.history.cancel();
-        if let Some(owner) = self.pane.orderflow.as_mut() {
+        if let Some(owner) = self.orderflow.as_mut() {
             owner.reset_flow_executions();
         }
         // A second reset before the first settled must not overwrite the
         // baseline with the empty series it is looking at now.
         let slots = self.slots();
-        self.pane.model.history.defer_reanchor(slots);
+        self.model.history.defer_reanchor(slots);
         // The prefix is bar-indexed against a series that no longer exists,
         // and its seam was trimmed against a first bar that is gone. A replay
         // never has one today; the invariant must not depend on that.
-        self.series.reset(self.pane.spec.spec(), keep_readings);
-        self.pane.lane.reset();
+        self.series.reset(self.spec.spec(), keep_readings);
+        self.lane.reset();
         self.publish_partial();
         let pane = &mut *self.pane;
         pane.bump_pagination_revision();
@@ -440,18 +434,17 @@ impl super::PaneMut<'_> {
         trade: &quantick_engine::Trade,
         closed_observer: &mut dyn FnMut(PaneRef<'_>, &quantick_engine::Bar, usize),
     ) {
-        if let Some(orderflow) = self.pane.orderflow.as_mut() {
+        if let Some(orderflow) = self.orderflow.as_mut() {
             orderflow.record_trade(trade);
         }
         let closes = self.series.ingest_live(trade);
         self.publish_tape_price_step();
         let seam = self.series.prefix().len();
         if let Some(live_from) = closes.history_until {
-            self.pane.lane.reset();
+            self.lane.reset();
             let mut history = self.series.closed_bars();
             history.truncate(seam + live_from);
-            self.pane
-                .indicator_worker
+            self.indicator_worker
                 .send(IndicatorCommand::Backfilled(history));
         }
         // One print can close several bars — a Renko print clearing several
@@ -460,9 +453,8 @@ impl super::PaneMut<'_> {
             let view = self.view();
             closed_observer(view, &self.series.state().bars()[index], seam + index);
             let closed = self.series.state().bars()[index].clone();
-            self.pane.lane.reset();
-            self.pane
-                .indicator_worker
+            self.lane.reset();
+            self.indicator_worker
                 .send(IndicatorCommand::BarClosed(closed));
         }
     }
@@ -473,7 +465,7 @@ impl super::PaneMut<'_> {
     /// [`Self::ingest_live_trade_observed`] for why it is not sent per trade.
     pub fn publish_partial(&mut self) {
         let command = self.partial_command();
-        self.pane.indicator_worker.send(command);
+        self.indicator_worker.send(command);
     }
 
     /// Publish only the forming run's unsent suffix; the worker retains it.

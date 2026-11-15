@@ -143,7 +143,7 @@ impl super::PaneMut<'_> {
         } = input;
         let (tape_only, native_tape) = self.tape_modes();
         // Tape only has no divider to grab: its left edge is the canvas's.
-        let divider = self.pane.frame.lane_divider_x.filter(|_| !tape_only);
+        let divider = self.frame.lane_divider_x.filter(|_| !tape_only);
         let handle = super::lane_rail::lane_handle(self, area);
         let on_divider = |at: egui::Pos2| handle.is_some_and(|rect| rect.x_range().contains(at.x));
         let over_tape = |position: egui::Pos2| {
@@ -211,7 +211,7 @@ impl super::PaneMut<'_> {
         let repeat = CanvasRepeat::of(chart.double_clicked(), chart.triple_clicked());
         let click = WindowClick::of(any_click, on_canvas, repeat);
         let pass = ui.ctx().cumulative_pass_nr();
-        if let Some(repeat) = self.pane.model.double_click.observe(pass, click) {
+        if let Some(repeat) = self.model.double_click.observe(pass, click) {
             // The triple zooms where its double centred: no target read off the view it moved.
             let at = chart
                 .interact_pointer_pos()
@@ -226,7 +226,7 @@ impl super::PaneMut<'_> {
                 .filter(|at| !tape && overlay.is_none() && !on_divider(*at))
                 .and_then(|at| self.hit_test().canvas_hit(at));
             open_settings = repeat.opens_chart_settings(canvas);
-            let tape_live = (self.pane.orderflow.as_ref()).is_some_and(|t| t.tape_end().is_live());
+            let tape_live = (self.orderflow.as_ref()).is_some_and(|t| t.tape_end().is_live());
             navigate(
                 self,
                 quantick_chart_interaction::pane::Intent::ReturnToLive {
@@ -245,7 +245,7 @@ impl super::PaneMut<'_> {
             // native tape leaves when switched off zooms its window too.
             let over_lane = |at: egui::Pos2| divider.is_some_and(|x| at.x > x);
             let tape = tape_only || chart.hover_pos().is_some_and(over_lane);
-            let tape = tape && self.pane.orderflow.is_some();
+            let tape = tape && self.orderflow.is_some();
             navigate(
                 self,
                 quantick_chart_interaction::pane::Intent::Zoom { factor, tape },
