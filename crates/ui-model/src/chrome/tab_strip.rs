@@ -9,11 +9,21 @@ pub enum TabAction {
 }
 pub use TabAction as Action;
 
+/// One tab as the strip paints it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Chip {
     pub id: u64,
+    /// `SYMBOL · venue`, composed by the tab when its market last changed.
     pub label: String,
+    /// The feed's mark: none while healthy and live.
     pub feed: TabFeed,
+    /// The workspace, for the hover, and the venue's code (`BIN`) for its tag.
+    pub workspace: String,
+    pub venue_code: String,
+    /// The open tab's symbol in its workspace's colour, where that reads on
+    /// the tab (`quantick_stores::workspaces::symbol_ink`); `None` keeps the
+    /// tab's normal ink.
+    pub symbol_ink: Option<[u8; 3]>,
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Snapshot {
@@ -74,6 +84,9 @@ mod tests {
                 id: 7,
                 label: "BTC".into(),
                 feed: TabFeed::Live,
+                workspace: "Default".into(),
+                venue_code: "BIN".into(),
+                symbol_ink: None,
             }],
             active: 0,
             surface: StripSurface::default(),

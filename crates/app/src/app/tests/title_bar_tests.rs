@@ -34,10 +34,9 @@ fn title_bar_narrow_overflow_keeps_selection_plus_and_window_buttons_reachable()
         for (_, rect) in &title.strip.tabs {
             assert_eq!(rect.height(), crate::tabstrip::CHIP_HEIGHT);
             if width >= 1200.0 {
-                assert!(
-                    rect.width() >= 150.0,
-                    "normal market labels use the enlarged width"
-                );
+                // Room to spare: each tab hugs its content, with no stretch gap.
+                let hug = (40.0..150.0).contains(&rect.width());
+                assert!(hug, "a tab hugs its content: {}", rect.width());
             }
         }
         let plus = title.strip.add.unwrap();
@@ -154,7 +153,7 @@ fn title_bar_native_clicks_traverse_registered_view_model_and_host() {
             ctx.run(input, |ctx| {
                 let _ = super::super::title_bar::draw(
                     ctx,
-                    &app.runtime.tabs,
+                    (&app.runtime, &app.config),
                     &mut app.chrome.title_bar,
                     &mut app.surfaces,
                 );
@@ -295,7 +294,7 @@ fn title_bar_idle_frames_preserve_text_focus_and_native_close_uses_normal_shutdo
         let _ = ctx.run(egui::RawInput::default(), |ctx| {
             let _ = super::super::title_bar::draw(
                 ctx,
-                &app.runtime.tabs,
+                (&app.runtime, &app.config),
                 &mut app.chrome.title_bar,
                 &mut app.surfaces,
             );
@@ -403,7 +402,7 @@ fn title_bar_accepts_degenerate_client_widths_without_negative_widget_sizes() {
         let _ = ctx.run(input, |ctx| {
             let _ = super::super::title_bar::draw(
                 ctx,
-                &app.runtime.tabs,
+                (&app.runtime, &app.config),
                 &mut app.chrome.title_bar,
                 &mut app.surfaces,
             );

@@ -1092,3 +1092,18 @@ fn the_workspace_menu_wears_designer_b_s_tokens_in_both_themes() {
         assert_eq!(got, want, "{}", theme.name);
     }
 }
+
+/// OKLab distance: zero for one colour, and the palette's tightest pair and
+/// Dark Petrol's distance to Dark's buy ink as the colour plan measured them.
+#[test]
+fn oklab_distance_measures_the_workspace_palette_as_planned() {
+    let rgb = PremultipliedRgba::from_rgb;
+    let cobalt = rgb(0x73, 0x93, 0xF5);
+    assert_eq!(contrast::oklab_distance(cobalt, cobalt), 0.0);
+    let pair = contrast::oklab_distance(cobalt, rgb(0x80, 0x85, 0xF2));
+    assert!((0.0360..0.0370).contains(&pair), "{pair}");
+    let buy = contrast::oklab_distance(rgb(0x4F, 0xA6, 0xC2), rgb(0x26, 0xA6, 0x9A));
+    assert!((0.0687..0.0697).contains(&buy), "{buy}");
+    let symmetric = contrast::oklab_distance(rgb(0x26, 0xA6, 0x9A), rgb(0x4F, 0xA6, 0xC2));
+    assert!((symmetric - buy).abs() < 1e-6);
+}

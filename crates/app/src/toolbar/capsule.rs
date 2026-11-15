@@ -12,6 +12,7 @@ use quantick_workspace::canvas::{CanvasRect, PaneKind, PaneTree};
 
 use super::ToolbarAction;
 use crate::theme;
+use quantick_appearance::tab_strip::WORKSPACE_CAPSULE_BAR_PT as BAR;
 
 /// The capsule's height: History's.
 const HEIGHT_PX: f32 = 22.0;
@@ -32,8 +33,9 @@ const PANE_STROKE_PX: f32 = 1.0;
 pub struct CapsuleModel<'a> {
     /// The docked panes the canvas draws, as the model's tree.
     pub tree: &'a PaneTree,
-    /// The tab's workspace name.
+    /// The tab's workspace name, and its colour: the tint, border and left bar.
     pub workspace: &'a str,
+    pub colour: Option<quantick_workspace::workspace_colour::WorkspaceColour>,
     /// Auto save is off and the workspace differs from its save.
     pub unsaved: bool,
     /// What differs is the layout: the miniature wears the dot too.
@@ -129,19 +131,28 @@ pub fn draw(
     );
     let stroke = ui.visuals().widgets.inactive.bg_stroke;
     let painter = ui.painter();
-    painter.rect(
-        whole,
-        ROUNDING_PX,
-        ui.visuals().widgets.inactive.weak_bg_fill,
-        stroke,
-    );
+    // A workspace's colour tints the fill and takes the border.
+    let (fill, edge) = match model.colour {
+        Some(colour) => {
+            let [r, g, b, a] = quantick_stores::workspaces::capsule_fill(colour, &palette.resolved);
+            let [ir, ig, ib] = colour.rgb(palette.resolved.dark);
+            let edge = (stroke.width, egui::Color32::from_rgb(ir, ig, ib)).into();
+            (egui::Color32::from_rgba_premultiplied(r, g, b, a), edge)
+        }
+        None => (palette.control(), stroke),
+    };
+    painter.rect(whole, ROUNDING_PX, fill, edge);
     for (part, response, lit) in [
         (miniature, &layout, model.popover_open),
         (name_rect, &menu, model.menu_open),
     ] {
         if lit || response.hovered() {
-            painter.rect_filled(part.shrink(1.0), ROUNDING_PX, palette.control());
+            painter.rect_filled(part.shrink(1.0), ROUNDING_PX, fill);
         }
+    }
+    if model.colour.is_some() {
+        let bar = painter.with_clip_rect(whole.with_max_x(whole.left() + BAR));
+        bar.rect_filled(whole, ROUNDING_PX, edge.color);
     }
     painter.vline(miniature.right() + 0.5, whole.y_range().shrink(4.0), stroke);
     let face = egui::Rect::from_center_size(miniature.center(), MINIATURE);
@@ -247,6 +258,7 @@ pub(crate) mod tests {
         CapsuleModel {
             tree: crate::canvas_layout::LAYOUT_PRESETS[0].tree,
             workspace: "Default",
+            colour: None,
             unsaved: false,
             layout_unsaved: false,
             menu_open: false,

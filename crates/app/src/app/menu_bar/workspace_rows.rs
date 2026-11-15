@@ -35,15 +35,16 @@ pub(super) fn chip_menu(
     }
     let label = |id| tabs.by_id(id).map(|t| t.symbol.clone()).unwrap_or_default();
     let live = app.active_tab().canvas.state.tree();
-    let rows = cache.menu(app.runtime.workspace.book.book(), tab, &keys, live, label);
+    let (palette, border) = (crate::theme::get(ctx), model::CHIP_MENU_BORDER_PT);
+    let (book, dark) = (app.runtime.workspace.book.book(), palette.resolved.dark);
+    let rows = cache.menu(book, tab, &keys, live, dark, label);
     let keys = [Key::ArrowDown, Key::ArrowUp, Key::Enter, Key::Escape];
     let [down, up, enter, escape] =
         ctx.input_mut(|i| keys.map(|k| i.consume_key(Modifiers::NONE, k)));
     let at = |r: Rect| MenuBounds::new(r.left(), r.top(), r.right(), r.bottom());
     let (n, screen, anchored) = (rows.list.len(), at(ctx.screen_rect()), at(anchor));
     let layout = |shown| model::chip_menu_layout(screen, anchored, n, shown);
-    let (palette, border) = (crate::theme::get(ctx), model::CHIP_MENU_BORDER_PT);
-    let (w, dark) = (layout(n).width - 2.0 * border, palette.resolved.dark);
+    let w = layout(n).width - 2.0 * border;
     let ink = |t: Option<Token>| t.map_or(Color32::TRANSPARENT, |t| *palette.get(t));
     let chrome = quantick_appearance::workspace_menu::chrome(dark);
     let edge = egui::Stroke::new(border, ink(Some(chrome.edge)));
@@ -158,6 +159,10 @@ fn paint(ui: &egui::Ui, at: egui::Pos2, piece: &Piece, ink: &Ink<'_>, drawn: &mu
                 painter.galley(place, words, ink(Some(t.ink)));
             }
             Mark::Tree(area, tree) => paint_tree(painter, rect(*area), tree),
+            Mark::Colour { at, radius, rgb } => {
+                let [r, g, b] = *rgb;
+                painter.rect_filled(rect(*at), *radius, Color32::from_rgb(r, g, b));
+            }
         }
         if let Some(hover) = piece.hover.filter(|_| index == 0 && response.hovered()) {
             plate(&hover);

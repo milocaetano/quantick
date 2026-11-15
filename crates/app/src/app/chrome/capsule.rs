@@ -28,6 +28,7 @@ pub(in crate::app) fn snapshot(app: &QuantickApp, ctx: &egui::Context) -> Capsul
         unsaved,
         marks: LayoutMarks::of(live, saved.as_ref(), unsaved),
         menu_open: app.chrome.window_menu.tab_workspace.chip_menu_on(tab),
+        colour: book.book().tab_colour(tab),
         workspace,
         door_open: (app.chrome.window_menu).opened_from(ctx.viewport_id(), MenuDoor::Toolbar),
         door_hover: format!(
@@ -91,14 +92,14 @@ pub(in crate::app) fn settle(
     crate::app::menu_bar::workspace_cell(app, ctx, Some(rects.name), workspace_clicked);
     app.chrome.add_menu.door = rects.add;
     crate::app::canvas_wiring::add_from_menu(app, ctx);
-    publish(app, viewport, state, rects, door, &cells);
+    publish(app, ctx, state, rects, door, &cells);
     rest
 }
 
 /// The list door, the capsule's parts and the popover's cells, as drawn.
 fn publish(
     app: &mut QuantickApp,
-    viewport: egui::ViewportId,
+    ctx: &egui::Context,
     state: &CapsuleState,
     rects: CapsuleRects,
     door: Option<egui::Rect>,
@@ -112,6 +113,7 @@ fn publish(
         capability,
         description: None,
     };
+    let (viewport, dark) = (ctx.viewport_id(), crate::theme::get(ctx).resolved.dark);
     let popovers = app.surfaces.canvas_popovers.model_state.projection();
     let tab = app.runtime.tabs.active_id();
     let menu = &app.chrome.window_menu;
@@ -139,13 +141,15 @@ fn publish(
         None,
     ));
     let workspace_open = menu.tab_workspace.chip_menu_on(tab);
-    controls.push(control(
+    let mut workspace = control(
         "capsule.workspace",
         &state.workspace,
         rects.name,
         workspace_open,
         Some(quantick_control_handlers::workspace_book::cell_menu::MENU_CAPABILITY_ID),
-    ));
+    );
+    workspace.description = state.colour.map(|colour| colour.describe(dark));
+    controls.push(workspace);
     if let Some(floppy) = rects.floppy {
         let save = Some(quantick_control_schema::workspace_book::WORKSPACE_SAVE_TO_CAPABILITY_ID);
         controls.push(control(

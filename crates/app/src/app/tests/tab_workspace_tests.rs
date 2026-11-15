@@ -274,6 +274,34 @@ fn a_first_run_leaves_tabs_unmodified_with_the_recipe_equal_to_what_they_show() 
     }
 }
 
+fn market(app: &QuantickApp) -> crate::app::title_bar::Market<'_> {
+    (&app.runtime, &app.config)
+}
+
+/// Two tabs on two workspaces, whatever market they show: each chip carries
+/// its own workspace's colour as the resolver gives it for the theme, and
+/// the venue's code from config.
+#[test]
+fn two_workspaces_on_one_market_wear_two_colours() {
+    let layouts = crate::scratch::ScratchFile::new("workspace-two-colours", "layouts.toml");
+    let (mut app, first, _second) = two_tabs(&layouts);
+    let book = app.runtime.workspace.book.book_mut();
+    book.save_as(first, "Scalp").unwrap();
+    let dark = quantick_appearance::ResolvedTheme::default();
+    let chips = crate::app::title_bar::chips_of(market(&app), &[0, 1], &dark);
+    assert_eq!(chips[0].workspace, "Scalp");
+    assert_ne!(chips[1].workspace, "Scalp");
+    let book = app.runtime.workspace.book.book();
+    let resolved = |tab| book.tab_colour(tab).map(|colour| colour.rgb(true));
+    assert_eq!(chips[0].symbol_ink, resolved(first));
+    assert!(chips[1].symbol_ink.is_some());
+    assert_ne!(chips[0].symbol_ink, chips[1].symbol_ink);
+    assert_eq!(
+        chips[0].venue_code,
+        app.config.feed_code(&app.runtime.tabs[0].feed_id)
+    );
+}
+
 /// The chip names the market the status bar names, and no workspace or mark:
 /// the cell's mark is the snapshot's, with autosave off and an edit held.
 #[test]
@@ -282,7 +310,8 @@ fn chip_and_snapshot_read_one_state() {
     let (mut app, first, second) = two_tabs(&layouts);
     app.runtime.workspace.book.book_mut().set_autosave(false);
     edit_split(&mut app, first, 0.31);
-    let labels: Vec<String> = crate::app::title_bar::chips_of(&app.runtime.tabs, &[0, 1])
+    let theme = quantick_appearance::ResolvedTheme::default();
+    let labels: Vec<String> = crate::app::title_bar::chips_of(market(&app), &[0, 1], &theme)
         .iter()
         .map(|chip| chip.label.to_owned())
         .collect();
@@ -1725,8 +1754,13 @@ fn names_that_fit_paint_whole_over_their_summaries() {
                 .iter()
                 .any(|(text, cut, _)| *text == row.label && !cut);
             assert!(whole, "{count}: {} whole: {painted:?}", row.label);
-            let summary = row.description.clone().expect("a summary");
-            let under = painted_rows(&output, &summary);
+            // The scene ends the summary with the colour's words, which the
+            // row paints as its slot, not as text.
+            let said = row.description.clone().expect("a summary");
+            let summary = said
+                .rsplit_once(" \u{b7} ")
+                .map_or(said.as_str(), |(s, _)| s);
+            let under = painted_rows(&output, summary);
             assert!(!under.is_empty(), "{count}: {summary} painted");
             checked += 1;
         }
@@ -2156,4 +2190,243 @@ fn enter_in_the_filter_switches_to_the_first_match() {
     run_frame_sized(&mut app, &ctx, FULL_HD, enter, egui::Modifiers::NONE);
     run_frame_at(&mut app, &ctx, FULL_HD);
     assert_eq!(app.runtime.workspace.book.tab_row(first).0, "Desk 05");
+}
+
+/// The shapes `output` paints in `colour` inside `within`, one surface's
+/// rectangle: rect fills (also while a menu fades in, its opacity aside),
+/// rect edges and text.
+fn painted_in(output: &egui::FullOutput, colour: egui::Color32, within: egui::Rect) -> [usize; 3] {
+    fn walk(
+        shape: &egui::Shape,
+        colour: egui::Color32,
+        within: egui::Rect,
+        found: &mut [usize; 3],
+    ) {
+        // Premultiplied by the fade's alpha: each channel back over it.
+        let near =
+            |c: u8, want: u8, a: u8| (u32::from(c) * 255 / u32::from(a)).abs_diff(want.into()) <= 2;
+        let faded = |fill: egui::Color32| {
+            let a = fill.a();
+            a > 0
+                && near(fill.r(), colour.r(), a)
+                && near(fill.g(), colour.g(), a)
+                && near(fill.b(), colour.b(), a)
+        };
+        let inside = |at: egui::Rect| within.expand(1.0).contains_rect(at);
+        match shape {
+            egui::Shape::Rect(rect) if inside(rect.rect) => {
+                found[0] += usize::from(faded(rect.fill));
+                found[1] += usize::from(rect.stroke.color == colour);
+            }
+            egui::Shape::Text(text) if inside(text.visual_bounding_rect()) => {
+                found[2] += usize::from(text.fallback_color == colour);
+            }
+            egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| walk(s, colour, within, found)),
+            _ => {}
+        }
+    }
+    let mut found = [0; 3];
+    for clipped in &output.shapes {
+        walk(&clipped.shape, colour, within, &mut found);
+    }
+    found
+}
+
+/// The rectangles of the open tab `tab` and of the capsule, as last drawn.
+fn tab_and_capsule(app: &QuantickApp, tab: u64) -> (egui::Rect, egui::Rect) {
+    let strip = &app.chrome.title_bar.strip.tab_ids;
+    let open = strip
+        .iter()
+        .find(|(id, _)| *id == tab)
+        .expect("the open tab")
+        .1;
+    let capsule = app.chrome.capsule;
+    (open, capsule.miniature.union(capsule.name))
+}
+
+/// `colour` as the window paints it on `ctx`'s theme.
+fn resolved(
+    ctx: &egui::Context,
+    colour: quantick_stores::workspaces::WorkspaceColour,
+) -> egui::Color32 {
+    let [r, g, b] = colour.rgb(crate::theme::get(ctx).resolved.dark);
+    egui::Color32::from_rgb(r, g, b)
+}
+
+/// A custom colour set by `workspace.colour.set` reads alike on every
+/// surface: the open tab's symbol, the capsule's border and bar, the menu's
+/// row and header slots, the scene, `workspace.list` and `workspace.summary`;
+/// a preset paints its resolved value for the theme on the tab, the capsule
+/// and a row; the open menu shows no "Colour of" section.
+#[test]
+fn a_colour_set_by_call_reads_alike_on_every_surface() {
+    use crate::control::ActionOrigin;
+    use quantick_stores::workspaces::WorkspaceColour;
+    use serde_json::json;
+    let layouts = crate::scratch::ScratchFile::new("workspace-colour-surfaces", "layouts.toml");
+    let (mut app, first, _) = two_tabs(&layouts);
+    app.runtime.tabs.select(0);
+    let call = |app: &mut QuantickApp, id: &str, input: serde_json::Value| {
+        app.control_action(id, 1, ActionOrigin::Human, input)
+            .unwrap_or_else(|error| panic!("{id}: {error:?}"))
+    };
+    call(&mut app, "workspace.save_as", json!({ "name": "Scalp" }));
+    let wire = json!({ "custom": "#3A7BD5", "light": "#3A7BD5", "dark": "#3A7BD5" });
+    let value = json!({ "name": "Scalp", "colour": "#3a7bd5" });
+    let set = call(&mut app, "workspace.colour.set", value);
+    assert_eq!(set["colour"], wire);
+    let listed = call(&mut app, "workspace.list", json!({}));
+    let rows = listed["workspaces"].as_array().unwrap();
+    let scalp = rows.iter().find(|row| row["name"] == "Scalp").unwrap();
+    assert_eq!(scalp["colour"], wire);
+
+    let ctx = egui::Context::default();
+    let shown = open_cell_menu(&mut app, &ctx);
+    let output = run_frame_sized(&mut app, &ctx, FULL_HD, Vec::new(), egui::Modifiers::NONE);
+    let custom = resolved(&ctx, WorkspaceColour::Custom([0x3A, 0x7B, 0xD5]));
+    let (tab, capsule) = tab_and_capsule(&app, first);
+    let in_tab = painted_in(&output, custom, tab);
+    assert!(
+        in_tab[2] >= 2,
+        "the open tab's symbol, two strikes: {in_tab:?}"
+    );
+    let in_capsule = painted_in(&output, custom, capsule);
+    assert!(in_capsule[1] >= 1, "the capsule's border: {in_capsule:?}");
+    assert!(in_capsule[0] >= 1, "the capsule's bar: {in_capsule:?}");
+    for (key, colour) in [
+        ("workspace_menu.workspace.Scalp", custom),
+        ("workspace_menu.current", custom),
+        (
+            "workspace_menu.workspace.Default",
+            resolved(&ctx, WorkspaceColour::preset(4).unwrap()),
+        ),
+    ] {
+        let row = shown.row(key).unwrap_or_else(|| panic!("{key}"));
+        assert!(painted_in(&output, colour, row)[0] >= 1, "{key}'s slot");
+    }
+    assert!(
+        painted_rows(&output, "COLOUR OF").is_empty(),
+        "no colour section"
+    );
+
+    // A preset: the open tab and the capsule paint the theme's value.
+    let sky = json!({ "name": "Scalp", "colour": "sky" });
+    call(&mut app, "workspace.colour.set", sky);
+    let output = run_frame_sized(&mut app, &ctx, FULL_HD, Vec::new(), egui::Modifiers::NONE);
+    let sky = resolved(&ctx, WorkspaceColour::preset(2).unwrap());
+    let (tab, capsule) = tab_and_capsule(&app, first);
+    assert!(painted_in(&output, sky, tab)[2] >= 2, "Sky on the open tab");
+    assert!(
+        painted_in(&output, sky, capsule)[1] >= 1,
+        "Sky on the capsule's border"
+    );
+    assert_eq!(
+        painted_in(&output, custom, capsule),
+        [0; 3],
+        "the custom is gone"
+    );
+    let back = json!({ "name": "Scalp", "colour": "#3A7BD5" });
+    call(&mut app, "workspace.colour.set", back);
+    run_frame_sized(&mut app, &ctx, FULL_HD, Vec::new(), egui::Modifiers::NONE);
+
+    let scene = crate::control::scene_snapshot(&app);
+    let said = |id: &str| {
+        let mut controls = scene.controls.iter();
+        let control = controls.find(|control| control.control_id == id);
+        control.and_then(|control| control.description.clone())
+    };
+    let ids = [
+        "toolbar.capsule.workspace",
+        "toolbar.workspace_menu.current",
+    ];
+    for id in ids
+        .into_iter()
+        .chain(["toolbar.workspace_menu.workspace.Scalp"])
+    {
+        let said = said(id).unwrap_or_else(|| panic!("{id}"));
+        assert!(said.ends_with("Custom #3A7BD5"), "{id}: {said}");
+    }
+
+    let mut registry = crate::control::standard_registry().unwrap();
+    let scope = observer_scope("workspace.summary");
+    let capture = registry
+        .capture(&app, &observer_instance(), std::slice::from_ref(&scope))
+        .unwrap()
+        .into_serialized()
+        .unwrap();
+    let summary = &capture.scopes[&scope].value;
+    let tabs = summary["tabs"].as_array().unwrap();
+    let tab = tabs
+        .iter()
+        .find(|tab| tab["tab_id"] == json!(first.to_string()));
+    assert_eq!(tab.unwrap()["workspace_colour"], wire);
+    let rows = summary["workspaces"].as_array().unwrap();
+    assert!(
+        rows.iter()
+            .any(|row| row["name"] == "Scalp" && row["colour"] == wire)
+    );
+}
+
+/// The fill painted last at `at`, clip included: what the eye sees there.
+fn top_fill_at(output: &egui::FullOutput, at: egui::Pos2) -> Option<egui::Color32> {
+    fn walk(
+        shape: &egui::Shape,
+        clip: egui::Rect,
+        at: egui::Pos2,
+        top: &mut Option<egui::Color32>,
+    ) {
+        match shape {
+            egui::Shape::Rect(rect)
+                if rect.fill.a() > 0 && rect.rect.contains(at) && clip.contains(at) =>
+            {
+                *top = Some(rect.fill);
+            }
+            egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| walk(s, clip, at, top)),
+            _ => {}
+        }
+    }
+    let mut top = None;
+    for clipped in &output.shapes {
+        walk(&clipped.shape, clipped.clip_rect, at, &mut top);
+    }
+    top
+}
+
+/// The capsule's 4 pt bar is the same at rest, under the pointer and with
+/// its workspace menu open: the hover fill never paints over it.
+#[test]
+fn the_capsule_keeps_its_bar_at_rest_hovered_and_open() {
+    use crate::control::ActionOrigin;
+    use serde_json::json;
+    let layouts = crate::scratch::ScratchFile::new("workspace-capsule-bar", "layouts.toml");
+    let (mut app, first, _) = two_tabs(&layouts);
+    app.runtime.tabs.select(0);
+    for (id, input) in [
+        ("workspace.save_as", json!({ "name": "Scalp" })),
+        (
+            "workspace.colour.set",
+            json!({ "name": "Scalp", "colour": "#3A7BD5" }),
+        ),
+    ] {
+        app.control_action(id, 1, ActionOrigin::Human, input)
+            .unwrap();
+    }
+    let custom = egui::Color32::from_rgb(0x3A, 0x7B, 0xD5);
+    let ctx = egui::Context::default();
+    run_frame_at(&mut app, &ctx, FULL_HD);
+    let (_, capsule) = tab_and_capsule(&app, first);
+    let edge = egui::pos2(capsule.left() + 2.0, capsule.center().y);
+    let hover = app.chrome.capsule.miniature.center();
+    let none = egui::Modifiers::NONE;
+    let output = run_frame_sized(&mut app, &ctx, FULL_HD, Vec::new(), none);
+    assert_eq!(top_fill_at(&output, edge), Some(custom), "at rest");
+    let moved = vec![egui::Event::PointerMoved(hover)];
+    run_frame_sized(&mut app, &ctx, FULL_HD, moved, none);
+    let output = run_frame_sized(&mut app, &ctx, FULL_HD, Vec::new(), none);
+    assert_eq!(top_fill_at(&output, edge), Some(custom), "hovered");
+    app.chrome.window_menu.tab_workspace.toggle_chip_menu(first);
+    run_frame_sized(&mut app, &ctx, FULL_HD, Vec::new(), none);
+    let output = run_frame_sized(&mut app, &ctx, FULL_HD, Vec::new(), none);
+    assert!(app.chrome.window_menu.tab_workspace.chip_menu_on(first));
+    assert_eq!(top_fill_at(&output, edge), Some(custom), "menu open");
 }
