@@ -181,3 +181,7 @@ pub fn documents() -> Vec<(&'static str, serde_json::Value)> {
         ),
     ]
 }
+
+#[cfg(test)]
+#[path = "tape_view_tests.rs"]
+mod tests;
