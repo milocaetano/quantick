@@ -522,3 +522,29 @@ fn a_context_expand_without_a_flow_pane_opens_every_rail() {
     assert!(flow.fold_context(false));
     assert_eq!(flow, canvas("time+time+flow"));
 }
+
+/// What a rail paints, back to front: the band over the whole rail, a 1 px
+/// edge along each long side and a 44 px grip, 2 px thick, centred on it.
+/// Upright on a row fold and flat on a column fold, never past the rail.
+#[test]
+fn a_rail_paints_its_band_two_edges_and_a_centred_grip() {
+    let upright = CanvasRect::new(100.0, 40.0, COLLAPSED_PANE_WIDTH_PX, 600.0);
+    let [band, first, last, grip] = rail_marks(upright, false);
+    assert_eq!(band, (upright, 0.0));
+    assert_eq!(first, (CanvasRect::new(100.0, 40.0, 1.0, 600.0), 0.0));
+    assert_eq!(last, (CanvasRect::new(107.0, 40.0, 1.0, 600.0), 0.0));
+    assert_eq!(grip, (CanvasRect::new(103.0, 318.0, 2.0, 44.0), 1.0));
+    assert_eq!(RAIL_GRIP_LENGTH_PX, 44.0);
+
+    let flat = CanvasRect::new(10.0, 300.0, 500.0, COLLAPSED_PANE_WIDTH_PX);
+    let [band, first, last, grip] = rail_marks(flat, true);
+    assert_eq!(band, (flat, 0.0));
+    assert_eq!(first, (CanvasRect::new(10.0, 300.0, 500.0, 1.0), 0.0));
+    assert_eq!(last, (CanvasRect::new(10.0, 307.0, 500.0, 1.0), 0.0));
+    assert_eq!(grip, (CanvasRect::new(238.0, 303.0, 44.0, 2.0), 1.0));
+
+    // A rail shorter than the grip keeps the grip inside it.
+    let short = CanvasRect::new(0.0, 0.0, COLLAPSED_PANE_WIDTH_PX, 30.0);
+    let grip = rail_marks(short, false)[3].0;
+    assert_eq!(grip, CanvasRect::new(3.0, 0.0, 2.0, 30.0));
+}

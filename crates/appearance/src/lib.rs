@@ -41,6 +41,9 @@ mod tests;
 mod grid_tests;
 
 #[cfg(test)]
+mod rail_tests;
+
+#[cfg(test)]
 mod surface_dump_tests;
 
 mod render_palette;
