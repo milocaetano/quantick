@@ -193,8 +193,9 @@ panel_live_row = "#262E40"
 panel_stripe_loss = "#EF5350"
 panel_gain_ink = "#88CEC7"
 # A folded pane's rail, lit so it reads as a pane put away rather than a
-# border: a band, a 1 px edge on each long side and the grip; then the three
-# while the pointer is on the rail's hit area.
+# border: a band, a 1 px edge on each long side not on the window's chrome
+# and the grip (chevron and ticks); then the three while the pointer is on
+# the rail's hit area.
 rail_band = "#283042"
 rail_edge = "#3B4560"
 rail_grip = "#AAB4C3"

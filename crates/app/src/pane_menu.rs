@@ -48,13 +48,17 @@ impl PaneMenus {
             rect,
             selected,
             capability,
+            description: None,
         };
         self.drawn.push(control);
     }
 
-    /// A rail as drawn, named `id`: its restore, as a strip's is.
-    pub(crate) fn publish_rail(&mut self, id: String, rect: Rect) {
+    /// A rail as drawn, named `id` and saying `words`: its restore, as a strip's is.
+    pub(crate) fn publish_rail(&mut self, id: String, rect: Rect, words: String) {
         self.publish(id, "Restore", rect, Some(item_capability(Item::Restore)));
+        if let Some(rail) = self.drawn.last_mut() {
+            rail.description = Some(words);
+        }
     }
 }
 

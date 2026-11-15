@@ -25,6 +25,7 @@ pub mod menu;
 pub mod metrics;
 pub mod presets;
 pub mod rail;
+pub mod rail_look;
 pub mod seams;
 pub mod state;
 pub mod tree;
@@ -48,14 +49,16 @@ pub use menu::{
     add_menu, menu_hook, pane_menu, remove_prompt, strip_label,
 };
 pub use metrics::{
-    CANVAS_DIVIDER_PX, COLLAPSE_AT_PX, COLLAPSED_HIT_PX, COLLAPSED_PANE_WIDTH_PX,
-    MIN_PANE_WIDTH_PX, RAIL_EDGE_PX, RAIL_GRIP_LENGTH_PX, RAIL_GRIP_RADIUS_PX,
-    RAIL_GRIP_THICKNESS_PX,
+    CANVAS_DIVIDER_PX, COLLAPSE_AT_PX, COLLAPSED_HIT_PX, COLLAPSED_PANE_WIDTH_PX, MIN_PANE_WIDTH_PX,
 };
 pub use presets::{
     LAYOUT_PRESETS, LayoutPreset, MAX_CANVAS_PANES, PaneKind, PresetGroup, matching_preset, preset,
 };
-pub use rail::{Hand, SeamDrag, rail_marks};
+pub use rail::{Hand, SeamDrag};
+pub use rail_look::{
+    RAIL_CHEVRON_ROWS, RAIL_CHEVRON_STROKE_PX, RAIL_EDGE_PX, RAIL_MAX_TICKS, RAIL_TICK_GAP_PX,
+    RAIL_TICK_PX, RAIL_TICKS_AFTER_PX, RailHolds, RailInk, RailLook, rail_marks,
+};
 pub use seams::{MIN_TREE_PANE_PX, SeamAddress, SeamRail, TreeSeam, tree_rails, tree_seams};
 pub use state::{
     CanvasRefusal, CanvasState, FloatHost, FloatingPane, MINIMIZED_STRIP_PX, PaneMode,
@@ -74,6 +77,8 @@ mod drag_tests;
 mod drop_tests;
 #[cfg(test)]
 mod menu_tests;
+#[cfg(test)]
+mod rail_look_tests;
 #[cfg(test)]
 mod rail_tests;
 #[cfg(test)]

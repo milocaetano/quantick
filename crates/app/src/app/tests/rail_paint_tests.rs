@@ -1,21 +1,18 @@
-//! A folded pane's rail paints the lit band (the designers' mock, option 1)
-//! on both painters, upright and flat, in Dark and in Light: the band, a
-//! 1 px edge along each long side and a 44 px grip, each in the theme's rail
-//! tokens, lit only while the pointer is on the rail's hit area. A divider
-//! between two open panes is not a rail and paints as before; the rail keeps
-//! its 8 px and the pane beside it its place.
+//! A folded pane's rail paints the workspace's marks (band, the edges the
+//! window's chrome does not already draw, a chevron toward the open side and
+//! a tick per pane behind it) in the theme's rail tokens, on both painters,
+//! upright and flat, in Dark and in Light, lit only while the pointer is on
+//! its hit area and no other drag is under way. The seam beside a rail is no
+//! line; a divider between two open panes paints as before; the rail keeps
+//! its 8 px and the pane beside it its place; its hover words reach the scene.
 use super::*;
 
 use crate::canvas_layout::{CANVAS_DIVIDER_PX, COLLAPSED_PANE_WIDTH_PX, LAYOUT_PRESETS};
+use crate::floating_panes::{model_rect, screen_rect};
 use quantick_appearance::{DARK, LIGHT, ResolvedTheme, Token};
-use quantick_workspace::canvas::{CanvasRect, SplitAxis, tree_rails, tree_seams};
-
-const AT_REST: [Token; 3] = [Token::RailBand, Token::RailEdge, Token::RailGrip];
-const LIT: [Token; 3] = [
-    Token::RailBandHover,
-    Token::RailEdgeHover,
-    Token::RailGripHover,
-];
+use quantick_workspace::canvas::{
+    CanvasRect, RailInk, RailLook, rail_marks, tree_rails, tree_seams,
+};
 
 /// `token` as the bundled theme `source` resolves it, in the renderer's bytes.
 fn ink(source: &str, token: Token) -> egui::Color32 {
@@ -34,10 +31,6 @@ fn dress(app: &mut QuantickApp, ctx: &egui::Context, source: &str) {
     run_frame(app, ctx);
 }
 
-fn egui_rect(at: CanvasRect) -> egui::Rect {
-    egui::Rect::from_min_size(egui::pos2(at.x, at.y), egui::vec2(at.w, at.h))
-}
-
 fn near(a: egui::Rect, b: egui::Rect) -> bool {
     (a.min - b.min).length() < 0.01 && (a.max - b.max).length() < 0.01
 }
@@ -50,62 +43,47 @@ fn painted_in(output: &egui::FullOutput, rail: egui::Rect) -> Vec<(egui::Rect, e
         .collect()
 }
 
-/// `rail` painted as the lit band, `flat` along a column fold, in
-/// `source`'s rail tokens at rest or `lit`.
-fn assert_lit_band(
+/// `rail` painted as `look` says, in `source`'s rail inks at rest or `lit`:
+/// every mark the workspace lays, each in its token. A canvas rail keeps
+/// its 8 px; the column painter's stack folds a chart to its own collapsed
+/// share, as it did before.
+fn assert_rail(
     output: &egui::FullOutput,
     rail: egui::Rect,
-    flat: bool,
-    source: &str,
-    lit: bool,
+    look: RailLook,
+    (source, lit): (&str, bool),
 ) {
-    let across = if flat { rail.height() } else { rail.width() };
+    let across = if look.flat {
+        rail.height()
+    } else {
+        rail.width()
+    };
+    let stacked = look.flat && rail.width() < 600.0;
     assert!(
-        (across - COLLAPSED_PANE_WIDTH_PX).abs() < 0.01,
-        "the rail keeps its 8 px: {rail:?}"
+        stacked || (across - COLLAPSED_PANE_WIDTH_PX).abs() < 0.01,
+        "8 px: {rail:?}"
     );
-    let [band, edge, grip] = (if lit { LIT } else { AT_REST }).map(|token| ink(source, token));
-    let (first, last) = if flat {
-        let strip = egui::vec2(rail.width(), 1.0);
-        let last = egui::pos2(rail.left(), rail.bottom() - 1.0);
-        (
-            egui::Rect::from_min_size(rail.min, strip),
-            egui::Rect::from_min_size(last, strip),
-        )
-    } else {
-        let strip = egui::vec2(1.0, rail.height());
-        let last = egui::pos2(rail.right() - 1.0, rail.top());
-        (
-            egui::Rect::from_min_size(rail.min, strip),
-            egui::Rect::from_min_size(last, strip),
-        )
-    };
-    let size = if flat {
-        egui::vec2(44.0, 2.0)
-    } else {
-        egui::vec2(2.0, 44.0)
-    };
+    let inks = quantick_appearance::rail::rail_inks(lit).map(|token| ink(source, token));
     let painted = painted_in(output, rail);
-    for (what, at, fill) in [
-        ("band", rail, band),
-        ("first edge", first, edge),
-        ("last edge", last, edge),
-        (
-            "44 px grip",
-            egui::Rect::from_center_size(rail.center(), size),
-            grip,
-        ),
-    ] {
+    for (mark, worn) in rail_marks(model_rect(rail), look) {
+        let (at, fill) = (screen_rect(mark), inks[worn.index()]);
         assert!(
             painted
                 .iter()
                 .any(|(rect, colour)| near(*rect, at) && *colour == fill),
-            "the {what} at {at:?} in {fill:?}; painted {painted:?}"
+            "{worn:?} at {at:?} in {fill:?}; painted {painted:?}"
         );
     }
 }
 
-/// The tab on the tree painter at `preset`, three frames in, in `source`.
+/// How many marks of `ink` the rail lays.
+fn count(rail: egui::Rect, look: RailLook, ink: RailInk) -> usize {
+    (rail_marks(model_rect(rail), look).iter())
+        .filter(|(_, worn)| *worn == ink)
+        .count()
+}
+
+/// The tab on the tree painter at `preset`, in `source`.
 fn tree_app(ctx: &egui::Context, preset: &str, source: &str) -> QuantickApp {
     let (mut app, _evt, _cmd, _book) = test_app();
     run_frame(&mut app, ctx);
@@ -119,14 +97,24 @@ fn tree_app(ctx: &egui::Context, preset: &str, source: &str) -> QuantickApp {
 }
 
 fn whole(app: &QuantickApp) -> CanvasRect {
-    let area = app.active_tab().canvas.last_canvas;
-    CanvasRect::new(area.left(), area.top(), area.width(), area.height())
+    model_rect(app.active_tab().canvas.last_canvas)
 }
 
-/// The column painter's two rails, the charts folded left of the flow and
-/// the flow folded right beside the sidebar.
+fn scene_words(app: &QuantickApp, id: &str) -> Option<String> {
+    let scene = crate::control::scene_snapshot(app);
+    let entry = scene
+        .controls
+        .into_iter()
+        .find(|entry| entry.control_id == id)?;
+    entry.description
+}
+
+/// The column painter's two rails: the charts folded left of the flow open
+/// right, their left line the tool rail's; the flow folded right beside the
+/// sidebar opens left, its right line the sidebar's. One tick each; the
+/// scene says what each holds.
 #[test]
-fn the_column_painters_rails_paint_the_lit_band_in_dark_and_light() {
+fn the_column_painters_rails_share_the_chrome_line_and_point_the_way_they_open() {
     for source in [DARK, LIGHT] {
         for flow in [false, true] {
             let ctx = egui::Context::default();
@@ -136,37 +124,134 @@ fn the_column_painters_rails_paint_the_lit_band_in_dark_and_light() {
             run_frame(&mut app, &ctx);
             let output = run_frame(&mut app, &ctx);
             let rail = app.active_tab().collapsed_rail_rect().expect("a rail");
-            assert_lit_band(&output, rail, false, source, false);
+            let look = RailLook {
+                flat: false,
+                opens_forward: !flow,
+                ticks: 1,
+                on_chrome: [!flow, flow],
+            };
+            assert_rail(&output, rail, look, (source, false));
+            assert_eq!(count(rail, look, RailInk::Edge), 1, "one edge, inside");
+            let id = app.active_tab().canvas.state.side_rail_id(flow).unwrap();
+            let words = scene_words(&app, &id).expect("the rail says what it holds");
+            let what = if flow { "Order flow · " } else { "Time · " };
+            assert!(
+                words.starts_with(what) && words.ends_with(" · drag to open"),
+                "{words}"
+            );
         }
     }
 }
 
-/// The tree painter's rails: the flow at the window's right edge, the whole
-/// context side of grid4+flow behind one rail, and the flow folded flat
-/// above the chart it stood over.
+/// The tree painter's rails: the flow at the window's right edge, the
+/// whole context side of grid4+flow behind one rail with four ticks, and
+/// the flow folded flat under the toolbar. The seam beside each is no
+/// line: nothing of the border's colour stands between rail and pane.
 #[test]
-fn the_tree_painters_rails_paint_the_lit_band_upright_and_flat_in_dark_and_light() {
+fn the_tree_painters_rails_paint_one_band_and_leave_their_seam_unlined() {
     for source in [DARK, LIGHT] {
-        for (preset, flow) in [
-            ("time+time+flow", true),
-            ("grid4+flow", false),
-            ("flow-over-time", true),
+        for (preset, flow, look) in [
+            (
+                "time+time+flow",
+                true,
+                RailLook {
+                    flat: false,
+                    opens_forward: false,
+                    ticks: 1,
+                    on_chrome: [false, true],
+                },
+            ),
+            (
+                "grid4+flow",
+                false,
+                RailLook {
+                    flat: false,
+                    opens_forward: true,
+                    ticks: 4,
+                    on_chrome: [true, false],
+                },
+            ),
+            (
+                "flow-over-time",
+                true,
+                RailLook {
+                    flat: true,
+                    opens_forward: true,
+                    ticks: 1,
+                    on_chrome: [true, false],
+                },
+            ),
         ] {
             let ctx = egui::Context::default();
             let mut app = tree_app(&ctx, preset, source);
             assert!(app.active_tab_mut().canvas.state.fold_flow_side(flow, true));
             run_frame(&mut app, &ctx);
             let output = run_frame(&mut app, &ctx);
-            let rails = tree_rails(
-                &app.active_tab().canvas.state,
-                whole(&app),
-                CANVAS_DIVIDER_PX,
-            );
+            let state = &app.active_tab().canvas.state;
+            let rails = tree_rails(state, whole(&app), CANVAS_DIVIDER_PX);
             assert_eq!(rails.len(), 1, "{preset}: one rail");
-            let flat = rails[0].axis == SplitAxis::Column;
-            assert_eq!(flat, preset == "flow-over-time", "{preset}");
-            assert_lit_band(&output, egui_rect(rails[0].rect), flat, source, false);
+            assert_eq!(rails[0].look(whole(&app)), look, "{preset}");
+            assert_rail(&output, screen_rect(rails[0].rect), look, (source, false));
+            let seams = tree_seams(state, whole(&app), CANVAS_DIVIDER_PX);
+            let beside = seams
+                .iter()
+                .find(|seam| seam.rail.is_some())
+                .expect("its seam");
+            let border = ink(source, Token::Border);
+            let gutter = painted_in(&output, screen_rect(beside.rect));
+            assert!(
+                gutter.iter().all(|(_, fill)| *fill != border),
+                "{preset}: {gutter:?}"
+            );
+            let words = scene_words(&app, &rails[0].control_id()).expect("words");
+            if preset == "grid4+flow" {
+                assert_eq!(words, "4 charts · drag to open");
+            }
         }
+    }
+}
+
+/// The column painter's flat rail, a context chart folded in its stack (to
+/// the stack's collapsed share, 17.5 px here, as before): lit while the pointer is on the dividers beside it, at rest away.
+#[test]
+fn the_column_painters_flat_context_rail_paints_and_lights_on_its_hit_area() {
+    let hover = |app: &mut QuantickApp, ctx: &egui::Context, at: egui::Pos2| {
+        run_frame_with_events(app, ctx, vec![egui::Event::PointerMoved(at)]);
+        run_frame_with_events(app, ctx, vec![egui::Event::PointerMoved(at)])
+    };
+    for source in [DARK, LIGHT] {
+        let launch = AppLaunch {
+            scenario: crate::hooks::ScenarioInputs::from_pairs(&[
+                ("QUANTICK_LAYOUT", "time+time+flow"),
+                ("QUANTICK_CONTEXT_UPPER_COLLAPSED", "1"),
+            ]),
+            ..AppLaunch::default()
+        };
+        let (mut app, _evt, _cmd, _book) = test_app_with_launch(launch);
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx);
+        dress(&mut app, &ctx, source);
+        let output = run_frame(&mut app, &ctx);
+        let band = ink(source, Token::RailBand);
+        let rail = (painted_rects(&output).into_iter())
+            .find(|shape| shape.fill == band && shape.rect.width() > shape.rect.height())
+            .expect("the folded chart's flat rail")
+            .rect;
+        let look = RailLook {
+            flat: true,
+            opens_forward: true,
+            ticks: 1,
+            on_chrome: [true, false],
+        };
+        assert_rail(&output, rail, look, (source, false));
+        assert_rail(
+            &hover(&mut app, &ctx, rail.center()),
+            rail,
+            look,
+            (source, true),
+        );
+        let away = rail.center() + egui::vec2(0.0, 120.0);
+        assert_rail(&hover(&mut app, &ctx, away), rail, look, (source, false));
     }
 }
 
@@ -186,10 +271,16 @@ fn a_rail_lights_only_while_the_pointer_is_on_its_hit_area() {
         assert!(app.active_tab_mut().canvas.fold(true, true));
         run_frame(&mut app, &ctx);
         let rail = app.active_tab().flow_rail_rect().expect("the flow's rail");
+        let look = RailLook {
+            flat: false,
+            opens_forward: false,
+            ticks: 1,
+            on_chrome: [false, true],
+        };
         let reach = egui::pos2(rail.left() - 10.0, rail.center().y);
-        assert_lit_band(&hover(&mut app, &ctx, reach), rail, false, source, true);
+        assert_rail(&hover(&mut app, &ctx, reach), rail, look, (source, true));
         let away = egui::pos2(rail.left() - 60.0, rail.center().y);
-        assert_lit_band(&hover(&mut app, &ctx, away), rail, false, source, false);
+        assert_rail(&hover(&mut app, &ctx, away), rail, look, (source, false));
 
         let mut app = tree_app(&ctx, "time+time+flow", source);
         assert!(app.active_tab_mut().canvas.state.fold_flow_side(true, true));
@@ -199,16 +290,15 @@ fn a_rail_lights_only_while_the_pointer_is_on_its_hit_area() {
             whole(&app),
             CANVAS_DIVIDER_PX,
         );
-        let rail = egui_rect(rails[0].rect);
-        assert_lit_band(
+        let (rail, look) = (screen_rect(rails[0].rect), rails[0].look(whole(&app)));
+        assert_rail(
             &hover(&mut app, &ctx, rail.center()),
             rail,
-            false,
-            source,
-            true,
+            look,
+            (source, true),
         );
         let away = egui::pos2(rail.left() - 60.0, rail.center().y);
-        assert_lit_band(&hover(&mut app, &ctx, away), rail, false, source, false);
+        assert_rail(&hover(&mut app, &ctx, away), rail, look, (source, false));
     }
 }
 
@@ -236,7 +326,7 @@ fn a_divider_between_open_panes_paints_as_before() {
             whole(&app),
             CANVAS_DIVIDER_PX,
         ) {
-            let at = egui_rect(seam.rect);
+            let at = screen_rect(seam.rect);
             assert_eq!(painted_in(&output, at), vec![(at, border)], "tree");
         }
     }

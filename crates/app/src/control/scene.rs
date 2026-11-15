@@ -276,7 +276,7 @@ fn push_drawn(
         controls.push(SceneControlSnapshot {
             control_id: control.id.clone(),
             label: control.label.clone(),
-            description: None,
+            description: control.description.clone(),
             role: SceneRoleDto::Action,
             owner: SceneOwnerSnapshot {
                 kind,

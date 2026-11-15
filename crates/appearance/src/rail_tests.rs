@@ -19,11 +19,12 @@ fn rgb(hex: u32) -> PremultipliedRgba {
 }
 
 /// The mock's `RAIL` table, keys ("dark", 1) and ("light", 1): band, edge
-/// and grip, then the same three under the pointer.
+/// and grip, then the same three under the pointer. Light's band is one step
+/// darker than the mock's, its hover with it, so it stands off the chrome.
 #[test]
 fn both_bundled_themes_paint_the_rail_as_the_mock_draws_it() {
     let dark = [0x283042, 0x3B4560, 0xAAB4C3, 0x343D54, 0x56627F, 0xEEF2F6];
-    let light = [0xDADADA, 0x7C7C7C, 0x3A3A3A, 0xC9CDD3, 0x5F6670, 0x000000];
+    let light = [0xD0D0D0, 0x7C7C7C, 0x3A3A3A, 0xBFC3C9, 0x5F6670, 0x000000];
     for (source, hexes) in [(DARK, dark), (LIGHT, light)] {
         let theme = ResolvedTheme::parse(source).unwrap();
         for (token, hex) in TOKENS.into_iter().zip(hexes) {
@@ -38,29 +39,12 @@ fn both_bundled_themes_paint_the_rail_as_the_mock_draws_it() {
     }
 }
 
-/// Back to front, as the workspace lays the marks out: the band, its two
-/// edges and the grip, each in its hover token while the pointer is on the
-/// rail's hit area.
+/// In the workspace's mark order, band, edge and grip, each in its hover
+/// token while the pointer is on the rail's hit area.
 #[test]
-fn the_rail_inks_are_band_edge_edge_grip_at_rest_and_under_the_pointer() {
-    assert_eq!(
-        rail_inks(false),
-        [
-            Token::RailBand,
-            Token::RailEdge,
-            Token::RailEdge,
-            Token::RailGrip
-        ]
-    );
-    assert_eq!(
-        rail_inks(true),
-        [
-            Token::RailBandHover,
-            Token::RailEdgeHover,
-            Token::RailEdgeHover,
-            Token::RailGripHover
-        ]
-    );
+fn the_rail_inks_are_band_edge_grip_at_rest_and_under_the_pointer() {
+    assert_eq!(rail_inks(false), TOKENS[..3]);
+    assert_eq!(rail_inks(true), TOKENS[3..]);
 }
 
 /// A stored theme is a frozen copy of the bundled file it was picked from:

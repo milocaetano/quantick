@@ -110,6 +110,7 @@ fn publish(
         rect,
         selected,
         capability,
+        description: None,
     };
     let popovers = app.surfaces.canvas_popovers.model_state.projection();
     let tab = app.runtime.tabs.active_id();

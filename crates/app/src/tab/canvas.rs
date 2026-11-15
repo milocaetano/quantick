@@ -11,12 +11,13 @@ use crate::surfaces::drawing_chrome::DrawingChromeExt as _;
 use eframe::egui;
 use quantick_chart::pane_header::{CapsuleSide, PaneIdentity};
 use quantick_engine::bar_selection::BarInputAvailability;
-use quantick_workspace::canvas::{CanvasRect, Hand, PANE_MENU_BUTTON_PX, rail_marks, seat_slot};
+use quantick_workspace::canvas::{Hand, PANE_MENU_BUTTON_PX, RailLook, rail_marks, seat_slot};
 use smallvec::SmallVec;
 
 use super::{FOCUS_FRAME_PX, SharedPicks, Tab};
 use crate::canvas_layout::{self, MAX_CANVAS_PANES, MAX_CONTEXT_PANES, PaneKind};
 use crate::config::FeedCapabilities;
+use crate::floating_panes::{model_rect, screen_rect};
 use crate::pane::canvas_split::PaneAreas;
 use crate::pane::{
     CANVAS_DIVIDER_HANDLE_PX, PaneChrome, PaneIndex, PaneSide, SharedEdit, SharedInteraction,
@@ -284,9 +285,12 @@ impl Tab {
                 if self.canvas.context_stack.heights[slot].is_collapsed() {
                     // Its hit area is the dividers' beside it, as far as they reach.
                     let near = [slot.wrapping_sub(1), slot].map(|at| bands.dividers.get(at));
-                    let reach = egui::vec2(0.0, CONTEXT_RAIL_REACH);
+                    let reach = egui::vec2(0.0, canvas_layout::COLLAPSED_HIT_PX / 2.0);
                     let hit = |at: &&egui::Rect| ui.rect_contains_pointer(at.expand2(reach));
-                    paint_rail(ui.painter(), *band, true, near.iter().flatten().any(hit));
+                    let hot = ui.ctx().dragged_id().is_none() && near.iter().flatten().any(hit);
+                    let way = (true, slot + 1 < context_shown);
+                    let look = RailLook::on(model_rect(*band), model_rect(column), way, 1);
+                    paint_rail(ui.painter(), *band, look, hot);
                     rects.context_charts.push(None);
                     continue;
                 }
@@ -1105,6 +1109,10 @@ impl Tab {
         {
             self.collapsed_rail = Some(rail);
         }
+        let (at, area) = (model_rect(rail), model_rect(canvas));
+        let (held, look) = self.canvas.state.side_rail(right, at, area);
+        let side = [PaneSide::Time(0), PaneSide::Flow][usize::from(right)];
+        let words = held.words(Some(&self.strip_name(side)));
         let reach = canvas_layout::COLLAPSED_HIT_PX.max(rail.width());
         let hit = if right {
             rail.with_min_x(rail.right() - reach)
@@ -1117,18 +1125,14 @@ impl Tab {
                 egui::Id::new(("canvas_divider", tab_id)),
                 egui::Sense::drag(),
             )
-            .on_hover_text(if right {
-                "drag left to show the flow chart again"
-            } else {
-                "drag right to show the timeframe charts again"
-            });
+            .on_hover_text(&words);
         if response.hovered() || response.dragged() {
             ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
         }
 
-        paint_rail(ui.painter(), rail, false, response.hovered());
+        paint_rail(ui.painter(), rail, look, response.hovered());
         if let Some(id) = self.canvas.state.side_rail_id(right) {
-            self.canvas.menus.publish_rail(id, rail);
+            self.canvas.menus.publish_rail(id, rail, words);
         }
         let drawn_width = if right {
             rail.left() - canvas.left()
@@ -1199,7 +1203,7 @@ impl Tab {
                     divider.expand2(egui::vec2(
                         0.0,
                         if upper_collapsed || lower_collapsed {
-                            CONTEXT_RAIL_REACH
+                            canvas_layout::COLLAPSED_HIT_PX / 2.0
                         } else {
                             CANVAS_DIVIDER_HANDLE_PX
                         },
@@ -1246,18 +1250,13 @@ pub(super) fn hand(r: &egui::Response, row: bool) -> Hand {
     Hand::of([r.drag_started(), r.dragged(), r.drag_stopped()], delta)
 }
 
-/// How far a divider beside a folded context chart reaches either side.
-const CONTEXT_RAIL_REACH: f32 = canvas_layout::COLLAPSED_HIT_PX / 2.0;
-
-/// A folded side's rail, one look for every fold: the workspace's marks
-/// (band, an edge on each long side, the grip) in the theme's rail inks, lit
-/// while `hot`. A rail folded across a column (`flat`) lies flat.
-pub(crate) fn paint_rail(painter: &egui::Painter, rail: egui::Rect, flat: bool, hot: bool) {
+/// A folded side's rail, one look for every fold: the workspace's marks for
+/// `look` in the theme's rail inks, lit while `hot`.
+pub(crate) fn paint_rail(painter: &egui::Painter, rail: egui::Rect, look: RailLook, hot: bool) {
     let palette = theme::get(painter.ctx());
-    let at = CanvasRect::new(rail.left(), rail.top(), rail.width(), rail.height());
     let inks = quantick_appearance::rail::rail_inks(hot);
-    for ((mark, radius), ink) in rail_marks(at, flat).into_iter().zip(inks) {
-        let mark = egui::Rect::from_min_size((mark.x, mark.y).into(), (mark.w, mark.h).into());
-        painter.rect_filled(mark, egui::Rounding::same(radius), *palette.get(ink));
+    for (mark, ink) in rail_marks(model_rect(rail), look) {
+        let fill = *palette.get(inks[ink.index()]);
+        painter.rect_filled(screen_rect(mark), egui::Rounding::ZERO, fill);
     }
 }
