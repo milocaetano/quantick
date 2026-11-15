@@ -222,7 +222,9 @@ pub const ALLOWED: &[(&str, &[&str])] = &[
     // window resolves every path; the store never reads the environment.
     // `orderbook` for the approved WIN tape's depth golden alone, a test that
     // hands the engine an MT5-shaped book the way the feed does. `drawings`
-    // for the alert observer cache, which reads a pane's drawings as facts.
+    // for the alert observer cache, which reads a pane's drawings as facts;
+    // it sits beside `AlertRuntime` because `alerts` cannot reach `drawings`
+    // (`drawings` depends on `alerts`).
     (
         "stores",
         &[

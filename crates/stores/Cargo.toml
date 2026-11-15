@@ -1,6 +1,6 @@
 [package]
 name = "quantick-stores"
-description = "Headless cockpit stores: the feed catalogue, added symbols, footprint, bubble and indicator presets, the indicator set and the window arrangement, as versioned documents the caller locates"
+description = "Headless cockpit stores: the feed catalogue, added symbols, footprint, bubble and indicator presets, the indicator set and the window arrangement, as versioned documents the caller locates, and the alert observer cache beside the alert book"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
