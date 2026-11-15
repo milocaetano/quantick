@@ -12,7 +12,7 @@ use quantick_workspace::canvas::{CanvasRect, PaneKind, PaneTree};
 
 use super::ToolbarAction;
 use crate::theme;
-use quantick_appearance::tab_strip::{WORKSPACE_CAPSULE_BAR_PT as BAR, WORKSPACE_TINT};
+use quantick_appearance::tab_strip::WORKSPACE_CAPSULE_BAR_PT as BAR;
 
 /// The capsule's height: History's.
 const HEIGHT_PX: f32 = 22.0;
@@ -131,12 +131,15 @@ pub fn draw(
     );
     let stroke = ui.visuals().widgets.inactive.bg_stroke;
     let painter = ui.painter();
-    // A workspace's colour tints the fill (as `workspace_tint`) and takes the border.
-    let (fill, edge) = match model.colour.and_then(|c| palette.workspace(c.index())) {
-        Some(ink) => (
-            palette.control().lerp_to_gamma(ink, WORKSPACE_TINT),
-            (stroke.width, ink).into(),
-        ),
+    // A workspace's colour tints the fill and takes the border.
+    let (fill, edge) = match model.colour {
+        Some(colour) => {
+            let [r, g, b, a] = quantick_stores::workspaces::capsule_fill(colour, &palette.resolved);
+            let [ir, ig, ib] = colour.rgb(palette.resolved.dark);
+            let ink = egui::Color32::from_rgb(ir, ig, ib);
+            let fill = egui::Color32::from_rgba_premultiplied(r, g, b, a);
+            (fill, (stroke.width, ink).into())
+        }
         None => (palette.control(), stroke),
     };
     painter.rect(whole, ROUNDING_PX, fill, edge);

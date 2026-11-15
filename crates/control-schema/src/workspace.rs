@@ -7,6 +7,7 @@ use quantick_control::wire::{CanonicalDecimal, WireU64};
 use schemars::JsonSchema;
 
 use quantick_stores::workspaces::WorkspaceColour;
+use quantick_stores::workspaces::hex;
 use serde::{Deserialize, Serialize};
 
 pub const SCOPE_ID: &str = "workspace.summary";
@@ -108,57 +109,48 @@ pub struct WorkspaceSnapshot {
     pub workspaces: Vec<WorkspaceColourRow>,
 }
 
-/// A workspace's colour: one slot of a fixed palette of eight, never held by
-/// two workspaces (`workspace.colour.set`).
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "lowercase")]
-pub enum WorkspaceColourDto {
-    Steel,
-    Violet,
-    Cyan,
-    Magenta,
-    Azure,
-    Indigo,
-    Chalk,
-    Cobalt,
+/// A workspace's colour as the wire reads it: a preset names itself and its
+/// index (`{"preset": "sky", "index": 2, ...}`), a custom colour its hex
+/// (`{"custom": "#3A7BD5", ...}`); both give the value painted in each theme.
+/// No two workspaces hold identical colours (`workspace.colour.set`).
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct WorkspaceColourDto {
+    /// The preset's name in lower case; absent on a custom colour.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preset: Option<String>,
+    /// The preset's place in the palette, as files store it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub index: Option<u8>,
+    /// The custom colour's `#RRGGBB`; absent on a preset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custom: Option<String>,
+    /// `#RRGGBB` painted in the Light theme.
+    pub light: String,
+    /// `#RRGGBB` painted in the Dark theme.
+    pub dark: String,
 }
 
-/// Slot for slot, by name: a slot added to either side stops the build here.
 impl From<WorkspaceColour> for WorkspaceColourDto {
     fn from(colour: WorkspaceColour) -> Self {
-        match colour {
-            WorkspaceColour::Steel => Self::Steel,
-            WorkspaceColour::Violet => Self::Violet,
-            WorkspaceColour::Cyan => Self::Cyan,
-            WorkspaceColour::Magenta => Self::Magenta,
-            WorkspaceColour::Azure => Self::Azure,
-            WorkspaceColour::Indigo => Self::Indigo,
-            WorkspaceColour::Chalk => Self::Chalk,
-            WorkspaceColour::Cobalt => Self::Cobalt,
+        let (preset, index, custom) = match colour {
+            WorkspaceColour::Preset(index) => (Some(colour.key()), Some(index), None),
+            WorkspaceColour::Custom(rgb) => (None, None, Some(hex(rgb))),
+        };
+        Self {
+            preset,
+            index,
+            custom,
+            light: hex(colour.rgb(false)),
+            dark: hex(colour.rgb(true)),
         }
     }
 }
 
-impl From<WorkspaceColourDto> for WorkspaceColour {
-    fn from(colour: WorkspaceColourDto) -> Self {
-        match colour {
-            WorkspaceColourDto::Steel => Self::Steel,
-            WorkspaceColourDto::Violet => Self::Violet,
-            WorkspaceColourDto::Cyan => Self::Cyan,
-            WorkspaceColourDto::Magenta => Self::Magenta,
-            WorkspaceColourDto::Azure => Self::Azure,
-            WorkspaceColourDto::Indigo => Self::Indigo,
-            WorkspaceColourDto::Chalk => Self::Chalk,
-            WorkspaceColourDto::Cobalt => Self::Cobalt,
-        }
-    }
-}
-
-/// One workspace's colour; `None` for a ninth while all eight are held.
+/// One workspace's colour.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct WorkspaceColourRow {
     pub name: String,
-    pub colour: Option<WorkspaceColourDto>,
+    pub colour: WorkspaceColourDto,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -200,7 +192,8 @@ pub struct WorkspaceTab {
     /// Whether the tab holds edits it has not saved to that workspace.
     #[serde(default)]
     pub modified: bool,
-    /// That workspace's colour, the bar on the tab's left edge. Additive.
+    /// That workspace's colour: the open tab's symbol and the capsule wear
+    /// it. Additive.
     #[serde(default)]
     pub workspace_colour: Option<WorkspaceColourDto>,
     /// The canvas model: the preset the docked panes match and every pane's

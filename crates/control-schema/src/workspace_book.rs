@@ -217,12 +217,16 @@ pub struct WorkspaceDeleteResult {
     pub kept_edits: Vec<WireU64>,
 }
 
-/// Give a workspace a colour of the palette.
+/// Give a workspace a colour: a preset's name or a custom `#RRGGBB`.
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct WorkspaceColourSetInput {
     pub name: String,
-    pub colour: WorkspaceColourDto,
+    /// A preset's name in any case (`sky`, `slate`, ...) or `#RRGGBB`.
+    pub colour: String,
+    /// Take a colour another workspace holds, giving it this one's own.
+    #[serde(default)]
+    pub swap: bool,
 }
 
 /// The colour the workspace now holds, and the workspace it swapped with.
@@ -232,10 +236,9 @@ pub struct WorkspaceColourSetResult {
     pub colour: WorkspaceColourDto,
     /// `false` when the workspace already held it: nothing is written.
     pub changed: bool,
-    /// The workspace that held the colour.
+    /// The workspace that held the colour, with `swap`.
     pub swapped_with: Option<String>,
-    /// The colour `swapped_with` holds now: the one the workspace gave up,
-    /// or `None` when the workspace had none, so `swapped_with` goes without.
+    /// The colour `swapped_with` holds now: the one the workspace gave up.
     #[serde(default)]
     pub holder_colour: Option<WorkspaceColourDto>,
 }
@@ -253,7 +256,7 @@ pub struct WorkspaceEntry {
     /// count, e.g. `Time 1m · Flow · 3 ind`.
     pub summary: String,
     pub tabs: Vec<WireU64>,
-    /// Its colour; `None` for a ninth while all eight are held. Additive.
+    /// Its colour. Additive: absent from a build that predates colours.
     #[serde(default)]
     pub colour: Option<WorkspaceColourDto>,
 }
@@ -399,7 +402,7 @@ pub fn workspace_colour_set_descriptor() -> CapabilityDescriptor {
         WORKSPACE_COLOUR_SET_CAPABILITY_ID,
         MODULE_ID,
         "Give a workspace a colour",
-        "Gives a workspace one of the eight palette colours: steel, violet, cyan, magenta, azure, indigo, chalk or cobalt. Its tabs wear it as the bar on their left edge and the capsule as its underline. No two workspaces share a colour: a colour another workspace holds swaps the two, and the answer names it in swapped_with and the colour it now holds in holder_colour; a workspace without a colour (a ninth) that takes a held one leaves its holder without, holder_colour null. A new workspace takes the next free colour and a deleted one frees its own; a ninth holds none until one frees. Read the colours with workspace.list or on each tab of workspace.summary. A name no workspace has is refused with workspace.unknown.",
+        "Gives a workspace a colour: one of the sixteen presets by name (cobalt, orchid, sky, violet, slate, fuchsia, petrol, lavender, ultramarine, mauve, denim, grape, ink, plum, ice, blossom) or a custom #RRGGBB. The open tab paints its symbol in it, the capsule its tint, border and left bar, and the workspace menu its row's and header's slot. No two workspaces hold identical colours (the same value in either theme): a colour another workspace holds is refused with workspace.colour_taken, naming the owner and the colour it would get, unless swap is true; then the owner takes this workspace's old colour, named in swapped_with and holder_colour. A new workspace takes the next free colour and a deleted one frees its own. Read the colours with workspace.list or on each tab of workspace.summary. A name no workspace has is refused with workspace.unknown, a colour that is neither a preset nor #RRGGBB with workspace.colour_invalid.",
         "The call names the colour it wants, so a repeat answers changed false and writes nothing.",
     ))
 }
@@ -486,7 +489,7 @@ pub const READBACKS: &[Readback] = &[
         IdempotencyPolicy::Optional,
         WORKSPACE_COLOUR_SET_EVENT_KIND,
         "payload.colour",
-        "an event after the pre-call cursor gives the workspace the requested colour",
+        "an event after the pre-call cursor gives the workspace the requested colour's word",
         &[EVERY_OPTIONAL_TEST],
     ),
     journal(

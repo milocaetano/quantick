@@ -26,8 +26,11 @@ const BODY_PT: f32 = 12.5;
 const HEADER_NAME_PT: f32 = 13.0;
 const SMALL_PT: f32 = 11.0;
 const CAPTION_PT: f32 = 10.0;
-/// The empty colour slot before a miniature, and the gap after it.
+/// The colour slot before a miniature, the gap after it, its height and
+/// corner radius.
 const SLOT_PT: f32 = 3.0 + 8.0;
+const SLOT_HEIGHT_PT: f32 = 22.0;
+const SLOT_RADIUS_PT: f32 = 1.5;
 /// The miniatures: the header's as large as the capsule's, a row's smaller.
 const MINI_HEADER: [f32; 2] = [40.0, 14.0];
 const MINI_ROW: [f32; 2] = [26.0, 14.0];
@@ -88,6 +91,9 @@ pub enum Mark {
     Text(Words),
     /// A layout miniature, as the capsule paints it.
     Tree(Area, PaneTree),
+    /// A workspace's colour in its slot, as the theme resolves it: a custom
+    /// colour is no theme token.
+    Colour { at: Area, radius: f32, rgb: [u8; 3] },
 }
 
 /// A part of the menu: its box, the row the scene lists it as, whether a
@@ -199,7 +205,7 @@ fn block(width: f32, height: f32, top: bool, ink: &MenuChrome) -> Piece {
     Piece::plain(area(0.0, 0.0, width, height), marks)
 }
 
-/// A workspace's line in `at`: the empty colour slot, its `mini` miniature,
+/// A workspace's line in `at`: its colour in the slot, its `mini` miniature,
 /// its `name_pt` name over its summary, `status` points left at the right.
 fn entry(
     at: Area,
@@ -223,6 +229,12 @@ fn entry(
         mini[1],
     );
     marks.extend(row.tree.clone().map(|tree| Mark::Tree(face, tree)));
+    let slot = area(at.x, at.y + (at.h - SLOT_HEIGHT_PT) / 2.0, 3.0, SLOT_HEIGHT_PT);
+    marks.extend(row.colour.as_ref().map(|colour| Mark::Colour {
+        at: slot,
+        radius: SLOT_RADIUS_PT,
+        rgb: colour.rgb,
+    }));
     marks
 }
 

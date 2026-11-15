@@ -2,6 +2,7 @@
 use crate::theme;
 use eframe::egui;
 
+use crate::config::AppConfig;
 use quantick_control_schema::native_window::WindowState;
 mod resize;
 
@@ -65,20 +66,28 @@ fn send_state(ctx: &egui::Context, state: WindowState) {
 
 pub(super) use crate::surfaces::chrome_title_bar::{HEIGHT, WINDOW_BUTTON_WIDTH};
 
-/// One chip per tab of this strip: dot, symbol and broker, read off the tab.
-/// The workspace and its mark are the status bar cell's alone.
-pub(super) fn chips_of<'a>(
-    tabs: &'a super::arrangement_host::ArrangementHost,
+/// The tabs and their workspace book, and the config the venues' codes come from.
+pub(super) type Market<'a> = (&'a super::workspace_runtime::WorkspaceRuntime, &'a AppConfig);
+
+/// One chip per tab of this strip: symbol, venue code, the feed's mark when
+/// it is not healthy and live, and its workspace's colour for `theme`.
+pub(super) fn chips_of(
+    (runtime, config): Market<'_>,
     indices: &[usize],
-) -> Vec<crate::tabstrip::TabChip<'a>> {
+    theme: &quantick_appearance::ResolvedTheme,
+) -> Vec<crate::tabstrip::TabChip> {
+    let (tabs, book) = (&runtime.tabs, runtime.workspace.book.book());
     indices
         .iter()
         .map(|index| {
-            let tab = &tabs[*index];
-            let id = tabs.id_at(*index);
+            let (tab, id) = (&tabs[*index], tabs.id_at(*index));
+            let ink = |c| quantick_stores::workspaces::symbol_ink(c, theme);
             crate::tabstrip::TabChip {
                 id,
-                label: tab.chip_label(),
+                label: tab.chip_label().to_owned(),
+                workspace: book.tab_workspace(id).to_owned(),
+                venue_code: config.feed_code(&tab.feed_id).into_owned(),
+                symbol_ink: book.tab_colour(id).and_then(ink),
                 feed: quantick_workspace::arrangement::strip::TabFeed::of(
                     tab.link.replay.is_some(),
                     tab.link.feed_connection == quantick_feed::FeedConnectionState::Connected,
@@ -89,14 +98,15 @@ pub(super) fn chips_of<'a>(
         .collect()
 }
 
-pub(crate) fn draw(
+pub(super) fn draw(
     ctx: &egui::Context,
-    tabs: &super::arrangement_host::ArrangementHost,
+    market: Market<'_>,
     title: &mut TitleBarState,
     surfaces: &mut crate::surfaces::Surfaces,
 ) -> Option<crate::tabstrip::TabAction> {
     use crate::surfaces::{HostEffect, HostIntent, ViewContext};
     use quantick_ui_model::{Slot, chrome_tab_strip as strip, chrome_title_bar as model};
+    let tabs = &market.0.tabs;
     resize::draw(ctx);
     let scope = tabs.windows().presented().0;
     for slot in [Slot::TitleBar, Slot::TabStrip] {
@@ -111,14 +121,7 @@ pub(crate) fn draw(
     let palette = theme::get(ctx);
     let active = tabs.presented_index();
     let indices: Vec<_> = tabs.window_indices(tabs.windows().presented()).collect();
-    let chips = chips_of(tabs, &indices)
-        .into_iter()
-        .map(|chip| strip::Chip {
-            id: chip.id,
-            label: chip.label.to_owned(),
-            feed: chip.feed,
-        })
-        .collect();
+    let chips = chips_of(market, &indices, &root.resolved);
     if let Some(state) = title.requests.take() {
         send_state(ctx, state);
     }

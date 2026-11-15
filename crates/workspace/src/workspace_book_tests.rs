@@ -53,7 +53,7 @@ fn a_new_tab_opens_on_default_clean_and_default_is_always_listed() {
         [WorkspaceListing {
             name: "Default".to_owned(),
             tabs: vec![1],
-            colour: Some(crate::workspace_colour::WorkspaceColour::Steel),
+            colour: crate::workspace_colour::WorkspaceColour::Preset(4),
         }]
     );
     let parsed = parse_book("version = 1\n").unwrap();

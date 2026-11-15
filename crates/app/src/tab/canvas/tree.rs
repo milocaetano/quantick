@@ -289,6 +289,7 @@ impl Tab {
                 rect,
                 selected,
                 capability,
+                description: None,
             }
         });
         canvas_state.menus.drawn.extend(drawn);

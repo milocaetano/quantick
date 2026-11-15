@@ -24,7 +24,7 @@ use crate::arrangement_document::{LAYOUT_UNRECORDED, SavedTab};
 use crate::indicator_document::SavedIndicator;
 use crate::layout_document::{LayoutBook, LayoutId};
 use crate::market_settings::DrawingKey;
-use crate::workspace_colour::{self, ColourOutcome, Colours, Swatch, WorkspaceColour};
+use crate::workspace_colour::{self, ColourOutcome, Colours, WorkspaceColour};
 use crate::workspace_recipe::{ContextPaneRecipe, FACTORY_SUMMARY, WorkspaceRecipe};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -53,6 +53,13 @@ pub enum WorkspaceRefusal {
     TabOpening(u64),
     /// `workspace.revert` is gone: edits are kept by Save to or by autosave.
     RevertRemoved,
+    /// Neither a preset's name nor `#RRGGBB`.
+    ColourInvalid(String),
+    /// Another workspace holds an identical colour and no swap was asked.
+    ColourTaken {
+        owner: String,
+        owner_would_get: WorkspaceColour,
+    },
 }
 
 impl WorkspaceRefusal {
@@ -68,6 +75,8 @@ impl WorkspaceRefusal {
             Self::UnknownTab(_) => "workspace.unknown_tab",
             Self::TabOpening(_) => "workspace.tab_not_ready",
             Self::RevertRemoved => "workspace.revert_removed",
+            Self::ColourInvalid(_) => "workspace.colour_invalid",
+            Self::ColourTaken { .. } => "workspace.colour_taken",
         }
     }
 }
@@ -92,6 +101,18 @@ impl std::fmt::Display for WorkspaceRefusal {
             Self::RevertRemoved => f.write_str(
                 "workspace.revert was removed: keep edits with workspace.save_to, or turn on \
                  workspace.autosave.set; switching the workspace drops held edits",
+            ),
+            Self::ColourInvalid(word) => write!(
+                f,
+                "{word:?} is no colour: name a preset (sky, slate, ...) or give #RRGGBB"
+            ),
+            Self::ColourTaken {
+                owner,
+                owner_would_get,
+            } => write!(
+                f,
+                "{owner} uses this colour; swap to give {owner} {}",
+                owner_would_get.name()
             ),
         }
     }
@@ -206,8 +227,8 @@ pub struct DeleteOutcome {
 pub struct WorkspaceListing {
     pub name: String,
     pub tabs: Vec<u64>,
-    /// `None` only for a ninth workspace while all eight colours are held.
-    pub colour: Option<WorkspaceColour>,
+    /// Unique among the workspaces ([`crate::workspace_colour`]).
+    pub colour: WorkspaceColour,
 }
 
 /// What making a new, empty workspace did. It always changes the book: a
@@ -246,6 +267,7 @@ pub struct WorkspaceBook {
     #[serde(
         default,
         skip_serializing_if = "BTreeMap::is_empty",
+        serialize_with = "stored_colours",
         deserialize_with = "lenient_colours"
     )]
     colours: Colours,
@@ -317,7 +339,10 @@ impl Default for WorkspaceBook {
             version: FORMAT_VERSION,
             recipes: BTreeMap::from([(DEFAULT_WORKSPACE.to_owned(), WorkspaceRecipe::default())]),
             renamed: BTreeMap::new(),
-            colours: BTreeMap::from([(DEFAULT_WORKSPACE.to_owned(), WorkspaceColour::ALL[0])]),
+            colours: BTreeMap::from([(
+                DEFAULT_WORKSPACE.to_owned(),
+                WorkspaceColour::Preset(workspace_colour::DEFAULT_PRESET),
+            )]),
             tabs: BTreeMap::new(),
             autosave: autosave_default(),
             drawings: BTreeMap::new(),
@@ -327,17 +352,50 @@ impl Default for WorkspaceBook {
     }
 }
 
-/// Read the `colours` table word by word: a colour this build does not know
-/// (a typo, a later build's slot) is dropped and `settle_colours` re-assigns it,
-/// so one stray word never costs the whole file.
+/// One value of the `colours` table as a file holds it: a preset's index, a
+/// `#RRGGBB` or one of #978's words, or anything else, which is dropped.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum StoredColour {
+    Index(i64),
+    Word(String),
+    Other(serde::de::IgnoredAny),
+}
+
+/// Write the `colours` table: a preset as its index, a custom colour as
+/// upper-case `#RRGGBB`. The file's version does not move: an older build
+/// drops what it cannot read and settles.
+fn stored_colours<S: serde::Serializer>(colours: &Colours, out: S) -> Result<S::Ok, S::Error> {
+    use serde::ser::SerializeMap;
+    let mut map = out.serialize_map(Some(colours.len()))?;
+    for (name, colour) in colours {
+        match colour {
+            WorkspaceColour::Preset(index) => map.serialize_entry(name, index)?,
+            WorkspaceColour::Custom(rgb) => map.serialize_entry(name, &workspace_colour::hex(*rgb))?,
+        }
+    }
+    map.end()
+}
+
+/// Read the `colours` table value by value: one this build cannot read (an
+/// index out of range, a bad hex, an unknown word) is dropped and
+/// `settle_colours` assigns the next free colour, so one stray value never
+/// costs the whole file.
 fn lenient_colours<'de, D>(deserializer: D) -> Result<Colours, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
-    let raw: BTreeMap<String, String> = serde::Deserialize::deserialize(deserializer)?;
+    let raw: BTreeMap<String, StoredColour> = serde::Deserialize::deserialize(deserializer)?;
+    let read = |stored: StoredColour| match stored {
+        StoredColour::Index(index) => u8::try_from(index).ok().and_then(WorkspaceColour::preset),
+        StoredColour::Word(word) => workspace_colour::parse_hex(&word)
+            .map(WorkspaceColour::Custom)
+            .or_else(|| WorkspaceColour::legacy(&word)),
+        StoredColour::Other(_) => None,
+    };
     Ok(raw
         .into_iter()
-        .filter_map(|(name, word)| WorkspaceColour::from_key(&word).map(|colour| (name, colour)))
+        .filter_map(|(name, stored)| read(stored).map(|colour| (name, colour)))
         .collect())
 }
 
@@ -433,7 +491,7 @@ impl WorkspaceBook {
             .map(|name| WorkspaceListing {
                 name: name.to_owned(),
                 tabs: self.tabs_on(name),
-                colour: self.colour(name),
+                colour: self.colour(name).unwrap_or(WorkspaceColour::Preset(0)),
             })
             .collect()
     }
@@ -464,8 +522,7 @@ impl WorkspaceBook {
             .map_or(DEFAULT_WORKSPACE, |state| state.workspace.as_str())
     }
 
-    /// The colour `name` holds; `None` for an unknown name, or a ninth
-    /// workspace while all eight are held.
+    /// The colour `name` holds; `None` for an unknown name.
     #[must_use]
     pub fn colour(&self, name: &str) -> Option<WorkspaceColour> {
         self.colours.get(name).copied()
@@ -479,26 +536,27 @@ impl WorkspaceBook {
         self.colour(self.tab_workspace(tab))
     }
 
-    /// The picker's eight swatches for `name`, in palette order.
-    #[must_use]
-    pub fn swatches(&self, name: &str) -> Vec<Swatch> {
-        workspace_colour::swatches(&self.colours, name)
-    }
-
-    /// Give a workspace a colour; the workspace holding it takes the picker's
-    /// old one, so no two ever share. Naming the colour it holds is no change.
+    /// Give a workspace a colour. One identical to another workspace's is
+    /// refused unless `swap`; with it the holder takes the old colour, so no
+    /// two ever share. Naming the colour it holds is no change.
     ///
     /// # Errors
-    /// No workspace has the name.
+    /// No workspace has the name, or another holds the colour without `swap`.
     pub fn set_colour(
         &mut self,
         name: &str,
         colour: WorkspaceColour,
+        swap: bool,
     ) -> Result<ColourOutcome, WorkspaceRefusal> {
         if !self.recipes.contains_key(name) {
             return Err(WorkspaceRefusal::UnknownWorkspace(name.to_owned()));
         }
-        Ok(workspace_colour::pick(&mut self.colours, name, colour))
+        workspace_colour::pick(&mut self.colours, name, colour, swap).map_err(|taken| {
+            WorkspaceRefusal::ColourTaken {
+                owner: taken.owner,
+                owner_would_get: taken.owner_would_get,
+            }
+        })
     }
 
     /// What a workspace holds, in the one line the menu and `workspace.list`
@@ -1238,7 +1296,7 @@ impl WorkspaceBook {
                 self.unsynced.insert(*tab, Unsynced::Outvoted);
             }
         }
-        // Its colour frees; a workspace without one (a ninth) takes it.
+        // Its colour frees for the next workspace made.
         self.settle_colours();
         Ok(outcome)
     }

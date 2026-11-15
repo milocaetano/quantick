@@ -48,6 +48,7 @@ impl PaneMenus {
             rect,
             selected,
             capability,
+            description: None,
         };
         self.drawn.push(control);
     }

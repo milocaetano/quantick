@@ -32,6 +32,7 @@ impl crate::surfaces::View<Model> for View {
             capsule: toolbar::capsule::CapsuleModel {
                 tree: &capsule.tree,
                 workspace: &capsule.workspace,
+                colour: capsule.colour,
                 unsaved: capsule.unsaved,
                 layout_unsaved: capsule.marks.layout_unsaved,
                 menu_open: capsule.menu_open,

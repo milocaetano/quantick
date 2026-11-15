@@ -153,7 +153,7 @@ fn title_bar_native_clicks_traverse_registered_view_model_and_host() {
             ctx.run(input, |ctx| {
                 let _ = super::super::title_bar::draw(
                     ctx,
-                    &app.runtime.tabs,
+                    (&app.runtime, &app.config),
                     &mut app.chrome.title_bar,
                     &mut app.surfaces,
                 );

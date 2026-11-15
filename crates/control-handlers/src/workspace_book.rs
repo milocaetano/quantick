@@ -121,7 +121,7 @@ pub trait WorkspaceBookHost {
     fn workspace_colours(&self) -> Vec<WorkspaceColourRow> {
         let rows = self.workspace_book_ref().map(WorkspaceBook::list);
         let row = |row: quantick_stores::workspaces::WorkspaceListing| WorkspaceColourRow {
-            colour: row.colour.map(Into::into),
+            colour: row.colour.into(),
             name: row.name,
         };
         rows.unwrap_or_default().into_iter().map(row).collect()
@@ -292,7 +292,16 @@ fn refused(refusal: &WorkspaceRefusal) -> ControlError {
         return not_ready(*tab);
     }
     let mut error = ControlError::invalid_request(refusal.to_string());
-    error.context.details = Some(json!({ "code": refusal.code() }));
+    let mut details = json!({ "code": refusal.code() });
+    if let WorkspaceRefusal::ColourTaken {
+        owner,
+        owner_would_get,
+    } = refusal
+    {
+        details["owner"] = json!(owner);
+        details["owner_would_get"] = json!(WorkspaceColourDto::from(*owner_would_get));
+    }
+    error.context.details = Some(details);
     error
 }
 
@@ -984,25 +993,29 @@ fn rename_journaled<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
     Ok(outcome)
 }
 
-/// Give a workspace a colour, swapping with its holder, and write the book.
+/// Give a workspace a colour, taking it from its holder only with `swap`,
+/// and write the book.
 ///
 /// # Errors
-/// No workspace has the name, no book, or the write failed.
+/// No workspace has the name, the colour is held and `swap` is false, no
+/// book, or the write failed.
 pub fn set_workspace_colour<H: WorkspaceBookHost + ?Sized>(
     app: &mut H,
     name: &str,
     colour: WorkspaceColour,
+    swap: bool,
 ) -> Result<ColourOutcome, ControlError> {
-    written(app, |book| book.set_colour(name, colour), |set| set.changed)
+    let set = |book: &mut WorkspaceBook| book.set_colour(name, colour, swap);
+    written(app, set, |set| set.changed)
 }
 
 fn colour_journaled<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
     app: &mut H,
     to: &mut Journal<'_, A>,
     name: &str,
-    colour: WorkspaceColour,
+    (colour, swap): (WorkspaceColour, bool),
 ) -> Result<ColourOutcome, ControlError> {
-    let outcome = set_workspace_colour(app, name, colour)?;
+    let outcome = set_workspace_colour(app, name, colour, swap)?;
     if outcome.changed {
         let payload = json!({ "workspace": name, "colour": colour.key(),
             "swapped_with": outcome.swapped_with,
@@ -1174,11 +1187,13 @@ fn colour_set<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
     actor: &ActorContext,
     value: &Value,
 ) -> Result<Value, ControlError> {
-    let WorkspaceColourSetInput { name, colour } = input(value)?;
-    let outcome = colour_journaled(app, &mut Some((access, actor)), &name, colour.into())?;
+    let WorkspaceColourSetInput { name, colour, swap } = input(value)?;
+    let invalid = || refused(&WorkspaceRefusal::ColourInvalid(colour.clone()));
+    let picked = WorkspaceColour::parse(&colour).ok_or_else(invalid)?;
+    let outcome = colour_journaled(app, &mut Some((access, actor)), &name, (picked, swap))?;
     answer(&WorkspaceColourSetResult {
         workspace: outcome.workspace,
-        colour,
+        colour: picked.into(),
         changed: outcome.changed,
         swapped_with: outcome.swapped_with,
         holder_colour: outcome.holder_colour.map(Into::into),
@@ -1199,7 +1214,7 @@ fn list<H: WorkspaceBookHost + ?Sized, A>(
         .map(|row| WorkspaceEntry {
             tabs: wires(&row.tabs),
             summary: book_ref.summary(&row.name),
-            colour: row.colour.map(Into::into),
+            colour: Some(row.colour.into()),
             name: row.name,
         })
         .collect();

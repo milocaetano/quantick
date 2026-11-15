@@ -6,6 +6,7 @@ use std::time::Instant;
 
 use quantick_control_handlers::workspace_book as ops;
 use quantick_layers::{ChartLayer, recipe_layers};
+use quantick_session::workspace_menu::WorkspaceCommand;
 use quantick_stores::market_settings::{DrawingKey, MarketSettingsStore};
 use quantick_stores::workspaces::{TabRecipeSync, WorkspaceBook, WorkspaceRecipe, capture_recipe};
 use quantick_workspace::book_upkeep::{self, TabRecipeHost};

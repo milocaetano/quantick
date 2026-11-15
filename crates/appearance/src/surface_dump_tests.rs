@@ -13,17 +13,13 @@ const ADDED: [&str; 4] = [
     "paper_tag_loss",
     "readout_edge",
 ];
-/// The settings panels' tokens came later still, under one prefix, and the
-/// workspace colours under another.
-const ADDED_PREFIXES: [&str; 2] = ["panel_", "workspace_"];
+/// The settings panels' tokens came later still, under one prefix.
+const ADDED_PREFIX: &str = "panel_";
 
 fn dump(name: &str, theme: &ResolvedTheme, out: &mut String) {
     writeln!(out, "[{name}]").unwrap();
     for token in Token::ALL {
-        let later = ADDED_PREFIXES
-            .iter()
-            .any(|prefix| token.key().starts_with(prefix));
-        if !ADDED.contains(&token.key()) && !later {
+        if !ADDED.contains(&token.key()) && !token.key().starts_with(ADDED_PREFIX) {
             writeln!(out, "{} {:?}", token.key(), theme.color(token).to_array()).unwrap();
         }
     }

@@ -278,20 +278,24 @@ fn market(app: &QuantickApp) -> crate::app::title_bar::Market<'_> {
     (&app.runtime, &app.config)
 }
 
-/// Two tabs on two workspaces are told apart by the bar, whatever market they
-/// show: each chip carries its own workspace's colour, and the venue's code
-/// from config.
+/// Two tabs on two workspaces, whatever market they show: each chip carries
+/// its own workspace's colour as the resolver gives it for the theme, and
+/// the venue's code from config.
 #[test]
 fn two_workspaces_on_one_market_wear_two_colours() {
     let layouts = crate::scratch::ScratchFile::new("workspace-two-colours", "layouts.toml");
     let (mut app, first, _second) = two_tabs(&layouts);
     let book = app.runtime.workspace.book.book_mut();
     book.save_as(first, "Scalp").unwrap();
-    let chips = crate::app::title_bar::chips_of(market(&app), &[0, 1]);
+    let dark = quantick_appearance::ResolvedTheme::default();
+    let chips = crate::app::title_bar::chips_of(market(&app), &[0, 1], &dark);
     assert_eq!(chips[0].workspace, "Scalp");
     assert_ne!(chips[1].workspace, "Scalp");
-    assert!(chips[0].colour.is_some() && chips[1].colour.is_some());
-    assert_ne!(chips[0].colour, chips[1].colour);
+    let book = app.runtime.workspace.book.book();
+    let resolved = |tab| book.tab_colour(tab).map(|colour| colour.rgb(true));
+    assert_eq!(chips[0].symbol_ink, resolved(first));
+    assert!(chips[1].symbol_ink.is_some());
+    assert_ne!(chips[0].symbol_ink, chips[1].symbol_ink);
     assert_eq!(
         chips[0].venue_code,
         app.config.feed_code(&app.runtime.tabs[0].feed_id)
@@ -306,7 +310,8 @@ fn chip_and_snapshot_read_one_state() {
     let (mut app, first, second) = two_tabs(&layouts);
     app.runtime.workspace.book.book_mut().set_autosave(false);
     edit_split(&mut app, first, 0.31);
-    let labels: Vec<String> = crate::app::title_bar::chips_of(market(&app), &[0, 1])
+    let theme = quantick_appearance::ResolvedTheme::default();
+    let labels: Vec<String> = crate::app::title_bar::chips_of(market(&app), &[0, 1], &theme)
         .iter()
         .map(|chip| chip.label.to_owned())
         .collect();
@@ -2180,4 +2185,90 @@ fn enter_in_the_filter_switches_to_the_first_match() {
     run_frame_sized(&mut app, &ctx, FULL_HD, enter, egui::Modifiers::NONE);
     run_frame_at(&mut app, &ctx, FULL_HD);
     assert_eq!(app.runtime.workspace.book.tab_row(first).0, "Desk 05");
+}
+
+/// Every shape `output` paints in `colour`: rect fills, rect edges and text.
+fn painted_in(output: &egui::FullOutput, colour: egui::Color32) -> [usize; 3] {
+    fn walk(shape: &egui::Shape, colour: egui::Color32, found: &mut [usize; 3]) {
+        match shape {
+            egui::Shape::Rect(rect) => {
+                found[0] += usize::from(rect.fill == colour);
+                found[1] += usize::from(rect.stroke.color == colour);
+            }
+            egui::Shape::Text(text) => found[2] += usize::from(text.fallback_color == colour),
+            egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| walk(s, colour, found)),
+            _ => {}
+        }
+    }
+    let mut found = [0; 3];
+    for clipped in &output.shapes {
+        walk(&clipped.shape, colour, &mut found);
+    }
+    found
+}
+
+/// A custom colour set by `workspace.colour.set` reads alike on every
+/// surface: the open tab's symbol, the capsule's border and bar, the menu's
+/// row and header slots, the scene, `workspace.list` and `workspace.summary`;
+/// a preset paints its resolved value for the theme; the open menu shows no
+/// "Colour of" section.
+#[test]
+fn a_colour_set_by_call_reads_alike_on_every_surface() {
+    use crate::control::ActionOrigin;
+    use quantick_stores::workspaces::WorkspaceColour;
+    use serde_json::json;
+    let layouts = crate::scratch::ScratchFile::new("workspace-colour-surfaces", "layouts.toml");
+    let (mut app, first, _) = two_tabs(&layouts);
+    app.runtime.tabs.select(0);
+    let mut call = |id: &str, input: serde_json::Value| {
+        app.control_action(id, 1, ActionOrigin::Human, input)
+            .unwrap_or_else(|error| panic!("{id}: {error:?}"))
+    };
+    call("workspace.save_as", json!({ "name": "Scalp" }));
+    let wire = json!({ "custom": "#3A7BD5", "light": "#3A7BD5", "dark": "#3A7BD5" });
+    let set = call("workspace.colour.set", json!({ "name": "Scalp", "colour": "#3a7bd5" }));
+    assert_eq!(set["colour"], wire);
+    let listed = call("workspace.list", json!({}));
+    assert_eq!(listed["workspaces"][1]["colour"], wire);
+    let custom = egui::Color32::from_rgb(0x3A, 0x7B, 0xD5);
+
+    let ctx = egui::Context::default();
+    let shown = open_cell_menu(&mut app, &ctx);
+    let output = run_frame_sized(&mut app, &ctx, FULL_HD, Vec::new(), egui::Modifiers::NONE);
+    let [fills, edges, texts] = painted_in(&output, custom);
+    assert!(texts >= 2, "the open tab's symbol in its two strikes: {texts}");
+    assert!(edges >= 1, "the capsule's border: {edges}");
+    assert!(fills >= 3, "the capsule's bar, the row's and the header's slot: {fills}");
+    let dark = crate::theme::get(&ctx).resolved.dark;
+    let slate = WorkspaceColour::preset(4).unwrap().rgb(dark);
+    let slate = egui::Color32::from_rgb(slate[0], slate[1], slate[2]);
+    assert!(painted_in(&output, slate)[0] >= 1, "Default's row slot");
+    assert!(shown.row("workspace_menu.workspace.Scalp").is_some());
+    assert!(painted_rows(&output, "COLOUR OF").is_empty(), "no colour section");
+
+    let scene = crate::control::scene_snapshot(&app);
+    let said = |id: &str| {
+        let mut controls = scene.controls.iter();
+        let control = controls.find(|control| control.control_id == id);
+        control.and_then(|control| control.description.clone())
+    };
+    let ids = ["toolbar.capsule.workspace", "toolbar.workspace_menu.current"];
+    for id in ids.into_iter().chain(["toolbar.workspace_menu.workspace.Scalp"]) {
+        let said = said(id).unwrap_or_else(|| panic!("{id}"));
+        assert!(said.ends_with("Custom #3A7BD5"), "{id}: {said}");
+    }
+
+    let mut registry = crate::control::standard_registry().unwrap();
+    let scope = observer_scope("workspace.summary");
+    let capture = registry
+        .capture(&app, &observer_instance(), std::slice::from_ref(&scope))
+        .unwrap()
+        .into_serialized()
+        .unwrap();
+    let summary = &capture.scopes[&scope].value;
+    let tabs = summary["tabs"].as_array().unwrap();
+    let tab = tabs.iter().find(|tab| tab["tab_id"] == json!(first.to_string()));
+    assert_eq!(tab.unwrap()["workspace_colour"], wire);
+    let rows = summary["workspaces"].as_array().unwrap();
+    assert!(rows.iter().any(|row| row["name"] == "Scalp" && row["colour"] == wire));
 }

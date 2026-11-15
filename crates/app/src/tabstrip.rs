@@ -13,8 +13,7 @@ use quantick_session::tab_chip::{self as face_layout, CloseSlot, FaceLayout, Fac
 use quantick_workspace::arrangement::strip::{
     StripRoom, StripSurface, TabFeed, chip_parts, fit_tabs, tab_hover,
 };
-use quantick_workspace::workspace_colour::WorkspaceColour;
-use std::{borrow::Cow, sync::Arc};
+use std::sync::Arc;
 
 use crate::theme::{self, Palette};
 
@@ -44,20 +43,7 @@ pub(crate) const HOME_PADDING_RIGHT_PX: f32 = 14.0;
 /// The Q alone, centred in its own height with the labelled form's margin.
 pub(crate) const HOME_MIN_WIDTH_PX: f32 = HOME_PADDING_LEFT_PX * 2.0 + HOME_Q.y;
 
-/// What one tab looks like on the strip this frame.
-pub struct TabChip<'a> {
-    pub id: u64,
-    /// `SYMBOL · venue`, composed by the tab when its market last changed.
-    pub label: &'a str,
-    /// The feed's mark: none while healthy and live.
-    pub feed: TabFeed,
-    /// The workspace, its colour on the active tab's symbol, the venue's code (`BIN`).
-    pub workspace: &'a str,
-    pub colour: Option<WorkspaceColour>,
-    pub venue_code: Cow<'a, str>,
-}
-
-pub use quantick_ui_model::chrome_tab_strip::Action as TabAction;
+pub use quantick_ui_model::chrome_tab_strip::{Action as TabAction, Chip as TabChip};
 
 /// Draw the strip and report the one action it produced.
 ///
@@ -82,7 +68,7 @@ pub(crate) struct StripDrawn {
 
 pub(crate) fn draw(
     ui: &mut egui::Ui,
-    chips: &[TabChip<'_>],
+    chips: &[TabChip],
     active: usize,
     surface: &StripSurface,
     (drawn, root): (&mut StripDrawn, &Palette),
@@ -106,7 +92,7 @@ pub(crate) fn draw(
     let labelled = HOME_PADDING_LEFT_PX + HOME_Q.x + after_q + HOME_PADDING_RIGHT_PX;
     let (gap, scale) = (ui.spacing().item_spacing.x, ui.ctx().pixels_per_point());
     let width = |text: &str, pt: f32| laid(ui, text, pt).size().x;
-    let face = |chip: &TabChip<'_>| drawn.faces.layout(chip.id, &source(chip, scale), width);
+    let face = |chip: &TabChip| drawn.faces.layout(chip.id, &source(chip, scale), width);
     let faces: Vec<FaceLayout> = chips.iter().map(face).collect();
     drawn.faces.keep(chips.iter().map(|chip| chip.id));
     let natural: Vec<f32> = faces.iter().map(|f| f.width + close_reserve).collect();
@@ -142,11 +128,11 @@ pub(crate) fn draw(
                     egui::WidgetType::Button,
                     ui.is_enabled(),
                     selected,
-                    chip.label,
+                    &chip.label,
                 )
             });
-            let (symbol, venue) = chip_parts(chip.label);
-            let hover = tab_hover(chip.workspace, symbol, venue, chip.feed);
+            let (symbol, venue) = chip_parts(&chip.label);
+            let hover = tab_hover(&chip.workspace, symbol, venue, chip.feed);
             let response = response.on_hover_text(hover);
             if response.clicked() && !selected {
                 action = Some(TabAction::Activate(index));
@@ -201,10 +187,8 @@ pub(crate) fn draw(
                 let lit = paint_tab_surface(ui, root, surface, sheet, selected, pointer);
                 // The face reads lit whenever its sheet is: body, × or focus;
                 // only the open tab wears its workspace's colour, on the symbol.
-                let own = chip
-                    .colour
-                    .filter(|_| selected)
-                    .and_then(|c| root.workspace(c.index()));
+                let own = (chip.symbol_ink.filter(|_| selected))
+                    .map(|[r, g, b]| egui::Color32::from_rgb(r, g, b));
                 paint_chip_face(ui, root, (chip, &faces[index]), body, (lit, own));
                 if close.clicked() {
                     action = Some(TabAction::Close(index));
@@ -220,7 +204,7 @@ pub(crate) fn draw(
                     .max_height(320.0)
                     .show(ui, |ui| {
                         for (index, chip) in chips.iter().enumerate() {
-                            let mut text = egui::RichText::new(chip.label);
+                            let mut text = egui::RichText::new(&chip.label);
                             if chip.feed == TabFeed::Replay {
                                 text = text.color(root.replay_ink());
                             }
@@ -259,8 +243,8 @@ pub(crate) fn draw(
 }
 
 /// What a tab's face is measured from.
-fn source<'a>(chip: &'a TabChip<'_>, scale: f32) -> FaceSource<'a> {
-    let (symbol, code) = (chip_parts(chip.label).0, chip.venue_code.as_ref());
+fn source(chip: &TabChip, scale: f32) -> FaceSource<'_> {
+    let (symbol, code) = (chip_parts(&chip.label).0, chip.venue_code.as_str());
     let (marked, word) = (chip.feed.marked(), chip.feed.word());
     FaceSource {
         symbol,
@@ -284,7 +268,7 @@ fn laid(ui: &egui::Ui, text: &str, pt: f32) -> Arc<egui::Galley> {
 fn paint_chip_face(
     ui: &egui::Ui,
     palette: &Palette,
-    (chip, face): (&TabChip<'_>, &FaceLayout),
+    (chip, face): (&TabChip, &FaceLayout),
     body: egui::Rect,
     (lit, own): (bool, Option<egui::Color32>),
 ) {
@@ -295,7 +279,7 @@ fn paint_chip_face(
         painter.galley(at, galley, ink);
     };
     let ink = *palette.get(tab_ink(lit));
-    let symbol = laid(ui, chip_parts(chip.label).0, face_layout::SYMBOL_TEXT_PT);
+    let symbol = laid(ui, chip_parts(&chip.label).0, face_layout::SYMBOL_TEXT_PT);
     put(&painter, symbol.clone(), face.symbol, own.unwrap_or(ink));
     put(
         &painter,

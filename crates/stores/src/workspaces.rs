@@ -2,6 +2,7 @@
 //! layouts file. The book itself is [`quantick_workspace::workspace_book`].
 use quantick_workspace::book_upkeep::UpkeepSave;
 use quantick_workspace::write_refusal::guard_write;
+use quantick_appearance::{PremultipliedRgba, ResolvedTheme, Token, contrast::contrast_ratio, tab_strip};
 use std::path::{Path, PathBuf};
 
 pub use quantick_workspace::workspace_book::{
@@ -9,9 +10,28 @@ pub use quantick_workspace::workspace_book::{
     RenameOutcome, SaveOutcome, SeedTab, SetOutcome, TabWorkspaceState, UnsavedEdits, Unsynced,
     WORKSPACES_FILE, WorkspaceBook, WorkspaceListing, WorkspaceRefusal, capture_recipe, parse_book,
 };
-pub use quantick_workspace::workspace_colour::{ColourOutcome, Swatch, WorkspaceColour};
+pub use quantick_workspace::workspace_colour::{ColourOutcome, Rgb, WorkspaceColour, hex};
 pub use quantick_workspace::workspace_recipe::{ContextPaneRecipe, WorkspaceRecipe};
 pub use quantick_workspace::workspace_sync::{TabAdoption, TabRecipeSync};
+
+/// The capsule's fill on `theme`: its control fill tinted toward the
+/// workspace's colour, which the name keeps 4.5:1 on for every preset.
+#[must_use]
+pub fn capsule_fill(colour: WorkspaceColour, theme: &ResolvedTheme) -> [u8; 4] {
+    let base = theme.color(Token::Control).to_array();
+    tab_strip::workspace_tint(base, colour.rgb(theme.dark))
+}
+
+/// The open tab's symbol ink on `theme`: the workspace's colour while it keeps
+/// [`tab_strip::WORKSPACE_SYMBOL_CONTRAST`] on the tab's sheet, else `None`,
+/// the tab's normal ink.
+#[must_use]
+pub fn symbol_ink(colour: WorkspaceColour, theme: &ResolvedTheme) -> Option<Rgb> {
+    let [r, g, b] = colour.rgb(theme.dark);
+    let sheet = theme.color(tab_strip::tab_fill(true));
+    let ratio = contrast_ratio(PremultipliedRgba::from_rgb(r, g, b), sheet);
+    (ratio >= tab_strip::WORKSPACE_SYMBOL_CONTRAST).then_some([r, g, b])
+}
 
 /// The file beside a layouts file.
 #[must_use]
@@ -248,18 +268,6 @@ mod tests {
         book
     }
 
-    /// The theme paints slot `i` in `WORKSPACE_TOKENS[i]`: the token list
-    /// keeps the palette's order and names, so a slot never paints another's.
-    #[test]
-    fn the_theme_tokens_follow_the_palette_slot_by_slot() {
-        use quantick_appearance::tab_strip::WORKSPACE_TOKENS;
-        assert_eq!(WORKSPACE_TOKENS.len(), WorkspaceColour::ALL.len());
-        for colour in WorkspaceColour::ALL {
-            let token = WORKSPACE_TOKENS[colour.index()];
-            assert_eq!(token.key(), format!("workspace_{}", colour.key()));
-        }
-    }
-
     #[test]
     fn the_file_sits_beside_the_layouts_and_round_trips_without_tab_state() {
         let dir = ScratchDir::new("workspaces-round-trip");
@@ -349,3 +357,6 @@ mod tests {
         assert!(!path.with_extension("toml.tmp").exists());
     }
 }
+
+#[cfg(test)]
+mod colour_ink_tests;
