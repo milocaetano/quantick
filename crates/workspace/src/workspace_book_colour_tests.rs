@@ -296,3 +296,28 @@ fn a_colour_two_workspaces_match_is_refused_and_a_reload_keeps_everything() {
     assert_eq!(colours(&reload(&book)), before, "a reload changes nothing");
     assert_unique(&book);
 }
+
+/// Every applied custom colour becomes the book's last custom colour, the
+/// palette's seventeenth swatch: a preset or a refusal leaves it, it round
+/// trips as `last_custom = "#RRGGBB"`, and an old file or a bad value has none.
+#[test]
+fn an_applied_custom_colour_is_the_last_custom_and_round_trips() {
+    let mut book = stored("Default = 4\nScalp = 2\n");
+    assert_eq!(book.last_custom(), None, "an old file has none");
+    let blue = [0x3A, 0x7B, 0xD5];
+    book.set_colour("Scalp", Custom(blue), false).unwrap();
+    assert_eq!(book.last_custom(), Some(blue));
+    book.set_colour("Scalp", preset(0), false).unwrap();
+    assert_eq!(book.last_custom(), Some(blue), "a preset leaves it");
+    let refused = book.set_colour("Default", preset(0), false);
+    assert!(refused.is_err());
+    assert_eq!(book.last_custom(), Some(blue));
+    let text = toml::to_string_pretty(&book).unwrap();
+    assert!(text.contains("last_custom = \"#3A7BD5\""), "{text}");
+    assert_eq!(reload(&book).last_custom(), Some(blue));
+    let bad = format!(
+        "version = {FORMAT_VERSION}\nlast_custom = \"blue\"\n{}",
+        recipe("Default")
+    );
+    assert_eq!(parse_book(&bad).unwrap().last_custom(), None);
+}

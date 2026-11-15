@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "One act on the popover of the tab on screen, as a hand does it.",
+  "oneOf": [
+    {
+      "additionalProperties": false,
+      "description": "Open the workspace menu and its popover.",
+      "properties": {
+        "act": {
+          "const": "open",
+          "type": "string"
+        }
+      },
+      "required": [
+        "act"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "description": "Close the popover; the menu stays.",
+      "properties": {
+        "act": {
+          "const": "close",
+          "type": "string"
+        }
+      },
+      "required": [
+        "act"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "description": "Press a swatch: a preset's name or `last_custom`.",
+      "properties": {
+        "act": {
+          "const": "pick",
+          "type": "string"
+        },
+        "colour": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "act",
+        "colour"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "description": "Open Custom, on `hex` or the current colour's Dark value.",
+      "properties": {
+        "act": {
+          "const": "custom",
+          "type": "string"
+        },
+        "hex": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "act"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "description": "Custom's Apply.",
+      "properties": {
+        "act": {
+          "const": "apply",
+          "type": "string"
+        }
+      },
+      "required": [
+        "act"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "description": "Answer the swap question: Swap (`true`) or Cancel.",
+      "properties": {
+        "act": {
+          "const": "answer",
+          "type": "string"
+        },
+        "swap": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "act",
+        "swap"
+      ],
+      "type": "object"
+    }
+  ],
+  "title": "WorkspaceColourPopoverInput"
+}

@@ -11,16 +11,6 @@ use quantick_control::{
 
 use super::registry::{CaptureContext, ProjectionRegistry, ProjectionRegistryError};
 
-/// The wire word for a feed's connection state.
-pub(crate) fn connection_state(state: quantick_feed::FeedConnectionState) -> &'static str {
-    use quantick_feed::FeedConnectionState;
-    match state {
-        FeedConnectionState::Connecting => "connecting",
-        FeedConnectionState::Reconnecting => "reconnecting",
-        FeedConnectionState::Connected => "connected",
-    }
-}
-
 pub(crate) fn register(registry: &mut ProjectionRegistry) -> Result<(), ProjectionRegistryError> {
     let module_id = ModuleId::new(MODULE_ID).expect("static module ID is valid");
     registry.register_module(
@@ -84,7 +74,7 @@ fn snapshot<P: TabsPort + ?Sized>(app: &P, now_ms: Option<i64>) -> FeedSnapshot 
                     active_symbol: tab.active.1.clone(),
                     feed_display_name: tab.feed_display_name(config).to_owned(),
                     source_mode: if replay { "replay" } else { "live" }.to_owned(),
-                    connection_state: connection_state(tab.link.feed_connection).to_owned(),
+                    connection_state: tab.link.feed_connection.word().to_owned(),
                     notice: FeedNoticeSnapshot::from_summary(tab.link.notice.summary())
                         .with_unlisted(tab.link.notice.unlisted_symbol(), tab.link.roll_offer())
                         .with_rolled_from(tab.link.rolled.as_ref().map(|r| r.from.as_str())),

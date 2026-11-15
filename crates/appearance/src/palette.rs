@@ -179,6 +179,8 @@ pub enum Token {
     DrawingProfile,
     ChartGrid,
     TabStrip,
+    /// The capsule's layout miniature: a neutral grey, never the accent.
+    CapsuleMiniature,
     Brand,
     ReplayInk,
     ToolbarSheet,
@@ -311,7 +313,7 @@ pub enum Token {
     RailGripHover,
 }
 impl Token {
-    pub const ALL: [Self; 160] = [
+    pub const ALL: [Self; 161] = [
         Self::FlowSurface,
         Self::FlowDivider,
         Self::FlowInk,
@@ -412,6 +414,7 @@ impl Token {
         Self::DrawingProfile,
         Self::ChartGrid,
         Self::TabStrip,
+        Self::CapsuleMiniature,
         Self::Brand,
         Self::ReplayInk,
         Self::ToolbarSheet,
@@ -482,6 +485,7 @@ impl Token {
             Self::DrawingProfile => "drawing_profile",
             Self::ChartGrid => "chart_grid",
             Self::TabStrip => "tab_strip",
+            Self::CapsuleMiniature => "capsule_miniature",
             Self::Brand => "brand",
             Self::ReplayInk => "replay_ink",
             Self::ToolbarSheet => "toolbar_sheet",

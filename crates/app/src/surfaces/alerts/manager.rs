@@ -1,6 +1,6 @@
 use super::*;
 use egui_phosphor::regular as icons;
-use quantick_alerts::{AlertCommand, AlertId, AlertStatus, MAX_HISTORY, Unavailable};
+use quantick_alerts::{AlertCommand, AlertId, AlertStatus, MAX_HISTORY};
 
 pub(super) fn draw_manager(
     ui: &mut egui::Ui,
@@ -93,7 +93,7 @@ fn draw_rows(
                 ui.strong(&view.spec.name);
                 super::editor::market_label(ui, &view.spec.market);
                 ui.label(super::editor::summary(&view.spec, context));
-                ui.label(status_label(view.status));
+                ui.label(view.status.label());
                 ui.horizontal_wrapped(|ui| {
                     if let Some(command) =
                         status_action(ui, view.status, view.spec.id, view.revision)
@@ -192,27 +192,4 @@ pub(super) fn status_action(
         ),
     };
     action(ui, icon, label).clicked().then_some(command)
-}
-
-fn status_label(status: AlertStatus) -> &'static str {
-    match status {
-        AlertStatus::Monitoring => "Monitoring",
-        AlertStatus::Paused => "Paused",
-        AlertStatus::Completed => "Completed",
-        AlertStatus::Expired => "Expired",
-        AlertStatus::Suspended(reason) => match reason {
-            Unavailable::SourceInactive => "Suspended: source is inactive",
-            Unavailable::MissingDrawing => "Suspended: drawing is missing",
-            Unavailable::AmbiguousDrawing => "Suspended: drawing identity is ambiguous",
-            Unavailable::LegacyIdentity => "Suspended: drawing identity must be saved",
-            Unavailable::UnsupportedDrawing => "Suspended: drawing type is unsupported",
-            Unavailable::OutsideTimeDomain => {
-                "Suspended: price is outside the drawing's time range"
-            }
-            Unavailable::InvalidGeometry => "Suspended: drawing geometry is invalid",
-            Unavailable::Hydrating => "Suspended: loading history",
-            Unavailable::ReplayPaused => "Suspended: replay is paused",
-            Unavailable::Scaffold => "Suspended: monitoring is unavailable",
-        },
-    }
 }

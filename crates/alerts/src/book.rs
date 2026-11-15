@@ -62,6 +62,33 @@ pub enum AlertStatus {
     Suspended(Unavailable),
 }
 
+impl AlertStatus {
+    /// What the alerts manager says of an alert in this state.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Monitoring => "Monitoring",
+            Self::Paused => "Paused",
+            Self::Completed => "Completed",
+            Self::Expired => "Expired",
+            Self::Suspended(reason) => match reason {
+                Unavailable::SourceInactive => "Suspended: source is inactive",
+                Unavailable::MissingDrawing => "Suspended: drawing is missing",
+                Unavailable::AmbiguousDrawing => "Suspended: drawing identity is ambiguous",
+                Unavailable::LegacyIdentity => "Suspended: drawing identity must be saved",
+                Unavailable::UnsupportedDrawing => "Suspended: drawing type is unsupported",
+                Unavailable::OutsideTimeDomain => {
+                    "Suspended: price is outside the drawing's time range"
+                }
+                Unavailable::InvalidGeometry => "Suspended: drawing geometry is invalid",
+                Unavailable::Hydrating => "Suspended: loading history",
+                Unavailable::ReplayPaused => "Suspended: replay is paused",
+                Unavailable::Scaffold => "Suspended: monitoring is unavailable",
+            },
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DeliveryOutcome {
     Pending,
@@ -476,5 +503,25 @@ impl AlertBook {
             .take(limit.min(MAX_HISTORY))
             .cloned()
             .collect())
+    }
+}
+
+#[cfg(test)]
+mod label_tests {
+    use super::*;
+
+    /// The manager reads each state as these words, a suspension with its
+    /// reason.
+    #[test]
+    fn each_status_reads_its_label() {
+        assert_eq!(AlertStatus::Monitoring.label(), "Monitoring");
+        assert_eq!(AlertStatus::Expired.label(), "Expired");
+        let loading = AlertStatus::Suspended(Unavailable::Hydrating);
+        assert_eq!(loading.label(), "Suspended: loading history");
+        let outside = AlertStatus::Suspended(Unavailable::OutsideTimeDomain);
+        assert_eq!(
+            outside.label(),
+            "Suspended: price is outside the drawing's time range"
+        );
     }
 }

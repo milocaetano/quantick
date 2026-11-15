@@ -354,3 +354,31 @@ fn every_two_presets_stay_apart_within_each_theme() {
         assert_eq!((a, b), closest, "dark {dark}: {gap}");
     }
 }
+
+/// The Custom field takes `#RRGGBB` or `RRGGBB` in any case, spaces around
+/// it aside; anything else is refused.
+#[test]
+fn a_typed_hex_takes_the_hash_or_not_in_any_case() {
+    for typed in ["#3A7BD5", "3a7bd5", "#3a7Bd5", " 3A7BD5 "] {
+        assert_eq!(parse_typed_hex(typed), Some([0x3A, 0x7B, 0xD5]), "{typed}");
+    }
+    for refused in ["#12345", "#GGGGGG", "", "#", "##3A7BD5", "#3A7BD5FF", "sky"] {
+        assert_eq!(parse_typed_hex(refused), None, "{refused:?}");
+    }
+}
+
+/// The picker's square and hue strip speak HSV: every preset round-trips to
+/// the byte, and the corners are white, black and the pure hue.
+#[test]
+fn hsv_round_trips_every_preset_and_pins_the_square_s_corners() {
+    for preset in PRESETS {
+        for rgb in [preset.light, preset.dark] {
+            assert_eq!(hsv_rgb(rgb_hsv(rgb)), rgb, "{}", preset.name);
+        }
+    }
+    assert_eq!(hsv_rgb([0.0, 0.0, 1.0]), [255, 255, 255]);
+    assert_eq!(hsv_rgb([0.5, 1.0, 0.0]), [0, 0, 0]);
+    assert_eq!(hsv_rgb([0.0, 1.0, 1.0]), [255, 0, 0]);
+    assert_eq!(hsv_rgb([1.0 / 3.0, 1.0, 1.0]), [0, 255, 0]);
+    assert_eq!(hsv_rgb([1.0, 1.0, 1.0]), [255, 0, 0], "the strip's far end");
+}

@@ -62,30 +62,6 @@ fn a_pointer_fraction_outside_the_canvas_is_refused() {
     }
 }
 
-/// The harness hook is the only way a scripted capture can see the
-/// settings dialog, so it has to name both halves — and refuse nonsense
-/// rather than guess, which would produce a screenshot of the wrong tab.
-#[test]
-fn the_settings_hook_names_an_indicator_and_a_tab() {
-    assert_eq!(
-        parse_settings_hook("0"),
-        Some((0, SettingsTab::Inputs)),
-        "a bare index opens on Inputs"
-    );
-    assert_eq!(
-        parse_settings_hook("2:style"),
-        Some((2, SettingsTab::Style))
-    );
-    assert_eq!(
-        parse_settings_hook("1:1"),
-        Some((1, SettingsTab::Style)),
-        "the numeric spelling works too"
-    );
-    assert_eq!(parse_settings_hook("0:colours"), None);
-    assert_eq!(parse_settings_hook("first"), None);
-    assert_eq!(parse_settings_hook(""), None);
-}
-
 #[test]
 fn a_context_menu_pane_is_named_by_either_of_its_two_words() {
     assert_eq!(

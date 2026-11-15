@@ -2430,3 +2430,139 @@ fn the_capsule_keeps_its_bar_at_rest_hovered_and_open() {
     assert!(app.chrome.window_menu.tab_workspace.chip_menu_on(first));
     assert_eq!(top_fill_at(&output, edge), Some(custom), "menu open");
 }
+
+/// Frames at full HD until the open menu's drawn row `id` shows; its rect.
+fn drawn_row(app: &mut QuantickApp, ctx: &egui::Context, id: &str) -> egui::Rect {
+    for _ in 0..6 {
+        run_frame_at(app, ctx, FULL_HD);
+        let rows = &app.chrome.window_menu.cell_rows;
+        if let Some((_, rect)) = rows.iter().find(|(row, _)| row.scene_id() == id) {
+            return *rect;
+        }
+    }
+    panic!("{id} was never drawn");
+}
+
+/// Tab 1 on a new `Scalp` beside `Default` (Slate), its menu's
+/// palette popover staged on `face`.
+fn popover_on(face: &str) -> (QuantickApp, egui::Context, crate::scratch::ScratchFile) {
+    let layouts = crate::scratch::ScratchFile::new("colour-popover", "layouts.toml");
+    let (mut app, first, _) = two_tabs(&layouts);
+    app.runtime.tabs.select(0);
+    app.runtime
+        .workspace
+        .book
+        .book_mut()
+        .create(first, "Scalp")
+        .unwrap();
+    let staged = app.chrome.window_menu.tab_workspace.stage(first, face);
+    assert!(staged, "{face}");
+    (app, egui::Context::default(), layouts)
+}
+
+fn preset(index: u8) -> quantick_stores::workspaces::WorkspaceColour {
+    quantick_stores::workspaces::WorkspaceColour::preset(index).unwrap()
+}
+
+/// A click on the header swatch opens the popover over the menu, and the
+/// scene lists its swatches and Custom….
+#[test]
+fn the_header_swatch_opens_the_popover_and_the_scene_lists_it() {
+    let (mut app, ctx, _layouts) = popover_on("cell");
+    let swatch = drawn_row(&mut app, &ctx, "workspace_menu.colour");
+    click_sized(&mut app, &ctx, FULL_HD, swatch.center());
+    let menu = &app.chrome.window_menu.tab_workspace;
+    assert!(
+        menu.colour.is_some() && menu.chip_menu.is_some(),
+        "the menu stays"
+    );
+    drawn_row(&mut app, &ctx, "workspace_menu.colour.slate");
+    let scene = crate::control::scene_snapshot(&app);
+    for key in ["cobalt", "slate", "blossom", "custom"] {
+        let id = format!("toolbar.workspace_menu.colour.{key}");
+        assert!(
+            scene
+                .controls
+                .iter()
+                .any(|control| control.control_id == id),
+            "{id}"
+        );
+    }
+}
+
+/// Swap reaches the colour handler with swap: the colour moves and the
+/// toast says which workspace changed.
+#[test]
+fn swap_reaches_the_colour_handler_and_the_toast_names_the_holder() {
+    let (mut app, ctx, _layouts) = popover_on("cell:colour:ask=slate");
+    let held = app.runtime.workspace.book.book().colour("Scalp").unwrap();
+    let swap = drawn_row(&mut app, &ctx, "workspace_menu.colour.swap");
+    click_sized(&mut app, &ctx, FULL_HD, swap.center());
+    let book = app.runtime.workspace.book.book();
+    assert_eq!(book.colour("Scalp"), Some(preset(4)));
+    assert_eq!(book.colour("Default"), Some(held), "Scalp's old colour");
+    let note = app.surfaces.toast.model_state.message();
+    assert_eq!(
+        note,
+        Some(format!("Default is now {}", held.name()).as_str())
+    );
+}
+
+/// Cancel on the question changes nothing.
+#[test]
+fn cancel_on_the_question_changes_nothing() {
+    let (mut app, ctx, _layouts) = popover_on("cell:colour:ask=slate");
+    let before = app.runtime.workspace.book.book().list();
+    let cancel = drawn_row(&mut app, &ctx, "workspace_menu.colour.cancel");
+    click_sized(&mut app, &ctx, FULL_HD, cancel.center());
+    assert_eq!(app.runtime.workspace.book.book().list(), before);
+    let popover = app.chrome.window_menu.tab_workspace.colour.as_ref();
+    assert_eq!(
+        popover.map(|popover| popover.asked.is_none()),
+        Some(true),
+        "back to the grid"
+    );
+}
+
+/// Apply on a custom colour reaches the colour handler.
+#[test]
+fn apply_on_a_custom_colour_reaches_the_colour_handler() {
+    let (mut app, ctx, _layouts) = popover_on("cell:colour:custom=#3A7BD5");
+    let apply = drawn_row(&mut app, &ctx, "workspace_menu.colour.apply");
+    click_sized(&mut app, &ctx, FULL_HD, apply.center());
+    let custom = quantick_stores::workspaces::WorkspaceColour::Custom([0x3A, 0x7B, 0xD5]);
+    assert_eq!(
+        app.runtime.workspace.book.book().colour("Scalp"),
+        Some(custom)
+    );
+    assert!(
+        app.chrome.window_menu.tab_workspace.colour.is_none(),
+        "it closes"
+    );
+}
+
+/// The popover call reaches the window's own menu: it opens the menu and its
+/// popover on the active tab, and Custom fills its field in the window's theme.
+#[test]
+fn the_popover_call_opens_the_window_s_menu_and_reads_its_theme() {
+    use crate::control::ActionOrigin;
+    use serde_json::json;
+    let (mut app, _ctx, _layouts) = popover_on("cell");
+    app.chrome.window_menu.tab_workspace = Default::default();
+    let mut call = |input: serde_json::Value| {
+        app.control_action("workspace.colour.popover", 1, ActionOrigin::Human, input)
+            .unwrap_or_else(|error| panic!("{error:?}"))
+    };
+    let open = call(json!({ "act": "open" }));
+    assert_eq!(
+        (open["open"].clone(), open["face"].clone()),
+        (json!(true), json!("grid"))
+    );
+    let custom = call(json!({ "act": "custom" }));
+    let dark = crate::app::TabsPort::appearance(&app).dark;
+    let scalp = app.runtime.workspace.book.book().colour("Scalp").unwrap();
+    let rgb = quantick_stores::workspaces::hex(scalp.rgb(dark));
+    assert_eq!(custom["hex"], json!(rgb));
+    let menu = &app.chrome.window_menu.tab_workspace;
+    assert!(menu.colour.as_ref().is_some_and(|popover| popover.custom));
+}

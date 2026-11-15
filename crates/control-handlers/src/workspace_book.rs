@@ -31,6 +31,9 @@ use quantick_control_schema::workspace_book::{
     workspace_rename_descriptor, workspace_revert_descriptor, workspace_save_as_descriptor,
     workspace_save_to_descriptor,
 };
+use quantick_control_schema::workspace_colour::{
+    ColourWarningDto, workspace_colour_palette_descriptor, workspace_colour_popover_descriptor,
+};
 use quantick_session::close_queue::{
     CloseAnswer, CloseQuestion, CloseQueue, CloseScope, CloseStep,
 };
@@ -50,6 +53,7 @@ use crate::notify::NotifyAccess;
 use crate::tabs::TabDirectory;
 
 pub mod cell_menu;
+pub mod colour_popover;
 
 fn unavailable() -> ControlError {
     ControlError::invalid_request("the workspaces are unavailable")
@@ -139,6 +143,12 @@ pub trait WorkspaceBookHost {
     fn persist_workspace_autosave(&mut self, _on: bool) -> Result<(), String> {
         Err("the desk is unavailable".to_owned())
     }
+    /// The window's workspace menu, which the colour popover's call opens
+    /// and acts on as a hand does, and whether the window paints in a dark
+    /// theme: what a colour's value is read in.
+    fn workspace_menu(&mut self) -> Option<(&mut WorkspaceMenuState, bool)> {
+        None
+    }
     /// Close a market tab; `false` when it is its window's last. With `close`
     /// false nothing closes and the answer says whether it would: asked
     /// before anything is saved or flushed, so the refusal writes nothing.
@@ -194,6 +204,9 @@ pub fn apply_row_command<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
         WorkspaceCommand::AnswerClose(answer) => {
             menu.close.answer(answer);
             return run_close(host, &mut to, &mut menu.close);
+        }
+        WorkspaceCommand::Colour(intent) => {
+            return colour_popover::act(host, &mut to, menu, tab, intent);
         }
         WorkspaceCommand::Set(name) => set_journaled(host, &mut to, tab, &name).map(|set| {
             set.changed
@@ -273,6 +286,10 @@ where
     registry.register_outside_replay(workspace_rename_descriptor(), rename)?;
     registry.register_outside_replay(workspace_delete_descriptor(), delete)?;
     registry.register_outside_replay(workspace_colour_set_descriptor(), colour_set)?;
+    let palette = workspace_colour_palette_descriptor();
+    registry.register_outside_replay(palette, colour_popover::palette_read)?;
+    let popover = workspace_colour_popover_descriptor();
+    registry.register_outside_replay(popover, colour_popover::popover_call)?;
     registry.register_outside_replay(workspace_list_descriptor(), list)
 }
 
@@ -1195,7 +1212,10 @@ fn colour_set<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
     let invalid = || refused(&WorkspaceRefusal::ColourInvalid(colour.clone()));
     let picked = WorkspaceColour::parse(&colour).ok_or_else(invalid)?;
     let outcome = colour_journaled(app, &mut Some((access, actor)), &name, (picked, swap))?;
+    let book = app.workspace_book_ref().ok_or_else(unavailable)?;
+    let found = quantick_stores::workspaces::palette::warnings(book, &name, picked);
     answer(&WorkspaceColourSetResult {
+        warnings: found.iter().map(ColourWarningDto::from).collect(),
         workspace: outcome.workspace,
         colour: picked.into(),
         changed: outcome.changed,

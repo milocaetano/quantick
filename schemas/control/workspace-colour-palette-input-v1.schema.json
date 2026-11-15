@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Read one workspace's palette.",
+  "properties": {
+    "name": {
+      "description": "The workspace. Left out, the one the tab on screen uses.",
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "title": "WorkspaceColourPaletteInput",
+  "type": "object"
+}

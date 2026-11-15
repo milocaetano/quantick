@@ -25,6 +25,7 @@
 
 mod button;
 pub mod close_queue;
+pub mod colour_popover;
 mod native;
 mod paging;
 pub mod paper;

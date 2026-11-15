@@ -18,7 +18,10 @@ use quantick_control_schema::scene::{
 };
 use quantick_control_schema::window_menu::{RowId, row_of};
 use quantick_control_schema::workspace_book as calls;
+use quantick_control_schema::workspace_colour::WORKSPACE_COLOUR_POPOVER_CAPABILITY_ID;
+use quantick_session::colour_popover::ColourIntent;
 use quantick_session::workspace_menu::{CHIP_MENU_FILTER_FROM, WorkspaceCommand, filter_matches};
+use quantick_stores::workspaces::palette::said;
 use quantick_stores::workspaces::{
     DEFAULT_WORKSPACE, Rgb, WorkspaceBook, WorkspaceColour, WorkspaceListing, WorkspaceRecipe,
 };
@@ -88,7 +91,9 @@ pub struct RowColour {
 }
 
 impl RowColour {
-    fn of(colour: WorkspaceColour, dark: bool) -> Self {
+    /// `colour` as `dark` or Light paints it.
+    #[must_use]
+    pub fn of(colour: WorkspaceColour, dark: bool) -> Self {
         Self {
             rgb: colour.rgb(dark),
             words: colour.describe(dark),
@@ -124,10 +129,14 @@ pub struct CellRow {
     pub tree: Option<PaneTree>,
     /// A workspace's colour, on its row and the header.
     pub colour: Option<RowColour>,
+    /// What hovering it says when that is more than a fixed phrase.
+    pub tip: Option<String>,
 }
 
 impl CellRow {
-    fn new(kind: RowKind, key: &str, label: impl Into<String>) -> Self {
+    /// A row of `kind` under scene key `key`, worded `label`, doing nothing.
+    #[must_use]
+    pub fn new(kind: RowKind, key: &str, label: impl Into<String>) -> Self {
         Self {
             kind,
             key: key.to_owned(),
@@ -143,6 +152,7 @@ impl CellRow {
             capability: None,
             tree: None,
             colour: None,
+            tip: None,
         }
     }
 
@@ -187,7 +197,8 @@ impl CellRow {
         if self.unavailable.is_some() {
             return self.disabled_hover;
         }
-        self.hover.or_else(|| cut.then_some(self.label.as_str()))
+        let tip = self.tip.as_deref().or(self.hover);
+        tip.or_else(|| cut.then_some(self.label.as_str()))
     }
 
     /// The row as the scene lists it under the toolbar owner `owner`, at
@@ -227,11 +238,22 @@ impl CellRow {
     }
 }
 
+/// Where the row under scene key `key` was drawn, among `drawn`.
+#[must_use]
+pub fn drawn<'a, R>(drawn: &'a [(CellRow, R)], key: &str) -> Option<&'a R> {
+    drawn
+        .iter()
+        .find(|(row, _)| row.key == key)
+        .map(|(_, at)| at)
+}
+
 /// The menu: the header on the tab's workspace with what acts on it, the
 /// list, which alone scrolls, and the footer.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CellMenu {
     pub current: CellRow,
+    /// The header's colour swatch, which opens the palette popover.
+    pub swatch: CellRow,
     /// Save (or its quiet line), Save as, Rename.
     pub head: Vec<CellRow>,
     /// Every workspace, in the stored order.
@@ -368,6 +390,14 @@ pub fn cell_menu(
         || described(book, workspace).1,
         |copy| copy.summary_of(live),
     );
+    let colour = book.colour(workspace);
+    let swatch = CellRow {
+        tip: colour.map(|colour| format!("{}{SEPARATOR}change colour", said(colour))),
+        command: Some(WorkspaceCommand::Colour(ColourIntent::Toggle)),
+        capability: Some(WORKSPACE_COLOUR_POPOVER_CAPABILITY_ID),
+        colour: colour.map(|colour| RowColour::of(colour, dark)),
+        ..CellRow::new(RowKind::Press, "colour", "Workspace colour")
+    };
     let current = CellRow {
         summary: format!("{shown}{SEPARATOR}{tabs}"),
         on: true,
@@ -381,6 +411,7 @@ pub fn cell_menu(
     };
     CellMenu {
         current,
+        swatch,
         head: head(workspace, modified, auto, keys),
         list,
         foot: foot(auto, keys),

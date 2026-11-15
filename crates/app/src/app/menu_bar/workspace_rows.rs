@@ -8,8 +8,11 @@ use eframe::egui::{self, Color32, Key, Modifiers, Rect, RichText, Sense, TextWra
 use quantick_appearance::Token;
 use quantick_control_handlers::workspace_book::cell_menu::{self as cells, CellMenuCache, CellRow};
 use quantick_control_schema::window_menu as text;
+use quantick_session::colour_popover::Key as PopoverKey;
 use quantick_session::workspace_menu::{self as model, CHIP_MENU_RADIUS_PT as RADIUS, MenuBounds};
 use quantick_session::workspace_menu::{NameDialogMode, WorkspaceCommand, WorkspaceMenuState};
+use quantick_stores::workspaces::WorkspaceBook;
+use quantick_ui_model::colour_palette as palette;
 use quantick_ui_model::workspace_menu::{self as marks, Mark, Piece};
 
 use super::MenuCommand;
@@ -38,9 +41,10 @@ pub(super) fn chip_menu(
     let (palette, border) = (crate::theme::get(ctx), model::CHIP_MENU_BORDER_PT);
     let (book, dark) = (app.runtime.workspace.book.book(), palette.resolved.dark);
     let rows = cache.menu(book, tab, &keys, live, dark, label);
+    let inert = menu.colour.is_some(); // The popover takes the keys and presses.
     let keys = [Key::ArrowDown, Key::ArrowUp, Key::Enter, Key::Escape];
     let [down, up, enter, escape] =
-        ctx.input_mut(|i| keys.map(|k| i.consume_key(Modifiers::NONE, k)));
+        ctx.input_mut(|i| keys.map(|k| !inert && i.consume_key(Modifiers::NONE, k)));
     let at = |r: Rect| MenuBounds::new(r.left(), r.top(), r.right(), r.bottom());
     let (n, screen, anchored) = (rows.list.len(), at(ctx.screen_rect()), at(anchor));
     let layout = |shown| model::chip_menu_layout(screen, anchored, n, shown);
@@ -72,7 +76,7 @@ pub(super) fn chip_menu(
                 let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
                 for piece in pieces {
                     let got = paint(ui, rect.min, piece, &ink, &mut drawn);
-                    asked = asked.take().or(got);
+                    asked = asked.take().or(got.filter(|_| !inert)); // Under the popover.
                 }
                 rect
             };
@@ -114,19 +118,62 @@ pub(super) fn chip_menu(
         });
     });
     let rect = area.response.rect;
+    let swatch = cells::drawn(&drawn, "colour").map(|at| at.shrink(4.0));
+    let held = (book, rows.current.label.as_str(), dark);
+    let paint = (&ink as &Ink<'_>, &mut drawn, frame.stroke(edge));
+    let popover = swatch.map(|at| colour_popover(ctx, held, at, menu, paint));
+    let (picked, off) = popover.unwrap_or_default();
     let cover = ctx.screen_rect();
     let shield = egui::Area::new(id.with("shield")).order(egui::Order::Middle); // Eats a click out.
     let shield = shield.fixed_pos(cover.min);
     let out = shield.show(ctx, |ui| ui.allocate_rect(cover, Sense::click()));
-    let out = out.inner.clicked();
-    let asked = keyed.or(asked);
+    let (out, asked) = (out.inner.clicked() || off, picked.or(keyed).or(asked));
     commands.extend(asked.clone().flatten().map(MenuCommand::Workspace));
-    if asked.is_some() || escape || out {
-        menu.close_chip_menu();
-    }
+    menu.settle(asked.as_ref(), escape, out);
     drawn.insert(0, (CellRow::menu(n), rect));
     drawn.retain(|_| !fresh); // egui lays a new area out unseen first.
     drawn
+}
+
+/// The palette popover under the header `swatch` while `menu` holds it open:
+/// `colour_palette`'s marks, egui's field over Custom's. Its press or key,
+/// and whether a click landed outside it.
+fn colour_popover(
+    ctx: &egui::Context,
+    (book, workspace, dark): (&WorkspaceBook, &str, bool),
+    swatch: Rect,
+    menu: &mut WorkspaceMenuState,
+    (ink, drawn, frame): (&Ink<'_>, &mut Drawn, egui::Frame),
+) -> (Asked, bool) {
+    let Some(state) = menu.colour.as_mut() else {
+        return (None, false);
+    };
+    let named = |k: PopoverKey| Key::from_name(k.name()).filter(|_| state.takes(k));
+    let pressed = ctx.input_mut(|i| {
+        PopoverKey::ALL.map(|k| named(k).is_some_and(|k| i.consume_key(Modifiers::NONE, k)))
+    });
+    let area = egui::Area::new(egui::Id::new("colour_popover")).order(egui::Order::Tooltip);
+    let area = area.fixed_pos((swatch.left_bottom() + vec2(0.0, palette::DROP_PT)).round());
+    let shown = area.constrain(true).show(ctx, |ui| {
+        frame.show(ui, |ui| {
+            let measure =
+                |s: &str, pt: f32| galley(ui, RichText::new(s).size(pt), f32::MAX).size().x;
+            let pop = palette::popover(book, workspace, state, dark, &measure)?;
+            let (rect, _) = ui.allocate_exact_size(vec2(pop.size[0], pop.size[1]), Sense::hover());
+            let paint = |asked: Asked, piece| asked.or(paint(ui, rect.min, piece, ink, drawn));
+            let asked = pop.pieces.iter().fold(None, paint);
+            if let Some(f) = pop.field {
+                let place = Rect::from_min_size(rect.min + vec2(f.x, f.y), vec2(f.w, f.h));
+                let mut field = ui.new_child(egui::UiBuilder::new().max_rect(place));
+                field.visuals_mut().text_cursor.stroke.color = ink(Some(Token::TextPrimary));
+                let edit = egui::TextEdit::singleline(&mut state.hex).frame(false);
+                field.add(edit).request_focus();
+            }
+            Some(pop.keyed(state, pressed).map(Some).or(asked))
+        })
+    });
+    let out = shown.response.clicked_elsewhere();
+    (shown.inner.inner.flatten(), out)
 }
 
 /// `words`, cut short to `width`.
@@ -136,12 +183,14 @@ fn galley(ui: &egui::Ui, words: RichText, width: f32) -> std::sync::Arc<egui::Ga
 }
 
 /// `piece` from `at`, its hover fill over its first mark, its row in `drawn`
-/// while half of it shows, its tip naming it whole while its name is cut.
+/// while half of it shows, its tip naming it whole while its name is cut; a
+/// drag piece answers where it is pressed.
 fn paint(ui: &egui::Ui, at: egui::Pos2, piece: &Piece, ink: &Ink<'_>, drawn: &mut Drawn) -> Asked {
     let rect = |a: marks::Area| Rect::from_min_size(at + vec2(a.x, a.y), vec2(a.w, a.h));
     let (whole, painter, mut cut) = (rect(piece.at), ui.painter(), false);
     let key = piece.row.as_ref().map_or("", |row| row.key.as_str());
-    let sense = [Sense::hover(), Sense::click()][usize::from(piece.press)];
+    let senses = [Sense::hover(), Sense::click(), Sense::click_and_drag()];
+    let sense = senses[usize::from(piece.press) + usize::from(piece.drag)];
     let mut response = ui.interact(whole, ui.id().with(("workspace_menu", key)), sense);
     let plate = |b: &marks::Plate| {
         let fill = ink(b.fill).gamma_multiply(f32::from(b.alpha) / 255.0);
@@ -156,12 +205,22 @@ fn paint(ui: &egui::Ui, at: egui::Pos2, piece: &Piece, ink: &Ink<'_>, drawn: &mu
                 let words = galley(ui, words.extra_letter_spacing(t.tracking), t.width);
                 let place = at + vec2(t.x, t.y - words.size().y / 2.0);
                 cut |= words.elided && t.names;
-                painter.galley(place, words, ink(Some(t.ink)));
+                let own = t.rgb.map(|[r, g, b]| Color32::from_rgb(r, g, b));
+                painter.galley(place, words, own.unwrap_or_else(|| ink(Some(t.ink))));
             }
-            Mark::Tree(area, tree) => paint_tree(painter, rect(*area), tree),
+            Mark::Tree(area, tree) => paint_tree(painter, rect(*area), tree, Token::Accent),
             Mark::Colour { at, radius, rgb } => {
                 let [r, g, b] = *rgb;
                 painter.rect_filled(rect(*at), *radius, Color32::from_rgb(r, g, b));
+            }
+            Mark::Shade(corners) => {
+                let mut mesh = egui::Mesh::default();
+                for ([x, y], [r, g, b]) in corners {
+                    mesh.colored_vertex(at + vec2(*x, *y), Color32::from_rgb(*r, *g, *b));
+                }
+                mesh.add_triangle(0, 1, 2);
+                mesh.add_triangle(0, 2, 3);
+                painter.add(mesh);
             }
         }
         if let Some(hover) = piece.hover.filter(|_| index == 0 && response.hovered()) {
@@ -169,6 +228,14 @@ fn paint(ui: &egui::Ui, at: egui::Pos2, piece: &Piece, ink: &Ink<'_>, drawn: &mu
         }
     }
     let row = piece.row.as_ref()?;
+    let (pressed, p) = (
+        response.dragged() || response.clicked(),
+        response.interact_pointer_pos(),
+    );
+    if let Some(p) = p.filter(|_| piece.drag && pressed) {
+        let at = (p - whole.min) / whole.size();
+        return palette::dragged(key, [at.x, at.y]).map(Some);
+    }
     let seen = whole.intersect(ui.clip_rect());
     drawn.extend((seen.height() * 2.0 >= whole.height()).then(|| (row.clone(), seen)));
     if let Some(tip) = row.tip(cut) {
