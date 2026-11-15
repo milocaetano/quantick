@@ -33,7 +33,8 @@ pub fn split_row(area: egui::Rect, widths: &[PaneWidth]) -> RowAreas {
 #[must_use]
 pub fn split_column(area: egui::Rect, heights: &[PaneWidth]) -> RowAreas {
     let band = |(from, to): Span| egui::Rect::from_x_y_ranges(area.x_range(), from..=to);
-    carve(split(area.top(), area.height(), heights), band)
+    let at = (area.top(), area.height());
+    carve(split(at.0, at.1, heights).meeting_rails(heights), band)
 }
 
 fn carve(split: Split, band: impl Fn(Span) -> egui::Rect) -> RowAreas {

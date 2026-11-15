@@ -210,7 +210,7 @@ panel_gain_ink = "#145A24"
 rail_band = "#D0D0D0"
 rail_edge = "#7C7C7C"
 rail_grip = "#3A4049"
-rail_band_hover = "#BFC3C9"
+rail_band_hover = "#B0B5BC"
 rail_edge_hover = "#5F6670"
 rail_grip_hover = "#000000"
 

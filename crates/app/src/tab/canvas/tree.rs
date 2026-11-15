@@ -154,17 +154,24 @@ impl Tab {
         let palette = theme::get(ui.ctx());
         let canvas = CanvasRect::new(area.left(), area.top(), area.width(), area.height());
         let rect = floating_panes::screen_rect;
+        let rails = tree_rails(&self.canvas.state, canvas, CANVAS_DIVIDER_PX);
+        let words: Vec<String> = rails.iter().map(|rail| self.rail_words(rail)).collect();
+        let of = |slot| rails.iter().position(|rail: &SeamRail| rail.slot == slot);
+        let mut grabs = vec![Vec::new(); rails.len()];
         for seam in tree_seams(&self.canvas.state, canvas, CANVAS_DIVIDER_PX) {
             let ink = [egui::Color32::TRANSPARENT, palette.border()][usize::from(seam.is_line())];
-            ui.painter()
-                .rect_filled(rect(seam.rect), egui::Rounding::ZERO, ink);
+            ui.painter().rect_filled(rect(seam.rect), 0.0, ink);
             if !seam.resizable {
                 continue;
             }
             let row = seam.axis == SplitAxis::Row;
             let id = egui::Id::new(("tree_seam", tab_id, &seam.address));
             let grab = rect(seam.grab(CANVAS_DIVIDER_HANDLE_PX));
-            let handle = ui.interact(grab, id, egui::Sense::drag());
+            let mut handle = ui.interact(grab, id, egui::Sense::drag());
+            if let Some(at) = seam.rail.and_then(|rail| of(rail.slot)) {
+                handle = handle.on_hover_text(&words[at]);
+                grabs[at].push(grab);
+            }
             if handle.hovered() || handle.dragged() {
                 ui.ctx().set_cursor_icon(CURSORS[usize::from(row)]);
             }
@@ -174,12 +181,8 @@ impl Tab {
             let (state, held) = (&mut self.canvas.state, &mut self.canvas.seam_drag);
             state.seam_hand(held, (&seam.address, super::hand(&handle, row)), canvas);
         }
-        for rail in tree_rails(&self.canvas.state, canvas, CANVAS_DIVIDER_PX) {
-            let (at, words) = (rect(rail.rect), self.rail_words(&rail));
-            let lit = super::rail_hot(ui.ctx(), &[rect(rail.hit())]);
-            if lit && ui.ctx().dragged_id().is_none() {
-                egui::show_tooltip_text(ui.ctx(), ui.layer_id(), egui::Id::new(rail.slot), &words);
-            }
+        for ((rail, words), hits) in rails.iter().zip(words).zip(&grabs) {
+            let (at, lit) = (rect(rail.rect), super::rail_hot(ui.painter(), hits));
             super::paint_rail(ui.painter(), at, rail.look(canvas), lit);
             self.canvas.menus.publish_rail(rail.control_id(), at, words);
         }
@@ -278,12 +281,11 @@ impl Tab {
         floating_panes::preview(&ctx, floats, &canvas_state.state, canvas);
         let drawn = floats.drawn.drain(..).map(|(id, label, rect, capability)| {
             let (rect, capability) = (floating_panes::screen_rect(rect), Some(capability));
-            let selected = false;
             crate::toolbar::DrawnControl {
                 id,
                 label,
                 rect,
-                selected,
+                selected: false,
                 capability,
                 description: None,
             }

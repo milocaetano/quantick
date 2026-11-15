@@ -89,7 +89,6 @@ pub struct DrawnControl {
     pub selected: bool,
     /// The capability that does what pressing it does.
     pub capability: Option<&'static str>,
-    /// What it shows on hover, where it says more than its label.
     pub description: Option<String>,
 }
 

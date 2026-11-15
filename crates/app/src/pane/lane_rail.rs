@@ -135,7 +135,6 @@ pub(super) fn paint_lane_rail(pane: &ChartPane, painter: &egui::Painter, chart: 
     };
     let paint = span(chart, (rail.paint_from_px, rail.paint_to_px));
     let hit = span(chart, (rail.hit_from_px, rail.hit_to_px));
-    let hot = crate::tab::rail_hot(painter.ctx(), &[hit]);
     let look = RailLook::between(false, rail.side == LaneSide::Trail, 1);
-    crate::tab::paint_rail(painter, paint, look, hot);
+    crate::tab::paint_rail(painter, paint, look, crate::tab::rail_hot(painter, &[hit]));
 }

@@ -71,28 +71,6 @@ impl SeamRail {
         format!("pane_menu.{}.rail", self.slot)
     }
 
-    /// Where a pointer finds it: [`COLLAPSED_HIT_PX`] from its outer edge
-    /// through its seam into the open side, as that seam's grab reaches.
-    #[must_use]
-    pub fn hit(&self) -> CanvasRect {
-        let (at, row) = (self.rect, self.axis == SplitAxis::Row);
-        let (low, high) = if row {
-            (at.x, at.right())
-        } else {
-            (at.y, at.bottom())
-        };
-        let from = if self.meets_after {
-            low
-        } else {
-            high - COLLAPSED_HIT_PX
-        };
-        if row {
-            CanvasRect::new(from, at.y, COLLAPSED_HIT_PX, at.h)
-        } else {
-            CanvasRect::new(at.x, from, at.w, COLLAPSED_HIT_PX)
-        }
-    }
-
     /// How it is drawn on a canvas of `area`: flat when folded across a
     /// column, its chevron toward the open side it meets.
     #[must_use]

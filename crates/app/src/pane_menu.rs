@@ -41,13 +41,12 @@ impl PaneMenus {
         rect: Rect,
         cap: Option<&'static str>,
     ) {
-        let (label, selected, capability) = (label.to_owned(), false, cap);
         let control = DrawnControl {
             id,
-            label,
+            label: label.to_owned(),
             rect,
-            selected,
-            capability,
+            selected: false,
+            capability: cap,
             description: None,
         };
         self.drawn.push(control);

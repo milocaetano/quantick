@@ -23,7 +23,7 @@ pub const RAIL_CHEVRON_BOX_PX: f32 = 5.0;
 /// A dash: one pixel along the rail, this long across it, one per pane,
 /// this far apart, the first this far past the chevron's last row.
 pub const RAIL_DASH_PX: f32 = 3.0;
-pub const RAIL_DASH_PITCH_PX: f32 = 3.0;
+pub const RAIL_DASH_PITCH_PX: f32 = 4.0;
 pub const RAIL_DASHES_AFTER_PX: f32 = 4.0;
 /// The most dashes a rail lays: past it, the count reads in its words.
 pub const RAIL_MAX_DASHES: usize = 8;

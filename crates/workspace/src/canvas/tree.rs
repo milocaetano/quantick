@@ -598,21 +598,26 @@ fn normalised(shares: &[f32]) -> Vec<f32> {
 /// `rect` less half a `divider` on every edge inside `area`.
 #[must_use]
 pub fn inset_seams(rect: CanvasRect, area: CanvasRect, divider: f32) -> CanvasRect {
-    const EDGE_SLACK: f32 = 0.5;
     let half = divider / 2.0;
     let left = rect.x
-        + if rect.x > area.x + EDGE_SLACK {
+        + if rect.x > area.x + EDGE_SLACK_PX {
             half
         } else {
             0.0
         };
     let top = rect.y
-        + if rect.y > area.y + EDGE_SLACK {
+        + if rect.y > area.y + EDGE_SLACK_PX {
             half
         } else {
             0.0
         };
-    let inner = |edge: f32, outer: f32| if edge < outer - EDGE_SLACK { half } else { 0.0 };
+    let inner = |edge: f32, outer: f32| {
+        if edge < outer - EDGE_SLACK_PX {
+            half
+        } else {
+            0.0
+        }
+    };
     let right = rect.right() - inner(rect.right(), area.right());
     let bottom = rect.bottom() - inner(rect.bottom(), area.bottom());
     CanvasRect::new(left, top, right - left, bottom - top)

@@ -64,16 +64,8 @@ pub fn column_frame(
         } else {
             PaneWidth::Auto
         };
-        let row = split(start, width, &[time, flow]);
-        let (mut time, divider, mut flow) = (row.panes[0], row.dividers[0], row.panes[1]);
-        // A folded side's divider is no line: the open pane comes up to the
-        // rail, no gutter between.
-        if flow_folded {
-            time.1 = divider.1;
-        } else if context_folded {
-            flow.0 = divider.0;
-        }
-        (Some(time), Some(divider), flow)
+        let row = split(start, width, &[time, flow]).meeting_rails(&[time, flow]);
+        (Some(row.panes[0]), Some(row.dividers[0]), row.panes[1])
     } else {
         (show_time.then_some(whole), None, whole)
     };

@@ -289,7 +289,7 @@ impl Tab {
                     let hits: Vec<_> = near.iter().flatten().map(|at| at.expand2(reach)).collect();
                     let way = (true, slot + 1 < context_shown);
                     let look = RailLook::on(model_rect(*band), model_rect(column), way, 1);
-                    paint_rail(ui.painter(), *band, look, rail_hot(ui.ctx(), &hits));
+                    paint_rail(ui.painter(), *band, look, rail_hot(ui.painter(), &hits));
                     rects.context_charts.push(None);
                     continue;
                 }
@@ -1108,8 +1108,10 @@ impl Tab {
         {
             self.collapsed_rail = Some(rail);
         }
-        let (at, area) = (model_rect(rail), model_rect(canvas));
-        let (held, look) = self.canvas.state.side_rail(right, at, area);
+        let (held, look) = self
+            .canvas
+            .state
+            .side_rail(right, model_rect(rail), model_rect(canvas));
         let side = [PaneSide::Time(0), PaneSide::Flow][usize::from(right)];
         let words = held.words(|| Some(self.strip_name(side)));
         let reach = canvas_layout::COLLAPSED_HIT_PX.max(rail.width());
@@ -1129,7 +1131,7 @@ impl Tab {
             ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
         }
 
-        paint_rail(ui.painter(), rail, look, rail_hot(ui.ctx(), &[hit]));
+        paint_rail(ui.painter(), rail, look, rail_hot(ui.painter(), &[hit]));
         if let Some(id) = self.canvas.state.side_rail_id(right) {
             self.canvas.menus.publish_rail(id, rail, words);
         }
@@ -1195,13 +1197,14 @@ impl Tab {
         for (index, divider) in dividers.iter().copied().enumerate() {
             let upper_collapsed = self.canvas.context_stack.heights[index].is_collapsed();
             let lower_collapsed = self.canvas.context_stack.heights[index + 1].is_collapsed();
-            ui.painter()
-                .rect_filled(divider, egui::Rounding::ZERO, palette.border());
+            let beside = upper_collapsed || lower_collapsed;
+            let ink = [palette.border(), egui::Color32::TRANSPARENT][usize::from(beside)];
+            ui.painter().rect_filled(divider, 0.0, ink);
             let handle = ui
                 .interact(
                     divider.expand2(egui::vec2(
                         0.0,
-                        if upper_collapsed || lower_collapsed {
+                        if beside {
                             canvas_layout::COLLAPSED_HIT_PX / 2.0
                         } else {
                             CANVAS_DIVIDER_HANDLE_PX
@@ -1249,15 +1252,16 @@ pub(super) fn hand(r: &egui::Response, row: bool) -> Hand {
     Hand::of([r.drag_started(), r.dragged(), r.drag_stopped()], delta)
 }
 
-/// Whether a rail with these hit areas lights: the workspace's one rule.
-pub(crate) fn rail_hot(ctx: &egui::Context, hits: &[egui::Rect]) -> bool {
+/// Whether a rail lights by the workspace's rule, hovered only where `painter`'s layer is on top.
+pub(crate) fn rail_hot(painter: &egui::Painter, hits: &[egui::Rect]) -> bool {
+    let (ctx, layer) = (painter.ctx(), painter.layer_id());
     let on = |at: Option<egui::Pos2>| at.is_some_and(|at| hits.iter().any(|hit| hit.contains(at)));
     let (hover, press) = ctx.input(|i| (i.pointer.hover_pos(), i.pointer.press_origin()));
-    quantick_workspace::canvas::rail_lit(on(hover), on(press), ctx.dragged_id().is_some())
+    let top = hover.and_then(|at| ctx.layer_id_at(at)) == Some(layer);
+    quantick_workspace::canvas::rail_lit(on(hover) && top, on(press), ctx.dragged_id().is_some())
 }
 
-/// A folded side's rail, one look for every fold: the workspace's marks for
-/// `look` in the theme's rail inks, lit while `hot`.
+/// A folded side's rail: the workspace's marks for `look`, lit while `hot`.
 pub(crate) fn paint_rail(painter: &egui::Painter, rail: egui::Rect, look: RailLook, hot: bool) {
     let palette = theme::get(painter.ctx());
     let inks = quantick_appearance::rail::rail_inks(hot);

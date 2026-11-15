@@ -259,7 +259,12 @@ fn the_column_painters_flat_context_rail_paints_and_lights_on_its_hit_area() {
             .frame
             .area
             .expect("the open chart");
-        assert_eq!(below.top(), rail.bottom(), "the chart meets the band");
+        let header = crate::theme::get(&ctx).layout(crate::time_header::HEIGHT_PX);
+        assert_eq!(
+            below.top() - header,
+            rail.bottom(),
+            "the chart meets the band"
+        );
         assert_rail(
             &hover(&mut app, &ctx, rail.center()),
             rail,
