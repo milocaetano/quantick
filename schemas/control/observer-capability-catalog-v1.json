@@ -32747,6 +32747,42 @@
             ],
             "type": "object"
           },
+          "IntakeLagSnapshot": {
+            "description": "How long live prints waited inside this process before paper trading saw\nthem: the window's drain receipt stamp to the paper-trading stage, per\nprint, over a bounded window of the newest prints (nearest-rank).",
+            "properties": {
+              "clamped": {
+                "$ref": "#/$defs/WireU64",
+                "description": "Prints whose stage stamp preceded the receipt stamp (a wall-clock step\nback), counted as zero lag rather than dropped."
+              },
+              "max_ms": {
+                "format": "int64",
+                "type": "integer",
+                "x-unit": "milliseconds"
+              },
+              "p50_ms": {
+                "format": "int64",
+                "type": "integer",
+                "x-unit": "milliseconds"
+              },
+              "p99_ms": {
+                "format": "int64",
+                "type": "integer",
+                "x-unit": "milliseconds"
+              },
+              "samples": {
+                "$ref": "#/$defs/WireU64",
+                "description": "Prints the window covers."
+              }
+            },
+            "required": [
+              "p50_ms",
+              "p99_ms",
+              "max_ms",
+              "samples",
+              "clamped"
+            ],
+            "type": "object"
+          },
           "LoadingTaskSnapshot": {
             "properties": {
               "operation_count": {
@@ -33061,6 +33097,17 @@
                   "null"
                 ],
                 "x-unit": "milliseconds"
+              },
+              "intake_lag": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/IntakeLagSnapshot"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Receipt-to-paper-trading delay inside this process, over the newest\nlive prints; `None` before the feed session's first print."
               },
               "sampled_prints": {
                 "$ref": "#/$defs/WireU64",

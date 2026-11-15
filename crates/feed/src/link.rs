@@ -137,6 +137,9 @@ pub struct FeedLink {
     /// is what wall clock is compared against every frame.
     pub latest_trade_ms: Option<i64>,
     pub live_trades: u64,
+    /// Receipt-to-paper-trading delay of the newest live prints; reset by
+    /// [`Self::attach`], so a new feed session starts its own window.
+    pub intake_lag: quantick_operability::intake_lag::IntakeLag,
     /// A session of this link has connected at least once.
     connected_once: bool,
 }
@@ -170,6 +173,7 @@ impl FeedLink {
             latest_trade_latency_ms: None,
             latest_trade_ms: None,
             live_trades: 0,
+            intake_lag: Default::default(),
             auto_roll: AutoRoll::default(),
             connected_once: false,
         }
@@ -201,6 +205,7 @@ impl FeedLink {
         self.commands = handle.commands;
         self.replay = handle.replay;
         self.book_channel_closed_reported = false;
+        self.intake_lag.clear();
     }
 
     /// Forget what this link recorded about the timeline it fed — its gaps,
@@ -352,6 +357,22 @@ impl FeedLink {
         )
     }
 
+    /// Book one live print received at `received_at_ms`, as the window hands
+    /// it to its owners: the arrival delay (the arithmetic of
+    /// `quantick_orderflow::feed_lag_ms`), the tape-age stamp, the count and
+    /// one intake-lag sample read now — the moment paper trading, the first
+    /// live-trade stage, runs.
+    pub fn observe_live_trade(&mut self, received_at_ms: i64, trade_ms: i64) {
+        self.observe_live_trade_at(received_at_ms, trade_ms, crate::clock::wall_clock_ms());
+    }
+
+    fn observe_live_trade_at(&mut self, received_at_ms: i64, trade_ms: i64, now_ms: i64) {
+        self.latest_trade_latency_ms = Some(received_at_ms.saturating_sub(trade_ms));
+        self.latest_trade_ms = Some(trade_ms);
+        self.live_trades += 1;
+        self.intake_lag.record(received_at_ms, now_ms);
+    }
+
     /// Delay observed when the newest live trade reached the UI.
     ///
     /// `None` while a session is replaying: those prints are as old as the day
@@ -413,6 +434,27 @@ mod tests {
     fn link() -> (FeedLink, mpsc::Sender<FeedNotice>) {
         let (handle, notices) = handle();
         (FeedLink::new(handle, 0), notices)
+    }
+
+    #[test]
+    fn a_live_print_books_its_delay_age_count_and_intake_sample() {
+        let (mut link, _notices) = link();
+        link.observe_live_trade_at(1_000, 600, 1_003);
+        link.observe_live_trade_at(1_000, 1_200, 1_009);
+        assert_eq!(
+            link.latest_trade_latency_ms,
+            Some(-200),
+            "signed, as measured"
+        );
+        assert_eq!((link.latest_trade_ms, link.live_trades), (Some(1_200), 2));
+        let lag = link.intake_lag.summary().expect("two samples");
+        assert_eq!((lag.samples, lag.p50_ms, lag.max_ms), (2, 3, 9));
+        link.attach(handle().0, 2_000);
+        assert_eq!(
+            link.intake_lag.summary(),
+            None,
+            "a new session, a new window"
+        );
     }
 
     fn handle() -> (FeedHandle, mpsc::Sender<FeedNotice>) {

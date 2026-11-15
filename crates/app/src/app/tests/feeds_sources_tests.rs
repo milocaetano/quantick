@@ -75,6 +75,30 @@ fn confirmed_feed_loss_reaches_gap_and_health_snapshots_without_changing_trades(
     );
 }
 
+/// Each live print reaching paper trading lands one intake-lag sample, and
+/// the diagnostics scope reads the window back; the window's own arithmetic
+/// is `quantick_operability::intake_lag`'s to test.
+#[test]
+fn live_prints_reach_the_intake_lag_window_and_health_diagnostics() {
+    let (mut app, _notices, (events, _book)) = test_app_with_notices();
+    let mut registry = crate::control::standard_registry().unwrap();
+    let scopes = [observer_scope("health.summary")];
+    events.blocking_send(FeedEvent::Live(trade(14))).unwrap();
+    events
+        .blocking_send(FeedEvent::LiveBatch(vec![trade(15), trade(16)]))
+        .unwrap();
+    let tab_id = app.runtime.tabs.active_id();
+    app.active_tab_mut().drain_feed(tab_id);
+    let health = registry
+        .capture(&app, &observer_instance(), &scopes)
+        .unwrap()
+        .into_serialized()
+        .unwrap();
+    let lag = &health.scopes[&scopes[0]].value["tabs"][0]["tape"]["intake_lag"];
+    assert_eq!(lag["samples"], "3", "one sample per live print: {lag}");
+    assert!(lag["p50_ms"].is_i64() && lag["max_ms"].is_i64(), "{lag}");
+}
+
 #[test]
 fn a_reconnect_refill_reads_back_on_feed_status_with_its_remaining_gap() {
     use quantick_feed::config::{BackfillState, BackfillStop, TapeBackfill};

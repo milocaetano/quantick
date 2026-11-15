@@ -121,6 +121,7 @@ fn tape_health(tab: &Tab) -> Option<TapeHealthSnapshot> {
         transport_latency_ms: split.and_then(|s| s.transport_lag_ms),
         dominant_hop: split.and_then(|s| s.hop).map(str::to_owned),
         sampled_prints: WireU64::new(u64::from(split.map_or(0, |s| s.prints))),
+        intake_lag: tab.link.intake_lag.summary().map(Into::into),
     })
 }
 

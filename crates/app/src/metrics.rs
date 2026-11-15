@@ -31,7 +31,3 @@ pub use quantick_chart_interaction::frame_stats::FrameStats;
 // the level where real time enters quantick; re-exported so every caller here
 // keeps one name for it. Nothing below that crate reads a clock at all.
 pub use quantick_feed::clock::wall_clock_ms;
-
-// Lives with the order-flow engine, which observes the same lag on depth
-// events; re-exported so the tape's callers keep one name for it.
-pub use quantick_orderflow::feed_lag_ms;

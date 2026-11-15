@@ -57,7 +57,11 @@
 //! Nothing here runs in a frame. The table is `const` data; `drift` and the
 //! walks in `sources` are test- and generation-time only, and the renderer
 //! is reached from `main`'s dump path before a window exists.
+//!
+//! [`intake_lag`] is the one runtime piece: a bounded per-print window the
+//! feed link records into and the health diagnostics read, told the time.
 
+pub mod intake_lag;
 pub mod matrix;
 pub mod registry;
 
