@@ -1,8 +1,10 @@
-//! The menu below the capsule's workspace name, apart from its pixels: which
-//! rows it shows and in what order, their words, what a press on each asks
-//! and the call that does the same, so the window only draws and the scene
-//! names every row. The size it keeps to is
-//! `quantick_session::workspace_menu::chip_menu_budget`'s.
+//! The menu below the capsule's workspace name (designer B, "workspace
+//! first"), apart from its pixels: the header on the tab's workspace with
+//! what acts on it, the list in its stored order with each row's summary
+//! and status, the filter and the footer, the words of each, what a press
+//! asks and the call that does the same, so the window only draws and the
+//! scene reads the whole menu. Its size, scroll, filter and focus are
+//! `quantick_session::workspace_menu`'s.
 //!
 //! A row view-model sits among the handler families because what a row does
 //! is the workspace calls' own business: each row names the call that does
@@ -10,16 +12,21 @@
 //! and this is the highest headless crate that sees both the session's
 //! commands and the control plane's words and scene.
 
-use std::hash::{Hash, Hasher};
-
 use quantick_control_host::wire::{available, unavailable};
 use quantick_control_schema::scene::{
     SceneBoundsSnapshot, SceneControlSnapshot, SceneOwnerKindDto, SceneOwnerSnapshot, SceneRoleDto,
 };
 use quantick_control_schema::window_menu::{RowId, row_of};
 use quantick_control_schema::workspace_book as calls;
-use quantick_session::workspace_menu::WorkspaceCommand;
-use quantick_stores::workspaces::{DEFAULT_WORKSPACE, WorkspaceBook, WorkspaceListing};
+use quantick_session::workspace_menu::{CHIP_MENU_FILTER_FROM, WorkspaceCommand, filter_matches};
+use quantick_stores::workspaces::{
+    DEFAULT_WORKSPACE, WorkspaceBook, WorkspaceListing, WorkspaceRecipe,
+};
+use quantick_workspace::canvas::PaneTree;
+use quantick_workspace::canvas_layout::recipe_canvas;
+
+/// Between the parts of a summary.
+const SEPARATOR: &str = " \u{b7} ";
 
 /// The open menu's id among the toolbar's scene controls; a row's is
 /// `<this>.<key>`.
@@ -33,6 +40,16 @@ pub const AUTOSAVE_SAVES_REASON: &str = "autosave_saves_every_change";
 pub const NO_EDITS_REASON: &str = "the_tab_holds_no_edits";
 /// Why Rename is greyed on `Default`.
 pub const DEFAULT_PROTECTED_REASON: &str = "the_default_workspace_cannot_be_renamed";
+/// The caption over the list, beside its count.
+pub const CAPTION: &str = "WORKSPACES";
+/// What Save says while autosave saves every change.
+pub const QUIET_SAVE: &str = "Saved automatically";
+/// The empty filter field's words.
+pub const FILTER_PLACEHOLDER: &str = "Type to filter";
+/// How a row ends while only the tab whose menu it is holds its edit.
+pub const UNSAVED_HERE: &str = "unsaved";
+/// The header's mark while the tab holds edits.
+pub const UNSAVED: &str = "Unsaved";
 
 /// The scene id of the row under `key`, or of the menu for an empty one.
 #[must_use]
@@ -45,39 +62,49 @@ pub fn scene_id(key: &str) -> String {
 }
 
 /// How a row draws.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RowKind {
-    Separator,
-    /// A line of supporting text.
-    Caption,
-    /// A tick box.
-    Switch,
-    /// A button, with its supporting text beside it.
+    /// The header's line on the tab's workspace: its miniature, its name over
+    /// its summary, and the Unsaved mark.
+    Current,
+    /// A button.
     Press,
+    /// The quiet line Save turns into while autosave saves.
+    Quiet,
+    /// The autosave switch, its state words at its end.
+    Switch,
+    /// A workspace in the list: miniature, name over summary, status.
+    Workspace,
+    /// The filter field over a long list.
+    Filter,
 }
 
 /// One row of the menu.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CellRow {
     pub kind: RowKind,
-    /// Its scene key; empty for a row the scene does not list.
+    /// Its scene key; empty for the menu itself.
     pub key: String,
     pub label: String,
-    /// The supporting text at the row's right end.
+    /// The line under a workspace's name, or the switch's state words.
+    pub summary: String,
+    /// A press's shortcut words at its right end.
     pub beside: String,
-    /// Ticked, or lit as the tab's own.
+    /// Switched on, or the tab's own workspace.
     pub on: bool,
     /// Why a press would do nothing now, as a stable code; `None` while it
     /// would.
     pub unavailable: Option<&'static str>,
-    /// The unsaved dot, inside the row before its text.
+    /// Unsaved edits: the header's mark, a row's dot, Save standing out.
     pub dot: bool,
     pub hover: Option<&'static str>,
     pub disabled_hover: Option<&'static str>,
-    /// What a press asks.
+    /// What a press asks; `None` on the tab's own row, which only closes.
     pub command: Option<WorkspaceCommand>,
     /// The call that does what a press does.
     pub capability: Option<&'static str>,
+    /// The layout its miniature pictures.
+    pub tree: Option<PaneTree>,
 }
 
 impl CellRow {
@@ -86,6 +113,7 @@ impl CellRow {
             kind,
             key: key.to_owned(),
             label: label.into(),
+            summary: String::new(),
             beside: String::new(),
             on: false,
             unavailable: None,
@@ -94,31 +122,35 @@ impl CellRow {
             disabled_hover: None,
             command: None,
             capability: None,
+            tree: None,
         }
     }
 
-    fn line(kind: RowKind, label: impl Into<String>) -> Self {
-        Self::new(kind, "", label)
-    }
-
-    fn press(key: &str, id: RowId, command: WorkspaceCommand, call: &'static str) -> Self {
+    fn press(
+        key: &str,
+        label: &str,
+        id: RowId,
+        command: WorkspaceCommand,
+        call: &'static str,
+    ) -> Self {
         let row = row_of(id);
         Self {
             hover: row.hover,
             disabled_hover: row.disabled_hover,
             command: Some(command),
             capability: Some(call),
-            ..Self::new(RowKind::Press, key, row.label)
+            ..Self::new(RowKind::Press, key, label)
         }
     }
 
-    /// The open menu itself, as the scene lists it.
+    /// The open menu itself, holding `workspaces`, as the scene lists it.
     #[must_use]
-    pub fn menu() -> Self {
+    pub fn menu(workspaces: usize) -> Self {
         Self {
             on: true,
+            summary: format!("{workspaces} workspaces"),
             capability: Some(MENU_CAPABILITY_ID),
-            ..Self::line(RowKind::Caption, "Workspace menu")
+            ..Self::new(RowKind::Current, "", "Workspace menu")
         }
     }
 
@@ -138,26 +170,26 @@ impl CellRow {
         self.hover.or_else(|| cut.then_some(self.label.as_str()))
     }
 
-    /// Whether this is the tab's own workspace in the list, the row the list
-    /// scrolls to.
-    #[must_use]
-    pub fn lit(&self) -> bool {
-        self.on && self.kind == RowKind::Press
-    }
-
     /// The row as the scene lists it under the toolbar owner `owner`, at
-    /// `bounds` when its rectangle is reportable: unavailable with its
-    /// reason while a press would do nothing.
+    /// `bounds` when its rectangle is reportable: its summary as its
+    /// description, unavailable with its reason while a press would do
+    /// nothing.
     #[must_use]
     pub fn scene_control(
         &self,
         owner: &str,
         bounds: Option<SceneBoundsSnapshot>,
     ) -> SceneControlSnapshot {
+        let marked = self.kind == RowKind::Current && self.dot;
+        let description = match (self.summary.is_empty(), marked) {
+            (true, _) => None,
+            (false, false) => Some(self.summary.clone()),
+            (false, true) => Some(format!("{}{SEPARATOR}{UNSAVED}", self.summary)),
+        };
         SceneControlSnapshot {
             control_id: format!("{owner}.{}", self.scene_id()),
             label: self.label.clone(),
-            description: None,
+            description,
             role: SceneRoleDto::Action,
             owner: SceneOwnerSnapshot {
                 kind: SceneOwnerKindDto::Toolbar,
@@ -175,26 +207,46 @@ impl CellRow {
     }
 }
 
-/// The menu's rows: the fixed ones above and below the workspaces, which
-/// alone scroll.
+/// The menu: the header on the tab's workspace with what acts on it, the
+/// list, which alone scrolls, and the footer.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CellMenu {
+    pub current: CellRow,
+    /// Save (or its quiet line), Save as, Rename.
     pub head: Vec<CellRow>,
+    /// Every workspace, in the stored order.
     pub list: Vec<CellRow>,
+    /// Autosave, New, Manage.
     pub foot: Vec<CellRow>,
 }
 
 impl CellMenu {
-    /// What the rows say, folded to one number: a change in any key, label
-    /// or supporting text changes it, so a menu measured for other words is
-    /// measured again.
+    /// Whether a filter field stands over the list.
     #[must_use]
-    pub fn signature(&self) -> u64 {
-        let mut hash = std::hash::DefaultHasher::new();
-        for row in self.head.iter().chain(&self.list).chain(&self.foot) {
-            (row.kind, &row.key, &row.label, &row.beside).hash(&mut hash);
-        }
-        hash.finish()
+    pub fn filters(&self) -> bool {
+        self.list.len() >= CHIP_MENU_FILTER_FROM
+    }
+
+    /// The list rows `filter` keeps, in the stored order.
+    #[must_use]
+    pub fn shown(&self, filter: &str) -> Vec<&CellRow> {
+        let kept = |row: &&CellRow| filter_matches(filter, &row.label);
+        self.list.iter().filter(kept).collect()
+    }
+
+    /// The filter field holding `filter`, while the list has one.
+    #[must_use]
+    pub fn filter_row(&self, filter: &str) -> Option<CellRow> {
+        let label = if filter.is_empty() {
+            FILTER_PLACEHOLDER
+        } else {
+            filter
+        };
+        self.filters().then(|| CellRow {
+            on: !filter.is_empty(),
+            capability: Some(MENU_CAPABILITY_ID),
+            ..CellRow::new(RowKind::Filter, "filter", label)
+        })
     }
 }
 
@@ -207,141 +259,227 @@ pub fn state_of(book: &WorkspaceBook, tab: u64) -> (&str, bool) {
         })
 }
 
-/// The menu as `book` stands for `tab`, `keys` being the save shortcut's
-/// words (designer 01): auto save and its line, Save, Save as, Rename, the
-/// workspaces with their one-line summaries, New and Manage.
-#[must_use]
-pub fn cell_menu(book: &WorkspaceBook, tab: u64, keys: &str) -> CellMenu {
-    CellMenu {
-        list: listed(book, tab, |row| book.summary(&row.name)),
-        ..fixed(book, tab, keys)
-    }
+/// The layout workspace `name` restores and its summary, as `workspace.list`
+/// says it.
+fn described(book: &WorkspaceBook, name: &str) -> (PaneTree, String) {
+    let factory = WorkspaceRecipe::default();
+    let recipe = book.recipe(name).unwrap_or(&factory);
+    let tree = recipe_canvas(recipe).tree().clone();
+    let summary = recipe.summary_of(&tree);
+    (tree, summary)
 }
 
-/// The `⋮` menu's workspace list: every workspace, the tab's own lit, beside
-/// the symbols of the tabs on it as `symbols` names them.
-#[must_use]
-pub fn window_list(
-    book: &WorkspaceBook,
-    tab: u64,
-    symbols: impl Fn(&[u64]) -> Vec<String>,
-) -> Vec<CellRow> {
-    listed(book, tab, |row| symbols(&row.tabs).join(", "))
-}
-
-/// A row per workspace, lit for `tab`'s own, with `beside` at its end.
-fn listed(
-    book: &WorkspaceBook,
-    tab: u64,
-    beside: impl Fn(&WorkspaceListing) -> String,
-) -> Vec<CellRow> {
-    let (workspace, _) = state_of(book, tab);
-    (book.list().into_iter())
-        .map(|row| CellRow {
-            beside: beside(&row),
-            on: row.name == workspace,
-            command: Some(WorkspaceCommand::Set(row.name.clone())),
-            capability: Some(calls::TAB_WORKSPACE_SET_CAPABILITY_ID),
-            ..CellRow::new(
-                RowKind::Press,
-                &format!("workspace.{}", row.name),
-                &row.name,
-            )
-        })
-        .collect()
-}
-
-/// The row the `⋮` menu draws for `id`, the same as the cell menu's; `None`
-/// for a row neither holds.
-#[must_use]
-pub fn action_row(book: &WorkspaceBook, tab: u64, id: RowId) -> Option<CellRow> {
-    let key = match id {
-        RowId::WorkspaceAutosave => "autosave",
-        RowId::WorkspaceSaveAsNew => "save_as",
-        RowId::WorkspaceRename => "rename",
-        RowId::WorkspaceNew => "new",
-        RowId::ManageWorkspaces => "manage",
-        _ => return None,
-    };
-    let CellMenu { head, foot, .. } = fixed(book, tab, "");
-    head.into_iter().chain(foot).find(|row| row.key == key)
-}
-
-/// Why Save would do nothing now, if it would not.
-fn save_refusal(auto: bool, modified: bool) -> Option<&'static str> {
-    if auto {
-        Some(AUTOSAVE_SAVES_REASON)
+/// `1 tab`, `2 tabs`.
+fn tabs_said(count: usize) -> String {
+    if count == 1 {
+        "1 tab".to_owned()
     } else {
-        (!modified).then_some(NO_EDITS_REASON)
+        format!("{count} tabs")
     }
 }
 
-/// The rows that never scroll, around an empty list.
-fn fixed(book: &WorkspaceBook, tab: u64, keys: &str) -> CellMenu {
+/// Where workspace `row`'s unsaved edit is held, as its summary ends: just
+/// `unsaved` when only `tab`, whose menu it is, holds it; else each holder's
+/// label once, or how many tabs hold it when two labels read alike. `None`
+/// while no tab holds one.
+fn held_in(
+    book: &WorkspaceBook,
+    row: &WorkspaceListing,
+    tab: u64,
+    label: &dyn Fn(u64) -> String,
+) -> Option<String> {
+    let holders: Vec<u64> = (row.tabs.iter().copied())
+        .filter(|&other| state_of(book, other).1)
+        .collect();
+    let mut labels: Vec<String> = holders.iter().map(|&holder| label(holder)).collect();
+    labels.sort();
+    labels.dedup();
+    match holders.as_slice() {
+        [] => None,
+        [only] if *only == tab => Some(UNSAVED_HERE.to_owned()),
+        _ if labels.len() < holders.len() => {
+            Some(format!("unsaved in {}", tabs_said(holders.len())))
+        }
+        _ => Some(format!("unsaved in {}", labels.join(", "))),
+    }
+}
+
+/// The menu as `book` stands for `tab`: `keys` the save shortcut's words,
+/// `live` the layout the tab shows, `label` a tab's words where an edit is
+/// held.
+#[must_use]
+pub fn cell_menu(
+    book: &WorkspaceBook,
+    tab: u64,
+    keys: &str,
+    live: &PaneTree,
+    label: impl Fn(u64) -> String,
+) -> CellMenu {
     let (workspace, modified) = state_of(book, tab);
     let auto = book.autosave();
-    let autosave_call = calls::WORKSPACE_AUTOSAVE_SET_CAPABILITY_ID;
-    let label = row_of(RowId::WorkspaceAutosave).label;
-    let line = if auto {
-        "Every change is saved".to_owned()
-    } else {
-        format!("Save with {keys}")
+    let list = (book.list().into_iter())
+        .map(|row| {
+            let (tree, mut summary) = described(book, &row.name);
+            let held = held_in(book, &row, tab, &label).filter(|_| !auto);
+            if let Some(held) = &held {
+                summary = format!("{summary}{SEPARATOR}{held}");
+            }
+            let on = row.name == workspace;
+            CellRow {
+                summary,
+                on,
+                dot: held.is_some(),
+                command: (!on).then(|| WorkspaceCommand::Set(row.name.clone())),
+                capability: Some(calls::TAB_WORKSPACE_SET_CAPABILITY_ID),
+                tree: Some(tree),
+                ..CellRow::new(
+                    RowKind::Workspace,
+                    &format!("workspace.{}", row.name),
+                    &row.name,
+                )
+            }
+        })
+        .collect::<Vec<_>>();
+    let tabs = tabs_said(book.tabs_on(workspace).len().max(1));
+    let shown = book.tab_copy(tab).or_else(|| book.recipe(workspace));
+    let shown = shown.map_or_else(
+        || described(book, workspace).1,
+        |copy| copy.summary_of(live),
+    );
+    let current = CellRow {
+        summary: format!("{shown}{SEPARATOR}{tabs}"),
+        on: true,
+        dot: modified && !auto,
+        capability: Some(MENU_CAPABILITY_ID),
+        tree: Some(live.clone()),
+        ..CellRow::new(RowKind::Current, "current", workspace)
     };
-    let rename = WorkspaceCommand::BeginRename(workspace.to_owned());
-    let rename_call = calls::WORKSPACE_RENAME_CAPABILITY_ID;
-    let head = vec![
+    CellMenu {
+        current,
+        head: head(workspace, modified, auto, keys),
+        list,
+        foot: foot(auto, keys),
+    }
+}
+
+/// Save, or its quiet line while autosave saves; Save as; Rename.
+fn head(workspace: &str, modified: bool, auto: bool, keys: &str) -> Vec<CellRow> {
+    let save_call = calls::WORKSPACE_SAVE_TO_CAPABILITY_ID;
+    let save = if auto {
         CellRow {
-            on: auto,
-            command: Some(WorkspaceCommand::SetAutosave(!auto)),
-            capability: Some(autosave_call),
-            ..CellRow::new(RowKind::Switch, "autosave", label)
-        },
-        CellRow::line(RowKind::Caption, line),
-        CellRow::line(RowKind::Separator, ""),
+            unavailable: Some(AUTOSAVE_SAVES_REASON),
+            capability: Some(save_call),
+            ..CellRow::new(RowKind::Quiet, "save", QUIET_SAVE)
+        }
+    } else {
         CellRow {
             beside: keys.to_owned(),
-            unavailable: save_refusal(auto, modified),
-            dot: modified && !auto,
-            command: Some(WorkspaceCommand::SaveTo),
-            capability: Some(calls::WORKSPACE_SAVE_TO_CAPABILITY_ID),
-            ..CellRow::new(
-                RowKind::Press,
+            unavailable: (!modified).then_some(NO_EDITS_REASON),
+            dot: modified,
+            ..CellRow::press(
                 "save",
-                format!("Save \u{201c}{workspace}\u{201d}"),
+                "Save",
+                RowId::SaveToWorkspace,
+                WorkspaceCommand::SaveTo,
+                save_call,
             )
-        },
+        }
+    };
+    let rename = WorkspaceCommand::BeginRename(workspace.to_owned());
+    vec![
+        save,
         CellRow::press(
             "save_as",
+            "Save as\u{2026}",
             RowId::WorkspaceSaveAsNew,
             WorkspaceCommand::BeginSaveAs,
             calls::WORKSPACE_SAVE_AS_CAPABILITY_ID,
         ),
         CellRow {
             unavailable: (workspace == DEFAULT_WORKSPACE).then_some(DEFAULT_PROTECTED_REASON),
-            ..CellRow::press("rename", RowId::WorkspaceRename, rename, rename_call)
+            ..CellRow::press(
+                "rename",
+                "Rename\u{2026}",
+                RowId::WorkspaceRename,
+                rename,
+                calls::WORKSPACE_RENAME_CAPABILITY_ID,
+            )
         },
-        CellRow::line(RowKind::Separator, ""),
-        CellRow::line(RowKind::Caption, "WORKSPACES"),
-    ];
-    let foot = vec![
-        CellRow::line(RowKind::Separator, ""),
+    ]
+}
+
+/// The autosave switch with its state words, New and Manage.
+fn foot(auto: bool, keys: &str) -> Vec<CellRow> {
+    let summary = if auto {
+        format!("On{SEPARATOR}every change is saved")
+    } else {
+        format!("Off{SEPARATOR}{keys} saves")
+    };
+    let switch = CellRow::press(
+        "autosave",
+        "Autosave",
+        RowId::WorkspaceAutosave,
+        WorkspaceCommand::SetAutosave(!auto),
+        calls::WORKSPACE_AUTOSAVE_SET_CAPABILITY_ID,
+    );
+    vec![
+        CellRow {
+            kind: RowKind::Switch,
+            summary,
+            on: auto,
+            ..switch
+        },
         CellRow::press(
             "new",
+            "New workspace\u{2026}",
             RowId::WorkspaceNew,
             WorkspaceCommand::BeginNew,
             calls::WORKSPACE_NEW_CAPABILITY_ID,
         ),
         CellRow::press(
             "manage",
+            "Manage\u{2026}",
             RowId::ManageWorkspaces,
             WorkspaceCommand::BeginManage,
             MENU_CAPABILITY_ID,
         ),
-    ];
-    CellMenu {
-        head,
-        list: Vec::new(),
-        foot,
+    ]
+}
+
+/// The open menu's rows, built once and again only when what they read
+/// changes: the book, the tab, the shortcut's words, the live layout or the
+/// tabs' labels. A quiet frame borrows the last build.
+#[derive(Debug, Default)]
+pub struct CellMenuCache {
+    read: Option<(WorkspaceBook, u64, String, PaneTree, Vec<String>)>,
+    menu: Option<CellMenu>,
+    /// How many times the rows were built.
+    pub builds: usize,
+}
+
+impl CellMenuCache {
+    /// [`cell_menu`] for these words, built only when they changed.
+    pub fn menu(
+        &mut self,
+        book: &WorkspaceBook,
+        tab: u64,
+        keys: &str,
+        live: &PaneTree,
+        label: impl Fn(u64) -> String,
+    ) -> &CellMenu {
+        let labels: Vec<String> = book.tab_workspaces().map(|(held, _)| label(held)).collect();
+        let read = (book, tab, keys, live, &labels);
+        let same =
+            (self.read.as_ref()).is_some_and(|(b, t, k, l, ls)| (b, *t, k.as_str(), l, ls) == read);
+        if !same {
+            let owned = (book.clone(), tab, keys.to_owned(), live.clone(), labels);
+            (self.read, self.menu) = (Some(owned), None);
+        }
+        let builds = &mut self.builds;
+        self.menu.get_or_insert_with(|| {
+            *builds += 1;
+            cell_menu(book, tab, keys, live, label)
+        })
     }
 }
 

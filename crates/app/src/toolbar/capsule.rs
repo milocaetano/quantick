@@ -220,6 +220,7 @@ pub fn paint_tree(painter: &egui::Painter, rect: egui::Rect, tree: &PaneTree) {
     for (slot, pane) in tree.rects(area) {
         let block =
             egui::Rect::from_min_size(egui::pos2(pane.x, pane.y), egui::vec2(pane.w, pane.h));
+        let block = egui::Rect::from_min_max(block.min.round(), block.max.round()); // Crisp.
         let flow = kinds
             .iter()
             .any(|(held, kind)| *held == slot && *kind == PaneKind::Flow);
