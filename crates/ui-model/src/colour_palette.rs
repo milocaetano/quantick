@@ -83,7 +83,7 @@ impl Popover {
             KeyAct::Press(at) => self.cells.get(at).cloned(),
             KeyAct::Apply => self
                 .applies
-                .then(|| WorkspaceCommand::Colour(ColourIntent::Apply)),
+                .then_some(WorkspaceCommand::Colour(ColourIntent::Apply)),
             KeyAct::Swap => colour(ColourIntent::Answer(true)),
             KeyAct::Cancel => colour(ColourIntent::Answer(false)),
         }
