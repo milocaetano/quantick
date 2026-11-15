@@ -41,12 +41,17 @@ pub fn shown_hsv(popover: &ColourPopover) -> [f32; 3] {
 /// picker keeps the last valid colour (the current one as `dark` paints it,
 /// before any).
 pub fn settle(model: &Palette, popover: &mut ColourPopover, dark: bool) {
-    if popover.asked.is_some() && question(model, popover).is_none() {
-        popover.back();
-    }
+    leave_freed(model, popover);
     let known = parse_typed_hex(&popover.hex).is_some() || popover.hsv.is_some();
     let current = rgb_hsv(model.current.rgb(dark));
     popover.hsv = Some(if known { shown_hsv(popover) } else { current });
+}
+
+/// Leave a question whose colour is no longer held, for the grid.
+pub fn leave_freed(model: &Palette, popover: &mut ColourPopover) {
+    if popover.asked.is_some() && question(model, popover).is_none() {
+        popover.back();
+    }
 }
 
 /// The colour a swatch's or the question's word names: a swatch key, a
@@ -87,7 +92,7 @@ pub fn act<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
         return None;
     }
     let popover = menu.colour.as_mut()?;
-    settle(&model, popover, host.workspace_dark());
+    leave_freed(&model, popover);
     let (colour, word, typed, swap) = match intent {
         ColourIntent::Toggle | ColourIntent::Close => {
             menu.colour = None;
@@ -222,9 +227,10 @@ pub(super) fn popover_call<H: WorkspaceBookHost + TabDirectory + ?Sized, A: Noti
 ) -> Result<Value, ControlError> {
     let asked: WorkspaceColourPopoverInput = input(value)?;
     let tab = app.tab_id_at(app.active_tab_index());
-    let mut menu = std::mem::take(app.workspace_menu().ok_or_else(super::unavailable)?);
-    let result = drive(app, (access, actor), &mut menu, tab, asked);
-    if let Some(held) = app.workspace_menu() {
+    let (held, dark) = app.workspace_menu().ok_or_else(super::unavailable)?;
+    let mut menu = std::mem::take(held);
+    let result = drive(app, (access, actor, dark), &mut menu, tab, asked);
+    if let Some((held, _)) = app.workspace_menu() {
         *held = menu;
     }
     answer(&result?)
@@ -233,14 +239,13 @@ pub(super) fn popover_call<H: WorkspaceBookHost + TabDirectory + ?Sized, A: Noti
 /// One act on `menu`, taken out of the window, and the popover after it.
 fn drive<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
     app: &mut H,
-    (access, actor): (&mut A, &ActorContext),
+    (access, actor, dark): (&mut A, &ActorContext, bool),
     menu: &mut WorkspaceMenuState,
     tab: u64,
     asked: WorkspaceColourPopoverInput,
 ) -> Result<WorkspaceColourPopoverResult, ControlError> {
     let mut to = Some((access, actor));
     let open = menu.chip_menu_on(tab) && menu.colour.is_some();
-    let dark = app.workspace_dark();
     let intent = match asked {
         WorkspaceColourPopoverInput::Open => {
             if !menu.chip_menu_on(tab) {

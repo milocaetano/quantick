@@ -32,6 +32,7 @@ use quantick_control_handlers::market_palette::TabOpening;
 use quantick_control_handlers::market_switch;
 use quantick_control_handlers::workspace_book::cell_menu::CellRow;
 use quantick_engine::bar_registry::BarConfiguration as Bars;
+use quantick_session::workspace_menu::WorkspaceMenuState;
 use quantick_stores::{market_settings::MarketSettingsStore, workspaces::WorkspaceBookStore};
 use quantick_ui_model::market_palette::Intent;
 use quantick_workspace::market_list::{self as list, OpenChoice};
@@ -940,17 +941,14 @@ impl quantick_control_handlers::workspace_book::WorkspaceBookHost for QuantickAp
         if !close {
             return self.runtime.tabs.plan_close(index).is_ok();
         }
-        let close = crate::tabstrip::TabAction::Close(index);
-        let asked = self.arrangement_adapter().apply_tab_action(close);
-        let closed = asked.1.is_some();
-        super::menu_bar::settle_strip(&mut self.surfaces.market_palette, self.runtime.tz, asked);
-        closed
+        super::tab_workspaces::close_tab_at(self, index)
+    }
+    fn workspace_menu(&mut self) -> Option<(&mut WorkspaceMenuState, bool)> {
+        let dark = TabsPort::appearance(self).dark;
+        Some((&mut self.chrome.window_menu.tab_workspace, dark))
     }
     fn tab_symbols(&self, tabs: &[u64]) -> Vec<String> {
         super::tab_workspaces::symbols_of(&self.runtime.tabs, tabs)
-    }
-    fn workspace_dark(&self) -> bool {
-        TabsPort::appearance(self).dark
     }
 }
 

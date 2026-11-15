@@ -45,11 +45,8 @@ impl WorkspaceBookHost for Host {
         self.writes += 1;
         Ok(())
     }
-    fn workspace_menu(&mut self) -> Option<&mut WorkspaceMenuState> {
-        Some(&mut self.menu)
-    }
-    fn workspace_dark(&self) -> bool {
-        self.dark
+    fn workspace_menu(&mut self) -> Option<(&mut WorkspaceMenuState, bool)> {
+        Some((&mut self.menu, self.dark))
     }
 }
 

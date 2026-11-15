@@ -144,14 +144,10 @@ pub trait WorkspaceBookHost {
         Err("the desk is unavailable".to_owned())
     }
     /// The window's workspace menu, which the colour popover's call opens
-    /// and acts on as a hand does.
-    fn workspace_menu(&mut self) -> Option<&mut WorkspaceMenuState> {
+    /// and acts on as a hand does, and whether the window paints in a dark
+    /// theme: what a colour's value is read in.
+    fn workspace_menu(&mut self) -> Option<(&mut WorkspaceMenuState, bool)> {
         None
-    }
-    /// Whether the window paints in a dark theme: what a colour's value is
-    /// read in where the call names no theme.
-    fn workspace_dark(&self) -> bool {
-        true
     }
     /// Close a market tab; `false` when it is its window's last. With `close`
     /// false nothing closes and the answer says whether it would: asked
