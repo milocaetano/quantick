@@ -49,8 +49,9 @@ impl Hand {
 }
 
 /// A seam drag in flight: the seam, where the first of its pair ended at the
-/// press, the pointer's travel since, the split's shares then, and the
-/// pair's shares before any fold of it: what a fold keeps for a restore.
+/// press, the pointer's travel since, the split's shares then, the pair's
+/// shares before any fold of it (what a fold keeps for a restore), and the
+/// rails inside the pair an earlier drag folded.
 ///
 /// Every step lays the pair out afresh from the press, so travel is never
 /// lost against a floor, and a drag that comes back to where it started puts
@@ -62,6 +63,10 @@ pub struct SeamDrag {
     travel: f32,
     shares: Vec<f32>,
     open: [f32; 2],
+    /// Rails inside either side at the press that this drag did not fold
+    /// whole: a fold of a chart within it. Every step leaves them folded,
+    /// so a second fold never reopens the first.
+    inner: Vec<PaneSlot>,
 }
 
 /// What a seam fold took from its open partner: the folded node's first
@@ -113,12 +118,20 @@ impl CanvasState {
             pair if pair == (two, one) => Some([kept.shares[1], kept.shares[0]]),
             _ => None,
         });
+        // A side folded whole is this seam's own rail, which the drag opens;
+        // a rail inside a side that is not is another seam's, and stays.
+        let inner = |node: &PaneTree| {
+            let own = railed(self, node);
+            let held = slots(node).into_iter();
+            held.filter(move |slot| !own && self.railed().contains(slot))
+        };
         Ok(SeamDrag {
             seam: seam.clone(),
             origin,
             travel: 0.0,
             open: kept.unwrap_or([shares[at[0]], shares[at[1]]]),
             shares,
+            inner: inner(&first).chain(inner(&second)).collect(),
         })
     }
 
@@ -168,7 +181,8 @@ impl CanvasState {
     /// keeping [`MIN_TREE_PANE_PX`] per pane along the split. The open side
     /// fills what a fold leaves and the split's other children keep their
     /// place; a folded side keeps the ratio the pair had at the press, which
-    /// is what a restore opens it at. Answers whether anything changed.
+    /// is what a restore opens it at. A rail an earlier drag folded inside
+    /// either side stays folded. Answers whether anything changed.
     ///
     /// # Errors
     /// As [`Self::begin_seam_drag`].
@@ -206,8 +220,15 @@ impl CanvasState {
         };
         let (one_slots, two_slots) = (slots(&one), slots(&two));
         let mut next = self.clone();
-        next.set_railed(&one_slots, false);
-        next.set_railed(&two_slots, false);
+        let opened: Vec<PaneSlot> = (one_slots.iter().chain(&two_slots))
+            .filter(|slot| !drag.inner.contains(slot))
+            .copied()
+            .collect();
+        next.set_railed(&opened, false);
+        // This pair's own fold is remembered only while it stands: a rail
+        // kept inside a side must not keep a stale one alive.
+        let own = [(one_slots[0], two_slots[0]), (two_slots[0], one_slots[0])];
+        (next.reopen).retain(|kept| !own.contains(&(kept.folded, kept.partner)));
         let fold_first = wanted < COLLAPSE_AT_PX;
         let pair = if fold_first || pair_px - wanted < COLLAPSE_AT_PX {
             let (folded, open_press, folded_press) = if fold_first {
@@ -287,11 +308,14 @@ impl CanvasState {
             };
             if railed(self, &children[index]) {
                 let folded = slots(&children[index]);
-                let kept = self.reopen.iter().find(|kept| kept.folded == folded[0]);
-                let back = kept.and_then(|kept| {
+                // A rail inside it may share its first slot: take the fold
+                // whose partner stands beside it in this split.
+                let mut kept = (self.reopen.iter()).filter(|kept| kept.folded == folded[0]);
+                let back = kept.find_map(|kept| {
                     let partner = children
                         .iter()
-                        .position(|child| child.holds(kept.partner))?;
+                        .position(|child| child.holds(kept.partner))
+                        .filter(|partner| *partner != index)?;
                     (!pinned(self, &children[partner])).then_some((partner, kept.shares))
                 });
                 if let Some((partner, [one, two])) = back {
@@ -360,6 +384,19 @@ impl CanvasState {
         let changed = next != *self;
         *self = next;
         changed
+    }
+
+    /// The context column's collapse call: [`Self::fold_flow_side`] for the
+    /// charts beside a docked flow pane. With none, every chart is context:
+    /// an expand opens every rail through [`Self::open_side`], the path the
+    /// flow side's expand takes, at its pre-fold shares, and a collapse has
+    /// no column to fold. Answers whether anything changed.
+    pub fn fold_context(&mut self, folded: bool) -> bool {
+        if folded || self.has_flow_sides() {
+            return self.fold_flow_side(false, folded);
+        }
+        let rails: Vec<PaneSlot> = self.railed().iter().copied().collect();
+        self.open_side(&rails)
     }
 
     /// Open every rail among `side`, the last folded first, each through
