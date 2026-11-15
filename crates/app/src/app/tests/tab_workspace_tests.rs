@@ -8,7 +8,7 @@ use quantick_control_handlers::workspace_book::{
 
 /// A desk of two tabs opening together, seeded on the scratch book beside
 /// `layouts`.
-fn two_tabs(layouts: &crate::scratch::ScratchFile) -> (QuantickApp, u64, u64) {
+pub(super) fn two_tabs(layouts: &crate::scratch::ScratchFile) -> (QuantickApp, u64, u64) {
     let (mut app, _evt, _cmd, _book) = test_app();
     app.runtime
         .workspace
@@ -956,7 +956,11 @@ fn a_menu_switch_and_delete_journal_what_the_control_calls_do() {
     call(&mut app, "tab.workspace.set", json!({ "name": "Scalp" }));
     call(&mut app, "workspace.delete", json!({ "name": "Scalp" }));
     call(&mut app, "workspace.save_as", json!({ "name": "Scalp" }));
-    menu(&mut app, WorkspaceCommand::Delete("Scalp".to_owned()));
+    app.chrome.window_menu.tab_workspace.open_manage(tab);
+    let manage = |intent| WorkspaceCommand::Manage(intent);
+    use quantick_session::manage_workspaces::ManageIntent::{Arm, Delete};
+    menu(&mut app, manage(Arm("Scalp".to_owned())));
+    menu(&mut app, manage(Delete { now_ms: 0 }));
     let rows = workspace_journal(&app);
     let deletes: Vec<_> = rows
         .iter()
