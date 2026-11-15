@@ -1,47 +1,19 @@
 //! Borrowed observation docking. No queue, history scan, or rule decisions.
 use crate::pane::ChartPane;
-use quantick_engine::{Bar, Trade};
+pub(crate) use quantick_stores::alerts::{Observation, PaneFacts, Source};
 
-/// The actual source, including replay recording and playback state.
-pub(crate) struct Source<'a> {
-    pub feed: &'a str,
-    pub symbol: &'a str,
-    pub generation: u64,
-    pub connection: quantick_feed::FeedConnectionState,
-    pub hydrating: bool,
-    pub replay: Option<&'a quantick_feed::ReplayLink>,
-}
-
-/// Read-only facts at the exact close/trade boundary. Geometry remains borrowed
-/// from the drawing owner until the native adapter projects `DrawingFact`s.
-pub(crate) struct PaneFacts<'a> {
-    pub id: u64,
-    pub series: &'a crate::state::ChartState,
-    pub drawings: &'a crate::drawings::Drawings,
-    pub drawing_key: Option<&'a quantick_workspace::market_settings::DrawingKey>,
-    pub prefix_slots: usize,
-    pub hydrating: bool,
-}
-
-impl<'a> From<&'a ChartPane> for PaneFacts<'a> {
-    fn from(pane: &'a ChartPane) -> Self {
-        Self {
-            id: pane.id,
-            series: &pane.state,
-            drawings: &pane.drawings,
-            drawing_key: pane.layout.drawings_key.as_ref(),
-            prefix_slots: pane.seam_slot(),
-            hydrating: pane.history_pending(),
-        }
+/// Pane facts at the boundary; the cache that reads them lives in `stores`.
+/// A function, not `From`: a trait impl on the public `PaneFacts` would make
+/// `ChartPane` effectively public and trip `private_interfaces`.
+pub(crate) fn facts(pane: &ChartPane) -> PaneFacts<'_> {
+    PaneFacts {
+        id: pane.id,
+        series: &pane.state,
+        drawings: &pane.drawings,
+        drawing_key: pane.layout.drawings_key.as_ref(),
+        prefix_slots: pane.seam_slot(),
+        hydrating: pane.history_pending(),
     }
-}
-
-pub(crate) struct Observation<'a> {
-    pub trade: &'a Trade,
-    pub received_at_ms: i64,
-    /// Every close, including equal timestamps, has its own composed slot.
-    /// `None` is the live trade observation after all its closes.
-    pub close: Option<(&'a Bar, usize)>,
 }
 
 pub(crate) trait Observer {
@@ -57,9 +29,6 @@ impl Observer for () {
     fn pane(&mut self, _: PaneFacts<'_>, _: Option<Observation<'_>>) {}
 }
 
-mod cache;
-pub(crate) use cache::Cache;
-
 impl Observer for crate::app::alerts_runtime::Runtime {
     fn reset(&mut self, reason: quantick_alerts::ResetReason) {
         self.cache.reset(&mut self.core, reason);
@@ -72,21 +41,24 @@ impl Observer for crate::app::alerts_runtime::Runtime {
             &mut self.core,
             facts,
             observation,
+            crate::metrics::wall_clock_ms,
             self.clock_origin.elapsed().as_millis() as u64,
         );
     }
 }
 
+/// The feed projection: the link's connection and replay state, as facts.
 pub(crate) fn observe_alert_lifecycle(tab: &super::Tab, observer: &mut dyn Observer) {
     observer.source(Source {
         feed: &tab.active.0,
         symbol: &tab.active.1,
         generation: tab.link.feed_generation(),
-        connection: tab.link.feed_connection,
+        connected: tab.link.feed_connection == quantick_feed::FeedConnectionState::Connected,
         hydrating: tab.loading.is_active(crate::loading::LoadingTask::History),
-        replay: tab.link.replay.as_ref(),
+        replay: (tab.link.replay.as_ref())
+            .map(|replay| (replay.session.path.as_path(), replay.status.is_playing())),
     });
     for (pane, _) in tab.panes() {
-        observer.pane(pane.into(), None);
+        observer.pane(facts(pane), None);
     }
 }

@@ -64,7 +64,7 @@ impl LiveTradeOwners<'_> {
                         pane.ingest_live_trade_observed(trade, &mut |pane, bar, slot| {
                             self.strategies.queue_closed(pane.id, bar, slot);
                             self.observer.pane(
-                                pane.into(),
+                                super::alerts::facts(pane),
                                 Some(super::alerts::Observation {
                                     trade,
                                     received_at_ms: self.received_at_ms,
@@ -73,7 +73,7 @@ impl LiveTradeOwners<'_> {
                             );
                         });
                         self.observer.pane(
-                            (&*pane).into(),
+                            super::alerts::facts(pane),
                             Some(super::alerts::Observation {
                                 trade,
                                 received_at_ms: self.received_at_ms,

@@ -226,13 +226,17 @@ pub const ALLOWED: &[(&str, &[&str])] = &[
     // The cockpit stores: documents over the vocabularies they persist. The
     // window resolves every path; the store never reads the environment.
     // `orderbook` for the approved WIN tape's depth golden alone, a test that
-    // hands the engine an MT5-shaped book the way the feed does.
+    // hands the engine an MT5-shaped book the way the feed does. `drawings`
+    // for the alert observer cache, which reads a pane's drawings as facts;
+    // it sits beside `AlertRuntime` because `alerts` cannot reach `drawings`
+    // (`drawings` depends on `alerts`).
     (
         "stores",
         &[
             "alerts",
             "appearance",
             "chart",
+            "drawings",
             "engine",
             "indicators",
             "orderbook",
