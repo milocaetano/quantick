@@ -118,6 +118,23 @@ fn mutable_borrows_reach_runtimes_but_not_identity_or_order() {
     assert!(tabs.get(3).is_none());
 }
 
+/// The panel's folds are the window's: a fold made beside one tab is what every
+/// tab reads for that asset, and another asset keeps its own.
+#[test]
+fn every_tab_reads_the_same_panel_folds() {
+    use crate::orderflow_panel::PanelSection::Bubbles;
+    let mut tabs = three();
+    let (tab, folds) = tabs.with_panel_folds(0).unwrap();
+    assert_eq!(tab.symbol, "A");
+    assert!(folds.set("BTCUSDT", Bubbles, false));
+    let (tab, folds) = tabs.with_panel_folds(2).unwrap();
+    assert_eq!(tab.symbol, "C");
+    assert!(!folds.section_open("BTCUSDT", Bubbles), "the same asset");
+    assert!(folds.section_open("ETHUSDT", Bubbles), "another asset");
+    assert!(!tabs.panel_folds().section_open("BTCUSDT", Bubbles));
+    assert!(tabs.with_panel_folds(3).is_none());
+}
+
 #[test]
 fn named_restore_opens_the_saved_market_and_closes_the_stale_one() {
     let mut tabs = Arrangement::new(crate::lifetime::WorkspaceId(0), TabId(0), fake("old"));

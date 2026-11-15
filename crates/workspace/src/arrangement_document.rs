@@ -366,4 +366,54 @@ perf_readings = false
         assert_eq!(chrome.inspector_position, None);
         assert_eq!(chrome.record_deals, None);
     }
+
+    fn flow_tab() -> SavedTab {
+        toml::from_str(
+            "feed = \"binance\"\nsymbol = \"TESTUSDT\"\nlayout = \"time+flow\"\nflow_bars = \"tick:50\"\n",
+        )
+        .unwrap()
+    }
+
+    fn chrome_with(dock_tab: SavedDockTab, dock_visible: bool) -> SavedChrome {
+        let mut chrome: SavedChrome = toml::from_str(
+            "timezone_minutes = 0\ndock_visible = true\nrail_visible = true\nrail_dock = \"left\"\nperf_readings = false\n",
+        )
+        .unwrap();
+        (chrome.dock_tab, chrome.dock_visible) = (Some(dock_tab), dock_visible);
+        chrome
+    }
+
+    /// An old file's L2 or Bubbles dock tab, on screen beside a tab showing its
+    /// flow pane, opens that tab's panel on that section, expanded; any other
+    /// dock tab, or no chrome, leaves the tab's own panel.
+    #[test]
+    fn an_old_l2_or_bubbles_dock_tab_opens_the_panel_on_its_section() {
+        let tab = flow_tab();
+        for (old, section) in [
+            (SavedDockTab::L2, PanelSection::L2),
+            (SavedDockTab::Bubbles, PanelSection::Bubbles),
+        ] {
+            let mut folds = AssetFolds::default();
+            folds.set(&tab.symbol, section, false);
+            let mut panel = tab.restored_panel(Some(&chrome_with(old, true)), true);
+            assert!(panel.is_open(), "{old:?}");
+            assert_eq!(panel.take_request(&tab.symbol, &mut folds), Some(section));
+            assert!(folds.section_open(&tab.symbol, section), "{old:?} expands");
+        }
+        let trading = chrome_with(SavedDockTab::Trading, true);
+        assert!(!tab.restored_panel(Some(&trading), true).is_open());
+        assert!(!tab.restored_panel(None, true).is_open());
+    }
+
+    /// A hidden dock showed no tab, and a tab not showing its flow pane has
+    /// nothing to attach a panel to: neither opens it.
+    #[test]
+    fn an_old_dock_tab_not_on_screen_opens_no_panel() {
+        let tab = flow_tab();
+        let hidden = chrome_with(SavedDockTab::L2, false);
+        assert!(!tab.restored_panel(Some(&hidden), true).is_open());
+        let shown = chrome_with(SavedDockTab::L2, true);
+        assert!(!tab.restored_panel(Some(&shown), false).is_open());
+        assert!(tab.restored_panel(Some(&shown), true).is_open());
+    }
 }

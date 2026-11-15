@@ -719,6 +719,29 @@ mod tape_size_tests {
     }
 }
 
+#[cfg(test)]
+mod market_hold_tests {
+    use super::*;
+    use crate::{tape_fold::TapeFold, tape_view_set::TapeView};
+    use rust_decimal::Decimal;
+
+    /// A market hold reads back under its own field and never in the stored
+    /// fold or view: the tape stays open beside the candles in the readback.
+    #[test]
+    fn a_market_hold_reads_as_held_and_leaves_the_stored_view_beside() {
+        let snapshot = |config: &HeatmapConfig| {
+            BubblesStateSnapshot::from_config(config, Decimal::ZERO, None, &[], None, Vec::new())
+        };
+        let mut config = HeatmapConfig::default();
+        assert!(!snapshot(&config).tape_fold_held_by_market);
+        config.live_lane.market_hold.held = true;
+        let held = snapshot(&config);
+        assert!(held.tape_fold_held_by_market && held.fold_market_closed);
+        assert_eq!(held.tape_fold, TapeFold::Open);
+        assert_eq!(held.tape_view, TapeView::Beside);
+    }
+}
+
 /// What a volume-dots frame was keyed and sized on.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct VolumeDotsSnapshot {
