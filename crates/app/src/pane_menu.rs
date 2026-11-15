@@ -41,20 +41,21 @@ impl PaneMenus {
         rect: Rect,
         cap: Option<&'static str>,
     ) {
-        let (label, selected, capability) = (label.to_owned(), false, cap);
         let control = DrawnControl {
             id,
-            label,
+            label: label.to_owned(),
             rect,
-            selected,
-            capability,
+            selected: false,
+            capability: cap,
+            description: None,
         };
         self.drawn.push(control);
     }
 
-    /// A rail as drawn, named `id`: its restore, as a strip's is.
-    pub(crate) fn publish_rail(&mut self, id: String, rect: Rect) {
+    /// A rail as drawn, named `id` and saying `words`: its restore, as a strip's is.
+    pub(crate) fn publish_rail(&mut self, id: String, rect: Rect, words: String) {
         self.publish(id, "Restore", rect, Some(item_capability(Item::Restore)));
+        self.drawn.last_mut().expect("published above").description = Some(words);
     }
 }
 

@@ -6,7 +6,9 @@
 //! nothing here knows a pixel it did not compute from the tree.
 
 use super::presets::{LAYOUT_PRESETS, LayoutPreset, PaneKind, PresetGroup};
+use super::seams::tree_rails;
 use super::state::{CanvasState, FloatHost, PaneMode};
+pub use super::tree::inset_seams;
 use super::tree::{CanvasRect, PaneSlot, PaneTree};
 use std::collections::BTreeSet;
 
@@ -85,12 +87,15 @@ pub fn tree_bands(
 ) -> Vec<TreeBand> {
     let panes = seated(state, seats);
     let seat = |slot| seat_of(&panes, seats, slot);
+    let rails: Vec<CanvasRect> = (tree_rails(state, area, divider).iter())
+        .map(|rail| rail.rect)
+        .collect();
     (state.rects(area).into_iter())
         .filter_map(|(slot, rect)| {
             Some(TreeBand {
                 slot,
                 seat: seat(slot)?,
-                rect: inset_seams(rect, area, divider),
+                rect: meet_rails(inset_seams(rect, area, divider), &rails, divider),
                 minimized: state.mode(slot) == Some(PaneMode::Minimized),
                 railed: state.railed().contains(&slot) && state.maximized() != Some(slot),
             })
@@ -188,27 +193,26 @@ fn seat_of(
     }
 }
 
-/// `rect` less half a `divider` on every edge inside `area`.
-#[must_use]
-pub fn inset_seams(rect: CanvasRect, area: CanvasRect, divider: f32) -> CanvasRect {
-    const EDGE_SLACK: f32 = 0.5;
-    let half = divider / 2.0;
-    let left = rect.x
-        + if rect.x > area.x + EDGE_SLACK {
-            half
-        } else {
-            0.0
-        };
-    let top = rect.y
-        + if rect.y > area.y + EDGE_SLACK {
-            half
-        } else {
-            0.0
-        };
-    let inner = |edge: f32, outer: f32| if edge < outer - EDGE_SLACK { half } else { 0.0 };
-    let right = rect.right() - inner(rect.right(), area.right());
-    let bottom = rect.bottom() - inner(rect.bottom(), area.bottom());
-    CanvasRect::new(left, top, right - left, bottom - top)
+/// `rect` grown across the `divider`-wide gutter to every rail beside it:
+/// the seam there is no line, so the pane comes up to the rail's edge.
+fn meet_rails(mut rect: CanvasRect, rails: &[CanvasRect], divider: f32) -> CanvasRect {
+    const SLACK: f32 = 0.5;
+    let near = |a: f32, b: f32| (a - b).abs() < SLACK;
+    let overlap = |a: (f32, f32), b: (f32, f32)| a.0 < b.1 - SLACK && b.0 < a.1 - SLACK;
+    for rail in rails {
+        let rows = overlap((rect.y, rect.bottom()), (rail.y, rail.bottom()));
+        let columns = overlap((rect.x, rect.right()), (rail.x, rail.right()));
+        if rows && near(rect.right() + divider, rail.x) {
+            rect.w += divider;
+        } else if rows && near(rail.right() + divider, rect.x) {
+            (rect.x, rect.w) = (rect.x - divider, rect.w + divider);
+        } else if columns && near(rect.bottom() + divider, rail.y) {
+            rect.h += divider;
+        } else if columns && near(rail.bottom() + divider, rect.y) {
+            (rect.y, rect.h) = (rect.y - divider, rect.h + divider);
+        }
+    }
+    rect
 }
 
 /// The recipe signal's reading of a canvas: every pane's slot, kind and

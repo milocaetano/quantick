@@ -116,6 +116,7 @@ mod published_schema_compatibility_tests;
 mod quick_range_band_tests;
 mod quick_range_control_tests;
 mod quick_range_shape_tests;
+mod rail_paint_tests;
 mod rectangle_extend_tests;
 mod retry_readback_tests;
 mod screenshot_evidence_tests;

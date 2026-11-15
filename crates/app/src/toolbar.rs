@@ -89,6 +89,7 @@ pub struct DrawnControl {
     pub selected: bool,
     /// The capability that does what pressing it does.
     pub capability: Option<&'static str>,
+    pub description: Option<String>,
 }
 
 /// Borrow the registered projection; only geometry and popup mechanics are mutable.

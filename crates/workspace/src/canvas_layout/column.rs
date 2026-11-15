@@ -64,7 +64,7 @@ pub fn column_frame(
         } else {
             PaneWidth::Auto
         };
-        let row = split(start, width, &[time, flow]);
+        let row = split(start, width, &[time, flow]).meeting_rails(&[time, flow]);
         (Some(row.panes[0]), Some(row.dividers[0]), row.panes[1])
     } else {
         (show_time.then_some(whole), None, whole)

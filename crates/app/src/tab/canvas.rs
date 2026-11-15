@@ -11,12 +11,13 @@ use crate::surfaces::drawing_chrome::DrawingChromeExt as _;
 use eframe::egui;
 use quantick_chart::pane_header::{CapsuleSide, PaneIdentity};
 use quantick_engine::bar_selection::BarInputAvailability;
-use quantick_workspace::canvas::{Hand, PANE_MENU_BUTTON_PX, seat_slot};
+use quantick_workspace::canvas::{Hand, PANE_MENU_BUTTON_PX, RailLook, rail_marks, seat_slot};
 use smallvec::SmallVec;
 
-use super::{FOCUS_FRAME_PX, RAIL_GRIP_HEIGHT_PX, RAIL_GRIP_WIDTH_PX, SharedPicks, Tab};
+use super::{FOCUS_FRAME_PX, SharedPicks, Tab};
 use crate::canvas_layout::{self, MAX_CANVAS_PANES, MAX_CONTEXT_PANES, PaneKind};
 use crate::config::FeedCapabilities;
+use crate::floating_panes::{model_rect, screen_rect};
 use crate::pane::canvas_split::PaneAreas;
 use crate::pane::{
     CANVAS_DIVIDER_HANDLE_PX, PaneChrome, PaneIndex, PaneSide, SharedEdit, SharedInteraction,
@@ -282,16 +283,13 @@ impl Tab {
                 .flatten();
             for (slot, band) in bands.panes.iter().enumerate().take(context_shown) {
                 if self.canvas.context_stack.heights[slot].is_collapsed() {
-                    ui.painter()
-                        .rect_filled(*band, egui::Rounding::ZERO, palette.chrome());
-                    ui.painter().rect_filled(
-                        egui::Rect::from_center_size(
-                            band.center(),
-                            egui::vec2(RAIL_GRIP_HEIGHT_PX, RAIL_GRIP_WIDTH_PX),
-                        ),
-                        egui::Rounding::same(1.0),
-                        palette.text_muted(),
-                    );
+                    // Its hit area is the dividers' beside it, as far as they reach.
+                    let near = [slot.wrapping_sub(1), slot].map(|at| bands.dividers.get(at));
+                    let reach = egui::vec2(0.0, canvas_layout::COLLAPSED_HIT_PX / 2.0);
+                    let hits: Vec<_> = near.iter().flatten().map(|at| at.expand2(reach)).collect();
+                    let way = (true, slot + 1 < context_shown);
+                    let look = RailLook::on(model_rect(*band), model_rect(column), way, 1);
+                    paint_rail(ui.painter(), *band, look, rail_hot(ui.painter(), &hits));
                     rects.context_charts.push(None);
                     continue;
                 }
@@ -1112,6 +1110,12 @@ impl Tab {
         {
             self.collapsed_rail = Some(rail);
         }
+        let (held, look) = self
+            .canvas
+            .state
+            .side_rail(right, model_rect(rail), model_rect(canvas));
+        let side = [PaneSide::Time(0), PaneSide::Flow][usize::from(right)];
+        let words = held.words(|| Some(self.strip_name(side)));
         let reach = canvas_layout::COLLAPSED_HIT_PX.max(rail.width());
         let hit = if right {
             rail.with_min_x(rail.right() - reach)
@@ -1124,19 +1128,14 @@ impl Tab {
                 egui::Id::new(("canvas_divider", tab_id)),
                 egui::Sense::drag(),
             )
-            .on_hover_text(if right {
-                "drag left to show the flow chart again"
-            } else {
-                "drag right to show the timeframe charts again"
-            });
+            .on_hover_text(&words);
         if response.hovered() || response.dragged() {
             ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
         }
 
-        let edge_x = if right { rail.left() } else { rail.right() };
-        paint_rail(ui.painter(), rail, (edge_x, false), response.hovered());
+        paint_rail(ui.painter(), rail, look, rail_hot(ui.painter(), &[hit]));
         if let Some(id) = self.canvas.state.side_rail_id(right) {
-            self.canvas.menus.publish_rail(id, rail);
+            self.canvas.menus.publish_rail(id, rail, words);
         }
         let drawn_width = if right {
             rail.left() - canvas.left()
@@ -1200,13 +1199,14 @@ impl Tab {
         for (index, divider) in dividers.iter().copied().enumerate() {
             let upper_collapsed = self.canvas.context_stack.heights[index].is_collapsed();
             let lower_collapsed = self.canvas.context_stack.heights[index + 1].is_collapsed();
-            ui.painter()
-                .rect_filled(divider, egui::Rounding::ZERO, palette.border());
+            let beside = upper_collapsed || lower_collapsed;
+            let ink = [palette.border(), egui::Color32::TRANSPARENT][usize::from(beside)];
+            ui.painter().rect_filled(divider, 0.0, ink);
             let handle = ui
                 .interact(
                     divider.expand2(egui::vec2(
                         0.0,
-                        if upper_collapsed || lower_collapsed {
+                        if beside {
                             canvas_layout::COLLAPSED_HIT_PX / 2.0
                         } else {
                             CANVAS_DIVIDER_HANDLE_PX
@@ -1254,27 +1254,21 @@ pub(super) fn hand(r: &egui::Response, row: bool) -> Hand {
     Hand::of([r.drag_started(), r.dragged(), r.drag_stopped()], delta)
 }
 
-/// A folded side's rail, one look for every fold: chrome, the inner edge
-/// where it meets the open side at `edge` (so it reads as chrome rather than
-/// a stripe the chart starts after), and a grip in the colour a reader knows
-/// means "chrome you can take hold of", lit while `hot`. A rail folded
-/// across a column (`edge.1`) lies flat: its edge and grip run sideways.
-pub(crate) fn paint_rail(painter: &egui::Painter, rail: egui::Rect, edge: (f32, bool), hot: bool) {
+/// Whether a rail lights by the workspace's rule, hovered only where `painter`'s layer is on top.
+pub(crate) fn rail_hot(painter: &egui::Painter, hits: &[egui::Rect]) -> bool {
+    let (ctx, layer) = (painter.ctx(), painter.layer_id());
+    let on = |at: Option<egui::Pos2>| at.is_some_and(|at| hits.iter().any(|hit| hit.contains(at)));
+    let (hover, press) = ctx.input(|i| (i.pointer.hover_pos(), i.pointer.press_origin()));
+    let top = hover.and_then(|at| ctx.layer_id_at(at)) == Some(layer);
+    quantick_workspace::canvas::rail_lit(on(hover) && top, on(press), ctx.dragged_id().is_some())
+}
+
+/// A folded side's rail: the workspace's marks for `look`, lit while `hot`.
+pub(crate) fn paint_rail(painter: &egui::Painter, rail: egui::Rect, look: RailLook, hot: bool) {
     let palette = theme::get(painter.ctx());
-    painter.rect_filled(rail, egui::Rounding::ZERO, palette.chrome());
-    let stroke = egui::Stroke::new(1.0_f32, palette.border());
-    let mut size = egui::vec2(RAIL_GRIP_WIDTH_PX, RAIL_GRIP_HEIGHT_PX);
-    if edge.1 {
-        painter.hline(rail.x_range(), edge.0, stroke);
-        size = egui::vec2(size.y, size.x);
-    } else {
-        painter.vline(edge.0, rail.y_range(), stroke);
+    let inks = quantick_appearance::rail::rail_inks(hot);
+    for (mark, ink) in rail_marks(model_rect(rail), look) {
+        let fill = *palette.get(inks[ink.index()]);
+        painter.rect_filled(screen_rect(mark), egui::Rounding::ZERO, fill);
     }
-    let grip = egui::Rect::from_center_size(rail.center(), size);
-    let colour = if hot {
-        palette.accent()
-    } else {
-        palette.text_muted()
-    };
-    painter.rect_filled(grip, egui::Rounding::same(1.0), colour);
 }

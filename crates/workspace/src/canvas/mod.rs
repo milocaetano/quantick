@@ -25,6 +25,7 @@ pub mod menu;
 pub mod metrics;
 pub mod presets;
 pub mod rail;
+pub mod rail_look;
 pub mod seams;
 pub mod state;
 pub mod tree;
@@ -54,6 +55,11 @@ pub use presets::{
     LAYOUT_PRESETS, LayoutPreset, MAX_CANVAS_PANES, PaneKind, PresetGroup, matching_preset, preset,
 };
 pub use rail::{Hand, SeamDrag};
+pub use rail_look::{
+    RAIL_CHEVRON_BOX_PX, RAIL_CHEVRON_ROWS, RAIL_CHEVRON_STROKE_PX, RAIL_DASH_PITCH_PX,
+    RAIL_DASH_PX, RAIL_DASHES_AFTER_PX, RAIL_EDGE_PX, RAIL_MAX_DASHES, RailHolds, RailInk,
+    RailLook, rail_lit, rail_marks,
+};
 pub use seams::{MIN_TREE_PANE_PX, SeamAddress, SeamRail, TreeSeam, tree_rails, tree_seams};
 pub use state::{
     CanvasRefusal, CanvasState, FloatHost, FloatingPane, MINIMIZED_STRIP_PX, PaneMode,
@@ -72,6 +78,8 @@ mod drag_tests;
 mod drop_tests;
 #[cfg(test)]
 mod menu_tests;
+#[cfg(test)]
+mod rail_look_tests;
 #[cfg(test)]
 mod rail_tests;
 #[cfg(test)]

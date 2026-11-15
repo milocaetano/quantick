@@ -297,9 +297,21 @@ pub enum Token {
     /// A gain on the panels' grey plates, the footer and a lit session row,
     /// where Light's buy ink falls short of 4.5:1.
     PanelGainInk,
+    /// A folded pane's rail: the band over its whole 8 px.
+    RailBand,
+    /// The one-pixel edge along each long side of the rail.
+    RailEdge,
+    /// The grip centred on the rail.
+    RailGrip,
+    /// The band while the pointer is on the rail's hit area.
+    RailBandHover,
+    /// The edges while the pointer is on the rail's hit area.
+    RailEdgeHover,
+    /// The grip while the pointer is on the rail's hit area.
+    RailGripHover,
 }
 impl Token {
-    pub const ALL: [Self; 154] = [
+    pub const ALL: [Self; 160] = [
         Self::FlowSurface,
         Self::FlowDivider,
         Self::FlowInk,
@@ -454,6 +466,12 @@ impl Token {
         Self::PanelLiveRow,
         Self::PanelStripeLoss,
         Self::PanelGainInk,
+        Self::RailBand,
+        Self::RailEdge,
+        Self::RailGrip,
+        Self::RailBandHover,
+        Self::RailEdgeHover,
+        Self::RailGripHover,
     ];
     pub const fn key(self) -> &'static str {
         match self {
@@ -518,6 +536,12 @@ impl Token {
             Self::PanelLiveRow => "panel_live_row",
             Self::PanelStripeLoss => "panel_stripe_loss",
             Self::PanelGainInk => "panel_gain_ink",
+            Self::RailBand => "rail_band",
+            Self::RailEdge => "rail_edge",
+            Self::RailGrip => "rail_grip",
+            Self::RailBandHover => "rail_band_hover",
+            Self::RailEdgeHover => "rail_edge_hover",
+            Self::RailGripHover => "rail_grip_hover",
             Self::FlowSurface => "flow_surface",
             Self::FlowDivider => "flow_divider",
             Self::FlowInk => "flow_ink",

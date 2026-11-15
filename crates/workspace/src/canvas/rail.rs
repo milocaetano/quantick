@@ -417,7 +417,7 @@ impl CanvasState {
 
     /// The split holding the docked flow pane and its index there, found
     /// without allocating: what every frame's fold readback walks.
-    fn flow_split(&self) -> Option<(&[PaneTree], usize)> {
+    pub(super) fn flow_split(&self) -> Option<(&[PaneTree], usize)> {
         fn find(node: &PaneTree) -> Option<(&[PaneTree], usize)> {
             let PaneTree::Split { children, .. } = node else {
                 return None;

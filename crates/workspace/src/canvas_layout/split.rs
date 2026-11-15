@@ -35,6 +35,22 @@ impl Split {
     pub fn dividers(&self) -> &[Span] {
         &self.dividers[..self.count.saturating_sub(1)]
     }
+
+    /// This split with every open pane beside a folded one (`widths`) grown
+    /// across the divider between them: a divider beside a rail is no line,
+    /// so the pane meets the rail. The divider still takes a hand.
+    #[must_use]
+    pub fn meeting_rails(mut self, widths: &[PaneWidth]) -> Self {
+        let folded = |at: usize| widths.get(at).is_some_and(|width| width.is_collapsed());
+        for at in 0..self.count.saturating_sub(1) {
+            match (folded(at), folded(at + 1)) {
+                (true, false) => self.panes[at + 1].0 = self.dividers[at].0,
+                (false, true) => self.panes[at].1 = self.dividers[at].1,
+                _ => {}
+            }
+        }
+        self
+    }
 }
 
 /// Where a span's middle is.
