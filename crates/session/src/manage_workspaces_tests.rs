@@ -214,6 +214,22 @@ fn a_palette_or_a_field_takes_the_keys_first() {
     });
 }
 
+/// The window types into the open field or palette only.
+#[test]
+fn the_window_types_into_the_open_field_or_palette() {
+    let mut dialog = ManageDialog::new(7);
+    assert!(matches!(dialog.typed(), (None, None)));
+    dialog.local(&ManageIntent::BeginRename("Scalp".to_owned()));
+    let (field, pop) = dialog.typed();
+    assert_eq!(
+        field.map(|(name, _)| name.clone()),
+        Some("Scalp".to_owned())
+    );
+    assert!(pop.is_none());
+    dialog.local(&ManageIntent::Chip("Scalp".to_owned()));
+    assert!(matches!(dialog.typed(), (None, Some(_))));
+}
+
 /// A capture stages each face of the dialog by its token.
 #[test]
 fn a_capture_stages_the_dialog_s_faces() {

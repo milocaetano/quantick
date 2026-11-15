@@ -28,7 +28,7 @@ pub(in crate::app) use menus::{MenuDoor, WindowMenuState};
 mod commands;
 mod menus;
 mod settings_window;
-mod workspace_manage;
+mod workspace_dialogs;
 mod workspace_rows;
 
 /// Opens the Market Replay browser (§10).
@@ -160,12 +160,14 @@ pub(super) const WINDOW_MENU_SHORTCUT: egui::KeyboardShortcut =
 const SETTINGS_SHORTCUT: egui::KeyboardShortcut =
     egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::Comma);
 
-/// A live market a close took goes to Recent with its bar; `+` opens the palette.
+/// A live market a close took goes to Recent with its bar; `+` opens the
+/// palette. Answers whether a tab closed.
 pub(super) fn settle_strip(
     palette: &mut MarketPaletteSurface,
     tz: TzOffset,
     (open, closed): StripAsk,
-) {
+) -> bool {
+    let was = closed.is_some();
     if let Some(tab) = closed.filter(|tab| tab.link.replay.is_none()) {
         let now = crate::metrics::wall_clock_ms();
         let stamp = quantick_civil::fmt_offset_minute(now, tz);
@@ -182,6 +184,7 @@ pub(super) fn settle_strip(
     if open {
         palette.update(PaletteIntent::open("", None));
     }
+    was
 }
 
 pub(super) fn last_price(tab: &crate::tab::Tab) -> Option<String> {
@@ -281,7 +284,7 @@ impl QuantickApp {
         }
         draw_window_menu(self, ctx, &mut commands);
         settings_window::show(self, ctx, &mut commands);
-        workspace_rows::dialogs(self, ctx, &mut commands);
+        self.chrome.window_menu.dialog_rows = workspace_dialogs::dialogs(self, ctx, &mut commands);
         // The close prompt: an answer settles its tab, an exit's last answer closes the app.
         let focused = self.runtime.tabs.windows().focused();
         let queue = &self.chrome.window_menu.tab_workspace.close;

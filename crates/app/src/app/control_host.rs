@@ -32,6 +32,7 @@ use quantick_control_handlers::market_palette::TabOpening;
 use quantick_control_handlers::market_switch;
 use quantick_control_handlers::workspace_book::cell_menu::CellRow;
 use quantick_engine::bar_registry::BarConfiguration as Bars;
+use quantick_session::workspace_menu::WorkspaceMenuState;
 use quantick_stores::{market_settings::MarketSettingsStore, workspaces::WorkspaceBookStore};
 use quantick_ui_model::market_palette::Intent;
 use quantick_workspace::market_list::{self as list, OpenChoice};
@@ -562,8 +563,9 @@ impl<'a> ChromeReads<'a> {
     }
 
     /// The workspace cell menu's rows in view, as last drawn.
-    pub(crate) fn cell_menu(self) -> &'a [(CellRow, egui::Rect)] {
-        self.window_menu.map_or(&[], |menu| &menu.cell_rows)
+    pub(crate) fn cell_menu(self) -> impl Iterator<Item = &'a (CellRow, egui::Rect)> {
+        (self.window_menu.into_iter())
+            .flat_map(|menu| menu.cell_rows.iter().chain(&menu.dialog_rows))
     }
 
     /// The view over the window's own roots, as [`TabReads::new`].
@@ -935,19 +937,19 @@ impl quantick_control_handlers::workspace_book::WorkspaceBookHost for QuantickAp
     }
     fn close_market_tab(&mut self, tab: u64, close: bool) -> bool {
         let index = self.runtime.tabs.position(tab);
-        // Without asking; with `close` false it only answers whether it would.
         let Some(index) = index else { return false };
         if !close {
             return self.runtime.tabs.plan_close(index).is_ok();
         }
         let close = crate::tabstrip::TabAction::Close(index);
         let asked = self.arrangement_adapter().apply_tab_action(close);
-        let closed = asked.1.is_some();
-        super::menu_bar::settle_strip(&mut self.surfaces.market_palette, self.runtime.tz, asked);
-        closed
+        super::menu_bar::settle_strip(&mut self.surfaces.market_palette, self.runtime.tz, asked)
     }
     fn tab_symbols(&self, tabs: &[u64]) -> Vec<String> {
         super::tab_workspaces::symbols_of(&self.runtime.tabs, tabs)
+    }
+    fn workspace_menu(&mut self) -> Option<&mut WorkspaceMenuState> {
+        Some(&mut self.chrome.window_menu.tab_workspace)
     }
 }
 

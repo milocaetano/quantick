@@ -189,6 +189,13 @@ impl ManageDialog {
         self.palette.is_none() && (self.rename.is_none() || key == ManageKey::Escape)
     }
 
+    /// What the window types into: the rename field with its first-focus
+    /// flag, and the open row palette.
+    pub fn typed(&mut self) -> (Option<(&mut String, &mut bool)>, Option<&mut ColourPopover>) {
+        let field = (self.rename.as_mut()).map(|it| (&mut it.name, &mut it.wants_focus));
+        (field, self.palette.as_mut().map(|open| &mut open.popover))
+    }
+
     /// The workspace whose palette is open.
     #[must_use]
     pub fn palette_of(&self) -> Option<&str> {
