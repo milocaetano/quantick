@@ -134,3 +134,21 @@ fn custom_opens_on_its_words_and_the_question_returns_to_it() {
     popover.open_custom("#000000".to_owned(), [0.0; 3]);
     assert!(!popover.custom, "Custom… again folds it away");
 }
+
+/// A capture opens the popover on each face it photographs.
+#[test]
+fn a_capture_stages_each_face_of_the_popover() {
+    let mut menu = WorkspaceMenuState::default();
+    assert!(menu.stage(7, "cell:colour"));
+    assert!(menu.chip_menu_on(7) && menu.colour == Some(ColourPopover::default()));
+    let mut menu = WorkspaceMenuState::default();
+    assert!(menu.stage(7, "cell:colour:ask=sky"));
+    assert_eq!(menu.colour.unwrap().asked.as_deref(), Some("sky"));
+    let mut menu = WorkspaceMenuState::default();
+    assert!(menu.stage(7, "cell:colour:custom=#62B8EA"));
+    let popover = menu.colour.unwrap();
+    assert!(popover.custom && popover.hex == "#62B8EA");
+    let mut menu = WorkspaceMenuState::default();
+    assert!(!menu.stage(7, "cell:colour:drop=sky"));
+    assert_eq!(menu, WorkspaceMenuState::default(), "nothing opened");
+}

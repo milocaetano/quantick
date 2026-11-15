@@ -3,6 +3,7 @@
 //! asks for a name and the close that asks per tab holding edits.
 
 use crate::close_queue::{CloseAnswer, CloseQueue, CloseScope};
+use crate::colour_popover::{ColourIntent, ColourPopover};
 
 /// What a workspace row or the dialog asked the window to do.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -27,6 +28,8 @@ pub enum WorkspaceCommand {
     Close(CloseScope, Vec<u64>),
     /// The close prompt's answer.
     AnswerClose(CloseAnswer),
+    /// A press in the header swatch's palette popover.
+    Colour(ColourIntent),
 }
 
 /// What the name dialog is asking for.
@@ -105,6 +108,8 @@ pub struct WorkspaceMenuState {
     pub manage: Option<ManageDialog>,
     pub dialog: Option<NameDialog>,
     pub close: CloseQueue,
+    /// The palette popover under the header swatch, while it is open.
+    pub colour: Option<ColourPopover>,
 }
 
 impl WorkspaceMenuState {
@@ -114,6 +119,28 @@ impl WorkspaceMenuState {
         self.chip_menu = (self.chip_menu != Some(tab)).then_some(tab);
         self.filter.clear();
         (self.focus, self.scroll, self.reveal) = (None, 0.0, true);
+        self.colour = None;
+    }
+
+    /// The header swatch: open the palette popover over the menu, or close it.
+    pub fn toggle_colour(&mut self) {
+        self.colour = match self.colour {
+            Some(_) => None,
+            None => Some(ColourPopover::default()),
+        };
+    }
+
+    /// The end of a frame on the open menu: `asked` the press, if any.
+    /// While the popover is open, Esc or a click outside closes only it; a
+    /// colour press never closes the menu; otherwise a press, Esc or a click
+    /// outside closes the menu.
+    pub fn settle(&mut self, asked: Option<&Option<WorkspaceCommand>>, escape: bool, out: bool) {
+        let colour = matches!(asked, Some(Some(WorkspaceCommand::Colour(_))));
+        if self.colour.is_some() && (escape || out) {
+            self.colour = None;
+        } else if !colour && (asked.is_some() || escape || out) {
+            self.close_chip_menu();
+        }
     }
 
     /// The filter's words changed: the focus goes back to the field, from
@@ -201,6 +228,7 @@ impl WorkspaceMenuState {
 
     pub fn close_chip_menu(&mut self) {
         self.chip_menu = None;
+        self.colour = None;
     }
 
     /// Open the Manage workspaces dialog in the window presenting `tab`.
@@ -213,11 +241,26 @@ impl WorkspaceMenuState {
     }
 
     /// Open a surface on `tab` as a capture asks (`QUANTICK_WORKSPACE_MENU`):
-    /// `cell` the cell's menu, `manage` the dialog, `manage:delete=<name>`
-    /// with that row's Delete armed, `manage:rename=<name>` with its Rename
-    /// asked over it. Answers false, opening nothing, for any other token.
+    /// `cell` the cell's menu, `cell:colour` with its palette popover,
+    /// `cell:colour:ask=<word>` with the swap question on that colour,
+    /// `cell:colour:custom=<hex>` with Custom open on those words, `manage`
+    /// the dialog, `manage:delete=<name>` with that row's Delete armed,
+    /// `manage:rename=<name>` with its Rename asked over it. Answers false,
+    /// opening nothing, for any other token.
     pub fn stage(&mut self, tab: u64, token: &str) -> bool {
         let (surface, row) = token.split_once(':').unwrap_or((token, ""));
+        if let ("cell", Some(popover)) = (surface, row.strip_prefix("colour")) {
+            let mut colour = ColourPopover::default();
+            match popover.strip_prefix(':').and_then(|face| face.split_once('=')) {
+                None if popover.is_empty() => {}
+                Some(("ask", word)) => colour.ask(word),
+                Some(("custom", hex)) => (colour.custom, colour.hex) = (true, hex.to_owned()),
+                _ => return false,
+            }
+            self.toggle_chip_menu(tab);
+            self.colour = Some(colour);
+            return true;
+        }
         match (surface, row.split_once('=')) {
             ("cell", None) => self.toggle_chip_menu(tab),
             ("manage", None) => self.open_manage(tab),
