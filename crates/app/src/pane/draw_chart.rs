@@ -246,8 +246,7 @@ impl ChartPane {
             // Only price-band background drawings may precede candle/indicator scales.
             self.carve_bands(&layout, &mut carved);
             let price_band = carved.get(..1).unwrap_or_default();
-            let none = crate::strategy_anchors::StrategyAnchors::default();
-            let anchors = chrome.strategies.anchors(self.id).unwrap_or(&none);
+            let anchors = chrome.strategies.anchors(self.id);
             self.paint_drawing_bands(&frame, price_band, DrawPass::UnderCandles, anchors);
             // Candle fills, outlines and wicks share one pass beneath bubbles.
             renderers.candles(&mut candle_pass);
@@ -550,8 +549,7 @@ impl ChartPane {
         chrome: &mut PaneChrome<'_>,
     ) {
         self.carve_bands(layout, carved);
-        let none = crate::strategy_anchors::StrategyAnchors::default();
-        let anchors = chrome.strategies.anchors(self.id).unwrap_or(&none);
+        let anchors = chrome.strategies.anchors(self.id);
         self.paint_drawing_bands(frame, carved, DrawPass::OverCandles, anchors);
         self.quick_range_view(chrome.tab, chrome.side).draw(
             frame.painter,
@@ -582,8 +580,10 @@ impl ChartPane {
         frame: &DrawFrame<'_>,
         bands: &[Band],
         pass: DrawPass,
-        anchors: &crate::strategy_anchors::StrategyAnchors,
+        anchors: Option<&crate::strategy_anchors::StrategyAnchors>,
     ) {
+        let none = crate::strategy_anchors::StrategyAnchors::default();
+        let anchors = anchors.unwrap_or(&none);
         for (index, band) in bands.iter().enumerate() {
             DrawingPass {
                 painter: frame.painter,

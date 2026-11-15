@@ -555,10 +555,6 @@ impl Tab {
     /// order. Runs on the UI frame that clicked, not on the next print: a
     /// cancel that waits for the market to move may lose the race to it.
     pub fn apply_strategy_cleanup(&mut self) {
-        // A drawing a control call removed is swept here, on the frame of
-        // the call: the pane that lost it cannot reach the strategies.
-        let ids: SmallVec<[u64; MAX_CANVAS_PANES]> =
-            self.panes().map(|(pane, _)| pane.id).collect();
         let Self {
             paper,
             flow_pane,
@@ -569,9 +565,16 @@ impl Tab {
         let panes: SmallVec<[&ChartPane; MAX_CANVAS_PANES]> = std::iter::once(&*flow_pane)
             .chain(time_panes.iter())
             .collect();
-        strategies.sweep_orphans(|id, drawing| {
-            (panes.iter()).any(|pane| pane.id == id && pane.drawings.index_of(drawing).is_some())
-        });
+        // A drawing a control call removed is swept here, on the frame of
+        // the call: the pane that lost it cannot reach the strategies. Free
+        // while nothing is armed.
+        if strategies.any_armed() {
+            strategies.sweep_orphans(|id, drawing| {
+                (panes.iter())
+                    .any(|pane| pane.id == id && pane.drawings.index_of(drawing).is_some())
+            });
+        }
+        let ids: SmallVec<[u64; MAX_CANVAS_PANES]> = panes.iter().map(|pane| pane.id).collect();
         for command in strategies.take_cleanup(&ids) {
             let _ = paper.account_mut().apply_strategy_command(command);
         }
@@ -608,8 +611,13 @@ impl Tab {
     /// Sweep the instances on `side` whose drawing is gone — delete-all,
     /// undo, redo — queueing what they owe for the same-frame drain.
     pub(crate) fn sweep_strategy_orphans(&mut self, side: PaneSide) {
-        let (pane, strategies) = self.pane_with_strategies(side);
-        strategies.sweep_orphans(|id| pane.drawings.index_of(id).is_some());
+        let pane = match side {
+            PaneSide::Time(slot) => self.time_panes.get(slot).unwrap_or(&self.flow_pane),
+            PaneSide::Flow => &self.flow_pane,
+        };
+        if let Some(strategies) = self.strategies.existing_mut(pane.id) {
+            strategies.sweep_orphans(|id| pane.drawings.index_of(id).is_some());
+        }
     }
 
     /// Arm `form` on the drawing through its pane's strategies

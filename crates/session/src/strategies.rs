@@ -73,10 +73,10 @@ impl<D: Copy + PartialEq> PaneStrategies<D> {
         &self.pending
     }
 
-    /// Forget the bars queued after the first `len` — prints nobody heard
-    /// close bars no strategy may be handed.
-    pub fn truncate_pending(&mut self, len: usize) {
-        self.pending.truncate(len);
+    /// Whether any instance carries an alarm.
+    #[must_use]
+    pub fn any_alarm(&self) -> bool {
+        (self.anchors.instances.iter()).any(|instance| instance.alarm.is_some())
     }
 
     /// The closed bars awaiting evaluation, drained.
@@ -259,6 +259,18 @@ impl<D: Copy + PartialEq> TabStrategies<D> {
         self.panes.entry(id).or_default()
     }
 
+    /// The strategies of pane `id`, only when it has held one — for the
+    /// per-frame paths that must not open an entry for every pane.
+    pub fn existing_mut(&mut self, id: u64) -> Option<&mut PaneStrategies<D>> {
+        self.panes.get_mut(&id)
+    }
+
+    /// Whether any pane carries an instance.
+    #[must_use]
+    pub fn any_armed(&self) -> bool {
+        self.panes.values().any(|pane| !pane.anchors.is_empty())
+    }
+
     /// The instances riding pane `id`'s drawings, if any.
     #[must_use]
     pub fn anchors(&self, id: u64) -> Option<&StrategyAnchors<D>> {
@@ -287,12 +299,7 @@ impl<D: Copy + PartialEq> TabStrategies<D> {
     /// Whether any instance carries an alarm — the gate before a clock read.
     #[must_use]
     pub fn any_alarm(&self) -> bool {
-        self.panes.values().any(|pane| {
-            pane.anchors
-                .instances
-                .iter()
-                .any(|instance| instance.alarm.is_some())
-        })
+        self.panes.values().any(PaneStrategies::any_alarm)
     }
 
     /// Disarm every pane's instances for `reason` (see
@@ -372,8 +379,7 @@ impl<D: Copy + PartialEq> TabStrategies<D> {
             }
             // The bar still forming, judged for the alarm only. Per print,
             // so it opens with the question that costs least.
-            let any_alarm =
-                (pane.anchors.instances.iter()).any(|instance| instance.alarm.is_some());
+            let any_alarm = pane.any_alarm();
             if let Some(Forming {
                 bar,
                 progress,
