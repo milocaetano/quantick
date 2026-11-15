@@ -3331,6 +3331,7 @@ version = "0.1.0"
 dependencies = [
  "quantick-civil",
  "quantick-engine",
+ "quantick-paper",
  "quantick-sim",
  "quantick-sources",
  "quantick-strategy",

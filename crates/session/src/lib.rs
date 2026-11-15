@@ -27,6 +27,7 @@ mod button;
 pub mod close_queue;
 mod native;
 mod paging;
+pub mod paper;
 pub mod prompt;
 pub mod strategies;
 pub mod tab_chip;
@@ -952,6 +953,8 @@ impl TabSession {
 
 #[cfg(test)]
 mod native_tests;
+#[cfg(test)]
+mod paper_tests;
 #[cfg(test)]
 mod session_tests;
 #[cfg(test)]
