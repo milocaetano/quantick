@@ -24,7 +24,7 @@ fn rgb(hex: u32) -> PremultipliedRgba {
 #[test]
 fn both_bundled_themes_paint_the_rail_as_the_mock_draws_it() {
     let dark = [0x38425C, 0x4A5573, 0xC8D0DC, 0x4A5A80, 0x63739C, 0xFFFFFF];
-    let light = [0xD0D0D0, 0x7C7C7C, 0x3A4049, 0xBFC3C9, 0x5F6670, 0x000000];
+    let light = [0xD0D0D0, 0x7C7C7C, 0x3A4049, 0xB0B5BC, 0x5F6670, 0x000000];
     for (source, hexes) in [(DARK, dark), (LIGHT, light)] {
         let theme = ResolvedTheme::parse(source).unwrap();
         for (token, hex) in TOKENS.into_iter().zip(hexes) {

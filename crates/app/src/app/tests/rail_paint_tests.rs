@@ -212,7 +212,9 @@ fn the_tree_painters_rails_paint_one_band_and_leave_their_seam_unlined() {
 }
 
 /// The column painter's flat rail, a context chart folded in its stack (to
-/// the stack's collapsed share, 17.5 px here, as before): lit while the pointer is on the dividers beside it, at rest away.
+/// the stack's collapsed share, 17.5 px here, as before): lit while the
+/// pointer is on the dividers beside it, at rest away. The divider beside it
+/// is no line, and the chart below comes up to the band, no gutter between.
 #[test]
 fn the_column_painters_flat_context_rail_paints_and_lights_on_its_hit_area() {
     let hover = |app: &mut QuantickApp, ctx: &egui::Context, at: egui::Pos2| {
@@ -244,6 +246,20 @@ fn the_column_painters_flat_context_rail_paints_and_lights_on_its_hit_area() {
             on_chrome: [true, false],
         };
         assert_rail(&output, rail, look, (source, false));
+        let divider = app
+            .active_tab()
+            .context_divider_rect(0)
+            .expect("its divider");
+        let border = ink(source, Token::Border);
+        let lined = painted_in(&output, divider)
+            .into_iter()
+            .any(|(_, fill)| fill == border);
+        assert!(!lined, "the divider beside the rail is no line");
+        let below = app.active_tab().time_panes[1]
+            .frame
+            .area
+            .expect("the open chart");
+        assert_eq!(below.top(), rail.bottom(), "the chart meets the band");
         assert_rail(
             &hover(&mut app, &ctx, rail.center()),
             rail,
@@ -370,7 +386,7 @@ fn a_divider_between_open_panes_paints_as_before() {
 /// where a gutter stood between them, on both painters; the rail itself
 /// stands where it stood. The numbers are the test window's.
 #[test]
-fn the_pane_beside_a_rail_keeps_the_place_it_had() {
+fn the_pane_beside_a_rail_comes_up_to_it_and_the_rail_stays_put() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = split_app(&ctx, 200);
     assert!(app.active_tab_mut().canvas.fold(true, true));
@@ -399,4 +415,174 @@ fn the_pane_beside_a_rail_keeps_the_place_it_had() {
     );
     let beside = egui::Rect::from_min_max(egui::pos2(701.0, 114.0), egui::pos2(1356.0, 844.0));
     assert_eq!(tab.time_panes[1].frame.area, Some(beside), "tree neighbour");
+}
+
+/// Frames with the pointer resting at `at`, long enough for a tooltip's
+/// delay; the last frame's output.
+fn rest(app: &mut QuantickApp, ctx: &egui::Context, at: egui::Pos2) -> egui::FullOutput {
+    run_frame_with_events(app, ctx, vec![egui::Event::PointerMoved(at)]);
+    let mut output = run_frame(app, ctx);
+    for _ in 0..50 {
+        output = run_frame(app, ctx);
+    }
+    output
+}
+
+fn says(output: &egui::FullOutput, words: &str) -> bool {
+    painted_text(output).iter().any(|text| text == words)
+}
+
+/// A rail lit by a drag that began on it stays lit while the pointer
+/// wanders off its hit area, until the drag lets go.
+#[test]
+fn a_rail_stays_lit_while_its_own_drag_wanders_off() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = split_app(&ctx, 200);
+    assert!(app.active_tab_mut().canvas.fold(true, true));
+    run_frame(&mut app, &ctx);
+    let rail = app.active_tab().flow_rail_rect().expect("the flow's rail");
+    let look = RailLook {
+        flat: false,
+        opens_forward: false,
+        dashes: 1,
+        on_chrome: [false, true],
+    };
+    let from = rail.center();
+    run_frame_with_events(&mut app, &ctx, vec![egui::Event::PointerMoved(from)]);
+    let press = vec![egui::Event::PointerMoved(from), pointer_button(from, true)];
+    run_frame_with_events(&mut app, &ctx, press);
+    // Down, along the rail and past the canvas: no travel across it.
+    let off = egui::pos2(from.x, app.active_tab().canvas.last_canvas.bottom() + 15.0);
+    let mut output = None;
+    for step in 1..=8 {
+        let at = from.lerp(off, step as f32 / 8.0);
+        output = Some(run_frame_with_events(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerMoved(at)],
+        ));
+    }
+    assert!(ctx.dragged_id().is_some(), "its own drag is held");
+    assert_rail(&output.unwrap(), rail, look, (DARK, true));
+    run_frame_with_events(&mut app, &ctx, vec![pointer_button(off, false)]);
+}
+
+/// The tree rail's words show as its tooltip once the pointer rests on its
+/// hit area, and not during a drag.
+#[test]
+fn the_tree_rail_says_its_words_when_lit_and_idle_and_not_while_dragging() {
+    let ctx = egui::Context::default();
+    let mut app = tree_app(&ctx, "time+time+flow", DARK);
+    assert!(app.active_tab_mut().canvas.state.fold_flow_side(true, true));
+    run_frame(&mut app, &ctx);
+    let rails = tree_rails(
+        &app.active_tab().canvas.state,
+        whole(&app),
+        CANVAS_DIVIDER_PX,
+    );
+    let (rail, id) = (screen_rect(rails[0].rect), rails[0].control_id());
+    let words = scene_words(&app, &id).expect("the rail's words");
+    assert!(
+        says(&rest(&mut app, &ctx, rail.center()), &words),
+        "lit and idle"
+    );
+    let away = egui::pos2(rail.left() - 400.0, rail.center().y);
+    run_frame_with_events(&mut app, &ctx, vec![egui::Event::PointerMoved(away)]);
+    let press = vec![egui::Event::PointerMoved(away), pointer_button(away, true)];
+    run_frame_with_events(&mut app, &ctx, press);
+    let mut output = run_frame(&mut app, &ctx);
+    for step in 1..=12 {
+        let at = away.lerp(rail.center(), step as f32 / 12.0);
+        output = run_frame_with_events(&mut app, &ctx, vec![egui::Event::PointerMoved(at)]);
+    }
+    for _ in 0..50 {
+        output = run_frame(&mut app, &ctx);
+    }
+    assert!(ctx.dragged_id().is_some(), "the chart's drag is under way");
+    assert!(!says(&output, &words), "no tooltip during a drag");
+    run_frame_with_events(&mut app, &ctx, vec![pointer_button(rail.center(), false)]);
+}
+
+/// Three charts side by side, the middle one folded: the seams on both
+/// sides of its rail light it, and a drag begun on either keeps it lit.
+#[test]
+fn a_rail_between_two_seams_lights_from_both() {
+    let ctx = egui::Context::default();
+    let mut app = tree_app(&ctx, "charts-3", DARK);
+    let area = whole(&app);
+    let state = &mut app.active_tab_mut().canvas.state;
+    let seam = quantick_workspace::canvas::SeamAddress {
+        path: Vec::new(),
+        index: 0,
+    };
+    let mut held = None;
+    for _ in 0..16 {
+        state
+            .step_seam_drag(&mut held, (&seam, area.w / 16.0, false), area)
+            .unwrap();
+    }
+    run_frame(&mut app, &ctx);
+    let rails = tree_rails(
+        &app.active_tab().canvas.state,
+        whole(&app),
+        CANVAS_DIVIDER_PX,
+    );
+    assert_eq!(rails.len(), 1, "the middle chart folded");
+    let (rail, look) = (screen_rect(rails[0].rect), rails[0].look(whole(&app)));
+    let hover = |app: &mut QuantickApp, at: egui::Pos2| {
+        run_frame_with_events(app, &ctx, vec![egui::Event::PointerMoved(at)]);
+        run_frame_with_events(app, &ctx, vec![egui::Event::PointerMoved(at)])
+    };
+    for side in [rail.left() - 5.0, rail.right() + 5.0] {
+        let at = egui::pos2(side, rail.center().y);
+        assert_rail(&hover(&mut app, at), rail, look, (DARK, true));
+        let away = egui::pos2(side + (side - rail.center().x) * 12.0, rail.center().y);
+        assert_rail(&hover(&mut app, away), rail, look, (DARK, false));
+        hover(&mut app, at);
+        let press = vec![egui::Event::PointerMoved(at), pointer_button(at, true)];
+        run_frame_with_events(&mut app, &ctx, press);
+        let off = egui::pos2(side, whole(&app).bottom() + 15.0);
+        let mut output = None;
+        for step in 1..=8 {
+            let to = at.lerp(off, step as f32 / 8.0);
+            output = Some(run_frame_with_events(
+                &mut app,
+                &ctx,
+                vec![egui::Event::PointerMoved(to)],
+            ));
+        }
+        assert_rail(&output.unwrap(), rail, look, (DARK, true));
+        run_frame_with_events(&mut app, &ctx, vec![pointer_button(off, false)]);
+        run_frame(&mut app, &ctx);
+    }
+}
+
+/// A chart floating over the rail takes the pointer: the rail stays at rest
+/// and says nothing, though the pointer lies within its hit area.
+#[test]
+fn a_pane_floating_over_a_rail_keeps_it_at_rest_and_quiet() {
+    let ctx = egui::Context::default();
+    let mut app = tree_app(&ctx, "time+time+flow", DARK);
+    assert!(app.active_tab_mut().canvas.state.fold_flow_side(true, true));
+    run_frame(&mut app, &ctx);
+    let rails = tree_rails(
+        &app.active_tab().canvas.state,
+        whole(&app),
+        CANVAS_DIVIDER_PX,
+    );
+    let (rail, look) = (screen_rect(rails[0].rect), rails[0].look(whole(&app)));
+    let words = scene_words(&app, &rails[0].control_id()).expect("the rail's words");
+    let area = whole(&app);
+    let state = &mut app.active_tab_mut().canvas.state;
+    let slot = state
+        .add(quantick_workspace::canvas::PaneKind::Time, area)
+        .unwrap();
+    let over = CanvasRect::new(rail.left() - 200.0, rail.center().y - 150.0, 300.0, 300.0);
+    state.float(slot, over).unwrap();
+    for _ in 0..6 {
+        run_frame(&mut app, &ctx);
+    }
+    let output = rest(&mut app, &ctx, rail.center());
+    assert_rail(&output, rail, look, (DARK, false));
+    assert!(!says(&output, &words), "no tooltip under the float");
 }

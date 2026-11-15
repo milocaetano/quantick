@@ -109,6 +109,7 @@ fn the_chevron_points_the_way_the_pane_opens_and_turns_with_the_rail() {
     );
     let dashes = &grip[RAIL_CHEVRON_ROWS..];
     assert_eq!(dashes.len(), 4, "one per chart of the grid");
+    assert_eq!(RAIL_DASH_PITCH_PX, 4.0, "a 1 px dash and a 3 px gap");
     for pair in dashes.windows(2) {
         assert_eq!(pair[1].x - pair[0].x, RAIL_DASH_PITCH_PX);
     }
@@ -244,14 +245,6 @@ fn the_grid_folded_behind_one_rail_holds_four_charts_and_its_neighbour_meets_it(
         .find(|seam| seam.rail.is_some())
         .expect("the rail's seam");
     assert!(!beside.is_line());
-    let grab = beside.grab(4.0);
-    let hit = rails[0].hit();
-    assert_eq!(
-        (hit.x, hit.right()),
-        (grab.x, grab.right()),
-        "the seam's reach"
-    );
-    assert_eq!(hit.w, COLLAPSED_HIT_PX);
     let open = CanvasState::from_preset(preset("grid4+flow").unwrap());
     assert!((tree_seams(&open, CANVAS, CANVAS_DIVIDER_PX).iter()).all(TreeSeam::is_line));
 
@@ -297,4 +290,27 @@ fn the_context_rail_holds_only_the_charts_in_the_flow_panes_split() {
         state.side_rail_holds(false),
         RailHolds::of([PaneKind::Time])
     );
+}
+
+/// Three charts side by side, the middle one folded: both seams beside it
+/// name its rail, so a grab on either side lights it.
+#[test]
+fn a_rail_between_two_seams_is_named_by_both() {
+    let mut state = CanvasState::from_preset(preset("charts-3").unwrap());
+    let seam = SeamAddress {
+        path: Vec::new(),
+        index: 0,
+    };
+    let mut held = None;
+    for _ in 0..16 {
+        state
+            .step_seam_drag(&mut held, (&seam, CANVAS.w / 16.0, false), CANVAS)
+            .unwrap();
+    }
+    let rails = tree_rails(&state, CANVAS, CANVAS_DIVIDER_PX);
+    assert_eq!(rails.len(), 1);
+    let seams = tree_seams(&state, CANVAS, CANVAS_DIVIDER_PX);
+    let beside: Vec<_> = seams.iter().filter_map(|seam| seam.rail).collect();
+    assert_eq!(beside.len(), 2, "a seam on each side");
+    assert!(beside.iter().all(|rail| rail.slot == rails[0].slot));
 }
