@@ -3,6 +3,7 @@
 //! the size, filter, focus and scroll `workspace_menu`'s and the marks
 //! `quantick_ui_model::workspace_menu`'s: this turns them into pixels and presses.
 
+use eframe::egui::scroll_area::ScrollBarVisibility::AlwaysHidden;
 use eframe::egui::{self, Color32, Key, Modifiers, Rect, RichText, Sense, TextWrapMode, vec2};
 use quantick_appearance::Token;
 use quantick_control_handlers::workspace_book::cell_menu::{self as cells, CellMenuCache, CellRow};
@@ -16,8 +17,7 @@ use crate::app::QuantickApp;
 use crate::toolbar::capsule::paint_tree;
 
 const NAME_FIELD_WIDTH_PT: f32 = 220.0;
-/// A press's answer: the command of the row pressed, `None` on the tab's own.
-type Asked = Option<Option<WorkspaceCommand>>;
+type Asked = Option<Option<WorkspaceCommand>>; // A press's command; None on the tab's own row.
 
 /// The capsule's workspace menu on the presented tab: `cell_menu`'s rows as
 /// `marks` lays them at `chip_menu_layout`'s size; answers the rows drawn.
@@ -47,7 +47,7 @@ pub(super) fn chip_menu(
     let ink = |t: Option<Token>| t.map_or(Color32::TRANSPARENT, |t| *palette.get(t));
     let chrome = quantick_appearance::workspace_menu::chrome(dark);
     let edge = egui::Stroke::new(border, ink(Some(chrome.edge)));
-    let frame = egui::Frame::popup(&ctx.style()).stroke(edge);
+    let frame = egui::Frame::popup(&ctx.style()).stroke(egui::Stroke::NONE);
     let frame = frame.inner_margin(border).rounding(RADIUS);
     let frame = frame.fill(ink(Some(chrome.ground)));
     let id = egui::Id::new(("tab_workspace_menu", tab));
@@ -55,16 +55,15 @@ pub(super) fn chip_menu(
     let area = egui::Area::new(id)
         .order(egui::Order::Foreground)
         .pivot(egui::Align2::RIGHT_TOP)
-        .fixed_pos(anchor.right_bottom() + vec2(0.0, model::CHIP_MENU_DROP_PT))
+        .fixed_pos((anchor.right_bottom() + vec2(0.0, model::CHIP_MENU_DROP_PT)).round())
         .constrain(true);
     let (mut asked, mut keyed): (Asked, Asked) = (None, None);
     let area = area.show(ctx, |ui| {
         frame.show(ui, |ui| {
             ui.spacing_mut().item_spacing = egui::Vec2::ZERO;
             ui.set_width(w);
-            ui.spacing_mut().scroll = egui::style::ScrollStyle::thin();
-            let lay = |words: &str, size| galley(ui, RichText::new(words).size(size), f32::MAX);
-            let measure = |words: &str, size: f32| lay(words, size).size().x;
+            let measure =
+                |s: &str, pt: f32| galley(ui, RichText::new(s).size(pt), f32::MAX).size().x;
             let head = marks::head(rows, w, dark, &measure);
             let foot = marks::foot(rows, w, dark, &measure);
             let mut block = |ui: &mut egui::Ui, pieces: &[Piece], height: f32| {
@@ -84,7 +83,8 @@ pub(super) fn chip_menu(
                 let place =
                     Rect::from_min_size(rect.min + vec2(words.x, words.y), vec2(words.w, words.h));
                 let edit = egui::TextEdit::singleline(&mut menu.filter).frame(false);
-                let edit = ui.put(place, edit.hint_text(cells::FILTER_PLACEHOLDER));
+                let mut field = ui.new_child(egui::UiBuilder::new().max_rect(place)); // Off the layout.
+                let edit = field.add(edit.hint_text(cells::FILTER_PLACEHOLDER));
                 edit.request_focus();
                 if edit.changed() {
                     menu.filter_changed();
@@ -95,10 +95,9 @@ pub(super) fn chip_menu(
             let chosen = menu.keys([down, up, enter], shown.len(), current);
             keyed = chosen.map(|at| shown[at].command.clone());
             let height = layout(shown.len()).list_height;
-            let mut list = egui::ScrollArea::vertical().max_height(height);
-            if !fresh && let Some(offset) = menu.reveal(current, height) {
-                list = list.vertical_scroll_offset(offset);
-            }
+            let list = egui::ScrollArea::vertical().max_height(height);
+            let list = list.vertical_scroll_offset(menu.offset(current, height, !fresh));
+            let list = list.scroll_bar_visibility(AlwaysHidden); // The cut row says more.
             let list = list.auto_shrink([false, true]).show(ui, |ui| {
                 for (index, row) in shown.iter().enumerate() {
                     let piece =
@@ -109,12 +108,16 @@ pub(super) fn chip_menu(
             });
             menu.scrolled(list.state.offset.y);
             block(ui, &foot, model::CHIP_MENU_FOOTER_PT);
+            let rim = ui.min_rect().expand(0.5); // The border, painted over the blocks.
+            ui.painter().rect_stroke(rim, RADIUS - 0.5, edge);
         });
     });
     let rect = area.response.rect;
-    let outside = |at: egui::Pos2| !anchor.contains(at) && !rect.contains(at);
-    let pointer = |i: &egui::InputState| i.pointer.interact_pos().is_some_and(outside);
-    let out = ctx.input(|i| i.pointer.any_pressed() && pointer(i));
+    let cover = ctx.screen_rect();
+    let shield = egui::Area::new(id.with("shield")).order(egui::Order::Middle); // Eats a click out.
+    let shield = shield.fixed_pos(cover.min);
+    let out = shield.show(ctx, |ui| ui.allocate_rect(cover, Sense::click()));
+    let out = out.inner.clicked();
     let asked = keyed.or(asked);
     commands.extend(asked.clone().flatten().map(MenuCommand::Workspace));
     if asked.is_some() || escape || out {
@@ -162,16 +165,13 @@ fn paint(ui: &egui::Ui, at: egui::Pos2, piece: &Piece, ink: &Ink<'_>, drawn: &mu
     }
     let row = piece.row.as_ref()?;
     let seen = whole.intersect(ui.clip_rect());
-    if seen.height() * 2.0 >= whole.height() {
-        drawn.push((row.clone(), seen));
-    }
+    drawn.extend((seen.height() * 2.0 >= whole.height()).then(|| (row.clone(), seen)));
     if let Some(tip) = row.tip(cut) {
         response = response.on_hover_text(tip);
     }
     response.clicked().then(|| row.command.clone())
 }
 
-/// A token's colour, clear for none; the rows drawn, for the scene.
 type Ink<'a> = dyn Fn(Option<Token>) -> Color32 + 'a;
 type Drawn = Vec<(CellRow, Rect)>;
 

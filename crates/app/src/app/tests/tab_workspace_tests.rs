@@ -1602,10 +1602,11 @@ fn the_cell_menu_is_designer_b_s_size_in_dark_and_light() {
         let most = model_height(&shown, 9);
         assert_eq!(most, 482.0);
         assert!(
-            menu.height() <= most + 0.5,
-            "{theme:?}: {} tall",
+            (menu.height() - most).abs() < 0.5,
+            "{theme:?}: {} tall, the model says {most}",
             menu.height()
         );
+        assert_eq!(menu.min, menu.min.round(), "{theme:?}: on whole pixels");
         assert!((menu.right() - name.right()).abs() < 1.0, "{theme:?}");
         assert!((menu.top() - name.bottom() - CHIP_MENU_DROP_PT).abs() < 1.0);
         assert_eq!(shown.listed().len(), 9, "{theme:?}: every row in view");
@@ -1624,7 +1625,23 @@ fn the_scene_reads_the_header_rows_filter_and_footer() {
     fill_book(&mut app, first, 30);
     let ctx = egui::Context::default();
     let shown = open_cell_menu(&mut app, &ctx);
-    assert!(shown.menu.height() <= model_height(&shown, 30) + 0.5);
+    let (painted, most) = (shown.menu.height(), model_height(&shown, 30));
+    assert_eq!(most, 523.0);
+    assert!(
+        (painted - most).abs() < 0.5,
+        "painted {painted}, the model {most}"
+    );
+    let field = shown.row("workspace_menu.filter").expect("the filter");
+    for row in shown.listed() {
+        assert!(row.top() >= field.bottom() + 4.0, "{row:?} under {field:?}");
+        assert_eq!(row.min.y, row.min.y.round(), "{row:?} on a whole pixel");
+    }
+    let top_row = shown.listed()[0];
+    assert_eq!(
+        (field.left(), field.right()),
+        (top_row.left(), top_row.right()),
+        "one extent"
+    );
     let scene = crate::control::scene_snapshot(&app);
     let control = |id: &str| {
         let mut controls = scene.controls.iter();
@@ -2012,4 +2029,131 @@ fn a_save_from_the_second_tab_keeps_the_first_tabs_add() {
         .collect();
     assert_eq!(kinds, scope_kinds(&app, a)[0], "what both tabs show");
     assert!(!app.runtime.workspace.book.tab_row(a).1);
+}
+
+/// A tab on a workspace other than Default, landing on it the frame its menu
+/// opens, keeps the menu open: by the toggle and by a click on the capsule's
+/// name, on either tab of the strip.
+#[test]
+fn the_cell_menu_stays_open_on_a_tab_on_another_workspace() {
+    for index in [0, 1] {
+        let layouts = crate::scratch::ScratchFile::new("workspace-menu-b-stays", "layouts.toml");
+        let (mut app, first, _) = two_tabs(&layouts);
+        app.runtime.tabs.select(0);
+        fill_book(&mut app, first, 4);
+        app.runtime.tabs.select(index);
+        let tab = app.runtime.tabs.active_id();
+        let name = app
+            .runtime
+            .workspace
+            .book
+            .book()
+            .list()
+            .last()
+            .unwrap()
+            .name
+            .clone();
+        assert_ne!(name, "Default");
+        set_tab_workspace(&mut app, tab, &name).expect("a known workspace");
+        app.chrome.window_menu.tab_workspace.toggle_chip_menu(tab);
+        let ctx = egui::Context::default();
+        for frame in 0..12 {
+            run_frame_at(&mut app, &ctx, FULL_HD);
+            let on = app.chrome.window_menu.tab_workspace.chip_menu_on(tab);
+            assert!(on, "tab {index}: closed on frame {frame}");
+        }
+        assert_eq!(app.runtime.workspace.book.tab_row(tab).0, name);
+        app.chrome.window_menu.tab_workspace.toggle_chip_menu(tab);
+        run_frame_at(&mut app, &ctx, FULL_HD);
+        let name = (app.chrome.toolbar_controls.iter())
+            .find(|control| control.id == "toolbar.capsule.workspace")
+            .expect("the capsule's name")
+            .rect;
+        click_sized(&mut app, &ctx, FULL_HD, name.center());
+        for frame in 0..12 {
+            run_frame_at(&mut app, &ctx, FULL_HD);
+            let on = app.chrome.window_menu.tab_workspace.chip_menu_on(tab);
+            assert!(on, "tab {index}: clicked open, closed on frame {frame}");
+        }
+    }
+}
+
+/// The panes' drawings on the active tab, all told.
+fn drawings(app: &QuantickApp) -> usize {
+    let panes = app.active_tab().panes();
+    panes.map(|(pane, _)| pane.drawings.items().len()).sum()
+}
+
+/// A click outside the open menu closes it and reaches nothing under it:
+/// the window's top layer there is the menu's shield, and an armed drawing
+/// tool draws nothing.
+#[test]
+fn a_click_outside_closes_the_menu_and_goes_no_further() {
+    use crate::toolrail::Tool;
+    let layouts = crate::scratch::ScratchFile::new("workspace-menu-b-outside", "layouts.toml");
+    let (mut app, first, _) = two_tabs(&layouts);
+    app.runtime.tabs.select(0);
+    fill_book(&mut app, first, 9);
+    let ctx = egui::Context::default();
+    open_cell_menu(&mut app, &ctx);
+    let chart = egui::pos2(400.0, 500.0);
+    let top = ctx.layer_id_at(chart).expect("a layer");
+    assert_eq!(top.order, egui::Order::Middle, "the shield takes the click");
+    let tool = Tool::Drawing(drawing_tool("horizontal-line"));
+    app.surfaces.toolrail.arm(tool);
+    click_sized(&mut app, &ctx, FULL_HD, chart);
+    run_frame_at(&mut app, &ctx, FULL_HD);
+    assert!(
+        !app.chrome.window_menu.tab_workspace.chip_menu_on(first),
+        "closed"
+    );
+    assert_eq!(drawings(&app), 0, "the click went no further");
+}
+
+/// Only the switch and its label toggle Autosave: a click on the row's
+/// state words changes nothing and leaves the menu open.
+#[test]
+fn only_the_switch_toggles_autosave() {
+    let layouts = crate::scratch::ScratchFile::new("workspace-menu-b-switch", "layouts.toml");
+    let (mut app, first, _) = two_tabs(&layouts);
+    app.runtime.tabs.select(0);
+    fill_book(&mut app, first, 9);
+    let ctx = egui::Context::default();
+    let shown = open_cell_menu(&mut app, &ctx);
+    let before = app.runtime.workspace.book.book().autosave();
+    let switch = shown.row("workspace_menu.autosave").expect("the toggle");
+    let words = egui::pos2(shown.menu.right() - 20.0, switch.center().y);
+    assert!(
+        !switch.contains(words),
+        "the state words lie outside the toggle"
+    );
+    click_sized(&mut app, &ctx, FULL_HD, words);
+    run_frame_at(&mut app, &ctx, FULL_HD);
+    assert_eq!(app.runtime.workspace.book.book().autosave(), before);
+    assert!(
+        app.chrome.window_menu.tab_workspace.chip_menu_on(first),
+        "still open"
+    );
+    click_sized(&mut app, &ctx, FULL_HD, switch.center());
+    run_frame_at(&mut app, &ctx, FULL_HD);
+    assert_eq!(app.runtime.workspace.book.book().autosave(), !before);
+}
+
+/// Typed into the filter, Enter switches to the first match.
+#[test]
+fn enter_in_the_filter_switches_to_the_first_match() {
+    let layouts = crate::scratch::ScratchFile::new("workspace-menu-b-enter", "layouts.toml");
+    let (mut app, first, _) = two_tabs(&layouts);
+    app.runtime.tabs.select(0);
+    fill_book(&mut app, first, 14);
+    let ctx = egui::Context::default();
+    let shown = open_cell_menu(&mut app, &ctx);
+    assert!(shown.row("workspace_menu.filter").is_some());
+    let typed = vec![egui::Event::Text("desk 05".to_owned())];
+    run_frame_sized(&mut app, &ctx, FULL_HD, typed, egui::Modifiers::NONE);
+    assert_eq!(app.chrome.window_menu.tab_workspace.filter, "desk 05");
+    let enter = vec![key_press(egui::Key::Enter)];
+    run_frame_sized(&mut app, &ctx, FULL_HD, enter, egui::Modifiers::NONE);
+    run_frame_at(&mut app, &ctx, FULL_HD);
+    assert_eq!(app.runtime.workspace.book.tab_row(first).0, "Desk 05");
 }

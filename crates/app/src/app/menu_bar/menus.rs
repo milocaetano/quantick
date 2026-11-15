@@ -25,7 +25,6 @@ pub(in crate::app) struct WindowMenuState {
     /// The chip's menu, the armed delete and the name dialog.
     pub(in crate::app) tab_workspace: quantick_session::workspace_menu::WorkspaceMenuState,
     pub(in crate::app) cell_rows: Vec<(CellRow, egui::Rect)>,
-    /// The open cell menu's rows, built again only when what they read changes.
     pub(in crate::app) cell_cache: CellMenuCache,
     pub(in crate::app) keyboard: bool,
 }
