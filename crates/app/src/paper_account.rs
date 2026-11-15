@@ -19,22 +19,23 @@
 //!
 //! It dereferences to the account, so every caller — the ticket, the dock,
 //! the control plane — keeps asking `account().place_intent(..)` and the
-//! rest of the money path by the names it already used. `on_trade`,
-//! `handle_events` and a chart command re-read the report at once; a close
+//! rest of the money path by the names it already used, and it lends the
+//! account to the tab's paper (`quantick_session::paper::TabPaper`), which
+//! holds it. A print (`PaperTrading::on_trade`), `handle_events` and a chart
+//! command re-read the report at once; a close
 //! any other core call journals waits for `settle`, run before the report
 //! window paints. So the painted report never lags the journal it reads.
 
 use std::ops::{Deref, DerefMut};
 use std::path::PathBuf;
 
-use quantick_engine::Trade;
 use quantick_paper::PaperAccount as Core;
 use quantick_sim::VenueEvent;
 
 mod export;
 mod report;
 
-pub(crate) use quantick_paper::account::{AccountEnv, Leg, elide_path, side_word};
+pub(crate) use quantick_paper::account::{Leg, elide_path, side_word};
 
 /// `=1` runs a fixed sequence of ordinary sim commands driven by print
 /// count, so a screenshot or demo run shows every trading surface without
@@ -55,7 +56,7 @@ crate::hooks::declare_hooks!["QUANTICK_PAPER_DEMO", "QUANTICK_PAPER_RISK"];
 
 /// The paper account, hosted: the headless account and the window-side state
 /// that travels with it.
-pub(crate) struct PaperAccount {
+pub struct PaperAccount {
     /// The money path. Reached through `Deref`, so its methods read as this
     /// host's own.
     core: Core,
@@ -81,6 +82,20 @@ impl Deref for PaperAccount {
 
 impl DerefMut for PaperAccount {
     fn deref_mut(&mut self) -> &mut Core {
+        &mut self.core
+    }
+}
+
+// How the tab's paper (`quantick_session::paper::TabPaper`) reaches the
+// money path inside this host.
+impl std::borrow::Borrow<Core> for PaperAccount {
+    fn borrow(&self) -> &Core {
+        &self.core
+    }
+}
+
+impl std::borrow::BorrowMut<Core> for PaperAccount {
+    fn borrow_mut(&mut self) -> &mut Core {
         &mut self.core
     }
 }
@@ -155,12 +170,6 @@ impl PaperAccount {
         self.follow_journal();
     }
 
-    /// Feed one live print through the simulator and act on what it did.
-    pub(crate) fn on_trade(&mut self, trade: &Trade) {
-        self.core.on_trade(trade);
-        self.follow_journal();
-    }
-
     /// Everything the simulator reported, through the account's one funnel
     /// (journal, acknowledgements, the bot buffer), and then the report.
     pub(crate) fn handle_events(&mut self, events: Vec<VenueEvent>) {
@@ -180,19 +189,6 @@ impl PaperAccount {
             let (report, env) = self.report_parts();
             report.journal_changed(&env);
         }
-    }
-
-    /// Point the account at an instrument. `None` when nothing changed,
-    /// `Some(arriving)` when it did — see `quantick_paper`'s own
-    /// `set_symbol` for why the two are told apart.
-    pub(crate) fn set_symbol(&mut self, symbol: &str) -> Option<bool> {
-        let arriving = self.core.set_symbol(symbol)?;
-        self.report.symbol_changed();
-        // The revealed page is deliberately left alone: resetting it here
-        // retired the `QUANTICK_LEDGER_PAGES` hook before the first row was
-        // painted, and would retire a trader's scroll-back as silently.
-        // `LedgerPage::of` already clamps a page the new history cannot back.
-        Some(arriving)
     }
 
     /// Point the journal somewhere new, in-session — the panel's folder

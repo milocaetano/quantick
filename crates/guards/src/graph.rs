@@ -194,7 +194,13 @@ pub const ALLOWED: &[(&str, &[&str])] = &[
     // One tab's reaching back behind a command bus: venue candles and the
     // trade-history run, over the source vocabulary. Told the time; its feed
     // requests leave as effects the window sends, so it never names `feed`.
-    ("session", &["civil", "engine", "sources"]),
+    // `strategy` for the armed instances a tab's panes carry, and `sim` for
+    // the commands they owe the paper account. `paper` for the desk and
+    // account a tab trades on, which the tab's session now holds and joins.
+    (
+        "session",
+        &["civil", "engine", "paper", "sim", "sources", "strategy"],
+    ),
     // What a source is, below the host that runs one: the provider settings
     // the config document reads and the history reach the feed host spends.
     ("sources", &["engine"]),
@@ -223,13 +229,17 @@ pub const ALLOWED: &[(&str, &[&str])] = &[
     // The cockpit stores: documents over the vocabularies they persist. The
     // window resolves every path; the store never reads the environment.
     // `orderbook` for the approved WIN tape's depth golden alone, a test that
-    // hands the engine an MT5-shaped book the way the feed does.
+    // hands the engine an MT5-shaped book the way the feed does. `drawings`
+    // for the alert observer cache, which reads a pane's drawings as facts;
+    // it sits beside `AlertRuntime` because `alerts` cannot reach `drawings`
+    // (`drawings` depends on `alerts`).
     (
         "stores",
         &[
             "alerts",
             "appearance",
             "chart",
+            "drawings",
             "engine",
             "indicators",
             "orderbook",

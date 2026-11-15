@@ -3333,7 +3333,10 @@ version = "0.1.0"
 dependencies = [
  "quantick-civil",
  "quantick-engine",
+ "quantick-paper",
+ "quantick-sim",
  "quantick-sources",
+ "quantick-strategy",
  "rust_decimal",
  "tracing",
 ]
@@ -3363,6 +3366,7 @@ dependencies = [
  "quantick-alerts",
  "quantick-appearance",
  "quantick-chart",
+ "quantick-drawings",
  "quantick-engine",
  "quantick-indicators",
  "quantick-orderbook",

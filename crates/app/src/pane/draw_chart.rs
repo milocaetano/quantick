@@ -246,7 +246,8 @@ impl ChartPane {
             // Only price-band background drawings may precede candle/indicator scales.
             self.carve_bands(&layout, &mut carved);
             let price_band = carved.get(..1).unwrap_or_default();
-            self.paint_drawing_bands(&frame, price_band, DrawPass::UnderCandles);
+            let anchors = chrome.strategies.anchors(self.id);
+            self.paint_drawing_bands(&frame, price_band, DrawPass::UnderCandles, anchors);
             // Candle fills, outlines and wicks share one pass beneath bubbles.
             renderers.candles(&mut candle_pass);
             if flow_execution {
@@ -548,7 +549,8 @@ impl ChartPane {
         chrome: &mut PaneChrome<'_>,
     ) {
         self.carve_bands(layout, carved);
-        self.paint_drawing_bands(frame, carved, DrawPass::OverCandles);
+        let anchors = chrome.strategies.anchors(self.id);
+        self.paint_drawing_bands(frame, carved, DrawPass::OverCandles, anchors);
         self.quick_range_view(chrome.tab, chrome.side).draw(
             frame.painter,
             carved,
@@ -573,7 +575,15 @@ impl ChartPane {
 
     /// One drawing pass over `bands`, each band numbered by its place in the
     /// carve.
-    fn paint_drawing_bands(&self, frame: &DrawFrame<'_>, bands: &[Band], pass: DrawPass) {
+    fn paint_drawing_bands(
+        &self,
+        frame: &DrawFrame<'_>,
+        bands: &[Band],
+        pass: DrawPass,
+        anchors: Option<&crate::strategy_anchors::StrategyAnchors>,
+    ) {
+        let none = crate::strategy_anchors::StrategyAnchors::default();
+        let anchors = anchors.unwrap_or(&none);
         for (index, band) in bands.iter().enumerate() {
             DrawingPass {
                 painter: frame.painter,
@@ -589,7 +599,7 @@ impl ChartPane {
             }
             .paint(
                 self.layer_renderers,
-                &self.strategies.anchors,
+                anchors,
                 &self.drawing_projection(),
                 self.closed_slots(),
             );

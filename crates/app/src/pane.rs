@@ -69,7 +69,6 @@ pub use context_menu::PaneContextMenu;
 pub use footprint::PaneFootprint;
 pub use frame::PaneFrame;
 pub use quantick_drawings::gesture::PaneGestures;
-pub use strategies::PaneStrategies;
 
 pub(crate) use canvas_split::split_pane_layout_strip;
 /// The canvas split and the shared-mark contract keep their public paths

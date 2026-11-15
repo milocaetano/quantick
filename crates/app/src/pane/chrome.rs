@@ -33,6 +33,9 @@ pub struct PaneChrome<'a> {
     /// The tab's paper-trading simulator. Both panes *draw* its lines — the
     /// same instrument at the same prices — while only one *handles* them.
     pub paper: &'a mut PaperTrading,
+    /// The strategies armed on the tab's panes, keyed by pane id: a pane's
+    /// menu arms and disarms its own, and its badges paint them.
+    pub strategies: &'a mut crate::strategy_anchors::TabStrategies,
     /// Whether this pane is the one paper trading takes its pointer from.
     ///
     /// Whether this pane's pointer drives order entry this frame.

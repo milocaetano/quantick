@@ -1055,9 +1055,7 @@ fn rearm_after_a_series_reset_rewarms_the_ruler_from_the_chart() {
     }
     fn state_of(app: &QuantickApp, drawing: drawings::DrawingId) -> quantick_strategy::ArmedState {
         app.active_tab()
-            .flow_pane
-            .strategies
-            .anchors
+            .anchors_on(crate::pane::PaneSide::Flow)
             .for_drawing(drawing)
             .expect("instance")
             .armed
@@ -1100,9 +1098,8 @@ fn rearm_after_a_series_reset_rewarms_the_ruler_from_the_chart() {
     bar(&mut app, &mut id, "100", "101");
     bar(&mut app, &mut id, "101", "102");
     {
-        let pane = &mut app.active_tab_mut().flow_pane;
-        let _ = pane
-            .strategies
+        let (pane, strategies) = app.active_tab_mut().pane_with_strategies(PaneSide::Flow);
+        let _ = strategies
             .anchors
             .for_drawing_mut(drawing)
             .expect("instance")
@@ -1110,8 +1107,8 @@ fn rearm_after_a_series_reset_rewarms_the_ruler_from_the_chart() {
             .disarm(quantick_strategy::DisarmReason::BarSpecChanged);
         // The pane's re-arm: kernel re-arm (which resets the ruler)
         // plus the re-warm from the chart's own closed bars.
-        let (strategies, series) = pane.strategies_with_series();
-        strategies.rearm(drawing, series);
+        let series = pane.series_read();
+        strategies.rearm(drawing, |depth| series.warmup_bars(depth));
     }
     assert_eq!(
         state_of(&app, drawing),
@@ -1194,9 +1191,7 @@ fn extend_right_keeps_the_region_active_past_the_drawn_end() {
     {
         let instance = app
             .active_tab()
-            .flow_pane
-            .strategies
-            .anchors
+            .anchors_on(crate::pane::PaneSide::Flow)
             .for_drawing(drawing)
             .expect("instance");
         assert_eq!(
@@ -1236,9 +1231,7 @@ fn extend_right_keeps_the_region_active_past_the_drawn_end() {
     assert!(
         matches!(
             app.active_tab()
-                .flow_pane
-                .strategies
-                .anchors
+                .anchors_on(crate::pane::PaneSide::Flow)
                 .for_drawing(drawing)
                 .expect("instance")
                 .armed
@@ -4282,7 +4275,10 @@ fn a_strategy_on_a_chart_only_mark_keeps_naming_it_when_another_chart_draws() {
         .expect("the region kept its id");
     assert_eq!(pane.drawings.items()[index].tool.id(), "rectangle");
     assert_eq!(pane.drawings.items().len(), 2, "and the level arrived");
-    assert!(!pane.strategies.anchors.is_empty(), "the instance is alive");
+    assert!(
+        !(app.active_tab().anchors_on(PaneSide::Time(0))).is_empty(),
+        "the instance is alive"
+    );
 }
 
 /// A level is a level on every timeframe: drawn on one chart, it stays on it
@@ -4457,7 +4453,10 @@ fn a_context_chart_with_a_strategy_armed_keeps_its_drawings_through_a_recut() {
         pane.drawings.index_of(drawing).is_some(),
         "the region stayed"
     );
-    assert!(!pane.strategies.anchors.is_empty(), "the instance is alive");
+    assert!(
+        !(app.active_tab().anchors_on(PaneSide::Time(0))).is_empty(),
+        "the instance is alive"
+    );
 }
 
 fn armed_rectangle(app: &mut QuantickApp, side: PaneSide) -> drawings::DrawingId {
@@ -4521,7 +4520,7 @@ fn a_twin_edit_does_not_move_a_chart_held_by_a_strategy() {
         "the region stayed"
     );
     assert_eq!(
-        pane.strategies.anchors.watching(),
+        app.active_tab().anchors_on(PaneSide::Time(0)).watching(),
         1,
         "the instance is alive"
     );
@@ -4541,8 +4540,7 @@ fn a_chart_whose_strategy_stopped_follows_its_bars() {
     run_frame(&mut app, &ctx);
     let _ = app
         .active_tab_mut()
-        .pane_mut(PaneSide::Time(0))
-        .strategies
+        .strategies_on(PaneSide::Time(0))
         .anchors
         .disarm_all(quantick_strategy::DisarmReason::TimelineReset);
     app.active_tab_mut()

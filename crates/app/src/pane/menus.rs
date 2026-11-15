@@ -20,8 +20,9 @@ use crate::style::ChartStyle;
 use quantick_layers::{ChartLayer, LayerBlock};
 use quantick_orderflow::LaneWindow;
 
+use super::PaneContextMenu;
 use super::layers::PaneLayerRead;
-use super::{PaneContextMenu, PaneStrategies};
+use crate::strategy_anchors::PaneStrategies;
 use quantick_drawings::gesture::PaneSeriesRead;
 
 pub(crate) use quantick_chart_interaction::pane::MenuIntent as PaneMenuIntent;
@@ -46,7 +47,7 @@ pub(crate) struct TapeMenuView {
 pub(crate) struct PaneMenuView<'a> {
     pub(crate) drawings: &'a Drawings,
     pub(crate) indicators: &'a IndicatorViews,
-    pub(crate) strategies: &'a PaneStrategies,
+    pub(crate) strategies: Option<&'a PaneStrategies>,
     pub(crate) series: PaneSeriesRead<'a>,
     /// The pane layer policy used to project menu descriptions.
     pub(crate) layers: PaneLayerRead<'a>,
@@ -123,10 +124,8 @@ impl PaneMenuView<'_> {
             .and_then(|id| self.drawings.index_of(id))
             .map(|index| {
                 let drawing = &self.drawings.items()[index];
-                let strategy = self
-                    .strategies
-                    .anchors
-                    .for_drawing(drawing.id)
+                let strategy = (self.strategies)
+                    .and_then(|strategies| strategies.anchors.for_drawing(drawing.id))
                     .map(|instance| {
                         use quantick_strategy::ArmedState;
                         let phase = match instance.armed.state() {

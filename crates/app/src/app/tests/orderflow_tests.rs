@@ -232,9 +232,7 @@ fn a_region_the_tape_walked_past_says_so_on_the_badge_and_keeps_listening() {
     let badge = {
         let tab = app.active_tab();
         let instance = tab
-            .flow_pane
-            .strategies
-            .anchors
+            .anchors_on(crate::pane::PaneSide::Flow)
             .for_drawing(drawing)
             .expect("instance");
         assert!(
@@ -255,7 +253,7 @@ fn a_region_the_tape_walked_past_says_so_on_the_badge_and_keeps_listening() {
             "the reason is readable as a value, not only as a sentence",
         );
         crate::pane::strategies::strategy_badge_text(
-            &tab.flow_pane.strategies.anchors,
+            tab.anchors_on(crate::pane::PaneSide::Flow),
             &tab.flow_pane.drawings,
             drawing,
             tab.flow_pane.closed_slots(),
