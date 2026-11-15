@@ -634,4 +634,94 @@ mod tests {
             })
         );
     }
+
+    /// A burst between two drains leaves the latest state, not a queue of
+    /// cards to page through, and a feed that recovers takes its own
+    /// instruction back down.
+    #[test]
+    fn a_burst_leaves_the_newest_notice_and_clear_takes_it_down() {
+        let (mut link, notices) = link();
+        assert_eq!(link.notice, FeedNotice::Clear, "nothing to report at birth");
+        let working = FeedNotice::working("starting the MetaTrader bridge");
+        notices.try_send(working).expect("room on the channel");
+        let attention = FeedNotice::attention("MetaTrader 5 is not running", "Log in.");
+        say(&mut link, &notices, attention);
+        assert!(
+            matches!(link.notice, FeedNotice::Attention { .. }),
+            "the newest notice is what the user sees, got {:?}",
+            link.notice
+        );
+        say(&mut link, &notices, FeedNotice::Clear);
+        assert_eq!(link.notice, FeedNotice::Clear);
+    }
+
+    /// Binance and replay hand over a closed channel; draining it is a no-op.
+    #[test]
+    fn a_closed_notice_channel_drains_to_nothing() {
+        let (mut link, notices) = link();
+        drop(notices);
+        link.drain_notices_at(1);
+        assert_eq!(link.notice, FeedNotice::Clear);
+        assert_eq!(link.feed_connection, FeedConnectionState::Connecting);
+    }
+
+    /// The bridge supervisor and the bridge server share the channel: progress
+    /// or attention arriving after `Connected` is not a transport transition.
+    #[test]
+    fn only_explicit_connection_notices_drive_transport_state() {
+        let (mut link, notices) = link();
+        assert_eq!(link.feed_connection, FeedConnectionState::Connecting);
+        let steps = [
+            (FeedNotice::Connected, FeedConnectionState::Connected),
+            (
+                FeedNotice::working("late supervisor progress"),
+                FeedConnectionState::Connected,
+            ),
+            (
+                FeedNotice::attention("late supervisor warning", "No transport action."),
+                FeedConnectionState::Connected,
+            ),
+            (
+                FeedNotice::reconnecting("Hyperliquid disconnected, reconnecting"),
+                FeedConnectionState::Reconnecting,
+            ),
+            (FeedNotice::Connected, FeedConnectionState::Connected),
+        ];
+        for (notice, state) in steps {
+            let said = format!("{notice:?}");
+            say(&mut link, &notices, notice);
+            assert_eq!(link.feed_connection, state, "after {said}");
+        }
+        assert_eq!(link.notice, FeedNotice::Clear, "Connected clears the card");
+    }
+
+    /// The budget is measured from the transport's own transition, so a
+    /// supervisor alternating two lines cannot keep resetting it.
+    #[test]
+    fn an_alternating_supervisor_cannot_hold_the_reconnect_budget_open() {
+        let (mut link, notices) = link();
+        let lost = || FeedNotice::reconnecting("bridge lost, reconnecting");
+        notices.try_send(lost()).expect("room on the channel");
+        link.drain_notices_at(0);
+        for step in 1..=8 {
+            let notice = if step % 2 == 0 {
+                lost()
+            } else {
+                FeedNotice::working("waiting for the bridge")
+            };
+            notices.try_send(notice).expect("room on the channel");
+            link.drain_notices_at(step * 3_000);
+        }
+        let stall = link.stall_at(
+            ProviderKind::MetaTrader,
+            "MetaTrader",
+            true,
+            None,
+            stall::RECONNECT_BUDGET_MS,
+        );
+        assert!(
+            stall.is_some(),
+            "the budget runs from the transition, not from the newest sentence"
+        );
+    }
 }

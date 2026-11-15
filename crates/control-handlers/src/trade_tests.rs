@@ -302,3 +302,32 @@ fn a_placement_journals_its_actor_and_the_venues_answer() {
     );
     assert_eq!(placed[1].payload["asked"]["side"], "buy");
 }
+
+/// A market order takes no price, and saying otherwise is refused as a bad
+/// request before anything reaches the venue or the journal: the input is
+/// wrong, not the market.
+#[test]
+fn a_market_order_with_a_price_is_refused_before_the_venue() {
+    let mut window = desk_window();
+    let mut access = FakeAccess::with_budget(0);
+    let error = place_order(
+        &mut window,
+        &mut access,
+        &FakeWindow::trader(),
+        &json!({ "side": "buy", "kind": "market", "quantity": "1", "price": "100" }),
+    )
+    .expect_err("a market order has no price of its own");
+    assert_eq!(
+        error.code.as_str(),
+        quantick_control::error::codes::INVALID_REQUEST
+    );
+    assert!(
+        error.message.contains("market order has no price"),
+        "{error:?}"
+    );
+    assert!(
+        window.desk.account.working_orders().is_empty(),
+        "nothing reached the venue"
+    );
+    assert!(access.events.is_empty(), "and nothing was journaled");
+}

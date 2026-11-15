@@ -222,6 +222,33 @@ fn a_press_not_yet_judged_carries_no_verdict_from_the_one_before() {
     assert_eq!(session.last_press(), None);
 }
 
+/// Only the tab on screen keeps paging: a reply on a hidden tab asks for
+/// nothing, and the frame that shows it again asks for the next page.
+#[test]
+fn a_hidden_tabs_run_pauses_and_resumes_when_shown() {
+    let yesterday = session(19);
+    let mut session = TabSession::new();
+    let mut shell = Shell::new(&[None]);
+    let now = Instant::now();
+    shell.dispatch(&mut session, Act::PressHistory(YESTERDAY), now);
+    assert_eq!(shell.sent.len(), 1, "the press");
+    let mut policy = HistoryPolicy {
+        progressive: false,
+        venue_lead_in: false,
+        frame: HistoryFrame {
+            visible: false,
+            ..HistoryFrame::default()
+        },
+    };
+    shell.dispatch(&mut session, Act::MirrorPolicy(policy), now);
+    shell.dispatch(&mut session, Act::HistoryPage(&yesterday[300..]), now);
+    assert_eq!(shell.sent.len(), 1, "a hidden tab asks nothing");
+    assert!(matches!(session.history_status(), RunStatus::Paused(_)));
+    policy.frame.visible = true;
+    shell.dispatch(&mut session, Act::MirrorPolicy(policy), now);
+    assert_eq!(shell.sent.len(), 2, "shown again, it continues");
+}
+
 #[test]
 fn a_page_that_never_left_ends_the_run_and_releases_the_panes() {
     let mut session = TabSession::new();
@@ -411,6 +438,78 @@ fn load_older_candles_says_why_it_cannot_and_reaches_behind_the_oldest_when_it_c
     assert_eq!(
         session.older_candles(shell.capabilities, &panes),
         OlderCandles::RecordStartsHere
+    );
+}
+
+/// A five-minute pane holding the candles from `19 * DAY` that asked behind
+/// them once, ready for the reply to that reach-back.
+fn reaching_back() -> (TabSession, Shell, Instant) {
+    let mut session = TabSession::new();
+    let mut shell = Shell::new(&[Some(5 * MINUTE)]);
+    let now = Instant::now();
+    shell.dispatch(&mut session, Act::PollCandles { tab_id: TAB }, now);
+    let held = (0..60).map(|m| candle(19 * DAY + m * MINUTE)).collect();
+    shell.dispatch(&mut session, candle_reply(MINUTE, held, true), now);
+    shell.dispatch(&mut session, Act::LoadOlderCandles { tab_id: TAB }, now);
+    assert_eq!(shell.sent.len(), 2, "the opening ask and the reach-back");
+    (session, shell, now)
+}
+
+fn candle_reply(interval_ms: i64, bars: Vec<Bar>, complete: bool) -> Act<'static> {
+    Act::CandleReply {
+        tab_id: TAB,
+        interval_ms,
+        bars,
+        slice: OhlcvSlice::Last { complete },
+    }
+}
+
+fn five_minute_pane() -> [PaneView<'static>; 1] {
+    [PaneView {
+        interval_ms: Some(5 * MINUTE),
+        first_print_open_ms: None,
+        first_bar: None,
+        partial: None,
+        rebuild_pending: false,
+        rebuild_failed: false,
+        first_visible_slot: None,
+    }]
+}
+
+/// A short answer teaches nothing about where the record starts: a venue
+/// that stopped answering brings nothing older for a reason unrelated to
+/// its depth, so the reach stays offered and a second press really asks.
+#[test]
+fn a_short_reach_back_never_retires_the_older_candles() {
+    let (mut session, mut shell, now) = reaching_back();
+    shell.dispatch(&mut session, candle_reply(MINUTE, Vec::new(), false), now);
+    assert!(!session.snapshot().older_exhausted);
+    assert_eq!(
+        session.older_candles(shell.capabilities, &five_minute_pane()),
+        OlderCandles::Available,
+        "a short answer is a reason to try again, not to stop offering"
+    );
+    shell.dispatch(&mut session, Act::LoadOlderCandles { tab_id: TAB }, now);
+    assert_eq!(shell.sent.len(), 3, "and pressing it again really asks");
+}
+
+/// A reach-back at an interval the pane cannot fold from is refused, not
+/// obeyed: the candles already paged in survive, and the reach stays offered.
+#[test]
+fn a_reach_back_at_a_bad_interval_keeps_the_candles_already_held() {
+    let (mut session, mut shell, now) = reaching_back();
+    let older = (0..60).map(|m| candle(18 * DAY + m * 5 * MINUTE)).collect();
+    shell.dispatch(&mut session, candle_reply(5 * MINUTE, older, true), now);
+    assert_eq!(
+        session.venue_candles_held(),
+        60,
+        "the span already held survives a slice it cannot fold"
+    );
+    assert_eq!(shell.prefixes, [12]);
+    assert_eq!(
+        session.older_candles(shell.capabilities, &five_minute_pane()),
+        OlderCandles::Available,
+        "and the reach is still offered"
     );
 }
 
