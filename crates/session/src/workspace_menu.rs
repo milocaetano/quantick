@@ -116,18 +116,27 @@ impl WorkspaceMenuState {
         (self.focus, self.scroll, self.reveal) = (None, 0.0, true);
     }
 
-    /// The filter's words changed: its first match takes the focus, so Enter
-    /// takes it; an empty filter leaves no row focused.
+    /// The filter's words changed: the focus goes back to the field, from
+    /// which Enter takes the first match and Down steps onto it.
     pub fn filter_changed(&mut self) {
-        self.focus = (!self.filter.trim().is_empty()).then_some(0);
-        (self.scroll, self.reveal) = (0.0, true);
+        (self.focus, self.scroll, self.reveal) = (None, 0.0, true);
+    }
+
+    /// Whether the filter narrows the list.
+    fn filtering(&self) -> bool {
+        !self.filter.trim().is_empty()
     }
 
     /// Up (`down` false) or Down among `rows` list rows, from the focus or
     /// else the tab's `current` row; it stops at either end.
     pub fn move_focus(&mut self, down: bool, rows: usize, current: Option<usize>) {
         let last = rows.checked_sub(1);
-        self.focus = match (self.focus.or(current), last) {
+        let from = if self.filtering() {
+            self.focus
+        } else {
+            self.focus.or(current)
+        };
+        self.focus = match (from, last) {
             (_, None) => None,
             (None, Some(last)) => Some(if down { 0 } else { last }),
             (Some(at), Some(last)) if down => Some((at + 1).min(last)),
@@ -151,16 +160,25 @@ impl WorkspaceMenuState {
         enter.then(|| self.enter(rows)).flatten()
     }
 
-    /// The row Enter takes among `rows`: the focused one, while the list
-    /// still holds it.
+    /// The row Enter takes among `rows`: the focused one, else the first
+    /// match while the filter narrows the list, while the list holds it.
     #[must_use]
     pub fn enter(&self, rows: usize) -> Option<usize> {
-        self.focus.filter(|&at| at < rows)
+        let first = self.filtering().then_some(0);
+        self.focus.or(first).filter(|&at| at < rows)
     }
 
     /// The list was drawn scrolled to `offset` points.
     pub fn scrolled(&mut self, offset: f32) {
         self.scroll = offset;
+    }
+
+    /// The offset the list draws at this frame, in whole points so its rows
+    /// and the rule under it land on pixels: [`Self::reveal`]'s once the menu
+    /// is `ready` to show, else where it was.
+    pub fn offset(&mut self, current: Option<usize>, view_pt: f32, ready: bool) -> f32 {
+        let revealed = ready.then(|| self.reveal(current, view_pt)).flatten();
+        revealed.unwrap_or(self.scroll).round()
     }
 
     /// The offset the list scrolls to this frame, if an opening or a moved
@@ -397,7 +415,8 @@ pub struct ChipMenuLayout {
 /// The cell's menu on `screen`, hanging below `anchor`, for `workspaces`
 /// in all of which the filter shows `shown`: [`CHIP_MENU_WIDTH_PT`] wide or
 /// the window's width, and ending [`CHIP_MENU_EDGE_PT`] above the window's
-/// bottom, the list shrinking to scroll first.
+/// bottom, the list shrinking to scroll first; every size in whole points, so
+/// the rows, the rules and the border land on pixels.
 #[must_use]
 pub fn chip_menu_layout(
     screen: MenuBounds,
@@ -417,9 +436,11 @@ pub fn chip_menu_layout(
     let floor = rows(shown.min(CHIP_MENU_MIN_LIST_ROWS));
     let list_height = whole
         .min(CHIP_MENU_LIST_MAX_PT)
-        .min(room - fixed)
+        .min((room - fixed).floor())
         .max(floor);
-    let window = (screen.right - screen.left - 2.0 * CHIP_MENU_EDGE_PT).max(0.0);
+    let window = (screen.right - screen.left - 2.0 * CHIP_MENU_EDGE_PT)
+        .max(0.0)
+        .floor();
     ChipMenuLayout {
         width: CHIP_MENU_WIDTH_PT.min(window),
         filter,
@@ -763,14 +784,47 @@ mod tests {
     }
 
     #[test]
-    fn typing_a_filter_focuses_its_first_match_and_clearing_it_drops_the_focus() {
+    fn from_the_filter_enter_takes_the_first_match_and_down_steps_onto_it() {
         let mut state = opened();
         state.filter = "desk".to_owned();
         state.filter_changed();
-        assert_eq!(state.focus, Some(0));
+        assert_eq!(state.focus, None, "the field keeps the focus");
+        assert_eq!(state.enter(5), Some(0), "Enter takes the first match");
+        assert_eq!(state.enter(0), None, "no match, nothing taken");
+        state.move_focus(true, 5, Some(3));
+        assert_eq!(state.focus, Some(0), "Down steps onto the first match");
+        state.move_focus(true, 5, Some(3));
+        assert_eq!(state.focus, Some(1));
         state.filter.clear();
         state.filter_changed();
-        assert_eq!(state.focus, None);
+        assert_eq!((state.focus, state.enter(5)), (None, None));
+    }
+
+    /// The list draws at whole points however it was scrolled, and its
+    /// height is whole in any window.
+    #[test]
+    fn the_list_lands_on_whole_points() {
+        let mut state = opened();
+        for offset in [0.0, 12.4, 33.5, 140.5, 701.75] {
+            state.scrolled(offset);
+            let drawn = state.offset(None, CHIP_MENU_LIST_MAX_PT, false);
+            assert_eq!(drawn, drawn.round(), "{offset}");
+        }
+        let mut state = opened();
+        assert_eq!(
+            state.offset(Some(29), CHIP_MENU_LIST_MAX_PT, false),
+            0.0,
+            "unseen"
+        );
+        let revealed = state.offset(Some(29), 300.5, true);
+        assert_eq!(revealed, revealed.round());
+        for bottom in [777.5, 560.25, 999.9] {
+            let screen = rect(0.0, 0.0, 1280.5, bottom);
+            let layout = chip_menu_layout(screen, rect(900.0, 40.0, 1000.0, 66.5), 30, 30);
+            assert_eq!(layout.list_height, layout.list_height.round(), "{bottom}");
+            assert_eq!(layout.height, layout.height.round(), "{bottom}");
+            assert_eq!(layout.width, layout.width.round());
+        }
     }
 
     #[test]
