@@ -592,21 +592,40 @@ mod tests {
         assert_eq!((new.tab_id, new.name.as_str()), (None, "Blank"));
     }
 
+    /// The call names a preset or a hex code; `swap` defaults to false. The
+    /// words themselves are judged by the handler, which answers
+    /// `workspace.colour_invalid`.
     #[test]
-    fn a_colour_is_one_of_the_eight_by_its_word() {
+    fn the_colour_call_takes_a_word_and_an_optional_swap() {
         let input: WorkspaceColourSetInput =
-            serde_json::from_value(json!({"name": "Scalp", "colour": "violet"})).unwrap();
-        assert_eq!(input.colour, WorkspaceColourDto::Violet);
+            serde_json::from_value(json!({"name": "Scalp", "colour": "sky"})).unwrap();
+        assert_eq!((input.colour.as_str(), input.swap), ("sky", false));
+        let input: WorkspaceColourSetInput = serde_json::from_value(
+            json!({"name": "Scalp", "colour": "#3A7BD5", "swap": true}),
+        )
+        .unwrap();
+        assert_eq!((input.colour.as_str(), input.swap), ("#3A7BD5", true));
         for refused in [
-            json!({"name": "Scalp", "colour": "green"}),
             json!({"name": "Scalp"}),
+            json!({"name": "Scalp", "colour": "sky", "share": true}),
         ] {
             assert!(serde_json::from_value::<WorkspaceColourSetInput>(refused).is_err());
         }
-        for colour in WorkspaceColour::ALL {
-            let wire = WorkspaceColourDto::from(colour);
-            assert_eq!(WorkspaceColour::from(wire), colour);
-            assert_eq!(json!(wire), json!(colour.key()), "one word per slot");
-        }
+    }
+
+    /// A preset reads its name, index and both values; a custom colour its
+    /// hex, the same in both themes.
+    #[test]
+    fn a_colour_on_the_wire_names_itself_and_its_values() {
+        let sky = WorkspaceColour::preset(2).unwrap();
+        assert_eq!(
+            json!(WorkspaceColourDto::from(sky)),
+            json!({"preset": "sky", "index": 2, "light": "#1F86BF", "dark": "#5DBDEB"})
+        );
+        let custom = WorkspaceColour::Custom([0x3A, 0x7B, 0xD5]);
+        assert_eq!(
+            json!(WorkspaceColourDto::from(custom)),
+            json!({"custom": "#3A7BD5", "light": "#3A7BD5", "dark": "#3A7BD5"})
+        );
     }
 }

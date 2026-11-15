@@ -484,8 +484,9 @@ fn list_names_every_workspace_with_its_summary_and_tabs() {
         rows["workspaces"],
         json!([
             { "name": "Default", "summary": "as the feed opens", "tabs": ["2"],
-              "colour": "steel" },
-            { "name": "Scalp", "summary": "Flow · 0 ind", "tabs": ["1"], "colour": "violet" },
+              "colour": SLATE.clone() },
+            { "name": "Scalp", "summary": "Flow · 0 ind", "tabs": ["1"],
+              "colour": COBALT.clone() },
         ])
     );
 }
@@ -507,7 +508,7 @@ fn every_journal_row_reads_a_field_the_event_carries() {
     delete(&mut host, &mut access, &actor, &json!({ "name": "Open" })).unwrap();
     edit(&mut host, 1);
     new(&mut host, &mut access, &actor, &json!({ "name": "Blank" })).unwrap();
-    let value = json!({ "name": "Blank", "colour": "steel" });
+    let value = json!({ "name": "Blank", "colour": "#3A7BD5" });
     colour_set(&mut host, &mut access, &actor, &value).unwrap();
     // Revert only refuses now: its row names an event nothing journals.
     for row in READBACKS
@@ -534,62 +535,85 @@ fn every_journal_row_reads_a_field_the_event_carries() {
     }
 }
 
-/// A colour another workspace holds swaps the two, once, journaled; a repeat
-/// writes nothing; an unknown name is refused; the swatch row is the call.
+/// Slate, Cobalt and Sky as the wire spells a preset.
+static SLATE: std::sync::LazyLock<Value> = std::sync::LazyLock::new(|| {
+    json!({ "preset": "slate", "index": 4, "light": "#56606E", "dark": "#A3ADBA" })
+});
+static COBALT: std::sync::LazyLock<Value> = std::sync::LazyLock::new(|| {
+    json!({ "preset": "cobalt", "index": 0, "light": "#2F5BD8", "dark": "#7393F5" })
+});
+static SKY: std::sync::LazyLock<Value> = std::sync::LazyLock::new(|| {
+    json!({ "preset": "sky", "index": 2, "light": "#1F86BF", "dark": "#5DBDEB" })
+});
+
+/// A free colour is taken at once; a held one is refused without `swap`,
+/// naming its owner and what the owner would get, and swapped with it; a
+/// repeat writes nothing; an unknown name and a bad colour are refused.
 #[test]
-fn colour_set_swaps_with_the_holder_and_a_repeat_writes_nothing() {
+fn colour_set_takes_a_free_colour_and_swaps_a_held_one_only_when_asked() {
     let (mut host, mut access, actor) = parts();
     save_as(&mut host, &mut access, &actor, &json!({ "name": "Scalp" })).unwrap();
     let (writes, journaled) = (host.writes, access.events.len());
-    let value = json!({ "name": "Scalp", "colour": "steel" });
-    let swapped = colour_set(&mut host, &mut access, &actor, &value).unwrap();
+    let free = json!({ "name": "Scalp", "colour": "sky" });
+    let taken = colour_set(&mut host, &mut access, &actor, &free).unwrap();
+    assert_eq!(
+        taken,
+        json!({ "workspace": "Scalp", "colour": SKY.clone(), "changed": true,
+                "swapped_with": null, "holder_colour": null })
+    );
+    assert_eq!((host.writes, access.events.len()), (writes + 1, journaled + 1));
+
+    let held = json!({ "name": "Scalp", "colour": "slate" });
+    let refused = colour_set(&mut host, &mut access, &actor, &held).unwrap_err();
+    assert_eq!(detail(&refused), "workspace.colour_taken");
+    let details = refused.context.details.as_ref().unwrap();
+    assert_eq!(details["owner"], "Default");
+    assert_eq!(details["owner_would_get"], SKY.clone());
+    assert_eq!((host.writes, access.events.len()), (writes + 1, journaled + 1));
+
+    let swap = json!({ "name": "Scalp", "colour": "slate", "swap": true });
+    let swapped = colour_set(&mut host, &mut access, &actor, &swap).unwrap();
     assert_eq!(
         swapped,
-        json!({ "workspace": "Scalp", "colour": "steel", "changed": true,
-                "swapped_with": "Default", "holder_colour": "violet" })
+        json!({ "workspace": "Scalp", "colour": SLATE.clone(), "changed": true,
+                "swapped_with": "Default", "holder_colour": SKY.clone() })
     );
-    assert_eq!(
-        host.book.colour(DEFAULT_WORKSPACE),
-        Some(WorkspaceColour::Violet)
-    );
-    assert_eq!(
-        (host.writes, access.events.len()),
-        (writes + 1, journaled + 1)
-    );
-    let again = colour_set(&mut host, &mut access, &actor, &value).unwrap();
+    let event = access.events.last().unwrap();
+    assert_eq!(event.payload["colour"], "slate");
+    assert_eq!(event.payload["swapped_with"], "Default");
+    assert_eq!(event.payload["holder_colour"], "sky");
+    assert_eq!((host.writes, access.events.len()), (writes + 2, journaled + 2));
+
+    let again = colour_set(&mut host, &mut access, &actor, &swap).unwrap();
     assert_eq!(again["changed"], false);
-    assert_eq!(
-        (host.writes, access.events.len()),
-        (writes + 1, journaled + 1)
-    );
-    let value = json!({ "name": "Nope", "colour": "cyan" });
+    assert_eq!((host.writes, access.events.len()), (writes + 2, journaled + 2));
+
+    let value = json!({ "name": "Nope", "colour": "sky" });
     let refused = colour_set(&mut host, &mut access, &actor, &value).unwrap_err();
     assert_eq!(detail(&refused), "workspace.unknown");
-
-    let mut menu = WorkspaceMenuState::default();
-    let command = WorkspaceCommand::SetColour("Default".to_owned(), WorkspaceColour::Steel);
-    let journal = Some((&mut access, &actor));
-    apply_row_command(&mut host, journal, &mut menu, 1, "WDOV26", command);
-    assert_eq!(
-        host.book.colour(DEFAULT_WORKSPACE),
-        Some(WorkspaceColour::Steel)
-    );
-    assert_eq!(
-        host.workspace_colour_of_tab_1(),
-        Some(WorkspaceColourDto::Violet)
-    );
-    let rows = host.workspace_colours();
-    assert_eq!(rows[0].colour, Some(WorkspaceColourDto::Steel));
-    assert_eq!(rows[1].colour, Some(WorkspaceColourDto::Violet));
+    for bad in ["green", "#12345", "Custom", ""] {
+        let value = json!({ "name": "Scalp", "colour": bad });
+        let refused = colour_set(&mut host, &mut access, &actor, &value).unwrap_err();
+        assert_eq!(detail(&refused), "workspace.colour_invalid", "{bad}");
+    }
+    assert_eq!(host.writes, writes + 2);
 }
 
-/// The wire's eight words are the store's, slot for slot.
+/// A custom colour reads the same on `workspace.list`, on the snapshot's
+/// rows and on the tab using it.
 #[test]
-fn the_wire_and_the_store_name_the_palette_alike() {
-    for colour in WorkspaceColour::ALL {
-        let wire = serde_json::to_value(WorkspaceColourDto::from(colour)).unwrap();
-        assert_eq!(wire, colour.key());
-    }
+fn a_custom_colour_reads_alike_on_the_list_the_rows_and_the_tab() {
+    let (mut host, mut access, actor) = parts();
+    save_as(&mut host, &mut access, &actor, &json!({ "name": "Scalp" })).unwrap();
+    let value = json!({ "name": "Scalp", "colour": "#3a7bd5" });
+    colour_set(&mut host, &mut access, &actor, &value).unwrap();
+    let wire = json!({ "custom": "#3A7BD5", "light": "#3A7BD5", "dark": "#3A7BD5" });
+    let rows = list(&mut host, &mut access, &actor, &json!({})).unwrap();
+    assert_eq!(rows["workspaces"][1]["colour"], wire);
+    assert_eq!(json!(host.tab_workspace_colour(1)), wire);
+    let snapshot = host.workspace_colours();
+    assert_eq!(json!(snapshot[1].colour), wire);
+    assert_eq!(json!(snapshot[0].colour), SLATE.clone());
 }
 
 /// A tab the book has not adopted reads `Default`'s colour in the snapshot,
@@ -600,33 +624,7 @@ fn a_tab_not_yet_adopted_reads_defaults_colour() {
     let book = host.workspace_book_ref().unwrap();
     assert!(book.tab_state(99).is_none(), "tab 99 is not adopted");
     assert_eq!(book.tab_workspace(99), DEFAULT_WORKSPACE);
-    assert_eq!(
-        host.tab_workspace_colour(99),
-        Some(WorkspaceColourDto::Steel)
-    );
-    assert_eq!(
-        host.tab_workspace_colour(99).map(Into::into),
-        book.tab_colour(99)
-    );
-}
-
-/// A workspace without a colour that takes a held one leaves its holder
-/// without: the answer and the journal both say so.
-#[test]
-fn a_colourless_workspace_taking_a_held_colour_says_its_holder_goes_without() {
-    let (mut host, mut access, actor) = parts();
-    for name in ["A", "B", "C", "D", "E", "F", "G", "H"] {
-        save_as(&mut host, &mut access, &actor, &json!({ "name": name })).unwrap();
-    }
-    assert_eq!(host.book.colour("H"), None, "all eight are held");
-    let value = json!({ "name": "H", "colour": "steel" });
-    let taken = colour_set(&mut host, &mut access, &actor, &value).unwrap();
-    assert_eq!(taken["swapped_with"], "Default");
-    assert_eq!(taken["holder_colour"], Value::Null);
-    assert_eq!(host.book.colour(DEFAULT_WORKSPACE), None);
-    let event = access.events.last().unwrap();
-    assert_eq!(event.payload["holder_colour"], Value::Null);
-    assert_eq!(event.payload["swapped_with"], "Default");
+    assert_eq!(json!(host.tab_workspace_colour(99)), SLATE.clone());
 }
 
 /// A failed write leaves both colours where they were.
@@ -636,16 +634,10 @@ fn a_colour_that_cannot_be_written_changes_nothing() {
     save_as(&mut host, &mut access, &actor, &json!({ "name": "Scalp" })).unwrap();
     host.write_fails = true;
     let before = host.book.clone();
-    let value = json!({ "name": "Scalp", "colour": "steel" });
+    let value = json!({ "name": "Scalp", "colour": "slate", "swap": true });
     let refused = colour_set(&mut host, &mut access, &actor, &value).unwrap_err();
     assert_eq!(detail(&refused), WRITE_FAILED_CODE);
     assert_eq!(host.book, before);
-}
-
-impl FakeHost {
-    fn workspace_colour_of_tab_1(&self) -> Option<WorkspaceColourDto> {
-        self.tab_workspace_colour(1)
-    }
 }
 
 /// New workspace asks the name first: the row opens the dialog and nothing
