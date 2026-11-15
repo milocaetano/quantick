@@ -11,6 +11,8 @@ quantick-alerts = { path = "../alerts" }
 quantick-appearance = { path = "../appearance" }
 quantick-chart = { path = "../chart" }
 quantick-engine = { path = "../engine" }
+# The alert observer cache reads pane drawings and their alert facts.
+quantick-drawings = { path = "../drawings" }
 quantick-indicators = { path = "../indicators" }
 quantick-orderflow = { path = "../orderflow" }
 # The feed-shaped config types and the history reach the catalogue speaks.

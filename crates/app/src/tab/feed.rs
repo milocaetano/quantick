@@ -62,7 +62,7 @@ impl LiveTradeOwners<'_> {
                     for pane in std::iter::once(&mut *self.flow).chain(self.context.iter_mut()) {
                         pane.ingest_live_trade_observed(trade, &mut |pane, bar, slot| {
                             self.observer.pane(
-                                pane.into(),
+                                super::alerts::facts(pane),
                                 Some(super::alerts::Observation {
                                     trade,
                                     received_at_ms: self.received_at_ms,
@@ -71,7 +71,7 @@ impl LiveTradeOwners<'_> {
                             );
                         });
                         self.observer.pane(
-                            (&*pane).into(),
+                            super::alerts::facts(pane),
                             Some(super::alerts::Observation {
                                 trade,
                                 received_at_ms: self.received_at_ms,
