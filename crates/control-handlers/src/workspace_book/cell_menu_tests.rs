@@ -530,7 +530,8 @@ fn a_row_without_a_summary_still_names_its_colour() {
     let colour = row.colour.clone().expect("a colour");
     assert_eq!(said, Some(colour.words));
     let mut header = menu.current.clone();
-    (header.summary.clear(), header.dot = true);
+    header.summary.clear();
+    header.dot = true;
     let said = header.scene_control("toolbar", None).description.unwrap();
     assert!(
         said.starts_with(UNSAVED) && said.contains(" \u{b7} "),
