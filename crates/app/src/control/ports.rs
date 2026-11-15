@@ -152,7 +152,7 @@ impl JournalSessionsPort for dyn ControlPort {
     }
     fn ledger_view(&mut self, change: &LedgerViewChange) -> Option<(LedgerView, bool)> {
         let paper = self.tabs_mut().active_paper_mut()?;
-        Some(paper.account_mut().report_parts().0.ledger_view(change))
+        Some((**paper).account_mut().report_parts().0.ledger_view(change))
     }
 }
 
@@ -178,27 +178,28 @@ impl AttentionPort for dyn ControlPort {
     }
 }
 
+// `**self` is the tab's paper (`quantick_session::paper`), never this trait.
 impl TradeDesk for PaperTrading {
     fn account(&self) -> &quantick_paper::PaperAccount {
-        PaperTrading::account(self)
+        (**self).account()
     }
     fn account_mut(&mut self) -> &mut quantick_paper::PaperAccount {
-        PaperTrading::account_mut(self)
+        (**self).account_mut()
     }
     fn ruler_ticks(&self) -> u32 {
-        PaperTrading::ruler_ticks(self)
+        (**self).ruler_ticks()
     }
     fn set_ruler_ticks(&mut self, ticks: u32) {
-        PaperTrading::set_ruler_ticks(self, ticks);
+        (**self).set_ruler_ticks(ticks);
     }
     fn clear_ruler(&mut self) {
-        PaperTrading::clear_ruler(self);
+        (**self).clear_ruler();
     }
     fn mark_price(&self) -> Option<rust_decimal::Decimal> {
-        PaperTrading::mark_price(self)
+        (**self).mark_price()
     }
     fn working_orders(&self) -> &[quantick_sim::Order] {
-        PaperTrading::working_orders(self)
+        (**self).working_orders()
     }
     fn armed_bracket(
         &self,
@@ -206,16 +207,16 @@ impl TradeDesk for PaperTrading {
         reference: rust_decimal::Decimal,
         quantity: rust_decimal::Decimal,
     ) -> quantick_sim::Bracket {
-        PaperTrading::armed_bracket(self, side, reference, quantity)
+        (**self).armed_bracket(side, reference, quantity)
     }
     fn risk_report(&self) -> (quantick_paper::risk_sizing::RiskState, bool) {
-        PaperTrading::risk_report(self)
+        (**self).risk_report()
     }
     fn position_summary(&self) -> Option<quantick_paper::format::PositionSummary> {
-        PaperTrading::position_summary(self)
+        (**self).position_summary()
     }
     fn selected_trade_index(&self) -> Option<usize> {
-        PaperTrading::account(self).selected_trade_index()
+        (**self).account().selected_trade_index()
     }
 }
 

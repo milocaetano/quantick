@@ -194,10 +194,11 @@ pub const ALLOWED: &[(&str, &[&str])] = &[
     // trade-history run, over the source vocabulary. Told the time; its feed
     // requests leave as effects the window sends, so it never names `feed`.
     // `strategy` for the armed instances a tab's panes carry, and `sim` for
-    // the commands they owe the paper account.
+    // the commands they owe the paper account. `paper` for the desk and
+    // account a tab trades on, which the tab's session now holds and joins.
     (
         "session",
-        &["civil", "engine", "sim", "sources", "strategy"],
+        &["civil", "engine", "paper", "sim", "sources", "strategy"],
     ),
     // What a source is, below the host that runs one: the provider settings
     // the config document reads and the history reach the feed host spends.

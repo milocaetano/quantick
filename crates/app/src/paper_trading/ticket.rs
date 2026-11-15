@@ -30,28 +30,6 @@ use entry_pair::{EntryPress, entry_pair};
 use position_card::{CardCommand, PositionCard};
 
 impl PaperTrading {
-    /// State-aware entry label: what pressing this side's button would do to
-    /// the open position — `SELL 1 (closes)`, `SELL 5 (reverses to short
-    /// 4)`. Decided by the desk; see `Desk::entry_label`.
-    #[must_use]
-    pub fn entry_label(&self, side: Side) -> String {
-        self.desk.entry_label(&self.account, side)
-    }
-
-    /// The entry buttons' hover text: the quantity and protective offsets
-    /// the press will use, which the toolbar itself has no widgets for.
-    #[must_use]
-    pub fn entry_hover(&self, side: Side) -> String {
-        self.desk.ticket.entry_hover(side)
-    }
-
-    /// The toolbar TRADE group's words, from one risk read; see
-    /// `Desk::trade_bar`.
-    #[must_use]
-    pub fn trade_bar(&self, reverse_key: &str) -> quantick_paper::desk::TradeBar {
-        self.desk.trade_bar(&self.account, reverse_key)
-    }
-
     // ------------------------------------------------------------------
     // Chart layer
     // ------------------------------------------------------------------
@@ -67,7 +45,7 @@ impl PaperTrading {
                 .font(palette.body_font(11.0))
                 .color(palette.text_muted()),
         );
-        let Some(mark) = self.account.venue().mark_price() else {
+        let Some(mark) = self.paper.account.venue().mark_price() else {
             ui.label(
                 egui::RichText::new("no print yet - there is no market to trade against")
                     .color(palette.text_muted()),
@@ -75,11 +53,12 @@ impl PaperTrading {
             return;
         };
         let quantity = self
+            .paper
             .desk
             .ticket
             .quantity_preview()
             .map_or_else(|| "?".to_owned(), fmt_decimal);
-        let price = self.account.snap(raw_price);
+        let price = self.paper.account.snap(raw_price);
         let entries = [
             (Side::Buy, EntryKind::Limit, price < mark),
             (Side::Buy, EntryKind::Stop, price > mark),
@@ -115,7 +94,7 @@ impl PaperTrading {
     /// strip. See `docs/ux/paper-trading.md` §3.
     pub fn draw_trading_tab(&mut self, ui: &mut egui::Ui) -> Option<TradingTabAction> {
         let palette = theme::get(ui.ctx());
-        self.desk.gesture.hovered_order = None;
+        self.paper.desk.gesture.hovered_order = None;
         ui.vertical(|ui| {
             ui.label(
                 egui::RichText::new("Simulated fills from the tape - no broker.")
@@ -157,33 +136,33 @@ impl PaperTrading {
     /// The position block, drawn by [`PositionCard`] from a snapshot; its
     /// press is applied here, before the order form reads the account.
     fn draw_position_card(&mut self, ui: &mut egui::Ui) {
-        let venue = self.account.venue();
+        let venue = self.paper.account.venue();
         let position = venue.position().cloned();
         let card = PositionCard {
             position: position.as_ref(),
             mark: venue.mark_price(),
-            realized: self.account.realized_pnl_tint(),
-            realized_text: self.account.realized_pnl_text(),
-            open_text: self.account.open_pnl_text(),
-            brackets: self.account.bracket_pnl(),
+            realized: self.paper.account.realized_pnl_tint(),
+            realized_text: self.paper.account.realized_pnl_text(),
+            open_text: self.paper.account.open_pnl_text(),
+            brackets: self.paper.account.bracket_pnl(),
             has_working_orders: !venue.working_orders().is_empty(),
-            stop_offset: parse_offset(&self.desk.ticket.stop_offset_text)
+            stop_offset: parse_offset(&self.paper.desk.ticket.stop_offset_text)
                 .ok()
                 .flatten(),
-            profit_offset: parse_offset(&self.desk.ticket.profit_offset_text)
+            profit_offset: parse_offset(&self.paper.desk.ticket.profit_offset_text)
                 .ok()
                 .flatten(),
         };
         match card.show(ui) {
             None => {}
-            Some(CardCommand::CancelAllOrders) => self.account.cancel_all_orders(),
+            Some(CardCommand::CancelAllOrders) => self.paper.account.cancel_all_orders(),
             Some(CardCommand::Venue(command)) => {
-                let events = self.account.dispatch(*command);
-                self.account.handle_events(events);
+                let events = self.paper.account.dispatch(*command);
+                self.paper.account.handle_events(events);
             }
-            Some(CardCommand::Close) => self.account.close_position(),
+            Some(CardCommand::Close) => self.paper.account.close_position(),
             Some(CardCommand::Reverse) => self.reverse_position(),
-            Some(CardCommand::Flatten) => self.account.flatten(),
+            Some(CardCommand::Flatten) => self.paper.account.flatten(),
         }
     }
 
@@ -198,17 +177,17 @@ impl PaperTrading {
         // distance - the ruler walks both legs the same number of points,
         // and a typed offset is a distance rather than a price - so the risk
         // is the side-independent half of the answer.
-        let risk_reference = self.account.venue().mark_price().unwrap_or_default();
+        let risk_reference = self.paper.account.venue().mark_price().unwrap_or_default();
         let risk_state = self.risk_state(Side::Buy, risk_reference);
         let derived_quantity = risk_state.derived_quantity();
-        let risk_blocks = risk_state.blocks_entry(self.account.risk_settings().lock);
+        let risk_blocks = risk_state.blocks_entry(self.paper.account.risk_settings().lock);
         if let Some(quantity) = derived_quantity {
             // The mode writes into the field the whole form already reads,
             // rather than adding a second number beside it: one quantity on
             // screen is the quantity that will be sent.
             let derived = crate::paper_chrome::fmt_exact(quantity);
-            if self.desk.ticket.qty_text != derived {
-                self.desk.ticket.qty_text = derived;
+            if self.paper.desk.ticket.qty_text != derived {
+                self.paper.desk.ticket.qty_text = derived;
             }
         }
         self.draw_quantity_row(ui, derived_quantity.is_none());
@@ -224,12 +203,15 @@ impl PaperTrading {
             ui.label(egui::RichText::new(sentence).color(colour));
         }
         self.draw_order_fields(ui);
-        let strategies_changed =
-            strategies::draw_strategy_row(ui, &mut self.account, &mut self.desk.strategy_editor);
+        let strategies_changed = strategies::draw_strategy_row(
+            ui,
+            &mut self.paper.account,
+            &mut self.paper.desk.strategy_editor,
+        );
         // The whole risk surface, in its own module: this file already
         // carries the order form, and a second feature inside it is how the
         // trunk grew the first time.
-        let editor = self.account.risk_editor();
+        let editor = self.paper.account.risk_editor();
         let risk_changed = crate::risk_sizing::draw_risk_block(
             ui,
             crate::risk_sizing::RiskBlock {
@@ -238,12 +220,12 @@ impl PaperTrading {
                 capital: editor.capital,
                 book: editor.book,
                 seeded: editor.seeded,
-                amount_text: &mut self.desk.ticket.risk_amount_text,
-                percent_text: &mut self.desk.ticket.risk_percent_text,
-                capital_text: &mut self.desk.ticket.capital_text,
-                point_value_text: &mut self.desk.ticket.point_value_text,
-                size_step_text: &mut self.desk.ticket.size_step_text,
-                currency_text: &mut self.desk.ticket.currency_text,
+                amount_text: &mut self.paper.desk.ticket.risk_amount_text,
+                percent_text: &mut self.paper.desk.ticket.risk_percent_text,
+                capital_text: &mut self.paper.desk.ticket.capital_text,
+                point_value_text: &mut self.paper.desk.ticket.point_value_text,
+                size_step_text: &mut self.paper.desk.ticket.size_step_text,
+                currency_text: &mut self.paper.desk.ticket.currency_text,
             },
         );
         ui.add_space(4.0);
@@ -251,22 +233,22 @@ impl PaperTrading {
         // The lock, enforced on the surface as well as at the click: a
         // ceiling the trader can still press through is one they will press
         // through by accident on a fast tape.
-        let ready = self.account.ready() && !risk_blocks;
+        let ready = self.paper.account.ready() && !risk_blocks;
         match entry_pair(ui, self, ready) {
             None => {}
-            Some(EntryPress::Disarm) => self.desk.armed = None,
+            Some(EntryPress::Disarm) => self.paper.desk.armed = None,
             Some(EntryPress::Fire(side)) => self.market(side),
             Some(EntryPress::Arm(side)) => {
-                self.desk.armed = Some(ArmedPlacement {
+                self.paper.desk.armed = Some(ArmedPlacement {
                     side,
-                    kind: self.desk.ticket.order_type,
+                    kind: self.paper.desk.ticket.order_type,
                 });
             }
         }
         ui.label(
-            egui::RichText::new(if self.desk.armed.is_some() {
+            egui::RichText::new(if self.paper.desk.armed.is_some() {
                 "Click the chart at your price. Esc cancels."
-            } else if self.desk.ticket.order_type == EntryKind::Market {
+            } else if self.paper.desk.ticket.order_type == EntryKind::Market {
                 "Market orders fill at the next print."
             } else {
                 "The button arms a click; the next chart click rests the order there."
@@ -276,9 +258,9 @@ impl PaperTrading {
         OrderEntryChanges {
             cmd_trading: cmd::draw_cmd_trading_settings(
                 ui,
-                &mut self.desk.cmd_trading,
-                &mut self.desk.ruler,
-                &self.account,
+                &mut self.paper.desk.cmd_trading,
+                &mut self.paper.desk.ruler,
+                &self.paper.account,
             ),
             strategies: strategies_changed,
             risk: risk_changed,
@@ -297,7 +279,7 @@ impl PaperTrading {
             } else {
                 Decimal::ONE
             };
-            let hint = self.account.quantity_step_hint(step);
+            let hint = self.paper.account.quantity_step_hint(step);
             ui.add_enabled_ui(typed, |ui| {
                 if ui
                     .small_button("−")
@@ -309,7 +291,7 @@ impl PaperTrading {
                 let width = ui
                     .painter()
                     .layout_no_wrap(
-                        self.desk.ticket.qty_text.clone(),
+                        self.paper.desk.ticket.qty_text.clone(),
                         egui::TextStyle::Monospace.resolve(ui.style()),
                         palette.text_primary(),
                     )
@@ -317,7 +299,7 @@ impl PaperTrading {
                     .x
                     + 12.0;
                 ui.add(
-                    egui::TextEdit::singleline(&mut self.desk.ticket.qty_text)
+                    egui::TextEdit::singleline(&mut self.paper.desk.ticket.qty_text)
                         .font(egui::TextStyle::Monospace)
                         .desired_width(width.max(56.0).min(ui.available_width() - 28.0)),
                 );
@@ -344,12 +326,12 @@ impl PaperTrading {
         ui.horizontal_wrapped(|ui| {
             ui.label(egui::RichText::new("Type").color(palette.text_muted()));
             for kind in [EntryKind::Market, EntryKind::Limit, EntryKind::Stop] {
-                let on = self.desk.ticket.order_type == kind;
+                let on = self.paper.desk.ticket.order_type == kind;
                 if pill_toggle(ui, kind_word(kind), on, "how the entry meets the market").clicked()
                     && !on
                 {
-                    self.desk.ticket.order_type = kind;
-                    self.desk.armed = None;
+                    self.paper.desk.ticket.order_type = kind;
+                    self.paper.desk.armed = None;
                 }
             }
         });
@@ -360,7 +342,7 @@ impl PaperTrading {
                      entry; empty places no stop",
                 );
             ui.add(
-                egui::TextEdit::singleline(&mut self.desk.ticket.stop_offset_text)
+                egui::TextEdit::singleline(&mut self.paper.desk.ticket.stop_offset_text)
                     .desired_width(52.0),
             );
             ui.label(egui::RichText::new("Target").color(palette.text_muted()))
@@ -369,7 +351,7 @@ impl PaperTrading {
                  entry; empty places no target",
                 );
             ui.add(
-                egui::TextEdit::singleline(&mut self.desk.ticket.profit_offset_text)
+                egui::TextEdit::singleline(&mut self.paper.desk.ticket.profit_offset_text)
                     .desired_width(52.0),
             );
             ui.label(
@@ -380,32 +362,21 @@ impl PaperTrading {
         });
     }
 
-    /// Walk the typed quantity by `notches` of the instrument's own size
-    /// step, never below its minimum; see `Ticket::step_quantity`.
-    pub(super) fn step_quantity(&mut self, notches: Decimal) {
-        let (unit, floor) = self
-            .account
-            .symbol_money()
-            .map_or((Decimal::ONE, Decimal::ONE), |money| {
-                (money.size_step, money.min_size)
-            });
-        self.desk.ticket.step_quantity(notches, unit, floor);
-    }
-
     fn draw_pending_orders(&mut self, ui: &mut egui::Ui) {
         let palette = theme::get(ui.ctx());
         let mut in_flight = Vec::new();
-        self.account.venue().in_flight_entries(&mut in_flight);
+        self.paper.account.venue().in_flight_entries(&mut in_flight);
         let queued_entries = in_flight.len();
         // Saturating, because the two reads cross a trait boundary and are
         // documented independently: a venue whose `in_flight_entries` says
         // more than its `in_flight` counts must not panic the render loop.
         let queued_closes = self
+            .paper
             .account
             .venue()
             .in_flight()
             .saturating_sub(queued_entries);
-        let orders: Vec<_> = self.account.working_orders().to_vec();
+        let orders: Vec<_> = self.paper.account.working_orders().to_vec();
         ui.label(caption(
             &palette,
             &format!("WORKING ORDERS · {}", orders.len()),
@@ -473,14 +444,17 @@ impl PaperTrading {
                         .on_hover_text("cancel this order")
                         .clicked()
                     {
-                        let events = self.account.dispatch(Command::CancelOrder { id: order.id });
-                        self.account.handle_events(events);
+                        let events = self
+                            .paper
+                            .account
+                            .dispatch(Command::CancelOrder { id: order.id });
+                        self.paper.account.handle_events(events);
                     }
                 });
             });
             // One hover, two surfaces: the row lifts its chart line.
             if response.response.hovered() {
-                self.desk.gesture.hovered_order = Some(order.id);
+                self.paper.desk.gesture.hovered_order = Some(order.id);
             }
         }
     }
@@ -488,10 +462,10 @@ impl PaperTrading {
     /// The P&L mode switch: which figure leads every readout; the other
     /// always follows it. True when the trader picked another one.
     fn draw_pnl_mode_switch(&mut self, ui: &mut egui::Ui) -> bool {
-        let current = self.account.pnl_primary();
+        let current = self.paper.account.pnl_primary();
         let mut picked = None;
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            for (primary, label) in self.account.pnl_modes().into_iter().rev() {
+            for (primary, label) in self.paper.account.pnl_modes().into_iter().rev() {
                 let hover = format!("lead P&L with {label} - the other figure stays beside it (session.pnl_display.set)");
                 if ui.selectable_label(primary == current, egui::RichText::new(label).small()).on_hover_text(hover).clicked() && primary != current {
                     picked = Some(primary);
@@ -499,17 +473,17 @@ impl PaperTrading {
             }
         });
         picked
-            .inspect(|primary| self.account.set_pnl_primary(*primary))
+            .inspect(|primary| self.paper.account.set_pnl_primary(*primary))
             .is_some()
     }
 
     fn draw_session_summary(&mut self, ui: &mut egui::Ui) -> Option<TradingTabAction> {
         let palette = theme::get(ui.ctx());
         let mut action = None;
-        let realized = self.account.realized_pnl_tint();
+        let realized = self.paper.account.realized_pnl_tint();
         ui.label(financial_text(
             &palette,
-            &self.account.realized_pnl_text(),
+            &self.paper.account.realized_pnl_text(),
             palette.mono_font(12.0),
             points_color(&palette, realized),
         ));
@@ -517,7 +491,7 @@ impl PaperTrading {
             ui.label(
                 egui::RichText::new(format!(
                     "realized · {} trades",
-                    self.account.venue().closed_trades().len()
+                    self.paper.account.venue().closed_trades().len()
                 ))
                 .color(palette.text_muted()),
             );
@@ -527,7 +501,7 @@ impl PaperTrading {
                     .on_hover_text("performance metrics computed from the saved history")
                     .clicked()
                 {
-                    let (report, env) = self.account.report_parts();
+                    let (report, env) = self.paper.account.report_parts();
                     report.open(&env);
                 }
             });
@@ -548,7 +522,7 @@ impl PaperTrading {
                     egui::Button::new(
                         egui::RichText::new(format!(
                             "trades saved to: {}",
-                            self.account.trades_dir().display()
+                            self.paper.account.trades_dir().display()
                         ))
                         .color(palette.text_muted()),
                     )
@@ -563,13 +537,13 @@ impl PaperTrading {
                      QUANTICK_TRADES_DIR overrides it for one run. Anything writing the \
                      quantick-trades format here (a future bot included) shows up in the \
                      ledger, the report and the export.",
-                    std::path::absolute(self.account.trades_dir())
-                        .unwrap_or_else(|_| self.account.trades_dir().to_path_buf())
+                    std::path::absolute(self.paper.account.trades_dir())
+                        .unwrap_or_else(|_| self.paper.account.trades_dir().to_path_buf())
                         .display()
                 ))
                 .clicked()
             {
-                reveal_folder(self.account.trades_dir());
+                reveal_folder(self.paper.account.trades_dir());
             }
         });
         action
@@ -592,23 +566,27 @@ impl PaperTrading {
     /// looks at another panel. Returns true when anything changed, so the
     /// app can persist it.
     pub(crate) fn draw_strategy_editor(&mut self, ctx: &egui::Context) -> bool {
-        strategies::draw_strategy_editor(ctx, &mut self.account, &mut self.desk.strategy_editor)
+        strategies::draw_strategy_editor(
+            ctx,
+            &mut self.paper.account,
+            &mut self.paper.desk.strategy_editor,
+        )
     }
 
     /// The trades ledger tab. Returns what the ledger asked of the host.
     pub fn draw_trades_tab(&mut self, ui: &mut egui::Ui, tz: TzOffset) -> Option<LedgerAction> {
-        let (report, env) = self.account.report_parts();
+        let (report, env) = self.paper.account.report_parts();
         report.draw_trades_tab(ui, tz, &env)
     }
 
     /// The performance report window, computed from what is on disk.
     pub fn draw_report_window(&mut self, ctx: &egui::Context, tz: TzOffset) {
-        let (report, env) = self.account.report_parts();
+        let (report, env) = self.paper.account.report_parts();
         let asked = report.draw_window(ctx, tz, &env);
         // The report can decide a folder picker should open; opening one is
         // this host's job, because the import copies into *its* journal.
         if asked.start_import {
-            self.account.start_import();
+            self.paper.account.start_import();
         }
         // And it can refuse a typed period. That message goes to the one
         // outbox every paper acknowledgement uses - dropping it here would
@@ -637,34 +615,8 @@ impl PaperTrading {
     /// It no longer draws anything. The message it produces goes to the
     /// window's one toast, through [`Self::take_toast`].
     pub fn settle(&mut self) {
-        self.desk.gesture.hovered_order = None;
-        self.account.settle();
-    }
-
-    /// Take the acknowledgement waiting to be shown, if there is one.
-    ///
-    /// This panel used to draw its own: the same `CENTER_BOTTOM` anchor as
-    /// the window's `ToastSurface`, 96px up instead of 44, on a 4-second
-    /// clock instead of 8 — so two acknowledgements could sit in one lane, at
-    /// two heights, disagreeing about how long an acknowledgement lasts. It
-    /// posts to an outbox now and the host drains it into the one surface
-    /// that owns the clock and the position.
-    ///
-    /// Newest wins, as the toast it replaces did: a slot, not a queue, since
-    /// a trader reading a stale acknowledgement while the current one waits
-    /// behind it is worse than missing the stale one. Taking rather than
-    /// reading, so one message is handed over once however many frames pass.
-    pub(crate) fn take_toast(&mut self) -> Option<String> {
-        self.account.take_toast()
-    }
-
-    /// Post an acknowledgement for the window to show. Newest wins.
-    ///
-    /// No clock is read here, unlike the toast this replaces: the surface is
-    /// told the frame's `Instant` by the host, which is what makes an
-    /// acknowledgement's lifetime as testable as the engine's arithmetic.
-    pub(crate) fn show_toast(&mut self, message: String) {
-        self.account.set_toast(message);
+        self.paper.desk.gesture.hovered_order = None;
+        self.paper.account.settle();
     }
 }
 
@@ -679,7 +631,7 @@ impl PaperTrading {
         &mut crate::paper_report::ReportState,
         crate::paper_report::ReportEnv<'_>,
     ) {
-        self.account.report_parts()
+        self.paper.account.report_parts()
     }
 }
 

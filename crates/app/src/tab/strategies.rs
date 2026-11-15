@@ -32,7 +32,7 @@ pub(super) fn evaluate(
     let pane = |id: u64| panes.iter().copied().find(|pane| pane.id == id);
     let answer = strategies.evaluate(
         &ids,
-        paper,
+        &mut **paper,
         Print {
             events: &events,
             now_ms,
@@ -55,19 +55,6 @@ pub(super) fn evaluate(
     );
     paper.account_mut().set_bot_listening(answer.watching > 0);
     pending_sounds.extend(answer.alarms);
-}
-
-/// The paper account as the strategy runner reaches it: commands go in
-/// through the same funnel every strategy command takes, and the flat gate
-/// is the account's own.
-impl quantick_strategy::runner::StrategyPort for crate::paper_trading::PaperTrading {
-    fn apply(&mut self, command: quantick_sim::Command) -> Vec<quantick_sim::VenueEvent> {
-        self.account_mut().apply_strategy_command(command)
-    }
-
-    fn is_flat(&self) -> bool {
-        crate::paper_trading::PaperTrading::is_flat(self)
-    }
 }
 
 #[cfg(test)]

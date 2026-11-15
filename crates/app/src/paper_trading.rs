@@ -17,31 +17,31 @@
 //! them, reads the window's input into plain values for the desk, and
 //! carries out the command a press comes back with.
 
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use eframe::egui;
-use quantick_engine::{Side, Trade};
+#[cfg(any(feature = "scenario-harness", test))]
+use quantick_engine::Side;
+use quantick_engine::Trade;
 #[cfg(any(feature = "scenario-harness", test))]
 use quantick_paper::desk::CmdPreviewForce;
-use quantick_paper::desk::Desk;
 #[cfg(any(feature = "scenario-harness", test))]
 use quantick_paper::desk::ruler::RULER_MAX_NOTCHES;
+use quantick_session::paper::TabPaper;
 // The words every order surface speaks, decided beside the account.
 use quantick_paper::format::{kind_short, kind_word, side_word_upper};
 #[cfg(any(feature = "scenario-harness", test))]
-use quantick_sim::OrderIntent;
-use quantick_sim::{Bracket, ClosedTrade};
+use quantick_sim::{Bracket, OrderIntent};
 // The journal's own format, and the command type the sim takes, are named
 // only by the tests that drive one; the writing moved to `paper_account`.
 #[cfg(test)]
-use quantick_sim::{Command, history};
+use quantick_sim::{ClosedTrade, Command, history};
+#[cfg(any(feature = "scenario-harness", test))]
 use rust_decimal::Decimal;
 
 use crate::chart::PriceScale;
 // One date law for every trade surface - see `paper_calendar`.
 pub(crate) use crate::paper_account::{Leg, side_word};
-use crate::paper_chrome::PositionSummary;
 // The desk's values, under the names the app's callers already use.
 pub(crate) use quantick_paper::desk::{
     ArmedPlacement, CmdEntryKind, CmdModifier, CmdTradingSettings,
@@ -220,8 +220,8 @@ pub struct ChartInput<'a> {
     pub layer_visible: bool,
 }
 
-/// The app-side trading host: the account, the desk that decides what the
-/// ticket and the chart gesture mean, and the paint and widgets around both.
+/// The app-side trading host: the tab's paper (desk and account), the
+/// capture hooks, and the paint and widgets around both.
 pub struct PaperTrading {
     /// Whether `QUANTICK_PAPER_ORDER_BRACKET` asked the capture hook's
     /// resting orders to carry protective legs.
@@ -231,13 +231,26 @@ pub struct PaperTrading {
     /// first mark (`QUANTICK_PAPER_ORDERS`); `None` once they are placed.
     #[cfg_attr(not(any(feature = "scenario-harness", test)), allow(dead_code))]
     orders_demo: Option<u8>,
-    /// The deciding half of the ticket and the chart gesture: what was
-    /// typed, how far the ruler stands, what is aimed, armed and grabbed.
-    desk: Desk,
-    /// The policy half: the venue, the journal, the risk, the
-    /// strategies and the events. Reached by the control plane
-    /// through [`Self::account`]; this module only draws it.
-    account: crate::paper_account::PaperAccount,
+    /// The tab's desk and account, and the decisions that join them
+    /// (`quantick_session::paper`). The account is held with the report and
+    /// the export threads beside it; everything the ticket, the dock and the
+    /// control plane call by name — `market`, `flatten`, the ruler, the risk
+    /// read — is the tab's, reached through `Deref`.
+    paper: TabPaper<crate::paper_account::PaperAccount>,
+}
+
+impl std::ops::Deref for PaperTrading {
+    type Target = TabPaper<crate::paper_account::PaperAccount>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.paper
+    }
+}
+
+impl std::ops::DerefMut for PaperTrading {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.paper
+    }
 }
 
 impl Default for PaperTrading {
@@ -288,10 +301,9 @@ impl PaperTrading {
             allow(clippy::let_and_return)
         )]
         let host = Self {
-            account: crate::paper_account::PaperAccount::with_trades_dir(dir),
+            paper: TabPaper::new(crate::paper_account::PaperAccount::with_trades_dir(dir)),
             order_bracket_demo: false,
             orders_demo: None,
-            desk: Desk::default(),
         };
         #[cfg(any(feature = "scenario-harness", test))]
         let host = host.with_launch_hooks();
@@ -306,7 +318,7 @@ impl PaperTrading {
     fn with_launch_hooks(mut self) -> Self {
         self.order_bracket_demo =
             crate::hooks::captured::var(PAPER_ORDER_BRACKET_ENV).is_some_and(|value| value == "1");
-        self.desk.gesture.cmd_preview_force = crate::hooks::captured::var(CMD_PREVIEW_ENV)
+        self.paper.desk.gesture.cmd_preview_force = crate::hooks::captured::var(CMD_PREVIEW_ENV)
             .and_then(|value| {
                 CmdPreviewForce::parse(&value).or_else(|| {
                     tracing::warn!(
@@ -319,7 +331,7 @@ impl PaperTrading {
                     None
                 })
             });
-        self.desk.gesture.order_hover_force =
+        self.paper.desk.gesture.order_hover_force =
             crate::hooks::captured::var(PAPER_ORDER_HOVER_ENV).is_some_and(|value| value == "1");
         self.orders_demo = crate::hooks::captured::var(PAPER_ORDERS_ENV).and_then(|value| {
             value
@@ -342,202 +354,29 @@ impl PaperTrading {
                     None
                 })
         });
-        self.desk.strategy_editor.open =
+        self.paper.desk.strategy_editor.open =
             crate::hooks::captured::var(STRATEGY_EDITOR_ENV).is_some_and(|value| value == "1");
-        self.desk.ruler.notches = crate::hooks::captured::var(RULER_TICKS_ENV)
+        self.paper.desk.ruler.notches = crate::hooks::captured::var(RULER_TICKS_ENV)
             .and_then(|value| value.trim().parse::<u32>().ok())
             .map_or(0, |notches| notches.min(RULER_MAX_NOTCHES));
         self
     }
 
-    /// Everything the account needs from the ticket for one call; see
-    /// [`Desk::account_env`].
-    fn account_env(&self, side: Side, price: Decimal) -> crate::paper_account::AccountEnv {
-        self.desk.account_env(&self.account, side, price)
-    }
-
-    /// The bracket the ticket's offsets describe, or the complaint about the
-    /// text that does not parse - which is toasted here, beside the box.
-    fn parse_bracket(&mut self, side: Side, reference: Decimal) -> Option<Bracket> {
-        match self.desk.ticket.parse_bracket(side, reference) {
-            Ok(bracket) => Some(bracket),
-            Err(message) => {
-                self.show_toast(message);
-                None
-            }
-        }
-    }
-
-    /// What the risk per trade says about the entry the aim is holding.
-    pub(crate) fn risk_state(
-        &self,
-        side: Side,
-        reference: Decimal,
-    ) -> crate::risk_sizing::RiskState {
-        self.account
-            .risk_state(side, reference, &self.account_env(side, reference))
-    }
-
-    /// The risk read the control plane and the ticket's own line share.
-    pub(crate) fn risk_report(&self) -> (crate::risk_sizing::RiskState, bool) {
-        self.desk.risk_report(&self.account)
-    }
-
-    /// The bracket an armed entry would carry, at this size.
-    pub(crate) fn armed_bracket(
-        &self,
-        side: Side,
-        reference: Decimal,
-        quantity: Decimal,
-    ) -> Bracket {
-        self.account.armed_bracket(
-            side,
-            reference,
-            quantity,
-            &self.account_env(side, reference),
-        )
-    }
-
-    /// The policy half, for readers that want it and not the pixels.
-    ///
-    /// The control plane goes through here: `control::{trade, session,
-    /// interaction}` ask the account, so the second operator reads the money
-    /// path rather than the ticket that draws it.
-    pub(crate) fn account(&self) -> &crate::paper_account::PaperAccount {
-        &self.account
-    }
-
-    /// The policy half, mutably.
-    ///
-    /// Nothing drains the outbox per call, and nothing needs to: the account
-    /// holds the one toast slot the ticket used to hold, and the per-frame
-    /// `settle` loop takes it the same way it always did. A caller here posts
-    /// an acknowledgement by acting, not by remembering to hand one on.
-    pub(crate) fn account_mut(&mut self) -> &mut crate::paper_account::PaperAccount {
-        &mut self.account
-    }
-
-    // ------------------------------------------------------------------
-    // The account, reached by name
-    //
-    // Every one of these moved to `paper_account`; the names stayed here so
-    // that `app`, `tab`, `dock` and `toolbar` did not pay for a move they
-    // did not ask for. The control plane does not come through these - it
-    // asks `account()` directly, so a reader of `control::trade` sees the
-    // money path and not the ticket that draws it.
-    // ------------------------------------------------------------------
-
-    /// Close everything, now. Named here as well as on the account because
-    /// `Iterator::flatten` otherwise wins method resolution on a bare
-    /// `.flatten()` and the shortcut stops closing the position.
-    pub(crate) fn flatten(&mut self) {
-        self.account_mut().flatten();
-    }
-
-    pub(crate) fn close_position(&mut self) {
-        self.account_mut().close_position()
-    }
-
-    pub(crate) fn is_flat(&self) -> bool {
-        self.account().is_flat()
-    }
-
-    pub(crate) fn mark_price(&self) -> Option<Decimal> {
-        self.account().mark_price()
-    }
-
-    pub(crate) fn position_summary(&self) -> Option<PositionSummary> {
-        self.account().position_summary()
-    }
-
-    pub(crate) fn seed(&mut self, trade: &Trade) {
-        self.account_mut().seed(trade)
-    }
-
-    pub(crate) fn session_trades(&self) -> &[ClosedTrade] {
-        self.account().session_trades()
-    }
-
-    pub(crate) fn status_cell(&self) -> Option<(String, std::cmp::Ordering)> {
-        self.account().status_cell()
-    }
-
-    pub(crate) fn working_orders(&self) -> &[quantick_sim::Order] {
-        self.account().working_orders()
-    }
-
-    // ------------------------------------------------------------------
-    // The desk, reached by name
-    //
-    // The cmd gesture's settings and the ruler are the desk's; these are
-    // the names the app, the control plane and the sidecar already call.
-    // ------------------------------------------------------------------
-
-    /// Install cmd-trading settings — the app's fan-out on boot and on a
-    /// change made in any tab (one gesture, one meaning, everywhere).
-    pub fn set_cmd_trading(&mut self, settings: CmdTradingSettings) {
-        self.desk.set_cmd_trading(settings);
-    }
-
-    /// The cmd-trading settings, for the app to persist.
-    #[must_use]
-    pub(crate) fn cmd_trading(&self) -> CmdTradingSettings {
-        self.desk.cmd_trading
-    }
-
-    /// Drop the frame's preview — the pane calls this when a drawing tool
-    /// owns the hand, so a stale line never keeps painting.
-    pub fn clear_cmd_preview(&mut self) {
-        self.desk.gesture.cmd_preview = None;
-    }
-
-    /// Put the ruler at `notches`, clamped to what the wheel itself can
-    /// reach, and answer with where it landed — the named form of rolling
-    /// the wheel.
-    pub(crate) fn set_ruler_ticks(&mut self, notches: u32) -> u32 {
-        self.desk.ruler.set_ticks(notches)
-    }
-
-    /// Every step the trader has named, by symbol, for the sidecar.
-    pub(crate) fn ruler_steps(&self) -> &BTreeMap<String, Decimal> {
-        &self.desk.ruler.steps
-    }
-
-    /// Replace the remembered steps wholesale, from the sidecar.
-    pub(crate) fn set_ruler_steps(&mut self, steps: BTreeMap<String, Decimal>) {
-        self.desk.ruler.set_steps(steps, self.account.symbol());
-    }
-
-    /// Whether a chart click flipped the P&L switch since the last ask; see
-    /// `Desk::take_pnl_flip`.
-    pub(crate) fn take_pnl_flip(&mut self) -> bool {
-        self.desk.take_pnl_flip()
-    }
-
-    /// Clear the ruler, so the next aim starts from the entry again.
-    pub(crate) fn clear_ruler(&mut self) -> bool {
-        self.desk.ruler.clear()
-    }
-
-    /// How far the ruler stands from the aim, in ticks; zero when it is off.
-    #[must_use]
-    pub(crate) fn ruler_ticks(&self) -> u32 {
-        self.desk.ruler.notches
-    }
-
-    /// Follow the app's active symbol. A change retargets the journal; the
-    /// simulator itself was already flattened by the timeline reset that
-    /// every switch performs.
+    /// Follow the app's active symbol: the tab's paper retargets the journal
+    /// and the ruler, and an open report starts over on the new instrument.
     pub fn set_symbol(&mut self, symbol: &str) {
-        let Some(arriving) = self.account.set_symbol(symbol) else {
-            return;
-        };
-        self.desk.ruler.follow_symbol(symbol, arriving);
+        // The revealed ledger page is left alone: `LedgerPage::of` clamps a
+        // page the new history cannot back, and resetting it retired the
+        // `QUANTICK_LEDGER_PAGES` hook before its first row was painted.
+        if self.paper.set_symbol(symbol) {
+            self.paper.account.report.symbol_changed();
+        }
     }
 
     /// Feed one live print through the simulator and act on what it did.
     pub fn on_trade(&mut self, trade: &Trade) {
-        self.account.on_trade(trade);
+        self.paper.on_trade(trade);
+        self.paper.account.follow_journal();
         // `orders_demo` is a harness field, so its orders rest from here.
         #[cfg(any(feature = "scenario-harness", test))]
         if self.orders_demo.is_some() {
@@ -561,7 +400,7 @@ impl PaperTrading {
         let Some(rungs) = self.orders_demo else {
             return;
         };
-        let Some(mark) = self.account.venue().mark_price() else {
+        let Some(mark) = self.paper.account.venue().mark_price() else {
             return;
         };
         let tick = Decimal::ONE
@@ -623,13 +462,14 @@ impl PaperTrading {
                     Bracket::none()
                 };
                 let events = self
+                    .paper
                     .account
                     .venue_mut()
                     .submit(OrderIntent::limit(side, quantity, price).with_bracket(bracket));
-                self.account.handle_events(events);
+                self.paper.account.handle_events(events);
             }
         }
-        if self.account.venue().working_orders().is_empty() {
+        if self.paper.account.venue().working_orders().is_empty() {
             tracing::warn!(
                 target: "quantick::app",
                 schema_version = 1_u8,
@@ -641,57 +481,6 @@ impl PaperTrading {
             return;
         }
         self.orders_demo = None;
-    }
-
-    /// The source rebuilt its timeline (replay seek, feed/symbol switch,
-    /// restart): pending orders are swept and the position flattens at the
-    /// last mark, labeled `reset` — never silently.
-    pub fn on_timeline_reset(&mut self) {
-        // The account sweeps, flattens, journals and forgets the session
-        // file and the bot buffer; what is left here is the pointer state
-        // and the sentence.
-        let reset = self.account.reset_timeline();
-        self.desk.reset_timeline();
-        if reset.had_position && reset.all_saved {
-            self.show_toast(
-                "SIM position flattened - the timeline was rebuilt under it.".to_owned(),
-            );
-        } else if reset.had_orders && reset.all_saved {
-            self.show_toast(
-                "SIM orders cancelled - the timeline was rebuilt under them.".to_owned(),
-            );
-        }
-    }
-
-    /// A toolbar/panel market order using the form's quantity and offsets.
-    pub fn market(&mut self, side: Side) {
-        let reference = self.account.mark_price().unwrap_or_default();
-        // The offsets are the ticket's text; the rest is placement.
-        let Some(ticket) = self.parse_bracket(side, reference) else {
-            return;
-        };
-        let env = self.account_env(side, reference);
-        // The wheel's distance was for this trade; the next starts bare. A
-        // refused entry was no trade, so the distance stays for the retry.
-        if self.account.market(side, reference, ticket, &env) {
-            self.desk.ruler.clear();
-        }
-    }
-
-    /// Flip the open position: one market order for twice its size, which
-    /// closes it and opens the opposite side at the same quantity. The
-    /// form's protective offsets apply to the new entry, exactly as they do
-    /// to any market order.
-    pub fn reverse_position(&mut self) {
-        // The account says which way and at what mark; the ticket resolves
-        // the protection for that side, because the offsets are its text.
-        let Some((side, reference)) = self.account.reverse_aim() else {
-            return;
-        };
-        let Some(bracket) = self.parse_bracket(side, reference) else {
-            return;
-        };
-        self.account.reverse_position(bracket);
     }
 }
 
@@ -725,12 +514,6 @@ impl PaperTrading {
 
     pub(crate) fn ready(&self) -> bool {
         self.account().ready()
-    }
-
-    /// Name this instrument's step, in points. A value that is not positive
-    /// clears it, which puts the instrument back on the derived default.
-    pub(crate) fn set_ruler_step(&mut self, step: Option<Decimal>) {
-        self.desk.ruler.set_step(self.account.symbol(), step);
     }
 }
 
