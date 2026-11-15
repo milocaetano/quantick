@@ -9,8 +9,9 @@ use std::path::{Path, PathBuf};
 
 pub use quantick_workspace::workspace_book::{
     BookParseError, CreateOutcome, DEFAULT_WORKSPACE, DeleteOutcome, MAX_WORKSPACE_NAME,
-    RenameOutcome, SaveOutcome, SeedTab, SetOutcome, TabWorkspaceState, UnsavedEdits, Unsynced,
-    WORKSPACES_FILE, WorkspaceBook, WorkspaceListing, WorkspaceRefusal, capture_recipe, parse_book,
+    RenameOutcome, SaveOutcome, SeedTab, SetOutcome, TabWorkspaceState, UNDO_WINDOW_MS,
+    UndoOutcome, UnsavedEdits, Unsynced, WORKSPACES_FILE, WorkspaceBook, WorkspaceListing,
+    WorkspaceRefusal, capture_recipe, parse_book,
 };
 pub use quantick_workspace::workspace_colour::{
     ColourOutcome, ColourTaken, Rgb, WorkspaceColour, hex, hsv_rgb, parse_typed_hex, rgb_hsv,
