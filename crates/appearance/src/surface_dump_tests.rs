@@ -6,8 +6,10 @@ use crate::{DARK, LIGHT, ResolvedTheme, Token};
 use std::fmt::Write;
 
 /// The tokens added since the lights: the bulb, then the paper plates'
-/// chip colours and readout edge. They did not exist before them.
-const ADDED: [&str; 4] = [
+/// chip colours and readout edge, then the capsule's grey miniature. They
+/// did not exist before them.
+const ADDED: [&str; 5] = [
+    "capsule_miniature",
     "flow_bulb_lit",
     "paper_tag_gain",
     "paper_tag_loss",

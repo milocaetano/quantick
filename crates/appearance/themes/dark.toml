@@ -85,6 +85,9 @@ chart_grid = "#232936"
 # The market tab strip and window title area, the wordmark's "tick" and a
 # replaying tab's mark (docs/ux/layout-appearance-2026-11-06).
 tab_strip = "#10141D"
+# The capsule's layout miniature: a neutral grey, so the workspace's colour
+# is the capsule's only hue.
+capsule_miniature = "#8A93A1"
 brand = "#3AF0B2"
 replay_ink = "#C58CFF"
 # The tabs: the active tab and the toolbar row

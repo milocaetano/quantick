@@ -38,6 +38,35 @@ pub struct MenuChrome {
     pub tint: u8,
 }
 
+/// A button filled in a colour, its label in an ink that reaches 4.5:1 on
+/// it in both themes: the accent's for the Enter default (Swap, Apply,
+/// Save), the error red's for Delete.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FilledButton {
+    pub fill: Token,
+    pub ink: Token,
+}
+
+impl FilledButton {
+    /// Swap, Apply and Save.
+    #[must_use]
+    pub const fn primary() -> Self {
+        Self {
+            fill: Token::Accent,
+            ink: Token::ChipInk,
+        }
+    }
+
+    /// Delete.
+    #[must_use]
+    pub const fn danger() -> Self {
+        Self {
+            fill: Token::ErrorText,
+            ink: Token::ChipInk,
+        }
+    }
+}
+
 /// The menu as `dark` or Light paints it.
 #[must_use]
 pub const fn chrome(dark: bool) -> MenuChrome {
@@ -73,3 +102,7 @@ pub const fn chrome(dark: bool) -> MenuChrome {
         tint,
     }
 }
+
+#[cfg(test)]
+#[path = "workspace_menu_tests.rs"]
+mod tests;

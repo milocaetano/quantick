@@ -141,7 +141,7 @@ fn no_preset_warns_and_light_s_black_sell_is_no_red() {
     let inks = trade_inks();
     let light_sell = ResolvedTheme::bundled(false).color(Token::Sell);
     assert_eq!(light_sell, PremultipliedRgba::from_rgb(0, 0, 0));
-    assert!(!inks.iter().any(|(_, ink)| *ink == light_sell), "{inks:?}");
+    assert!(!inks.iter().any(|trade| trade.ink == light_sell), "{inks:?}");
     assert_eq!(inks.len(), 3, "both buys and Dark's sell");
     let book = mock(false);
     for index in 0..16 {

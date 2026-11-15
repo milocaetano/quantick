@@ -13,8 +13,10 @@ pub use quantick_workspace::workspace_book::{
     WORKSPACES_FILE, WorkspaceBook, WorkspaceListing, WorkspaceRefusal, capture_recipe, parse_book,
 };
 pub use quantick_workspace::workspace_colour::{
-    ColourOutcome, ColourTaken, Rgb, WorkspaceColour, hex,
+    ColourOutcome, ColourTaken, Rgb, WorkspaceColour, hex, hsv_rgb, parse_typed_hex, rgb_hsv,
 };
+
+pub mod palette;
 pub use quantick_workspace::workspace_recipe::{ContextPaneRecipe, WorkspaceRecipe};
 pub use quantick_workspace::workspace_sync::{TabAdoption, TabRecipeSync};
 
