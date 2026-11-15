@@ -4,6 +4,7 @@ mod catalog;
 pub mod paper_report;
 #[cfg(test)]
 mod scratch;
+pub mod colour_palette;
 pub mod workspace_menu;
 
 /// A deterministic transition over cached presentation state.

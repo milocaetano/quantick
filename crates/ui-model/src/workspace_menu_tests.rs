@@ -247,8 +247,9 @@ fn the_selected_row_s_summary_reads_on_its_fill() {
     }
 }
 
-/// The colour fills #1036's slot, 3 x 22 with a 1.5 radius, in every row and
-/// in the header, as the resolved value: a custom colour is no token.
+/// The colour fills #1036's slot, 3 x 22 with a 1.5 radius, in every row,
+/// and the header's 16 x 16 swatch, as the resolved value: a custom colour
+/// is no token.
 #[test]
 fn the_colour_fills_the_slot_in_every_row_and_the_header() {
     use quantick_stores::workspaces::WorkspaceColour;
@@ -275,10 +276,11 @@ fn the_colour_fills_the_slot_in_every_row_and_the_header() {
         assert_eq!(slot(&default), (area(8.0, 6.0, 3.0, 22.0), 1.5, slate));
         assert_eq!(slot(&scalp).2, [0x3A, 0x7B, 0xD5]);
         let pieces = head(&menu, 318.0, dark, &measure);
-        let header = slot(keyed(&pieces, "current"));
+        let header = slot(keyed(&pieces, "colour"));
         assert_eq!(
             header,
-            (area(8.0, 14.0, 3.0, 22.0), 1.5, [0x3A, 0x7B, 0xD5])
+            (area(8.0, 17.0, 16.0, 16.0), 4.0, [0x3A, 0x7B, 0xD5]),
+            "the header's slot is its swatch"
         );
     }
 }
