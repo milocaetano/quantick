@@ -12,7 +12,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::layout::transient_descriptor;
-use crate::readback::{EVERY_FORBIDDEN_TEST, Readback, journal};
+use crate::readback::{EVERY_OPTIONAL_TEST, Readback, journal};
 use crate::workspace::{MODULE_ID, WorkspaceColourDto};
 use crate::workspace_book::{WORKSPACE_COLOUR_SET_EVENT_KIND, writes_the_book};
 
@@ -166,7 +166,7 @@ pub fn workspace_colour_palette_descriptor() -> CapabilityDescriptor {
 }
 
 pub fn workspace_colour_popover_descriptor() -> CapabilityDescriptor {
-    let mut descriptor = writes_the_book(transient_descriptor::<
+    writes_the_book(transient_descriptor::<
         WorkspaceColourPopoverInput,
         WorkspaceColourPopoverResult,
     >(
@@ -174,20 +174,18 @@ pub fn workspace_colour_popover_descriptor() -> CapabilityDescriptor {
         MODULE_ID,
         "Drive the workspace colour popover",
         "Acts on the palette popover under the workspace menu's header swatch, for the tab on screen, as a hand does: open (the menu too), close (the menu stays), pick a swatch (a free colour applies at once and closes the popover; one another workspace holds puts the swap question in the grid's place), custom (opens the Custom picker on a hex, #RRGGBB or RRGGBB, and answers its warnings: close to another workspace's colour, near the buy green or sell red, low contrast on a tab strip; none blocks), apply (Custom's colour, through the same path; a malformed hex answers hex_hint and changes nothing; an identical colour asks to swap) and answer (swap true takes the colour and gives the holder this workspace's old one, false cancels). Each answer is the popover's state. Any act but open while it is closed is refused with workspace.colour_popover_closed.",
-        "Opening twice leaves it open; a pick names its colour, so a repeat answers no change; the question is answered once.",
-    ));
-    descriptor.idempotency = IdempotencyPolicy::Forbidden;
-    descriptor
+        "Opening twice leaves it open; a pick names its colour, so a repeat answers no change; an answer with the question gone is refused as closed or changes nothing.",
+    ))
 }
 
 /// How a client reconciles an interrupted act.
 pub const READBACKS: &[Readback] = &[journal(
     WORKSPACE_COLOUR_POPOVER_CAPABILITY_ID,
-    IdempotencyPolicy::Forbidden,
+    IdempotencyPolicy::Optional,
     WORKSPACE_COLOUR_SET_EVENT_KIND,
     "payload.colour",
     "an event after the pre-call cursor gives the workspace the picked colour's word; opening, closing and Custom's field change no file",
-    &[EVERY_FORBIDDEN_TEST],
+    &[EVERY_OPTIONAL_TEST],
 )];
 
 /// Published schemas of the colour calls.

@@ -100,7 +100,6 @@ use crate::ui_state;
 use crate::window_scale;
 use quantick_feed::FeedHandle;
 
-#[cfg(any(feature = "scenario-harness", test))]
 use quantick_stores::bubble_asset_store::open_asset_bubbles;
 
 // Names the window's own code no longer reads: the nine modules above took the

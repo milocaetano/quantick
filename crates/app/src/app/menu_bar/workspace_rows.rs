@@ -55,10 +55,7 @@ pub(super) fn chip_menu(
     let frame = egui::Frame::popup(&ctx.style()).stroke(egui::Stroke::NONE);
     let frame = frame.inner_margin(border).rounding(RADIUS);
     let frame = frame.fill(ink(Some(chrome.ground)));
-    let (id, popover_frame) = (
-        egui::Id::new(("tab_workspace_menu", tab)),
-        frame.stroke(edge),
-    );
+    let id = egui::Id::new(("tab_workspace_menu", tab));
     let fresh = ctx.memory(|memory| memory.area_rect(id).is_none());
     let area = egui::Area::new(id)
         .order(egui::Order::Foreground)
@@ -122,10 +119,8 @@ pub(super) fn chip_menu(
     });
     let rect = area.response.rect;
     let swatch = cells::drawn(&drawn, "colour").map(|at| at.shrink(4.0));
-    let (held, paint) = (
-        (book, rows.current.label.as_str(), dark),
-        (&ink, &mut drawn, popover_frame),
-    );
+    let held = (book, rows.current.label.as_str(), dark);
+    let paint = (&ink as &Ink<'_>, &mut drawn, frame.stroke(edge));
     let popover = swatch.map(|at| colour_popover(ctx, held, at, menu, paint));
     let (picked, off) = popover.unwrap_or_default();
     let cover = ctx.screen_rect();
