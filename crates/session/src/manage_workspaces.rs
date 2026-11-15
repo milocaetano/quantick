@@ -83,11 +83,51 @@ pub enum ManageKey {
     Undo,
 }
 
+impl ManageKey {
+    pub const ALL: [Self; 8] = [
+        Self::Up,
+        Self::Down,
+        Self::F2,
+        Self::Delete,
+        Self::Colour,
+        Self::Enter,
+        Self::Escape,
+        Self::Undo,
+    ];
+
+    /// The name the window's toolkit knows the key by.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Up => "ArrowUp",
+            Self::Down => "ArrowDown",
+            Self::F2 => "F2",
+            Self::Delete => "Delete",
+            Self::Colour => "C",
+            Self::Enter => "Enter",
+            Self::Escape => "Escape",
+            Self::Undo => "Z",
+        }
+    }
+
+    /// Pressed with Ctrl (Cmd on a Mac).
+    #[must_use]
+    pub const fn command(self) -> bool {
+        matches!(self, Self::Undo)
+    }
+}
+
 /// The keys pressed this frame.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ManageKeys([bool; 8]);
 
 impl ManageKeys {
+    /// From one flag per [`ManageKey::ALL`].
+    #[must_use]
+    pub const fn of(pressed: [bool; 8]) -> Self {
+        Self(pressed)
+    }
+
     pub fn press(&mut self, key: ManageKey) {
         self.0[key as usize] = true;
     }
@@ -112,6 +152,8 @@ pub struct ManageDialog {
     pub undo: Vec<UndoRow>,
     /// The footer's line after a swap or an Undo, also toasted.
     pub note: Option<String>,
+    /// A capture staged the armed row's Delete for the first frame.
+    pub confirm_staged: bool,
 }
 
 impl ManageDialog {
@@ -125,6 +167,7 @@ impl ManageDialog {
             palette: None,
             undo: Vec::new(),
             note: None,
+            confirm_staged: false,
         }
     }
 
@@ -137,6 +180,13 @@ impl ManageDialog {
         }
         self.local(&ManageIntent::Arm(name.to_owned()));
         DeleteClick::Armed
+    }
+
+    /// Whether the dialog takes `key` from the window: none while a row's
+    /// palette takes its own keys, only Esc while a name is typed.
+    #[must_use]
+    pub fn takes(&self, key: ManageKey) -> bool {
+        self.palette.is_none() && (self.rename.is_none() || key == ManageKey::Escape)
     }
 
     /// The workspace whose palette is open.
@@ -218,9 +268,11 @@ impl ManageDialog {
         self.undo.iter().rev().find(|row| now_ms < row.until_ms)
     }
 
-    /// The frame's time: Undo rows whose ten seconds ended go.
-    pub fn tick(&mut self, now_ms: i64) {
+    /// The frame's time: Undo rows whose ten seconds ended go. Answers
+    /// whether one still stands, so the frame keeps its line moving.
+    pub fn tick(&mut self, now_ms: i64) -> bool {
         self.undo.retain(|row| now_ms < row.until_ms);
+        !self.undo.is_empty()
     }
 
     /// A frame's keys over `rows` (each name, and whether it is protected
@@ -252,7 +304,8 @@ impl ManageDialog {
         if keys.has(ManageKey::Undo) && self.undo_row(now_ms).is_some() {
             return Some(ManageIntent::Undo { now_ms });
         }
-        if keys.has(ManageKey::Enter) && self.armed.is_some() {
+        let staged = std::mem::take(&mut self.confirm_staged);
+        if (staged || keys.has(ManageKey::Enter)) && self.armed.is_some() {
             return Some(ManageIntent::Delete { now_ms });
         }
         let (name, protected) = self.focus.and_then(|at| rows.get(at))?;
@@ -269,13 +322,18 @@ impl ManageDialog {
     /// A capture's face (`QUANTICK_WORKSPACE_MENU=manage:<face>`):
     /// `delete=<name>` armed, `rename=<name>` its field open,
     /// `colour=<name>` its palette open, `colour=<name>:ask=<word>` on the
-    /// swap question, `focus=<row>` the row chosen. False for any other.
+    /// swap question, `focus=<row>` the row chosen, `undo=<name>` deleted on
+    /// the first frame so its Undo row stands. False for any other.
     pub fn stage(&mut self, face: &str) -> bool {
         let Some((what, name)) = face.split_once('=') else {
             return false;
         };
         match what {
             "delete" => self.local(&ManageIntent::Arm(name.to_owned())),
+            "undo" => {
+                self.confirm_staged = self.local(&ManageIntent::Arm(name.to_owned()));
+                true
+            }
             "rename" => self.local(&ManageIntent::BeginRename(name.to_owned())),
             "colour" => {
                 let (name, ask) = name.split_once(":ask=").unwrap_or((name, ""));

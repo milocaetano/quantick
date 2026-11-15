@@ -22,9 +22,10 @@ pub enum WorkspaceCommand {
     BeginRename(String),
     /// Open the Manage workspaces dialog.
     BeginManage,
-    Delete(String),
     /// The dialog's Enter.
     SubmitDialog,
+    /// The name dialog's Cancel, its close button or Esc.
+    CloseDialog,
     /// Close these tabs, or exit, asking first per tab holding edits.
     Close(CloseScope, Vec<u64>),
     /// The close prompt's answer.
@@ -93,6 +94,8 @@ pub struct WorkspaceMenuState {
     pub close: CloseQueue,
     /// The palette popover under the header swatch, while it is open.
     pub colour: Option<ColourPopover>,
+    /// A capture staged a dialog before the window presented its tab.
+    staged_dialog: bool,
 }
 
 impl WorkspaceMenuState {
@@ -229,7 +232,8 @@ impl WorkspaceMenuState {
     /// `cell:colour:custom=<hex>` with Custom open on those words, `manage`
     /// the dialog, `manage:<face>` on one of [`ManageDialog::stage`]'s faces,
     /// `save_as` and `new` the create dialogs (their name and colour are the
-    /// handler's to fill). Answers false, opening nothing, for any other token.
+    /// handler's to fill), `save_as:custom=<hex>` with Custom open on those
+    /// words. Answers false, opening nothing, for any other token.
     pub fn stage(&mut self, tab: u64, token: &str) -> bool {
         let (surface, row) = token.split_once(':').unwrap_or((token, ""));
         if let ("cell", Some(popover)) = (surface, row.strip_prefix("colour")) {
@@ -260,11 +264,37 @@ impl WorkspaceMenuState {
                 }
                 self.manage = Some(dialog);
             }
-            ("save_as", "") => self.open_save_as(tab),
-            ("new", "") => self.open_new(tab),
+            ("save_as" | "new", face) => {
+                let custom = face.strip_prefix("custom=");
+                if !face.is_empty() && custom.is_none() {
+                    return false;
+                }
+                if surface == "new" {
+                    self.open_new(tab);
+                } else {
+                    self.open_save_as(tab);
+                }
+                if let (Some(hex), Some(dialog)) = (custom, self.dialog.as_mut()) {
+                    (dialog.palette.custom, dialog.palette.hex) = (true, hex.to_owned());
+                }
+            }
             _ => return false,
         }
+        self.staged_dialog = surface != "cell";
         true
+    }
+
+    /// The first frame presenting a market tab carries a staged dialog
+    /// there, as [`Self::follow_cell`] carries a staged menu.
+    pub fn follow_staged(&mut self, tab: u64, shown: bool) {
+        if shown && std::mem::take(&mut self.staged_dialog) {
+            if let Some(dialog) = &mut self.manage {
+                dialog.tab = tab;
+            }
+            if let Some(dialog) = &mut self.dialog {
+                dialog.tab = tab;
+            }
+        }
     }
 
     /// The window presenting `presented` (`None` on Home) holds `window`'s
@@ -536,6 +566,10 @@ mod tests {
         );
         assert!(state.stage(7, "new"));
         assert_eq!(state.dialog.as_ref().unwrap().mode, NameDialogMode::New);
+        assert!(state.stage(7, "save_as:custom=#5DBDEB"));
+        let custom = &state.dialog.as_ref().unwrap().palette;
+        assert!(custom.custom && custom.hex == "#5DBDEB");
+        assert!(!WorkspaceMenuState::default().stage(7, "save_as:paint=1"));
         let mut fresh = WorkspaceMenuState::default();
         assert!(!fresh.stage(7, "manage:drop=Scalp"));
         assert!(!fresh.stage(7, "file"));

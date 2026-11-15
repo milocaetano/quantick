@@ -1,7 +1,8 @@
-//! What a press in the header swatch's palette popover does, and the two
-//! calls that read the palette and drive the popover without a hand. A pick
-//! reaches the same handler `workspace.colour.set` uses, journaled alike;
-//! the palette, the question's words and the warnings are
+//! What a press in a workspace's palette does, under the menu's header
+//! swatch or under a Manage row, and the two calls that read the palette and
+//! drive the header's popover without a hand. A pick reaches the same
+//! handler `workspace.colour.set` uses, journaled alike; the palette, the
+//! question's words and the warnings are
 //! `quantick_stores::workspaces::palette`'s.
 
 use quantick_control::error::ControlError;
@@ -52,14 +53,8 @@ pub fn question(model: &Palette, popover: &ColourPopover) -> Option<SwapQuestion
     }
 }
 
-/// The palette of the workspace `tab` is on, as the book stands.
-fn model_of<H: WorkspaceBookHost + ?Sized>(host: &H, tab: u64) -> Option<Palette> {
-    let book = host.workspace_book_ref()?;
-    palette(book, state_of(book, tab).0)
-}
-
-/// Carry out a press in the popover on the menu of `tab`; answers what to
-/// tell the trader.
+/// Carry out a press in the popover on the menu of `tab`, on the workspace
+/// the tab is on; answers what to tell the trader.
 pub fn act<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
     host: &mut H,
     to: &mut Journal<'_, A>,
@@ -67,15 +62,33 @@ pub fn act<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
     tab: u64,
     intent: ColourIntent,
 ) -> Option<String> {
-    let model = model_of(host, tab)?;
+    let book = host.workspace_book_ref()?;
+    let workspace = state_of(book, tab).0.to_owned();
+    act_on(host, to, &mut menu.colour, &workspace, intent)
+}
+
+/// Carry out a press in `open`, the palette of `workspace` (the menu's
+/// header popover or a Manage row's): a free colour applies at once and
+/// closes it, a held one asks to swap. Answers what to tell the trader.
+pub fn act_on<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
+    host: &mut H,
+    to: &mut Journal<'_, A>,
+    open: &mut Option<ColourPopover>,
+    workspace: &str,
+    intent: ColourIntent,
+) -> Option<String> {
+    let model = palette(host.workspace_book_ref()?, workspace)?;
     if intent == ColourIntent::Toggle {
-        menu.toggle_colour();
+        *open = match open.take() {
+            Some(_) => None,
+            None => Some(ColourPopover::default()),
+        };
         return None;
     }
-    let popover = menu.colour.as_mut()?;
+    let popover = open.as_mut()?;
     let (word, typed, swap) = match intent {
         ColourIntent::Toggle | ColourIntent::Close => {
-            menu.colour = None;
+            *open = None;
             return None;
         }
         ColourIntent::Custom { dark } => {
@@ -106,7 +119,7 @@ pub fn act<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
     }
     match colour_journaled(host, to, &model.workspace, (colour, swap)) {
         Ok(outcome) => {
-            menu.colour = None;
+            *open = None;
             let swapped = outcome.swapped_with.zip(outcome.holder_colour);
             swapped.map(|(owner, now)| format!("{owner} is now {}", said(now)))
         }
@@ -116,7 +129,7 @@ pub fn act<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
 
 /// A press on the hue strip (`hue`) or the square (`square`), in
 /// thousandths: the picker moves there and the field follows.
-fn pressed(
+pub(super) fn pressed(
     popover: &mut ColourPopover,
     hue: Option<u16>,
     square: Option<(u16, u16)>,

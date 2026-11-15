@@ -9,6 +9,7 @@ pub fn documents() -> Vec<(&'static str, serde_json::Value)> {
     documents.extend(crate::alerts::documents());
     documents.extend(crate::workspace_book::documents());
     documents.extend(crate::workspace_colour::documents());
+    documents.extend(crate::workspace_manage::documents());
     documents.extend(crate::native_window::documents());
     documents.extend(crate::home_tab::documents());
     documents.extend(crate::indicator_picker::documents());

@@ -7,11 +7,11 @@
 use quantick_appearance::Token;
 use quantick_appearance::workspace_menu::{MenuChrome, chrome};
 use quantick_control_handlers::workspace_book::cell_menu::{
-    CAPTION, CellMenu, CellRow, RowKind, UNSAVED,
+    CAPTION, CellMenu, CellRow, FILTER_PLACEHOLDER, RowKind, UNSAVED,
 };
 use quantick_session::workspace_menu::{
-    CHIP_MENU_CAPTION_PT, CHIP_MENU_FOOTER_PT, CHIP_MENU_HEADER_PT, CHIP_MENU_LIST_PAD_PT as PAD,
-    CHIP_MENU_ROW_PT,
+    CHIP_MENU_BORDER_PT, CHIP_MENU_CAPTION_PT, CHIP_MENU_FILTER_PT, CHIP_MENU_FOOTER_PT,
+    CHIP_MENU_HEADER_PT, CHIP_MENU_LIST_PAD_PT as PAD, CHIP_MENU_ROW_PT, ChipMenuLayout,
 };
 use quantick_workspace::canvas::PaneTree;
 
@@ -108,6 +108,12 @@ pub enum Mark {
     /// A box shaded between its corners, each a point and its colour: top
     /// left, top right, bottom right, bottom left (Custom's square and strip).
     Shade([([f32; 2], [u8; 3]); 4]),
+    /// Diagonal stripes in `ink` across a box: a colour another workspace
+    /// holds, locked in the create dialogs.
+    Hatch {
+        at: Area,
+        ink: Token,
+    },
 }
 
 /// A part of the menu: its box, the row the scene lists it as, whether a
@@ -119,18 +125,102 @@ pub struct Piece {
     pub press: bool,
     /// A press or drag reports where it is ([`crate::colour_palette::dragged`]).
     pub drag: bool,
+    /// Only a double click presses it (a Manage row's name).
+    pub double: bool,
     /// What a hover lays over its first mark.
     pub hover: Option<Plate>,
     pub marks: Vec<Mark>,
 }
 
+/// A surface to paint with one painter (the menu, Manage, the name
+/// dialogs, the palette popover): the fixed head and foot, the list in its
+/// own coordinates scrolled in `list_view`, and what the window lays over it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Sheet {
+    pub size: [f32; 2],
+    pub head: Vec<Piece>,
+    /// Where the list starts, and the height it shows at once.
+    pub list_top: f32,
+    pub list_view: f32,
+    /// Every row's pieces, from the list's top.
+    pub list: Vec<Piece>,
+    /// The list's whole height.
+    pub list_height: f32,
+    /// The chosen row, which the list scrolls into view.
+    pub focus: Option<Area>,
+    /// The text field's box: in the list's coordinates, or the sheet's
+    /// while `fixed` (the menu's filter), with its placeholder; a fixed field
+    /// keeps the keyboard.
+    pub field: Option<Area>,
+    pub fixed: bool,
+    pub hint: &'static str,
+    /// The open palette and where it stands in the list.
+    pub palette: Option<([f32; 2], crate::colour_palette::Popover)>,
+    pub foot: Vec<Piece>,
+    /// Manage's rows: each name and whether rename and delete refuse it.
+    pub names: Vec<(String, bool)>,
+    /// A name dialog's Save would save: a name, and a free colour.
+    pub saves: bool,
+}
+
+impl Sheet {
+    /// The sheet, its list brought to its focus only when that `moved`.
+    #[must_use]
+    pub fn revealed(mut self, moved: bool) -> Self {
+        self.focus = self.focus.filter(|_| moved);
+        self
+    }
+
+    /// A sheet `size` large of `list` alone, which never scrolls.
+    #[must_use]
+    pub fn of(size: [f32; 2], list: Vec<Piece>) -> Self {
+        Self {
+            size,
+            head: Vec::new(),
+            list_top: 0.0,
+            list_view: size[1],
+            list,
+            list_height: size[1],
+            focus: None,
+            field: None,
+            fixed: false,
+            hint: "",
+            palette: None,
+            foot: Vec::new(),
+            names: Vec::new(),
+            saves: false,
+        }
+    }
+}
+
 impl Piece {
+    /// The piece `dy` points lower, its marks and hover with it.
+    #[must_use]
+    pub fn shifted(mut self, dy: f32) -> Self {
+        self.at.y += dy;
+        if let Some(hover) = &mut self.hover {
+            hover.at.y += dy;
+        }
+        for mark in &mut self.marks {
+            match mark {
+                Mark::Box(Plate { at, .. })
+                | Mark::Tree(at, _)
+                | Mark::Colour { at, .. }
+                | Mark::Hatch { at, .. } => at.y += dy,
+                Mark::Text(words) => words.y += dy,
+                Mark::Shade(corners) => corners.iter_mut().for_each(|(at, _)| at[1] += dy),
+            }
+        }
+        self
+    }
+
     pub(crate) fn plain(at: Area, marks: Vec<Mark>) -> Self {
         Self {
             at,
             row: None,
             press: false,
             drag: false,
+            double: false,
             hover: None,
             marks,
         }
@@ -342,6 +432,7 @@ fn press(at: Area, row: &CellRow, plain: bool, ink: &MenuChrome, measure: Measur
         row: Some(row.clone()),
         press: enabled,
         drag: false,
+        double: false,
         hover: hover(at, ink.hover).filter(|_| enabled && !row.dot),
         marks,
     }
@@ -461,6 +552,7 @@ pub fn row(row: &CellRow, width: f32, focused: bool, dark: bool) -> Piece {
         row: Some(row.clone()),
         press: true,
         drag: false,
+        double: false,
         hover: hover(lit, ink.hover).filter(|_| !row.on),
         marks,
     }
@@ -489,6 +581,47 @@ pub fn foot(menu: &CellMenu, width: f32, dark: bool, measure: Measure<'_>) -> Ve
         switch.hover = hover(switch.at, ink.hover);
     }
     pieces
+}
+
+/// The menu as one sheet at `layout`'s size: the header, the filter field
+/// while the list has one, the rows `filter` keeps (`focus` ringed) in a
+/// list `layout.list_height` tall, and the footer.
+#[must_use]
+pub fn sheet(
+    menu: &CellMenu,
+    (filter, focus): (&str, Option<usize>),
+    layout: &ChipMenuLayout,
+    dark: bool,
+    measure: Measure<'_>,
+) -> Sheet {
+    let width = layout.width - 2.0 * CHIP_MENU_BORDER_PT;
+    let mut view = Sheet::of([width, 0.0], Vec::new());
+    view.head = head(menu, width, dark, measure);
+    view.list_top = HEAD_PT;
+    if let Some(row) = menu.filter_row(filter) {
+        view.head
+            .push(self::filter(row, width, dark).shifted(HEAD_PT));
+        let words = filter_text(width);
+        (view.field, view.fixed) = (
+            Some(area(words.x, words.y + HEAD_PT, words.w, words.h)),
+            true,
+        );
+        (view.hint, view.list_top) = (FILTER_PLACEHOLDER, HEAD_PT + CHIP_MENU_FILTER_PT);
+    }
+    let shown = menu.shown(filter);
+    let rows = shown.iter().enumerate();
+    let place = |(at, shown): (usize, &&CellRow)| {
+        row(shown, width, focus == Some(at), dark).shifted(at as f32 * CHIP_MENU_ROW_PT)
+    };
+    view.list = rows.map(place).collect();
+    view.list_height = shown.len() as f32 * CHIP_MENU_ROW_PT + PAD;
+    view.list_view = layout.list_height;
+    let foot_y = view.list_top + view.list_view;
+    view.foot = (foot(menu, width, dark, measure).into_iter())
+        .map(|piece| piece.shifted(foot_y))
+        .collect();
+    view.size[1] = foot_y + CHIP_MENU_FOOTER_PT;
+    view
 }
 
 #[cfg(test)]
