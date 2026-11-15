@@ -40,22 +40,22 @@ const fn preset(name: &'static str, light: u32, dark: u32) -> Preset {
 /// green, red, gold or orange, which already mean buy, sell, the POC and
 /// unsaved edits.
 pub const PRESETS: [Preset; 16] = [
-    preset("Cobalt", 0x2F5B_D8, 0x7393_F5),
-    preset("Orchid", 0xA63D_A0, 0xDA7B_D4),
-    preset("Sky", 0x1F86_BF, 0x5DBD_EB),
-    preset("Violet", 0x6A3F_C4, 0xA887_F2),
-    preset("Slate", 0x5660_6E, 0xA3AD_BA),
-    preset("Fuchsia", 0xC02B_86, 0xEF6D_B7),
-    preset("Petrol", 0x145F_78, 0x4FA6_C2),
-    preset("Lavender", 0x8C7C_D0, 0xC6BB_F6),
-    preset("Ultramarine", 0x2C2F_9E, 0x8085_F2),
-    preset("Mauve", 0x8A6A_8E, 0xC3A6_C7),
-    preset("Denim", 0x4A6F_A5, 0x90AE_DD),
-    preset("Grape", 0x6E24_96, 0xBE78_E6),
-    preset("Ink", 0x252B_36, 0xE3E7_EE),
-    preset("Plum", 0x6B2A_5E, 0xB86F_A6),
-    preset("Ice", 0x5E9F_D0, 0xB3DB_F5),
-    preset("Blossom", 0xCF6F_B6, 0xF4B3_DD),
+    preset("Cobalt", 0x2F_5B_D8, 0x73_93_F5),
+    preset("Orchid", 0xA6_3D_A0, 0xDA_7B_D4),
+    preset("Sky", 0x1F_86_BF, 0x5D_BD_EB),
+    preset("Violet", 0x6A_3F_C4, 0xA8_87_F2),
+    preset("Slate", 0x56_60_6E, 0xA3_AD_BA),
+    preset("Fuchsia", 0xC0_2B_86, 0xEF_6D_B7),
+    preset("Petrol", 0x14_5F_78, 0x4F_A6_C2),
+    preset("Lavender", 0x8C_7C_D0, 0xC6_BB_F6),
+    preset("Ultramarine", 0x2C_2F_9E, 0x80_85_F2),
+    preset("Mauve", 0x8A_6A_8E, 0xC3_A6_C7),
+    preset("Denim", 0x4A_6F_A5, 0x90_AE_DD),
+    preset("Grape", 0x6E_24_96, 0xBE_78_E6),
+    preset("Ink", 0x25_2B_36, 0xE3_E7_EE),
+    preset("Plum", 0x6B_2A_5E, 0xB8_6F_A6),
+    preset("Ice", 0x5E_9F_D0, 0xB3_DB_F5),
+    preset("Blossom", 0xCF_6F_B6, 0xF4_B3_DD),
 ];
 
 /// `Default`'s colour while it is free: Slate, the steel grey-blue.
