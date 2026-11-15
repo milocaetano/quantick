@@ -71,11 +71,8 @@ fn the_header_lays_its_line_and_buttons_as_the_mock_does() {
     let Mark::Box(primary) = primary else {
         panic!("a box")
     };
-    assert_eq!(
-        primary.fill,
-        Some(Token::LedgerSelection),
-        "Save stands out"
-    );
+    assert_eq!(primary.fill, Some(Token::Accent), "Save stands out");
+    assert_eq!(primary.alpha, chrome(true).tint, "in the accent's tint");
     assert_eq!(primary.edge, Some(Token::Accent));
     let caption = pieces.last().unwrap();
     assert_eq!((caption.at.y, caption.at.h), (81.0, 24.0));
@@ -88,6 +85,14 @@ fn autosave_on_paints_save_as_a_quiet_line() {
     let pieces = head(&menu(true, true), 318.0, false, &measure);
     let save = keyed(&pieces, "save");
     assert!(!save.press && save.hover.is_none());
+    let caption = pieces.last().unwrap();
+    let Mark::Text(spaced) = &caption.marks[0] else {
+        panic!("words")
+    };
+    assert!(
+        (spaced.tracking - 0.8).abs() < 1e-5,
+        "the caption's letters spaced"
+    );
     assert!(words(save).contains(&QUIET_SAVE));
     assert!(!words(keyed(&pieces, "current")).contains(&"Unsaved"));
 }
@@ -116,7 +121,22 @@ fn a_row_wears_its_status_and_the_focus_ring() {
         panic!("a box")
     };
     assert_eq!(ring.edge, Some(Token::Accent));
-    assert_eq!(row(other, 310.0, false, true).hover, Some(Token::HoverFill));
+    let hovered = row(other, 310.0, false, true).hover.expect("a hover fill");
+    assert_eq!(
+        (hovered.fill, hovered.radius),
+        (Some(Token::HoverFill), 4.0)
+    );
+    let named: Vec<bool> = (lit.marks.iter())
+        .filter_map(|mark| match mark {
+            Mark::Text(words) => Some(words.names),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        named.iter().filter(|names| **names).count(),
+        1,
+        "only the name"
+    );
     let tree = (lit.marks.iter()).find_map(|mark| match mark {
         Mark::Tree(at, _) => Some(*at),
         _ => None,

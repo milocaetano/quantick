@@ -15,6 +15,8 @@ use quantick_session::workspace_menu::{
 };
 use quantick_workspace::canvas::PaneTree;
 
+/// The header block with the caption under it, in points.
+pub const HEAD_PT: f32 = CHIP_MENU_HEADER_PT + CHIP_MENU_CAPTION_PT;
 /// A button's and a row's corner radius.
 const RADIUS: f32 = 4.0;
 /// The blocks' outer corners, inside the menu's radius-6 border.
@@ -57,10 +59,14 @@ pub struct Plate {
     pub at: Area,
     pub radius: f32,
     pub fill: Option<Token>,
+    /// The fill's opacity, out of 255.
+    pub alpha: u8,
     pub edge: Option<Token>,
 }
 
-/// Words starting at `x`, centred on `y`, cut short to `width`.
+/// Words starting at `x`, centred on `y`, cut short to `width`, `tracking`
+/// points between letters; `names` marks a row's name, whose cut the hover
+/// tells whole.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Words {
     pub x: f32,
@@ -69,6 +75,8 @@ pub struct Words {
     pub size: f32,
     pub ink: Token,
     pub width: f32,
+    pub tracking: f32,
+    pub names: bool,
 }
 
 /// One thing to paint.
@@ -87,7 +95,8 @@ pub struct Piece {
     pub at: Area,
     pub row: Option<CellRow>,
     pub press: bool,
-    pub hover: Option<Token>,
+    /// What a hover lays over its first mark.
+    pub hover: Option<Plate>,
     pub marks: Vec<Mark>,
 }
 
@@ -108,6 +117,19 @@ fn plate(at: Area, radius: f32, fill: Option<Token>, edge: Option<Token>) -> Mar
         at,
         radius,
         fill,
+        alpha: u8::MAX,
+        edge,
+    })
+}
+
+/// The hover fill over `at`, as a button's corners round it.
+fn hover(at: Area, ink: Token) -> Option<Plate> {
+    let (radius, fill, alpha, edge) = (RADIUS, Some(ink), u8::MAX, None);
+    Some(Plate {
+        at,
+        radius,
+        fill,
+        alpha,
         edge,
     })
 }
@@ -126,7 +148,25 @@ fn text(x: f32, y: f32, words: &str, size: f32, ink: Token, width: f32) -> Mark 
         size,
         ink,
         width,
+        tracking: 0.0,
+        names: false,
     })
+}
+
+/// `mark` spaced as the caption is: 0.08 em between letters.
+fn tracked(mut mark: Mark) -> Mark {
+    if let Mark::Text(words) = &mut mark {
+        words.tracking = 0.08 * words.size;
+    }
+    mark
+}
+
+/// `mark`, a row's name.
+fn named(mut mark: Mark) -> Mark {
+    if let Mark::Text(words) = &mut mark {
+        words.names = true;
+    }
+    mark
 }
 
 /// What measures words: their width at a size, in points.
@@ -171,7 +211,7 @@ fn entry(
     let width = at.x + at.w - status - left;
     let top = at.y + (at.h - 30.0) / 2.0;
     let mut marks = vec![
-        text(left, top + 7.5, &row.label, name_pt, ink.ink, width),
+        named(text(left, top + 7.5, &row.label, name_pt, ink.ink, width)),
         text(left, top + 23.5, &row.summary, SMALL_PT, ink.support, width),
     ];
     let face = area(
@@ -191,12 +231,15 @@ fn press(at: Area, row: &CellRow, plain: bool, ink: &MenuChrome, measure: Measur
     let quiet = row.kind == RowKind::Quiet;
     let enabled = row.unavailable.is_none() && !quiet;
     let (back, edge) = match (row.dot, plain || quiet) {
-        (true, _) => (Some(ink.current), Some(ink.accent)),
+        (true, _) => (Some(ink.accent), Some(ink.accent)),
         (false, true) => (None, None),
         (false, false) => (Some(ink.control), Some(ink.control_edge)),
     };
     let (y, mut x) = (at.y + at.h / 2.0, at.x + 8.0);
     let mut marks = vec![plate(at, RADIUS, back, edge)];
+    if let (true, Mark::Box(save)) = (row.dot, &mut marks[0]) {
+        save.alpha = ink.tint;
+    }
     if row.kind == RowKind::Switch {
         let track = area(x - 2.0, y - 7.0, 26.0, 14.0);
         let (knob, knob_ink) = match row.on {
@@ -232,7 +275,7 @@ fn press(at: Area, row: &CellRow, plain: bool, ink: &MenuChrome, measure: Measur
         at,
         row: Some(row.clone()),
         press: enabled,
-        hover: (enabled && !row.dot).then_some(ink.hover),
+        hover: hover(at, ink.hover).filter(|_| enabled && !row.dot),
         marks,
     }
 }
@@ -281,7 +324,7 @@ pub fn head(menu: &CellMenu, width: f32, dark: bool, measure: Measure<'_>) -> Ve
     let y = CHIP_MENU_HEADER_PT + CHIP_MENU_CAPTION_PT / 2.0;
     let count = menu.list.len().to_string();
     let caption = vec![
-        text(11.0, y, CAPTION, CAPTION_PT, ink.faint, width),
+        tracked(text(11.0, y, CAPTION, CAPTION_PT, ink.faint, width)),
         ending(measure, width - 10.0, y, &count, SMALL_PT, ink.faint),
     ];
     let at = area(0.0, CHIP_MENU_HEADER_PT, width, CHIP_MENU_CAPTION_PT);
@@ -300,6 +343,12 @@ pub fn filter(row: CellRow, width: f32, dark: bool) -> Piece {
         row: Some(row),
         ..Piece::plain(at, vec![field])
     }
+}
+
+/// Where the filter field's words stand, in a list `width` wide.
+#[must_use]
+pub fn filter_text(width: f32) -> Area {
+    area(16.0, 4.0, width - 32.0, 16.0)
 }
 
 /// A list row in a list `width` wide, inside its padding: the tab's own on the selection fill with its
@@ -327,7 +376,7 @@ pub fn row(row: &CellRow, width: f32, focused: bool, dark: bool) -> Piece {
         at,
         row: Some(row.clone()),
         press: true,
-        hover: (!row.on).then_some(ink.hover),
+        hover: hover(at, ink.hover).filter(|_| !row.on),
         marks,
     }
 }

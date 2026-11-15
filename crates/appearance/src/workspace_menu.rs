@@ -4,6 +4,10 @@
 //! here, once, and graded headless; the painter only reads it.
 
 use crate::Token;
+use crate::contrast::ACTIVE_TINT_ALPHA;
+
+/// Light's Save tint: 0.16 of the accent, as designer B's `--tint`.
+const LIGHT_TINT_ALPHA: u8 = 41;
 
 /// The token of each part of the menu.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -30,11 +34,19 @@ pub struct MenuChrome {
     pub accent: Token,
     /// The filter field.
     pub inset: Token,
+    /// Save's accent fill while it holds edits, out of 255.
+    pub tint: u8,
 }
 
 /// The menu as `dark` or Light paints it.
 #[must_use]
 pub const fn chrome(dark: bool) -> MenuChrome {
+    // Designer B's tint: the pressed accent's in Dark, lighter on Light's white.
+    let tint = if dark {
+        ACTIVE_TINT_ALPHA
+    } else {
+        LIGHT_TINT_ALPHA
+    };
     let (ground, block, block_edge) = if dark {
         (Token::Chrome, Token::PanelBlock, Token::PanelBlockEdge)
     } else {
@@ -58,5 +70,6 @@ pub const fn chrome(dark: bool) -> MenuChrome {
         faint: Token::TextFaint,
         accent: Token::Accent,
         inset: Token::Inset,
+        tint,
     }
 }
