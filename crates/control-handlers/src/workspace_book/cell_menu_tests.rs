@@ -538,3 +538,29 @@ fn a_row_without_a_summary_still_names_its_colour() {
         "{said}"
     );
 }
+
+/// The header's swatch opens the palette popover, names the call that does
+/// the same and says its colour on hover: a preset by name, a custom colour
+/// by its hex.
+#[test]
+fn the_header_swatch_opens_the_popover_and_says_its_colour() {
+    use quantick_session::colour_popover::ColourIntent;
+    use quantick_stores::workspaces::WorkspaceColour;
+    let mut book = desk(false);
+    book.set_colour("Pair", WorkspaceColour::preset(2).unwrap(), false)
+        .unwrap();
+    let menu = menu_of(&book, 1);
+    let swatch = &menu.swatch;
+    assert_eq!(swatch.scene_id(), "workspace_menu.colour");
+    assert_eq!(
+        swatch.command,
+        Some(WorkspaceCommand::Colour(ColourIntent::Toggle))
+    );
+    assert_eq!(swatch.capability, Some("workspace.colour.popover"));
+    assert_eq!(swatch.tip(false), Some("Sky \u{b7} change colour"));
+    assert_eq!(swatch.colour.as_ref().unwrap().rgb, [0x5D, 0xBD, 0xEB]);
+    book.set_colour("Pair", WorkspaceColour::Custom([0x3A, 0x7B, 0xD5]), false)
+        .unwrap();
+    let tip = menu_of(&book, 1).swatch.tip(false).map(str::to_owned);
+    assert_eq!(tip.as_deref(), Some("Custom #3A7BD5 \u{b7} change colour"));
+}
