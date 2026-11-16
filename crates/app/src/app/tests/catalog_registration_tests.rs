@@ -40,6 +40,12 @@ fn new_surface_uses_only_catalog_registration() {
             &mut crate::surfaces::ViewContext { ctx, ui: None },
         );
     });
-    assert_eq!(response.model_effects, vec![HostEffect::Second((8, 17))]);
-    assert!(response.undo_drawing);
+    assert_eq!(
+        response.model_effects,
+        vec![
+            HostEffect::Second((8, 17)),
+            HostEffect::Toast(quantick_ui_model::toast::Effects { undo_drawing: true })
+        ]
+    );
+    assert!(response.undo_drawing());
 }

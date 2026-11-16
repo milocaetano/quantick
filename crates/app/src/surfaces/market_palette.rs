@@ -36,10 +36,7 @@ pub(crate) type MarketPaletteSurface = super::Adapter<Model, View>;
 pub(crate) struct View;
 
 pub(crate) fn effects(market: Option<list::PaletteIntent>) -> SurfaceResponse {
-    SurfaceResponse {
-        market,
-        ..SurfaceResponse::default()
-    }
+    SurfaceResponse::effect_if(market.is_some(), super::HostEffect::MarketPalette(market))
 }
 
 fn either(flag: bool, yes: Color32, no: Color32) -> Color32 {
@@ -686,7 +683,7 @@ mod market_palette_surface_tests {
         settle(&mut surface, &ctx);
         frame(&mut surface, &ctx, key(Key::ArrowLeft));
         let edited = frame(&mut surface, &ctx, key(Key::Delete));
-        assert_eq!(edited.response.market, None);
+        assert_eq!(edited.response.market(), None);
         assert_eq!(
             surface.model_state.open.as_mut().expect("open").query(),
             "pep"
@@ -694,7 +691,7 @@ mod market_palette_surface_tests {
         frame(&mut surface, &ctx, key(Key::End));
         let removed = frame(&mut surface, &ctx, key(Key::Delete));
         assert_eq!(
-            removed.response.market,
+            removed.response.market(),
             Some(PaletteIntent::Remove {
                 feed_id: "binance".to_owned(),
                 symbol: "PEPEUSDT".to_owned(),
@@ -725,7 +722,7 @@ mod market_palette_surface_tests {
                 !reached(&down) && !reached(&up),
                 "the {target} saw the click"
             );
-            assert_eq!(up.response.market, None);
+            assert_eq!(up.response.market(), None);
             assert!(
                 !surface.model_state.is_open(),
                 "a click on the {target}'s scrim closes"
@@ -804,7 +801,7 @@ mod market_palette_surface_tests {
         settle(&mut surface, &ctx);
         let entered = frame(&mut surface, &ctx, key(Key::Enter));
         assert!(matches!(
-            entered.response.market,
+            entered.response.market(),
             Some(PaletteIntent::Open(_))
         ));
         assert!(painted(&entered.output, "BTCUSDT"), "the rows are painted");

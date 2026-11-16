@@ -584,15 +584,15 @@ impl QuantickApp {
                 );
             self.surfaces.strategy_popup.update(SettleArm(outcome));
         }
-        if let Some(request) = asks.market {
+        let late = quantick_ui_model::late_effects::LateEffects::fold(asks.model_effects);
+        if let Some(request) = late.market {
             apply_palette_intent(self, request);
         }
         if let Some(change) = asks.footprint {
             self.layer_wiring().apply_footprint_change(change);
         }
-        if asks.undo_drawing {
-            self.active_tab_mut().undo_drawing();
-        }
+        late.undo_drawing
+            .then(|| self.active_tab_mut().undo_drawing());
     }
 
     fn draw_status_line(&mut self, ctx: &egui::Context, scratch: &mut FrameScratch) {

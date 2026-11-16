@@ -647,7 +647,9 @@ fn paper_tail_unsupported_mixed_output_preserves_the_complete_response() {
             navigate_to_trade: Some((-20_000, -10_000)),
             ..Default::default()
         })),
-        undo_drawing: true,
+        model_effects: vec![crate::surfaces::HostEffect::Toast(
+            quantick_ui_model::toast::Effects { undo_drawing: true },
+        )],
         ..Default::default()
     };
     assert_eq!(retained, vec![expected]);
@@ -667,11 +669,13 @@ fn paper_tail_unsupported_mixed_output_preserves_the_complete_response() {
             navigate_to_trade: Some((-20_000, -10_000)),
             ..Default::default()
         })),
-        undo_drawing: true,
+        model_effects: vec![crate::surfaces::HostEffect::Toast(
+            quantick_ui_model::toast::Effects { undo_drawing: true },
+        )],
         ..Default::default()
     };
     let retained = app.settle_paper_response_test(response).unwrap_err();
-    assert!(retained.undo_drawing);
+    assert!(retained.undo_drawing());
     assert!(retained.paper_panel.as_ref().unwrap().open_replay_browser);
     assert_eq!(
         retained.paper_panel.as_ref().unwrap().navigate_to_trade,

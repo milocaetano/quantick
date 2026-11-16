@@ -227,7 +227,7 @@ pub(super) fn draw_surfaces(
             .editor
             .observe(target, Some(editor_pane.presentation.candles.context()));
     }
-    let mut retained = Vec::new();
+    let (mut retained, mut bar_switch) = (Vec::new(), None);
     for effect in std::mem::take(&mut asks.model_effects) {
         match effect {
             quantick_ui_model::HostEffect::ChartSettings(effects) => {
@@ -236,6 +236,7 @@ pub(super) fn draw_surfaces(
                     effects.persistence,
                 )
             }
+            quantick_ui_model::HostEffect::BarSwitch(asked) => bar_switch = bar_switch.or(asked),
             other => retained.push(other),
         }
     }
@@ -248,7 +249,7 @@ pub(super) fn draw_surfaces(
         std::mem::take(&mut asks.script_editor_actions),
         now,
     );
-    if let Some(request) = asks.bar_switch.take() {
+    if let Some(request) = bar_switch {
         apply_bar_switch(tabs, &mut registry.toast, request);
     }
     if let Some(request) = asks.alerts.as_mut()
