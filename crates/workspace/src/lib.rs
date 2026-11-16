@@ -9,6 +9,9 @@ pub mod context_opening;
 pub mod dock;
 pub mod drawing_identity;
 pub mod indicator_document;
+pub mod indicator_mirror;
+#[cfg(test)]
+mod indicator_mirror_tests;
 pub mod layout_commit;
 pub mod layout_document;
 pub mod layout_store;
