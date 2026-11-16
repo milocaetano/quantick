@@ -1,6 +1,6 @@
 //! One fake pane for the bubble families' handler tests: the window resolves
 //! it, its facts answer the tick rule, and its view records what it wore.
-use crate::bubble_preset::{BubbleLook, BubblePane, PaneBubblesPort, ResolvedPane, TickSpherePane};
+use crate::bubble_preset::{AssetSave, BubbleLook, BubblePane, PaneBubblesPort, TickSpherePane};
 use quantick_control::error::ControlError;
 use quantick_control_schema::bubble_preset::{ListInput, ListResult};
 use quantick_control_schema::orderflow::BubblesStateSnapshot;
@@ -14,6 +14,8 @@ pub(crate) struct FakePane {
 
 #[derive(Default)]
 pub(crate) struct FakeLook {
+    /// The whole look last worn, and whether it brought its spheres.
+    pub preset: Option<(String, bool)>,
     pub worn: Option<Option<String>>,
     pub tuning: TickTuning,
     /// The bound asset's key; `None` is a view bound to no asset.
@@ -42,12 +44,9 @@ impl FakePane {
 
 impl PaneBubblesPort for FakePane {
     type Theme = ();
-    fn pane_bubbles(
-        &mut self,
-        _tab_id: u64,
-        _pane_id: u64,
-    ) -> Result<ResolvedPane<'_, ()>, ControlError> {
-        Ok(((), self))
+    fn bubble_theme(&self) {}
+    fn pane_bubbles(&mut self, _: u64, _: u64) -> Result<&mut dyn BubblePane<()>, ControlError> {
+        Ok(self)
     }
 }
 
@@ -56,41 +55,43 @@ impl BubblePane<()> for FakePane {
         self.facts
     }
     fn bubble_look(&mut self) -> Option<&mut dyn BubbleLook<()>> {
-        self.view
-            .as_mut()
-            .map(|view| view as &mut dyn BubbleLook<()>)
+        Some(self.view.as_mut()?)
+    }
+    fn asset_save(&mut self) -> Option<&mut dyn AssetSave> {
+        Some(self.view.as_mut()?)
     }
 }
 
 impl BubbleLook<()> for FakeLook {
-    fn apply_named_preset(&mut self, _: &str, _: bool, _: &()) -> Result<bool, String> {
-        unreachable!("no fake test wears a whole look")
+    fn wear_preset(&mut self, name: &str, spheres: bool, _: &()) -> Result<bool, String> {
+        self.preset = Some((name.to_owned(), spheres));
+        Ok(true)
     }
-    fn reset_bubble_look(&mut self) -> bool {
-        unreachable!("no fake test resets the look")
+    fn restore_factory_look(&mut self) -> bool {
+        self.preset.take().is_some()
     }
-    fn bubble_presets_page(&self, _: &ListInput) -> Result<ListResult, String> {
+    fn presets_page(&self, _: &ListInput) -> Result<ListResult, String> {
         unreachable!("no fake test lists presets")
     }
-    fn wear_tick_spheres(
-        &mut self,
-        preset: Option<&str>,
-        tuning: TickTuning,
-    ) -> Result<bool, String> {
+    fn wear_tick(&mut self, preset: Option<&str>, tuning: TickTuning) -> Result<bool, String> {
         self.worn = Some(preset.map(str::to_owned));
         self.tuning = tuning;
         Ok(true)
     }
-    fn bubbles_snapshot(&self) -> BubblesStateSnapshot {
-        unreachable!("no fake test reads the bubbles snapshot")
+    fn look_snapshot(&self) -> BubblesStateSnapshot {
+        let zero = rust_decimal::Decimal::ZERO;
+        BubblesStateSnapshot::from_config(&self.config, zero, None, &[], None, Vec::new())
     }
-    fn cached_config(&self) -> &HeatmapConfig {
+    fn look_config(&self) -> &HeatmapConfig {
         &self.config
     }
+}
+
+impl AssetSave for FakeLook {
     fn asset_key(&self) -> Option<&str> {
         self.asset.as_deref()
     }
-    fn set_save_asset_changes(&mut self, on: bool) -> Option<SaveSwitch> {
+    fn switch_asset_save(&mut self, on: bool) -> Option<SaveSwitch> {
         self.asset.as_ref()?;
         let moved = self.save_changes != on;
         self.save_changes = on;

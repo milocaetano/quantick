@@ -1,6 +1,6 @@
 //! "Save changes for this asset" over the addressed pane's bubble look: the
 //! window resolves the pane, the look's asset binding answers the switch.
-use crate::bubble_preset::{PaneBubblesPort, invalid};
+use crate::bubble_preset::PaneBubblesPort;
 use crate::dock::ActionDock;
 use quantick_control::{error::ControlError, registry::RegistryError, wire::ActorContext};
 use quantick_control_schema::bubble_save::{SaveChangesInput, descriptor};
@@ -19,17 +19,21 @@ fn set<H: PaneBubblesPort + ?Sized, A>(
     value: &Value,
 ) -> Result<Value, ControlError> {
     let input: SaveChangesInput = serde_json::from_value(value.clone()).map_err(invalid)?;
-    let (_, pane) = host.pane_bubbles(input.tab_id.get(), input.pane_id.get())?;
+    let pane = host.pane_bubbles(input.tab_id.get(), input.pane_id.get())?;
     let view = pane
-        .bubble_look()
+        .asset_save()
         .ok_or_else(|| invalid("the requested pane has no order-flow view"))?;
     let unbound =
         || invalid("the requested pane's bubbles belong to no asset; address the flow pane");
     let asset = view.asset_key().ok_or_else(unbound)?.to_owned();
     let switch = view
-        .set_save_asset_changes(input.save_changes)
+        .switch_asset_save(input.save_changes)
         .ok_or_else(unbound)?;
     serde_json::to_value(input.result(asset, switch)).map_err(invalid)
+}
+
+fn invalid(error: impl std::fmt::Display) -> ControlError {
+    ControlError::invalid_request(error.to_string())
 }
 
 #[cfg(test)]

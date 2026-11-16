@@ -1,27 +1,28 @@
 //! Named whole looks and tick spheres over the addressed pane's own bubbles:
 //! the window resolves the pane, the pane and its order-flow view serve it.
 use crate::dock::ActionDock;
-use quantick_control::{error::ControlError, registry::RegistryError, wire::ActorContext};
-use quantick_control_schema::bubble_preset::{ApplyInput, ListInput, ListResult, ResetInput};
+use quantick_control::{error::ControlError, registry::RegistryError, wire::*};
+use quantick_control_schema::bubble_preset::{
+    ApplyInput, ListInput, ListResult, ResetInput, applied,
+};
 use quantick_control_schema::orderflow::BubblesStateSnapshot;
 use quantick_orderflow::{HeatmapConfig, TickTuning};
 use quantick_stores::bubble_asset_store::SaveSwitch;
 use serde_json::Value;
 
-/// The window's one bubble job: resolve the addressed pane. `Theme` is the
-/// window's order-flow appearance, the one a whole look is dressed in.
+/// The window's bubble job: resolve the addressed pane, and lend the theme a
+/// whole look is dressed in. Everything else is the pane's.
 pub trait PaneBubblesPort {
+    /// The window's order-flow appearance.
     type Theme;
-    /// The pane `tab_id` and `pane_id` name, and the theme of the window.
+    fn bubble_theme(&self) -> Self::Theme;
+    /// The pane `tab_id` and `pane_id` name.
     fn pane_bubbles(
         &mut self,
         tab_id: u64,
         pane_id: u64,
-    ) -> Result<ResolvedPane<'_, Self::Theme>, ControlError>;
+    ) -> Result<&mut dyn BubblePane<Self::Theme>, ControlError>;
 }
-
-/// The window's theme and the pane it resolved.
-pub type ResolvedPane<'a, T> = (T, &'a mut dyn BubblePane<T>);
 
 /// A chart pane, as its bubble calls read it.
 pub trait BubblePane<T> {
@@ -29,29 +30,33 @@ pub trait BubblePane<T> {
     fn tick_sphere_pane(&self) -> TickSpherePane;
     /// The pane's order-flow view, when it has one.
     fn bubble_look(&mut self) -> Option<&mut dyn BubbleLook<T>>;
+    /// The same view's asset save switch, when it has one.
+    fn asset_save(&mut self) -> Option<&mut dyn AssetSave>;
 }
 
-/// An order-flow view's bubble look: what the calls change and read back.
+/// An order-flow view's bubble look: what the look calls change and read.
+/// Its names differ from the view's own methods, so an implementation that
+/// forwards to one cannot fall back on itself.
 pub trait BubbleLook<T> {
     /// Wear the whole preset `name`; its tick spheres only when `spheres`,
     /// the pane's [`TickSpherePane::may_choose`].
-    fn apply_named_preset(&mut self, name: &str, spheres: bool, theme: &T) -> Result<bool, String>;
+    fn wear_preset(&mut self, name: &str, spheres: bool, theme: &T) -> Result<bool, String>;
     /// Restore the factory look, as the panel's reset button does: the look
     /// a fresh open shows, its tick spheres included.
-    fn reset_bubble_look(&mut self) -> bool;
-    fn bubble_presets_page(&self, input: &ListInput) -> Result<ListResult, String>;
+    fn restore_factory_look(&mut self) -> bool;
+    fn presets_page(&self, input: &ListInput) -> Result<ListResult, String>;
     /// Wear `preset`'s tick spheres with `tuning` applied, or none.
-    fn wear_tick_spheres(
-        &mut self,
-        preset: Option<&str>,
-        tuning: TickTuning,
-    ) -> Result<bool, String>;
-    fn bubbles_snapshot(&self) -> BubblesStateSnapshot;
-    fn cached_config(&self) -> &HeatmapConfig;
-    /// The key of the asset the look belongs to, once a tab bound one.
+    fn wear_tick(&mut self, preset: Option<&str>, tuning: TickTuning) -> Result<bool, String>;
+    fn look_snapshot(&self) -> BubblesStateSnapshot;
+    fn look_config(&self) -> &HeatmapConfig;
+}
+
+/// An order-flow view's asset binding, as the save switch reads it.
+pub trait AssetSave {
+    /// The key of the asset the view's look belongs to, once a tab bound one.
     fn asset_key(&self) -> Option<&str>;
     /// Switch "Save changes for this asset"; `None` while bound to no asset.
-    fn set_save_asset_changes(&mut self, on: bool) -> Option<SaveSwitch>;
+    fn switch_asset_save(&mut self, on: bool) -> Option<SaveSwitch>;
 }
 
 const NO_VIEW: &str = "The pane has no order-flow view";
@@ -80,14 +85,15 @@ fn apply<H: PaneBubblesPort + ?Sized, A>(
     input: &Value,
 ) -> Result<Value, ControlError> {
     let input: ApplyInput = serde_json::from_value(input.clone()).map_err(invalid)?;
-    let (theme, pane) = host.pane_bubbles(input.tab_id.get(), input.pane_id.get())?;
+    let theme = host.bubble_theme();
+    let pane = host.pane_bubbles(input.tab_id.get(), input.pane_id.get())?;
     // A whole look brings its spheres by the rule tick.set asks.
     let spheres = pane.tick_sphere_pane().may_choose();
     let owner = pane.bubble_look().ok_or_else(|| invalid(NO_VIEW))?;
     let changed = owner
-        .apply_named_preset(&input.preset, spheres, &theme)
+        .wear_preset(&input.preset, spheres, &theme)
         .map_err(invalid)?;
-    applied(input.tab_id, input.pane_id, changed, owner)
+    answer(input.tab_id, input.pane_id, changed, owner)
 }
 
 fn reset<H: PaneBubblesPort + ?Sized, A>(
@@ -97,10 +103,10 @@ fn reset<H: PaneBubblesPort + ?Sized, A>(
     input: &Value,
 ) -> Result<Value, ControlError> {
     let input: ResetInput = serde_json::from_value(input.clone()).map_err(invalid)?;
-    let (_, pane) = host.pane_bubbles(input.tab_id.get(), input.pane_id.get())?;
+    let pane = host.pane_bubbles(input.tab_id.get(), input.pane_id.get())?;
     let owner = pane.bubble_look().ok_or_else(|| invalid(NO_VIEW))?;
-    let changed = owner.reset_bubble_look();
-    applied(input.tab_id, input.pane_id, changed, owner)
+    let changed = owner.restore_factory_look();
+    answer(input.tab_id, input.pane_id, changed, owner)
 }
 
 fn list<H: PaneBubblesPort + ?Sized, A>(
@@ -110,28 +116,29 @@ fn list<H: PaneBubblesPort + ?Sized, A>(
     input: &Value,
 ) -> Result<Value, ControlError> {
     let input: ListInput = serde_json::from_value(input.clone()).map_err(invalid)?;
-    let (_, pane) = host.pane_bubbles(input.tab_id.get(), input.pane_id.get())?;
+    let pane = host.pane_bubbles(input.tab_id.get(), input.pane_id.get())?;
     let owner = pane.bubble_look().ok_or_else(|| invalid(NO_VIEW))?;
-    serde_json::to_value(owner.bubble_presets_page(&input).map_err(invalid)?).map_err(invalid)
+    serde_json::to_value(owner.presets_page(&input).map_err(invalid)?).map_err(invalid)
 }
 
 /// What a whole look answers: whether it moved, and the look it wears now.
-fn applied<T>(
-    tab_id: quantick_control::wire::WireU64,
-    pane_id: quantick_control::wire::WireU64,
+fn answer<T>(
+    tab_id: WireU64,
+    pane_id: WireU64,
     changed: bool,
     owner: &dyn BubbleLook<T>,
 ) -> Result<Value, ControlError> {
-    serde_json::to_value(quantick_control_schema::bubble_preset::applied(
+    let snapshot = owner.look_snapshot();
+    serde_json::to_value(applied(
         (tab_id, pane_id),
         changed,
-        owner.bubbles_snapshot(),
-        owner.cached_config(),
+        snapshot,
+        owner.look_config(),
     ))
     .map_err(invalid)
 }
 
-pub(crate) fn invalid(error: impl std::fmt::Display) -> ControlError {
+fn invalid(error: impl std::fmt::Display) -> ControlError {
     ControlError::invalid_request(error.to_string())
 }
 
@@ -265,11 +272,11 @@ fn tick<H: PaneBubblesPort + ?Sized, A>(
         serde_json::from_value(input.clone()).map_err(invalid)?;
     let preset = input.preset.as_deref();
     let tuning = tick_tuning(&input)?;
-    let (_, pane) = host.pane_bubbles(input.tab_id.get(), input.pane_id.get())?;
+    let pane = host.pane_bubbles(input.tab_id.get(), input.pane_id.get())?;
     pane.tick_sphere_pane().admit(preset)?;
     let owner = pane.bubble_look().ok_or_else(|| invalid(NO_VIEW))?;
-    let changed = owner.wear_tick_spheres(preset, tuning).map_err(invalid)?;
-    let worn = owner.cached_config().volume_dots.tick_bubbles;
+    let changed = owner.wear_tick(preset, tuning).map_err(invalid)?;
+    let worn = owner.look_config().volume_dots.tick_bubbles;
     serde_json::to_value(quantick_control_schema::tick_bubbles::TickBubblesResult {
         tab_id: input.tab_id,
         pane_id: input.pane_id,
@@ -381,6 +388,34 @@ mod tick_rule_tests {
     }
 
     use crate::bubble_fake::FakePane;
+
+    /// A whole look brings its tick spheres by the rule tick.set asks.
+    #[test]
+    fn a_whole_look_brings_spheres_only_where_the_rule_admits_them() {
+        let actor = crate::test_support::FakeWindow::assistant();
+        let input = json!({"tab_id": "1", "pane_id": "2", "preset": "mini index"});
+        for (tick_chart, asset_mode) in [(false, true), (true, false), (true, true)] {
+            let mut pane = FakePane::new(TickSpherePane::new(tick_chart, asset_mode));
+            let answer = apply(&mut pane, &mut (), &actor, &input).unwrap();
+            assert_eq!(answer["changed"], true);
+            let worn = Some(("mini index".to_owned(), tick_chart && asset_mode));
+            assert_eq!(pane.look().preset, worn);
+            let reset = json!({"tab_id": "1", "pane_id": "2"});
+            assert_eq!(reset_call(&mut pane, &reset)["changed"], true);
+            assert_eq!(pane.look().preset, None);
+        }
+        let mut no_view = FakePane {
+            view: None,
+            ..FakePane::new(TickSpherePane::new(true, true))
+        };
+        let error = apply(&mut no_view, &mut (), &actor, &input).unwrap_err();
+        assert!(format!("{error:?}").contains(NO_VIEW), "{error:?}");
+    }
+
+    fn reset_call(pane: &mut FakePane, input: &Value) -> Value {
+        let actor = crate::test_support::FakeWindow::assistant();
+        reset(pane, &mut (), &actor, input).unwrap()
+    }
 
     #[test]
     fn tick_set_asks_the_rule_before_the_pane_wears_anything() {
