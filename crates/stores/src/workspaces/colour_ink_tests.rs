@@ -66,3 +66,27 @@ fn a_custom_colour_below_the_floor_falls_back_to_the_tabs_ink() {
     assert_eq!(symbol_ink(pale, &dark), Some([0xEE; 3]));
     assert_eq!(symbol_ink(pale, &light), None);
 }
+
+/// Every workspace row, in menu B and in Manage, is tinted toward its own
+/// colour: at rest, hovered and current (about twice the rest). The name and
+/// the summary read 4.5:1 on each, and the current row stands apart from a
+/// row of the same colour at rest.
+#[test]
+fn every_row_tint_keeps_its_words_at_four_and_a_half_to_one() {
+    use quantick_appearance::workspace_menu::{RowTint, row_fill};
+    for dark in [true, false] {
+        let theme = ResolvedTheme::bundled(dark);
+        let inks = [Token::TextPrimary, Token::TextSupport].map(|token| theme.color(token));
+        for colour in presets() {
+            let shade = |tint| row_fill(colour.rgb(dark), dark, tint);
+            for tint in [RowTint::Rest, RowTint::Hover, RowTint::Current] {
+                for ink in inks {
+                    let ratio = contrast_ratio(ink, rgb(shade(tint)));
+                    assert!(ratio >= 4.5, "{} dark {dark} {tint:?}: {ratio}", colour.name());
+                }
+            }
+            let apart = contrast_ratio(rgb(shade(RowTint::Current)), rgb(shade(RowTint::Rest)));
+            assert!(apart > 1.05, "{} dark {dark}: current reads apart ({apart})", colour.name());
+        }
+    }
+}

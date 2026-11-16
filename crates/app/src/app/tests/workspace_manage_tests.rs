@@ -104,6 +104,19 @@ fn a_click_outside_a_row_s_palette_closes_only_it() {
     assert_eq!(dialog.palette_of(), None, "the palette closed");
 }
 
+/// After a swatch click the field has lost the keyboard; Enter still saves.
+#[test]
+fn enter_after_a_swatch_click_saves() {
+    let (mut app, ctx, first, _layouts) = scalp("create-click-enter");
+    assert!(app.chrome.window_menu.tab_workspace.stage(first, "save_as"));
+    let lavender = drawn(&mut app, &ctx, "name_dialog.colour.lavender");
+    click_sized(&mut app, &ctx, FULL_HD, lavender.center());
+    run_sized_frame(&mut app, &ctx, FULL_HD, vec![key_press(egui::Key::Enter)]);
+    run_frame_at(&mut app, &ctx, FULL_HD);
+    let lavender = quantick_stores::workspaces::WorkspaceColour::preset(7);
+    assert_eq!(app.runtime.workspace.book.book().colour("Scalp 2"), lavender);
+}
+
 /// Enter in the inline field reaches `workspace.rename`.
 #[test]
 fn enter_in_the_name_field_reaches_the_rename() {

@@ -2196,6 +2196,25 @@ fn enter_in_the_filter_switches_to_the_first_match() {
     assert_eq!(app.runtime.workspace.book.tab_row(first).0, "Desk 05");
 }
 
+/// Typed into the filter and Enter in one frame: the keystroke narrows the
+/// list before Enter reads it.
+#[test]
+fn typing_then_enter_in_one_frame_switches_to_the_match() {
+    let layouts = crate::scratch::ScratchFile::new("workspace-menu-b-one-frame", "layouts.toml");
+    let (mut app, first, _) = two_tabs(&layouts);
+    app.runtime.tabs.select(0);
+    fill_book(&mut app, first, 14);
+    let ctx = egui::Context::default();
+    open_cell_menu(&mut app, &ctx);
+    let both = vec![
+        egui::Event::Text("desk 05".to_owned()),
+        key_press(egui::Key::Enter),
+    ];
+    run_frame_sized(&mut app, &ctx, FULL_HD, both, egui::Modifiers::NONE);
+    run_frame_at(&mut app, &ctx, FULL_HD);
+    assert_eq!(app.runtime.workspace.book.tab_row(first).0, "Desk 05");
+}
+
 /// The shapes `output` paints in `colour` inside `within`, one surface's
 /// rectangle: rect fills (also while a menu fades in, its opacity aside),
 /// rect edges and text.
