@@ -67,6 +67,11 @@ pub struct SeamDrag {
     /// whole: a fold of a chart within it. Every step leaves them folded,
     /// so a second fold never reopens the first.
     inner: Vec<PaneSlot>,
+    /// The seam the hand pressed, which may hand the drag to `seam`: a rail
+    /// between two seams goes to the one on the side of the first move.
+    grabbed: SeamAddress,
+    /// Whether the first move has picked the seam.
+    picked: bool,
 }
 
 /// What a seam fold took from its open partner: the folded node's first
@@ -132,20 +137,76 @@ impl CanvasState {
             open: kept.unwrap_or([shares[at[0]], shares[at[1]]]),
             shares,
             inner: inner(&first).chain(inner(&second)).collect(),
+            grabbed: seam.clone(),
+            picked: false,
         })
     }
 
+    /// The seams either side of the rail `seam` borders, before it and
+    /// after it, when that rail has a partner on both sides: a press there
+    /// leaves the first move to pick which seam it drags. A strip beside the
+    /// rail is skipped as the seams skip it.
+    fn rail_seams(&self, seam: &SeamAddress) -> Option<[SeamAddress; 2]> {
+        let Some(PaneTree::Split { children, .. }) = node_at(self.tree(), &seam.path) else {
+            return None;
+        };
+        let (first, second) = partners(self, children, seam.index)?;
+        let rail = [first, second]
+            .into_iter()
+            .find(|at| railed(self, &children[*at]))?;
+        let paired = |index: usize| partners(self, children, index);
+        let before =
+            (rail.checked_sub(1)).filter(|at| paired(*at).is_some_and(|(_, to)| to == rail));
+        let after = paired(rail).filter(|(from, _)| *from == rail).map(|_| rail);
+        let at = |index| SeamAddress {
+            path: seam.path.clone(),
+            index,
+        };
+        Some([at(before?), at(after?)])
+    }
+
     /// The hand on `seam`, one frame: [`Self::step_seam_drag`] while it is
-    /// held, and the drag dropped when it lets go. Answers whether anything
-    /// moved; a refused step moves nothing.
+    /// held, and the drag dropped when it lets go. A press on a rail between
+    /// two seams drags the seam on the side of the first move, backward the
+    /// one before the rail and forward the one after, so the rail opens
+    /// either way. Answers whether anything moved; a refused step moves
+    /// nothing.
     pub fn seam_hand(
         &mut self,
         drag: &mut Option<SeamDrag>,
         (seam, hand): (&SeamAddress, Hand),
         area: CanvasRect,
     ) -> bool {
-        let step = (seam, hand.delta, hand.pressed);
-        let moved = hand.held && self.step_seam_drag(drag, step, area).unwrap_or(false);
+        if !hand.held {
+            drag.take_if(|_| hand.released);
+            return false;
+        }
+        if hand.pressed || drag.as_ref().is_none_or(|held| held.grabbed != *seam) {
+            *drag = self.begin_seam_drag(seam, area).ok();
+        }
+        let delta = hand.delta;
+        if let Some(held) = drag
+            .as_mut()
+            .filter(|held| !held.picked && delta.abs() > f32::EPSILON)
+        {
+            held.picked = true;
+            let ways = self.rail_seams(seam);
+            let way = ways.map(|[before, after]| if delta < 0.0 { before } else { after });
+            if let Some(way) = way.filter(|way| *way != held.seam)
+                && let Ok(taken) = self.begin_seam_drag(&way, area)
+            {
+                *held = SeamDrag {
+                    grabbed: seam.clone(),
+                    picked: true,
+                    ..taken
+                };
+            }
+        }
+        let at = drag.as_ref().map(|held| held.seam.clone());
+        let moved = at.is_some_and(|at| {
+            let step = self.step_seam_drag(drag, (&at, delta, false), area);
+            step.unwrap_or(false)
+        });
         drag.take_if(|_| hand.released);
         moved
     }
