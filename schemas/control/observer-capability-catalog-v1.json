@@ -9075,6 +9075,169 @@
         "status": "available"
       },
       "confirmation_class": "none",
+      "description": "Reads the active tab's layout picker as the toolbar's layout button draws it: the workspace, its save state (Saved: <layout> or Not saved · Ctrl+S), and every cell of the 4 x 4 grid with its preset id, display name, hint, group, row, column and whether the canvas draws it or the workspace saved it. While a pick confirms it also names Changed to <layout> and the preset Ctrl+Z restores. Pick a cell with canvas.layout.pick.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "observe",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8192
+      },
+      "id": "canvas.layout.picker",
+      "idempotency": "forbidden",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "title": "LayoutPickerInput",
+        "type": "object"
+      },
+      "module": "canvas",
+      "output_schema": {
+        "$defs": {
+          "LayoutGroupDto": {
+            "description": "A column pair of the layout picker's grid.",
+            "enum": [
+              "with_flow",
+              "timeframes"
+            ],
+            "type": "string"
+          },
+          "LayoutPickerCell": {
+            "description": "One cell of the layout picker.",
+            "properties": {
+              "column": {
+                "format": "uint32",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "current": {
+                "description": "The canvas draws it.",
+                "type": "boolean"
+              },
+              "group": {
+                "$ref": "#/$defs/LayoutGroupDto"
+              },
+              "hint": {
+                "description": "The cell's tooltip.",
+                "type": "string"
+              },
+              "name": {
+                "description": "The one display name: the cell's, the header's and the scene's.",
+                "type": "string"
+              },
+              "preset_id": {
+                "description": "What `canvas.layout.pick` takes.",
+                "type": "string"
+              },
+              "row": {
+                "description": "Its place on the 4 x 4 grid, from the top left.",
+                "format": "uint32",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "saved": {
+                "description": "The workspace saved it.",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "preset_id",
+              "name",
+              "hint",
+              "group",
+              "row",
+              "column",
+              "current",
+              "saved"
+            ],
+            "type": "object"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "The layout picker of the active tab, as its header and cells say it.",
+        "properties": {
+          "cells": {
+            "description": "Every cell, in catalogue order.",
+            "items": {
+              "$ref": "#/$defs/LayoutPickerCell"
+            },
+            "type": "array"
+          },
+          "changed": {
+            "description": "While a pick confirms: `Changed to <layout>`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "current_id": {
+            "description": "The preset the canvas draws; absent for a custom arrangement.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "open": {
+            "description": "The picker hangs open below the toolbar's layout button.",
+            "type": "boolean"
+          },
+          "saved_id": {
+            "description": "The preset the workspace saved.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "description": "The header's save state: `Saved: <layout>` or `Not saved · Ctrl+S`.",
+            "type": "string"
+          },
+          "undo_id": {
+            "description": "While a pick confirms: the preset Ctrl+Z or the header's `was` words\nrestore, which `canvas.layout.pick` takes too.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "unsaved": {
+            "description": "The layout differs from the workspace's save.",
+            "type": "boolean"
+          },
+          "workspace": {
+            "description": "The tab's workspace, whose layout this is.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "open",
+          "workspace",
+          "status",
+          "unsaved",
+          "cells"
+        ],
+        "title": "LayoutPickerResult",
+        "type": "object"
+      },
+      "persistence": "none",
+      "preconditions": [],
+      "read_only": true,
+      "required_permissions": [
+        "observe",
+        "observe.workspace"
+      ],
+      "reversible": false,
+      "revision_policy": "forbidden",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "title": "Read the layout picker",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
       "description": "Inserts a floating chart into the layout, as a drop does: at a canvas edge (edge), beside a docked chart (beside with side: it joins that chart's split along that side for a fair share, or that chart splits in half), or in a docked chart's place (swap_with: that chart floats where this one stood over the canvas; a chart in its own window cannot swap). A docked chart named in slot moves there instead, and swapping two docked charts trades their places. Name exactly one. The result names the preset the layout now matches, if any.",
       "destructive": false,
       "dry_run_supported": false,

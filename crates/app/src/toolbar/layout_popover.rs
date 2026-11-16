@@ -1,183 +1,152 @@
-//! Layout popover A: the catalogue the capsule's miniature opens, side by
-//! side — WITH FLOW on the left, TIMEFRAMES on the right — filled from
-//! [`LAYOUT_PRESETS`] and nothing else, so a preset added to the registry
-//! appears here without this file changing.
-//!
-//! The current layout wears the accent ring, the workspace's saved one a
-//! "saved" tag, and the footer says the layout changed only while the two
-//! differ. A pick goes back as [`ToolbarAction::SetLayout`], the one path.
+//! The layout picker's pixels and presses. `quantick_ui_model::layout_picker`
+//! decides its size, every place, word and colour; this hangs a frame of
+//! exactly that size where `place_under` says, paints the marks, and reports
+//! what the pointer and keys did as a [`Seen`].
 
-use eframe::egui;
+use eframe::egui::{self, Color32, Modifiers, Pos2, Rect, Sense, vec2};
+use quantick_ui_model::layout_picker::{self as model, Mark, Picker, Seen, Target};
+use quantick_workspace::canvas::LayoutPreset;
 
-use super::ToolbarAction;
-use crate::canvas_layout::{LayoutPreset, PresetGroup};
-use crate::theme;
-use crate::widgets::CORNER_RADIUS;
-use quantick_appearance::Token;
-use quantick_workspace::canvas::LayoutMarks;
+/// The picker's area; its "keys" child holds the focus that keeps the
+/// arrows, Enter, Esc and Ctrl+Z from the chart while it is open.
+const ID: &str = "layout_popover";
+/// The app's bold face, when the fonts are installed.
+const BOLD: &str = "note-sans-bold";
 
-/// One cell: the thumbnail and a name of up to two lines under it.
-const CELL: egui::Vec2 = egui::vec2(70.0, 70.0);
-/// The thumbnail inside a cell.
-const THUMBNAIL: egui::Vec2 = egui::vec2(58.0, 34.0);
-/// Gap between cells and around the column divider.
-const GAP_PX: f32 = 10.0;
-/// Padding inside the popover.
-const PAD_PX: f32 = 12.0;
-/// A cell's name.
-const LABEL_PX: f32 = 11.0;
-/// The ring around the current layout.
-const RING_PX: f32 = 1.5;
-/// How far below the capsule the popover hangs.
-const DROP_PX: f32 = 4.0;
-
-/// What the popover shows.
-pub struct PopoverModel<'a> {
-    /// The workspace whose layout this is.
-    pub workspace: &'a str,
-    /// The current and saved presets, and whether the layout differs.
-    pub marks: LayoutMarks,
+/// What the frame drew, for the observer scene: the cells, the header and
+/// the "was" words, each with its rect.
+#[derive(Default)]
+pub struct Drawn {
+    pub cells: Vec<(&'static LayoutPreset, Rect)>,
+    pub header: Option<(Rect, String)>,
+    pub undo: Option<(Rect, String)>,
 }
 
-/// One drawn cell, for the observer scene.
-pub type DrawnCell = (&'static LayoutPreset, egui::Rect);
+fn rgba([r, g, b, a]: [u8; 4]) -> Color32 {
+    Color32::from_rgba_premultiplied(r, g, b, a)
+}
 
-/// Draw the popover under `anchor`'s right edge. Answers the cells drawn and
-/// whether a press landed outside it (which closes it).
+/// The model's `at` from `origin`, in window points.
+fn place(origin: Pos2, at: model::Rect) -> Rect {
+    Rect::from_min_size(origin + vec2(at.x, at.y), vec2(at.w, at.h))
+}
+
+/// Hang `picker` below `anchor`, its button, and paint it; answers what was
+/// drawn and what this frame saw over it, `current` being the canvas's layout.
 pub fn draw(
     ctx: &egui::Context,
-    anchor: egui::Rect,
-    model: &PopoverModel<'_>,
-    actions: &mut Vec<ToolbarAction>,
-) -> (Vec<DrawnCell>, bool) {
-    let palette = theme::get(ctx);
-    let mut cells = Vec::new();
-    let area = egui::Area::new(egui::Id::new("layout_popover"))
-        .order(egui::Order::Foreground)
-        .pivot(egui::Align2::RIGHT_TOP)
-        .fixed_pos(anchor.right_bottom() + egui::vec2(0.0, DROP_PX))
-        .constrain(true)
-        .show(ctx, |ui| {
-            egui::Frame::menu(ui.style())
-                .inner_margin(PAD_PX)
-                .show(ui, |ui| {
-                    ui.spacing_mut().item_spacing = egui::vec2(GAP_PX, GAP_PX / 2.0);
-                    let caption = |ui: &mut egui::Ui, text: String| {
-                        ui.label(
-                            egui::RichText::new(text)
-                                .size(LABEL_PX)
-                                .color(palette.text_muted()),
-                        );
-                    };
-                    caption(ui, format!("LAYOUT OF {}", model.workspace.to_uppercase()));
-                    ui.horizontal_top(|ui| {
-                        for (group, title) in PresetGroup::COLUMNS {
-                            if group == PresetGroup::Timeframes {
-                                ui.separator();
-                            }
-                            ui.vertical(|ui| {
-                                caption(ui, title.to_owned());
-                                for row in group.presets().chunks(2) {
-                                    ui.horizontal(|ui| {
-                                        for preset in row {
-                                            let rect = cell(ui, preset, model);
-                                            if rect.1.clicked() {
-                                                actions.push(ToolbarAction::SetLayout(preset));
-                                            }
-                                            cells.push((*preset, rect.0));
-                                        }
-                                    });
-                                }
-                            });
-                        }
-                    });
-                    if model.marks.layout_unsaved {
-                        ui.separator();
-                        ui.horizontal(|ui| {
-                            caption(
-                                ui,
-                                format!(
-                                    "Changed in \u{201c}{}\u{201d} \u{b7} not saved",
-                                    model.workspace
-                                ),
-                            );
-                            ui.with_layout(
-                                egui::Layout::right_to_left(egui::Align::Center),
-                                |ui| {
-                                    let keys = egui::RichText::new("Ctrl+S")
-                                        .monospace()
-                                        .color(palette.text_muted());
-                                    ui.label(keys);
-                                },
-                            );
-                        });
-                    }
-                });
+    anchor: Rect,
+    picker: &Picker,
+    current: Option<&'static LayoutPreset>,
+) -> (Drawn, Seen) {
+    let ours = |r: Rect| model::Rect::new(r.left(), r.top(), r.width(), r.height());
+    let spot = model::place_under(ours(anchor), ours(ctx.screen_rect()));
+    let frame = egui::Frame::popup(&ctx.style()).inner_margin(model::BORDER_PT);
+    let frame = frame.fill(rgba(picker.ground)).rounding(model::RADIUS_PT);
+    let frame = frame.stroke((model::BORDER_PT, rgba(picker.edge)));
+    let (mut drawn, mut over, at) = (Drawn::default(), None, egui::pos2(spot.x, spot.y));
+    let (id, scroll) = (egui::Id::new(ID), egui::ScrollArea::vertical());
+    let area = egui::Area::new(id).order(egui::Order::Foreground);
+    let area = area.constrain(false).fixed_pos(at).show(ctx, |ui| {
+        frame.show(ui, |ui| {
+            let scroll = scroll.max_height(spot.height - 2.0 * model::BORDER_PT);
+            scroll.show(ui, |ui| {
+                let size = vec2(picker.size[0], picker.size[1]);
+                let (whole, _) = ui.allocate_exact_size(size, Sense::hover());
+                ui.interact(whole, id.with("keys"), Sense::focusable_noninteractive());
+                let (origin, seen) = (whole.min, ui.clip_rect());
+                paint(ui.painter(), origin, &picker.marks);
+                let mut hit = |at: model::Rect, key: &str, target: Target| {
+                    let response =
+                        ui.interact(place(origin, at), ui.id().with(key), Sense::click());
+                    over = over.or(response.contains_pointer().then_some(target));
+                    response
+                };
+                for cell in &picker.cells {
+                    paint(ui.painter(), origin, &cell.marks);
+                    let tip = cell.preset.hint;
+                    hit(cell.at, cell.preset.id, Target::Cell(cell.preset)).on_hover_text(tip);
+                    let shown = place(origin, cell.at).intersect(seen);
+                    drawn.cells.push((cell.preset, shown));
+                }
+                let header = &picker.header;
+                let label = header.label();
+                drawn.header = Some((place(origin, header.at).intersect(seen), label));
+                if let Some((at, words)) = &header.undo {
+                    drawn.undo = Some((hit(*at, "undo", Target::Undo).rect, words.clone()));
+                }
+            });
         });
-    let outside = ctx.input(|input| {
-        input.pointer.any_pressed()
-            && input
-                .pointer
-                .interact_pos()
-                .is_some_and(|at| !anchor.contains(at) && !area.response.rect.contains(at))
     });
-    (cells, outside)
+    let mut keep = egui::EventFilter::default();
+    (keep.tab, keep.horizontal_arrows, keep.vertical_arrows) = (true, true, true);
+    keep.escape = true;
+    ctx.memory_mut(|memory| memory.request_focus(id.with("keys")));
+    ctx.memory_mut(|memory| memory.set_focus_lock_filter(id.with("keys"), keep));
+    let (frame, pointer) = (area.response.rect, ctx.input(|input| input.pointer.clone()));
+    let away = |at: Pos2| !anchor.contains(at) && !frame.contains(at);
+    let outside = pointer.any_pressed() && pointer.interact_pos().is_some_and(away);
+    let pressed = ctx.input_mut(|input| {
+        model::KEY_NAMES.map(|(name, command)| {
+            let modifiers = [Modifiers::NONE, Modifiers::COMMAND][usize::from(command)];
+            egui::Key::from_name(name).is_some_and(|key| input.consume_key(modifiers, key))
+        })
+    });
+    let clicks = [
+        pointer.primary_pressed(),
+        pointer.primary_released(),
+        outside,
+    ];
+    let seen = Seen::of(now_ms(ctx), current, over, clicks, pressed);
+    (drawn, seen)
 }
 
-/// One preset: its tree in miniature and its name, wrapped at " + ".
-fn cell(
-    ui: &mut egui::Ui,
-    preset: &'static LayoutPreset,
-    model: &PopoverModel<'_>,
-) -> (egui::Rect, egui::Response) {
-    let palette = theme::get(ui.ctx());
-    let (rect, response) = ui.allocate_exact_size(CELL, egui::Sense::click());
-    let response = response.on_hover_text(preset.label);
-    let painter = ui.painter();
-    if response.hovered() {
-        painter.rect_filled(rect, CORNER_RADIUS, palette.control());
+/// The window's clock, in milliseconds.
+pub fn now_ms(ctx: &egui::Context) -> u64 {
+    (ctx.input(|input| input.time) * 1000.0) as u64
+}
+
+/// `marks` from `origin`: square fills as exact pixels, rounded ones and
+/// edges as egui shapes, words in the proportional face or the bold one.
+pub fn paint(painter: &egui::Painter, origin: Pos2, marks: &[Mark]) {
+    let (bold, context) = (egui::FontFamily::Name(BOLD.into()), painter.ctx());
+    let has_bold = context.fonts(|fonts| fonts.families().contains(&bold));
+    let mut mesh = egui::Mesh::default();
+    for mark in marks {
+        if !matches!(mark, Mark::Fill(plate) if plate.radius == 0.0) {
+            painter.add(std::mem::take(&mut mesh));
+        }
+        match mark {
+            Mark::Fill(plate) if plate.radius == 0.0 => {
+                mesh.add_colored_rect(place(origin, plate.at), rgba(plate.rgba));
+            }
+            Mark::Fill(plate) => {
+                painter.rect_filled(place(origin, plate.at), plate.radius, rgba(plate.rgba));
+            }
+            Mark::Edge(plate, width) => {
+                let at = place(origin, plate.at).shrink(width / 2.0);
+                painter.rect_stroke(at, plate.radius - width / 2.0, (*width, rgba(plate.rgba)));
+            }
+            Mark::Words(words) => {
+                let heavy = words.bold && has_bold;
+                let family = if heavy {
+                    bold.clone()
+                } else {
+                    egui::FontFamily::Proportional
+                };
+                let (font, color) = (egui::FontId::new(words.size, family), rgba(words.rgba));
+                let mut format = egui::TextFormat::simple(font, color);
+                format.extra_letter_spacing = words.tracking;
+                let mut job = egui::text::LayoutJob::single_section(words.text.clone(), format);
+                job.wrap = egui::text::TextWrapping::truncate_at_width(words.width);
+                let galley = painter.layout_job(job);
+                let shift = [0.0, 0.5, 1.0][words.anchor as usize] * galley.size().x;
+                let at = origin + vec2(words.x - shift, words.y - galley.size().y / 2.0);
+                painter.galley(at.round(), galley, color);
+            }
+        }
     }
-    if model.marks.current == Some(preset) {
-        painter.rect_stroke(
-            rect,
-            CORNER_RADIUS,
-            egui::Stroke::new(RING_PX, palette.accent()),
-        );
-    }
-    let thumb = egui::Rect::from_min_size(
-        egui::pos2(rect.center().x - THUMBNAIL.x / 2.0, rect.top() + 4.0),
-        THUMBNAIL,
-    );
-    super::capsule::paint_tree(painter, thumb, preset.tree, Token::Accent);
-    let name = preset
-        .label
-        .replacen(" + ", "\n+ ", usize::from(preset.label.len() > 12));
-    painter.text(
-        egui::pos2(rect.center().x, thumb.bottom() + 3.0),
-        egui::Align2::CENTER_TOP,
-        name,
-        egui::FontId::proportional(LABEL_PX),
-        palette.text_primary(),
-    );
-    if model.marks.saved == Some(preset) {
-        let tag = painter.layout_no_wrap(
-            "saved".to_owned(),
-            egui::FontId::proportional(9.0),
-            palette.text_muted(),
-        );
-        let at = egui::Rect::from_min_size(
-            egui::pos2(thumb.right() - tag.size().x - 4.0, thumb.top() - 5.0),
-            tag.size() + egui::vec2(6.0, 2.0),
-        );
-        painter.rect(
-            at,
-            4.0,
-            palette.chrome(),
-            egui::Stroke::new(1.0_f32, palette.border()),
-        );
-        painter.galley(at.min + egui::vec2(3.0, 1.0), tag, palette.text_muted());
-    }
-    (rect, response)
+    painter.add(mesh);
 }
 
 #[cfg(test)]

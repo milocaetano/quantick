@@ -233,7 +233,7 @@ fn every_seam_folds_and_comes_back(state: &CanvasState, case: &str) {
 }
 
 /// Every seam of every layout folds the side it is dragged towards to one
-/// rail, as "2 stacked + Flow" does, and gives it back on the way back: as
+/// rail, as "2 stack + Flow" does, and gives it back on the way back: as
 /// laid out, with a floating chart added, and after a minimize and restore.
 #[test]
 fn every_seam_of_every_layout_folds_to_one_rail_and_reopens() {

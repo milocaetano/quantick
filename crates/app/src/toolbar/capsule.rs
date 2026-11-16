@@ -8,11 +8,13 @@
 
 use eframe::egui;
 use egui_phosphor::regular as icons;
-use quantick_workspace::canvas::{CanvasRect, PaneKind, PaneTree};
+use quantick_appearance::{PremultipliedRgba, layout_picker::ColourInks};
+use quantick_workspace::canvas::PaneTree;
 
 use super::ToolbarAction;
 use crate::theme;
 use quantick_appearance::{Token, tab_strip::WORKSPACE_CAPSULE_BAR_PT as BAR};
+use quantick_ui_model::layout_picker as picker;
 
 /// The capsule's height: History's.
 const HEIGHT_PX: f32 = 22.0;
@@ -26,8 +28,6 @@ const FLOPPY_GAP_PX: f32 = 4.0;
 const DOT_RADIUS_PX: f32 = 2.5;
 /// Rounding of the capsule and the floppy.
 const ROUNDING_PX: f32 = 4.0;
-/// Stroke of a miniature pane.
-const PANE_STROKE_PX: f32 = 1.0;
 
 /// What the capsule shows this frame.
 pub struct CapsuleModel<'a> {
@@ -156,7 +156,16 @@ pub fn draw(
     }
     painter.vline(miniature.right() + 0.5, whole.y_range().shrink(4.0), stroke);
     let face = egui::Rect::from_center_size(miniature.center(), MINIATURE);
-    paint_tree(painter, face, model.tree, Token::CapsuleMiniature); // Grey: the colour is the hue.
+    let face = egui::Rect::from_min_size(face.min.round(), MINIATURE);
+    let at = picker::Rect::new(face.left(), face.top(), face.width(), face.height());
+    let tree = picker::miniature(
+        model.tree,
+        at,
+        model.colour,
+        fill.to_array(),
+        &palette.resolved,
+    );
+    super::layout_popover::paint(painter, egui::Pos2::ZERO, &tree);
     if model.layout_unsaved {
         painter.circle_filled(face.right_top(), DOT_RADIUS_PX, palette.accent());
     }
@@ -226,42 +235,14 @@ pub fn draw(
 /// timeframe chart outlined, the flow pane filled with `flow`'s tint.
 pub fn paint_tree(painter: &egui::Painter, rect: egui::Rect, tree: &PaneTree, flow: Token) {
     let palette = theme::get(painter.ctx());
-    let flow_ink = *palette.get(flow);
-    let kinds = tree.panes();
-    let area = CanvasRect::new(rect.left(), rect.top(), rect.width(), rect.height());
-    for (slot, pane) in tree.rects(area) {
-        let block =
-            egui::Rect::from_min_size(egui::pos2(pane.x, pane.y), egui::vec2(pane.w, pane.h));
-        let block = egui::Rect::from_min_max(block.min.round(), block.max.round()); // Crisp.
-        let flow = kinds
-            .iter()
-            .any(|(held, kind)| *held == slot && *kind == PaneKind::Flow);
-        let (fill, line) = if flow {
-            (theme::active_tint(flow_ink), flow_ink)
-        } else {
-            (egui::Color32::TRANSPARENT, palette.text_faint())
-        };
-        // A mesh is never feathered: on whole pixels its 1 px edges stay one
-        // pixel in their own colour.
-        let (mut mesh, inner) = (egui::Mesh::default(), block.shrink(PANE_STROKE_PX));
-        mesh.add_colored_rect(inner, fill);
-        let (left, right) = (
-            inner.with_max_x(inner.left()),
-            inner.with_min_x(inner.right()),
-        );
-        let sides = [
-            left.with_min_x(block.left()),
-            right.with_max_x(block.right()),
-        ];
-        let ends = [
-            block.with_max_y(inner.top()),
-            block.with_min_y(inner.bottom()),
-        ];
-        for edge in sides.into_iter().chain(ends) {
-            mesh.add_colored_rect(edge, line);
-        }
-        painter.add(mesh);
-    }
+    let ink = |colour: egui::Color32| PremultipliedRgba::from_premultiplied(colour.to_array());
+    let inks = ColourInks::panes(ink(*palette.get(flow)), ink(palette.text_faint()));
+    let at = picker::Rect::new(rect.left(), rect.top(), rect.width(), rect.height());
+    super::layout_popover::paint(
+        painter,
+        egui::Pos2::ZERO,
+        &picker::thumbnail(tree, at, &inks),
+    );
 }
 
 #[cfg(test)]

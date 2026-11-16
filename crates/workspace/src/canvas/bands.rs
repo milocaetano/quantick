@@ -347,12 +347,4 @@ impl LayoutPreset {
         let rect = rects.iter().find(|(held, _)| *held as usize == flow)?;
         Some(rect.1.x)
     }
-
-    /// The name a catalogue cell shows: a long one wraps at its first " + ".
-    #[must_use]
-    pub fn cell_label(&self) -> String {
-        const ONE_LINE_CHARS: usize = 12;
-        let wraps = usize::from(self.label.len() > ONE_LINE_CHARS);
-        self.label.replacen(" + ", "\n+ ", wraps)
-    }
 }

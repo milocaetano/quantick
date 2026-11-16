@@ -2,6 +2,7 @@
 //! Time, snapshots and completion results arrive as intents; no clock is read.
 mod catalog;
 pub mod colour_palette;
+pub mod layout_picker;
 pub mod paper_report;
 #[cfg(test)]
 mod scratch;

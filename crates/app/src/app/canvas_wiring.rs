@@ -6,8 +6,9 @@
 use eframe::egui;
 use quantick_control::error::ControlError;
 use quantick_control_handlers::canvas::{self, CanvasAct, CanvasHost};
-use quantick_control_schema::canvas::CanvasResult;
+use quantick_control_schema::canvas::{CanvasResult, LayoutPickerResult};
 use quantick_stores::workspaces::WorkspaceRecipe;
+use quantick_ui_model::layout_picker;
 use quantick_workspace::canvas::{CanvasRect, WidgetSpec, add_menu, slot_seat};
 use quantick_workspace::canvas_layout::recipe_canvas;
 
@@ -58,10 +59,21 @@ impl CanvasHost for QuantickApp {
     fn open_window_menu(&mut self) -> Result<bool, ControlError> {
         Ok(open_window_menu(&mut self.chrome.window_menu))
     }
-
     fn act_on_canvas(&mut self, act: CanvasAct) -> Result<CanvasResult, ControlError> {
         answer(self, act)
     }
+
+    fn layout_picker(&mut self) -> Result<LayoutPickerResult, ControlError> {
+        Ok(picker_read(self))
+    }
+}
+
+/// The active tab's layout picker, as `canvas.layout.picker` reads it.
+fn picker_read(app: &QuantickApp) -> LayoutPickerResult {
+    let (workspace, _, marks) = super::chrome::capsule::layout_of(app);
+    let popovers = &app.surfaces.canvas_popovers.model_state;
+    let (open, state) = (popovers.projection().layout_open, popovers.picker());
+    layout_picker::read(&workspace, marks, state, open)
 }
 
 /// Act on the active tab's canvas against its save, and read it back.
