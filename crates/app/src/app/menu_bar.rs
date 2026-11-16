@@ -27,8 +27,8 @@ pub(super) use commands::MenuCommand;
 pub(in crate::app) use menus::{MenuDoor, WindowMenuState};
 
 mod commands;
+mod help_window;
 mod menus;
-mod settings_window;
 mod workspace_dialogs;
 mod workspace_rows;
 
@@ -281,7 +281,10 @@ impl QuantickApp {
             commands.push(MenuCommand::OpenSettings(SettingsSection::AgentAccess));
         }
         draw_window_menu(self, ctx, &mut commands);
-        settings_window::show(self, ctx, &mut commands);
+        if help_window::owned_here(&mut self.chrome.window_menu, ctx) {
+            super::chrome::settings::draw(self, ctx, &mut commands);
+            help_window::show_help(&mut self.chrome.window_menu, ctx);
+        }
         self.chrome.window_menu.dialog_rows = workspace_dialogs::dialogs(self, ctx, &mut commands);
         // The close prompt: an answer settles its tab, an exit's last answer closes the app.
         let focused = self.runtime.tabs.windows().focused();
@@ -479,7 +482,7 @@ fn apply_menu_command_on(app: &mut QuantickApp, ctx: &egui::Context, command: Me
     match command {
         MenuCommand::ToggleWindowMenu => app.chrome.window_menu.toggle(viewport, true),
         MenuCommand::OpenSettings(section) => {
-            app.chrome.window_menu.open_settings(viewport, section);
+            super::chrome::settings::open(app, viewport, section);
         }
         MenuCommand::OpenHelp(page) => {
             app.chrome.window_menu.windows_viewport = Some(viewport);

@@ -125,7 +125,7 @@ fn settings_opens_with_the_switches_that_left_the_menus() {
     run_frame(&mut app, &ctx);
     let output = run_frame(&mut app, &ctx);
     assert_eq!(
-        app.chrome.window_menu.settings_shown(),
+        app.surfaces.settings_window.model_state.shown(),
         Some(SettingsSection::Display),
         "Ctrl+, and the menu row open on Display"
     );
@@ -138,7 +138,10 @@ fn settings_opens_with_the_switches_that_left_the_menus() {
         click_entry(&mut app, &ctx, &output, section.title());
         run_frame(&mut app, &ctx);
         output = run_frame(&mut app, &ctx);
-        assert_eq!(app.chrome.window_menu.settings_section, section);
+        assert_eq!(
+            app.surfaces.settings_window.model_state.shown(),
+            Some(section)
+        );
         for row in section.rows() {
             let label = row.label();
             assert!(painted_text_center(&output, label).is_some(), "{label}");
@@ -152,9 +155,7 @@ fn a_switch_row_flips_the_setting_it_names() {
     let ctx = egui::Context::default();
     run_frame(&mut app, &ctx);
     let before = app.health.show_perf;
-    app.chrome
-        .window_menu
-        .open_settings(ctx.viewport_id(), SettingsSection::Display);
+    crate::app::chrome::settings::open(&mut app, ctx.viewport_id(), SettingsSection::Display);
     run_frame(&mut app, &ctx);
     let output = run_frame(&mut app, &ctx);
     let row = painted_text_center(&output, "Perf readings").unwrap();
@@ -172,7 +173,9 @@ fn the_status_bar_clock_opens_settings_on_display() {
     let (mut app, _evt, _cmd, _book) = test_app();
     let ctx = egui::Context::default();
     let output = run_frame(&mut app, &ctx);
-    app.chrome.window_menu.settings_section = SettingsSection::Data;
+    let _ = (app.surfaces.settings_window).update(
+        quantick_ui_model::settings_window::Intent::Show(SettingsSection::Data),
+    );
     let clock = format!(
         "{} {}",
         app.runtime.tz.label(),
@@ -182,7 +185,7 @@ fn the_status_bar_clock_opens_settings_on_display() {
     click_sized(&mut app, &ctx, TEST_WINDOW, clock);
     run_frame(&mut app, &ctx);
     assert_eq!(
-        app.chrome.window_menu.settings_shown(),
+        app.surfaces.settings_window.model_state.shown(),
         Some(SettingsSection::Display)
     );
 }
@@ -480,9 +483,7 @@ fn local_agent_menu_opens_registered_panel_in_the_same_frame() {
     app.apply_menu_command(crate::app::menu_bar::MenuCommand::OpenAgentAccess);
     assert!(!app.surfaces.access_panel.model_state.open);
     app.control.control_access = Some(crate::control::ControlAccess::new());
-    app.chrome
-        .window_menu
-        .open_settings(ctx.viewport_id(), SettingsSection::AgentAccess);
+    crate::app::chrome::settings::open(&mut app, ctx.viewport_id(), SettingsSection::AgentAccess);
     run_frame(&mut app, &ctx);
     let output = run_frame(&mut app, &ctx);
     fn button_center(shape: &egui::Shape) -> Option<egui::Pos2> {

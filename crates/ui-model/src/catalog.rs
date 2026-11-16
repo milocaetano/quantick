@@ -14,6 +14,8 @@ macro_rules! surface_catalog {
                 chrome_menu_dialogs_first: ChromeMenuDialogsFirst => chrome_menu_dialogs_first = "chrome/probe_menu_dialogs_first.rs", chrome_menu_dialogs_first = "chrome/tests/menu_dialogs_first.rs", chrome_menu_dialogs_first::effects, MenuDialogs, Local;
                 [] []
                 access_panel: AccessPanel => access_panel = "access_panel.rs", access_panel = "access_panel.rs", access_panel::effects, MenuDialogs, Local;
+                [] []
+                settings_window: SettingsWindow => settings_window = "settings_window.rs", settings_window = "settings_window.rs", settings_window::effects, Settings, Local;
                 [cfg(any(test, feature = "test-support"))] [cfg(test)]
                 chrome_menu_dialogs_second: ChromeMenuDialogsSecond => chrome_menu_dialogs_second = "chrome/probe_menu_dialogs_second.rs", chrome_menu_dialogs_second = "chrome/tests/menu_dialogs_second.rs", chrome_menu_dialogs_second::effects, MenuDialogs, Local;
                 [cfg(any(test, feature = "test-support"))] [cfg(test)]

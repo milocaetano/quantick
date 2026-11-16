@@ -187,6 +187,8 @@ pub enum Slot {
     Toolbar,
     MenuBar,
     MenuDialogs,
+    /// The Settings window, on the window it opened on.
+    Settings,
     EditorDialogs,
     TabStrip,
     StatusLine,
