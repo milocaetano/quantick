@@ -99,7 +99,7 @@ impl FlowRect {
 #[must_use]
 pub fn lane_divider_x(chart_rect: FlowRect, lane_width_px: f32) -> Option<f32> {
     (lane_width_px.is_finite() && lane_width_px > 0.0 && lane_width_px <= chart_rect.width())
-        .then(|| chart_rect.right - lane_width_px)
+        .then_some(chart_rect.right - lane_width_px)
 }
 
 /// Mapping between normalized projection coordinates and the chart viewport.

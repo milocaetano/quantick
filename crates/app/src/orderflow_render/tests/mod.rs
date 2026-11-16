@@ -955,17 +955,17 @@ fn a_bubble_beside_the_divider_is_clipped_to_its_own_pane() {
     // hard against the divider with a radius that would reach well past it.
     let history = clipped(0.749, false);
     assert!(
-        history.contains(&format!("{:?}", layout.history_rect())),
+        history.contains(&format!("{:?}", layout.history_rect().egui())),
         "a candle-pane print must carry the candle pane's clip: {history}"
     );
     assert!(
-        !history.contains(&format!("{:?}", layout.chart_rect)),
+        !history.contains(&format!("{:?}", layout.chart_rect.egui())),
         "and never the whole chart's: {history}"
     );
     // ...and the tape's first print is clipped the other way.
     let lane = clipped(0.751, true);
     assert!(
-        lane.contains(&format!("{:?}", layout.lane_rect())),
+        lane.contains(&format!("{:?}", layout.lane_rect().egui())),
         "a tape print must carry the tape's clip: {lane}"
     );
     assert!(layout.history_rect().right <= divider);
@@ -1046,14 +1046,14 @@ fn the_bubble_pass_paints_what_each_panes_switch_lets_through() {
     let marks = drawn(false, true);
     assert_eq!(marks.matches("CircleShape").count(), 1, "{marks}");
     assert!(
-        marks.contains(&format!("{:?}", layout.lane_rect())),
+        marks.contains(&format!("{:?}", layout.lane_rect().egui())),
         "{marks}"
     );
     // And the other way round.
     let marks = drawn(true, false);
     assert_eq!(marks.matches("CircleShape").count(), 1, "{marks}");
     assert!(
-        marks.contains(&format!("{:?}", layout.history_rect())),
+        marks.contains(&format!("{:?}", layout.history_rect().egui())),
         "{marks}"
     );
     assert_eq!(
