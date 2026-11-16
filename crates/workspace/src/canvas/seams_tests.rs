@@ -293,6 +293,43 @@ fn a_seam_beside_a_rail_is_grabbed_over_the_rail_hit_width() {
     assert!((grab.w - COLLAPSED_HIT_PX).abs() < EPS, "{grab:?}");
 }
 
+/// A rail between two seams answers to the seam whose drag folded it: the
+/// middle of "3 charts" dragged shut to the right is taken back by the
+/// first seam over the rail's hit width, and the second stops at the rail's
+/// edge, so the hand drags it back the way it came. Folded to the left, the
+/// second seam takes it.
+#[test]
+fn a_rail_between_two_seams_is_grabbed_by_the_seam_that_folded_it() {
+    for (by, own) in [(AREA.w, 0), (-AREA.w, 1)] {
+        let mut state = canvas("charts-3");
+        drag(&mut state, &root(own), by);
+        let seams = tree_seams(&state, AREA, DIVIDER);
+        let rail = seams[own].rail.expect("the middle chart folded");
+        let middle = rail.rect.x + rail.rect.w / 2.0;
+        let takes = |seam: &TreeSeam| {
+            let grab = seam.grab(6.0);
+            grab.x <= middle && middle <= grab.right()
+        };
+        assert!(
+            seams[own].reaches && takes(&seams[own]),
+            "{by}: its own seam"
+        );
+        let other = &seams[1 - own];
+        assert_eq!(other.rail.map(|held| held.slot), Some(rail.slot));
+        let grab = other.grab(6.0);
+        assert!(!other.reaches && !takes(other), "{by}: {grab:?}");
+        let edge = if own == 0 {
+            grab.x - rail.rect.right()
+        } else {
+            grab.right() - rail.rect.x
+        };
+        assert!(
+            edge.abs() < EPS,
+            "{by}: it stops at the rail's edge, {grab:?}"
+        );
+    }
+}
+
 /// A restore by call opens a rail at the shares the drag found it at, and a
 /// maximize opens it too.
 #[test]

@@ -46,6 +46,10 @@ pub struct TreeSeam {
     pub resizable: bool,
     /// The rail folded right beside it, which dragging it reopens.
     pub rail: Option<SeamRail>,
+    /// Whether a press on that rail takes this seam. A rail between two
+    /// seams answers to the one whose drag folded it, so the hand drags it
+    /// back the way it came; the other stops at the rail's edge.
+    pub reaches: bool,
 }
 
 /// A node a seam drag folded shut, painted as one rail.
@@ -97,7 +101,8 @@ impl TreeSeam {
 impl TreeSeam {
     /// What takes the drag: the seam with `handle` points either side, or,
     /// beside a rail, the rail's [`COLLAPSED_HIT_PX`] from its outer edge
-    /// through the seam, as the column painter's rail reaches.
+    /// through the seam, as the column painter's rail reaches; a seam that
+    /// does not [`Self::reaches`] its rail stops at the rail's edge.
     #[must_use]
     pub fn grab(&self, handle: f32) -> CanvasRect {
         let (at, row) = (self.rect, self.axis == SplitAxis::Row);
@@ -106,21 +111,21 @@ impl TreeSeam {
         } else {
             (at.y - handle, at.bottom() + handle)
         };
-        let (start, end) = match self.rail {
-            Some(rail) if rail.meets_after => {
-                let outer = if row { rail.rect.x } else { rail.rect.y };
-                (outer, end.max(outer + COLLAPSED_HIT_PX))
+        let span = |rail: SeamRail| {
+            let rect = rail.rect;
+            let (low, high) = if row {
+                (rect.x, rect.right())
+            } else {
+                (rect.y, rect.bottom())
+            };
+            match (rail.meets_after, self.reaches) {
+                (true, true) => (low, end.max(low + COLLAPSED_HIT_PX)),
+                (false, true) => (start.min(high - COLLAPSED_HIT_PX), high),
+                (true, false) => (start.max(high), end),
+                (false, false) => (start, end.min(low)),
             }
-            Some(rail) => {
-                let outer = if row {
-                    rail.rect.right()
-                } else {
-                    rail.rect.bottom()
-                };
-                (start.min(outer - COLLAPSED_HIT_PX), outer)
-            }
-            None => (start, end),
         };
+        let (start, end) = self.rail.map_or((start, end), span);
         if row {
             CanvasRect::new(start, at.y, end - start, at.h)
         } else {
@@ -178,6 +183,7 @@ fn collect(
             let railed = railed(state, &children[at]) && pair.is_some();
             railed.then(|| rail_of(&children[at], rects, (area, divider), *axis, at < index + 1))
         };
+        let rail = beside(index).or_else(|| beside(index + 1));
         out.push(TreeSeam {
             address: SeamAddress {
                 path: path.clone(),
@@ -186,7 +192,8 @@ fn collect(
             axis: *axis,
             rect,
             resizable: pair.is_some(),
-            rail: beside(index).or_else(|| beside(index + 1)),
+            reaches: rail.is_none_or(|rail| reaches(state, children, (rail, index))),
+            rail,
         });
     }
     for (index, child) in children.iter().enumerate() {
@@ -250,6 +257,22 @@ fn rail_of(
         meets_after,
         holds: RailHolds::of(node.panes().into_iter().map(|(_, kind)| kind)),
     }
+}
+
+/// Whether a press on `rail`, beside the seam after child `index` of
+/// `children`, takes that seam: unless the drag that folded it traded with
+/// the child across the rail, whose own seam then takes it.
+fn reaches(state: &CanvasState, children: &[PaneTree], (rail, index): (SeamRail, usize)) -> bool {
+    let across = if rail.meets_after {
+        index.checked_sub(1)
+    } else {
+        Some(index + 2)
+    };
+    let Some(across) = across.and_then(|at| children.get(at)) else {
+        return true;
+    };
+    let mut kept = (state.reopen.iter()).filter(|kept| kept.folded == rail.slot);
+    !kept.any(|kept| across.holds(kept.partner))
 }
 
 /// Whether `child` is folded: a pane minimized to its strip or railed, or a

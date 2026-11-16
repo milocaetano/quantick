@@ -77,7 +77,7 @@ pub struct SeamDrag {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub(crate) struct Reopen {
     pub(super) folded: PaneSlot,
-    partner: PaneSlot,
+    pub(super) partner: PaneSlot,
     shares: [f32; 2],
 }
 
