@@ -181,6 +181,22 @@ impl WorkspaceBook {
         Ok(outcome)
     }
 
+    /// The tabs a delete of `name` would put on `Default`'s recipe, and those
+    /// that would keep their edits there: the split [`Self::delete`] makes,
+    /// named before the click.
+    #[must_use]
+    pub fn delete_split(&self, name: &str) -> (Vec<u64>, Vec<u64>) {
+        let recipe = self.recipes.get(name);
+        let on = self
+            .tabs
+            .iter()
+            .filter(|(_, state)| state.workspace == name);
+        let (adopted, kept): (Vec<_>, Vec<_>) =
+            on.partition(|(_, state)| recipe.is_some_and(|recipe| recipe.holds(&state.copy)));
+        let ids = |tabs: Vec<(&u64, _)>| tabs.into_iter().map(|(tab, _)| *tab).collect();
+        (ids(adopted), ids(kept))
+    }
+
     /// When the Undo of `name`'s delete ends, while one waits.
     #[must_use]
     pub fn undo_until(&self, name: &str) -> Option<i64> {

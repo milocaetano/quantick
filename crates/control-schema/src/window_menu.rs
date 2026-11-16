@@ -509,6 +509,8 @@ pub const MANAGE_DEFAULT_NOTE: &str =
 /// The pencil's and the trash's hovers.
 pub const MANAGE_RENAME_HOVER: &str = "Rename \u{b7} F2";
 pub const MANAGE_DELETE_HOVER: &str = "Delete \u{b7} Del";
+/// Why a row's pencil and trash rest while its name is typed.
+pub const MANAGE_RENAMING_HOVER: &str = "Finish renaming first \u{b7} Enter or Esc";
 /// A colour chip's hover.
 pub const MANAGE_CHIP_HOVER: &str = "Change colour \u{b7} C";
 /// The footer's keys, and the hint beside a name being typed.
@@ -548,18 +550,29 @@ pub fn tab_names_hover(symbols: &[String]) -> String {
     }
 }
 
-/// The row a delete leaves for ten seconds: `Scalp deleted · WIN$N and
-/// WDO$N back on Default`.
-#[must_use]
-pub fn deleted_row_label(workspace: &str, moved: &[String]) -> String {
-    if moved.is_empty() {
-        format!("{workspace} deleted")
+/// `A keeps its edits`, `A and B keep their edits`.
+fn keep_edits(kept: &[String]) -> String {
+    let verb = if kept.len() == 1 {
+        "keeps its"
     } else {
-        format!(
-            "{workspace} deleted \u{b7} {} back on Default",
-            listed(moved)
-        )
+        "keep their"
+    };
+    format!("{} {verb} edits", listed(kept))
+}
+
+/// The row a delete leaves for ten seconds, naming the tabs as the
+/// confirmation and the toast do: `Scalp deleted · WIN$N back on Default ·
+/// WDO$N keeps its edits`.
+#[must_use]
+pub fn deleted_row_label(workspace: &str, adopted: &[String], kept: &[String]) -> String {
+    let mut row = format!("{workspace} deleted");
+    if !adopted.is_empty() {
+        row.push_str(&format!(" \u{b7} {} back on Default", listed(adopted)));
     }
+    if !kept.is_empty() {
+        row.push_str(&format!(" \u{b7} {}", keep_edits(kept)));
+    }
+    row
 }
 
 /// What an Undo says: `Scalp is back`, or `Scalp is back as Orchid` when
@@ -582,17 +595,21 @@ pub fn tab_count_label(tabs: usize) -> String {
     }
 }
 
-/// The armed delete, stating what the confirmation does: `Delete Scalp?
-/// ETHUSDT goes back to Default.`, the verb following the count.
+/// The armed delete, stating what the confirmation does to each tab:
+/// `Delete Scalp? ETHUSDT goes back to Default; SOLUSDT keeps its edits
+/// there.`, the verbs following the counts.
 #[must_use]
-pub fn delete_armed_label(workspace: &str, moved: &[String]) -> String {
-    match moved {
-        [] => format!("Delete {workspace}? No tab uses it."),
-        [_] => format!(
-            "Delete {workspace}? {} goes back to Default.",
-            listed(moved)
-        ),
-        _ => format!("Delete {workspace}? {} go back to Default.", listed(moved)),
+pub fn delete_armed_label(workspace: &str, adopted: &[String], kept: &[String]) -> String {
+    let back = match adopted {
+        [] => None,
+        [_] => Some(format!("{} goes back to Default", listed(adopted))),
+        _ => Some(format!("{} go back to Default", listed(adopted))),
+    };
+    match (back, kept.is_empty()) {
+        (None, true) => format!("Delete {workspace}? No tab uses it."),
+        (Some(back), true) => format!("Delete {workspace}? {back}."),
+        (Some(back), false) => format!("Delete {workspace}? {back}; {} there.", keep_edits(kept)),
+        (None, false) => format!("Delete {workspace}? {} on Default.", keep_edits(kept)),
     }
 }
 

@@ -18,7 +18,8 @@ use quantick_session::manage_workspaces::{ManageIntent, UndoRow};
 use quantick_session::workspace_menu::{NameDialog, NameDialogMode, WorkspaceMenuState};
 use quantick_stores::workspaces::palette::{Pick, choosing, said};
 use quantick_stores::workspaces::{
-    UndoOutcome, WorkspaceBook, WorkspaceColour, WorkspaceRefusal, hex, parse_typed_hex, rgb_hsv,
+    DeleteOutcome, UndoOutcome, WorkspaceBook, WorkspaceColour, WorkspaceRefusal, hex,
+    parse_typed_hex, rgb_hsv,
 };
 use serde_json::{Value, json};
 
@@ -114,7 +115,7 @@ fn deleted<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
         Ok(gone) => gone,
         Err(error) => return Some(error.message),
     };
-    note_deleted(host, menu, name, &gone.moved);
+    note_deleted(host, menu, name, &gone);
     Some(text::deleted_toast(
         name,
         &host.tab_symbols(&gone.adopted),
@@ -128,7 +129,7 @@ pub(super) fn note_deleted<H: WorkspaceBookHost + ?Sized>(
     host: &H,
     menu: &mut WorkspaceMenuState,
     name: &str,
-    moved: &[u64],
+    gone: &DeleteOutcome,
 ) {
     let until = host
         .workspace_book_ref()
@@ -138,7 +139,11 @@ pub(super) fn note_deleted<H: WorkspaceBookHost + ?Sized>(
     };
     dialog.deleted(UndoRow {
         workspace: name.to_owned(),
-        words: text::deleted_row_label(name, &host.tab_symbols(moved)),
+        words: text::deleted_row_label(
+            name,
+            &host.tab_symbols(&gone.adopted),
+            &host.tab_symbols(&gone.kept_edits),
+        ),
         until_ms,
     });
 }
@@ -184,16 +189,12 @@ pub fn fill_create<H: WorkspaceBookHost + ?Sized>(host: &H, menu: &mut Workspace
     dialog.colour = Some(choosing(book, None).current.key());
 }
 
-/// The create dialog's colour: Custom's typed one while it is open and
-/// holds a colour, else the chosen swatch; `None` for none chosen.
+/// The create dialog's colour: the chosen swatch, or the Custom colour its
+/// Apply chose; `None` for none chosen. A colour typed but not applied is
+/// not chosen.
 #[must_use]
 pub fn chosen(dialog: &NameDialog) -> Option<WorkspaceColour> {
-    let typed = (dialog.palette.custom)
-        .then(|| parse_typed_hex(&dialog.palette.hex))
-        .flatten();
-    typed
-        .map(WorkspaceColour::Custom)
-        .or_else(|| WorkspaceColour::parse(dialog.colour.as_deref()?))
+    WorkspaceColour::parse(dialog.colour.as_deref()?)
 }
 
 /// A press in the create dialog's palette: a free swatch is chosen, a held

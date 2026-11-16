@@ -67,6 +67,43 @@ impl FilledButton {
     }
 }
 
+/// How far a workspace row's fill moves from the list's ground toward the
+/// row's own colour: at rest, under the pointer or the keys, and on the
+/// tab's own workspace (twice the rest). The capsule's 12% was the start;
+/// Dark's support ink on Dark Ink's tint fell under 4.5:1 above 7%, so every
+/// row takes these lower shares, never one per preset.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RowTint {
+    Rest,
+    Hover,
+    Current,
+}
+
+impl RowTint {
+    /// The share of the colour in the fill.
+    #[must_use]
+    pub const fn share(self) -> f32 {
+        match self {
+            Self::Rest => 0.035,
+            Self::Hover => 0.05,
+            Self::Current => 0.07,
+        }
+    }
+}
+
+/// A workspace row's fill: the list's ground as `dark` paints it, `tint`'s
+/// share of the way toward `colour`. Menu B and Manage both fill with this.
+#[must_use]
+pub fn row_fill(colour: [u8; 3], dark: bool, tint: RowTint) -> [u8; 3] {
+    let ground = crate::ResolvedTheme::bundled(dark).color(chrome(dark).ground).to_array();
+    let share = tint.share();
+    let mix = |at: usize| {
+        let (from, to) = (f32::from(ground[at]), f32::from(colour[at]));
+        (from + (to - from) * share).round().clamp(0.0, 255.0) as u8
+    };
+    [mix(0), mix(1), mix(2)]
+}
+
 /// The menu as `dark` or Light paints it.
 #[must_use]
 pub const fn chrome(dark: bool) -> MenuChrome {

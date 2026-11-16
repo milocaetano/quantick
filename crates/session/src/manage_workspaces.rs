@@ -185,11 +185,19 @@ impl ManageDialog {
         DeleteClick::Armed
     }
 
-    /// Whether the dialog takes `key` from the window: none while a row's
-    /// palette takes its own keys, only Esc while a name is typed.
+    /// Whether the dialog takes `key` from the window at `now_ms`: only a
+    /// key that acts. None while a row's palette takes its own keys, only
+    /// Esc while a name is typed; F2, Del and C with a chosen row, Enter on
+    /// an armed one, Ctrl+Z while an Undo row stands.
     #[must_use]
-    pub fn takes(&self, key: ManageKey) -> bool {
-        self.palette.is_none() && (self.rename.is_none() || key == ManageKey::Escape)
+    pub fn takes(&self, key: ManageKey, now_ms: i64) -> bool {
+        let free = self.palette.is_none() && (self.rename.is_none() || key == ManageKey::Escape);
+        free && match key {
+            ManageKey::F2 | ManageKey::Delete | ManageKey::Colour => self.focus.is_some(),
+            ManageKey::Enter => self.armed.is_some(),
+            ManageKey::Undo => self.undo_row(now_ms).is_some(),
+            ManageKey::Up | ManageKey::Down | ManageKey::Escape => true,
+        }
     }
 
     /// What the window types into: the rename field with its first-focus

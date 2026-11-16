@@ -1231,7 +1231,7 @@ fn delete<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
     let now_ms = Some(actor.requested_at_unix_ms);
     let outcome = delete_journaled(app, &mut Some((access, actor)), &name, now_ms)?;
     if let Some(mut menu) = app.workspace_menu().map(|(menu, _)| std::mem::take(menu)) {
-        manage::note_deleted(app, &mut menu, &name, &outcome.moved);
+        manage::note_deleted(app, &mut menu, &name, &outcome);
         *app.workspace_menu().ok_or_else(unavailable)?.0 = menu;
     }
     answer(&WorkspaceDeleteResult {

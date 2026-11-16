@@ -157,6 +157,31 @@ pub(crate) fn mono_ink(rgb: Rgb) -> Rgb {
     }
 }
 
+/// Light's stripes white at about 35%, Dark's the support ink's.
+fn hatch(dark: bool) -> [u8; 4] {
+    if dark {
+        let [r, g, b, _] = ResolvedTheme::bundled(true)
+            .color(Token::TextSupport)
+            .to_array();
+        [r, g, b, u8::MAX]
+    } else {
+        [u8::MAX, u8::MAX, u8::MAX, 89]
+    }
+}
+
+/// `rgb` under the veil a locked swatch wears: the ground at
+/// [`VEIL_ALPHA`] over it, as `dark`'s bundled theme paints the ground.
+pub(crate) fn veiled(rgb: Rgb, dark: bool) -> Rgb {
+    let ground = ResolvedTheme::bundled(dark)
+        .color(chrome(dark).ground)
+        .to_array();
+    let share = f32::from(VEIL_ALPHA) / 255.0;
+    let mix = |at: usize| {
+        (f32::from(ground[at]) * share + f32::from(rgb[at]) * (1.0 - share)).round() as u8
+    };
+    [mix(0), mix(1), mix(2)]
+}
+
 /// `mark`, words in `rgb` of their own.
 fn tinted(mut mark: Mark, rgb: Rgb) -> Mark {
     if let Mark::Text(words) = &mut mark {
@@ -181,6 +206,7 @@ fn text(x: f32, y: f32, words: &str, size: f32, ink: Token, width: f32) -> Mark 
 
 fn plate(at: Area, radius: f32, fill: Option<Token>, edge: Option<Token>) -> Plate {
     Plate {
+        rgb: None,
         at,
         radius,
         fill,
@@ -250,17 +276,21 @@ fn swatch(
         radius: RADIUS,
         rgb,
     }];
-    if swatch.locked {
+    // A locked swatch reads as its veiled colour: what its words stand on.
+    let rgb = if swatch.locked {
         let mut veil = plate(at, RADIUS, Some(ink.ground), None);
         veil.alpha = VEIL_ALPHA;
         marks.extend([
             Mark::Box(veil),
             Mark::Hatch {
                 at,
-                ink: ink.support,
+                rgba: hatch(dark),
             },
         ]);
-    }
+        veiled(rgb, dark)
+    } else {
+        rgb
+    };
     if swatch.current {
         marks.extend([ring(at, 3.0, ink.ink), ring(at, 2.0, ink.ink)]);
         let check = centred(measure, at, CHECK, 12.0, ink.ink);
@@ -337,7 +367,7 @@ fn button(
     let primary = FilledButton::primary();
     let (fill, edge, words) = match (filled, enabled) {
         (true, true) => (primary.fill, primary.fill, primary.ink),
-        (_, false) => (ink.control, ink.edge, ink.faint),
+        (_, false) => (ink.control, ink.control, ink.faint), // No edge to read as a ring.
         (false, true) => (ink.control, ink.edge, ink.ink),
     };
     let back = plate(at, 4.0, Some(fill), Some(edge));

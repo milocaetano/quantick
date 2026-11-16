@@ -129,7 +129,10 @@ fn a_row_wears_its_status_and_the_focus_ring() {
     };
     assert_eq!(ring.edge, Some(Token::Accent));
     let hovered = rest.hover.expect("a hover fill");
-    assert_eq!((hovered.rgb, hovered.radius), (fill(other, RowTint::Hover), 4.0));
+    assert_eq!(
+        (hovered.rgb, hovered.radius),
+        (fill(other, RowTint::Hover), 4.0)
+    );
     let named: Vec<bool> = (lit.marks.iter())
         .filter_map(|mark| match mark {
             Mark::Text(words) => Some(words.names),
@@ -246,7 +249,9 @@ fn the_selected_row_s_summary_reads_on_its_fill() {
             _ => None,
         });
         let summary = summary.expect("a summary");
-        let ratio = contrast_ratio(theme.color(summary.ink), theme.color(back.fill.unwrap()));
+        let [r, g, b] = back.rgb.expect("its own colour's tint");
+        let fill = quantick_appearance::PremultipliedRgba::from_rgb(r, g, b);
+        let ratio = contrast_ratio(theme.color(summary.ink), fill);
         assert!(ratio >= 4.5, "{}: {ratio}", theme.name);
     }
 }

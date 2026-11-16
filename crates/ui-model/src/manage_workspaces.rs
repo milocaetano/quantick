@@ -25,11 +25,14 @@ use quantick_session::colour_popover::ColourIntent;
 use quantick_session::manage_workspaces::{ManageDialog, ManageIntent};
 use quantick_session::workspace_menu::{NameDialog, NameDialogMode, WorkspaceCommand};
 use quantick_stores::workspaces::palette::{Pick, choosing, said};
-use quantick_stores::workspaces::{DEFAULT_WORKSPACE, WorkspaceBook};
+use quantick_stores::workspaces::{
+    DEFAULT_WORKSPACE, WorkspaceBook, WorkspaceColour, parse_typed_hex,
+};
 
 use crate::colour_palette;
 pub use crate::workspace_menu::Sheet;
-use crate::workspace_menu::{Area, Mark, Measure, Piece, Plate, Words, area};
+use crate::workspace_menu::{Area, Mark, Measure, Piece, Plate, Words, area, tinted};
+use quantick_appearance::workspace_menu::RowTint;
 
 /// The scene ids' first word: Manage's, and the name dialogs'.
 pub const SCOPE: &str = "manage_workspaces";
@@ -87,6 +90,7 @@ fn words(x: f32, y: f32, said: &str, size: f32, ink: Token, width: f32) -> Mark 
 
 fn plate(at: Area, fill: Option<Token>, edge: Option<Token>, alpha: u8) -> Mark {
     Mark::Box(Plate {
+        rgb: None,
         at,
         radius: RADIUS,
         fill,
@@ -97,6 +101,7 @@ fn plate(at: Area, fill: Option<Token>, edge: Option<Token>, alpha: u8) -> Mark 
 
 fn ring(at: Area, ink: Token) -> Option<Plate> {
     Some(Plate {
+        rgb: None,
         at,
         radius: RADIUS,
         fill: None,
@@ -153,7 +158,11 @@ fn button(
 fn icon(x: f32, top: f32, glyph: &str, row: CellRow, ink: &MenuChrome) -> Piece {
     let at = area(x, top + (ROW_PT - HIT) / 2.0, HIT, HIT);
     let enabled = row.unavailable.is_none();
-    let said = if enabled { ink.support } else { ink.faint };
+    let said = if enabled {
+        ink.support
+    } else {
+        Token::RestingIcon
+    };
     let marks = vec![words(at.x + 5.0, at.y + HIT / 2.0, glyph, 13.0, said, HIT)];
     press(at, row, enabled, marks, ink)
 }
@@ -192,17 +201,10 @@ pub fn manage(
         let focused = dialog.focus == Some(view.names.len());
         view.names.push((row.name.clone(), protected));
         let top = view.list_height;
+        // Default's band and rule span its note too.
+        let tall = ROW_PT + if protected { NOTE_PT } else { 0.0 };
         if focused {
-            view.focus = Some(area(0.0, top, WIDTH_PT, ROW_PT));
-            view.list.push(Piece::plain(
-                area(0.0, top, WIDTH_PT, ROW_PT),
-                vec![plate(
-                    area(4.0, top + 2.0, WIDTH_PT - 8.0, ROW_PT - 4.0),
-                    Some(ink.hover),
-                    None,
-                    u8::MAX,
-                )],
-            ));
+            view.focus = Some(area(0.0, top, WIDTH_PT, tall));
         }
         let tabs = symbols(&row.tabs);
         let line = Line {
@@ -212,9 +214,13 @@ pub fn manage(
             tabs: &tabs,
             protected,
             now_ms,
+            focused,
+            dark,
         };
         if dialog.armed.as_deref() == Some(row.name.as_str()) {
-            armed(&mut view, &line, &ink, measure);
+            let (adopted, kept) = book.delete_split(&row.name);
+            let said = (symbols(&adopted), symbols(&kept));
+            armed(&mut view, &line, (&said.0, &said.1), (&ink, measure));
         } else {
             plain(&mut view, book, (&line, current, dialog), &ink, measure);
         }
@@ -227,22 +233,10 @@ pub fn manage(
             let mut pop = colour_palette::popover(book, &row.name, state, dark, measure);
             if let Some(pop) = pop.as_mut() {
                 pop.scoped(SCOPE, &format!("{}.", row.name));
-                let y = view.list_height;
-                view.list.push(Piece::plain(
-                    area(0.0, y, WIDTH_PT, pop.size[1] + 8.0),
-                    vec![plate(
-                        area(0.0, y, WIDTH_PT, pop.size[1] + 8.0),
-                        Some(ink.block),
-                        None,
-                        u8::MAX,
-                    )],
-                ));
-                view.list_height += pop.size[1] + 8.0;
             }
-            view.palette =
-                pop.map(|pop| ([NAME_X - 12.0, view.list_height - pop.size[1] - 4.0], pop));
-            // The row and its palette whole in view, as far as the list holds.
-            view.focus = Some(area(0.0, top, WIDTH_PT, view.list_height - top));
+            // Over the rows below, hung from the chip: every row stays put.
+            view.palette = pop.map(|pop| ([PAD - 2.0, top + ROW_PT - 4.0], pop));
+            view.focus = Some(area(0.0, top, WIDTH_PT, ROW_PT));
         }
     }
     if undo_left && let Some(undo) = undo {
@@ -271,6 +265,8 @@ struct Line<'a> {
     tabs: &'a [String],
     protected: bool,
     now_ms: i64,
+    focused: bool,
+    dark: bool,
 }
 
 fn head(ink: &MenuChrome, measure: Measure<'_>) -> Vec<Piece> {
@@ -320,14 +316,14 @@ fn head(ink: &MenuChrome, measure: Measure<'_>) -> Vec<Piece> {
             ink.faint,
             200.0,
         )),
-        caption(ending(
+        flush_right(caption(ending(
             measure,
             count_right(),
             y,
             text::MANAGE_TABS_CAPTION,
             CAPTION_TEXT_PT,
             ink.faint,
-        )),
+        ))),
     ];
     head.push(Piece::plain(
         area(0.0, TITLE_PT, WIDTH_PT, CAPTION_PT),
@@ -342,6 +338,15 @@ fn caption(mut mark: Mark) -> Mark {
         said.tracking = 0.08 * said.size;
         // The letters spread: as much more room, so none is cut.
         said.width += said.tracking * said.text.chars().count() as f32;
+    }
+    mark
+}
+
+/// A tracked caption ending where its column does: its spread taken from
+/// the left, so TABS ends with the counts.
+fn flush_right(mut mark: Mark) -> Mark {
+    if let Mark::Text(said) = &mut mark {
+        said.x -= said.tracking * said.text.chars().count() as f32;
     }
     mark
 }
@@ -401,9 +406,17 @@ fn count(line: &Line<'_>, ink: &MenuChrome, measure: Measure<'_>) -> Piece {
 
 /// The pencil and the trash, greyed on Default with its reason.
 fn icons(line: &Line<'_>, renaming: bool, ink: &MenuChrome) -> [Piece; 2] {
-    let refused = (line.protected || renaming)
-        .then_some("the_default_workspace_cannot_be_renamed_or_deleted");
-    let why = line.protected.then_some(text::DEFAULT_PROTECTED_HOVER);
+    let (refused, why) = match (line.protected, renaming) {
+        (true, _) => (
+            Some("the_default_workspace_cannot_be_renamed_or_deleted"),
+            Some(text::DEFAULT_PROTECTED_HOVER),
+        ),
+        (false, true) => (
+            Some("finish_renaming_first"),
+            Some(text::MANAGE_RENAMING_HOVER),
+        ),
+        (false, false) => (None, None),
+    };
     let x = WIDTH_PT - PAD - HIT;
     let rename = CellRow {
         unavailable: refused,
@@ -447,8 +460,9 @@ fn plain(
         .as_ref()
         .filter(|rename| rename.from == line.name);
     let summary = described(book, line.name).1;
+    let rule = top + ROW_PT + if line.protected { NOTE_PT } else { 0.0 } - 1.0;
     let mut marks = vec![plate(
-        area(PAD, top + ROW_PT - 1.0, WIDTH_PT - 2.0 * PAD, 1.0),
+        area(PAD, rule, WIDTH_PT - 2.0 * PAD, 1.0),
         Some(ink.block_edge),
         None,
         96,
@@ -461,9 +475,18 @@ fn plain(
         capability: Some(calls::WORKSPACE_LIST_CAPABILITY_ID),
         ..CellRow::new(RowKind::Workspace, line.name, line.name)
     };
+    // Its own colour, as menu B tints it: stronger on the tab's own.
+    let band = area(4.0, top + 1.0, WIDTH_PT - 8.0, rule - top - 1.0);
+    let tint = match (row.on, line.focused) {
+        (true, _) => RowTint::Current,
+        (false, true) => RowTint::Hover,
+        (false, false) => RowTint::Rest,
+    };
+    marks.insert(0, Mark::Box(tinted(band, &row, tint, line.dark)));
     view.list.push(Piece {
+        hover: Some(tinted(band, &row, RowTint::Hover, line.dark)).filter(|_| !row.on),
         row: Some(row),
-        ..Piece::plain(area(0.0, top, WIDTH_PT, ROW_PT), std::mem::take(&mut marks))
+        ..Piece::plain(area(0.0, top, WIDTH_PT, rule - top), std::mem::take(&mut marks))
     });
     view.list.push(chip(line, ink));
     let room = count_right() - 80.0 - NAME_X;
@@ -475,7 +498,7 @@ fn plain(
             y,
             text::MANAGE_RENAME_HINT,
             SMALL_PT,
-            ink.faint,
+            Token::KeyHint,
             room - FIELD_W,
         ));
         view.field = Some(area(
@@ -602,7 +625,12 @@ fn plain(
 
 /// The armed row, at the same height: the question naming the tabs that
 /// go back to Default, Delete (the Enter default) and Keep.
-fn armed(view: &mut Sheet, line: &Line<'_>, ink: &MenuChrome, measure: Measure<'_>) {
+fn armed(
+    view: &mut Sheet,
+    line: &Line<'_>,
+    (adopted, kept): (&[String], &[String]),
+    (ink, measure): (&MenuChrome, Measure<'_>),
+) {
     let (top, y) = (line.top, line.top + ROW_PT / 2.0);
     let band = area(0.0, top, WIDTH_PT, ROW_PT);
     let marks = vec![
@@ -614,7 +642,7 @@ fn armed(view: &mut Sheet, line: &Line<'_>, ink: &MenuChrome, measure: Measure<'
             u8::MAX,
         ),
     ];
-    let asked = text::delete_armed_label(line.name, line.tabs);
+    let asked = text::delete_armed_label(line.name, adopted, kept);
     let keep_w = measure(text::MANAGE_KEEP, BODY_PT) + 20.0;
     let delete_w = measure(text::MANAGE_DELETE, BODY_PT) + 20.0;
     let keep_x = WIDTH_PT - PAD - keep_w;
@@ -700,7 +728,7 @@ fn undo_row(
             y,
             text::MANAGE_UNDO_KEYS,
             SMALL_PT,
-            ink.faint,
+            Token::KeyHint,
             keys_w + 1.0,
         ),
         plate(
@@ -766,7 +794,7 @@ fn foot(dialog: &ManageDialog, ink: &MenuChrome, top: f32, measure: Measure<'_>)
     pieces.push(button((close_x, y), close, None, ink, measure));
     let (said, said_ink) = match &dialog.note {
         Some(note) => (note.as_str(), ink.ink),
-        None => (text::MANAGE_KEYS_HINT, ink.faint),
+        None => (text::MANAGE_KEYS_HINT, Token::KeyHint),
     };
     let hint = ending(
         measure,
@@ -887,12 +915,16 @@ pub fn name_dialog(
         });
         y += LINE_PT;
     }
+    // The caption and the check stay on the chosen colour until Apply.
     let colour = chosen(dialog);
     let mut saves = !dialog.name.trim().is_empty();
     let mut palette = None;
     if dialog.colour.is_some() {
         let model = choosing(book, colour);
-        saves &= colour.is_some_and(|colour| matches!(model.pick(colour, true), Pick::Apply(_)));
+        let free = |colour| matches!(model.pick(colour, true), Pick::Apply(_));
+        let typed = (dialog.palette.custom).then(|| parse_typed_hex(&dialog.palette.hex));
+        let typed = typed.flatten().map(WorkspaceColour::Custom);
+        saves &= colour.is_some_and(free) && typed.is_none_or(free);
         let caption_said = text::colour_caption(&colour.map(said).unwrap_or_default());
         let at = area(PAD, y, width - 2.0 * PAD, LINE_PT);
         pieces.push(Piece {
@@ -965,7 +997,7 @@ pub fn name_dialog(
             top + HIT / 2.0,
             text::DIALOG_ENTER_SAVES,
             SMALL_PT,
-            ink.faint,
+            Token::KeyHint,
         )],
     ));
     let mut view = Sheet::of([width, y + FOOT_PT], pieces);
@@ -979,9 +1011,26 @@ pub fn name_dialog(
     view
 }
 
+/// The name dialog's height at rest, Custom folded: where its top stays
+/// while Custom grows it downward.
+#[must_use]
+pub fn name_rest_height(book: &WorkspaceBook, dialog: &NameDialog) -> f32 {
+    let mut rest = dialog.clone();
+    (rest.palette.custom, rest.refusal) = (false, None);
+    name_dialog(book, &rest, false, &|_, _| 0.0).size[1]
+}
+
+/// The dialog `view` capped at `room` points: what does not fit scrolls.
+#[must_use]
+pub fn capped(mut view: Sheet, room: f32) -> Sheet {
+    let height = view.size[1].min(room.max(TITLE_PT + FOOT_PT));
+    (view.size[1], view.list_view) = (height, height);
+    view
+}
+
 /// What a name dialog's frame asks: a press (its palette's as the
-/// dialog's), else Enter in the field (or anywhere while Custom is open)
-/// while Save would save, else Esc's. A typed change clears the refusal.
+/// dialog's), else Enter: Save while it would save, or Custom's Apply while
+/// Custom is open; else Esc's. A typed change clears the refusal.
 pub fn name_answer(
     dialog: &mut NameDialog,
     typed: &str,
@@ -991,8 +1040,11 @@ pub fn name_answer(
     if dialog.name != typed {
         dialog.refusal = None;
     }
-    let enter = field || (dialog.palette.custom && anywhere);
-    let submit = (enter && saves).then_some(WorkspaceCommand::SubmitDialog);
+    let submit = match (field || anywhere, dialog.palette.custom) {
+        (true, true) => Some(WorkspaceCommand::NameColour(ColourIntent::Apply)),
+        (true, false) => saves.then_some(WorkspaceCommand::SubmitDialog),
+        (false, _) => None,
+    };
     let escape = escape.then(|| name_escape(dialog));
     asked.map(name_colour).or(submit).or(escape)
 }

@@ -50,10 +50,18 @@ fn name(
     let dialog = menu.dialog.as_mut().filter(|dialog| dialog.tab == tab)?;
     let (book, held, dark) = (app.runtime.workspace.book.book(), dialog.clone(), pen.2);
     let esc = ctx.input_mut(|i| i.consume_key(Mods::NONE, Key::Escape));
-    let view = |measure: Measure<'_>| marks::name_dialog(book, &held, dark, measure);
+    // Its top stays where it opens at rest; Custom grows it downward.
+    let screen = ctx.screen_rect();
+    let top =
+        screen.top() + ((screen.height() - marks::name_rest_height(book, &held)) / 2.0).max(8.0);
+    let room = screen.bottom() - 8.0 - top;
+    let view =
+        |measure: Measure<'_>| marks::capped(marks::name_dialog(book, &held, dark, measure), room);
+    let area = centred(Order::Tooltip).pivot(egui::Align2::CENTER_TOP);
+    let area = area.fixed_pos(egui::pos2(screen.center().x, top));
     let field = Some((&mut dialog.name, &mut dialog.wants_focus));
     let parts = (field, Some((&mut dialog.palette, [false; 8])), None);
-    let painted = sheet(ctx, centred(Order::Tooltip), &view, parts, pen);
+    let painted = sheet(ctx, area, &view, parts, pen);
     let enter = [painted.enter, ctx.input(|i| i.key_pressed(Key::Enter))];
     let answer = (enter, painted.saves, esc);
     marks::name_answer(dialog, &held.name, painted.asked.flatten(), answer)
@@ -81,14 +89,13 @@ fn manage(
     let open = dialog.palette.as_ref().map(|open| open.popover.clone());
     let takes = |k: PopKey| open.as_ref().is_some_and(|open| open.takes(k));
     let pop_keys = PopKey::ALL.map(|k| takes(k) && consume(k.name(), false));
-    let ours =
-        ManageKeys::of(ManageKey::ALL.map(|k| dialog.takes(k) && consume(k.name(), k.command())));
+    let ours = ManageKeys::of(
+        ManageKey::ALL.map(|k| dialog.takes(k, now_ms) && consume(k.name(), k.command())),
+    );
     let book = app.runtime.workspace.book.book();
     let keyed = dialog.keys(ours, &marks::names(book), now_ms);
-    let (current, moved) = (
-        book.tab_workspace(tab).to_owned(),
-        std::mem::take(&mut dialog.reveal),
-    );
+    let current = book.tab_workspace(tab).to_owned();
+    let moved = std::mem::take(&mut dialog.reveal);
     let held = dialog.clone();
     let symbols = |tabs: &[u64]| crate::app::tab_workspaces::symbols_of(&app.runtime.tabs, tabs);
     let at = (current.as_str(), now_ms, pen.2);
