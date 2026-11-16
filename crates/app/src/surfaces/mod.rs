@@ -259,7 +259,8 @@ impl SurfaceResponse {
     /// the later ask deterministically beats writing the file twice or letting
     /// draw order decide in silence. Only one surface produces it today; the
     /// rule is pinned by a test so a second producer meets a documented answer
-    /// rather than a surprise.
+    /// rather than a surprise. Typed `model_effects` are kept in draw order;
+    /// the host that executes one applies the same first-asker rule.
     fn merge(&mut self, other: Self) {
         if let Some(paper) = other.paper_panel {
             self.paper_panel

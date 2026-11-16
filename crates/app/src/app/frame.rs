@@ -25,7 +25,6 @@ use quantick_chart_interaction::frame_tail_plan::{FrameTailPlan, FrameTailStage}
 use quantick_chart_interaction::quick_range::conversion_plan::PlacementOutcome;
 use quantick_control_handlers::market_palette::MarketPaletteHost;
 use quantick_feed::stall::Stall;
-use quantick_ui_model::HostEffect;
 use quantick_ui_model::market_palette::Intent as PaletteUiIntent;
 use quantick_ui_model::strategy_popup::Intent::SettleArm;
 use quantick_workspace::market_list::PaletteIntent;
@@ -585,14 +584,15 @@ impl QuantickApp {
                 );
             self.surfaces.strategy_popup.update(SettleArm(outcome));
         }
-        for effect in asks.model_effects {
-            if let HostEffect::MarketPalette(Some(request)) = effect {
-                apply_palette_intent(self, request);
-            }
+        let late = quantick_ui_model::late_effects::LateEffects::fold(asks.model_effects);
+        if let Some(request) = late.market {
+            apply_palette_intent(self, request);
         }
         if let Some(change) = asks.footprint {
             self.layer_wiring().apply_footprint_change(change);
         }
+        late.undo_drawing
+            .then(|| self.active_tab_mut().undo_drawing());
     }
 
     fn draw_status_line(&mut self, ctx: &egui::Context, scratch: &mut FrameScratch) {

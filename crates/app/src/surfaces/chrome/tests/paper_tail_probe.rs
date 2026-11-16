@@ -44,13 +44,10 @@ pub(crate) fn effects(effects: Effects) -> SurfaceResponse {
                 ..Default::default()
             })
         }),
-        model_effects: (effects.mixed.then(|| {
-            crate::surfaces::HostEffect::Toast(quantick_ui_model::toast::Effects {
-                undo_drawing: true,
-            })
-        }))
-        .into_iter()
-        .collect(),
+        model_effects: crate::surfaces::toast::effects(quantick_ui_model::toast::Effects {
+            undo_drawing: effects.mixed,
+        })
+        .model_effects,
         ..Default::default()
     }
 }
