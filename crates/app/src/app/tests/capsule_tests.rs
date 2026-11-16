@@ -160,6 +160,94 @@ fn popover_lists_registry_rings_current_tags_saved() {
     );
 }
 
+/// Popover A hugs its grid: the divider between the columns stands only as
+/// tall as the columns, so the frame ends a padding under the last cell
+/// instead of running down the window.
+/// It keeps that size frame after frame and open after open, with the "not
+/// saved" footer too, and hangs below its button rather than over the toolbar.
+#[test]
+fn layout_popover_hugs_its_content_on_every_frame_and_open() {
+    use quantick_ui_model::canvas_popovers::Intent;
+    fn text_bottom(output: &egui::FullOutput, wanted: &str) -> Option<f32> {
+        fn walk(shape: &egui::Shape, wanted: &str) -> Option<f32> {
+            match shape {
+                egui::Shape::Text(text) if text.galley.text().starts_with(wanted) => {
+                    Some(text.visual_bounding_rect().bottom())
+                }
+                egui::Shape::Vec(shapes) => shapes.iter().find_map(|shape| walk(shape, wanted)),
+                _ => None,
+            }
+        }
+        (output.shapes.iter()).find_map(|clipped| walk(&clipped.shape, wanted))
+    }
+    let (mut app, _evt, _cmd, _book) = test_app();
+    let ctx = egui::Context::default();
+    frames(&mut app, &ctx, 2);
+    app.runtime.workspace.book.book_mut().set_autosave(false);
+    let miniature = app.chrome.capsule.miniature;
+    // The frame's inner margin, its stroke and a label's line gap.
+    let slack = 12.0 + 6.0;
+    let mut heights = Vec::new();
+    // Opens 0 and 1 on the saved layout, 2 and 3 after a change (footer).
+    for open in 0..4 {
+        if open == 0 {
+            click_sized(&mut app, &ctx, TEST_WINDOW, miniature.center());
+        } else {
+            app.surfaces
+                .canvas_popovers
+                .update(Intent::SetLayoutOpen(true));
+        }
+        for frame in 0..6 {
+            let output = run_frame(&mut app, &ctx);
+            if frame == 0 {
+                continue;
+            }
+            let footer = text_bottom(&output, "Ctrl+S");
+            assert_eq!(footer.is_some(), open >= 2, "the footer shows once changed");
+            let last_cell = (app.chrome.toolbar_controls.iter())
+                .filter(|control| control.id.starts_with("toolbar.layout_popover."))
+                .map(|control| control.rect.bottom())
+                .fold(f32::MIN, f32::max);
+            let content = footer.unwrap_or(last_cell).max(last_cell);
+            let popover = ctx
+                .memory(|memory| memory.area_rect(egui::Id::new("layout_popover")))
+                .expect("the popover is painted");
+            let miniature = app.chrome.capsule.miniature;
+            assert!(
+                popover.bottom() <= content + slack,
+                "open {open} frame {frame}: the frame ends at {} under content at {content}",
+                popover.bottom()
+            );
+            assert!(
+                popover.top() >= miniature.bottom(),
+                "open {open} frame {frame}: the popover ({popover:?}) hangs below its button \
+                 ({miniature:?})"
+            );
+            heights.push((open >= 2, popover.height()));
+        }
+        app.surfaces
+            .canvas_popovers
+            .update(Intent::SetLayoutOpen(false));
+        frames(&mut app, &ctx, 2);
+        if open == 1 {
+            // The layout now differs from the saved one: the footer appears.
+            app.apply_layout_preset(preset("charts-2").unwrap());
+            frames(&mut app, &ctx, 6);
+        }
+    }
+    // Same content, same size: no growth across frames, none across opens.
+    for pair in heights.windows(2).filter(|pair| pair[0].0 == pair[1].0) {
+        assert_eq!(pair[0].1, pair[1].1, "{heights:?}");
+    }
+    assert!(
+        heights
+            .iter()
+            .all(|(_, height)| *height < TEST_WINDOW.y / 2.0),
+        "{heights:?} in a {} tall window",
+        TEST_WINDOW.y
+    );
+}
+
 /// C9: ≡ | symbol … History | BUY 1 | SELL 1 on the left; the capsule and the
 /// tray on the right.
 #[test]
