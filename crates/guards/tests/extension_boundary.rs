@@ -46,17 +46,14 @@ IndicatorHost\tpub|trait |fn add ( & mut self , source : IndicatorSource ) -> Sl
 /// The window-reach ratchet runs beside this one in the CLI with no slack, so
 /// each specimen is signed at its own reach just before the CLI reads it. A
 /// tree the specimen made unreadable is left unsigned: that is its finding.
+/// These specimens therefore never test window-reach; its own tests do.
 fn sign_window_reach(root: &std::path::Path) {
     let Ok(reach) = window_reach::measured(root) else {
         return;
     };
     fs::write(
         root.join(window_reach::BASELINE_FILE),
-        format!(
-            "!budget {reach}
-window-reach {reach}
-"
-        ),
+        format!("!budget {reach}\nwindow-reach {reach}\n"),
     )
     .unwrap();
 }

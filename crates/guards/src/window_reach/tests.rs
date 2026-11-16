@@ -124,3 +124,37 @@ fn an_edit_outside_the_app_source_asks_nothing() {
     assert!(check_file(&root, "crates/app/src/app/tests/app_tests.rs").is_empty());
     assert!(!check_file(&root, "crates/app/src/app.rs").is_empty());
 }
+
+#[test]
+fn a_test_field_or_argument_does_not_hide_what_follows_it() {
+    let source = "\
+pub struct Access {
+    #[cfg(test)]
+    observed: usize,
+}
+impl Access {
+    fn execute(&mut self, window: &mut ControlWindow) {}
+}
+fn build() {
+    launch(
+        #[cfg(any(feature = \"drawing-harness\", test))]
+        toolrail,
+    );
+}
+impl eframe::App for QuantickApp {}
+#[cfg(any(feature = \"control-harness\", test))]
+fn drive(app: &mut QuantickApp) {}
+";
+    assert_eq!(reach_of(source), 3);
+}
+
+#[test]
+fn every_reference_spelling_of_the_window_is_reach() {
+    let source = "\
+impl<'a> SomePort for &'a mut QuantickApp {}
+fn by_impl(app: &mut impl ControlPort) {}
+fn parenthesised<'a>(app: &mut (dyn ControlPort + 'a)) {}
+enum Target<'a> { App(&'a mut QuantickApp), Other }
+";
+    assert_eq!(reach_of(source), 4);
+}

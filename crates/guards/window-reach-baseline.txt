@@ -11,5 +11,5 @@
 #
 # Recorded when the guard landed, on main bf31dfb6 with the alert port asking
 # for its owner (AlertDefinitionsPort::alert_runtime).
-!budget 131
-window-reach 131
+!budget 161
+window-reach 161

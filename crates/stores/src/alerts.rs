@@ -1,5 +1,5 @@
 //! Validated workspace alert sidecar and persistence-before-success commands.
-use quantick_alerts::{AlertBook, AlertCommand, CommandResult};
+use quantick_alerts::{AlertBook, AlertCommand, AlertSpec, CommandResult};
 pub use quantick_alerts::{AlertDocument, AlertError};
 use std::path::PathBuf;
 
@@ -80,6 +80,10 @@ impl AlertRuntime {
             return Err(error.clone());
         }
         self.book.history(after, limit)
+    }
+    /// Whether a spec would be admitted; reads nothing and writes nothing.
+    pub fn validate(&self, spec: &AlertSpec) -> Result<(), AlertError> {
+        self.book.validate(spec)
     }
     #[must_use]
     pub fn open(path: PathBuf, utc_ms: i64) -> Self {

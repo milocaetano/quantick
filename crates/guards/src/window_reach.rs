@@ -8,16 +8,21 @@
 //! agent copies the nearest one, so every new impl on the window was a
 //! precedent for the next.
 //!
-//! So the reach is a ratchet. In `crates/app/src` production code — test
-//! files and `#[cfg(test)]` items out, by the same lexer the impl-spread
-//! ratchet uses — it counts:
+//! So the reach is a ratchet. In `crates/app/src` production code it counts:
 //!
 //! - every `impl` block, inherent or trait, whose self type is the window:
 //!   `QuantickApp`, `ControlWindow`, or `dyn ControlPort`, which
 //!   `ControlWindow` names;
 //! - every function outside those blocks with a parameter holding either by
-//!   reference (`&`, `&mut`, `&'a mut`, any path prefix);
-//! - every struct with a field holding either by reference.
+//!   reference (`&`, `&mut`, `&'a mut`, `&mut impl`, any path prefix);
+//! - every struct or enum with a field holding either by reference.
+//!
+//! Production code is what [`production`] leaves: comments and literal
+//! contents blanked by the impl-spread lexer's mask, test files skipped, and
+//! only an *item* under a bare `#[cfg(test)]` blanked. That lexer's own test
+//! spans also swallow a `#[cfg(test)]` field or argument and whatever follows
+//! it, and treat `cfg(any(feature = "...", test))` as test-only; either would
+//! hide production reach, so this view does neither.
 //!
 //! The total must stay at the one signed ceiling, [`LABEL`] in
 //! [`BASELINE_FILE`], on the shared [`Policy`]. The slack is zero: a reach
@@ -120,8 +125,8 @@ fn files(root: &Path, dir: &str, found: &mut Vec<String>, missed: &mut Vec<Strin
 
 /// The reach of one file's production view.
 pub fn reach_of(source: &str) -> usize {
-    let text: String = lex::production(source).into_iter().collect();
-    let text = text.as_bytes();
+    let text = production(source);
+    let text = text.as_slice();
     let window_impls = window_impls(text);
     let inside = |at: usize| {
         window_impls
@@ -133,11 +138,118 @@ pub fn reach_of(source: &str) -> usize {
         .filter_map(|at| parameters(text, at))
         .filter(|params| holds_window(params))
         .count();
-    let structs = words(text, "struct")
+    let holders = words(text, "struct")
+        .chain(words(text, "enum"))
         .filter_map(|at| fields(text, at))
         .filter(|body| holds_window(body))
         .count();
-    window_impls.len() + functions + structs
+    window_impls.len() + functions + holders
+}
+
+/// The items a bare `#[cfg(test)]` may stand on: blanking one of these
+/// removes test code, while a field, argument or statement under the same
+/// attribute stays counted rather than risk hiding what follows it.
+const ITEMS: [&str; 12] = [
+    "mod",
+    "fn",
+    "impl",
+    "struct",
+    "enum",
+    "use",
+    "const",
+    "static",
+    "type",
+    "trait",
+    "unsafe",
+    "macro_rules",
+];
+
+/// One file's production view as bytes: comments and literal contents
+/// blanked, then every item under a bare `#[cfg(test)]`, newlines kept.
+fn production(source: &str) -> Vec<u8> {
+    let source: Vec<char> = source.replace("\r\n", "\n").chars().collect();
+    let masked: String = lex::mask(&source).into_iter().collect();
+    let mut text = masked.into_bytes();
+    let mut from = 0;
+    while let Some(at) = find_bytes(&text, b"#[", from) {
+        from = at + 2;
+        let Some(end) = closing_bracket(&text, at + 1) else {
+            continue;
+        };
+        let inner: String = String::from_utf8_lossy(&text[at + 2..end])
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect();
+        if inner != "cfg(test)" {
+            continue;
+        }
+        if let Some(item_end) = item_end(&text, end + 1) {
+            for byte in &mut text[at..=item_end] {
+                if *byte != b'\n' {
+                    *byte = b' ';
+                }
+            }
+            from = item_end + 1;
+        }
+    }
+    text
+}
+
+fn find_bytes(text: &[u8], needle: &[u8], from: usize) -> Option<usize> {
+    text.get(from..)?
+        .windows(needle.len())
+        .position(|window| window == needle)
+        .map(|offset| from + offset)
+}
+
+/// The `]` closing the attribute bracket opened at `open`.
+fn closing_bracket(text: &[u8], open: usize) -> Option<usize> {
+    let mut depth = 0usize;
+    for (offset, byte) in text[open..].iter().enumerate() {
+        match byte {
+            b'[' => depth += 1,
+            b']' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(open + offset);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// The last byte of the item starting after an attribute at `from`, if it
+/// is one of [`ITEMS`]: further attributes and a visibility are skipped, and
+/// the item ends at its body's closing brace or its `;`.
+fn item_end(text: &[u8], from: usize) -> Option<usize> {
+    let mut at = skip_space(text, from);
+    while text[at..].starts_with(b"#[") {
+        at = skip_space(text, closing_bracket(text, at + 1)? + 1);
+    }
+    if text[at..].starts_with(b"pub") && text.get(at + 3).is_some_and(|b| !is_ident(*b)) {
+        at = skip_space(text, at + 3);
+        if text.get(at) == Some(&b'(') {
+            at = skip_space(text, closing(text, at)? + 1);
+        }
+    }
+    let word_end = at + text[at..].iter().take_while(|b| is_ident(**b)).count();
+    let word = std::str::from_utf8(&text[at..word_end]).ok()?;
+    if !ITEMS.contains(&word) {
+        return None;
+    }
+    let mut depth = 0usize;
+    for (offset, byte) in text[word_end..].iter().enumerate() {
+        match byte {
+            b'(' | b'[' => depth += 1,
+            b')' | b']' => depth = depth.saturating_sub(1),
+            b';' if depth == 0 => return Some(word_end + offset),
+            b'{' if depth == 0 => return closing(text, word_end + offset),
+            _ => {}
+        }
+    }
+    None
 }
 
 /// The whole reach of `crates/app/src`.
@@ -294,20 +406,50 @@ fn window_impls(text: &[u8]) -> Vec<(usize, usize)> {
     spans
 }
 
-/// Whether a type, once `&`, `mut`, `dyn`, generics and its path are gone,
-/// is the window.
+/// Whether an impl's self type is the window, by reference or not.
 fn names_window(ty: &[u8]) -> bool {
-    let ty = String::from_utf8_lossy(ty);
-    let ty = ty.trim().trim_start_matches('&').trim();
-    let ty = ty.strip_prefix("mut ").unwrap_or(ty).trim();
-    let ty = ty.strip_prefix("dyn ").unwrap_or(ty).trim();
-    let ty = ty.split('<').next().unwrap_or("");
-    let last = ty.rsplit("::").next().unwrap_or("").trim();
-    let name: String = last
-        .chars()
-        .take_while(|c| c.is_alphanumeric() || *c == '_')
-        .collect();
-    WINDOW.contains(&name.as_str())
+    let at = skip_space(ty, 0);
+    if ty.get(at) == Some(&b'&') {
+        names_window_at(ty, at + 1)
+    } else {
+        names_window_at(ty, at)
+    }
+}
+
+/// Whether the type at `at` — after an optional lifetime, `mut`, `dyn`,
+/// `impl` and an opening parenthesis — is a path ending in one of [`WINDOW`].
+fn names_window_at(text: &[u8], mut at: usize) -> bool {
+    at = skip_space(text, at);
+    if text.get(at) == Some(&b'\'') {
+        at += 1;
+        while text.get(at).is_some_and(|b| is_ident(*b)) {
+            at += 1;
+        }
+        at = skip_space(text, at);
+    }
+    loop {
+        let before = at;
+        if text.get(at) == Some(&b'(') {
+            at = skip_space(text, at + 1);
+        }
+        for keyword in [&b"mut"[..], b"dyn", b"impl"] {
+            if text[at..].starts_with(keyword)
+                && text.get(at + keyword.len()).is_some_and(|b| !is_ident(*b))
+            {
+                at = skip_space(text, at + keyword.len());
+            }
+        }
+        if at == before {
+            break;
+        }
+    }
+    let start = at;
+    while text.get(at).is_some_and(|b| is_ident(*b) || *b == b':') {
+        at += 1;
+    }
+    let path = String::from_utf8_lossy(&text[start..at]);
+    let last = path.rsplit("::").next().unwrap_or("");
+    WINDOW.contains(&last)
 }
 
 /// The parameter list of the function named at `at` (the `fn` keyword), or
@@ -331,8 +473,8 @@ fn parameters(text: &[u8], at: usize) -> Option<&[u8]> {
     Some(&text[open..=closing(text, open)?])
 }
 
-/// The field list of the struct named at `at` (the `struct` keyword); `None`
-/// for a unit struct.
+/// The body of the struct or enum named at `at` (its keyword); `None` for a
+/// unit struct.
 fn fields(text: &[u8], at: usize) -> Option<&[u8]> {
     let body = text[at..]
         .iter()
@@ -344,36 +486,12 @@ fn fields(text: &[u8], at: usize) -> Option<&[u8]> {
     Some(&text[body..=closing(text, body)?])
 }
 
-/// Whether `text` holds the window by reference: `&`, then an optional
-/// lifetime, `mut` and `dyn`, then a path ending in one of [`WINDOW`].
+/// Whether `text` holds the window by reference anywhere: `&`, then what
+/// [`names_window_at`] accepts.
 fn holds_window(text: &[u8]) -> bool {
-    text.iter().enumerate().any(|(at, byte)| {
-        if *byte != b'&' {
-            return false;
-        }
-        let mut at = skip_space(text, at + 1);
-        if text.get(at) == Some(&b'\'') {
-            at += 1;
-            while text.get(at).is_some_and(|b| is_ident(*b)) {
-                at += 1;
-            }
-            at = skip_space(text, at);
-        }
-        for keyword in [&b"mut"[..], b"dyn"] {
-            if text[at..].starts_with(keyword)
-                && text.get(at + keyword.len()).is_some_and(|b| !is_ident(*b))
-            {
-                at = skip_space(text, at + keyword.len());
-            }
-        }
-        let start = at;
-        while text.get(at).is_some_and(|b| is_ident(*b) || *b == b':') {
-            at += 1;
-        }
-        let path = String::from_utf8_lossy(&text[start..at]);
-        let last = path.rsplit("::").next().unwrap_or("");
-        WINDOW.contains(&last)
-    })
+    text.iter()
+        .enumerate()
+        .any(|(at, byte)| *byte == b'&' && names_window_at(text, at + 1))
 }
 
 #[cfg(test)]

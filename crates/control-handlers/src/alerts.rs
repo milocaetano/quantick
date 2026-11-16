@@ -154,7 +154,6 @@ fn validate<H: AlertDefinitionsPort + ?Sized, A>(
 ) -> Result<Value, ControlError> {
     let input: schema::SpecInput = parse(input)?;
     host.alert_runtime()
-        .book
         .validate(&read_spec(input.spec)?)
         .map_err(domain)?;
     Ok(json!({"valid":true}))

@@ -220,7 +220,7 @@ fn raw_start(source: &[char], at: usize) -> Option<(usize, usize)> {
 }
 
 /// `mask`: comments and literal contents blanked to spaces, newlines kept.
-fn mask(source: &[char]) -> Vec<char> {
+pub(crate) fn mask(source: &[char]) -> Vec<char> {
     let n = source.len();
     let mut out = source.to_vec();
     let mut at = 0;
