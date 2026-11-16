@@ -8,7 +8,7 @@ use quantick_orderflow::{
     same_lane_window,
 };
 
-pub use crate::flow_geometry::FlowRect;
+use crate::flow_geometry::FlowRect;
 use crate::pane_header::{
     CAPSULE_FRAME_X_PX, Capsule, CapsuleSide, FlowHeaderState, LayerGlyph, item_px,
 };

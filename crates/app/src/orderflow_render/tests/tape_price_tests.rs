@@ -309,3 +309,24 @@ fn native_book_and_reductions_share_the_bubble_time_axis() {
         }
     }
 }
+
+/// The frame's context resolves the native tape's geometry from its style, over
+/// the lane's width and the chart's height: the mapping the book and dots share.
+#[test]
+fn the_context_hands_the_layout_its_native_tape_geometry() {
+    let viewport = Viewport::new();
+    let rect = egui::Rect::from_min_size(egui::pos2(20.0, 30.0), egui::vec2(600.0, 400.0));
+    let mut config = HeatmapConfig::default();
+    config.volume_dots.enabled = true;
+    config.live_lane.enabled = true;
+    config.live_lane.tape_only = true;
+    config.live_lane.depth_time_averaging = true;
+    let style = OrderflowRenderStyle::from_config(&config, [0, 0, 0, 255]);
+    let frame = projection(Vec::new());
+    let layout = ProjectedLayout::new(flow_rect(rect), &viewport, 1, 0, 2, 250.0);
+    let expected =
+        quantick_orderflow::projection::TapeHorizontalGeometry::from_style(&style, 250.0, 400.0);
+    assert!(expected.is_some(), "an averaged native tape");
+    let context = RenderContext::new(&frame, layout, &style);
+    assert_eq!(context.layout.tape_geometry, expected);
+}

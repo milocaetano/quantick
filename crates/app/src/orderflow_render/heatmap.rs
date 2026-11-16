@@ -136,9 +136,10 @@ pub(crate) fn draw_heatmap_background(painter: &egui::Painter, context: &RenderC
             continue;
         }
         let (x0, x1) = lead.unwrap_or((context.layout.x(gap.x0), context.layout.x(gap.x1)));
-        let pane = lead.map_or(context.layout.span_pane(gap.x0, gap.x1).egui(), |_| {
-            context.layout.lane_rect().egui()
-        });
+        let pane = lead.map_or_else(
+            || context.layout.span_pane(gap.x0, gap.x1).egui(),
+            |_| context.layout.lane_rect().egui(),
+        );
         let rect = egui::Rect::from_min_max(
             egui::pos2(x0.min(x1), context.layout.chart_rect.top),
             egui::pos2(x0.max(x1), context.layout.chart_rect.bottom),
