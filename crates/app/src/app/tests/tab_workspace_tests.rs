@@ -2654,3 +2654,97 @@ fn a_folded_stacked_chart_survives_a_workspace_switch() {
         "the save still holds"
     );
 }
+
+/// The active tab's canvas as the trader sees it: the preset it draws, the
+/// panes it holds, and what `canvas.layout.picker` reads.
+fn canvas_read(app: &mut QuantickApp) -> (Option<&'static str>, usize, Option<String>) {
+    use crate::control::ActionOrigin;
+    let canvas = &app.active_tab().canvas.state;
+    let (preset, panes) = (
+        canvas.preset().map(|preset| preset.id),
+        canvas.panes().len(),
+    );
+    let input = serde_json::json!({});
+    let picker = app.control_action("canvas.layout.picker", 1, ActionOrigin::Human, input);
+    let current = picker.expect("the picker reads")["current_id"]
+        .as_str()
+        .map(str::to_owned);
+    (preset, panes, current)
+}
+
+/// A switch puts the other workspace's layout on the canvas, read as the
+/// model, the picker and the panes: by the capsule menu's row, by the window
+/// menu's Workspace submenu and by `tab.workspace.set`, each way.
+#[test]
+fn a_workspace_switch_paints_the_other_workspace_s_layout() {
+    use crate::control::ActionOrigin;
+    use serde_json::json;
+    let layouts = crate::scratch::ScratchFile::new("workspace-switch-layout", "layouts.toml");
+    let (mut app, first, _) = two_tabs(&layouts);
+    app.runtime.tabs.select(0);
+    let ctx = egui::Context::default();
+    let call = |app: &mut QuantickApp, id: &str, input: serde_json::Value| {
+        app.control_action(id, 1, ActionOrigin::Human, input)
+            .unwrap_or_else(|error| panic!("{id}: {error:?}"))
+    };
+    for _ in 0..4 {
+        run_frame_at(&mut app, &ctx, FULL_HD);
+    }
+    let default = canvas_read(&mut app);
+    call(
+        &mut app,
+        "canvas.layout.pick",
+        json!({ "preset_id": "charts-4" }),
+    );
+    for _ in 0..4 {
+        run_frame_at(&mut app, &ctx, FULL_HD);
+    }
+    let quad = canvas_read(&mut app);
+    assert_eq!(quad.0, Some("charts-4"));
+    assert_ne!(quad, default, "the pick changed the canvas");
+    call(&mut app, "workspace.save_as", json!({ "name": "Quad" }));
+    run_frame_at(&mut app, &ctx, FULL_HD);
+    assert_eq!(
+        app.runtime.workspace.book.tab_row(first),
+        ("Quad".to_owned(), false)
+    );
+
+    let shown = open_cell_menu(&mut app, &ctx);
+    let row = shown
+        .row("workspace_menu.workspace.Default")
+        .expect("Default");
+    click_sized(&mut app, &ctx, FULL_HD, row.center());
+    for _ in 0..4 {
+        run_frame_at(&mut app, &ctx, FULL_HD);
+    }
+    assert_eq!(app.runtime.workspace.book.tab_row(first).0, "Default");
+    assert_eq!(
+        canvas_read(&mut app),
+        default,
+        "the menu's row paints Default's layout"
+    );
+
+    let (_, submenu, output) = open_workspace_submenu(&mut app, &ctx);
+    let row = painted_text_center(&output, "Quad").expect("Quad's row");
+    assert!(submenu.contains(row), "Quad in the Workspace submenu");
+    click_sized(&mut app, &ctx, TEST_WINDOW, row);
+    for _ in 0..4 {
+        run_frame_at(&mut app, &ctx, FULL_HD);
+    }
+    assert_eq!(app.runtime.workspace.book.tab_row(first).0, "Quad");
+    assert_eq!(
+        canvas_read(&mut app),
+        quad,
+        "the window menu paints Quad's layout"
+    );
+    call(&mut app, "tab.workspace.set", json!({ "name": "Default" }));
+    for _ in 0..4 {
+        run_frame_at(&mut app, &ctx, FULL_HD);
+    }
+    assert_eq!(canvas_read(&mut app), default, "the call paints Default's");
+    call(&mut app, "tab.workspace.set", json!({ "name": "Quad" }));
+    for _ in 0..4 {
+        run_frame_at(&mut app, &ctx, FULL_HD);
+    }
+    assert_eq!(canvas_read(&mut app), quad, "the call paints Quad's layout");
+}
