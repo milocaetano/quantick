@@ -45,6 +45,8 @@ const OTHER_WAY_PX: f32 = 120.0;
 const OUT_AND_BACK_PX: f32 = 40.0;
 /// Float rounding in a share, far under a point on any screen.
 const ROUNDING: f32 = 1e-4;
+/// A hand's jitter at the press, under any seam's pick.
+const JITTER_PX: f32 = 1.0;
 /// Most frames a layout gets to build its charts before a case starts.
 const SETTLE_FRAMES: usize = 60;
 
@@ -397,7 +399,6 @@ type Held = (
     Vec<bool>,
 );
 
-/// How `after` differs from `before`, if it does.
 /// Every share of `tree`, depth first.
 fn tree_shares(tree: &PaneTree, out: &mut Vec<f32>) {
     if let PaneTree::Split {
@@ -432,6 +433,7 @@ fn rounded(before: &Held, tab: &crate::tab::Tab) -> bool {
         && (&before.2, &before.3) == (&after.2, &after.3)
 }
 
+/// How `after` differs from `before`, if it does.
 fn moved_by(before: &Held, after: &Held) -> Option<String> {
     if before == after {
         return None;
@@ -823,7 +825,9 @@ fn check_other_way(
         let (cross_lo, cross_hi) = across(rect, case.axis);
         let at = |on: f32| point(case.axis, on, cross_lo + (cross_hi - cross_lo) * GRAB_AT);
         let mid = (lo + hi) / 2.0;
-        rig.drag(app, at(mid), at(mid + way * OTHER_WAY_PX));
+        // A hand's 1 px jitter the other way first must not pick the seam.
+        let jitter = at(mid - way * JITTER_PX);
+        rig.drag_through(app, &[at(mid), jitter, at(mid + way * OTHER_WAY_PX)]);
         let tab = rig.tab(app);
         let pair = before.pair.concat();
         let shut =
