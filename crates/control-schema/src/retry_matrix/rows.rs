@@ -57,7 +57,8 @@ pub const FAMILIES: &[&[Readback]] = &[
 ];
 
 const TOTAL: usize = total(FAMILIES);
-const JOINED: [Readback; TOTAL] = flatten(FAMILIES);
+/// A static, not a const: the joined table is past clippy's large-array size.
+static JOINED: [Readback; TOTAL] = flatten(FAMILIES);
 
 /// Every mutable capability's readback.
 pub const READBACKS: &[Readback] = &JOINED;
