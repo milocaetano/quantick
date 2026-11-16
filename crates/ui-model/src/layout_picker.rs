@@ -90,8 +90,8 @@ pub const CHANGED: &str = "Changed to";
 pub const HINT: &str = "Arrows move \u{b7} Enter picks \u{b7} Esc closes";
 /// Phosphor's check and floppy disk, in the bundled icon font.
 pub const CHECK: &str = "\u{e182}";
-/// Phosphor's dot: the unsaved mark before the status words.
-pub const DOT: &str = "\u{ecde}";
+/// The bullet: the unsaved mark before the status words.
+pub const DOT: &str = "\u{2022}";
 pub const FLOPPY: &str = "\u{e248}";
 
 /// A box, in points from the picker's top left.
