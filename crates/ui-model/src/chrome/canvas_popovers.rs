@@ -1,6 +1,6 @@
 //! One application-wide owner for the toolbar popovers.
 use quantick_control_handlers::canvas::{CanvasAct, add_act};
-use quantick_workspace::canvas::WidgetSpec;
+use quantick_workspace::canvas::{LayoutPreset, WidgetSpec, preset};
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct Projection {
@@ -8,10 +8,14 @@ pub struct Projection {
     pub layout_open: bool,
 }
 #[derive(Debug, Default)]
-pub struct State(Projection);
+pub struct State(Projection, crate::layout_picker::State);
 impl State {
     pub fn projection(&self) -> Projection {
         self.0
+    }
+    /// The layout picker's hover, press, focus and confirmation.
+    pub fn picker(&self) -> &crate::layout_picker::State {
+        &self.1
     }
 }
 #[derive(Debug)]
@@ -28,10 +32,13 @@ pub enum Intent {
         widget: &'static WidgetSpec,
         available: bool,
     },
-    SettleLayout {
-        outside: bool,
-        selected: bool,
-    },
+    /// What the window saw over the open layout picker this frame.
+    Layout(crate::layout_picker::Seen),
+    /// A capture's staging, with the current layout and the clock: open the
+    /// picker held past its confirmation, then `pick=<id>` picks a layout,
+    /// `focus=<id>` rings a cell for the keyboard, `hover=<id>` and
+    /// `press=<id>` hold a cell under a pointer that is not there.
+    StageLayout(String, Option<&'static LayoutPreset>, u64),
     ToolbarHidden,
 }
 #[derive(Debug, Default, PartialEq)]
@@ -42,25 +49,81 @@ impl crate::Model for Model {
     type Intent = Intent;
     type Effects = Effects;
     fn update(state: &mut State, intent: Intent) -> Effects {
-        match intent {
-            Intent::ToggleAdd => state.0.add_open ^= true,
-            Intent::ToggleLayout => state.0.layout_open ^= true,
-            Intent::SetAddOpen(open) => state.0.add_open = open,
-            Intent::SetLayoutOpen(open) => state.0.layout_open = open,
-            Intent::DismissAdd { outside, escaped } => state.0.add_open &= !outside && !escaped,
-            Intent::Pick { widget, available } => {
-                if state.0.add_open && available {
-                    state.0.add_open = false;
-                    return Effects(Some(add_act(widget).1));
+        let effects = match intent {
+            Intent::Layout(seen) if state.0.layout_open => {
+                let step = state.1.step(seen);
+                state.0.layout_open &= !step.close;
+                return pick_act(step.pick);
+            }
+            Intent::StageLayout(hook, current, now_ms) => {
+                state.0.layout_open = true;
+                state.1.held = true;
+                let (word, id) = hook.split_once('=').unwrap_or((hook.as_str(), ""));
+                let named = preset(id);
+                state.1.focus = named.filter(|_| word == "focus");
+                let cell = named.filter(|_| ["hover", "press"].contains(&word));
+                state.1.hover = cell.map(crate::layout_picker::Target::Cell);
+                state.1.pressed = state.1.hover.filter(|_| word == "press");
+                let pick = named.filter(|named| word == "pick" && Some(*named) != current);
+                if let Some(to) = pick {
+                    let was = current;
+                    state.1.changed = Some(crate::layout_picker::Changed {
+                        to,
+                        was,
+                        at_ms: now_ms,
+                    });
                 }
+                return pick_act(pick);
             }
-            Intent::SettleLayout { outside, selected } => {
-                state.0.layout_open &= !outside && !selected
-            }
-            Intent::ToolbarHidden => state.0.layout_open = false,
+            _ => layout_closed(state, intent),
+        };
+        if !state.0.layout_open {
+            state.1 = crate::layout_picker::State::default();
         }
-        Effects::default()
+        effects
     }
+}
+
+/// The layouts a pass's `effects` picked, as the toolbar's one layout action.
+pub fn picked(effects: Vec<crate::HostEffect>) -> Vec<crate::chrome_toolbar::Action> {
+    let layout = |effect| match effect {
+        crate::HostEffect::CanvasPopovers(Effects(Some(CanvasAct::PickLayout { preset_id }))) => {
+            preset(&preset_id)
+        }
+        _ => None,
+    };
+    let picks = effects.into_iter().filter_map(layout);
+    picks
+        .map(crate::chrome_toolbar::Action::SetLayout)
+        .collect()
+}
+
+/// A picked layout, as the act `canvas.layout.pick` takes.
+fn pick_act(pick: Option<&'static LayoutPreset>) -> Effects {
+    let preset_id = |preset: &LayoutPreset| preset.id.to_owned();
+    Effects(pick.map(|pick| CanvasAct::PickLayout {
+        preset_id: preset_id(pick),
+    }))
+}
+
+/// Every intent but the picker's own frame and staging.
+fn layout_closed(state: &mut State, intent: Intent) -> Effects {
+    match intent {
+        Intent::ToggleAdd => state.0.add_open ^= true,
+        Intent::ToggleLayout => state.0.layout_open ^= true,
+        Intent::SetAddOpen(open) => state.0.add_open = open,
+        Intent::SetLayoutOpen(open) => state.0.layout_open = open,
+        Intent::DismissAdd { outside, escaped } => state.0.add_open &= !outside && !escaped,
+        Intent::Pick { widget, available } => {
+            if state.0.add_open && available {
+                state.0.add_open = false;
+                return Effects(Some(add_act(widget).1));
+            }
+        }
+        Intent::ToolbarHidden => state.0.layout_open = false,
+        Intent::Layout(_) | Intent::StageLayout(..) => {}
+    }
+    Effects::default()
 }
 
 #[cfg(test)]
@@ -139,34 +202,56 @@ mod tests {
     }
     #[test]
     fn capsule_toggles_and_dismissal_use_cached_state() {
+        use crate::layout_picker::{Seen, Target};
+        let flow = quantick_workspace::canvas::preset("flow");
+        let charts = quantick_workspace::canvas::preset("charts-2");
         let mut state = State::default();
         Model::update(&mut state, Intent::ToggleLayout);
         assert!(state.projection().layout_open);
-        Model::update(
-            &mut state,
-            Intent::SettleLayout {
-                outside: false,
-                selected: false,
-            },
-        );
+        Model::update(&mut state, Intent::Layout(Seen::default()));
         assert!(state.projection().layout_open);
-        Model::update(
-            &mut state,
-            Intent::SettleLayout {
-                outside: true,
-                selected: false,
-            },
-        );
+        let outside = Seen {
+            outside: true,
+            ..Seen::default()
+        };
+        Model::update(&mut state, Intent::Layout(outside));
         assert!(!state.projection().layout_open);
         Model::update(&mut state, Intent::ToggleLayout);
-        Model::update(
-            &mut state,
-            Intent::SettleLayout {
-                outside: false,
-                selected: true,
-            },
+        let over = charts.map(Target::Cell);
+        let press = Seen {
+            current: flow,
+            over,
+            press: true,
+            ..Seen::default()
+        };
+        Model::update(&mut state, Intent::Layout(press));
+        let release = Seen {
+            release: true,
+            ..press
+        };
+        assert_eq!(
+            Model::update(&mut state, Intent::Layout(release)),
+            Effects(Some(CanvasAct::PickLayout {
+                preset_id: "charts-2".to_owned()
+            }))
         );
-        assert!(!state.projection().layout_open);
+        assert!(state.projection().layout_open, "the pick confirms first");
+        assert!(state.picker().changed.is_some());
+        Model::update(&mut state, Intent::SetLayoutOpen(false));
+        assert_eq!(state.picker(), &crate::layout_picker::State::default());
+        let staged = Intent::StageLayout("pick=charts-2".to_owned(), flow, 5);
+        assert!(Model::update(&mut state, staged).0.is_some());
+        assert!(state.picker().held && state.projection().layout_open);
+        let pressed = Intent::StageLayout("press=charts-3".to_owned(), flow, 5);
+        Model::update(&mut state, pressed);
+        let cell = quantick_workspace::canvas::preset("charts-3").map(Target::Cell);
+        assert_eq!((state.picker().hover, state.picker().pressed), (cell, cell));
+        Model::update(&mut state, Intent::Layout(Seen::default()));
+        assert_eq!(
+            state.picker().pressed,
+            cell,
+            "a staged press outlives a still pointer"
+        );
         Model::update(&mut state, Intent::ToggleAdd);
         assert!(state.projection().add_open);
         Model::update(&mut state, Intent::ToggleAdd);

@@ -10,12 +10,13 @@ use quantick_control_schema::canvas::CanvasDimension;
 use quantick_control_schema::canvas::{
     ADD_WIDGET_CAPABILITY_ID, AddWidgetInput, CanvasCorner, CanvasEdge, CanvasRectDto,
     CanvasResult, DOCK_CAPABILITY_ID, DockPaneInput, FLOAT_CAPABILITY_ID, FloatPaneInput,
-    MAX_SEAM_TRAVEL_PT, MAXIMIZE_CAPABILITY_ID, MINIMIZE_CAPABILITY_ID,
-    OPEN_WINDOW_MENU_CAPABILITY_ID, PARK_CAPABILITY_ID, PICK_LAYOUT_CAPABILITY_ID,
-    POP_OUT_CAPABILITY_ID, PaneInput, ParkPaneInput, PickLayoutInput, PopOutInput,
-    REMOVE_CAPABILITY_ID, RESIZE_CAPABILITY_ID, RESTORE_CAPABILITY_ID, RETURN_CAPABILITY_ID,
-    RemovePaneInput, ResizePaneInput, SEAM_DRAG_CAPABILITY_ID, SHARE_DECIMAL_PLACES, SeamDragInput,
-    WindowMenuInput, WindowMenuResult, descriptor,
+    LAYOUT_PICKER_CAPABILITY_ID, LayoutPickerInput, LayoutPickerResult, MAX_SEAM_TRAVEL_PT,
+    MAXIMIZE_CAPABILITY_ID, MINIMIZE_CAPABILITY_ID, OPEN_WINDOW_MENU_CAPABILITY_ID,
+    PARK_CAPABILITY_ID, PICK_LAYOUT_CAPABILITY_ID, POP_OUT_CAPABILITY_ID, PaneInput, ParkPaneInput,
+    PickLayoutInput, PopOutInput, REMOVE_CAPABILITY_ID, RESIZE_CAPABILITY_ID,
+    RESTORE_CAPABILITY_ID, RETURN_CAPABILITY_ID, RemovePaneInput, ResizePaneInput,
+    SEAM_DRAG_CAPABILITY_ID, SHARE_DECIMAL_PLACES, SeamDragInput, WindowMenuInput,
+    WindowMenuResult, descriptor,
 };
 use quantick_control_schema::canvas::{
     CanvasPaneDto, CanvasPaneKind, CanvasPaneMode, CanvasPlaceDto, CanvasSeamDto, CanvasView,
@@ -120,6 +121,11 @@ pub trait CanvasHost {
         Err(unavailable())
     }
 
+    /// The active tab's layout picker, as the toolbar draws it.
+    fn layout_picker(&mut self) -> Result<LayoutPickerResult, ControlError> {
+        Err(unavailable())
+    }
+
     /// Apply `act` to the active tab's canvas and answer the canvas after.
     fn act_on_canvas(&mut self, _act: CanvasAct) -> Result<CanvasResult, ControlError> {
         Err(unavailable())
@@ -134,6 +140,7 @@ pub fn register<H: CanvasHost + ?Sized, A>(
     let described = |id: &str| descriptor(id).expect("every canvas id is described");
     registry
         .register_outside_replay(described(OPEN_WINDOW_MENU_CAPABILITY_ID), open_window_menu)?;
+    registry.register_outside_replay(described(LAYOUT_PICKER_CAPABILITY_ID), layout_picker)?;
     registry.register(described(PICK_LAYOUT_CAPABILITY_ID), pick_layout)?;
     registry.register(described(MINIMIZE_CAPABILITY_ID), minimize)?;
     registry.register(described(MAXIMIZE_CAPABILITY_ID), maximize)?;
@@ -168,6 +175,17 @@ fn open_window_menu<H: CanvasHost + ?Sized, A>(
     let _: WindowMenuInput = parse(value)?;
     let open = app.open_window_menu()?;
     serde_json::to_value(WindowMenuResult { open })
+        .map_err(|error| ControlError::invalid_request(error.to_string()))
+}
+
+fn layout_picker<H: CanvasHost + ?Sized, A>(
+    app: &mut H,
+    _: &mut A,
+    _: &ActorContext,
+    value: &Value,
+) -> Result<Value, ControlError> {
+    let _: LayoutPickerInput = parse(value)?;
+    serde_json::to_value(app.layout_picker()?)
         .map_err(|error| ControlError::invalid_request(error.to_string()))
 }
 

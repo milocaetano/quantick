@@ -123,7 +123,7 @@ pub fn legible(color: PremultipliedRgba, background: PremultipliedRgba) -> Premu
 }
 
 /// [`legible`] held to `least` instead of [`MIN_DRAWING_CONTRAST`].
-fn legible_at(
+pub fn legible_at(
     color: PremultipliedRgba,
     background: PremultipliedRgba,
     least: f32,

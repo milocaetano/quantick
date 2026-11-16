@@ -20,6 +20,11 @@ const RESULT_MAX_BYTES: usize = 2048;
 
 pub const OPEN_WINDOW_MENU_CAPABILITY_ID: &str = "canvas.window_menu.open";
 pub const PICK_LAYOUT_CAPABILITY_ID: &str = "canvas.layout.pick";
+/// The layout picker as the toolbar draws it: a read, not an action, so it
+/// stays out of [`CANVAS_CAPABILITY_IDS`].
+pub const LAYOUT_PICKER_CAPABILITY_ID: &str = "canvas.layout.picker";
+/// Sixteen cells with their names and hints fit well inside.
+const PICKER_MAX_BYTES: usize = 8192;
 pub const MINIMIZE_CAPABILITY_ID: &str = "canvas.pane.minimize";
 pub const MAXIMIZE_CAPABILITY_ID: &str = "canvas.pane.maximize";
 pub const RESTORE_CAPABILITY_ID: &str = "canvas.pane.restore";
@@ -131,6 +136,65 @@ pub struct WindowMenuResult {
 pub struct PickLayoutInput {
     /// A preset id from the layout registry.
     pub preset_id: String,
+}
+
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct LayoutPickerInput {}
+
+/// A column pair of the layout picker's grid.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum LayoutGroupDto {
+    WithFlow,
+    Timeframes,
+}
+
+/// One cell of the layout picker.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct LayoutPickerCell {
+    /// What `canvas.layout.pick` takes.
+    pub preset_id: String,
+    /// The one display name: the cell's, the header's and the scene's.
+    pub name: String,
+    /// The cell's tooltip.
+    pub hint: String,
+    pub group: LayoutGroupDto,
+    /// Its place on the 4 x 4 grid, from the top left.
+    pub row: u32,
+    pub column: u32,
+    /// The canvas draws it.
+    pub current: bool,
+    /// The workspace saved it.
+    pub saved: bool,
+}
+
+/// The layout picker of the active tab, as its header and cells say it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct LayoutPickerResult {
+    /// The picker hangs open below the toolbar's layout button.
+    pub open: bool,
+    /// The tab's workspace, whose layout this is.
+    pub workspace: String,
+    /// The header's save state: `Saved: <layout>` or `Not saved · Ctrl+S`.
+    pub status: String,
+    /// The layout differs from the workspace's save.
+    pub unsaved: bool,
+    /// The preset the canvas draws; absent for a custom arrangement.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_id: Option<String>,
+    /// The preset the workspace saved.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub saved_id: Option<String>,
+    /// While a pick confirms: `Changed to <layout>`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub changed: Option<String>,
+    /// While a pick confirms: the preset Ctrl+Z or the header's `was` words
+    /// restore, which `canvas.layout.pick` takes too.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub undo_id: Option<String>,
+    /// Every cell, in catalogue order.
+    pub cells: Vec<LayoutPickerCell>,
 }
 
 /// One pane, named by its slot.
@@ -352,6 +416,24 @@ fn canvas_descriptor<Input: JsonSchema, Output: JsonSchema>(
 #[must_use]
 pub fn descriptor(id: &str) -> Option<CapabilityDescriptor> {
     let descriptor = match id {
+        LAYOUT_PICKER_CAPABILITY_ID => {
+            let mut descriptor = quantick_control_host::authority::read_descriptor::<
+                LayoutPickerInput,
+                LayoutPickerResult,
+            >(&quantick_control_host::authority::ReadSpec {
+                id: LAYOUT_PICKER_CAPABILITY_ID,
+                module: CANVAS_MODULE_ID,
+                title: "Read the layout picker",
+                description: "Reads the active tab's layout picker as the toolbar's layout button draws it: the workspace, its save state (Saved: <layout> or Not saved · Ctrl+S), and every cell of the 4 x 4 grid with its preset id, display name, hint, group, row, column and whether the canvas draws it or the workspace saved it. While a pick confirms it also names Changed to <layout> and the preset Ctrl+Z restores. Pick a cell with canvas.layout.pick.",
+                permissions: &[
+                    quantick_control_host::authority::OBSERVE_PERMISSION_ID,
+                    "observe.workspace",
+                ],
+                pagination: None,
+            });
+            descriptor.expected_cost.max_response_bytes = Some(PICKER_MAX_BYTES);
+            descriptor
+        }
         OPEN_WINDOW_MENU_CAPABILITY_ID => {
             let mut descriptor = crate::layout::transient_descriptor::<
                 WindowMenuInput,
@@ -501,6 +583,14 @@ pub fn documents() -> Vec<(&'static str, serde_json::Value)> {
         (
             "canvas-pick-layout-input-v1.schema.json",
             schema::<PickLayoutInput>(),
+        ),
+        (
+            "canvas-layout-picker-input-v1.schema.json",
+            schema::<LayoutPickerInput>(),
+        ),
+        (
+            "canvas-layout-picker-result-v1.schema.json",
+            schema::<LayoutPickerResult>(),
         ),
         ("canvas-pane-input-v1.schema.json", schema::<PaneInput>()),
         (

@@ -93,7 +93,7 @@ The three exclusion classes are closed:
 | `layout.pane.focus` | Make another chart the focused one | click anywhere on a chart | `layout.focus.set` | — |
 | `layout.pane.move` | Move a context chart up or down the column | window menu, Workspace, Move chart, and the drag the menu entry exists to replace | `layout.pane.move` | — |
 | `layout.pane.resize` | Resize columns or adjacent context charts | drag the horizontal or vertical divider between two charts | `layout.pane.resize`, `layout.pane.resize_pair` | — |
-| `layout.preset.apply` | Switch the canvas to another arrangement | the capsule's layout popover, window menu, Workspace, Layout, Ctrl+Shift+1 … Ctrl+Shift+9 | `layout.preset.apply`, `canvas.layout.pick` | — |
+| `layout.preset.apply` | Switch the canvas to another arrangement | the capsule's layout popover (arrows, Enter, Ctrl+Z back), window menu, Workspace, Layout, Ctrl+Shift+1 … Ctrl+Shift+9 | `layout.preset.apply`, `canvas.layout.pick`, `canvas.layout.picker` | — |
 | `canvas.window_menu.open` | Open the window menu from the toolbar's list door | the toolbar's list door at its left end | `canvas.window_menu.open` | — |
 | `canvas.pane.minimize` | Fold a chart to a strip at its edge | a chart header's ⋯ menu, Minimize; the remove dialog's Minimize instead | `canvas.pane.minimize` | — |
 | `canvas.pane.maximize` | Fill the canvas with one chart | a chart header's ⋯ menu, Maximize | `canvas.pane.maximize` | — |

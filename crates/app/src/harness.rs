@@ -280,10 +280,10 @@ impl<T> Budgeted<T> {
 #[cfg_attr(test, derive(Default))]
 pub(crate) struct Harness {
     /// `QUANTICK_LAYOUT_PICKER`: a pending request to open the toolbar's
-    /// layout popover. Drained by the frame that honours it — the popover is a
-    /// popup egui owns, so the hook asks for it through the same call the
-    /// click makes rather than faking the surface.
-    layout_picker_autostart: bool,
+    /// layout popover, held open: `1` as it opens, `pick=<id>` after a pick of
+    /// that layout, `focus=<id>` with the keyboard on that cell. Drained by
+    /// the frame that honours it, through the picker's own model.
+    layout_picker: Option<String>,
     /// `QUANTICK_WINDOW_MENU=toolbar`: hang the window menu from `≡` once.
     window_menu_toolbar: bool,
     /// `QUANTICK_DEAL_RECORDING`: `on`/`off` override the default a tab's
@@ -410,7 +410,8 @@ impl Harness {
         let read = |name: &str| env.var(name);
         let flag = |name: &str| flag(env, name);
         Self {
-            layout_picker_autostart: flag("QUANTICK_LAYOUT_PICKER"),
+            layout_picker: read("QUANTICK_LAYOUT_PICKER")
+                .filter(|hook| !["", "0"].contains(&hook.as_str())),
             window_menu_toolbar: read("QUANTICK_WINDOW_MENU").as_deref() == Some("toolbar"),
             deal_recording: crate::deal_recording::RecordingHook::parse(
                 env.var(crate::deal_recording::RECORDING_HOOK_ENV)
@@ -489,10 +490,10 @@ impl Harness {
         }
     }
 
-    /// Whether the layout popover should open this frame, and never again:
-    /// one shot, so a trader's click can close it.
-    pub(crate) fn take_layout_picker_autostart(&mut self) -> bool {
-        std::mem::take(&mut self.layout_picker_autostart)
+    /// The layout popover's staging this frame, and never again: one shot,
+    /// so a trader's click can close it.
+    pub(crate) fn take_layout_picker(&mut self) -> Option<String> {
+        self.layout_picker.take()
     }
 
     /// Whether the window menu should hang from `≡` this frame, once.

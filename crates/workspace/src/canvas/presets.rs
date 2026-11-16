@@ -58,8 +58,11 @@ pub struct LayoutPreset {
     /// label: that is prose a reader sees, and rewording it must not move an
     /// operator's ground.
     pub id: &'static str,
-    /// What the picker and the menu call it.
+    /// What the picker, the menu, the scene and the control plane call it:
+    /// the one display name, on one picker cell line ([`LABEL_MAX_CHARS`]).
     pub label: &'static str,
+    /// The longer description a picker cell's tooltip gives.
+    pub hint: &'static str,
     /// The panes it lays out, by slot: `kinds[slot]` is the kind of the
     /// tree's pane `slot`. A flow pane is always the last slot.
     pub kinds: &'static [PaneKind],
@@ -77,6 +80,11 @@ impl PartialEq for LayoutPreset {
 }
 
 impl Eq for LayoutPreset {}
+
+/// The longest display name, in characters: one line of a picker cell. "2
+/// stacked + Flow" and "3 stacked + Flow" became "2 stack + Flow" and "3 stack
+/// + Flow" to fit; their hints say it whole.
+pub const LABEL_MAX_CHARS: usize = 14;
 
 /// Most panes one tab's canvas may hold at once.
 ///
@@ -125,6 +133,7 @@ pub static LAYOUT_PRESETS: &[LayoutPreset] = &[
     LayoutPreset {
         id: "flow",
         label: "Flow",
+        hint: "The flow pane alone",
         kinds: &[F],
         group: PresetGroup::WithFlow,
         tree: &f(0),
@@ -132,6 +141,7 @@ pub static LAYOUT_PRESETS: &[LayoutPreset] = &[
     LayoutPreset {
         id: "time+flow",
         label: "1 TF + Flow",
+        hint: "One timeframe chart left of the flow pane",
         kinds: &[T, F],
         group: PresetGroup::WithFlow,
         tree: &split!(Row, [CTX, FLOW], [t(0), f(1)]),
@@ -139,13 +149,15 @@ pub static LAYOUT_PRESETS: &[LayoutPreset] = &[
     LayoutPreset {
         id: "time+time+flow",
         label: "2 TF + Flow",
+        hint: "Two timeframe charts side by side, left of the flow pane",
         kinds: &[T, T, F],
         group: PresetGroup::WithFlow,
         tree: &split!(Row, [CTX / 2.0, CTX / 2.0, FLOW], [t(0), t(1), f(2)]),
     },
     LayoutPreset {
         id: "stack2+flow",
-        label: "2 stacked + Flow",
+        label: "2 stack + Flow",
+        hint: "Two timeframe charts stacked, left of the flow pane",
         kinds: &[T, T, F],
         group: PresetGroup::WithFlow,
         tree: &split!(
@@ -156,7 +168,8 @@ pub static LAYOUT_PRESETS: &[LayoutPreset] = &[
     },
     LayoutPreset {
         id: "stack3+flow",
-        label: "3 stacked + Flow",
+        label: "3 stack + Flow",
+        hint: "Three timeframe charts stacked, left of the flow pane",
         kinds: &[T, T, T, F],
         group: PresetGroup::WithFlow,
         tree: &split!(
@@ -168,6 +181,7 @@ pub static LAYOUT_PRESETS: &[LayoutPreset] = &[
     LayoutPreset {
         id: "grid4+flow",
         label: "4 TF + Flow",
+        hint: "Four timeframe charts in a 2 x 2 grid, left of the flow pane",
         kinds: &[T, T, T, T, F],
         group: PresetGroup::WithFlow,
         tree: &split!(
@@ -189,6 +203,7 @@ pub static LAYOUT_PRESETS: &[LayoutPreset] = &[
     LayoutPreset {
         id: "flow-over-time",
         label: "Flow over TF",
+        hint: "The flow pane over one timeframe chart",
         kinds: &[T, F],
         group: PresetGroup::WithFlow,
         tree: &split!(Column, [TOP, BELOW], [f(1), t(0)]),
@@ -196,6 +211,7 @@ pub static LAYOUT_PRESETS: &[LayoutPreset] = &[
     LayoutPreset {
         id: "flow-over-2time",
         label: "Flow over 2 TF",
+        hint: "The flow pane over two timeframe charts side by side",
         kinds: &[T, T, F],
         group: PresetGroup::WithFlow,
         tree: &split!(
@@ -207,6 +223,7 @@ pub static LAYOUT_PRESETS: &[LayoutPreset] = &[
     LayoutPreset {
         id: "time",
         label: "1 chart",
+        hint: "One timeframe chart",
         kinds: &[T],
         group: PresetGroup::Timeframes,
         tree: &t(0),
@@ -214,6 +231,7 @@ pub static LAYOUT_PRESETS: &[LayoutPreset] = &[
     LayoutPreset {
         id: "charts-2",
         label: "2 charts",
+        hint: "Two timeframe charts side by side",
         kinds: &[T, T],
         group: PresetGroup::Timeframes,
         tree: &split!(Row, [1.0, 1.0], [t(0), t(1)]),
@@ -221,6 +239,7 @@ pub static LAYOUT_PRESETS: &[LayoutPreset] = &[
     LayoutPreset {
         id: "charts-3",
         label: "3 charts",
+        hint: "Three timeframe charts side by side",
         kinds: &[T, T, T],
         group: PresetGroup::Timeframes,
         tree: &split!(Row, [1.0, 1.0, 1.0], [t(0), t(1), t(2)]),
@@ -228,6 +247,7 @@ pub static LAYOUT_PRESETS: &[LayoutPreset] = &[
     LayoutPreset {
         id: "charts-4",
         label: "4 charts",
+        hint: "Four timeframe charts in a 2 x 2 grid",
         kinds: &[T, T, T, T],
         group: PresetGroup::Timeframes,
         tree: &split!(
@@ -242,6 +262,7 @@ pub static LAYOUT_PRESETS: &[LayoutPreset] = &[
     LayoutPreset {
         id: "charts-5",
         label: "5 charts",
+        hint: "Five timeframe charts: three over two",
         kinds: &[T, T, T, T, T],
         group: PresetGroup::Timeframes,
         tree: &split!(
@@ -256,6 +277,7 @@ pub static LAYOUT_PRESETS: &[LayoutPreset] = &[
     LayoutPreset {
         id: "charts-6",
         label: "6 charts",
+        hint: "Six timeframe charts: three over three",
         kinds: &[T, T, T, T, T, T],
         group: PresetGroup::Timeframes,
         tree: &split!(
@@ -270,6 +292,7 @@ pub static LAYOUT_PRESETS: &[LayoutPreset] = &[
     LayoutPreset {
         id: "charts-7",
         label: "7 charts",
+        hint: "Seven timeframe charts: four over three",
         kinds: &[T, T, T, T, T, T, T],
         group: PresetGroup::Timeframes,
         tree: &split!(
@@ -284,6 +307,7 @@ pub static LAYOUT_PRESETS: &[LayoutPreset] = &[
     LayoutPreset {
         id: "charts-8",
         label: "8 charts",
+        hint: "Eight timeframe charts: four over four",
         kinds: &[T, T, T, T, T, T, T, T],
         group: PresetGroup::Timeframes,
         tree: &split!(

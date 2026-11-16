@@ -52,7 +52,8 @@ pub use metrics::{
     CANVAS_DIVIDER_PX, COLLAPSE_AT_PX, COLLAPSED_HIT_PX, COLLAPSED_PANE_WIDTH_PX, MIN_PANE_WIDTH_PX,
 };
 pub use presets::{
-    LAYOUT_PRESETS, LayoutPreset, MAX_CANVAS_PANES, PaneKind, PresetGroup, matching_preset, preset,
+    LABEL_MAX_CHARS, LAYOUT_PRESETS, LayoutPreset, MAX_CANVAS_PANES, PaneKind, PresetGroup,
+    matching_preset, preset,
 };
 pub use rail::{Hand, SeamDrag};
 pub use rail_look::{

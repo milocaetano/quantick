@@ -12,6 +12,7 @@ use quantick_engine::Side;
 use quantick_session::paper::TradeCommand;
 
 use crate::app::indicator_manager::IndicatorEdit;
+use crate::canvas_layout::LayoutPreset;
 use crate::indicator_worker::SlotId;
 use crate::toolbar::{self, ToolbarAction};
 
@@ -146,10 +147,7 @@ impl QuantickApp {
     /// the keyboard all arrive here, so none of them can grow its own idea of
     /// what applying a layout does. A control-plane capability joins them by
     /// calling this, never by repeating it.
-    pub(in crate::app) fn apply_layout_preset(
-        &mut self,
-        preset: &'static crate::canvas_layout::LayoutPreset,
-    ) {
+    pub(in crate::app) fn apply_layout_preset(&mut self, preset: &'static LayoutPreset) {
         crate::tab::layout::pick(self.active_tab_mut(), preset);
     }
 

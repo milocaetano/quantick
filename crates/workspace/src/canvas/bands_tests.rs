@@ -87,7 +87,7 @@ fn layout_marks_compare_against_the_save() {
 }
 
 /// The split a column painter takes from a preset is where its tree puts the
-/// flow pane; a catalogue cell wraps a long name at " + ".
+/// flow pane.
 #[test]
 fn presets_answer_their_split_label_and_word() {
     let flow = preset("flow").unwrap();
@@ -95,8 +95,6 @@ fn presets_answer_their_split_label_and_word() {
     assert_eq!(preset("time").unwrap().flow_left(), None);
     let stacked = preset("stack2+flow").unwrap();
     assert!(stacked.flow_left().is_some_and(|x| x > 0.0 && x < 1.0));
-    assert_eq!(stacked.cell_label(), "2 stacked\n+ Flow");
-    assert_eq!(flow.cell_label(), "Flow");
     assert_eq!(
         DeclaredLayout::nearest(stacked),
         DeclaredLayout::TimeTimeAndFlow

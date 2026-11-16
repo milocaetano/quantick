@@ -18,7 +18,7 @@ pub enum CanvasLayout {
     /// Time pane left, flow pane right, on a draggable divider.
     TimeAndFlow,
     /// Two time panes stacked in the left column, flow pane right: the
-    /// registry's "2 stacked + Flow".
+    /// registry's "2 stack + Flow".
     TimeTimeAndFlow,
     /// Any other registry entry, drawn from its pane tree.
     Preset(&'static LayoutPreset),

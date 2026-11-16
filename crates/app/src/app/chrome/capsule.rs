@@ -3,30 +3,38 @@
 //! to the observer scene, and what their presses do.
 
 use eframe::egui;
-use quantick_control_schema::canvas::{OPEN_WINDOW_MENU_CAPABILITY_ID, PICK_LAYOUT_CAPABILITY_ID};
+use quantick_control_schema::canvas::{
+    LAYOUT_PICKER_CAPABILITY_ID, OPEN_WINDOW_MENU_CAPABILITY_ID, PICK_LAYOUT_CAPABILITY_ID,
+};
 use quantick_session::workspace_menu::WorkspaceCommand;
+use quantick_ui_model::canvas_popovers::picked;
 use quantick_workspace::canvas::LayoutMarks;
 
 use crate::app::QuantickApp;
 use crate::app::menu_bar::MenuDoor;
 use crate::toolbar::capsule::CapsuleRects;
-use crate::toolbar::layout_popover::{self, PopoverModel};
+use crate::toolbar::layout_popover;
 use crate::toolbar::{DrawnControl, ToolbarAction};
 use quantick_ui_model::chrome_toolbar::Capsule as CapsuleState;
+
+/// The active tab's workspace, whether it holds edits, and its layout marks.
+pub(in crate::app) fn layout_of(app: &QuantickApp) -> (String, bool, LayoutMarks) {
+    let book = &app.runtime.workspace.book;
+    let (workspace, unsaved) = book.tab_row(app.runtime.tabs.active_id());
+    let recipe = book.book().recipe(&workspace);
+    let saved = recipe.map(quantick_workspace::canvas_layout::recipe_canvas);
+    let marks = LayoutMarks::of(&app.active_tab().canvas.state, saved.as_ref(), unsaved);
+    (workspace, unsaved, marks)
+}
 
 pub(in crate::app) fn snapshot(app: &QuantickApp, ctx: &egui::Context) -> CapsuleState {
     let tab = app.runtime.tabs.active_id();
     let book = &app.runtime.workspace.book;
-    let (workspace, unsaved) = book.tab_row(tab);
-    let live = &app.active_tab().canvas.state;
-    let saved = book
-        .book()
-        .recipe(&workspace)
-        .map(quantick_workspace::canvas_layout::recipe_canvas);
+    let (workspace, unsaved, marks) = layout_of(app);
     CapsuleState {
-        tree: live.tree().clone(),
+        tree: app.active_tab().canvas.state.tree().clone(),
         unsaved,
-        marks: LayoutMarks::of(live, saved.as_ref(), unsaved),
+        marks,
         menu_open: app.chrome.window_menu.tab_workspace.chip_menu_on(tab),
         colour: book.book().tab_colour(tab),
         workspace,
@@ -52,17 +60,20 @@ pub(in crate::app) fn settle(
     app.chrome.capsule = rects;
     app.chrome.window_menu.toolbar_door = door;
     #[cfg(any(feature = "scenario-harness", test))]
-    if app.chrome.harness.take_layout_picker_autostart() {
-        app.surfaces.canvas_popovers.update(
-            quantick_ui_model::canvas_popovers::Intent::SetLayoutOpen(true),
-        );
-    }
-    #[cfg(any(feature = "scenario-harness", test))]
     if app.chrome.harness.take_window_menu_toolbar() {
         crate::app::canvas_wiring::open_window_menu(&mut app.chrome.window_menu);
     }
     let mut workspace_clicked = false;
     let mut rest = Vec::new();
+    #[cfg(any(feature = "scenario-harness", test))]
+    if let Some(hook) = app.chrome.harness.take_layout_picker() {
+        let now_ms = layout_popover::now_ms(ctx);
+        let stage = quantick_ui_model::canvas_popovers::Intent::StageLayout;
+        let staged = stage(hook, state.marks.current, now_ms);
+        rest.extend(picked(
+            app.surfaces.canvas_popovers.update(staged).model_effects,
+        ));
+    }
     for action in actions {
         match action {
             ToolbarAction::ToggleWindowMenu => {
@@ -76,23 +87,20 @@ pub(in crate::app) fn settle(
             action => rest.push(action),
         }
     }
-    let model = PopoverModel {
-        workspace: &state.workspace,
-        marks: state.marks,
-    };
-    let cells = app
-        .surfaces
-        .canvas_popovers
+    let shown = (state.workspace.as_str(), state.colour, state.marks);
+    let hang = (rects.miniature, rects.miniature.union(rects.name));
+    let tab = app.runtime.tabs.active_id();
+    let drawn = (app.surfaces.canvas_popovers)
         .with_pass(
             quantick_ui_model::Slot::Toolbar,
-            |_| {},
-            |view, session| view.layout(session, ctx, rects.miniature, &model, &mut rest),
+            |response| rest.extend(picked(response.model_effects)),
+            |view, session| view.layout(session, (ctx, hang, tab), shown),
         )
         .unwrap_or_default();
     crate::app::menu_bar::workspace_cell(app, ctx, Some(rects.name), workspace_clicked);
     app.chrome.add_menu.door = rects.add;
     crate::app::canvas_wiring::add_from_menu(app, ctx);
-    publish(app, ctx, state, rects, door, &cells);
+    publish(app, ctx, state, rects, door, &drawn);
     rest
 }
 
@@ -103,7 +111,7 @@ fn publish(
     state: &CapsuleState,
     rects: CapsuleRects,
     door: Option<egui::Rect>,
-    cells: &[layout_popover::DrawnCell],
+    drawn: &layout_popover::Drawn,
 ) {
     let control = |id: &str, label: &str, rect, selected, capability| DrawnControl {
         id: format!("toolbar.{id}"),
@@ -160,16 +168,25 @@ fn publish(
             save,
         ));
     }
-    for (preset, rect) in cells {
+    if let Some((rect, label)) = &drawn.header {
+        let read = Some(LAYOUT_PICKER_CAPABILITY_ID);
+        controls.push(control("layout_popover.header", label, *rect, false, read));
+    }
+    let pick = Some(PICK_LAYOUT_CAPABILITY_ID);
+    if let Some((rect, words)) = &drawn.undo {
+        controls.push(control("layout_popover.undo", words, *rect, false, pick));
+    }
+    for (preset, rect) in &drawn.cells {
         let id = format!("layout_popover.{}", preset.id);
-        let selected = state.marks.current == Some(*preset);
-        controls.push(control(
+        let mut cell = control(
             &id,
             preset.label,
             *rect,
-            selected,
-            Some(PICK_LAYOUT_CAPABILITY_ID),
-        ));
+            state.marks.current == Some(*preset),
+            pick,
+        );
+        cell.description = Some(preset.hint.to_owned());
+        controls.push(cell);
     }
     let add = &app.chrome.add_menu;
     if let Some(door) = add.door {

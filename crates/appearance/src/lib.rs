@@ -12,6 +12,7 @@ pub mod contrast;
 mod document;
 mod error;
 pub mod heat;
+pub mod layout_picker;
 pub mod orderflow;
 pub mod palette;
 pub mod panel_chrome;
