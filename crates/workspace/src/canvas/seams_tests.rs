@@ -132,6 +132,73 @@ fn drag(state: &mut CanvasState, seam: &SeamAddress, by: f32) {
     }
 }
 
+/// The window's hand on `seam`'s handle: a press, sixteen moves adding up
+/// to `by` points along the split, a release.
+fn hand_drag(state: &mut CanvasState, seam: &SeamAddress, by: f32) {
+    use crate::canvas::Hand;
+    let mut held = None;
+    state.seam_hand(&mut held, (seam, Hand::of([true, true, false], 0.0)), AREA);
+    for _ in 0..16 {
+        let step = Hand::of([false, true, false], by / 16.0);
+        state.seam_hand(&mut held, (seam, step), AREA);
+    }
+    state.seam_hand(&mut held, (seam, Hand::of([false, false, true], 0.0)), AREA);
+}
+
+/// A rail with an open chart on both sides opens by a drag either way,
+/// whichever of its two seams the press landed on, however it was folded:
+/// the first move picks the seam on that side, backward the one before it,
+/// forward the one after.
+#[test]
+fn a_middle_rail_opens_by_a_drag_either_way_from_either_seam() {
+    for (fold, by) in [(0, AREA.w), (1, -AREA.w)] {
+        for grabbed in [0, 1] {
+            for way in [-300.0, 300.0] {
+                let mut state = canvas("charts-3");
+                drag(&mut state, &root(fold), by);
+                let middle = state.tree().panes()[1].0;
+                assert!(
+                    state.railed().contains(&middle),
+                    "{fold}: the middle folded"
+                );
+                hand_drag(&mut state, &root(grabbed), way);
+                let case = format!("folded by seam {fold}, grabbed by seam {grabbed}, moved {way}");
+                assert!(state.railed().is_empty(), "{case}: open");
+            }
+        }
+    }
+}
+
+/// With a minimized strip between a middle rail and the chart before it,
+/// the first move still picks the side: the seam beside the strip and the
+/// seam after the rail each open it, either way.
+#[test]
+fn a_middle_rail_beside_a_strip_opens_by_a_drag_either_way() {
+    let row = |index| SeamAddress {
+        path: vec![0],
+        index,
+    };
+    for grabbed in [1, 2] {
+        for way in [-200.0, 200.0] {
+            let mut state = canvas("charts-7");
+            let top: Vec<PaneSlot> = state.tree().panes()[..4]
+                .iter()
+                .map(|(slot, _)| *slot)
+                .collect();
+            state.minimize(top[1]).unwrap();
+            drag(&mut state, &row(1), AREA.w);
+            assert!(state.railed().contains(&top[2]), "the third chart folded");
+            hand_drag(&mut state, &row(grabbed), way);
+            let case = format!("grabbed by seam {grabbed}, moved {way}");
+            assert!(state.railed().is_empty(), "{case}: open");
+            assert!(
+                state.minimized().contains(&top[1]),
+                "{case}: the strip stays"
+            );
+        }
+    }
+}
+
 /// Every split's shares, depth first.
 fn all_shares(node: &PaneTree, out: &mut Vec<f32>) {
     if let PaneTree::Split {
@@ -291,43 +358,6 @@ fn a_seam_beside_a_rail_is_grabbed_over_the_rail_hit_width() {
     let grab = seam.grab(6.0);
     assert_eq!(grab.right(), AREA.w);
     assert!((grab.w - COLLAPSED_HIT_PX).abs() < EPS, "{grab:?}");
-}
-
-/// A rail between two seams answers to the seam whose drag folded it: the
-/// middle of "3 charts" dragged shut to the right is taken back by the
-/// first seam over the rail's hit width, and the second stops at the rail's
-/// edge, so the hand drags it back the way it came. Folded to the left, the
-/// second seam takes it.
-#[test]
-fn a_rail_between_two_seams_is_grabbed_by_the_seam_that_folded_it() {
-    for (by, own) in [(AREA.w, 0), (-AREA.w, 1)] {
-        let mut state = canvas("charts-3");
-        drag(&mut state, &root(own), by);
-        let seams = tree_seams(&state, AREA, DIVIDER);
-        let rail = seams[own].rail.expect("the middle chart folded");
-        let middle = rail.rect.x + rail.rect.w / 2.0;
-        let takes = |seam: &TreeSeam| {
-            let grab = seam.grab(6.0);
-            grab.x <= middle && middle <= grab.right()
-        };
-        assert!(
-            seams[own].reaches && takes(&seams[own]),
-            "{by}: its own seam"
-        );
-        let other = &seams[1 - own];
-        assert_eq!(other.rail.map(|held| held.slot), Some(rail.slot));
-        let grab = other.grab(6.0);
-        assert!(!other.reaches && !takes(other), "{by}: {grab:?}");
-        let edge = if own == 0 {
-            grab.x - rail.rect.right()
-        } else {
-            grab.right() - rail.rect.x
-        };
-        assert!(
-            edge.abs() < EPS,
-            "{by}: it stops at the rail's edge, {grab:?}"
-        );
-    }
 }
 
 /// A restore by call opens a rail at the shares the drag found it at, and a

@@ -38,6 +38,13 @@ const SLACK: f32 = 0.5;
 /// How far along its cross span a hand grabs a divider or a rail: off the
 /// middle, where the dividers of a 2 x 2 grid cross.
 const GRAB_AT: f32 = 0.3;
+/// How far a middle rail is dragged open the way it did not fold: past the
+/// fold threshold, short of the neighbour's floor.
+const OTHER_WAY_PX: f32 = 120.0;
+/// How far a drag that comes back goes first: under every floor and fold.
+const OUT_AND_BACK_PX: f32 = 40.0;
+/// Float rounding in a share, far under a point on any screen.
+const ROUNDING: f32 = 1e-4;
 /// Most frames a layout gets to build its charts before a case starts.
 const SETTLE_FRAMES: usize = 60;
 
@@ -99,6 +106,29 @@ impl Rig {
         let release = vec![egui::Event::PointerMoved(to), pointer_button(to, false)];
         self.frame(app, release);
         self.frame(app, Vec::new())
+    }
+
+    /// A press at the first of `points`, [`STEPS`] moves to each next one,
+    /// a release at the last, then a frame to settle.
+    fn drag_through(&self, app: &mut QuantickApp, points: &[egui::Pos2]) {
+        let from = points[0];
+        self.frame(app, vec![egui::Event::PointerMoved(from)]);
+        self.frame(
+            app,
+            vec![egui::Event::PointerMoved(from), pointer_button(from, true)],
+        );
+        for leg in points.windows(2) {
+            for step in 1..=STEPS {
+                let at = leg[0].lerp(leg[1], step as f32 / STEPS as f32);
+                self.frame(app, vec![egui::Event::PointerMoved(at)]);
+            }
+        }
+        let to = points[points.len() - 1];
+        self.frame(
+            app,
+            vec![egui::Event::PointerMoved(to), pointer_button(to, false)],
+        );
+        self.frame(app, Vec::new());
     }
 
     /// A press and a release at `at` without a move between.
@@ -368,6 +398,40 @@ type Held = (
 );
 
 /// How `after` differs from `before`, if it does.
+/// Every share of `tree`, depth first.
+fn tree_shares(tree: &PaneTree, out: &mut Vec<f32>) {
+    if let PaneTree::Split {
+        children, shares, ..
+    } = tree
+    {
+        out.extend(shares.iter());
+        for child in children.iter() {
+            tree_shares(child, out);
+        }
+    }
+}
+
+/// Whether `tab` holds what `before` held but for float rounding in the
+/// tree's shares and the split, far under a point on any screen: what a
+/// drag replayed back to its press may leave. The stack's heights and every
+/// fold must match exactly.
+fn rounded(before: &Held, tab: &crate::tab::Tab) -> bool {
+    let after = held(tab);
+    let shares = |held: &Held| {
+        let mut out = Vec::new();
+        tree_shares(held.0.tree(), &mut out);
+        out
+    };
+    let (was, now) = (shares(before), shares(&after));
+    let close = |a: f32, b: f32| (a - b).abs() < ROUNDING;
+    before.0.railed() == after.0.railed()
+        && before.0.tree().panes() == after.0.tree().panes()
+        && was.len() == now.len()
+        && was.iter().zip(&now).all(|(a, b)| close(*a, *b))
+        && close(before.1, after.1)
+        && (&before.2, &before.3) == (&after.2, &after.3)
+}
+
 fn moved_by(before: &Held, after: &Held) -> Option<String> {
     if before == after {
         return None;
@@ -694,8 +758,8 @@ fn check_reads(
 /// How far the hand drags the rail at `rail_mid` to put the boundary back
 /// where it stood: the column painter's divider counts from its centre and
 /// a rail from its inner edge (the flow's) or its middle (the context's),
-/// the stack's boundary follows the pointer, and a seam counts from the
-/// boundary the model holds.
+/// the stack's boundary from the divider beside the rail, and a seam from
+/// the boundary the model holds: each moves by the pointer's travel.
 fn travel_back(case: &Case, tab: &crate::tab::Tab, before: &Before, rail: egui::Rect) -> f32 {
     let (lo, hi) = along(rail, case.axis);
     let rail_mid = (lo + hi) / 2.0;
@@ -709,8 +773,80 @@ fn travel_back(case: &Case, tab: &crate::tab::Tab, before: &Before, rail: egui::
             };
             before.divider - at
         }
-        (true, false) => before.divider - rail_mid,
+        (true, false) => {
+            let now = tab.context_divider_rect(case.seam.index);
+            now.map_or(0.0, |at| {
+                before.divider - (along(at, case.axis).0 + along(at, case.axis).1) / 2.0
+            })
+        }
         (false, _) => before.boundary - model_boundary(tab, &before.pair[0], case.axis),
+    }
+}
+
+/// The rail of the fold just made again, dragged open the way its chevron
+/// points when that is not back the way it came, and both ways when it
+/// stands between two open charts: each drag must open it. A chevron on a
+/// rail at the edge of its split points back the way it came, which the
+/// drag back already proved; one that points elsewhere is a finding.
+fn check_other_way(
+    (case, rig, app): (&Case, &Rig, &mut QuantickApp),
+    (before, back): (&Before, f32),
+    found: &mut Vec<String>,
+) {
+    let tab = rig.tab(app);
+    if tab.canvas.column_painted() {
+        return;
+    }
+    let whole = model_rect(tab.canvas.last_canvas);
+    let slot = before.fold.0[0];
+    let rails = tree_rails(&tab.canvas.state, whole, CANVAS_DIVIDER_PX);
+    let Some(rail) = rails.into_iter().find(|rail| rail.slot == slot) else {
+        found.push("folded again, no rail".to_owned());
+        return;
+    };
+    let seams = tree_seams(&tab.canvas.state, whole, CANVAS_DIVIDER_PX).into_iter();
+    let beside = seams.filter(|seam| seam.resizable && seam.rail.is_some_and(|at| at.slot == slot));
+    let middle = beside.count() == 2;
+    let chevron = if rail.meets_after { 1.0 } else { -1.0 };
+    if !middle && chevron * back < 0.0 {
+        found.push("the chevron points away from the way the rail opens".to_owned());
+        return;
+    }
+    let ways: &[f32] = if middle { &[-1.0, 1.0] } else { &[] };
+    for way in ways {
+        let tab = rig.tab(app);
+        let Some(rect) = model_rail(tab, slot) else {
+            found.push("folded again, no rail".to_owned());
+            return;
+        };
+        let (lo, hi) = along(rect, case.axis);
+        let (cross_lo, cross_hi) = across(rect, case.axis);
+        let at = |on: f32| point(case.axis, on, cross_lo + (cross_hi - cross_lo) * GRAB_AT);
+        let mid = (lo + hi) / 2.0;
+        rig.drag(app, at(mid), at(mid + way * OTHER_WAY_PX));
+        let tab = rig.tab(app);
+        let pair = before.pair.concat();
+        let shut =
+            (pair.iter().zip(sides(tab, &pair))).any(|(slot, side)| folded(tab, *slot, side));
+        if shut {
+            found.push(format!(
+                "dragged {way:+} from the middle rail, still folded"
+            ));
+            return;
+        }
+        // Folded again for the next way, from where the divider now stands.
+        let Ok(again) = read_before(case, rig.tab(app)) else {
+            found.push("opened, but its divider is not drawn".to_owned());
+            return;
+        };
+        let (pair_lo, pair_hi) = along(again.pair_band, case.axis);
+        let edge = if case.first {
+            pair_lo + 1.0
+        } else {
+            pair_hi - 1.0
+        };
+        let press = point(case.axis, again.divider, again.off);
+        rig.drag(app, press, point(case.axis, edge, again.off));
     }
 }
 
@@ -732,6 +868,15 @@ fn run_case(case: &Case) -> Vec<String> {
         found.push(format!(
             "a click on the open divider changed the canvas: {how}"
         ));
+    }
+    // A drag that comes back to where it was pressed moves nothing.
+    let still = held(rig.tab(app));
+    let out = point(axis, before.divider + OUT_AND_BACK_PX, before.off);
+    rig.drag_through(app, &[press, out, press]);
+    if let Some(how) =
+        moved_by(&still, &held(rig.tab(app))).filter(|_| !rounded(&still, rig.tab(app)))
+    {
+        found.push(format!("a drag out and back changed the canvas: {how}"));
     }
     // The fold, dragged to just inside the pair's far edge.
     let (lo, hi) = along(before.pair_band, axis);
@@ -784,6 +929,9 @@ fn run_case(case: &Case) -> Vec<String> {
     if before.bands.len() != after.len() || !moved.is_empty() {
         found.push(format!("reopened elsewhere: {moved:?}"));
     }
+    // Folded again, the rail opens the way its chevron points too.
+    rig.drag(app, press, point(axis, edge, before.off));
+    check_other_way((case, &rig, app), (&before, travel), &mut found);
     if let (Some(child), Some(root)) = (&rig.child, root_before)
         && held(tab_by_id(app, child.root_tab)) != root
     {
