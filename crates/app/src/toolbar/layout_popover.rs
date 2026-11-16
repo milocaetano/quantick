@@ -28,6 +28,8 @@ const PAD_PX: f32 = 12.0;
 const LABEL_PX: f32 = 11.0;
 /// The ring around the current layout.
 const RING_PX: f32 = 1.5;
+/// Width the column divider takes: egui's separator spacing.
+const DIVIDER_PX: f32 = 6.0;
 /// How far below the capsule the popover hangs.
 const DROP_PX: f32 = 4.0;
 
@@ -70,10 +72,13 @@ pub fn draw(
                         );
                     };
                     caption(ui, format!("LAYOUT OF {}", model.workspace.to_uppercase()));
-                    ui.horizontal_top(|ui| {
+                    // A separator would fill the height the Area remembers.
+                    let mut divider = None;
+                    let grid = ui.horizontal_top(|ui| {
                         for (group, title) in PresetGroup::COLUMNS {
                             if group == PresetGroup::Timeframes {
-                                ui.separator();
+                                let gap = ui.allocate_space(egui::vec2(DIVIDER_PX, 0.0)).1;
+                                divider = Some(ui.painter().round_to_pixel_center(gap.center().x));
                             }
                             ui.vertical(|ui| {
                                 caption(ui, title.to_owned());
@@ -91,6 +96,11 @@ pub fn draw(
                             });
                         }
                     });
+                    if let Some(x) = divider {
+                        let stroke = ui.visuals().widgets.noninteractive.bg_stroke;
+                        ui.painter().vline(x, grid.response.rect.y_range(), stroke);
+                    }
+                    ui.set_max_width(grid.response.rect.width());
                     if model.marks.layout_unsaved {
                         ui.separator();
                         ui.horizontal(|ui| {
@@ -101,15 +111,11 @@ pub fn draw(
                                     model.workspace
                                 ),
                             );
-                            ui.with_layout(
-                                egui::Layout::right_to_left(egui::Align::Center),
-                                |ui| {
-                                    let keys = egui::RichText::new("Ctrl+S")
-                                        .monospace()
-                                        .color(palette.text_muted());
-                                    ui.label(keys);
-                                },
-                            );
+                            let keys = egui::RichText::new("Ctrl+S").monospace();
+                            let right = egui::Layout::right_to_left(egui::Align::Center);
+                            ui.with_layout(right, |ui| {
+                                ui.label(keys.color(palette.text_muted()));
+                            });
                         });
                     }
                 });
@@ -138,11 +144,8 @@ fn cell(
         painter.rect_filled(rect, CORNER_RADIUS, palette.control());
     }
     if model.marks.current == Some(preset) {
-        painter.rect_stroke(
-            rect,
-            CORNER_RADIUS,
-            egui::Stroke::new(RING_PX, palette.accent()),
-        );
+        let ring = egui::Stroke::new(RING_PX, palette.accent());
+        painter.rect_stroke(rect, CORNER_RADIUS, ring);
     }
     let thumb = egui::Rect::from_min_size(
         egui::pos2(rect.center().x - THUMBNAIL.x / 2.0, rect.top() + 4.0),
@@ -169,12 +172,8 @@ fn cell(
             egui::pos2(thumb.right() - tag.size().x - 4.0, thumb.top() - 5.0),
             tag.size() + egui::vec2(6.0, 2.0),
         );
-        painter.rect(
-            at,
-            4.0,
-            palette.chrome(),
-            egui::Stroke::new(1.0_f32, palette.border()),
-        );
+        let border = egui::Stroke::new(1.0_f32, palette.border());
+        painter.rect(at, 4.0, palette.chrome(), border);
         painter.galley(at.min + egui::vec2(3.0, 1.0), tag, palette.text_muted());
     }
     (rect, response)
