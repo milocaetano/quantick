@@ -53,11 +53,14 @@ pub(super) fn context_fixture(
     );
     run_frame(&mut app, ctx);
     assert_eq!(
-        app.active_tab().time_panes[0].state.spec(),
+        app.active_tab().time_panes[0].series.state.spec(),
         &BarSpec::Tick(4)
     );
     assert_eq!(
-        app.active_tab().time_panes[0].state.tape_price_step(),
+        app.active_tab().time_panes[0]
+            .series
+            .state
+            .tape_price_step(),
         Some(Decimal::from(5))
     );
     // The book worker adopts its auto-sized capture bucket off-thread; land
@@ -115,7 +118,7 @@ fn candle_aggression_opt_in_preserves_candles_and_the_right_tape() {
     let before = run_frame(&mut app, &ctx);
     let left = &app.active_tab().time_panes[0];
     assert!(
-        left.state.bar_footprints().is_empty(),
+        left.series.state.bar_footprints().is_empty(),
         "no consumer allocates ladders yet"
     );
     let chart = left.frame.chart_rect.unwrap();
@@ -132,7 +135,7 @@ fn candle_aggression_opt_in_preserves_candles_and_the_right_tape() {
         left.orderflow.is_none(),
         "context panes never acquire a book worker"
     );
-    assert_eq!(left.state.bar_footprints().len(), 5);
+    assert_eq!(left.series.state.bar_footprints().len(), 5);
     assert!(!left.layer_switched_on(ChartLayer::Footprint, &app.runtime.style));
     assert_eq!(
         candle_ink(&after, chart),
@@ -152,6 +155,7 @@ fn candle_aggression_opt_in_preserves_candles_and_the_right_tape() {
     run_frame(&mut app, &ctx);
     assert!(
         app.active_tab().time_panes[0]
+            .series
             .state
             .bar_footprints()
             .is_empty(),
@@ -181,7 +185,7 @@ fn candle_aggression_keeps_same_millisecond_tick_ownership_and_current_partial()
             .unwrap();
     }
     run_frame(&mut app, &ctx);
-    let state = &app.active_tab().time_panes[0].state;
+    let state = &app.active_tab().time_panes[0].series.state;
     assert_eq!(state.bars().len(), 6);
     assert_eq!(
         row_totals(&state.bar_footprints()[5]),
@@ -199,7 +203,7 @@ fn candle_aggression_keeps_same_millisecond_tick_ownership_and_current_partial()
     let output = run_frame(&mut app, &ctx);
     let left = &app.active_tab().time_panes[0];
     assert_eq!(
-        row_totals(left.state.partial_footprint().unwrap()),
+        row_totals(left.series.state.partial_footprint().unwrap()),
         (Decimal::from(25), Decimal::ZERO, 2)
     );
     let chart = left.frame.chart_rect.unwrap();

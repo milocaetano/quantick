@@ -11,20 +11,20 @@ fn subfloor_shared_bar_operation_applies_only_the_effective_configuration() {
         let effective = raw.clamped();
         let tab = app.active_tab_mut();
         assert!(tab.set_pane_bar_spec(0, raw).unwrap());
-        assert_eq!(tab.flow_pane.state.spec(), &effective);
+        assert_eq!(tab.flow_pane.series.state.spec(), &effective);
         assert_eq!(tab.flow_pane.spec.spec(), effective);
-        let revision = tab.flow_pane.state.series_revision();
+        let revision = tab.flow_pane.series.state.series_revision();
         tab.apply_spec_changes();
         tab.apply_spec_changes();
         assert_eq!(tab.flow_pane.spec.pending(), None);
         assert_eq!(
-            tab.flow_pane.state.series_revision(),
+            tab.flow_pane.series.state.series_revision(),
             revision,
             "no deferred second rebuild"
         );
         assert!(!tab.set_pane_bar_spec(0, raw).unwrap());
         assert_eq!(
-            tab.flow_pane.state.series_revision(),
+            tab.flow_pane.series.state.series_revision(),
             revision,
             "repeated request is a no-op"
         );
@@ -62,14 +62,17 @@ fn subfloor_admitted_bar_requests_are_idempotent_and_do_not_rebuild_again() {
             serde_json::json!({"pane":"1", "spec":text}),
         );
         assert_eq!(success_result(&response)["changed"], true);
-        assert_eq!(app.active_tab().pane(target).state.spec(), &effective);
+        assert_eq!(
+            app.active_tab().pane(target).series.state.spec(),
+            &effective
+        );
         assert_eq!(app.active_tab().pane(target).spec.spec(), effective);
-        let revision = app.active_tab().pane(target).state.series_revision();
+        let revision = app.active_tab().pane(target).series.state.series_revision();
         for _ in 0..3 {
             run_frame(&mut app, &ctx);
         }
         assert_eq!(
-            app.active_tab().pane(target).state.series_revision(),
+            app.active_tab().pane(target).series.state.series_revision(),
             revision
         );
         let response = remote_bar_call(
@@ -80,7 +83,7 @@ fn subfloor_admitted_bar_requests_are_idempotent_and_do_not_rebuild_again() {
         );
         assert_eq!(success_result(&response)["changed"], false);
         assert_eq!(
-            app.active_tab().pane(target).state.series_revision(),
+            app.active_tab().pane(target).series.state.series_revision(),
             revision
         );
         assert_eq!(app.active_tab().pane(target).spec.pending(), None);
@@ -124,7 +127,7 @@ fn bar_registry_commands_match_admitted_remote_changes_and_refuse_missing_inputs
         app.active_tab_mut().apply_spec_changes();
         app.active_tab_mut().apply_spec_changes();
         let expected =
-            quantick_engine::fixture::write_bars(app.active_tab().flow_pane.state.bars());
+            quantick_engine::fixture::write_bars(app.active_tab().flow_pane.series.state.bars());
         app.active_tab_mut().flow_pane.set_spec(BarSpec::Tick(50));
         let response = remote_bar_call(
             &mut app,
@@ -140,13 +143,13 @@ fn bar_registry_commands_match_admitted_remote_changes_and_refuse_missing_inputs
             "{text}: {:?}",
             response.outcome
         );
-        assert_eq!(app.active_tab().flow_pane.state.spec(), &config);
+        assert_eq!(app.active_tab().flow_pane.series.state.spec(), &config);
         assert_eq!(
-            quantick_engine::fixture::write_bars(app.active_tab().flow_pane.state.bars()),
+            quantick_engine::fixture::write_bars(app.active_tab().flow_pane.series.state.bars()),
             expected
         );
     }
-    let before = *app.active_tab().flow_pane.state.spec();
+    let before = *app.active_tab().flow_pane.series.state.spec();
     for text in [
         "trades:10",
         "tick:0",
@@ -165,7 +168,7 @@ fn bar_registry_commands_match_admitted_remote_changes_and_refuse_missing_inputs
             quantick_control::error::codes::INVALID_REQUEST
         );
         assert_eq!(
-            app.active_tab().flow_pane.state.spec(),
+            app.active_tab().flow_pane.series.state.spec(),
             &before,
             "a refused command is atomic"
         );
@@ -221,7 +224,7 @@ fn bar_registry_remote_changes_still_require_the_granted_layout_scope() {
             .unwrap()
             .select(None)
             .unwrap();
-    let before = *app.active_tab().flow_pane.state.spec();
+    let before = *app.active_tab().flow_pane.series.state.spec();
     let response = remote_bar_call(
         &mut app,
         &ctx,
@@ -232,7 +235,7 @@ fn bar_registry_remote_changes_still_require_the_granted_layout_scope() {
         response_error(&response).code.as_str(),
         quantick_control::error::codes::PERMISSION_DENIED
     );
-    assert_eq!(app.active_tab().flow_pane.state.spec(), &before);
+    assert_eq!(app.active_tab().flow_pane.series.state.spec(), &before);
     disable_test_gateway(&mut app, &ctx);
     std::fs::remove_dir_all(directory).unwrap();
 }
@@ -451,7 +454,7 @@ fn delayed_bar_response_fixture(unwind: bool) {
     // The header draws before the gateway runs, so its editor sees the value the
     // frame after the call landed.
     run_frame(&mut app, &ctx);
-    assert_eq!(app.active_tab().flow_pane.state.spec(), &config);
+    assert_eq!(app.active_tab().flow_pane.series.state.spec(), &config);
     assert_eq!(
         app.active_tab().flow_pane.spec.pending(),
         Some(BUILTIN_BARS.parse("dollar:1000").unwrap())
@@ -472,7 +475,7 @@ fn delayed_bar_response_fixture(unwind: bool) {
         response.outcome,
         quantick_control::wire::ResponseOutcome::Success { .. }
     ));
-    assert_eq!(app.active_tab().flow_pane.state.spec(), &config);
+    assert_eq!(app.active_tab().flow_pane.series.state.spec(), &config);
     assert!(
         !app.control
             .control_access
@@ -485,7 +488,7 @@ fn delayed_bar_response_fixture(unwind: bool) {
     // A deliberate later idle frame still obeys the unchanged editor contract.
     run_frame(&mut app, &ctx);
     assert_eq!(
-        app.active_tab().flow_pane.state.spec(),
+        app.active_tab().flow_pane.series.state.spec(),
         &BUILTIN_BARS.parse("dollar:1000").unwrap()
     );
     disable_test_gateway(&mut app, &ctx);

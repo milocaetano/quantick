@@ -71,7 +71,7 @@ impl ChartPane {
             .orderflow
             .as_ref()
             .is_some_and(OrderflowView::flow_execution_active)
-            && self.state.tick_membership().is_some();
+            && self.series.state.tick_membership().is_some();
         if flow_execution {
             start.candle_aggression = false;
         }
@@ -107,9 +107,9 @@ impl ChartPane {
         // Field borrows, not `self` borrows: the tape below needs `&mut
         // self.orderflow` while these are alive.
         let series = Series {
-            prefix: self.history_prefix.as_slice(),
-            closed: self.state.bars(),
-            partial: self.state.partial(),
+            prefix: self.series.history_prefix.as_slice(),
+            closed: self.series.state.bars(),
+            partial: self.series.state.partial(),
         };
         let Some((mut frame, auto_range, flip_span, newest)) = layout.resolve(
             painter,
@@ -139,7 +139,7 @@ impl ChartPane {
             self.price_view.is_inverted(),
         );
         let demand = self.layer_read().projection_demand();
-        flow.project(self.orderflow.as_mut(), demand, &self.state, &frame);
+        flow.project(self.orderflow.as_mut(), demand, &self.series.state, &frame);
         flow.heatmap(self.orderflow.as_ref());
         let depth_visible = self
             .orderflow
@@ -152,7 +152,7 @@ impl ChartPane {
         refresh_drawing_folds(
             &mut self.drawings,
             &crate::frvp::RefreshInputs {
-                state: &self.state,
+                state: &self.series.state,
                 budget: crate::frvp::fold_budget(),
                 prefix: frame.prefix,
                 partial_ladder: live_ladder(&self.presentation.footprint),
@@ -233,7 +233,7 @@ impl ChartPane {
             // The footprint dresses only the bars it has a ladder for.
             let ladders = self.presentation.footprint.ladder_slots(
                 frame.prefix.len(),
-                self.state.bar_footprints(),
+                self.series.state.bar_footprints(),
                 frame.partial_visible.map(|_| frame.closed_total),
             );
             let base = &chrome.style.candles;
@@ -259,7 +259,7 @@ impl ChartPane {
             if start.footprint_paints || start.candle_aggression {
                 history.footprint(
                     &mut self.presentation.footprint,
-                    &self.state,
+                    &self.series.state,
                     chrome,
                     depth_visible,
                     &start,
@@ -279,7 +279,7 @@ impl ChartPane {
         flow.strip(
             self.orderflow.as_mut(),
             &frame,
-            self.state.partial_footprint(),
+            self.series.state.partial_footprint(),
         );
 
         if layout.tape_only {
@@ -347,7 +347,7 @@ impl ChartPane {
         let footprint_on = ((self.presentation.footprint.visible || self.wants_range_profile())
             && !footprint_blocked)
             || candle_aggression;
-        self.state.set_footprint_enabled(footprint_on);
+        self.series.state.set_footprint_enabled(footprint_on);
         // Accumulating is not painting, and the candles answer to the second.
         // A range profile turns the ladders *on* without ever asking for the
         // layer, so the switch above cannot be what dresses a candle: doing
@@ -364,18 +364,18 @@ impl ChartPane {
                 .map(OrderflowView::capture_grouping_now)
                 .or_else(|| {
                     candle_aggression
-                        .then(|| self.state.tape_price_step())
+                        .then(|| self.series.state.tape_price_step())
                         .flatten()
                 })
         {
-            self.state.set_footprint_group(base);
+            self.series.state.set_footprint_group(base);
         }
         if footprint_on {
             let now = painter.ctx().input(|i| i.time);
-            let closed_total = self.history_prefix.len() + self.state.bars().len();
+            let closed_total = self.series.history_prefix.len() + self.series.state.bars().len();
             snapshot_live_ladder(
                 &mut self.presentation.footprint,
-                self.state.partial_footprint(),
+                self.series.state.partial_footprint(),
                 closed_total,
                 now,
             );
@@ -393,8 +393,8 @@ impl ChartPane {
     /// empty series: the connection overlay speaks for an empty pane.
     fn lay_out(&mut self, area: egui::Rect, chrome: &PaneChrome<'_>) -> Option<FrameLayout> {
         self.sync_price_axis_mode();
-        let closed_total = self.history_prefix.len() + self.state.bars().len();
-        let total = closed_total + usize::from(self.state.partial().is_some());
+        let closed_total = self.series.history_prefix.len() + self.series.state.bars().len();
+        let total = closed_total + usize::from(self.series.state.partial().is_some());
         let mut areas = self.plot_areas(area, chrome.capabilities);
         // Indicator panes claimed the bottom band inside `plot_split`, so the
         // rect the candles scale to is the same one the input handler uses.
@@ -516,9 +516,10 @@ impl ChartPane {
         self.frame.chart_rect = Some(chart_rect);
         let rungs = lane_rungs(lane_px);
         if self.lane.set_rungs(rungs) {
-            let command = self
-                .lane
-                .command(self.state.partial().cloned(), self.state.trades());
+            let command = self.lane.command(
+                self.series.state.partial().cloned(),
+                self.series.state.trades(),
+            );
             self.indicator_worker.send(command);
         }
         live_lane
@@ -853,7 +854,7 @@ impl ChartPane {
         {
             let progress = chrome
                 .price_tag
-                .reading(|at| self.state.bar_progress_at(at));
+                .reading(|at| self.series.state.bar_progress_at(at));
             let second = progress.map(|_| pointer_compass::second_line_height(painter));
             price_claims.extend(pointer_compass::price_tag_claims(y, second));
         }
@@ -987,7 +988,7 @@ impl ChartPane {
                 .layer_visible(quantick_layers::ChartLayer::LastPrice, chrome.style),
             progress: chrome
                 .price_tag
-                .reading(|at| self.state.bar_progress_at(at)),
+                .reading(|at| self.series.state.bar_progress_at(at)),
             style: chrome.style,
         }
         .paint(self.layer_renderers);
@@ -1001,8 +1002,8 @@ impl ChartPane {
             candle_width: cw,
             viewport: &frame.view,
             seam: self.seam_slot(),
-            boundary: self.state.backfill_boundary(),
-            bars: self.state.bars(),
+            boundary: self.series.state.backfill_boundary(),
+            bars: self.series.state.bars(),
             gaps,
         };
         if self.layer_visible(ChartLayer::SeamDivider, chrome.style) {

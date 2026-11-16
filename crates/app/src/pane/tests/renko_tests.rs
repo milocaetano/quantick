@@ -130,7 +130,7 @@ fn bricks_cut_from_held_prints_reach_no_strategy_and_no_live_close() {
     let _ = settled(&pane);
     pane.ingest_live_trade_observed(&tape[64], &mut |_, _, slot| queued.push(slot));
     assert_eq!(pane.closed_slots(), 34);
-    assert_eq!(pane.state.backfill_boundary(), Some(31));
+    assert_eq!(pane.series.state.backfill_boundary(), Some(31));
     let events = settled(&pane);
     let rebuilt: Vec<usize> = events
         .iter()

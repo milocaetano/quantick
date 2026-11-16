@@ -119,7 +119,7 @@ fn profile(pane: &ChartPane) -> (&VolumeProfile, LevelPrices) {
 fn assert_market_grid(app: &QuantickApp) {
     for side in SIDES {
         assert_eq!(
-            app.active_tab().pane(side).state.footprint_group(),
+            app.active_tab().pane(side).series.state.footprint_group(),
             Decimal::from(5),
             "{side:?} must inherit the instrument capture grid"
         );
@@ -154,7 +154,11 @@ fn collapsed_flow_adopts_published_grid_before_context_profiles_draw() {
     for side in [PaneSide::Time(0), PaneSide::Time(1)] {
         let pane = app.active_tab().pane(side);
         assert!(pane.frame.area.is_some());
-        assert_eq!(pane.state.footprint_group(), Decimal::from(5), "{side:?}");
+        assert_eq!(
+            pane.series.state.footprint_group(),
+            Decimal::from(5),
+            "{side:?}"
+        );
         let (profile, levels) = profile(pane);
         assert_eq!(profile.group(), Decimal::from(5));
         assert_eq!(profile.total_volume(), Decimal::from(480));
@@ -175,7 +179,7 @@ fn equal_prints_and_bounds_match_profiles_on_non_first_renko_context() {
     let mut app = profile_fixture(&ctx, false);
     for side in SIDES {
         let pane = app.active_tab_mut().pane_mut(side);
-        assert_eq!(pane.state.trades().len(), 96);
+        assert_eq!(pane.series.state.trades().len(), 96);
         let end = pane.slots().saturating_sub(1) as f32;
         place_profile(pane, 0.0, end);
     }
@@ -227,7 +231,7 @@ fn equal_prints_and_bounds_match_profiles_on_non_first_renko_context() {
     for side in SIDES {
         let pane = app.active_tab_mut().pane_mut(side);
         pane.drawings.items_mut()[0].points[1].bar =
-            pane.state.bars().len().saturating_sub(1) as f32;
+            pane.series.state.bars().len().saturating_sub(1) as f32;
     }
     run_frame(&mut app, &ctx);
     let before: Vec<_> = SIDES
@@ -236,7 +240,7 @@ fn equal_prints_and_bounds_match_profiles_on_non_first_renko_context() {
             let pane = app.active_tab().pane(*side);
             let result = output(pane);
             (
-                pane.state.series_revision(),
+                pane.series.state.series_revision(),
                 result.key,
                 result
                     .profile
@@ -265,7 +269,7 @@ fn equal_prints_and_bounds_match_profiles_on_non_first_renko_context() {
         let result = output(pane);
         assert_eq!(
             (
-                pane.state.series_revision(),
+                pane.series.state.series_revision(),
                 result.key,
                 result
                     .profile
@@ -326,6 +330,7 @@ fn restored_collapsed_contexts_inherit_grid_before_they_draw_and_after_recut() {
         assert_eq!(
             app.active_tab()
                 .pane(PaneSide::Time(1))
+                .series
                 .state
                 .trades()
                 .len(),
@@ -365,7 +370,7 @@ fn different_first_candle_bounds_keep_their_actual_print_volumes() {
         }
     );
     for (side, trades, end_ms) in [(PaneSide::Flow, 4, 1_400), (PaneSide::Time(1), 2, 1_200)] {
-        let bar = &app.active_tab().pane(side).state.bars()[0];
+        let bar = &app.active_tab().pane(side).series.state.bars()[0];
         assert_eq!(
             (bar.open_time, bar.close_time, bar.trade_count),
             (1_100, end_ms, trades)

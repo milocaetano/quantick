@@ -17,7 +17,7 @@ fn drain(app: &mut QuantickApp) {
 
 /// How the flow pane splits its prints and bars into history and live.
 fn labelling(app: &QuantickApp) -> (usize, Option<usize>) {
-    let state = &app.active_tab().flow_pane.state;
+    let state = &app.active_tab().flow_pane.series.state;
     (state.backfill_trade_count(), state.backfill_boundary())
 }
 
@@ -54,7 +54,7 @@ fn a_refill_keeps_the_live_bars_live_with_a_hole_or_without_one() {
         );
         let tab = app.active_tab();
         assert_eq!(
-            tab.flow_pane.state.trades().len(),
+            tab.flow_pane.series.state.trades().len(),
             if hole { 261 } else { 201 }
         );
         assert_eq!(
@@ -107,7 +107,7 @@ fn the_flow_layer_across_a_refilled_hole_matches_a_continuous_load() {
         let health = tape.health();
         (health.aggression_count, health.tape_age)
     };
-    let bars = |app: &QuantickApp| app.active_tab().flow_pane.state.bars().to_vec();
+    let bars = |app: &QuantickApp| app.active_tab().flow_pane.series.state.bars().to_vec();
 
     let (mut continuous, _notices, (events, _book)) = test_app_with_notices();
     events

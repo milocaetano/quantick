@@ -854,7 +854,7 @@ impl quantick_control_handlers::market_palette::MarketPaletteHost for QuantickAp
                 symbol: tab.symbol.clone(),
                 asset: self.config.market_asset(&tab.feed_id, &tab.symbol),
                 workspace: book.tab_row(tabs.id_at(index)).0,
-                bar: tab.flow_pane.state.spec().to_config_string(),
+                bar: tab.flow_pane.series.bar_config(),
                 context_bars: super::arrangement_adapter::saved_tab_of(tab).context_bars,
                 replay: tab.link.replay.is_some(),
                 streaming: tab.link.latest_trade_ms.is_some(),
@@ -869,7 +869,7 @@ impl quantick_control_handlers::market_palette::MarketPaletteHost for QuantickAp
             recent: self.surfaces.market_palette.model_state.recent.clone(),
             starter_feed: self.config.default_feed.clone(),
             workspaces: book.book().list().into_iter().map(|row| row.name).collect(),
-            inherited_bar: Some(self.active_tab().flow_pane.state.spec().to_config_string()),
+            inherited_bar: Some(self.active_tab().flow_pane.series.bar_config()),
         }
     }
     /// Bring the tab at `index` forward, off Home.
