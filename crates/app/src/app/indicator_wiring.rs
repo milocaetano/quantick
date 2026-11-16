@@ -133,6 +133,14 @@ impl IndicatorWiring<'_> {
         for (side, slot) in requests {
             self.apply_indicator_legend_action(tab_id, side, LegendAction::OpenSettings(slot));
         }
+        // A canvas menu's hide, from the tab of any window, takes the legend's path.
+        let hides: Vec<_> = (self.runtime.tabs.iter_with_ids_mut())
+            .flat_map(|(tab, panes)| panes.panes_with_sides_mut().map(move |at| (tab, at)))
+            .filter_map(|(tab, (pane, side))| Some((tab, side, pane.model.pending_hide.take()?)))
+            .collect();
+        for (tab, side, slot) in hides {
+            self.apply_indicator_legend_action(tab, side, LegendAction::ToggleHidden(SlotId(slot)));
+        }
         let guide = |pane_id: u64, slot: SlotId, enabled: bool| serde_json::json!({"tab_id":tab_id.to_string(),"pane_id":pane_id.to_string(),"slot_id":slot.0.to_string(),"enabled":enabled});
         // The hook's guide goes first. Taking the pane requests before it is
         // sent changes nothing: the guide action writes the slot's guide and
