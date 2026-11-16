@@ -65,7 +65,8 @@ impl TabCanvas {
     }
 
     pub(crate) fn context_collapsed_slots(&self) -> Vec<bool> {
-        self.context_stack.collapsed_slots()
+        let model = (&self.state, &self.seats, self.layout.is_column());
+        canvas_layout::stack_collapsed(&self.context_stack, model)
     }
 
     pub(crate) fn restore_context_heights(&mut self, shares: &[f32], collapsed: &[bool]) {

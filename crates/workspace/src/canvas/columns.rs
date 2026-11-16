@@ -54,17 +54,21 @@ impl CanvasState {
     }
 
     /// Give the model the folds of the column painter's stack, `folded[i]`
-    /// for chart `slots[i]`. The model folding the whole stack is the
-    /// column's own fold, and the stack never folds whole by itself: either
-    /// leaves the model as it is. Answers whether anything changed.
+    /// for chart `slots[i]`: rails, or, while the column is folded whole,
+    /// the folds its reopening keeps. The stack never folds whole by
+    /// itself. Answers whether anything changed.
     pub fn rail_stack(&mut self, slots: &[PaneSlot], folded: &[bool]) -> bool {
-        let whole = slots.iter().all(|slot| self.railed().contains(slot));
-        if whole || folded.iter().all(|folded| *folded) {
+        if folded.iter().all(|folded| *folded) {
             return false;
         }
+        let whole = slots.iter().all(|slot| self.railed().contains(slot));
         let mut changed = false;
         for (slot, folded) in slots.iter().zip(folded) {
-            changed |= self.set_railed(&[*slot], *folded);
+            changed |= match (whole, *folded) {
+                (true, true) => self.kept.insert(*slot),
+                (true, false) => self.kept.remove(slot),
+                (false, _) => self.set_railed(&[*slot], *folded),
+            };
         }
         changed
     }

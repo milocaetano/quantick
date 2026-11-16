@@ -104,7 +104,13 @@ pub fn recipe_canvas(recipe: &WorkspaceRecipe) -> CanvasState {
     );
     let rebuilt = || CanvasState::from_preset_split(preset, split);
     let state = (recipe.canvas.clone()).unwrap_or_else(rebuilt);
-    state.with_folds(recipe.context_collapsed, recipe.flow_collapsed)
+    let state = state.with_folds(recipe.context_collapsed, recipe.flow_collapsed);
+    // The stack's flags, as a save leaves them out of the canvas.
+    if CanvasLayout::of_recipe(recipe).is_column() {
+        state.with_stack_folds(&recipe.context_panes_collapsed)
+    } else {
+        state
+    }
 }
 
 impl From<DeclaredLayout> for CanvasLayout {

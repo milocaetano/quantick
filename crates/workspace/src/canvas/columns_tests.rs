@@ -155,13 +155,16 @@ fn a_stacked_chart_folds_in_the_model_and_the_columns_still_draw() {
         [slots[1]]
     );
 
-    // The column folded whole is the column's fold, which the stack leaves.
+    // The column folded whole stays the column's fold; the stack's folds
+    // inside it are what its reopening keeps.
     assert!(state.fold_flow_side(false, true));
+    assert_eq!(state.stack_folds(), [false, true]);
     assert!(
-        !state.rail_stack(&slots, &[false, false]),
-        "the column's own"
+        state.rail_stack(&slots, &[false, false]),
+        "kept, not railed"
     );
-    assert_eq!(state.flow_side_folds(), (true, false));
+    assert_eq!(state.flow_side_folds(), (true, false), "the column's own");
+    assert_eq!(state.stack_folds(), [false, false]);
 }
 
 /// The flow pane folds and opens beside a folded stacked chart without

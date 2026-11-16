@@ -80,6 +80,7 @@ pub use named::{CanvasLayout, recipe_canvas};
 pub use split::{Span, Split, split};
 pub use stack::{
     ContextPairResult, ContextResizeError, ContextStack, ResizeContextPair, StackFrame, on_stack,
+    stack_collapsed,
 };
 
 /// Most context panes one tab may stack beside the flow pane.

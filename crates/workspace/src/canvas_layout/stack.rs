@@ -21,9 +21,6 @@ pub struct ContextStack {
     pub frame: Option<StackFrame>,
     /// The hand on a divider, while one is held.
     hold: Option<StackHold>,
-    /// The model last folded every chart: the column's fold, inside which
-    /// the stack keeps its own folds for the column to reopen with.
-    whole: bool,
 }
 
 /// A hand on the divider below chart `index`: where the divider stood at
@@ -134,13 +131,11 @@ impl ContextStack {
     /// Fold the charts as the canvas model folds them, `folded[i]` for
     /// chart `i`: one the model rails folds at the share it holds, a pair's
     /// partner taking the rest; one the model opened reopens at the height it
-    /// had ([`Self::open`]). The model folding every chart is the column's
-    /// fold, which leaves the stack as it is, and the column reopening
-    /// keeps the stack's own folds: [`on_stack`] gives them back.
+    /// had ([`Self::open`]). The stack never folds whole, so a call asking
+    /// that leaves it as it is.
     pub fn follow(&mut self, folded: &[bool]) {
         let count = folded.len().min(self.heights.len());
-        let whole = folded[..count].iter().all(|folded| *folded);
-        if std::mem::replace(&mut self.whole, whole) || whole {
+        if folded[..count].iter().all(|folded| *folded) {
             return;
         }
         let px = self.frame.as_ref().map_or(0.0, |frame| frame.column.h);
@@ -334,7 +329,7 @@ pub fn on_stack<R>(
     }
     stack.at_least(slots.len());
     let folded: Vec<bool> = (slots.iter())
-        .map(|slot| state.railed().contains(slot))
+        .map(|slot| state.stack_folded(*slot))
         .collect();
     stack.follow(&folded);
     let out = op(stack);
@@ -342,6 +337,25 @@ pub fn on_stack<R>(
     folded.resize(slots.len(), false);
     state.rail_stack(&slots, &folded);
     out
+}
+
+/// Which of `stack`'s charts are folded, top to bottom, as the canvas model
+/// says (`state`, `seats` and `columns` as [`on_stack`] takes them): what a
+/// save writes as the stack's flags, read without waiting for a frame.
+#[must_use]
+pub fn stack_collapsed(
+    stack: &ContextStack,
+    (state, seats, columns): (&CanvasState, &Seats, bool),
+) -> Vec<bool> {
+    let slots = stack_slots(state, &seats.current(state));
+    if !columns || slots.len() < 2 {
+        return stack.collapsed_slots();
+    }
+    let mut folded: Vec<bool> = (slots.iter())
+        .map(|slot| state.stack_folded(*slot))
+        .collect();
+    folded.resize(stack.heights.len().max(slots.len()), false);
+    folded
 }
 
 /// The slots of `state`'s stack by the built chart `seats` seats each on:

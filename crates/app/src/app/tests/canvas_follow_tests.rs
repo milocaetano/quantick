@@ -246,9 +246,9 @@ fn an_expand_reads_the_inner_fold_the_window_draws() {
     let pair = (tab.time_panes[0].id, tab.time_panes[1].id);
     let agent = quantick_control::wire::ActorKind::Agent;
     tab.resize_context_pair(tab_id, pair, 1.0, agent);
-    frames(&mut app, 2);
+    frames(&mut app, &ctx, 2);
     assert!(app.active_tab_mut().set_context_collapsed(true));
-    frames(&mut app, 2);
+    frames(&mut app, &ctx, 2);
     assert!(app.active_tab_mut().set_context_collapsed(false));
     let railed = |app: &QuantickApp| app.active_tab().canvas.state.railed().clone();
     assert_eq!(
@@ -256,7 +256,7 @@ fn an_expand_reads_the_inner_fold_the_window_draws() {
         [lower],
         "read"
     );
-    frames(&mut app, 2);
+    frames(&mut app, &ctx, 2);
     assert_eq!(
         railed(&app).into_iter().collect::<Vec<_>>(),
         [lower],
@@ -266,10 +266,10 @@ fn an_expand_reads_the_inner_fold_the_window_draws() {
 
     assert!(app.active_tab_mut().set_context_collapsed(true));
     app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
-    frames(&mut app, 2);
+    frames(&mut app, &ctx, 2);
     app.active_tab_mut()
         .set_layout(CanvasLayout::TimeTimeAndFlow);
-    frames(&mut app, 6);
+    frames(&mut app, &ctx, 6);
     assert!(railed(&app).is_empty());
     assert!(band(&app, PaneSide::Time(1)).is_some(), "both charts open");
 }

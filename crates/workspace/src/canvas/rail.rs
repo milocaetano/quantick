@@ -461,7 +461,14 @@ impl CanvasState {
         if other.iter().all(|slot| next.folded(*slot)) {
             return false;
         }
+        // The charts folded inside it stay folded when it reopens.
+        let inner: Vec<PaneSlot> = (fold.iter().copied())
+            .filter(|slot| self.railed().contains(slot))
+            .collect();
         next.set_railed(&fold, true);
+        if inner.len() < fold.len() {
+            next.kept.extend(inner);
+        }
         let changed = next != *self;
         *self = next;
         changed
@@ -485,6 +492,11 @@ impl CanvasState {
     /// the shares it had before; a rail no fold remembers just opens.
     /// Answers whether anything changed.
     fn open_side(&mut self, side: &[PaneSlot]) -> bool {
+        // A side folded whole reopens with the charts folded inside it before.
+        let whole = side.iter().all(|slot| self.railed().contains(slot));
+        let kept = |slot: &PaneSlot| whole && self.kept.contains(slot);
+        let side: Vec<PaneSlot> = side.iter().copied().filter(|slot| !kept(slot)).collect();
+        self.kept.clear();
         let remembered: Vec<PaneSlot> = (self.reopen.iter().rev())
             .map(|kept| kept.folded)
             .filter(|slot| side.contains(slot))
@@ -493,7 +505,7 @@ impl CanvasState {
         for slot in remembered {
             changed |= self.railed().contains(&slot) && self.unrail(slot);
         }
-        self.set_railed(side, false) || changed
+        self.set_railed(&side, false) || changed
     }
 
     /// The split holding the docked flow pane and its index there, found
@@ -570,19 +582,34 @@ impl CanvasState {
         self.stack_column().unwrap_or_default()
     }
 
-    /// The charts folded inside the stack while some of it stands open: the
-    /// stack's own folds, which a save keeps as the stack's flags.
+    /// Whether stacked chart `slot` is folded inside its stack: on its own
+    /// rail, or kept for the reopening of a stack folded whole.
     #[must_use]
-    pub fn stack_rails(&self) -> Vec<PaneSlot> {
+    pub fn stack_folded(&self, slot: PaneSlot) -> bool {
         let stack = self.stack_slots();
-        let railed: Vec<PaneSlot> = (stack.iter().copied())
-            .filter(|slot| self.railed().contains(slot))
-            .collect();
-        if railed.len() < stack.len() {
-            railed
+        let whole = !stack.is_empty() && stack.iter().all(|at| self.railed().contains(at));
+        if whole {
+            self.kept.contains(&slot)
         } else {
-            Vec::new()
+            self.railed().contains(&slot)
         }
+    }
+
+    /// The stack's own folds, top to bottom in the tree: what a save keeps
+    /// as the stack's flags ([`Self::with_stack_folds`] rebuilds them).
+    #[must_use]
+    pub fn stack_folds(&self) -> Vec<bool> {
+        let stack = self.stack_slots().into_iter();
+        stack.map(|slot| self.stack_folded(slot)).collect()
+    }
+
+    /// This canvas with the stack's flags folded in, top to bottom in the
+    /// tree: the mirror of what a save leaves out.
+    #[must_use]
+    pub fn with_stack_folds(mut self, folded: &[bool]) -> Self {
+        let slots = self.stack_slots();
+        self.rail_stack(&slots, folded);
+        self
     }
 
     fn stack_column(&self) -> Option<Vec<PaneSlot>> {
