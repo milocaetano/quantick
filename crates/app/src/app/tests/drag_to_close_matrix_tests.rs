@@ -30,7 +30,7 @@ use std::{cell::RefCell, rc::Rc};
 /// The two windows every case runs in: a trading monitor and a laptop.
 const SIZES: [egui::Vec2; 2] = [egui::vec2(1600.0, 1000.0), egui::vec2(1100.0, 650.0)];
 /// The layouts a torn-off market window runs the whole matrix for.
-const TORN_OFF: [&str; 2] = ["time+time+flow", "charts-4"];
+const TORN_OFF: [&str; 4] = ["time+time+flow", "charts-4", "stack2+flow", "stack3+flow"];
 /// How many moves a drag takes between its press and its release.
 const STEPS: usize = 12;
 /// How far two edges may differ and still be one edge.
@@ -946,16 +946,9 @@ fn run_case(case: &Case) -> Vec<String> {
 
 /// Findings that wait on a decision, listed rather than fixed: a layout, a
 /// divider and the start of what remained. Each must still be found, so the
-/// list cannot outlive its finding.
-///
-/// "2 stacked + Flow" folds a stacked chart in the column painter's own
-/// stack, outside the canvas model (#1008 kept it there): the window paints
-/// its rail, but the scene names none and the canvas read says it is open.
-/// Closing that gap means moving the stack's folds into the model.
-const AWAITING_DECISION: [(&str, &str, &str); 2] = [
-    ("stack2+flow", "[0]/0", "the scene lists no rail"),
-    ("stack2+flow", "[0]/0", "the canvas read rails []"),
-];
+/// list cannot outlive its finding. None waits: a stacked chart's fold is the
+/// canvas model's (#1057), so its rail is in the scene and the canvas read.
+const AWAITING_DECISION: [(&str, &str, &str); 0] = [];
 
 /// Which entry of [`AWAITING_DECISION`] `case`'s finding `what` is, if any.
 fn awaiting(case: &Case, what: &str) -> Option<usize> {

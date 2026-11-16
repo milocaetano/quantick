@@ -184,3 +184,100 @@ fn a_divider_hand_counts_from_the_press_and_a_return_leaves_the_heights() {
         "a drag that ends elsewhere keeps its heights"
     );
 }
+
+/// Where the boundary below chart `index` of `heights` stands in `column`.
+fn boundary(column: CanvasRect, heights: &[PaneWidth], index: usize) -> f32 {
+    split::centre(carve(column, heights).dividers[index])
+}
+
+/// A chart folded by the hand keeps the boundary the press found, not the
+/// floor the drag passed on its way: an expand opens it there.
+#[test]
+fn a_fold_by_hand_keeps_the_boundary_of_the_press() {
+    use crate::canvas::Hand;
+    let column = CanvasRect::new(0.0, 40.0, 600.0, 900.0);
+    let mut stack = stack(2);
+    stack.heights = vec![PaneWidth::Manual(0.6), PaneWidth::Manual(0.4)];
+    let pressed = boundary(column, &stack.heights, 0);
+    stack.hand(0, Hand::of([true, true, false], 0.0), pressed);
+    for _ in 0..12 {
+        let at = boundary(column, &stack.heights, 0);
+        let wanted = stack.hand(0, Hand::of([false, true, false], -60.0), at);
+        let dividers = carve(column, &stack.heights).dividers().to_vec();
+        let wanted = wanted.expect("the hand moved");
+        stack.resize(0, wanted, column, &dividers, FOOTER_PX).unwrap();
+    }
+    assert!(stack.heights[0].is_collapsed(), "dragged to the top edge");
+    stack.expand();
+    let opened = boundary(column, &stack.heights, 0);
+    assert!((opened - pressed).abs() < 0.01, "{opened} vs {pressed}");
+}
+
+/// The stack folds as the canvas model folds its charts: a chart the model
+/// rails folds to its rail and its partner fills the rest, one the model
+/// opens comes back at the height it had, and the stack folded whole is the
+/// column's fold, which leaves the stack as it is.
+#[test]
+fn the_stack_folds_as_the_model_says() {
+    let column = CanvasRect::new(0.0, 40.0, 600.0, 900.0);
+    for heights in [
+        vec![PaneWidth::Auto; 2],
+        vec![PaneWidth::Manual(0.3), PaneWidth::Manual(0.7)],
+    ] {
+        let mut stack = stack(2);
+        stack.heights.clone_from(&heights);
+        let open = boundary(column, &stack.heights, 0);
+        for (slot, folded) in [(0, [true, false]), (1, [false, true])] {
+            stack.follow(&folded);
+            assert_eq!(stack.collapsed_slots(), folded);
+            let laid = carve(column, &stack.heights);
+            let rail = laid.panes[slot];
+            assert!((length(rail) - COLLAPSED_PANE_WIDTH_PX).abs() < 0.01, "{rail:?}");
+            let met = laid.meeting_rails(&stack.heights).panes[1 - slot];
+            assert!((length(met) + length(rail) - column.h).abs() < 0.01, "{met:?}");
+            stack.follow(&[false, false]);
+            assert!(stack.collapsed_slots().iter().all(|folded| !folded));
+            let back = boundary(column, &stack.heights, 0);
+            assert!((back - open).abs() < 0.01, "{heights:?}: {back} vs {open}");
+        }
+        stack.follow(&[true, true]);
+        assert!(stack.collapsed_slots().iter().all(|folded| !folded), "whole");
+    }
+}
+
+/// Every fold the stack makes lands on the canvas model, on the slot each
+/// chart is seated on; a restore by name on the model reopens the chart at
+/// the height it had; a layout the column painter does not draw is left to
+/// its tree.
+#[test]
+fn the_stack_and_the_model_hold_one_fold() {
+    use crate::canvas::{CanvasState, PaneKind, Seats};
+    let preset = crate::canvas::preset("stack2+flow").unwrap();
+    let mut state = CanvasState::from_preset(preset);
+    let seats = Seats::default();
+    let slots: Vec<_> = (state.tree().panes().into_iter())
+        .filter(|(_, kind)| *kind == PaneKind::Time)
+        .map(|(slot, _)| slot)
+        .collect();
+    let column = CanvasRect::new(0.0, 40.0, 600.0, 900.0);
+    let mut stack = stack(0);
+    let open = |stack: &mut ContextStack, state: &mut CanvasState| {
+        on_stack(stack, (state, &seats, true), |stack| stack.at_least(2));
+        boundary(column, &stack.heights, 0)
+    };
+    let was = open(&mut stack, &mut state);
+    let fold = |stack: &mut ContextStack| {
+        let dividers = carve(column, &stack.heights).dividers().to_vec();
+        stack.resize(0, column.bottom(), column, &dividers, FOOTER_PX)
+    };
+    on_stack(&mut stack, (&mut state, &seats, true), fold).unwrap();
+    assert_eq!(state.railed().iter().copied().collect::<Vec<_>>(), [slots[1]]);
+    assert!(state.restore(slots[1]).unwrap());
+    let back = open(&mut stack, &mut state);
+    assert!((back - was).abs() < 0.01, "{back} vs {was}");
+    assert!(stack.collapsed_slots().iter().all(|folded| !folded));
+
+    let mut tree = CanvasState::from_preset(preset);
+    on_stack(&mut stack, (&mut tree, &seats, false), fold).unwrap();
+    assert!(tree.railed().is_empty(), "the tree's own layouts");
+}
