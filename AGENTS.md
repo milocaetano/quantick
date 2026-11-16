@@ -14,42 +14,45 @@
 ## The map
 
 `crates/` workspace. Edges: `crates/guards/src/graph.rs`.
-`app`, `backtest`, `mcp` and `guards` are leaves; `guards` has no edges.
+`app`, `backtest`, `mcp` and `guards` are leaves.
 
 | Crate | Depends on | What it owns |
 | --- | --- | --- |
 | `app` | every crate but the other leaves, `trading` and `sources` | Desktop chart. |
-| `backtest` | strategy, pine, indicators, replay, sim, paper (dev), engine | Recorded sessions to performance, using the chart engine. |
+| `backtest` | strategy, pine, indicators, replay, sim, paper (dev), engine | Recorded sessions to performance. |
 | `mcp` | control-local, control | The MCP adapter; stdout carries MCP frames only. |
-| `guards` | — | Size, context, cycle and UI-free ratchets; English and encoding scans. |
-| `control-handlers` | alerts, control*, chart*, civil, drawings, engine, orderflow, paper, replay, session, sim, sources, stores, workspace | Port handlers. |
-| `control-schema` | control, control-host, stores, pine, layers, trading, orderflow, indicators, orderbook, engine | Control-plane schemas over the domain crates. |
-| `stores` | alerts, appearance, chart, drawings, sources, workspace, orderflow, indicators, engine | Cockpit documents: catalogue, symbols, footprint, presets, scripts, arrangement, home, bundle; the alert observer cache. |
-| `ui-model` | none | UI model contract and catalog. |
+| `guards` | — | Ratchets and scans. |
+| `control-handlers` | alerts, chart*, civil, control, control-host, control-schema, drawings, engine, orderflow, paper, replay, session, sim, sources, stores, workspace | Port handlers. |
+| `control-schema` | control, control-host, stores, pine, layers, operability, trading, orderflow, indicators, orderbook, engine | Control-plane schemas over the domain crates. |
+| `stores` | alerts, appearance, chart, drawings, sources, workspace, orderflow, indicators, engine, orderbook (dev) | Cockpit documents; the alert observer cache. |
+| `ui-model` | alerts, appearance, chart*, civil, control, control-handlers, control-schema, drawings, engine, indicators, orderflow, paper, replay, session, sources, stores, strategy, workspace, sim (dev), trading (dev) | UI model contract and catalog. |
+| `session` | chart*, civil, engine, paper, sim, sources, strategy | A tab's reach-back: candles, history paging. |
+| `drawings` | alerts, anchored-studies, appearance, chart*, engine, indicators, workspace | Chart marks: store, update, scenes. |
 | `alerts` | civil, workspace | Alerts and sounds. |
 | `appearance` | — | Colors and typography. |
-| `chart` | appearance, chart-interaction, civil, orderflow, indicator-session, indicators, engine, workspace | Chart model. |
+| `chart` | appearance, chart-interaction, civil, layers, orderflow, indicator-session, indicators, engine, workspace, orderbook (dev) | Chart model. |
 | `indicator-session` | pine, indicators, engine | Bindings, batches, deltas. |
-| `anchored-studies` | indicators, engine | Resumable profile/anchored-average state; caller schedules and paints. |
+| `anchored-studies` | indicators, engine | Resumable profile and anchored-average state. |
 | `pine` | indicators | "Quantick Pine", a Pine v5 subset; zero external dependencies. |
 | `strategy` | alerts, sim, workspace, engine | Regions, brackets, `SignalAlarm`, presets, drawing anchors. |
-| `control-local` | control | Instance directory and blocking loopback client; one ownership check. |
-| `control-host` | control, engine | Projection registry, admission, idempotency store, event journal. Told the time. |
-| `indicators` | engine | The `Indicator` trait (commit/preview, rollback), incremental `ta.*` kernels, draw objects. |
-| `replay` | civil, engine | Recorded sessions: CSV, folder scan, deal recorder, playback clock; told the time. Test support is `replay::test_support`. |
-| `paper` | sim, trading, replay, workspace, civil, engine | Paper account, risk, journal and report; three drivers. |
-| `sim` | trading, engine | `TradingVenue` impl; fills only on what the tape proves, never on quotes. |
+| `control-local` | control | Instance directory and loopback client. |
+| `control-host` | control, engine | Projections, admission, idempotency, event journal; told the time. |
+| `indicators` | engine | The `Indicator` trait, `ta.*` kernels, draw objects. |
+| `replay` | civil, engine | Recorded sessions, playback clock; told the time. Test support: `replay::test_support`. |
+| `paper` | sim, trading, replay, workspace, civil, engine | Paper account, risk, journal and report. |
+| `sim` | trading, engine | `TradingVenue` impl; fills only on tape, never quotes. |
 | `trading` | engine | Venue-neutral order vocabulary and the `TradingVenue` port. |
-| `feed` | feed-*, sources, replay, orderbook, engine | The `FeedEvent`/`FeedCommand` port, its adapters, session export. Owns runtimes, threads, clock. |
-| `feed-binance`, `feed-hyperliquid`, `feed-mt5` | engine, orderbook, sources | Produce trades. |
-| `sources` | engine | Feed config vocabulary and the history reach, below `feed`. |
+| `feed` | feed-*, sources, replay, operability, orderbook, engine | The `FeedEvent`/`FeedCommand` port and adapters; owns runtimes, threads, clock. |
+| `feed-binance`, `feed-hyperliquid`, `feed-mt5` | engine, orderbook; binance also sources | Produce trades. |
+| `sources` | engine | Feed config vocabulary and history reach. |
 | `orderflow` | appearance, engine, orderbook | Liquidity history, grouping, timeline and heatmaps. Told the time. |
 | `engine` | — | Trades in, bars out. Deterministic, no clock. |
-| `orderbook` | — | L2 book core: validated snapshots, absolute level updates, update-id continuity. |
-| `control` | — | Control-plane contracts and the published `fake` host/client ports. |
-| `civil` | — | Civil dates and the display offset the journal, report and axis share. |
-| `workspace` | — | Layout documents and pane membership transitions. |
+| `orderbook` | — | L2 book core. |
+| `control` | — | Control-plane contracts and `fake` ports. |
+| `civil` | — | Civil dates and the display offset. |
+| `workspace` | — | Layout documents and pane membership. |
 | `chart-interaction` | layers, orderflow | Pane state, menus, quick ranges, anchors. |
-| `layers` | — | Layers, visibility, availability, inheritance, persistence. |
-| `backpressure` | — | Owner-to-worker admission (park, fold, never drop), progress; told the time. |
+| `layers` | — | Layer visibility and persistence. |
+| `backpressure` | — | Owner-to-worker admission (never drop); told the time. |
 | `operability` | — | UI behaviours, capabilities and exclusions. |
+| `platform` | — | OS window calls for `app`. |
