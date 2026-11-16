@@ -91,6 +91,19 @@ fn a_chip_click_opens_the_row_s_palette() {
     drawn(&mut app, &ctx, "manage_workspaces.Scalp.colour.petrol");
 }
 
+/// A click outside a row's palette closes that palette, and only it.
+#[test]
+fn a_click_outside_a_row_s_palette_closes_only_it() {
+    let (mut app, ctx, first, _layouts) = scalp("manage-palette-out");
+    assert!(app.chrome.window_menu.tab_workspace.stage(first, "manage:colour=Scalp"));
+    drawn(&mut app, &ctx, "manage_workspaces.Scalp.colour.petrol");
+    let title = drawn(&mut app, &ctx, "manage_workspaces");
+    click_sized(&mut app, &ctx, FULL_HD, title.center());
+    let dialog = app.chrome.window_menu.tab_workspace.manage.as_ref();
+    let dialog = dialog.expect("Manage stays open");
+    assert_eq!(dialog.palette_of(), None, "the palette closed");
+}
+
 /// Enter in the inline field reaches `workspace.rename`.
 #[test]
 fn enter_in_the_name_field_reaches_the_rename() {
