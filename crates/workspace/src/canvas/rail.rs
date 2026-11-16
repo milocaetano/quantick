@@ -454,9 +454,9 @@ impl CanvasState {
         }
         let mut next = self.clone();
         // The two sides never fold together: the other opens when it is
-        // folded whole. A chart folded inside it stays folded.
+        // folded whole, as an open does, keeping the charts folded inside.
         if other.iter().all(|slot| next.railed().contains(slot)) {
-            next.set_railed(&other, false);
+            next.open_side(&other);
         }
         if other.iter().all(|slot| next.folded(*slot)) {
             return false;
@@ -495,8 +495,9 @@ impl CanvasState {
         // A side folded whole reopens with the charts folded inside it before.
         let whole = side.iter().all(|slot| self.railed().contains(slot));
         let kept = |slot: &PaneSlot| whole && self.kept.contains(slot);
-        let side: Vec<PaneSlot> = side.iter().copied().filter(|slot| !kept(slot)).collect();
-        self.kept.clear();
+        let opened: Vec<PaneSlot> = side.iter().copied().filter(|slot| !kept(slot)).collect();
+        self.kept.retain(|slot| !side.contains(slot));
+        let side = opened;
         let remembered: Vec<PaneSlot> = (self.reopen.iter().rev())
             .map(|kept| kept.folded)
             .filter(|slot| side.contains(slot))
