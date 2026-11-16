@@ -1230,7 +1230,7 @@ impl Tab {
             if handle.hovered() || handle.dragged() {
                 ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
             }
-            if handle.dragged()
+            if handle.drag_delta().y.abs() > f32::EPSILON
                 && let Some(pointer) = ui.ctx().pointer_interact_pos()
             {
                 let _ = self.canvas.resize_context_pair(
