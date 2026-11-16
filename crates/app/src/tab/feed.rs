@@ -37,24 +37,20 @@ use quantick_session::{
     Act, Delivery, Effect, FeedRequest, Msg, OlderCandles, Refusal, TabView, Wait, WaitChange,
 };
 use quantick_stores::bubble_asset_store::{AssetBinding, SharedAssetBubbles};
+use quantick_strategy::sound::Cue;
 
 /// The actual effect owners for one print; no app, transport or layout access.
 struct LiveTradeOwners<'a> {
     paper: &'a mut crate::paper_trading::PaperTrading,
-    strategies: &'a mut crate::strategy_anchors::TabStrategies,
     flow: &'a mut crate::pane::ChartPane,
     context: &'a mut [crate::pane::ChartPane],
-    pending_sounds: &'a mut Vec<crate::audio::Cue>,
     observer: &'a mut dyn super::alerts::Observer,
     received_at_ms: i64,
 }
 
-/// The effect sink for [`live_trade::execute_live_trade`], which makes the calls.
+/// The effect sink for [`quantick_session::market::TabMarket::execute_live_trade`].
 impl live_trade::LiveTradeOwners for LiveTradeOwners<'_> {
     type Drawing = crate::drawings::DrawingId;
-    fn strategies(&mut self) -> &mut crate::strategy_anchors::TabStrategies {
-        self.strategies
-    }
     fn paper_trade(&mut self, trade: &Trade) {
         self.paper.on_trade(trade);
     }
@@ -84,15 +80,13 @@ impl live_trade::LiveTradeOwners for LiveTradeOwners<'_> {
         self.observer
             .pane(super::alerts::facts(pane), Some(observation));
     }
-    fn evaluate_strategies(&mut self, now_ms: u64) {
+    fn evaluate_strategies(
+        &mut self,
+        strategies: &mut crate::strategy_anchors::TabStrategies,
+        now_ms: u64,
+    ) -> Vec<Cue> {
         let panes = (&*self.flow, &*self.context);
-        super::strategies::evaluate(
-            self.paper,
-            self.strategies,
-            panes,
-            self.pending_sounds,
-            now_ms,
-        );
+        super::strategies::evaluate(self.paper, strategies, panes, now_ms)
     }
 }
 
@@ -340,7 +334,7 @@ impl Tab {
         // Disarmed by name, never silently dropped. Their pending entries need
         // no sweep of ours: the paper reset a few lines down cancels every
         // order with the honest `reset` label.
-        let _ = (self.strategies).disarm_all(quantick_strategy::DisarmReason::MarketChanged);
+        let _ = (self.market.strategies).disarm_all(quantick_strategy::DisarmReason::MarketChanged);
         self.history_trades = 0;
         // The old feed's unanswered loads died with its channel; the new feed
         // opens with exactly one backfill in flight.
@@ -882,14 +876,12 @@ impl Tab {
         // against its own tape.
         let mut owners = LiveTradeOwners {
             paper: &mut self.paper,
-            strategies: &mut self.strategies,
             flow: &mut self.flow_pane,
             context: &mut self.time_panes,
-            pending_sounds: &mut self.pending_alarm_sounds,
             observer,
             received_at_ms,
         };
-        live_trade::execute_live_trade(trade, stages, &mut owners, clock);
+        (self.market).execute_live_trade(trade, stages, &mut owners, clock);
     }
 
     /// Drain a bounded number of synchronized depth events. The separate
@@ -1191,7 +1183,7 @@ impl Tab {
         let Self {
             flow_pane,
             time_panes,
-            strategies,
+            market: crate::strategy_anchors::TabMarket { strategies, .. },
             ..
         } = self;
         for pane in std::iter::once(flow_pane).chain(time_panes.iter_mut()) {

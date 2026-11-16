@@ -28,6 +28,7 @@ pub mod close_queue;
 pub mod colour_popover;
 pub mod live_trade;
 pub mod manage_workspaces;
+pub mod market;
 mod native;
 mod paging;
 pub mod paper;
@@ -956,7 +957,7 @@ impl TabSession {
 }
 
 #[cfg(test)]
-mod live_trade_tests;
+mod market_tests;
 #[cfg(test)]
 mod native_tests;
 #[cfg(test)]

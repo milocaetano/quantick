@@ -662,7 +662,7 @@ impl Tab {
             flow_pane,
             time_panes,
             paper,
-            strategies,
+            market: crate::strategy_anchors::TabMarket { strategies, .. },
             link,
             paper_drag_pane,
             focus,

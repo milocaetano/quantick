@@ -18,3 +18,6 @@ pub type PaneStrategies = quantick_session::strategies::PaneStrategies<DrawingId
 
 /// Every pane's strategies, keyed by pane id; the tab owns one.
 pub type TabStrategies = quantick_session::strategies::TabStrategies<DrawingId>;
+
+/// The tab's strategies and alarm queue, walked through each live print.
+pub type TabMarket = quantick_session::market::TabMarket<DrawingId>;

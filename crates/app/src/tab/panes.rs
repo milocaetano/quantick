@@ -523,7 +523,7 @@ impl Tab {
             paper,
             flow_pane,
             time_panes,
-            strategies,
+            market: crate::strategy_anchors::TabMarket { strategies, .. },
             ..
         } = self;
         let panes: SmallVec<[&ChartPane; MAX_CANVAS_PANES]> = std::iter::once(&*flow_pane)
@@ -552,7 +552,7 @@ impl Tab {
         let Self {
             flow_pane,
             time_panes,
-            strategies,
+            market: crate::strategy_anchors::TabMarket { strategies, .. },
             ..
         } = self;
         let pane = match side {
@@ -579,7 +579,7 @@ impl Tab {
             PaneSide::Time(slot) => self.time_panes.get(slot).unwrap_or(&self.flow_pane),
             PaneSide::Flow => &self.flow_pane,
         };
-        if let Some(strategies) = self.strategies.existing_mut(pane.id) {
+        if let Some(strategies) = self.market.strategies.existing_mut(pane.id) {
             strategies.sweep_orphans(|id| pane.drawings.index_of(id).is_some());
         }
     }
@@ -644,7 +644,7 @@ impl Tab {
         // the reason on the badge. No cleanup commands come back under this
         // reason: `paper.on_timeline_reset` below sweeps every order with the
         // honest `reset` label.
-        let _ = (self.strategies).disarm_all(quantick_strategy::DisarmReason::TimelineReset);
+        let _ = (self.market.strategies).disarm_all(quantick_strategy::DisarmReason::TimelineReset);
         self.drop_overlay_gestures();
         // The timeline these describe is the one being rebuilt. A gap
         // re-anchors itself by market time, so one left behind would paint
@@ -766,7 +766,7 @@ impl Tab {
         match reseed {
             Some(seat) => {
                 // Whatever rode the chart this one replaces goes with it.
-                self.strategies.forget_pane(self.time_panes[seat].id);
+                self.market.strategies.forget_pane(self.time_panes[seat].id);
                 self.time_panes[seat] = pane;
             }
             None => self.time_panes.push(pane),
@@ -1035,7 +1035,7 @@ impl Tab {
             // itself continues, so any pending bot entry is swept here
             // and now — through the same funnel manual orders use.
             let id = pane.id;
-            let cleanup = self.strategies.pane_mut(id).disarm_all(reason);
+            let cleanup = self.market.strategies.pane_mut(id).disarm_all(reason);
             for command in cleanup {
                 let _ = self.paper.account_mut().apply_strategy_command(command);
             }

@@ -189,7 +189,7 @@ fn armed_strategy_on_a_stacked_pane_reaches_paper() {
         .unwrap();
     let flow = app.active_tab().flow_pane.id;
     assert!(
-        (app.active_tab().strategies.anchors(flow)).is_none_or(|anchors| anchors.is_empty()),
+        (app.active_tab().market.strategies.anchors(flow)).is_none_or(|anchors| anchors.is_empty()),
         "the strategy rides the stacked chart alone"
     );
 
@@ -447,7 +447,7 @@ fn a_refill_feeds_the_bars_and_the_mark_never_a_fill_a_strategy_or_the_latency()
         tab.link.latest_trade_latency_ms, latency,
         "no arrival reading"
     );
-    assert!(tab.pending_alarm_sounds.is_empty(), "no alarm sounds");
+    assert!(tab.market.pending_alarms().is_empty(), "no alarm sounds");
 
     // The next live print does not evaluate the bar the hole closed, where
     // the resume path's queued evaluation would.
