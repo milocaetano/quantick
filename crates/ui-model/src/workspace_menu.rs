@@ -5,13 +5,13 @@
 //! these marks into pixels and presses.
 
 use quantick_appearance::Token;
-use quantick_appearance::workspace_menu::{MenuChrome, chrome};
+use quantick_appearance::workspace_menu::{MenuChrome, RowTint, RowWords, chrome};
 use quantick_control_handlers::workspace_book::cell_menu::{
     CAPTION, CellMenu, CellRow, RowKind, UNSAVED,
 };
 use quantick_session::workspace_menu::{
-    CHIP_MENU_CAPTION_PT, CHIP_MENU_FOOTER_PT, CHIP_MENU_HEADER_PT, CHIP_MENU_LIST_PAD_PT as PAD,
-    CHIP_MENU_ROW_PT,
+    CHIP_MENU_BORDER_PT, CHIP_MENU_CAPTION_PT, CHIP_MENU_FILTER_PT, CHIP_MENU_FOOTER_PT,
+    CHIP_MENU_HEADER_PT, CHIP_MENU_LIST_PAD_PT as PAD, CHIP_MENU_ROW_PT, ChipMenuLayout,
 };
 use quantick_workspace::canvas::PaneTree;
 
@@ -77,6 +77,9 @@ pub struct Plate {
     /// The fill's opacity, out of 255.
     pub alpha: u8,
     pub edge: Option<Token>,
+    /// A colour and the share of the way the fill moves toward it: a
+    /// workspace row's tint over the ground the theme paints.
+    pub toward: Option<([u8; 3], f32)>,
 }
 
 /// Words starting at `x`, centred on `y`, cut short to `width`, `tracking`
@@ -94,6 +97,8 @@ pub struct Words {
     pub names: bool,
     /// A colour of its own instead of `ink`'s: black or white on a swatch.
     pub rgb: Option<[u8; 3]>,
+    /// On a workspace row's tint, where the painter chooses the ink.
+    pub on: Option<RowWords>,
 }
 
 /// One thing to paint.
@@ -113,6 +118,13 @@ pub enum Mark {
     /// A box shaded between its corners, each a point and its colour: top
     /// left, top right, bottom right, bottom left (Custom's square and strip).
     Shade([([f32; 2], [u8; 3]); 4]),
+    /// Diagonal stripes in `ink` at `alpha` across a box: a colour another
+    /// workspace holds, locked in the create dialogs.
+    Hatch {
+        at: Area,
+        ink: Token,
+        alpha: u8,
+    },
 }
 
 /// A part of the menu: its box, the row the scene lists it as, whether a
@@ -124,18 +136,100 @@ pub struct Piece {
     pub press: bool,
     /// A press or drag reports where it is ([`crate::colour_palette::dragged`]).
     pub drag: bool,
+    /// Only a double click presses it (a Manage row's name).
+    pub double: bool,
     /// What a hover lays over its first mark.
     pub hover: Option<Plate>,
     pub marks: Vec<Mark>,
 }
 
+/// A surface to paint with one painter (the menu, Manage, the name
+/// dialogs, the palette popover): the fixed head and foot, the list in its
+/// own coordinates scrolled in `list_view`, and what the window lays over it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Sheet {
+    pub size: [f32; 2],
+    pub head: Vec<Piece>,
+    /// Where the list starts, and the height it shows at once.
+    pub list_top: f32,
+    pub list_view: f32,
+    /// Every row's pieces, from the list's top.
+    pub list: Vec<Piece>,
+    /// The list's whole height.
+    pub list_height: f32,
+    /// The chosen row, which the list scrolls into view.
+    pub focus: Option<Area>,
+    /// The text field's box, in the list's coordinates.
+    pub field: Option<Area>,
+    /// The open palette and where it stands in the list.
+    pub palette: Option<([f32; 2], crate::colour_palette::Popover)>,
+    pub foot: Vec<Piece>,
+    /// Manage's rows: each name and whether rename and delete refuse it.
+    pub names: Vec<(String, bool)>,
+    /// A name dialog's Save would save: a name, and a free colour.
+    pub saves: bool,
+    /// The open palette hangs over the list and a click outside it closes
+    /// it (Manage's rows); else it stands in the list.
+    pub closes_out: bool,
+}
+
+impl Sheet {
+    /// The sheet, its list brought to its focus only when that `moved`.
+    #[must_use]
+    pub fn revealed(mut self, moved: bool) -> Self {
+        self.focus = self.focus.filter(|_| moved);
+        self
+    }
+
+    /// A sheet `size` large of `list` alone, which never scrolls.
+    #[must_use]
+    pub fn of(size: [f32; 2], list: Vec<Piece>) -> Self {
+        Self {
+            size,
+            head: Vec::new(),
+            list_top: 0.0,
+            list_view: size[1],
+            list,
+            list_height: size[1],
+            focus: None,
+            field: None,
+            palette: None,
+            foot: Vec::new(),
+            names: Vec::new(),
+            saves: false,
+            closes_out: false,
+        }
+    }
+}
+
 impl Piece {
+    /// The piece `dy` points lower, its marks and hover with it.
+    #[must_use]
+    pub fn shifted(mut self, dy: f32) -> Self {
+        self.at.y += dy;
+        if let Some(hover) = &mut self.hover {
+            hover.at.y += dy;
+        }
+        for mark in &mut self.marks {
+            match mark {
+                Mark::Box(Plate { at, .. })
+                | Mark::Tree(at, _)
+                | Mark::Colour { at, .. }
+                | Mark::Hatch { at, .. } => at.y += dy,
+                Mark::Text(words) => words.y += dy,
+                Mark::Shade(corners) => corners.iter_mut().for_each(|(at, _)| at[1] += dy),
+            }
+        }
+        self
+    }
+
     pub(crate) fn plain(at: Area, marks: Vec<Mark>) -> Self {
         Self {
             at,
             row: None,
             press: false,
             drag: false,
+            double: false,
             hover: None,
             marks,
         }
@@ -144,6 +238,7 @@ impl Piece {
 
 fn plate(at: Area, radius: f32, fill: Option<Token>, edge: Option<Token>) -> Mark {
     Mark::Box(Plate {
+        toward: None,
         at,
         radius,
         fill,
@@ -152,10 +247,56 @@ fn plate(at: Area, radius: f32, fill: Option<Token>, edge: Option<Token>) -> Mar
     })
 }
 
+/// A row's fill over `at`: a workspace row's own colour at `tint`'s share
+/// over the ground, mixed as the theme paints it, the one fill menu B and
+/// Manage both paint; a row without a colour keeps the menu's hover and
+/// current tokens.
+pub(crate) fn tinted(at: Area, row: &CellRow, tint: RowTint, dark: bool) -> Plate {
+    let ink = chrome(dark);
+    let toward = (row.colour.as_ref()).map(|colour| (colour.rgb, tint.share()));
+    let fill = match tint {
+        _ if toward.is_some() => Some(ink.ground),
+        RowTint::Rest => None,
+        RowTint::Hover => Some(ink.hover),
+        RowTint::Current => Some(ink.current),
+    };
+    Plate {
+        toward,
+        at,
+        radius: RADIUS,
+        fill,
+        alpha: u8::MAX,
+        edge: None,
+    }
+}
+
+/// `marks`' words in the menu's text and support inks on `row`'s tint: the
+/// painter chooses their ink ([`RowWords::ink`]) for every fill the row
+/// wears. One rule for menu B and Manage.
+pub(crate) fn legible(marks: &mut [Mark], row: &CellRow, dark: bool) {
+    let (Some(colour), ink) = (row.colour.as_ref(), chrome(dark)) else {
+        return;
+    };
+    let on = RowWords {
+        ground: ink.ground,
+        colour: colour.rgb,
+        current: row.on,
+    };
+    for mark in marks {
+        if let Mark::Text(words) = mark
+            && words.rgb.is_none()
+            && [ink.ink, ink.support].contains(&words.ink)
+        {
+            words.on = Some(on);
+        }
+    }
+}
+
 /// The hover fill over `at`, as a button's corners round it.
 fn hover(at: Area, ink: Token) -> Option<Plate> {
     let (radius, fill, alpha, edge) = (RADIUS, Some(ink), u8::MAX, None);
     Some(Plate {
+        toward: None,
         at,
         radius,
         fill,
@@ -181,6 +322,7 @@ fn text(x: f32, y: f32, words: &str, size: f32, ink: Token, width: f32) -> Mark 
         tracking: 0.0,
         names: false,
         rgb: None,
+        on: None,
     })
 }
 
@@ -285,6 +427,7 @@ fn swatch(line: Area, row: &CellRow, ink: &MenuChrome) -> Piece {
         row: Some(row.clone()),
         press: true,
         hover: Some(Plate {
+            toward: None,
             at: ring,
             radius: SWATCH_RADIUS_PT + 2.0,
             fill: None,
@@ -348,6 +491,7 @@ fn press(at: Area, row: &CellRow, plain: bool, ink: &MenuChrome, measure: Measur
         row: Some(row.clone()),
         press: enabled,
         drag: false,
+        double: false,
         hover: hover(at, ink.hover).filter(|_| enabled && !row.dot),
         marks,
     }
@@ -431,17 +575,20 @@ pub fn filter_text(width: f32) -> Area {
 pub fn row(row: &CellRow, width: f32, focused: bool, dark: bool) -> Piece {
     let ink = chrome(dark);
     let at = area(PAD, 0.0, width - 2.0 * PAD, CHIP_MENU_ROW_PT);
-    let back = match (row.on, focused) {
-        (true, _) => Some(ink.current),
-        (false, true) => Some(ink.hover),
-        (false, false) => None,
-    };
     let ring = if focused { Some(ink.accent) } else { None };
     // The selection, hover and focus start past the colour slot, so the slot
     // stands on the panel and never sinks into the highlight.
     let from = 2.0 * PAD + SLOT_WIDTH_PT + HIGHLIGHT_GAP_PT;
     let lit = area(from, 0.0, at.x + at.w - from, CHIP_MENU_ROW_PT);
-    let mut marks = vec![plate(lit, RADIUS, back, ring)];
+    let tint = match (row.on, focused) {
+        (true, _) => RowTint::Current,
+        (false, true) => RowTint::Hover,
+        (false, false) => RowTint::Rest,
+    };
+    let mut marks = vec![
+        Mark::Box(tinted(lit, row, tint, dark)),
+        plate(lit, RADIUS, None, ring),
+    ];
     let (status, y) = (width - PAD - 8.0 - STATUS_PT, CHIP_MENU_ROW_PT / 2.0);
     if row.on {
         marks.push(text(status + 1.0, y, CHECK, 12.0, ink.accent, STATUS_PT));
@@ -449,7 +596,7 @@ pub fn row(row: &CellRow, width: f32, focused: bool, dark: bool) -> Piece {
         marks.push(dot(status + 7.0, y, DOT_PT, ink.accent));
     }
     let line = area(2.0 * PAD, 0.0, width - 3.0 * PAD - 8.0, CHIP_MENU_ROW_PT);
-    let mut line = entry(
+    let line = entry(
         line,
         row,
         (SLOT_WIDTH_PT, MINI_ROW),
@@ -457,17 +604,15 @@ pub fn row(row: &CellRow, width: f32, focused: bool, dark: bool) -> Piece {
         STATUS_PT + 8.0,
         &ink,
     );
-    // On the selection fill the support ink falls under 4.5:1 in Dark.
-    if let (true, Some(Mark::Text(summary))) = (row.on, line.get_mut(1)) {
-        summary.ink = ink.ink;
-    }
     marks.extend(line);
+    legible(&mut marks, row, dark);
     Piece {
         at,
         row: Some(row.clone()),
         press: true,
         drag: false,
-        hover: hover(lit, ink.hover).filter(|_| !row.on),
+        double: false,
+        hover: (!row.on).then(|| tinted(lit, row, RowTint::Hover, dark)),
         marks,
     }
 }
@@ -495,6 +640,42 @@ pub fn foot(menu: &CellMenu, width: f32, dark: bool, measure: Measure<'_>) -> Ve
         switch.hover = hover(switch.at, ink.hover);
     }
     pieces
+}
+
+/// The menu as one sheet at `layout`'s size: the header, the filter field
+/// while the list has one, the rows `filter` keeps (`focus` ringed) in a
+/// list `layout.list_height` tall, and the footer.
+#[must_use]
+pub fn sheet(
+    menu: &CellMenu,
+    (filter, focus): (&str, Option<usize>),
+    layout: &ChipMenuLayout,
+    dark: bool,
+    measure: Measure<'_>,
+) -> Sheet {
+    let width = layout.width - 2.0 * CHIP_MENU_BORDER_PT;
+    let mut view = Sheet::of([width, 0.0], Vec::new());
+    view.head = head(menu, width, dark, measure);
+    view.list_top = HEAD_PT;
+    if let Some(row) = menu.filter_row(filter) {
+        view.head
+            .push(self::filter(row, width, dark).shifted(HEAD_PT));
+        view.list_top = HEAD_PT + CHIP_MENU_FILTER_PT; // The window lays the field.
+    }
+    let shown = menu.shown(filter);
+    let rows = shown.iter().enumerate();
+    let place = |(at, shown): (usize, &&CellRow)| {
+        row(shown, width, focus == Some(at), dark).shifted(at as f32 * CHIP_MENU_ROW_PT)
+    };
+    view.list = rows.map(place).collect();
+    view.list_height = shown.len() as f32 * CHIP_MENU_ROW_PT + PAD;
+    view.list_view = layout.list_height;
+    let foot_y = view.list_top + view.list_view;
+    view.foot = (foot(menu, width, dark, measure).into_iter())
+        .map(|piece| piece.shifted(foot_y))
+        .collect();
+    view.size[1] = foot_y + CHIP_MENU_FOOTER_PT;
+    view
 }
 
 #[cfg(test)]

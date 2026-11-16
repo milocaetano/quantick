@@ -181,6 +181,10 @@ pub enum Token {
     TabStrip,
     /// The capsule's layout miniature: a neutral grey, never the accent.
     CapsuleMiniature,
+    /// An icon press resting while it cannot act (Manage's pencil and trash).
+    RestingIcon,
+    /// Key hints beside a dialog's buttons, 4.5:1 on its blocks.
+    KeyHint,
     Brand,
     ReplayInk,
     ToolbarSheet,
@@ -313,7 +317,7 @@ pub enum Token {
     RailGripHover,
 }
 impl Token {
-    pub const ALL: [Self; 161] = [
+    pub const ALL: [Self; 163] = [
         Self::FlowSurface,
         Self::FlowDivider,
         Self::FlowInk,
@@ -415,6 +419,8 @@ impl Token {
         Self::ChartGrid,
         Self::TabStrip,
         Self::CapsuleMiniature,
+        Self::RestingIcon,
+        Self::KeyHint,
         Self::Brand,
         Self::ReplayInk,
         Self::ToolbarSheet,
@@ -486,6 +492,8 @@ impl Token {
             Self::ChartGrid => "chart_grid",
             Self::TabStrip => "tab_strip",
             Self::CapsuleMiniature => "capsule_miniature",
+            Self::RestingIcon => "resting_icon",
+            Self::KeyHint => "key_hint",
             Self::Brand => "brand",
             Self::ReplayInk => "replay_ink",
             Self::ToolbarSheet => "toolbar_sheet",

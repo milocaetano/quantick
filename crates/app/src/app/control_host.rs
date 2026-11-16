@@ -563,8 +563,9 @@ impl<'a> ChromeReads<'a> {
     }
 
     /// The workspace cell menu's rows in view, as last drawn.
-    pub(crate) fn cell_menu(self) -> &'a [(CellRow, egui::Rect)] {
-        self.window_menu.map_or(&[], |menu| &menu.cell_rows)
+    pub(crate) fn cell_menu(self) -> impl Iterator<Item = &'a (CellRow, egui::Rect)> {
+        (self.window_menu.into_iter())
+            .flat_map(|menu| menu.cell_rows.iter().chain(&menu.dialog_rows))
     }
 
     /// The view over the window's own roots, as [`TabReads::new`].

@@ -368,6 +368,8 @@ pub enum ColourTaken {
         owner_would_get: WorkspaceColour,
         other: String,
     },
+    /// A new workspace asked for a colour these hold: no swap on create.
+    NewWorkspace { owners: Vec<String> },
 }
 
 impl ColourTaken {
@@ -376,7 +378,9 @@ impl ColourTaken {
     pub fn owners(&self) -> Vec<&str> {
         match self {
             Self::Held { owner, .. } | Self::SwapClashes { owner, .. } => vec![owner.as_str()],
-            Self::HeldByMany { owners } => owners.iter().map(String::as_str).collect(),
+            Self::HeldByMany { owners } | Self::NewWorkspace { owners } => {
+                owners.iter().map(String::as_str).collect()
+            }
         }
     }
 }

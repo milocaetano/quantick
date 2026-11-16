@@ -183,6 +183,8 @@ capability that cannot change application state.
 | `workspace.colour.popover` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
 | `workspace.colour.set` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
 | `workspace.delete` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
+| `workspace.delete.undo` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
+| `workspace.dialog.open` | 1 | `workspace` | no | `cockpit`, `cockpit.layout` |
 | `workspace.list` | 1 | `workspace` | yes | `observe`, `observe.workspace` |
 | `workspace.new` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
 | `workspace.rename` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
@@ -190,4 +192,4 @@ capability that cannot change application state.
 | `workspace.save_as` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
 | `workspace.save_to` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
 
-165 capabilities registered.
+167 capabilities registered.

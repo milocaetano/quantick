@@ -27,6 +27,7 @@ mod button;
 pub mod close_queue;
 pub mod colour_popover;
 pub mod live_trade;
+pub mod manage_workspaces;
 mod native;
 mod paging;
 pub mod paper;

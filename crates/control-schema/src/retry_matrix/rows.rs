@@ -37,6 +37,7 @@ pub const FAMILIES: &[&[Readback]] = &[
     crate::desk::READBACKS,
     crate::workspace_book::READBACKS,
     crate::workspace_colour::READBACKS,
+    crate::workspace_manage::READBACKS,
     crate::price_axis::READBACKS,
     crate::price_tag_progress::READBACKS,
     crate::home_tab::READBACKS,
@@ -56,7 +57,8 @@ pub const FAMILIES: &[&[Readback]] = &[
 ];
 
 const TOTAL: usize = total(FAMILIES);
-const JOINED: [Readback; TOTAL] = flatten(FAMILIES);
+/// A static, not a const: the joined table is past clippy's large-array size.
+static JOINED: [Readback; TOTAL] = flatten(FAMILIES);
 
 /// Every mutable capability's readback.
 pub const READBACKS: &[Readback] = &JOINED;

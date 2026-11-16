@@ -105,6 +105,9 @@ impl RowColour {
 #[derive(Debug, Clone, PartialEq)]
 pub struct CellRow {
     pub kind: RowKind,
+    /// The surface its scene id starts with: [`SCENE_ID`] for the menu,
+    /// `manage_workspaces` or `name_dialog` for the dialogs.
+    pub scope: &'static str,
     /// Its scene key; empty for the menu itself.
     pub key: String,
     pub label: String,
@@ -139,6 +142,7 @@ impl CellRow {
     pub fn new(kind: RowKind, key: &str, label: impl Into<String>) -> Self {
         Self {
             kind,
+            scope: SCENE_ID,
             key: key.to_owned(),
             label: label.into(),
             summary: String::new(),
@@ -187,15 +191,19 @@ impl CellRow {
     /// The row's id among the toolbar's scene controls.
     #[must_use]
     pub fn scene_id(&self) -> String {
-        scene_id(&self.key)
+        match self.key.as_str() {
+            "" => self.scope.to_owned(),
+            key => format!("{}.{key}", self.scope),
+        }
     }
 
-    /// What hovering the row says: why it is greyed while it is, else what it
-    /// does, else its whole label when `cut` short.
+    /// What hovering the row says: why it is greyed while it is (its fixed
+    /// reason, else its own tip), else what it does, else its whole label
+    /// when `cut` short.
     #[must_use]
     pub fn tip(&self, cut: bool) -> Option<&str> {
         if self.unavailable.is_some() {
-            return self.disabled_hover;
+            return self.disabled_hover.or(self.tip.as_deref());
         }
         let tip = self.tip.as_deref().or(self.hover);
         tip.or_else(|| cut.then_some(self.label.as_str()))
@@ -303,7 +311,8 @@ pub fn state_of(book: &WorkspaceBook, tab: u64) -> (&str, bool) {
 
 /// The layout workspace `name` restores and its summary, as `workspace.list`
 /// says it.
-fn described(book: &WorkspaceBook, name: &str) -> (PaneTree, String) {
+#[must_use]
+pub fn described(book: &WorkspaceBook, name: &str) -> (PaneTree, String) {
     let factory = WorkspaceRecipe::default();
     let recipe = book.recipe(name).unwrap_or(&factory);
     let tree = recipe_canvas(recipe).tree().clone();

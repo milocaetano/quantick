@@ -186,7 +186,7 @@ fn preset_list(
     };
     // Sticky: a drag from an unnamed value across a preset keeps its editor.
     custom |= named(*value).is_none();
-    let words = named(*value).map_or_else(|| value_words(kind, *value), str::to_owned);
+    let words = named(*value).map_or_else(|| kind.words(*value), str::to_owned);
     let button = ui
         .add(egui::Button::new(format!("{words} {}", icons::CARET_DOWN)))
         .on_hover_text("Choose a preset, or Custom…");
@@ -218,14 +218,6 @@ fn preset_list(
 
 /// The last row of an unfolded preset list: it reveals the free editor.
 const CUSTOM: &str = "Custom…";
-
-/// A value no preset names, written the way its kind reads.
-fn value_words(kind: NumberKind, value: Decimal) -> String {
-    match (kind, value.to_i64()) {
-        (NumberKind::Duration, Some(ms)) => quantick_engine::fmt_time_interval(ms),
-        _ => value.normalize().to_string(),
-    }
-}
 
 #[cfg(test)]
 mod tests;

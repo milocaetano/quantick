@@ -149,6 +149,32 @@ pub struct InstrumentMoney {
     pub source: MoneySource,
 }
 
+impl InstrumentMoney {
+    /// The money a trader declares by `(currency, point_value, size_step)`,
+    /// or `None` while any of them is missing.
+    #[must_use]
+    pub fn declared(
+        (currency, point_value, size_step): (&str, Decimal, Decimal),
+        previous: Option<&Self>,
+    ) -> Option<Self> {
+        let currency = Currency::new(currency)?;
+        if point_value <= Decimal::ZERO || size_step <= Decimal::ZERO {
+            return None;
+        }
+        Some(Self {
+            point_value,
+            size_step,
+            // A minimum the trader declared is theirs to keep: a venue whose
+            // smallest order is not one increment exists, and overwriting it
+            // here made the record's field write-only.
+            min_size: previous.map_or(size_step, |money| money.min_size),
+            max_size: previous.and_then(|money| money.max_size),
+            currency,
+            source: MoneySource::Declared,
+        })
+    }
+}
+
 /// How a sized quantity stands to the budget it was asked for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SizeOutcome {

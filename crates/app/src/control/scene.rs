@@ -63,7 +63,7 @@ use crate::{
     dock::DockTab,
     pane::{ChartPane, PaneSide},
     tab::Tab,
-    toolrail::{RailControl, RailControlKind},
+    toolrail::RailControl,
 };
 
 use super::{
@@ -117,11 +117,6 @@ fn project_controls<P: TabsPort + ChromePort + ?Sized>(
     scene_snapshot(app)
 }
 
-/// The identifier of one chart tab's entry in the tab strip.
-fn tab_control_id(tab_id: u64) -> String {
-    format!("{TAB_STRIP_OWNER_ID}.tab.{tab_id}")
-}
-
 /// The identifier of one button on the drawing rail.
 ///
 /// The rail draws from three registries and they share no namespace: a tool
@@ -131,12 +126,11 @@ fn tab_control_id(tab_id: u64) -> String {
 /// cannot mean the family flyout on a wide window and the tool itself on a
 /// narrow one.
 fn rail_control_id(control: &RailControl) -> String {
-    let registry = match control.kind {
-        RailControlKind::Tool => "tool",
-        RailControlKind::Family => "family",
-        RailControlKind::Favorite => "favorite",
-    };
-    format!("{TOOL_RAIL_OWNER_ID}.{registry}.{}", control.id)
+    format!(
+        "{TOOL_RAIL_OWNER_ID}.{}.{}",
+        control.kind.registry(),
+        control.id
+    )
 }
 
 /// The identifier of one tab on the dock's strip.

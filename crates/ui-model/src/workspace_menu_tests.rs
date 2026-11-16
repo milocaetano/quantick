@@ -112,19 +112,27 @@ fn a_row_wears_its_status_and_the_focus_ring() {
     );
     assert!(lit.press, "the tab's own row closes the menu");
     assert!(words(&lit).contains(&CHECK), "the check");
+    // Every workspace row tinted toward its own colour, its own the most.
+    let fill =
+        |row: &CellRow, tint: RowTint| Some((row.colour.as_ref().unwrap().rgb, tint.share()));
     let Mark::Box(back) = &lit.marks[0] else {
         panic!("a box")
     };
-    assert_eq!(back.fill, Some(Token::LedgerSelection));
+    assert_eq!(back.toward, fill(own, RowTint::Current));
+    let rest = row(other, 310.0, false, true);
+    let Mark::Box(at_rest) = &rest.marks[0] else {
+        panic!("a box")
+    };
+    assert_eq!(at_rest.toward, fill(other, RowTint::Rest));
     let focused = row(other, 310.0, true, true);
-    let Mark::Box(ring) = &focused.marks[0] else {
+    let Mark::Box(ring) = &focused.marks[1] else {
         panic!("a box")
     };
     assert_eq!(ring.edge, Some(Token::Accent));
-    let hovered = row(other, 310.0, false, true).hover.expect("a hover fill");
+    let hovered = rest.hover.expect("a hover fill");
     assert_eq!(
-        (hovered.fill, hovered.radius),
-        (Some(Token::HoverFill), 4.0)
+        (hovered.toward, hovered.radius),
+        (fill(other, RowTint::Hover), 4.0)
     );
     let named: Vec<bool> = (lit.marks.iter())
         .filter_map(|mark| match mark {
@@ -242,7 +250,21 @@ fn the_selected_row_s_summary_reads_on_its_fill() {
             _ => None,
         });
         let summary = summary.expect("a summary");
-        let ratio = contrast_ratio(theme.color(summary.ink), theme.color(back.fill.unwrap()));
+        let solid = |token| {
+            let [r, g, b, _] = theme.color(token).to_array();
+            [r, g, b]
+        };
+        let (colour, share) = back.toward.expect("its own colour's tint");
+        let fill =
+            quantick_appearance::workspace_menu::mix(solid(back.fill.unwrap()), colour, share);
+        let row = summary.on.expect("chosen on the row's tint");
+        let ground = solid(row.ground);
+        let [r, g, b] = row.ink(ground, solid(summary.ink), solid(Token::TextPrimary));
+        let [fr, fg, fb] = fill;
+        let ratio = contrast_ratio(
+            quantick_appearance::PremultipliedRgba::from_rgb(r, g, b),
+            quantick_appearance::PremultipliedRgba::from_rgb(fr, fg, fb),
+        );
         assert!(ratio >= 4.5, "{}: {ratio}", theme.name);
     }
 }

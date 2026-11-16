@@ -29,7 +29,7 @@ pub(in crate::app) use menus::{MenuDoor, WindowMenuState};
 mod commands;
 mod menus;
 mod settings_window;
-mod workspace_manage;
+mod workspace_dialogs;
 mod workspace_rows;
 
 /// Opens the Market Replay browser (§10).
@@ -282,7 +282,7 @@ impl QuantickApp {
         }
         draw_window_menu(self, ctx, &mut commands);
         settings_window::show(self, ctx, &mut commands);
-        workspace_rows::dialogs(self, ctx, &mut commands);
+        self.chrome.window_menu.dialog_rows = workspace_dialogs::dialogs(self, ctx, &mut commands);
         // The close prompt: an answer settles its tab, an exit's last answer closes the app.
         let focused = self.runtime.tabs.windows().focused();
         let queue = &self.chrome.window_menu.tab_workspace.close;

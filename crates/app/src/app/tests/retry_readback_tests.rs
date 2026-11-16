@@ -932,6 +932,19 @@ fn replay_plan() -> Vec<(&'static str, u32, Value, Readback)> {
             json!({ "name": "Renamed" }),
             Readback::Moves,
         ),
+        // Inside its ten seconds the delete comes back; then Manage opens.
+        (
+            "workspace.delete.undo",
+            1,
+            json!({ "name": "Renamed" }),
+            Readback::Moves,
+        ),
+        (
+            "workspace.dialog.open",
+            1,
+            json!({ "mode": "manage" }),
+            Readback::Moves,
+        ),
         // Opening the colour popover journals nothing: the colour stays.
         (
             "workspace.colour.popover",

@@ -21,6 +21,17 @@ pub enum AlertError {
     UnsupportedVersion(u32),
 }
 
+impl AlertError {
+    /// The words the alert surfaces show for this error.
+    #[must_use]
+    pub fn words(&self) -> String {
+        match self {
+            Self::Invalid { field, reason } => format!("{field}: {reason}"),
+            other => format!("{other:?}"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum AlertCommand {
     Create(AlertSpec),

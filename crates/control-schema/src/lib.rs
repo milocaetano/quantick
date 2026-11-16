@@ -65,6 +65,7 @@ pub mod window_menu;
 pub mod workspace;
 pub mod workspace_book;
 pub mod workspace_colour;
+pub mod workspace_manage;
 
 pub mod indicator_picker;
 pub mod native_indicator;

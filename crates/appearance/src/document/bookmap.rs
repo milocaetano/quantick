@@ -92,6 +92,8 @@ mod tests {
                 // and the capsule's miniature to the toolbar.
                 Token::ToolbarSheet
                 | Token::CapsuleMiniature
+                | Token::RestingIcon
+                | Token::KeyHint
                 | Token::TabIdleFill
                 | Token::TabIdleOutline
                 | Token::TabBand

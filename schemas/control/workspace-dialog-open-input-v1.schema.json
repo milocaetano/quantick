@@ -1,0 +1,52 @@
+{
+  "$defs": {
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    },
+    "WorkspaceDialog": {
+      "description": "Which dialog to open.",
+      "oneOf": [
+        {
+          "const": "save_as",
+          "description": "Save as new workspace: the tab's copy under a new name.",
+          "type": "string"
+        },
+        {
+          "const": "new",
+          "description": "New workspace: an empty recipe.",
+          "type": "string"
+        },
+        {
+          "const": "manage",
+          "description": "Manage workspaces.",
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Open a workspace dialog on a tab.",
+  "properties": {
+    "mode": {
+      "$ref": "#/$defs/WorkspaceDialog"
+    },
+    "tab_id": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/WireU64"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "The tab. Left out, the one on screen."
+    }
+  },
+  "required": [
+    "mode"
+  ],
+  "title": "WorkspaceDialogOpenInput",
+  "type": "object"
+}

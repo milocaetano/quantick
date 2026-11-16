@@ -22,7 +22,11 @@ fn surface(context: Option<&Context>) -> AlertSurface {
     surface
 }
 fn edit(surface: &mut AlertSurface, change: impl FnOnce(&mut Draft)) {
-    let mut draft = surface.model_state.draft().cloned().expect("a draft is open");
+    let mut draft = surface
+        .model_state
+        .draft()
+        .cloned()
+        .expect("a draft is open");
     change(&mut draft);
     let _ = surface.update(Intent::Edit(Box::new(draft)));
 }
@@ -191,7 +195,9 @@ fn alert_target_controls_keep_operators_compatible() {
             name: "Region fixture".into(),
         });
         let mut surface = surface(Some(&context));
-        edit(&mut surface, |draft| draft.spec.conditions[0].operator = initial);
+        edit(&mut surface, |draft| {
+            draft.spec.conditions[0].operator = initial
+        });
         assert!(
             confirmation::click(&mut surface, &ctx, "Value")
                 .alerts
@@ -225,11 +231,7 @@ fn alert_target_controls_keep_operators_compatible() {
                 expected
             }
         );
-        assert!(
-            AlertBook::default()
-                .validate(&draft(&surface).spec)
-                .is_ok()
-        );
+        assert!(AlertBook::default().validate(&draft(&surface).spec).is_ok());
     }
 }
 

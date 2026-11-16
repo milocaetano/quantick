@@ -34,6 +34,9 @@ use quantick_control_schema::workspace_book::{
 use quantick_control_schema::workspace_colour::{
     ColourWarningDto, workspace_colour_palette_descriptor, workspace_colour_popover_descriptor,
 };
+use quantick_control_schema::workspace_manage::{
+    workspace_delete_undo_descriptor, workspace_dialog_open_descriptor,
+};
 use quantick_session::close_queue::{
     CloseAnswer, CloseQuestion, CloseQueue, CloseScope, CloseStep,
 };
@@ -54,6 +57,7 @@ use crate::tabs::TabDirectory;
 
 pub mod cell_menu;
 pub mod colour_popover;
+pub mod manage;
 
 fn unavailable() -> ControlError {
     ControlError::invalid_request("the workspaces are unavailable")
@@ -176,10 +180,17 @@ pub fn apply_row_command<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
     let note = match command {
         WorkspaceCommand::BeginSaveAs => {
             menu.open_save_as(tab);
+            manage::fill_create(host, menu);
             return None;
         }
         WorkspaceCommand::BeginNew => {
             menu.open_new(tab);
+            manage::fill_create(host, menu);
+            return None;
+        }
+        WorkspaceCommand::Manage(intent) => return manage::act(host, &mut to, menu, intent),
+        WorkspaceCommand::NameColour(intent) => {
+            manage::name_colour(host, menu, intent);
             return None;
         }
         WorkspaceCommand::BeginRename(from) => {
@@ -192,6 +203,10 @@ pub fn apply_row_command<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
         }
         WorkspaceCommand::SubmitDialog => {
             return submit_name_dialog(host, &mut to, menu, symbol);
+        }
+        WorkspaceCommand::CloseDialog => {
+            menu.close_dialog();
+            return None;
         }
         WorkspaceCommand::Close(scope, tabs) => {
             if menu.close.request(scope, tabs)
@@ -220,15 +235,6 @@ pub fn apply_row_command<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
         WorkspaceCommand::SetAutosave(on) => {
             autosave_journaled(host, &mut to, on, tab).map(|(_, saved)| saved_notes(host, &saved))
         }
-        WorkspaceCommand::Delete(name) => delete_journaled(host, &mut to, &name).map(|gone| {
-            gone.changed.then(|| {
-                text::deleted_toast(
-                    &name,
-                    &host.tab_symbols(&gone.adopted),
-                    &host.tab_symbols(&gone.kept_edits),
-                )
-            })
-        }),
     };
     note.unwrap_or_else(|error| Some(error.message))
 }
@@ -242,11 +248,11 @@ fn submit_name_dialog<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
     symbol: &str,
 ) -> Option<String> {
     let dialog = menu.dialog.clone()?;
-    let tab = dialog.tab;
+    let (tab, colour) = (dialog.tab, manage::chosen(&dialog));
     let outcome = match &dialog.mode {
-        NameDialogMode::SaveAsNew => save_as_journaled(host, to, tab, &dialog.name)
+        NameDialogMode::SaveAsNew => save_as_journaled(host, to, tab, (&dialog.name, colour))
             .map(|saved| Some(text::saved_as_toast(symbol, &saved.workspace))),
-        NameDialogMode::New => new_journaled(host, to, tab, &dialog.name)
+        NameDialogMode::New => new_journaled(host, to, tab, (&dialog.name, colour))
             .map(|made| Some(text::created_toast(symbol, &made.workspace))),
         NameDialogMode::Rename { from } => {
             rename_journaled(host, to, from, &dialog.name).map(|moved| {
@@ -285,6 +291,8 @@ where
     registry.register_outside_replay(tab_close_descriptor(), close)?;
     registry.register_outside_replay(workspace_rename_descriptor(), rename)?;
     registry.register_outside_replay(workspace_delete_descriptor(), delete)?;
+    registry.register_outside_replay(workspace_delete_undo_descriptor(), manage::undo_call)?;
+    registry.register_outside_replay(workspace_dialog_open_descriptor(), manage::dialog_open)?;
     registry.register_outside_replay(workspace_colour_set_descriptor(), colour_set)?;
     let palette = workspace_colour_palette_descriptor();
     registry.register_outside_replay(palette, colour_popover::palette_read)?;
@@ -565,19 +573,20 @@ fn discard_market<H: WorkspaceBookHost + ?Sized>(app: &mut H, closed: &[DrawingK
 pub fn save_tab_as<H: WorkspaceBookHost + ?Sized>(
     app: &mut H,
     tab: u64,
-    name: &str,
+    (name, colour): (&str, Option<WorkspaceColour>),
 ) -> Result<SaveOutcome, ControlError> {
-    // Asked of a copy first: a refused name writes no drawing either.
+    // Asked of a copy first: a refused name or colour writes no drawing either.
     let before = book(app)?.clone();
     before
         .clone()
-        .save_as(tab, name)
+        .save_as_coloured(tab, name, colour)
         .map_err(|refusal| refused(&refusal))?;
     // What its panes show, held edits of the workspace's included.
     if let Some(store) = app.workspace_store() {
         store.take_shown_sets(tab);
     }
-    let mut outcome = written(app, |book| book.save_as(tab, name), |saved| saved.changed)?;
+    let save = |book: &mut WorkspaceBook| book.save_as_coloured(tab, name, colour);
+    let mut outcome = written(app, save, |saved| saved.changed)?;
     outcome.changed |= commit_market_whole(app, tab, before, outcome.changed)?;
     Ok(outcome)
 }
@@ -589,9 +598,10 @@ pub fn save_tab_as<H: WorkspaceBookHost + ?Sized>(
 pub fn new_tab_workspace<H: WorkspaceBookHost + ?Sized>(
     app: &mut H,
     tab: u64,
-    name: &str,
+    (name, colour): (&str, Option<WorkspaceColour>),
 ) -> Result<CreateOutcome, ControlError> {
-    let outcome = written(app, |book| book.create(tab, name), |_| true)?;
+    let create = |book: &mut WorkspaceBook| book.create_coloured(tab, name, colour);
+    let outcome = written(app, create, |_| true)?;
     show(app, &[tab])?;
     Ok(outcome)
 }
@@ -880,15 +890,21 @@ pub fn rename_workspace<H: WorkspaceBookHost + ?Sized>(
     written(app, |book| book.rename(name, to), |moved| moved.changed)
 }
 
-/// Delete a workspace, moving its tabs to `Default` and redrawing the clean ones.
+/// Delete a workspace, moving its tabs to `Default` and redrawing the clean
+/// ones; at `now_ms`, when told, an Undo can take it back for ten seconds.
 ///
 /// # Errors
 /// `Default`, no workspace has the name, no book, or the write failed.
 pub fn delete_workspace<H: WorkspaceBookHost + ?Sized>(
     app: &mut H,
     name: &str,
+    now_ms: Option<i64>,
 ) -> Result<DeleteOutcome, ControlError> {
-    let outcome = written(app, |book| book.delete(name), |gone| gone.changed)?;
+    let delete = |book: &mut WorkspaceBook| match now_ms {
+        Some(now_ms) => book.delete_at(name, now_ms),
+        None => book.delete(name),
+    };
+    let outcome = written(app, delete, |gone| gone.changed)?;
     if outcome.changed {
         show(app, &outcome.adopted)?;
     }
@@ -938,9 +954,9 @@ fn save_as_journaled<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
     app: &mut H,
     to: &mut Journal<'_, A>,
     tab: u64,
-    name: &str,
+    asked: (&str, Option<WorkspaceColour>),
 ) -> Result<SaveOutcome, ControlError> {
-    let outcome = save_tab_as(app, tab, name)?;
+    let outcome = save_tab_as(app, tab, asked)?;
     if outcome.changed {
         let payload = json!({ "workspace": outcome.workspace, "tabs_changed": [] });
         journal(to, WORKSPACE_SAVED_EVENT_KIND, payload);
@@ -952,10 +968,10 @@ fn new_journaled<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
     app: &mut H,
     to: &mut Journal<'_, A>,
     tab: u64,
-    name: &str,
+    asked: (&str, Option<WorkspaceColour>),
 ) -> Result<CreateOutcome, ControlError> {
     flush(app, to, tab)?;
-    let outcome = new_tab_workspace(app, tab, name)?;
+    let outcome = new_tab_workspace(app, tab, asked)?;
     let payload = json!({ "tab_id": WireU64::new(tab), "workspace": outcome.workspace,
         "dropped_edits": outcome.dropped_edits });
     journal(to, WORKSPACE_CREATED_EVENT_KIND, payload);
@@ -1050,8 +1066,9 @@ fn delete_journaled<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
     app: &mut H,
     to: &mut Journal<'_, A>,
     name: &str,
+    now_ms: Option<i64>,
 ) -> Result<DeleteOutcome, ControlError> {
-    let outcome = delete_workspace(app, name)?;
+    let outcome = delete_workspace(app, name, now_ms)?;
     if outcome.changed {
         let payload = json!({ "workspace": name, "moved": wires(&outcome.moved),
             "kept_edits": wires(&outcome.kept_edits) });
@@ -1099,9 +1116,14 @@ fn save_as<H: WorkspaceBookHost + TabDirectory + ?Sized, A: NotifyAccess>(
     actor: &ActorContext,
     value: &Value,
 ) -> Result<Value, ControlError> {
-    let WorkspaceSaveAsInput { tab_id, name } = input(value)?;
+    let WorkspaceSaveAsInput {
+        tab_id,
+        name,
+        colour,
+    } = input(value)?;
+    let colour = colour_word(colour.as_deref())?;
     let tab = tab_on_book(app, tab_id)?;
-    let outcome = save_as_journaled(app, &mut Some((access, actor)), tab, &name)?;
+    let outcome = save_as_journaled(app, &mut Some((access, actor)), tab, (&name, colour))?;
     answer(&WorkspaceSaveResult {
         workspace: outcome.workspace,
         changed: outcome.changed,
@@ -1115,14 +1137,26 @@ fn new<H: WorkspaceBookHost + TabDirectory + ?Sized, A: NotifyAccess>(
     actor: &ActorContext,
     value: &Value,
 ) -> Result<Value, ControlError> {
-    let WorkspaceNewInput { tab_id, name } = input(value)?;
+    let WorkspaceNewInput {
+        tab_id,
+        name,
+        colour,
+    } = input(value)?;
+    let colour = colour_word(colour.as_deref())?;
     let tab = tab_on_book(app, tab_id)?;
-    let outcome = new_journaled(app, &mut Some((access, actor)), tab, &name)?;
+    let outcome = new_journaled(app, &mut Some((access, actor)), tab, (&name, colour))?;
     answer(&WorkspaceNewResult {
         tab_id: WireU64::new(tab),
         workspace: outcome.workspace,
         dropped_edits: outcome.dropped_edits,
     })
+}
+
+/// A call's colour word: a preset's name or `#RRGGBB`; left out, none.
+fn colour_word(word: Option<&str>) -> Result<Option<WorkspaceColour>, ControlError> {
+    let Some(word) = word else { return Ok(None) };
+    let invalid = || refused(&WorkspaceRefusal::ColourInvalid(word.to_owned()));
+    WorkspaceColour::parse(word).ok_or_else(invalid).map(Some)
 }
 
 /// Revert is gone; the refusal names the calls that keep edits instead.
@@ -1194,11 +1228,19 @@ fn delete<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
     value: &Value,
 ) -> Result<Value, ControlError> {
     let WorkspaceDeleteInput { name } = input(value)?;
-    let outcome = delete_journaled(app, &mut Some((access, actor)), &name)?;
+    let now_ms = Some(actor.requested_at_unix_ms);
+    let outcome = delete_journaled(app, &mut Some((access, actor)), &name, now_ms)?;
+    if let Some(mut menu) = app.workspace_menu().map(|(menu, _)| std::mem::take(menu)) {
+        manage::note_deleted(app, &mut menu, &name, &outcome);
+        *app.workspace_menu().ok_or_else(unavailable)?.0 = menu;
+    }
     answer(&WorkspaceDeleteResult {
         changed: outcome.changed,
         moved: wires(&outcome.moved),
         kept_edits: wires(&outcome.kept_edits),
+        undo_until_unix_ms: app
+            .workspace_book_ref()
+            .and_then(|book| book.undo_until(&name)),
     })
 }
 

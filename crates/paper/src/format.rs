@@ -11,7 +11,7 @@
 
 use quantick_engine::Side;
 use quantick_engine::display::display_decimal;
-use quantick_trading::EntryKind;
+use quantick_trading::{EntryKind, OrderRole};
 use rust_decimal::Decimal;
 
 /// The open position, read-only, as every chrome surface reports it — the
@@ -59,6 +59,18 @@ pub fn kind_short(kind: EntryKind) -> &'static str {
         EntryKind::Market => "MKT",
         EntryKind::Limit => "LMT",
         EntryKind::Stop => "STP",
+    }
+}
+
+/// What a working order calls itself in its tag. An entry names its side and
+/// kind, because those are what the accent line cannot say; a protective leg
+/// names its job, because "SELL LMT" over a long is a lie about what it is
+/// waiting to do.
+pub fn order_line_name(order: &quantick_trading::Order) -> String {
+    match order.role {
+        OrderRole::Entry => format!("{} {}", side_word_upper(order.side), kind_short(order.kind)),
+        OrderRole::StopLoss => "SL".to_owned(),
+        OrderRole::TakeProfit => "TP".to_owned(),
     }
 }
 

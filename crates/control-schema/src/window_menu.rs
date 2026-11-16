@@ -499,6 +499,91 @@ pub const MANAGE_DELETE: &str = "Delete";
 pub const MANAGE_CLOSE: &str = "Close";
 /// The hover on the current workspace's check.
 pub const MANAGE_CURRENT_HOVER: &str = "This tab's workspace";
+/// The pill on the tab's own workspace, and the two column captions.
+pub const MANAGE_CURRENT_PILL: &str = "CURRENT";
+pub const MANAGE_WORKSPACE_CAPTION: &str = "WORKSPACE";
+pub const MANAGE_TABS_CAPTION: &str = "TABS";
+/// The line under Default's row.
+pub const MANAGE_DEFAULT_NOTE: &str =
+    "Default is the fallback for tabs whose workspace is deleted. It cannot be renamed or deleted.";
+/// The pencil's and the trash's hovers.
+pub const MANAGE_RENAME_HOVER: &str = "Rename \u{b7} F2";
+pub const MANAGE_DELETE_HOVER: &str = "Delete \u{b7} Del";
+/// Why a row's pencil and trash rest while its name is typed.
+pub const MANAGE_RENAMING_HOVER: &str = "Finish renaming first \u{b7} Enter or Esc";
+/// A colour chip's hover.
+pub const MANAGE_CHIP_HOVER: &str = "Change colour \u{b7} C";
+/// The footer's keys, and the hint beside a name being typed.
+pub const MANAGE_KEYS_HINT: &str = "F2 rename \u{b7} Del delete \u{b7} C colour";
+pub const MANAGE_RENAME_HINT: &str = "Enter save \u{b7} Esc cancel";
+/// The armed row's second button, and the Undo row's.
+pub const MANAGE_KEEP: &str = "Keep";
+pub const MANAGE_UNDO: &str = "Undo";
+pub const MANAGE_UNDO_KEYS: &str = "Ctrl+Z";
+/// The footer's way to a new workspace.
+pub const MANAGE_NEW: &str = "New workspace\u{2026}";
+/// The create dialogs' hint beside Save.
+pub const DIALOG_ENTER_SAVES: &str = "Enter saves";
+
+/// `A`, `A and B`, `A, B and C`.
+fn listed(symbols: &[String]) -> String {
+    match symbols {
+        [] => String::new(),
+        [only] => only.clone(),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+    }
+}
+
+/// The caption over the create dialogs' palette: `Colour · Petrol`.
+#[must_use]
+pub fn colour_caption(colour: &str) -> String {
+    format!("Colour \u{b7} {colour}")
+}
+
+/// The hover on a row's tab count: the tabs it holds, by name.
+#[must_use]
+pub fn tab_names_hover(symbols: &[String]) -> String {
+    if symbols.is_empty() {
+        "No tab uses it".to_owned()
+    } else {
+        symbols.join(", ")
+    }
+}
+
+/// `A keeps its edits`, `A and B keep their edits`.
+fn keep_edits(kept: &[String]) -> String {
+    let verb = if kept.len() == 1 {
+        "keeps its"
+    } else {
+        "keep their"
+    };
+    format!("{} {verb} edits", listed(kept))
+}
+
+/// The row a delete leaves for ten seconds, naming the tabs as the
+/// confirmation and the toast do: `Scalp deleted · WIN$N back on Default ·
+/// WDO$N keeps its edits`.
+#[must_use]
+pub fn deleted_row_label(workspace: &str, adopted: &[String], kept: &[String]) -> String {
+    let mut row = format!("{workspace} deleted");
+    if !adopted.is_empty() {
+        row.push_str(&format!(" \u{b7} {} back on Default", listed(adopted)));
+    }
+    if !kept.is_empty() {
+        row.push_str(&format!(" \u{b7} {}", keep_edits(kept)));
+    }
+    row
+}
+
+/// What an Undo says: `Scalp is back`, or `Scalp is back as Orchid` when
+/// its own colour was taken meanwhile.
+#[must_use]
+pub fn undone_label(workspace: &str, recoloured: Option<&str>) -> String {
+    match recoloured {
+        Some(colour) => format!("{workspace} is back as {colour}"),
+        None => format!("{workspace} is back"),
+    }
+}
 
 /// How many tabs use a workspace, as the dialog's row says it.
 #[must_use]
@@ -510,13 +595,21 @@ pub fn tab_count_label(tabs: usize) -> String {
     }
 }
 
-/// The armed delete, stating what the confirmation does.
+/// The armed delete, stating what the confirmation does to each tab:
+/// `Delete Scalp? ETHUSDT goes back to Default; SOLUSDT keeps its edits
+/// there.`, the verbs following the counts.
 #[must_use]
-pub fn delete_armed_label(workspace: &str, moved: &[String]) -> String {
-    if moved.is_empty() {
-        format!("Delete {workspace}? No tab uses it")
-    } else {
-        format!("Delete {workspace}? {} move to Default", named(moved))
+pub fn delete_armed_label(workspace: &str, adopted: &[String], kept: &[String]) -> String {
+    let back = match adopted {
+        [] => None,
+        [_] => Some(format!("{} goes back to Default", listed(adopted))),
+        _ => Some(format!("{} go back to Default", listed(adopted))),
+    };
+    match (back, kept.is_empty()) {
+        (None, true) => format!("Delete {workspace}? No tab uses it."),
+        (Some(back), true) => format!("Delete {workspace}? {back}."),
+        (Some(back), false) => format!("Delete {workspace}? {back}; {} there.", keep_edits(kept)),
+        (None, false) => format!("Delete {workspace}? {} on Default.", keep_edits(kept)),
     }
 }
 
@@ -798,6 +891,64 @@ mod tests {
         assert_eq!(
             saved_toast("Scalp", &tabs),
             "Saved to Scalp; BTCUSDT, WDOV26 changed"
+        );
+    }
+
+    #[test]
+    fn the_manage_words_follow_the_mock() {
+        let two = ["WIN$N".to_owned(), "WDO$N".to_owned()];
+        assert_eq!(
+            delete_armed_label("Scalp", &two, &[]),
+            "Delete Scalp? WIN$N and WDO$N go back to Default."
+        );
+        assert_eq!(
+            delete_armed_label("Scalp", &two[..1], &[]),
+            "Delete Scalp? WIN$N goes back to Default."
+        );
+        assert_eq!(
+            delete_armed_label("Scalp", &[], &[]),
+            "Delete Scalp? No tab uses it."
+        );
+        assert_eq!(
+            deleted_row_label("Scalp", &two, &[]),
+            "Scalp deleted \u{b7} WIN$N and WDO$N back on Default"
+        );
+        assert_eq!(deleted_row_label("Tape", &[], &[]), "Tape deleted");
+        assert_eq!(
+            undone_label("Scalp", Some("Orchid")),
+            "Scalp is back as Orchid"
+        );
+        assert_eq!(colour_caption("Petrol"), "Colour \u{b7} Petrol");
+        let three = ["A".to_owned(), "B".to_owned(), "C".to_owned()];
+        assert_eq!(tab_names_hover(&three), "A, B, C");
+        assert_eq!(listed(&three), "A, B and C");
+    }
+
+    /// The confirmation, the Undo row and the toast name the same tabs the
+    /// same way: which go back to Default, which keep their edits there.
+    #[test]
+    fn the_confirmation_row_and_toast_agree_on_each_tab() {
+        let (adopted, kept) = (["ETHUSDT".to_owned()], ["SOLUSDT".to_owned()]);
+        assert_eq!(
+            delete_armed_label("Scalp", &adopted, &kept),
+            "Delete Scalp? ETHUSDT goes back to Default; SOLUSDT keeps its edits there."
+        );
+        assert_eq!(
+            deleted_row_label("Scalp", &adopted, &kept),
+            "Scalp deleted \u{b7} ETHUSDT back on Default \u{b7} SOLUSDT keeps its edits"
+        );
+        assert_eq!(
+            deleted_toast("Scalp", &adopted, &kept),
+            "Deleted Scalp; ETHUSDT moved to Default; SOLUSDT keeps its edits as Default \u{2022}"
+        );
+        let both = ["A".to_owned(), "B".to_owned()];
+        assert_eq!(
+            delete_armed_label("Tape", &[], &both),
+            "Delete Tape? A and B keep their edits on Default."
+        );
+        assert_eq!(
+            deleted_row_label("Tape", &[], &both),
+            "Tape deleted \u{b7} A and B keep their edits"
         );
     }
 

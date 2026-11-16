@@ -5,7 +5,9 @@
 //! are `quantick_stores::workspaces::palette`'s, the state and the keys
 //! `quantick_session::colour_popover`'s; the window turns these marks into
 //! pixels and presses, and lays its text field where [`Popover::field`] says.
-//! Manage and the create dialogs draw the same grid.
+//! Manage draws the same popover under a row; the create dialogs draw it
+//! from [`choosing`], every held colour locked: hatched, faded, initialled,
+//! no press.
 
 use quantick_appearance::workspace_menu::{FilledButton, chrome};
 use quantick_appearance::{PremultipliedRgba, ResolvedTheme, Token, contrast::contrast_ratio};
@@ -16,7 +18,7 @@ use quantick_control_schema::workspace_colour::WORKSPACE_COLOUR_POPOVER_CAPABILI
 use quantick_session::colour_popover::{ColourIntent, ColourPopover, KeyAct, Keys};
 use quantick_session::workspace_menu::WorkspaceCommand;
 use quantick_stores::workspaces::palette::{
-    ColourWarning, HEX_HINT, Palette, SwapQuestion, Swatch, palette, warnings,
+    self, ColourWarning, HEX_HINT, Palette, Pick, SwapQuestion, Swatch, palette, warnings,
 };
 use quantick_stores::workspaces::{Rgb, WorkspaceBook, WorkspaceColour, hsv_rgb, parse_typed_hex};
 
@@ -49,6 +51,8 @@ const STRIPS: usize = 16;
 /// Phosphor's check and warning, in the bundled icon font.
 const CHECK: &str = "\u{e182}";
 const WARNING: &str = "\u{e4e0}";
+/// A locked swatch's veil: its colour shows at 45%.
+const VEIL_ALPHA: u8 = 140;
 
 /// The popover to paint.
 #[derive(Debug, Clone, PartialEq)]
@@ -68,6 +72,27 @@ pub struct Popover {
 }
 
 impl Popover {
+    /// The popover as a sheet of its own, under the menu's header swatch.
+    #[must_use]
+    pub fn sheet(self) -> crate::workspace_menu::Sheet {
+        let mut sheet = crate::workspace_menu::Sheet::of(self.size, Vec::new());
+        sheet.palette = Some(([0.0, 0.0], self));
+        sheet
+    }
+
+    /// Every row's scene id under `scope`, its key after `prefix` (a Manage
+    /// row's `Scalp.`): the same popover, listed where it stands.
+    pub fn scoped(&mut self, scope: &'static str, prefix: &str) {
+        for row in self
+            .pieces
+            .iter_mut()
+            .filter_map(|piece| piece.row.as_mut())
+        {
+            row.scope = scope;
+            row.key = format!("{prefix}{}", row.key);
+        }
+    }
+
     /// What `pressed` (one flag per `colour_popover::Key::ALL`) presses on
     /// `state`, its focus moved.
     pub fn keyed(&self, state: &mut ColourPopover, pressed: [bool; 8]) -> Option<WorkspaceCommand> {
@@ -97,11 +122,11 @@ impl Popover {
 pub fn dragged(key: &str, at: [f32; 2]) -> Option<WorkspaceCommand> {
     let share = |f: f32| (f.clamp(0.0, 1.0) * 1000.0).round() as u16;
     let intent = match key {
-        "colour.square" => ColourIntent::Square {
+        _ if key.ends_with("colour.square") => ColourIntent::Square {
             x: share(at[0]),
             y: share(at[1]),
         },
-        "colour.hue" => ColourIntent::Hue(share(at[0])),
+        _ if key.ends_with("colour.hue") => ColourIntent::Hue(share(at[0])),
         _ => return None,
     };
     Some(WorkspaceCommand::Colour(intent))
@@ -132,6 +157,36 @@ pub(crate) fn mono_ink(rgb: Rgb) -> Rgb {
     }
 }
 
+/// The stripes over a locked swatch at `at`: Light's in its white control
+/// ink at about 35%, Dark's in the support ink.
+fn hatch(at: Area, dark: bool) -> Mark {
+    match dark {
+        true => Mark::Hatch {
+            at,
+            ink: Token::TextSupport,
+            alpha: u8::MAX,
+        },
+        false => Mark::Hatch {
+            at,
+            ink: chrome(false).control,
+            alpha: 89,
+        },
+    }
+}
+
+/// `rgb` under the veil a locked swatch wears: the ground at
+/// [`VEIL_ALPHA`] over it, as `dark`'s bundled theme paints the ground.
+pub(crate) fn veiled(rgb: Rgb, dark: bool) -> Rgb {
+    let ground = ResolvedTheme::bundled(dark)
+        .color(chrome(dark).ground)
+        .to_array();
+    let share = f32::from(VEIL_ALPHA) / 255.0;
+    let mix = |at: usize| {
+        (f32::from(ground[at]) * share + f32::from(rgb[at]) * (1.0 - share)).round() as u8
+    };
+    [mix(0), mix(1), mix(2)]
+}
+
 /// `mark`, words in `rgb` of their own.
 fn tinted(mut mark: Mark, rgb: Rgb) -> Mark {
     if let Mark::Text(words) = &mut mark {
@@ -151,11 +206,13 @@ fn text(x: f32, y: f32, words: &str, size: f32, ink: Token, width: f32) -> Mark 
         tracking: 0.0,
         names: false,
         rgb: None,
+        on: None,
     })
 }
 
 fn plate(at: Area, radius: f32, fill: Option<Token>, edge: Option<Token>) -> Plate {
     Plate {
+        toward: None,
         at,
         radius,
         fill,
@@ -225,6 +282,15 @@ fn swatch(
         radius: RADIUS,
         rgb,
     }];
+    // A locked swatch reads as its veiled colour: what its words stand on.
+    let rgb = if swatch.locked {
+        let mut veil = plate(at, RADIUS, Some(ink.ground), None);
+        veil.alpha = VEIL_ALPHA;
+        marks.extend([Mark::Box(veil), hatch(at, dark)]);
+        veiled(rgb, dark)
+    } else {
+        rgb
+    };
     if swatch.current {
         marks.extend([ring(at, 3.0, ink.ink), ring(at, 2.0, ink.ink)]);
         let check = centred(measure, at, CHECK, 12.0, ink.ink);
@@ -253,19 +319,38 @@ fn swatch(
             summary: swatch.tip(),
             tip: Some(swatch.tip()),
             on: swatch.current,
+            unavailable: swatch
+                .locked
+                .then_some("another_workspace_holds_this_colour"),
             colour: Some(RowColour::of(swatch.colour, dark)),
             ..row(&swatch.key, &swatch.name, Some(pick), SET)
         }),
-        press: true,
+        press: !swatch.locked,
         drag: false,
-        hover: Some(plate(
-            area(at.x - 2.0, at.y - 2.0, at.w + 4.0, at.h + 4.0),
-            RADIUS + 2.0,
-            None,
-            Some(ink.accent),
-        )),
+        double: false,
+        hover: (!swatch.locked).then(|| {
+            plate(
+                area(at.x - 2.0, at.y - 2.0, at.w + 4.0, at.h + 4.0),
+                RADIUS + 2.0,
+                None,
+                Some(ink.accent),
+            )
+        }),
         marks,
     }
+}
+
+/// The create dialogs' popover: [`palette::choosing`] on `chosen`, every
+/// held colour locked.
+#[must_use]
+pub fn choosing(
+    book: &WorkspaceBook,
+    chosen: Option<WorkspaceColour>,
+    state: &mut ColourPopover,
+    dark: bool,
+    measure: crate::workspace_menu::Measure<'_>,
+) -> Popover {
+    popover_of(book, &palette::choosing(book, chosen), state, dark, measure)
 }
 
 /// A button at `at` worded `label`: filled for the Enter default, else the
@@ -282,7 +367,7 @@ fn button(
     let primary = FilledButton::primary();
     let (fill, edge, words) = match (filled, enabled) {
         (true, true) => (primary.fill, primary.fill, primary.ink),
-        (_, false) => (ink.control, ink.edge, ink.faint),
+        (_, false) => (ink.control, ink.control, ink.faint), // No edge to read as a ring.
         (false, true) => (ink.control, ink.edge, ink.ink),
     };
     let back = plate(at, 4.0, Some(fill), Some(edge));
@@ -293,6 +378,7 @@ fn button(
         row: Some(row),
         press: enabled,
         drag: false,
+        double: false,
         marks: vec![
             Mark::Box(back),
             centred(measure, at, &label, BODY_PT, words),
@@ -311,16 +397,32 @@ pub fn popover(
     dark: bool,
     measure: crate::workspace_menu::Measure<'_>,
 ) -> Option<Popover> {
-    let model = palette(book, name)?;
-    settle(&model, state, dark); // A freed question is left; the picker keeps its colour.
-    if let Some(question) = question(&model, state) {
-        return Some(asked(&model, &question, state.focus, dark, measure));
+    Some(popover_of(
+        book,
+        &palette(book, name)?,
+        state,
+        dark,
+        measure,
+    ))
+}
+
+/// The popover of `model`, as `state` stands once settled.
+fn popover_of(
+    book: &WorkspaceBook,
+    model: &Palette,
+    state: &mut ColourPopover,
+    dark: bool,
+    measure: crate::workspace_menu::Measure<'_>,
+) -> Popover {
+    settle(model, state, dark); // A freed question is left; the picker keeps its colour.
+    if let Some(question) = question(model, state) {
+        return asked(model, &question, state.focus, dark, measure);
     }
-    let mut marks = grid(&model, state, dark, measure);
+    let mut marks = grid(model, state, dark, measure);
     if state.custom {
-        custom(&mut marks, book, &model, state, dark, measure);
+        custom(&mut marks, book, model, state, dark, measure);
     }
-    Some(marks)
+    marks
 }
 
 /// The sixteen swatches four by four, then the seventeenth and Custom….
@@ -514,16 +616,23 @@ fn custom(
         measure(apply_label, BODY_PT) + 16.0,
         CONTROL_H,
     );
+    // Creating, an identical colour blocks Apply and says whose it is.
+    let blocked = typed.filter(|_| model.choosing).and_then(|rgb| {
+        match model.pick(WorkspaceColour::Custom(rgb), true) {
+            Pick::Refused(words) => Some(words),
+            _ => None,
+        }
+    });
     let mut apply_row = row("apply", apply_label, Some(ColourIntent::Apply), SET);
-    apply_row.unavailable = typed.is_none().then_some("the_field_holds_no_colour");
-    marks.pieces.push(button(
-        apply_at,
-        apply_row,
-        true,
-        typed.is_some(),
-        dark,
-        measure,
-    ));
+    apply_row.unavailable = match (typed, &blocked) {
+        (None, _) => Some("the_field_holds_no_colour"),
+        (Some(_), Some(_)) => Some("another_workspace_holds_this_colour"),
+        _ => None,
+    };
+    let applies = apply_row.unavailable.is_none();
+    marks
+        .pieces
+        .push(button(apply_at, apply_row, true, applies, dark, measure));
     let cancel_label = "Cancel";
     let cancel_at = area(
         apply_at.x + apply_at.w + 4.0,
@@ -540,15 +649,21 @@ fn custom(
         dark,
         measure,
     ));
-    let found: Vec<ColourWarning> = typed.map_or_else(Vec::new, |rgb| {
-        warnings(book, &model.workspace, WorkspaceColour::Custom(rgb))
-    });
+    let found: Vec<ColourWarning> = match (typed, &blocked) {
+        (Some(rgb), None) => warnings(book, &model.workspace, WorkspaceColour::Custom(rgb)),
+        _ => Vec::new(),
+    };
     let mut y = line + CONTROL_H;
-    if typed.is_none() {
+    let refusal = if typed.is_none() {
+        Some(HEX_HINT.to_owned())
+    } else {
+        blocked
+    };
+    if let Some(words) = refusal {
         let at = area(PAD, y, WIDTH_PT - 2.0 * PAD, LINE_PT);
-        let hint = text(PAD, y + LINE_PT / 2.0, HEX_HINT, NAME_PT, Token::Warn, at.w);
+        let hint = text(PAD, y + LINE_PT / 2.0, &words, NAME_PT, Token::Warn, at.w);
         marks.pieces.push(Piece {
-            row: Some(row("hint", HEX_HINT, None, POPOVER)),
+            row: Some(row("hint", &words, None, POPOVER)),
             ..Piece::plain(at, vec![hint])
         });
         y += LINE_PT;
@@ -575,7 +690,7 @@ fn custom(
         y += LINE_PT;
     }
     marks.size[1] = y + PAD;
-    marks.applies = typed.is_some();
+    marks.applies = applies;
 }
 
 /// The swap question in the grid's place: its two lines, the two

@@ -107,6 +107,9 @@ pub struct WorkspaceSaveAsInput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tab_id: Option<WireU64>,
     pub name: String,
+    /// A preset's name or `#RRGGBB`. Left out, the next free colour.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub colour: Option<String>,
 }
 
 /// Make a new, empty workspace and put a tab on it.
@@ -117,6 +120,9 @@ pub struct WorkspaceNewInput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tab_id: Option<WireU64>,
     pub name: String,
+    /// A preset's name or `#RRGGBB`. Left out, the next free colour.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub colour: Option<String>,
 }
 
 /// The new workspace as stored, and whether the tab's edits were dropped.
@@ -215,6 +221,9 @@ pub struct WorkspaceDeleteResult {
     pub moved: Vec<WireU64>,
     /// The moved tabs that kept their edits, marked `Default •`.
     pub kept_edits: Vec<WireU64>,
+    /// Until when `workspace.delete.undo` takes it back. Additive.
+    #[serde(default)]
+    pub undo_until_unix_ms: Option<i64>,
 }
 
 /// Give a workspace a colour: a preset's name or a custom `#RRGGBB`.
@@ -318,7 +327,7 @@ pub fn workspace_save_as_descriptor() -> CapabilityDescriptor {
         WORKSPACE_SAVE_AS_CAPABILITY_ID,
         MODULE_ID,
         "Save a tab as a new workspace",
-        "Makes a workspace of what the tab shows and puts the tab on it. No other tab changes. An empty or taken name is refused with the reason.",
+        "Makes a workspace of what the tab shows and puts the tab on it, in colour (a preset's name or #RRGGBB; left out, the next free colour). No other tab changes. An empty or taken name is refused with the reason; a colour another workspace holds is refused with workspace.colour_taken, never swapped on create; one that is neither with workspace.colour_invalid. The Save as new workspace dialog's Save; open it with workspace.dialog.open.",
         "A repeat from the tab that made the name writes nothing and answers changed false.",
     ))
 }
@@ -329,7 +338,7 @@ pub fn workspace_new_descriptor() -> CapabilityDescriptor {
             WORKSPACE_NEW_CAPABILITY_ID,
             MODULE_ID,
             "Make a new, empty workspace for a tab",
-            "Makes a workspace of an empty recipe: what the tab shows, its canvas, pane sizes, context intervals, layers and footprint style, with every indicator removed. The tab moves onto it and its unsaved edits are dropped; the answer says so. No other tab changes. Unlike workspace.save_as, it copies no indicators. An empty or taken name is refused with the reason; a tab still opening is refused with workspace.tab_not_ready, retryable.",
+            "Makes a workspace of an empty recipe: what the tab shows, its canvas, pane sizes, context intervals, layers and footprint style, with every indicator removed. The tab moves onto it and its unsaved edits are dropped; the answer says so. No other tab changes. Unlike workspace.save_as, it copies no indicators. It takes colour (a preset's name or #RRGGBB; left out, the next free colour); one another workspace holds is refused with workspace.colour_taken, never swapped on create. An empty or taken name is refused with the reason; a tab still opening is refused with workspace.tab_not_ready, retryable. The New workspace dialog's Save; open it with workspace.dialog.open.",
             "A repeat finds the name taken and is refused with workspace.name_taken; nothing changes.",
         ),
     )
@@ -392,7 +401,7 @@ pub fn workspace_delete_descriptor() -> CapabilityDescriptor {
         WORKSPACE_DELETE_CAPABILITY_ID,
         MODULE_ID,
         "Delete a workspace",
-        "Deletes a workspace and moves the tabs on it to Default. A tab with unsaved edits keeps them, marked Default •. Default cannot be deleted.",
+        "Deletes a workspace and moves the tabs on it to Default. A tab with unsaved edits keeps them, marked Default •. Default cannot be deleted. For 10 seconds, until the answer's undo_until_unix_ms, workspace.delete.undo brings it back with its recipe, colour and tabs, as Manage workspaces' Undo does.",
         "A repeat finds no such workspace and is refused with workspace.unknown; nothing is written.",
     ))
 }
