@@ -26,8 +26,21 @@ const BODY_PT: f32 = 12.5;
 const HEADER_NAME_PT: f32 = 13.0;
 const SMALL_PT: f32 = 11.0;
 const CAPTION_PT: f32 = 10.0;
-/// The empty colour slot before a miniature, and the gap after it.
-const SLOT_PT: f32 = 3.0 + 8.0;
+/// The colour slot before a row's miniature, its height and corner radius;
+/// the gap after it, and after the header's swatch.
+const SLOT_HEIGHT_PT: f32 = 22.0;
+const SLOT_GAP_PT: f32 = 8.0;
+const SLOT_WIDTH_PT: f32 = 3.0;
+/// The panel showing between a row's colour slot and its highlight.
+const HIGHLIGHT_GAP_PT: f32 = 1.0;
+const SLOT_RADIUS_PT: f32 = 1.5;
+/// The header's colour swatch, its press and its corner radius.
+pub const SWATCH_PT: f32 = 16.0;
+/// Where the header's swatch ends, from the header block's top: centred on
+/// its 34 pt line 8 pt down.
+pub const SWATCH_BOTTOM_PT: f32 = 8.0 + (34.0 + SWATCH_PT) / 2.0;
+const SWATCH_HIT_PT: f32 = 24.0;
+const SWATCH_RADIUS_PT: f32 = 4.0;
 /// The miniatures: the header's as large as the capsule's, a row's smaller.
 const MINI_HEADER: [f32; 2] = [40.0, 14.0];
 const MINI_ROW: [f32; 2] = [26.0, 14.0];
@@ -51,7 +64,7 @@ pub struct Area {
     pub h: f32,
 }
 
-const fn area(x: f32, y: f32, w: f32, h: f32) -> Area {
+pub(crate) const fn area(x: f32, y: f32, w: f32, h: f32) -> Area {
     Area { x, y, w, h }
 }
 
@@ -79,6 +92,8 @@ pub struct Words {
     pub width: f32,
     pub tracking: f32,
     pub names: bool,
+    /// A colour of its own instead of `ink`'s: black or white on a swatch.
+    pub rgb: Option<[u8; 3]>,
 }
 
 /// One thing to paint.
@@ -88,6 +103,16 @@ pub enum Mark {
     Text(Words),
     /// A layout miniature, as the capsule paints it.
     Tree(Area, PaneTree),
+    /// A workspace's colour in its slot, as the theme resolves it: a custom
+    /// colour is no theme token.
+    Colour {
+        at: Area,
+        radius: f32,
+        rgb: [u8; 3],
+    },
+    /// A box shaded between its corners, each a point and its colour: top
+    /// left, top right, bottom right, bottom left (Custom's square and strip).
+    Shade([([f32; 2], [u8; 3]); 4]),
 }
 
 /// A part of the menu: its box, the row the scene lists it as, whether a
@@ -97,17 +122,20 @@ pub struct Piece {
     pub at: Area,
     pub row: Option<CellRow>,
     pub press: bool,
+    /// A press or drag reports where it is ([`crate::colour_palette::dragged`]).
+    pub drag: bool,
     /// What a hover lays over its first mark.
     pub hover: Option<Plate>,
     pub marks: Vec<Mark>,
 }
 
 impl Piece {
-    fn plain(at: Area, marks: Vec<Mark>) -> Self {
+    pub(crate) fn plain(at: Area, marks: Vec<Mark>) -> Self {
         Self {
             at,
             row: None,
             press: false,
+            drag: false,
             hover: None,
             marks,
         }
@@ -152,6 +180,7 @@ fn text(x: f32, y: f32, words: &str, size: f32, ink: Token, width: f32) -> Mark 
         width,
         tracking: 0.0,
         names: false,
+        rgb: None,
     })
 }
 
@@ -199,31 +228,71 @@ fn block(width: f32, height: f32, top: bool, ink: &MenuChrome) -> Piece {
     Piece::plain(area(0.0, 0.0, width, height), marks)
 }
 
-/// A workspace's line in `at`: the empty colour slot, its `mini` miniature,
-/// its `name_pt` name over its summary, `status` points left at the right.
+/// A workspace's line in `at`: `slot` points of colour before its `mini`
+/// miniature (painted here on a row, by the swatch in the header), its
+/// `name_pt` name over its summary, `status` points left at the right.
 fn entry(
     at: Area,
     row: &CellRow,
-    mini: [f32; 2],
+    (slot, mini): (f32, [f32; 2]),
     name_pt: f32,
     status: f32,
     ink: &MenuChrome,
 ) -> Vec<Mark> {
-    let left = at.x + SLOT_PT + mini[0] + 8.0;
+    let lead = slot + SLOT_GAP_PT;
+    let left = at.x + lead + mini[0] + 8.0;
     let width = at.x + at.w - status - left;
     let top = at.y + (at.h - 30.0) / 2.0;
     let mut marks = vec![
         named(text(left, top + 7.5, &row.label, name_pt, ink.ink, width)),
         text(left, top + 23.5, &row.summary, SMALL_PT, ink.support, width),
     ];
-    let face = area(
-        at.x + SLOT_PT,
-        at.y + (at.h - mini[1]) / 2.0,
-        mini[0],
-        mini[1],
-    );
+    let face = area(at.x + lead, at.y + (at.h - mini[1]) / 2.0, mini[0], mini[1]);
     marks.extend(row.tree.clone().map(|tree| Mark::Tree(face, tree)));
+    let slot_at = area(
+        at.x,
+        at.y + (at.h - SLOT_HEIGHT_PT) / 2.0,
+        SLOT_WIDTH_PT,
+        SLOT_HEIGHT_PT,
+    );
+    let slot_mark = row.colour.as_ref().map(|colour| Mark::Colour {
+        at: slot_at,
+        radius: SLOT_RADIUS_PT,
+        rgb: colour.rgb,
+    });
+    marks.extend(slot_mark.filter(|_| row.kind != RowKind::Current));
     marks
+}
+
+/// The header's swatch on the line `line`: the colour 16 x 16, pressed over
+/// 24 x 24, ringed in the accent on hover; it opens the palette popover.
+fn swatch(line: Area, row: &CellRow, ink: &MenuChrome) -> Piece {
+    let at = area(
+        line.x,
+        line.y + (line.h - SWATCH_PT) / 2.0,
+        SWATCH_PT,
+        SWATCH_PT,
+    );
+    let grow = (SWATCH_HIT_PT - SWATCH_PT) / 2.0;
+    let hit = area(at.x - grow, at.y - grow, SWATCH_HIT_PT, SWATCH_HIT_PT);
+    let ring = area(at.x - 2.0, at.y - 2.0, at.w + 4.0, at.h + 4.0);
+    let colour = row.colour.as_ref().map(|colour| Mark::Colour {
+        at,
+        radius: SWATCH_RADIUS_PT,
+        rgb: colour.rgb,
+    });
+    Piece {
+        row: Some(row.clone()),
+        press: true,
+        hover: Some(Plate {
+            at: ring,
+            radius: SWATCH_RADIUS_PT + 2.0,
+            fill: None,
+            alpha: u8::MAX,
+            edge: Some(ink.accent),
+        }),
+        ..Piece::plain(hit, colour.into_iter().collect())
+    }
 }
 
 /// A header or footer press of `row` at `at`, `plain` without a resting
@@ -278,6 +347,7 @@ fn press(at: Area, row: &CellRow, plain: bool, ink: &MenuChrome, measure: Measur
         at,
         row: Some(row.clone()),
         press: enabled,
+        drag: false,
         hover: hover(at, ink.hover).filter(|_| enabled && !row.dot),
         marks,
     }
@@ -302,7 +372,7 @@ pub fn head(menu: &CellMenu, width: f32, dark: bool, measure: Measure<'_>) -> Ve
     marks.extend(entry(
         line,
         &menu.current,
-        MINI_HEADER,
+        (SWATCH_PT, MINI_HEADER),
         HEADER_NAME_PT,
         state,
         &ink,
@@ -311,6 +381,7 @@ pub fn head(menu: &CellMenu, width: f32, dark: bool, measure: Measure<'_>) -> Ve
         row: Some(menu.current.clone()),
         ..Piece::plain(line, marks)
     });
+    pieces.push(swatch(line, &menu.swatch, &ink));
     let (left, right) = (19.0, width - 10.0);
     let wide = |row: &CellRow| measure(&row.label, BODY_PT) + 16.0;
     let fixed: f32 = menu.head.iter().skip(1).map(|row| wide(row) + 4.0).sum();
@@ -366,7 +437,11 @@ pub fn row(row: &CellRow, width: f32, focused: bool, dark: bool) -> Piece {
         (false, false) => None,
     };
     let ring = if focused { Some(ink.accent) } else { None };
-    let mut marks = vec![plate(at, RADIUS, back, ring)];
+    // The selection, hover and focus start past the colour slot, so the slot
+    // stands on the panel and never sinks into the highlight.
+    let from = 2.0 * PAD + SLOT_WIDTH_PT + HIGHLIGHT_GAP_PT;
+    let lit = area(from, 0.0, at.x + at.w - from, CHIP_MENU_ROW_PT);
+    let mut marks = vec![plate(lit, RADIUS, back, ring)];
     let (status, y) = (width - PAD - 8.0 - STATUS_PT, CHIP_MENU_ROW_PT / 2.0);
     if row.on {
         marks.push(text(status + 1.0, y, CHECK, 12.0, ink.accent, STATUS_PT));
@@ -374,7 +449,14 @@ pub fn row(row: &CellRow, width: f32, focused: bool, dark: bool) -> Piece {
         marks.push(dot(status + 7.0, y, DOT_PT, ink.accent));
     }
     let line = area(2.0 * PAD, 0.0, width - 3.0 * PAD - 8.0, CHIP_MENU_ROW_PT);
-    let mut line = entry(line, row, MINI_ROW, BODY_PT, STATUS_PT + 8.0, &ink);
+    let mut line = entry(
+        line,
+        row,
+        (SLOT_WIDTH_PT, MINI_ROW),
+        BODY_PT,
+        STATUS_PT + 8.0,
+        &ink,
+    );
     // On the selection fill the support ink falls under 4.5:1 in Dark.
     if let (true, Some(Mark::Text(summary))) = (row.on, line.get_mut(1)) {
         summary.ink = ink.ink;
@@ -384,7 +466,8 @@ pub fn row(row: &CellRow, width: f32, focused: bool, dark: bool) -> Piece {
         at,
         row: Some(row.clone()),
         press: true,
-        hover: hover(at, ink.hover).filter(|_| !row.on),
+        drag: false,
+        hover: hover(lit, ink.hover).filter(|_| !row.on),
         marks,
     }
 }

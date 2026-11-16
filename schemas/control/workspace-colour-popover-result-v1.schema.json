@@ -1,0 +1,126 @@
+{
+  "$defs": {
+    "ColourWarningDto": {
+      "description": "One warning a colour raises; none blocks.",
+      "oneOf": [
+        {
+          "description": "Hard to tell from this workspace's colour (OKLab ΔE below 0.03 in\neither theme).",
+          "properties": {
+            "kind": {
+              "const": "close",
+              "type": "string"
+            },
+            "workspace": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "workspace"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Within 0.06 OKLab of a theme's buy green.",
+          "properties": {
+            "kind": {
+              "const": "near_buy",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Within 0.06 OKLab of a theme's sell red.",
+          "properties": {
+            "kind": {
+              "const": "near_sell",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Below 1.5:1 on the `dark` or `light` tab strip.",
+          "properties": {
+            "kind": {
+              "const": "low_contrast",
+              "type": "string"
+            },
+            "theme": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "theme"
+          ],
+          "type": "object"
+        }
+      ]
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "The popover after the act.",
+  "properties": {
+    "face": {
+      "description": "`closed`, `grid`, `custom` (open under the grid) or `question`.",
+      "type": "string"
+    },
+    "hex": {
+      "description": "Custom's field, while it is open.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "hex_hint": {
+      "description": "Why Apply is disabled: the field is no colour.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "note": {
+      "description": "What the trader was told: after a swap, the workspace that changed.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "open": {
+      "type": "boolean"
+    },
+    "question": {
+      "description": "The swap question, while it stands in the grid's place.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "warnings": {
+      "description": "What Custom's colour warns, live; none blocks.",
+      "items": {
+        "$ref": "#/$defs/ColourWarningDto"
+      },
+      "type": "array"
+    },
+    "workspace": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "open",
+    "workspace",
+    "face",
+    "warnings"
+  ],
+  "title": "WorkspaceColourPopoverResult",
+  "type": "object"
+}

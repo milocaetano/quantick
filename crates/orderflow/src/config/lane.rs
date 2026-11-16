@@ -111,6 +111,27 @@ impl Default for LaneWindow {
 }
 
 impl LaneWindow {
+    /// A window as a human types it: `auto` follows the bars; a duration pins
+    /// it (`90s`, `2min`, `2m`, `120000ms`, or bare milliseconds). `None` for
+    /// anything else, so a typo is refused rather than guessed. The setter
+    /// clamps the value, not this.
+    #[must_use]
+    pub fn parse(value: &str) -> Option<Self> {
+        let value = value.trim().to_ascii_lowercase();
+        if value == "auto" {
+            return Some(Self::default());
+        }
+        let units = [("ms", 1), ("min", 60_000), ("m", 60_000), ("s", 1_000)];
+        let mut found = units
+            .iter()
+            .filter_map(|(unit, scale)| Some((value.strip_suffix(unit)?, *scale)));
+        let (number, scale) = found.next().unwrap_or((value.as_str(), 1));
+        let parsed = number.trim().parse::<f64>().ok()?;
+        (parsed.is_finite() && parsed > 0.0).then(|| Self::Fixed {
+            ms: (parsed * f64::from(scale)).round() as i64,
+        })
+    }
+
     /// Clamp into a range the renderer can use.
     pub fn sanitize(&mut self) {
         match self {
@@ -765,6 +786,33 @@ impl LiveLaneStyle {
 mod tests {
     use super::*;
     use crate::config::DEFAULT_BUBBLE_CLUSTER_MS;
+
+    /// A window reads what a human would type, and refuses everything else
+    /// rather than guessing.
+    #[test]
+    fn a_window_reads_durations_and_refuses_nonsense() {
+        assert_eq!(LaneWindow::parse("auto"), Some(LaneWindow::default()));
+        assert_eq!(LaneWindow::parse("  AUTO "), Some(LaneWindow::default()));
+        for (typed, ms) in [
+            ("15s", 15_000),
+            ("90s", 90_000),
+            ("1min", 60_000),
+            ("2min", 120_000),
+            ("2m", 120_000),
+            ("1.5min", 90_000),
+            ("120000ms", 120_000),
+            ("120000", 120_000),
+        ] {
+            assert_eq!(
+                LaneWindow::parse(typed),
+                Some(LaneWindow::Fixed { ms }),
+                "{typed}"
+            );
+        }
+        for refused in ["", "soon", "2 hours", "-5s", "0", "0s", "NaN", "infs"] {
+            assert_eq!(LaneWindow::parse(refused), None, "{refused}");
+        }
+    }
 
     /// Volume dots on the candles stay small, so the candle is what reads
     /// there: the largest radius is a share of the style's, never under the

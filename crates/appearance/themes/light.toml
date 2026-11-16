@@ -96,6 +96,9 @@ chart_grid = "#BABBBB"
 # Overridden by [title_strip] for the bundled strip and wordmark; kept so a
 # Light theme without that table, or one derived from this file, has its own.
 tab_strip = "#D9D6D2"
+# The capsule's layout miniature: a neutral grey, so the workspace's colour
+# is the capsule's only hue.
+capsule_miniature = "#7C7C7C"
 brand = "#12C68C"
 # Dark enough that a replaying idle tab keeps 4.5:1 on its warm grey.
 replay_ink = "#7832AA"
@@ -204,6 +207,15 @@ panel_live_row = "#E9ECEF"
 panel_stripe_loss = "#B3261E"
 # The buy ink reads 4.0:1 on the footer grey; gains there go one step deeper.
 panel_gain_ink = "#145A24"
+# A folded pane's rail: a grey band a step under the chrome, a 1 px edge on
+# each long side not on the window's chrome and the marks (chevron and
+# dashes); then the three while the pointer is on the rail's hit area.
+rail_band = "#D0D0D0"
+rail_edge = "#7C7C7C"
+rail_grip = "#3A4049"
+rail_band_hover = "#B0B5BC"
+rail_edge_hover = "#5F6670"
+rail_grip_hover = "#000000"
 
 # TradingView's axis widths and label sizes, in logical pixels; the gutter
 # excludes the plot's 16 px right margin, and the strip counts its top rule.

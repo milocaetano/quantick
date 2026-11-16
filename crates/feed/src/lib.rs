@@ -304,6 +304,18 @@ pub enum FeedConnectionState {
     Connected,
 }
 
+impl FeedConnectionState {
+    /// The wire word the feed snapshot and the agent's view say.
+    #[must_use]
+    pub const fn word(self) -> &'static str {
+        match self {
+            Self::Connecting => "connecting",
+            Self::Reconnecting => "reconnecting",
+            Self::Connected => "connected",
+        }
+    }
+}
+
 /// Market-time bounds of incomplete source delivery, including reconnects
 /// that kept the timeline. Missing source messages may be quotes; this does
 /// not assert how many executed trades were lost. Equal bounds can still

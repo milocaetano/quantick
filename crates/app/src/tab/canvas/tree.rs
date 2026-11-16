@@ -10,8 +10,8 @@ use eframe::egui;
 use quantick_chart::pane_header::{PaneHeader, PaneIdentity};
 use quantick_engine::bar_selection::BarInputAvailability;
 use quantick_workspace::canvas::{
-    CanvasRect, FloatHost, PaneKind, PaneSlot, SplitAxis, slot_seat, strip_label, tree_bands,
-    tree_rails, tree_seams,
+    CanvasRect, FloatHost, PaneKind, PaneSlot, SeamRail, SplitAxis, slot_seat, strip_label,
+    tree_bands, tree_rails, tree_seams,
 };
 use smallvec::SmallVec;
 
@@ -51,13 +51,9 @@ impl Tab {
         );
         // A rail is painted over its whole node with the seams.
         let bands = bands.into_iter().filter(|band| !band.railed).map(|band| {
-            let at = egui::Rect::from_min_size(
-                egui::pos2(band.rect.x, band.rect.y),
-                egui::vec2(band.rect.w, band.rect.h),
-            );
             (
                 band.seat.map_or(PaneSide::Flow, PaneSide::Time),
-                at,
+                floating_panes::screen_rect(band.rect),
                 band.minimized,
                 band.slot,
             )
@@ -157,22 +153,27 @@ impl Tab {
     pub(super) fn draw_tree_seams(&mut self, tab_id: u64, ui: &egui::Ui, area: egui::Rect) {
         let palette = theme::get(ui.ctx());
         let canvas = CanvasRect::new(area.left(), area.top(), area.width(), area.height());
-        let rect =
-            |at: CanvasRect| egui::Rect::from_min_size((at.x, at.y).into(), (at.w, at.h).into());
-        let mut hot = None;
+        let rect = floating_panes::screen_rect;
+        let rails = tree_rails(&self.canvas.state, canvas, CANVAS_DIVIDER_PX);
+        let words: Vec<String> = rails.iter().map(|rail| self.rail_words(rail)).collect();
+        let of = |slot| rails.iter().position(|rail: &SeamRail| rail.slot == slot);
+        let mut grabs = vec![Vec::new(); rails.len()];
         for seam in tree_seams(&self.canvas.state, canvas, CANVAS_DIVIDER_PX) {
-            ui.painter()
-                .rect_filled(rect(seam.rect), egui::Rounding::ZERO, palette.border());
+            let ink = [egui::Color32::TRANSPARENT, palette.border()][usize::from(seam.is_line())];
+            ui.painter().rect_filled(rect(seam.rect), 0.0, ink);
             if !seam.resizable {
                 continue;
             }
             let row = seam.axis == SplitAxis::Row;
             let id = egui::Id::new(("tree_seam", tab_id, &seam.address));
             let grab = rect(seam.grab(CANVAS_DIVIDER_HANDLE_PX));
-            let handle = ui.interact(grab, id, egui::Sense::drag());
+            let mut handle = ui.interact(grab, id, egui::Sense::drag());
+            if let Some(at) = seam.rail.and_then(|rail| of(rail.slot)) {
+                handle = handle.on_hover_text(&words[at]);
+                grabs[at].push(grab);
+            }
             if handle.hovered() || handle.dragged() {
                 ui.ctx().set_cursor_icon(CURSORS[usize::from(row)]);
-                hot = hot.or(seam.rail.map(|rail| rail.slot));
             }
             // Every step the pointer took since the press, as the column
             // divider adds them up: an off-centre grab never jumps the seam,
@@ -180,12 +181,10 @@ impl Tab {
             let (state, held) = (&mut self.canvas.state, &mut self.canvas.seam_drag);
             state.seam_hand(held, (&seam.address, super::hand(&handle, row)), canvas);
         }
-        for rail in tree_rails(&self.canvas.state, canvas, CANVAS_DIVIDER_PX) {
-            let (at, across) = (rect(rail.rect), rail.axis == SplitAxis::Column);
-            let edges = [[at.left(), at.right()], [at.top(), at.bottom()]][usize::from(across)];
-            let edge = (edges[usize::from(rail.meets_after)], across);
-            super::paint_rail(ui.painter(), at, edge, hot == Some(rail.slot));
-            self.canvas.menus.publish_rail(rail.control_id(), at);
+        for ((rail, words), hits) in rails.iter().zip(words).zip(&grabs) {
+            let (at, lit) = (rect(rail.rect), super::rail_hot(ui.painter(), hits));
+            super::paint_rail(ui.painter(), at, rail.look(canvas), lit);
+            self.canvas.menus.publish_rail(rail.control_id(), at, words);
         }
     }
 
@@ -282,13 +281,13 @@ impl Tab {
         floating_panes::preview(&ctx, floats, &canvas_state.state, canvas);
         let drawn = floats.drawn.drain(..).map(|(id, label, rect, capability)| {
             let (rect, capability) = (floating_panes::screen_rect(rect), Some(capability));
-            let selected = false;
             crate::toolbar::DrawnControl {
                 id,
                 label,
                 rect,
-                selected,
+                selected: false,
                 capability,
+                description: None,
             }
         });
         canvas_state.menus.drawn.extend(drawn);
@@ -351,8 +350,15 @@ impl Tab {
         frame.area = frame.area.filter(|_| !windowed);
     }
 
+    /// What `rail` says on hover and in the scene: a lone pane by its name.
+    fn rail_words(&mut self, rail: &SeamRail) -> String {
+        let seat = slot_seat(&self.canvas.state, &mut self.canvas.seats, rail.slot);
+        let side = seat.map(|seat| seat.map_or(PaneSide::Flow, PaneSide::Time));
+        rail.holds.words(|| side.map(|side| self.strip_name(side)))
+    }
+
     /// What a folded chart's strip calls it: "Time · 1m · BTCUSDT".
-    fn strip_name(&self, side: PaneSide) -> String {
+    pub(super) fn strip_name(&self, side: PaneSide) -> String {
         let (kind, identity, pane) = match side {
             PaneSide::Time(seat) => (
                 PaneKind::Time,

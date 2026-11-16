@@ -149,6 +149,36 @@ pub(super) const ROWS: &[UiBehaviour] = &[
         mapping: Mapping::Capabilities(&["workspace.list", "workspace.rename", "workspace.delete"]),
     },
     UiBehaviour {
+        id: "workspace.colour.set",
+        title: "Give a workspace a colour, swapping with its holder only when asked",
+        reach: "the capsule's workspace menu, the header swatch",
+        keys: &[(
+            Source::Authored,
+            "the header swatch's popover is marks the workspace menu paints: each swatch, Apply and Swap is listed in the scene as toolbar.workspace_menu.colour.<key>",
+        )],
+        mapping: Mapping::Capabilities(&["workspace.colour.set"]),
+    },
+    UiBehaviour {
+        id: "workspace.colour.palette",
+        title: "Read a workspace's palette: the presets, who holds each, the last custom colour",
+        reach: "the capsule's workspace menu, the header swatch's popover",
+        keys: &[(
+            Source::Authored,
+            "the popover is drawn from this model; its swatches are scene entries toolbar.workspace_menu.colour.<key>",
+        )],
+        mapping: Mapping::Capabilities(&["workspace.colour.palette"]),
+    },
+    UiBehaviour {
+        id: "workspace.colour.popover",
+        title: "Open the colour popover, pick a swatch, type a Custom colour and answer the swap question",
+        reach: "the capsule's workspace menu, the header swatch",
+        keys: &[(
+            Source::Authored,
+            "a press on the header swatch, a swatch, Custom\u{2026}, Apply, Swap or Cancel; arrows, Enter and Esc in the popover",
+        )],
+        mapping: Mapping::Capabilities(&["workspace.colour.popover"]),
+    },
+    UiBehaviour {
         id: "workspace.list",
         title: "List the workspaces and the tabs using each",
         reach: "window menu, Workspace, whose list names each workspace",

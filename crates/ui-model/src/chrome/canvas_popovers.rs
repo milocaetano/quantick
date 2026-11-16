@@ -79,6 +79,7 @@ mod tests {
             capsule: toolbar::Capsule {
                 tree: quantick_workspace::canvas::LAYOUT_PRESETS[0].tree.clone(),
                 workspace: "Default".into(),
+                colour: None,
                 unsaved: false,
                 marks: Default::default(),
                 menu_open: false,

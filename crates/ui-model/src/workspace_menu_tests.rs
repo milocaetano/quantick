@@ -32,7 +32,7 @@ fn menu(autosave: bool, edited: bool) -> CellMenu {
     }
     book.set_autosave(autosave);
     let live = PaneTree::pane(0, PaneKind::Flow);
-    cell_menu(&book, 1, "Ctrl+S", &live, |tab| format!("T{tab}"))
+    cell_menu(&book, 1, "Ctrl+S", &live, true, |tab| format!("T{tab}"))
 }
 
 fn keyed<'a>(pieces: &'a [Piece], key: &str) -> &'a Piece {
@@ -244,5 +244,78 @@ fn the_selected_row_s_summary_reads_on_its_fill() {
         let summary = summary.expect("a summary");
         let ratio = contrast_ratio(theme.color(summary.ink), theme.color(back.fill.unwrap()));
         assert!(ratio >= 4.5, "{}: {ratio}", theme.name);
+    }
+}
+
+/// The colour fills #1036's slot, 3 x 22 with a 1.5 radius, in every row,
+/// and the header's 16 x 16 swatch, as the resolved value: a custom colour
+/// is no token.
+#[test]
+fn the_colour_fills_the_slot_in_every_row_and_the_header() {
+    use quantick_stores::workspaces::WorkspaceColour;
+    let mut book = WorkspaceBook::default();
+    book.open_tab(1);
+    book.observe(1, &WorkspaceRecipe::default()).unwrap();
+    book.save_as(1, "Scalp").unwrap();
+    let custom = WorkspaceColour::Custom([0x3A, 0x7B, 0xD5]);
+    book.set_colour("Scalp", custom, false).unwrap();
+    let live = PaneTree::pane(0, PaneKind::Flow);
+    let slot = |piece: &Piece| {
+        let mut slots = piece.marks.iter().filter_map(|mark| match mark {
+            Mark::Colour { at, radius, rgb } => Some((*at, *radius, *rgb)),
+            _ => None,
+        });
+        let found = slots.next().expect("a colour slot");
+        assert!(slots.next().is_none(), "one slot");
+        found
+    };
+    for dark in [true, false] {
+        let menu = cell_menu(&book, 1, "Ctrl+S", &live, dark, |tab| format!("T{tab}"));
+        let slate = WorkspaceColour::preset(4).unwrap().rgb(dark);
+        let [default, scalp] = [&menu.list[0], &menu.list[1]].map(|r| row(r, 310.0, false, dark));
+        assert_eq!(slot(&default), (area(8.0, 6.0, 3.0, 22.0), 1.5, slate));
+        assert_eq!(slot(&scalp).2, [0x3A, 0x7B, 0xD5]);
+        let pieces = head(&menu, 318.0, dark, &measure);
+        let header = slot(keyed(&pieces, "colour"));
+        assert_eq!(
+            header,
+            (area(8.0, 17.0, 16.0, 16.0), 4.0, [0x3A, 0x7B, 0xD5]),
+            "the header's slot is its swatch"
+        );
+    }
+}
+
+/// The selection and hover fills start one point past the colour slot, so
+/// the slot stands on the panel and never sinks into the highlight; the
+/// geometry is the same in both themes.
+#[test]
+fn the_row_highlight_starts_past_the_colour_slot() {
+    let menu = menu(false, false);
+    let own = menu.list.iter().find(|row| row.on).unwrap();
+    let other = menu.list.iter().find(|row| !row.on).unwrap();
+    for dark in [true, false] {
+        let lit = row(own, 310.0, false, dark);
+        let slot = (lit.marks.iter())
+            .find_map(|mark| match mark {
+                Mark::Colour { at, .. } => Some(*at),
+                _ => None,
+            })
+            .expect("a slot");
+        let Mark::Box(back) = &lit.marks[0] else {
+            panic!("a box")
+        };
+        assert_eq!(back.at.x, slot.x + slot.w + 1.0, "dark {dark}");
+        assert_eq!(
+            back.at.x + back.at.w,
+            lit.at.x + lit.at.w,
+            "to the row's end"
+        );
+        let hovered = row(other, 310.0, false, dark).hover.unwrap();
+        assert_eq!(hovered.at, back.at, "hover takes the same box");
+        let focused = row(other, 310.0, true, dark);
+        let Mark::Box(ring) = &focused.marks[0] else {
+            panic!("a box")
+        };
+        assert_eq!(ring.at, back.at, "and the focus ring");
     }
 }

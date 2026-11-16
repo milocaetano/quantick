@@ -96,6 +96,7 @@ impl FakeWindow {
                     default_layout: None,
                     default_bars: None,
                     record_deals: false,
+                    short_name: None,
                 }],
                 metatrader: Default::default(),
                 paper: Default::default(),

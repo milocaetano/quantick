@@ -41,7 +41,7 @@ mod panes;
 mod strategies;
 
 pub use canvas::CanvasChrome;
-pub(crate) use canvas::paint_rail;
+pub(crate) use canvas::{paint_rail, rail_hot};
 #[cfg(test)]
 pub use quantick_session::HISTORY_NOTE_LINGER;
 pub use quantick_session::HistoryPolicy;
@@ -59,11 +59,6 @@ const BOOK_DRAIN_BUDGET: usize = crate::live_envelope::BURST_DEPTH_UPDATES_PER_F
 /// trader asked for it over the old 1 px header rule, which read as nothing
 /// and left no way to tell which chart a click had activated.
 pub(crate) const FOCUS_FRAME_PX: f32 = 2.0;
-/// Width of the grip bar on a collapsed column's rail.
-const RAIL_GRIP_WIDTH_PX: f32 = 2.0;
-/// Height of that grip bar. Long enough to read as a handle at a glance,
-/// short enough that it is a mark on the rail rather than the rail itself.
-const RAIL_GRIP_HEIGHT_PX: f32 = 24.0;
 
 pub use crate::canvas_layout::CanvasLayout;
 

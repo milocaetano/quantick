@@ -116,7 +116,8 @@ const fn flatten<const N: usize>(families: &[&[UiBehaviour]]) -> [UiBehaviour; N
 }
 
 const TOTAL: usize = total(FAMILIES);
-const JOINED: [UiBehaviour; TOTAL] = flatten(FAMILIES);
+// A static: the joined rows outgrew what a const array may copy.
+static JOINED: [UiBehaviour; TOTAL] = flatten(FAMILIES);
 
 /// Every supported UI behaviour, in identifier order within its group.
 ///

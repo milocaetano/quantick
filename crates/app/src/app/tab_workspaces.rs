@@ -253,3 +253,12 @@ pub(super) fn apply_workspace_command(app: &mut QuantickApp, command: WorkspaceC
     });
     app.chrome.window_menu.tab_workspace = menu;
 }
+
+/// Close the market tab at `index` without asking.
+pub(super) fn close_tab_at(app: &mut QuantickApp, index: usize) -> bool {
+    let close = crate::tabstrip::TabAction::Close(index);
+    let asked = app.arrangement_adapter().apply_tab_action(close);
+    let closed = asked.1.is_some();
+    super::menu_bar::settle_strip(&mut app.surfaces.market_palette, app.runtime.tz, asked);
+    closed
+}

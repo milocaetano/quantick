@@ -268,7 +268,7 @@ impl QuantickApp {
             .is_some_and(crate::control::ControlAccess::is_enabled);
         let action = super::title_bar::draw(
             ctx,
-            &self.runtime.tabs,
+            (&self.runtime, &self.config),
             &mut self.chrome.title_bar,
             &mut self.surfaces,
         );

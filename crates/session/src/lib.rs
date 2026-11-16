@@ -25,6 +25,7 @@
 
 mod button;
 pub mod close_queue;
+pub mod colour_popover;
 pub mod live_trade;
 mod native;
 mod paging;

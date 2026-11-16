@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::layout::transient_descriptor;
 use crate::readback::{EVERY_OPTIONAL_TEST, Readback, journal};
-use crate::workspace::MODULE_ID;
+use crate::workspace::{MODULE_ID, WorkspaceColourDto};
 
 pub const TAB_WORKSPACE_SET_CAPABILITY_ID: &str = "tab.workspace.set";
 pub const WORKSPACE_SAVE_TO_CAPABILITY_ID: &str = "workspace.save_to";
@@ -33,6 +33,7 @@ pub const WORKSPACE_DELETE_CAPABILITY_ID: &str = "workspace.delete";
 pub const WORKSPACE_LIST_CAPABILITY_ID: &str = "workspace.list";
 pub const WORKSPACE_AUTOSAVE_SET_CAPABILITY_ID: &str = "workspace.autosave.set";
 pub const TAB_CLOSE_CAPABILITY_ID: &str = "tab.close";
+pub const WORKSPACE_COLOUR_SET_CAPABILITY_ID: &str = "workspace.colour.set";
 
 /// A tab moved to another workspace.
 pub const TAB_WORKSPACE_SET_EVENT_KIND: &str = "workspace.tab_set";
@@ -48,6 +49,8 @@ pub const WORKSPACE_RENAMED_EVENT_KIND: &str = "workspace.renamed";
 pub const WORKSPACE_DELETED_EVENT_KIND: &str = "workspace.deleted";
 /// Journaled when autosave turns on or off.
 pub const WORKSPACE_AUTOSAVE_SET_EVENT_KIND: &str = "workspace.autosave_set";
+/// A workspace took a colour, and the one that held it took the old one.
+pub const WORKSPACE_COLOUR_SET_EVENT_KIND: &str = "workspace.colour_set";
 /// Journaled when `tab.close` closes a tab.
 pub const TAB_CLOSED_EVENT_KIND: &str = "workspace.tab_closed";
 /// `tab.close` without `save` on a tab holding edits, autosave off: nothing
@@ -214,6 +217,35 @@ pub struct WorkspaceDeleteResult {
     pub kept_edits: Vec<WireU64>,
 }
 
+/// Give a workspace a colour: a preset's name or a custom `#RRGGBB`.
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct WorkspaceColourSetInput {
+    pub name: String,
+    /// A preset's name in any case (`sky`, `slate`, ...) or `#RRGGBB`.
+    pub colour: String,
+    /// Take a colour another workspace holds, giving it this one's own.
+    #[serde(default)]
+    pub swap: bool,
+}
+
+/// The colour the workspace now holds, and the workspace it swapped with.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
+pub struct WorkspaceColourSetResult {
+    pub workspace: String,
+    pub colour: WorkspaceColourDto,
+    /// `false` when the workspace already held it: nothing is written.
+    pub changed: bool,
+    /// The workspace that held the colour, with `swap`.
+    pub swapped_with: Option<String>,
+    /// The colour `swapped_with` holds now: the one the workspace gave up.
+    #[serde(default)]
+    pub holder_colour: Option<WorkspaceColourDto>,
+    /// What the colour warns; none blocks. Additive.
+    #[serde(default)]
+    pub warnings: Vec<crate::workspace_colour::ColourWarningDto>,
+}
+
 /// Takes nothing: every workspace is listed.
 #[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -227,6 +259,9 @@ pub struct WorkspaceEntry {
     /// count, e.g. `Time 1m · Flow · 3 ind`.
     pub summary: String,
     pub tabs: Vec<WireU64>,
+    /// Its colour. Additive: absent from a build that predates colours.
+    #[serde(default)]
+    pub colour: Option<WorkspaceColourDto>,
 }
 
 /// Every workspace, `Default` first, then by name.
@@ -241,7 +276,7 @@ fn bounded(mut descriptor: CapabilityDescriptor) -> CapabilityDescriptor {
 }
 
 /// Behind the desk's consent: this call changes what the trader comes back to.
-fn writes_the_book(mut descriptor: CapabilityDescriptor) -> CapabilityDescriptor {
+pub(crate) fn writes_the_book(mut descriptor: CapabilityDescriptor) -> CapabilityDescriptor {
     descriptor.persistence = EffectPersistence::Durable;
     descriptor.required_permissions = [COCKPIT_PERMISSION_ID, COCKPIT_DESK_PERMISSION_ID]
         .into_iter()
@@ -362,12 +397,25 @@ pub fn workspace_delete_descriptor() -> CapabilityDescriptor {
     ))
 }
 
+pub fn workspace_colour_set_descriptor() -> CapabilityDescriptor {
+    writes_the_book(transient_descriptor::<
+        WorkspaceColourSetInput,
+        WorkspaceColourSetResult,
+    >(
+        WORKSPACE_COLOUR_SET_CAPABILITY_ID,
+        MODULE_ID,
+        "Give a workspace a colour",
+        "Gives a workspace a colour: one of the sixteen presets by name (cobalt, orchid, sky, violet, slate, fuchsia, petrol, lavender, ultramarine, mauve, denim, grape, ink, plum, ice, blossom) or a custom #RRGGBB. The open tab paints its symbol in it, the capsule its tint, border and left bar, and the workspace menu its row's and header's slot. No two workspaces hold identical colours (the same value in either theme): a colour another workspace holds is refused with workspace.colour_taken, its details listing the holders in owners and, for a single holder, the colour it would get in owner_would_get. With swap true a single holder takes this workspace's old colour, named in swapped_with and holder_colour; two or more holders, or a swap that would give the holder a colour a third workspace matches, are refused even with swap. A new workspace takes the next free colour and a deleted one frees its own. Read the colours with workspace.list or on each tab of workspace.summary. The answer's warnings list what the colour warns, none of which blocks: kind close (hard to tell from the named workspace's colour), near_buy, near_sell, or low_contrast (lost on the named theme's tab strip, dark or light). An applied custom colour becomes the palette's last custom colour (workspace.colour.palette). A name no workspace has is refused with workspace.unknown, a colour that is neither a preset nor #RRGGBB with workspace.colour_invalid.",
+        "The call names the colour it wants, so a repeat answers changed false and writes nothing.",
+    ))
+}
+
 pub fn workspace_list_descriptor() -> CapabilityDescriptor {
     read_descriptor::<WorkspaceListInput, WorkspaceListResult>(&ReadSpec {
         id: WORKSPACE_LIST_CAPABILITY_ID,
         module: MODULE_ID,
         title: "List the workspaces",
-        description: "Lists every saved workspace with a one-line summary (panes, intervals, indicator count) and the open tabs using it, Default first. Which workspace a tab uses and whether it holds edits is also on each tab in workspace.summary.",
+        description: "Lists every saved workspace with a one-line summary (panes, intervals, indicator count), its colour and the open tabs using it, Default first. Which workspace a tab uses and whether it holds edits is also on each tab in workspace.summary.",
         permissions: &[OBSERVE_PERMISSION_ID, "observe.workspace"],
         pagination: None,
     })
@@ -440,6 +488,14 @@ pub const READBACKS: &[Readback] = &[
         &[EVERY_OPTIONAL_TEST],
     ),
     journal(
+        WORKSPACE_COLOUR_SET_CAPABILITY_ID,
+        IdempotencyPolicy::Optional,
+        WORKSPACE_COLOUR_SET_EVENT_KIND,
+        "payload.colour",
+        "an event after the pre-call cursor gives the workspace the requested colour's word",
+        &[EVERY_OPTIONAL_TEST],
+    ),
+    journal(
         WORKSPACE_DELETE_CAPABILITY_ID,
         IdempotencyPolicy::Optional,
         WORKSPACE_DELETED_EVENT_KIND,
@@ -507,6 +563,14 @@ pub fn documents() -> Vec<(&'static str, serde_json::Value)> {
             schema::<WorkspaceDeleteResult>(),
         ),
         (
+            "workspace-colour-set-input-v1.schema.json",
+            schema::<WorkspaceColourSetInput>(),
+        ),
+        (
+            "workspace-colour-set-result-v1.schema.json",
+            schema::<WorkspaceColourSetResult>(),
+        ),
+        (
             "workspace-list-input-v1.schema.json",
             schema::<WorkspaceListInput>(),
         ),
@@ -520,6 +584,7 @@ pub fn documents() -> Vec<(&'static str, serde_json::Value)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use quantick_stores::workspaces::WorkspaceColour;
     use serde_json::json;
 
     #[test]
@@ -531,5 +596,41 @@ mod tests {
         assert!(serde_json::from_value::<WorkspaceNewInput>(json!({})).is_err());
         let new: WorkspaceNewInput = serde_json::from_value(json!({"name": "Blank"})).unwrap();
         assert_eq!((new.tab_id, new.name.as_str()), (None, "Blank"));
+    }
+
+    /// The call names a preset or a hex code; `swap` defaults to false. The
+    /// words themselves are judged by the handler, which answers
+    /// `workspace.colour_invalid`.
+    #[test]
+    fn the_colour_call_takes_a_word_and_an_optional_swap() {
+        let input: WorkspaceColourSetInput =
+            serde_json::from_value(json!({"name": "Scalp", "colour": "sky"})).unwrap();
+        assert_eq!((input.colour.as_str(), input.swap), ("sky", false));
+        let input: WorkspaceColourSetInput =
+            serde_json::from_value(json!({"name": "Scalp", "colour": "#3A7BD5", "swap": true}))
+                .unwrap();
+        assert_eq!((input.colour.as_str(), input.swap), ("#3A7BD5", true));
+        for refused in [
+            json!({"name": "Scalp"}),
+            json!({"name": "Scalp", "colour": "sky", "share": true}),
+        ] {
+            assert!(serde_json::from_value::<WorkspaceColourSetInput>(refused).is_err());
+        }
+    }
+
+    /// A preset reads its name, index and both values; a custom colour its
+    /// hex, the same in both themes.
+    #[test]
+    fn a_colour_on_the_wire_names_itself_and_its_values() {
+        let sky = WorkspaceColour::preset(2).unwrap();
+        assert_eq!(
+            json!(WorkspaceColourDto::from(sky)),
+            json!({"preset": "sky", "index": 2, "light": "#1F86BF", "dark": "#5DBDEB"})
+        );
+        let custom = WorkspaceColour::Custom([0x3A, 0x7B, 0xD5]);
+        assert_eq!(
+            json!(WorkspaceColourDto::from(custom)),
+            json!({"custom": "#3A7BD5", "light": "#3A7BD5", "dark": "#3A7BD5"})
+        );
     }
 }

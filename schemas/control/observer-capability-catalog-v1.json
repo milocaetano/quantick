@@ -29578,6 +29578,657 @@
         "status": "available"
       },
       "confirmation_class": "none",
+      "description": "Reads the palette the workspace menu's header swatch opens, for one workspace (left out, the active tab's): the sixteen presets with their index, name and Light and Dark values, which is current, which another workspace holds with its initials (a pick asks to swap), the last custom colour applied (the seventeenth swatch) and the colour a new workspace would take next. Set a colour with workspace.colour.set or drive the popover with workspace.colour.popover.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "observe",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "workspace.colour.palette",
+      "idempotency": "forbidden",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "Read one workspace's palette.",
+        "properties": {
+          "name": {
+            "description": "The workspace. Left out, the one the tab on screen uses.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "title": "WorkspaceColourPaletteInput",
+        "type": "object"
+      },
+      "module": "workspace",
+      "output_schema": {
+        "$defs": {
+          "PaletteSwatchDto": {
+            "description": "One swatch as the popover shows it.",
+            "properties": {
+              "colour": {
+                "$ref": "#/$defs/WorkspaceColourDto"
+              },
+              "current": {
+                "description": "The workspace's own colour.",
+                "type": "boolean"
+              },
+              "holder": {
+                "description": "The workspace holding it, if another does: a pick asks to swap.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "initials": {
+                "description": "The holder's initials, as the swatch shows them.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "key": {
+                "description": "What `workspace.colour.popover`'s pick names it by: a preset's\nlower-case name, or `last_custom`.",
+                "type": "string"
+              },
+              "name": {
+                "description": "The words under it: the preset's name or the custom `#RRGGBB`.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "key",
+              "name",
+              "colour",
+              "current"
+            ],
+            "type": "object"
+          },
+          "WorkspaceColourDto": {
+            "description": "A workspace's colour as the wire reads it: a preset names itself and its\nindex (`{\"preset\": \"sky\", \"index\": 2, ...}`), a custom colour its hex\n(`{\"custom\": \"#3A7BD5\", ...}`); both give the value painted in each theme.\nNo two workspaces hold identical colours (`workspace.colour.set`).",
+            "properties": {
+              "custom": {
+                "description": "The custom colour's `#RRGGBB`; absent on a preset.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "dark": {
+                "description": "`#RRGGBB` painted in the Dark theme.",
+                "type": "string"
+              },
+              "index": {
+                "description": "The preset's place in the palette, as files store it.",
+                "format": "uint8",
+                "maximum": 255,
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "light": {
+                "description": "`#RRGGBB` painted in the Light theme.",
+                "type": "string"
+              },
+              "preset": {
+                "description": "The preset's name in lower case; absent on a custom colour.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "light",
+              "dark"
+            ],
+            "type": "object"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "The palette the header swatch opens: the sixteen presets, who holds\neach, the last custom colour and the colour a new workspace would take.",
+        "properties": {
+          "current": {
+            "$ref": "#/$defs/WorkspaceColourDto"
+          },
+          "last_custom": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PaletteSwatchDto"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The seventeenth swatch: the last custom colour applied, once one was."
+          },
+          "next_free": {
+            "$ref": "#/$defs/WorkspaceColourDto"
+          },
+          "presets": {
+            "items": {
+              "$ref": "#/$defs/PaletteSwatchDto"
+            },
+            "type": "array"
+          },
+          "workspace": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace",
+          "current",
+          "presets",
+          "next_free"
+        ],
+        "title": "WorkspaceColourPaletteResult",
+        "type": "object"
+      },
+      "persistence": "none",
+      "preconditions": [],
+      "read_only": true,
+      "required_permissions": [
+        "observe",
+        "observe.workspace"
+      ],
+      "reversible": false,
+      "revision_policy": "forbidden",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "title": "Read a workspace's colour palette",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Acts on the palette popover under the workspace menu's header swatch, for the tab on screen, as a hand does: open (the menu too), close (the menu stays), pick a swatch (a free colour applies at once and closes the popover; one another workspace holds puts the swap question in the grid's place), custom (opens the Custom picker on a hex, #RRGGBB or RRGGBB, and answers its warnings: close to another workspace's colour, near the buy green or sell red, low contrast on a tab strip; none blocks), apply (Custom's colour, through the same path; a malformed hex answers hex_hint and changes nothing; an identical colour asks to swap) and answer (swap true takes the colour and gives the holder this workspace's old one, false cancels). Each answer is the popover's state. Any act but open while it is closed is refused with workspace.colour_popover_closed.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 4096
+      },
+      "id": "workspace.colour.popover",
+      "idempotency": "optional",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "One act on the popover of the tab on screen, as a hand does it.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "description": "Open the workspace menu and its popover.",
+            "properties": {
+              "act": {
+                "const": "open",
+                "type": "string"
+              }
+            },
+            "required": [
+              "act"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Close the popover; the menu stays.",
+            "properties": {
+              "act": {
+                "const": "close",
+                "type": "string"
+              }
+            },
+            "required": [
+              "act"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Press a swatch: a preset's name or `last_custom`.",
+            "properties": {
+              "act": {
+                "const": "pick",
+                "type": "string"
+              },
+              "colour": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "act",
+              "colour"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Open Custom, on `hex` or the current colour's Dark value.",
+            "properties": {
+              "act": {
+                "const": "custom",
+                "type": "string"
+              },
+              "hex": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "act"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Custom's Apply.",
+            "properties": {
+              "act": {
+                "const": "apply",
+                "type": "string"
+              }
+            },
+            "required": [
+              "act"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Answer the swap question: Swap (`true`) or Cancel.",
+            "properties": {
+              "act": {
+                "const": "answer",
+                "type": "string"
+              },
+              "swap": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "act",
+              "swap"
+            ],
+            "type": "object"
+          }
+        ],
+        "title": "WorkspaceColourPopoverInput"
+      },
+      "module": "workspace",
+      "output_schema": {
+        "$defs": {
+          "ColourWarningDto": {
+            "description": "One warning a colour raises; none blocks.",
+            "oneOf": [
+              {
+                "description": "Hard to tell from this workspace's colour (OKLab ΔE below 0.03 in\neither theme).",
+                "properties": {
+                  "kind": {
+                    "const": "close",
+                    "type": "string"
+                  },
+                  "workspace": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "workspace"
+                ],
+                "type": "object"
+              },
+              {
+                "description": "Within 0.06 OKLab of a theme's buy green.",
+                "properties": {
+                  "kind": {
+                    "const": "near_buy",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
+              },
+              {
+                "description": "Within 0.06 OKLab of a theme's sell red.",
+                "properties": {
+                  "kind": {
+                    "const": "near_sell",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
+              },
+              {
+                "description": "Below 1.5:1 on the `dark` or `light` tab strip.",
+                "properties": {
+                  "kind": {
+                    "const": "low_contrast",
+                    "type": "string"
+                  },
+                  "theme": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "theme"
+                ],
+                "type": "object"
+              }
+            ]
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "The popover after the act.",
+        "properties": {
+          "face": {
+            "description": "`closed`, `grid`, `custom` (open under the grid) or `question`.",
+            "type": "string"
+          },
+          "hex": {
+            "description": "Custom's field, while it is open.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "hex_hint": {
+            "description": "Why Apply is disabled: the field is no colour.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "note": {
+            "description": "What the trader was told: after a swap, the workspace that changed.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "open": {
+            "type": "boolean"
+          },
+          "question": {
+            "description": "The swap question, while it stands in the grid's place.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "warnings": {
+            "description": "What Custom's colour warns, live; none blocks.",
+            "items": {
+              "$ref": "#/$defs/ColourWarningDto"
+            },
+            "type": "array"
+          },
+          "workspace": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "open",
+          "workspace",
+          "face",
+          "warnings"
+        ],
+        "title": "WorkspaceColourPopoverResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.desk"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "Opening twice leaves it open; a pick names its colour, so a repeat answers no change; an answer with the question gone is refused as closed or changes nothing.",
+      "title": "Drive the workspace colour popover",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Gives a workspace a colour: one of the sixteen presets by name (cobalt, orchid, sky, violet, slate, fuchsia, petrol, lavender, ultramarine, mauve, denim, grape, ink, plum, ice, blossom) or a custom #RRGGBB. The open tab paints its symbol in it, the capsule its tint, border and left bar, and the workspace menu its row's and header's slot. No two workspaces hold identical colours (the same value in either theme): a colour another workspace holds is refused with workspace.colour_taken, its details listing the holders in owners and, for a single holder, the colour it would get in owner_would_get. With swap true a single holder takes this workspace's old colour, named in swapped_with and holder_colour; two or more holders, or a swap that would give the holder a colour a third workspace matches, are refused even with swap. A new workspace takes the next free colour and a deleted one frees its own. Read the colours with workspace.list or on each tab of workspace.summary. The answer's warnings list what the colour warns, none of which blocks: kind close (hard to tell from the named workspace's colour), near_buy, near_sell, or low_contrast (lost on the named theme's tab strip, dark or light). An applied custom colour becomes the palette's last custom colour (workspace.colour.palette). A name no workspace has is refused with workspace.unknown, a colour that is neither a preset nor #RRGGBB with workspace.colour_invalid.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 4096
+      },
+      "id": "workspace.colour.set",
+      "idempotency": "optional",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "Give a workspace a colour: a preset's name or a custom `#RRGGBB`.",
+        "properties": {
+          "colour": {
+            "description": "A preset's name in any case (`sky`, `slate`, ...) or `#RRGGBB`.",
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "swap": {
+            "default": false,
+            "description": "Take a colour another workspace holds, giving it this one's own.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name",
+          "colour"
+        ],
+        "title": "WorkspaceColourSetInput",
+        "type": "object"
+      },
+      "module": "workspace",
+      "output_schema": {
+        "$defs": {
+          "ColourWarningDto": {
+            "description": "One warning a colour raises; none blocks.",
+            "oneOf": [
+              {
+                "description": "Hard to tell from this workspace's colour (OKLab ΔE below 0.03 in\neither theme).",
+                "properties": {
+                  "kind": {
+                    "const": "close",
+                    "type": "string"
+                  },
+                  "workspace": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "workspace"
+                ],
+                "type": "object"
+              },
+              {
+                "description": "Within 0.06 OKLab of a theme's buy green.",
+                "properties": {
+                  "kind": {
+                    "const": "near_buy",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
+              },
+              {
+                "description": "Within 0.06 OKLab of a theme's sell red.",
+                "properties": {
+                  "kind": {
+                    "const": "near_sell",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
+              },
+              {
+                "description": "Below 1.5:1 on the `dark` or `light` tab strip.",
+                "properties": {
+                  "kind": {
+                    "const": "low_contrast",
+                    "type": "string"
+                  },
+                  "theme": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "theme"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "WorkspaceColourDto": {
+            "description": "A workspace's colour as the wire reads it: a preset names itself and its\nindex (`{\"preset\": \"sky\", \"index\": 2, ...}`), a custom colour its hex\n(`{\"custom\": \"#3A7BD5\", ...}`); both give the value painted in each theme.\nNo two workspaces hold identical colours (`workspace.colour.set`).",
+            "properties": {
+              "custom": {
+                "description": "The custom colour's `#RRGGBB`; absent on a preset.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "dark": {
+                "description": "`#RRGGBB` painted in the Dark theme.",
+                "type": "string"
+              },
+              "index": {
+                "description": "The preset's place in the palette, as files store it.",
+                "format": "uint8",
+                "maximum": 255,
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "light": {
+                "description": "`#RRGGBB` painted in the Light theme.",
+                "type": "string"
+              },
+              "preset": {
+                "description": "The preset's name in lower case; absent on a custom colour.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "light",
+              "dark"
+            ],
+            "type": "object"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "The colour the workspace now holds, and the workspace it swapped with.",
+        "properties": {
+          "changed": {
+            "description": "`false` when the workspace already held it: nothing is written.",
+            "type": "boolean"
+          },
+          "colour": {
+            "$ref": "#/$defs/WorkspaceColourDto"
+          },
+          "holder_colour": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WorkspaceColourDto"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "The colour `swapped_with` holds now: the one the workspace gave up."
+          },
+          "swapped_with": {
+            "description": "The workspace that held the colour, with `swap`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "warnings": {
+            "default": [],
+            "description": "What the colour warns; none blocks. Additive.",
+            "items": {
+              "$ref": "#/$defs/ColourWarningDto"
+            },
+            "type": "array"
+          },
+          "workspace": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace",
+          "colour",
+          "changed"
+        ],
+        "title": "WorkspaceColourSetResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.desk"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "The call names the colour it wants, so a repeat answers changed false and writes nothing.",
+      "title": "Give a workspace a colour",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
       "description": "Deletes a workspace and moves the tabs on it to Default. A tab with unsaved edits keeps them, marked Default •. Default cannot be deleted.",
       "destructive": false,
       "dry_run_supported": false,
@@ -29662,7 +30313,7 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Lists every saved workspace with a one-line summary (panes, intervals, indicator count) and the open tabs using it, Default first. Which workspace a tab uses and whether it holds edits is also on each tab in workspace.summary.",
+      "description": "Lists every saved workspace with a one-line summary (panes, intervals, indicator count), its colour and the open tabs using it, Default first. Which workspace a tab uses and whether it holds edits is also on each tab in workspace.summary.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "observe",
@@ -29687,9 +30338,63 @@
             "pattern": "^(0|[1-9][0-9]*)$",
             "type": "string"
           },
+          "WorkspaceColourDto": {
+            "description": "A workspace's colour as the wire reads it: a preset names itself and its\nindex (`{\"preset\": \"sky\", \"index\": 2, ...}`), a custom colour its hex\n(`{\"custom\": \"#3A7BD5\", ...}`); both give the value painted in each theme.\nNo two workspaces hold identical colours (`workspace.colour.set`).",
+            "properties": {
+              "custom": {
+                "description": "The custom colour's `#RRGGBB`; absent on a preset.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "dark": {
+                "description": "`#RRGGBB` painted in the Dark theme.",
+                "type": "string"
+              },
+              "index": {
+                "description": "The preset's place in the palette, as files store it.",
+                "format": "uint8",
+                "maximum": 255,
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "light": {
+                "description": "`#RRGGBB` painted in the Light theme.",
+                "type": "string"
+              },
+              "preset": {
+                "description": "The preset's name in lower case; absent on a custom colour.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "light",
+              "dark"
+            ],
+            "type": "object"
+          },
           "WorkspaceEntry": {
             "description": "One workspace and the tabs using it.",
             "properties": {
+              "colour": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WorkspaceColourDto"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Its colour. Additive: absent from a build that predates colours."
+              },
               "name": {
                 "type": "string"
               },
@@ -37107,6 +37812,64 @@
             "pattern": "^(0|[1-9][0-9]*)$",
             "type": "string"
           },
+          "WorkspaceColourDto": {
+            "description": "A workspace's colour as the wire reads it: a preset names itself and its\nindex (`{\"preset\": \"sky\", \"index\": 2, ...}`), a custom colour its hex\n(`{\"custom\": \"#3A7BD5\", ...}`); both give the value painted in each theme.\nNo two workspaces hold identical colours (`workspace.colour.set`).",
+            "properties": {
+              "custom": {
+                "description": "The custom colour's `#RRGGBB`; absent on a preset.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "dark": {
+                "description": "`#RRGGBB` painted in the Dark theme.",
+                "type": "string"
+              },
+              "index": {
+                "description": "The preset's place in the palette, as files store it.",
+                "format": "uint8",
+                "maximum": 255,
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "light": {
+                "description": "`#RRGGBB` painted in the Light theme.",
+                "type": "string"
+              },
+              "preset": {
+                "description": "The preset's name in lower case; absent on a custom colour.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "light",
+              "dark"
+            ],
+            "type": "object"
+          },
+          "WorkspaceColourRow": {
+            "description": "One workspace's colour.",
+            "properties": {
+              "colour": {
+                "$ref": "#/$defs/WorkspaceColourDto"
+              },
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "colour"
+            ],
+            "type": "object"
+          },
           "WorkspacePane": {
             "properties": {
               "collapsed": {
@@ -37242,6 +38005,18 @@
                 "default": "",
                 "description": "The workspace this tab uses. Additive; empty from a build that predates\nit.",
                 "type": "string"
+              },
+              "workspace_colour": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WorkspaceColourDto"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "That workspace's colour: the open tab's symbol and the capsule wear\nit. Additive."
               }
             },
             "required": [
@@ -37349,6 +38124,14 @@
             "description": "Native presentation order, independent of the retained runtime storage indices below.",
             "items": {
               "$ref": "#/$defs/MarketWindowSnapshot"
+            },
+            "type": "array"
+          },
+          "workspaces": {
+            "default": [],
+            "description": "Every workspace and its colour, `Default` first, then by name.\nAdditive; empty from a build that predates workspace colours.",
+            "items": {
+              "$ref": "#/$defs/WorkspaceColourRow"
             },
             "type": "array"
           }

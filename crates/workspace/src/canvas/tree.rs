@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 
 /// How far inside the canvas an edge must sit to meet a neighbour, as
-/// [`super::bands::inset_seams`] reads it.
+/// [`inset_seams`] reads it.
 const EDGE_SLACK_PX: f32 = 0.5;
 
 /// How a pane holds its extent when the tree is carved.
@@ -593,4 +593,32 @@ fn normalised(shares: &[f32]) -> Vec<f32> {
     } else {
         vec![1.0 / shares.len().max(1) as f32; shares.len()]
     }
+}
+
+/// `rect` less half a `divider` on every edge inside `area`.
+#[must_use]
+pub fn inset_seams(rect: CanvasRect, area: CanvasRect, divider: f32) -> CanvasRect {
+    let half = divider / 2.0;
+    let left = rect.x
+        + if rect.x > area.x + EDGE_SLACK_PX {
+            half
+        } else {
+            0.0
+        };
+    let top = rect.y
+        + if rect.y > area.y + EDGE_SLACK_PX {
+            half
+        } else {
+            0.0
+        };
+    let inner = |edge: f32, outer: f32| {
+        if edge < outer - EDGE_SLACK_PX {
+            half
+        } else {
+            0.0
+        }
+    };
+    let right = rect.right() - inner(rect.right(), area.right());
+    let bottom = rect.bottom() - inner(rect.bottom(), area.bottom());
+    CanvasRect::new(left, top, right - left, bottom - top)
 }

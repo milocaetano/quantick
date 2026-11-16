@@ -9,6 +9,7 @@ use super::{ChartPane, LANE_HANDLE_HALF_WIDTH_PX};
 use crate::canvas_layout as canvas;
 use crate::plot_area::split_time_strip;
 use crate::theme;
+use quantick_workspace::canvas::RailLook;
 
 /// How strongly the divider's trace shows through the indicator panes.
 const FAINT_TRACE: f32 = 0.5;
@@ -134,7 +135,6 @@ pub(super) fn paint_lane_rail(pane: &ChartPane, painter: &egui::Painter, chart: 
     };
     let paint = span(chart, (rail.paint_from_px, rail.paint_to_px));
     let hit = span(chart, (rail.hit_from_px, rail.hit_to_px));
-    let hover = painter.ctx().pointer_hover_pos();
-    let hot = hover.is_some_and(|at| hit.contains(at));
-    crate::tab::paint_rail(painter, paint, (chart.left() + rail.edge_px(), false), hot);
+    let look = RailLook::between(false, rail.side == LaneSide::Trail, 1);
+    crate::tab::paint_rail(painter, paint, look, crate::tab::rail_hot(painter, &[hit]));
 }

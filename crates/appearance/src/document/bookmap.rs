@@ -88,8 +88,10 @@ mod tests {
                 Token::TextFaint => [187, 198, 208, 255],
                 Token::CandleWick => [182, 201, 210, 255],
                 Token::FootprintProfile => [197, 204, 214, 255],
-                // The tab tokens belong to the title strip, never to a chart.
+                // The tab tokens belong to the title strip, never to a chart,
+                // and the capsule's miniature to the toolbar.
                 Token::ToolbarSheet
+                | Token::CapsuleMiniature
                 | Token::TabIdleFill
                 | Token::TabIdleOutline
                 | Token::TabBand
@@ -113,8 +115,11 @@ mod tests {
                 | Token::PaperTagGain
                 | Token::PaperTagLoss
                 | Token::ReadoutEdge => light.color(token).to_array(),
-                // So are the settings panels' blocks and plates.
-                _ if token.key().starts_with("panel_") => light.color(token).to_array(),
+                // So are the settings panels' blocks and plates, and a
+                // folded pane's rail, which is canvas chrome.
+                _ if token.key().starts_with("panel_") || token.key().starts_with("rail_") => {
+                    light.color(token).to_array()
+                }
                 _ => dark.color(token).to_array(),
             };
             assert_eq!(

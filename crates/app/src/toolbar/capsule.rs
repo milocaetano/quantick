@@ -12,6 +12,7 @@ use quantick_workspace::canvas::{CanvasRect, PaneKind, PaneTree};
 
 use super::ToolbarAction;
 use crate::theme;
+use quantick_appearance::{Token, tab_strip::WORKSPACE_CAPSULE_BAR_PT as BAR};
 
 /// The capsule's height: History's.
 const HEIGHT_PX: f32 = 22.0;
@@ -32,8 +33,9 @@ const PANE_STROKE_PX: f32 = 1.0;
 pub struct CapsuleModel<'a> {
     /// The docked panes the canvas draws, as the model's tree.
     pub tree: &'a PaneTree,
-    /// The tab's workspace name.
+    /// The tab's workspace name, and its colour: the tint, border and left bar.
     pub workspace: &'a str,
+    pub colour: Option<quantick_workspace::workspace_colour::WorkspaceColour>,
     /// Auto save is off and the workspace differs from its save.
     pub unsaved: bool,
     /// What differs is the layout: the miniature wears the dot too.
@@ -129,23 +131,32 @@ pub fn draw(
     );
     let stroke = ui.visuals().widgets.inactive.bg_stroke;
     let painter = ui.painter();
-    painter.rect(
-        whole,
-        ROUNDING_PX,
-        ui.visuals().widgets.inactive.weak_bg_fill,
-        stroke,
-    );
+    // A workspace's colour tints the fill and takes the border.
+    let (fill, edge) = match model.colour {
+        Some(colour) => {
+            let [r, g, b, a] = quantick_stores::workspaces::capsule_fill(colour, &palette.resolved);
+            let [ir, ig, ib] = colour.rgb(palette.resolved.dark);
+            let edge = (stroke.width, egui::Color32::from_rgb(ir, ig, ib)).into();
+            (egui::Color32::from_rgba_premultiplied(r, g, b, a), edge)
+        }
+        None => (palette.control(), stroke),
+    };
+    painter.rect(whole, ROUNDING_PX, fill, edge);
     for (part, response, lit) in [
         (miniature, &layout, model.popover_open),
         (name_rect, &menu, model.menu_open),
     ] {
         if lit || response.hovered() {
-            painter.rect_filled(part.shrink(1.0), ROUNDING_PX, palette.control());
+            painter.rect_filled(part.shrink(1.0), ROUNDING_PX, fill);
         }
+    }
+    if model.colour.is_some() {
+        let bar = painter.with_clip_rect(whole.with_max_x(whole.left() + BAR));
+        bar.rect_filled(whole, ROUNDING_PX, edge.color);
     }
     painter.vline(miniature.right() + 0.5, whole.y_range().shrink(4.0), stroke);
     let face = egui::Rect::from_center_size(miniature.center(), MINIATURE);
-    paint_tree(painter, face, model.tree);
+    paint_tree(painter, face, model.tree, Token::CapsuleMiniature); // Grey: the colour is the hue.
     if model.layout_unsaved {
         painter.circle_filled(face.right_top(), DOT_RADIUS_PX, palette.accent());
     }
@@ -212,9 +223,10 @@ pub fn draw(
 }
 
 /// The tree's panes inside `rect`, exactly as the canvas lays them out: a
-/// timeframe chart outlined, the flow pane filled with the accent.
-pub fn paint_tree(painter: &egui::Painter, rect: egui::Rect, tree: &PaneTree) {
+/// timeframe chart outlined, the flow pane filled with `flow`'s tint.
+pub fn paint_tree(painter: &egui::Painter, rect: egui::Rect, tree: &PaneTree, flow: Token) {
     let palette = theme::get(painter.ctx());
+    let flow_ink = *palette.get(flow);
     let kinds = tree.panes();
     let area = CanvasRect::new(rect.left(), rect.top(), rect.width(), rect.height());
     for (slot, pane) in tree.rects(area) {
@@ -225,16 +237,30 @@ pub fn paint_tree(painter: &egui::Painter, rect: egui::Rect, tree: &PaneTree) {
             .iter()
             .any(|(held, kind)| *held == slot && *kind == PaneKind::Flow);
         let (fill, line) = if flow {
-            (theme::active_tint(palette.accent()), palette.accent())
+            (theme::active_tint(flow_ink), flow_ink)
         } else {
             (egui::Color32::TRANSPARENT, palette.text_faint())
         };
-        painter.rect(
-            block.shrink(0.5),
-            1.0,
-            fill,
-            egui::Stroke::new(PANE_STROKE_PX, line),
+        // A mesh is never feathered: on whole pixels its 1 px edges stay one
+        // pixel in their own colour.
+        let (mut mesh, inner) = (egui::Mesh::default(), block.shrink(PANE_STROKE_PX));
+        mesh.add_colored_rect(inner, fill);
+        let (left, right) = (
+            inner.with_max_x(inner.left()),
+            inner.with_min_x(inner.right()),
         );
+        let sides = [
+            left.with_min_x(block.left()),
+            right.with_max_x(block.right()),
+        ];
+        let ends = [
+            block.with_max_y(inner.top()),
+            block.with_min_y(inner.bottom()),
+        ];
+        for edge in sides.into_iter().chain(ends) {
+            mesh.add_colored_rect(edge, line);
+        }
+        painter.add(mesh);
     }
 }
 
@@ -247,6 +273,7 @@ pub(crate) mod tests {
         CapsuleModel {
             tree: crate::canvas_layout::LAYOUT_PRESETS[0].tree,
             workspace: "Default",
+            colour: None,
             unsaved: false,
             layout_unsaved: false,
             menu_open: false,

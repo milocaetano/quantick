@@ -55,7 +55,7 @@ fn live() -> PaneTree {
 }
 
 fn menu_of(book: &WorkspaceBook, tab: u64) -> CellMenu {
-    cell_menu(book, tab, "Ctrl+S", &live(), label)
+    cell_menu(book, tab, "Ctrl+S", &live(), true, label)
 }
 
 fn keys(rows: &[CellRow]) -> Vec<&str> {
@@ -452,13 +452,13 @@ fn holders_are_named_once_or_counted_when_they_read_alike() {
             .find(|row| row.label == "Pair")
             .unwrap()
     };
-    let named = pair(cell_menu(&book, 1, "Ctrl+S", &live(), label));
+    let named = pair(cell_menu(&book, 1, "Ctrl+S", &live(), true, label));
     assert!(
         named.summary.ends_with("unsaved in T1, T2"),
         "{}",
         named.summary
     );
-    let alike = pair(cell_menu(&book, 1, "Ctrl+S", &live(), |_| {
+    let alike = pair(cell_menu(&book, 1, "Ctrl+S", &live(), true, |_| {
         "WINZ25".to_owned()
     }));
     assert!(
@@ -474,14 +474,93 @@ fn the_rows_are_built_again_only_when_the_book_changes() {
     let mut book = desk(false);
     let mut cache = CellMenuCache::default();
     for _ in 0..3 {
-        cache.menu(&book, 1, "Ctrl+S", &live(), label);
+        cache.menu(&book, 1, "Ctrl+S", &live(), true, label);
     }
     assert_eq!(cache.builds, 1, "quiet frames");
     book.observe(1, &recipe(DeclaredLayout::TimeAndFlow, 2))
         .unwrap();
-    let menu = cache.menu(&book, 1, "Ctrl+S", &live(), label).clone();
+    let menu = cache.menu(&book, 1, "Ctrl+S", &live(), true, label).clone();
     assert_eq!(cache.builds, 2, "the edit");
     assert_eq!(menu, menu_of(&book, 1));
-    cache.menu(&book, 1, "Ctrl+Alt+S", &live(), label);
+    cache.menu(&book, 1, "Ctrl+Alt+S", &live(), true, label);
     assert_eq!(cache.builds, 3, "the shortcut's words");
+}
+
+/// Each row and the header carry their workspace's colour for the theme, and
+/// the scene ends their description with its name and hex; another theme
+/// builds the rows again.
+#[test]
+fn every_row_carries_its_colour_and_the_scene_names_it() {
+    use quantick_stores::workspaces::WorkspaceColour;
+    let mut book = desk(false);
+    let custom = WorkspaceColour::Custom([0x3A, 0x7B, 0xD5]);
+    book.set_colour("Solo", custom, false).unwrap();
+    let sky = WorkspaceColour::preset(2).unwrap();
+    book.set_colour("Pair", sky, false).unwrap();
+    let dark = menu_of(&book, 1);
+    let colour = |row: &CellRow| row.colour.clone().expect("a colour");
+    let pair = dark.list.iter().find(|row| row.label == "Pair").unwrap();
+    assert_eq!(colour(pair).rgb, sky.rgb(true));
+    assert_eq!(colour(&dark.current).rgb, sky.rgb(true), "tab 1 is on Pair");
+    let solo = dark.list.iter().find(|row| row.label == "Solo").unwrap();
+    assert_eq!(colour(solo).rgb, [0x3A, 0x7B, 0xD5]);
+    let said = pair.scene_control("toolbar", None).description.unwrap();
+    assert!(said.ends_with(" \u{b7} Sky #5DBDEB"), "{said}");
+    let said = solo.scene_control("toolbar", None).description.unwrap();
+    assert!(said.ends_with(" \u{b7} Custom #3A7BD5"), "{said}");
+    let said = dark.current.scene_control("toolbar", None).description;
+    assert!(said.unwrap().ends_with("Sky #5DBDEB"));
+    assert!(dark.head.iter().all(|row| row.colour.is_none()), "buttons");
+    let light = cell_menu(&book, 1, "Ctrl+S", &live(), false, label);
+    let pair = light.list.iter().find(|row| row.label == "Pair").unwrap();
+    assert_eq!(colour(pair).rgb, sky.rgb(false));
+    let mut cache = CellMenuCache::default();
+    cache.menu(&book, 1, "Ctrl+S", &live(), true, label);
+    cache.menu(&book, 1, "Ctrl+S", &live(), false, label);
+    assert_eq!(cache.builds, 2, "the theme");
+}
+
+/// A row with no summary still names its colour in the scene.
+#[test]
+fn a_row_without_a_summary_still_names_its_colour() {
+    let menu = menu_of(&desk(false), 1);
+    let mut row = menu.list[0].clone();
+    row.summary.clear();
+    let said = row.scene_control("toolbar", None).description;
+    let colour = row.colour.clone().expect("a colour");
+    assert_eq!(said, Some(colour.words));
+    let mut header = menu.current.clone();
+    header.summary.clear();
+    header.dot = true;
+    let said = header.scene_control("toolbar", None).description.unwrap();
+    assert!(
+        said.starts_with(UNSAVED) && said.contains(" \u{b7} "),
+        "{said}"
+    );
+}
+
+/// The header's swatch opens the palette popover, names the call that does
+/// the same and says its colour on hover: a preset by name, a custom colour
+/// by its hex.
+#[test]
+fn the_header_swatch_opens_the_popover_and_says_its_colour() {
+    use quantick_session::colour_popover::ColourIntent;
+    use quantick_stores::workspaces::WorkspaceColour;
+    let mut book = desk(false);
+    book.set_colour("Pair", WorkspaceColour::preset(2).unwrap(), false)
+        .unwrap();
+    let menu = menu_of(&book, 1);
+    let swatch = &menu.swatch;
+    assert_eq!(swatch.scene_id(), "workspace_menu.colour");
+    assert_eq!(
+        swatch.command,
+        Some(WorkspaceCommand::Colour(ColourIntent::Toggle))
+    );
+    assert_eq!(swatch.capability, Some("workspace.colour.popover"));
+    assert_eq!(swatch.tip(false), Some("Sky \u{b7} change colour"));
+    assert_eq!(swatch.colour.as_ref().unwrap().rgb, [0x5D, 0xBD, 0xEB]);
+    book.set_colour("Pair", WorkspaceColour::Custom([0x3A, 0x7B, 0xD5]), false)
+        .unwrap();
+    let tip = menu_of(&book, 1).swatch.tip(false).map(str::to_owned);
+    assert_eq!(tip.as_deref(), Some("Custom #3A7BD5 \u{b7} change colour"));
 }

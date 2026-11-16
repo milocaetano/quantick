@@ -265,34 +265,6 @@ fn a_region_the_tape_walked_past_says_so_on_the_badge_and_keeps_listening() {
     );
 }
 
-/// The tape's window hook reads what a human would type, and refuses
-/// everything else rather than guessing — a capture of the wrong state is
-/// worse than a capture of the default one.
-#[test]
-fn the_tape_window_hook_reads_durations_and_refuses_nonsense() {
-    assert_eq!(parse_tape_window("auto"), Some(LaneWindow::default()));
-    assert_eq!(parse_tape_window("  AUTO "), Some(LaneWindow::default()));
-    for (typed, ms) in [
-        ("15s", 15_000),
-        ("90s", 90_000),
-        ("1min", 60_000),
-        ("2min", 120_000),
-        ("2m", 120_000),
-        ("1.5min", 90_000),
-        ("120000ms", 120_000),
-        ("120000", 120_000),
-    ] {
-        assert_eq!(
-            parse_tape_window(typed),
-            Some(LaneWindow::Fixed { ms }),
-            "{typed}"
-        );
-    }
-    for refused in ["", "soon", "2 hours", "-5s", "0", "0s", "NaN", "infs"] {
-        assert_eq!(parse_tape_window(refused), None, "{refused}");
-    }
-}
-
 /// A right-click on the tape configures the tape. The candles' layers do
 /// not vanish with it — they move one submenu away — because the tape is
 /// also where a trader right-clicks to trade, and a menu that answered

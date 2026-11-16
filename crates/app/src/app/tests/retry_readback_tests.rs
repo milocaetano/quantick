@@ -921,10 +921,23 @@ fn replay_plan() -> Vec<(&'static str, u32, Value, Readback)> {
             Readback::Moves,
         ),
         (
+            "workspace.colour.set",
+            1,
+            json!({ "name": "Renamed", "colour": "ink" }),
+            Readback::Moves,
+        ),
+        (
             "workspace.delete",
             1,
             json!({ "name": "Renamed" }),
             Readback::Moves,
+        ),
+        // Opening the colour popover journals nothing: the colour stays.
+        (
+            "workspace.colour.popover",
+            1,
+            json!({ "act": "open" }),
+            Readback::Stays,
         ),
         // The canvas, in an order where each call has something to do: a
         // layout, one chart folded, maximized, restored and widened, a widget added,
