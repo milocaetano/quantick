@@ -60,10 +60,7 @@ impl Tab {
         });
         let bands: SmallVec<[_; MAX_CANVAS_PANES]> = bands.collect();
         let built = self.time_panes.len();
-        let heights = &mut self.canvas.context_stack.heights;
-        if heights.len() < built {
-            heights.resize(built, crate::canvas_layout::PaneWidth::Auto);
-        }
+        self.canvas.context_stack.at_least(built);
         self.canvas.context_stack.frame = None;
         #[cfg(test)]
         self.context_dividers.clear();

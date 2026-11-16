@@ -114,3 +114,166 @@ fn the_context_readback_agrees_with_a_rail_after_a_dock() {
     assert_eq!(tree_rails(&state, AREA, CANVAS_DIVIDER_PX).len(), 1);
     assert_eq!(state.flow_side_folds(), (true, false));
 }
+
+/// The stack's charts, top to bottom, of a canvas laid out as `id`.
+fn stacked(id: &str) -> (CanvasState, Vec<PaneSlot>) {
+    let state = CanvasState::from_preset(layout(id));
+    let panes = state.tree().panes().into_iter();
+    let slots = panes.filter(|(_, kind)| *kind == PaneKind::Time);
+    let slots = slots.map(|(slot, _)| slot).collect();
+    (state, slots)
+}
+
+/// A chart folded inside the stack is one rail of the canvas model, and the
+/// column painter still draws the canvas: its fold is no column fold, the
+/// stack folded whole is the column's own and stays so, and a save that
+/// keeps only the preset, the split and the stack's flags rebuilds it.
+#[test]
+fn a_stacked_chart_folds_in_the_model_and_the_columns_still_draw() {
+    let preset = layout("stack2+flow");
+    let (mut state, slots) = stacked("stack2+flow");
+    assert!(state.rail_stack(&slots, &[true, false]));
+    assert_eq!(
+        state.railed().iter().copied().collect::<Vec<_>>(),
+        [slots[0]]
+    );
+    assert!(state.column_painted(preset, true), "the columns draw it");
+    assert_eq!(state.flow_side_folds(), (false, false), "no column fold");
+    assert_eq!(
+        state.saved_form(preset, 0.4, true),
+        None,
+        "rebuilt from flags"
+    );
+    assert!(!state.rail_stack(&slots, &[true, false]), "again: nothing");
+    assert!(
+        !state.rail_stack(&slots, &[true, true]),
+        "never the stack whole"
+    );
+    assert!(state.rail_stack(&slots, &[false, true]));
+    assert_eq!(
+        state.railed().iter().copied().collect::<Vec<_>>(),
+        [slots[1]]
+    );
+
+    // The column folded whole stays the column's fold; the stack's folds
+    // inside it are what its reopening keeps.
+    assert!(state.fold_flow_side(false, true));
+    assert_eq!(state.stack_folds(), [false, true]);
+    assert!(
+        state.rail_stack(&slots, &[false, false]),
+        "kept, not railed"
+    );
+    assert_eq!(state.flow_side_folds(), (true, false), "the column's own");
+    assert_eq!(state.stack_folds(), [false, false]);
+}
+
+/// The flow pane folds and opens beside a folded stacked chart without
+/// opening it, by the call and by the column painter's divider; restoring
+/// the chart by name and the context's expand open it.
+#[test]
+fn a_stacked_fold_outlives_the_flow_fold_and_opens_by_name() {
+    let preset = layout("stack2+flow");
+    let (mut state, slots) = stacked("stack2+flow");
+    state.rail_stack(&slots, &[false, true]);
+    assert!(state.fold_flow_side(true, true));
+    assert!(state.railed().contains(&slots[1]), "the flow fold keeps it");
+    assert!(state.column_painted(preset, true));
+    let (mut hold, mut split) = (None, 0.4);
+    let press = Hand::of([true, true, false], 0.0);
+    state.column_hand((&mut hold, &mut split), press, (1592.0, 1600.0));
+    let drag = Hand::of([false, true, true], -900.0);
+    assert!(state.column_hand((&mut hold, &mut split), drag, (1592.0, 1600.0)));
+    assert_eq!(state.flow_side_folds(), (false, false), "the flow opened");
+    assert!(
+        state.railed().contains(&slots[1]),
+        "the stacked chart did not"
+    );
+    assert!(state.restore(slots[1]).unwrap());
+    assert!(state.railed().is_empty());
+    state.rail_stack(&slots, &[true, false]);
+    assert!(state.fold_context(false), "the context's expand opens it");
+    assert!(state.railed().is_empty());
+}
+
+/// "3 stacked + Flow" is drawn from the tree: a stacked chart folds there
+/// by its seam, and is no column fold either.
+#[test]
+fn a_chart_of_three_stacked_folds_on_the_tree() {
+    let (mut state, slots) = stacked("stack3+flow");
+    let seam = SeamAddress {
+        path: vec![0],
+        index: 0,
+    };
+    let mut held = None;
+    state
+        .step_seam_drag(&mut held, (&seam, -900.0, true), AREA)
+        .unwrap();
+    assert_eq!(
+        state.railed().iter().copied().collect::<Vec<_>>(),
+        [slots[0]]
+    );
+    assert_eq!(state.flow_side_folds(), (false, false));
+}
+
+/// A chart folded inside the grid beside the flow pane stays folded while
+/// the flow pane folds and reopens, and while the grid folds whole and
+/// reopens: the tree's layouts keep inner folds as the stack does.
+#[test]
+fn an_inner_fold_of_the_grid_outlives_the_side_folds() {
+    let (mut state, slots) = stacked("grid4+flow");
+    let seam = SeamAddress {
+        path: vec![0, 0],
+        index: 0,
+    };
+    let mut held = None;
+    state
+        .step_seam_drag(&mut held, (&seam, -900.0, true), AREA)
+        .unwrap();
+    let inner = || vec![slots[0]];
+    let railed = |state: &CanvasState| state.railed().iter().copied().collect::<Vec<_>>();
+    assert_eq!(railed(&state), inner());
+    for side in [true, false] {
+        assert!(state.fold_flow_side(side, true), "fold {side}");
+        assert!(state.fold_flow_side(side, false), "open {side}");
+        assert_eq!(railed(&state), inner(), "after {side}");
+    }
+}
+
+/// A save of a stacked layout keeps the stack's folds as its flags, folded
+/// inside a column folded whole too, and the recipe's canvas rebuilds them.
+#[test]
+fn the_stack_folds_round_trip_through_the_flags() {
+    let preset = layout("stack2+flow");
+    let (mut state, slots) = stacked("stack2+flow");
+    assert!(state.rail_stack(&slots, &[false, true]));
+    for whole in [false, true] {
+        if whole {
+            assert!(state.fold_flow_side(false, true));
+        }
+        assert_eq!(state.stack_folds(), [false, true], "whole {whole}");
+        assert_eq!(state.saved_form(preset, 0.4, true), None, "whole {whole}");
+        let rebuilt = CanvasState::from_preset_split(preset, Some(0.4))
+            .with_folds(whole, false)
+            .with_stack_folds(&[false, true]);
+        assert_eq!(rebuilt.railed(), state.railed(), "whole {whole}");
+        assert_eq!(rebuilt.stack_folds(), [false, true], "whole {whole}");
+    }
+}
+
+/// A chart folded inside the context column folded whole stays folded when
+/// the flow pane folds, which opens the column, and when the flow pane is
+/// asked open while the column stays folded.
+#[test]
+fn a_kept_fold_outlives_the_flow_pane_either_way() {
+    let preset = layout("stack2+flow");
+    let (mut state, slots) = stacked("stack2+flow");
+    state.rail_stack(&slots, &[false, true]);
+    assert!(state.fold_flow_side(false, true), "the column folds whole");
+    assert!(!state.fold_flow_side(true, false), "the flow pane is open");
+    assert_eq!(state.stack_folds(), [false, true], "asked open, still kept");
+    assert!(state.fold_flow_side(true, true), "the flow pane folds");
+    assert_eq!(state.flow_side_folds(), (false, true));
+    assert_eq!(state.stack_folds(), [false, true], "the column opened");
+    assert!(state.railed().contains(&slots[1]));
+    assert!(state.column_painted(preset, true));
+}

@@ -199,3 +199,77 @@ fn summary_matches_what_the_canvas_draws() {
     let focused = (panes.as_array().unwrap().iter()).filter(|pane| pane["focused"] == true);
     assert_eq!(focused.count(), 1, "one focused chart");
 }
+
+/// #1057: a stacked chart folded by the stack's own resize is the canvas
+/// model's fold, its rail published under the slot's restore with the
+/// rail's words, and a restore by that name reopens it where it stood.
+#[test]
+fn a_stacked_fold_is_the_models_and_restores_by_name() {
+    use quantick_control_handlers::layout::LayoutTab as _;
+    let (mut app, ctx) = laid_out("stack2+flow");
+    let lower = PaneSide::Time(1);
+    let was = band(&app, lower).expect("the lower chart");
+    let slot = slot_of(&app, lower);
+    let tab_id = app.runtime.tabs.active_id();
+    let tab = app.active_tab_mut();
+    let pair = (tab.time_panes[0].id, tab.time_panes[1].id);
+    let agent = quantick_control::wire::ActorKind::Agent;
+    let folded = tab.resize_context_pair(tab_id, pair, 1.0, agent);
+    assert!(matches!(folded, Some(Ok((_, true)))), "{folded:?}");
+    frames(&mut app, &ctx, 2);
+    assert!(app.active_tab().canvas.state.railed().contains(&slot));
+    let rail = format!("pane_menu.{slot}.rail");
+    let words = (app.active_tab().canvas.menus.drawn.iter())
+        .find(|control| control.id == rail)
+        .and_then(|control| control.description.clone());
+    assert!(
+        words.is_some_and(|words| words.starts_with("Time · ") && words.ends_with("drag to open")),
+        "the rail is published by its restore"
+    );
+    act(&mut app, CanvasAct::Restore { slot });
+    frames(&mut app, &ctx, 2);
+    let back = band(&app, lower).expect("reopened");
+    let near = (back.min - was.min).length() < 1.0 && (back.max - was.max).length() < 1.0;
+    assert!(near, "reopened at {back:?}, stood at {was:?}");
+}
+
+/// A stacked chart folded inside a column folded whole: the context's
+/// expand reopens the column with the chart still folded, read and drawn
+/// alike on the same frame; a layout picked again carries nothing over.
+#[test]
+fn an_expand_reads_the_inner_fold_the_window_draws() {
+    use quantick_control_handlers::layout::LayoutTab as _;
+    let (mut app, ctx) = laid_out("stack2+flow");
+    let lower = slot_of(&app, PaneSide::Time(1));
+    let tab_id = app.runtime.tabs.active_id();
+    let tab = app.active_tab_mut();
+    let pair = (tab.time_panes[0].id, tab.time_panes[1].id);
+    let agent = quantick_control::wire::ActorKind::Agent;
+    tab.resize_context_pair(tab_id, pair, 1.0, agent);
+    frames(&mut app, &ctx, 2);
+    assert!(app.active_tab_mut().set_context_collapsed(true));
+    frames(&mut app, &ctx, 2);
+    assert!(app.active_tab_mut().set_context_collapsed(false));
+    let railed = |app: &QuantickApp| app.active_tab().canvas.state.railed().clone();
+    assert_eq!(
+        railed(&app).into_iter().collect::<Vec<_>>(),
+        [lower],
+        "read"
+    );
+    frames(&mut app, &ctx, 2);
+    assert_eq!(
+        railed(&app).into_iter().collect::<Vec<_>>(),
+        [lower],
+        "drawn"
+    );
+    assert!(band(&app, PaneSide::Time(1)).is_none(), "painted folded");
+
+    assert!(app.active_tab_mut().set_context_collapsed(true));
+    app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
+    frames(&mut app, &ctx, 2);
+    app.active_tab_mut()
+        .set_layout(CanvasLayout::TimeTimeAndFlow);
+    frames(&mut app, &ctx, 6);
+    assert!(railed(&app).is_empty());
+    assert!(band(&app, PaneSide::Time(1)).is_some(), "both charts open");
+}

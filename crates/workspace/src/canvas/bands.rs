@@ -49,8 +49,13 @@ impl Seats {
     #[must_use]
     pub fn current(&self, state: &CanvasState) -> Self {
         let mut seats = self.clone();
-        seated(state, &mut seats);
+        seats.refresh(state);
         seats
+    }
+
+    /// Bring these seats up to date for `state` in place, as a frame does.
+    pub fn refresh(&mut self, state: &CanvasState) {
+        seated(state, self);
     }
 }
 

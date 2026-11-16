@@ -120,10 +120,12 @@ fn arrange(app: &mut QuantickApp, ctx: &egui::Context, arrangement: &Arrangement
         1.0 / arrangement.slots_collapsed.len().max(1) as f32;
         arrangement.slots_collapsed.len()
     ];
-    tab.canvas
-        .restore_context_heights(&shares, arrangement.slots_collapsed);
+    // The folds first, then the stack's, as a restored workspace has them:
+    // opening the context opens a chart folded inside it.
     tab.canvas.fold(false, arrangement.context_collapsed);
     tab.canvas.fold(true, arrangement.flow_collapsed);
+    tab.canvas
+        .restore_context_heights(&shares, arrangement.slots_collapsed);
     run_frame(app, ctx);
     run_frame(app, ctx);
 }

@@ -2597,3 +2597,60 @@ fn the_popover_call_opens_the_window_s_menu_and_reads_its_theme() {
     let menu = &app.chrome.window_menu.tab_workspace;
     assert!(menu.colour.as_ref().is_some_and(|popover| popover.custom));
 }
+
+/// #1057: a stacked chart folded on a saved workspace stays folded through a
+/// switch away and back, in the model, the scene and the painted rail, and
+/// the next capture still matches the save.
+#[test]
+fn a_folded_stacked_chart_survives_a_workspace_switch() {
+    use quantick_control_handlers::layout::LayoutTab as _;
+    let layouts = crate::scratch::ScratchFile::new("workspace-stacked-fold", "layouts.toml");
+    let (mut app, first, _) = two_tabs(&layouts);
+    let tab = app.runtime.tabs.by_id_mut(first).expect("an open tab");
+    tab.set_layout(CanvasLayout::TimeTimeAndFlow);
+    app.runtime.tabs.select(0);
+    frames(&mut app, 4);
+    let tab = app.runtime.tabs.by_id_mut(first).expect("an open tab");
+    let pair = (tab.time_panes[0].id, tab.time_panes[1].id);
+    let agent = quantick_control::wire::ActorKind::Agent;
+    let folded = tab.resize_context_pair(first, pair, 1.0, agent);
+    assert!(matches!(folded, Some(Ok((_, true)))), "{folded:?}");
+    frames(&mut app, 2);
+    let own = app.runtime.workspace.book.tab_row(first).0;
+    let stacked = live_recipe(&app.runtime, first).expect("an open tab");
+    assert_eq!(stacked.context_panes_collapsed, [false, true]);
+    let book = app.runtime.workspace.book.book_mut();
+    book.observe(first, &stacked).expect("held");
+    book.save_as(first, "Stacked").expect("a free name");
+
+    set_tab_workspace(&mut app, first, &own).expect("its own workspace");
+    frames(&mut app, 3);
+    set_tab_workspace(&mut app, first, "Stacked").expect("back");
+    frames(&mut app, 3);
+    let tab = app.runtime.tabs.by_id(first).expect("an open tab");
+    let canvas = &tab.canvas;
+    let slot =
+        quantick_workspace::canvas::seat_slot(&canvas.state, &mut canvas.seats.clone(), Some(1))
+            .expect("the lower chart");
+    assert!(canvas.state.railed().contains(&slot), "the model");
+    let rail = format!("pane_menu.{slot}.rail");
+    assert!(
+        canvas.menus.drawn.iter().any(|control| control.id == rail),
+        "the scene"
+    );
+    let (_, bands) = canvas
+        .context_stack_geometry(&tab.time_panes)
+        .expect("the stack");
+    let painted = bands.panes[1].height();
+    assert!(
+        (painted - crate::canvas_layout::COLLAPSED_PANE_WIDTH_PX).abs() < 0.5,
+        "{painted}"
+    );
+    let live = live_recipe(&app.runtime, first).expect("an open tab");
+    assert_eq!(live.context_panes_collapsed, [false, true], "the capture");
+    assert_eq!(
+        app.runtime.workspace.book.tab_row(first),
+        ("Stacked".to_owned(), false),
+        "the save still holds"
+    );
+}

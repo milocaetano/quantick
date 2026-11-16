@@ -30,7 +30,7 @@ use std::{cell::RefCell, rc::Rc};
 /// The two windows every case runs in: a trading monitor and a laptop.
 const SIZES: [egui::Vec2; 2] = [egui::vec2(1600.0, 1000.0), egui::vec2(1100.0, 650.0)];
 /// The layouts a torn-off market window runs the whole matrix for.
-const TORN_OFF: [&str; 2] = ["time+time+flow", "charts-4"];
+const TORN_OFF: [&str; 4] = ["time+time+flow", "charts-4", "stack2+flow", "stack3+flow"];
 /// How many moves a drag takes between its press and its release.
 const STEPS: usize = 12;
 /// How far two edges may differ and still be one edge.
@@ -946,16 +946,9 @@ fn run_case(case: &Case) -> Vec<String> {
 
 /// Findings that wait on a decision, listed rather than fixed: a layout, a
 /// divider and the start of what remained. Each must still be found, so the
-/// list cannot outlive its finding.
-///
-/// "2 stacked + Flow" folds a stacked chart in the column painter's own
-/// stack, outside the canvas model (#1008 kept it there): the window paints
-/// its rail, but the scene names none and the canvas read says it is open.
-/// Closing that gap means moving the stack's folds into the model.
-const AWAITING_DECISION: [(&str, &str, &str); 2] = [
-    ("stack2+flow", "[0]/0", "the scene lists no rail"),
-    ("stack2+flow", "[0]/0", "the canvas read rails []"),
-];
+/// list cannot outlive its finding. None waits: a stacked chart's fold is the
+/// canvas model's (#1057), so its rail is in the scene and the canvas read.
+const AWAITING_DECISION: [(&str, &str, &str); 0] = [];
 
 /// Which entry of [`AWAITING_DECISION`] `case`'s finding `what` is, if any.
 fn awaiting(case: &Case, what: &str) -> Option<usize> {
@@ -1017,4 +1010,46 @@ fn every_divider_of_every_layout_closes_by_dragging_in_the_main_window() {
 #[test]
 fn every_divider_closes_by_dragging_in_a_torn_off_market_window() {
     run_matrix(&cases(Some(&TORN_OFF), true));
+}
+
+/// A stacked chart folded by its divider, then the context column folded
+/// whole by the column divider, then the column's rail dragged across to
+/// fold the flow pane: the chart folded inside the column stays folded.
+#[test]
+fn a_stacked_fold_outlives_the_column_dragged_edge_to_edge() {
+    let preset = crate::canvas_layout::preset("stack2+flow").expect("a preset");
+    let (mut app, rig) = laid_out(preset, SIZES[0], false);
+    let app = &mut app;
+    let stack = SeamAddress {
+        path: vec![0],
+        index: 0,
+    };
+    let lower = pair_of(rig.tab(app).canvas.state.tree(), &stack)[1][0];
+    let across = |rect: egui::Rect| rect.top() + rect.height() * GRAB_AT;
+    let at = divider(rig.tab(app), &stack).expect("the stack's divider");
+    let canvas = rig.tab(app).canvas.last_canvas;
+    let x = at.center().x;
+    rig.drag(app, at.center(), egui::pos2(x, canvas.bottom() - 1.0));
+    assert!(
+        rig.tab(app).canvas.state.railed().contains(&lower),
+        "folded"
+    );
+    let column = rig
+        .tab(app)
+        .canvas_divider_rect()
+        .expect("the column divider");
+    let y = across(column);
+    let left = egui::pos2(canvas.left() + 1.0, y);
+    rig.drag(app, egui::pos2(column.center().x, y), left);
+    assert_eq!(rig.tab(app).canvas.folds(), (true, false), "the column");
+    let rail = rig
+        .tab(app)
+        .collapsed_rail_rect()
+        .expect("the column's rail");
+    let right = egui::pos2(canvas.right() - 1.0, y);
+    rig.drag(app, egui::pos2(rail.center().x, y), right);
+    let tab = rig.tab(app);
+    assert_eq!(tab.canvas.folds(), (false, true), "the flow pane");
+    assert!(tab.canvas.state.railed().contains(&lower), "still folded");
+    assert!(tab.canvas.pane_collapsed(PaneSide::Time(1)), "drawn folded");
 }

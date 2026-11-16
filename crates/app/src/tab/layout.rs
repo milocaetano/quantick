@@ -120,7 +120,7 @@ impl TabCanvas {
         // arrangement that is *already* selected is exactly how a trader asks
         // for the charts they can see promised in a lit cell — and a return
         // above this line answered that with the rail.
-        self.expand_context_stack();
+        self.context_stack.expand();
         self.seats.clear();
         if layout == previous {
             return None;

@@ -50,12 +50,7 @@ impl Tab {
         }
         let pane = self.time_panes.remove(from_slot);
         self.time_panes.insert(to_slot, pane);
-        if from_slot < self.canvas.context_stack.heights.len()
-            && to_slot < self.canvas.context_stack.heights.len()
-        {
-            let height = self.canvas.context_stack.heights.remove(from_slot);
-            self.canvas.context_stack.heights.insert(to_slot, height);
-        }
+        (self.canvas).on_stack(|stack| stack.move_chart(from_slot, to_slot));
         // Focus follows the pane the trader just moved, so the next command
         // lands on the chart they were working with rather than on whichever
         // one slid into its place.

@@ -139,6 +139,11 @@ pub struct CanvasState {
     /// gives back ([`super::rail`]); only while that rail stands.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(super) reopen: Vec<Reopen>,
+    /// The charts folded inside a side of the flow pane before that side
+    /// folded whole, which its reopening keeps folded ([`super::rail`]);
+    /// only while they stand on the side's rail.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub(super) kept: BTreeSet<PaneSlot>,
     tree: PaneTree,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     floating: Vec<FloatingPane>,
@@ -154,6 +159,7 @@ impl CanvasState {
             minimized: BTreeSet::new(),
             railed: BTreeSet::new(),
             reopen: Vec::new(),
+            kept: BTreeSet::new(),
             tree: preset.tree.clone(),
             floating: Vec::new(),
         }
@@ -206,10 +212,12 @@ impl CanvasState {
         changed
     }
 
-    /// Forget what a fold took for every rail that no longer stands.
+    /// Forget what a fold took, and the inner folds a side kept, for every
+    /// rail that no longer stands.
     fn prune_reopen(&mut self) {
         let railed = &self.railed;
         self.reopen.retain(|reopen| railed.contains(&reopen.folded));
+        self.kept.retain(|slot| railed.contains(slot));
     }
 
     /// Whether `slot` is folded, to its strip or to a rail.
@@ -341,6 +349,7 @@ impl CanvasState {
         self.minimized.clear();
         self.railed.clear();
         self.reopen.clear();
+        self.kept.clear();
         changed
     }
 
@@ -728,6 +737,8 @@ struct Stored {
     railed: BTreeSet<PaneSlot>,
     #[serde(default)]
     reopen: Vec<Reopen>,
+    #[serde(default)]
+    kept: BTreeSet<PaneSlot>,
     tree: PaneTree,
     #[serde(default)]
     floating: Vec<FloatingPane>,
@@ -741,6 +752,7 @@ impl From<Stored> for CanvasState {
             minimized: stored.minimized,
             railed: stored.railed,
             reopen: stored.reopen,
+            kept: stored.kept,
             tree: stored.tree,
             floating: stored.floating,
         };

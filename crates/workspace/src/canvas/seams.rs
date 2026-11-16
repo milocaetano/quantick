@@ -572,6 +572,8 @@ impl CanvasState {
         // A column fold is the save's own two flags: rebuilt, not carried.
         let (context, flow) = state.flow_side_folds();
         let rebuilt = Self::from_preset_split(preset, Some(split)).with_folds(context, flow);
+        // So are the stack's: the save's stack flags rebuild them.
+        let rebuilt = rebuilt.with_stack_folds(&state.stack_folds());
         let plain = columns && state == rebuilt;
         (!plain).then_some(state)
     }
