@@ -192,11 +192,7 @@ impl ChartPane {
     }
 
     pub(crate) fn series_read(&self) -> gesture::PaneSeriesRead<'_> {
-        gesture::PaneSeriesRead {
-            history_prefix: &self.series.history_prefix,
-            state: &self.series.state,
-            spec: &self.spec,
-        }
+        self.series.read(&self.spec)
     }
     /// The layer answers — see [`layers::PaneLayerRead`].
     pub(crate) fn layer_read(&self) -> layers::PaneLayerRead<'_> {
