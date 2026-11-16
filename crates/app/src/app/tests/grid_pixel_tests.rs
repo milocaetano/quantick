@@ -269,7 +269,7 @@ fn the_time_labels_are_laid_out_once_per_pane_and_frame() {
     let ctx = egui::Context::default();
     ctx.set_pixels_per_point(1.5);
     let mut app = fixture(&ctx, quantick_appearance::LIGHT);
-    let runs = || crate::pane::tests::TIME_MARK_RUNS.with(std::cell::Cell::get);
+    let runs = crate::pane::ChartPane::time_mark_layouts;
     let before = runs();
     let output = run_frame(&mut app, &ctx);
     let painted = SIDES

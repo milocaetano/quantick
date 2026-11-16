@@ -193,8 +193,19 @@ fn the_jump_to_live_chip_shows_only_its_hand() {
     let slots = pane.slots();
     pane.model.viewport.pan_pixels(200.0, slots);
     run_frame(&mut app, &ctx);
-    run_frame(&mut app, &ctx);
-    let chip = crate::pane::tests::live_chip_rect(history);
+    let painted = run_frame(&mut app, &ctx);
+    // The chip where the frame painted it: its label, centred on the chip.
+    let chip = painted
+        .shapes
+        .iter()
+        .find_map(|clipped| match &clipped.shape {
+            egui::Shape::Text(text) if text.galley.text() == "» live" => {
+                Some(text.visual_bounding_rect())
+            }
+            _ => None,
+        })
+        .expect("panned into history, the strip offers the way back");
+    assert!(history.contains_rect(chip), "the chip sits on the strip");
     let output = hover(&mut app, &ctx, chip.center());
     assert_eq!(
         output.platform_output.cursor_icon,
