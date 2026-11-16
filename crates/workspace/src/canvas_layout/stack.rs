@@ -10,14 +10,30 @@ use super::{
     CANVAS_DIVIDER_PX, COLLAPSE_AT_PX, COLLAPSED_PANE_WIDTH_PX, MAX_CONTEXT_PANES,
     MIN_PANE_WIDTH_PX, PaneWidth, split,
 };
-use crate::canvas::CanvasRect;
+use crate::canvas::{CanvasRect, Hand};
 
 /// One tab's stacked context charts.
 #[derive(Debug, Default)]
 pub struct ContextStack {
     pub heights: Vec<PaneWidth>,
     pub frame: Option<StackFrame>,
+    /// The hand on a divider, while one is held.
+    hold: Option<StackHold>,
 }
+
+/// A hand on the divider below chart `index`: where the divider stood at
+/// the press, the pointer's travel since, and the heights then.
+#[derive(Debug)]
+struct StackHold {
+    index: usize,
+    at: f32,
+    travel: f32,
+    heights: Vec<PaneWidth>,
+}
+
+/// How far from its press a hand may be let go and still count as back
+/// where it started.
+const BACK_PX: f32 = 0.5;
 
 /// Where the stack was last drawn and which charts it held, top to bottom.
 #[derive(Debug)]
@@ -123,6 +139,36 @@ impl ContextStack {
         let share = |slot: usize| shares.get(slot).copied().filter(|share| *share > 0.0);
         let shares = [share(0).unwrap_or(0.5), share(1).unwrap_or(0.5)];
         self.restore(&shares, &[upper, !upper]);
+    }
+
+    /// The hand on the divider below chart `index`, drawn centred at `at`,
+    /// one frame: the boundary it asks for, the divider's place at the press
+    /// plus the pointer's travel since, so a grab off the divider's centre
+    /// never jumps it; `None` on a frame it did not move. Let go back where
+    /// it was pressed, the heights are as they were at the press.
+    pub fn hand(&mut self, index: usize, hand: Hand, at: f32) -> Option<f32> {
+        let ours = |hold: &StackHold| hold.index == index;
+        if hand.pressed || (hand.held && !self.hold.as_ref().is_some_and(ours)) {
+            let heights = self.heights.clone();
+            let travel = 0.0;
+            self.hold = Some(StackHold {
+                index,
+                at,
+                travel,
+                heights,
+            });
+        }
+        if hand.released
+            && let Some(hold) = self.hold.take_if(|hold| ours(hold))
+            && hold.travel.abs() < BACK_PX
+        {
+            self.heights = hold.heights;
+        }
+        let hold = self.hold.as_mut().filter(|hold| ours(hold) && hand.held)?;
+        (hand.delta.abs() > f32::EPSILON && hand.delta.is_finite()).then(|| {
+            hold.travel += hand.delta;
+            hold.at + hold.travel
+        })
     }
 
     /// Which boundary of the drawn stack `request` names.
