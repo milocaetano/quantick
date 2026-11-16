@@ -585,19 +585,13 @@ impl QuantickApp {
                 );
             self.surfaces.strategy_popup.update(SettleArm(outcome));
         }
-        let mut undo = false;
         for effect in asks.model_effects {
-            match effect {
-                HostEffect::MarketPalette(Some(request)) => apply_palette_intent(self, request),
-                HostEffect::Toast(effects) => undo |= effects.undo_drawing,
-                _ => {}
+            if let HostEffect::MarketPalette(Some(request)) = effect {
+                apply_palette_intent(self, request);
             }
         }
         if let Some(change) = asks.footprint {
             self.layer_wiring().apply_footprint_change(change);
-        }
-        if undo {
-            self.active_tab_mut().undo_drawing();
         }
     }
 

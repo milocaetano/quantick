@@ -239,6 +239,11 @@ pub(super) fn draw_surfaces(
             quantick_ui_model::HostEffect::BarSwitch(Some(request)) => {
                 apply_bar_switch(tabs, &mut registry.toast, request)
             }
+            // The host owns the drawing stack, and the sweep of any strategy
+            // the undo leaves orphaned.
+            quantick_ui_model::HostEffect::Toast(toast) if toast.undo_drawing => {
+                tabs.runtime_mut(tabs.active_index()).undo_drawing()
+            }
             other => retained.push(other),
         }
     }
