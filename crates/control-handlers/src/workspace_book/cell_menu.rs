@@ -197,12 +197,13 @@ impl CellRow {
         }
     }
 
-    /// What hovering the row says: why it is greyed while it is, else what it
-    /// does, else its whole label when `cut` short.
+    /// What hovering the row says: why it is greyed while it is (its fixed
+    /// reason, else its own tip), else what it does, else its whole label
+    /// when `cut` short.
     #[must_use]
     pub fn tip(&self, cut: bool) -> Option<&str> {
         if self.unavailable.is_some() {
-            return self.disabled_hover;
+            return self.disabled_hover.or(self.tip.as_deref());
         }
         let tip = self.tip.as_deref().or(self.hover);
         tip.or_else(|| cut.then_some(self.label.as_str()))
