@@ -107,7 +107,11 @@ fn leading_overlay_preserves_hooks_capture_and_actual_toast_interleaving() {
     );
     assert_eq!(
         response.model_effects,
-        vec![HostEffect::First((3, 10)), HostEffect::Second((8, 17))]
+        vec![
+            HostEffect::First((3, 10)),
+            HostEffect::Second((8, 17)),
+            HostEffect::Toast(quantick_ui_model::toast::Effects { undo_drawing: true })
+        ]
     );
     registry.phase_trace.as_mut().unwrap().clear();
     let _ = ctx.run(Default::default(), |ctx| {
@@ -280,6 +284,10 @@ fn leading_effect_wins_and_real_toast_undo_survives_the_same_overlay_fold() {
     );
     assert_eq!(
         response.model_effects,
-        vec![HostEffect::First((5, 10)), HostEffect::Second((8, 17))]
+        vec![
+            HostEffect::First((5, 10)),
+            HostEffect::Toast(quantick_ui_model::toast::Effects { undo_drawing: true }),
+            HostEffect::Second((8, 17))
+        ]
     );
 }
