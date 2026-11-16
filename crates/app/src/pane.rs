@@ -101,7 +101,7 @@ pub use quantick_drawings::gesture::{DRAWING_ANCHOR_RADIUS_PX, DrawingDrag};
 use crate::pointer_compass::PointerCompass;
 
 #[cfg(test)]
-pub(crate) mod tests;
+mod tests;
 
 #[cfg(test)]
 #[path = "pane/tests/lane_transport_tests.rs"]
