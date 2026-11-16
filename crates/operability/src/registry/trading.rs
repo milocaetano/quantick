@@ -3,7 +3,7 @@
 //! Read [`super`] first: it says why the rows are written, how they are
 //! joined, and what the drift guard does with them.
 
-use super::{ExclusionClass, Mapping, Source, UiBehaviour};
+use super::{Mapping, Source, UiBehaviour};
 
 /// Every row this family owns.
 pub(super) const ROWS: &[UiBehaviour] = &[
@@ -120,12 +120,7 @@ pub(super) const ROWS: &[UiBehaviour] = &[
         title: "Close the position and cancel every working order",
         reach: "Trading panel, Shift+F",
         keys: &[(Source::Hotkey, "PAPER_FLATTEN_SHORTCUT")],
-        mapping: excluded!(
-            PendingCapability,
-            "`trade.order.place` and `trade.order.cancel` do the two halves, and a caller that \
-             runs them in sequence is not flat between them. The one-shot has no capability. \
-             Tracked in issue 401"
-        ),
+        mapping: capability!("trade.position.flatten"),
     },
     UiBehaviour {
         id: "trade.position.reverse",
@@ -135,11 +130,7 @@ pub(super) const ROWS: &[UiBehaviour] = &[
             (Source::Hotkey, "PAPER_REVERSE_SHORTCUT"),
             (Source::ToolbarAction, "PaperReverse"),
         ],
-        mapping: excluded!(
-            PendingCapability,
-            "no capability reverses; a caller would have to size the flip itself from a read \
-             that may already be stale. Tracked in issue 401"
-        ),
+        mapping: capability!("trade.position.reverse"),
     },
     UiBehaviour {
         id: "trade.ticket.risk.set",

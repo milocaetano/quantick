@@ -115,8 +115,8 @@ key and lost-reply proofs live in `crates/mcp/tests/fake_gateway.rs`.
 | deduplicated per connection | 91 |
 | key refused; not retryable, read back | 17 |
 | key required; deduplicated per connection | 19 |
-| refused before dispatch: no grant reaches it | 7 |
-| **Total** | **134** |
+| refused before dispatch: no grant reaches it | 9 |
+| **Total** | **136** |
 
 ## Capabilities
 
@@ -242,6 +242,8 @@ key and lost-reply proofs live in `crates/mcp/tests/fake_gateway.rs`.
 | `trade.order.bracket` | 1 | forbidden | refused before dispatch: no grant reaches it | none (`trader` ceiling) | `snapshot.read` `session.paper` (also needs `observe.paper`) | `tabs[].working_orders[].stop_loss` | the named order carries the stop and target asked for | `no_production_grant_reaches_a_trade_capability_keyed_or_not` |
 | `trade.order.cancel` | 1 | forbidden | refused before dispatch: no grant reaches it | none (`trader` ceiling) | `snapshot.read` `session.paper` (also needs `observe.paper`) | `tabs[].working_orders[].order_id` | the named order is no longer working | `no_production_grant_reaches_a_trade_capability_keyed_or_not` |
 | `trade.order.place` | 1 | forbidden | refused before dispatch: no grant reaches it | none (`trader` ceiling) | `snapshot.read` `session.paper` (also needs `observe.paper`) | `tabs[].working_orders[].order_id` | an order the pre-call reading lacked is working, or a position opened | `no_production_grant_reaches_a_trade_capability_keyed_or_not` |
+| `trade.position.flatten` | 1 | forbidden | refused before dispatch: no grant reaches it | none (`trader` ceiling) | `snapshot.read` `session.paper` (also needs `observe.paper`) | `tabs[].working_order_count` | no position is open and no order is working | `no_production_grant_reaches_a_trade_capability_keyed_or_not` |
+| `trade.position.reverse` | 1 | forbidden | refused before dispatch: no grant reaches it | none (`trader` ceiling) | `snapshot.read` `session.paper` (also needs `observe.paper`) | `tabs[].position.side` | the position's side is the opposite of the pre-call reading | `no_production_grant_reaches_a_trade_capability_keyed_or_not` |
 | `trade.risk.set` | 1 | optional | refused before dispatch: no grant reaches it | none (`trader` ceiling) | `snapshot.read` `session.paper` (also needs `observe.paper`) | `tabs[].risk_state` | the ticket's risk state follows the basis asked for | `no_production_grant_reaches_a_trade_capability_keyed_or_not` |
 | `trade.ruler.set` | 1 | optional | refused before dispatch: no grant reaches it | none (`trader` ceiling) | `snapshot.read` `session.paper` (also needs `observe.paper`) | `tabs[].ruler_ticks` | the ruler stands at the distance the call answered with | `a_dropped_trade_shaping_answer_is_replayed_and_the_ticket_changes_once`, `no_production_grant_reaches_a_trade_capability_keyed_or_not` |
 | `trade.strategy.select` | 1 | optional | refused before dispatch: no grant reaches it | none (`trader` ceiling) | `snapshot.read` `session.paper` (also needs `observe.paper`) | `tabs[].armed_strategy` | the ticket is armed with the strategy asked for | `no_production_grant_reaches_a_trade_capability_keyed_or_not` |
@@ -257,4 +259,4 @@ key and lost-reply proofs live in `crates/mcp/tests/fake_gateway.rs`.
 | `workspace.save_as` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `workspace.saved` | `payload.workspace` | an event after the pre-call cursor names the new workspace | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `workspace.save_to` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `workspace.saved` | `payload.workspace` | an event after the pre-call cursor names the tab's workspace | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 
-134 mutable capabilities registered, 134 with a readback.
+136 mutable capabilities registered, 136 with a readback.

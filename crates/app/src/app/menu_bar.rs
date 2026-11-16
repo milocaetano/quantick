@@ -16,6 +16,7 @@ use crate::{chart_layers::shortcuts, tabstrip::TabAction, timezone::TzOffset};
 use crate::{surfaces::ChartSettingsTab::Candles, surfaces::MarketPaletteSurface};
 use eframe::egui;
 use quantick_control_schema::settings_sections::SettingsSection;
+use quantick_session::paper::TradeCommand;
 use quantick_session::{close_queue::CloseScope, workspace_menu::WorkspaceCommand};
 use quantick_ui_model::access_panel::Intent as AccessPanelIntent;
 use quantick_ui_model::market_palette::Intent as PaletteIntent;
@@ -366,15 +367,10 @@ impl QuantickApp {
             MenuCommand::SetSaveOnExit(save_on_exit) => {
                 super::desk_wiring::write_reopen(self.workspace_save_adapter(), save_on_exit);
             }
-            MenuCommand::PaperMarket(side) => self.active_tab_mut().paper.market(side),
-            MenuCommand::PaperReverse => self.active_tab_mut().paper.reverse_position(),
-            MenuCommand::PaperFlatten => self.active_tab_mut().paper.flatten(),
-            MenuCommand::PaperCancelAll => {
-                self.active_tab_mut()
-                    .paper
-                    .account_mut()
-                    .cancel_all_orders();
-            }
+            MenuCommand::PaperMarket(side) => self.trade(TradeCommand::Market { side }),
+            MenuCommand::PaperReverse => self.trade(TradeCommand::Reverse),
+            MenuCommand::PaperFlatten => self.trade(TradeCommand::Flatten),
+            MenuCommand::PaperCancelAll => self.trade(TradeCommand::CancelAll),
             MenuCommand::SetToolboxDock(dock) => self.surfaces.toolrail.set_dock(dock),
             MenuCommand::ToggleToolbox => self.surfaces.toolrail.toggle_visible(),
             MenuCommand::OpenDockTab(tab) => self.surfaces.dock.open_tab(tab),

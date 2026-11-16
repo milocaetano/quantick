@@ -28674,6 +28674,310 @@
         "status": "available"
       },
       "confirmation_class": "none",
+      "description": "Exits the open position at the next print and removes every working order, in one call, so the account is never half-flat between two calls. Risk-reducing: it only ever takes exposure off. Flat with nothing working, it changes nothing.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "trade",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "trade.position.flatten",
+      "idempotency": "forbidden",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "The one-shot position calls take nothing: the position is the account's.",
+        "title": "PositionInput",
+        "type": "object"
+      },
+      "module": "trade",
+      "output_schema": {
+        "$defs": {
+          "WorkingOrderView": {
+            "description": "One working order, as a caller reads it back.",
+            "properties": {
+              "kind": {
+                "type": "string"
+              },
+              "order_id": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "price": {
+                "description": "Resting price, absent only for an order that has none.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "quantity": {
+                "type": "string"
+              },
+              "side": {
+                "type": "string"
+              },
+              "stop_loss": {
+                "description": "The protective stop riding this order, armed on its fill.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "take_profit": {
+                "description": "The protective target riding this order; see `stop_loss`.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "order_id",
+              "side",
+              "kind",
+              "quantity"
+            ],
+            "type": "object"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "What every `trade.*` action answers with.\n\n`accepted` is the one field a caller must read. A refusal is not an\nerror return here for the same reason it is not one in the venue port:\nthe venue's messages are written to teach, and a result that carried\nonly a status code would throw away the sentence that says what to do\ninstead.",
+        "properties": {
+          "accepted": {
+            "description": "Whether the venue took the request.",
+            "type": "boolean"
+          },
+          "mark_price": {
+            "description": "The last price the venue had been shown when this call landed.\n\nEvery refusal in this family is a statement about a price relative to\nthe market, so a caller that got one needs the market to understand\nit — and a caller that got an acceptance needs it to know what its\norder is resting away from. Absent before the first print, which is\nalso when nothing can be placed.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "order_id": {
+            "description": "The order this call is about, once the venue has named it.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "rejected_because": {
+            "description": "The venue's own words when it did not. Absent when it did.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ruler_ticks": {
+            "description": "How far the aim's ruler stands from an entry, in ticks; zero when it\nis not in use.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "selected_strategy": {
+            "description": "The named exit ladder the ticket is set to, if any. Every call in\nthis family reports it, because it is what the *next* order will\ncarry and a caller that placed one needs to know which ladder it\njust armed.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "simulated": {
+            "description": "A reminder in every result: these fills are simulated.",
+            "type": "boolean"
+          },
+          "working_orders": {
+            "description": "Every order working after the call, so a caller never has to guess\nwhat the account looks like now.",
+            "items": {
+              "$ref": "#/$defs/WorkingOrderView"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "accepted",
+          "working_orders",
+          "ruler_ticks",
+          "simulated"
+        ],
+        "title": "TradeResult",
+        "type": "object"
+      },
+      "persistence": "transient",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "trade"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": true,
+      "stale_input_safety": "Names no order and no size: it flattens whatever the account holds when it lands, so a caller working from a stale read still ends flat.",
+      "title": "Go flat: close the position and cancel every working order",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Flips the open position in one market order for twice its size, protected by the ticket's offsets for the new side. The opening leg is measured by the risk per trade like any entry and refused with its sentence. Refused while flat: there is nothing to reverse.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "trade",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "trade.position.reverse",
+      "idempotency": "forbidden",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "The one-shot position calls take nothing: the position is the account's.",
+        "title": "PositionInput",
+        "type": "object"
+      },
+      "module": "trade",
+      "output_schema": {
+        "$defs": {
+          "WorkingOrderView": {
+            "description": "One working order, as a caller reads it back.",
+            "properties": {
+              "kind": {
+                "type": "string"
+              },
+              "order_id": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "price": {
+                "description": "Resting price, absent only for an order that has none.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "quantity": {
+                "type": "string"
+              },
+              "side": {
+                "type": "string"
+              },
+              "stop_loss": {
+                "description": "The protective stop riding this order, armed on its fill.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "take_profit": {
+                "description": "The protective target riding this order; see `stop_loss`.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "order_id",
+              "side",
+              "kind",
+              "quantity"
+            ],
+            "type": "object"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "What every `trade.*` action answers with.\n\n`accepted` is the one field a caller must read. A refusal is not an\nerror return here for the same reason it is not one in the venue port:\nthe venue's messages are written to teach, and a result that carried\nonly a status code would throw away the sentence that says what to do\ninstead.",
+        "properties": {
+          "accepted": {
+            "description": "Whether the venue took the request.",
+            "type": "boolean"
+          },
+          "mark_price": {
+            "description": "The last price the venue had been shown when this call landed.\n\nEvery refusal in this family is a statement about a price relative to\nthe market, so a caller that got one needs the market to understand\nit — and a caller that got an acceptance needs it to know what its\norder is resting away from. Absent before the first print, which is\nalso when nothing can be placed.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "order_id": {
+            "description": "The order this call is about, once the venue has named it.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "rejected_because": {
+            "description": "The venue's own words when it did not. Absent when it did.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ruler_ticks": {
+            "description": "How far the aim's ruler stands from an entry, in ticks; zero when it\nis not in use.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "selected_strategy": {
+            "description": "The named exit ladder the ticket is set to, if any. Every call in\nthis family reports it, because it is what the *next* order will\ncarry and a caller that placed one needs to know which ladder it\njust armed.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "simulated": {
+            "description": "A reminder in every result: these fills are simulated.",
+            "type": "boolean"
+          },
+          "working_orders": {
+            "description": "Every order working after the call, so a caller never has to guess\nwhat the account looks like now.",
+            "items": {
+              "$ref": "#/$defs/WorkingOrderView"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "accepted",
+          "working_orders",
+          "ruler_ticks",
+          "simulated"
+        ],
+        "title": "TradeResult",
+        "type": "object"
+      },
+      "persistence": "transient",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "trade"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "The size is the account's at the moment the call lands, never a size the caller read earlier. Not safe to retry: a second reversal flips the position back.",
+      "title": "Reverse the simulated position",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
       "description": "Says what one trade may lose - a fixed amount, or a share of the capital declared for the instrument's currency - and whether an entry whose stop risks more than that is refused. Shapes the size the next order would carry; changes no order that exists and never touches an open position.",
       "destructive": false,
       "dry_run_supported": false,

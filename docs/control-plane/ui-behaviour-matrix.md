@@ -42,10 +42,10 @@ The three exclusion classes are closed:
 
 | Outcome | Behaviours |
 | --- | --- |
-| Reachable by capability | 135 |
+| Reachable by capability | 137 |
 | Excluded: `authority` | 4 |
 | Excluded: `ui_only_by_decision` | 7 |
-| Excluded: `pending_capability` | 43 |
+| Excluded: `pending_capability` | 41 |
 | **Total** | **189** |
 
 100 of the 189 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 89 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
@@ -163,8 +163,8 @@ The three exclusion classes are closed:
 | `trade.order.place_at_price` | Rest an order at the price under the pointer | the canvas right-click menu's trade section | `trade.order.place` | — |
 | `trade.orders.cancel_all` | Cancel every working order without trading | Trading panel, Shift+X | `trade.order.cancel` | — |
 | `trade.position.close` | Exit the open position at the next print | toolbar trade group, Trading panel | `trade.order.place` | — |
-| `trade.position.flatten` | Close the position and cancel every working order | Trading panel, Shift+F | — | `pending_capability` — `trade.order.place` and `trade.order.cancel` do the two halves, and a caller that runs them in sequence is not flat between them. The one-shot has no capability. Tracked in issue 401 |
-| `trade.position.reverse` | Reverse the simulated position | toolbar trade group, Trading panel, Shift+R | — | `pending_capability` — no capability reverses; a caller would have to size the flip itself from a read that may already be stale. Tracked in issue 401 |
+| `trade.position.flatten` | Close the position and cancel every working order | Trading panel, Shift+F | `trade.position.flatten` | — |
+| `trade.position.reverse` | Reverse the simulated position | toolbar trade group, Trading panel, Shift+R | `trade.position.reverse` | — |
 | `trade.ticket.risk.set` | Say what one trade may lose | the Trading panel's risk section | `trade.risk.set` | — |
 | `trade.ticket.ruler.set` | Walk the projected stop and target out from the aim | the ruler wheel on the chart's aim | `trade.ruler.set` | — |
 | `trade.ticket.strategy.select` | Choose the ticket's exit ladder | the Trading panel's strategy selector | `trade.strategy.select` | — |
