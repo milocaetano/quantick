@@ -79,7 +79,7 @@ pub use column::{ColumnFrame, column_frame};
 pub use named::{CanvasLayout, recipe_canvas};
 pub use split::{Span, Split, split};
 pub use stack::{
-    ContextPairResult, ContextResizeError, ContextStack, ResizeContextPair, StackFrame,
+    ContextPairResult, ContextResizeError, ContextStack, ResizeContextPair, StackFrame, on_stack,
 };
 
 /// Most context panes one tab may stack beside the flow pane.

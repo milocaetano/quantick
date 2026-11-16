@@ -133,18 +133,34 @@ fn a_stacked_chart_folds_in_the_model_and_the_columns_still_draw() {
     let preset = layout("stack2+flow");
     let (mut state, slots) = stacked("stack2+flow");
     assert!(state.rail_stack(&slots, &[true, false]));
-    assert_eq!(state.railed().iter().copied().collect::<Vec<_>>(), [slots[0]]);
+    assert_eq!(
+        state.railed().iter().copied().collect::<Vec<_>>(),
+        [slots[0]]
+    );
     assert!(state.column_painted(preset, true), "the columns draw it");
     assert_eq!(state.flow_side_folds(), (false, false), "no column fold");
-    assert_eq!(state.saved_form(preset, 0.4, true), None, "rebuilt from flags");
+    assert_eq!(
+        state.saved_form(preset, 0.4, true),
+        None,
+        "rebuilt from flags"
+    );
     assert!(!state.rail_stack(&slots, &[true, false]), "again: nothing");
-    assert!(!state.rail_stack(&slots, &[true, true]), "never the stack whole");
+    assert!(
+        !state.rail_stack(&slots, &[true, true]),
+        "never the stack whole"
+    );
     assert!(state.rail_stack(&slots, &[false, true]));
-    assert_eq!(state.railed().iter().copied().collect::<Vec<_>>(), [slots[1]]);
+    assert_eq!(
+        state.railed().iter().copied().collect::<Vec<_>>(),
+        [slots[1]]
+    );
 
     // The column folded whole is the column's fold, which the stack leaves.
     assert!(state.fold_flow_side(false, true));
-    assert!(!state.rail_stack(&slots, &[false, false]), "the column's own");
+    assert!(
+        !state.rail_stack(&slots, &[false, false]),
+        "the column's own"
+    );
     assert_eq!(state.flow_side_folds(), (true, false));
 }
 
@@ -165,7 +181,10 @@ fn a_stacked_fold_outlives_the_flow_fold_and_opens_by_name() {
     let drag = Hand::of([false, true, true], -900.0);
     assert!(state.column_hand((&mut hold, &mut split), drag, (1592.0, 1600.0)));
     assert_eq!(state.flow_side_folds(), (false, false), "the flow opened");
-    assert!(state.railed().contains(&slots[1]), "the stacked chart did not");
+    assert!(
+        state.railed().contains(&slots[1]),
+        "the stacked chart did not"
+    );
     assert!(state.restore(slots[1]).unwrap());
     assert!(state.railed().is_empty());
     state.rail_stack(&slots, &[true, false]);
@@ -186,6 +205,9 @@ fn a_chart_of_three_stacked_folds_on_the_tree() {
     state
         .step_seam_drag(&mut held, (&seam, -900.0, true), AREA)
         .unwrap();
-    assert_eq!(state.railed().iter().copied().collect::<Vec<_>>(), [slots[0]]);
+    assert_eq!(
+        state.railed().iter().copied().collect::<Vec<_>>(),
+        [slots[0]]
+    );
     assert_eq!(state.flow_side_folds(), (false, false));
 }

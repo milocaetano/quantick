@@ -7,6 +7,7 @@ use super::metrics::{COLLAPSE_AT_PX, COLLAPSED_PANE_WIDTH_PX, MIN_PANE_WIDTH_PX}
 use super::presets::{LayoutPreset, PaneKind};
 use super::rail::Hand;
 use super::state::CanvasState;
+use super::tree::PaneSlot;
 
 /// The kind of pane a switch from `previous` to `next` reveals, which takes
 /// the focus: the pane that just appeared is the one the trader asked to work
@@ -51,6 +52,22 @@ impl CanvasState {
             && self.one_side_railed()
             && self.preset() == Some(preset)
     }
+
+    /// Give the model the folds of the column painter's stack, `folded[i]`
+    /// for chart `slots[i]`. The model folding the whole stack is the
+    /// column's own fold, and the stack never folds whole by itself: either
+    /// leaves the model as it is. Answers whether anything changed.
+    pub fn rail_stack(&mut self, slots: &[PaneSlot], folded: &[bool]) -> bool {
+        let whole = slots.iter().all(|slot| self.railed().contains(slot));
+        if whole || folded.iter().all(|folded| *folded) {
+            return false;
+        }
+        let mut changed = false;
+        for (slot, folded) in slots.iter().zip(folded) {
+            changed |= self.set_railed(&[*slot], *folded);
+        }
+        changed
+    }
 }
 
 /// The column painter's divider or rail drag in flight: where the divider
@@ -94,7 +111,10 @@ impl CanvasState {
             held.travel += hand.delta;
             let asked = column_drag(held.at + held.travel, width, held.from);
             if let ColumnDrag::Open(fraction) = asked {
-                changed = self.fold_flow_side(false, false) | self.fold_flow_side(true, false);
+                // Only a side folded whole opens: a stacked chart stays.
+                let (context, flow) = self.flow_side_folds();
+                changed = (context && self.fold_flow_side(false, false))
+                    | (flow && self.fold_flow_side(true, false));
                 *split = fraction;
             } else if asked != ColumnDrag::Hold {
                 *split = held.split;

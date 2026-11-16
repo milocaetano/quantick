@@ -3,14 +3,16 @@
 //! drag and a remote caller share, with its floors.
 //!
 //! Height choices survive layouts that hide the stack; the drawn frame only
-//! describes a stack on screen, so an action can refuse a stale one.
+//! describes a stack on screen, so an action can refuse a stale one. Which
+//! chart is folded is the canvas model's: [`on_stack`] runs every change of
+//! the stack folded as the model says and gives the model the folds it left.
 
 use super::split::{Span, centre};
 use super::{
     CANVAS_DIVIDER_PX, COLLAPSE_AT_PX, COLLAPSED_PANE_WIDTH_PX, MAX_CONTEXT_PANES,
-    MIN_PANE_WIDTH_PX, PaneWidth, split,
+    MIN_PANE_WIDTH_PX, PaneWidth, resolve_shares, split,
 };
-use crate::canvas::{CanvasRect, Hand};
+use crate::canvas::{CanvasRect, CanvasState, Hand, PaneSlot, Seats};
 
 /// One tab's stacked context charts.
 #[derive(Debug, Default)]
@@ -94,21 +96,64 @@ impl ContextStack {
             .collect()
     }
 
-    /// Reopen every folded chart at the height it had; a folded pair gives
-    /// its partner back the rest.
+    /// Reopen every folded chart at the height it had ([`Self::open`]).
     pub fn expand(&mut self) {
-        let folded = (self.heights.iter().enumerate()).find_map(|(slot, height)| match *height {
-            PaneWidth::Collapsed { restore } => Some((slot, restore)),
-            _ => None,
-        });
-        if let (2, Some((slot, restore))) = (self.heights.len(), folded) {
-            self.heights[slot] = PaneWidth::Manual(restore);
+        (0..self.heights.len()).for_each(|slot| self.open(slot));
+    }
+
+    /// Reopen chart `slot` at the height it had, if folded; a folded pair
+    /// gives its partner back the rest.
+    fn open(&mut self, slot: usize) {
+        let Some(PaneWidth::Collapsed { restore }) = self.heights.get(slot).copied() else {
+            return;
+        };
+        self.heights[slot] = PaneWidth::Manual(restore);
+        if self.heights.len() == 2 {
             self.heights[1 - slot] = PaneWidth::Manual(1.0 - restore);
+        }
+    }
+
+    /// Hold at least `count` charts, a new one sized automatically.
+    pub fn at_least(&mut self, count: usize) {
+        if self.heights.len() < count {
+            self.heights.resize(count, PaneWidth::Auto);
+        }
+    }
+
+    /// Move chart `from` to `to`, its height going with it.
+    pub fn move_chart(&mut self, from: usize, to: usize) {
+        if from < self.heights.len() && to < self.heights.len() {
+            let height = self.heights.remove(from);
+            self.heights.insert(to, height);
+        }
+    }
+
+    /// Fold the charts as the canvas model folds them, `folded[i]` for
+    /// chart `i`: one the model rails folds at the share it holds, a pair's
+    /// partner taking the rest; one the model opened reopens at the height it
+    /// had ([`Self::open`]). The model folding every chart is the column's
+    /// fold, which leaves the stack as it is.
+    pub fn follow(&mut self, folded: &[bool]) {
+        let count = folded.len().min(self.heights.len());
+        if folded[..count].iter().all(|folded| *folded) {
             return;
         }
-        for height in &mut self.heights {
-            if let PaneWidth::Collapsed { restore } = *height {
-                *height = PaneWidth::Manual(restore);
+        let px = self.frame.as_ref().map_or(0.0, |frame| frame.column.h);
+        let mut shares = [0.0_f32; MAX_CONTEXT_PANES];
+        resolve_shares(&self.heights[..count], px, &mut shares[..count]);
+        for (slot, folded) in folded[..count].iter().enumerate() {
+            match (*folded, self.heights[slot]) {
+                (true, PaneWidth::Collapsed { .. })
+                | (false, PaneWidth::Auto | PaneWidth::Manual(_)) => {}
+                (true, _) => {
+                    self.heights[slot] = PaneWidth::Collapsed {
+                        restore: shares[slot],
+                    };
+                    if count == 2 {
+                        self.heights[1 - slot] = PaneWidth::Auto;
+                    }
+                }
+                (false, PaneWidth::Collapsed { .. }) => self.open(slot),
             }
         }
     }
@@ -210,6 +255,13 @@ impl ContextStack {
         // Height buys the pane-local footer too, so it cannot eat the chart's floor.
         let floor = MIN_PANE_WIDTH_PX + footer_px;
         let previous_y = centre(dividers[index]);
+        // A fold by the hand keeps the boundary its press found on an open
+        // pair, not the floor the drag passed.
+        let open_at_press = |hold: &&StackHold| {
+            let open = |slot: usize| hold.heights.get(slot).is_some_and(|at| !at.is_collapsed());
+            hold.index == index && open(index) && open(index + 1)
+        };
+        let kept_y = (self.hold.as_ref().filter(open_at_press)).map_or(previous_y, |hold| hold.at);
         let fraction = |y: f32| (y - column.y) / column.h;
         if pair_height < floor + COLLAPSED_PANE_WIDTH_PX {
             return Ok(ContextPairResult {
@@ -228,11 +280,11 @@ impl ContextStack {
         let collapse_lower = pair_bottom - wanted_y < COLLAPSE_AT_PX;
         let open = !upper.is_collapsed() && !lower.is_collapsed();
         if collapse_upper && open {
-            let restore = (previous_y - pair_top) / column.h;
+            let restore = (kept_y - pair_top) / column.h;
             self.heights[index] = PaneWidth::Collapsed { restore };
             self.heights[index + 1] = PaneWidth::Manual(pair_share - collapsed_share(index));
         } else if collapse_lower && open {
-            let restore = (pair_bottom - previous_y) / column.h;
+            let restore = (pair_bottom - kept_y) / column.h;
             self.heights[index] = PaneWidth::Manual(pair_share - collapsed_share(index + 1));
             self.heights[index + 1] = PaneWidth::Collapsed { restore };
         } else if !collapse_upper && !collapse_lower {
@@ -258,4 +310,44 @@ impl ContextStack {
             changed,
         })
     }
+}
+
+/// The column painter's stack and the canvas model as one: `op` runs on
+/// `stack` folded as `state` folds the charts `seats` seats in it, top to
+/// bottom, and the folds it leaves are `state`'s. The model holds which
+/// chart is folded, the stack the heights. A layout the column painter does
+/// not draw (`columns` false) keeps its folds on its tree.
+pub fn on_stack<R>(
+    stack: &mut ContextStack,
+    (state, seats, columns): (&mut CanvasState, &Seats, bool),
+    op: impl FnOnce(&mut ContextStack) -> R,
+) -> R {
+    let slots = stack_slots(state, seats);
+    if !columns || slots.len() < 2 {
+        return op(stack);
+    }
+    stack.at_least(slots.len());
+    let folded: Vec<bool> = (slots.iter())
+        .map(|slot| state.railed().contains(slot))
+        .collect();
+    stack.follow(&folded);
+    let out = op(stack);
+    let folded = stack.collapsed_slots();
+    state.rail_stack(&slots, &folded[..slots.len()]);
+    out
+}
+
+/// The slots of `state`'s stack by the built chart `seats` seats each on:
+/// the stack's charts top to bottom as the column painter draws them.
+fn stack_slots(state: &CanvasState, seats: &Seats) -> Vec<PaneSlot> {
+    let stack = state.stack_slots();
+    let seats = seats.current(state);
+    let mut held: Vec<(usize, PaneSlot)> = (seats.held().iter())
+        .filter(|(slot, _)| stack.contains(slot))
+        .map(|(slot, seat)| (*seat, *slot))
+        .collect();
+    held.sort_unstable();
+    let seated = held.iter().enumerate();
+    let seated = seated.take_while(|(at, (seat, _))| at == seat);
+    seated.map(|(_, (_, slot))| *slot).collect()
 }

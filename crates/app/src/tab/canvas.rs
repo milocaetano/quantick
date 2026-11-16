@@ -11,7 +11,9 @@ use crate::surfaces::drawing_chrome::DrawingChromeExt as _;
 use eframe::egui;
 use quantick_chart::pane_header::{CapsuleSide, PaneIdentity};
 use quantick_engine::bar_selection::BarInputAvailability;
-use quantick_workspace::canvas::{Hand, PANE_MENU_BUTTON_PX, RailLook, rail_marks, seat_slot};
+use quantick_workspace::canvas::{
+    Hand, PANE_MENU_BUTTON_PX, RailHolds, RailLook, rail_marks, seat_slot,
+};
 use smallvec::SmallVec;
 
 use super::{FOCUS_FRAME_PX, SharedPicks, Tab};
@@ -261,12 +263,7 @@ impl Tab {
             // Focus before input, so the click that focuses a pane is also the
             // click that pane goes on to handle. Only a split has focus to
             // move: a single visible pane is the focused one by definition.
-            if self.canvas.context_stack.heights.len() < context_shown {
-                self.canvas
-                    .context_stack
-                    .heights
-                    .resize(context_shown, canvas_layout::PaneWidth::Auto);
-            }
+            self.canvas.on_stack(|stack| stack.at_least(context_shown));
             let bands = canvas_layout::split_column(
                 column,
                 &self.canvas.context_stack.heights[..context_shown],
@@ -290,6 +287,15 @@ impl Tab {
                     let way = (true, slot + 1 < context_shown);
                     let look = RailLook::on(model_rect(*band), model_rect(column), way, 1);
                     paint_rail(ui.painter(), *band, look, rail_hot(ui.painter(), &hits));
+                    // Named and worded as the tree's rails: the model's fold.
+                    let name = || Some(self.strip_name(PaneSide::Time(slot)));
+                    let words = RailHolds::of([PaneKind::Time]).words(name);
+                    let canvas = &mut self.canvas;
+                    if let Some(at) = seat_slot(&canvas.state, &mut canvas.seats, Some(slot)) {
+                        canvas
+                            .menus
+                            .publish_rail(format!("pane_menu.{at}.rail"), *band, words);
+                    }
                     rects.context_charts.push(None);
                     continue;
                 }
@@ -1230,8 +1236,8 @@ impl Tab {
             if handle.hovered() || handle.dragged() {
                 ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
             }
-            let (stack, hand) = (&mut self.canvas.context_stack, hand(&handle, false));
-            if let Some(wanted_y) = stack.hand(index, hand, divider.center().y) {
+            let (hand, at) = (hand(&handle, false), divider.center().y);
+            if let Some(wanted_y) = self.canvas.on_stack(|stack| stack.hand(index, hand, at)) {
                 let _ = self.canvas.resize_context_pair(
                     tab_id,
                     super::context_resize::ResizeContextPair {

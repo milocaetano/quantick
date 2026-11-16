@@ -453,7 +453,11 @@ impl CanvasState {
             return self.open_side(&fold);
         }
         let mut next = self.clone();
-        next.set_railed(&other, false);
+        // The two sides never fold together: the other opens when it is
+        // folded whole. A chart folded inside it stays folded.
+        if other.iter().all(|slot| next.railed().contains(slot)) {
+            next.set_railed(&other, false);
+        }
         if other.iter().all(|slot| next.folded(*slot)) {
             return false;
         }
@@ -533,8 +537,9 @@ impl CanvasState {
         (context, whole(&children[index]))
     }
 
-    /// Whether the rails, if any, are exactly one whole side of the flow
-    /// pane: the fold the column painter draws as its own.
+    /// Whether the rails, if any, are the folds the column painter draws as
+    /// its own: one whole side of the flow pane, and charts folded inside
+    /// the stack beside it while some of it stands open.
     pub(super) fn one_side_railed(&self) -> bool {
         if self.railed().is_empty() {
             return true;
@@ -542,13 +547,64 @@ impl CanvasState {
         let Some((children, index)) = self.flow_split() else {
             return false;
         };
-        let whole = |child: &PaneTree| child.railed(&|slot| self.pin(slot));
-        let beside = (children.iter().enumerate()).filter(|(at, _)| *at != index);
         let (context, flow) = self.flow_side_folds();
-        let context_whole = beside.clone().all(|(_, child)| whole(child));
-        let held: usize = beside.map(|(_, child)| child.len()).sum();
-        (flow && !context && whole(&children[index]) && self.railed().len() == 1)
-            || (context && !flow && context_whole && self.railed().len() == held)
+        let beside = |slot: PaneSlot| {
+            let mut sides = children.iter().enumerate();
+            sides.any(|(at, child)| at != index && child.holds(slot))
+        };
+        let stack = self.stack_column().filter(|_| !context);
+        let stacked = |slot: PaneSlot| stack.as_ref().is_some_and(|stack| stack.contains(&slot));
+        !(context && flow)
+            && self.railed().iter().all(|slot| {
+                (flow && children[index].holds(*slot))
+                    || (context && beside(*slot))
+                    || stacked(*slot)
+            })
+    }
+
+    /// The charts of the stack beside the flow pane, top to bottom in the
+    /// tree: the one column of charts on its side, which the column painter
+    /// draws as its stack. Empty for any other canvas.
+    #[must_use]
+    pub fn stack_slots(&self) -> Vec<PaneSlot> {
+        self.stack_column().unwrap_or_default()
+    }
+
+    /// The charts folded inside the stack while some of it stands open: the
+    /// stack's own folds, which a save keeps as the stack's flags.
+    #[must_use]
+    pub fn stack_rails(&self) -> Vec<PaneSlot> {
+        let stack = self.stack_slots();
+        let railed: Vec<PaneSlot> = (stack.iter().copied())
+            .filter(|slot| self.railed().contains(slot))
+            .collect();
+        if railed.len() < stack.len() {
+            railed
+        } else {
+            Vec::new()
+        }
+    }
+
+    fn stack_column(&self) -> Option<Vec<PaneSlot>> {
+        let (children, index) = self.flow_split()?;
+        let mut beside = (children.iter().enumerate()).filter(|(at, _)| *at != index);
+        let (Some((_, column)), None) = (beside.next(), beside.next()) else {
+            return None;
+        };
+        let PaneTree::Split {
+            axis: SplitAxis::Column,
+            children: stack,
+            ..
+        } = column
+        else {
+            return None;
+        };
+        (stack.iter())
+            .map(|chart| match chart {
+                PaneTree::Pane { slot, .. } => Some(*slot),
+                PaneTree::Split { .. } => None,
+            })
+            .collect()
     }
 
     /// The scene's name for the rail of one side of the flow pane, the flow

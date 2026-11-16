@@ -205,7 +205,9 @@ fn a_fold_by_hand_keeps_the_boundary_of_the_press() {
         let wanted = stack.hand(0, Hand::of([false, true, false], -60.0), at);
         let dividers = carve(column, &stack.heights).dividers().to_vec();
         let wanted = wanted.expect("the hand moved");
-        stack.resize(0, wanted, column, &dividers, FOOTER_PX).unwrap();
+        stack
+            .resize(0, wanted, column, &dividers, FOOTER_PX)
+            .unwrap();
     }
     assert!(stack.heights[0].is_collapsed(), "dragged to the top edge");
     stack.expand();
@@ -232,16 +234,25 @@ fn the_stack_folds_as_the_model_says() {
             assert_eq!(stack.collapsed_slots(), folded);
             let laid = carve(column, &stack.heights);
             let rail = laid.panes[slot];
-            assert!((length(rail) - COLLAPSED_PANE_WIDTH_PX).abs() < 0.01, "{rail:?}");
+            assert!(
+                (length(rail) - COLLAPSED_PANE_WIDTH_PX).abs() < 0.01,
+                "{rail:?}"
+            );
             let met = laid.meeting_rails(&stack.heights).panes[1 - slot];
-            assert!((length(met) + length(rail) - column.h).abs() < 0.01, "{met:?}");
+            assert!(
+                (length(met) + length(rail) - column.h).abs() < 0.01,
+                "{met:?}"
+            );
             stack.follow(&[false, false]);
             assert!(stack.collapsed_slots().iter().all(|folded| !folded));
             let back = boundary(column, &stack.heights, 0);
             assert!((back - open).abs() < 0.01, "{heights:?}: {back} vs {open}");
         }
         stack.follow(&[true, true]);
-        assert!(stack.collapsed_slots().iter().all(|folded| !folded), "whole");
+        assert!(
+            stack.collapsed_slots().iter().all(|folded| !folded),
+            "whole"
+        );
     }
 }
 
@@ -271,7 +282,10 @@ fn the_stack_and_the_model_hold_one_fold() {
         stack.resize(0, column.bottom(), column, &dividers, FOOTER_PX)
     };
     on_stack(&mut stack, (&mut state, &seats, true), fold).unwrap();
-    assert_eq!(state.railed().iter().copied().collect::<Vec<_>>(), [slots[1]]);
+    assert_eq!(
+        state.railed().iter().copied().collect::<Vec<_>>(),
+        [slots[1]]
+    );
     assert!(state.restore(slots[1]).unwrap());
     let back = open(&mut stack, &mut state);
     assert!((back - was).abs() < 0.01, "{back} vs {was}");

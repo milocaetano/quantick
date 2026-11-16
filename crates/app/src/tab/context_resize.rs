@@ -38,22 +38,17 @@ impl TabCanvas {
         self.layout.shows_time() && !time_panes.is_empty() && !self.folds().0
     }
 
-    /// Folded by the canvas model, or by the column flags while they draw.
+    /// Folded by the canvas model, whichever painter draws.
     pub(crate) fn pane_collapsed(&self, side: PaneSide) -> bool {
-        if !self.column_painted() {
-            let (seat, seats) = (side.index().checked_sub(1), self.seats.current(&self.state));
-            return seat_mode(&self.state, &seats, seat) == Some(PaneMode::Minimized);
-        }
-        let heights = &self.context_stack.heights;
-        match side {
-            PaneSide::Flow => self.folds().1 && self.layout.shows_time(),
-            PaneSide::Time(slot) => {
-                (self.folds().0 && self.layout.shows_flow())
-                    || heights
-                        .get(slot)
-                        .is_some_and(|height| height.is_collapsed())
-            }
-        }
+        let (seat, seats) = (side.index().checked_sub(1), self.seats.current(&self.state));
+        seat_mode(&self.state, &seats, seat) == Some(PaneMode::Minimized)
+    }
+
+    /// Run `op` on the stack folded as the canvas model says, the model
+    /// taking the folds it leaves: `quantick_workspace::canvas_layout::on_stack`.
+    pub(crate) fn on_stack<R>(&mut self, op: impl FnOnce(&mut ContextStack) -> R) -> R {
+        let model = (&mut self.state, &self.seats, self.layout.is_column());
+        canvas_layout::on_stack(&mut self.context_stack, model, op)
     }
 
     pub(crate) fn context_height_shares(&self) -> Vec<f32> {
@@ -69,13 +64,13 @@ impl TabCanvas {
     }
 
     pub(crate) fn restore_context_heights(&mut self, shares: &[f32], collapsed: &[bool]) {
-        self.context_stack.restore(shares, collapsed);
+        self.on_stack(|stack| stack.restore(shares, collapsed));
     }
 
     /// Fold the upper or the lower of two stacked charts, as a launch hook asks.
     #[cfg(any(feature = "scenario-harness", test))]
     pub(crate) fn fold_context_pane(&mut self, upper: bool) {
-        self.context_stack.fold_one(upper);
+        self.on_stack(|stack| stack.fold_one(upper));
     }
 
     /// Current geometry from the same splitter the painter uses. Old layouts
@@ -117,7 +112,8 @@ impl TabCanvas {
             .collect();
         let footer = crate::layout_strip::STRIP_HEIGHT;
         let wanted = request.wanted_y;
-        let result = (self.context_stack).resize(index, wanted, column, &dividers, footer)?;
+        let result =
+            self.on_stack(|stack| stack.resize(index, wanted, column, &dividers, footer))?;
         if result.changed {
             tracing::info!(target: "quantick::app", event_code = "LAYOUT_CONTEXT_PAIR_RESIZED",
                 tab_id = tab_id, upper_pane_id = request.upper_pane_id,
