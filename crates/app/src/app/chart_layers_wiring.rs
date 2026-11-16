@@ -99,14 +99,6 @@ impl LayerWiring<'_> {
                 *self.style_revision = self.style_revision.saturating_add(1);
             }
         }
-        if actions.indicators_changed {
-            // The same mark `LayoutAdapter::note_indicator_edit_at` leaves:
-            // the layouts file carries the indicator state, and the debounce
-            // decides when it is written.
-            self.workspace
-                .layouts_mut()
-                .mark_changed(std::time::Instant::now());
-        }
         if actions.footprint_changed {
             crate::footprint_config::save(
                 self.workspace.footprint_settings_path(),

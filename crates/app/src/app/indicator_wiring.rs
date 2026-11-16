@@ -125,13 +125,21 @@ impl IndicatorWiring<'_> {
                 self.harness.settings_autostart_opened();
             }
         }
-        let requests: SmallVec<[(PaneSide, SlotId); MAX_CANVAS_PANES]> = (self.runtime)
+        let requests: SmallVec<[(PaneSide, LegendAction); MAX_CANVAS_PANES]> = (self.runtime)
             .active_tab_mut()
             .panes_with_sides_mut()
-            .filter_map(|(pane, side)| pane.take_settings_request().map(|slot| (side, slot)))
+            .flat_map(|(pane, side)| {
+                let settings = pane.take_settings_request().map(LegendAction::OpenSettings);
+                let hide = pane.model.pending_hide.take();
+                let hide = hide.map(|slot| LegendAction::ToggleHidden(SlotId(slot)));
+                [settings, hide]
+                    .into_iter()
+                    .flatten()
+                    .map(move |action| (side, action))
+            })
             .collect();
-        for (side, slot) in requests {
-            self.apply_indicator_legend_action(tab_id, side, LegendAction::OpenSettings(slot));
+        for (side, action) in requests {
+            self.apply_indicator_legend_action(tab_id, side, action);
         }
         let guide = |pane_id: u64, slot: SlotId, enabled: bool| serde_json::json!({"tab_id":tab_id.to_string(),"pane_id":pane_id.to_string(),"slot_id":slot.0.to_string(),"enabled":enabled});
         // The hook's guide goes first. Taking the pane requests before it is

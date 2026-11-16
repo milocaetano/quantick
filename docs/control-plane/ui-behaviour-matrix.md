@@ -42,10 +42,10 @@ The three exclusion classes are closed:
 
 | Outcome | Behaviours |
 | --- | --- |
-| Reachable by capability | 141 |
+| Reachable by capability | 143 |
 | Excluded: `authority` | 4 |
 | Excluded: `ui_only_by_decision` | 7 |
-| Excluded: `pending_capability` | 41 |
+| Excluded: `pending_capability` | 39 |
 | **Total** | **193** |
 
 99 of the 193 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 94 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
@@ -142,11 +142,11 @@ The three exclusion classes are closed:
 | `indicator.picker.open` | Open and search the indicator library | the ƒx glyph on each pane header, searchable centered modal | `indicator.picker.set` | — |
 | `appearance.dialog.toggle` | Open the chart settings on the Candles tab — candles, canvas, grid | Settings window, a double click on a candle | `chart.settings.set` | — |
 | `appearance.candle_presets` | Apply, save, delete or reset a candle preset | the chart settings window's Candles tab | `chart.settings.set` | — |
-| `indicator.hidden.toggle` | Hide an indicator's drawing without removing it | the eye on the legend row, and the indicator picker | — | `pending_capability` — `indicator.script.attach` and `indicator.script.detach` add and remove; nothing hides. Tracked in issue 401 |
+| `indicator.hidden.toggle` | Hide an indicator's drawing without removing it | the eye on the legend row, and the indicator picker | — | `pending_capability` — `indicator.native.edit` hides a native slot; a script slot has no hide capability. Tracked in issue 401 |
 | `indicator.legend.collapse` | Fold the focused chart's indicator legend to its count | the legend's own chevron, window menu, Ctrl+L | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
 | `indicator.mouse_vertical_line.toggle` | Mirror price hover into one non-price indicator pane | right-click menu on an indicator pane | `indicator.mouse_vertical_line.set` | — |
-| `indicator.native.add` | Add a native indicator from the catalog | toolbar indicator picker | — | `pending_capability` — `indicator.script.attach` attaches a Pine script; the native catalog has no capability, so an operator can add the indicators a trader writes and not the ones shipped. Tracked in issue 401 |
-| `indicator.native.remove` | Remove a native indicator | the legend row's close, and the indicator picker | — | `pending_capability` — `indicator.script.detach` names a script; a native has no identifier it accepts. Tracked in issue 401 |
+| `indicator.native.add` | Add a native indicator from the catalog | toolbar indicator picker | `indicator.native.edit` | — |
+| `indicator.native.remove` | Remove a native indicator | the legend row's close, and the indicator picker | `indicator.native.edit` | — |
 | `indicator.script.add` | Load a Pine script from the library | toolbar indicator picker | `indicator.script.attach` | — |
 | `indicator.script.remove` | Remove a script indicator | the legend row's close, and the indicator picker | `indicator.script.detach` | — |
 | `indicator.settings.open` | Open an indicator's settings | the legend row's gear, and the indicator picker | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |

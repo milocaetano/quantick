@@ -56,7 +56,6 @@ pub struct LayerActions {
     pub time_grid: Option<bool>,
     /// The pane whose canvas requested either grid change.
     pub grid_pane: Option<u64>,
-    pub indicators_changed: bool,
     pub footprint_changed: bool,
     pub open_footprint_settings: bool,
     /// A pane header's glyph asked for the panel section that configures its layer.
