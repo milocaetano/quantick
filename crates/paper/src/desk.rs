@@ -278,7 +278,9 @@ impl Desk {
         command: ChartCommand,
     ) -> Result<(), String> {
         match command {
-            ChartCommand::ClosePosition => account.close_position(),
+            ChartCommand::ClosePosition => {
+                account.close_position();
+            }
             ChartCommand::AmendLeg { owner, leg, price } => account.amend_leg(owner, leg, price),
             ChartCommand::AmendRung {
                 order,

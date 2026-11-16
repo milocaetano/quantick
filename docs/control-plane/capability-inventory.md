@@ -57,7 +57,6 @@ capability that cannot change application state.
 | `appearance.apply` | 1 | `appearance` | no | `cockpit`, `cockpit.layout` |
 | `attention.mark.create` | 1 | `attention` | no | `annotate`, `annotate.attention` |
 | `canvas.layout.pick` | 1 | `canvas` | no | `cockpit`, `cockpit.layout` |
-| `canvas.layout.picker` | 1 | `canvas` | yes | `observe`, `observe.workspace` |
 | `canvas.pane.dock` | 1 | `canvas` | no | `cockpit`, `cockpit.layout` |
 | `canvas.pane.float` | 1 | `canvas` | no | `cockpit`, `cockpit.layout` |
 | `canvas.pane.maximize` | 1 | `canvas` | no | `cockpit`, `cockpit.layout` |
@@ -171,6 +170,8 @@ capability that cannot change application state.
 | `trade.order.bracket` | 1 | `trade` | no | `trade` |
 | `trade.order.cancel` | 1 | `trade` | no | `trade` |
 | `trade.order.place` | 1 | `trade` | no | `trade` |
+| `trade.position.flatten` | 1 | `trade` | no | `trade` |
+| `trade.position.reverse` | 1 | `trade` | no | `trade` |
 | `trade.risk.set` | 1 | `trade` | no | `trade` |
 | `trade.ruler.set` | 1 | `trade` | no | `trade` |
 | `trade.strategy.select` | 1 | `trade` | no | `trade` |
@@ -189,4 +190,4 @@ capability that cannot change application state.
 | `workspace.save_as` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
 | `workspace.save_to` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
 
-164 capabilities registered.
+165 capabilities registered.

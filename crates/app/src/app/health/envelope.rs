@@ -28,10 +28,10 @@ pub(in crate::app) fn observe(
             for (_kind, progress) in pane_workers(pane) {
                 reading.add(&progress);
             }
-            let retained = pane.state.trades().len();
+            let retained = pane.series.state.trades().len();
             if reading.retained_owner.is_none() || retained > reading.retained_trades {
                 reading.retained_trades = retained;
-                reading.retained_bars = pane.state.bars().len();
+                reading.retained_bars = pane.series.state.bars().len();
                 reading.retained_owner = Some((tab_id, pane.id));
             }
         }

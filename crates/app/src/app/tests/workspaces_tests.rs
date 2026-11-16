@@ -703,12 +703,12 @@ fn a_restored_workspace_puts_the_window_back() {
         "the saved focus wins over the pane the layout switch revealed"
     );
     assert_eq!(
-        tab.flow_pane.state.spec(),
+        tab.flow_pane.series.state.spec(),
         &BarSpec::Dollar(rust_decimal::Decimal::from(250_000)),
         "the flow pane opens on the rule the workspace recorded"
     );
     assert_eq!(
-        tab.time_pane().map(|pane| *pane.state.spec()),
+        tab.time_pane().map(|pane| *pane.series.state.spec()),
         Some(BarSpec::Time(300_000).into()),
         "and the time pane on its saved interval, not the header default"
     );

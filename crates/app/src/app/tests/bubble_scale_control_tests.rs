@@ -133,6 +133,7 @@ fn bubble_size_refuses_invalid_values_stale_targets_and_inactive_context() {
     run_frame(&mut app, &ctx);
     assert!(
         app.active_tab().time_panes[0]
+            .series
             .state
             .tick_membership()
             .is_none()
@@ -195,7 +196,7 @@ fn bubble_size_refuses_invalid_values_stale_targets_and_inactive_context() {
         .set(crate::state::BarSpec::Volume(Decimal::from(5)));
     app.active_tab_mut().apply_spec_changes();
     app.active_tab_mut().apply_spec_changes();
-    let membership = app.active_tab().flow_pane.state.tick_membership();
+    let membership = app.active_tab().flow_pane.series.state.tick_membership();
     assert!(membership.is_none(), "the pane now draws volume bars");
     let candle = input(&app, "candle", 2.0);
     let (response, _) = unkeyed_call(&mut app, &mut cockpit, ACTION, candle);

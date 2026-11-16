@@ -1,5 +1,6 @@
 //! The `trade.*` action family: placing, bracketing and cancelling an
-//! order as named calls rather than only as chart gestures.
+//! order, and flattening or reversing the position, as named calls rather
+//! than only as chart gestures.
 //!
 //! `CLAUDE.md`'s *operable without a hand* rule, applied to the one class of
 //! capability that had no registry entry at all. Everything the chart's
@@ -29,9 +30,11 @@
 //! the permission that guards them is already carved out.
 //!
 //! The family reaches the desk through [`TradePort`]: the active tab's paper
-//! desk as [`TradeDesk`] — the account, the ruler and the armed bracket —
-//! and the two persistence calls a ticket edit makes. What it decides from
-//! those is all here.
+//! desk as [`TradeDesk`] — the account, the ruler and the one `execute` the
+//! tab's own buttons trade through — and the two persistence calls a ticket
+//! edit makes. The trade rules (armed bracket, risk lock, ruler) are the
+//! tab's, in `quantick_session::paper`; what is here is parsing, refusals
+//! and the journal.
 
 pub use quantick_control_host::authority::CAPABILITY_VERSION;
 pub use quantick_control_schema::trade::*;
@@ -40,6 +43,7 @@ use quantick_control::{error::ControlError, registry::RegistryError, wire::Actor
 use quantick_control_host::journal::NewEvent;
 use quantick_engine::Side;
 use quantick_paper::{PaperAccount, format::PositionSummary, risk_sizing::RiskState};
+use quantick_session::paper::{TradeCommand, TradeOutcome};
 use quantick_sim::{Bracket, EntryKind, Order, OrderId, OrderIntent, VenueEvent};
 use rust_decimal::Decimal;
 use serde_json::{Value, json};
@@ -61,15 +65,13 @@ pub trait TradeDesk {
     fn ruler_ticks(&self) -> u32;
     /// Set the ruler to `ticks`.
     fn set_ruler_ticks(&mut self, ticks: u32);
-    /// Clear the ruler: the next order starts bare.
-    fn clear_ruler(&mut self);
+    /// Run one trade command exactly as the tab's own surfaces run it:
+    /// `quantick_session::paper::TabPaper::execute`.
+    fn execute(&mut self, command: TradeCommand) -> TradeOutcome;
     /// The last mark price, if the account has seen a print.
     fn mark_price(&self) -> Option<Decimal>;
     /// The resting orders.
     fn working_orders(&self) -> &[Order];
-    /// The bracket the ticket would attach to an order of `quantity` on
-    /// `side` around `reference`, exactly as a click attaches it.
-    fn armed_bracket(&self, side: Side, reference: Decimal, quantity: Decimal) -> Bracket;
     /// The risk sizing's state and whether it blocks an entry, asked once.
     fn risk_report(&self) -> (RiskState, bool);
     /// The open position, as the desk's own surfaces summarise it.
@@ -205,35 +207,35 @@ fn place_order<P: TradePort + ?Sized, A: JournalAccess>(
             .map(|text| parse_price("take_profit", text))
             .transpose()?,
     );
-    // Levels the caller named win; otherwise the call takes what the
-    // ticket is set to, exactly as a click does. A named call that
-    // ignored the armed ladder while the result it answers with reports
-    // that ladder would be the two-surfaces bug this rule exists to
-    // prevent.
-    let bracket = if named.is_empty() {
-        let desk = app.active_desk().ok_or_else(no_chart_open)?;
-        let reference = intent
-            .price
-            .or_else(|| desk.account().mark_price())
-            .unwrap_or_default();
-        desk.armed_bracket(intent.side, reference, intent.quantity)
-    } else {
-        named
+    // The armed bracket, the risk per trade and the ruler are the tab's
+    // decisions, made where a click makes them. A refusal comes back as an
+    // error carrying the sentence the ticket shows, never as an empty
+    // answer the caller has to interpret.
+    let command = TradeCommand::Place {
+        intent: Box::new(intent.with_bracket(named)),
     };
-    let intent = intent.with_bracket(bracket);
-    let desk = app.active_desk_mut().ok_or_else(no_chart_open)?;
-    // The risk per trade is a ceiling on the account, so it holds on this
-    // path too. Asked of the same function the ticket asks, so an operator
-    // reads the refusal the trader would have read - and gets it as an
-    // error rather than as an empty answer it has to interpret.
-    if let Some(refusal) = desk.account().risk_refusal_for(&intent) {
+    run(app, access, actor, command, PLACE_EVENT_KIND, asked)
+}
+
+/// Run `command` on the active desk, refuse what the tab refused, and
+/// journal what the venue answered under `kind`.
+fn run<P: TradePort + ?Sized, A: JournalAccess>(
+    app: &mut P,
+    access: &mut A,
+    actor: &ActorContext,
+    command: TradeCommand,
+    kind: &str,
+    asked: Value,
+) -> Result<Value, ControlError> {
+    let outcome = app
+        .active_desk_mut()
+        .ok_or_else(no_chart_open)?
+        .execute(command);
+    if let Some(refusal) = outcome.refusal {
         return Err(ControlError::invalid_request(refusal));
     }
-    let events = desk.account_mut().place_intent(intent);
-    // The ruler shaped this one order, as it does a click's; the next starts bare.
-    desk.clear_ruler();
-    let result = answer(app, &events);
-    journal(access, actor, PLACE_EVENT_KIND, &result, asked);
+    let result = answer(app, &outcome.events);
+    journal(access, actor, kind, &result, asked);
     to_value(result)
 }
 
@@ -258,14 +260,11 @@ fn bracket_order<P: TradePort + ?Sized, A: JournalAccess>(
             .map(|text| parse_price("take_profit", text))
             .transpose()?,
     );
-    let events = app
-        .active_desk_mut()
-        .ok_or_else(no_chart_open)?
-        .account_mut()
-        .set_order_bracket(OrderId(input.order_id), bracket);
-    let result = answer(app, &events);
-    journal(access, actor, BRACKET_EVENT_KIND, &result, asked);
-    to_value(result)
+    let command = TradeCommand::Amend {
+        id: OrderId(input.order_id),
+        bracket: Box::new(bracket),
+    };
+    run(app, access, actor, command, BRACKET_EVENT_KIND, asked)
 }
 
 fn cancel_order<P: TradePort + ?Sized, A: JournalAccess>(
@@ -277,14 +276,51 @@ fn cancel_order<P: TradePort + ?Sized, A: JournalAccess>(
     let asked = input.clone();
     let input: CancelInput = serde_json::from_value(input.clone())
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
-    let events = app
-        .active_desk_mut()
-        .ok_or_else(no_chart_open)?
-        .account_mut()
-        .cancel_order(OrderId(input.order_id));
-    let result = answer(app, &events);
-    journal(access, actor, CANCEL_EVENT_KIND, &result, asked);
-    to_value(result)
+    let command = TradeCommand::Cancel {
+        id: OrderId(input.order_id),
+    };
+    run(app, access, actor, command, CANCEL_EVENT_KIND, asked)
+}
+
+/// Close the position and cancel every working order in one call.
+fn flatten_position<P: TradePort + ?Sized, A: JournalAccess>(
+    app: &mut P,
+    access: &mut A,
+    actor: &ActorContext,
+    input: &Value,
+) -> Result<Value, ControlError> {
+    let _: PositionInput = serde_json::from_value(input.clone())
+        .map_err(|error| ControlError::invalid_request(error.to_string()))?;
+    let asked = input.clone();
+    run(
+        app,
+        access,
+        actor,
+        TradeCommand::Flatten,
+        FLATTEN_EVENT_KIND,
+        asked,
+    )
+}
+
+/// Flip the open position in one call; refused while flat, by the tab,
+/// because a reversal of nothing is a caller working from a stale read.
+fn reverse_position<P: TradePort + ?Sized, A: JournalAccess>(
+    app: &mut P,
+    access: &mut A,
+    actor: &ActorContext,
+    input: &Value,
+) -> Result<Value, ControlError> {
+    let _: PositionInput = serde_json::from_value(input.clone())
+        .map_err(|error| ControlError::invalid_request(error.to_string()))?;
+    let asked = input.clone();
+    run(
+        app,
+        access,
+        actor,
+        TradeCommand::Reverse,
+        REVERSE_EVENT_KIND,
+        asked,
+    )
 }
 
 fn select_strategy<P: TradePort + ?Sized, A: JournalAccess>(
@@ -385,6 +421,8 @@ where
     registry.register(place_descriptor(), place_order::<H, A>)?;
     registry.register(bracket_descriptor(), bracket_order::<H, A>)?;
     registry.register(cancel_descriptor(), cancel_order::<H, A>)?;
+    registry.register(flatten_descriptor(), flatten_position::<H, A>)?;
+    registry.register(reverse_descriptor(), reverse_position::<H, A>)?;
     Ok(())
 }
 

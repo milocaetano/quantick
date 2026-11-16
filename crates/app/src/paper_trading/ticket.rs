@@ -9,7 +9,8 @@
 use eframe::egui;
 use egui_phosphor::regular as icons;
 use quantick_engine::Side;
-use quantick_sim::{Command, EntryKind};
+use quantick_session::paper::TradeCommand;
+use quantick_sim::EntryKind;
 use rust_decimal::Decimal;
 
 use quantick_paper::desk::ticket::parse_offset;
@@ -155,14 +156,14 @@ impl PaperTrading {
         };
         match card.show(ui) {
             None => {}
-            Some(CardCommand::CancelAllOrders) => self.paper.account.cancel_all_orders(),
+            Some(CardCommand::CancelAllOrders) => self.paper.send(TradeCommand::CancelAll),
             Some(CardCommand::Venue(command)) => {
                 let events = self.paper.account.dispatch(*command);
                 self.paper.account.handle_events(events);
             }
-            Some(CardCommand::Close) => self.paper.account.close_position(),
-            Some(CardCommand::Reverse) => self.reverse_position(),
-            Some(CardCommand::Flatten) => self.paper.account.flatten(),
+            Some(CardCommand::Close) => self.paper.send(TradeCommand::Close),
+            Some(CardCommand::Reverse) => self.paper.send(TradeCommand::Reverse),
+            Some(CardCommand::Flatten) => self.paper.send(TradeCommand::Flatten),
         }
     }
 
@@ -444,11 +445,7 @@ impl PaperTrading {
                         .on_hover_text("cancel this order")
                         .clicked()
                     {
-                        let events = self
-                            .paper
-                            .account
-                            .dispatch(Command::CancelOrder { id: order.id });
-                        self.paper.account.handle_events(events);
+                        self.paper.send(TradeCommand::Cancel { id: order.id });
                     }
                 });
             });

@@ -85,7 +85,7 @@ fn settle_marks(pane: &mut ChartPane) {
 
 /// A pane's side of the market store (see `quantick_drawings::PaneMarks`).
 fn marks_of(pane: &mut ChartPane) -> PaneMarks<'_, BarConfiguration> {
-    let now = *pane.state.spec();
+    let now = *pane.series.state.spec();
     let (drawings, layout) = (&mut pane.drawings, &mut pane.layout);
     let rule = BarConfiguration::to_config_string;
     PaneMarks {
@@ -414,20 +414,6 @@ impl LayoutAdapter<'_> {
             .flat_map(|tab| tab.panes())
             .filter(|(pane, _)| session.shows_origin(&pane.layout.view, layout))
             .count()
-    }
-
-    /// Physical order comes from topology; membership selection belongs to the core.
-    fn panes_on(&self, layout: LayoutId) -> Vec<(u64, PaneSide)> {
-        let session = self.store.session();
-        session
-            .matching(
-                layout,
-                self.tabs.iter_with_ids().flat_map(|(tab_id, tab)| {
-                    tab.panes()
-                        .map(move |(pane, side)| ((tab_id, side), &pane.layout.view))
-                }),
-            )
-            .collect()
     }
 
     /// Give a pane its strip layout's name for its header.
@@ -807,7 +793,7 @@ impl LayoutAdapter<'_> {
     fn drawing_key(&self, tab: u64, side: PaneSide) -> Option<DrawingKey> {
         let pane = self.pane_at(tab, side)?;
         let (venue, symbol) = Self::market_of(self.tabs.by_id(tab)?);
-        let bars = (side != PaneSide::Flow).then(|| pane.state.spec().to_config_string());
+        let bars = (side != PaneSide::Flow).then(|| pane.series.bar_config());
         let asset = self.store.market().asset(venue, symbol);
         Some(DrawingKey::of_pane(venue, asset, bars))
     }
@@ -860,7 +846,7 @@ impl LayoutAdapter<'_> {
         };
         pane.layout.drawings_key = Some(key);
         pane.layout.drawings_source = source;
-        pane.layout.drawings_spec = Some(*pane.state.spec());
+        pane.layout.drawings_spec = Some(*pane.series.state.spec());
         if let Some(key) = grown {
             self.refresh_twins(Some((tab, side, &key, PaneWrite::ALL)));
         }
@@ -920,7 +906,7 @@ impl LayoutAdapter<'_> {
                 tab.panes()
                     .filter(move |(pane, _)| {
                         let recuttable = tab.strategies.watching(pane.id) == 0;
-                        let bars = recuttable.then(|| pane.state.spec());
+                        let bars = recuttable.then(|| pane.series.state.spec());
                         pane.layout.needs_rekey(feed, symbol, bars)
                     })
                     .map(move |(_, side)| (tab_id, side))

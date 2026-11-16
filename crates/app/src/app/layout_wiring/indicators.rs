@@ -7,14 +7,19 @@ use super::LayoutAdapter;
 use super::TabSlot;
 use crate::indicator_style::StyleOverride;
 use crate::indicator_worker::{IndicatorCommand, IndicatorEvent, IndicatorSource, SlotId};
+use crate::indicators::IndicatorView;
 use crate::indicators::state_file::{SavedIndicator, SavedInput, SavedKind, SavedPlotStyle};
 use crate::indicators::state_file::{SavedInputExt, SavedPlotStyleExt};
 use crate::layouts::LayoutId;
 use crate::pane::PaneSide;
+use quantick_workspace::indicator_mirror::{self as mirror, LayoutEdit, MirrorAction, SavedInputs};
 
 mod guide;
 mod native;
 pub(crate) use guide::set_indicator_mouse_vertical_line;
+
+/// One mirrored action, addressed by tab id and side.
+type Mirrored = MirrorAction<(u64, PaneSide), SlotId>;
 
 /// Read the same durable values materialization uses, never a live preview.
 pub(in crate::app) fn saved_inputs(
@@ -35,14 +40,10 @@ pub(in crate::app) fn saved_inputs(
     let layout = store.session().resolve_layout(pane.layout_id());
     let entry = store.book().get(layout)?.indicators.get(index)?;
     // Match restore: an unreadable set uses declared defaults as a whole.
-    Some(
-        entry
-            .inputs
-            .iter()
-            .map(SavedInput::to_value)
-            .collect::<Option<Vec<_>>>()
-            .unwrap_or_default(),
-    )
+    match mirror::saved_inputs(&entry.inputs, SavedInput::to_value) {
+        SavedInputs::Bind(values) => Some(values),
+        SavedInputs::Defaults | SavedInputs::Dropped { .. } => Some(Vec::new()),
+    }
 }
 
 impl LayoutAdapter<'_> {
@@ -93,14 +94,6 @@ impl LayoutAdapter<'_> {
             side,
             slot,
         })
-    }
-
-    /// Where a slot sits in its pane's layout, or `None` for a slot the
-    /// layout does not carry — an operator's, or one a validation hook added.
-    fn layout_index_of(&self, target: TabSlot) -> Option<usize> {
-        self.layout_slots_at(target.tab, target.side)
-            .iter()
-            .position(|slot| *slot == target.slot)
     }
 
     /// Add one indicator to one pane, with no fan-out and no dirty mark —
@@ -238,22 +231,50 @@ impl LayoutAdapter<'_> {
         self.indicators.registry.remove(pane, target);
     }
 
-    /// Put a whole saved set on one pane: add, bind inputs, queue the hide
-    /// and the style until the worker's first `Rebuilt` gives them a view.
+    /// Put a whole saved set on one pane, as [`mirror::materialise`] plans it.
     pub(in crate::app) fn materialize_indicators_at(
         &mut self,
         tab: u64,
         side: PaneSide,
         set: &[SavedIndicator],
     ) {
-        for entry in set {
-            let Some(slot) = self.add_indicator_at(tab, side, &entry.kind) else {
+        for entry in mirror::materialise(set, SavedInput::to_value) {
+            let Some(slot) = self.add_indicator_at(tab, side, entry.kind) else {
                 continue;
             };
             let owner = self
                 .slot_at(tab, side, slot)
                 .expect("existing indicator pane");
-            self.apply_saved_entry(owner, entry);
+            match entry.inputs {
+                SavedInputs::Bind(values) => {
+                    if let Some(pane) = self.pane_mut_at(tab, side) {
+                        pane.indicator_worker
+                            .send(IndicatorCommand::SetInputs { slot, values });
+                    }
+                }
+                SavedInputs::Dropped { saved, readable } => tracing::warn!(
+                    target: "quantick::app",
+                    schema_version = 1_u8,
+                    event_code = "INDICATOR_STATE_INPUTS_DROPPED",
+                    kind = ?entry.kind,
+                    saved,
+                    readable,
+                    action = "declared_defaults_used",
+                    "saved indicator inputs could not be read; using the declared defaults"
+                ),
+                SavedInputs::Defaults => {}
+            }
+            let registry = &mut self.indicators.registry;
+            if entry.hidden {
+                registry.defer_hidden(owner);
+            }
+            if entry.mouse_vertical_line {
+                registry.defer_mouse_vertical_line(owner);
+            }
+            if let Some(styles) = entry.plot_styles {
+                let plots = styles.iter().copied().map(SavedPlotStyle::to_override);
+                registry.defer_style(owner, StyleOverride::from_plots(plots.collect()));
+            }
         }
     }
 
@@ -283,51 +304,6 @@ impl LayoutAdapter<'_> {
         }
     }
 
-    /// Bind one saved entry's inputs, hide flag and style onto a slot.
-    fn apply_saved_entry(&mut self, owner: TabSlot, entry: &SavedIndicator) {
-        let values: Vec<_> = entry
-            .inputs
-            .iter()
-            .filter_map(SavedInput::to_value)
-            .collect();
-        if !values.is_empty() && values.len() == entry.inputs.len() {
-            if let Some(pane) = self.pane_mut_at(owner.tab, owner.side) {
-                pane.indicator_worker.send(IndicatorCommand::SetInputs {
-                    slot: owner.slot,
-                    values,
-                });
-            }
-        } else if !entry.inputs.is_empty() {
-            tracing::warn!(
-                target: "quantick::app",
-                schema_version = 1_u8,
-                event_code = "INDICATOR_STATE_INPUTS_DROPPED",
-                kind = ?entry.kind,
-                saved = entry.inputs.len(),
-                readable = values.len(),
-                action = "declared_defaults_used",
-                "saved indicator inputs could not be read; using the declared defaults"
-            );
-        }
-        if entry.hidden {
-            self.indicators.registry.defer_hidden(owner);
-        }
-        guide::queue_saved(self, owner, entry);
-        if !entry.plot_styles.is_empty() {
-            self.indicators.registry.defer_style(
-                owner,
-                StyleOverride::from_plots(
-                    entry
-                        .plot_styles
-                        .iter()
-                        .copied()
-                        .map(SavedPlotStyle::to_override)
-                        .collect(),
-                ),
-            );
-        }
-    }
-
     /// Apply queued hide flags and styles to the views that now exist.
     ///
     /// A queued hide means "hide this once it is born": views are born
@@ -347,52 +323,67 @@ impl LayoutAdapter<'_> {
         {
             return None;
         }
-        let index = self.layout_index_of(origin)?;
+        let slots = self.layout_slots_at(origin.tab, origin.side);
+        let index = mirror::layout_index(&slots, &origin.slot)?;
         Some((self.pane_own_layout(origin.tab, origin.side), index))
     }
 
-    /// A layout's entry at a layout index, for an edit to write.
-    fn layout_entry_mut(&mut self, layout: LayoutId, index: usize) -> Option<&mut SavedIndicator> {
-        self.store
-            .session_mut()
-            .indicators_mut(layout)?
-            .get_mut(index)
+    /// Record `edit` in the origin's layout entry and return what every other
+    /// pane on that layout must do; `None` for a slot the layout does not carry.
+    fn mirror(&mut self, origin: TabSlot, edit: LayoutEdit) -> Option<Vec<Mirrored>> {
+        let at = self.edit_coordinates(origin)?;
+        let registry = &self.indicators.registry;
+        let panes = self.tabs.iter_with_ids().flat_map(|(tab_id, tab)| {
+            tab.panes().map(move |(pane, side)| mirror::PaneSlots {
+                pane: (tab_id, side),
+                layout: pane.layout.view.layout(),
+                slots: registry.layout_slots_at(tab_id, side),
+            })
+        });
+        let panes = panes.collect();
+        let entries = self.store.session_mut().indicators_mut(at.0);
+        Some(mirror::mirror(
+            entries,
+            at,
+            &(origin.tab, origin.side),
+            edit,
+            panes,
+        ))
     }
 
-    /// The other panes an edit on `origin` reaches: every pane on the same
-    /// layout, minus the origin.
-    fn mirror_targets(&self, origin: TabSlot, layout: LayoutId) -> Vec<(u64, PaneSide)> {
-        self.panes_on(layout)
-            .into_iter()
-            .filter(|target| *target != (origin.tab, origin.side))
-            .collect()
+    /// [`Self::mirror`] for an edit of an existing slot: the slots it reaches.
+    fn mirror_slots(&mut self, origin: TabSlot, edit: LayoutEdit) -> Option<Vec<TabSlot>> {
+        let actions = self.mirror(origin, edit)?;
+        let slots = actions.into_iter().filter_map(|action| match action {
+            MirrorAction::Edit { pane, slot } => self.slot_at(pane.0, pane.1, slot),
+            MirrorAction::Add { .. } => None,
+        });
+        Some(slots.collect())
+    }
+
+    /// The origin's own view, for the edit a mirror copies.
+    fn view_at(&self, at: TabSlot) -> Option<&IndicatorView> {
+        let pane = self.pane_at(at.tab, at.side)?;
+        pane.indicators
+            .all()
+            .iter()
+            .find(|view| view.slot == at.slot)
     }
 
     /// Mirror an add: the layout gains the entry, and the same kind goes on
     /// every other pane showing it, so the new indicator is on every such
-    /// chart the frame it was asked for. Inputs start empty — "the declared
-    /// defaults" — until the trader commits some.
+    /// chart the frame it was asked for.
     /// The caller marks save intent once after completing the origin edit.
     pub(in crate::app) fn mirror_add(&mut self, origin: TabSlot, kind: &SavedKind) {
-        let Some((layout, index)) = self.edit_coordinates(origin) else {
-            return;
-        };
-        let entry = SavedIndicator {
-            kind: kind.clone(),
-            hidden: false,
-            mouse_vertical_line: false,
-            inputs: Vec::new(),
-            plot_styles: Vec::new(),
-        };
-        if let Some(target) = self.store.session_mut().indicators_mut(layout) {
-            if index <= target.len() {
-                target.insert(index, entry);
-            } else {
-                target.push(entry);
+        let actions = self.mirror(origin, LayoutEdit::Add(kind.clone()));
+        for action in actions.unwrap_or_default() {
+            if let MirrorAction::Add {
+                pane: (tab, side),
+                kind,
+            } = action
+            {
+                self.add_indicator_at(tab, side, &kind);
             }
-        }
-        for (tab, side) in self.mirror_targets(origin, layout) {
-            self.add_indicator_at(tab, side, kind);
         }
     }
 
@@ -400,70 +391,35 @@ impl LayoutAdapter<'_> {
     /// position on every other pane of the layout with it.
     /// The caller marks save intent once after removing the origin.
     pub(in crate::app) fn mirror_remove(&mut self, origin: TabSlot) {
-        let Some((layout, index)) = self.edit_coordinates(origin) else {
-            return;
-        };
-        if let Some(target) = self.store.session_mut().indicators_mut(layout)
-            && index < target.len()
+        for target in self
+            .mirror_slots(origin, LayoutEdit::Remove)
+            .unwrap_or_default()
         {
-            target.remove(index);
-        }
-        for (tab, side) in self.mirror_targets(origin, layout) {
-            if let Some(slot) = self.layout_slots_at(tab, side).get(index).copied() {
-                self.remove_indicator_silently(
-                    self.slot_at(tab, side, slot)
-                        .expect("existing indicator pane"),
-                );
-            }
+            self.remove_indicator_silently(target);
         }
     }
 
     /// Mirror an eye toggle: the entry records it, and the same position on
     /// every other pane of the layout follows — now, or once its view is born.
     pub(in crate::app) fn mirror_hidden(&mut self, origin: TabSlot) {
-        let Some((layout, index)) = self.edit_coordinates(origin) else {
+        let Some(hidden) = self.view_at(origin).map(|view| view.hidden) else {
             return;
         };
-        let Some(hidden) = self
-            .pane_at(origin.tab, origin.side)
-            .and_then(|pane| {
-                pane.indicators
-                    .all()
-                    .iter()
-                    .find(|view| view.slot == origin.slot)
-            })
-            .map(|view| view.hidden)
-        else {
+        let Some(targets) = self.mirror_slots(origin, LayoutEdit::Hidden(hidden)) else {
             return;
         };
-        if let Some(entry) = self.layout_entry_mut(layout, index) {
-            entry.hidden = hidden;
-        }
-        for (tab, side) in self.mirror_targets(origin, layout) {
-            let Some(slot) = self.layout_slots_at(tab, side).get(index).copied() else {
+        for target in targets {
+            let Some(pane) = self.pane_mut_at(target.tab, target.side) else {
                 continue;
             };
-            let owner = self
-                .slot_at(tab, side, slot)
-                .expect("existing indicator pane");
-            let Some(pane) = self.pane_mut_at(tab, side) else {
-                continue;
-            };
-            let live = pane
-                .indicators
-                .all()
-                .iter()
-                .find(|view| view.slot == slot)
-                .map(|view| view.hidden);
-            match live {
-                Some(live) if live != hidden => pane.indicators.toggle_hidden(slot),
+            let view = pane.indicators.all().iter().find(|v| v.slot == target.slot);
+            match view.map(|view| view.hidden) {
+                Some(live) if live != hidden => pane.indicators.toggle_hidden(target.slot),
                 Some(_) => {}
-                None => {
-                    // Unborn: the queue says what its first frame should
-                    // be. An unhide takes a queued hide back out, or the
-                    // view would be born and hidden a moment later.
-                    self.indicators.registry.set_deferred_hidden(owner, hidden);
-                }
+                // Unborn: the queue says what its first frame should be. An
+                // unhide takes a queued hide back out, or the view would be
+                // born and hidden a moment later.
+                None => (self.indicators.registry).set_deferred_hidden(target, hidden),
             }
         }
         self.mark_layouts_dirty();
@@ -481,20 +437,15 @@ impl LayoutAdapter<'_> {
         origin: TabSlot,
         values: &[quantick_indicators::InputValue],
     ) {
-        let Some((layout, index)) = self.edit_coordinates(origin) else {
+        let saved = values.iter().map(SavedInput::from_value).collect();
+        let Some(targets) = self.mirror_slots(origin, LayoutEdit::Inputs(saved)) else {
             return;
         };
-        if let Some(entry) = self.layout_entry_mut(layout, index) {
-            entry.inputs = values.iter().map(SavedInput::from_value).collect();
-        }
-        for (tab, side) in self.mirror_targets(origin, layout) {
-            if let Some(slot) = self.layout_slots_at(tab, side).get(index).copied()
-                && let Some(pane) = self.pane_mut_at(tab, side)
-            {
-                pane.indicator_worker.send(IndicatorCommand::SetInputs {
-                    slot,
-                    values: values.to_vec(),
-                });
+        for target in targets {
+            if let Some(pane) = self.pane_mut_at(target.tab, target.side) {
+                let (slot, values) = (target.slot, values.to_vec());
+                pane.indicator_worker
+                    .send(IndicatorCommand::SetInputs { slot, values });
             }
         }
         self.mark_layouts_dirty();
@@ -503,46 +454,19 @@ impl LayoutAdapter<'_> {
     /// Mirror the origin's style layer: the entry records it, and the same
     /// position on every other pane of the layout wears it.
     pub(in crate::app) fn mirror_style(&mut self, origin: TabSlot) {
-        let Some((layout, index)) = self.edit_coordinates(origin) else {
+        let Some(style) = self.view_at(origin).map(|view| view.style.clone()) else {
             return;
         };
-        let Some(style) = self
-            .pane_at(origin.tab, origin.side)
-            .and_then(|pane| {
-                pane.indicators
-                    .all()
-                    .iter()
-                    .find(|view| view.slot == origin.slot)
-            })
-            .map(|view| view.style.clone())
-        else {
+        let plots = style.plots().iter().copied();
+        let saved = plots.map(SavedPlotStyle::from_override).collect();
+        let Some(targets) = self.mirror_slots(origin, LayoutEdit::Styles(saved)) else {
             return;
         };
-        if let Some(entry) = self.layout_entry_mut(layout, index) {
-            entry.plot_styles = style
-                .plots()
-                .iter()
-                .copied()
-                .map(SavedPlotStyle::from_override)
-                .collect();
-        }
-        for (tab, side) in self.mirror_targets(origin, layout) {
-            let Some(slot) = self.layout_slots_at(tab, side).get(index).copied() else {
-                continue;
-            };
-            let owner = self
-                .slot_at(tab, side, slot)
-                .expect("existing indicator pane");
-            match self
-                .pane_mut_at(tab, side)
-                .and_then(|pane| pane.indicators.view_mut(slot))
-            {
+        for target in targets {
+            let pane = self.pane_mut_at(target.tab, target.side);
+            match pane.and_then(|pane| pane.indicators.view_mut(target.slot)) {
                 Some(view) => view.style = style.clone(),
-                None => {
-                    self.indicators
-                        .registry
-                        .replace_deferred_style(owner, style.clone());
-                }
+                None => (self.indicators.registry).replace_deferred_style(target, style.clone()),
             }
         }
         self.mark_layouts_dirty();

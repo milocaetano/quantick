@@ -26,10 +26,12 @@
 mod button;
 pub mod close_queue;
 pub mod colour_popover;
+pub mod live_trade;
 mod native;
 mod paging;
 pub mod paper;
 pub mod prompt;
+pub mod series;
 pub mod strategies;
 pub mod tab_chip;
 mod venue;
@@ -953,9 +955,13 @@ impl TabSession {
 }
 
 #[cfg(test)]
+mod live_trade_tests;
+#[cfg(test)]
 mod native_tests;
 #[cfg(test)]
 mod paper_tests;
+#[cfg(test)]
+mod series_tests;
 #[cfg(test)]
 mod session_tests;
 #[cfg(test)]

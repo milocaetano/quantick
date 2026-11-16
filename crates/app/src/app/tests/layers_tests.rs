@@ -1130,6 +1130,7 @@ fn both_panes_group_the_ladders_at_the_market_bucket_even_with_the_layer_hidden(
     assert_eq!(
         app.active_tab()
             .pane(PaneSide::Flow)
+            .series
             .state
             .footprint_group(),
         Decimal::new(1, 1),
@@ -1141,6 +1142,7 @@ fn both_panes_group_the_ladders_at_the_market_bucket_even_with_the_layer_hidden(
     let market_bucket = app
         .active_tab()
         .pane(PaneSide::Flow)
+        .series
         .state
         .footprint_group();
 
@@ -1171,12 +1173,14 @@ fn both_panes_group_the_ladders_at_the_market_bucket_even_with_the_layer_hidden(
         // And put its ladders deliberately out of step, which is exactly
         // what a pane with no tape of its own drifts to when nothing hands
         // it the market's grid.
-        time.state
+        time.series
+            .state
             .set_footprint_group(market_bucket * Decimal::from(100));
     }
     assert_ne!(
         app.active_tab()
             .pane(PaneSide::Time(0))
+            .series
             .state
             .footprint_group(),
         market_bucket,
@@ -1189,11 +1193,13 @@ fn both_panes_group_the_ladders_at_the_market_bucket_even_with_the_layer_hidden(
     let time_group = app
         .active_tab()
         .pane(PaneSide::Time(0))
+        .series
         .state
         .footprint_group();
     let flow_group = app
         .active_tab()
         .pane(PaneSide::Flow)
+        .series
         .state
         .footprint_group();
     assert_eq!(
