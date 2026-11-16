@@ -123,7 +123,7 @@ fn enter_applies_the_highlighted_row_to_the_pane_it_opened_over() {
     let response = frame(&mut surface, &ctx, vec![key(egui::Key::Enter)]);
     let chosen = quantick_engine::bar_registry::BUILTIN_BARS.quick_candidates(15)[1];
     assert_eq!(
-        response.bar_switch,
+        response.bar_switch(),
         Some(BarSwitchRequest {
             tab: 0,
             side: crate::pane::PaneSide::Flow,
@@ -149,14 +149,14 @@ fn the_hook_opened_switch_follows_focus_to_the_time_pane() {
     assert!(surface.is_open(), "still open over the time pane");
     let response = frame_in(&mut surface, &ctx, vec![key(egui::Key::Enter)], &env);
     assert_eq!(
-        response.bar_switch.map(|request| request.side),
+        response.bar_switch().map(|request| request.side),
         Some(crate::pane::PaneSide::Time(0))
     );
 
     surface.open(0, PaneSide::Flow, "15");
     frame(&mut surface, &ctx, Vec::new());
     let response = frame_in(&mut surface, &ctx, vec![key(egui::Key::Enter)], &env);
-    assert_eq!(response.bar_switch, None);
+    assert_eq!(response.bar_switch(), None);
     assert!(
         !surface.is_open(),
         "ordinary switches close before Enter on focus change"
@@ -171,7 +171,7 @@ fn losing_the_keyboard_closes_it_and_leaves_enter_alone() {
     frame(&mut surface, &ctx, Vec::new());
     ctx.memory_mut(|memory| memory.surrender_focus(egui::Id::new("bar_switch").with("query")));
     let response = frame(&mut surface, &ctx, vec![key(egui::Key::Enter)]);
-    assert_eq!(response.bar_switch, None);
+    assert_eq!(response.bar_switch(), None);
     assert!(!surface.is_open());
 }
 
@@ -192,7 +192,7 @@ fn a_letter_after_the_number_lists_the_kind_that_declares_it() {
     let response = frame(&mut surface, &ctx, vec![key(egui::Key::Enter)]);
     assert_eq!(
         response
-            .bar_switch
+            .bar_switch()
             .map(|request| request.config.to_config_string()),
         Some("renko:50".to_owned())
     );
@@ -223,7 +223,7 @@ fn a_letter_after_the_number_lists_the_kind_that_declares_it() {
     let response = frame(&mut surface, &ctx, vec![key(egui::Key::Enter)]);
     assert_eq!(
         response
-            .bar_switch
+            .bar_switch()
             .map(|request| request.config.to_config_string()),
         Some("time:1mo".to_owned())
     );
@@ -243,7 +243,7 @@ fn a_letter_and_enter_in_one_frame_answer_the_lettered_list() {
     );
     assert_eq!(
         response
-            .bar_switch
+            .bar_switch()
             .map(|request| request.config.to_config_string())
             .as_deref(),
         Some("tick:2000")
@@ -267,7 +267,7 @@ fn a_focused_widget_keeps_typed_digits_and_escape_surrenders_query_focus() {
         "opening paints and focuses in the same frame"
     );
     assert_eq!(
-        frame(&mut surface, &ctx, vec![key(egui::Key::Escape)]).bar_switch,
+        frame(&mut surface, &ctx, vec![key(egui::Key::Escape)]).bar_switch(),
         None
     );
     assert!(!surface.is_open());
@@ -321,7 +321,7 @@ fn clicking_a_painted_row_routes_its_current_candidate() {
             ],
             &env,
         )
-        .bar_switch);
+        .bar_switch());
     }
     let request = request.expect("click selects current row");
     assert_eq!((request.tab, request.side), (7, PaneSide::Time(1)));

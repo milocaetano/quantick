@@ -145,9 +145,6 @@ pub(crate) struct SurfaceResponse {
     pub alerts: Option<Box<alerts::Request>>,
     pub indicator_actions: Vec<crate::toolbar::ToolbarAction>,
     pub script_editor_actions: Vec<quantick_stores::script_library::ScriptEditorAction>,
-    /// The toast's Undo button was pressed — the host owns the drawing stack,
-    /// and the sweep of any strategy left orphaned by the undo.
-    pub undo_drawing: bool,
     /// The appearance window edited the chart style. The host owns the style
     /// every renderer reads, and the revision counter they watch, so it takes
     /// the edited copy rather than lending the original out.
@@ -157,8 +154,6 @@ pub(crate) struct SurfaceResponse {
     /// The footprint window settled on a setup, or asked for the chart's
     /// override to be dropped.
     pub footprint: Option<FootprintChange>,
-    /// The market palette asked for something only the application can do.
-    pub market: Option<quantick_workspace::market_list::PaletteIntent>,
     /// The arming dialog's **Arm** was pressed. The host answers through
     /// `quantick_ui_model::strategy_popup::Intent::SettleArm`, because the answer decides whether
     /// the dialog closes or shows a refusal.
@@ -166,7 +161,6 @@ pub(crate) struct SurfaceResponse {
     /// A sound was auditioned. The host owns the one speaker every armed
     /// instance shares, so it plays this and reports what happened.
     pub test_alert: Option<crate::audio::Cue>,
-    pub bar_switch: Option<BarSwitchRequest>,
 }
 
 /// Host outputs of the complete borrowed paper-panel pass.
@@ -232,6 +226,15 @@ pub(crate) struct StyleLogRequest {
 }
 
 impl SurfaceResponse {
+    /// A response carrying `effect` when the surface asked for it.
+    pub(crate) fn effect_if(wanted: bool, effect: HostEffect) -> Self {
+        let model_effects = if wanted { vec![effect] } else { Vec::new() };
+        Self {
+            model_effects,
+            ..Self::default()
+        }
+    }
+
     /// Validate the complete residual before a paper host performs any effect.
     /// Direct model/domain changes made during painting are not rolled back.
     pub(crate) fn into_paper_panel(mut self) -> Result<PaperPanelEffects, Box<Self>> {
@@ -268,14 +271,11 @@ impl SurfaceResponse {
         self.indicator_actions.extend(other.indicator_actions);
         self.script_editor_actions
             .extend(other.script_editor_actions);
-        self.undo_drawing |= other.undo_drawing;
         self.style = self.style.take().or(other.style);
         self.log_style_change = self.log_style_change.take().or(other.log_style_change);
         self.footprint = self.footprint.take().or(other.footprint);
-        self.market = self.market.take().or(other.market);
         self.arm_strategy = self.arm_strategy.take().or(other.arm_strategy);
         self.test_alert = self.test_alert.take().or(other.test_alert);
-        self.bar_switch = self.bar_switch.take().or(other.bar_switch);
     }
 }
 

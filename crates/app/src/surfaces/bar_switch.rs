@@ -179,10 +179,7 @@ impl super::View<Model> for View {
 }
 
 pub(crate) fn effects(request: Option<BarSwitchRequest>) -> SurfaceResponse {
-    SurfaceResponse {
-        bar_switch: request,
-        ..SurfaceResponse::default()
-    }
+    SurfaceResponse::effect_if(request.is_some(), super::HostEffect::BarSwitch(request))
 }
 
 #[cfg(any(feature = "scenario-harness", test))]

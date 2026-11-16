@@ -236,6 +236,9 @@ pub(super) fn draw_surfaces(
                     effects.persistence,
                 )
             }
+            quantick_ui_model::HostEffect::BarSwitch(Some(request)) => {
+                apply_bar_switch(tabs, &mut registry.toast, request)
+            }
             other => retained.push(other),
         }
     }
@@ -248,9 +251,6 @@ pub(super) fn draw_surfaces(
         std::mem::take(&mut asks.script_editor_actions),
         now,
     );
-    if let Some(request) = asks.bar_switch.take() {
-        apply_bar_switch(tabs, &mut registry.toast, request);
-    }
     if let Some(request) = asks.alerts.as_mut()
         && let Some(command) = request.command.take()
     {

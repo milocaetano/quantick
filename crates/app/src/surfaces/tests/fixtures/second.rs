@@ -33,9 +33,14 @@ impl super::View<quantick_ui_model::second::Model> for View {
     }
 }
 pub(crate) fn effects((value, now): (i64, u64)) -> SurfaceResponse {
+    let mut model_effects = vec![super::HostEffect::Second((value, now))];
+    if value == 8 && now == 17 {
+        model_effects.push(super::HostEffect::Toast(
+            quantick_ui_model::toast::Effects { undo_drawing: true },
+        ));
+    }
     SurfaceResponse {
-        model_effects: vec![super::HostEffect::Second((value, now))],
-        undo_drawing: value == 8 && now == 17,
+        model_effects,
         ..Default::default()
     }
 }

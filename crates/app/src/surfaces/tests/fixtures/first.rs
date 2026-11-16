@@ -52,9 +52,14 @@ impl super::View<quantick_ui_model::first::Model> for View {
     }
 }
 pub(crate) fn effects((value, now): (i64, u64)) -> SurfaceResponse {
+    let mut model_effects = vec![super::HostEffect::First((value, now))];
+    if value == 8 && now == 17 {
+        model_effects.push(super::HostEffect::Toast(
+            quantick_ui_model::toast::Effects { undo_drawing: true },
+        ));
+    }
     SurfaceResponse {
-        model_effects: vec![super::HostEffect::First((value, now))],
-        undo_drawing: value == 8 && now == 17,
+        model_effects,
         ..Default::default()
     }
 }
@@ -67,12 +72,12 @@ fn hook_updates_state_before_first_paint_and_folds_effects_once() {
     let ctx = egui::Context::default();
     let env = SurfaceEnv::quiet(std::time::Instant::now());
     let _ = ctx.run(Default::default(), |ctx| {
-        assert!(registry.draw_all(ctx, &env).undo_drawing);
+        assert!(registry.draw_all(ctx, &env).undo_drawing());
     });
     assert_eq!(registry.first.view.painted, Some(8));
     assert_eq!(registry.first.model_state, 8);
     let _ = ctx.run(Default::default(), |ctx| {
-        assert!(!registry.draw_all(ctx, &env).undo_drawing);
+        assert!(!registry.draw_all(ctx, &env).undo_drawing());
     });
     assert_eq!(registry.first.model_state, 8);
 }
@@ -81,7 +86,7 @@ fn hook_updates_state_before_first_paint_and_folds_effects_once() {
 fn unscoped_host_intents_update_only_the_registered_model_and_return_effects() {
     let mut registry = super::Surfaces::default();
     let response = registry.update(super::HostIntent::First(Box::new((8, 17))));
-    assert!(response.undo_drawing);
+    assert!(response.undo_drawing());
     assert_eq!(registry.first.model_state, 8);
     assert_eq!(registry.second.model_state, 0);
     assert_eq!(*registry.first.scoped(10).0, 0);
@@ -114,10 +119,11 @@ fn staged_input_paints_current_state_and_folds_each_effect_once_in_both_hosts() 
             response.model_effects,
             vec![
                 super::HostEffect::First((3, 10)),
-                super::HostEffect::First((8, 17))
+                super::HostEffect::First((8, 17)),
+                super::HostEffect::Toast(quantick_ui_model::toast::Effects { undo_drawing: true })
             ]
         );
-        assert!(response.undo_drawing);
+        assert!(response.undo_drawing());
         let (state, view) = if scoped {
             registry.first.scoped(42)
         } else {

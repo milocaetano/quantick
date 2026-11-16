@@ -268,7 +268,7 @@ fn leading_effect_wins_and_real_toast_undo_survives_the_same_overlay_fold() {
         );
     }
     assert!(
-        response.undo_drawing,
+        response.undo_drawing(),
         "actual toast effect survives between model passes"
     );
     assert_eq!(

@@ -1,6 +1,31 @@
 use super::*;
 use quantick_workspace::market_list::PaletteIntent;
 
+/// Test probes reading the typed host effects a response carries.
+impl SurfaceResponse {
+    pub(crate) fn undo_drawing(&self) -> bool {
+        self.model_effects
+            .iter()
+            .any(|effect| matches!(effect, HostEffect::Toast(toast) if toast.undo_drawing))
+    }
+    pub(crate) fn bar_switch(self) -> Option<BarSwitchRequest> {
+        self.model_effects
+            .into_iter()
+            .find_map(|effect| match effect {
+                HostEffect::BarSwitch(request) => request,
+                _ => None,
+            })
+    }
+    pub(crate) fn market(self) -> Option<PaletteIntent> {
+        self.model_effects
+            .into_iter()
+            .find_map(|effect| match effect {
+                HostEffect::MarketPalette(intent) => intent,
+                _ => None,
+            })
+    }
+}
+
 #[test]
 fn borrowed_domain_rows_reborrow_in_catalog_order() {
     use quantick_ui_model::{Slot, borrowed_first, borrowed_second};
@@ -456,12 +481,12 @@ fn scoped_catalog_keeps_panes_independent_and_reclaims_removed_owners() {
             assert!(
                 !registry
                     .draw_slot_scoped(10, quantick_ui_model::Slot::Toolbar, target)
-                    .undo_drawing
+                    .undo_drawing()
             );
             assert!(
                 registry
                     .draw_slot_scoped(10, quantick_ui_model::Slot::Overlay, target)
-                    .undo_drawing
+                    .undo_drawing()
             );
         });
     });
@@ -499,7 +524,7 @@ fn registered_view_routes_intents() {
     let ctx = egui::Context::default();
     let mut effects = SurfaceResponse::default();
     let output = ctx.run(Default::default(), |ctx| {
-        assert!(!registry.draw_all(ctx, &env()).undo_drawing);
+        assert!(!registry.draw_all(ctx, &env()).undo_drawing());
         for slot in [
             quantick_ui_model::Slot::PaneHeader,
             quantick_ui_model::Slot::TitleBar,
@@ -510,7 +535,7 @@ fn registered_view_routes_intents() {
             assert!(
                 !registry
                     .draw_slot(slot, &mut ViewContext { ctx, ui: None }, &env())
-                    .undo_drawing
+                    .undo_drawing()
             );
             assert_eq!(
                 registry.second.model_state, 0,
@@ -529,7 +554,7 @@ fn registered_view_routes_intents() {
     assert_eq!(registry.second.view.painted, Some(0));
     assert_eq!(registry.second.model_state, 8);
     assert_eq!(registry.first.model_state, 0);
-    assert!(effects.undo_drawing);
+    assert!(effects.undo_drawing());
     let _ = ctx.run(Default::default(), |ctx| {
         egui::CentralPanel::default().show(ctx, |ui| {
             assert!(
@@ -539,7 +564,7 @@ fn registered_view_routes_intents() {
                         &mut ViewContext { ctx, ui: Some(ui) },
                         &env()
                     )
-                    .undo_drawing
+                    .undo_drawing()
             );
         });
     });
@@ -580,8 +605,14 @@ fn an_outside_typed_view_delivers_boolean_and_value_requests() {
     let _ = ctx.run(Default::default(), |ctx| {
         response = drive(&mut adapter, ctx, &env());
     });
-    assert!(response.undo_drawing);
-    assert_eq!(response.model_effects, vec![HostEffect::First((8, 17))]);
+    assert!(response.undo_drawing());
+    assert_eq!(
+        response.model_effects,
+        vec![
+            HostEffect::First((8, 17)),
+            HostEffect::Toast(quantick_ui_model::toast::Effects { undo_drawing: true })
+        ]
+    );
     assert_eq!(
         response.style.unwrap().canvas.grid_enabled,
         !crate::style::ChartStyle::default().canvas.grid_enabled
@@ -592,7 +623,7 @@ fn an_outside_typed_view_delivers_boolean_and_value_requests() {
         response = drive(&mut adapter, ctx, &env());
     });
     assert!(
-        !response.undo_drawing,
+        !response.undo_drawing(),
         "a value request does not imply Undo"
     );
     assert_eq!(response.model_effects, vec![HostEffect::First((9, 18))]);
@@ -618,10 +649,6 @@ fn every_valued_request_keeps_the_first_asker() {
             applied_preset: None,
         }),
         footprint: Some(FootprintChange::ResetToDefault),
-        market: Some(PaletteIntent::Remove {
-            feed_id: "first".to_owned(),
-            symbol: "FIRST".to_owned(),
-        }),
         test_alert: Some(crate::audio::Cue::default()),
         ..SurfaceResponse::default()
     };
@@ -638,26 +665,13 @@ fn every_valued_request_keeps_the_first_asker() {
             applied_preset: Some(crate::style::CandlePreset::Classic),
         }),
         footprint: Some(FootprintChange::Applied(Box::default())),
-        market: Some(PaletteIntent::Remove {
-            feed_id: "second".to_owned(),
-            symbol: "SECOND".to_owned(),
-        }),
         arm_strategy: None,
-        bar_switch: None,
         test_alert: Some(crate::audio::Cue::new(
             crate::audio::AlertSound::Critical,
             None,
         )),
-        undo_drawing: false,
     });
     assert_eq!(first.footprint, Some(FootprintChange::ResetToDefault));
-    assert_eq!(
-        first.market,
-        Some(PaletteIntent::Remove {
-            feed_id: "first".to_owned(),
-            symbol: "FIRST".to_owned(),
-        })
-    );
     // The three the first version of this test set but never contested,
     // which is how a field folded with assignment instead of `or` would
     // have shipped: an appearance edit silently clobbered by whatever
@@ -728,9 +742,11 @@ fn a_response_stays_small_enough_to_return_every_frame() {
 #[test]
 fn a_quiet_surface_cannot_cancel_an_earlier_request() {
     let mut merged = SurfaceResponse {
-        undo_drawing: true,
+        model_effects: vec![HostEffect::Toast(quantick_ui_model::toast::Effects {
+            undo_drawing: true,
+        })],
         ..SurfaceResponse::default()
     };
     merged.merge(SurfaceResponse::default());
-    assert!(merged.undo_drawing);
+    assert!(merged.undo_drawing());
 }

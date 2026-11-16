@@ -55,10 +55,7 @@ pub(crate) fn note_with_undo(
     });
 }
 pub(crate) fn effects(effect: quantick_ui_model::toast::Effects) -> SurfaceResponse {
-    SurfaceResponse {
-        undo_drawing: effect.undo_drawing,
-        ..Default::default()
-    }
+    SurfaceResponse::effect_if(effect.undo_drawing, super::HostEffect::Toast(effect))
 }
 impl super::View<Model> for View {
     fn id(&self) -> &'static str {
