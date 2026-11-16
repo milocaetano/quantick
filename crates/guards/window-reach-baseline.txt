@@ -4,10 +4,12 @@
 # writes its cuts there too.
 #
 # The window-reach ratchet's one ceiling (`crates/guards/src/window_reach.rs`):
-# in crates/app/src production code, the impl blocks for QuantickApp or
-# ControlWindow, the functions taking either by reference, and the structs
-# holding either by reference. The slack is zero, so a reach that fell fails
-# too until `cargo run -p quantick-guards -- --tighten` writes the new ceiling.
+# in crates/app/src production code, the impl blocks for QuantickApp,
+# ControlWindow or dyn ControlPort, the functions taking either by reference,
+# and the structs or enums holding either by reference. Harness-feature code
+# counts; only items under a bare #[cfg(test)] and test files do not. The
+# slack is zero, so a reach that fell fails too until
+# `cargo run -p quantick-guards -- --tighten` writes the new ceiling.
 #
 # Recorded when the guard landed, on main bf31dfb6 with the alert port asking
 # for its owner (AlertDefinitionsPort::alert_runtime).
