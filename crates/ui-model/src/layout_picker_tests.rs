@@ -276,9 +276,14 @@ fn every_preset_and_a_custom_colour_pass_the_clamp_in_both_themes() {
                 }
                 None => assert_eq!(inks.flow_edge, look::FLOW_EDGE_BARE_PT, "{name}"),
             }
-            assert_eq!(
-                inks.time_edge.to_array()[3],
-                look::TIME_EDGE_ALPHA,
+            let edge = quantick_appearance::contrast::over(inks.time_edge, ground);
+            let ratio = contrast_ratio(edge, ground);
+            assert!(
+                ratio >= look::RING_CONTRAST,
+                "{name} timeframe edge {ratio}"
+            );
+            assert!(
+                inks.time_edge.to_array()[3] >= look::TIME_EDGE_ALPHA,
                 "{name}"
             );
         }
@@ -553,6 +558,84 @@ fn it_hangs_below_its_button_and_scrolls_in_a_short_window() {
     assert!(short.y + short.height <= 250.0);
     let narrow = place_under(Rect::new(100.0, 40.0, 54.0, 22.0), screen);
     assert!(narrow.x >= 0.0 && narrow.y == tall.y);
+}
+
+/// A narrow window keeps the whole frame inside its right edge; a very short
+/// one shows less than the least height rather than hang below the window.
+#[test]
+fn it_stays_inside_a_narrow_and_a_very_short_window() {
+    let screen = Rect::new(0.0, 0.0, 600.0, 1000.0);
+    let past = place_under(Rect::new(560.0, 40.0, 80.0, 22.0), screen);
+    assert!(past.x + OUTER[0] <= screen.w, "{past:?}");
+    assert!(past.x >= 0.0);
+    let tiny = Rect::new(0.0, 0.0, 1600.0, 100.0);
+    let short = place_under(Rect::new(1200.0, 40.0, 80.0, 22.0), tiny);
+    assert!(short.y + short.height <= tiny.h, "{short:?}");
+    assert!(short.height >= 0.0 && short.scrolls);
+}
+
+/// The header's status and the "was" words end on one right edge; the was
+/// words underline under the pointer.
+#[test]
+fn the_header_status_lines_end_together_and_was_underlines_on_hover() {
+    let theme = ResolvedTheme::bundled(true);
+    let state = State {
+        hover: Some(Target::Undo),
+        changed: Some(Changed {
+            to: preset("charts-2").unwrap(),
+            was: preset("time+flow"),
+            at_ms: 0,
+        }),
+        ..State::default()
+    };
+    let shown = picker(&view(&state, marks("charts-2", "time+flow", true)), theme);
+    let right = |wanted: &str| {
+        shown.marks.iter().find_map(|mark| match mark {
+            Mark::Words(words) if words.text.starts_with(wanted) => Some(words.clone()),
+            _ => None,
+        })
+    };
+    let status = right(NOT_SAVED).expect("the status words");
+    let was = right("was ").expect("the was words");
+    assert_eq!((status.anchor, was.anchor), (Anchor::Right, Anchor::Right));
+    assert_eq!(status.x, was.x);
+    assert!(was.underline, "a link under the pointer");
+    let rest = State {
+        hover: None,
+        ..state
+    };
+    let calm = picker(&view(&rest, marks("charts-2", "time+flow", true)), theme);
+    let calm_was = calm.marks.iter().find_map(|mark| match mark {
+        Mark::Words(words) if words.text.starts_with("was ") => Some(words.clone()),
+        _ => None,
+    });
+    assert!(!calm_was.unwrap().underline);
+}
+
+/// The picker belongs to the tab it opened on: a frame from another tab
+/// closes it and forgets the pick, so Ctrl+Z there restores nothing.
+#[test]
+fn another_tab_closes_the_picker_and_forgets_the_pick() {
+    let mut state = State {
+        changed: Some(Changed {
+            to: preset("charts-2").unwrap(),
+            was: preset("flow"),
+            at_ms: 0,
+        }),
+        tab: Some(1),
+        ..State::default()
+    };
+    let undo = Seen {
+        tab: 2,
+        keys: Keys {
+            undo: true,
+            ..Keys::default()
+        },
+        ..seen(100, "time+flow")
+    };
+    let step = state.step(undo);
+    assert_eq!((step.pick, step.close), (None, true));
+    assert_eq!(state, State::default());
 }
 
 /// The read names every cell as the grid draws it, with the save state.

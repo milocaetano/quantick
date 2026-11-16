@@ -84,3 +84,16 @@ fn a_context_menu_pane_is_named_by_either_of_its_two_words() {
         "no such pane"
     );
 }
+
+/// `QUANTICK_LAYOUT_PICKER=0` is off, as `1` is on; a staging word stages.
+#[test]
+fn the_layout_picker_hook_reads_zero_as_off() {
+    let capture = |value| {
+        let pairs = [("QUANTICK_LAYOUT_PICKER", value)];
+        Harness::capture(&crate::hooks::ScenarioInputs::from_pairs(&pairs)).take_layout_picker()
+    };
+    assert_eq!(capture("0"), None);
+    assert_eq!(capture(""), None);
+    assert_eq!(capture("1").as_deref(), Some("1"));
+    assert_eq!(capture("pick=charts-2").as_deref(), Some("pick=charts-2"));
+}

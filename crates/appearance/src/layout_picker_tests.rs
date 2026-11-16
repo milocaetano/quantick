@@ -28,7 +28,7 @@ fn every_word_reads_on_its_ground_in_both_themes() {
             for &(ground_name, ground) in under {
                 let ratio = contrast_ratio(theme.color(ink), ground);
                 assert!(
-                    ratio >= TEXT_CONTRAST,
+                    ratio >= TEXT_CONTRAST + CAPTION_MARGIN,
                     "{} {ink_name} on {ground_name}: {ratio}",
                     theme.name
                 );
@@ -78,5 +78,45 @@ fn a_strong_colour_keeps_its_value_and_fills_the_flow_pane() {
     assert!(contrast_ratio(fill, ground) >= FILL_CONTRAST);
     assert_eq!(inks.flow_edge, FLOW_EDGE_PT);
     assert!(contrast_ratio(inks.check, inks.ring) >= RING_CONTRAST);
-    assert_eq!(inks.time_edge.a(), TIME_EDGE_ALPHA);
+    assert!(inks.time_edge.a() >= TIME_EDGE_ALPHA);
+}
+
+/// A timeframe pane's edge holds 3:1 on an empty chart cell once
+/// composited: the colour at 60%, more opaque where 60% falls short.
+#[test]
+fn timeframe_edges_hold_three_to_one_on_the_cell() {
+    for theme in themes() {
+        let ground = theme.color(chrome(theme.dark).ground);
+        for rgb in [[0x6A, 0x3F, 0xC4], [0x1F, 0x86, 0xBF], [0xA8, 0x87, 0xF2]] {
+            let inks = colour_inks(rgb, ground, theme.dark);
+            let seen = over(inks.time_edge, ground);
+            let ratio = contrast_ratio(seen, ground);
+            assert!(ratio >= RING_CONTRAST, "{} {rgb:?}: {ratio}", theme.name);
+        }
+    }
+}
+
+/// Ice in Dark: the flow fill stands off an empty cell at the target, not
+/// only at the floor.
+#[test]
+fn a_pale_colour_fills_the_flow_pane_at_the_target() {
+    let theme = ResolvedTheme::bundled(true);
+    let ground = theme.color(chrome(true).ground);
+    let inks = colour_inks([0xB3, 0xDB, 0xF5], ground, true);
+    let fill = inks.fill.expect("ice tints the flow pane");
+    let ratio = contrast_ratio(fill, ground);
+    assert!(ratio >= FILL_TARGET, "{ratio}");
+}
+
+/// The focus ring is the theme's accent, never a workspace colour such as
+/// Light Ink, which is near the ink itself.
+#[test]
+fn the_focus_ring_is_the_accent_and_stands_apart_from_ink() {
+    for theme in themes() {
+        assert_eq!(chrome(theme.dark).focus, Token::Accent);
+    }
+    let light = ResolvedTheme::bundled(false);
+    let ground = light.color(chrome(false).ground);
+    let ink = colour_inks([0x25, 0x2B, 0x36], ground, false).ring;
+    assert_ne!(light.color(Token::Accent), ink);
 }

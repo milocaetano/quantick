@@ -118,10 +118,11 @@ fn the_picker_is_its_contents_size_and_hangs_below_its_button() {
                 egui::vec2(OUTER[0], OUTER[1]),
                 "autosave {autosave}"
             );
-            assert_eq!(frame.top(), (button.bottom() + DROP_PT).round());
+            let capsule = button.union(app.chrome.capsule.name);
+            assert_eq!(frame.top(), (capsule.bottom() + DROP_PT).round());
             assert!(
-                (frame.right() - button.right()).abs() <= 1.0,
-                "{frame:?} {button:?}"
+                (frame.right() - capsule.right()).abs() <= 1.0,
+                "right edges flush: {frame:?} {capsule:?}"
             );
             let escape = vec![key_press(egui::Key::Escape)];
             run_sized_frame(&mut app, &ctx, TEST_WINDOW, escape);
@@ -176,6 +177,19 @@ fn a_pick_confirms_and_ctrl_z_restores_the_previous_layout() {
     assert!(painted_text_center(&output, "Changed to 2 charts").is_some());
     let undo = control(&app, "toolbar.layout_popover.undo").expect("the was words");
     assert!(undo.label.contains(before.label), "{}", undo.label);
+    let shift = egui::Modifiers::COMMAND | egui::Modifiers::SHIFT;
+    run_sized_frame(
+        &mut app,
+        &ctx,
+        TEST_WINDOW,
+        vec![key_press_with(egui::Key::Z, shift)],
+    );
+    frames(&mut app, &ctx, 2);
+    assert_eq!(
+        app.active_tab().canvas.state.preset(),
+        Some(picked),
+        "Ctrl+Shift+Z is not the picker's undo"
+    );
     let ctrl_z = vec![key_press_with(egui::Key::Z, egui::Modifiers::COMMAND)];
     run_sized_frame(&mut app, &ctx, TEST_WINDOW, ctrl_z);
     frames(&mut app, &ctx, 3);
@@ -321,5 +335,43 @@ fn canvas_popover_projection_is_consumed_by_one_paint() {
             .model_state
             .projection()
             .add_open
+    );
+}
+
+/// The picker belongs to its tab: after a pick on one tab, another tab's
+/// frame closes it and Ctrl+Z there leaves that tab's layout alone.
+#[test]
+fn a_tab_change_closes_the_picker_and_ctrl_z_spares_the_other_tab() {
+    let ctx = egui::Context::default();
+    let (mut app, _cmd_rx) = app_with_history(50);
+    let _ends = open_second_tab(&mut app, &ctx, "ETHUSDT");
+    frames(&mut app, &ctx, 3);
+    open_picker(&mut app, &ctx, TEST_WINDOW);
+    let cell = control(&app, "toolbar.layout_popover.charts-2")
+        .unwrap()
+        .rect;
+    click_sized(&mut app, &ctx, TEST_WINDOW, cell.center());
+    frames(&mut app, &ctx, 2);
+    assert_eq!(app.active_tab().canvas.state.preset(), preset("charts-2"));
+    app.apply_tab_action(TabAction::Activate(0));
+    frames(&mut app, &ctx, 2);
+    let other = app.active_tab().canvas.state.preset();
+    let ctrl_z = vec![key_press_with(egui::Key::Z, egui::Modifiers::COMMAND)];
+    run_sized_frame(&mut app, &ctx, TEST_WINDOW, ctrl_z);
+    frames(&mut app, &ctx, 2);
+    assert_eq!(
+        app.active_tab().canvas.state.preset(),
+        other,
+        "the other tab"
+    );
+    let open = app.surfaces.canvas_popovers.model_state.projection();
+    assert!(!open.layout_open, "the picker closed with its tab");
+    assert!(
+        app.surfaces
+            .canvas_popovers
+            .model_state
+            .picker()
+            .changed
+            .is_none()
     );
 }
