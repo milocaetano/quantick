@@ -200,7 +200,12 @@ fn the_undo_row_stands_until_its_time() {
 #[test]
 fn a_palette_or_a_field_takes_the_keys_first() {
     let mut dialog = ManageDialog::new(7);
-    let takes = |dialog: &ManageDialog, key| dialog.takes(key, 5);
+    let rows = [
+        ("Default".to_owned(), true),
+        ("Flow".to_owned(), false),
+        ("Scalp".to_owned(), false),
+    ];
+    let takes = |dialog: &ManageDialog, key| dialog.takes(key, 5, &rows);
     for key in [ManageKey::Up, ManageKey::Down, ManageKey::Escape] {
         assert!(takes(&dialog, key), "{key:?} always acts");
     }
@@ -215,6 +220,14 @@ fn a_palette_or_a_field_takes_the_keys_first() {
     }
     dialog.focus = Some(2);
     assert!(takes(&dialog, ManageKey::F2) && takes(&dialog, ManageKey::Colour));
+    dialog.focus = Some(0);
+    assert!(!takes(&dialog, ManageKey::F2), "Default is not renamed");
+    assert!(!takes(&dialog, ManageKey::Delete), "nor deleted");
+    assert!(
+        takes(&dialog, ManageKey::Colour),
+        "its colour still changes"
+    );
+    dialog.focus = Some(2);
     assert!(
         !takes(&dialog, ManageKey::Enter),
         "Enter only on an armed row"
@@ -230,7 +243,7 @@ fn a_palette_or_a_field_takes_the_keys_first() {
         takes(&dialog, ManageKey::Undo),
         "Ctrl+Z while an Undo row stands"
     );
-    assert!(!dialog.takes(ManageKey::Undo, 10), "and not after");
+    assert!(!dialog.takes(ManageKey::Undo, 10, &rows), "and not after");
     dialog.local(&ManageIntent::BeginRename("Scalp".to_owned()));
     assert!(takes(&dialog, ManageKey::Escape) && !takes(&dialog, ManageKey::Colour));
     dialog.local(&ManageIntent::Chip("Scalp".to_owned()));

@@ -501,16 +501,14 @@ fn a_palette_press_is_routed_to_its_place() {
     );
 }
 
-/// Manage tints each row toward its colour as menu B does, and words whose
-/// ink would fall under 4.5:1 on its rest or hover fill take the one ink
-/// [`row_ink`] chooses: the summary beside Scalp's name in Dark.
+/// Manage tints each row toward its colour as menu B does, over the list's
+/// ground, and its words are chosen on that tint as menu B's are.
 #[test]
 fn every_row_wears_its_colour_and_its_words_read_on_it() {
-    use quantick_appearance::workspace_menu::{RowTint, chrome, row_fill, row_ink};
+    use quantick_appearance::workspace_menu::{RowTint, RowWords, chrome};
     use quantick_stores::workspaces::WorkspaceColour;
     let shown = view(&ManageDialog::new(1), true);
     let sky = WorkspaceColour::preset(2).unwrap().rgb(true);
-    let fills = [RowTint::Rest, RowTint::Hover].map(|tint| row_fill(sky, true, tint));
     let at = (shown.list.iter()).position(|piece| {
         piece
             .row
@@ -521,16 +519,48 @@ fn every_row_wears_its_colour_and_its_words_read_on_it() {
     let Some(Mark::Text(words)) = summary.marks.first() else {
         panic!("the summary")
     };
-    assert_eq!(words.rgb, row_ink(&fills, true, chrome(true).support));
-    assert!(
-        words.rgb.is_some(),
-        "the support ink steps up on Sky's tint"
-    );
+    let row = RowWords {
+        ground: chrome(true).ground,
+        colour: sky,
+        current: false,
+    };
+    assert_eq!(words.on, Some(row), "the summary is chosen on Sky's tint");
     let band = (shown.list.iter()).find_map(|piece| match piece.marks.first() {
         Some(Mark::Box(plate)) if piece.row.as_ref().is_some_and(|row| row.label == "Scalp") => {
-            plate.rgb
+            Some((plate.fill, plate.toward))
         }
         _ => None,
     });
-    assert_eq!(band, Some(fills[0]), "Scalp's own colour at rest");
+    let rest = (
+        Some(chrome(true).ground),
+        Some((sky, RowTint::Rest.share())),
+    );
+    assert_eq!(
+        band,
+        Some(rest),
+        "Scalp's own colour over the ground, at rest"
+    );
+}
+
+/// The name dialog's top stays where it opens while Custom grows it, and
+/// what does not fit the window scrolls inside it.
+#[test]
+fn the_name_dialog_keeps_its_top_and_fits_the_window() {
+    let book = book();
+    let mut dialog = create("save_as");
+    let screen = [0.0, 900.0];
+    let (top, room) = name_place(&book, &dialog, screen);
+    dialog.palette.custom = true;
+    assert_eq!(
+        name_place(&book, &dialog, screen),
+        (top, room),
+        "Custom grows it downward"
+    );
+    assert_eq!(room, screen[1] - DIALOG_MARGIN_PT - top);
+    let (short_top, short_room) = name_place(&book, &dialog, [0.0, 300.0]);
+    assert_eq!(
+        short_top, DIALOG_MARGIN_PT,
+        "never above the window's margin"
+    );
+    assert_eq!(short_room, 300.0 - 2.0 * DIALOG_MARGIN_PT);
 }

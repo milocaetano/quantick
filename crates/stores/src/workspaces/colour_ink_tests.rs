@@ -68,27 +68,32 @@ fn a_custom_colour_below_the_floor_falls_back_to_the_tabs_ink() {
 }
 
 /// Every workspace row, in menu B and in Manage, is tinted toward its own
-/// colour: at rest, hovered and current. The name and the summary, in the
-/// ink [`row_ink`] chooses for the fills the row can wear, read 4.5:1 on
-/// each, and the current row stands apart from a row of the same colour at
-/// rest.
+/// colour over the list's ground: at rest, hovered and current. The name
+/// and the summary, in the ink [`RowWords::ink`] chooses for the fills the
+/// row wears, read 4.5:1 on each, and the current row stands apart from a
+/// row of the same colour at rest.
 #[test]
 fn every_row_tint_keeps_its_words_at_four_and_a_half_to_one() {
-    use quantick_appearance::workspace_menu::{RowTint, chrome, row_fill, row_ink};
+    use quantick_appearance::workspace_menu::{RowTint, RowWords, chrome, mix};
     for dark in [true, false] {
         let theme = ResolvedTheme::bundled(dark);
         let menu = chrome(dark);
+        let solid = |token| {
+            let [r, g, b, _] = theme.color(token).to_array();
+            [r, g, b]
+        };
+        let ground = solid(menu.ground);
         for colour in presets() {
-            let shade = |tint| row_fill(colour.rgb(dark), dark, tint);
-            let worn = [
-                vec![shade(RowTint::Rest), shade(RowTint::Hover)],
-                vec![shade(RowTint::Current)],
-            ];
-            for fills in &worn {
+            for current in [false, true] {
+                let row = RowWords {
+                    ground: menu.ground,
+                    colour: colour.rgb(dark),
+                    current,
+                };
                 for token in [menu.ink, menu.support] {
-                    let ink = row_ink(fills, dark, token).map_or_else(|| theme.color(token), rgb);
-                    for fill in fills {
-                        let ratio = contrast_ratio(ink, rgb(*fill));
+                    let ink = row.ink(ground, solid(token), solid(Token::TextPrimary));
+                    for fill in row.fills(ground) {
+                        let ratio = contrast_ratio(rgb(ink), rgb(fill));
                         assert!(
                             ratio >= 4.5,
                             "{} dark {dark} {token:?}: {ratio}",
@@ -97,6 +102,7 @@ fn every_row_tint_keeps_its_words_at_four_and_a_half_to_one() {
                     }
                 }
             }
+            let shade = |tint: RowTint| mix(ground, colour.rgb(dark), tint.share());
             let (now, rest) = (shade(RowTint::Current), shade(RowTint::Rest));
             let apart = (0..3).map(|at| now[at].abs_diff(rest[at])).max();
             assert!(
@@ -105,6 +111,35 @@ fn every_row_tint_keeps_its_words_at_four_and_a_half_to_one() {
                 colour.name()
             );
         }
+    }
+}
+
+/// A theme of the trader's own paints its own ground: the row's fill mixes
+/// from that ground, and its words are chosen against it.
+#[test]
+fn a_row_follows_the_ground_the_theme_paints() {
+    use quantick_appearance::workspace_menu::{RowTint, RowWords, chrome, mix};
+    let menu = chrome(true);
+    let sky = WorkspaceColour::preset(2).unwrap().rgb(true);
+    let row = RowWords {
+        ground: menu.ground,
+        colour: sky,
+        current: false,
+    };
+    let (bundled, own) = ([0x17, 0x1B, 0x26], [0x3A, 0x40, 0x4C]);
+    assert_eq!(row.fills(own)[0], mix(own, sky, RowTint::Rest.share()));
+    assert_ne!(
+        row.fills(own),
+        row.fills(bundled),
+        "the mix follows the ground"
+    );
+    let support = [0x86, 0x92, 0xA4];
+    let ink = row.ink(own, support, [0xD2, 0xDA, 0xE2]);
+    for fill in row.fills(own) {
+        assert!(
+            contrast_ratio(rgb(ink), rgb(fill)) >= 4.5,
+            "chosen on the theme's own ground"
+        );
     }
 }
 
