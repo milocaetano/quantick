@@ -2,12 +2,6 @@
 
 use super::*;
 
-pub(super) fn queue_saved(app: &mut LayoutAdapter<'_>, owner: TabSlot, entry: &SavedIndicator) {
-    if entry.mouse_vertical_line {
-        app.indicators.registry.defer_mouse_vertical_line(owner);
-    }
-}
-
 /// Set the guide through the path shared by the pane menu and control action.
 pub(crate) fn set_indicator_mouse_vertical_line(
     app: &mut LayoutAdapter<'_>,
@@ -32,31 +26,25 @@ pub(crate) fn set_indicator_mouse_vertical_line(
 }
 
 fn set_at(app: &mut LayoutAdapter<'_>, origin: TabSlot, enabled: bool) -> bool {
-    let Some((layout, index)) = app.edit_coordinates(origin) else {
+    // The origin refuses first: a slot off the layout, a closed view or an
+    // overlay writes nothing.
+    if app.edit_coordinates(origin).is_none() || !set_view(app, origin, enabled) {
         return false;
-    };
-    if let Some(view) = app
-        .pane_mut_at(origin.tab, origin.side)
-        .and_then(|pane| pane.indicators.view_mut(origin.slot))
-        .filter(|view| !view.descriptor.overlay)
-    {
-        view.mouse_vertical_line = enabled;
-    } else {
-        return false;
-    };
-    if let Some(entry) = app.layout_entry_mut(layout, index) {
-        entry.mouse_vertical_line = enabled;
     }
-    for (tab, side) in app.mirror_targets(origin, layout) {
-        if let Some(slot) = app.layout_slots_at(tab, side).get(index).copied()
-            && let Some(view) = app
-                .pane_mut_at(tab, side)
-                .and_then(|pane| pane.indicators.view_mut(slot))
-            && !view.descriptor.overlay
-        {
-            view.mouse_vertical_line = enabled;
-        }
+    let edit = LayoutEdit::MouseVerticalLine(enabled);
+    for target in app.mirror_slots(origin, edit).unwrap_or_default() {
+        set_view(app, target, enabled);
     }
     app.mark_layouts_dirty();
     true
+}
+
+/// Set the guide on one view; a closed view or an overlay refuses it.
+fn set_view(app: &mut LayoutAdapter<'_>, at: TabSlot, enabled: bool) -> bool {
+    let pane = app.pane_mut_at(at.tab, at.side);
+    let view = pane.and_then(|pane| pane.indicators.view_mut(at.slot));
+    let guided = view.filter(|view| !view.descriptor.overlay);
+    guided
+        .map(|view| view.mouse_vertical_line = enabled)
+        .is_some()
 }

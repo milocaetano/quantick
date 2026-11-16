@@ -416,20 +416,6 @@ impl LayoutAdapter<'_> {
             .count()
     }
 
-    /// Physical order comes from topology; membership selection belongs to the core.
-    fn panes_on(&self, layout: LayoutId) -> Vec<(u64, PaneSide)> {
-        let session = self.store.session();
-        session
-            .matching(
-                layout,
-                self.tabs.iter_with_ids().flat_map(|(tab_id, tab)| {
-                    tab.panes()
-                        .map(move |(pane, side)| ((tab_id, side), &pane.layout.view))
-                }),
-            )
-            .collect()
-    }
-
     /// Give a pane its strip layout's name for its header.
     fn refresh_layout_label(&mut self, tab: u64, side: PaneSide) {
         let name = self
