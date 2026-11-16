@@ -5,7 +5,7 @@
 //! these marks into pixels and presses.
 
 use quantick_appearance::Token;
-use quantick_appearance::workspace_menu::{MenuChrome, RowTint, chrome, row_fill};
+use quantick_appearance::workspace_menu::{MenuChrome, RowTint, chrome, row_fill, row_ink};
 use quantick_control_handlers::workspace_book::cell_menu::{
     CAPTION, CellMenu, CellRow, RowKind, UNSAVED,
 };
@@ -264,6 +264,32 @@ pub(crate) fn tinted(at: Area, row: &CellRow, tint: RowTint, dark: bool) -> Plat
         fill: fill.filter(|_| rgb.is_none()),
         alpha: u8::MAX,
         edge: None,
+    }
+}
+
+/// `marks`' words in the menu's text and support inks on `row`'s tint take
+/// [`row_ink`]'s ink for every fill the row wears: its rest and hover, or
+/// its current. One rule for menu B and Manage.
+pub(crate) fn legible(marks: &mut [Mark], row: &CellRow, dark: bool) {
+    let (Some(colour), ink) = (row.colour.as_ref(), chrome(dark)) else {
+        return;
+    };
+    let worn: &[RowTint] = if row.on {
+        &[RowTint::Current]
+    } else {
+        &[RowTint::Rest, RowTint::Hover]
+    };
+    let fills: Vec<[u8; 3]> = worn
+        .iter()
+        .map(|tint| row_fill(colour.rgb, dark, *tint))
+        .collect();
+    for mark in marks {
+        if let Mark::Text(words) = mark
+            && words.rgb.is_none()
+            && [ink.ink, ink.support].contains(&words.ink)
+        {
+            words.rgb = row_ink(&fills, dark, words.ink);
+        }
     }
 }
 
@@ -570,7 +596,7 @@ pub fn row(row: &CellRow, width: f32, focused: bool, dark: bool) -> Piece {
         marks.push(dot(status + 7.0, y, DOT_PT, ink.accent));
     }
     let line = area(2.0 * PAD, 0.0, width - 3.0 * PAD - 8.0, CHIP_MENU_ROW_PT);
-    let mut line = entry(
+    let line = entry(
         line,
         row,
         (SLOT_WIDTH_PT, MINI_ROW),
@@ -578,11 +604,8 @@ pub fn row(row: &CellRow, width: f32, focused: bool, dark: bool) -> Piece {
         STATUS_PT + 8.0,
         &ink,
     );
-    // On the selection fill the support ink falls under 4.5:1 in Dark.
-    if let (true, Some(Mark::Text(summary))) = (row.on, line.get_mut(1)) {
-        summary.ink = ink.ink;
-    }
     marks.extend(line);
+    legible(&mut marks, row, dark);
     Piece {
         at,
         row: Some(row.clone()),

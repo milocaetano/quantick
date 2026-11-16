@@ -31,7 +31,7 @@ use quantick_stores::workspaces::{
 
 use crate::colour_palette;
 pub use crate::workspace_menu::Sheet;
-use crate::workspace_menu::{Area, Mark, Measure, Piece, Plate, Words, area, tinted};
+use crate::workspace_menu::{Area, Mark, Measure, Piece, Plate, Words, area, legible, tinted};
 use quantick_appearance::workspace_menu::RowTint;
 
 /// The scene ids' first word: Manage's, and the name dialogs'.
@@ -483,6 +483,7 @@ fn plain(
         (false, false) => RowTint::Rest,
     };
     marks.insert(0, Mark::Box(tinted(band, &row, tint, line.dark)));
+    let (first, legible_on) = (view.list.len(), row.clone());
     view.list.push(Piece {
         hover: (!row.on).then(|| tinted(band, &row, RowTint::Hover, line.dark)),
         row: Some(row),
@@ -623,6 +624,9 @@ fn plain(
             ..Piece::plain(at, lines)
         });
         view.list_height += NOTE_PT;
+    }
+    for piece in &mut view.list[first..] {
+        legible(&mut piece.marks, &legible_on, line.dark); // As menu B's.
     }
 }
 

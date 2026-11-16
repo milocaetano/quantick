@@ -69,9 +69,9 @@ impl FilledButton {
 
 /// How far a workspace row's fill moves from the list's ground toward the
 /// row's own colour: at rest, under the pointer or the keys, and on the
-/// tab's own workspace (twice the rest). The capsule's 12% was the start;
-/// Dark's support ink on Dark Ink's tint fell under 4.5:1 above 7%, so every
-/// row takes these lower shares, never one per preset.
+/// tab's own workspace, so each row wears its colour as the selected one
+/// does. The words keep 4.5:1 by their ink ([`row_ink`]), never by a lower
+/// share.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RowTint {
     Rest,
@@ -84,9 +84,9 @@ impl RowTint {
     #[must_use]
     pub const fn share(self) -> f32 {
         match self {
-            Self::Rest => 0.035,
-            Self::Hover => 0.05,
-            Self::Current => 0.07,
+            Self::Rest => 0.14,
+            Self::Hover => 0.18,
+            Self::Current => 0.24,
         }
     }
 }
@@ -104,6 +104,29 @@ pub fn row_fill(colour: [u8; 3], dark: bool, tint: RowTint) -> [u8; 3] {
         (from + (to - from) * share).round().clamp(0.0, 255.0) as u8
     };
     [mix(0), mix(1), mix(2)]
+}
+
+/// The ink a workspace row's words of `token` take on every fill in `fills`
+/// (the row's rest and hover, or its current): `None` while the token reads
+/// 4.5:1 on each, else the theme's primary text, else pure white in Dark or
+/// near-black in Light. Menu B and Manage both choose with this.
+#[must_use]
+pub fn row_ink(fills: &[[u8; 3]], dark: bool, token: Token) -> Option<[u8; 3]> {
+    use crate::{PremultipliedRgba as Rgba, contrast::contrast_ratio};
+    let theme = crate::ResolvedTheme::bundled(dark);
+    let opaque = |[r, g, b]: [u8; 3]| Rgba::from_rgb(r, g, b);
+    let reads = |ink: Rgba| (fills.iter()).all(|fill| contrast_ratio(ink, opaque(*fill)) >= 4.5);
+    if reads(theme.color(token)) {
+        return None;
+    }
+    let primary = theme.color(Token::TextPrimary).to_array();
+    let primary = [primary[0], primary[1], primary[2]];
+    let strong = if dark { [255; 3] } else { [17; 3] };
+    Some(if reads(opaque(primary)) {
+        primary
+    } else {
+        strong
+    })
 }
 
 /// The menu as `dark` or Light paints it.
