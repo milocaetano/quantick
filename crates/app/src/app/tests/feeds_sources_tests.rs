@@ -34,7 +34,7 @@ fn confirmed_feed_loss_reaches_gap_and_health_snapshots_without_changing_trades(
     events.blocking_send(FeedEvent::Live(trade(14))).unwrap();
     let tab_id = app.runtime.tabs.active_id();
     app.active_tab_mut().drain_feed(tab_id);
-    assert_eq!(app.active_tab().flow_pane.state.trades().len(), 1);
+    assert_eq!(app.active_tab().flow_pane.series.state.trades().len(), 1);
     assert_eq!(
         app.active_tab().link.feed_gaps.len(),
         quantick_feed::MAX_REMEMBERED_GAPS
@@ -316,6 +316,7 @@ fn a_reconnect_refill_is_charted_whole_whatever_reaches_the_tab_first() {
         let tab = app.active_tab();
         let times: Vec<i64> = tab
             .flow_pane
+            .series
             .state
             .trades()
             .iter()
@@ -700,7 +701,7 @@ fn a_click_on_the_popup_never_reaches_the_chart() {
 
     // The headline's own row: painted text, which registers no widget.
     let on_the_sentence = egui::pos2(popup.center().x, popup.top() + 12.0);
-    let held = app.active_tab().flow_pane.state.trades().len();
+    let held = app.active_tab().flow_pane.series.state.trades().len();
     let before = {
         let viewport = &app.active_tab().flow_pane.model.viewport;
         (viewport.px_per_bar(), viewport.right_edge_bar(held))
@@ -789,14 +790,14 @@ fn a_resume_floor_never_outlives_the_event_it_filtered() {
             ..trade(2)
         },
     ];
-    let held = app.active_tab().flow_pane.state.trades().len();
+    let held = app.active_tab().flow_pane.series.state.trades().len();
     events
         .blocking_send(FeedEvent::HistoryPrepended(older))
         .unwrap();
     let tab_id = app.runtime.tabs.active_id();
     app.active_tab_mut().drain_feed(tab_id);
     assert_eq!(
-        app.active_tab().flow_pane.state.trades().len(),
+        app.active_tab().flow_pane.series.state.trades().len(),
         held + 2,
         "load older must not be swallowed by a floor from a past reconnect"
     );
@@ -919,7 +920,7 @@ fn a_finer_spec_follows_the_same_market_time_forward() {
         .retain(crate::state::BarSpec::Tick(1));
     app.active_tab_mut().apply_spec_changes();
     app.active_tab_mut().apply_spec_changes();
-    assert_eq!(app.active_tab().flow_pane.state.bars().len(), 400);
+    assert_eq!(app.active_tab().flow_pane.series.state.bars().len(), 400);
     let edge = app
         .active_tab()
         .flow_pane
@@ -1439,6 +1440,7 @@ fn progressive_slices_paint_as_they_arrive_and_the_wait_ends_on_the_last() {
     // across the merge, which is what the seam contract rests on.
     let pane = app.active_tab().pane(PaneSide::Time(0));
     let opens: Vec<i64> = pane
+        .series
         .history_prefix
         .iter()
         .map(|bar| bar.open_time)
@@ -1766,7 +1768,7 @@ fn yesterday_pages_to_the_previous_open_and_the_chart_holds_still_while_it_does(
     let ctx = egui::Context::default();
     let (mut app, events, mut commands) = history_app(&ctx);
     drain_load_older(&mut commands);
-    let bars_before = app.active_tab().flow_pane.state.bars().len();
+    let bars_before = app.active_tab().flow_pane.series.state.bars().len();
 
     app.apply_toolbar_action(crate::toolbar::ToolbarAction::LoadHistory(
         history_reach::HistoryReach::Sessions(1),
@@ -1794,7 +1796,7 @@ fn yesterday_pages_to_the_previous_open_and_the_chart_holds_still_while_it_does(
         app.drain_tabs();
         if index < 2 {
             assert_eq!(
-                app.active_tab().flow_pane.state.bars().len(),
+                app.active_tab().flow_pane.series.state.bars().len(),
                 bars_before,
                 "page {index}: the visible bars do not move while the run pages"
             );
@@ -1969,7 +1971,7 @@ fn cancel_stops_paging_keeps_what_arrived_and_says_where() {
     let ctx = egui::Context::default();
     let (mut app, events, mut commands) = history_app(&ctx);
     drain_load_older(&mut commands);
-    let held = app.active_tab().flow_pane.state.trades().len();
+    let held = app.active_tab().flow_pane.series.state.trades().len();
     app.apply_toolbar_action(crate::toolbar::ToolbarAction::LoadHistory(
         history_reach::HistoryReach::Sessions(5),
     ));
@@ -2003,7 +2005,7 @@ fn cancel_stops_paging_keeps_what_arrived_and_says_where() {
         ))
         .unwrap();
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    while app.active_tab().flow_pane.state.trades().len() != held + 90
+    while app.active_tab().flow_pane.series.state.trades().len() != held + 90
         && std::time::Instant::now() < deadline
     {
         app.drain_tabs();
@@ -2014,7 +2016,7 @@ fn cancel_stops_paging_keeps_what_arrived_and_says_where() {
         "nothing more is asked"
     );
     assert_eq!(
-        app.active_tab().flow_pane.state.trades().len(),
+        app.active_tab().flow_pane.series.state.trades().len(),
         held + 90,
         "every page that arrived is kept"
     );
@@ -2154,7 +2156,8 @@ fn a_run_stops_the_moment_the_venue_says_its_record_ends() {
 fn the_venue_prefix_is_counted_apart_from_the_built_bars() {
     let ctx = egui::Context::default();
     let (mut app, events, _commands) = history_app(&ctx);
-    let venue_bars = |app: &QuantickApp, side| app.active_tab().pane(side).history_prefix.len();
+    let venue_bars =
+        |app: &QuantickApp, side| app.active_tab().pane(side).series.history_prefix.len();
     assert_eq!(
         venue_bars(&app, PaneSide::Time(0)),
         0,
@@ -2173,7 +2176,8 @@ fn the_venue_prefix_is_counted_apart_from_the_built_bars() {
     assert_eq!(venue_bars(&app, PaneSide::Time(0)), 120);
     let time = app.active_tab().pane(PaneSide::Time(0));
     assert!(
-        time.state
+        time.series
+            .state
             .backfill_boundary()
             .is_some_and(|built| built > 0),
         "and the trade-derived counts are still their own"
@@ -2192,6 +2196,7 @@ fn the_seam_drops_a_venue_bucket_that_overlaps_the_first_engine_bar() {
     let first_engine_open = app
         .active_tab()
         .pane(PaneSide::Time(0))
+        .series
         .state
         .bars()
         .first()
@@ -2199,6 +2204,7 @@ fn the_seam_drops_a_venue_bucket_that_overlaps_the_first_engine_bar() {
         .or_else(|| {
             app.active_tab()
                 .pane(PaneSide::Time(0))
+                .series
                 .state
                 .partial()
                 .map(|bar| bar.open_time)
@@ -2234,10 +2240,11 @@ fn the_seam_drops_a_venue_bucket_that_overlaps_the_first_engine_bar() {
     // connected (36% of a minute, 94% of an hour, measured live).
     let interval = quantick_feed::OHLCV_BASE_INTERVAL_MS;
     let first_open = pane
+        .series
         .state
         .bars()
         .first()
-        .or_else(|| pane.state.partial())
+        .or_else(|| pane.series.state.partial())
         .map(|bar| bar.open_time)
         .expect("the pane holds the fixture trades");
     assert_ne!(
@@ -2459,7 +2466,12 @@ fn a_market_without_a_bar_opens_on_the_active_tab_bar_the_footer_showed() {
     press_in_palette(&mut app, &ctx, egui::Key::Enter);
     assert_eq!(app.active_tab().symbol, "ETHUSDT");
     assert_eq!(
-        app.active_tab().flow_pane.state.spec().to_config_string(),
+        app.active_tab()
+            .flow_pane
+            .series
+            .state
+            .spec()
+            .to_config_string(),
         "volume:13"
     );
 }
@@ -2643,8 +2655,8 @@ fn the_same_market_can_be_open_twice() {
         app.runtime.tabs[1].flow_pane.id
     );
     // Separate engines: what one holds says nothing about the other.
-    assert!(!app.runtime.tabs[0].flow_pane.state.bars().is_empty());
-    assert!(app.runtime.tabs[1].flow_pane.state.bars().is_empty());
+    assert!(!app.runtime.tabs[0].flow_pane.series.state.bars().is_empty());
+    assert!(app.runtime.tabs[1].flow_pane.series.state.bars().is_empty());
 }
 
 /// A market order takes no price, and saying otherwise is refused before

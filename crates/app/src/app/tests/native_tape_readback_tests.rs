@@ -354,7 +354,7 @@ fn assert_regional_circles(
     let rect = pane.frame.chart_rect.unwrap();
     let right = pane.frame.candles_right.unwrap_or(rect.right());
     let (low, high) = pane.price_view.resolve(pane.frame.auto_range.unwrap());
-    let total = pane.state.bars().len() + usize::from(pane.state.partial().is_some());
+    let total = pane.series.state.bars().len() + usize::from(pane.series.state.partial().is_some());
     let history = rect.with_max_x(right);
     let geometry = quantick_chart::flow_execution::FlowExecutionGeometry::new(
         pane.model.viewport,

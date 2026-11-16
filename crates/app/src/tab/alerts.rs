@@ -8,7 +8,7 @@ pub(crate) use quantick_stores::alerts::{Observation, PaneFacts, Source};
 pub(crate) fn facts(pane: &ChartPane) -> PaneFacts<'_> {
     PaneFacts {
         id: pane.id,
-        series: &pane.state,
+        series: &pane.series.state,
         drawings: &pane.drawings,
         drawing_key: pane.layout.drawings_key.as_ref(),
         prefix_slots: pane.seam_slot(),

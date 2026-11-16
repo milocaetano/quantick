@@ -19,7 +19,7 @@ fn switching_only_the_imbalance_unit_recuts_the_series() {
     app.active_tab_mut().apply_spec_changes();
     app.active_tab_mut().apply_spec_changes();
     assert_eq!(
-        app.active_tab().flow_pane.state.spec(),
+        app.active_tab().flow_pane.series.state.spec(),
         &BarSpec::Imbalance(crate::state::ImbalanceUnit::Trades, 100),
         "the kind switch lands on the default trades unit first"
     );
@@ -42,7 +42,7 @@ fn switching_only_the_imbalance_unit_recuts_the_series() {
     );
     app.active_tab_mut().apply_spec_changes();
     assert_eq!(
-        app.active_tab().flow_pane.state.spec(),
+        app.active_tab().flow_pane.series.state.spec(),
         &BarSpec::Imbalance(crate::state::ImbalanceUnit::Volume, 100),
         "a unit-only change rebuilds the series"
     );
@@ -566,7 +566,7 @@ fn depth_channel_updates_heatmap_without_mutating_candles() {
 
     let (mut app, _evt_tx, mut cmd_rx, book_tx) = test_app();
     let generation = take_capture_start(&mut cmd_rx);
-    let bars_before = app.active_tab().flow_pane.state.bars().len();
+    let bars_before = app.active_tab().flow_pane.series.state.bars().len();
     book_tx
         .try_send(DepthEvent::Snapshot {
             symbol: "TESTUSDT".to_owned(),
@@ -590,7 +590,10 @@ fn depth_channel_updates_heatmap_without_mutating_candles() {
     let book = app.active_tab_mut().tape_mut().health();
     assert_eq!(book.bid_levels, 1);
     assert_eq!(book.ask_levels, 1);
-    assert_eq!(app.active_tab().flow_pane.state.bars().len(), bars_before);
+    assert_eq!(
+        app.active_tab().flow_pane.series.state.bars().len(),
+        bars_before
+    );
 }
 
 #[test]
@@ -617,22 +620,23 @@ fn one_tape_feeds_both_panes_and_each_cuts_it_its_own_way() {
 
     let time = app.active_tab().time_pane().expect("time pane");
     assert_eq!(
-        time.state.trades().len(),
-        app.active_tab().flow_pane.state.trades().len(),
+        time.series.state.trades().len(),
+        app.active_tab().flow_pane.series.state.trades().len(),
         "both panes hold the same tape"
     );
     assert_ne!(
-        time.state.bars().len(),
-        app.active_tab().flow_pane.state.bars().len(),
+        time.series.state.bars().len(),
+        app.active_tab().flow_pane.series.state.bars().len(),
         "tick(1) and M1 cannot agree on a bar count over the same trades"
     );
 
     // And a live trade after the split reaches both of them.
-    let flow_before = app.active_tab().flow_pane.state.trades().len();
+    let flow_before = app.active_tab().flow_pane.series.state.trades().len();
     let time_before = app
         .active_tab()
         .time_pane()
         .expect("time pane")
+        .series
         .state
         .trades()
         .len();
@@ -640,13 +644,14 @@ fn one_tape_feeds_both_panes_and_each_cuts_it_its_own_way() {
     app.active_tab_mut()
         .ingest_live_trade_at(&trade, trade.timestamp_ms);
     assert_eq!(
-        app.active_tab().flow_pane.state.trades().len(),
+        app.active_tab().flow_pane.series.state.trades().len(),
         flow_before + 1
     );
     assert_eq!(
         app.active_tab()
             .time_pane()
             .expect("time pane")
+            .series
             .state
             .trades()
             .len(),
@@ -671,6 +676,7 @@ fn an_index_magnitude_tape_keeps_the_five_point_grouping_it_already_had() {
     assert_eq!(
         app.active_tab()
             .pane(PaneSide::Flow)
+            .series
             .state
             .footprint_group(),
         Decimal::from(5),

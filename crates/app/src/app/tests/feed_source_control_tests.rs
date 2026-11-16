@@ -41,7 +41,7 @@ fn configured_feed_selection_is_validated_retry_safe_and_reads_back() {
     assert_eq!(first.outcome, retry.outcome);
     assert_eq!(success_result(&first)["changed"], false);
     assert_eq!(app.active_tab().link.feed_generation(), generation);
-    assert_eq!(app.active_tab().flow_pane.state.bars().len(), 4);
+    assert_eq!(app.active_tab().flow_pane.series.state.bars().len(), 4);
     let (read, _) = unkeyed_call(
         &mut app,
         &mut cockpit,

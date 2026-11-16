@@ -91,10 +91,10 @@ fn benchmark_history_frame_work() {
             peak = peak.max(frame.elapsed().as_secs_f64() * 1000.0);
             completed_times.push(start.elapsed().as_secs_f64() * 1000.0);
             frame_peaks.push(peak);
-            assert_eq!(asynchronous.state.bars(), serial.state.bars());
+            assert_eq!(asynchronous.series.state.bars(), serial.series.state.bars());
             assert_eq!(
-                asynchronous.state.backfill_boundary(),
-                serial.state.backfill_boundary()
+                asynchronous.series.state.backfill_boundary(),
+                serial.series.state.backfill_boundary()
             );
         }
         for samples in [
@@ -158,8 +158,8 @@ fn large_history_publishes_coherent_panes_and_preserves_the_live_tail() {
     loop {
         app.active_tab_mut().drain_feed(tab_id);
         let tab = app.active_tab();
-        let flow = tab.flow_pane.state.trades().len();
-        let time = tab.time_panes[0].state.trades().len();
+        let flow = tab.flow_pane.series.state.trades().len();
+        let time = tab.time_panes[0].series.state.trades().len();
         assert_eq!(flow, time, "panes publish the same source in one drain");
         if flow == 100_001 {
             break;
@@ -173,9 +173,12 @@ fn large_history_publishes_coherent_panes_and_preserves_the_live_tail() {
     let tab = app.active_tab();
     assert!(!tab.loading.is_active(LoadingTask::HistoryRebuild));
     assert!(!tab.loading.is_active(LoadingTask::History));
-    assert_eq!(tab.flow_pane.state.trades()[0].agg_id, trade(0).agg_id);
     assert_eq!(
-        tab.flow_pane.state.trades().last().unwrap().agg_id,
+        tab.flow_pane.series.state.trades()[0].agg_id,
+        trade(0).agg_id
+    );
+    assert_eq!(
+        tab.flow_pane.series.state.trades().last().unwrap().agg_id,
         trade(100_000).agg_id
     );
 }
@@ -199,8 +202,8 @@ fn mixed_size_panes_share_admission_and_settle_the_history_reply_once() {
     loop {
         app.active_tab_mut().drain_feed(tab_id);
         let tab = app.active_tab();
-        let flow_added = tab.flow_pane.state.trades().len() - 5;
-        let time_added = tab.time_panes[0].state.trades().len() - 60_000;
+        let flow_added = tab.flow_pane.series.state.trades().len() - 5;
+        let time_added = tab.time_panes[0].series.state.trades().len() - 60_000;
         assert_eq!(
             flow_added, time_added,
             "the small pane waits for the large pane"

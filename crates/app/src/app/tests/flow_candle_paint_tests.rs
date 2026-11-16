@@ -62,8 +62,8 @@ fn flow_keeps_configured_fills_indicator_alpha_and_one_candle_pass_beneath_bubbl
     let pane = &mut app.active_tab_mut().flow_pane;
     pane.model.viewport.set_px_per_bar(45.0);
     assert!(pane.price_view.set_manual_range(99.0, 103.0));
-    assert_eq!(pane.state.bars().len(), 4);
-    assert!(pane.state.partial().is_some());
+    assert_eq!(pane.series.state.bars().len(), 4);
+    assert!(pane.series.state.partial().is_some());
     let slot = pane.indicators.allocate_slot("paint.fixture");
     pane.indicators.apply(IndicatorEvent::Rebuilt {
         slot,
@@ -229,6 +229,7 @@ fn flow_keeps_configured_fills_indicator_alpha_and_one_candle_pass_beneath_bubbl
     );
     let pane = &app.active_tab().flow_pane;
     let plain = pane
+        .series
         .state
         .bars()
         .iter()

@@ -593,7 +593,10 @@ fn app_with_history_and_launch(
     evt_tx.try_send(FeedEvent::Backfilled(trades)).unwrap();
     let tab_id = app.runtime.tabs.active_id();
     app.active_tab_mut().drain_feed(tab_id);
-    assert_eq!(app.active_tab().flow_pane.state.bars().len() as u64, count);
+    assert_eq!(
+        app.active_tab().flow_pane.series.state.bars().len() as u64,
+        count
+    );
     (app, cmd_rx)
 }
 

@@ -161,12 +161,13 @@ pub(crate) fn context(
                 },
             ),
             symbol: tab.active.1.clone(),
-            aggregation: pane.state.spec().to_config_string(),
+            aggregation: pane.series.state.spec().to_config_string(),
         },
         price: pane
+            .series
             .state
             .partial()
-            .or_else(|| pane.state.bars().last())
+            .or_else(|| pane.series.state.bars().last())
             .and_then(|bar| bar.close.to_f64())
             .filter(|price| price.is_finite()),
         utc_ms: wall_clock_ms(),

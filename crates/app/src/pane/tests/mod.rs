@@ -643,7 +643,7 @@ fn ingesting_prints_hands_the_tape_grid_to_the_order_flow_engine() {
         });
     }
 
-    assert_eq!(pane.state.tape_price_step(), Some(Decimal::from(5)));
+    assert_eq!(pane.series.state.tape_price_step(), Some(Decimal::from(5)));
     let after = pane
         .orderflow
         .as_mut()
@@ -781,7 +781,7 @@ fn pane_with_overlay(values: Vec<f64>) -> ChartPane {
     // Plot rows map 1:1 onto bar slots, so the fixture needs the bars the
     // columns describe — without them the x mapping has nothing to place
     // the curve on, which is exactly what a chart before its first bar is.
-    pane.history_prefix = (0..values.len())
+    pane.series.history_prefix = (0..values.len())
         .map(|_| quantick_engine::Bar {
             open_time: 0,
             close_time: 0,
@@ -840,7 +840,7 @@ fn slot_of(bar: f32) -> usize {
 /// could only have come from that slot.
 fn pane_with_timed_bars(count: usize) -> ChartPane {
     let mut pane = ChartPane::flow(1, BarSpec::Tick(50), "TESTUSDT".to_owned());
-    pane.history_prefix = (0..count)
+    pane.series.history_prefix = (0..count)
         .map(|index| quantick_engine::Bar {
             open_time: BAR_ZERO_MS + index as i64 * 60_000,
             close_time: BAR_ZERO_MS + index as i64 * 60_000 + 59_999,
@@ -2383,17 +2383,20 @@ fn a_reset_drops_the_readings_unless_the_market_is_the_same() {
         session_deals: 5_000_400,
     };
     let mut pane = pane_of_prints(4, 2);
-    pane.state.observe_deals(reading);
+    pane.series.state.observe_deals(reading);
     pane.reset_series_with(true);
     assert_eq!(
-        pane.state.deal_samples(),
+        pane.series.state.deal_samples(),
         &[reading],
         "the same market keeps them"
     );
-    assert!(pane.state.bars().is_empty(), "the series itself is gone");
+    assert!(
+        pane.series.state.bars().is_empty(),
+        "the series itself is gone"
+    );
     pane.reset_series();
     assert!(
-        pane.state.deal_samples().is_empty(),
+        pane.series.state.deal_samples().is_empty(),
         "a new market starts clean"
     );
 }
@@ -2667,7 +2670,7 @@ fn finish_prefix_indicators(pane: &mut ChartPane) {
 }
 
 #[test]
-fn prefix_install_preserves_composed_series_effects() {
+fn venue_prefix_shifts_the_pane_view_as_before() {
     let mut pane = ChartPane::flow(1, BarSpec::Tick(1), "TESTUSDT".to_owned());
     pane.ingest_backfill(&(10..20).map(print_at).collect::<Vec<_>>());
     shared_mark_at(&mut pane, 4, 100.0);
@@ -2704,9 +2707,9 @@ fn prefix_install_preserves_composed_series_effects() {
         (prefix[..2].to_vec(), None, true, 2),
         (prefix[..2].to_vec(), Some(prefix[0].clone()), true, 2),
     ] {
-        let old_count = pane.history_prefix.len();
+        let old_count = pane.series.history_prefix.len();
         let old_column = pane.indicators.all()[0].columns[0].clone();
-        assert_eq!(pane.install_venue_history(bars, lead, false), changed);
+        assert_eq!(pane.install_venue_history(bars, lead, false, None), changed);
         let aligned = &pane.indicators.all()[0].columns[0];
         let added = (count as usize).saturating_sub(old_count);
         assert_eq!(aligned.len(), old_column.len() + added);
@@ -2752,9 +2755,9 @@ fn prefix_install_rejects_history_from_before_reset_or_recut() {
             pane.ingest_backfill(&(30..34).map(print_at).collect::<Vec<_>>());
             assert!(pane.prepare_history());
             assert!(!pane.install_history());
-            assert_eq!(pane.state.trades().len(), 4);
+            assert_eq!(pane.series.state.trades().len(), 4);
             assert_eq!(pane.slot_open_time(0), Some(TAPE_START_MS + 30_000));
-            assert!(pane.history_prefix.is_empty());
+            assert!(pane.series.history_prefix.is_empty());
         } else {
             pane.set_spec(BarSpec::Tick(2));
             assert!(
@@ -2767,9 +2770,9 @@ fn prefix_install_rejects_history_from_before_reset_or_recut() {
                 std::thread::yield_now();
             }
             assert!(pane.install_history());
-            assert_eq!(pane.state.spec(), &BarSpec::Tick(2));
-            assert_eq!(pane.state.trades().len(), 18);
-            assert_eq!(pane.state.bars().len(), 9);
+            assert_eq!(pane.series.state.spec(), &BarSpec::Tick(2));
+            assert_eq!(pane.series.state.trades().len(), 18);
+            assert_eq!(pane.series.state.bars().len(), 9);
         }
     }
 }
