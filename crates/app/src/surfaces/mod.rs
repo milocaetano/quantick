@@ -333,12 +333,15 @@ pub(crate) trait View<M: quantick_ui_model::Model> {
         self.paint_updated(session, target, None);
         SurfaceResponse::default()
     }
+    /// A view that paints in `paint_updated` or `paint_borrowed` asks nothing here.
     fn paint(
         &mut self,
-        state: &M::State,
-        target: &mut ViewContext<'_>,
-        env: Option<&SurfaceEnv<'_>>,
-    ) -> Option<M::Intent>;
+        _state: &M::State,
+        _target: &mut ViewContext<'_>,
+        _env: Option<&SurfaceEnv<'_>>,
+    ) -> Option<M::Intent> {
+        None
+    }
 }
 
 /// Host conversion around the headless scoped adapter; storage is UI-independent.

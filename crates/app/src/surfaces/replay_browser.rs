@@ -15,7 +15,7 @@ use quantick_replay::{ParseOptions, Session, SessionError, library};
 use quantick_replay::{clock::SPEEDS, format};
 use quantick_ui_model::{
     UpdateSession,
-    replay_browser::{BrowserTab, Effects, Intent, LocalEffect, Model, State},
+    replay_browser::{BrowserTab, Effects, Intent, LocalEffect, Model},
 };
 use std::{
     path::PathBuf,
@@ -178,14 +178,6 @@ impl View {
 impl super::View<Model> for View {
     fn id(&self) -> &'static str {
         "replay_browser"
-    }
-    fn paint(
-        &mut self,
-        _: &State,
-        _: &mut ViewContext<'_>,
-        _: Option<&super::SurfaceEnv<'_>>,
-    ) -> Option<Intent> {
-        None
     }
     fn paint_updated(
         &mut self,

@@ -87,14 +87,6 @@ impl ControlAccess {
         }
     }
 
-    pub fn menu_label(&self) -> &'static str {
-        self.panel_facts().menu_label()
-    }
-
-    pub fn switch_state(&self) -> (bool, bool) {
-        self.panel_facts().switch_state()
-    }
-
     /// A checkbox requests precisely one membership edit; launch configuration
     /// keeps its separate normalization rules and permission floors.
     fn request_permission(&mut self, permission: PermissionId, selected: bool) {

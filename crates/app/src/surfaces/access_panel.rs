@@ -1,6 +1,6 @@
 //! Registered access presentation. The borrowed gateway remains the authority.
-use super::{BorrowedSurfaceEnv, HostEffect, SurfaceEnv, SurfaceResponse, ViewContext};
-use quantick_ui_model::access_panel::{Effects, Intent, Model, State};
+use super::{BorrowedSurfaceEnv, HostEffect, SurfaceResponse, ViewContext};
+use quantick_ui_model::access_panel::{Effects, Intent, Model};
 use quantick_ui_model::{Slot, UpdateSession};
 
 #[cfg(any(feature = "control-harness", test))]
@@ -10,14 +10,6 @@ pub(crate) struct View;
 impl super::View<Model> for View {
     fn id(&self) -> &'static str {
         "access_panel"
-    }
-    fn paint(
-        &mut self,
-        _: &State,
-        _: &mut ViewContext<'_>,
-        _: Option<&SurfaceEnv<'_>>,
-    ) -> Option<Intent> {
-        None
     }
     fn paint_borrowed(
         &mut self,

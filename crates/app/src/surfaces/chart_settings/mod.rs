@@ -4,7 +4,7 @@ pub(crate) mod footprint;
 use super::{SurfaceEnv, SurfaceResponse, ViewContext};
 use eframe::egui;
 pub(crate) use quantick_ui_model::chart_settings::ChartSettingsTab;
-use quantick_ui_model::chart_settings::{Effects, Intent, Model, State};
+use quantick_ui_model::chart_settings::{Effects, Intent, Model};
 use std::time::Instant;
 #[derive(Default)]
 pub(crate) struct View {
@@ -13,14 +13,6 @@ pub(crate) struct View {
 impl super::View<Model> for View {
     fn id(&self) -> &'static str {
         "chart-settings"
-    }
-    fn paint(
-        &mut self,
-        _: &State,
-        _: &mut ViewContext<'_>,
-        _: Option<&SurfaceEnv<'_>>,
-    ) -> Option<Intent> {
-        None
     }
     #[cfg(any(feature = "scenario-harness", test))]
     fn apply_env_hook(&mut self, env: &SurfaceEnv<'_>) -> Option<Intent> {

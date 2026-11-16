@@ -7,7 +7,7 @@ use crate::{
 use eframe::egui;
 use quantick_ui_model::{
     UpdateSession,
-    strategy_popup::{Effects, Field, Intent, Model, State, TextField},
+    strategy_popup::{Effects, Field, Intent, Model, TextField},
 };
 
 type Session<'a> = UpdateSession<'a, Model>;
@@ -39,14 +39,6 @@ pub(crate) fn effects(effects: Effects) -> SurfaceResponse {
 impl super::View<Model> for View {
     fn id(&self) -> &'static str {
         "strategy-popup"
-    }
-    fn paint(
-        &mut self,
-        _: &State,
-        _: &mut ViewContext<'_>,
-        _: Option<&SurfaceEnv<'_>>,
-    ) -> Option<Intent> {
-        None
     }
     fn paint_updated(
         &mut self,

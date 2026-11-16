@@ -2,7 +2,10 @@
 //! doors each [`OrderflowSwitch`] reads and writes through, and the facts
 //! the config holds for the policy.
 use super::OrderflowView as V;
-use quantick_layers::{ChartLayer, LayerBlock, LayerFacts, LayerState, OrderflowSwitch};
+pub(crate) use quantick_chart::orderflow_layers::{
+    bbo_lines_block, bbo_lines_drawn, layer_facts, native_tape_block,
+};
+use quantick_layers::OrderflowSwitch;
 use quantick_orderflow::HeatmapConfig;
 /// How one switch reads its owner and writes through it: `(read, write)`.
 struct Switch(fn(&V) -> bool, fn(&mut V, bool));
@@ -46,31 +49,4 @@ pub(crate) fn layer_switch(view: &V, switch: OrderflowSwitch) -> bool {
 /// Move `switch` on `view` through the door its toolbar or menu uses.
 pub(crate) fn set_layer_switch(view: &mut V, switch: OrderflowSwitch, visible: bool) {
     (SWITCHES[switch as usize].1)(view, visible);
-}
-/// The layer policy's facts `config` holds, one reading for the layer
-/// call, the menu and the settings box; the pane adds its own.
-pub(crate) fn layer_facts(config: &HeatmapConfig) -> LayerFacts {
-    LayerFacts {
-        flow_pane: true,
-        tape_on: config.lane_enabled(),
-        tape_only: config.tape_only(),
-        native_tape: config.native_tape(),
-        volume_dots: config.volume_dots.enabled,
-        capture_enabled: config.enabled,
-        depth_visible: config.depth_visible(),
-        ..LayerFacts::default()
-    }
-}
-/// Why the native tape switch cannot move for `config`, as the layer call says.
-pub(crate) fn native_tape_block(config: &HeatmapConfig) -> Option<LayerBlock> {
-    LayerState::blocked(ChartLayer::NativeTape, layer_facts(config))
-}
-/// Why the best bid/ask lines switch cannot move for `config`.
-pub(crate) fn bbo_lines_block(config: &HeatmapConfig) -> Option<LayerBlock> {
-    LayerState::blocked(ChartLayer::TapeBboLines, layer_facts(config))
-}
-/// Whether the best bid/ask lines draw for `config`, as the layer call reads back.
-pub(crate) fn bbo_lines_drawn(config: &HeatmapConfig) -> bool {
-    let layer = ChartLayer::TapeBboLines;
-    LayerState::effective(layer, config.live_lane.bbo_lines, layer_facts(config))
 }

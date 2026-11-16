@@ -1,5 +1,5 @@
 //! Borrowed layout dialog painting, at the existing overlay and footer phases.
-use quantick_ui_model::layout_dialogs::{Effects, Intent, Model, State};
+use quantick_ui_model::layout_dialogs::{Effects, Model};
 pub(crate) type LayoutDialogsSurface = crate::surfaces::Adapter<Model, View>;
 #[derive(Default)]
 pub(crate) struct LayoutDialogsView;
@@ -7,14 +7,6 @@ pub(crate) use LayoutDialogsView as View;
 impl crate::surfaces::View<Model> for View {
     fn id(&self) -> &'static str {
         "layout_dialogs"
-    }
-    fn paint(
-        &mut self,
-        _: &State,
-        _: &mut crate::surfaces::ViewContext<'_>,
-        _: Option<&crate::surfaces::SurfaceEnv<'_>>,
-    ) -> Option<Intent> {
-        None
     }
 }
 pub(crate) fn effects(effect: Effects) -> crate::surfaces::SurfaceResponse {

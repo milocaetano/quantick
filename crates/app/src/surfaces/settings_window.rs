@@ -3,6 +3,7 @@
 use eframe::egui;
 use quantick_appearance::Builtin;
 use quantick_control_schema::settings_sections::{SettingRow, SettingsSection};
+use quantick_ui_model::UpdateSession;
 use quantick_ui_model::settings_window::{AgentNote, Control, Effects, Intent, Model, State};
 
 use super::{HostEffect, SurfaceEnv, SurfaceResponse, ViewContext};
@@ -24,80 +25,79 @@ impl super::View<Model> for View {
     fn id(&self) -> &'static str {
         "settings_window"
     }
-    fn paint(
+    /// A frame can ask more than once (a switch flipped as the window closes),
+    /// and every ask repaints, so the next frame shows what it changed.
+    fn paint_updated(
         &mut self,
-        state: &State,
+        session: &mut UpdateSession<'_, Model>,
         target: &mut ViewContext<'_>,
         _: Option<&SurfaceEnv<'_>>,
-    ) -> Option<Intent> {
-        let section = state.shown()?;
-        let ctx = target.context();
-        let mut open = true;
-        let mut intent = None;
-        egui::Window::new("Settings")
-            .id(egui::Id::new("window_settings"))
-            .open(&mut open)
-            .collapsible(false)
-            .resizable(false)
-            .fixed_size(SETTINGS_SIZE_PX)
-            .default_pos([16.0, super::chrome_title_bar::HEIGHT + 16.0])
-            .show(ctx, |ui| {
-                ui.horizontal_top(|ui| {
-                    section_list(section, ui, &mut intent);
-                    ui.separator();
-                    ui.vertical(|ui| section_body(state, section, ui, &mut intent));
-                });
-            });
-        if !open {
-            intent = Some(Intent::Close);
+    ) {
+        let asks = paint_window(session.state(), target.context());
+        if !asks.is_empty() {
+            target.context().request_repaint();
         }
-        intent
+        for ask in asks {
+            session.update(ask);
+        }
     }
 }
 
+fn paint_window(state: &State, ctx: &egui::Context) -> Vec<Intent> {
+    let mut asks = Vec::new();
+    let Some(shown) = state.shown() else {
+        return asks;
+    };
+    let mut open = true;
+    egui::Window::new("Settings")
+        .id(egui::Id::new("window_settings"))
+        .open(&mut open)
+        .collapsible(false)
+        .resizable(false)
+        .fixed_size(SETTINGS_SIZE_PX)
+        .default_pos([16.0, super::chrome_title_bar::HEIGHT + 16.0])
+        .show(ctx, |ui| {
+            ui.horizontal_top(|ui| {
+                // The list on the left: the one on screen is filled, as in the prototype.
+                ui.vertical(|ui| {
+                    ui.set_width(SECTION_LIST_WIDTH_PX);
+                    for section in SettingsSection::ALL {
+                        let label = ui.selectable_label(shown == section, section.title());
+                        if label.clicked() {
+                            asks.push(Intent::Show(section));
+                        }
+                    }
+                });
+                ui.separator();
+                ui.vertical(|ui| {
+                    ui.strong(shown.title());
+                    ui.add_space(ROW_GAP_PX);
+                    egui::ScrollArea::vertical().show(ui, |ui| {
+                        for row in shown.rows() {
+                            draw_row(state, ui, *row, &mut asks);
+                            ui.separator();
+                        }
+                    });
+                });
+            });
+        });
+    if !open {
+        asks.push(Intent::Close);
+    }
+    asks
+}
+
 pub(crate) fn effects(effects: Effects) -> SurfaceResponse {
+    let model_effects =
+        (effects != Effects::default()).then_some(HostEffect::SettingsWindow(effects));
     SurfaceResponse {
-        model_effects: (effects != Effects::default())
-            .then_some(HostEffect::SettingsWindow(effects))
-            .into_iter()
-            .collect(),
+        model_effects: model_effects.into_iter().collect(),
         ..Default::default()
     }
 }
 
-/// The list on the left: the one on screen is filled, as in the prototype.
-fn section_list(shown: SettingsSection, ui: &mut egui::Ui, intent: &mut Option<Intent>) {
-    ui.vertical(|ui| {
-        ui.set_width(SECTION_LIST_WIDTH_PX);
-        for section in SettingsSection::ALL {
-            if ui
-                .selectable_label(shown == section, section.title())
-                .clicked()
-            {
-                *intent = Some(Intent::Show(section));
-            }
-        }
-    });
-}
-
-fn section_body(
-    state: &State,
-    section: SettingsSection,
-    ui: &mut egui::Ui,
-    intent: &mut Option<Intent>,
-) {
-    ui.strong(section.title());
-    ui.add_space(ROW_GAP_PX);
-    egui::ScrollArea::vertical().show(ui, |ui| {
-        for row in section.rows() {
-            draw_row(state, ui, *row, intent);
-            ui.separator();
-        }
-    });
-}
-
 /// A row's name and line on the left, what it does on the right.
-fn draw_row(state: &State, ui: &mut egui::Ui, row: SettingRow, intent: &mut Option<Intent>) {
+fn draw_row(state: &State, ui: &mut egui::Ui, row: SettingRow, intent: &mut Vec<Intent>) {
     let palette = theme::get(ui.ctx());
     ui.horizontal_top(|ui| {
         ui.vertical(|ui| {
@@ -115,7 +115,7 @@ fn draw_row(state: &State, ui: &mut egui::Ui, row: SettingRow, intent: &mut Opti
     });
     let note = match row {
         SettingRow::Appearance => state.theme_error().map(|error| (palette.warn(), error)),
-        SettingRow::AgentSwitch => state.facts().agent.note.as_ref().map(|note| match note {
+        SettingRow::AgentSwitch => state.facts().agent_note.as_ref().map(|note| match note {
             AgentNote::Error(error) => (palette.warn(), error.as_str()),
             AgentNote::Status(status) => (palette.text_muted(), status.as_str()),
         }),
@@ -126,18 +126,15 @@ fn draw_row(state: &State, ui: &mut egui::Ui, row: SettingRow, intent: &mut Opti
     }
 }
 
-fn row_control(state: &State, ui: &mut egui::Ui, row: SettingRow, intent: &mut Option<Intent>) {
+fn row_control(state: &State, ui: &mut egui::Ui, row: SettingRow, intent: &mut Vec<Intent>) {
     match state.control(row) {
-        Control::Button => {
+        control @ (Control::Button | Control::Appearance(_)) => {
             if ui.button(row.label()).clicked() {
-                *intent = Some(Intent::Press(row));
+                intent.push(Intent::Press(row));
             }
-        }
-        Control::Appearance(current) => {
-            if ui.button(row.label()).clicked() {
-                *intent = Some(Intent::Press(row));
+            if let Control::Appearance(current) = control {
+                theme_menu(ui, current, intent);
             }
-            theme_menu(ui, current, intent);
         }
         Control::Timezone(current) => {
             let mut tz = current;
@@ -149,23 +146,23 @@ fn row_control(state: &State, ui: &mut egui::Ui, row: SettingRow, intent: &mut O
                     }
                 });
             if tz != current {
-                *intent = Some(Intent::PickTimezone(tz));
+                intent.push(Intent::PickTimezone(tz));
             }
         }
         Control::Switch { mut on, enabled } => {
             let mut response = switch(ui, &mut on, enabled, row);
             if row == SettingRow::AgentSwitch {
-                response = response.on_hover_text(state.facts().agent.hover);
+                response = response.on_hover_text(state.facts().agent.menu_label());
             }
             if response.changed() {
-                *intent = Some(Intent::Flip(row, on));
+                intent.push(Intent::Flip(row, on));
             }
         }
     }
 }
 
 /// The bundled themes; a pick asks the appearance owner to apply it.
-fn theme_menu(ui: &mut egui::Ui, current: Option<Builtin>, intent: &mut Option<Intent>) {
+fn theme_menu(ui: &mut egui::Ui, current: Option<Builtin>, intent: &mut Vec<Intent>) {
     let menu = ui.menu_button("Theme", |ui| {
         if current.is_none() {
             ui.label("Custom theme");
@@ -174,7 +171,7 @@ fn theme_menu(ui: &mut egui::Ui, current: Option<Builtin>, intent: &mut Option<I
             let response = ui.selectable_label(current == Some(choice), choice.label());
             record(&response, choice.label());
             if response.clicked() {
-                *intent = Some(Intent::PickTheme(choice));
+                intent.push(Intent::PickTheme(choice));
                 ui.close_menu();
             }
         }

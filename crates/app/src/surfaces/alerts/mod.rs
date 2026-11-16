@@ -58,14 +58,6 @@ impl super::View<Model> for View {
             session.update(intent);
         }
     }
-    fn paint(
-        &mut self,
-        _state: &State,
-        _target: &mut ViewContext<'_>,
-        _env: Option<&SurfaceEnv<'_>>,
-    ) -> Option<Intent> {
-        None
-    }
     #[cfg(any(feature = "scenario-harness", test))]
     fn apply_env_hook(&mut self, _env: &SurfaceEnv<'_>) -> Option<Intent> {
         let mode = crate::hooks::captured::var("QUANTICK_ALERTS")?;

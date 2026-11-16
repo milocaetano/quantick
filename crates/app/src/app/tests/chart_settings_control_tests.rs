@@ -337,7 +337,8 @@ fn the_footprint_entry_points_open_the_footprint_tab() {
             .is_open_on(ChartSettingsTab::Footprint)
     );
     // Settings → Appearance… flips the same window to the Candles tab.
-    app.apply_menu_command(crate::app::menu_bar::MenuCommand::OpenAppearance);
+    let appearance = quantick_ui_model::settings_window::Action::OpenAppearance;
+    crate::app::chrome::settings::settle(&mut app, &egui::Context::default(), appearance);
     assert!(
         app.surfaces
             .chart_settings

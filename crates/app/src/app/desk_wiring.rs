@@ -12,8 +12,8 @@ use super::{QuantickApp, workspace_runtime::WorkspaceRuntime};
 pub(super) fn apply(app: &mut QuantickApp, act: DeskAct) -> bool {
     match act {
         DeskAct::OpenSettings(section) => {
-            let menu = &app.chrome.window_menu;
-            let viewport = menu.windows_viewport.unwrap_or(egui::ViewportId::ROOT);
+            let viewport =
+                (app.chrome.window_menu.windows_viewport).unwrap_or(egui::ViewportId::ROOT);
             super::chrome::settings::open(app, viewport, section);
             true
         }

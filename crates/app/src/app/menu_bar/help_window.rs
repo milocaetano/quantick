@@ -3,6 +3,7 @@
 use eframe::egui;
 use quantick_control_schema::window_menu::{ABOUT_WORKSPACES, HelpPage};
 
+use super::super::QuantickApp;
 use super::{
     CLOSE_TAB_SHORTCUT, DOCK_SHORTCUT, HOME_SHORTCUT, LEGEND_SHORTCUT, NEW_TAB_SHORTCUT,
     NEXT_TAB_SHORTCUT, PREVIOUS_TAB_SHORTCUT, REPLAY_SHORTCUT, SAVE_WORKSPACE_SHORTCUT,
@@ -11,20 +12,24 @@ use super::{
 
 const WINDOW_WIDTH_PX: f32 = 420.0;
 
-/// Whether Settings and Help belong on this window. The window they opened on
-/// may have closed since; the root takes them over, or a call would report a
-/// section nobody can see.
-pub(super) fn owned_here(menu: &mut WindowMenuState, ctx: &egui::Context) -> bool {
+/// Draw Settings and Help, on the window they opened on. That window may have
+/// closed since; the root takes them over, or a call would report a section
+/// nobody can see.
+pub(super) fn show(app: &mut QuantickApp, ctx: &egui::Context) {
+    let menu = &mut app.chrome.window_menu;
     let owner = menu.windows_viewport;
     let owner_live =
         owner.is_some_and(|id| ctx.input(|input| input.raw.viewports.contains_key(&id)));
     if !owner_live && owner.is_some() && ctx.viewport_id() == egui::ViewportId::ROOT {
         menu.windows_viewport = Some(egui::ViewportId::ROOT);
     }
-    menu.windows_viewport == Some(ctx.viewport_id())
+    if menu.windows_viewport == Some(ctx.viewport_id()) {
+        super::super::chrome::settings::draw(app, ctx);
+        show_help(&mut app.chrome.window_menu, ctx);
+    }
 }
 
-pub(super) fn show_help(menu: &mut WindowMenuState, ctx: &egui::Context) {
+fn show_help(menu: &mut WindowMenuState, ctx: &egui::Context) {
     let Some(page) = menu.help else {
         return;
     };

@@ -169,6 +169,44 @@ fn a_switch_row_flips_the_setting_it_names() {
 }
 
 #[test]
+fn each_settings_action_reaches_its_owner() {
+    use crate::app::chrome::settings::settle;
+    use quantick_ui_model::settings_window::Action;
+    let (mut app, _evt, _cmd, _book) = test_app();
+    let ctx = egui::Context::default();
+    run_frame(&mut app, &ctx);
+    let tz = (crate::timezone::TzOffset::ALL.into_iter())
+        .find(|tz| *tz != app.runtime.tz)
+        .expect("a second offset");
+    settle(&mut app, &ctx, Action::Timezone(tz));
+    assert_eq!(app.runtime.tz, tz);
+    let perf = !app.health.show_perf;
+    settle(&mut app, &ctx, Action::PerfReadings(perf));
+    assert_eq!(app.health.show_perf, perf);
+    let progressive = !app.runtime.history.progressive_history;
+    settle(&mut app, &ctx, Action::ProgressiveHistory(progressive));
+    assert_eq!(app.runtime.history.progressive_history, progressive);
+    let lead_in = !app.runtime.history.venue_lead_in;
+    settle(&mut app, &ctx, Action::VenueLeadIn(lead_in));
+    assert_eq!(app.runtime.history.venue_lead_in, lead_in);
+    let record = !crate::app::deal_recording_wiring::default_for(&app);
+    settle(&mut app, &ctx, Action::RecordDeals(record));
+    assert_eq!(crate::app::deal_recording_wiring::default_for(&app), record);
+    app.control.control_access = None;
+    settle(&mut app, &ctx, Action::OpenAgentAccess);
+    assert!(
+        !app.surfaces.access_panel.model_state.open,
+        "no gateway, no panel"
+    );
+    app.control.control_access = Some(crate::control::ControlAccess::new());
+    settle(&mut app, &ctx, Action::OpenAgentAccess);
+    assert!(app.surfaces.access_panel.model_state.open);
+    settle(&mut app, &ctx, Action::OpenAppearance);
+    let candles = crate::surfaces::ChartSettingsTab::Candles;
+    assert!(app.surfaces.chart_settings.model_state.is_open_on(candles));
+}
+
+#[test]
 fn the_status_bar_clock_opens_settings_on_display() {
     let (mut app, _evt, _cmd, _book) = test_app();
     let ctx = egui::Context::default();
@@ -479,9 +517,6 @@ fn list_door_opens_window_menu_below_itself() {
 fn local_agent_menu_opens_registered_panel_in_the_same_frame() {
     let (mut app, _evt, _cmd, _book) = test_app();
     let ctx = egui::Context::default();
-    app.control.control_access = None;
-    app.apply_menu_command(crate::app::menu_bar::MenuCommand::OpenAgentAccess);
-    assert!(!app.surfaces.access_panel.model_state.open);
     app.control.control_access = Some(crate::control::ControlAccess::new());
     crate::app::chrome::settings::open(&mut app, ctx.viewport_id(), SettingsSection::AgentAccess);
     run_frame(&mut app, &ctx);

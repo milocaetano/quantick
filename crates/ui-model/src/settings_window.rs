@@ -14,16 +14,9 @@ pub struct Facts {
     pub progressive_history: bool,
     pub venue_lead_in: bool,
     pub record_deals: bool,
-    pub agent: AgentFacts,
-}
-
-/// The local agent access switch, as its gateway reports it.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct AgentFacts {
-    pub on: bool,
-    pub can_flip: bool,
-    pub hover: &'static str,
-    pub note: Option<AgentNote>,
+    /// The local agent gateway, as its panel reads it; the default is no gateway.
+    pub agent: crate::access_panel::Facts,
+    pub agent_note: Option<AgentNote>,
 }
 
 /// The line under the agent switch.
@@ -40,7 +33,10 @@ pub enum Control {
     /// The appearance button and the theme menu beside it.
     Appearance(Option<Builtin>),
     Timezone(TzOffset),
-    Switch { on: bool, enabled: bool },
+    Switch {
+        on: bool,
+        enabled: bool,
+    },
 }
 
 #[derive(Debug, Default, PartialEq)]
@@ -74,10 +70,10 @@ impl State {
             SettingRow::ProgressiveHistory => switch(facts.progressive_history),
             SettingRow::VenueLeadIn => switch(facts.venue_lead_in),
             SettingRow::RecordDeals => switch(facts.record_deals),
-            SettingRow::AgentSwitch => Control::Switch {
-                on: facts.agent.on,
-                enabled: facts.agent.can_flip,
-            },
+            SettingRow::AgentSwitch => {
+                let (on, enabled) = facts.agent.switch_state();
+                Control::Switch { on, enabled }
+            }
             SettingRow::ManageClients => Control::Button,
         }
     }
@@ -93,7 +89,8 @@ pub enum Intent {
     Flip(SettingRow, bool),
     PickTimezone(TzOffset),
     PickTheme(Builtin),
-    /// The theme could not be applied; the words stay under its row.
+    /// The theme could not be applied; the words stay under its row until
+    /// the next pick or the next opening.
     ThemeFailed(String),
 }
 
@@ -127,6 +124,7 @@ impl crate::Model for Model {
             Intent::Open(section) => {
                 state.open = true;
                 state.section = section;
+                state.theme_error = None;
                 None
             }
             Intent::Close => {
@@ -143,7 +141,9 @@ impl crate::Model for Model {
             }
             Intent::Press(row) => press(row),
             Intent::Flip(row, on) => flip(state, row, on),
-            Intent::PickTimezone(tz) => (tz != state.facts.timezone).then_some(Action::Timezone(tz)),
+            Intent::PickTimezone(tz) => {
+                (tz != state.facts.timezone).then_some(Action::Timezone(tz))
+            }
             Intent::PickTheme(choice) => {
                 state.theme_error = None;
                 Some(Action::Theme(choice))

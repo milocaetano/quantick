@@ -2,7 +2,7 @@
 use crate::toolbar::layout_popover as popover;
 use eframe::egui;
 use quantick_stores::workspaces::WorkspaceColour;
-use quantick_ui_model::canvas_popovers::{Effects, Intent, Model, State};
+use quantick_ui_model::canvas_popovers::{Effects, Intent, Model};
 use quantick_ui_model::layout_picker as picker;
 use quantick_workspace::canvas::LayoutMarks;
 #[derive(Default)]
@@ -11,14 +11,6 @@ pub(crate) use CanvasPopoversView as View;
 impl crate::surfaces::View<Model> for View {
     fn id(&self) -> &'static str {
         "canvas_popovers"
-    }
-    fn paint(
-        &mut self,
-        _: &State,
-        _: &mut crate::surfaces::ViewContext<'_>,
-        _: Option<&crate::surfaces::SurfaceEnv<'_>>,
-    ) -> Option<Intent> {
-        None
     }
 }
 pub(crate) fn effects(effects: Effects) -> crate::surfaces::SurfaceResponse {

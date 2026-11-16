@@ -41,7 +41,10 @@ fn each_switch_asks_its_owner_only_when_its_value_changes() {
     );
     for (row, asked) in [
         (SettingRow::PerfReadings, Action::PerfReadings(false)),
-        (SettingRow::ProgressiveHistory, Action::ProgressiveHistory(true)),
+        (
+            SettingRow::ProgressiveHistory,
+            Action::ProgressiveHistory(true),
+        ),
         (SettingRow::VenueLeadIn, Action::VenueLeadIn(true)),
         (SettingRow::RecordDeals, Action::RecordDeals(true)),
     ] {
@@ -58,9 +61,9 @@ fn each_switch_asks_its_owner_only_when_its_value_changes() {
 #[test]
 fn the_agent_switch_moves_only_when_its_gateway_lets_it() {
     let agent = |can_flip| Facts {
-        agent: AgentFacts {
-            can_flip,
-            ..AgentFacts::default()
+        agent: crate::access_panel::Facts {
+            identity_available: can_flip,
+            ..Default::default()
         },
         ..Facts::default()
     };
@@ -115,7 +118,18 @@ fn buttons_timezone_and_theme_ask_their_owners() {
         action(&mut state, Intent::PickTheme(choice)),
         Some(Action::Theme(choice))
     );
-    assert_eq!(state.theme_error(), None, "a new pick clears the old failure");
+    assert_eq!(
+        state.theme_error(),
+        None,
+        "a new pick clears the old failure"
+    );
+    action(&mut state, Intent::ThemeFailed("disk full".to_owned()));
+    action(&mut state, Intent::Open(SettingsSection::Display));
+    assert_eq!(
+        state.theme_error(),
+        None,
+        "reopening forgets an old failure"
+    );
 }
 
 #[test]

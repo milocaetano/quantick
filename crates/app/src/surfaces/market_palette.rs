@@ -15,7 +15,7 @@ use super::Surface;
 use super::{SurfaceEnv, SurfaceResponse, ViewContext};
 use crate::theme;
 type Session<'a> = quantick_ui_model::UpdateSession<'a, Model>;
-use quantick_ui_model::market_palette::{Intent, Model, State};
+use quantick_ui_model::market_palette::{Intent, Model};
 
 const WIDTH_PX: f32 = 640.0;
 const TOP_PX: f32 = 56.0;
@@ -281,15 +281,6 @@ impl super::View<Model> for View {
             query: if query == "1" { String::new() } else { query },
             switching: None,
         })
-    }
-
-    fn paint(
-        &mut self,
-        _: &State,
-        _: &mut ViewContext<'_>,
-        _: Option<&SurfaceEnv<'_>>,
-    ) -> Option<Intent> {
-        None
     }
 
     fn paint_updated(

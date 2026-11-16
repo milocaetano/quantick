@@ -3,7 +3,7 @@ use super::{SurfaceEnv, SurfaceResponse, ViewContext};
 use crate::theme;
 use eframe::egui;
 pub(crate) use quantick_ui_model::bar_switch::BarSwitchRequest;
-use quantick_ui_model::bar_switch::{Intent, Model, State};
+use quantick_ui_model::bar_switch::{Intent, Model};
 
 const TOP_MARGIN_PX: f32 = 24.0;
 const WIDTH_PX: f32 = 260.0;
@@ -13,14 +13,6 @@ pub(crate) struct View;
 impl super::View<Model> for View {
     fn id(&self) -> &'static str {
         "bar_switch"
-    }
-    fn paint(
-        &mut self,
-        _: &State,
-        _: &mut ViewContext<'_>,
-        _: Option<&SurfaceEnv<'_>>,
-    ) -> Option<Intent> {
-        None
     }
     fn paint_updated(
         &mut self,
