@@ -881,22 +881,22 @@ mod tests {
     fn the_manage_words_follow_the_mock() {
         let two = ["WIN$N".to_owned(), "WDO$N".to_owned()];
         assert_eq!(
-            delete_armed_label("Scalp", &two),
+            delete_armed_label("Scalp", &two, &[]),
             "Delete Scalp? WIN$N and WDO$N go back to Default."
         );
         assert_eq!(
-            delete_armed_label("Scalp", &two[..1]),
+            delete_armed_label("Scalp", &two[..1], &[]),
             "Delete Scalp? WIN$N goes back to Default."
         );
         assert_eq!(
-            delete_armed_label("Scalp", &[]),
+            delete_armed_label("Scalp", &[], &[]),
             "Delete Scalp? No tab uses it."
         );
         assert_eq!(
-            deleted_row_label("Scalp", &two),
+            deleted_row_label("Scalp", &two, &[]),
             "Scalp deleted \u{b7} WIN$N and WDO$N back on Default"
         );
-        assert_eq!(deleted_row_label("Tape", &[]), "Tape deleted");
+        assert_eq!(deleted_row_label("Tape", &[], &[]), "Tape deleted");
         assert_eq!(
             undone_label("Scalp", Some("Orchid")),
             "Scalp is back as Orchid"
@@ -905,6 +905,34 @@ mod tests {
         let three = ["A".to_owned(), "B".to_owned(), "C".to_owned()];
         assert_eq!(tab_names_hover(&three), "A, B, C");
         assert_eq!(listed(&three), "A, B and C");
+    }
+
+    /// The confirmation, the Undo row and the toast name the same tabs the
+    /// same way: which go back to Default, which keep their edits there.
+    #[test]
+    fn the_confirmation_row_and_toast_agree_on_each_tab() {
+        let (adopted, kept) = (["ETHUSDT".to_owned()], ["SOLUSDT".to_owned()]);
+        assert_eq!(
+            delete_armed_label("Scalp", &adopted, &kept),
+            "Delete Scalp? ETHUSDT goes back to Default; SOLUSDT keeps its edits there."
+        );
+        assert_eq!(
+            deleted_row_label("Scalp", &adopted, &kept),
+            "Scalp deleted \u{b7} ETHUSDT back on Default \u{b7} SOLUSDT keeps its edits"
+        );
+        assert_eq!(
+            deleted_toast("Scalp", &adopted, &kept),
+            "Deleted Scalp; ETHUSDT moved to Default; SOLUSDT keeps its edits as Default \u{2022}"
+        );
+        let both = ["A".to_owned(), "B".to_owned()];
+        assert_eq!(
+            delete_armed_label("Tape", &[], &both),
+            "Delete Tape? A and B keep their edits on Default."
+        );
+        assert_eq!(
+            deleted_row_label("Tape", &[], &both),
+            "Tape deleted \u{b7} A and B keep their edits"
+        );
     }
 
     #[test]

@@ -255,3 +255,18 @@ fn a_tab_settled_clean_on_a_factory_default_comes_back_exactly() {
     assert_eq!(book.tab_state(1), before.tab_state(1), "clean, not marked");
     assert_eq!(book.tab_copy(1), before.tab_copy(1), "its own copy back");
 }
+
+/// Before a delete, which tabs would go back to Default and which keep
+/// their edits there: the split the delete itself makes.
+#[test]
+fn the_delete_split_names_the_tabs_as_the_delete_moves_them() {
+    let mut book = mock();
+    let edited = WorkspaceRecipe {
+        layout: DeclaredLayout::Time,
+        ..WorkspaceRecipe::default()
+    };
+    book.observe(3, &edited).unwrap();
+    assert_eq!(book.delete_split("Scalp"), (vec![2], vec![3]));
+    let gone = book.delete_at("Scalp", 0).unwrap();
+    assert_eq!((gone.adopted, gone.kept_edits), (vec![2], vec![3]));
+}
