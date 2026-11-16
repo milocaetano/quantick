@@ -21,6 +21,9 @@ pub struct ContextStack {
     pub frame: Option<StackFrame>,
     /// The hand on a divider, while one is held.
     hold: Option<StackHold>,
+    /// The model last folded every chart: the column's fold, inside which
+    /// the stack keeps its own folds for the column to reopen with.
+    whole: bool,
 }
 
 /// A hand on the divider below chart `index`: where the divider stood at
@@ -132,10 +135,12 @@ impl ContextStack {
     /// chart `i`: one the model rails folds at the share it holds, a pair's
     /// partner taking the rest; one the model opened reopens at the height it
     /// had ([`Self::open`]). The model folding every chart is the column's
-    /// fold, which leaves the stack as it is.
+    /// fold, which leaves the stack as it is, and the column reopening
+    /// keeps the stack's own folds: [`on_stack`] gives them back.
     pub fn follow(&mut self, folded: &[bool]) {
         let count = folded.len().min(self.heights.len());
-        if folded[..count].iter().all(|folded| *folded) {
+        let whole = folded[..count].iter().all(|folded| *folded);
+        if std::mem::replace(&mut self.whole, whole) || whole {
             return;
         }
         let px = self.frame.as_ref().map_or(0.0, |frame| frame.column.h);
@@ -319,9 +324,10 @@ impl ContextStack {
 /// not draw (`columns` false) keeps its folds on its tree.
 pub fn on_stack<R>(
     stack: &mut ContextStack,
-    (state, seats, columns): (&mut CanvasState, &Seats, bool),
+    (state, seats, columns): (&mut CanvasState, &mut Seats, bool),
     op: impl FnOnce(&mut ContextStack) -> R,
 ) -> R {
+    seats.refresh(state);
     let slots = stack_slots(state, seats);
     if !columns || slots.len() < 2 {
         return op(stack);
@@ -332,8 +338,9 @@ pub fn on_stack<R>(
         .collect();
     stack.follow(&folded);
     let out = op(stack);
-    let folded = stack.collapsed_slots();
-    state.rail_stack(&slots, &folded[..slots.len()]);
+    let mut folded = stack.collapsed_slots();
+    folded.resize(slots.len(), false);
+    state.rail_stack(&slots, &folded);
     out
 }
 
@@ -341,7 +348,6 @@ pub fn on_stack<R>(
 /// the stack's charts top to bottom as the column painter draws them.
 fn stack_slots(state: &CanvasState, seats: &Seats) -> Vec<PaneSlot> {
     let stack = state.stack_slots();
-    let seats = seats.current(state);
     let mut held: Vec<(usize, PaneSlot)> = (seats.held().iter())
         .filter(|(slot, _)| stack.contains(slot))
         .map(|(slot, seat)| (*seat, *slot))

@@ -287,14 +287,12 @@ impl Tab {
                     let way = (true, slot + 1 < context_shown);
                     let look = RailLook::on(model_rect(*band), model_rect(column), way, 1);
                     paint_rail(ui.painter(), *band, look, rail_hot(ui.painter(), &hits));
-                    // Named and worded as the tree's rails: the model's fold.
                     let name = || Some(self.strip_name(PaneSide::Time(slot)));
                     let words = RailHolds::of([PaneKind::Time]).words(name);
                     let canvas = &mut self.canvas;
                     if let Some(at) = seat_slot(&canvas.state, &mut canvas.seats, Some(slot)) {
-                        canvas
-                            .menus
-                            .publish_rail(format!("pane_menu.{at}.rail"), *band, words);
+                        let id = format!("pane_menu.{at}.rail");
+                        canvas.menus.publish_rail(id, *band, words);
                     }
                     rects.context_charts.push(None);
                     continue;

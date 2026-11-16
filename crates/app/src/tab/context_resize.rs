@@ -38,16 +38,25 @@ impl TabCanvas {
         self.layout.shows_time() && !time_panes.is_empty() && !self.folds().0
     }
 
-    /// Folded by the canvas model, whichever painter draws.
+    /// Folded by the canvas model; while the columns draw, read off its rails.
     pub(crate) fn pane_collapsed(&self, side: PaneSide) -> bool {
-        let (seat, seats) = (side.index().checked_sub(1), self.seats.current(&self.state));
-        seat_mode(&self.state, &seats, seat) == Some(PaneMode::Minimized)
+        if !self.column_painted() {
+            let (seat, seats) = (side.index().checked_sub(1), self.seats.current(&self.state));
+            return seat_mode(&self.state, &seats, seat) == Some(PaneMode::Minimized);
+        }
+        let railed = |seat| {
+            let mut held = self.seats.held().iter();
+            held.any(|(slot, at)| *at == seat && self.state.railed().contains(slot))
+        };
+        match side {
+            PaneSide::Flow => self.folds().1 && self.layout.shows_time(),
+            PaneSide::Time(seat) => (self.folds().0 && self.layout.shows_flow()) || railed(seat),
+        }
     }
 
-    /// Run `op` on the stack folded as the canvas model says, the model
-    /// taking the folds it leaves: `quantick_workspace::canvas_layout::on_stack`.
+    /// `op` on the stack as the canvas model folds it: `canvas_layout::on_stack`.
     pub(crate) fn on_stack<R>(&mut self, op: impl FnOnce(&mut ContextStack) -> R) -> R {
-        let model = (&mut self.state, &self.seats, self.layout.is_column());
+        let model = (&mut self.state, &mut self.seats, self.layout.is_column());
         canvas_layout::on_stack(&mut self.context_stack, model, op)
     }
 
@@ -57,10 +66,6 @@ impl TabCanvas {
 
     pub(crate) fn context_collapsed_slots(&self) -> Vec<bool> {
         self.context_stack.collapsed_slots()
-    }
-
-    pub(crate) fn expand_context_stack(&mut self) {
-        self.context_stack.expand();
     }
 
     pub(crate) fn restore_context_heights(&mut self, shares: &[f32], collapsed: &[bool]) {

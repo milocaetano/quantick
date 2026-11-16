@@ -254,6 +254,13 @@ fn the_stack_folds_as_the_model_says() {
             "whole"
         );
     }
+    // A chart folded inside a column folded whole stays folded when the
+    // column opens: the stack keeps its own folds.
+    let mut stack = stack(2);
+    stack.follow(&[false, true]);
+    stack.follow(&[true, true]);
+    stack.follow(&[false, false]);
+    assert_eq!(stack.collapsed_slots(), [false, true]);
 }
 
 /// Every fold the stack makes lands on the canvas model, on the slot each
@@ -265,7 +272,7 @@ fn the_stack_and_the_model_hold_one_fold() {
     use crate::canvas::{CanvasState, PaneKind, Seats};
     let preset = crate::canvas::preset("stack2+flow").unwrap();
     let mut state = CanvasState::from_preset(preset);
-    let seats = Seats::default();
+    let mut seats = Seats::default();
     let slots: Vec<_> = (state.tree().panes().into_iter())
         .filter(|(_, kind)| *kind == PaneKind::Time)
         .map(|(slot, _)| slot)
@@ -273,7 +280,8 @@ fn the_stack_and_the_model_hold_one_fold() {
     let column = CanvasRect::new(0.0, 40.0, 600.0, 900.0);
     let mut stack = stack(0);
     let open = |stack: &mut ContextStack, state: &mut CanvasState| {
-        on_stack(stack, (state, &seats, true), |stack| stack.at_least(2));
+        let seats = &mut Seats::default();
+        on_stack(stack, (state, seats, true), |stack| stack.at_least(2));
         boundary(column, &stack.heights, 0)
     };
     let was = open(&mut stack, &mut state);
@@ -281,7 +289,7 @@ fn the_stack_and_the_model_hold_one_fold() {
         let dividers = carve(column, &stack.heights).dividers().to_vec();
         stack.resize(0, column.bottom(), column, &dividers, FOOTER_PX)
     };
-    on_stack(&mut stack, (&mut state, &seats, true), fold).unwrap();
+    on_stack(&mut stack, (&mut state, &mut seats, true), fold).unwrap();
     assert_eq!(
         state.railed().iter().copied().collect::<Vec<_>>(),
         [slots[1]]
@@ -292,6 +300,6 @@ fn the_stack_and_the_model_hold_one_fold() {
     assert!(stack.collapsed_slots().iter().all(|folded| !folded));
 
     let mut tree = CanvasState::from_preset(preset);
-    on_stack(&mut stack, (&mut tree, &seats, false), fold).unwrap();
+    on_stack(&mut stack, (&mut tree, &mut seats, false), fold).unwrap();
     assert!(tree.railed().is_empty(), "the tree's own layouts");
 }
