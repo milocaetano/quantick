@@ -7,7 +7,7 @@
 //! and open it again when dragged back past the threshold. The constants have
 //! their one owner in [`super::metrics`]; `canvas_layout` re-exports them.
 
-use super::metrics::COLLAPSE_AT_PX;
+use super::metrics::{COLLAPSE_AT_PX, PICK_SEAM_PX};
 #[cfg(doc)]
 use super::metrics::{COLLAPSED_HIT_PX, COLLAPSED_PANE_WIDTH_PX};
 use super::presets::PaneKind;
@@ -70,8 +70,10 @@ pub struct SeamDrag {
     /// The seam the hand pressed, which may hand the drag to `seam`: a rail
     /// between two seams goes to the one on the side of the first move.
     grabbed: SeamAddress,
-    /// Whether the first move has picked the seam.
+    /// Whether the hand's travel has picked the seam.
     picked: bool,
+    /// The travel along the split before the pick, applied whole once made.
+    pending: f32,
 }
 
 /// What a seam fold took from its open partner: the folded node's first
@@ -139,6 +141,7 @@ impl CanvasState {
             inner: inner(&first).chain(inner(&second)).collect(),
             grabbed: seam.clone(),
             picked: false,
+            pending: 0.0,
         })
     }
 
@@ -167,9 +170,10 @@ impl CanvasState {
 
     /// The hand on `seam`, one frame: [`Self::step_seam_drag`] while it is
     /// held, and the drag dropped when it lets go. A press on a rail between
-    /// two seams drags the seam on the side of the first move, backward the
-    /// one before the rail and forward the one after, so the rail opens
-    /// either way. Answers whether anything moved; a refused step moves
+    /// two seams waits until its travel along the split passes
+    /// [`PICK_SEAM_PX`], then drags the seam on that side, backward the one
+    /// before the rail and forward the one after, with all that travel, so
+    /// the rail opens either way and a jitter picks nothing. Answers whether anything moved; a refused step moves
     /// nothing.
     pub fn seam_hand(
         &mut self,
@@ -184,15 +188,22 @@ impl CanvasState {
         if hand.pressed || drag.as_ref().is_none_or(|held| held.grabbed != *seam) {
             *drag = self.begin_seam_drag(seam, area).ok();
         }
-        let delta = hand.delta;
+        let mut delta = hand.delta;
         if let Some(held) = drag
             .as_mut()
-            .filter(|held| !held.picked && delta.abs() > f32::EPSILON)
+            .filter(|held| !held.picked && delta.is_finite())
         {
-            held.picked = true;
-            let ways = self.rail_seams(seam);
-            let way = ways.map(|[before, after]| if delta < 0.0 { before } else { after });
-            if let Some(way) = way.filter(|way| *way != held.seam)
+            let Some([before, after]) = self.rail_seams(seam) else {
+                held.picked = true;
+                return self.seam_step(drag, delta, area);
+            };
+            held.pending += delta;
+            if held.pending.abs() < PICK_SEAM_PX {
+                return false;
+            }
+            (delta, held.picked) = (held.pending, true);
+            let way = if delta < 0.0 { before } else { after };
+            if way != held.seam
                 && let Ok(taken) = self.begin_seam_drag(&way, area)
             {
                 *held = SeamDrag {
@@ -202,13 +213,18 @@ impl CanvasState {
                 };
             }
         }
-        let at = drag.as_ref().map(|held| held.seam.clone());
-        let moved = at.is_some_and(|at| {
-            let step = self.step_seam_drag(drag, (&at, delta, false), area);
-            step.unwrap_or(false)
-        });
+        let moved = self.seam_step(drag, delta, area);
         drag.take_if(|_| hand.released);
         moved
+    }
+
+    /// One step of `drag` by `delta` along its own seam.
+    fn seam_step(&mut self, drag: &mut Option<SeamDrag>, delta: f32, area: CanvasRect) -> bool {
+        let at = drag.as_ref().map(|held| held.seam.clone());
+        at.is_some_and(|at| {
+            let step = self.step_seam_drag(drag, (&at, delta, false), area);
+            step.unwrap_or(false)
+        })
     }
 
     /// The hand's drag of a seam, one frame: `drag` taken afresh on the

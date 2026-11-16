@@ -46,6 +46,11 @@ pub const COLLAPSE_AT_PX: f32 = MIN_PANE_WIDTH_PX / 2.0;
 /// picture of an affordance rather than one.
 pub const COLLAPSED_HIT_PX: f32 = 24.0;
 
+/// How far a hand pressed on a rail between two seams travels along the
+/// split before its direction picks the seam it drags: past a hand's
+/// jitter, short of any move a trader would feel as lost.
+pub const PICK_SEAM_PX: f32 = 3.0;
+
 /// Narrowest the column painter squeezes a pane to while it is still open.
 ///
 /// A pane is not all chart. The price axis takes `plot_area`'s gutter constant (64 px)
