@@ -112,7 +112,10 @@ fn buttons_timezone_and_theme_ask_their_owners() {
         Some(Action::Timezone(other))
     );
     let choice = Builtin::ALL[0];
+    action(&mut state, Intent::PickTheme(choice));
+    assert!(!state.theme_landed(), "not in use yet");
     action(&mut state, Intent::ThemeFailed("disk full".to_owned()));
+    assert!(!state.theme_landed(), "a failed pick keeps the menu open");
     assert_eq!(state.theme_error(), Some("disk full"));
     assert_eq!(
         action(&mut state, Intent::PickTheme(choice)),
@@ -124,6 +127,13 @@ fn buttons_timezone_and_theme_ask_their_owners() {
         "a new pick clears the old failure"
     );
     action(&mut state, Intent::ThemeFailed("disk full".to_owned()));
+    action(&mut state, Intent::Open(SettingsSection::Data));
+    assert_eq!(
+        state.theme_error(),
+        Some("disk full"),
+        "another door onto the open window keeps the failure on screen"
+    );
+    action(&mut state, Intent::Close);
     action(&mut state, Intent::Open(SettingsSection::Display));
     assert_eq!(
         state.theme_error(),

@@ -114,7 +114,6 @@ fn draw_row(state: &State, ui: &mut egui::Ui, row: SettingRow, intent: &mut Vec<
         });
     });
     let note = match row {
-        SettingRow::Appearance => state.theme_error().map(|error| (palette.warn(), error)),
         SettingRow::AgentSwitch => state.facts().agent_note.as_ref().map(|note| match note {
             AgentNote::Error(error) => (palette.warn(), error.as_str()),
             AgentNote::Status(status) => (palette.text_muted(), status.as_str()),
@@ -133,7 +132,7 @@ fn row_control(state: &State, ui: &mut egui::Ui, row: SettingRow, intent: &mut V
                 intent.push(Intent::Press(row));
             }
             if let Control::Appearance(current) = control {
-                theme_menu(ui, current, intent);
+                theme_menu(ui, state, current, intent);
             }
         }
         Control::Timezone(current) => {
@@ -162,8 +161,12 @@ fn row_control(state: &State, ui: &mut egui::Ui, row: SettingRow, intent: &mut V
 }
 
 /// The bundled themes; a pick asks the appearance owner to apply it.
-fn theme_menu(ui: &mut egui::Ui, current: Option<Builtin>, intent: &mut Vec<Intent>) {
+fn theme_menu(ui: &mut egui::Ui, state: &State, current: Option<Builtin>, intent: &mut Vec<Intent>) {
     let menu = ui.menu_button("Theme", |ui| {
+        if state.theme_landed() {
+            ui.close_menu();
+            intent.push(Intent::ThemeMenuClosed);
+        }
         if current.is_none() {
             ui.label("Custom theme");
         }
@@ -172,8 +175,10 @@ fn theme_menu(ui: &mut egui::Ui, current: Option<Builtin>, intent: &mut Vec<Inte
             record(&response, choice.label());
             if response.clicked() {
                 intent.push(Intent::PickTheme(choice));
-                ui.close_menu();
             }
+        }
+        if let Some(error) = state.theme_error() {
+            ui.colored_label(theme::get(ui.ctx()).warn(), error);
         }
     });
     record(&menu.response, "Theme");

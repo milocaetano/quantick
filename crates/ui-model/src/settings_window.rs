@@ -45,6 +45,8 @@ pub struct State {
     section: SettingsSection,
     facts: Facts,
     theme_error: Option<String>,
+    /// The theme last picked, until the menu closes on it.
+    theme_picked: Option<Builtin>,
 }
 
 impl State {
@@ -57,6 +59,11 @@ impl State {
     }
     pub fn theme_error(&self) -> Option<&str> {
         self.theme_error.as_deref()
+    }
+    /// The picked theme is the one in use: the menu closes. A failed pick
+    /// keeps it open, with the reason inside.
+    pub fn theme_landed(&self) -> bool {
+        self.theme_picked.is_some() && self.theme_picked == self.facts.theme
     }
 
     /// The control `row` draws, from the observed facts.
@@ -89,9 +96,11 @@ pub enum Intent {
     Flip(SettingRow, bool),
     PickTimezone(TzOffset),
     PickTheme(Builtin),
-    /// The theme could not be applied; the words stay under its row until
-    /// the next pick or the next opening.
+    /// The theme could not be applied; the words stay in its menu until the
+    /// next pick or the next opening.
     ThemeFailed(String),
+    /// The menu closed on the theme that landed.
+    ThemeMenuClosed,
 }
 
 /// What a row asked its owner to do.
@@ -122,9 +131,11 @@ impl crate::Model for Model {
     fn update(state: &mut State, intent: Intent) -> Effects {
         let action = match intent {
             Intent::Open(section) => {
+                if !state.open {
+                    state.theme_error = None;
+                }
                 state.open = true;
                 state.section = section;
-                state.theme_error = None;
                 None
             }
             Intent::Close => {
@@ -146,10 +157,16 @@ impl crate::Model for Model {
             }
             Intent::PickTheme(choice) => {
                 state.theme_error = None;
+                state.theme_picked = Some(choice);
                 Some(Action::Theme(choice))
             }
             Intent::ThemeFailed(error) => {
                 state.theme_error = Some(error);
+                state.theme_picked = None;
+                None
+            }
+            Intent::ThemeMenuClosed => {
+                state.theme_picked = None;
                 None
             }
         };
