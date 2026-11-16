@@ -174,7 +174,7 @@ pub(super) fn settle_strip(
             symbol: tab.symbol.clone(),
             at: stamp.get(11..).unwrap_or_default().to_owned(),
             price: last_price(&tab),
-            bar: tab.flow_pane.series.state.spec().to_config_string(),
+            bar: tab.flow_pane.series.bar_config(),
             context_bars: super::arrangement_adapter::saved_tab_of(&tab).context_bars,
         };
         palette.update(PaletteIntent::Remember(closed));

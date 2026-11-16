@@ -807,7 +807,7 @@ impl LayoutAdapter<'_> {
     fn drawing_key(&self, tab: u64, side: PaneSide) -> Option<DrawingKey> {
         let pane = self.pane_at(tab, side)?;
         let (venue, symbol) = Self::market_of(self.tabs.by_id(tab)?);
-        let bars = (side != PaneSide::Flow).then(|| pane.series.state.spec().to_config_string());
+        let bars = (side != PaneSide::Flow).then(|| pane.series.bar_config());
         let asset = self.store.market().asset(venue, symbol);
         Some(DrawingKey::of_pane(venue, asset, bars))
     }

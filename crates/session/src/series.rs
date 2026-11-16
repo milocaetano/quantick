@@ -23,8 +23,10 @@ pub struct PaneSeries {
     /// retained trades on every spec change and would eat a prefix kept
     /// inside it on the first chip click.
     ///
-    /// Non-empty on any pane cutting by a foldable time interval. A venue
-    /// candle has no tape, so the flow layers draw nothing over it.
+    /// Non-empty on any pane cutting by a foldable time interval: the split's
+    /// time pane, and the flow pane whenever its spec is `BarSpec::Time`
+    /// (audit S1). A venue candle has no tape, so the flow layers draw
+    /// nothing over it.
     pub history_prefix: VenueHistory,
 }
 
@@ -79,10 +81,27 @@ impl PaneSeries {
     }
 }
 
-fn log_seam_lead(pane: u64, seam: SeamTrace, had: Option<&Bar>, seated: Option<&Bar>) {
-    if had == seated && (seated.is_some() || seam.token == "nothing_before_first_trade") {
-        return;
+/// The action a seam line reports, or `None` when the seam bar neither
+/// changed nor has a reason to say it holds no lead.
+pub(crate) fn seam_lead_action(
+    token: &'static str,
+    had: Option<&Bar>,
+    seated: Option<&Bar>,
+) -> Option<&'static str> {
+    if had == seated && (seated.is_some() || token == "nothing_before_first_trade") {
+        return None;
     }
+    Some(if seated.is_some() {
+        "merged_into_seam_bar"
+    } else {
+        token
+    })
+}
+
+fn log_seam_lead(pane: u64, seam: SeamTrace, had: Option<&Bar>, seated: Option<&Bar>) {
+    let Some(action) = seam_lead_action(seam.token, had, seated) else {
+        return;
+    };
     tracing::info!(
         target: "quantick::app",
         schema_version = 1_u8,
@@ -92,7 +111,7 @@ fn log_seam_lead(pane: u64, seam: SeamTrace, had: Option<&Bar>, seated: Option<&
         first_print_ms = seam.first_print_ms,
         lead_open_ms = seated.map_or(0, |bar| bar.open_time),
         lead_trades = seated.map_or(0, |bar| bar.trade_count),
-        action = if seated.is_some() { "merged_into_seam_bar" } else { seam.token },
+        action,
         "the venue's history of the seam bucket before the first trade"
     );
 }

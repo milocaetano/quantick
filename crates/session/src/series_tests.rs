@@ -7,7 +7,7 @@ use quantick_engine::time_bucket::DAY_MS;
 use quantick_engine::{Bar, BarSpec, Side, Trade};
 use rust_decimal::Decimal;
 
-use crate::series::{PaneSeries, PrefixInstall};
+use crate::series::{PaneSeries, PrefixInstall, seam_lead_action};
 
 const HOUR: i64 = 3_600_000;
 /// 06:14:03 on day 9 after the epoch.
@@ -116,5 +116,51 @@ fn prefix_install_returns_its_view_effects() {
 
 #[test]
 fn bar_config_spells_the_rule_the_engine_cuts_by() {
-    assert_eq!(series().bar_config(), BarSpec::Time(DAY_MS).to_config_string());
+    assert_eq!(
+        series().bar_config(),
+        BarSpec::Time(DAY_MS).to_config_string()
+    );
+}
+
+/// The seam line speaks when the seated lead changed, or when there is none
+/// for a reason other than an empty bucket; an unchanged seat stays quiet.
+#[test]
+fn the_seam_line_speaks_only_for_a_change_or_a_missing_lead() {
+    let (old, new) = (lead(), bar(9 * DAY_MS, FIRST_PRINT - 8_000));
+    let cases = [
+        ("merged", None, Some(&old), Some("merged_into_seam_bar")),
+        (
+            "merged",
+            Some(&old),
+            Some(&new),
+            Some("merged_into_seam_bar"),
+        ),
+        ("merged", Some(&old), Some(&old), None),
+        (
+            "lead_after_first_trade",
+            Some(&old),
+            None,
+            Some("lead_after_first_trade"),
+        ),
+        (
+            "lead_after_first_trade",
+            None,
+            None,
+            Some("lead_after_first_trade"),
+        ),
+        ("nothing_before_first_trade", None, None, None),
+        (
+            "nothing_before_first_trade",
+            Some(&old),
+            None,
+            Some("nothing_before_first_trade"),
+        ),
+    ];
+    for (token, had, seated, action) in cases {
+        assert_eq!(
+            seam_lead_action(token, had, seated),
+            action,
+            "{token} {had:?} {seated:?}"
+        );
+    }
 }

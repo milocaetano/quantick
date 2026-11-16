@@ -1,3 +1,3 @@
 # #1041: the venue-prefix install and its seam line moved into `quantick_session::series`.
-crates/app -36
-!budget -36
+crates/app -38
+!budget -38

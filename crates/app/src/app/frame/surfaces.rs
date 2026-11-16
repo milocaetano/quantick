@@ -169,7 +169,7 @@ pub(super) fn draw_surfaces(
                 } else {
                     "Time"
                 },
-                editor_pane.series.state.spec().to_config_string(),
+                editor_pane.series.bar_config(),
                 editor_pane.id
             )
         };

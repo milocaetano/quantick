@@ -161,7 +161,7 @@ pub(crate) fn context(
                 },
             ),
             symbol: tab.active.1.clone(),
-            aggregation: pane.series.state.spec().to_config_string(),
+            aggregation: pane.series.bar_config(),
         },
         price: pane
             .series

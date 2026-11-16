@@ -453,17 +453,15 @@ pub(super) fn saved_tab_of(tab: &Tab) -> ui_state::SavedTab {
         context_panes_collapsed: tab.canvas.context_collapsed_slots(),
         focus: Some(ui_state::SavedFocus::from_side(tab.focused_side()).0),
         focus_slot: ui_state::SavedFocus::from_side(tab.focused_side()).1,
-        flow_bars: tab.flow_pane.series.state.spec().to_config_string(),
+        flow_bars: tab.flow_pane.series.bar_config(),
         // Only a pane that exists has an interval worth recording; a
         // tab that never showed the split restores on the default,
         // which is what it had.
-        time_bars: tab
-            .time_pane()
-            .map(|pane| pane.series.state.spec().to_config_string()),
+        time_bars: tab.time_pane().map(|pane| pane.series.bar_config()),
         context_bars: tab
             .time_panes
             .iter()
-            .map(|pane| pane.series.state.spec().to_config_string())
+            .map(|pane| pane.series.bar_config())
             .collect(),
         flow_layout: tab.flow_pane.layout_id().map(|layout| layout.0),
         context_layouts: tab
