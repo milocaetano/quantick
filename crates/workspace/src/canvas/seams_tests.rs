@@ -132,6 +132,145 @@ fn drag(state: &mut CanvasState, seam: &SeamAddress, by: f32) {
     }
 }
 
+/// The window's hand on `seam`'s handle: a press, sixteen moves adding up
+/// to `by` points along the split, a release.
+fn hand_drag(state: &mut CanvasState, seam: &SeamAddress, by: f32) {
+    hand_moves(state, seam, &[by / 16.0; 16]);
+}
+
+/// The window's hand on `seam`'s handle: a press, a frame for each of
+/// `moves` along the split, a release.
+fn hand_moves(state: &mut CanvasState, seam: &SeamAddress, moves: &[f32]) {
+    use crate::canvas::Hand;
+    let mut held = None;
+    state.seam_hand(&mut held, (seam, Hand::of([true, true, false], 0.0)), AREA);
+    for delta in moves {
+        let step = Hand::of([false, true, false], *delta);
+        state.seam_hand(&mut held, (seam, step), AREA);
+    }
+    state.seam_hand(&mut held, (seam, Hand::of([false, false, true], 0.0)), AREA);
+}
+
+/// "3 charts" with its middle chart dragged shut to the right by the
+/// first seam: the rail, and the outer charts' widths.
+fn middle_railed() -> CanvasState {
+    let mut state = canvas("charts-3");
+    drag(&mut state, &root(0), AREA.w);
+    state
+}
+
+fn widths(state: &CanvasState) -> [f32; 3] {
+    let panes = state.tree().panes();
+    [0, 1, 2].map(|at| rect_of(state, panes[at].0).w)
+}
+
+/// A hand's jitter does not pick a middle rail's seam: 1 px back, then a
+/// drag forward, opens it forward, the chart before it untouched.
+#[test]
+fn a_middle_rail_picks_its_seam_past_a_jitter() {
+    let mut state = middle_railed();
+    let before = widths(&state);
+    let mut moves = vec![-1.0];
+    moves.extend([300.0 / 16.0; 16]);
+    hand_moves(&mut state, &root(1), &moves);
+    assert!(state.railed().is_empty(), "open");
+    let after = widths(&state);
+    assert!(
+        (after[0] - before[0]).abs() < EPS,
+        "forward: {before:?} -> {after:?}"
+    );
+    assert!(
+        after[2] < before[2] - 100.0,
+        "the chart after gave the room: {after:?}"
+    );
+}
+
+/// A mostly diagonal drag moves little along the split: its seam is picked
+/// by the sign of the travel along it once that passes the pick, every
+/// point of it applied.
+#[test]
+fn a_middle_rail_picks_by_the_travel_along_its_split() {
+    let mut state = middle_railed();
+    let before = widths(&state);
+    let mut moves = vec![1.0, -2.0, -2.0];
+    moves.extend([-300.0 / 16.0; 16]);
+    hand_moves(&mut state, &root(1), &moves);
+    assert!(state.railed().is_empty(), "open");
+    let after = widths(&state);
+    assert!(
+        (after[2] - before[2]).abs() < EPS,
+        "backward: {before:?} -> {after:?}"
+    );
+    let opened = after[1] - before[1];
+    assert!(
+        (opened - 303.0).abs() < 1.0,
+        "every point applied: {opened}"
+    );
+}
+
+/// A press let go before its travel reaches the pick changes nothing.
+#[test]
+fn a_middle_rail_pressed_and_let_go_short_of_the_pick_stays() {
+    let mut state = middle_railed();
+    let before = state.clone();
+    hand_moves(&mut state, &root(1), &[1.0, 1.0]);
+    assert_eq!(state, before);
+}
+
+/// A rail with an open chart on both sides opens by a drag either way,
+/// whichever of its two seams the press landed on, however it was folded:
+/// the first move picks the seam on that side, backward the one before it,
+/// forward the one after.
+#[test]
+fn a_middle_rail_opens_by_a_drag_either_way_from_either_seam() {
+    for (fold, by) in [(0, AREA.w), (1, -AREA.w)] {
+        for grabbed in [0, 1] {
+            for way in [-300.0, 300.0] {
+                let mut state = canvas("charts-3");
+                drag(&mut state, &root(fold), by);
+                let middle = state.tree().panes()[1].0;
+                assert!(
+                    state.railed().contains(&middle),
+                    "{fold}: the middle folded"
+                );
+                hand_drag(&mut state, &root(grabbed), way);
+                let case = format!("folded by seam {fold}, grabbed by seam {grabbed}, moved {way}");
+                assert!(state.railed().is_empty(), "{case}: open");
+            }
+        }
+    }
+}
+
+/// With a minimized strip between a middle rail and the chart before it,
+/// the first move still picks the side: the seam beside the strip and the
+/// seam after the rail each open it, either way.
+#[test]
+fn a_middle_rail_beside_a_strip_opens_by_a_drag_either_way() {
+    let row = |index| SeamAddress {
+        path: vec![0],
+        index,
+    };
+    for grabbed in [1, 2] {
+        for way in [-200.0, 200.0] {
+            let mut state = canvas("charts-7");
+            let top: Vec<PaneSlot> = state.tree().panes()[..4]
+                .iter()
+                .map(|(slot, _)| *slot)
+                .collect();
+            state.minimize(top[1]).unwrap();
+            drag(&mut state, &row(1), AREA.w);
+            assert!(state.railed().contains(&top[2]), "the third chart folded");
+            hand_drag(&mut state, &row(grabbed), way);
+            let case = format!("grabbed by seam {grabbed}, moved {way}");
+            assert!(state.railed().is_empty(), "{case}: open");
+            assert!(
+                state.minimized().contains(&top[1]),
+                "{case}: the strip stays"
+            );
+        }
+    }
+}
+
 /// Every split's shares, depth first.
 fn all_shares(node: &PaneTree, out: &mut Vec<f32>) {
     if let PaneTree::Split {

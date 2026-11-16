@@ -1233,15 +1233,14 @@ impl Tab {
             if handle.hovered() || handle.dragged() {
                 ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
             }
-            if handle.dragged()
-                && let Some(pointer) = ui.ctx().pointer_interact_pos()
-            {
+            let (stack, hand) = (&mut self.canvas.context_stack, hand(&handle, false));
+            if let Some(wanted_y) = stack.hand(index, hand, divider.center().y) {
                 let _ = self.canvas.resize_context_pair(
                     tab_id,
                     super::context_resize::ResizeContextPair {
                         upper_pane_id: self.time_panes[index].id,
                         lower_pane_id: self.time_panes[index + 1].id,
-                        wanted_y: pointer.y,
+                        wanted_y,
                     },
                     quantick_control::wire::ActorKind::HumanUi,
                     &self.time_panes,

@@ -7,10 +7,9 @@ use crate::canvas::CanvasRect;
 const FOOTER_PX: f32 = 28.0;
 
 fn stack(count: usize) -> ContextStack {
-    ContextStack {
-        heights: vec![PaneWidth::Auto; count],
-        frame: None,
-    }
+    let mut stack = ContextStack::default();
+    stack.heights = vec![PaneWidth::Auto; count];
+    stack
 }
 
 fn carve(column: CanvasRect, heights: &[PaneWidth]) -> Split {
@@ -138,5 +137,50 @@ fn shares_folds_and_the_named_pair_round_trip() {
     assert_eq!(
         stack.pair_index(&reversed),
         Err(ContextResizeError::NotAdjacent)
+    );
+}
+
+/// The hand on a divider counts from the press: grabbed off its centre, the
+/// first move asks for the divider's place plus that move, never the
+/// pointer's own place; let go back where it was pressed, the heights are
+/// as they were, automatic ones too.
+#[test]
+fn a_divider_hand_counts_from_the_press_and_a_return_leaves_the_heights() {
+    use crate::canvas::Hand;
+    let mut stack = stack(2);
+    let frame = |pressed, held, released, delta| Hand::of([pressed, held, released], delta);
+    assert_eq!(
+        stack.hand(0, frame(true, true, false, 0.0), 400.0),
+        None,
+        "a press asks nothing"
+    );
+    assert_eq!(
+        stack.hand(0, frame(false, true, false, 10.0), 400.0),
+        Some(410.0)
+    );
+    assert_eq!(
+        stack.hand(1, frame(false, false, false, 0.0), 700.0),
+        None,
+        "another divider idles"
+    );
+    stack.heights[0] = PaneWidth::Manual(0.6);
+    assert_eq!(
+        stack.hand(0, frame(false, true, false, -10.0), 410.0),
+        Some(400.0)
+    );
+    assert_eq!(stack.hand(0, frame(false, false, true, 0.0), 400.0), None);
+    assert_eq!(
+        stack.heights,
+        vec![PaneWidth::Auto; 2],
+        "back where it started"
+    );
+    stack.hand(0, frame(true, true, false, 0.0), 400.0);
+    stack.hand(0, frame(false, true, false, 30.0), 400.0);
+    stack.heights[0] = PaneWidth::Manual(0.6);
+    stack.hand(0, frame(false, false, true, 0.0), 430.0);
+    assert_eq!(
+        stack.heights[0],
+        PaneWidth::Manual(0.6),
+        "a drag that ends elsewhere keeps its heights"
     );
 }
