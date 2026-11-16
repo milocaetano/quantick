@@ -1037,10 +1037,7 @@ impl ChartPane {
                     *chrome.begin_text_edit = true;
                 }
             }
-            PaneMenuIntent::ToggleIndicatorHidden(slot) => {
-                self.indicators.toggle_hidden(SlotId(slot));
-                chrome.layers.indicators_changed = true;
-            }
+            PaneMenuIntent::ToggleIndicatorHidden(slot) => self.model.pending_hide = Some(slot),
             PaneMenuIntent::SelectDrawing(id) => {
                 if let Some(index) = self.drawings.index_of(id) {
                     self.drawings.select(Some(index));

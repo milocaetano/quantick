@@ -48,8 +48,8 @@ pub(super) const ROWS: &[UiBehaviour] = &[
         keys: &[(Source::ToolbarAction, "ToggleIndicatorHidden")],
         mapping: excluded!(
             PendingCapability,
-            "`indicator.script.attach` and `indicator.script.detach` add and remove; nothing \
-             hides. Tracked in issue 401"
+            "`indicator.native.edit` hides a native slot; a script slot has no hide \
+             capability. Tracked in issue 401"
         ),
     },
     UiBehaviour {
@@ -74,12 +74,7 @@ pub(super) const ROWS: &[UiBehaviour] = &[
         title: "Add a native indicator from the catalog",
         reach: "toolbar indicator picker",
         keys: &[(Source::ToolbarAction, "AddNative")],
-        mapping: excluded!(
-            PendingCapability,
-            "`indicator.script.attach` attaches a Pine script; the native catalog has no \
-             capability, so an operator can add the indicators a trader writes and not the \
-             ones shipped. Tracked in issue 401"
-        ),
+        mapping: capability!("indicator.native.edit"),
     },
     UiBehaviour {
         id: "indicator.native.remove",
@@ -89,11 +84,7 @@ pub(super) const ROWS: &[UiBehaviour] = &[
             Source::Authored,
             "the legend row close, which the toolbar enum sees only as `RemoveIndicator`",
         )],
-        mapping: excluded!(
-            PendingCapability,
-            "`indicator.script.detach` names a script; a native has no identifier it accepts. \
-             Tracked in issue 401"
-        ),
+        mapping: capability!("indicator.native.edit"),
     },
     UiBehaviour {
         id: "indicator.script.add",
