@@ -173,8 +173,8 @@ fn catalogue_is_eight_with_flow_then_eight_timeframes() {
             "Flow",
             "1 TF + Flow",
             "2 TF + Flow",
-            "2 stacked + Flow",
-            "3 stacked + Flow",
+            "2 stack + Flow",
+            "3 stack + Flow",
             "4 TF + Flow",
             "Flow over TF",
             "Flow over 2 TF",
@@ -195,6 +195,19 @@ fn catalogue_is_eight_with_flow_then_eight_timeframes() {
         !labels.iter().any(|label| label.contains("2 Flows")),
         "2 Flows was rejected"
     );
+    // One line in a picker cell; the longer description is the hint.
+    for preset in LAYOUT_PRESETS {
+        assert!(
+            preset.label.chars().count() <= LABEL_MAX_CHARS,
+            "{} fits one cell line",
+            preset.label
+        );
+        assert!(
+            preset.hint.len() > preset.label.len(),
+            "{} has a longer hint",
+            preset.id
+        );
+    }
     // The four ids configs and saved workspaces have always used.
     assert_eq!(preset("flow").unwrap().label, "Flow");
     assert_eq!(preset("time").unwrap().label, "1 chart");
