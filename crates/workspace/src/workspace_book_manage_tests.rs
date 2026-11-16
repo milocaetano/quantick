@@ -235,3 +235,23 @@ fn default_cannot_be_deleted_so_nothing_is_recorded() {
     assert!(book.delete_at(DEFAULT_WORKSPACE, 0).is_err());
     assert_eq!(book.undo_until(DEFAULT_WORKSPACE), None);
 }
+
+/// With Default on the factory recipe the window settles a moved tab's copy
+/// to what it shows; a tab still clean on Default comes back exactly.
+#[test]
+fn a_tab_settled_clean_on_a_factory_default_comes_back_exactly() {
+    let mut book = book();
+    book.save_as(1, "Scalp").unwrap();
+    assert!(book.recipe(DEFAULT_WORKSPACE).unwrap().is_factory());
+    let before = book.clone();
+    book.delete_at("Scalp", 0).unwrap();
+    let shown = WorkspaceRecipe {
+        layout: DeclaredLayout::Time,
+        ..WorkspaceRecipe::default()
+    };
+    book.settle_tab(1, &shown);
+    let undone = book.undo_delete("Scalp", 1).unwrap();
+    assert_eq!(undone.tabs, vec![1]);
+    assert_eq!(book.tab_state(1), before.tab_state(1), "clean, not marked");
+    assert_eq!(book.tab_copy(1), before.tab_copy(1), "its own copy back");
+}
