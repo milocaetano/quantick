@@ -26,8 +26,17 @@ use crate::state::BarSpec;
 use crate::toolrail::Tool;
 use crate::viewport::Viewport;
 
+/// The window's tests read these private pane names through this module.
+pub(crate) use super::painting::live_chip_rect;
 use super::painting::{LIVE_CHIP_MARGIN_PX, LIVE_CHIP_VPAD_PX, LIVE_CHIP_WIDTH_PX};
+use super::pointer_hit::PLOT_PICK_TOLERANCE_PX;
+pub(crate) use super::render_registry::MARK_RUNS as TIME_MARK_RUNS;
+use super::strategies::strategy_badge_text;
 use super::*;
+use crate::drawings::{self, ChartPoint, DrawingBand};
+use crate::indicator_render;
+use crate::plot_area::split_time_strip;
+use quantick_drawings::gesture::MAGNET_REACH_PX;
 
 mod menu_intent_tests;
 mod native_split_tests;

@@ -194,7 +194,7 @@ fn the_jump_to_live_chip_shows_only_its_hand() {
     pane.model.viewport.pan_pixels(200.0, slots);
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
-    let chip = crate::pane::test_live_chip_rect(history);
+    let chip = crate::pane::tests::live_chip_rect(history);
     let output = hover(&mut app, &ctx, chip.center());
     assert_eq!(
         output.platform_output.cursor_icon,

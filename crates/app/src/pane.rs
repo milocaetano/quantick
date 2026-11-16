@@ -13,24 +13,6 @@
 //! [`ChartPane::id`] for the same reason — two panes registering one id would
 //! share a drag.
 
-// The tests in `pane/tests/` reach these through `use super::*`; the production
-// code that read them moved to the siblings, so only the tests still need
-// them here.
-#[cfg(test)]
-use crate::drawings;
-#[cfg(test)]
-use crate::drawings::{ChartPoint, DrawingBand};
-#[cfg(test)]
-use crate::indicator_render;
-#[cfg(test)]
-use crate::plot_area::split_time_strip;
-#[cfg(test)]
-use pointer_hit::PLOT_PICK_TOLERANCE_PX;
-#[cfg(test)]
-use quantick_drawings::gesture::MAGNET_REACH_PX;
-#[cfg(test)]
-use strategies::strategy_badge_text;
-
 mod axes_and_panes;
 mod canvas_gestures;
 mod constants;
@@ -101,8 +83,6 @@ pub(crate) use chart_pane::{SideChrome, SideRowChrome};
 pub use chrome::PaneChrome;
 use drag::region_pause;
 use hint::paint_placement_hint;
-#[cfg(test)]
-pub(crate) use painting::live_chip_rect as test_live_chip_rect;
 use painting::{
     LANE_AXIS_FONT_PX, LANE_AXIS_GAP_PX, LANE_HANDLE_HALF_WIDTH_PX, LAST_PRICE_DASH_PX,
     LAST_PRICE_GAP_PX, LAST_PRICE_LINE_ALPHA, SCROLL_ZOOM_PX, SEAM_DASH_PX, SEAM_GAP_PX,
@@ -115,15 +95,13 @@ pub(crate) use price_axis::PriceAxisLevel;
 #[cfg(any(feature = "drawing-harness", test))]
 pub use quantick_drawings::gesture::ParkedHand;
 pub use quantick_drawings::gesture::{DRAWING_ANCHOR_RADIUS_PX, DrawingDrag};
-#[cfg(test)]
-pub(crate) use render_registry::MARK_RUNS as TIME_MARK_RUNS;
 
 // The compass is painted by several of the leaves and by the axes registry,
 // which all reach it as `pane::PointerCompass`.
 use crate::pointer_compass::PointerCompass;
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 #[cfg(test)]
 #[path = "pane/tests/lane_transport_tests.rs"]

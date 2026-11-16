@@ -2539,7 +2539,7 @@ fn layouts_come_back_after_a_restart() {
     app.layout_adapter().flush_layouts();
 
     let path = app.runtime.workspace.layouts().path().to_path_buf();
-    let crate::layouts::Loaded::Book(book) = crate::layouts::load(&path) else {
+    let quantick_stores::layouts::Loaded::Book(book) = quantick_stores::layouts::load(&path) else {
         panic!("the book was written");
     };
     assert_eq!(book.layouts().len(), 2);

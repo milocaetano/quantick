@@ -294,7 +294,7 @@ fn a_secondary_drag_through_a_profile_gap_measures_without_panning_or_moving_it(
     );
 
     assert!(
-        crate::app::control_quick_range(&app).is_some(),
+        control_quick_range(&app).is_some(),
         "the drag through the profile's gap raised a quick range"
     );
     let after = target(&app, 120.0, 106.0);

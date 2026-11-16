@@ -174,7 +174,7 @@ fn a_secondary_drag_is_temporary_until_it_is_dismissed_or_converted() {
 
     drag_quick_range(&mut app, &ctx, start, end);
     assert!(
-        crate::app::control_quick_range(&app).is_some(),
+        control_quick_range(&app).is_some(),
         "releasing a secondary drag raises its profile action"
     );
     let scene = crate::control::scene_snapshot(&app);
@@ -242,19 +242,18 @@ fn a_secondary_drag_is_temporary_until_it_is_dismissed_or_converted() {
 
     click_chart(&mut app, &ctx, chart.left_top() + egui::vec2(24.0, 24.0));
     assert!(
-        crate::app::control_quick_range(&app).is_none(),
+        control_quick_range(&app).is_none(),
         "a chart click dismisses the temporary choice"
     );
     assert!(app.active_tab().flow_pane.drawings.items().is_empty());
 
     drag_quick_range(&mut app, &ctx, start, end);
-    let action =
-        crate::app::control_quick_range(&app).expect("the second range raised the same action");
+    let action = control_quick_range(&app).expect("the second range raised the same action");
     assert!(action.enabled, "both anchors resolve to market time");
     click_chart(&mut app, &ctx, action.rect.center());
 
     assert!(
-        crate::app::control_quick_range(&app).is_none(),
+        control_quick_range(&app).is_none(),
         "conversion consumes the temporary ruler"
     );
     let drawings = app.active_tab().flow_pane.drawings.items();
@@ -286,7 +285,7 @@ fn quick_range_fibonacci_actions_use_the_dragged_move() {
         click_quick_range_action(&mut app, &ctx, action);
 
         assert!(
-            crate::app::control_quick_range(&app).is_none(),
+            control_quick_range(&app).is_none(),
             "clicking {action:?} consumes the temporary range at {:?}",
             control.rect
         );
@@ -373,7 +372,7 @@ fn independent_annotations_do_not_run_the_temporary_conversion_plan() {
         run_frame_at(&mut app, &ctx, TEST_WINDOW);
         let (_, start, end) = quick_range_ends(&app);
         drag_quick_range(&mut app, &ctx, start, end);
-        assert!(crate::app::control_quick_range(&app).unwrap().enabled);
+        assert!(control_quick_range(&app).unwrap().enabled);
         let mut points = vec![
             serde_json::json!({"time_unix_ms": 2000, "price": "100"}),
             serde_json::json!({"time_unix_ms": 3000, "price": "101"}),
@@ -394,12 +393,12 @@ fn independent_annotations_do_not_run_the_temporary_conversion_plan() {
         .unwrap();
         assert_eq!(app.active_tab().drawing_pane().drawings.items().len(), 1);
         assert!(
-            crate::app::control_quick_range(&app).unwrap().enabled,
+            control_quick_range(&app).unwrap().enabled,
             "an independent annotation does not complete the temporary range"
         );
         run_frame(&mut app, &ctx);
         assert!(
-            crate::app::control_quick_range(&app).is_none(),
+            control_quick_range(&app).is_none(),
             "the normal selection reconciliation releases it next frame"
         );
     }
@@ -508,7 +507,7 @@ fn quick_range_action_refusal_finishes_the_token_and_explains_the_retry() {
     );
     run_frame(&mut app, &ctx);
     assert!(
-        crate::app::control_quick_range(&app).is_none_or(|control| !control.enabled),
+        control_quick_range(&app).is_none_or(|control| !control.enabled),
         "next reconciliation still applies the changed series revision"
     );
 }
@@ -549,7 +548,7 @@ fn quick_range_never_starts_in_the_live_tape_lane() {
     let start = egui::pos2((divider + chart.right()) * 0.5, chart.center().y);
     let end = egui::pos2(divider - 80.0, chart.center().y - 55.0);
     drag_quick_range(&mut app, &ctx, start, end);
-    assert!(crate::app::control_quick_range(&app).is_none());
+    assert!(control_quick_range(&app).is_none());
     assert!(app.active_tab().flow_pane.drawings.items().is_empty());
 }
 
@@ -572,7 +571,7 @@ fn a_secondary_drag_measures_the_bars_it_crossed_without_panning() {
         start.x,
         start_after.x
     );
-    let action = crate::app::control_quick_range(&app).expect("the drag raised its action");
+    let action = control_quick_range(&app).expect("the drag raised its action");
     // One idle frame first, as the dismissal click gives the flow test above:
     // without it the press lands before the bar can take it.
     run_frame(&mut app, &ctx);
@@ -600,13 +599,13 @@ fn hiding_the_pane_that_owns_a_range_takes_its_action_bar_away() {
     run_frame_at(&mut app, &ctx, TEST_WINDOW);
     let (_, start, end) = quick_range_ends(&app);
     drag_quick_range(&mut app, &ctx, start, end);
-    assert!(crate::app::control_quick_range(&app).is_some());
+    assert!(control_quick_range(&app).is_some());
 
     app.active_tab_mut().set_layout(CanvasLayout::Time);
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
     assert!(
-        crate::app::control_quick_range(&app).is_none(),
+        control_quick_range(&app).is_none(),
         "the flow pane no longer paints the range, so no bar speaks for it"
     );
 }
@@ -668,7 +667,7 @@ fn a_right_click_that_slips_within_the_click_distance_raises_no_range() {
         start + egui::vec2(click_distance_px - 1.0, 0.0),
     );
     assert!(
-        crate::app::control_quick_range(&app).is_none(),
+        control_quick_range(&app).is_none(),
         "a slip inside egui's click distance is the context-menu gesture, not a range"
     );
 }
@@ -4769,7 +4768,7 @@ fn moving_a_context_chart_moves_its_drawings_and_slots_with_it() {
             .drawings_key
             .as_ref()
             .map(|key| key.role.clone()),
-        Some(crate::layouts::PaneRole::Context {
+        Some(quantick_workspace::market_settings::PaneRole::Context {
             bars: app
                 .active_tab()
                 .pane(PaneSide::Time(1))
