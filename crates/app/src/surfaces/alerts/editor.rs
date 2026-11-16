@@ -1,8 +1,8 @@
 use super::*;
 use egui_phosphor::regular as icons;
 use quantick_alerts::{
-    AlertSpec, Expiration, ExpirationChoice, Frequency, MAX_CONDITIONS, MarketRef,
-    Operator, Predicate, SourceContext, TargetKind, TargetRef, sound,
+    AlertSpec, Expiration, ExpirationChoice, Frequency, MAX_CONDITIONS, MarketRef, Operator,
+    Predicate, SourceContext, TargetKind, TargetRef, sound,
 };
 
 /// The draft's editor; `draft` is a copy the caller hands back if it changed.
@@ -52,7 +52,7 @@ pub(super) fn draw_editor(
                 ui.label("Summary");
                 ui.label(summary(&draft.spec, Some(&draft.context)));
                 for issue in &view.errors {
-                    error(ui, &error_text(issue));
+                    error(ui, &issue.words());
                 }
             }
             if let Some(message) = surface_error {
@@ -118,12 +118,7 @@ pub(super) fn market_label(ui: &mut egui::Ui, market: &MarketRef) {
     ))
     .on_hover_text(identity);
 }
-fn conditions(
-    ui: &mut egui::Ui,
-    draft: &mut Draft,
-    book: &AlertBook,
-    actions: &mut Vec<Intent>,
-) {
+fn conditions(ui: &mut egui::Ui, draft: &mut Draft, book: &AlertBook, actions: &mut Vec<Intent>) {
     ui.strong("All conditions");
     ui.label("Every condition must be true at the same observation.");
     let mut remove = None;
@@ -328,7 +323,7 @@ fn expiration(ui: &mut egui::Ui, draft: &mut Draft, book: &AlertBook) {
                 draft.spec.expiration = expiration;
                 draft.expiration_error = None;
             }
-            Err(issue) => draft.expiration_error = Some(error_text(&issue)),
+            Err(issue) => draft.expiration_error = Some(issue.words()),
         }
     }
     if let Some(issue) = &draft.expiration_error {

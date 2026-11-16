@@ -8,7 +8,7 @@ use quantick_control_handlers::workspace_book::{
 
 /// A desk of two tabs opening together, seeded on the scratch book beside
 /// `layouts`.
-fn two_tabs(layouts: &crate::scratch::ScratchFile) -> (QuantickApp, u64, u64) {
+pub(super) fn two_tabs(layouts: &crate::scratch::ScratchFile) -> (QuantickApp, u64, u64) {
     let (mut app, _evt, _cmd, _book) = test_app();
     app.runtime
         .workspace
@@ -956,7 +956,11 @@ fn a_menu_switch_and_delete_journal_what_the_control_calls_do() {
     call(&mut app, "tab.workspace.set", json!({ "name": "Scalp" }));
     call(&mut app, "workspace.delete", json!({ "name": "Scalp" }));
     call(&mut app, "workspace.save_as", json!({ "name": "Scalp" }));
-    menu(&mut app, WorkspaceCommand::Delete("Scalp".to_owned()));
+    app.chrome.window_menu.tab_workspace.open_manage(tab);
+    let manage = |intent| WorkspaceCommand::Manage(intent);
+    use quantick_session::manage_workspaces::ManageIntent::{Arm, Delete};
+    menu(&mut app, manage(Arm("Scalp".to_owned())));
+    menu(&mut app, manage(Delete { now_ms: 0 }));
     let rows = workspace_journal(&app);
     let deletes: Vec<_> = rows
         .iter()
@@ -2189,6 +2193,25 @@ fn enter_in_the_filter_switches_to_the_first_match() {
     assert_eq!(app.chrome.window_menu.tab_workspace.filter, "desk 05");
     let enter = vec![key_press(egui::Key::Enter)];
     run_frame_sized(&mut app, &ctx, FULL_HD, enter, egui::Modifiers::NONE);
+    run_frame_at(&mut app, &ctx, FULL_HD);
+    assert_eq!(app.runtime.workspace.book.tab_row(first).0, "Desk 05");
+}
+
+/// Typed into the filter and Enter in one frame: the keystroke narrows the
+/// list before Enter reads it.
+#[test]
+fn typing_then_enter_in_one_frame_switches_to_the_match() {
+    let layouts = crate::scratch::ScratchFile::new("workspace-menu-b-one-frame", "layouts.toml");
+    let (mut app, first, _) = two_tabs(&layouts);
+    app.runtime.tabs.select(0);
+    fill_book(&mut app, first, 14);
+    let ctx = egui::Context::default();
+    open_cell_menu(&mut app, &ctx);
+    let both = vec![
+        egui::Event::Text("desk 05".to_owned()),
+        key_press(egui::Key::Enter),
+    ];
+    run_frame_sized(&mut app, &ctx, FULL_HD, both, egui::Modifiers::NONE);
     run_frame_at(&mut app, &ctx, FULL_HD);
     assert_eq!(app.runtime.workspace.book.tab_row(first).0, "Desk 05");
 }

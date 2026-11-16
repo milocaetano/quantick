@@ -9,6 +9,13 @@
   "additionalProperties": false,
   "description": "Make a new workspace of a tab's copy.",
   "properties": {
+    "colour": {
+      "description": "A preset's name or `#RRGGBB`. Left out, the next free colour.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "name": {
       "type": "string"
     },

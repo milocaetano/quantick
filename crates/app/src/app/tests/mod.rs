@@ -136,6 +136,7 @@ mod workspace_bundle_runtime_baseline_tests;
 mod workspace_commit_baseline_tests;
 mod workspace_lifetime_baseline_tests;
 mod workspace_lifetime_tests;
+mod workspace_manage_tests;
 mod workspaces_tests;
 
 use super::*;

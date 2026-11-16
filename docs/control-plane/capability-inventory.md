@@ -57,6 +57,7 @@ capability that cannot change application state.
 | `appearance.apply` | 1 | `appearance` | no | `cockpit`, `cockpit.layout` |
 | `attention.mark.create` | 1 | `attention` | no | `annotate`, `annotate.attention` |
 | `canvas.layout.pick` | 1 | `canvas` | no | `cockpit`, `cockpit.layout` |
+| `canvas.layout.picker` | 1 | `canvas` | yes | `observe`, `observe.workspace` |
 | `canvas.pane.dock` | 1 | `canvas` | no | `cockpit`, `cockpit.layout` |
 | `canvas.pane.float` | 1 | `canvas` | no | `cockpit`, `cockpit.layout` |
 | `canvas.pane.maximize` | 1 | `canvas` | no | `cockpit`, `cockpit.layout` |
@@ -183,6 +184,8 @@ capability that cannot change application state.
 | `workspace.colour.popover` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
 | `workspace.colour.set` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
 | `workspace.delete` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
+| `workspace.delete.undo` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
+| `workspace.dialog.open` | 1 | `workspace` | no | `cockpit`, `cockpit.layout` |
 | `workspace.list` | 1 | `workspace` | yes | `observe`, `observe.workspace` |
 | `workspace.new` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
 | `workspace.rename` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
@@ -190,4 +193,4 @@ capability that cannot change application state.
 | `workspace.save_as` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
 | `workspace.save_to` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
 
-165 capabilities registered.
+168 capabilities registered.

@@ -9,7 +9,6 @@ use core::conversion_plan::{ConversionReadback, PendingConversion, PlacementOutc
 use eframe::egui;
 pub(crate) use quantick_chart_interaction::quick_range::Action;
 use quantick_chart_interaction::quick_range::{self as core, Phase};
-use quantick_control::annotation as ids;
 
 // Gated inside the file (`#![cfg]`), so the file itself says it is harness.
 mod launch;
@@ -20,51 +19,9 @@ pub(crate) const BAR_ID: &str = "quick_range_context_bar";
 pub(crate) const ACTION_COUNT: usize = Action::ALL.len();
 const STALE_REASON_WIDTH_PX: f32 = 180.0;
 
-/// The model owns operation identity and its names; the adapter binds each
-/// action to its drawing tool and its registry capability.
-pub(crate) trait ActionUi {
-    fn tool_id(self) -> &'static str;
-    fn capability_id(self) -> &'static str;
-    fn capability_version(self) -> u32;
-}
-impl ActionUi for Action {
-    fn tool_id(self) -> &'static str {
-        match self {
-            Self::Profile => crate::frvp::TOOL_ID,
-            Self::Retracement => "fib-retracement",
-            Self::Projection => "fib-extension",
-            Self::Rectangle => ids::ZONE_TOOL_ID,
-            Self::TrendLine => ids::TREND_LINE_TOOL_ID,
-            Self::Horizontal => ids::HORIZONTAL_LINE_TOOL_ID,
-            Self::Channel => ids::PARALLEL_CHANNEL_TOOL_ID,
-        }
-    }
-
-    fn capability_id(self) -> &'static str {
-        match self {
-            Self::Profile => ids::PROFILE_CAPABILITY_ID,
-            Self::Retracement => ids::FIB_RETRACEMENT_CAPABILITY_ID,
-            Self::Projection => ids::FIB_PROJECTION_CAPABILITY_ID,
-            Self::Rectangle => ids::RECTANGLE_CAPABILITY_ID,
-            Self::TrendLine => ids::TREND_LINE_CAPABILITY_ID,
-            Self::Horizontal => ids::HORIZONTAL_LEVELS_CAPABILITY_ID,
-            Self::Channel => ids::PARALLEL_CHANNEL_CAPABILITY_ID,
-        }
-    }
-
-    fn capability_version(self) -> u32 {
-        match self {
-            Self::Profile => ids::PROFILE_CAPABILITY_VERSION,
-            Self::Retracement | Self::Projection => ids::FIB_CAPABILITY_VERSION,
-            Self::Rectangle => ids::RECTANGLE_CAPABILITY_VERSION,
-            Self::TrendLine => ids::TREND_LINE_CAPABILITY_VERSION,
-            Self::Horizontal => ids::HORIZONTAL_LEVELS_CAPABILITY_VERSION,
-            Self::Channel => ids::PARALLEL_CHANNEL_CAPABILITY_VERSION,
-        }
-    }
-}
-
-pub(crate) use quantick_ui_model::drawing_chrome::quick_range::{Owner, PendingRangePlacement};
+pub(crate) use quantick_ui_model::drawing_chrome::quick_range::{
+    ActionUi, Owner, PendingRangePlacement,
+};
 use quantick_ui_model::drawing_chrome::{
     self as model,
     quick_range::{Intent, State},

@@ -115,16 +115,25 @@ pub(super) const ROWS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "workspace.save_as",
         title: "Save a tab as a new workspace",
-        reach: "window menu, Workspace, Save as new",
-        keys: &[(Source::MenuEntry, "Save as new\u{2026}")],
-        mapping: Mapping::Capabilities(&["workspace.save_as"]),
+        reach: "window menu, Workspace, Save as new, or the capsule's workspace menu, Save as\u{2026}: \
+                its dialog suggests a name and holds the palette on the next free colour",
+        keys: &[
+            (Source::MenuEntry, "Save as new\u{2026}"),
+            (
+                Source::Authored,
+                "the dialog's name field, palette and Save are marks the dialog paints: listed \
+                 in the scene as toolbar.name_dialog.colour.<key>",
+            ),
+        ],
+        mapping: Mapping::Capabilities(&["workspace.dialog.open", "workspace.save_as"]),
     },
     UiBehaviour {
         id: "workspace.new",
         title: "Make a new, empty workspace for a tab",
-        reach: "the capsule's workspace menu, New workspace",
+        reach: "the capsule's workspace menu, New workspace\u{2026}, or Manage workspaces' footer: \
+                its dialog suggests a name and holds the palette on the next free colour",
         keys: &[(Source::MenuEntry, "New workspace\u{2026}")],
-        mapping: Mapping::Capabilities(&["workspace.new"]),
+        mapping: Mapping::Capabilities(&["workspace.dialog.open", "workspace.new"]),
     },
     UiBehaviour {
         id: "workspace.autosave.set",
@@ -136,22 +145,67 @@ pub(super) const ROWS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "workspace.rename",
         title: "Rename a workspace",
-        reach: "window menu, Workspace, Rename, or a row's Rename in Manage workspaces",
+        reach: "window menu, Workspace, Rename, the capsule's workspace menu, Rename\u{2026}, or \
+                inline in a Manage workspaces row (pencil, F2 or a double click)",
         keys: &[(Source::MenuEntry, "Rename workspace\u{2026}")],
         mapping: Mapping::Capabilities(&["workspace.rename"]),
     },
     UiBehaviour {
         id: "workspace.manage",
-        title: "List every workspace with its tabs, to rename or delete one (its tabs move to \
-                Default), Delete confirmed in the row",
+        title: "Open Manage workspaces: every workspace with its colour, name, tab count, \
+                rename and delete",
         reach: "window menu, Workspace, Manage workspaces\u{2026}, or the capsule's workspace menu",
         keys: &[(Source::MenuEntry, "Manage workspaces\u{2026}")],
-        mapping: Mapping::Capabilities(&["workspace.list", "workspace.rename", "workspace.delete"]),
+        mapping: Mapping::Capabilities(&["workspace.dialog.open", "workspace.list"]),
+    },
+    UiBehaviour {
+        id: "workspace.manage.colour",
+        title: "Recolour any workspace from its Manage row, swapping with the holder when asked",
+        reach: "Manage workspaces, a row's colour chip or C on the chosen row",
+        keys: &[(
+            Source::Authored,
+            "the chip and the palette under the row are marks the dialog paints: listed in the \
+             scene as toolbar.manage_workspaces.<workspace>.chip and \
+             toolbar.manage_workspaces.<workspace>.colour.<key>",
+        )],
+        mapping: Mapping::Capabilities(&["workspace.colour.set", "workspace.colour.palette"]),
+    },
+    UiBehaviour {
+        id: "workspace.manage.rename",
+        title: "Rename a workspace in its Manage row: Enter saves, Esc cancels",
+        reach: "Manage workspaces, a row's pencil, F2 on the chosen row, or a double click on the name",
+        keys: &[(
+            Source::Authored,
+            "the pencil and the field are marks the dialog paints: \
+             toolbar.manage_workspaces.<workspace>.rename and .name",
+        )],
+        mapping: Mapping::Capabilities(&["workspace.rename"]),
+    },
+    UiBehaviour {
+        id: "workspace.manage.delete",
+        title: "Delete a workspace, confirmed in its row naming the tabs that go back to Default",
+        reach: "Manage workspaces, a row's trash or Del on the chosen row, then Delete or Enter",
+        keys: &[(
+            Source::Authored,
+            "the trash, Delete and Keep are marks the dialog paints: \
+             toolbar.manage_workspaces.<workspace>.delete, .confirm and .keep",
+        )],
+        mapping: Mapping::Capabilities(&["workspace.delete"]),
+    },
+    UiBehaviour {
+        id: "workspace.manage.undo",
+        title: "Undo a workspace delete for 10 seconds: the workspace, its colour and its tabs",
+        reach: "Manage workspaces, the deleted row's Undo or Ctrl+Z",
+        keys: &[(
+            Source::Authored,
+            "the Undo row is marks the dialog paints: toolbar.manage_workspaces.<workspace>.undo",
+        )],
+        mapping: Mapping::Capabilities(&["workspace.delete.undo"]),
     },
     UiBehaviour {
         id: "workspace.colour.set",
         title: "Give a workspace a colour, swapping with its holder only when asked",
-        reach: "the capsule's workspace menu, the header swatch",
+        reach: "the capsule's workspace menu, the header swatch, or a row's chip in Manage workspaces",
         keys: &[(
             Source::Authored,
             "the header swatch's popover is marks the workspace menu paints: each swatch, Apply and Swap is listed in the scene as toolbar.workspace_menu.colour.<key>",

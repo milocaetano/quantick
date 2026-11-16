@@ -99,6 +99,9 @@ tab_strip = "#D9D6D2"
 # The capsule's layout miniature: a neutral grey, so the workspace's colour
 # is the capsule's only hue.
 capsule_miniature = "#7C7C7C"
+# Manage's resting pencil and trash, and its key hints (4.5:1 on its blocks).
+resting_icon = "#B8BDC5"
+key_hint = "#6B6B6B"
 brand = "#12C68C"
 # Dark enough that a replaying idle tab keeps 4.5:1 on its warm grey.
 replay_ink = "#7832AA"

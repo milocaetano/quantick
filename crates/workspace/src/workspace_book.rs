@@ -29,6 +29,10 @@ use crate::workspace_recipe::{ContextPaneRecipe, FACTORY_SUMMARY, WorkspaceRecip
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+#[path = "workspace_book_manage.rs"]
+mod manage;
+pub use manage::{UNDO_WINDOW_MS, UndoOutcome};
+
 /// The file beside the layouts file.
 pub const WORKSPACES_FILE: &str = "workspaces.toml";
 /// The workspace that always exists and cannot be deleted or renamed.
@@ -58,6 +62,8 @@ pub enum WorkspaceRefusal {
     /// Another workspace holds an identical colour: no swap was asked, or
     /// none can free it.
     ColourTaken(ColourTaken),
+    /// The ten seconds a delete can be undone in have ended.
+    UndoExpired(String),
 }
 
 impl WorkspaceRefusal {
@@ -75,6 +81,7 @@ impl WorkspaceRefusal {
             Self::RevertRemoved => "workspace.revert_removed",
             Self::ColourInvalid(_) => "workspace.colour_invalid",
             Self::ColourTaken(_) => "workspace.colour_taken",
+            Self::UndoExpired(_) => "workspace.undo_expired",
         }
     }
 }
@@ -128,6 +135,10 @@ impl std::fmt::Display for WorkspaceRefusal {
                  {other} already matches; pick another",
                 owner_would_get.name()
             ),
+            Self::ColourTaken(ColourTaken::NewWorkspace { owners }) => {
+                write!(f, "Used by {}. Pick another colour.", owners.join(" and "))
+            }
+            Self::UndoExpired(name) => write!(f, "the Undo of deleting {name} has ended"),
         }
     }
 }
@@ -313,6 +324,9 @@ pub struct WorkspaceBook {
     /// autosave writes where two tabs on one workspace hold edits.
     #[serde(skip)]
     active: Option<u64>,
+    /// The deletes an Undo can still take back: the window's, never a file's.
+    #[serde(skip)]
+    deleted: BTreeMap<String, manage::Deleted>,
 }
 
 /// Why a tab's copy differs from its workspace with autosave on. Either way
@@ -372,6 +386,7 @@ impl Default for WorkspaceBook {
             drawings: BTreeMap::new(),
             unsynced: BTreeMap::new(),
             active: None,
+            deleted: BTreeMap::new(),
         }
     }
 }

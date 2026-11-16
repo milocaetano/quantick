@@ -220,3 +220,62 @@ fn the_mock_s_custom_values_raise_their_warnings() {
     assert!(said(BLUE).is_empty(), "the mock's custom colour is clean");
     assert_eq!(HEX_HINT, "Use #RRGGBB, for example #3A7BD5");
 }
+
+/// The create dialogs' palette: the next free colour (Petrol) chosen, every
+/// held swatch locked with its owner's initials, Flow's Violet included,
+/// and a locked swatch's hover sends the trader to Manage.
+#[test]
+fn the_create_palette_chooses_the_next_free_colour_and_locks_the_held_ones() {
+    let book = mock(true);
+    let model = choosing(&book, None);
+    assert!(model.choosing);
+    assert_eq!(model.current, preset(6), "Petrol, the next free");
+    assert_eq!(model.current, model.next_free);
+    let petrol = &model.presets[6];
+    assert!(petrol.current && !petrol.locked);
+    let violet = &model.presets[3];
+    assert!(violet.locked && !violet.current);
+    assert_eq!(violet.initials.as_deref(), Some("F"));
+    let sky = &model.presets[2];
+    assert!(sky.locked);
+    assert_eq!(
+        sky.tip(),
+        "Used by Scalp \u{b7} change it in Manage workspaces"
+    );
+    assert!(!model.presets[7].locked, "Lavender is free");
+    let last = model.last_custom.as_ref().unwrap();
+    assert!(!last.locked, "#3A7BD5 is nobody's");
+    let chosen = choosing(&book, Some(preset(7)));
+    assert!(chosen.presets[7].current && !chosen.presets[6].current);
+}
+
+/// On create a held colour is never swapped: a pick or a typed identical
+/// colour is refused with its owner, a free one is chosen.
+#[test]
+fn on_create_a_held_colour_is_refused_and_a_free_one_chosen() {
+    let model = choosing(&mock(false), None);
+    let refused = |pick| match pick {
+        Pick::Refused(words) => words,
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(
+        refused(model.pick(preset(2), false)),
+        "Used by Scalp. Pick another colour."
+    );
+    let typed = WorkspaceColour::Custom([0x5D, 0xBD, 0xEB]);
+    assert_eq!(
+        refused(model.pick(typed, true)),
+        "Used by Scalp. Pick another colour."
+    );
+    assert_eq!(model.pick(preset(7), false), Pick::Apply(preset(7)));
+    let blue = WorkspaceColour::Custom(BLUE);
+    assert_eq!(model.pick(blue, true), Pick::Apply(blue));
+}
+
+/// The menu's and Manage's palette never lock: a held colour asks to swap.
+#[test]
+fn the_apply_palette_locks_nothing() {
+    let model = palette(&mock(true), "Flow").unwrap();
+    assert!(!model.choosing);
+    assert!(model.swatches().all(|swatch| !swatch.locked));
+}

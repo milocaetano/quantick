@@ -318,7 +318,7 @@ fn draw_history(ui: &mut egui::Ui, model: &mut ToolbarModel, actions: &mut Vec<T
         .on_hover_text(model.history.status.button_hover(model.history.main))
         .on_disabled_hover_text(history_disabled_hover(model));
     if load.clicked() {
-        actions.push(history_button_action(&model.history));
+        actions.push(model.history.action());
     }
     ui.add_space(HISTORY_SPLIT_GAP_PX);
     let caret = ui.add_enabled_ui(menu, |ui| {
@@ -334,11 +334,6 @@ fn draw_history(ui: &mut egui::Ui, model: &mut ToolbarModel, actions: &mut Vec<T
 /// The button's words: the target it loads, or the run it is making.
 fn history_button_label(button: &HistoryButton) -> String {
     button.label(icons::CLOCK_COUNTER_CLOCKWISE, icons::X)
-}
-
-/// The main click repeats the target; while running it cancels.
-fn history_button_action(button: &HistoryButton) -> ToolbarAction {
-    button.action()
 }
 
 /// The button's refusal, read off the model. One owner, called by the bar's
@@ -573,7 +568,7 @@ fn draw_overflow(
                 .on_hover_text(model.history.status.button_hover(model.history.main))
                 .on_disabled_hover_text(history_disabled_hover(model));
             if load.clicked() {
-                actions.push(history_button_action(&model.history));
+                actions.push(model.history.action());
                 ui.close_menu();
             }
             if history_menu_reachable(model) {

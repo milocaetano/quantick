@@ -137,6 +137,18 @@ pub enum RailControlKind {
     Favorite,
 }
 
+impl RailControlKind {
+    /// The registry's word in a control's identifier.
+    #[must_use]
+    pub const fn registry(self) -> &'static str {
+        match self {
+            Self::Tool => "tool",
+            Self::Family => "family",
+            Self::Favorite => "favorite",
+        }
+    }
+}
+
 /// The slice of the scrolling band one draw put on screen.
 ///
 /// The band's content is the spilled favorites followed by every tool slot;

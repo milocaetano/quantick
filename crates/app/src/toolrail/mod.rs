@@ -12,13 +12,13 @@ use crate::drawings::{DrawingTool, IconDots, IconLetter, IconStrokes};
 use crate::theme;
 use crate::widgets::{IconButton, MarkerEdge, TOOLRAIL_ICON};
 use quantick_chart_interaction::scripted_hand::Area;
+pub(crate) use quantick_chart_interaction::tool_rail::RailControl;
 pub use quantick_chart_interaction::tool_rail::ToolboxDock;
 use quantick_chart_interaction::tool_rail::{
     BAND_ARROW_LENGTH_PX, BandWindow, RailStage, TOOLBOX_GRIP_LENGTH_PX, TOOLBOX_ITEM_GAP_PX,
     TOOLBOX_MARGIN_PX, TOOLBOX_THICKNESS_PX, anchored_favorites, band_max_offset, band_scroll_step,
     band_viewport, band_visible_items, stage_for,
 };
-pub(crate) use quantick_chart_interaction::tool_rail::{RailControl, RailControlKind};
 
 mod band;
 mod flyout;

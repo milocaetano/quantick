@@ -6,7 +6,52 @@ use core::conversion_plan::{
 };
 use quantick_chart_interaction::pane::PaneSide;
 use quantick_chart_interaction::quick_range::{self as core, Command, Event, Phase};
+use quantick_control::annotation as ids;
 use quantick_drawings::{self as drawings, ChartPoint, DrawingBand, DrawingPayload, NewDrawing};
+
+/// The model owns operation identity and its names; the adapter binds each
+/// action to its drawing tool and its registry capability.
+pub trait ActionUi {
+    fn tool_id(self) -> &'static str;
+    fn capability_id(self) -> &'static str;
+    fn capability_version(self) -> u32;
+}
+impl ActionUi for Action {
+    fn tool_id(self) -> &'static str {
+        match self {
+            Self::Profile => drawings::frvp::TOOL_ID,
+            Self::Retracement => "fib-retracement",
+            Self::Projection => "fib-extension",
+            Self::Rectangle => ids::ZONE_TOOL_ID,
+            Self::TrendLine => ids::TREND_LINE_TOOL_ID,
+            Self::Horizontal => ids::HORIZONTAL_LINE_TOOL_ID,
+            Self::Channel => ids::PARALLEL_CHANNEL_TOOL_ID,
+        }
+    }
+
+    fn capability_id(self) -> &'static str {
+        match self {
+            Self::Profile => ids::PROFILE_CAPABILITY_ID,
+            Self::Retracement => ids::FIB_RETRACEMENT_CAPABILITY_ID,
+            Self::Projection => ids::FIB_PROJECTION_CAPABILITY_ID,
+            Self::Rectangle => ids::RECTANGLE_CAPABILITY_ID,
+            Self::TrendLine => ids::TREND_LINE_CAPABILITY_ID,
+            Self::Horizontal => ids::HORIZONTAL_LEVELS_CAPABILITY_ID,
+            Self::Channel => ids::PARALLEL_CHANNEL_CAPABILITY_ID,
+        }
+    }
+
+    fn capability_version(self) -> u32 {
+        match self {
+            Self::Profile => ids::PROFILE_CAPABILITY_VERSION,
+            Self::Retracement | Self::Projection => ids::FIB_CAPABILITY_VERSION,
+            Self::Rectangle => ids::RECTANGLE_CAPABILITY_VERSION,
+            Self::TrendLine => ids::TREND_LINE_CAPABILITY_VERSION,
+            Self::Horizontal => ids::HORIZONTAL_LEVELS_CAPABILITY_VERSION,
+            Self::Channel => ids::PARALLEL_CHANNEL_CAPABILITY_VERSION,
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Owner {

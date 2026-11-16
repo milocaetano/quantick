@@ -26,7 +26,7 @@ use super::paint_ctx::{
 use super::{
     AIM_ECHO_ALPHA, AIM_ECHO_DASH_PX, AIM_ECHO_GAP_PX, AIM_ECHO_WIDTH_PX, CMD_LINE_MAX_DASHES,
     LINE_HOVER_WIDTH_PX, LINE_WIDTH_PX, Leg, ORDER_DASH_PX, ORDER_GAP_PX, POSITION_LINE_WIDTH_PX,
-    PaperTrading, kind_short, kind_word, leg_color, side_word, side_word_upper,
+    PaperTrading, kind_word, leg_color, side_word, side_word_upper,
 };
 use crate::chart::PriceScale;
 use crate::paper_chrome::{fmt_decimal, points_color, position_word};
@@ -127,7 +127,7 @@ impl PaperTrading {
             // side and what kind of order waits there. The price is the
             // chip's job, and the id only matters once you mean to act on
             // it, so both wait for the open form.
-            let name = order_line_name(order);
+            let name = quantick_paper::format::order_line_name(order);
             let mut text = if expanded {
                 format!(
                     "#{} {} {} @ {}",
@@ -629,17 +629,5 @@ fn order_line_color(palette: &crate::theme::Palette, role: OrderRole) -> egui::C
         OrderRole::Entry => palette.accent(),
         OrderRole::StopLoss => palette.sell(),
         OrderRole::TakeProfit => palette.buy(),
-    }
-}
-
-/// What a working order calls itself in its tag. An entry names its side and
-/// kind, because those are what the accent line cannot say; a protective leg
-/// names its job, because "SELL LMT" over a long is a lie about what it is
-/// waiting to do.
-fn order_line_name(order: &quantick_sim::Order) -> String {
-    match order.role {
-        OrderRole::Entry => format!("{} {}", side_word_upper(order.side), kind_short(order.kind)),
-        OrderRole::StopLoss => "SL".to_owned(),
-        OrderRole::TakeProfit => "TP".to_owned(),
     }
 }

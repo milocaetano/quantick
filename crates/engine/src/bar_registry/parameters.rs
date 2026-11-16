@@ -12,6 +12,17 @@ pub enum NumberKind {
     Duration,
 }
 
+impl NumberKind {
+    /// A value no preset names, written the way this kind reads.
+    #[must_use]
+    pub fn words(self, value: Decimal) -> String {
+        match (self, value.to_i64()) {
+            (Self::Duration, Some(ms)) => fmt_time_interval(ms),
+            _ => value.normalize().to_string(),
+        }
+    }
+}
+
 /// A numeric editor's domain and step, in the parameter's own units.
 #[derive(Debug, Clone, Copy)]
 pub struct NumberEditor {

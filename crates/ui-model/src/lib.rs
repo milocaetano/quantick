@@ -3,6 +3,7 @@
 mod catalog;
 pub mod colour_palette;
 pub mod layout_picker;
+pub mod manage_workspaces;
 pub mod paper_report;
 #[cfg(test)]
 mod scratch;
