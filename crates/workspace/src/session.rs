@@ -202,6 +202,10 @@ impl LayoutSession {
             .filter(|id| self.book.get(*id).is_some())
             .unwrap_or(self.book.active_id())
     }
+    #[must_use]
+    pub fn shows(&self, view: &LayoutView, layout: LayoutId) -> bool {
+        view.layout() == Some(layout)
+    }
     /// Whether `view` shows the strip layout `origin`, itself or a copy of it.
     #[must_use]
     pub fn shows_origin(&self, view: &LayoutView, origin: LayoutId) -> bool {
@@ -218,6 +222,13 @@ impl LayoutSession {
         self.book
             .get(shown)
             .map_or(0, |layout| layout.indicators.len())
+    }
+    pub fn matching<'a, T: 'a>(
+        &'a self,
+        layout: LayoutId,
+        order: impl Iterator<Item = (T, &'a LayoutView)> + 'a,
+    ) -> impl Iterator<Item = T> + 'a {
+        order.filter_map(move |(target, view)| self.shows(view, layout).then_some(target))
     }
     /// Document payload access never exposes membership, names or identities.
     pub fn indicators_mut(
