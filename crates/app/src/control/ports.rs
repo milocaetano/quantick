@@ -277,6 +277,9 @@ impl JournalAccess for ControlAccess {
     ) -> quantick_control::wire::WireU64 {
         self.append_event(event)
     }
+    fn now_unix_ms(&self) -> i64 {
+        crate::metrics::wall_clock_ms()
+    }
 }
 
 impl OrderflowEngine for OrderflowView {

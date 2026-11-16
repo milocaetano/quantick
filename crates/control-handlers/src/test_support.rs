@@ -420,6 +420,9 @@ fn entry<'a>(tab: &'a FakeTab, slot: usize, read: &'a FakePaneRead<'a>) -> Chart
     }
 }
 
+/// The fixed time a fake access tells a handler it runs at.
+pub(crate) const FAKE_NOW_UNIX_MS: i64 = 100;
+
 /// A fake access: a fixed number of notifications it allows, then the wait
 /// it reports, and every event it journaled.
 pub(crate) struct FakeAccess {
@@ -442,6 +445,9 @@ impl JournalAccess for FakeAccess {
     fn record_event(&mut self, event: NewEvent) -> WireU64 {
         self.events.push(event);
         WireU64::new(self.events.len() as u64)
+    }
+    fn now_unix_ms(&self) -> i64 {
+        FAKE_NOW_UNIX_MS
     }
 }
 

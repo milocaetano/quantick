@@ -8,7 +8,7 @@ use std::process::Command;
 
 use quantick_guards::{
     GUARDS, app_lines, extension_boundary as boundary, impl_spread, single_consumer, struct_width,
-    ui_free,
+    ui_free, window_reach,
 };
 use scratch_dir::ScratchDir;
 
@@ -42,6 +42,21 @@ ChartState\tpub|struct |bars : usize
 IndicatorRegistry\tpub|struct |kinds : Vec < Kind >|operators : Set < Target >|files : Vec < File >|hidden : Vec < Target >|styles : Vec < Style >
 IndicatorHost\tpub|trait |fn add ( & mut self , source : IndicatorSource ) -> SlotId ;|fn remove ( & mut self , slot : SlotId ) ;
 ";
+
+/// The window-reach ratchet runs beside this one in the CLI with no slack, so
+/// each specimen is signed at its own reach just before the CLI reads it. A
+/// tree the specimen made unreadable is left unsigned: that is its finding.
+/// These specimens therefore never test window-reach; its own tests do.
+fn sign_window_reach(root: &std::path::Path) {
+    let Ok(reach) = window_reach::measured(root) else {
+        return;
+    };
+    fs::write(
+        root.join(window_reach::BASELINE_FILE),
+        format!("!budget {reach}\nwindow-reach {reach}\n"),
+    )
+    .unwrap();
+}
 
 fn fixture() -> ScratchDir {
     let root = ScratchDir::new("extension-boundary");
@@ -144,6 +159,7 @@ fn assert_rejected(source: &str, evidence: &str) {
 }
 
 fn assert_cli_rejected(root: &std::path::Path, relative: &str, evidence: &str) {
+    sign_window_reach(root);
     let output = Command::new(env!("CARGO_BIN_EXE_quantick-guards"))
         .env("QUANTICK_GUARDS_ROOT", root)
         .args(["--file", relative])
@@ -244,6 +260,7 @@ fn const_expression_blocks_cannot_hide_root_deposits() {
     )
     .unwrap();
     assert!(findings(&root).is_empty());
+    sign_window_reach(root.path());
     let output = Command::new(env!("CARGO_BIN_EXE_quantick-guards"))
         .env("QUANTICK_GUARDS_ROOT", root.path())
         .args(["--file", "crates/app/src/app.rs"])
@@ -321,6 +338,7 @@ fn realistic_native_owner_grows_in_same_or_new_file_but_root_deposit_fails() {
             fs::write(root.join("crates/app/src/native_owner.rs"), OWNED_NATIVE).unwrap();
         }
         assert!(findings(&root).is_empty());
+        sign_window_reach(root.path());
         let output = Command::new(env!("CARGO_BIN_EXE_quantick-guards"))
             .env("QUANTICK_GUARDS_ROOT", root.path())
             .args([
@@ -369,6 +387,7 @@ fn skipped_directory_modules_require_test_classification_or_scanned_inline_bodie
         )
         .unwrap();
         assert!(findings(&root).is_empty());
+        sign_window_reach(root.path());
         let output = Command::new(env!("CARGO_BIN_EXE_quantick-guards"))
             .env("QUANTICK_GUARDS_ROOT", root.path())
             .args(["--file", "crates/app/src/app.rs"])
@@ -508,6 +527,7 @@ fn a_failed_scan_is_not_measured_as_zero() {
         failure.missed[0].starts_with("  crates/app/src/app.rs: unreadable source"),
         "{failure}"
     );
+    sign_window_reach(root.path());
     let output = Command::new(env!("CARGO_BIN_EXE_quantick-guards"))
         .env("QUANTICK_GUARDS_ROOT", root.path())
         .arg("--report")
