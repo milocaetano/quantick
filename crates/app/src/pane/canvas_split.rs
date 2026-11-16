@@ -7,7 +7,9 @@
 //! tab and the layout code do.
 
 use eframe::egui;
-use quantick_chart::flow_band::{FlowRect, flow_pane_layout_scaled};
+use quantick_chart::flow_band::flow_pane_layout_scaled;
+
+use crate::orderflow_render::EguiRect;
 
 pub use quantick_chart_interaction::pane::PaneSide;
 pub use quantick_workspace::canvas_layout::{DEFAULT_PANE_FRACTION, clamp_pane_fraction};
@@ -36,14 +38,11 @@ pub struct FlowPaneAreas {
 pub fn split_flow_pane(area: egui::Rect, scale: f32) -> FlowPaneAreas {
     let layout =
         flow_pane_layout_scaled(area.left(), area.top(), area.right(), area.bottom(), scale);
-    let rect = |r: FlowRect| {
-        egui::Rect::from_min_max(egui::pos2(r.left, r.top), egui::pos2(r.right, r.bottom))
-    };
     FlowPaneAreas {
-        band: rect(layout.band),
-        side_row: rect(layout.side_row),
+        band: layout.band.egui(),
+        side_row: layout.side_row.egui(),
         header: area.with_max_y(layout.side_row.bottom),
-        chart: rect(layout.chart),
+        chart: layout.chart.egui(),
     }
 }
 

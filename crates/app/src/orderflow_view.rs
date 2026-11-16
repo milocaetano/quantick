@@ -24,7 +24,7 @@ use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive as _;
 
 use crate::bubble_presets;
-use crate::orderflow_render::{OrderflowRenderStyle, RenderContext};
+use crate::orderflow_render::{EguiRect, OrderflowRenderStyle, RenderContext};
 use crate::orderflow_worker::{BookCommand, BookWorker};
 use crate::viewport::Viewport;
 
@@ -321,11 +321,13 @@ impl OrderflowView {
                 ),
             ) && layout
                 .current_book_preview_rect(cell.y0, cell.y1)
+                .egui()
                 .contains(position)
         };
         let cell = projection.cells.iter().rev().find(|cell| {
             layout
                 .heat_cell_rect(cell, style.min_cell_height, frame.current_book_live)
+                .egui()
                 .contains(position)
                 || preview(cell)
         })?;

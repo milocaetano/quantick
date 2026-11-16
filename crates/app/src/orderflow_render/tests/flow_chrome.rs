@@ -10,7 +10,7 @@ fn tick_chrome_keeps_live_l2_wrapping_and_header_stacks_at_the_preferred_top() {
         ] {
             let area = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(width, 400.0));
             let viewport = Viewport::new();
-            let layout = ProjectedLayout::new(area, &viewport, 2, 0, 2, 0.0);
+            let layout = ProjectedLayout::new(flow_rect(area), &viewport, 2, 0, 2, 0.0);
             let projection = HeatmapProjection::empty(
                 true,
                 quantick_orderflow::EffectiveGrouping::resolve(
@@ -64,7 +64,7 @@ fn tick_chrome_keeps_live_l2_wrapping_and_header_stacks_at_the_preferred_top() {
 fn tick_chrome_omits_a_blocked_l2_key() {
     let area = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(240.0, 80.0));
     let viewport = Viewport::new();
-    let layout = ProjectedLayout::new(area, &viewport, 2, 0, 2, 0.0);
+    let layout = ProjectedLayout::new(flow_rect(area), &viewport, 2, 0, 2, 0.0);
     let projection = HeatmapProjection::empty(
         true,
         quantick_orderflow::EffectiveGrouping::resolve(

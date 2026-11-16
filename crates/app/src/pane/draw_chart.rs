@@ -511,8 +511,9 @@ impl ChartPane {
             let lane = &view.cached_config().live_lane;
             lane.candles_clear_px(chart_rect.width())
         });
-        self.frame.lane_divider_x = crate::orderflow_render::lane_divider_x(chart_rect, lane_px);
-        self.frame.candles_right = crate::orderflow_render::lane_divider_x(chart_rect, clear_px);
+        let flow_chart = crate::orderflow_render::flow_rect(chart_rect);
+        self.frame.lane_divider_x = crate::orderflow_render::lane_divider_x(flow_chart, lane_px);
+        self.frame.candles_right = crate::orderflow_render::lane_divider_x(flow_chart, clear_px);
         self.frame.chart_rect = Some(chart_rect);
         let rungs = lane_rungs(lane_px);
         if self.lane.set_rungs(rungs) {

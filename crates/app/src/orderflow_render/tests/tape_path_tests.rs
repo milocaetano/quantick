@@ -23,7 +23,7 @@ fn the_tape_price_path_is_behind_the_dots_and_opt_in() {
     config.volume_dots.enabled = true;
     config.live_lane.tape_only = true;
     let style = super::tape_only_tests::style_for(&config);
-    let layout = ProjectedLayout::new(rect, &viewport, 3, 0, 4, rect.width());
+    let layout = ProjectedLayout::new(flow_rect(rect), &viewport, 3, 0, 4, rect.width());
     let shown = painted(|painter| {
         draw_aggression_bubbles(painter, &RenderContext::new(&projection, layout, &style));
     });
@@ -85,8 +85,9 @@ fn a_tape_path_clips_an_offscreen_excursion_without_reconnecting_visible_dots() 
                 config.volume_dots.enabled = true;
                 config.live_lane.tape_only = true;
                 let style = super::tape_only_tests::style_for(&config);
-                let layout = ProjectedLayout::new(rect, &viewport, 0, 0, 1, rect.width())
-                    .with_inverted(inverted);
+                let layout =
+                    ProjectedLayout::new(flow_rect(rect), &viewport, 0, 0, 1, rect.width())
+                        .with_inverted(inverted);
                 let memory = RefCell::new(TapeDotMemory::default());
                 let context = RenderContext::new(&projection, layout, &style)
                     .with_tape_price_range((100.0, 120.0))

@@ -93,7 +93,7 @@ fn dots_frame(marks: Vec<AggressionPrimitive>) -> HeatmapProjection {
 fn the_biggest_dot_of_each_pane_is_clearly_the_biggest() {
     let viewport = Viewport::new();
     let rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1000.0, 400.0));
-    let layout = ProjectedLayout::new(rect, &viewport, 3, 0, 4, 300.0);
+    let layout = ProjectedLayout::new(flow_rect(rect), &viewport, 3, 0, 4, 300.0);
     let style = dots_style(DotSizing {
         native_tape: false,
         tape_column_px: 100.0,
@@ -152,7 +152,7 @@ fn native_painted_radii(style: &OrderflowRenderStyle) -> (Vec<f32>, Vec<f32>) {
 
     let viewport = Viewport::new();
     let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 400.0));
-    let layout = ProjectedLayout::new(rect, &viewport, 3, 0, 4, 300.0);
+    let layout = ProjectedLayout::new(flow_rect(rect), &viewport, 3, 0, 4, 300.0);
     let mut marks = Vec::new();
     for (index, quantity) in [1, 4, 8].into_iter().enumerate() {
         let y = 0.2 + index as f64 * 0.3;

@@ -620,7 +620,7 @@ fn hollow_small_buys_opens_the_dot_and_leaves_dressed_bubbles_alone() {
 fn an_inverted_layout_mirrors_normalized_y() {
     let viewport = Viewport::new();
     let rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(800.0, 400.0));
-    let layout = ProjectedLayout::new(rect, &viewport, 2, 0, 2, 0.0);
+    let layout = ProjectedLayout::new(flow_rect(rect), &viewport, 2, 0, 2, 0.0);
     let flipped = layout.with_inverted(true);
     assert_eq!(layout.y(0.25), 100.0);
     assert_eq!(flipped.y(0.25), 300.0);
@@ -634,7 +634,7 @@ fn an_inverted_layout_mirrors_normalized_y() {
 fn the_legend_starts_below_the_corner_it_was_told_about() {
     let viewport = Viewport::new();
     let rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(800.0, 400.0));
-    let layout = ProjectedLayout::new(rect, &viewport, 2, 0, 2, 0.0);
+    let layout = ProjectedLayout::new(flow_rect(rect), &viewport, 2, 0, 2, 0.0);
     let projection = HeatmapProjection::empty(
         true,
         quantick_orderflow::EffectiveGrouping::resolve(
@@ -816,7 +816,7 @@ fn a_pie_needs_the_readability_floor_on_the_shipped_presets() {
 fn the_lane_scale_reaches_the_bubbles_and_stops_at_the_boundary() {
     let viewport = Viewport::new();
     let rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1000.0, 400.0));
-    let layout = ProjectedLayout::new(rect, &viewport, 4, 0, 4, 5.0);
+    let layout = ProjectedLayout::new(flow_rect(rect), &viewport, 4, 0, 4, 5.0);
     let style = OrderflowRenderStyle {
         bubbles: BubbleStyle {
             min_radius: 2.0,
@@ -895,7 +895,7 @@ fn a_bubble_beside_the_divider_is_clipped_to_its_own_pane() {
     let viewport = Viewport::new();
     let rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1000.0, 400.0));
     // Three bar slots plus a 300 px lane: the divider lands on x = 700.
-    let layout = ProjectedLayout::new(rect, &viewport, 3, 0, 4, 300.0);
+    let layout = ProjectedLayout::new(flow_rect(rect), &viewport, 3, 0, 4, 300.0);
     let divider = layout.lane_left_x().expect("a lane has a boundary");
     let style = OrderflowRenderStyle {
         bubbles: BubbleStyle {
@@ -968,8 +968,8 @@ fn a_bubble_beside_the_divider_is_clipped_to_its_own_pane() {
         lane.contains(&format!("{:?}", layout.lane_rect())),
         "a tape print must carry the tape's clip: {lane}"
     );
-    assert!(layout.history_rect().right() <= divider);
-    assert!(layout.lane_rect().left() >= divider);
+    assert!(layout.history_rect().right <= divider);
+    assert!(layout.lane_rect().left >= divider);
 }
 
 /// The bubble pass paints what each pane's switch lets through
@@ -980,7 +980,7 @@ fn the_bubble_pass_paints_what_each_panes_switch_lets_through() {
     let viewport = Viewport::new();
     let rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1000.0, 400.0));
     // Three bar slots plus a 300 px lane: the divider lands on x = 700.
-    let layout = ProjectedLayout::new(rect, &viewport, 3, 0, 4, 300.0);
+    let layout = ProjectedLayout::new(flow_rect(rect), &viewport, 3, 0, 4, 300.0);
 
     // One print on each pane, from the same projection, so the only thing
     // that can separate them is the switch under test.
@@ -1063,123 +1063,6 @@ fn the_bubble_pass_paints_what_each_panes_switch_lets_through() {
     );
 }
 
-/// The depth map is switched per pane by the region it may paint, not by
-/// dropping cells: a resting level that has been there since before the
-/// tape's window opened is one continuous band across the divider, and
-/// hiding the map over the candles has to cut it there rather than lose it.
-#[test]
-fn the_depth_map_is_cut_at_the_divider_rather_than_dropped() {
-    let viewport = Viewport::new();
-    let rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1000.0, 400.0));
-    let layout = ProjectedLayout::new(rect, &viewport, 3, 0, 4, 300.0);
-    let divider = layout.lane_left_x().expect("a lane has a boundary");
-
-    assert_eq!(layout.layer_clip(true, true), Some(layout.chart_rect));
-    assert_eq!(layout.layer_clip(true, false), Some(layout.history_rect()));
-    assert_eq!(layout.layer_clip(false, true), Some(layout.lane_rect()));
-    assert_eq!(layout.layer_clip(false, false), None);
-    // The two regions meet at the divider and neither reaches past it, so
-    // a band crossing it is cut, never doubled or dropped.
-    assert!(layout.layer_clip(true, false).unwrap().right() <= divider);
-    assert!(layout.layer_clip(false, true).unwrap().left() >= divider);
-
-    // A canvas with no tape has one pane, and it is the candles'. The
-    // lane's switch cannot blank a chart that has no lane.
-    let laneless = ProjectedLayout::new(rect, &viewport, 3, 0, 4, 0.0);
-    assert!(laneless.lane_left_x().is_none());
-    assert_eq!(laneless.layer_clip(true, false), Some(laneless.chart_rect));
-    assert_eq!(laneless.layer_clip(true, true), Some(laneless.chart_rect));
-    assert_eq!(laneless.layer_clip(false, true), None);
-}
-
-/// The lane is a pane of its own: a fixed band on the right edge of the
-/// chart, with the candles' pane ending exactly where it opens.
-#[test]
-fn the_lane_is_a_fixed_band_on_the_right_edge() {
-    let viewport = Viewport::new(); // candle_width 8, following
-    let rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1000.0, 100.0));
-    // Four regions: three bar slots and the lane, 300 px wide.
-    let layout = ProjectedLayout::new(rect, &viewport, 3, 0, 4, 300.0);
-    let boundary = layout.lane_left_x().expect("a lane has a boundary");
-    assert!(
-        (boundary - 700.0).abs() < 0.01,
-        "the band is the last 300 px"
-    );
-
-    // Bars keep their candle width, and the last one ends at the divider.
-    let bar_width = (layout.x(1.0 / 4.0) - layout.x(0.0)).abs();
-    assert!((bar_width - viewport.candle_width()).abs() < 0.01);
-    assert!(
-        (layout.x(3.0 / 4.0) - boundary).abs() < 0.01,
-        "the candles' pane ends exactly where the lane opens"
-    );
-    // ...and the lane spans the band, whatever the candles are worth.
-    assert!((layout.x(1.0) - rect.right()).abs() < 0.01);
-
-    let no_lane = ProjectedLayout::new(rect, &viewport, 4, 0, 4, 0.0);
-    assert_eq!(no_lane.lane_left_x(), None);
-    let flat_width = (no_lane.x(1.0) - no_lane.x(3.0 / 4.0)).abs();
-    assert!((flat_width - viewport.candle_width()).abs() < 0.01);
-    assert!((no_lane.x(1.0) - rect.right()).abs() < 0.01);
-}
-
-/// The point of the pane: every chart movement leaves the tape alone.
-#[test]
-fn panning_and_zooming_the_candles_never_move_the_lane() {
-    let rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1000.0, 100.0));
-    let mut panned = Viewport::new();
-    panned.pan_pixels(240.0, 60); // 30 candles into history
-    let mut zoomed = Viewport::new();
-    zoomed.zoom(4.0);
-
-    let still = Viewport::new();
-    let reference = ProjectedLayout::new(rect, &still, 60, 0, 5, 300.0);
-    for viewport in [&panned, &zoomed] {
-        let moved = ProjectedLayout::new(rect, viewport, 60, 0, 5, 300.0);
-        assert_eq!(moved.lane_left_x(), reference.lane_left_x());
-        // Same instant on the tape, same pixel — however the candles moved.
-        for position in [0.85_f64, 0.9, 1.0] {
-            assert!(
-                (moved.x(position) - reference.x(position)).abs() < 0.01,
-                "the tape moved with the candles at {position}"
-            );
-        }
-    }
-}
-
-#[test]
-fn ordinary_lane_opening_never_stretches_old_depth_across_forward_space() {
-    let rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1000.0, 100.0));
-    let mut viewport = Viewport::new();
-    viewport.pan_pixels(-160.0, 60);
-    for native in [false, true] {
-        for inverted in [false, true] {
-            let mut layout =
-                ProjectedLayout::new(rect, &viewport, 60, 56, 5, 300.0).with_inverted(inverted);
-            if native {
-                layout.tape_geometry = Some(
-                    quantick_orderflow::projection::TapeHorizontalGeometry::resolve(
-                        300.0,
-                        100.0,
-                        &quantick_orderflow::BubbleStyle::default(),
-                    ),
-                );
-            }
-            let divider = layout.lane_left_x().unwrap();
-            let band = layout.band(0.8, 0.9, 0.2, 0.3, 1.0);
-            let opening = layout.with_lane_only().x(0.8);
-            assert!((band.left() - opening).abs() < 0.01);
-            assert!(band.left() >= divider);
-            let preview = layout.current_book_preview_rect(0.2, 0.3);
-            assert!(preview.is_positive());
-            assert!((preview.right() - divider).abs() < 0.01);
-            assert!(preview.left() < divider);
-            assert!(preview.intersect(band).width() <= 0.01);
-            assert_eq!(preview.top(), layout.y(0.2).min(layout.y(0.3)));
-        }
-    }
-}
-
 /// The strip between the last candle and the tape previews the current
 /// book while the frame holds it current, on a lane that asks for it, with
 /// depth averaging on or off. A row standing at the live edge (averaging off)
@@ -1219,8 +1102,8 @@ fn paint_one_current_row(style: &OrderflowRenderStyle, live: bool) -> (bool, boo
     let rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1000.0, 100.0));
     let mut viewport = Viewport::new();
     viewport.pan_pixels(-160.0, 60);
-    let layout = ProjectedLayout::new(rect, &viewport, 60, 56, 5, 300.0);
-    let strip = layout.current_book_preview_rect(0.2, 0.3);
+    let layout = ProjectedLayout::new(flow_rect(rect), &viewport, 60, 56, 5, 300.0);
+    let strip = layout.current_book_preview_rect(0.2, 0.3).egui();
     assert!(strip.is_positive());
     let mut projection = HeatmapProjection::empty(
         true,
@@ -1296,43 +1179,6 @@ fn a_lane_without_the_forward_preview_keeps_the_strip_empty() {
         );
     }
 }
-
-#[test]
-fn the_lane_is_the_only_region_wider_than_a_candle() {
-    let viewport = Viewport::new(); // candle_width 8, following
-    let rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1000.0, 100.0));
-    // 3 regions: 2 bar slots and the lane, 32 px wide — four candles' worth
-    // at this zoom, and still 32 px at any other.
-    let layout = ProjectedLayout::new(rect, &viewport, 2, 0, 3, 32.0);
-    let closed_w = (layout.x(1.0 / 3.0) - layout.x(0.0)).abs();
-    let live_w = (layout.x(1.0) - layout.x(2.0 / 3.0)).abs();
-    assert!(closed_w > 0.0);
-    assert!(
-        (live_w - closed_w * 4.0).abs() < 0.01,
-        "the lane should be 4x a bar slot: bar={closed_w} lane={live_w}"
-    );
-}
-
-/// A bar panned off the right of its own pane scrolls out of sight instead
-/// of being drawn over the tape.
-#[test]
-fn a_candle_panned_behind_the_tape_is_clipped_to_its_own_pane() {
-    let mut viewport = Viewport::new();
-    viewport.pan_pixels(80.0, 20); // 10 candles into history
-    let rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1000.0, 100.0));
-    let layout = ProjectedLayout::new(rect, &viewport, 20, 0, 21, 300.0);
-    let divider = layout.lane_left_x().expect("a lane has a boundary");
-
-    // The newest bar is now right of the divider, and its pane stops there.
-    let newest = 19.5 / 21.0;
-    assert!(layout.x(newest) > divider);
-    assert!(layout.pane(newest).right() <= divider + 0.01);
-    // A band entirely past the divider is clipped away to nothing...
-    assert!(!layout.band(newest, newest, 0.1, 0.2, 1.0).is_positive());
-    // ...while the tape's own pane starts there and reaches the edge.
-    assert!((layout.pane(1.0).left() - divider).abs() < 0.01);
-    assert!((layout.pane(1.0).right() - rect.right()).abs() < 0.01);
-}
 /// A folded bubble does not look like a print.
 ///
 /// The budget merges marks instead of discarding them, so nothing a trader
@@ -1402,7 +1248,7 @@ fn a_reduction_leaves_the_canvas_with_the_book_that_explains_it() {
     let viewport = Viewport::new();
     let rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(800.0, 400.0));
     // A lane 200 px wide: everything past x = 600 belongs to the tape.
-    let layout = ProjectedLayout::new(rect, &viewport, 2, 0, 2, 200.0);
+    let layout = ProjectedLayout::new(flow_rect(rect), &viewport, 2, 0, 2, 200.0);
     let mut projection = HeatmapProjection::empty(
         true,
         quantick_orderflow::EffectiveGrouping::resolve(
@@ -1566,12 +1412,13 @@ fn a_held_book_clamped_to_the_lane_opening_is_drawn_from_the_divider() {
         })
     };
     for viewport in [&Viewport::new(), &panned] {
-        let layout = ProjectedLayout::new(rect, viewport, 60, 0, 5, 300.0).with_lane_only();
+        let layout =
+            ProjectedLayout::new(flow_rect(rect), viewport, 60, 0, 5, 300.0).with_lane_only();
         let divider = layout.lane_left_x().expect("a lane");
         assert!((layout.x(opening) - divider).abs() < 0.01);
         let band = layout.band(opening, 0.9, 0.4, 0.6, 1.0);
         assert!(
-            (band.left() - divider).abs() < 0.01 && band.right() > band.left(),
+            (band.left - divider).abs() < 0.01 && band.right > band.left,
             "the band starts at the divider: {band:?}"
         );
         let output = draw(layout);
@@ -1602,27 +1449,9 @@ fn a_held_book_clamped_to_the_lane_opening_is_drawn_from_the_divider() {
         assert!(count > 0 && count <= 7, "{count} px bring out the reason");
         assert_eq!(gap_rects(&output), 1, "the pending stretch is filled");
     }
-    let live = ProjectedLayout::new(rect, &panned, 60, 0, 5, 300.0);
+    let live = ProjectedLayout::new(flow_rect(rect), &panned, 60, 0, 5, 300.0);
     assert!(
         !live.in_lane(opening),
         "the live frame's own mapping is unchanged"
     );
-}
-
-/// A live strip on the candles' side of the divider: the candles' pane, and every
-/// bar mapped into it, ends where the strip starts; the tape still opens on the
-/// divider, as wide as it was.
-#[test]
-fn a_trail_strip_ends_the_candles_short_of_the_divider() {
-    let chart = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1_000.0, 600.0));
-    let viewport = Viewport::new();
-    let plain = ProjectedLayout::new(chart, &viewport, 10, 0, 11, 300.0);
-    let mut layout = plain;
-    layout.trail_strip_px = 84.0;
-    assert_eq!(plain.history_rect().right(), 700.0);
-    assert_eq!(layout.history_rect().right(), 616.0);
-    assert_eq!(layout.lane_rect(), plain.lane_rect());
-    assert_eq!(layout.lane_left_x(), Some(700.0));
-    let newest = |layout: ProjectedLayout<'_>| layout.x(9.5 / 11.0);
-    assert!((newest(plain) - newest(layout) - 84.0).abs() < 1e-3);
 }

@@ -1,7 +1,7 @@
 //! The tape's best bid and best ask: bold stepped lines over its book.
 
 use super::bubbles::bubble_colors;
-use super::{RenderContext, premultiplied};
+use super::{EguiRect, RenderContext, premultiplied};
 use eframe::egui;
 use quantick_orderflow::projection::bbo_strokes;
 
@@ -13,7 +13,7 @@ pub(crate) fn draw_bbo_lines(painter: &egui::Painter, context: &RenderContext<'_
     if !shown {
         return;
     }
-    let clip = painter.with_clip_rect(layout.lane_rect());
+    let clip = painter.with_clip_rect(layout.lane_rect().egui());
     let tape = layout.with_lane_only();
     let colors = bubble_colors(&style.colors(premultiplied), &style.bubbles);
     let halo = crate::theme::get(painter.ctx()).quantity_shadow();

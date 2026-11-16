@@ -26,7 +26,7 @@ use crate::live_strip;
 use crate::orderflow_render::{
     OrderflowRenderStyle, ProjectedLayout, RenderContext, draw_aggression_bubbles, draw_bbo_lines,
     draw_compact_legend_avoiding, draw_heatmap_background, draw_liquidity_events,
-    draw_live_lane_marks,
+    draw_live_lane_marks, flow_rect,
 };
 use crate::orderflow_worker::BookCommand;
 use crate::viewport::Viewport;
@@ -43,8 +43,14 @@ impl OrderflowView {
         lane_px: f32,
     ) -> ProjectedLayout<'a> {
         let (first, slots) = (frame.first_bar_index, frame.slot_count);
-        let mut layout =
-            ProjectedLayout::new(chart_rect, viewport, total_bars, first, slots, lane_px);
+        let mut layout = ProjectedLayout::new(
+            flow_rect(chart_rect),
+            viewport,
+            total_bars,
+            first,
+            slots,
+            lane_px,
+        );
         layout.trail_strip_px = self.trail_strip_px;
         layout
     }
@@ -346,7 +352,8 @@ impl OrderflowView {
             style.lane_aggression_layer = false;
         }
         if tick_regions.is_some() && !style.live_lane.tape_only {
-            layout.chart_rect = chart_rect.with_max_x(chart_rect.right() - lane_width_px);
+            layout.chart_rect =
+                flow_rect(chart_rect.with_max_x(chart_rect.right() - lane_width_px));
         }
         let context = RenderContext::new(&frame.projection, layout, &style);
         draw_compact_legend_avoiding(painter, &context, tick_regions)

@@ -33,7 +33,7 @@ fn frame() -> HeatmapProjection {
 fn the_tape_draws_bold_bbo_lines_only_while_their_switch_is_on() {
     let viewport = Viewport::new();
     let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(600.0, 400.0));
-    let layout = ProjectedLayout::new(rect, &viewport, 3, 0, 4, rect.width());
+    let layout = ProjectedLayout::new(flow_rect(rect), &viewport, 3, 0, 4, rect.width());
     let projection = frame();
     let mut config = quantick_orderflow::HeatmapConfig::default();
     config.live_lane.tape_only = true;
@@ -98,7 +98,7 @@ fn a_line_from_the_tape_opening_stays_on_the_tape_with_the_candles_panned() {
     let mut viewport = Viewport::new();
     viewport.pan_pixels(400.0, 100);
     let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(600.0, 400.0));
-    let layout = ProjectedLayout::new(rect, &viewport, 100, 96, 4, 200.0);
+    let layout = ProjectedLayout::new(flow_rect(rect), &viewport, 100, 96, 4, 200.0);
     let lane = layout.lane_left_x().expect("a tape beside the candles");
     let mut projection = frame();
     let opening = 3.0 / 4.0;

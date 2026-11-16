@@ -575,7 +575,7 @@ fn semantic_pointer_resolves_the_same_heat_cell_the_renderer_projects() {
     let chart = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1_000.0, 600.0));
     let viewport = Viewport::new();
     let layout = ProjectedLayout::new(
-        chart,
+        crate::orderflow_render::flow_rect(chart),
         &viewport,
         1,
         frame.first_bar_index,
@@ -586,6 +586,7 @@ fn semantic_pointer_resolves_the_same_heat_cell_the_renderer_projects() {
         OrderflowRenderStyle::from_config(&view.config, egui::Color32::TRANSPARENT.to_array());
     let position = layout
         .heat_cell_rect(cell, style.min_cell_height, true)
+        .egui()
         .center();
 
     let hit = view
@@ -645,7 +646,7 @@ fn forward_current_book_preview_pointer_keeps_exact_quantity_and_orientation() {
         viewport.pan_pixels(-160.0, 1);
         for inverted in [false, true] {
             let layout = ProjectedLayout::new(
-                chart,
+                crate::orderflow_render::flow_rect(chart),
                 &viewport,
                 1,
                 frame.first_bar_index,
@@ -653,7 +654,10 @@ fn forward_current_book_preview_pointer_keeps_exact_quantity_and_orientation() {
                 300.0,
             )
             .with_inverted(inverted);
-            let position = layout.current_book_preview_rect(cell.y0, cell.y1).center();
+            let position = layout
+                .current_book_preview_rect(cell.y0, cell.y1)
+                .egui()
+                .center();
             let hit = view
                 .control_flow_cell_at(chart, &viewport, 1, 700.0, inverted, position)
                 .unwrap();
@@ -704,14 +708,14 @@ fn the_pointer_and_the_paint_agree_on_a_current_book_gone_stale() {
                 .find(|cell| cell.current_book)
                 .expect("a current row");
             let layout = ProjectedLayout::new(
-                chart,
+                crate::orderflow_render::flow_rect(chart),
                 &viewport,
                 1,
                 frame.first_bar_index,
                 frame.slot_count,
                 300.0,
             );
-            let preview = layout.current_book_preview_rect(cell.y0, cell.y1);
+            let preview = layout.current_book_preview_rect(cell.y0, cell.y1).egui();
             assert!(preview.is_positive());
             let output = egui::Context::default().run(egui::RawInput::default(), |ctx| {
                 let painter = ctx.layer_painter(egui::LayerId::background());

@@ -31,7 +31,7 @@ use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive as _;
 
 use super::OrderflowRenderStyle;
-use super::layout::RenderContext;
+use super::layout::{EguiRect, RenderContext};
 use super::{Palette, add_gradient_rect, finite_unit, mix_rgb};
 
 /// The bubble colours ([`quantick_orderflow::config::BubbleColors`]) in egui's.
@@ -513,7 +513,7 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
     let appearance = crate::theme::get(painter.ctx());
     let palette = style.colors(super::premultiplied);
     let colors = bubble_colors(&palette, bubbles);
-    let clip = painter.with_clip_rect(context.layout.chart_rect);
+    let clip = painter.with_clip_rect(context.layout.chart_rect.egui());
 
     // The side nudge generalizes to a bubble carrying both sides: it slides
     // continuously with the buy share, so an even split sits on the exact
@@ -546,9 +546,9 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
     };
     let pane_at = |trade: &AggressionPrimitive| {
         if factual_tape && trade.live {
-            context.layout.lane_rect()
+            context.layout.lane_rect().egui()
         } else {
-            context.layout.pane(trade.x)
+            context.layout.pane(trade.x).egui()
         }
     };
     let on_screen = |trade: &&AggressionPrimitive| pane_at(trade).contains(center_at(trade));
@@ -626,9 +626,9 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
     // the *centre* inside the pane still lets a fat radius (and its label)
     // spill across the divider, which is exactly the two charts drawing into
     // each other. One painter per pane, picked per print.
-    let history_clip = painter.with_clip_rect(context.layout.history_rect());
+    let history_clip = painter.with_clip_rect(context.layout.history_rect().egui());
     let lane_clip = if context.layout.lane_left_x().is_some() {
-        painter.with_clip_rect(context.layout.lane_rect())
+        painter.with_clip_rect(context.layout.lane_rect().egui())
     } else {
         history_clip.clone()
     };
@@ -701,7 +701,7 @@ fn resolve_pass(
     let dots = context.projection.volume_dots;
     // The frame's own tape, never the switch: tape off keeps the tick chart.
     let factual_tape = dots && style.dot_sizing.is_some_and(|sizing| sizing.native_tape);
-    let tape_rect = context.layout.lane_rect();
+    let tape_rect = context.layout.lane_rect().egui();
     let tape_geometry =
         TapeHorizontalGeometry::resolve(tape_rect.width(), tape_rect.height(), &style.bubbles);
     let fixed_tape_size = style.dot_sizing.is_some_and(|sizing| {

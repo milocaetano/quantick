@@ -106,11 +106,10 @@ fn a_tape_only_pane_draws_the_tape_and_no_candle_marks() {
     assert!(!tape_only.depth_layer, "and no depth behind candles");
     assert!(tape_only.lane_aggression_layer, "the tape still draws");
 
-    let normal_layout = ProjectedLayout::new(rect, &viewport, 3, 0, 4, 300.0);
+    let normal_layout = ProjectedLayout::new(flow_rect(rect), &viewport, 3, 0, 4, 300.0);
     // Tape only: the lane is the whole chart.
-    let tape_layout = ProjectedLayout::new(rect, &viewport, 3, 0, 4, rect.width());
+    let tape_layout = ProjectedLayout::new(flow_rect(rect), &viewport, 3, 0, 4, rect.width());
     assert_eq!(tape_layout.lane_left_x(), Some(rect.left()));
-    assert_eq!(tape_layout.lane_rect(), rect, "the tape fills the canvas");
 
     let listed = |style: &OrderflowRenderStyle, layout| {
         RenderContext::new(&projection, layout, style)
@@ -140,21 +139,11 @@ fn a_tape_only_pane_draws_the_tape_and_no_candle_marks() {
     );
 }
 
-/// The divider sits on the chart's left edge when the tape takes the whole
-/// width, and a lane wider than the chart is still no lane.
-#[test]
-fn a_whole_width_lane_puts_the_divider_on_the_left_edge() {
-    let rect = egui::Rect::from_min_max(egui::pos2(60.0, 0.0), egui::pos2(1060.0, 400.0));
-    assert_eq!(lane_divider_x(rect, 1_000.0), Some(60.0));
-    assert_eq!(lane_divider_x(rect, 1_000.5), None);
-    assert_eq!(lane_divider_x(rect, 350.0), Some(710.0));
-}
-
 #[test]
 fn borrowing_all_visible_marks_and_copying_filtered_marks_obey_the_same_visibility_policy() {
     let viewport = Viewport::new();
     let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1_000.0, 400.0));
-    let layout = ProjectedLayout::new(rect, &viewport, 3, 0, 4, rect.width());
+    let layout = ProjectedLayout::new(flow_rect(rect), &viewport, 3, 0, 4, rect.width());
     let mut config = quantick_orderflow::HeatmapConfig::default();
     config.volume_dots.enabled = true;
     config.live_lane.tape_only = true;
@@ -264,7 +253,7 @@ fn the_lane_marks_need_a_lane_and_permission_but_keep_the_offline_boundary() {
     );
     projection.live_now_x = Some(0.95);
 
-    let with_lane = ProjectedLayout::new(rect, &viewport, 4, 0, 4, 5.0);
+    let with_lane = ProjectedLayout::new(flow_rect(rect), &viewport, 4, 0, 4, 5.0);
     let drawn = painted(|painter| {
         draw_live_lane_marks(painter, &RenderContext::new(&projection, with_lane, &style));
     });
@@ -277,7 +266,7 @@ fn the_lane_marks_need_a_lane_and_permission_but_keep_the_offline_boundary() {
     let mut settled = projection.clone();
     settled.live_now_x = None;
     // No lane at all: nothing to divide.
-    let no_lane = ProjectedLayout::new(rect, &viewport, 4, 0, 4, 0.0);
+    let no_lane = ProjectedLayout::new(flow_rect(rect), &viewport, 4, 0, 4, 0.0);
     // Switched off by the user.
     let hidden = OrderflowRenderStyle {
         live_lane: LiveLaneStyle {
