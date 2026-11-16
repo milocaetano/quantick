@@ -869,14 +869,7 @@ impl quantick_control_handlers::market_palette::MarketPaletteHost for QuantickAp
             recent: self.surfaces.market_palette.model_state.recent.clone(),
             starter_feed: self.config.default_feed.clone(),
             workspaces: book.book().list().into_iter().map(|row| row.name).collect(),
-            inherited_bar: Some(
-                self.active_tab()
-                    .flow_pane
-                    .series
-                    .state
-                    .spec()
-                    .to_config_string(),
-            ),
+            inherited_bar: Some(self.active_tab().flow_pane.series.bar_config()),
         }
     }
     /// Bring the tab at `index` forward, off Home.

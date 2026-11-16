@@ -113,3 +113,8 @@ fn prefix_install_returns_its_view_effects() {
     assert_eq!(series.history_prefix.len(), 1);
     assert_eq!(history.revision(), 3);
 }
+
+#[test]
+fn bar_config_spells_the_rule_the_engine_cuts_by() {
+    assert_eq!(series().bar_config(), BarSpec::Time(DAY_MS).to_config_string());
+}

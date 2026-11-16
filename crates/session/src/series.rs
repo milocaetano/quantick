@@ -46,6 +46,12 @@ impl PaneSeries {
         }
     }
 
+    /// The bar rule the engine cuts this series by, as a config spells it.
+    #[must_use]
+    pub fn bar_config(&self) -> String {
+        self.state.spec().to_config_string()
+    }
+
     /// Put `bars` in front of the engine's bars, the venue's seam `lead`
     /// merged into the first one (`ChartState::set_venue_lead`); `covers_seam`
     /// says nothing of that bar's bucket is left unaccounted for. A seam bar
