@@ -259,3 +259,21 @@ fn the_stack_folds_round_trip_through_the_flags() {
         assert_eq!(rebuilt.stack_folds(), [false, true], "whole {whole}");
     }
 }
+
+/// A chart folded inside the context column folded whole stays folded when
+/// the flow pane folds, which opens the column, and when the flow pane is
+/// asked open while the column stays folded.
+#[test]
+fn a_kept_fold_outlives_the_flow_pane_either_way() {
+    let preset = layout("stack2+flow");
+    let (mut state, slots) = stacked("stack2+flow");
+    state.rail_stack(&slots, &[false, true]);
+    assert!(state.fold_flow_side(false, true), "the column folds whole");
+    assert!(!state.fold_flow_side(true, false), "the flow pane is open");
+    assert_eq!(state.stack_folds(), [false, true], "asked open, still kept");
+    assert!(state.fold_flow_side(true, true), "the flow pane folds");
+    assert_eq!(state.flow_side_folds(), (false, true));
+    assert_eq!(state.stack_folds(), [false, true], "the column opened");
+    assert!(state.railed().contains(&slots[1]));
+    assert!(state.column_painted(preset, true));
+}

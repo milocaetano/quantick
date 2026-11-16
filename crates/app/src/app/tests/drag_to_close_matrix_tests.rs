@@ -1011,3 +1011,45 @@ fn every_divider_of_every_layout_closes_by_dragging_in_the_main_window() {
 fn every_divider_closes_by_dragging_in_a_torn_off_market_window() {
     run_matrix(&cases(Some(&TORN_OFF), true));
 }
+
+/// A stacked chart folded by its divider, then the context column folded
+/// whole by the column divider, then the column's rail dragged across to
+/// fold the flow pane: the chart folded inside the column stays folded.
+#[test]
+fn a_stacked_fold_outlives_the_column_dragged_edge_to_edge() {
+    let preset = crate::canvas_layout::preset("stack2+flow").expect("a preset");
+    let (mut app, rig) = laid_out(preset, SIZES[0], false);
+    let app = &mut app;
+    let stack = SeamAddress {
+        path: vec![0],
+        index: 0,
+    };
+    let lower = pair_of(rig.tab(app).canvas.state.tree(), &stack)[1][0];
+    let across = |rect: egui::Rect| rect.top() + rect.height() * GRAB_AT;
+    let at = divider(rig.tab(app), &stack).expect("the stack's divider");
+    let canvas = rig.tab(app).canvas.last_canvas;
+    let x = at.center().x;
+    rig.drag(app, at.center(), egui::pos2(x, canvas.bottom() - 1.0));
+    assert!(
+        rig.tab(app).canvas.state.railed().contains(&lower),
+        "folded"
+    );
+    let column = rig
+        .tab(app)
+        .canvas_divider_rect()
+        .expect("the column divider");
+    let y = across(column);
+    let left = egui::pos2(canvas.left() + 1.0, y);
+    rig.drag(app, egui::pos2(column.center().x, y), left);
+    assert_eq!(rig.tab(app).canvas.folds(), (true, false), "the column");
+    let rail = rig
+        .tab(app)
+        .collapsed_rail_rect()
+        .expect("the column's rail");
+    let right = egui::pos2(canvas.right() - 1.0, y);
+    rig.drag(app, egui::pos2(rail.center().x, y), right);
+    let tab = rig.tab(app);
+    assert_eq!(tab.canvas.folds(), (false, true), "the flow pane");
+    assert!(tab.canvas.state.railed().contains(&lower), "still folded");
+    assert!(tab.canvas.pane_collapsed(PaneSide::Time(1)), "drawn folded");
+}
