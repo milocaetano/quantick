@@ -36,7 +36,7 @@ impl LiquidityRangesSection<'_> {
         ui.horizontal(|ui| {
             ui.label("display range");
             egui::ComboBox::from_id_salt("heatmap_display_grouping")
-                .selected_text(display_grouping_label(config.display_grouping))
+                .selected_text(config.display_grouping.label())
                 .show_ui(ui, |ui| {
                     ui.selectable_value(
                         &mut config.display_grouping,
@@ -260,13 +260,5 @@ impl BookHealthSection<'_> {
         }
         ui.label(words.retained);
         ui.label(words.range);
-    }
-}
-
-fn display_grouping_label(grouping: DisplayGrouping) -> String {
-    match grouping {
-        DisplayGrouping::Native => "Native · 1×".to_owned(),
-        DisplayGrouping::Multiple(multiple) => format!("Range · {multiple}×"),
-        DisplayGrouping::Adaptive { target_rows } => format!("Auto · {target_rows} rows"),
     }
 }

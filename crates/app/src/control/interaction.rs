@@ -13,7 +13,7 @@ pub(crate) use quantick_control_schema::interaction::{
 };
 
 use crate::{
-    drawings::{Drawing, DrawingBand},
+    drawings::Drawing,
     pane::{ChartPane, ControlDrawingHit, ControlPointerHit, PaneSide},
     tab::Tab,
 };
@@ -248,7 +248,7 @@ fn drawing_selection(
         tool_id: drawing.tool.id().to_owned(),
         label: format!("{} {}", drawing.tool.name(), index + 1),
         user_label_present: drawing.name.is_some(),
-        band: drawing_band(&drawing.band),
+        band: drawing_band_name(&drawing.band).to_owned(),
         annotation_band: quantick_control_handlers::annotate::annotation_band(&drawing.band),
         scope: quantick_control_handlers::analysis::scope_name(drawing).to_owned(),
         locked: drawing.locked,
@@ -281,10 +281,6 @@ fn drawing_hit_snapshot(
 pub(crate) use quantick_control_schema::interaction::flow_cell_snapshot;
 
 pub(crate) use quantick_control_handlers::analysis::drawing_band_name;
-
-fn drawing_band(band: &DrawingBand) -> String {
-    drawing_band_name(band).to_owned()
-}
 
 fn active_tab<P: TabsPort + ?Sized>(app: &P) -> &Tab {
     &app.tab_reads().tabs()[app.tab_reads().active_tab_index()]

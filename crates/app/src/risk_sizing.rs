@@ -7,7 +7,7 @@
 //! trader types into, rewritten from the model while they do not hold the
 //! keyboard. Every policy name is re-exported so callers keep one address.
 
-use quantick_sim::{Currency, InstrumentMoney};
+use quantick_sim::InstrumentMoney;
 use rust_decimal::Decimal;
 
 pub(crate) use quantick_paper::risk_sizing::*;
@@ -236,7 +236,8 @@ impl InstrumentMoneySection<'_> {
             let step_changed = edit_decimal(ui, self.size_step_text, &mut size_step, 56.0);
             let currency_changed = edit_currency(ui, self.currency_text, self.currency_code);
             if point_changed || step_changed || currency_changed {
-                match declaration(self.currency_text, point_value, size_step, self.declared) {
+                let typed = (self.currency_text.as_str(), point_value, size_step);
+                match InstrumentMoney::declared(typed, self.declared) {
                     Some(money) => {
                         self.book.insert(self.symbol.to_owned(), money);
                     }
@@ -254,31 +255,6 @@ impl InstrumentMoneySection<'_> {
         ui.label(egui::RichText::new(money_note(self.declared)).color(palette.text_support()));
         changed
     }
-}
-
-/// The instrument money the three fields declare, or `None` while any of
-/// them is missing.
-fn declaration(
-    currency_text: &str,
-    point_value: Decimal,
-    size_step: Decimal,
-    previous: Option<&InstrumentMoney>,
-) -> Option<InstrumentMoney> {
-    let currency = Currency::new(currency_text)?;
-    if point_value <= Decimal::ZERO || size_step <= Decimal::ZERO {
-        return None;
-    }
-    Some(InstrumentMoney {
-        point_value,
-        size_step,
-        // A minimum the trader declared is theirs to keep: a venue whose
-        // smallest order is not one increment exists, and overwriting it
-        // here made the record's field write-only.
-        min_size: previous.map_or(size_step, |money| money.min_size),
-        max_size: previous.and_then(|money| money.max_size),
-        currency,
-        source: quantick_sim::MoneySource::Declared,
-    })
 }
 
 /// The currency field, following the same rule as the decimal ones: while it

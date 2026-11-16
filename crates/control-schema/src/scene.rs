@@ -68,6 +68,12 @@ pub const SCHEMA_VERSION: u32 = 1;
 /// The identifier prefix of every control the tab strip owns.
 pub const TAB_STRIP_OWNER_ID: &str = "tab_strip";
 
+/// The identifier of one chart tab's entry in the tab strip.
+#[must_use]
+pub fn tab_control_id(tab_id: u64) -> String {
+    format!("{TAB_STRIP_OWNER_ID}.tab.{tab_id}")
+}
+
 /// The drawing tool rail.
 pub const TOOL_RAIL_OWNER_ID: &str = "tool_rail";
 

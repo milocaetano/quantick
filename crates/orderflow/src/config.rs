@@ -183,6 +183,16 @@ impl Default for DisplayGrouping {
 }
 
 impl DisplayGrouping {
+    /// The words the settings picker names this grouping by.
+    #[must_use]
+    pub fn label(self) -> String {
+        match self {
+            Self::Native => "Native \u{b7} 1\u{d7}".to_owned(),
+            Self::Multiple(multiple) => format!("Range \u{b7} {multiple}\u{d7}"),
+            Self::Adaptive { target_rows } => format!("Auto \u{b7} {target_rows} rows"),
+        }
+    }
+
     fn sanitized(self) -> Self {
         match self {
             Self::Native => Self::Native,

@@ -3,9 +3,9 @@
 use super::{SurfaceEnv, SurfaceResponse, ViewContext};
 use eframe::egui;
 use quantick_alerts::{AlertBook, AlertError};
+use quantick_ui_model::UpdateSession;
 pub(crate) use quantick_ui_model::alerts::{Context, DrawingChoice, Request};
 use quantick_ui_model::alerts::{Draft, Effects, Intent, Model, State, Subview};
-use quantick_ui_model::UpdateSession;
 mod editor;
 mod manager;
 #[cfg(test)]
@@ -213,17 +213,11 @@ fn error(ui: &mut egui::Ui, message: &str) {
 }
 fn show_storage_error(ui: &mut egui::Ui, problem: &AlertError) {
     ui.heading("Alert storage is unavailable");
-    error(ui, &error_text(problem));
+    error(ui, &problem.words());
     ui.label("Definitions and history cannot be confirmed. Failed saves do not replace the last saved definitions.");
     ui.label(
         "Correct the alert storage file or its permissions, then restart Quantick to reload it.",
     );
-}
-fn error_text(value: &AlertError) -> String {
-    match value {
-        AlertError::Invalid { field, reason } => format!("{field}: {reason}"),
-        other => format!("{other:?}"),
-    }
 }
 
 #[cfg(any(feature = "scenario-harness", test))]
