@@ -199,7 +199,7 @@ pub const ALLOWED: &[(&str, &[&str])] = &[
     // account a tab trades on, which the tab's session now holds and joins.
     // `chart` for the pane series a venue prefix installs into, and
     // `chart-interaction` for the history state and the view effects that
-    // install decides.
+    // install decides, and the live-trade plan a print is carried through.
     (
         "session",
         &[

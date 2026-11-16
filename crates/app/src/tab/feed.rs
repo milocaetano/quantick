@@ -22,6 +22,7 @@ use crate::loading::LoadingTask;
 use crate::metrics;
 use crate::pane::PaneSide;
 use crate::paper_home::shelf_dir;
+use quantick_engine::Trade;
 use quantick_feed as feed;
 use quantick_feed::history_reach::HistoryReach;
 use quantick_feed::history_run::{Cancelled, Press};
@@ -31,6 +32,7 @@ use quantick_feed::{
     REFILL_PRINTS_PER_DRAIN, past_resume_floor_logged,
 };
 use quantick_layers::ChartLayer;
+use quantick_session::live_trade::{self, LiveClose, PaneFold};
 use quantick_session::{
     Act, Delivery, Effect, FeedRequest, Msg, OlderCandles, Refusal, TabView, Wait, WaitChange,
 };
@@ -47,58 +49,50 @@ struct LiveTradeOwners<'a> {
     received_at_ms: i64,
 }
 
-impl LiveTradeOwners<'_> {
-    // Production supplies the validated plan. Private tests inject an invalid
-    // traversal here, through these same effect bodies, to expose real harm.
-    fn execute(
-        self,
-        trade: &quantick_engine::Trade,
-        stages: impl IntoIterator<Item = LiveTradeStage>,
-        mut clock: impl FnMut() -> i64,
-    ) {
-        for stage in stages {
-            match stage {
-                LiveTradeStage::PaperTrade => self.paper.on_trade(trade),
-                LiveTradeStage::PaneTrades => {
-                    for pane in std::iter::once(&mut *self.flow).chain(self.context.iter_mut()) {
-                        pane.ingest_live_trade_observed(trade, &mut |pane, bar, slot| {
-                            self.strategies.queue_closed(pane.id, bar, slot);
-                            self.observer.pane(
-                                super::alerts::facts(pane),
-                                Some(super::alerts::Observation {
-                                    trade,
-                                    received_at_ms: self.received_at_ms,
-                                    close: Some((bar, slot)),
-                                }),
-                            );
-                        });
-                        self.observer.pane(
-                            super::alerts::facts(pane),
-                            Some(super::alerts::Observation {
-                                trade,
-                                received_at_ms: self.received_at_ms,
-                                close: None,
-                            }),
-                        );
-                    }
-                }
-                LiveTradeStage::StrategyEvaluation => {
-                    // Preserve the per-print alarm gate: idle charts never read a clock.
-                    let now_ms = if self.strategies.any_alarm() {
-                        clock()
-                    } else {
-                        0
-                    };
-                    super::strategies::evaluate(
-                        self.paper,
-                        self.strategies,
-                        (&*self.flow, &*self.context),
-                        self.pending_sounds,
-                        now_ms,
-                    );
-                }
-            }
-        }
+/// The effect sink for [`live_trade::execute_live_trade`], which makes the calls.
+impl live_trade::LiveTradeOwners for LiveTradeOwners<'_> {
+    type Drawing = crate::drawings::DrawingId;
+    fn strategies(&mut self) -> &mut crate::strategy_anchors::TabStrategies {
+        self.strategies
+    }
+    fn paper_trade(&mut self, trade: &Trade) {
+        self.paper.on_trade(trade);
+    }
+    fn pane_count(&self) -> usize {
+        1 + self.context.len()
+    }
+    fn fold_pane(&mut self, pane: usize, trade: &Trade) -> PaneFold {
+        let pane = match pane.checked_sub(1) {
+            None => &mut *self.flow,
+            Some(at) => &mut self.context[at],
+        };
+        let mut fold = PaneFold::new(pane.id);
+        pane.ingest_live_trade_observed(trade, &mut |_, bar, slot| fold.close(bar, slot));
+        fold
+    }
+    fn observe_alert(&mut self, pane: usize, trade: &Trade, close: Option<&LiveClose>) {
+        let pane = pane
+            .checked_sub(1)
+            .map_or(&*self.flow, |at| &self.context[at]);
+        let close = close.map(|close| (&close.bar, close.slot));
+        let received_at_ms = self.received_at_ms;
+        let observation = super::alerts::Observation {
+            trade,
+            received_at_ms,
+            close,
+        };
+        self.observer
+            .pane(super::alerts::facts(pane), Some(observation));
+    }
+    fn evaluate_strategies(&mut self, now_ms: u64) {
+        let panes = (&*self.flow, &*self.context);
+        super::strategies::evaluate(
+            self.paper,
+            self.strategies,
+            panes,
+            self.pending_sounds,
+            now_ms,
+        );
     }
 }
 
@@ -149,7 +143,7 @@ impl Tab {
     }
     pub(crate) fn ingest_live_trade_test_order(
         &mut self,
-        trade: &quantick_engine::Trade,
+        trade: &Trade,
         stages: impl IntoIterator<Item = LiveTradeStage>,
         clock: impl FnMut() -> i64,
     ) {
@@ -852,13 +846,13 @@ impl Tab {
     /// The transport observation is the window's; what the trade does to the
     /// bars, the tape and the indicators is the pane's.
     #[cfg(test)]
-    pub fn ingest_live_trade_at(&mut self, trade: &quantick_engine::Trade, received_at_ms: i64) {
+    pub fn ingest_live_trade_at(&mut self, trade: &Trade, received_at_ms: i64) {
         self.ingest_live_trade_observed(trade, received_at_ms, &mut ());
     }
 
     fn ingest_live_trade_observed(
         &mut self,
-        trade: &quantick_engine::Trade,
+        trade: &Trade,
         received_at_ms: i64,
         observer: &mut dyn super::alerts::Observer,
     ) {
@@ -873,7 +867,7 @@ impl Tab {
 
     fn ingest_live_trade_with_stages(
         &mut self,
-        trade: &quantick_engine::Trade,
+        trade: &Trade,
         received_at_ms: i64,
         stages: impl IntoIterator<Item = LiveTradeStage>,
         clock: impl FnMut() -> i64,
@@ -886,7 +880,7 @@ impl Tab {
         // paper trading works identically on a live feed and a replay — and on
         // a tab the user is not looking at, whose position keeps marking
         // against its own tape.
-        LiveTradeOwners {
+        let mut owners = LiveTradeOwners {
             paper: &mut self.paper,
             strategies: &mut self.strategies,
             flow: &mut self.flow_pane,
@@ -894,8 +888,8 @@ impl Tab {
             pending_sounds: &mut self.pending_alarm_sounds,
             observer,
             received_at_ms,
-        }
-        .execute(trade, stages, clock);
+        };
+        live_trade::execute_live_trade(trade, stages, &mut owners, clock);
     }
 
     /// Drain a bounded number of synchronized depth events. The separate
@@ -1197,7 +1191,7 @@ impl Tab {
     ///
     /// Returns whether anything was actually ingested, so the caller's live
     /// flag means the same thing on this path as on the ordinary one.
-    fn ingest_resumed(&mut self, trades: &[quantick_engine::Trade]) -> bool {
+    fn ingest_resumed(&mut self, trades: &[Trade]) -> bool {
         let Some(floor) = self.link.resume_floor_ms.take() else {
             return false;
         };
@@ -1212,7 +1206,7 @@ impl Tab {
     /// Prints made while nobody listened, a resumed window or a refilled hole: the live
     /// path's bars, tape and indicators, and the paper mark only (see [`Self::ingest_resumed`]).
     /// Without `to_strategies` the bars they close never reach a strategy.
-    fn ingest_unheard(&mut self, trades: &[quantick_engine::Trade], to_strategies: bool) -> bool {
+    fn ingest_unheard(&mut self, trades: &[Trade], to_strategies: bool) -> bool {
         let Some(last) = trades.last() else {
             return false;
         };
