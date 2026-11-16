@@ -30229,7 +30229,7 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Deletes a workspace and moves the tabs on it to Default. A tab with unsaved edits keeps them, marked Default •. Default cannot be deleted.",
+      "description": "Deletes a workspace and moves the tabs on it to Default. A tab with unsaved edits keeps them, marked Default •. Default cannot be deleted. For 10 seconds, until the answer's undo_until_unix_ms, workspace.delete.undo brings it back with its recipe, colour and tabs, as Manage workspaces' Undo does.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "cockpit",
@@ -30283,6 +30283,15 @@
               "$ref": "#/$defs/WireU64"
             },
             "type": "array"
+          },
+          "undo_until_unix_ms": {
+            "default": null,
+            "description": "Until when `workspace.delete.undo` takes it back. Additive.",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
           }
         },
         "required": [
@@ -30306,6 +30315,310 @@
       "risk_reducing": false,
       "stale_input_safety": "A repeat finds no such workspace and is refused with workspace.unknown; nothing is written.",
       "title": "Delete a workspace",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Takes back a workspace.delete within 10 seconds of it (its answer's undo_until_unix_ms), as Manage workspaces' Undo and Ctrl+Z do: the workspace comes back with its recipe and colour, and the tabs the delete moved that are still open and still on Default move back. When its colour was taken meanwhile it takes the next free one, named in colour with recoloured true. Refused with workspace.undo_expired after the 10 seconds, workspace.unknown with no recent delete of that name, and workspace.name_taken when a workspace took the name meanwhile.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 4096
+      },
+      "id": "workspace.delete.undo",
+      "idempotency": "optional",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "Take back a recent delete.",
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "WorkspaceDeleteUndoInput",
+        "type": "object"
+      },
+      "module": "workspace",
+      "output_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          },
+          "WorkspaceColourDto": {
+            "description": "A workspace's colour as the wire reads it: a preset names itself and its\nindex (`{\"preset\": \"sky\", \"index\": 2, ...}`), a custom colour its hex\n(`{\"custom\": \"#3A7BD5\", ...}`); both give the value painted in each theme.\nNo two workspaces hold identical colours (`workspace.colour.set`).",
+            "properties": {
+              "custom": {
+                "description": "The custom colour's `#RRGGBB`; absent on a preset.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "dark": {
+                "description": "`#RRGGBB` painted in the Dark theme.",
+                "type": "string"
+              },
+              "index": {
+                "description": "The preset's place in the palette, as files store it.",
+                "format": "uint8",
+                "maximum": 255,
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "light": {
+                "description": "`#RRGGBB` painted in the Light theme.",
+                "type": "string"
+              },
+              "preset": {
+                "description": "The preset's name in lower case; absent on a custom colour.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "light",
+              "dark"
+            ],
+            "type": "object"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "The workspace back, its colour and the tabs moved back.",
+        "properties": {
+          "changed": {
+            "description": "`false` for a repeat after the Undo landed.",
+            "type": "boolean"
+          },
+          "colour": {
+            "$ref": "#/$defs/WorkspaceColourDto"
+          },
+          "recoloured": {
+            "description": "Its own colour was taken meanwhile, so it took the next free one.",
+            "type": "boolean"
+          },
+          "tabs": {
+            "description": "The tabs moved back: still open and still on Default.",
+            "items": {
+              "$ref": "#/$defs/WireU64"
+            },
+            "type": "array"
+          },
+          "workspace": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace",
+          "changed",
+          "colour",
+          "recoloured",
+          "tabs"
+        ],
+        "title": "WorkspaceDeleteUndoResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.desk"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "A repeat after the Undo landed answers changed false and writes nothing.",
+      "title": "Undo a workspace delete",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Puts a workspace dialog on screen for a tab (left out, the one on screen), as the workspace menu's entries do, and journals workspace.dialog_opened: save_as (Save as new workspace) or new (New workspace), each with its suggested name selected and the palette open on the next free colour, which the answer names; or manage (Manage workspaces: one row per workspace with its colour chip, name, tab count, rename and delete). Nothing is written to the workspaces: Save is workspace.save_as or workspace.new with colour, and Manage's actions are workspace.colour.set, workspace.rename, workspace.delete and workspace.delete.undo. An unknown tab is refused with workspace.unknown_tab.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 2048
+      },
+      "id": "workspace.dialog.open",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          },
+          "WorkspaceDialog": {
+            "description": "Which dialog to open.",
+            "oneOf": [
+              {
+                "const": "save_as",
+                "description": "Save as new workspace: the tab's copy under a new name.",
+                "type": "string"
+              },
+              {
+                "const": "new",
+                "description": "New workspace: an empty recipe.",
+                "type": "string"
+              },
+              {
+                "const": "manage",
+                "description": "Manage workspaces.",
+                "type": "string"
+              }
+            ]
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "Open a workspace dialog on a tab.",
+        "properties": {
+          "mode": {
+            "$ref": "#/$defs/WorkspaceDialog"
+          },
+          "tab_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The tab. Left out, the one on screen."
+          }
+        },
+        "required": [
+          "mode"
+        ],
+        "title": "WorkspaceDialogOpenInput",
+        "type": "object"
+      },
+      "module": "workspace",
+      "output_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          },
+          "WorkspaceColourDto": {
+            "description": "A workspace's colour as the wire reads it: a preset names itself and its\nindex (`{\"preset\": \"sky\", \"index\": 2, ...}`), a custom colour its hex\n(`{\"custom\": \"#3A7BD5\", ...}`); both give the value painted in each theme.\nNo two workspaces hold identical colours (`workspace.colour.set`).",
+            "properties": {
+              "custom": {
+                "description": "The custom colour's `#RRGGBB`; absent on a preset.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "dark": {
+                "description": "`#RRGGBB` painted in the Dark theme.",
+                "type": "string"
+              },
+              "index": {
+                "description": "The preset's place in the palette, as files store it.",
+                "format": "uint8",
+                "maximum": 255,
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "light": {
+                "description": "`#RRGGBB` painted in the Light theme.",
+                "type": "string"
+              },
+              "preset": {
+                "description": "The preset's name in lower case; absent on a custom colour.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "light",
+              "dark"
+            ],
+            "type": "object"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "The dialog now on screen.",
+        "properties": {
+          "colour": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WorkspaceColourDto"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The create dialogs' preselected colour: the next free one."
+          },
+          "dialog": {
+            "description": "`save_as`, `new` or `manage`.",
+            "type": "string"
+          },
+          "name": {
+            "description": "The create dialogs' suggested name, selected in the field.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "dialog",
+          "title",
+          "tab_id"
+        ],
+        "title": "WorkspaceDialogOpenResult",
+        "type": "object"
+      },
+      "persistence": "transient",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "Opening a dialog twice leaves one open, the create dialogs reset to their suggested name and colour.",
+      "title": "Open a workspace dialog",
       "version": 1
     },
     {
@@ -30452,7 +30765,7 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Makes a workspace of an empty recipe: what the tab shows, its canvas, pane sizes, context intervals, layers and footprint style, with every indicator removed. The tab moves onto it and its unsaved edits are dropped; the answer says so. No other tab changes. Unlike workspace.save_as, it copies no indicators. An empty or taken name is refused with the reason; a tab still opening is refused with workspace.tab_not_ready, retryable.",
+      "description": "Makes a workspace of an empty recipe: what the tab shows, its canvas, pane sizes, context intervals, layers and footprint style, with every indicator removed. The tab moves onto it and its unsaved edits are dropped; the answer says so. No other tab changes. Unlike workspace.save_as, it copies no indicators. It takes colour (a preset's name or #RRGGBB; left out, the next free colour); one another workspace holds is refused with workspace.colour_taken, never swapped on create. An empty or taken name is refused with the reason; a tab still opening is refused with workspace.tab_not_ready, retryable. The New workspace dialog's Save; open it with workspace.dialog.open.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "cockpit",
@@ -30474,6 +30787,13 @@
         "additionalProperties": false,
         "description": "Make a new, empty workspace and put a tab on it.",
         "properties": {
+          "colour": {
+            "description": "A preset's name or `#RRGGBB`. Left out, the next free colour.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "name": {
             "type": "string"
           },
@@ -30700,7 +31020,7 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Makes a workspace of what the tab shows and puts the tab on it. No other tab changes. An empty or taken name is refused with the reason.",
+      "description": "Makes a workspace of what the tab shows and puts the tab on it, in colour (a preset's name or #RRGGBB; left out, the next free colour). No other tab changes. An empty or taken name is refused with the reason; a colour another workspace holds is refused with workspace.colour_taken, never swapped on create; one that is neither with workspace.colour_invalid. The Save as new workspace dialog's Save; open it with workspace.dialog.open.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "cockpit",
@@ -30722,6 +31042,13 @@
         "additionalProperties": false,
         "description": "Make a new workspace of a tab's copy.",
         "properties": {
+          "colour": {
+            "description": "A preset's name or `#RRGGBB`. Left out, the next free colour.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "name": {
             "type": "string"
           },

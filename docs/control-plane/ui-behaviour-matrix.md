@@ -42,13 +42,13 @@ The three exclusion classes are closed:
 
 | Outcome | Behaviours |
 | --- | --- |
-| Reachable by capability | 135 |
+| Reachable by capability | 139 |
 | Excluded: `authority` | 4 |
 | Excluded: `ui_only_by_decision` | 7 |
 | Excluded: `pending_capability` | 43 |
-| **Total** | **189** |
+| **Total** | **193** |
 
-100 of the 189 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 89 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
+99 of the 193 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 94 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
 
 ## Behaviours
 
@@ -227,12 +227,16 @@ The three exclusion classes are closed:
 | `desk.forget` | Forget the saved workspace and open on the configured default | window menu, Desk, Reset startup desk | `desk.forget` | — |
 | `tab.workspace.set` | Put a tab on a saved workspace | the capsule's workspace name, Ctrl+Shift+O | `tab.workspace.set` | — |
 | `workspace.save_to` | Save a tab's edits to its workspace | the capsule's floppy, its workspace menu, window menu, Save to, Ctrl+S | `workspace.save_to` | — |
-| `workspace.save_as` | Save a tab as a new workspace | window menu, Workspace, Save as new | `workspace.save_as` | — |
-| `workspace.new` | Make a new, empty workspace for a tab | the capsule's workspace menu, New workspace | `workspace.new` | — |
+| `workspace.save_as` | Save a tab as a new workspace | window menu, Workspace, Save as new, or the capsule's workspace menu, Save as…: its dialog suggests a name and holds the palette on the next free colour | `workspace.dialog.open`, `workspace.save_as` | — |
+| `workspace.new` | Make a new, empty workspace for a tab | the capsule's workspace menu, New workspace…, or Manage workspaces' footer: its dialog suggests a name and holds the palette on the next free colour | `workspace.dialog.open`, `workspace.new` | — |
 | `workspace.autosave.set` | Turn auto save layout changes on or off | the capsule's workspace menu, Auto save | `workspace.autosave.set` | — |
-| `workspace.rename` | Rename a workspace | window menu, Workspace, Rename, or a row's Rename in Manage workspaces | `workspace.rename` | — |
-| `workspace.manage` | List every workspace with its tabs, to rename or delete one (its tabs move to Default), Delete confirmed in the row | window menu, Workspace, Manage workspaces…, or the capsule's workspace menu | `workspace.list`, `workspace.rename`, `workspace.delete` | — |
-| `workspace.colour.set` | Give a workspace a colour, swapping with its holder only when asked | the capsule's workspace menu, the header swatch | `workspace.colour.set` | — |
+| `workspace.rename` | Rename a workspace | window menu, Workspace, Rename, the capsule's workspace menu, Rename…, or inline in a Manage workspaces row (pencil, F2 or a double click) | `workspace.rename` | — |
+| `workspace.manage` | Open Manage workspaces: every workspace with its colour, name, tab count, rename and delete | window menu, Workspace, Manage workspaces…, or the capsule's workspace menu | `workspace.dialog.open`, `workspace.list` | — |
+| `workspace.manage.colour` | Recolour any workspace from its Manage row, swapping with the holder when asked | Manage workspaces, a row's colour chip or C on the chosen row | `workspace.colour.set`, `workspace.colour.palette` | — |
+| `workspace.manage.rename` | Rename a workspace in its Manage row: Enter saves, Esc cancels | Manage workspaces, a row's pencil, F2 on the chosen row, or a double click on the name | `workspace.rename` | — |
+| `workspace.manage.delete` | Delete a workspace, confirmed in its row naming the tabs that go back to Default | Manage workspaces, a row's trash or Del on the chosen row, then Delete or Enter | `workspace.delete` | — |
+| `workspace.manage.undo` | Undo a workspace delete for 10 seconds: the workspace, its colour and its tabs | Manage workspaces, the deleted row's Undo or Ctrl+Z | `workspace.delete.undo` | — |
+| `workspace.colour.set` | Give a workspace a colour, swapping with its holder only when asked | the capsule's workspace menu, the header swatch, or a row's chip in Manage workspaces | `workspace.colour.set` | — |
 | `workspace.colour.palette` | Read a workspace's palette: the presets, who holds each, the last custom colour | the capsule's workspace menu, the header swatch's popover | `workspace.colour.palette` | — |
 | `workspace.colour.popover` | Open the colour popover, pick a swatch, type a Custom colour and answer the swap question | the capsule's workspace menu, the header swatch | `workspace.colour.popover` | — |
 | `workspace.list` | List the workspaces and the tabs using each | window menu, Workspace, whose list names each workspace | `workspace.list` | — |
@@ -265,7 +269,7 @@ matrix fails the build.
 | `hotkey` | 25 |
 | `menu_entry` | 47 |
 | `scripted_menu` | 0 |
-| `authored` | 91 |
+| `authored` | 96 |
 
 ## Appendix: rows no registry stands behind
 
@@ -363,6 +367,11 @@ declares nothing here is a guard failure.
 | `drawing.scope.toggle` | the context bar's sharing button and the inspector checkbox are widgets, not registry entries |
 | `drawing.hide` | Alt+H is read per frame by `app/drawing_controller/input.rs`; the Hide and Show buttons on the menu and manager rows are widgets, not hotkey registry entries |
 | `drawing.clear_all` | a menu entry and a manager button that ask the same question |
+| `workspace.save_as` | the dialog's name field, palette and Save are marks the dialog paints: listed in the scene as toolbar.name_dialog.colour.<key> |
+| `workspace.manage.colour` | the chip and the palette under the row are marks the dialog paints: listed in the scene as toolbar.manage_workspaces.<workspace>.chip and toolbar.manage_workspaces.<workspace>.colour.<key> |
+| `workspace.manage.rename` | the pencil and the field are marks the dialog paints: toolbar.manage_workspaces.<workspace>.rename and .name |
+| `workspace.manage.delete` | the trash, Delete and Keep are marks the dialog paints: toolbar.manage_workspaces.<workspace>.delete, .confirm and .keep |
+| `workspace.manage.undo` | the Undo row is marks the dialog paints: toolbar.manage_workspaces.<workspace>.undo |
 | `workspace.colour.set` | the header swatch's popover is marks the workspace menu paints: each swatch, Apply and Swap is listed in the scene as toolbar.workspace_menu.colour.<key> |
 | `workspace.colour.palette` | the popover is drawn from this model; its swatches are scene entries toolbar.workspace_menu.colour.<key> |
 | `workspace.colour.popover` | a press on the header swatch, a swatch, Custom…, Apply, Swap or Cancel; arrows, Enter and Esc in the popover |

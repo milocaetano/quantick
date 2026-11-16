@@ -25,6 +25,15 @@
         "$ref": "#/$defs/WireU64"
       },
       "type": "array"
+    },
+    "undo_until_unix_ms": {
+      "default": null,
+      "description": "Until when `workspace.delete.undo` takes it back. Additive.",
+      "format": "int64",
+      "type": [
+        "integer",
+        "null"
+      ]
     }
   },
   "required": [
