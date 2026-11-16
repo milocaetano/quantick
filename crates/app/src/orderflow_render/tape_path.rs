@@ -6,6 +6,8 @@ use crate::orderflow_render::constants::{
     RETAINED_EDGE_LABEL_TOP_PX,
 };
 use eframe::egui::{self, Align2};
+
+use super::EguiRect;
 use quantick_orderflow::projection::{PastTape, TapeHorizontalGeometry};
 use quantick_orderflow::tape_view::{PAST_TAPE_LABEL, RETAINED_EDGE_LABEL, retained_edge_fraction};
 
@@ -36,7 +38,7 @@ pub(crate) fn draw_past_tape_edge(
         return;
     };
     let appearance = crate::theme::get(painter.ctx());
-    let lane = context.layout.lane_rect();
+    let lane = context.layout.lane_rect().egui();
     let font = appearance.label_font(PAST_TAPE_LABEL_FONT_PX);
     let (clip, color) = (painter.with_clip_rect(lane), appearance.tape_label());
     let top_left = lane.left_top() + PAST_TAPE_LABEL_INSET;

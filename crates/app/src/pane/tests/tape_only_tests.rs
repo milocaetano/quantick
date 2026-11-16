@@ -176,7 +176,14 @@ fn the_tape_alone_wears_no_key() {
     config.live_lane.show_aggressions = true;
     config.live_lane.show_depth = false;
     let style = OrderflowRenderStyle::from_config(&config, egui::Color32::BLACK.to_array());
-    let layout = ProjectedLayout::new(area, &pane.model.viewport, 2, 0, 2, area.width());
+    let layout = ProjectedLayout::new(
+        crate::orderflow_render::flow_rect(area),
+        &pane.model.viewport,
+        2,
+        0,
+        2,
+        area.width(),
+    );
     let ctx = egui::Context::default();
     let mut key = Some(egui::Rect::NOTHING);
     let output = ctx.run(egui::RawInput::default(), |ctx| {

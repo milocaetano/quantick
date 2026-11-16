@@ -63,7 +63,7 @@ fn manual_native_gains_scale_actual_meshes_and_circles_independently() {
 fn manual_legacy_gain_does_not_move_edge_clamped_centers_or_require_volume_dots() {
     let viewport = Viewport::new();
     let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 400.0));
-    let layout = ProjectedLayout::new(rect, &viewport, 3, 0, 4, 300.0);
+    let layout = ProjectedLayout::new(flow_rect(rect), &viewport, 3, 0, 4, 300.0);
     let mut style = dots_style(DotSizing {
         native_tape: false,
         tape_column_px: 100.0,
@@ -131,7 +131,7 @@ fn the_newest_dot_stays_whole_at_now_under_the_tape_gain() {
 
     let viewport = Viewport::new();
     let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 400.0));
-    let layout = ProjectedLayout::new(rect, &viewport, 3, 0, 4, 300.0);
+    let layout = ProjectedLayout::new(flow_rect(rect), &viewport, 3, 0, 4, 300.0);
     let mut newest = dot(true, 8, 1.0, 0.5);
     newest.price = Decimal::from(50);
     newest.price_bucket = newest.price;
@@ -170,7 +170,7 @@ fn the_newest_dot_stays_whole_at_now_under_the_tape_gain() {
                 },
             )
             .shapes;
-        let lane = layout.lane_rect();
+        let lane = layout.lane_rect().egui();
         let mut bounds = egui::Rect::NOTHING;
         for clipped in shapes {
             let drawn = clipped.shape.visual_bounding_rect();
@@ -182,7 +182,7 @@ fn the_newest_dot_stays_whole_at_now_under_the_tape_gain() {
         bounds
     };
     let plain = painted_dot(1.0);
-    let lane_right = layout.lane_rect().right();
+    let lane_right = layout.lane_rect().right;
     for gain in [1.37, 3.0] {
         let dot = painted_dot(gain);
         assert!(

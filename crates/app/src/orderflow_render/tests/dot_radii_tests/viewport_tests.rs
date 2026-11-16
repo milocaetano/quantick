@@ -71,7 +71,7 @@ fn cached_native_frame_uses_current_camera_and_visible_groups_for_every_paint() 
     let viewport = Viewport::new();
     let paint = |window_ms, price_high, lane_width| {
         let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 400.0));
-        let layout = ProjectedLayout::new(rect, &viewport, 3, 0, 4, lane_width);
+        let layout = ProjectedLayout::new(flow_rect(rect), &viewport, 3, 0, 4, lane_width);
         let edge = quantick_orderflow::LiveEdge {
             now_ms: 6_000,
             window_ms,

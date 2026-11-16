@@ -13,7 +13,7 @@ use quantick_orderflow::LiquidityEvidence;
 use quantick_orderflow::config::theme::{heat_fill_parts, quantize_heat};
 
 use super::bubbles::{bubble_radius, side_offset_y};
-use super::layout::{EventBand, RenderContext};
+use super::layout::{EguiRect, EventBand, RenderContext};
 use super::{
     OrderflowRenderStyle, Palette, add_gradient_rect, draw_dashed_vertical, finite_unit, rgba,
 };
@@ -41,7 +41,7 @@ pub(crate) fn draw_heatmap_background(painter: &egui::Painter, context: &RenderC
     else {
         return;
     };
-    let clip = painter.with_clip_rect(region);
+    let clip = painter.with_clip_rect(region.egui());
     let mut mesh = egui::Mesh::default();
     mesh.vertices
         .reserve(context.projection.cells.len().saturating_mul(8));
@@ -49,10 +49,10 @@ pub(crate) fn draw_heatmap_background(painter: &egui::Painter, context: &RenderC
         .reserve(context.projection.cells.len().saturating_mul(12));
 
     for cell in context.projection.cells.iter() {
-        let rect =
-            context
-                .layout
-                .heat_cell_rect(cell, style.min_cell_height, context.current_book_live);
+        let rect = context
+            .layout
+            .heat_cell_rect(cell, style.min_cell_height, context.current_book_live)
+            .egui();
         let in_lane = rect.is_positive();
         if !in_lane && !cell.current_book {
             continue;
@@ -70,7 +70,13 @@ pub(crate) fn draw_heatmap_background(painter: &egui::Painter, context: &RenderC
                 egui::pos2(rect.left(), rect.top() - spread),
                 egui::pos2(rect.right(), rect.bottom() + spread),
             )
-            .intersect(context.layout.span_pane(cell.x0, cell.x1).union(rect));
+            .intersect(
+                context
+                    .layout
+                    .span_pane(cell.x0, cell.x1)
+                    .egui()
+                    .union(rect),
+            );
             let glow = rgba(rgb, alpha * style.edge_glow);
             add_gradient_rect(&mut mesh, glow_rect, glow, glow);
         }
@@ -80,7 +86,10 @@ pub(crate) fn draw_heatmap_background(painter: &egui::Painter, context: &RenderC
             add_gradient_rect(&mut mesh, rect, fill, fill);
         }
         if quantick_orderflow::projection::current_book_preview(cell, previews) {
-            let preview = context.layout.current_book_preview_rect(cell.y0, cell.y1);
+            let preview = context
+                .layout
+                .current_book_preview_rect(cell.y0, cell.y1)
+                .egui();
             if preview.is_positive() && style.depth_layer {
                 add_gradient_rect(&mut mesh, preview, fill, fill);
             }
@@ -105,7 +114,7 @@ pub(crate) fn draw_heatmap_background(painter: &egui::Painter, context: &RenderC
     {
         draw_text_with_shadow(
             &clip,
-            egui::pos2(left, context.layout.chart_rect.top()) + DEPTH_CAPTION_OFFSET,
+            egui::pos2(left, context.layout.chart_rect.top) + DEPTH_CAPTION_OFFSET,
             egui::Align2::LEFT_TOP,
             caption,
             appearance.label_font(SMALL_PRINT_FONT_PX),
@@ -127,12 +136,13 @@ pub(crate) fn draw_heatmap_background(painter: &egui::Painter, context: &RenderC
             continue;
         }
         let (x0, x1) = lead.unwrap_or((context.layout.x(gap.x0), context.layout.x(gap.x1)));
-        let pane = lead.map_or(context.layout.span_pane(gap.x0, gap.x1), |_| {
-            context.layout.lane_rect()
-        });
+        let pane = lead.map_or_else(
+            || context.layout.span_pane(gap.x0, gap.x1).egui(),
+            |_| context.layout.lane_rect().egui(),
+        );
         let rect = egui::Rect::from_min_max(
-            egui::pos2(x0.min(x1), context.layout.chart_rect.top()),
-            egui::pos2(x0.max(x1), context.layout.chart_rect.bottom()),
+            egui::pos2(x0.min(x1), context.layout.chart_rect.top),
+            egui::pos2(x0.max(x1), context.layout.chart_rect.bottom),
         )
         .intersect(pane);
         if !rect.is_positive() {
@@ -181,7 +191,7 @@ pub(crate) fn draw_live_lane_marks(painter: &egui::Painter, context: &RenderCont
     if !style.live_lane.show_marks {
         return;
     }
-    let rect = context.layout.chart_rect;
+    let rect = context.layout.chart_rect.egui();
     draw_lane_boundary(painter, rect, context.layout.lane_width_px, &style);
     // The divider is layout; only the moving time mark needs a market clock.
     let Some(now_x) = context.projection.live_now_x else {
@@ -217,7 +227,7 @@ pub(crate) fn draw_lane_boundary(
     if !style.live_lane.show_marks {
         return;
     }
-    if let Some(x) = super::lane_divider_x(rect, lane_width) {
+    if let Some(x) = super::lane_divider_x(super::flow_rect(rect), lane_width) {
         painter.with_clip_rect(rect).vline(
             x,
             rect.y_range(),
@@ -238,7 +248,7 @@ pub(crate) fn draw_lane_boundary(
 /// depth-only fronts on top.
 pub(crate) fn draw_liquidity_events(painter: &egui::Painter, context: &RenderContext<'_>) {
     let pass = EventPass::new(context);
-    let clip = painter.with_clip_rect(context.layout.chart_rect);
+    let clip = painter.with_clip_rect(context.layout.chart_rect.egui());
     let event_count = context.projection.liquidity_events.len();
     let mut hole_mesh = egui::Mesh::default();
     hole_mesh.vertices.reserve(event_count.saturating_mul(4));
@@ -298,7 +308,7 @@ impl<'c, 'a> EventPass<'c, 'a> {
     fn carve_event_holes(&self, hole_mesh: &mut egui::Mesh, fronts: &mut Vec<EventFront>) {
         let layout = &self.context.layout;
         let style = &self.style;
-        let right_edge = layout.chart_rect.right();
+        let right_edge = layout.chart_rect.right;
 
         for event in &self.context.projection.liquidity_events {
             // Two questions, both answered here because nowhere else asks.
@@ -329,13 +339,13 @@ impl<'c, 'a> EventPass<'c, 'a> {
                 continue;
             }
             let band = layout.event_band(event.x, event.y0, event.y1, style.min_cell_height);
-            if band.x < layout.chart_rect.left() - 1.0 || band.x > right_edge + 1.0 {
+            if band.x < layout.chart_rect.left - 1.0 || band.x > right_edge + 1.0 {
                 continue;
             }
             // Every mark below reaches to the *right* of the level it happened at,
             // so each one stops at the edge of its own pane: a reduction beside the
             // divider must not bleed its hole and its tail across the tape.
-            let pane = layout.pane(event.x);
+            let pane = layout.pane(event.x).egui();
 
             let reduction = finite_unit(event.fraction);
             let full = event.full_removal;
@@ -390,7 +400,7 @@ impl<'c, 'a> EventPass<'c, 'a> {
                 continue;
             }
             let center = egui::pos2(layout.x(trade.x), layout.y_unclamped(trade.y));
-            let pane = layout.pane(trade.x);
+            let pane = layout.pane(trade.x).egui();
             if !pane.contains(center) {
                 continue;
             }

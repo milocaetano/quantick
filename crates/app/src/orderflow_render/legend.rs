@@ -17,7 +17,7 @@ use quantick_chart::flow_execution::flow_chrome_layout;
 use quantick_orderflow::config::legend::{LegendGlyph, legend_entries};
 
 use super::bubbles::bubble_colors;
-use super::layout::RenderContext;
+use super::layout::{EguiRect, RenderContext};
 use super::{OrderflowRenderStyle, Palette, add_gradient_rect, draw_dashed_vertical, rgba};
 
 /// Draw the canvas key. The tape alone wears none: its bubbles' colours are
@@ -49,7 +49,7 @@ pub(crate) fn draw_compact_legend_avoiding(
     let colors = bubble_colors(&palette, &style.bubbles);
     palette.buy = colors.buy;
     palette.sell = colors.sell;
-    let clip = painter.with_clip_rect(context.layout.chart_rect);
+    let clip = painter.with_clip_rect(context.layout.chart_rect.egui());
     let multiple = context.projection.effective_grouping.multiple;
     let liquidity_label = if multiple > 1 {
         format!("liquidity · {multiple}×")
@@ -98,11 +98,12 @@ pub(crate) fn draw_compact_legend_avoiding(
     // width — nothing at this corner prints over anything else.
     let corner = LEGEND_OUTER_MARGIN_PX;
     let mut panel = egui::Rect::from_min_size(
-        context.layout.chart_rect.left_top() + egui::vec2(corner, corner + style.legend_top_inset),
+        context.layout.chart_rect.egui().left_top()
+            + egui::vec2(corner, corner + style.legend_top_inset),
         panel_size,
     );
     if let Some(regions) = tick_regions {
-        let area = context.layout.chart_rect;
+        let area = context.layout.chart_rect.egui();
         let placed = quantick_chart::flow_execution::place_flow_chrome(
             [area.min.into(), area.max.into()],
             [panel.min.into(), panel.max.into()],

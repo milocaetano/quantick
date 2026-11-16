@@ -211,14 +211,18 @@ fn a_tape_that_is_off_publishes_no_divider_for_anything_to_hang_off() {
     let mut lane = LiveLaneStyle::default();
     let on = lane.resolved_width_px(chart.width());
     assert!(on > 0.0, "a tape that is on reserves a band");
-    assert!(crate::orderflow_render::lane_divider_x(chart, on).is_some());
+    assert!(
+        crate::orderflow_render::lane_divider_x(crate::orderflow_render::flow_rect(chart), on)
+            .is_some()
+    );
     assert!(lane_rungs(on) > 0, "and a ladder is walked for it");
 
     lane.enabled = false;
     let off = lane.resolved_width_px(chart.width());
     assert_eq!(off, 0.0, "a tape that is off reserves nothing");
     assert!(
-        crate::orderflow_render::lane_divider_x(chart, off).is_none(),
+        crate::orderflow_render::lane_divider_x(crate::orderflow_render::flow_rect(chart), off)
+            .is_none(),
         "so the canvas is not split and the candles take all of it"
     );
     assert_eq!(lane_rungs(off), 0, "and no ladder is walked on its account");

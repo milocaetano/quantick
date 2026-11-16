@@ -8,6 +8,7 @@ use quantick_orderflow::{
     same_lane_window,
 };
 
+use crate::flow_geometry::FlowRect;
 use crate::pane_header::{
     CAPSULE_FRAME_X_PX, Capsule, CapsuleSide, FlowHeaderState, LayerGlyph, item_px,
 };
@@ -40,15 +41,6 @@ const GRIP_PITCH_PX: f32 = 5.0;
 pub const WINDOW_SELECTOR_HINT: &str = "How much market time the tape shows";
 /// The selector's name in the scene.
 pub const WINDOW_SELECTOR_NAME: &str = "Tape window";
-
-/// An axis-aligned box, in the window's points.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct FlowRect {
-    pub left: f32,
-    pub top: f32,
-    pub right: f32,
-    pub bottom: f32,
-}
 
 /// A flow pane's area, carved: the band, the row of side headers under it and the
 /// chart inside the frame. A pane too short for its chrome spends what it has on
