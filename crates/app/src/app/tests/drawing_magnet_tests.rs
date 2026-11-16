@@ -65,7 +65,7 @@ fn app_with_candles() -> (QuantickApp, mpsc::Receiver<FeedCommand>) {
     let tab_id = app.runtime.tabs.active_id();
     app.active_tab_mut().drain_feed(tab_id);
     assert_eq!(
-        app.active_tab().flow_pane.state.bars().len() as u64,
+        app.active_tab().flow_pane.series.state.bars().len() as u64,
         CLOSED_BARS
     );
     (app, cmd_rx)
@@ -210,7 +210,7 @@ fn shared_mirror_drag(rail: bool, own: bool) -> f64 {
     run_frame(&mut app, &ctx);
     let pane = app.active_tab().time_pane().expect("the split built it");
     let slot = pane.slots() - 3;
-    let high = pane.state.bars()[slot].high.to_f64().unwrap();
+    let high = pane.series.state.bars()[slot].high.to_f64().unwrap();
     let chart = pane.frame.chart_area.expect("the time pane drew");
     let history_right = pane.frame.candles_right.unwrap_or(chart.right());
     let x = pane

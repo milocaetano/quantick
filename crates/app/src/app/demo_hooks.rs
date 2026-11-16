@@ -157,7 +157,7 @@ pub(super) fn apply_venue_history_demo(app: &mut QuantickApp) {
     };
     let tab = app.active_tab_mut();
     // Wait for bars to sit the prefix in front of: a seam needs both sides.
-    if tab.flow_pane.state.bars().len() < 12 {
+    if tab.flow_pane.series.state.bars().len() < 12 {
         return;
     }
     app.chrome.harness.venue_history_demo_staged();
@@ -188,7 +188,7 @@ pub(super) fn deliver_synthetic_prefix(
 ) -> bool {
     let tab_id = app.runtime.tabs.active_id();
     let tab = app.active_tab_mut();
-    let Some(first) = tab.flow_pane.state.bars().first() else {
+    let Some(first) = tab.flow_pane.series.state.bars().first() else {
         return false;
     };
     let interval = quantick_feed::OHLCV_BASE_INTERVAL_MS;
@@ -596,7 +596,7 @@ pub(super) fn apply_frvp_demo(app: &mut QuantickApp) {
     };
     let facts = ProfileFacts {
         slots: pane.slots(),
-        prefix: pane.history_prefix.len(),
+        prefix: pane.series.history_prefix.len(),
     };
     let Some(ScenarioEffect::Profile(geometry)) = app
         .surfaces

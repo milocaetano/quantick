@@ -258,7 +258,7 @@ impl<'a> HealthSummary<'a> {
             worker_output_blocked = self.envelope.output_blocked,
             retained_trades = self.envelope.retained_trades,
             live_rate = self.envelope.live_rate,
-            bar_spec = self.tab.flow_pane.state.spec().summary(),
+            bar_spec = self.tab.flow_pane.series.state.spec().summary(),
             // Both facts the tape states about its own prices — the grid they
             // land on and the magnitude they land at — and the row width the
             // ladder ended up drawing from them. A validation run reads all
@@ -269,16 +269,16 @@ impl<'a> HealthSummary<'a> {
             tape_price_step = self
                 .tab
                 .flow_pane
-                .state
+                .series.state
                 .tape_price_step()
                 .map_or_else(|| "unknown".to_owned(), |step| step.to_string()),
             tape_reference_price = self
                 .tab
                 .flow_pane
-                .state
+                .series.state
                 .tape_reference_price()
                 .map_or_else(|| "unknown".to_owned(), |price| price.to_string()),
-            footprint_rows = %self.tab.flow_pane.state.footprint_group(),
+            footprint_rows = %self.tab.flow_pane.series.state.footprint_group(),
             canvas_layout = ?self.tab.canvas.layout,
             screen_pt_w = self.geometry.screen.x,
             screen_pt_h = self.geometry.screen.y,
@@ -287,7 +287,7 @@ impl<'a> HealthSummary<'a> {
             scale = self.geometry.scale,
             native_scale = self.geometry.native_scale,
             zoom_factor = self.geometry.zoom,
-            time_pane_spec = self.tab.time_pane().map(|pane| pane.state.spec().summary()),
+            time_pane_spec = self.tab.time_pane().map(|pane| pane.series.state.spec().summary()),
             time_pane_count = self.tab.time_panes.len(),
             // Drawings are a per-frame, O(objects) paint cost, and the shared
             // ones are additionally reprojected on every other pane of the

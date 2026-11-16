@@ -30,6 +30,11 @@ use quantick_paper::risk_sizing::RiskState;
 use quantick_sim::{Bracket, ClosedTrade, Command, EntryKind, Order, VenueEvent};
 use rust_decimal::Decimal;
 
+#[path = "paper_command.rs"]
+mod command;
+
+pub use command::{NOTHING_TO_REVERSE, TradeCommand, TradeOutcome};
+
 /// What a rebuilt timeline says when it flattened a position.
 const RESET_POSITION_TOAST: &str = "SIM position flattened - the timeline was rebuilt under it.";
 /// What a rebuilt timeline says when it swept resting orders.
@@ -181,43 +186,28 @@ impl<A: BorrowMut<PaperAccount>> TabPaper<A> {
         self.core_mut().seed(trade);
     }
 
-    /// A market order using the ticket's quantity and offsets. The ruler's
-    /// distance was for this trade, so an accepted entry puts it away; a
-    /// refused one was no trade, and the distance stays for the retry.
+    /// A market order using the ticket's quantity and offsets;
+    /// [`TradeCommand::Market`].
     pub fn market(&mut self, side: Side) {
-        let reference = self.core().mark_price().unwrap_or_default();
-        let Some(ticket) = self.parse_bracket(side, reference) else {
-            return;
-        };
-        let env = self.account_env(side, reference);
-        if self.core_mut().market(side, reference, ticket, &env) {
-            self.desk.ruler.clear();
-        }
+        self.send(TradeCommand::Market { side });
     }
 
-    /// Flip the open position: one market order for twice its size. The
-    /// account says which way and at what mark; the ticket resolves the
-    /// protection for that side, because the offsets are its text.
+    /// Flip the open position: one market order for twice its size;
+    /// [`TradeCommand::Reverse`].
     pub fn reverse_position(&mut self) {
-        let Some((side, reference)) = self.core().reverse_aim() else {
-            return;
-        };
-        let Some(bracket) = self.parse_bracket(side, reference) else {
-            return;
-        };
-        self.core_mut().reverse_position(bracket);
+        self.send(TradeCommand::Reverse);
     }
 
-    /// Close everything, now. Named on the tab as well as on the account
-    /// because `Iterator::flatten` otherwise wins method resolution on a
-    /// bare `.flatten()` and the shortcut stops closing the position.
+    /// Close everything, now; [`TradeCommand::Flatten`]. Named on the tab as
+    /// well as on the account because `Iterator::flatten` otherwise wins
+    /// method resolution on a bare `.flatten()`.
     pub fn flatten(&mut self) {
-        self.core_mut().flatten();
+        self.send(TradeCommand::Flatten);
     }
 
-    /// Close the open position at the market.
+    /// Close the open position at the market; [`TradeCommand::Close`].
     pub fn close_position(&mut self) {
-        self.core_mut().close_position();
+        self.send(TradeCommand::Close);
     }
 
     /// The source rebuilt its timeline (replay seek, feed/symbol switch,

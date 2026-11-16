@@ -61,7 +61,7 @@ fn the_bars_control_changes_only_its_own_pane_and_leaves_focus_alone() {
     run_frame(&mut app, &ctx);
     app.active_tab_mut().focus = PaneSide::Time(0);
     run_frame(&mut app, &ctx);
-    let time_before = *app.active_tab().time_panes[0].state.spec();
+    let time_before = *app.active_tab().time_panes[0].series.state.spec();
     let time_selected = app.active_tab().time_panes[0].spec.selected_id();
 
     let control = control_of(&app, &ctx, PaneSide::Flow);
@@ -80,10 +80,10 @@ fn the_bars_control_changes_only_its_own_pane_and_leaves_focus_alone() {
     let tab = app.active_tab();
     assert_eq!(tab.flow_pane.spec.selected_id(), "volume");
     assert!(
-        tab.flow_pane.state.spec().id() == "volume",
+        tab.flow_pane.series.state.spec().id() == "volume",
         "the chart rebuilt on what the header says"
     );
-    assert_eq!(tab.time_panes[0].state.spec(), &time_before);
+    assert_eq!(tab.time_panes[0].series.state.spec(), &time_before);
     assert_eq!(tab.time_panes[0].spec.selected_id(), time_selected);
     assert_eq!(tab.focus, PaneSide::Time(0));
 }
@@ -99,8 +99,8 @@ fn stacked_panes_each_own_their_menu_and_focus_never_moves() {
     app.active_tab_mut().focus = PaneSide::Flow;
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
-    let upper = *app.active_tab().time_panes[0].state.spec();
-    let flow = *app.active_tab().flow_pane.state.spec();
+    let upper = *app.active_tab().time_panes[0].series.state.spec();
+    let flow = *app.active_tab().flow_pane.series.state.spec();
 
     let control = control_of(&app, &ctx, PaneSide::Time(1));
     assert_ne!(control, control_of(&app, &ctx, PaneSide::Time(0)));
@@ -122,9 +122,9 @@ fn stacked_panes_each_own_their_menu_and_focus_never_moves() {
     run_frame(&mut app, &ctx);
 
     let tab = app.active_tab();
-    assert_eq!(tab.time_panes[1].state.spec().id(), "volume");
-    assert_eq!(tab.time_panes[0].state.spec(), &upper);
-    assert_eq!(tab.flow_pane.state.spec(), &flow);
+    assert_eq!(tab.time_panes[1].series.state.spec().id(), "volume");
+    assert_eq!(tab.time_panes[0].series.state.spec(), &upper);
+    assert_eq!(tab.flow_pane.series.state.spec(), &flow);
     assert_eq!(tab.focus, PaneSide::Flow);
 }
 
@@ -792,7 +792,7 @@ fn charted_fixture(ctx: &egui::Context) -> (QuantickApp, impl Sized) {
 /// What the candles show: their zoom and where their right edge is.
 fn candle_viewport(app: &QuantickApp) -> (f32, f32) {
     let pane = &app.active_tab().flow_pane;
-    let total = pane.state.bars().len() + usize::from(pane.state.partial().is_some());
+    let total = pane.series.state.bars().len() + usize::from(pane.series.state.partial().is_some());
     (
         pane.model.viewport.px_per_bar(),
         pane.model.viewport.right_edge_bar(total),

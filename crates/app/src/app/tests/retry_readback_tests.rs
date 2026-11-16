@@ -1044,7 +1044,7 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
             "market.open" => json!({
                 "feed": app.active_tab().feed_id,
                 "symbol": app.active_tab().symbol,
-                "bar": app.active_tab().flow_pane.state.spec().to_config_string(),
+                "bar": app.active_tab().flow_pane.series.state.spec().to_config_string(),
                 "workspace": app.runtime.workspace.book.tab_row(app.runtime.tabs.active_id()).0,
             }),
             "catalog.remove" => {

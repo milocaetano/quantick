@@ -9,6 +9,7 @@
 use eframe::egui;
 use quantick_control_handlers::market_palette::MarketPaletteHost as _;
 use quantick_engine::Side;
+use quantick_session::paper::TradeCommand;
 
 use crate::app::indicator_manager::IndicatorEdit;
 use crate::indicator_worker::SlotId;
@@ -152,6 +153,11 @@ impl QuantickApp {
         crate::tab::layout::pick(self.active_tab_mut(), preset);
     }
 
+    /// One trade, sent to the active tab's desk as every surface sends it.
+    pub(in crate::app) fn trade(&mut self, command: TradeCommand) {
+        self.active_tab_mut().paper.send(command);
+    }
+
     /// One toolbar side effect.
     pub(in crate::app) fn apply_toolbar_action(&mut self, action: ToolbarAction) {
         match action {
@@ -243,10 +249,10 @@ impl QuantickApp {
             }
             // The toolbar acts on the market it is showing: the active tab's
             // simulator, whose tape the buttons' price came from.
-            ToolbarAction::PaperBuy => self.active_tab_mut().paper.market(Side::Buy),
-            ToolbarAction::PaperSell => self.active_tab_mut().paper.market(Side::Sell),
-            ToolbarAction::PaperClose => self.active_tab_mut().paper.close_position(),
-            ToolbarAction::PaperReverse => self.active_tab_mut().paper.reverse_position(),
+            ToolbarAction::PaperBuy => self.trade(TradeCommand::Market { side: Side::Buy }),
+            ToolbarAction::PaperSell => self.trade(TradeCommand::Market { side: Side::Sell }),
+            ToolbarAction::PaperClose => self.trade(TradeCommand::Close),
+            ToolbarAction::PaperReverse => self.trade(TradeCommand::Reverse),
         }
     }
 }

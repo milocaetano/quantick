@@ -386,7 +386,10 @@ impl Tab {
         let feed = self.connection.state();
         self.tape_mut().observe_market(feed);
         let spoken = self.connection.spoken_link(now_ms);
-        let (view, state) = (self.flow_pane.orderflow.as_mut(), &self.flow_pane.state);
+        let (view, state) = (
+            self.flow_pane.orderflow.as_mut(),
+            &self.flow_pane.series.state,
+        );
         view.expect("the flow pane keeps a tape")
             .hold_tape_window(spoken, state);
     }
@@ -696,7 +699,7 @@ impl Tab {
             .map(|tape| tape.capture_grouping_now())
         {
             for pane in time_panes.iter_mut() {
-                pane.state.set_footprint_group(base);
+                pane.series.state.set_footprint_group(base);
             }
         }
         // Context panes carry addresses `1..`, the flow pane `0` — the order

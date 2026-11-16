@@ -1,0 +1,3 @@
+# #1043: the live-trade plan runs in `quantick_session::live_trade`; the window only performs its effects.
+crates/app -15
+!budget -15

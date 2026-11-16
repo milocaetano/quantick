@@ -1,0 +1,3 @@
+# #1042: the pane series logic moved into `quantick_session::series`, returning view effects.
+crates/app -70
+!budget -70

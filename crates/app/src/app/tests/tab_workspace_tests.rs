@@ -1191,7 +1191,7 @@ fn a_workspace_switch_restores_the_timeframes_it_saved() {
     };
     let shown = |app: &QuantickApp| {
         let tab = app.active_tab();
-        let rule = |pane: &crate::pane::ChartPane| pane.state.spec().to_config_string();
+        let rule = |pane: &crate::pane::ChartPane| pane.series.state.spec().to_config_string();
         (rule(&tab.flow_pane), rule(&tab.time_panes[0]))
     };
     put(&mut app, "tick:2000", "time:300000");
@@ -1230,6 +1230,7 @@ fn a_new_tab_on_a_market_opens_on_the_timeframe_it_remembers() {
         .expect("the time pane takes it");
     frames(&mut app, 2);
     let shown = app.active_tab().time_panes[0]
+        .series
         .state
         .spec()
         .to_config_string();
@@ -1252,7 +1253,7 @@ fn a_new_tab_on_a_market_opens_on_the_timeframe_it_remembers() {
         .time_panes
         .first()
         .expect("a context chart");
-    assert_eq!(opened.state.spec().to_config_string(), shown);
+    assert_eq!(opened.series.state.spec().to_config_string(), shown);
 }
 
 /// Autosave off: closing a chip whose tab holds edits asks first, and Enter

@@ -70,7 +70,7 @@ fn with_feed<R>(
             ladder: book.and_then(|book| book.1).zip(at_ms),
             earlier: None,
             fallback_tick: book.map(|book| book.2).unwrap_or_default(),
-            trades: pane.state.trades(),
+            trades: pane.series.state.trades(),
             setup: &setup,
             base_unit: &base_unit,
             tz,

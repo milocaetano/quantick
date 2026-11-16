@@ -22,6 +22,7 @@ use quantick_paper::report::ledger_state::{LedgerView, LedgerViewChange};
 use quantick_paper::report::session_edit::{
     JournalEdit, JournalEditOutcome, JournalScope, SessionEditError,
 };
+use quantick_session::paper::{TradeCommand, TradeOutcome};
 use quantick_session::{HistoryAct, HistoryOutcome, HistoryReply};
 
 use crate::app::control_host::ControlPort;
@@ -192,22 +193,14 @@ impl TradeDesk for PaperTrading {
     fn set_ruler_ticks(&mut self, ticks: u32) {
         (**self).set_ruler_ticks(ticks);
     }
-    fn clear_ruler(&mut self) {
-        (**self).clear_ruler();
+    fn execute(&mut self, command: TradeCommand) -> TradeOutcome {
+        (**self).execute(command)
     }
     fn mark_price(&self) -> Option<rust_decimal::Decimal> {
         (**self).mark_price()
     }
     fn working_orders(&self) -> &[quantick_sim::Order] {
         (**self).working_orders()
-    }
-    fn armed_bracket(
-        &self,
-        side: quantick_engine::Side,
-        reference: rust_decimal::Decimal,
-        quantity: rust_decimal::Decimal,
-    ) -> quantick_sim::Bracket {
-        (**self).armed_bracket(side, reference, quantity)
     }
     fn risk_report(&self) -> (quantick_paper::risk_sizing::RiskState, bool) {
         (**self).risk_report()

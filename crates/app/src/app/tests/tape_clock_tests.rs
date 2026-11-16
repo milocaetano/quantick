@@ -93,12 +93,14 @@ fn a_tape_with_nothing_coming_holds_its_window_until_the_link_or_a_print_frees_i
     let tab = app.active_tab_mut();
     tab.ingest_live_trade_at(&print, 10_000);
     tab.update_tape_clock_at(10_000);
-    let window = tab.tape().live_lane_window_ms(tab.flow_pane.state.bars());
+    let window = tab
+        .tape()
+        .live_lane_window_ms(tab.flow_pane.series.state.bars());
     let cap = at + window * 45 / 100;
     let hold = |tab: &mut crate::tab::Tab, link| {
         let pane = &mut tab.flow_pane;
         let view = pane.orderflow.as_mut().unwrap();
-        view.hold_tape_window(Some(link), &pane.state);
+        view.hold_tape_window(Some(link), &pane.series.state);
     };
 
     tab.update_tape_clock_at(11_000);
@@ -136,7 +138,7 @@ fn a_tape_with_nothing_coming_holds_its_window_until_the_link_or_a_print_frees_i
 fn time_left(app: &QuantickApp) -> Option<i64> {
     let tab = app.active_tab();
     let clock_ms = tab.tape().market_now_ms();
-    match tab.flow_pane.state.bar_progress_at(clock_ms)? {
+    match tab.flow_pane.series.state.bar_progress_at(clock_ms)? {
         quantick_chart::bar_progress::BarProgressReading::Remaining { remaining_ms, .. } => {
             Some(remaining_ms)
         }

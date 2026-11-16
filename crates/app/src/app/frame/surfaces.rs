@@ -108,7 +108,7 @@ pub(super) fn draw_surfaces(
             focused_tab
                 .sides()
                 .filter(|side| {
-                    let reading = focused_tab.pane(*side).state.bar_progress_at(None);
+                    let reading = focused_tab.pane(*side).series.state.bar_progress_at(None);
                     reading
                         .and_then(BarProgressReading::fixed_progress)
                         .is_some()
@@ -169,7 +169,7 @@ pub(super) fn draw_surfaces(
                 } else {
                     "Time"
                 },
-                editor_pane.state.spec().to_config_string(),
+                editor_pane.series.bar_config(),
                 editor_pane.id
             )
         };

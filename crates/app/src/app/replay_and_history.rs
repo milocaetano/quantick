@@ -264,6 +264,7 @@ impl Harness {
         // The ending's real sentence, from the chart's real oldest print.
         let oldest = tab
             .flow_pane
+            .series
             .state
             .trades()
             .first()

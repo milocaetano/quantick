@@ -99,7 +99,7 @@ impl ChartPaneSource for PaneRead<'_> {
         self.pane.id
     }
     fn state(&self) -> &ChartState {
-        &self.pane.state
+        &self.pane.series.state
     }
     fn pagination_revision(&self) -> u64 {
         self.pane.pagination_revision()
@@ -114,7 +114,7 @@ impl ChartPaneSource for PaneRead<'_> {
         self.pane.closed_bar(slot)
     }
     fn venue_prefix(&self) -> &[Bar] {
-        &self.pane.history_prefix
+        &self.pane.series.history_prefix
     }
     fn slot_open_time(&self, slot: usize) -> Option<i64> {
         self.pane.slot_open_time(slot)
@@ -135,7 +135,7 @@ impl ChartPaneSource for PaneRead<'_> {
         provenance_context(self.tab, self.config)
     }
     fn venue_candles(&self) -> Option<quantick_session::SeriesStatus> {
-        (self.tab.session).candle_status(self.pane.state.spec().time_interval_ms())
+        (self.tab.session).candle_status(self.pane.series.state.spec().time_interval_ms())
     }
 }
 

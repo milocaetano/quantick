@@ -326,19 +326,29 @@ impl PaperAccount {
         ticket: Bracket,
         env: &AccountEnv,
     ) -> bool {
+        self.market_events(side, reference, ticket, env).is_some()
+    }
+
+    /// [`Self::market`], answering with what the venue did: `None` when the
+    /// entry was refused before it reached the venue, the reason posted.
+    pub fn market_events(
+        &mut self,
+        side: Side,
+        reference: Decimal,
+        ticket: Bracket,
+        env: &AccountEnv,
+    ) -> Option<Vec<VenueEvent>> {
         // The same three sources the aim reads, in the same order. A button
         // sitting directly under the Strategy row must not place a bare
         // order while that row says a ladder is armed. The size comes from
         // the same call, so the risk per trade governs a toolbar press as
         // much as it governs the aim.
-        let Some((quantity, bracket)) = self.entry_size(side, reference, ticket, env) else {
-            return false;
-        };
+        let (quantity, bracket) = self.entry_size(side, reference, ticket, env)?;
         let events = self
             .venue
             .submit(OrderIntent::market(side, quantity).with_bracket(bracket));
-        self.handle_events(events);
-        true
+        self.handle_events(events.clone());
+        Some(events)
     }
 
     /// Feed one live print through the simulator and act on what it did.
@@ -458,9 +468,9 @@ impl PaperAccount {
 
     /// The acknowledgement waiting, if any, left where it is.
     ///
-    /// Test support, published on purpose: a host's tests assert on what
-    /// the account said without draining the slot the host's own frame
-    /// loop drains. Production reads the outbox with [`Self::take_toast`].
+    /// A host's tests assert on what the account said without draining the
+    /// slot the host's own frame loop drains, and a trade command answers a
+    /// refusal with the words just posted. Draining is [`Self::take_toast`].
     #[must_use]
     pub fn peek_toast(&self) -> Option<&String> {
         self.outbox.toast.as_ref()
@@ -722,15 +732,17 @@ impl PaperAccount {
 
     /// Exit the open position at the next print — the toolbar's close
     /// button, the HUD's, and the Trading tab's all funnel here.
-    pub fn close_position(&mut self) {
+    pub fn close_position(&mut self) -> Vec<VenueEvent> {
         let events = self.venue.close(CloseAmount::All);
-        self.handle_events(events);
+        self.handle_events(events.clone());
+        events
     }
 
     /// Close the position and cancel every pending order.
-    pub fn flatten(&mut self) {
+    pub fn flatten(&mut self) -> Vec<VenueEvent> {
         let events = self.venue.flatten();
-        self.handle_events(events);
+        self.handle_events(events.clone());
+        events
     }
 
     /// `Close 1 LONG` while a position is open — the toolbar's exit button
