@@ -251,7 +251,11 @@ fn the_selected_row_s_summary_reads_on_its_fill() {
         let summary = summary.expect("a summary");
         let [r, g, b] = back.rgb.expect("its own colour's tint");
         let fill = quantick_appearance::PremultipliedRgba::from_rgb(r, g, b);
-        let ratio = contrast_ratio(theme.color(summary.ink), fill);
+        let ink = summary.rgb.map_or_else(
+            || theme.color(summary.ink),
+            |[r, g, b]| quantick_appearance::PremultipliedRgba::from_rgb(r, g, b),
+        );
+        let ratio = contrast_ratio(ink, fill);
         assert!(ratio >= 4.5, "{}: {ratio}", theme.name);
     }
 }

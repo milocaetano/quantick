@@ -68,34 +68,52 @@ fn a_custom_colour_below_the_floor_falls_back_to_the_tabs_ink() {
 }
 
 /// Every workspace row, in menu B and in Manage, is tinted toward its own
-/// colour: at rest, hovered and current (about twice the rest). The name and
-/// the summary read 4.5:1 on each, and the current row stands apart from a
-/// row of the same colour at rest.
+/// colour: at rest, hovered and current. The name and the summary, in the
+/// ink [`row_ink`] chooses for the fills the row can wear, read 4.5:1 on
+/// each, and the current row stands apart from a row of the same colour at
+/// rest.
 #[test]
 fn every_row_tint_keeps_its_words_at_four_and_a_half_to_one() {
-    use quantick_appearance::workspace_menu::{RowTint, row_fill};
+    use quantick_appearance::workspace_menu::{RowTint, chrome, row_fill, row_ink};
     for dark in [true, false] {
         let theme = ResolvedTheme::bundled(dark);
-        let inks = [Token::TextPrimary, Token::TextSupport].map(|token| theme.color(token));
+        let menu = chrome(dark);
         for colour in presets() {
             let shade = |tint| row_fill(colour.rgb(dark), dark, tint);
-            for tint in [RowTint::Rest, RowTint::Hover, RowTint::Current] {
-                for ink in inks {
-                    let ratio = contrast_ratio(ink, rgb(shade(tint)));
-                    assert!(
-                        ratio >= 4.5,
-                        "{} dark {dark} {tint:?}: {ratio}",
-                        colour.name()
-                    );
+            let worn = [
+                vec![shade(RowTint::Rest), shade(RowTint::Hover)],
+                vec![shade(RowTint::Current)],
+            ];
+            for fills in &worn {
+                for token in [menu.ink, menu.support] {
+                    let ink = row_ink(fills, dark, token).map_or_else(|| theme.color(token), rgb);
+                    for fill in fills {
+                        let ratio = contrast_ratio(ink, rgb(*fill));
+                        assert!(
+                            ratio >= 4.5,
+                            "{} dark {dark} {token:?}: {ratio}",
+                            colour.name()
+                        );
+                    }
                 }
             }
             let (now, rest) = (shade(RowTint::Current), shade(RowTint::Rest));
             let apart = (0..3).map(|at| now[at].abs_diff(rest[at])).max();
             assert!(
-                apart >= Some(3),
+                apart >= Some(8),
                 "{} dark {dark}: current stands apart",
                 colour.name()
             );
         }
     }
+}
+
+/// The trader asked to see each row's colour, as the selected row shows
+/// it: the rest tint is at least 12%, hover and current stronger.
+#[test]
+fn every_row_wears_its_colour_visibly() {
+    use quantick_appearance::workspace_menu::RowTint;
+    assert!(RowTint::Rest.share() >= 0.12);
+    assert!(RowTint::Hover.share() > RowTint::Rest.share());
+    assert!(RowTint::Current.share() > RowTint::Hover.share());
 }

@@ -500,3 +500,37 @@ fn a_palette_press_is_routed_to_its_place() {
         WorkspaceCommand::NameColour(ColourIntent::Close)
     );
 }
+
+/// Manage tints each row toward its colour as menu B does, and words whose
+/// ink would fall under 4.5:1 on its rest or hover fill take the one ink
+/// [`row_ink`] chooses: the summary beside Scalp's name in Dark.
+#[test]
+fn every_row_wears_its_colour_and_its_words_read_on_it() {
+    use quantick_appearance::workspace_menu::{RowTint, chrome, row_fill, row_ink};
+    use quantick_stores::workspaces::WorkspaceColour;
+    let shown = view(&ManageDialog::new(1), true);
+    let sky = WorkspaceColour::preset(2).unwrap().rgb(true);
+    let fills = [RowTint::Rest, RowTint::Hover].map(|tint| row_fill(sky, true, tint));
+    let at = (shown.list.iter()).position(|piece| {
+        piece
+            .row
+            .as_ref()
+            .is_some_and(|row| row.scene_id() == "manage_workspaces.Scalp.name")
+    });
+    let summary = &shown.list[at.expect("Scalp's name") + 1];
+    let Some(Mark::Text(words)) = summary.marks.first() else {
+        panic!("the summary")
+    };
+    assert_eq!(words.rgb, row_ink(&fills, true, chrome(true).support));
+    assert!(
+        words.rgb.is_some(),
+        "the support ink steps up on Sky's tint"
+    );
+    let band = (shown.list.iter()).find_map(|piece| match piece.marks.first() {
+        Some(Mark::Box(plate)) if piece.row.as_ref().is_some_and(|row| row.label == "Scalp") => {
+            plate.rgb
+        }
+        _ => None,
+    });
+    assert_eq!(band, Some(fills[0]), "Scalp's own colour at rest");
+}
