@@ -9,16 +9,15 @@
 use super::arrangement_adapter::StripAsk;
 use super::{GatewayPort, LayersPort, LayoutPort};
 use crate::orderflow_panel as panel;
+use crate::surfaces::MarketPaletteSurface;
 use crate::surfaces::replay_browser::ReplayBrowserExt as _;
 use crate::surfaces::toast;
 use crate::toolrail::ToolRailExt as _;
 use crate::{chart_layers::shortcuts, tabstrip::TabAction, timezone::TzOffset};
-use crate::{surfaces::ChartSettingsTab::Candles, surfaces::MarketPaletteSurface};
 use eframe::egui;
 use quantick_control_schema::settings_sections::SettingsSection;
 use quantick_session::paper::TradeCommand;
 use quantick_session::{close_queue::CloseScope, workspace_menu::WorkspaceCommand};
-use quantick_ui_model::access_panel::Intent as AccessPanelIntent;
 use quantick_ui_model::market_palette::Intent as PaletteIntent;
 use std::time::Instant;
 
@@ -27,8 +26,8 @@ pub(super) use commands::MenuCommand;
 pub(in crate::app) use menus::{MenuDoor, WindowMenuState};
 
 mod commands;
+mod help_window;
 mod menus;
-mod settings_window;
 mod workspace_dialogs;
 mod workspace_rows;
 
@@ -281,7 +280,7 @@ impl QuantickApp {
             commands.push(MenuCommand::OpenSettings(SettingsSection::AgentAccess));
         }
         draw_window_menu(self, ctx, &mut commands);
-        settings_window::show(self, ctx, &mut commands);
+        help_window::show(self, ctx);
         self.chrome.window_menu.dialog_rows = workspace_dialogs::dialogs(self, ctx, &mut commands);
         // The close prompt: an answer settles its tab, an exit's last answer closes the app.
         let focused = self.runtime.tabs.windows().focused();
@@ -375,16 +374,6 @@ impl QuantickApp {
             MenuCommand::ToggleToolbox => self.surfaces.toolrail.toggle_visible(),
             MenuCommand::OpenDockTab(tab) => self.surfaces.dock.open_tab(tab),
             MenuCommand::OpenOrderFlowPanel(s) => panel::open_on(self.active_tab_mut(), s),
-            MenuCommand::SetShowPerf(show) => self.health.show_perf = show,
-            MenuCommand::SetProgressiveHistory(on) => self.runtime.history.progressive_history = on,
-            MenuCommand::SetVenueLeadIn(on) => self.runtime.history.venue_lead_in = on,
-            MenuCommand::SetTimezone(tz) => self.runtime.tz = tz,
-            MenuCommand::OpenAppearance => self.layer_wiring().open_settings(Candles),
-            MenuCommand::OpenAgentAccess => {
-                if self.control.control_access.is_some() {
-                    self.surfaces.access_panel.update(AccessPanelIntent::Open);
-                }
-            }
             MenuCommand::OpenReplayFormatHelp => self.surfaces.replay_browser.open_format_help(),
             // Carried out by `apply_menu_command_on`, which knows the window.
             MenuCommand::ToggleWindowMenu
@@ -479,7 +468,7 @@ fn apply_menu_command_on(app: &mut QuantickApp, ctx: &egui::Context, command: Me
     match command {
         MenuCommand::ToggleWindowMenu => app.chrome.window_menu.toggle(viewport, true),
         MenuCommand::OpenSettings(section) => {
-            app.chrome.window_menu.open_settings(viewport, section);
+            super::chrome::settings::open(app, viewport, section);
         }
         MenuCommand::OpenHelp(page) => {
             app.chrome.window_menu.windows_viewport = Some(viewport);

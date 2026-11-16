@@ -286,16 +286,15 @@ fn declaration(window: &str) -> &str {
 /// counted instead: a new one changes this number and fails the guard, which
 /// sends the author to this module to say which behaviour it belongs to. They
 /// are the legend and context-chart switches; the layout, preset and recent-file
-/// lists; the table's row and workspace-list labels; the two buttons Settings names from
+/// lists; the table's row and workspace-list labels; the one button Settings names from
 /// its own table; and the two `Chart N up` / `Chart N down` entries.
-pub(crate) const COMPUTED_MENU_LABELS: usize = 11;
+pub(crate) const COMPUTED_MENU_LABELS: usize = 10;
 
 /// The actual owners that render the menu bar and its workspace file actions.
 const MENU_SOURCES: &[&str] = &[
-    "crates/app/src/theme/choice.rs",
     "crates/app/src/app/menu_bar.rs",
     "crates/ui-model/src/chrome/menu_bar.rs",
-    "crates/app/src/app/menu_bar/settings_window.rs",
+    "crates/app/src/surfaces/settings_window.rs",
 ];
 
 /// The menu bar's own labels, and the count of the ones it computes.

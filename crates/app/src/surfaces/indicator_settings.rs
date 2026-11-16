@@ -1,9 +1,9 @@
 //! Registered addressed indicator editor; the borrowed host retains IO and style authority.
-use super::{Adapter, BorrowedSurfaceEnv, HostEffect, SurfaceEnv, SurfaceResponse, ViewContext};
+use super::{Adapter, BorrowedSurfaceEnv, HostEffect, SurfaceResponse, ViewContext};
 use crate::indicators::state_file::{SavedInput, SavedInputExt};
 use quantick_indicators::InputSpec;
 use quantick_ui_model::indicator_settings::{
-    DEFAULT_PRESET, Effects, Intent, LocalOperation, Model, State,
+    DEFAULT_PRESET, Effects, Intent, LocalOperation, Model,
 };
 use quantick_ui_model::{Slot, UpdateSession};
 
@@ -14,14 +14,6 @@ pub(crate) struct View;
 impl super::View<Model> for View {
     fn id(&self) -> &'static str {
         "indicator_settings"
-    }
-    fn paint(
-        &mut self,
-        _: &State,
-        _: &mut ViewContext<'_>,
-        _: Option<&SurfaceEnv<'_>>,
-    ) -> Option<Intent> {
-        None
     }
     fn paint_borrowed(
         &mut self,

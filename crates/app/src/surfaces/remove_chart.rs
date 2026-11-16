@@ -9,22 +9,13 @@ use quantick_workspace::canvas::{RemoveAnswer, RemovePrompt};
 
 use crate::pane_menu::{PaneMenus, danger_ink};
 use crate::theme;
-use quantick_ui_model::remove_chart::{Effects, Intent, Model, State};
+use quantick_ui_model::remove_chart::{Effects, Intent, Model};
 
 #[derive(Default)]
 pub(crate) struct View;
 impl super::View<Model> for View {
     fn id(&self) -> &'static str {
         "remove_chart"
-    }
-    fn paint(
-        &mut self,
-        _: &State,
-        _: &mut super::ViewContext<'_>,
-        _: Option<&super::SurfaceEnv<'_>>,
-    ) -> Option<Intent> {
-        // Canvas-local geometry and prompt are borrowed at settle_canvas.
-        None
     }
 }
 

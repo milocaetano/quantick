@@ -7,13 +7,11 @@
 //! the active tab collapses, clicking any other switches. The L2 and Bubbles
 //! settings live in the flow pane's own panel, [`crate::orderflow_panel`].
 
-use super::{
-    BorrowedSurfaceEnv, PaperPanelEffects, PaperPanelEnv, SurfaceEnv, SurfaceResponse, ViewContext,
-};
+use super::{BorrowedSurfaceEnv, PaperPanelEffects, PaperPanelEnv, SurfaceResponse, ViewContext};
 use eframe::egui;
 use egui_phosphor::regular as icons;
 use quantick_engine::Side;
-use quantick_ui_model::dock::{Intent, Model, State};
+use quantick_ui_model::dock::{Intent, Model};
 use quantick_ui_model::{Slot, UpdateSession};
 use quantick_workspace::dock::{DOCK_MAX_WIDTH, DOCK_MIN_WIDTH, DockTab};
 
@@ -284,14 +282,6 @@ pub(crate) struct View;
 impl super::View<Model> for View {
     fn id(&self) -> &'static str {
         "dock"
-    }
-    fn paint(
-        &mut self,
-        _: &State,
-        _: &mut ViewContext<'_>,
-        _: Option<&SurfaceEnv<'_>>,
-    ) -> Option<Intent> {
-        None
     }
     fn paint_borrowed(
         &mut self,

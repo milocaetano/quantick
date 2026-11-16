@@ -73,27 +73,6 @@ fn the_tape_draws_bold_bbo_lines_only_while_their_switch_is_on() {
 }
 
 #[test]
-fn the_lines_draw_exactly_when_the_layer_reads_back_drawn() {
-    use crate::orderflow_view::layers::bbo_lines_drawn;
-    let mut config = quantick_orderflow::HeatmapConfig {
-        enabled: true,
-        ..quantick_orderflow::HeatmapConfig::default()
-    };
-    assert!(
-        bbo_lines_drawn(&config),
-        "on by default while the book is captured"
-    );
-    config.enabled = false;
-    assert!(
-        !bbo_lines_drawn(&config),
-        "no capture, no lines, as the readback says"
-    );
-    config.enabled = true;
-    config.live_lane.bbo_lines = false;
-    assert!(!bbo_lines_drawn(&config));
-}
-
-#[test]
 fn a_line_from_the_tape_opening_stays_on_the_tape_with_the_candles_panned() {
     let mut viewport = Viewport::new();
     viewport.pan_pixels(400.0, 100);

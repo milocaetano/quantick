@@ -1,7 +1,7 @@
 //! Borrowed recovery popup painting; the registered model owns its lifetime.
 use crate::feed_notice::{self, NoticeAction, Report};
 use eframe::egui;
-use quantick_ui_model::feed_notice::{Intent, Model, State};
+use quantick_ui_model::feed_notice::{Intent, Model};
 
 pub(crate) type FeedNoticeSurface = super::Adapter<Model, View>;
 
@@ -11,15 +11,6 @@ pub(crate) use FeedNoticeView as View;
 impl super::View<Model> for View {
     fn id(&self) -> &'static str {
         "feed_notice"
-    }
-    fn paint(
-        &mut self,
-        _: &State,
-        _: &mut super::ViewContext<'_>,
-        _: Option<&super::SurfaceEnv<'_>>,
-    ) -> Option<Intent> {
-        // The existing canvas pass supplies report and geometry by borrow.
-        None
     }
 }
 pub(crate) fn effects((): ()) -> super::SurfaceResponse {

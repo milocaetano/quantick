@@ -285,14 +285,6 @@ impl super::View<quantick_ui_model::drawing_chrome::Model> for View {
     fn id(&self) -> &'static str {
         "drawing_chrome"
     }
-    fn paint(
-        &mut self,
-        _: &quantick_ui_model::drawing_chrome::State,
-        _: &mut super::ViewContext<'_>,
-        _: Option<&super::SurfaceEnv<'_>>,
-    ) -> Option<quantick_ui_model::drawing_chrome::Intent> {
-        None
-    }
 }
 pub(crate) fn effects(effects: DrawingChromeAsk) -> super::SurfaceResponse {
     if effects == DrawingChromeAsk::default() {

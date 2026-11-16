@@ -836,14 +836,6 @@ impl crate::surfaces::View<Model> for View {
     fn id(&self) -> &'static str {
         "drawing_toolrail"
     }
-    fn paint(
-        &mut self,
-        _: &State,
-        _: &mut crate::surfaces::ViewContext<'_>,
-        _: Option<&crate::surfaces::SurfaceEnv<'_>>,
-    ) -> Option<Intent> {
-        None
-    }
     fn paint_updated(
         &mut self,
         session: &mut UpdateSession<'_, Model>,

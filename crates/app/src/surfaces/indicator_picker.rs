@@ -58,14 +58,6 @@ impl super::View<Model> for View {
             None
         }
     }
-    fn paint(
-        &mut self,
-        _: &State,
-        _: &mut ViewContext<'_>,
-        _: Option<&SurfaceEnv<'_>>,
-    ) -> Option<Intent> {
-        None
-    }
     fn paint_updated(
         &mut self,
         session: &mut UpdateSession<'_, Model>,

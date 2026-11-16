@@ -67,3 +67,4 @@ pub(in crate::app) mod capsule;
 pub(in crate::app) mod toolbar;
 
 pub(in crate::app) mod menu_bar;
+pub(in crate::app) mod settings;

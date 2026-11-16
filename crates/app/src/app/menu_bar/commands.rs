@@ -12,7 +12,6 @@ use quantick_session::workspace_menu::WorkspaceCommand;
 use crate::canvas_layout::LayoutPreset;
 use crate::dock::DockTab;
 use crate::layout_strip::StripAction;
-use crate::timezone::TzOffset;
 use crate::toolrail::ToolboxDock;
 
 use super::{
@@ -63,12 +62,6 @@ pub(in crate::app) enum MenuCommand {
     OpenDockTab(DockTab),
     /// Open the order-flow panel on a section.
     OpenOrderFlowPanel(crate::ui_state::PanelSection),
-    SetShowPerf(bool),
-    SetProgressiveHistory(bool),
-    SetVenueLeadIn(bool),
-    SetTimezone(TzOffset),
-    OpenAppearance,
-    OpenAgentAccess,
     OpenReplayFormatHelp,
     /// `F10`: open or close the `⋮` window menu.
     ToggleWindowMenu,

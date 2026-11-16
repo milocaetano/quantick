@@ -55,7 +55,7 @@ fn settings_open_needs_a_grant_shows_each_section_and_the_scene_says_which() {
 
     let (denied, _) = unkeyed_call(&mut app, &mut observer, CAPABILITY, json!({}));
     assert_eq!(failure(&denied).code.as_str(), codes::PERMISSION_DENIED);
-    assert!(!app.chrome.window_menu.settings_open);
+    assert!(app.surfaces.settings_window.model_state.shown().is_none());
 
     let (shown, _) = unkeyed_call(&mut app, &mut client, CAPABILITY, json!({}));
     assert_eq!(success_result(&shown)["section"], "display");
@@ -67,7 +67,10 @@ fn settings_open_needs_a_grant_shows_each_section_and_the_scene_says_which() {
         let input = json!({ "section": token });
         let (shown, _) = unkeyed_call(&mut app, &mut client, CAPABILITY, input);
         assert_eq!(success_result(&shown)["section"], token);
-        assert_eq!(app.chrome.window_menu.settings_section, section);
+        assert_eq!(
+            app.surfaces.settings_window.model_state.shown(),
+            Some(section)
+        );
         let scene = observer_scene(&app);
         assert_eq!(
             scene_control(&scene, section.control_id())["selected"],
@@ -89,7 +92,10 @@ fn a_connection_cannot_bring_up_the_agent_access_section() {
         error.context.details.as_ref().unwrap()["code"],
         AGENT_ACCESS_REFUSED_CODE
     );
-    assert!(!app.chrome.window_menu.settings_open, "nothing came up");
+    assert!(
+        app.surfaces.settings_window.model_state.shown().is_none(),
+        "nothing came up"
+    );
     disable_test_gateway(&mut app, &ctx);
 }
 
@@ -252,7 +258,7 @@ fn the_agent_on_pill_is_amber_and_opens_agent_access() {
     click_sized(&mut app, &ctx, TEST_WINDOW, pill.center());
     run_frame(&mut app, &ctx);
     assert_eq!(
-        app.chrome.window_menu.settings_shown(),
+        app.surfaces.settings_window.model_state.shown(),
         Some(SettingsSection::AgentAccess)
     );
     let output = run_frame(&mut app, &ctx);

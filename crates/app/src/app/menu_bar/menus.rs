@@ -1,7 +1,7 @@
 //! Native window menu geometry and settings/dialog host state.
 use eframe::egui;
 use quantick_control_handlers::workspace_book::cell_menu::{CellMenuCache, CellRow};
-use quantick_control_schema::{settings_sections::SettingsSection, window_menu::HelpPage};
+use quantick_control_schema::window_menu::HelpPage;
 
 /// The button the menu hangs from. Both open the same menu; the door only
 /// decides where it drops and which way its submenus open.
@@ -18,9 +18,6 @@ pub(in crate::app) struct WindowMenuState {
     pub(in crate::app) toolbar_door: Option<egui::Rect>,
     /// The window Settings and Help opened on, apart from the menu's own.
     pub(in crate::app) windows_viewport: Option<egui::ViewportId>,
-    pub(in crate::app) settings_open: bool,
-    /// The section Settings shows; the section list and every door write it.
-    pub(in crate::app) settings_section: SettingsSection,
     pub(in crate::app) help: Option<HelpPage>,
     /// The chip's menu, the armed delete and the name dialog.
     pub(in crate::app) tab_workspace: quantick_session::workspace_menu::WorkspaceMenuState,
@@ -31,22 +28,6 @@ pub(in crate::app) struct WindowMenuState {
 }
 
 impl WindowMenuState {
-    /// The section on screen, while Settings is up.
-    pub(in crate::app) fn settings_shown(&self) -> Option<SettingsSection> {
-        self.settings_open.then_some(self.settings_section)
-    }
-
-    /// Bring Settings up on `section`, on this window.
-    pub(in crate::app) fn open_settings(
-        &mut self,
-        viewport: egui::ViewportId,
-        section: SettingsSection,
-    ) {
-        self.windows_viewport = Some(viewport);
-        self.settings_open = true;
-        self.settings_section = section;
-    }
-
     /// Open or close the menu on this window. Opened from the keyboard, its first
     /// row is ready for the keys; opened by the mouse, no row wears a focus ring.
     pub(in crate::app) fn toggle(&mut self, viewport: egui::ViewportId, by_keyboard: bool) {

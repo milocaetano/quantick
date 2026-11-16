@@ -535,6 +535,7 @@ pub(crate) struct ChromeReads<'a> {
     drawn: ChromeDrawn,
     title_bar: Option<&'a super::title_bar::TitleBarState>,
     window_menu: Option<&'a super::menu_bar::WindowMenuState>,
+    settings: Option<quantick_control_schema::settings_sections::SettingsSection>,
     /// The toolbar's list door, capsule and layout popover, as drawn.
     pub(crate) toolbar: &'a [crate::toolbar::DrawnControl],
 }
@@ -559,7 +560,7 @@ impl<'a> ChromeReads<'a> {
     pub(crate) fn settings_section(
         self,
     ) -> Option<quantick_control_schema::settings_sections::SettingsSection> {
-        self.window_menu?.settings_shown()
+        self.settings
     }
 
     /// The workspace cell menu's rows in view, as last drawn.
@@ -589,6 +590,7 @@ impl<'a> ChromeReads<'a> {
             alerts_open: false,
             title_bar: None,
             window_menu: None,
+            settings: None,
             toolbar: &[],
         }
     }
@@ -973,6 +975,7 @@ impl ChromePort for QuantickApp {
         reads.alerts_open = self.surfaces.alerts.is_open();
         reads.title_bar = Some(&self.chrome.title_bar);
         reads.window_menu = Some(&self.chrome.window_menu);
+        reads.settings = self.surfaces.settings_window.model_state.shown();
         reads.toolbar = &self.chrome.toolbar_controls;
         reads
     }
