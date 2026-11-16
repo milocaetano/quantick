@@ -33,7 +33,7 @@ use rust_decimal::Decimal;
 #[path = "paper_command.rs"]
 mod command;
 
-pub use command::{TradeCommand, TradeOutcome};
+pub use command::{NOTHING_TO_REVERSE, TradeCommand, TradeOutcome};
 
 /// What a rebuilt timeline says when it flattened a position.
 const RESET_POSITION_TOAST: &str = "SIM position flattened - the timeline was rebuilt under it.";

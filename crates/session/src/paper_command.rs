@@ -15,8 +15,12 @@ use quantick_sim::{Bracket, OrderId, OrderIntent, VenueEvent};
 
 use super::TabPaper;
 
-/// One paper-trading action, said once for every surface.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Why a reversal of no position is refused.
+pub const NOTHING_TO_REVERSE: &str = "the account is flat: there is no position to reverse";
+
+/// One paper-trading action, said once for every surface. The two variants
+/// that carry a ladder box it, so a bare press stays a small value.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TradeCommand {
     /// Enter at the market with the ticket's quantity and offsets, sized by
     /// the risk per trade — the toolbar's BUY/SELL.
@@ -26,18 +30,16 @@ pub enum TradeCommand {
     },
     /// Place one order stated in full — the named call's entry.
     Place {
-        /// The order, without its protection.
-        intent: OrderIntent,
-        /// The protection the caller named; empty takes the bracket the
-        /// ticket has armed, exactly as a click does.
-        named: Bracket,
+        /// The order. Its bracket is the protection the caller named; an
+        /// empty one takes the bracket the ticket has armed, as a click does.
+        intent: Box<OrderIntent>,
     },
     /// Replace a working order's protective prices.
     Amend {
         /// The working order.
         id: OrderId,
         /// Its new protection.
-        bracket: Bracket,
+        bracket: Box<Bracket>,
     },
     /// Remove one working order without trading.
     Cancel {
@@ -87,9 +89,9 @@ impl<A: BorrowMut<PaperAccount>> TabPaper<A> {
     pub fn execute(&mut self, command: TradeCommand) -> TradeOutcome {
         match command {
             TradeCommand::Market { side } => self.market_entry(side),
-            TradeCommand::Place { intent, named } => self.place(intent, named),
+            TradeCommand::Place { intent } => self.place(*intent),
             TradeCommand::Amend { id, bracket } => {
-                TradeOutcome::sent(self.core_mut().set_order_bracket(id, bracket))
+                TradeOutcome::sent(self.core_mut().set_order_bracket(id, *bracket))
             }
             TradeCommand::Cancel { id } => TradeOutcome::sent(self.core_mut().cancel_order(id)),
             TradeCommand::CancelAll => TradeOutcome::sent(self.core_mut().cancel_all_orders()),
@@ -125,7 +127,8 @@ impl<A: BorrowMut<PaperAccount>> TabPaper<A> {
     /// Levels the caller named win; otherwise the order takes what the
     /// ticket is set to, as a click does. A refusal posts nothing: the caller
     /// reads the sentence from the outcome.
-    fn place(&mut self, intent: OrderIntent, named: Bracket) -> TradeOutcome {
+    fn place(&mut self, intent: OrderIntent) -> TradeOutcome {
+        let named = intent.bracket;
         let bracket = if named.is_empty() {
             let reference = intent
                 .price
@@ -149,10 +152,12 @@ impl<A: BorrowMut<PaperAccount>> TabPaper<A> {
     }
 
     /// The account says which way and at what mark; the ticket resolves the
-    /// protection for that side, because the offsets are its text.
+    /// protection for that side, because the offsets are its text. Flat, it
+    /// is refused without a toast: a press on nothing stays silent, and a
+    /// named caller learns its read went stale.
     fn reverse(&mut self) -> TradeOutcome {
         let Some((side, reference)) = self.core().reverse_aim() else {
-            return TradeOutcome::default();
+            return TradeOutcome::refused(NOTHING_TO_REVERSE.to_owned());
         };
         let Some(bracket) = self.parse_bracket(side, reference) else {
             return self.refused_by_toast();

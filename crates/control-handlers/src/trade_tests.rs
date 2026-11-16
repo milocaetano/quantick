@@ -435,11 +435,11 @@ fn a_trade_command_lands_the_same_through_a_click_and_a_named_call() {
     let market = OrderIntent::market(Side::Buy, Decimal::ONE);
     let protect = Bracket::whole(Some(Decimal::from(95)), Some(Decimal::from(110)));
 
-    let mut steps: Vec<(TradeCommand, Box<dyn Fn(&mut DeskWindow, &mut FakeAccess)>)> = vec![
+    type NamedCall = Box<dyn Fn(&mut DeskWindow, &mut FakeAccess)>;
+    let mut steps: Vec<(TradeCommand, NamedCall)> = vec![
         (
             TradeCommand::Place {
-                intent: limit,
-                named: Bracket::none(),
+                intent: Box::new(limit),
             },
             Box::new(|w, a| {
                 place_order(
@@ -454,7 +454,7 @@ fn a_trade_command_lands_the_same_through_a_click_and_a_named_call() {
         (
             TradeCommand::Amend {
                 id: OrderId(1),
-                bracket: protect,
+                bracket: Box::new(protect),
             },
             Box::new(|w, a| {
                 bracket_order(
@@ -475,8 +475,7 @@ fn a_trade_command_lands_the_same_through_a_click_and_a_named_call() {
         ),
         (
             TradeCommand::Place {
-                intent: market,
-                named: Bracket::none(),
+                intent: Box::new(market),
             },
             Box::new(|w, a| {
                 place_order(
@@ -502,7 +501,7 @@ fn a_trade_command_lands_the_same_through_a_click_and_a_named_call() {
         ),
     ];
     for (index, (command, named_call)) in steps.drain(..).enumerate() {
-        let clicked = ui.execute(command);
+        let clicked = ui.execute(command.clone());
         named_call(&mut window, &mut access);
         let called = window
             .desk
@@ -574,7 +573,10 @@ fn reverse_flips_the_position_in_one_call_and_refuses_while_flat() {
     let trader = FakeWindow::trader();
     let flat = reverse_position(&mut window, &mut access, &trader, &json!({}))
         .expect_err("nothing to reverse");
-    assert!(flat.message.contains("flat"), "{flat:?}");
+    assert_eq!(
+        flat,
+        ControlError::invalid_request(quantick_session::paper::NOTHING_TO_REVERSE.to_owned())
+    );
     assert!(
         access.events.is_empty(),
         "a refusal before the desk records nothing"

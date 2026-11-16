@@ -577,8 +577,8 @@ pub const READBACKS: &[Readback] = &[
         "trade.position.flatten",
         Forbidden,
         PAPER_SCOPE_ID,
-        "tabs[].working_order_count",
-        "no position is open and no order is working",
+        "tabs[].position",
+        "no position is open and `working_order_count` is zero",
         &[TRADE_UNREACHABLE_TEST],
     ),
     snapshot(

@@ -211,7 +211,9 @@ fn place_order<P: TradePort + ?Sized, A: JournalAccess>(
     // decisions, made where a click makes them. A refusal comes back as an
     // error carrying the sentence the ticket shows, never as an empty
     // answer the caller has to interpret.
-    let command = TradeCommand::Place { intent, named };
+    let command = TradeCommand::Place {
+        intent: Box::new(intent.with_bracket(named)),
+    };
     run(app, access, actor, command, PLACE_EVENT_KIND, asked)
 }
 
@@ -260,7 +262,7 @@ fn bracket_order<P: TradePort + ?Sized, A: JournalAccess>(
     );
     let command = TradeCommand::Amend {
         id: OrderId(input.order_id),
-        bracket,
+        bracket: Box::new(bracket),
     };
     run(app, access, actor, command, BRACKET_EVENT_KIND, asked)
 }
@@ -300,8 +302,8 @@ fn flatten_position<P: TradePort + ?Sized, A: JournalAccess>(
     )
 }
 
-/// Flip the open position in one call; refused while flat, because a
-/// reversal of nothing is a caller working from a read that went stale.
+/// Flip the open position in one call; refused while flat, by the tab,
+/// because a reversal of nothing is a caller working from a stale read.
 fn reverse_position<P: TradePort + ?Sized, A: JournalAccess>(
     app: &mut P,
     access: &mut A,
@@ -310,12 +312,6 @@ fn reverse_position<P: TradePort + ?Sized, A: JournalAccess>(
 ) -> Result<Value, ControlError> {
     let _: PositionInput = serde_json::from_value(input.clone())
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
-    let desk = app.active_desk().ok_or_else(no_chart_open)?;
-    if desk.position_summary().is_none() {
-        return Err(ControlError::invalid_request(
-            "the account is flat: there is no position to reverse".to_owned(),
-        ));
-    }
     let asked = input.clone();
     run(
         app,
