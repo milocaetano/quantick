@@ -174,6 +174,7 @@ pub(super) fn sheet(
             let scroll = scroll.scroll_bar_visibility(bar).auto_shrink([false; 2]);
             let scroll = (offset.into_iter()).fold(scroll, |s, o| s.vertical_scroll_offset(o));
             let scrolled = scroll.show(&mut child, |ui| {
+                ui.set_clip_rect(list.intersect(ui.clip_rect())); // Never over the head.
                 let size = vec2(view.size[0], view.list_height);
                 let body = ui.allocate_exact_size(size, Sense::hover()).0.min;
                 let mut asked = put(ui, body, &view.list, (ink, drawn));

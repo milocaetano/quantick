@@ -154,6 +154,8 @@ pub struct ManageDialog {
     pub note: Option<String>,
     /// A capture staged the armed row's Delete for the first frame.
     pub confirm_staged: bool,
+    /// The chosen row or the row just opened scrolls into view next frame.
+    pub reveal: bool,
 }
 
 impl ManageDialog {
@@ -168,6 +170,7 @@ impl ManageDialog {
             undo: Vec::new(),
             note: None,
             confirm_staged: false,
+            reveal: false,
         }
     }
 
@@ -205,6 +208,7 @@ impl ManageDialog {
     /// Carry out an intent that changes only the dialog; answers whether it
     /// was one. One row holds a palette, a rename or an armed delete at a time.
     pub fn local(&mut self, intent: &ManageIntent) -> bool {
+        self.reveal = true;
         match intent {
             ManageIntent::Chip(name) => {
                 let open = self.palette_of() != Some(name.as_str());
@@ -232,7 +236,10 @@ impl ManageDialog {
             ManageIntent::Escape => {
                 self.escape();
             }
-            _ => return false,
+            _ => {
+                self.reveal = false;
+                return false;
+            }
         }
         true
     }
@@ -297,6 +304,7 @@ impl ManageDialog {
             if keys.has(key)
                 && let Some(last) = last
             {
+                self.reveal = true;
                 self.focus = Some(match (self.focus, down) {
                     (None, true) => 0,
                     (None, false) => last,

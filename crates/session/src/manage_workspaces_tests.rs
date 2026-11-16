@@ -214,6 +214,25 @@ fn a_palette_or_a_field_takes_the_keys_first() {
     });
 }
 
+/// Opening a row's palette, field or question, or moving the focus, asks
+/// the list to bring it into view once.
+#[test]
+fn what_opens_or_moves_is_revealed() {
+    let mut dialog = ManageDialog::new(7);
+    assert!(!dialog.reveal);
+    dialog.local(&ManageIntent::Chip("Tape".to_owned()));
+    assert!(std::mem::take(&mut dialog.reveal));
+    assert!(!dialog.local(&ManageIntent::CommitRename));
+    assert!(
+        !dialog.reveal,
+        "a press the handler carries out moves nothing"
+    );
+    let mut down = ManageKeys::default();
+    down.press(ManageKey::Down);
+    dialog.keys(down, &rows(), 0);
+    assert!(dialog.reveal);
+}
+
 /// The window types into the open field or palette only.
 #[test]
 fn the_window_types_into_the_open_field_or_palette() {

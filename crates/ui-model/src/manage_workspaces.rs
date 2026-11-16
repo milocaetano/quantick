@@ -238,6 +238,8 @@ pub fn manage(
             }
             view.palette =
                 pop.map(|pop| ([NAME_X - 12.0, view.list_height - pop.size[1] - 4.0], pop));
+            // The row and its palette whole in view, as far as the list holds.
+            view.focus = Some(area(0.0, top, WIDTH_PT, view.list_height - top));
         }
     }
     if undo_left && let Some(undo) = undo {
@@ -335,6 +337,8 @@ fn head(ink: &MenuChrome, measure: Measure<'_>) -> Vec<Piece> {
 fn caption(mut mark: Mark) -> Mark {
     if let Mark::Text(said) = &mut mark {
         said.tracking = 0.08 * said.size;
+        // The letters spread: as much more room, so none is cut.
+        said.width += said.tracking * said.text.chars().count() as f32;
     }
     mark
 }

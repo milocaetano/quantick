@@ -83,9 +83,12 @@ fn manage(
     let pop_keys = PopKey::ALL.map(|k| takes(k) && consume(k.name(), false));
     let ours =
         ManageKeys::of(ManageKey::ALL.map(|k| dialog.takes(k) && consume(k.name(), k.command())));
-    let (book, focus) = (app.runtime.workspace.book.book(), dialog.focus);
+    let book = app.runtime.workspace.book.book();
     let keyed = dialog.keys(ours, &marks::names(book), now_ms);
-    let (current, moved) = (book.tab_workspace(tab).to_owned(), focus != dialog.focus);
+    let (current, moved) = (
+        book.tab_workspace(tab).to_owned(),
+        std::mem::take(&mut dialog.reveal),
+    );
     let held = dialog.clone();
     let symbols = |tabs: &[u64]| crate::app::tab_workspaces::symbols_of(&app.runtime.tabs, tabs);
     let at = (current.as_str(), now_ms, pen.2);
