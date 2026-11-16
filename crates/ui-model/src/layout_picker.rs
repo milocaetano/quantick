@@ -49,8 +49,6 @@ pub const OUTER: [f32; 2] = [SIZE[0] + 2.0 * BORDER_PT, SIZE[1] + 2.0 * BORDER_P
 /// from the window's edges.
 pub const DROP_PT: f32 = 4.0;
 const MARGIN_PT: f32 = 4.0;
-/// The least height shown in a window too short for the whole.
-const MIN_SHOWN_PT: f32 = 80.0;
 /// A cell's thumbnail, from the cell's top left, and its size.
 const THUMB_AT: [f32; 2] = [15.0, 6.0];
 const THUMB: [f32; 2] = [54.0, 30.0];
@@ -81,7 +79,6 @@ const NAME_X: f32 = 92.0;
 /// floppy or the unsaved dot stands at its left.
 pub const STATUS_W: f32 = 140.0;
 pub const STATUS_ICON_W: f32 = 10.0;
-const DOT_PT: f32 = 5.0;
 /// How long a pick shows its confirmation before the popover closes.
 pub const CONFIRM_MS: u64 = 800;
 
@@ -93,6 +90,8 @@ pub const CHANGED: &str = "Changed to";
 pub const HINT: &str = "Arrows move \u{b7} Enter picks \u{b7} Esc closes";
 /// Phosphor's check and floppy disk, in the bundled icon font.
 pub const CHECK: &str = "\u{e182}";
+/// Phosphor's dot: the unsaved mark before the status words.
+pub const DOT: &str = "\u{ecde}";
 pub const FLOPPY: &str = "\u{e248}";
 
 /// A box, in points from the picker's top left.
@@ -140,6 +139,10 @@ pub struct Words {
     pub tracking: f32,
     pub width: f32,
     pub rgba: [u8; 4],
+    /// Underlined: a link under the pointer.
+    pub underline: bool,
+    /// A glyph and its own colour before the words, then a space.
+    pub lead: Option<(String, [u8; 4])>,
 }
 
 /// One thing to paint.
@@ -168,7 +171,17 @@ fn words(x: f32, y: f32, anchor: Anchor, text: &str, size: f32, rgba: Premultipl
         tracking: 0.0,
         width: SIZE[0],
         rgba: rgba.to_array(),
+        underline: false,
+        lead: None,
     })
+}
+
+/// `mark` led by `glyph` in its own `rgba`.
+fn led(mut mark: Mark, glyph: &str, rgba: PremultipliedRgba) -> Mark {
+    if let Mark::Words(words) = &mut mark {
+        words.lead = Some((format!("{glyph} "), rgba.to_array()));
+    }
+    mark
 }
 
 /// `mark` cut at `width`, bold, or tracked as a caption.
@@ -205,8 +218,10 @@ pub struct State {
     /// The keyboard's cell; none until an arrow is pressed.
     pub focus: Option<&'static LayoutPreset>,
     pub changed: Option<Changed>,
-    /// Kept open past the confirmation: a capture's staging.
+    /// Kept open past the confirmation, its staged hover kept: a capture's.
     pub held: bool,
+    /// The tab it opened on: a frame from another closes it.
+    pub tab: Option<u64>,
 }
 
 /// The keys the picker takes, by the window's key names, with Ctrl or not,
@@ -255,6 +270,8 @@ impl Keys {
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct Seen {
     pub now_ms: u64,
+    /// The active tab.
+    pub tab: u64,
     /// The layout the canvas draws.
     pub current: Option<&'static LayoutPreset>,
     /// What the pointer is over.
@@ -273,7 +290,7 @@ impl Seen {
     /// pressed or not.
     #[must_use]
     pub const fn of(
-        now_ms: u64,
+        (now_ms, tab): (u64, u64),
         current: Option<&'static LayoutPreset>,
         over: Option<Target>,
         [press, release, outside]: [bool; 3],
@@ -282,6 +299,7 @@ impl Seen {
         let keys = Keys::from_pressed(keys);
         Self {
             now_ms,
+            tab,
             current,
             over,
             press,
@@ -308,7 +326,16 @@ impl State {
     /// layout and the end of a confirmation close.
     pub fn step(&mut self, seen: Seen) -> Step {
         let mut step = Step::default();
-        self.hover = seen.over;
+        if self.tab.is_some_and(|tab| tab != seen.tab) {
+            *self = Self::default();
+            step.close = true;
+            return step;
+        }
+        self.tab = Some(seen.tab);
+        // A capture's staged hover holds while no real pointer moves in.
+        if !self.held || seen.over.is_some() || seen.press || seen.release {
+            self.hover = seen.over;
+        }
         let mut chosen = None;
         if seen.press {
             self.pressed = seen.over;
@@ -429,10 +456,11 @@ pub struct Placement {
 #[must_use]
 pub fn place_under(button: Rect, screen: Rect) -> Placement {
     let flush = button.x + button.w - OUTER[0];
-    let x = flush.max(screen.x + MARGIN_PT).round();
+    let inside = screen.x + screen.w - MARGIN_PT - OUTER[0];
+    let x = flush.min(inside).max(screen.x + MARGIN_PT).round();
     let y = (button.y + button.h + DROP_PT).round();
     let room = screen.y + screen.h - MARGIN_PT - y;
-    let height = OUTER[1].min(room.max(MIN_SHOWN_PT)).floor();
+    let height = room.clamp(0.0, OUTER[1]).floor();
     Placement {
         x,
         y,
@@ -476,6 +504,8 @@ pub struct Cell {
     pub at: Rect,
     pub current: bool,
     pub saved: bool,
+    /// The keyboard's cell, which the window scrolls into view.
+    pub focused: bool,
     pub marks: Vec<Mark>,
 }
 
@@ -633,34 +663,25 @@ fn header(
     );
     marks.push(shaped(name, Some(slot - 8.0 - NAME_X), false, false));
     let status = status(&view.marks);
-    if view.marks.saved.is_some() && !view.marks.layout_unsaved {
-        let icon = words(
-            slot,
-            LINE_ONE_Y,
-            Anchor::Left,
-            FLOPPY,
-            SMALL_PT,
-            ink(look.support),
-        );
-        marks.push(icon);
+    let saved = view.marks.saved.is_some() && !view.marks.layout_unsaved;
+    let (lead, lead_ink) = if saved {
+        (FLOPPY, ink(look.support))
     } else {
-        let dot = Rect::new(slot + 2.0, LINE_ONE_Y - DOT_PT / 2.0, DOT_PT, DOT_PT);
-        marks.push(fill(dot, DOT_PT / 2.0, inks.ring));
-    }
-    let text_x = slot + STATUS_ICON_W + 4.0;
+        (DOT, inks.ring)
+    };
+    let right = width - 10.0;
     let said = words(
-        text_x,
+        right,
         LINE_ONE_Y,
-        Anchor::Left,
+        Anchor::Right,
         &status,
         SMALL_PT,
         ink(look.support),
     );
-    marks.push(shaped(
-        said,
-        Some(STATUS_W - STATUS_ICON_W - 4.0),
-        false,
-        false,
+    marks.push(led(
+        shaped(said, Some(STATUS_W), false, false),
+        lead,
+        lead_ink,
     ));
     let changed = view.state.changed;
     let line = match changed {
@@ -669,39 +690,34 @@ fn header(
     };
     let mut undo = None;
     if let Some(changed) = changed {
-        marks.push(words(
+        let said = words(
             10.0,
-            LINE_TWO_Y,
-            Anchor::Left,
-            CHECK,
-            SMALL_PT,
-            inks.ring,
-        ));
-        marks.push(words(
-            24.0,
             LINE_TWO_Y,
             Anchor::Left,
             &line,
             SMALL_PT,
             ink(look.ink),
-        ));
+        );
+        marks.push(led(said, CHECK, inks.ring));
         if let Some(was) = changed.was {
             let said = format!("was {} \u{b7} Ctrl+Z", was.label);
             let lit = view.state.hover == Some(Target::Undo);
-            let tone = if lit { look.ink } else { look.support };
-            let right = width - 10.0;
             let reach = Rect::new(right - STATUS_W, LINE_TWO_Y - 8.0, STATUS_W + 4.0, 16.0);
             if lit {
                 marks.push(fill(reach, 4.0, ink(look.hover)));
             }
-            marks.push(words(
+            let mut link = words(
                 right,
                 LINE_TWO_Y,
                 Anchor::Right,
                 &said,
                 SMALL_PT,
-                ink(tone),
-            ));
+                ink(look.ink),
+            );
+            if let Mark::Words(words) = &mut link {
+                words.underline = lit;
+            }
+            marks.push(link);
             undo = Some((reach, said));
         }
     } else {
@@ -798,6 +814,7 @@ fn cell(
         at,
         current,
         saved: view.marks.saved == Some(preset),
+        focused: state.focus == Some(preset),
         marks,
     }
 }

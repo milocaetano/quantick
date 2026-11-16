@@ -3,6 +3,7 @@
 //! exactly that size where `place_under` says, paints the marks, and reports
 //! what the pointer and keys did as a [`Seen`].
 
+use eframe::egui::scroll_area::ScrollBarVisibility::{AlwaysHidden, AlwaysVisible};
 use eframe::egui::{self, Color32, Modifiers, Pos2, Rect, Sense, vec2};
 use quantick_ui_model::layout_picker::{self as model, Mark, Picker, Seen, Target};
 use quantick_workspace::canvas::LayoutPreset;
@@ -13,8 +14,7 @@ const ID: &str = "layout_popover";
 /// The app's bold face, when the fonts are installed.
 const BOLD: &str = "note-sans-bold";
 
-/// What the frame drew, for the observer scene: the cells, the header and
-/// the "was" words, each with its rect.
+/// What the frame drew for the scene: cells, header, "was" words, with rects.
 #[derive(Default)]
 pub struct Drawn {
     pub cells: Vec<(&'static LayoutPreset, Rect)>,
@@ -31,16 +31,15 @@ fn place(origin: Pos2, at: model::Rect) -> Rect {
     Rect::from_min_size(origin + vec2(at.x, at.y), vec2(at.w, at.h))
 }
 
-/// Hang `picker` below `anchor`, its button, and paint it; answers what was
-/// drawn and what this frame saw over it, `current` being the canvas's layout.
+/// Hang `picker` flush below `button` (`anchor` presses it), on `tab`: drawn, seen.
 pub fn draw(
     ctx: &egui::Context,
-    anchor: Rect,
+    (anchor, button): (Rect, Rect),
     picker: &Picker,
-    current: Option<&'static LayoutPreset>,
+    (current, tab): (Option<&'static LayoutPreset>, u64),
 ) -> (Drawn, Seen) {
     let ours = |r: Rect| model::Rect::new(r.left(), r.top(), r.width(), r.height());
-    let spot = model::place_under(ours(anchor), ours(ctx.screen_rect()));
+    let spot = model::place_under(ours(button), ours(ctx.screen_rect()));
     let frame = egui::Frame::popup(&ctx.style()).inner_margin(model::BORDER_PT);
     let frame = frame.fill(rgba(picker.ground)).rounding(model::RADIUS_PT);
     let frame = frame.stroke((model::BORDER_PT, rgba(picker.edge)));
@@ -50,7 +49,13 @@ pub fn draw(
     let area = area.constrain(false).fixed_pos(at).show(ctx, |ui| {
         frame.show(ui, |ui| {
             let scroll = scroll.max_height(spot.height - 2.0 * model::BORDER_PT);
-            scroll.show(ui, |ui| {
+            let bar = [AlwaysHidden, AlwaysVisible][usize::from(spot.scrolls)];
+            let (mut style, edge) = (egui::style::ScrollStyle::solid(), rgba(picker.edge));
+            (style.bar_width, style.bar_inner_margin) = (4.0, 0.0); // A thin bar: clipped.
+            ui.spacing_mut().scroll = style;
+            let w = &mut ui.visuals_mut().widgets;
+            (w.inactive.bg_fill, w.hovered.bg_fill, w.active.bg_fill) = (edge, edge, edge);
+            scroll.scroll_bar_visibility(bar).show(ui, |ui| {
                 let size = vec2(picker.size[0], picker.size[1]);
                 let (whole, _) = ui.allocate_exact_size(size, Sense::hover());
                 ui.interact(whole, id.with("keys"), Sense::focusable_noninteractive());
@@ -67,13 +72,16 @@ pub fn draw(
                     let tip = cell.preset.hint;
                     hit(cell.at, cell.preset.id, Target::Cell(cell.preset)).on_hover_text(tip);
                     let shown = place(origin, cell.at).intersect(seen);
+                    if cell.focused && shown != place(origin, cell.at) {
+                        ui.scroll_to_rect(place(origin, cell.at), None);
+                    }
                     drawn.cells.push((cell.preset, shown));
                 }
                 let header = &picker.header;
-                let label = header.label();
-                drawn.header = Some((place(origin, header.at).intersect(seen), label));
+                drawn.header = Some((place(origin, header.at).intersect(seen), header.label()));
                 if let Some((at, words)) = &header.undo {
-                    drawn.undo = Some((hit(*at, "undo", Target::Undo).rect, words.clone()));
+                    let reach = hit(*at, "undo", Target::Undo).rect.intersect(seen);
+                    drawn.undo = Some((reach, words.clone()));
                 }
             });
         });
@@ -87,17 +95,17 @@ pub fn draw(
     let away = |at: Pos2| !anchor.contains(at) && !frame.contains(at);
     let outside = pointer.any_pressed() && pointer.interact_pos().is_some_and(away);
     let pressed = ctx.input_mut(|input| {
+        let shifted = |e: &_| matches!(e, egui::Event::Key { modifiers: m, .. } if m.shift);
+        let shift = input.modifiers.shift || input.events.iter().any(shifted); // Shift+Z: redo.
         model::KEY_NAMES.map(|(name, command)| {
             let modifiers = [Modifiers::NONE, Modifiers::COMMAND][usize::from(command)];
-            egui::Key::from_name(name).is_some_and(|key| input.consume_key(modifiers, key))
+            let key = egui::Key::from_name(name).filter(|_| !shift);
+            key.is_some_and(|key| input.consume_key(modifiers, key))
         })
     });
-    let clicks = [
-        pointer.primary_pressed(),
-        pointer.primary_released(),
-        outside,
-    ];
-    let seen = Seen::of(now_ms(ctx), current, over, clicks, pressed);
+    let (press, release) = (pointer.primary_pressed(), pointer.primary_released());
+    let clicks = [press, release, outside];
+    let seen = Seen::of((now_ms(ctx), tab), current, over, clicks, pressed);
     (drawn, seen)
 }
 
@@ -137,7 +145,14 @@ pub fn paint(painter: &egui::Painter, origin: Pos2, marks: &[Mark]) {
                 let (font, color) = (egui::FontId::new(words.size, family), rgba(words.rgba));
                 let mut format = egui::TextFormat::simple(font, color);
                 format.extra_letter_spacing = words.tracking;
-                let mut job = egui::text::LayoutJob::single_section(words.text.clone(), format);
+                format.underline = egui::Stroke::new(f32::from(u8::from(words.underline)), color);
+                let mut job = egui::text::LayoutJob::default();
+                if let Some((glyph, ink)) = &words.lead {
+                    let mut lead = format.clone();
+                    lead.color = rgba(*ink);
+                    job.append(glyph, 0.0, lead);
+                }
+                job.append(&words.text, 0.0, format);
                 job.wrap = egui::text::TextWrapping::truncate_at_width(words.width);
                 let galley = painter.layout_job(job);
                 let shift = [0.0, 0.5, 1.0][words.anchor as usize] * galley.size().x;

@@ -1,9 +1,10 @@
 //! The layout picker (alternative A): which token each part of its chrome,
 //! words and cell states wears, and the workspace colour's inks clamped per
-//! theme. The ring, a pane's edge and the ✓ hold [`RING_CONTRAST`] on what
-//! they stand on; the flow pane's fill holds [`FILL_CONTRAST`] on an empty
-//! chart cell, or gives way to a wider edge. Graded headless; the painter
-//! only reads the bytes.
+//! theme. The ring, every pane's edge (a timeframe pane's composited at its
+//! opacity) and the ✓ hold [`RING_CONTRAST`] on what they stand on; the flow
+//! pane's fill reaches [`FILL_TARGET`] on an empty chart cell where a tint
+//! can, never less than [`FILL_CONTRAST`], or gives way to a wider edge.
+//! Graded headless; the painter only reads the bytes.
 
 use crate::color::{RgbaExt, with_opacity};
 use crate::contrast::{contrast_ratio, legible_at, over};
@@ -11,12 +12,17 @@ use crate::{PremultipliedRgba, ResolvedTheme, Token};
 
 /// The ring, the flow pane's edge and the ✓ badge on the popover's ground.
 pub const RING_CONTRAST: f32 = 3.0;
-/// The flow pane's fill on an empty chart cell.
+/// The flow pane's fill on an empty chart cell: the floor, and the target
+/// the tint reaches for first.
 pub const FILL_CONTRAST: f32 = 1.5;
-/// Every word on its ground.
+pub const FILL_TARGET: f32 = 1.9;
+/// Every word on its ground, and the margin the picker keeps over it.
 pub const TEXT_CONTRAST: f32 = 4.5;
-/// The timeframe panes' edges: the colour at this opacity, out of 255 (60%).
+pub const CAPTION_MARGIN: f32 = 0.5;
+/// The timeframe panes' edges: the colour at this opacity, out of 255 (60%),
+/// raised in [`TIME_EDGE_STEP`]s until the edge holds [`RING_CONTRAST`].
 pub const TIME_EDGE_ALPHA: u8 = 153;
+const TIME_EDGE_STEP: u8 = 6;
 /// The flow pane's edge, and its edge without a fill, in points.
 pub const FLOW_EDGE_PT: f32 = 1.0;
 pub const FLOW_EDGE_BARE_PT: f32 = 2.0;
@@ -42,7 +48,8 @@ pub struct PickerChrome {
     pub support: Token,
     /// A cell under the pointer.
     pub hover: Token,
-    /// The keyboard focus ring: never the workspace colour of the current ring.
+    /// The keyboard focus ring: the theme's accent, which egui's own focus
+    /// wears too; never the workspace colour of the current ring.
     pub focus: Token,
     /// What a press lays over the hover plate to sink it.
     pub press: Token,
@@ -58,9 +65,9 @@ pub const fn chrome(dark: bool) -> PickerChrome {
         block_edge: menu.block_edge,
         edge: menu.edge,
         ink: menu.ink,
-        support: Token::TextSupport,
+        support: Token::TextMuted,
         hover: menu.hover,
-        focus: Token::TextPrimary,
+        focus: Token::Accent,
         press: Token::BareHover,
     }
 }
@@ -120,7 +127,11 @@ pub fn colour_inks(rgb: [u8; 3], ground: PremultipliedRgba, dark: bool) -> Colou
     let mut fill = None;
     while share <= most + f32::EPSILON {
         let tint = mix(ground, raw, share);
-        if contrast_ratio(tint, ground) >= FILL_CONTRAST {
+        let ratio = contrast_ratio(tint, ground);
+        if ratio >= FILL_CONTRAST && fill.is_none() {
+            fill = Some(tint);
+        }
+        if ratio >= FILL_TARGET {
             fill = Some(tint);
             break;
         }
@@ -145,8 +156,21 @@ pub fn colour_inks(rgb: [u8; 3], ground: PremultipliedRgba, dark: bool) -> Colou
         plate: mix(ground, raw, PLATE_SHARE[usize::from(dark)]),
         fill,
         flow_edge,
-        time_edge: with_opacity(ring, TIME_EDGE_ALPHA),
+        time_edge: time_edge(ring, ground),
         check,
+    }
+}
+
+/// The ring at [`TIME_EDGE_ALPHA`], more opaque until it holds
+/// [`RING_CONTRAST`] over `ground`; opaque, the ring already does.
+fn time_edge(ring: PremultipliedRgba, ground: PremultipliedRgba) -> PremultipliedRgba {
+    let mut alpha = TIME_EDGE_ALPHA;
+    loop {
+        let edge = with_opacity(ring, alpha);
+        if alpha == u8::MAX || contrast_ratio(over(edge, ground), ground) >= RING_CONTRAST {
+            return edge;
+        }
+        alpha = alpha.saturating_add(TIME_EDGE_STEP);
     }
 }
 

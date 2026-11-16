@@ -88,11 +88,13 @@ pub(in crate::app) fn settle(
         }
     }
     let shown = (state.workspace.as_str(), state.colour, state.marks);
+    let hang = (rects.miniature, rects.miniature.union(rects.name));
+    let tab = app.runtime.tabs.active_id();
     let drawn = (app.surfaces.canvas_popovers)
         .with_pass(
             quantick_ui_model::Slot::Toolbar,
             |response| rest.extend(picked(response.model_effects)),
-            |view, session| view.layout(session, (ctx, rects.miniature), shown),
+            |view, session| view.layout(session, (ctx, hang, tab), shown),
         )
         .unwrap_or_default();
     crate::app::menu_bar::workspace_cell(app, ctx, Some(rects.name), workspace_clicked);

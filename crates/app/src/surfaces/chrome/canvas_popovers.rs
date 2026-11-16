@@ -33,7 +33,7 @@ impl CanvasPopoversView {
     pub(crate) fn layout(
         &mut self,
         session: &mut quantick_ui_model::UpdateSession<'_, Model>,
-        (ctx, anchor): (&egui::Context, egui::Rect),
+        (ctx, anchor, tab): (&egui::Context, (egui::Rect, egui::Rect), u64),
         (workspace, colour, marks): (&str, Option<WorkspaceColour>, LayoutMarks),
     ) -> popover::Drawn {
         if !session.state().projection().layout_open {
@@ -42,7 +42,7 @@ impl CanvasPopoversView {
         let (palette, before) = (crate::theme::get(ctx), session.state().picker().clone());
         let shown = picker::View::new(workspace, colour, marks, &before);
         let shown = picker::picker(&shown, &palette.resolved);
-        let (drawn, seen) = popover::draw(ctx, anchor, &shown, marks.current);
+        let (drawn, seen) = popover::draw(ctx, anchor, &shown, (marks.current, tab));
         session.update(Intent::Layout(seen));
         if let Some(ms) = session.state().picker().repaint_ms(&before, seen.now_ms) {
             ctx.request_repaint_after(std::time::Duration::from_millis(ms));

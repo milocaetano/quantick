@@ -36,7 +36,8 @@ pub enum Intent {
     Layout(crate::layout_picker::Seen),
     /// A capture's staging, with the current layout and the clock: open the
     /// picker held past its confirmation, then `pick=<id>` picks a layout,
-    /// `focus=<id>` rings a cell for the keyboard.
+    /// `focus=<id>` rings a cell for the keyboard, `hover=<id>` and
+    /// `press=<id>` hold a cell under a pointer that is not there.
     StageLayout(String, Option<&'static LayoutPreset>, u64),
     ToolbarHidden,
 }
@@ -60,6 +61,9 @@ impl crate::Model for Model {
                 let (word, id) = hook.split_once('=').unwrap_or((hook.as_str(), ""));
                 let named = preset(id);
                 state.1.focus = named.filter(|_| word == "focus");
+                let cell = named.filter(|_| ["hover", "press"].contains(&word));
+                state.1.hover = cell.map(crate::layout_picker::Target::Cell);
+                state.1.pressed = state.1.hover.filter(|_| word == "press");
                 let pick = named.filter(|named| word == "pick" && Some(*named) != current);
                 if let Some(to) = pick {
                     let was = current;
@@ -238,6 +242,16 @@ mod tests {
         let staged = Intent::StageLayout("pick=charts-2".to_owned(), flow, 5);
         assert!(Model::update(&mut state, staged).0.is_some());
         assert!(state.picker().held && state.projection().layout_open);
+        let pressed = Intent::StageLayout("press=charts-3".to_owned(), flow, 5);
+        Model::update(&mut state, pressed);
+        let cell = quantick_workspace::canvas::preset("charts-3").map(Target::Cell);
+        assert_eq!((state.picker().hover, state.picker().pressed), (cell, cell));
+        Model::update(&mut state, Intent::Layout(Seen::default()));
+        assert_eq!(
+            state.picker().pressed,
+            cell,
+            "a staged press outlives a still pointer"
+        );
         Model::update(&mut state, Intent::ToggleAdd);
         assert!(state.projection().add_open);
         Model::update(&mut state, Intent::ToggleAdd);

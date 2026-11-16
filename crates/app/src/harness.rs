@@ -410,7 +410,8 @@ impl Harness {
         let read = |name: &str| env.var(name);
         let flag = |name: &str| flag(env, name);
         Self {
-            layout_picker: read("QUANTICK_LAYOUT_PICKER").filter(|hook| !hook.is_empty()),
+            layout_picker: read("QUANTICK_LAYOUT_PICKER")
+                .filter(|hook| !["", "0"].contains(&hook.as_str())),
             window_menu_toolbar: read("QUANTICK_WINDOW_MENU").as_deref() == Some("toolbar"),
             deal_recording: crate::deal_recording::RecordingHook::parse(
                 env.var(crate::deal_recording::RECORDING_HOOK_ENV)

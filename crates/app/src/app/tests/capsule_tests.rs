@@ -174,7 +174,13 @@ fn a_pick_confirms_and_ctrl_z_restores_the_previous_layout() {
         header.label
     );
     assert!(header.label.contains("Not saved"), "{}", header.label);
-    assert!(painted_text_center(&output, "Changed to 2 charts").is_some());
+    let painted = painted_text(&output);
+    assert!(
+        painted
+            .iter()
+            .any(|text| text.ends_with("Changed to 2 charts")),
+        "{painted:?}"
+    );
     let undo = control(&app, "toolbar.layout_popover.undo").expect("the was words");
     assert!(undo.label.contains(before.label), "{}", undo.label);
     let shift = egui::Modifiers::COMMAND | egui::Modifiers::SHIFT;
