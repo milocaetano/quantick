@@ -362,6 +362,28 @@ mod recipe_tests {
     use super::*;
     use crate::workspace_recipe::{DeclaredLayout, WorkspaceRecipe};
 
+    /// A stacked layout's recipe rebuilds the chart it saved folded: what a
+    /// workspace switch puts on the tab is what a restore does.
+    #[test]
+    fn a_recipe_rebuilds_its_folded_stacked_chart() {
+        let recipe = WorkspaceRecipe {
+            layout: DeclaredLayout::TimeTimeAndFlow,
+            context_panes_collapsed: vec![false, true],
+            ..WorkspaceRecipe::default()
+        };
+        let state = recipe_canvas(&recipe);
+        assert_eq!(state.stack_folds(), [false, true]);
+        assert_eq!(state.railed().len(), 1);
+        let flat = WorkspaceRecipe {
+            canvas: Some(crate::canvas::CanvasState::from_preset(
+                crate::canvas::preset("stack3+flow").unwrap(),
+            )),
+            context_panes_collapsed: vec![false, true, false],
+            ..recipe
+        };
+        assert!(recipe_canvas(&flat).railed().is_empty(), "the tree's own");
+    }
+
     /// A recipe from before the canvas model opens on its declared layout;
     /// one with a saved canvas on that canvas's preset. The canvas it
     /// restores holds the layout's panes, folds as saved.

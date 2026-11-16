@@ -211,3 +211,48 @@ fn a_chart_of_three_stacked_folds_on_the_tree() {
     );
     assert_eq!(state.flow_side_folds(), (false, false));
 }
+
+/// A chart folded inside the grid beside the flow pane stays folded while
+/// the flow pane folds and reopens, and while the grid folds whole and
+/// reopens: the tree's layouts keep inner folds as the stack does.
+#[test]
+fn an_inner_fold_of_the_grid_outlives_the_side_folds() {
+    let (mut state, slots) = stacked("grid4+flow");
+    let seam = SeamAddress {
+        path: vec![0, 0],
+        index: 0,
+    };
+    let mut held = None;
+    state
+        .step_seam_drag(&mut held, (&seam, -900.0, true), AREA)
+        .unwrap();
+    let inner = || vec![slots[0]];
+    let railed = |state: &CanvasState| state.railed().iter().copied().collect::<Vec<_>>();
+    assert_eq!(railed(&state), inner());
+    for side in [true, false] {
+        assert!(state.fold_flow_side(side, true), "fold {side}");
+        assert!(state.fold_flow_side(side, false), "open {side}");
+        assert_eq!(railed(&state), inner(), "after {side}");
+    }
+}
+
+/// A save of a stacked layout keeps the stack's folds as its flags, folded
+/// inside a column folded whole too, and the recipe's canvas rebuilds them.
+#[test]
+fn the_stack_folds_round_trip_through_the_flags() {
+    let preset = layout("stack2+flow");
+    let (mut state, slots) = stacked("stack2+flow");
+    assert!(state.rail_stack(&slots, &[false, true]));
+    for whole in [false, true] {
+        if whole {
+            assert!(state.fold_flow_side(false, true));
+        }
+        assert_eq!(state.stack_folds(), [false, true], "whole {whole}");
+        assert_eq!(state.saved_form(preset, 0.4, true), None, "whole {whole}");
+        let rebuilt = CanvasState::from_preset_split(preset, Some(0.4))
+            .with_folds(whole, false)
+            .with_stack_folds(&[false, true]);
+        assert_eq!(rebuilt.railed(), state.railed(), "whole {whole}");
+        assert_eq!(rebuilt.stack_folds(), [false, true], "whole {whole}");
+    }
+}

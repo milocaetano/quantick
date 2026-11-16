@@ -254,13 +254,46 @@ fn the_stack_folds_as_the_model_says() {
             "whole"
         );
     }
-    // A chart folded inside a column folded whole stays folded when the
-    // column opens: the stack keeps its own folds.
+}
+
+/// A chart folded inside a column folded whole is the model's to keep: the
+/// stack reads it there while the column is folded and after it reopens,
+/// and a layout picked again carries no fold over.
+#[test]
+fn a_fold_inside_a_folded_column_is_kept_by_the_model() {
+    use crate::canvas::{CanvasState, PaneKind, Seats};
+    let preset = crate::canvas::preset("stack2+flow").unwrap();
+    let mut state = CanvasState::from_preset(preset);
+    let mut seats = Seats::default();
+    let slots: Vec<_> = (state.tree().panes().into_iter())
+        .filter(|(_, kind)| *kind == PaneKind::Time)
+        .map(|(slot, _)| slot)
+        .collect();
     let mut stack = stack(2);
-    stack.follow(&[false, true]);
-    stack.follow(&[true, true]);
-    stack.follow(&[false, false]);
+    let sync = |stack: &mut ContextStack, state: &mut CanvasState, seats: &mut Seats| {
+        on_stack(stack, (state, seats, true), |_| ());
+    };
+    on_stack(&mut stack, (&mut state, &mut seats, true), |stack| {
+        stack.restore(&[0.5, 0.5], &[false, true]);
+    });
+    assert!(state.fold_flow_side(false, true), "the column folds whole");
+    sync(&mut stack, &mut state, &mut seats);
     assert_eq!(stack.collapsed_slots(), [false, true]);
+    assert_eq!(state.stack_folds(), [false, true]);
+    assert!(state.fold_context(false), "the column reopens");
+    assert_eq!(
+        state.railed().iter().copied().collect::<Vec<_>>(),
+        [slots[1]],
+        "the read right after says what the window draws"
+    );
+    sync(&mut stack, &mut state, &mut seats);
+    assert_eq!(stack.collapsed_slots(), [false, true]);
+
+    assert!(state.fold_flow_side(false, true));
+    state.apply_preset(preset);
+    sync(&mut stack, &mut state, &mut seats);
+    assert!(state.railed().is_empty());
+    assert_eq!(stack.collapsed_slots(), [false, false], "nothing carried");
 }
 
 /// Every fold the stack makes lands on the canvas model, on the slot each
