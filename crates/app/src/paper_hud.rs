@@ -22,6 +22,7 @@ use crate::paper_chrome::{
 };
 use crate::paper_trading::PaperTrading;
 use crate::theme;
+use quantick_session::paper::TradeCommand;
 
 /// Gap between the pane's corner and the HUD card, in pixels.
 const HUD_MARGIN_PX: f32 = 8.0;
@@ -160,7 +161,7 @@ pub fn draw(
                             ))
                             .clicked()
                         {
-                            paper.close_position();
+                            paper.send(TradeCommand::Close);
                         }
                         if ui
                             .add(quiet(&format!("{} Reverse", icons::ARROWS_LEFT_RIGHT)))
@@ -170,7 +171,7 @@ pub fn draw(
                             ))
                             .clicked()
                         {
-                            paper.reverse_position();
+                            paper.send(TradeCommand::Reverse);
                         }
                     });
                 });

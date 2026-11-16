@@ -2,6 +2,8 @@ use quantick_control_host::actions::ActionRegistry;
 use quantick_control_host::authority::TRADE_EFFECT_ID;
 use serde_json::json;
 
+use quantick_session::paper::TabPaper;
+
 use super::*;
 use crate::test_support::{FakeAccess, FakeWindow};
 
@@ -116,11 +118,35 @@ fn a_trade_without_a_chart_open_is_refused_before_it_journals() {
     );
 }
 
-/// One paper desk, as the window's adapter hands the active tab's over: an
-/// account marked at 100 and the desk's ruler and ticket around it.
+/// One paper desk, as the window's adapter hands the active tab's over: the
+/// tab's own paper (an account and the desk's ruler and ticket around it),
+/// and every outcome a control call ran through it, for a parity test to
+/// hold against the tab's own surfaces.
 struct PaperDesk {
-    account: quantick_paper::PaperAccount,
-    desk: quantick_paper::desk::Desk,
+    paper: TabPaper,
+    outcomes: Vec<TradeOutcome>,
+}
+
+impl PaperDesk {
+    fn new(account: PaperAccount) -> Self {
+        Self {
+            paper: TabPaper::new(account),
+            outcomes: Vec::new(),
+        }
+    }
+}
+
+impl std::ops::Deref for PaperDesk {
+    type Target = TabPaper;
+    fn deref(&self) -> &TabPaper {
+        &self.paper
+    }
+}
+
+impl std::ops::DerefMut for PaperDesk {
+    fn deref_mut(&mut self) -> &mut TabPaper {
+        &mut self.paper
+    }
 }
 
 impl TradeDesk for PaperDesk {
@@ -128,26 +154,24 @@ impl TradeDesk for PaperDesk {
         &self.account
     }
     fn account_mut(&mut self) -> &mut PaperAccount {
-        &mut self.account
+        &mut self.paper.account
     }
     fn ruler_ticks(&self) -> u32 {
         self.desk.ruler.notches
     }
     fn set_ruler_ticks(&mut self, ticks: u32) {
-        self.desk.ruler.set_ticks(ticks);
+        self.paper.desk.ruler.set_ticks(ticks);
     }
-    fn clear_ruler(&mut self) {
-        self.desk.ruler.clear();
+    fn execute(&mut self, command: TradeCommand) -> TradeOutcome {
+        let outcome = self.paper.execute(command);
+        self.outcomes.push(outcome.clone());
+        outcome
     }
     fn mark_price(&self) -> Option<Decimal> {
         self.account.mark_price()
     }
     fn working_orders(&self) -> &[Order] {
         self.account.working_orders()
-    }
-    fn armed_bracket(&self, side: Side, reference: Decimal, quantity: Decimal) -> Bracket {
-        let env = self.desk.account_env(&self.account, side, reference);
-        self.account.armed_bracket(side, reference, quantity, &env)
     }
     fn risk_report(&self) -> (RiskState, bool) {
         self.desk.risk_report(&self.account)
@@ -191,10 +215,7 @@ fn desk_window() -> DeskWindow {
         side: Side::Buy,
     });
     DeskWindow {
-        desk: PaperDesk {
-            account,
-            desk: quantick_paper::desk::Desk::default(),
-        },
+        desk: PaperDesk::new(account),
     }
 }
 
@@ -333,10 +354,7 @@ fn locked_win_window() -> DeskWindow {
         lock: true,
     });
     DeskWindow {
-        desk: PaperDesk {
-            account,
-            desk: quantick_paper::desk::Desk::default(),
-        },
+        desk: PaperDesk::new(account),
     }
 }
 
@@ -379,4 +397,214 @@ fn the_lock_refuses_a_named_order_over_the_budget() {
         "nothing rests at the venue"
     );
     assert!(window.desk.account.is_flat(), "nothing was filled");
+}
+
+/// One print at `price`, the tape a fill needs.
+fn print(agg_id: u64, price: i64) -> quantick_engine::Trade {
+    quantick_engine::Trade {
+        agg_id,
+        timestamp_ms: i64::try_from(agg_id).expect("small id") * 1_000,
+        price: Decimal::from(price),
+        quantity: Decimal::ONE,
+        side: Side::Buy,
+    }
+}
+
+/// Everything a trader or an operator can read back from one desk.
+fn readback(paper: &TabPaper) -> String {
+    format!(
+        "{:?} | {:?} | {:?} | {:?} | ruler {}",
+        paper.position_summary(),
+        paper.working_orders(),
+        paper.session_trades(),
+        paper.account.peek_toast(),
+        paper.ruler_ticks(),
+    )
+}
+
+/// C1: the tab's own surfaces and the named call run one decision. The same
+/// commands, sent to one desk the way a click sends them and to an identical
+/// desk through the control handlers, leave the same account, the same
+/// working orders and the same venue events behind, step by step.
+#[test]
+fn a_trade_command_lands_the_same_through_a_click_and_a_named_call() {
+    let mut window = desk_window();
+    let mut ui = desk_window().desk.paper;
+    let mut access = FakeAccess::with_budget(0);
+    let limit = OrderIntent::limit(Side::Buy, Decimal::from(2), Decimal::from(99));
+    let market = OrderIntent::market(Side::Buy, Decimal::ONE);
+    let protect = Bracket::whole(Some(Decimal::from(95)), Some(Decimal::from(110)));
+
+    type NamedCall = Box<dyn Fn(&mut DeskWindow, &mut FakeAccess)>;
+    let mut steps: Vec<(TradeCommand, NamedCall)> = vec![
+        (
+            TradeCommand::Place {
+                intent: Box::new(limit),
+            },
+            Box::new(|w, a| {
+                place_order(
+                    w,
+                    a,
+                    &FakeWindow::trader(),
+                    &json!({ "side": "buy", "kind": "limit", "quantity": "2", "price": "99" }),
+                )
+                .expect("placed");
+            }),
+        ),
+        (
+            TradeCommand::Amend {
+                id: OrderId(1),
+                bracket: Box::new(protect),
+            },
+            Box::new(|w, a| {
+                bracket_order(
+                    w,
+                    a,
+                    &FakeWindow::trader(),
+                    &json!({ "order_id": 1, "stop_loss": "95", "take_profit": "110" }),
+                )
+                .expect("bracketed");
+            }),
+        ),
+        (
+            TradeCommand::Cancel { id: OrderId(1) },
+            Box::new(|w, a| {
+                cancel_order(w, a, &FakeWindow::trader(), &json!({ "order_id": 1 }))
+                    .expect("cancelled");
+            }),
+        ),
+        (
+            TradeCommand::Place {
+                intent: Box::new(market),
+            },
+            Box::new(|w, a| {
+                place_order(
+                    w,
+                    a,
+                    &FakeWindow::trader(),
+                    &json!({ "side": "buy", "kind": "market", "quantity": "1" }),
+                )
+                .expect("placed");
+            }),
+        ),
+        (
+            TradeCommand::Reverse,
+            Box::new(|w, a| {
+                reverse_position(w, a, &FakeWindow::trader(), &json!({})).expect("reversed");
+            }),
+        ),
+        (
+            TradeCommand::Flatten,
+            Box::new(|w, a| {
+                flatten_position(w, a, &FakeWindow::trader(), &json!({})).expect("flattened");
+            }),
+        ),
+    ];
+    for (index, (command, named_call)) in steps.drain(..).enumerate() {
+        let clicked = ui.execute(command.clone());
+        named_call(&mut window, &mut access);
+        let called = window
+            .desk
+            .outcomes
+            .pop()
+            .expect("the handler ran the command");
+        assert_eq!(
+            clicked, called,
+            "step {index}: {command:?} answered the same"
+        );
+        // A print after every step, so a market order fills on both desks.
+        let tape = print(u64::try_from(index).expect("small") + 1, 100);
+        ui.on_trade(&tape);
+        window.desk.on_trade(&tape);
+        assert_eq!(
+            readback(&ui),
+            readback(&window.desk),
+            "step {index}: {command:?} left the same desk behind"
+        );
+        if index == 1 {
+            let amended = ui.working_orders().first().map(|order| order.bracket);
+            assert_eq!(amended, Some(protect), "the amendment found order 1");
+        }
+    }
+    assert!(ui.is_flat(), "the sequence ends flat");
+    assert!(ui.working_orders().is_empty(), "and with nothing working");
+}
+
+/// C2: one call goes flat. A long position and a resting order become no
+/// position and nothing working; the call journals who asked and the venue's
+/// answer, as a placement does.
+#[test]
+fn flatten_goes_flat_with_nothing_working_in_one_call() {
+    let mut window = desk_window();
+    let mut access = FakeAccess::with_budget(0);
+    let trader = FakeWindow::trader();
+    for input in [
+        json!({ "side": "buy", "kind": "market", "quantity": "2" }),
+        json!({ "side": "buy", "kind": "limit", "quantity": "1", "price": "95" }),
+    ] {
+        place_order(&mut window, &mut access, &trader, &input).expect("placed");
+    }
+    window.desk.on_trade(&print(1, 100));
+    assert!(!window.desk.is_flat(), "the market order filled");
+    assert_eq!(window.desk.working_orders().len(), 1, "the limit rests");
+
+    let flat = flatten_position(&mut window, &mut access, &trader, &json!({}))
+        .expect("the call dispatches");
+    assert_eq!(flat["accepted"], true, "{flat}");
+    assert_eq!(flat["working_orders"], json!([]), "nothing works now");
+    window.desk.on_trade(&print(2, 100));
+    assert!(window.desk.is_flat(), "the exit filled at the next print");
+    assert!(window.desk.working_orders().is_empty());
+    let journalled = access
+        .events
+        .iter()
+        .filter(|event| event.kind.as_str() == FLATTEN_EVENT_KIND)
+        .count();
+    assert_eq!(journalled, 1, "the flatten journals once");
+}
+
+/// C2: one call reverses. A long of 2 becomes a short of 2 at the next
+/// print; while flat the call is refused, before it journals, because a
+/// reversal of nothing is a caller working from a stale read.
+#[test]
+fn reverse_flips_the_position_in_one_call_and_refuses_while_flat() {
+    let mut window = desk_window();
+    let mut access = FakeAccess::with_budget(0);
+    let trader = FakeWindow::trader();
+    let flat = reverse_position(&mut window, &mut access, &trader, &json!({}))
+        .expect_err("nothing to reverse");
+    assert_eq!(
+        flat,
+        ControlError::invalid_request(quantick_session::paper::NOTHING_TO_REVERSE.to_owned())
+    );
+    assert!(
+        access.events.is_empty(),
+        "a refusal before the desk records nothing"
+    );
+
+    place_order(
+        &mut window,
+        &mut access,
+        &trader,
+        &json!({ "side": "buy", "kind": "market", "quantity": "2" }),
+    )
+    .expect("placed");
+    window.desk.on_trade(&print(1, 100));
+    let long = window.desk.position_summary().expect("long");
+    assert_eq!(long.quantity, Decimal::from(2));
+
+    let reversed = reverse_position(&mut window, &mut access, &trader, &json!({}))
+        .expect("the call dispatches");
+    assert_eq!(reversed["accepted"], true, "{reversed}");
+    window.desk.on_trade(&print(2, 100));
+    let short = window.desk.position_summary().expect("short");
+    assert_ne!(short.side, long.side, "the side flipped");
+    assert_eq!(short.quantity, Decimal::from(2), "the size held");
+    assert!(
+        access
+            .events
+            .iter()
+            .any(|event| event.kind.as_str() == REVERSE_EVENT_KIND),
+        "the reversal journals"
+    );
 }

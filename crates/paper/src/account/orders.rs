@@ -75,21 +75,33 @@ impl PaperAccount {
     /// same sentence. The closing half carries no new risk and is not
     /// counted.
     pub fn reverse_position(&mut self, bracket: Bracket) {
+        if let Err(refusal) = self.try_reverse_position(bracket) {
+            self.set_toast(format!("SIM: {}", refusal.sentence()));
+        }
+    }
+
+    /// [`Self::reverse_position`] for a caller that branches on a refusal:
+    /// what the venue did (nothing while flat), or the risk lock's typed
+    /// answer with no acknowledgement posted.
+    pub fn try_reverse_position(
+        &mut self,
+        bracket: Bracket,
+    ) -> Result<Vec<VenueEvent>, super::RiskRefusal> {
         let (Some(position), Some((side, _))) =
             (self.venue.position().cloned(), self.reverse_aim())
         else {
-            return;
+            return Ok(Vec::new());
         };
         let opening = OrderIntent::market(side, position.quantity).with_bracket(bracket);
         if let Some(refusal) = self.risk_refusal(&opening) {
-            self.set_toast(format!("SIM: {}", refusal.sentence()));
-            return;
+            return Err(refusal);
         }
         let events = self.venue.submit(
             OrderIntent::market(side, position.quantity.saturating_add(position.quantity))
                 .with_bracket(bracket),
         );
-        self.handle_events(events);
+        self.handle_events(events.clone());
+        Ok(events)
     }
 
     /// Place one order, stated in full — the control plane's entry point,
@@ -285,7 +297,7 @@ impl PaperAccount {
     }
 
     /// Cancel every working order (resting and queued), trading nothing.
-    pub fn cancel_all_orders(&mut self) {
+    pub fn cancel_all_orders(&mut self) -> Vec<VenueEvent> {
         let mut ids: Vec<OrderId> = self
             .venue
             .working_orders()
@@ -293,10 +305,13 @@ impl PaperAccount {
             .map(|order| order.id)
             .collect();
         self.venue.in_flight_entries(&mut ids);
+        let mut all = Vec::new();
         for id in ids {
             let events = self.venue.cancel(id);
-            self.handle_events(events);
+            self.handle_events(events.clone());
+            all.extend(events);
         }
+        all
     }
 
     /// The strategies the trader keeps, in their own order.

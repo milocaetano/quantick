@@ -170,6 +170,8 @@ capability that cannot change application state.
 | `trade.order.bracket` | 1 | `trade` | no | `trade` |
 | `trade.order.cancel` | 1 | `trade` | no | `trade` |
 | `trade.order.place` | 1 | `trade` | no | `trade` |
+| `trade.position.flatten` | 1 | `trade` | no | `trade` |
+| `trade.position.reverse` | 1 | `trade` | no | `trade` |
 | `trade.risk.set` | 1 | `trade` | no | `trade` |
 | `trade.ruler.set` | 1 | `trade` | no | `trade` |
 | `trade.strategy.select` | 1 | `trade` | no | `trade` |
@@ -188,4 +190,4 @@ capability that cannot change application state.
 | `workspace.save_as` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
 | `workspace.save_to` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
 
-163 capabilities registered.
+165 capabilities registered.

@@ -91,6 +91,15 @@ pub const SET_INSTRUMENT_MONEY_CAPABILITY_ID: &str = "trade.instrument.set_money
 
 pub const CANCEL_CAPABILITY_ID: &str = "trade.order.cancel";
 
+/// The two one-shot position calls: what they journal under and their ids.
+pub const FLATTEN_EVENT_KIND: &str = "trade.position.flattened";
+
+pub const REVERSE_EVENT_KIND: &str = "trade.position.reversed";
+
+pub const FLATTEN_CAPABILITY_ID: &str = "trade.position.flatten";
+
+pub const REVERSE_CAPABILITY_ID: &str = "trade.position.reverse";
+
 /// How an entry meets the market, stated rather than inferred.
 ///
 /// The chart's aim infers the kind from where the pointer sits relative to
@@ -193,6 +202,11 @@ pub struct BracketInput {
 pub struct CancelInput {
     pub order_id: u64,
 }
+
+/// The one-shot position calls take nothing: the position is the account's.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PositionInput {}
 
 /// What every `trade.*` action answers with.
 ///
@@ -366,6 +380,28 @@ pub fn cancel_descriptor() -> CapabilityDescriptor {
     )
 }
 
+pub fn flatten_descriptor() -> CapabilityDescriptor {
+    descriptor(
+        FLATTEN_CAPABILITY_ID,
+        "Go flat: close the position and cancel every working order",
+        "Exits the open position at the next print and removes every working order, in one call, so the account is never half-flat between two calls. Risk-reducing: it only ever takes exposure off. Flat with nothing working, it changes nothing.",
+        generated_schema::<PositionInput>(),
+        true,
+        "Names no order and no size: it flattens whatever the account holds when it lands, so a caller working from a stale read still ends flat.",
+    )
+}
+
+pub fn reverse_descriptor() -> CapabilityDescriptor {
+    descriptor(
+        REVERSE_CAPABILITY_ID,
+        "Reverse the simulated position",
+        "Flips the open position in one market order for twice its size, protected by the ticket's offsets for the new side. The opening leg is measured by the risk per trade like any entry and refused with its sentence. Refused while flat: there is nothing to reverse.",
+        generated_schema::<PositionInput>(),
+        false,
+        "The size is the account's at the moment the call lands, never a size the caller read earlier. Not safe to retry: a second reversal flips the position back.",
+    )
+}
+
 /// Which named exit ladder the ticket arms next.
 #[derive(Debug, Clone, Default, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -535,6 +571,22 @@ pub const READBACKS: &[Readback] = &[
         PAPER_SCOPE_ID,
         "tabs[].working_orders[].order_id",
         "an order the pre-call reading lacked is working, or a position opened",
+        &[TRADE_UNREACHABLE_TEST],
+    ),
+    snapshot(
+        "trade.position.flatten",
+        Forbidden,
+        PAPER_SCOPE_ID,
+        "tabs[].position",
+        "no position is open and `working_order_count` is zero",
+        &[TRADE_UNREACHABLE_TEST],
+    ),
+    snapshot(
+        "trade.position.reverse",
+        Forbidden,
+        PAPER_SCOPE_ID,
+        "tabs[].position.side",
+        "the position's side is the opposite of the pre-call reading",
         &[TRADE_UNREACHABLE_TEST],
     ),
     snapshot(
