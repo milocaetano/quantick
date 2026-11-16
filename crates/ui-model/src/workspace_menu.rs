@@ -166,6 +166,8 @@ pub struct Sheet {
     pub names: Vec<(String, bool)>,
     /// A name dialog's Save would save: a name, and a free colour.
     pub saves: bool,
+    /// A click outside the open palette closes it (Manage's rows).
+    pub closes_out: bool,
 }
 
 impl Sheet {
@@ -194,6 +196,7 @@ impl Sheet {
             foot: Vec::new(),
             names: Vec::new(),
             saves: false,
+            closes_out: false,
         }
     }
 }

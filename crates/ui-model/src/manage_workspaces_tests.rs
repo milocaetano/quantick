@@ -250,6 +250,7 @@ fn a_chip_opens_the_same_palette_under_its_row() {
         "a held colour asks to swap, never locked here"
     );
     assert_eq!(open.size, view(&ManageDialog::new(1), true).size);
+    assert!(open.closes_out, "a click outside it closes it");
     let foot = ids(&open.foot);
     assert!(foot.contains(&"manage_workspaces.new".to_owned()));
     assert!(foot.contains(&"manage_workspaces.close".to_owned()));

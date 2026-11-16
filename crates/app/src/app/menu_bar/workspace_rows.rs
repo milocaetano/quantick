@@ -11,7 +11,7 @@ use eframe::egui::{self, Color32, Key, Modifiers, Rect, RichText, Sense, TextWra
 use quantick_appearance::Token;
 use quantick_control_handlers::workspace_book::cell_menu::{self as cells, CellMenuCache, CellRow};
 use quantick_control_handlers::workspace_book::colour_popover;
-use quantick_session::colour_popover::{ColourPopover, Key as PopoverKey};
+use quantick_session::colour_popover::{ColourIntent, ColourPopover, Key as PopoverKey};
 use quantick_session::workspace_menu::{self as model, MenuBounds};
 use quantick_session::workspace_menu::{WorkspaceCommand, WorkspaceMenuState};
 use quantick_stores::workspaces::WorkspaceBook;
@@ -187,8 +187,20 @@ pub(super) fn sheet(
                     ui.scroll_to_rect(place(body, at), None);
                 }
                 if let (Some((at, pane)), Some((state, keys))) = (&view.palette, pop) {
-                    let got = palette_at(ui, body + vec2(at[0], at[1]), pane, state, (ink, drawn));
+                    let origin = body + vec2(at[0], at[1]);
+                    let got = palette_at(ui, origin, pane, state, (ink, drawn));
                     asked = asked.or(pane.keyed(state, keys).map(Some)).or(got);
+                    let inside = Rect::from_min_size(origin, vec2(pane.size[0], pane.size[1]));
+                    let click = ui.input(|i| {
+                        i.pointer
+                            .primary_clicked()
+                            .then(|| i.pointer.interact_pos())
+                    });
+                    let out = click
+                        .flatten()
+                        .is_some_and(|at| view.closes_out && !inside.contains(at));
+                    asked = asked
+                        .or(out.then_some(Some(WorkspaceCommand::Colour(ColourIntent::Close))));
                 }
                 asked
             });

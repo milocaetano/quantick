@@ -243,19 +243,24 @@ impl WorkspaceBook {
     }
 
     /// The tabs a delete moved, back on `name` where still open and on
-    /// `Default`: exactly as they stood when untouched since, else with
-    /// their copy, which then reads as edits.
+    /// `Default`: exactly as they stood when untouched since or still clean
+    /// there, else with their copy, which then reads as edits.
     fn move_back(&mut self, name: &str, moved: &[MovedTab]) -> Vec<u64> {
         let mut back = Vec::new();
         for one in moved {
-            let Some(state) = self.tabs.get_mut(&one.tab) else {
+            let Some(state) = self.tabs.get(&one.tab) else {
                 continue;
             };
             if state.workspace != DEFAULT_WORKSPACE {
                 continue;
             }
+            // Untouched, or settled clean on a factory Default: as it stood.
+            let untouched = state.copy == one.left || !self.is_modified(state);
+            let Some(state) = self.tabs.get_mut(&one.tab) else {
+                continue;
+            };
             back.push(one.tab);
-            if state.copy == one.left {
+            if untouched {
                 *state = one.before.clone();
                 match one.unsynced {
                     Some(unsynced) => self.unsynced.insert(one.tab, unsynced),

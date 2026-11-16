@@ -179,6 +179,7 @@ pub fn manage(
     let mut view = Sheet::of(size, Vec::new());
     (view.head, view.list_top) = (head(&ink, measure), TITLE_PT + CAPTION_PT);
     (view.list_view, view.list_height) = (LIST_PT, 0.0);
+    view.closes_out = true;
     let undo = dialog.undo_row(now_ms);
     let mut undo_left = undo.is_some();
     let listed = book.list();
