@@ -123,7 +123,6 @@ mod screenshot_evidence_tests;
 mod session_length_tests;
 mod settled_frame;
 mod tab_workspace_tests;
-mod workspace_manage_tests;
 mod tape_only_scale_tests;
 mod theme_menu_tests;
 mod time_strip_cursor_tests;
@@ -137,6 +136,7 @@ mod workspace_bundle_runtime_baseline_tests;
 mod workspace_commit_baseline_tests;
 mod workspace_lifetime_baseline_tests;
 mod workspace_lifetime_tests;
+mod workspace_manage_tests;
 mod workspaces_tests;
 
 use super::*;
