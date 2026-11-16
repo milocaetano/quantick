@@ -609,6 +609,13 @@ fn an_indicator_added_on_a_flow_pane_reaches_every_pane_of_its_layout_in_both_ta
     app.apply_toolbar_action(ToolbarAction::AddNative("native.ema"));
     settle_indicators(&mut app);
     frames(&mut app, 2);
+    // The mirrored add reaches tab `b`'s workers at once, but a view appears
+    // only when its worker answers: wait for `b`'s workers too, not frames.
+    let other_tab = app.runtime.tabs.by_id_mut(b).expect("an open tab");
+    for pane in other_tab.panes_mut() {
+        pane.indicator_worker.flush();
+        pane.apply_indicator_events();
+    }
     assert_eq!(
         count(&app, a, PaneSide::Time(0)),
         context + 1,
