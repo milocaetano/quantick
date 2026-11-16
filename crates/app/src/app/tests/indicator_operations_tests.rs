@@ -302,3 +302,20 @@ fn canvas_menu_hide_mirrors_two_panes_and_records_the_layout_entry() {
     );
     assert_one_indicator_save(&mut app);
 }
+
+/// A tab no longer active, as another window's, still has its menu hide applied.
+#[test]
+fn a_canvas_menu_hide_on_a_tab_that_is_not_active_is_applied() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = split_app(&ctx, 40);
+    app.apply_toolbar_action(ToolbarAction::AddNative("native.ema"));
+    settle_indicators(&mut app);
+    let slot = app.active_tab().flow_pane.indicators.all()[0].slot;
+    open_second_tab(&mut app, &ctx, "ETHUSDT");
+    assert_ne!(app.runtime.tabs.active_index(), 0);
+    app.runtime.tabs.runtime_mut(0).flow_pane.model.pending_hide = Some(slot.0);
+    app.service_indicator_requests();
+    let first = app.runtime.tabs.runtime_mut(0);
+    assert!(first.flow_pane.indicators.all()[0].hidden);
+    assert_eq!(first.flow_pane.model.pending_hide, None, "taken once");
+}

@@ -475,9 +475,8 @@ fn chrome_intents_raise_the_hosts_flags() {
         assert_eq!(
             pane.model.pending_hide.take(),
             Some(slot.0),
-            "asked of the window once"
+            "asked of the window"
         );
-        assert_eq!(pane.model.pending_hide, None);
 
         pane.apply_menu_intent(
             PaneMenuIntent::ObjectsAsk(quantick_chart_interaction::pane::ObjectAction::DeleteAll),
