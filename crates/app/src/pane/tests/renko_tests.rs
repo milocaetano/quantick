@@ -5,6 +5,7 @@
 //! time they carry — while a tick pane's still shift by the bars it added.
 
 use super::*;
+use crate::drawings::{self, ChartPoint};
 use crate::viewport::Viewport;
 use quantick_engine::bar_registry::BUILTIN_BARS;
 use rust_decimal::Decimal;

@@ -37,6 +37,29 @@ use crate::plot_area::plot_split;
 use crate::style::CandlePreset;
 use crate::surfaces::drawing_chrome::demo::DrawingsDemo;
 use crate::ui_state::WorkspaceExt;
+// Names only the tests read; production `app.rs` no longer imports them.
+use super::control_host::control_quick_range;
+use super::drawing_controller::DUPLICATE_OFFSET_BARS;
+use super::menu_bar::{
+    PAPER_BUY_SHORTCUT, PAPER_CANCEL_SHORTCUT, PAPER_FLATTEN_SHORTCUT, PAPER_REVERSE_SHORTCUT,
+    PAPER_SELL_SHORTCUT,
+};
+use crate::chart_layers::ChartLayer;
+use crate::dock::DockTab;
+use crate::drawings;
+use crate::feed_notice;
+use crate::harness::ContextMenuPane;
+use crate::loading::LoadingTask;
+use crate::metrics;
+use crate::pane::{self, DRAWING_ANCHOR_RADIUS_PX};
+use crate::state::BarSpec;
+use crate::statusbar;
+use crate::tab::CanvasLayout;
+use crate::tabstrip::TabAction;
+use crate::timezone::TzOffset;
+use crate::toolbar::ToolbarAction;
+use crate::toolrail::{Tool, ToolboxDock};
+use quantick_feed::{self as feed, FeedCommand, ReplayControl};
 
 pub(crate) fn update_indicator_settings(
     app: &mut QuantickApp,

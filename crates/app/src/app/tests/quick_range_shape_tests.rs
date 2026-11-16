@@ -152,7 +152,7 @@ fn the_channel_keeps_the_leg_and_takes_its_width_from_the_next_click() {
         let draft = pane.drawings.draft().expect("the leg is a pending channel");
         assert_eq!(draft.tool.id(), "parallel-channel");
         assert_eq!(draft.points, leg);
-        assert!(crate::app::control_quick_range(&app).is_none(), "box gone");
+        assert!(control_quick_range(&app).is_none(), "box gone");
 
         let middle = egui::pos2((start.x + end.x) / 2.0, (start.y + end.y) / 2.0 + offset);
         click_chart(&mut app, &ctx, middle);

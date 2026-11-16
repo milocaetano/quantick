@@ -32,8 +32,6 @@ mod chart_layers_wiring;
 mod chart_settings_wiring;
 mod chrome;
 pub(crate) mod control_host;
-#[cfg(test)]
-pub(crate) use control_host::control_quick_range;
 pub(crate) use control_host::{
     AlertsPort, ChromePort, ControlWindow, GatewayPort, HealthPort, IndicatorPickerPort,
     LayersPort, LayoutPort, PaperPort, RecordingPort, ScriptsPort, TabsMutPort, TabsPort,
@@ -71,70 +69,20 @@ fn saved_context_intervals(bars: &[String], time_bars: Option<&str>) -> Vec<i64>
     let default = crate::time_header::DEFAULT_INTERVAL_MS;
     quantick_stores::ui_state::saved_context_intervals(bars, time_bars, default)
 }
-// Named by the paper-trading and drawing tests through `use super::*`, and by
-// nothing in production outside the module that owns them, so the imports are
-// gated the way the block at the end of this list is.
-#[cfg(test)]
-use drawing_controller::DUPLICATE_OFFSET_BARS;
-#[cfg(test)]
-use menu_bar::{
-    PAPER_BUY_SHORTCUT, PAPER_CANCEL_SHORTCUT, PAPER_FLATTEN_SHORTCUT, PAPER_REVERSE_SHORTCUT,
-    PAPER_SELL_SHORTCUT,
-};
 
 use crate::config::AppConfig;
-#[cfg(test)]
-use crate::drawings;
-#[cfg(test)]
-use crate::feed_notice;
 #[cfg(any(feature = "scenario-harness", test))]
 use crate::harness::Harness;
-#[cfg(test)]
-use crate::state::BarSpec;
 use crate::surfaces::replay_browser::ReplayBrowserExt as _;
 use crate::symbols_file::{self, AddedSymbols};
 use crate::tab::Tab;
-#[cfg(test)]
-use crate::timezone::TzOffset;
 use crate::ui_state;
 use crate::window_scale;
 use quantick_feed::FeedHandle;
 
 use quantick_stores::bubble_asset_store::open_asset_bubbles;
 
-// Names the window's own code no longer reads: the nine modules above took the
-// last production read of each with them -- `launch_hooks` and `paper_wiring`
-// took the newest five. `app::tests` still reaches every one
-// through `use super::*`, so they stay here as gated imports rather than
-// becoming an edit to `app/tests/` — the same treatment `ChartLayer` already
-// had when `maintain_chart_layers` left for `app::chart_layers_wiring`, and
-// `heatmap_lamp_on` has now taken the last read of that one to `app::tests`.
-#[cfg(test)]
-use crate::chart_layers::ChartLayer;
-#[cfg(test)]
-use crate::dock::DockTab;
-#[cfg(test)]
-#[cfg(any(feature = "scenario-harness", test))]
-use crate::harness::ContextMenuPane;
-#[cfg(test)]
-use crate::loading::LoadingTask;
-#[cfg(test)]
-use crate::metrics;
 use crate::pane::ChartPane;
-#[cfg(test)]
-use crate::pane::{self, DRAWING_ANCHOR_RADIUS_PX};
-#[cfg(test)]
-use crate::statusbar;
-#[cfg(test)]
-use crate::tab::CanvasLayout;
-#[cfg(test)]
-use crate::tabstrip::TabAction;
-#[cfg(test)]
-use crate::toolbar::ToolbarAction;
-#[cfg(test)]
-use crate::toolrail::{Tool, ToolboxDock};
-#[cfg(test)]
-use quantick_feed::{self as feed, FeedCommand, ReplayControl};
 
 /// Id of the tab the window opens with.
 const FIRST_TAB_ID: u64 = 0;

@@ -1,5 +1,8 @@
 use super::*;
 use crate::drawings::{DrawingId, DrawingScope, StyleColor32};
+use quantick_drawings::SavedDrawingExt;
+use quantick_stores::layouts::save;
+use quantick_workspace::layout_document::{SavedBand, SavedDrawing, SavedPoint, parse};
 fn level(price: f64) -> SavedDrawing {
     SavedDrawing {
         tool: "horizontal-line".to_owned(),

@@ -267,7 +267,9 @@ fn the_indicator_set_restores_from_disk_and_saves_back() {
     app.active_tab_mut().flow_pane.apply_indicator_events();
     app.layout_adapter().apply_pending_indicator_state();
     app.layout_adapter().flush_layouts();
-    let crate::layouts::Loaded::Book(book) = crate::layouts::load(&layouts_path) else {
+    let quantick_stores::layouts::Loaded::Book(book) =
+        quantick_stores::layouts::load(&layouts_path)
+    else {
         panic!("the layouts file was written");
     };
     let written = &book.active().indicators;

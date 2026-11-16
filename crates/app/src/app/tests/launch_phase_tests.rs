@@ -113,7 +113,7 @@ fn a_stray_store_hook_in_a_default_build_turns_saving_off_and_says_so() {
         &workspace,
         &ui_state::Workspace::default()
     ));
-    crate::layouts::save(
+    quantick_stores::layouts::save(
         &dir.join("layouts.toml"),
         &crate::layouts::LayoutBook::default(),
     );
