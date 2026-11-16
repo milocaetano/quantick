@@ -43,8 +43,8 @@ impl WorkspaceBookHost for Host {
         self.writes += 1;
         Ok(())
     }
-    fn workspace_menu(&mut self) -> Option<&mut WorkspaceMenuState> {
-        Some(&mut self.menu)
+    fn workspace_menu(&mut self) -> Option<(&mut WorkspaceMenuState, bool)> {
+        Some((&mut self.menu, true))
     }
     fn tab_symbols(&self, tabs: &[u64]) -> Vec<String> {
         let symbol = |tab: &u64| ["WINZ26", "WIN$N", "WDO$N"][*tab as usize - 1].to_owned();

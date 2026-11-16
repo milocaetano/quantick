@@ -19,6 +19,7 @@ struct Host {
     book: WorkspaceBook,
     menu: WorkspaceMenuState,
     writes: usize,
+    dark: bool,
 }
 
 impl TabDirectory for Host {
@@ -44,8 +45,8 @@ impl WorkspaceBookHost for Host {
         self.writes += 1;
         Ok(())
     }
-    fn workspace_menu(&mut self) -> Option<&mut WorkspaceMenuState> {
-        Some(&mut self.menu)
+    fn workspace_menu(&mut self) -> Option<(&mut WorkspaceMenuState, bool)> {
+        Some((&mut self.menu, self.dark))
     }
 }
 
@@ -80,6 +81,7 @@ fn host() -> (Host, FakeAccess, ActorContext) {
         book,
         menu,
         writes: 0,
+        dark: true,
     };
     (host, FakeAccess::with_budget(0), FakeWindow::assistant())
 }
@@ -407,4 +409,71 @@ fn the_colour_call_answers_its_warnings() {
     let value = json!({"name": "Flow", "colour": "petrol"});
     let set = crate::workspace_book::colour_set(&mut host, &mut access, &actor, &value).unwrap();
     assert_eq!(set["warnings"], json!([]));
+}
+
+/// A question whose colour stops being held under it is left: Tab then
+/// Enter cannot apply the stale colour, and the read-back says grid.
+#[test]
+fn a_question_whose_colour_freed_is_left_and_applies_nothing() {
+    let (mut host, mut access, actor) = host();
+    press(
+        &mut host,
+        &mut access,
+        &actor,
+        ColourIntent::Pick("sky".to_owned()),
+    );
+    assert!(host.menu.colour.as_ref().unwrap().asked.is_some());
+    host.book.set_colour("Scalp", preset(6), false).unwrap();
+    let writes = host.writes;
+    press(&mut host, &mut access, &actor, ColourIntent::Answer(true));
+    assert_eq!(host.book.colour("Flow"), Some(preset(3)), "nothing applied");
+    assert_eq!(host.writes, writes);
+    assert_eq!(host.menu.colour.as_ref().unwrap().asked, None);
+    host.menu.colour.as_mut().unwrap().ask("sky");
+    let read = popover_call::<Host, FakeAccess>(
+        &mut host,
+        &mut access,
+        &actor,
+        &json!({"act": "custom", "hex": "#123456"}),
+    )
+    .unwrap();
+    assert_eq!(read["question"], json!(null));
+    assert_eq!(read["face"], json!("custom"), "the stale question is gone");
+}
+
+/// The custom act fills the field from the current colour as the window's
+/// theme paints it.
+#[test]
+fn the_custom_act_fills_the_field_in_the_window_s_theme() {
+    let (mut host, mut access, actor) = host();
+    host.dark = false;
+    let read = call(
+        &mut host,
+        &mut access,
+        &actor,
+        "popover",
+        json!({"act": "custom"}),
+    );
+    assert_eq!(read["hex"], json!("#6A3FC4"), "Violet as Light paints it");
+}
+
+/// A typed value equal to a held preset swaps that preset itself.
+#[test]
+fn a_typed_preset_value_swaps_the_preset() {
+    let (mut host, mut access, actor) = host();
+    host.menu.colour.as_mut().unwrap().ask("#5DBDEB");
+    press(&mut host, &mut access, &actor, ColourIntent::Answer(true));
+    assert_eq!(host.book.colour("Flow"), Some(preset(2)));
+    assert_eq!(host.book.colour("Scalp"), Some(preset(3)));
+}
+
+/// A refused act leaves the menu as it was.
+#[test]
+fn a_refused_act_keeps_the_menu() {
+    let (mut host, mut access, actor) = host();
+    host.menu.colour = None;
+    let refused =
+        popover_call::<Host, FakeAccess>(&mut host, &mut access, &actor, &json!({"act": "apply"}));
+    assert!(refused.is_err());
+    assert!(host.menu.chip_menu_on(1), "the menu is still open");
 }

@@ -9,6 +9,23 @@ pub enum SettingsTab {
     Style,
 }
 
+impl SettingsTab {
+    /// `QUANTICK_INDICATOR_SETTINGS`: `<index>` or `<index>:<tab>`, the tab
+    /// `inputs`/`0` or `style`/`1`. Nonsense is no hook rather than a guessed
+    /// one: a capture of the wrong tab would claim to show what it does not.
+    #[must_use]
+    pub fn hook(value: &str) -> Option<(usize, Self)> {
+        let (index, tab) = value.split_once(':').unwrap_or((value, "inputs"));
+        let index = index.trim().parse::<usize>().ok()?;
+        let tab = match tab.trim().to_ascii_lowercase().as_str() {
+            "inputs" | "0" => Self::Inputs,
+            "style" | "1" => Self::Style,
+            _ => return None,
+        };
+        Some((index, tab))
+    }
+}
+
 #[derive(Debug)]
 pub struct SettingsDialog {
     pub target: TabSlot,
@@ -333,3 +350,29 @@ pub fn row_order(specs: &[InputSpec]) -> Vec<usize> {
 #[cfg(test)]
 #[path = "indicator_settings/tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod hook_tests {
+    use super::*;
+
+    /// The harness hook is the only way a scripted capture can see the
+    /// settings dialog, so it has to name both halves — and refuse nonsense
+    /// rather than guess, which would produce a screenshot of the wrong tab.
+    #[test]
+    fn the_settings_hook_names_an_indicator_and_a_tab() {
+        assert_eq!(
+            SettingsTab::hook("0"),
+            Some((0, SettingsTab::Inputs)),
+            "a bare index opens on Inputs"
+        );
+        assert_eq!(SettingsTab::hook("2:style"), Some((2, SettingsTab::Style)));
+        assert_eq!(
+            SettingsTab::hook("1:1"),
+            Some((1, SettingsTab::Style)),
+            "the numeric spelling works too"
+        );
+        assert_eq!(SettingsTab::hook("0:colours"), None);
+        assert_eq!(SettingsTab::hook("first"), None);
+        assert_eq!(SettingsTab::hook(""), None);
+    }
+}

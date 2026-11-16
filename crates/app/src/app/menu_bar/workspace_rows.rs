@@ -10,6 +10,7 @@ use eframe::egui::text::{CCursor, CCursorRange};
 use eframe::egui::{self, Color32, Key, Modifiers, Rect, RichText, Sense, TextWrapMode, vec2};
 use quantick_appearance::Token;
 use quantick_control_handlers::workspace_book::cell_menu::{self as cells, CellMenuCache, CellRow};
+use quantick_control_handlers::workspace_book::colour_popover;
 use quantick_session::colour_popover::{ColourPopover, Key as PopoverKey};
 use quantick_session::workspace_menu::{self as model, MenuBounds};
 use quantick_session::workspace_menu::{WorkspaceCommand, WorkspaceMenuState};
@@ -127,9 +128,11 @@ fn colour_popover(
     });
     let area = egui::Area::new(egui::Id::new("colour_popover")).order(egui::Order::Tooltip);
     let area = area.fixed_pos((swatch.left_bottom() + vec2(0.0, palette::DROP_PT)).round());
+    let model = quantick_stores::workspaces::palette::palette(book, workspace);
+    model.inspect(|model| colour_popover::settle(model, state, dark)); // Kept frame to frame.
     let held = state.clone();
     let view = |m: &dyn Fn(&str, f32) -> f32| {
-        let pop = palette::popover(book, workspace, &held, dark, m);
+        let pop = palette::popover(book, workspace, &mut held.clone(), dark, m);
         pop.map_or_else(|| Sheet::of([0.0; 2], Vec::new()), palette::Popover::sheet)
     };
     let parts = (None, Some((state, pressed)), None);
@@ -257,6 +260,7 @@ pub(super) fn palette_at(
     let asked = put(ui, origin, &pop.pieces, (ink, drawn));
     if let Some(f) = pop.field {
         let mut field = ui.new_child(egui::UiBuilder::new().max_rect(place(origin, f)));
+        field.visuals_mut().text_cursor.stroke.color = ink(Some(Token::TextPrimary));
         let edit = egui::TextEdit::singleline(&mut state.hex).frame(false);
         field.add(edit).request_focus();
     }
@@ -320,7 +324,8 @@ pub(super) fn paint(
                 let words = galley(ui, words.extra_letter_spacing(t.tracking), t.width);
                 let place = at + vec2(t.x, t.y - words.size().y / 2.0);
                 cut |= words.elided && t.names;
-                painter.galley(place, words, ink(Some(t.ink)));
+                let own = t.rgb.map(|[r, g, b]| Color32::from_rgb(r, g, b));
+                painter.galley(place, words, own.unwrap_or_else(|| ink(Some(t.ink))));
             }
             Mark::Tree(area, tree) => paint_tree(painter, rect(*area), tree, Token::Accent),
             Mark::Colour { at, radius, rgb } => {

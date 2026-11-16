@@ -241,12 +241,26 @@ pub fn paint_tree(painter: &egui::Painter, rect: egui::Rect, tree: &PaneTree, fl
         } else {
             (egui::Color32::TRANSPARENT, palette.text_faint())
         };
-        painter.rect(
-            block.shrink(0.5),
-            1.0,
-            fill,
-            egui::Stroke::new(PANE_STROKE_PX, line),
+        // A mesh is never feathered: on whole pixels its 1 px edges stay one
+        // pixel in their own colour.
+        let (mut mesh, inner) = (egui::Mesh::default(), block.shrink(PANE_STROKE_PX));
+        mesh.add_colored_rect(inner, fill);
+        let (left, right) = (
+            inner.with_max_x(inner.left()),
+            inner.with_min_x(inner.right()),
         );
+        let sides = [
+            left.with_min_x(block.left()),
+            right.with_max_x(block.right()),
+        ];
+        let ends = [
+            block.with_max_y(inner.top()),
+            block.with_min_y(inner.bottom()),
+        ];
+        for edge in sides.into_iter().chain(ends) {
+            mesh.add_colored_rect(edge, line);
+        }
+        painter.add(mesh);
     }
 }
 

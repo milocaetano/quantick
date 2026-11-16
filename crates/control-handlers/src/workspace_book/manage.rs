@@ -252,7 +252,7 @@ pub(super) fn dialog_open<H: WorkspaceBookHost + TabDirectory + ?Sized, A: Notif
 ) -> Result<Value, ControlError> {
     let WorkspaceDialogOpenInput { mode, tab_id } = input(value)?;
     let tab = tab_of(app, tab_id)?;
-    let mut menu = std::mem::take(app.workspace_menu().ok_or_else(unavailable)?);
+    let mut menu = std::mem::take(app.workspace_menu().ok_or_else(unavailable)?.0);
     menu.close_chip_menu();
     match mode {
         WorkspaceDialog::SaveAs => menu.open_save_as(tab),
@@ -276,7 +276,7 @@ pub(super) fn dialog_open<H: WorkspaceBookHost + TabDirectory + ?Sized, A: Notif
         name: dialog.map(|dialog| dialog.name.clone()),
         colour: dialog.and_then(chosen).map(Into::into),
     };
-    *app.workspace_menu().ok_or_else(unavailable)? = menu;
+    *app.workspace_menu().ok_or_else(unavailable)?.0 = menu;
     let payload = json!({ "dialog": mode.word(), "tab_id": WireU64::new(tab) });
     journal(
         &mut Some((access, actor)),
@@ -296,7 +296,7 @@ pub(super) fn undo_call<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
     let WorkspaceDeleteUndoInput { name } = input(value)?;
     let now_ms = actor.requested_at_unix_ms;
     let undone = undo_journaled(app, &mut Some((access, actor)), &name, now_ms)?;
-    if let Some(dialog) = app.workspace_menu().and_then(|menu| menu.manage.as_mut()) {
+    if let Some(dialog) = app.workspace_menu().and_then(|menu| menu.0.manage.as_mut()) {
         dialog.undone(&name);
     }
     answer(&WorkspaceDeleteUndoResult {

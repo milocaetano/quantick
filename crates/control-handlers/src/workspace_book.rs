@@ -148,8 +148,9 @@ pub trait WorkspaceBookHost {
         Err("the desk is unavailable".to_owned())
     }
     /// The window's workspace menu, which the colour popover's call opens
-    /// and acts on as a hand does.
-    fn workspace_menu(&mut self) -> Option<&mut WorkspaceMenuState> {
+    /// and acts on as a hand does, and whether the window paints in a dark
+    /// theme: what a colour's value is read in.
+    fn workspace_menu(&mut self) -> Option<(&mut WorkspaceMenuState, bool)> {
         None
     }
     /// Close a market tab; `false` when it is its window's last. With `close`
@@ -1229,9 +1230,9 @@ fn delete<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
     let WorkspaceDeleteInput { name } = input(value)?;
     let now_ms = Some(actor.requested_at_unix_ms);
     let outcome = delete_journaled(app, &mut Some((access, actor)), &name, now_ms)?;
-    if let Some(mut menu) = app.workspace_menu().map(std::mem::take) {
+    if let Some(mut menu) = app.workspace_menu().map(|(menu, _)| std::mem::take(menu)) {
         manage::note_deleted(app, &mut menu, &name, &outcome.moved);
-        *app.workspace_menu().ok_or_else(unavailable)? = menu;
+        *app.workspace_menu().ok_or_else(unavailable)?.0 = menu;
     }
     answer(&WorkspaceDeleteResult {
         changed: outcome.changed,

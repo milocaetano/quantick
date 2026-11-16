@@ -1,8 +1,8 @@
 //! What a press in a workspace's palette does, under the menu's header
 //! swatch or under a Manage row, and the two calls that read the palette and
-//! drive the header's popover without a hand. A pick reaches the same
-//! handler `workspace.colour.set` uses, journaled alike; the palette, the
-//! question's words and the warnings are
+//! drive the header's popover without a hand. A pick
+//! reaches the same handler `workspace.colour.set` uses, journaled alike;
+//! the palette, the question's words and the warnings are
 //! `quantick_stores::workspaces::palette`'s.
 
 use quantick_control::error::ControlError;
@@ -26,13 +26,32 @@ use super::{Journal, WorkspaceBookHost, answer, colour_journaled, input};
 use crate::notify::NotifyAccess;
 use crate::tabs::TabDirectory;
 
-/// Where the picker stands: the last press on the square or the strip,
-/// unless the field holds another valid colour, which moves it.
+/// Where the picker stands: the field's colour while it holds a valid one
+/// the picker does not already stand on, else the last valid colour.
 #[must_use]
 pub fn shown_hsv(popover: &ColourPopover) -> [f32; 3] {
-    match parse_typed_hex(&popover.hex) {
-        Some(rgb) if hsv_rgb(popover.hsv) != rgb => rgb_hsv(rgb),
-        _ => popover.hsv,
+    match (parse_typed_hex(&popover.hex), popover.hsv) {
+        (Some(rgb), Some(hsv)) if hsv_rgb(hsv) == rgb => hsv,
+        (Some(rgb), _) => rgb_hsv(rgb),
+        (None, hsv) => hsv.unwrap_or_default(),
+    }
+}
+
+/// Bring `popover` in step with the book and its field, wherever it is read:
+/// a question whose colour is no longer held is left for the grid, and the
+/// picker keeps the last valid colour (the current one as `dark` paints it,
+/// before any).
+pub fn settle(model: &Palette, popover: &mut ColourPopover, dark: bool) {
+    leave_freed(model, popover);
+    let known = parse_typed_hex(&popover.hex).is_some() || popover.hsv.is_some();
+    let current = rgb_hsv(model.current.rgb(dark));
+    popover.hsv = Some(if known { shown_hsv(popover) } else { current });
+}
+
+/// Leave a question whose colour is no longer held, for the grid.
+pub fn leave_freed(model: &Palette, popover: &mut ColourPopover) {
+    if popover.asked.is_some() && question(model, popover).is_none() {
+        popover.back();
     }
 }
 
@@ -86,7 +105,8 @@ pub fn act_on<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
         return None;
     }
     let popover = open.as_mut()?;
-    let (word, typed, swap) = match intent {
+    leave_freed(&model, popover);
+    let (colour, word, typed, swap) = match intent {
         ColourIntent::Toggle | ColourIntent::Close => {
             *open = None;
             return None;
@@ -102,11 +122,16 @@ pub fn act_on<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
             popover.back();
             return None;
         }
-        ColourIntent::Pick(word) => (word, false, false),
-        ColourIntent::Apply => (hex(parse_typed_hex(&popover.hex)?), true, false),
-        ColourIntent::Answer(true) => (popover.asked.clone()?, false, true),
+        ColourIntent::Pick(word) => (named(&model, &word)?, word, false, false),
+        ColourIntent::Apply => {
+            let rgb = parse_typed_hex(&popover.hex)?;
+            (WorkspaceColour::Custom(rgb), hex(rgb), true, false)
+        }
+        ColourIntent::Answer(true) => {
+            let asked = question(&model, popover)?.colour; // None once it freed.
+            (asked, String::new(), false, true)
+        }
     };
-    let colour = named(&model, &word)?;
     if !swap {
         match model.pick(colour, typed) {
             Pick::Apply(_) => {}
@@ -142,7 +167,7 @@ pub(super) fn pressed(
     if let Some((x, y)) = square {
         (hsv[1], hsv[2]) = (share(x), 1.0 - share(y));
     }
-    (popover.hsv, popover.hex) = (hsv, hex(hsv_rgb(hsv)));
+    (popover.hsv, popover.hex) = (Some(hsv), hex(hsv_rgb(hsv)));
     None
 }
 
@@ -205,7 +230,8 @@ pub(super) fn palette_read<H: WorkspaceBookHost + TabDirectory + ?Sized, A>(
     answer(&WorkspaceColourPaletteResult::from(&model))
 }
 
-/// `workspace.colour.popover`: the act on the tab on screen's popover.
+/// `workspace.colour.popover`: the act on the tab on screen's popover. The
+/// menu's state is put back whatever the act answers.
 pub(super) fn popover_call<H: WorkspaceBookHost + TabDirectory + ?Sized, A: NotifyAccess>(
     app: &mut H,
     access: &mut A,
@@ -214,7 +240,23 @@ pub(super) fn popover_call<H: WorkspaceBookHost + TabDirectory + ?Sized, A: Noti
 ) -> Result<Value, ControlError> {
     let asked: WorkspaceColourPopoverInput = input(value)?;
     let tab = app.tab_id_at(app.active_tab_index());
-    let mut menu = std::mem::take(app.workspace_menu().ok_or_else(super::unavailable)?);
+    let (held, dark) = app.workspace_menu().ok_or_else(super::unavailable)?;
+    let mut menu = std::mem::take(held);
+    let result = drive(app, (access, actor, dark), &mut menu, tab, asked);
+    if let Some((held, _)) = app.workspace_menu() {
+        *held = menu;
+    }
+    answer(&result?)
+}
+
+/// One act on `menu`, taken out of the window, and the popover after it.
+fn drive<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
+    app: &mut H,
+    (access, actor, dark): (&mut A, &ActorContext, bool),
+    menu: &mut WorkspaceMenuState,
+    tab: u64,
+    asked: WorkspaceColourPopoverInput,
+) -> Result<WorkspaceColourPopoverResult, ControlError> {
     let mut to = Some((access, actor));
     let open = menu.chip_menu_on(tab) && menu.colour.is_some();
     let intent = match asked {
@@ -227,16 +269,12 @@ pub(super) fn popover_call<H: WorkspaceBookHost + TabDirectory + ?Sized, A: Noti
             }
             None
         }
-        _ if !open => {
-            *app.workspace_menu().ok_or_else(super::unavailable)? = menu;
-            return Err(closed());
-        }
+        _ if !open => return Err(closed()),
         WorkspaceColourPopoverInput::Close => Some(ColourIntent::Close),
         WorkspaceColourPopoverInput::Pick { colour } => Some(ColourIntent::Pick(colour)),
         WorkspaceColourPopoverInput::Custom { hex: typed } => {
             if !menu.colour.as_ref().is_some_and(|popover| popover.custom) {
-                let custom = ColourIntent::Custom { dark: true };
-                act(app, &mut to, &mut menu, tab, custom);
+                act(app, &mut to, menu, tab, ColourIntent::Custom { dark });
             }
             if let (Some(popover), Some(typed)) = (menu.colour.as_mut(), typed) {
                 popover.hex = typed;
@@ -246,11 +284,12 @@ pub(super) fn popover_call<H: WorkspaceBookHost + TabDirectory + ?Sized, A: Noti
         WorkspaceColourPopoverInput::Apply => Some(ColourIntent::Apply),
         WorkspaceColourPopoverInput::Answer { swap } => Some(ColourIntent::Answer(swap)),
     };
-    let note = intent.and_then(|intent| act(app, &mut to, &mut menu, tab, intent));
+    let note = intent.and_then(|intent| act(app, &mut to, menu, tab, intent));
     let book = app.workspace_book_ref().ok_or_else(super::unavailable)?;
-    let result = read_back(book, &menu, tab, note);
-    *app.workspace_menu().ok_or_else(super::unavailable)? = menu;
-    answer(&result)
+    if let (Some(model), Some(popover)) = (palette(book, state_of(book, tab).0), &mut menu.colour) {
+        settle(&model, popover, dark);
+    }
+    Ok(read_back(book, menu, tab, note))
 }
 
 #[cfg(test)]

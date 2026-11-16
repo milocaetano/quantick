@@ -81,6 +81,7 @@ fn words(x: f32, y: f32, said: &str, size: f32, ink: Token, width: f32) -> Mark 
         width,
         tracking: 0.0,
         names: false,
+        rgb: None,
     })
 }
 
@@ -221,7 +222,8 @@ pub fn manage(
             .as_ref()
             .filter(|open| open.workspace == row.name)
         {
-            let mut pop = colour_palette::popover(book, &row.name, &open.popover, dark, measure);
+            let state = &mut open.popover.clone(); // Settled for this frame only.
+            let mut pop = colour_palette::popover(book, &row.name, state, dark, measure);
             if let Some(pop) = pop.as_mut() {
                 pop.scoped(SCOPE, &format!("{}.", row.name));
                 let y = view.list_height;
@@ -907,7 +909,8 @@ pub fn name_dialog(
             )
         });
         y += LINE_PT - 4.0;
-        let mut pop = colour_palette::choosing(book, colour, &dialog.palette, dark, measure);
+        let state = &mut dialog.palette.clone(); // Settled for this frame only.
+        let mut pop = colour_palette::choosing(book, colour, state, dark, measure);
         pop.scoped(NAME_SCOPE, "");
         let height = pop.size[1];
         palette = Some(([0.0, y], pop));

@@ -941,15 +941,14 @@ impl quantick_control_handlers::workspace_book::WorkspaceBookHost for QuantickAp
         if !close {
             return self.runtime.tabs.plan_close(index).is_ok();
         }
-        let close = crate::tabstrip::TabAction::Close(index);
-        let asked = self.arrangement_adapter().apply_tab_action(close);
-        super::menu_bar::settle_strip(&mut self.surfaces.market_palette, self.runtime.tz, asked)
+        super::tab_workspaces::close_tab_at(self, index)
+    }
+    fn workspace_menu(&mut self) -> Option<(&mut WorkspaceMenuState, bool)> {
+        let dark = TabsPort::appearance(self).dark;
+        Some((&mut self.chrome.window_menu.tab_workspace, dark))
     }
     fn tab_symbols(&self, tabs: &[u64]) -> Vec<String> {
         super::tab_workspaces::symbols_of(&self.runtime.tabs, tabs)
-    }
-    fn workspace_menu(&mut self) -> Option<&mut WorkspaceMenuState> {
-        Some(&mut self.chrome.window_menu.tab_workspace)
     }
 }
 
