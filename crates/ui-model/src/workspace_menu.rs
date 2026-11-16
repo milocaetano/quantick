@@ -248,7 +248,10 @@ fn plate(at: Area, radius: f32, fill: Option<Token>, edge: Option<Token>) -> Mar
 /// a colour keeps the menu's hover and current tokens.
 pub(crate) fn tinted(at: Area, row: &CellRow, tint: RowTint, dark: bool) -> Plate {
     let ink = chrome(dark);
-    let rgb = row.colour.as_ref().map(|colour| row_fill(colour.rgb, dark, tint));
+    let rgb = row
+        .colour
+        .as_ref()
+        .map(|colour| row_fill(colour.rgb, dark, tint));
     let fill = match tint {
         RowTint::Rest => None,
         RowTint::Hover => Some(ink.hover),
@@ -398,7 +401,7 @@ fn swatch(line: Area, row: &CellRow, ink: &MenuChrome) -> Piece {
         row: Some(row.clone()),
         press: true,
         hover: Some(Plate {
-        rgb: None,
+            rgb: None,
             at: ring,
             radius: SWATCH_RADIUS_PT + 2.0,
             fill: None,
@@ -556,7 +559,10 @@ pub fn row(row: &CellRow, width: f32, focused: bool, dark: bool) -> Piece {
         (false, true) => RowTint::Hover,
         (false, false) => RowTint::Rest,
     };
-    let mut marks = vec![Mark::Box(tinted(lit, row, tint, dark)), plate(lit, RADIUS, None, ring)];
+    let mut marks = vec![
+        Mark::Box(tinted(lit, row, tint, dark)),
+        plate(lit, RADIUS, None, ring),
+    ];
     let (status, y) = (width - PAD - 8.0 - STATUS_PT, CHIP_MENU_ROW_PT / 2.0);
     if row.on {
         marks.push(text(status + 1.0, y, CHECK, 12.0, ink.accent, STATUS_PT));
@@ -583,7 +589,7 @@ pub fn row(row: &CellRow, width: f32, focused: bool, dark: bool) -> Piece {
         press: true,
         drag: false,
         double: false,
-        hover: Some(tinted(lit, row, RowTint::Hover, dark)).filter(|_| !row.on),
+        hover: (!row.on).then(|| tinted(lit, row, RowTint::Hover, dark)),
         marks,
     }
 }

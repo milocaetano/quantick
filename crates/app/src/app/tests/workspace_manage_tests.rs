@@ -95,7 +95,12 @@ fn a_chip_click_opens_the_row_s_palette() {
 #[test]
 fn a_click_outside_a_row_s_palette_closes_only_it() {
     let (mut app, ctx, first, _layouts) = scalp("manage-palette-out");
-    assert!(app.chrome.window_menu.tab_workspace.stage(first, "manage:colour=Scalp"));
+    assert!(
+        app.chrome
+            .window_menu
+            .tab_workspace
+            .stage(first, "manage:colour=Scalp")
+    );
     drawn(&mut app, &ctx, "manage_workspaces.Scalp.colour.petrol");
     let title = drawn(&mut app, &ctx, "manage_workspaces");
     click_sized(&mut app, &ctx, FULL_HD, title.center());
@@ -114,7 +119,10 @@ fn enter_after_a_swatch_click_saves() {
     run_sized_frame(&mut app, &ctx, FULL_HD, vec![key_press(egui::Key::Enter)]);
     run_frame_at(&mut app, &ctx, FULL_HD);
     let lavender = quantick_stores::workspaces::WorkspaceColour::preset(7);
-    assert_eq!(app.runtime.workspace.book.book().colour("Scalp 2"), lavender);
+    assert_eq!(
+        app.runtime.workspace.book.book().colour("Scalp 2"),
+        lavender
+    );
 }
 
 /// Enter in the inline field reaches `workspace.rename`.

@@ -484,9 +484,12 @@ fn plain(
     };
     marks.insert(0, Mark::Box(tinted(band, &row, tint, line.dark)));
     view.list.push(Piece {
-        hover: Some(tinted(band, &row, RowTint::Hover, line.dark)).filter(|_| !row.on),
+        hover: (!row.on).then(|| tinted(band, &row, RowTint::Hover, line.dark)),
         row: Some(row),
-        ..Piece::plain(area(0.0, top, WIDTH_PT, rule - top), std::mem::take(&mut marks))
+        ..Piece::plain(
+            area(0.0, top, WIDTH_PT, rule - top),
+            std::mem::take(&mut marks),
+        )
     });
     view.list.push(chip(line, ink));
     let room = count_right() - 80.0 - NAME_X;

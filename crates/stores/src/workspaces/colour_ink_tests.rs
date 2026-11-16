@@ -82,12 +82,20 @@ fn every_row_tint_keeps_its_words_at_four_and_a_half_to_one() {
             for tint in [RowTint::Rest, RowTint::Hover, RowTint::Current] {
                 for ink in inks {
                     let ratio = contrast_ratio(ink, rgb(shade(tint)));
-                    assert!(ratio >= 4.5, "{} dark {dark} {tint:?}: {ratio}", colour.name());
+                    assert!(
+                        ratio >= 4.5,
+                        "{} dark {dark} {tint:?}: {ratio}",
+                        colour.name()
+                    );
                 }
             }
             let (now, rest) = (shade(RowTint::Current), shade(RowTint::Rest));
             let apart = (0..3).map(|at| now[at].abs_diff(rest[at])).max();
-            assert!(apart >= Some(3), "{} dark {dark}: current stands apart", colour.name());
+            assert!(
+                apart >= Some(3),
+                "{} dark {dark}: current stands apart",
+                colour.name()
+            );
         }
     }
 }

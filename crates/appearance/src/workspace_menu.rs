@@ -95,7 +95,9 @@ impl RowTint {
 /// share of the way toward `colour`. Menu B and Manage both fill with this.
 #[must_use]
 pub fn row_fill(colour: [u8; 3], dark: bool, tint: RowTint) -> [u8; 3] {
-    let ground = crate::ResolvedTheme::bundled(dark).color(chrome(dark).ground).to_array();
+    let ground = crate::ResolvedTheme::bundled(dark)
+        .color(chrome(dark).ground)
+        .to_array();
     let share = tint.share();
     let mix = |at: usize| {
         let (from, to) = (f32::from(ground[at]), f32::from(colour[at]));
