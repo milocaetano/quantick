@@ -141,16 +141,6 @@ pub struct Tab {
     // crate::loading) while the tab is on screen.
     pub loading: LoadingTracker,
 
-    /// Alarm sounds this tab's armed instances asked for, oldest first,
-    /// drained by the app once per frame.
-    ///
-    /// A queue rather than a direct call to the platform: the judgement is
-    /// made deep in the per-trade sweep, where a tab must stay testable
-    /// without a build machine making noise, and where blocking on an
-    /// operating-system call would be on the tape's path. The app plays
-    /// them through the [`AlertSink`](crate::audio::AlertSink) port.
-    pub pending_alarm_sounds: Vec<crate::audio::Cue>,
-
     /// Paper trading for this market: the deterministic simulator plus its
     /// journal, chart layer, dock tab and report.
     ///
@@ -191,8 +181,10 @@ pub struct Tab {
     /// only one bar-building path. `MAX_CONTEXT_PANES` is what bounds that
     /// cost.
     pub time_panes: SmallVec<[ChartPane; MAX_CONTEXT_PANES]>,
-    /// The strategies armed on the panes' drawings, keyed by pane id.
-    pub strategies: crate::strategy_anchors::TabStrategies,
+    /// The strategies armed on the panes' drawings and the alarm sounds
+    /// they raised, walked through each live print; the app plays the
+    /// sounds through the [`AlertSink`](crate::audio::AlertSink) port.
+    pub market: crate::strategy_anchors::TabMarket,
     /// `SYMBOL · venue`, as the strip shows it — see [`Self::chip_label`].
     chip_label: String,
     /// Which panes the canvas shows, how they are sized and folded, and what
@@ -243,13 +235,12 @@ impl Tab {
             history_trades: 0,
             session: quantick_session::TabSession::new(),
             loading,
-            pending_alarm_sounds: Vec::new(),
             paper: PaperTrading::with_trades_dir(trades_dir),
             paper_drag_pane: None,
             flow_pane: ChartPane::flow(flow_pane_id, spec, symbol.clone()),
             chip_label: String::new(),
             time_panes: SmallVec::new(),
-            strategies: Default::default(),
+            market: Default::default(),
             canvas: layout::TabCanvas::default(),
             focus: PaneSide::Flow,
             symbol,

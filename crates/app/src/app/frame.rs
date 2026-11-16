@@ -459,7 +459,7 @@ impl QuantickApp {
                     self.runtime
                         .tabs
                         .iter_mut()
-                        .flat_map(|tab| tab.pending_alarm_sounds.drain(..)),
+                        .flat_map(|tab| tab.market.drain_alarms()),
                 );
             }
             FrameStage::BackgroundPaperPanels => super::frame_tail::settle_background_paper_panels(

@@ -32,7 +32,7 @@ pub(super) fn open_requested_strategy_popups(
     let sides: SmallVec<[PaneSide; MAX_CANVAS_PANES]> = tab.sides().collect();
     for side in sides {
         let pane = tab.pane(side).id;
-        let asked = tab.strategies.existing_mut(pane);
+        let asked = tab.market.strategies.existing_mut(pane);
         if let Some(drawing) = asked.and_then(|strategies| strategies.take_popup_request()) {
             let form =
                 crate::strategy_presets::StoredPreset::starting_point(quantick_engine::Side::Buy);

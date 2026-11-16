@@ -636,7 +636,7 @@ fn the_signal_alarm_sounds_mid_bar_and_places_nothing() {
         app.runtime
             .tabs
             .iter_mut()
-            .flat_map(|tab| tab.pending_alarm_sounds.drain(..)),
+            .flat_map(|tab| tab.market.drain_alarms()),
     );
     assert!(
         recorder.sounds().is_empty(),
@@ -657,7 +657,7 @@ fn the_signal_alarm_sounds_mid_bar_and_places_nothing() {
         app.runtime
             .tabs
             .iter_mut()
-            .flat_map(|tab| tab.pending_alarm_sounds.drain(..)),
+            .flat_map(|tab| tab.market.drain_alarms()),
     );
     assert!(
         recorder.sounds().is_empty(),
@@ -671,7 +671,7 @@ fn the_signal_alarm_sounds_mid_bar_and_places_nothing() {
         app.runtime
             .tabs
             .iter_mut()
-            .flat_map(|tab| tab.pending_alarm_sounds.drain(..)),
+            .flat_map(|tab| tab.market.drain_alarms()),
     );
     assert_eq!(
         recorder.cues(),
@@ -703,7 +703,7 @@ fn the_signal_alarm_sounds_mid_bar_and_places_nothing() {
         app.runtime
             .tabs
             .iter_mut()
-            .flat_map(|tab| tab.pending_alarm_sounds.drain(..)),
+            .flat_map(|tab| tab.market.drain_alarms()),
     );
     assert_eq!(
         recorder.sounds(),

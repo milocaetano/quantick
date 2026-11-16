@@ -248,7 +248,7 @@ impl DrawingAccess<'_> {
     pub(super) fn remove_strategy(&mut self, id: drawings::DrawingId) {
         let tab = self.tab_mut();
         let pane = tab.drawing_pane().id;
-        tab.strategies.pane_mut(pane).remove_for_drawing(id);
+        tab.market.strategies.pane_mut(pane).remove_for_drawing(id);
     }
     // Each destructive operation keeps its original owner even if it clears
     // the selection. The next independent command resolves its owner afresh.
@@ -297,7 +297,7 @@ impl DrawingAccess<'_> {
     ) -> Option<(crate::strategy_presets::StoredPreset, String)> {
         use quantick_strategy::ArmedState;
         let tab = &self.tabs[self.tabs.active_index()];
-        (tab.strategies.anchors(tab.drawing_pane().id))?
+        (tab.market.strategies.anchors(tab.drawing_pane().id))?
             .for_drawing(source)
             .filter(|instance| {
                 matches!(

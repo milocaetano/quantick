@@ -905,7 +905,7 @@ impl LayoutAdapter<'_> {
                 let (feed, symbol) = Self::market_of(tab);
                 tab.panes()
                     .filter(move |(pane, _)| {
-                        let recuttable = tab.strategies.watching(pane.id) == 0;
+                        let recuttable = tab.market.strategies.watching(pane.id) == 0;
                         let bars = recuttable.then(|| pane.series.state.spec());
                         pane.layout.needs_rekey(feed, symbol, bars)
                     })

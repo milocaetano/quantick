@@ -19,9 +19,8 @@ pub(super) fn evaluate(
     paper: &mut crate::paper_trading::PaperTrading,
     strategies: &mut crate::strategy_anchors::TabStrategies,
     (flow_pane, time_panes): (&ChartPane, &[ChartPane]),
-    pending_sounds: &mut Vec<crate::audio::Cue>,
     now_ms: u64,
-) {
+) -> Vec<quantick_strategy::sound::Cue> {
     let events = paper.account_mut().drain_bot_events();
     // Flow first, then the context stack: a strategy armed on the second
     // stacked chart has to trade and ring like one armed on the first.
@@ -45,7 +44,7 @@ pub(super) fn evaluate(
         |id| pane(id)?.series.forming(),
     );
     paper.account_mut().set_bot_listening(answer.watching > 0);
-    pending_sounds.extend(answer.alarms);
+    answer.alarms
 }
 
 #[cfg(test)]
@@ -55,7 +54,7 @@ impl super::Tab {
         &self,
         side: crate::pane::PaneSide,
     ) -> &crate::strategy_anchors::StrategyAnchors {
-        (self.strategies.anchors(self.pane(side).id)).expect("the pane has held a strategy")
+        (self.market.strategies.anchors(self.pane(side).id)).expect("the pane has held a strategy")
     }
 
     /// The strategies of the pane on `side`.
@@ -64,6 +63,6 @@ impl super::Tab {
         side: crate::pane::PaneSide,
     ) -> &mut crate::strategy_anchors::PaneStrategies {
         let id = self.pane(side).id;
-        self.strategies.pane_mut(id)
+        self.market.strategies.pane_mut(id)
     }
 }
