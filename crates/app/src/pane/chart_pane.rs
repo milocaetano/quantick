@@ -57,7 +57,9 @@ pub struct ChartPane {
     /// gesture state egui keeps on our behalf, so two panes sharing an id
     /// would share a drag.
     pub id: u64,
-    pub state: ChartState,
+    /// The engine's bars and the venue prefix in front of them, composed where they are read
+    /// ([`Self::slots`], [`Self::closed_bar`], the rebuild payload, the draw).
+    pub series: quantick_session::series::PaneSeries,
     pub(super) history_worker: history_worker::HistoryWorker,
     /// The tape, and everything read off it: the live lane, the heatmap, the bubbles, the live
     /// strip. `None` is what makes a time pane a time pane: §11 keeps the flow layers on the flow
@@ -109,18 +111,6 @@ pub struct ChartPane {
     pub(super) price_band_label: std::sync::Arc<str>,
     // Pointer position over the plot this frame, for the crosshair.
     pub hover_pos: Option<egui::Pos2>,
-
-    /// Venue candles in front of the trade-derived series, folded to this pane's interval.
-    ///
-    /// Deliberately outside `ChartState`, which rebuilds its bars from retained trades on every
-    /// spec change and would eat a prefix kept inside it on the first chip click. It is composed
-    /// with the engine's bars where they are read ([`Self::slots`], [`Self::closed_bar`], the
-    /// rebuild payload, the draw).
-    ///
-    /// Non-empty on any pane cutting by a foldable time interval: the split's time pane, and the
-    /// flow pane whenever its spec is `BarSpec::Time` (audit S1). A venue candle has no tape, so
-    /// the flow layers draw nothing over it.
-    pub history_prefix: quantick_chart::venue_history::VenueHistory,
 
     /// Where the position HUD anchors this frame: the chart rect and price scale, cached by the
     /// draw while the paper layer is painted on the pane that owns order entry. The HUD draws in
@@ -179,7 +169,7 @@ impl ChartPane {
     /// an order-flow view.
     pub(crate) fn bubble_scale_facts(&self) -> Option<BubbleScalePane> {
         let config = self.orderflow.as_ref()?.cached_config();
-        let tick_chart = self.state.tick_membership().is_some();
+        let tick_chart = self.series.state.tick_membership().is_some();
         Some(BubbleScalePane::of(config, tick_chart))
     }
 
@@ -202,18 +192,14 @@ impl ChartPane {
     }
 
     pub(crate) fn series_read(&self) -> gesture::PaneSeriesRead<'_> {
-        gesture::PaneSeriesRead {
-            history_prefix: &self.history_prefix,
-            state: &self.state,
-            spec: &self.spec,
-        }
+        self.series.read(&self.spec)
     }
     /// The layer answers — see [`layers::PaneLayerRead`].
     pub(crate) fn layer_read(&self) -> layers::PaneLayerRead<'_> {
         layers::PaneLayerRead {
             layers: &self.layers,
             orderflow: self.orderflow.as_ref(),
-            state: &self.state,
+            state: &self.series.state,
             footprint: &self.presentation.footprint,
             style: &self.presentation.candles,
             drawings: &self.drawings,
@@ -225,7 +211,7 @@ impl ChartPane {
             pane: self.id,
             layers: &mut self.layers,
             orderflow: self.orderflow.as_mut(),
-            state: &self.state,
+            state: &self.series.state,
             presentation: &mut self.presentation,
             drawings: &mut self.drawings,
         }
@@ -273,8 +259,8 @@ impl ChartPane {
         SharedMarksMut {
             projection: gesture::DrawingProjection {
                 series: gesture::PaneSeriesRead {
-                    history_prefix: &self.history_prefix,
-                    state: &self.state,
+                    history_prefix: &self.series.history_prefix,
+                    state: &self.series.state,
                     spec: &self.spec,
                 },
                 viewport: &self.model.viewport,
@@ -291,8 +277,8 @@ impl ChartPane {
             drawings: &mut self.drawings,
             gestures: &mut self.gestures,
             series: gesture::PaneSeriesRead {
-                history_prefix: &self.history_prefix,
-                state: &self.state,
+                history_prefix: &self.series.history_prefix,
+                state: &self.series.state,
                 spec: &self.spec,
             },
         }
@@ -365,7 +351,7 @@ impl ChartPane {
         Self {
             id,
             spec: selector,
-            state: ChartState::new(spec),
+            series: quantick_session::series::PaneSeries::new(ChartState::new(spec)),
             history_worker: Default::default(),
             orderflow,
             indicator_worker: IndicatorWorker::spawn(),
@@ -385,7 +371,6 @@ impl ChartPane {
             price_view: PriceView::new(),
             price_band_label: std::sync::Arc::from(bands::PRICE_BAND_LABEL),
             hover_pos: None,
-            history_prefix: quantick_chart::venue_history::VenueHistory::default(),
             paper_hud_anchor: None,
             context_menu: PaneContextMenu::default(),
             drawings,
@@ -424,9 +409,9 @@ impl ChartPane {
     /// parameter would snap it back to a rule the trader never chose.
     pub fn set_spec(&mut self, spec: impl Into<BarConfiguration>) {
         let spec = spec.into();
-        let changed = self.state.spec() != &spec;
+        let changed = self.series.state.spec() != &spec;
         self.spec.set(spec);
-        self.state.set_spec(spec);
+        self.series.state.set_spec(spec);
         if changed {
             self.bump_pagination_revision();
         }
@@ -434,7 +419,7 @@ impl ChartPane {
 
     /// Re-cut every retained print from the retained deal-counter readings.
     pub fn rebuild_bars(&mut self) {
-        self.state.rebuild_bars();
+        self.series.state.rebuild_bars();
         self.bump_pagination_revision();
     }
 
@@ -674,8 +659,8 @@ impl ChartPane {
         .handle(ui, chrome, &areas, &bands, &pointer, tool_armed);
         let projection = gesture::DrawingProjection {
             series: gesture::PaneSeriesRead {
-                history_prefix: &self.history_prefix,
-                state: &self.state,
+                history_prefix: &self.series.history_prefix,
+                state: &self.series.state,
                 spec: &self.spec,
             },
             viewport: &self.model.viewport,
@@ -771,8 +756,8 @@ impl ChartPane {
             &mut self.drawings,
             &gesture::DrawingProjection {
                 series: gesture::PaneSeriesRead {
-                    history_prefix: &self.history_prefix,
-                    state: &self.state,
+                    history_prefix: &self.series.history_prefix,
+                    state: &self.series.state,
                     spec: &self.spec,
                 },
                 viewport: &self.model.viewport,
@@ -852,21 +837,23 @@ impl ChartPane {
         let flow_opening = self
             .orderflow
             .as_ref()
-            .filter(|owner| self.state.tick_membership().is_some() && owner.flow_execution_active())
+            .filter(|owner| {
+                self.series.state.tick_membership().is_some() && owner.flow_execution_active()
+            })
             .map(|owner| owner.ignore_flow_opening());
         let view = PaneMenuView {
             drawings: &self.drawings,
             indicators: &self.indicators,
             strategies,
             series: gesture::PaneSeriesRead {
-                history_prefix: &self.history_prefix,
-                state: &self.state,
+                history_prefix: &self.series.history_prefix,
+                state: &self.series.state,
                 spec: &self.spec,
             },
             layers: layers::PaneLayerRead {
                 layers: &self.layers,
                 orderflow: self.orderflow.as_ref(),
-                state: &self.state,
+                state: &self.series.state,
                 footprint: &self.presentation.footprint,
                 style: &self.presentation.candles,
                 drawings: &self.drawings,
@@ -1263,7 +1250,7 @@ impl ChartPane {
             let glyph = |toggle| self.header_glyph(toggle, chrome.style, chrome.capabilities);
             let capsule = Some(Capsule::of(side, glyph, scale))
                 .filter(|capsule| parts.capsule && self.slots() > 0 && !capsule.is_empty());
-            let (chart, tz, link) = (&self.state, chrome.tz, chrome.link);
+            let (chart, tz, link) = (&self.series.state, chrome.tz, chrome.link);
             // How far the side's data reaches, and on the tape whether more is coming.
             let clock =
                 move || SideLabel::of(side, chart, tz, link).map_or_else(String::new, |l| l.text());
@@ -1305,8 +1292,8 @@ impl ChartPane {
             .filter(|_| owner.tape_end().is_live())?;
         let times = (
             now,
-            last_print_ms(&self.state)?,
-            owner.live_lane_window_ms(self.state.bars()),
+            last_print_ms(&self.series.state)?,
+            owner.live_lane_window_ms(self.series.state.bars()),
         );
         tape_seam_x(
             owner.cached_config(),

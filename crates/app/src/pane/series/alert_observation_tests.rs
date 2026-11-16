@@ -29,5 +29,5 @@ fn committed_observer_excludes_held_history_and_preserves_equal_time_closes() {
         closes.iter().map(|(_, slot)| *slot).collect::<Vec<_>>(),
         [31, 32, 33]
     );
-    assert_eq!(pane.state.backfill_boundary(), Some(31));
+    assert_eq!(pane.series.state.backfill_boundary(), Some(31));
 }

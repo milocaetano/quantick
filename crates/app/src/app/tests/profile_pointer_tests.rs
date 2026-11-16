@@ -11,6 +11,7 @@ fn profile_app() -> (QuantickApp, mpsc::Receiver<FeedCommand>, egui::Context) {
     app.active_tab_mut().apply_spec_changes();
     app.active_tab_mut()
         .flow_pane
+        .series
         .state
         .set_footprint_enabled(true);
     let trades = (1..=200)
@@ -23,7 +24,7 @@ fn profile_app() -> (QuantickApp, mpsc::Receiver<FeedCommand>, egui::Context) {
     events.try_send(FeedEvent::Backfilled(trades)).unwrap();
     let tab_id = app.runtime.tabs.active_id();
     app.active_tab_mut().drain_feed(tab_id);
-    assert_eq!(app.active_tab().flow_pane.state.bars().len(), 200);
+    assert_eq!(app.active_tab().flow_pane.series.state.bars().len(), 200);
     let tool = crate::drawings::DRAWING_TOOLS
         .into_iter()
         .find(|tool| tool.id() == crate::frvp::TOOL_ID)

@@ -17,7 +17,7 @@ use crate::strategies::{Print, TabStrategies};
 
 /// The window anchors to its drawing id; any copyable key will do here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct DrawingId(u64);
+pub(crate) struct DrawingId(pub(crate) u64);
 
 const PANE: u64 = 7;
 
@@ -38,7 +38,7 @@ impl StrategyPort for RecordingPort {
     }
 }
 
-fn bar(open: i64, close: i64) -> Bar {
+pub(crate) fn bar(open: i64, close: i64) -> Bar {
     Bar {
         open_time: 0,
         close_time: 0,
@@ -52,7 +52,7 @@ fn bar(open: i64, close: i64) -> Bar {
     }
 }
 
-fn instance(drawing: DrawingId) -> AnchoredInstance<DrawingId> {
+pub(crate) fn instance(drawing: DrawingId) -> AnchoredInstance<DrawingId> {
     AnchoredInstance {
         drawing,
         preset: "test".to_owned(),

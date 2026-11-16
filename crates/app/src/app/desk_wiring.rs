@@ -49,7 +49,7 @@ pub(super) fn open_settings_on(menu: &mut WindowMenuState, ctx: &egui::Context) 
 /// Raise the export dialog, suggesting the active chart's name.
 pub(super) fn open_export(runtime: &mut WorkspaceRuntime) {
     let tab = &runtime.tabs[runtime.tabs.active_index()];
-    let (symbol, spec) = (&tab.symbol, tab.flow_pane.state.spec());
+    let (symbol, spec) = (&tab.symbol, tab.flow_pane.series.state.spec());
     runtime.workspace.picker_mut().open_export(symbol, spec);
 }
 

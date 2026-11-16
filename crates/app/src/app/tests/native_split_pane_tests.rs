@@ -85,7 +85,8 @@ fn dragging_the_candles_pans_them_and_the_shared_axis_but_never_the_tapes_time()
     run_frame(&mut app, &ctx);
     let (chart, divider, total) = {
         let pane = &app.active_tab().flow_pane;
-        let total = pane.state.bars().len() + usize::from(pane.state.partial().is_some());
+        let total =
+            pane.series.state.bars().len() + usize::from(pane.series.state.partial().is_some());
         (
             pane.frame.chart_rect.unwrap(),
             pane.frame.lane_divider_x.unwrap(),

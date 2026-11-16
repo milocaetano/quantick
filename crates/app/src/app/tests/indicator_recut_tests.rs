@@ -52,7 +52,7 @@ fn a_spec_change_rebuilds_its_pane_when_only_the_neighbour_prefix_moves() {
     app.active_tab_mut().apply_spec_changes();
 
     let flow = &mut app.active_tab_mut().flow_pane;
-    assert_eq!(flow.state.spec(), &spec, "the bars were re-cut");
+    assert_eq!(flow.series.state.spec(), &spec, "the bars were re-cut");
     finish_indicator_commands(flow);
     let expected = flow.series_read().closed_bars();
     let bars = expected.len();

@@ -792,7 +792,7 @@ impl AppRig {
         app.active_tab_mut().flow_pane.spec.set(*spec);
         app.active_tab_mut().apply_spec_changes();
         app.active_tab_mut().apply_spec_changes();
-        assert_eq!(app.active_tab().flow_pane.state.spec(), spec);
+        assert_eq!(app.active_tab().flow_pane.series.state.spec(), spec);
         assert!(
             app.active_tab_mut()
                 .tape_mut()

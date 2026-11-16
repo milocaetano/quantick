@@ -87,7 +87,7 @@ fn producer_close_rebuild_lane_toggle_and_empty_updates_preserve_the_run() {
     assert_eq!(publish(&mut pane), 2);
     assert_eq!(retained(&pane), 3);
     pane.ingest_live_trade(&print(8, 8));
-    assert!(pane.state.partial().is_none());
+    assert!(pane.series.state.partial().is_none());
     assert_eq!(publish(&mut pane), 0);
     assert_eq!(
         retained(&pane),
@@ -114,7 +114,7 @@ fn producer_close_rebuild_lane_toggle_and_empty_updates_preserve_the_run() {
     assert_eq!(publish(&mut pane), 0, "resize does not duplicate the seed");
     assert_eq!(retained(&pane), 2);
     assert_eq!(
-        pane.state.trades().len(),
+        pane.series.state.trades().len(),
         10,
         "transport never changes trade retention"
     );

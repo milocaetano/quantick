@@ -11,7 +11,7 @@ use smallvec::SmallVec;
 
 use crate::canvas_layout::MAX_CANVAS_PANES;
 use crate::pane::ChartPane;
-use quantick_session::strategies::{Forming, Print};
+use quantick_session::strategies::Print;
 
 /// Evaluate the panes against the print the paper account has already consumed.
 /// The supplied clock only governs alarms; commands still acknowledge immediately.
@@ -20,9 +20,8 @@ pub(super) fn evaluate(
     strategies: &mut crate::strategy_anchors::TabStrategies,
     (flow_pane, time_panes): (&ChartPane, &[ChartPane]),
     pending_sounds: &mut Vec<crate::audio::Cue>,
-    now_ms: i64,
+    now_ms: u64,
 ) {
-    let now_ms = u64::try_from(now_ms).unwrap_or(0);
     let events = paper.account_mut().drain_bot_events();
     // Flow first, then the context stack: a strategy armed on the second
     // stacked chart has to trade and ring like one armed on the first.
@@ -43,15 +42,7 @@ pub(super) fn evaluate(
                 crate::pane::strategies::drawing_region(&pane.drawings, drawing, slot)
             })
         },
-        |id| {
-            let pane = pane(id)?;
-            Some(Forming {
-                bar: pane.state.partial().cloned()?,
-                progress: (pane.state.bar_progress_at(None))
-                    .and_then(quantick_chart::bar_progress::BarProgressReading::fixed_progress),
-                slot: pane.closed_slots(),
-            })
-        },
+        |id| pane(id)?.series.forming(),
     );
     paper.account_mut().set_bot_listening(answer.watching > 0);
     pending_sounds.extend(answer.alarms);

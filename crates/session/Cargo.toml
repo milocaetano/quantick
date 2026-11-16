@@ -7,6 +7,10 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+# The pane's series (`series`): the bar state and the venue prefix in front
+# of it, and the history state and view effects a prefix install decides.
+quantick-chart = { path = "../chart" }
+quantick-chart-interaction = { path = "../chart-interaction" }
 # The clock face a history note is written in, and the sentence's time.
 quantick-civil = { path = "../civil" }
 quantick-engine = { path = "../engine" }

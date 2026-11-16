@@ -9,10 +9,10 @@
 
 use crate::indicator_worker::{IndicatorCommand, IndicatorSource, SlotId};
 use crate::price_view::PriceView;
-use crate::state::ChartState;
 
 use super::ChartPane;
-use quantick_chart_interaction::pane_history::{PrefixChange, PrefixInstallEffect};
+use quantick_chart_interaction::pane_history::PrefixInstallEffect;
+use quantick_session::series::SeriesEffect;
 
 impl ChartPane {
     // The slot reads, each one line onto the composed series that owns its
@@ -66,63 +66,78 @@ impl ChartPane {
         self.lane.reset();
         self.indicator_worker.send(IndicatorCommand::Rebuild(
             self.series_read().closed_bars(),
-            self.state.partial().cloned(),
+            self.series.state.partial().cloned(),
         ));
         self.publish_partial();
     }
 
-    /// [`Self::install_history_prefix`], with the venue's seam `lead` merged
-    /// into the first engine bar (`ChartState::set_venue_lead`), and whether
-    /// it leaves nothing of that bar's bucket unaccounted for.
+    /// Apply what [`quantick_session::series::PaneSeries::install_venue_prefix`] decided to
+    /// the view; whether the prefix or the seam lead changed.
     pub fn install_venue_history(
         &mut self,
         bars: Vec<quantick_engine::Bar>,
         lead: Option<quantick_engine::Bar>,
         covers_seam: bool,
+        seam: Option<quantick_session::SeamTrace>,
     ) -> bool {
-        let lead_changed = self.state.set_venue_lead(lead, covers_seam);
-        let change = self
-            .history_prefix
-            .install(bars, &mut self.model.history, lead_changed);
-        for effect in change.install_effects() {
+        let (history, id) = (&mut self.model.history, self.id);
+        let install = self
+            .series
+            .install_venue_prefix(history, id, bars, lead, covers_seam, seam);
+        self.apply_series_effects(install.effects);
+        install.changed
+    }
+
+    /// Carry out what the pane's series decided, in order.
+    fn apply_series_effects(&mut self, effects: impl IntoIterator<Item = SeriesEffect>) {
+        use PrefixInstallEffect::{
+            RebuildIndicators, ShiftDrawings, ShiftIndicatorRows, ShiftViewport,
+        };
+        for effect in effects {
             match effect {
-                PrefixInstallEffect::ShiftViewport(delta) => {
+                SeriesEffect::Prefix(ShiftViewport(delta)) => {
                     self.model.viewport.shift_right_edge(delta)
                 }
-                PrefixInstallEffect::ShiftDrawings(delta) => self.marks_mut().shift_bars(delta),
-                PrefixInstallEffect::ShiftIndicatorRows(added) => self.indicators.shift_rows(added),
-                PrefixInstallEffect::RebuildIndicators => self.send_indicator_rebuild(),
+                SeriesEffect::Prefix(ShiftDrawings(delta)) => self.marks_mut().shift_bars(delta),
+                SeriesEffect::Prefix(ShiftIndicatorRows(added)) => {
+                    self.indicators.shift_rows(added)
+                }
+                SeriesEffect::Prefix(RebuildIndicators) => self.send_indicator_rebuild(),
+                SeriesEffect::ReanchorViewport { slot, offset } => {
+                    self.model.viewport.reanchor_history(slot, offset)
+                }
+                SeriesEffect::ReanchorDrawings(old_slots) => self.reanchor_drawings(old_slots),
+                SeriesEffect::BackfillIndicators(slots) => {
+                    self.lane.reset();
+                    let mut history = self.series_read().closed_bars();
+                    history.truncate(slots);
+                    self.indicator_worker
+                        .send(IndicatorCommand::Backfilled(history));
+                }
+                SeriesEffect::PublishPartial => self.publish_partial(),
+                SeriesEffect::PublishTapePriceStep => self.publish_tape_price_step(),
             }
         }
-        change != PrefixChange::Unchanged
     }
 
     /// Apply the indicator worker's deltas, before the draw reads columns.
     pub fn apply_indicator_events(&mut self) {
         self.drain_indicator_events();
-        let bars = self.history_prefix.len() + self.state.bars().len();
-        if self.indicators.row_drift(bars).is_none() {
-            return;
-        }
-        // Behind is normal while the worker has work. Idle, and with what it had
-        // already published taken in, a difference means a rebuild was missed.
-        let counts = self.indicator_worker.progress().counts;
-        if counts.queued + counts.inflight + counts.parked + counts.deferred == 0 {
-            self.drain_indicator_events();
-            if let Some(rows) = self.indicators.answer_row_drift(bars) {
-                tracing::warn!(
-                    target: "quantick::app",
-                    schema_version = 1_u8,
-                    event_code = "INDICATOR_ROWS_DRIFT",
-                    pane = self.id,
-                    rows,
-                    bars,
-                    action = "rebuild_indicators",
-                    "indicator rows disagree with the pane's bars"
-                );
-                self.send_indicator_rebuild();
-            }
-        }
+        let worker = &mut self.indicator_worker;
+        let rebuild = self
+            .series
+            .indicator_row_drift(self.id, &mut self.indicators, |views| {
+                let counts = worker.progress().counts;
+                let idle = counts.queued + counts.inflight + counts.parked + counts.deferred == 0;
+                if idle {
+                    worker
+                        .drain_events()
+                        .into_iter()
+                        .for_each(|event| views.apply(event));
+                }
+                idle
+            });
+        self.apply_series_effects(rebuild);
     }
 
     fn drain_indicator_events(&mut self) {
@@ -145,62 +160,27 @@ impl ChartPane {
         let Some(orderflow) = self.orderflow.as_mut() else {
             return;
         };
-        if let Some(step) = self.state.tape_price_step() {
-            orderflow.observe_tape_price_grid(step, self.state.tape_reference_price());
+        if let Some(step) = self.series.state.tape_price_step() {
+            orderflow.observe_tape_price_grid(step, self.series.state.tape_reference_price());
         }
     }
 
     /// Take a backfill batch into the series and hand the indicators the bars
     /// it produced.
     pub fn ingest_backfill(&mut self, trades: &[quantick_engine::Trade]) {
-        if !trades.is_empty() {
-            self.bump_pagination_revision();
-        }
-        self.state.ingest_backfill(trades);
-        self.lane.reset();
-        self.indicator_worker.send(IndicatorCommand::Backfilled(
-            self.series_read().closed_bars(),
-        ));
-        let partial = self.partial_command();
-        self.indicator_worker.send(partial);
-        self.publish_tape_price_step();
+        let effects = self.series.ingest_backfill(&mut self.model.history, trades);
+        self.apply_series_effects(effects);
     }
 
     /// Prepend older trades, keeping the view and the marks on the bars they
     /// were on, and return how many net bars the trades added.
     pub fn prepend_history(&mut self, trades: &[quantick_engine::Trade]) -> usize {
-        if !trades.is_empty() {
-            self.bump_pagination_revision();
-        }
-        let path_dependent = self.state.spec().definition().path_dependent;
-        let anchor =
-            path_dependent.then(|| self.series_read().history_view_anchor(&self.model.viewport));
-        let added = self.state.prepend_history(trades);
-        self.finish_history_prepend(added, anchor);
+        let (history, viewport) = (&mut self.model.history, &self.model.viewport);
+        let (added, effects) = self
+            .series
+            .prepend_history(history, viewport, &self.spec, trades);
+        self.apply_series_effects(effects);
         added
-    }
-
-    fn finish_history_prepend(&mut self, added: usize, anchor: Option<(Option<i64>, f32, usize)>) {
-        if let Some((edge_time, offset, old_slots)) = anchor {
-            // A Renko series re-cut from an older first print can hold a
-            // different number of bricks, so the view and the marks go back
-            // to market time.
-            self.model
-                .viewport
-                .reanchor_history(edge_time.and_then(|ms| self.slot_at_time(ms)), offset);
-            self.reanchor_drawings(old_slots);
-        } else {
-            // Older bars shift every index up by `added`; keep the view steady.
-            self.model.viewport.shift_right_edge(added as isize);
-            self.marks_mut().shift_bars(added as isize);
-        }
-        // Indicator columns shift with them: the rebuild below is a round-trip
-        // away, and until it lands every value would otherwise be drawn
-        // `added` slots off its own candle.
-        self.indicators.shift_rows(added);
-        self.publish_tape_price_step();
-        // Older trades re-cut every bar; replay from scratch.
-        self.send_indicator_rebuild();
     }
 
     /// Queue a large recut without replacing the readable chart.
@@ -242,26 +222,18 @@ impl ChartPane {
 
     /// Install a complete recut and catch up the live tail before moving anchors.
     pub fn prepare_history(&mut self) -> bool {
-        self.history_worker.poll(&self.state)
+        self.history_worker.poll(&self.series.state)
     }
 
     pub fn install_history(&mut self) -> bool {
-        let Some(candidate) = self.history_worker.take_ready(&self.state) else {
+        let Some(candidate) = self.history_worker.take_ready(&self.series.state) else {
             return false;
         };
-        let anchor = self
-            .state
-            .spec()
-            .definition()
-            .path_dependent
-            .then(|| self.series_read().history_view_anchor(&self.model.viewport));
-        let added = candidate
-            .bars()
-            .len()
-            .saturating_sub(self.state.bars().len());
-        let old = std::mem::replace(&mut self.state, candidate);
-        self.bump_pagination_revision();
-        self.finish_history_prepend(added, anchor);
+        let (history, viewport) = (&mut self.model.history, &self.model.viewport);
+        let (old, effects) = self
+            .series
+            .install_recut(history, viewport, &self.spec, candidate);
+        self.apply_series_effects(effects);
         self.history_worker.retire(old);
         true
     }
@@ -279,10 +251,10 @@ impl ChartPane {
     }
 
     pub fn settle_pending_reanchor(&mut self) {
-        let Some(old_slots) = self.model.history.settle_reanchor(self.slots()) else {
-            return;
-        };
-        self.reanchor_drawings(old_slots);
+        let settled = self
+            .series
+            .settle_reanchor(&mut self.model.history, &self.spec);
+        self.apply_series_effects(settled);
     }
 
     /// Rewrite the market instants behind the selected object's anchors after
@@ -293,11 +265,7 @@ impl ChartPane {
     /// does not update it has moved only half the object.
     pub fn retime_selected(&mut self) {
         let projection = quantick_drawings::gesture::DrawingProjection {
-            series: quantick_drawings::gesture::PaneSeriesRead {
-                history_prefix: &self.history_prefix,
-                state: &self.state,
-                spec: &self.spec,
-            },
+            series: self.series.read(&self.spec),
             viewport: &self.model.viewport,
             indicators: &self.indicators,
         };
@@ -324,22 +292,10 @@ impl ChartPane {
         if let Some(owner) = self.orderflow.as_mut() {
             owner.reset_flow_executions();
         }
-        // A second reset before the first settled must not overwrite the
-        // baseline with the empty series it is looking at now.
-        let slots = self.slots();
-        self.model.history.defer_reanchor(slots);
-        // The prefix is bar-indexed against a series that no longer exists,
-        // and its seam was trimmed against a first bar that is gone. A replay
-        // never has one today; the invariant must not depend on that.
-        self.history_prefix.clear();
-        if keep_readings {
-            self.state.reset_series(self.spec.spec());
-        } else {
-            self.state = ChartState::new(self.spec.spec());
-        }
+        self.series
+            .reset(&mut self.model.history, &self.spec, keep_readings);
         self.lane.reset();
         self.publish_partial();
-        self.bump_pagination_revision();
         self.model.reset_series_view();
         // Framing dies with the series; orientation is the trader's standing
         // choice about the view, not about these bars — it survives the way
@@ -361,19 +317,11 @@ impl ChartPane {
         backfill_count: usize,
         deal_samples: &[quantick_engine::DealSample],
     ) {
-        if !trades.is_empty() {
-            self.bump_pagination_revision();
-        }
-        self.state.observe_deals_batch(deal_samples);
-        let split = backfill_count.min(trades.len());
-        self.state.ingest_backfill(trades.range(..split));
-        for trade in trades.since(split) {
-            self.state.ingest_live(trade);
-        }
-        // One rebuild rather than one command per trade: the worker is being
-        // handed a whole history, not watching it arrive.
-        self.publish_tape_price_step();
-        self.send_indicator_rebuild();
+        let history = &mut self.model.history;
+        let effects = self
+            .series
+            .seed_from(history, trades, backfill_count, deal_samples);
+        self.apply_series_effects(effects);
     }
 
     /// [`Self::ingest_live_trade_observed`], with nobody listening.
@@ -402,29 +350,16 @@ impl ChartPane {
         if let Some(orderflow) = self.orderflow.as_mut() {
             orderflow.record_trade(trade);
         }
-        let bars_before = self.state.bars().len();
-        self.state.ingest_live(trade);
+        let ingest = self.series.ingest_live(trade);
         self.publish_tape_price_step();
-        // Bars the builder cut late from prints it held — Renko's, once it
-        // reads its step — landed behind the boundary: history the indicators
-        // take as history, and never a close handed to a strategy.
-        let live_from = bars_before.max(self.state.backfill_boundary().unwrap_or(0));
-        if live_from > bars_before {
-            self.lane.reset();
-            let mut history = self.series_read().closed_bars();
-            history.truncate(self.history_prefix.len() + live_from);
-            self.indicator_worker
-                .send(IndicatorCommand::Backfilled(history));
-        }
-        // One print can close several bars — a Renko print clearing several
-        // levels — and each is an event.
-        for index in live_from..self.state.bars().len() {
+        self.apply_series_effects(ingest.backfilled.map(SeriesEffect::BackfillIndicators));
+        for index in ingest.closed {
             closed_observer(
                 self,
-                &self.state.bars()[index],
-                self.history_prefix.len() + index,
+                &self.series.state.bars()[index],
+                self.series.history_prefix.len() + index,
             );
-            let closed = self.state.bars()[index].clone();
+            let closed = self.series.state.bars()[index].clone();
             self.lane.reset();
             self.indicator_worker
                 .send(IndicatorCommand::BarClosed(closed));
@@ -443,8 +378,10 @@ impl ChartPane {
     /// Publish only the forming run's unsent suffix; the worker retains it.
     /// Rebuilds and lane enable cold-seed the current run once.
     fn partial_command(&mut self) -> IndicatorCommand {
-        self.lane
-            .command(self.state.partial().cloned(), self.state.trades())
+        self.lane.command(
+            self.series.state.partial().cloned(),
+            self.series.state.trades(),
+        )
     }
 }
 
@@ -458,7 +395,7 @@ impl ChartPane {
     /// drawings keep their bars, the indicator columns keep their candles
     /// until the rebuild lands. Returns whether anything changed.
     pub fn install_history_prefix(&mut self, bars: Vec<quantick_engine::Bar>) -> bool {
-        self.install_venue_history(bars, None, false)
+        self.install_venue_history(bars, None, false, None)
     }
 
     pub(crate) fn hold_history_publication(&mut self, held: bool) {

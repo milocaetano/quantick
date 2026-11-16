@@ -143,7 +143,7 @@ fn a_restored_monthly_pane_asks_for_days_first() {
         (0..200).map(minute_trade).collect(),
     );
     assert_eq!(
-        app.active_tab().pane(PaneSide::Time(0)).state.spec(),
+        app.active_tab().pane(PaneSide::Time(0)).series.state.spec(),
         &BarSpec::Time(quantick_engine::time_bucket::CALENDAR_MONTH_MS)
     );
     assert_eq!(
@@ -421,7 +421,7 @@ fn the_control_plane_sets_and_refuses_calendar_intervals() {
     assert_eq!(changed["changed"], true);
     app.active_tab_mut().apply_spec_changes();
     assert_eq!(
-        app.active_tab().pane(PaneSide::Time(0)).state.spec(),
+        app.active_tab().pane(PaneSide::Time(0)).series.state.spec(),
         &BarSpec::Time(month)
     );
     let weekly = app
@@ -531,9 +531,13 @@ fn the_forming_day_week_and_month_hold_the_venue_part_before_the_first_trade() {
     );
     {
         let pane = app.active_tab().pane(PaneSide::Time(0));
-        assert_eq!(pane.state.venue_lead(), None, "no partial lead meanwhile");
         assert_eq!(
-            pane.state.partial().map(|bar| bar.open_time),
+            pane.series.state.venue_lead(),
+            None,
+            "no partial lead meanwhile"
+        );
+        assert_eq!(
+            pane.series.state.partial().map(|bar| bar.open_time),
             Some(FIRST_TRADE_MS)
         );
     }
@@ -573,7 +577,11 @@ fn the_forming_day_week_and_month_hold_the_venue_part_before_the_first_trade() {
             .filter(|bar| bar.open_time >= first_day * DAY_MS && bar.open_time < SEAM_DAY * DAY_MS);
         let expected = venue_then_prints(whole_days.chain(seam_minutes.iter().copied()), interval);
         let pane = app.active_tab().pane(PaneSide::Time(0));
-        let forming = pane.state.partial().expect("the seam bar is forming");
+        let forming = pane
+            .series
+            .state
+            .partial()
+            .expect("the seam bar is forming");
         assert_eq!(forming, &expected, "{interval}");
         assert_eq!(
             forming.open_time,
@@ -581,11 +589,11 @@ fn the_forming_day_week_and_month_hold_the_venue_part_before_the_first_trade() {
             "{interval}: the bucket's start"
         );
         assert!(
-            pane.state.venue_lead().is_some(),
+            pane.series.state.venue_lead().is_some(),
             "{interval}: labelled venue + prints"
         );
         assert_eq!(
-            pane.state.first_print_open_ms(),
+            pane.series.state.first_print_open_ms(),
             Some(FIRST_TRADE_MS),
             "{interval}"
         );
@@ -602,7 +610,7 @@ fn the_forming_day_week_and_month_hold_the_venue_part_before_the_first_trade() {
         tab,
         pane,
         pane.seam_slot(),
-        pane.state.partial().expect("forming"),
+        pane.series.state.partial().expect("forming"),
         crate::control::chart::BarStateDto::InProgress,
         &app.config,
     );
@@ -652,11 +660,14 @@ fn an_intraday_seam_bar_takes_the_venue_minutes_before_the_first_trade() {
         .collect();
     assert_eq!(lead.len(), 4);
     let pane = app.active_tab().pane(PaneSide::Time(0));
-    assert_eq!(pane.state.bars()[0], venue_then_prints(lead, five));
-    assert_eq!(pane.state.bars()[0].open_time, (FIRST_MINUTE - 4) * minute);
-    assert!(pane.state.venue_lead().is_some());
+    assert_eq!(pane.series.state.bars()[0], venue_then_prints(lead, five));
     assert_eq!(
-        pane.state.bars()[1].trade_count,
+        pane.series.state.bars()[0].open_time,
+        (FIRST_MINUTE - 4) * minute
+    );
+    assert!(pane.series.state.venue_lead().is_some());
+    assert_eq!(
+        pane.series.state.bars()[1].trade_count,
         5,
         "the next bar is the prints' alone"
     );
@@ -688,10 +699,10 @@ fn an_intraday_seam_bar_takes_the_venue_minutes_before_the_first_trade() {
     );
     let pane = app.active_tab().pane(PaneSide::Time(0));
     assert_eq!(
-        pane.state.partial().map(|bar| bar.open_time),
+        pane.series.state.partial().map(|bar| bar.open_time),
         Some(SEAM_DAY * DAY_MS)
     );
-    assert!(pane.state.venue_lead().is_some());
+    assert!(pane.series.state.venue_lead().is_some());
 }
 
 /// Venue candles that land before the first print are trimmed and led
@@ -721,7 +732,7 @@ fn venue_candles_ahead_of_the_first_print_meet_it_at_the_seam() {
         Some((FIRST_MINUTE - 4) * minute),
         "the bucket the first print opened, led in by the venue's minutes"
     );
-    assert!(pane.state.venue_lead().is_some());
+    assert!(pane.series.state.venue_lead().is_some());
     assert!(
         pane.slot_open_time(seam - 1) < pane.slot_open_time(seam),
         "nothing overlaps the seam"
@@ -802,9 +813,9 @@ fn a_reconnect_with_the_seam_minutes_out_asks_for_them_again() {
     answer(&events, minute, minutes_to_the_seam());
     app.drain_tabs();
     let pane = app.active_tab().pane(PaneSide::Time(0));
-    assert!(pane.state.venue_lead().is_some(), "the lead is back");
+    assert!(pane.series.state.venue_lead().is_some(), "the lead is back");
     assert_eq!(
-        pane.state.partial().map(|bar| bar.open_time),
+        pane.series.state.partial().map(|bar| bar.open_time),
         Some(4 * DAY_MS)
     );
 }
@@ -838,12 +849,12 @@ fn a_complete_answer_for_the_seam_stretch_closes_it_with_nothing_traded() {
 fn assert_forming_week_holds_its_whole_days(app: &QuantickApp) {
     let tab = app.active_tab();
     let pane = tab.pane(PaneSide::Time(0));
-    assert!(pane.state.venue_lead().is_some());
+    assert!(pane.series.state.venue_lead().is_some());
     let whole_days = days_to_the_seam()
         .into_iter()
         .filter(|bar| bar.open_time >= 4 * DAY_MS && bar.open_time < SEAM_DAY * DAY_MS)
         .collect::<Vec<_>>();
-    let forming = pane.state.partial().expect("forming");
+    let forming = pane.series.state.partial().expect("forming");
     assert_eq!(forming, &venue_then_prints(&whole_days, WEEK_MS));
     let snapshot = crate::control::chart::bar_snapshot(
         tab,
@@ -896,7 +907,11 @@ fn an_uncovered_seam_asks_for_its_stretch_and_a_complete_answer_closes_it() {
         "the uncovered stretch is asked for"
     );
     assert_eq!(
-        app.active_tab().pane(PaneSide::Time(0)).state.venue_lead(),
+        app.active_tab()
+            .pane(PaneSide::Time(0))
+            .series
+            .state
+            .venue_lead(),
         None
     );
     answer(&events, minute, minutes_of_the_session_before());

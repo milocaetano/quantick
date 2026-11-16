@@ -112,7 +112,7 @@ impl TabRecipeHost for BookTabs<'_> {
                 share.to_bits().hash(&mut hash);
             }
             for (pane, _) in tab.panes() {
-                let spec = pane.state.spec();
+                let spec = pane.series.state.spec();
                 let style = pane.footprint_config(&app.runtime.footprint_config).style;
                 (pane.layout_id(), pane.layer_read().mask(&app.runtime.style)).hash(&mut hash);
                 (style.id(), spec.id(), spec.parameter(), spec.choice()).hash(&mut hash);

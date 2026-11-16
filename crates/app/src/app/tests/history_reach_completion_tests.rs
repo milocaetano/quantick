@@ -37,7 +37,7 @@ fn one_press_of_yesterday_reaches_the_previous_open_on_a_million_print_tape() {
         .unwrap();
     app.active_tab_mut().drain_feed(tab_id);
     while commands.try_recv().is_ok() {}
-    let held = app.active_tab().flow_pane.state.trades().len();
+    let held = app.active_tab().flow_pane.series.state.trades().len();
     app.active_tab_mut()
         .load_history(&config, HistoryReach::Sessions(1));
     let start = std::time::Instant::now();
@@ -59,7 +59,7 @@ fn one_press_of_yesterday_reaches_the_previous_open_on_a_million_print_tape() {
         app.active_tab_mut().drain_feed(tab_id);
         frame_peak = frame_peak.max(frame.elapsed());
         assert_eq!(
-            app.active_tab().flow_pane.state.trades().len(),
+            app.active_tab().flow_pane.series.state.trades().len(),
             held,
             "the chart holds still while the run pages"
         );
@@ -86,11 +86,11 @@ fn one_press_of_yesterday_reaches_the_previous_open_on_a_million_print_tape() {
     let mut lengths = std::collections::BTreeSet::new();
     while app.active_tab().flow_pane.history_pending() {
         app.active_tab_mut().drain_feed(tab_id);
-        lengths.insert(app.active_tab().flow_pane.state.trades().len());
+        lengths.insert(app.active_tab().flow_pane.series.state.trades().len());
         assert!(std::time::Instant::now() < deadline, "the rebuild lands");
         std::thread::yield_now();
     }
-    lengths.insert(app.active_tab().flow_pane.state.trades().len());
+    lengths.insert(app.active_tab().flow_pane.series.state.trades().len());
     assert!(
         lengths.len() <= 2,
         "the chart moved once, not once a page: {lengths:?}"
@@ -98,9 +98,9 @@ fn one_press_of_yesterday_reaches_the_previous_open_on_a_million_print_tape() {
     let tab = app.active_tab();
     assert!(!tab.loading.is_active(LoadingTask::History));
     for (pane, _) in tab.panes() {
-        assert_eq!(pane.state.trades().len(), (edge - cursor) as usize);
-        assert_eq!(pane.state.trades()[0].agg_id, cursor);
-        assert_eq!(pane.state.trades().last().unwrap().agg_id, edge - 1);
+        assert_eq!(pane.series.state.trades().len(), (edge - cursor) as usize);
+        assert_eq!(pane.series.state.trades()[0].agg_id, cursor);
+        assert_eq!(pane.series.state.trades().last().unwrap().agg_id, edge - 1);
     }
 }
 
