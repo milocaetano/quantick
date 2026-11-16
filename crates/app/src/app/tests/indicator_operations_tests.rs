@@ -269,3 +269,36 @@ fn native_toolbar_operations_mirror_two_panes_and_save_once() {
         }
     }
 }
+
+/// The canvas menu's hide is the legend eye's hide: the layout entry records
+/// it and every other pane on that layout follows.
+#[test]
+fn canvas_menu_hide_mirrors_two_panes_and_records_the_layout_entry() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = split_app(&ctx, 40);
+    let tab = app.runtime.tabs.active_id();
+    assert_eq!(
+        app.layout_state().pane_layout(tab, PaneSide::Flow),
+        app.layout_state().pane_layout(tab, PaneSide::Time(0))
+    );
+    app.apply_toolbar_action(ToolbarAction::AddNative("native.ema"));
+    settle_indicators(&mut app);
+    app.runtime.workspace.layouts_mut().take_flush();
+    let slot = app.active_tab().flow_pane.indicators.all()[0].slot;
+    with_flow_pane(&mut app, |pane, chrome| {
+        pane.apply_menu_intent(
+            quantick_chart_interaction::pane::MenuIntent::ToggleIndicatorHidden(slot.0),
+            chrome,
+        );
+    });
+    run_frame(&mut app, &ctx);
+    for side in [PaneSide::Flow, PaneSide::Time(0)] {
+        let views = app.active_tab().pane(side).indicators.all();
+        assert!(views[0].hidden, "{side:?} hides with the menu's pane");
+    }
+    assert!(
+        pane_set(&app, PaneSide::Flow)[0].hidden,
+        "the layout entry says hidden"
+    );
+    assert_one_indicator_save(&mut app);
+}
