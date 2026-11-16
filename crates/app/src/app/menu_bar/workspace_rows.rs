@@ -23,6 +23,8 @@ use crate::toolbar::capsule::paint_tree;
 
 type Asked = Option<Option<WorkspaceCommand>>; // A press's command; None on the tab's own row.
 pub(super) type Pen<'a, 'b> = (&'a Ink<'a>, &'b mut Drawn, bool);
+/// What builds a sheet, given what measures words.
+pub(super) type View<'a> = &'a dyn Fn(&dyn Fn(&str, f32) -> f32) -> Sheet;
 /// A sheet's text field and whether it selects its words, its palette's state
 /// and keys, and the list's scroll offset when the caller keeps it.
 pub(super) type Parts<'a> = (
@@ -142,7 +144,7 @@ fn colour_popover(
 pub(super) fn sheet(
     ctx: &egui::Context,
     area: egui::Area,
-    view: &dyn Fn(&dyn Fn(&str, f32) -> f32) -> Sheet,
+    view: View<'_>,
     (text, pop, offset): Parts<'_>,
     (ink, drawn, dark): Pen<'_, '_>,
 ) -> Painted {
