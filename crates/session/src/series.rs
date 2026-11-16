@@ -8,6 +8,7 @@
 
 use std::ops::Range;
 
+use quantick_chart::bar_progress::BarProgressReading;
 use quantick_chart::indicator_views::IndicatorViews;
 use quantick_chart::pane_series::PaneSeriesRead;
 use quantick_chart::state::{ChartState, SpecSelector};
@@ -18,6 +19,7 @@ use quantick_engine::trade_tape::TradeTape;
 use quantick_engine::{Bar, DealSample, Trade};
 
 use crate::SeamTrace;
+use crate::strategies::Forming;
 
 /// The bars one pane holds: the venue prefix in front, then the bars the
 /// engine cut from prints.
@@ -196,6 +198,18 @@ impl PaneSeries {
             backfilled: (live_from > bars_before).then(|| self.history_prefix.len() + live_from),
             closed: live_from..self.state.bars().len(),
         }
+    }
+
+    /// The bar still forming, for an alarm's preview: its progress where the
+    /// spec measures one, and the slot it will close at.
+    #[must_use]
+    pub fn forming(&self) -> Option<Forming> {
+        Some(Forming {
+            bar: self.state.partial().cloned()?,
+            progress: (self.state.bar_progress_at(None))
+                .and_then(BarProgressReading::fixed_progress),
+            slot: self.closed_slots(),
+        })
     }
 
     /// Prepend older trades; the net bars they added, and what keeps the
