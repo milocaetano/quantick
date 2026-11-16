@@ -11,7 +11,8 @@
 //! the UI crate may not grow in absolute lines ([`app_lines`]), no struct may
 //! gain a field past its recorded count ([`struct_width`]), no type in a large
 //! crate may spread its inherent impls over more files than the signed
-//! ceiling ([`impl_spread`]), a crate with one
+//! ceiling ([`impl_spread`]), the window may not reach further into the UI
+//! crate than its signed ceiling ([`window_reach`]), a crate with one
 //! consumer must be signed for ([`single_consumer`]),
 //! a test's temporary directory is minted by its
 //! crate's scratch module rather than spelled by hand ([`scratch`]), the
@@ -74,6 +75,7 @@ pub mod single_consumer;
 pub mod size;
 pub mod struct_width;
 pub mod ui_free;
+pub mod window_reach;
 
 use std::path::{Path, PathBuf};
 
@@ -255,6 +257,16 @@ pub const GUARDS: &[Guard] = &[
             tighten: impl_spread::tighten,
             policy: &impl_spread::POLICY,
             measured: impl_spread::measured,
+        }),
+    },
+    Guard {
+        name: "window-reach",
+        check: window_reach::check,
+        check_file: window_reach::check_file,
+        ratchet: Some(Ratchet {
+            tighten: window_reach::tighten,
+            policy: &window_reach::POLICY,
+            measured: window_reach::measured,
         }),
     },
     Guard {

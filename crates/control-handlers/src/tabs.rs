@@ -37,4 +37,7 @@ pub trait JournalAccess {
     /// Journal one event, stamped by the access's own clock; answers its
     /// sequence.
     fn record_event(&mut self, event: NewEvent) -> WireU64;
+    /// The access's clock, for a command that must be stamped as it runs;
+    /// a handler is told the time, it never reads one.
+    fn now_unix_ms(&self) -> i64;
 }

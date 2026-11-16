@@ -5,6 +5,15 @@ use quantick_alerts::{
 };
 use quantick_control_handlers::alerts::AlertDefinitionsPort;
 
+/// A command through the alert owner's flush path, as a control call makes it.
+fn command(
+    app: &mut QuantickApp,
+    command: AlertCommand,
+) -> Result<quantick_alerts::CommandResult, quantick_alerts::AlertError> {
+    app.alert_runtime()
+        .command(command, crate::metrics::wall_clock_ms())
+}
+
 fn spec(app: &QuantickApp) -> AlertSpec {
     let tab = app.active_tab();
     let context =
@@ -55,7 +64,7 @@ fn alert_end_to_end() {
         .unwrap();
     app.drain_tabs();
     let rule = spec(&app);
-    let created = app.alert_command(AlertCommand::Create(rule)).unwrap();
+    let created = command(&mut app, AlertCommand::Create(rule)).unwrap();
     for id in 2..=4 {
         let mut print = trade(id);
         print.timestamp_ms = 2000;
@@ -166,7 +175,7 @@ fn alert_target_binding_end_to_end() {
         operator: Operator::Inside,
         target: TargetRef::Drawing(target.clone()),
     };
-    app.alert_command(AlertCommand::Create(rule)).unwrap();
+    command(&mut app, AlertCommand::Create(rule)).unwrap();
     let reopened =
         quantick_stores::alerts::AlertRuntime::open(app.runtime.alerts.core.store.path.clone(), 0);
     assert_eq!(
@@ -235,7 +244,8 @@ fn live_close_reaches_the_alert_cache() {
         .try_send(FeedEvent::Backfilled(vec![trade(1)]))
         .unwrap();
     app.drain_tabs();
-    app.alert_command(AlertCommand::Create(spec(&app))).unwrap();
+    let rule = spec(&app);
+    command(&mut app, AlertCommand::Create(rule)).unwrap();
     let mut print = trade(2);
     print.price = Decimal::from(102);
     events.try_send(FeedEvent::Live(print)).unwrap();
@@ -256,7 +266,7 @@ fn alert_native_dense_tape_no_fire() {
     let mut rule = spec(&app);
     rule.frequency = Frequency::PerBar;
     rule.conditions[0].target = TargetRef::Value(10_000.0);
-    app.alert_command(AlertCommand::Create(rule)).unwrap();
+    command(&mut app, AlertCommand::Create(rule)).unwrap();
     let tab = &app.runtime.tabs[0];
     let runtime = &mut app.runtime.alerts;
     crate::tab::alerts::observe_alert_lifecycle(tab, runtime);
@@ -328,11 +338,10 @@ fn alert_shared_sound_batch_and_failure() {
             .unwrap();
         app.drain_tabs();
         let rule = spec(&app);
-        app.alert_command(AlertCommand::Create(rule.clone()))
-            .unwrap();
+        command(&mut app, AlertCommand::Create(rule.clone())).unwrap();
         let mut silent = rule;
         silent.notification.sound = None;
-        app.alert_command(AlertCommand::Create(silent)).unwrap();
+        command(&mut app, AlertCommand::Create(silent)).unwrap();
         for id in 2..=4 {
             let mut print = trade(id);
             print.price = Decimal::from(102);
@@ -387,7 +396,7 @@ fn alert_post_close_trade_preserves_bar_budget() {
             app.drain_tabs();
             let mut rule = spec(&app);
             rule.frequency = frequency;
-            app.alert_command(AlertCommand::Create(rule)).unwrap();
+            command(&mut app, AlertCommand::Create(rule)).unwrap();
             for id in 2..=4 {
                 let mut print = trade(id);
                 print.price = Decimal::from(102);
@@ -417,7 +426,8 @@ fn alert_native_lifecycle_reset_and_hydration_are_silent() {
         .try_send(FeedEvent::Backfilled(vec![trade(1)]))
         .unwrap();
     app.drain_tabs();
-    app.alert_command(AlertCommand::Create(spec(&app))).unwrap();
+    let rule = spec(&app);
+    command(&mut app, AlertCommand::Create(rule)).unwrap();
     app.active_tab_mut().link.feed_connection = quantick_feed::FeedConnectionState::Reconnecting;
     app.drain_tabs();
     assert_eq!(

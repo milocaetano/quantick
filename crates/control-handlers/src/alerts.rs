@@ -1,5 +1,5 @@
 //! Admitted alert operations over one persistent owner; no delivery on mutation.
-use quantick_alerts::{AlertCommand, AlertError, AlertEvent, AlertSpec, AlertView, CommandResult};
+use quantick_alerts::{AlertCommand, AlertError, AlertSpec, AlertView, CommandResult};
 use quantick_control::{error::ControlError, wire::ActorContext};
 use quantick_control_schema::alerts as schema;
 use serde_json::{Value, json};
@@ -14,22 +14,9 @@ pub trait AlertDefinitionsPort {
     ) -> Result<quantick_alerts::DurableDrawingRef, schema::TargetResolveError> {
         Err(schema::TargetResolveError::Unavailable)
     }
-    fn alert_book(&self) -> &quantick_alerts::AlertBook;
-    fn alert_book_at(&mut self) -> (&mut quantick_alerts::AlertBook, i64);
-    /// Native hosts override this boundary to persist before returning success.
-    fn alert_command(&mut self, command: AlertCommand) -> Result<CommandResult, AlertError> {
-        let (book, utc_ms) = self.alert_book_at();
-        book.command(command, utc_ms)
-    }
-    fn alert_validate(&self, spec: &AlertSpec) -> Result<(), AlertError> {
-        self.alert_book().validate(spec)
-    }
-    fn alert_views(&self) -> Result<Vec<AlertView>, AlertError> {
-        self.alert_book().views()
-    }
-    fn alert_history(&self, after: u64, limit: usize) -> Result<Vec<AlertEvent>, AlertError> {
-        self.alert_book().history(after, limit)
-    }
+    /// The owner of the alert book and its store: every read and command
+    /// goes through it, so a mutation persists before it answers success.
+    fn alert_runtime(&mut self) -> &mut quantick_stores::alerts::AlertRuntime;
 }
 
 pub fn register<H: AlertDefinitionsPort + ?Sized, A: crate::JournalAccess>(
@@ -93,6 +80,14 @@ fn domain(error: AlertError) -> ControlError {
     });
     result
 }
+/// One command through the runtime's flush path, stamped by the access's clock.
+fn command<H: AlertDefinitionsPort + ?Sized, A: crate::JournalAccess>(
+    host: &mut H,
+    access: &A,
+    command: AlertCommand,
+) -> Result<CommandResult, AlertError> {
+    host.alert_runtime().command(command, access.now_unix_ms())
+}
 fn result(value: CommandResult) -> Value {
     json!({"id":value.id.map(|id|id.0),"revision":value.revision})
 }
@@ -125,7 +120,8 @@ fn list<H: AlertDefinitionsPort + ?Sized, A>(
 ) -> Result<Value, ControlError> {
     let page = page(input)?;
     let views = bounded_page(
-        host.alert_views()
+        host.alert_runtime()
+            .views()
             .map_err(domain)?
             .into_iter()
             .filter(|view| view.spec.id.0 > page.after)
@@ -142,7 +138,8 @@ fn read<H: AlertDefinitionsPort + ?Sized, A>(
     input: &Value,
 ) -> Result<Value, ControlError> {
     let input: schema::ReadInput = parse(input)?;
-    host.alert_views()
+    host.alert_runtime()
+        .views()
         .map_err(domain)?
         .into_iter()
         .find(|view| view.spec.id.0 == input.id)
@@ -156,7 +153,9 @@ fn validate<H: AlertDefinitionsPort + ?Sized, A>(
     input: &Value,
 ) -> Result<Value, ControlError> {
     let input: schema::SpecInput = parse(input)?;
-    host.alert_validate(&read_spec(input.spec)?)
+    host.alert_runtime()
+        .book
+        .validate(&read_spec(input.spec)?)
         .map_err(domain)?;
     Ok(json!({"valid":true}))
 }
@@ -167,7 +166,7 @@ fn create<H: AlertDefinitionsPort + ?Sized, A: crate::JournalAccess>(
     input: &Value,
 ) -> Result<Value, ControlError> {
     let input: schema::SpecInput = parse(input)?;
-    host.alert_command(AlertCommand::Create(read_spec(input.spec)?))
+    command(host, access, AlertCommand::Create(read_spec(input.spec)?))
         .map(|value| record(access, actor, schema::CREATE, result(value)))
         .map_err(domain)
 }
@@ -178,10 +177,14 @@ fn edit<H: AlertDefinitionsPort + ?Sized, A: crate::JournalAccess>(
     input: &Value,
 ) -> Result<Value, ControlError> {
     let input: schema::EditInput = parse(input)?;
-    host.alert_command(AlertCommand::Edit {
-        spec: read_spec(input.spec)?,
-        expected_revision: input.expected_revision,
-    })
+    command(
+        host,
+        access,
+        AlertCommand::Edit {
+            spec: read_spec(input.spec)?,
+            expected_revision: input.expected_revision,
+        },
+    )
     .map(|value| record(access, actor, schema::EDIT, result(value)))
     .map_err(domain)
 }
@@ -194,10 +197,14 @@ macro_rules! revision_action {
             input: &Value,
         ) -> Result<Value, ControlError> {
             let input: schema::RevisionInput = parse(input)?;
-            host.alert_command(AlertCommand::$variant {
-                id: quantick_alerts::AlertId(input.id),
-                expected_revision: input.expected_revision,
-            })
+            command(
+                host,
+                access,
+                AlertCommand::$variant {
+                    id: quantick_alerts::AlertId(input.id),
+                    expected_revision: input.expected_revision,
+                },
+            )
             .map(|value| record(access, actor, schema::$operation, result(value)))
             .map_err(domain)
         }
@@ -215,7 +222,8 @@ fn history<H: AlertDefinitionsPort + ?Sized, A>(
 ) -> Result<Value, ControlError> {
     let page = page(input)?;
     let events = bounded_page(
-        host.alert_history(page.after, page.limit)
+        host.alert_runtime()
+            .history(page.after, page.limit)
             .map_err(domain)?
             .into_iter()
             .map(|event| {
@@ -235,7 +243,7 @@ fn clear_history<H: AlertDefinitionsPort + ?Sized, A: crate::JournalAccess>(
     input: &Value,
 ) -> Result<Value, ControlError> {
     let _: quantick_control_host::authority::EmptyInput = parse(input)?;
-    host.alert_command(AlertCommand::ClearHistory)
+    command(host, access, AlertCommand::ClearHistory)
         .map(|value| record(access, actor, schema::CLEAR_HISTORY, result(value)))
         .map_err(domain)
 }

@@ -1,8 +1,6 @@
 //! Native shell adapter for the workspace's headless alert owner.
 use crate::metrics::wall_clock_ms;
-use quantick_alerts::{
-    AlertCommand, AlertError, AlertEvent, AlertView, CommandResult, DurableDrawingRef,
-};
+use quantick_alerts::{AlertError, DurableDrawingRef};
 use quantick_control_schema::alerts::{DrawingSelector, TargetResolveError};
 
 /// Only native clock state lives here. The workspace book/store stay headless.
@@ -125,20 +123,8 @@ impl quantick_control_handlers::alerts::AlertDefinitionsPort for super::Quantick
         use super::LayoutPort;
         self.layout_adapter().resolve_alert_target(selector)
     }
-    fn alert_command(&mut self, command: AlertCommand) -> Result<CommandResult, AlertError> {
-        self.runtime.alerts.core.command(command, wall_clock_ms())
-    }
-    fn alert_book(&self) -> &quantick_alerts::AlertBook {
-        &self.runtime.alerts.core.book
-    }
-    fn alert_views(&self) -> Result<Vec<AlertView>, AlertError> {
-        self.runtime.alerts.core.views()
-    }
-    fn alert_history(&self, after: u64, limit: usize) -> Result<Vec<AlertEvent>, AlertError> {
-        self.runtime.alerts.core.history(after, limit)
-    }
-    fn alert_book_at(&mut self) -> (&mut quantick_alerts::AlertBook, i64) {
-        (&mut self.runtime.alerts.core.book, wall_clock_ms())
+    fn alert_runtime(&mut self) -> &mut quantick_stores::alerts::AlertRuntime {
+        &mut self.runtime.alerts.core
     }
 }
 

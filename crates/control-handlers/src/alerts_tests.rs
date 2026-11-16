@@ -23,14 +23,8 @@ struct Host {
     resolutions: usize,
 }
 impl AlertDefinitionsPort for Host {
-    fn alert_book(&self) -> &quantick_alerts::AlertBook {
-        &self.runtime.book
-    }
-    fn alert_book_at(&mut self) -> (&mut quantick_alerts::AlertBook, i64) {
-        (&mut self.runtime.book, 100)
-    }
-    fn alert_command(&mut self, command: AlertCommand) -> Result<CommandResult, AlertError> {
-        self.runtime.command(command, 100)
+    fn alert_runtime(&mut self) -> &mut quantick_stores::alerts::AlertRuntime {
+        &mut self.runtime
     }
     fn alert_resolve_target(
         &mut self,
@@ -193,7 +187,7 @@ fn alert_crud_and_history() {
             .as_str(),
         codes::PERMISSION_DENIED
     );
-    assert!(host.alert_views().unwrap().is_empty());
+    assert!(host.runtime.views().unwrap().is_empty());
     client
         .grant
         .insert(authority::permission(authority::COCKPIT_PERMISSION_ID));
@@ -233,7 +227,7 @@ fn alert_crud_and_history() {
             )
             .unwrap()
     );
-    assert_eq!(host.alert_views().unwrap().len(), 1);
+    assert_eq!(host.runtime.views().unwrap().len(), 1);
     let mut changed = spec.clone();
     changed["name"] = json!("Other");
     assert_eq!(
@@ -304,7 +298,7 @@ fn alert_crud_and_history() {
 }
 fn prove_history_and_target(client: &mut Client, host: &mut Host, id: u64, revision: u64) {
     // A real core event, through the persisted host, becomes immutable wire history.
-    let market = host.alert_views().unwrap()[0].spec.market.clone();
+    let market = host.runtime.views().unwrap()[0].spec.market.clone();
     let input = quantick_alerts::AlertInput {
         market: &market,
         utc_ms: 200,
@@ -356,7 +350,7 @@ fn prove_history_and_target(client: &mut Client, host: &mut Host, id: u64, revis
         );
     }
     assert_eq!(std::fs::read(&host.runtime.store.path).unwrap(), persisted);
-    assert_eq!(host.alert_views().unwrap().len(), 1);
+    assert_eq!(host.runtime.views().unwrap().len(), 1);
     assert_eq!(
         client.call(host, schema::HISTORY, json!({}), None).unwrap(),
         history

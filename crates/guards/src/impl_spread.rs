@@ -46,7 +46,7 @@
 //! in a large crate, and a ceiling shared with every helper type of every
 //! small crate would be a number nobody can act on.
 
-mod lex;
+pub(crate) mod lex;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;

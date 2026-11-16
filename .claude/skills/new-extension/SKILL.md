@@ -30,9 +30,9 @@ build ships becomes an error slot naming it, never a substitute.
 in `crates/ui-model/src/catalog.rs` declares both, the slot and the effect
 conversion ([references/headless-ui.md](references/headless-ui.md)); a port: `TradingVenue` in
 `crates/trading/src/venue.rs`; a decision: the pure plan in
-`crates/feed/src/ohlcv_plan.rs` (inputs handed in, no clock or socket). Never a
-new field, constructor line, `draw_frame` call or menu hotkey on `QuantickApp`
-— `crates/guards/src/size.rs` fails that growth.
+`crates/feed/src/ohlcv_plan.rs` (inputs handed in, no clock or socket). A port's
+state owner implements it, or a split-borrow adapter (`LayoutAdapter`) when
+state spans app types; `QuantickApp` only builds.
 
 **No port fits?** Carve it first (trait, registry or capability flag) as its own
 reviewable slice, then dock. Never inline now and abstract later. Name the

@@ -14,7 +14,7 @@
 
 /// `is_test_file`: a file only tests compile — under a `tests` directory, a
 /// `tests.rs` or `*_tests.rs` sidecar, or inside a `*_tests` directory.
-pub(super) fn is_test_file(relative: &str) -> bool {
+pub(crate) fn is_test_file(relative: &str) -> bool {
     let parts: Vec<&str> = relative.split('/').collect();
     let Some((name, dirs)) = parts.split_last() else {
         return false;
@@ -28,7 +28,7 @@ pub(super) fn is_test_file(relative: &str) -> bool {
 /// The source as code points with comments, literal contents and every
 /// test-only item blanked to spaces, newlines kept: `blank_spans(mask(src),
 /// test_spans(...))`.
-pub(super) fn production(source: &str) -> Vec<char> {
+pub(crate) fn production(source: &str) -> Vec<char> {
     let source: Vec<char> = source.replace("\r\n", "\n").chars().collect();
     let mut code = mask(&source);
     for (from, to) in test_spans(&code) {

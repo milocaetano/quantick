@@ -17,7 +17,7 @@ use quantick_guards::{GUARDS, remedies, workspace_root};
 /// instead of a green suite over a guard CI never runs — which is the failure
 /// the check exists to prevent, and which a hand-kept list of names invites by
 /// making "add the string" the obvious fix.
-const TESTED: [&str; 17] = [
+const TESTED: [&str; 18] = [
     "size",
     "language",
     "encoding",
@@ -35,6 +35,7 @@ const TESTED: [&str; 17] = [
     "struct-width",
     "single-consumer",
     "impl-spread",
+    "window-reach",
 ];
 
 /// Run one named guard and fail with everything it found.
@@ -163,6 +164,13 @@ fn every_single_consumer_crate_is_signed_for() {
 #[test]
 fn no_type_spreads_its_impls_past_the_recorded_ceiling() {
     assert_clean(TESTED[16]);
+}
+
+/// The window reaches no further into the UI crate than its signed ceiling,
+/// and a reach that fell has had the ceiling tightened.
+#[test]
+fn the_window_reaches_no_further_than_the_recorded_ceiling() {
+    assert_clean(TESTED[17]);
 }
 
 // --- `--report`, the mode that measures rather than judges -------------------

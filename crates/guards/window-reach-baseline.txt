@@ -1,0 +1,15 @@
+# A raise is never an edit here: it is a new file in crates/guards/window-reach-baseline.d/ named
+# for the branch, holding signed deltas (`window-reach +N`, `!budget +N`) and a
+# comment saying why. The guard adds them to these numbers, and `--tighten`
+# writes its cuts there too.
+#
+# The window-reach ratchet's one ceiling (`crates/guards/src/window_reach.rs`):
+# in crates/app/src production code, the impl blocks for QuantickApp or
+# ControlWindow, the functions taking either by reference, and the structs
+# holding either by reference. The slack is zero, so a reach that fell fails
+# too until `cargo run -p quantick-guards -- --tighten` writes the new ceiling.
+#
+# Recorded when the guard landed, on main bf31dfb6 with the alert port asking
+# for its owner (AlertDefinitionsPort::alert_runtime).
+!budget 131
+window-reach 131
