@@ -85,12 +85,13 @@ fn words(x: f32, y: f32, said: &str, size: f32, ink: Token, width: f32) -> Mark 
         tracking: 0.0,
         names: false,
         rgb: None,
+        on: None,
     })
 }
 
 fn plate(at: Area, fill: Option<Token>, edge: Option<Token>, alpha: u8) -> Mark {
     Mark::Box(Plate {
-        rgb: None,
+        toward: None,
         at,
         radius: RADIUS,
         fill,
@@ -101,7 +102,7 @@ fn plate(at: Area, fill: Option<Token>, edge: Option<Token>, alpha: u8) -> Mark 
 
 fn ring(at: Area, ink: Token) -> Option<Plate> {
     Some(Plate {
-        rgb: None,
+        toward: None,
         at,
         radius: RADIUS,
         fill: None,
@@ -1025,6 +1026,23 @@ pub fn name_rest_height(book: &WorkspaceBook, dialog: &NameDialog) -> f32 {
     let mut rest = dialog.clone();
     (rest.palette.custom, rest.refusal) = (false, None);
     name_dialog(book, &rest, false, &|_, _| 0.0).size[1]
+}
+
+/// The name dialog's distance from the window's edges.
+pub const DIALOG_MARGIN_PT: f32 = 8.0;
+
+/// Where the name dialog stands in a window from `top` to `bottom`: its
+/// top, centred at rest and kept while Custom grows it downward, and the
+/// room below it, which [`capped`] holds it to.
+#[must_use]
+pub fn name_place(
+    book: &WorkspaceBook,
+    dialog: &NameDialog,
+    [top, bottom]: [f32; 2],
+) -> (f32, f32) {
+    let free = bottom - top - name_rest_height(book, dialog);
+    let top = top + (free / 2.0).max(DIALOG_MARGIN_PT);
+    (top, bottom - DIALOG_MARGIN_PT - top)
 }
 
 /// The dialog `view` capped at `room` points: what does not fit scrolls.

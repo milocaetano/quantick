@@ -70,8 +70,8 @@ impl FilledButton {
 /// How far a workspace row's fill moves from the list's ground toward the
 /// row's own colour: at rest, under the pointer or the keys, and on the
 /// tab's own workspace, so each row wears its colour as the selected one
-/// does. The words keep 4.5:1 by their ink ([`row_ink`]), never by a lower
-/// share.
+/// does. The words keep 4.5:1 by their ink ([`RowWords::ink`]), never by a
+/// lower share.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RowTint {
     Rest,
@@ -91,42 +91,79 @@ impl RowTint {
     }
 }
 
-/// A workspace row's fill: the list's ground as `dark` paints it, `tint`'s
-/// share of the way toward `colour`. Menu B and Manage both fill with this.
+/// `share` of the way from `ground` toward `colour`: a workspace row's fill
+/// over the ground the theme paints.
 #[must_use]
-pub fn row_fill(colour: [u8; 3], dark: bool, tint: RowTint) -> [u8; 3] {
-    let ground = crate::ResolvedTheme::bundled(dark)
-        .color(chrome(dark).ground)
-        .to_array();
-    let share = tint.share();
-    let mix = |at: usize| {
+pub fn mix(ground: [u8; 3], colour: [u8; 3], share: f32) -> [u8; 3] {
+    let at = |at: usize| {
         let (from, to) = (f32::from(ground[at]), f32::from(colour[at]));
         (from + (to - from) * share).round().clamp(0.0, 255.0) as u8
     };
-    [mix(0), mix(1), mix(2)]
+    [at(0), at(1), at(2)]
 }
 
-/// The ink a workspace row's words of `token` take on every fill in `fills`
-/// (the row's rest and hover, or its current): `None` while the token reads
-/// 4.5:1 on each, else the theme's primary text, else pure white in Dark or
-/// near-black in Light. Menu B and Manage both choose with this.
+/// A workspace row's fill: `toward`'s colour and share over `ground` as
+/// the painter resolves it (its alpha set aside).
 #[must_use]
-pub fn row_ink(fills: &[[u8; 3]], dark: bool, token: Token) -> Option<[u8; 3]> {
-    use crate::{PremultipliedRgba as Rgba, contrast::contrast_ratio};
-    let theme = crate::ResolvedTheme::bundled(dark);
-    let opaque = |[r, g, b]: [u8; 3]| Rgba::from_rgb(r, g, b);
-    let reads = |ink: Rgba| (fills.iter()).all(|fill| contrast_ratio(ink, opaque(*fill)) >= 4.5);
-    if reads(theme.color(token)) {
-        return None;
+pub fn mixed([r, g, b, _]: [u8; 4], (colour, share): ([u8; 3], f32)) -> [u8; 3] {
+    mix([r, g, b], colour, share)
+}
+
+/// Words on a workspace row's tint: the row's colour over the `ground`
+/// token, and whether it is the tab's own. The painter chooses their ink
+/// with the theme it paints, so a theme of the trader's own reads too.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RowWords {
+    pub ground: Token,
+    pub colour: [u8; 3],
+    pub current: bool,
+}
+
+impl RowWords {
+    /// The fills the row wears over `ground`: its rest and hover, or its
+    /// current.
+    #[must_use]
+    pub fn fills(self, ground: [u8; 3]) -> Vec<[u8; 3]> {
+        let worn: &[RowTint] = match self.current {
+            true => &[RowTint::Current],
+            false => &[RowTint::Rest, RowTint::Hover],
+        };
+        (worn.iter())
+            .map(|tint| mix(ground, self.colour, tint.share()))
+            .collect()
     }
-    let primary = theme.color(Token::TextPrimary).to_array();
-    let primary = [primary[0], primary[1], primary[2]];
-    let strong = if dark { [255; 3] } else { [17; 3] };
-    Some(if reads(opaque(primary)) {
-        primary
-    } else {
-        strong
-    })
+
+    /// [`RowWords::ink`] for words in `own`, each token as `solid` resolves
+    /// it (alpha set aside): the painter's live theme.
+    #[must_use]
+    pub fn ink_by(self, own: Token, solid: impl Fn(Token) -> [u8; 4]) -> [u8; 3] {
+        let rgb = |token| {
+            let [r, g, b, _] = solid(token);
+            [r, g, b]
+        };
+        self.ink(rgb(self.ground), rgb(own), rgb(Token::TextPrimary))
+    }
+
+    /// The ink of words in `own` on those fills: `own` while it reads 4.5:1
+    /// on each, else `primary`, else white or near-black, whichever reads
+    /// more. Menu B and Manage both choose with this.
+    #[must_use]
+    pub fn ink(self, ground: [u8; 3], own: [u8; 3], primary: [u8; 3]) -> [u8; 3] {
+        use crate::{PremultipliedRgba as Rgba, contrast::contrast_ratio};
+        let fills = self.fills(ground);
+        let rgba = |[r, g, b]: [u8; 3]| Rgba::from_rgb(r, g, b);
+        let least = |ink: [u8; 3]| {
+            let ratios = fills
+                .iter()
+                .map(|fill| contrast_ratio(rgba(ink), rgba(*fill)));
+            ratios.fold(f32::MAX, f32::min)
+        };
+        let strong = [[255; 3], [17; 3]]
+            .into_iter()
+            .max_by(|a, b| least(*a).total_cmp(&least(*b)));
+        let readable = [own, primary].into_iter().find(|ink| least(*ink) >= 4.5);
+        readable.or(strong).unwrap_or(own)
+    }
 }
 
 /// The menu as `dark` or Light paints it.

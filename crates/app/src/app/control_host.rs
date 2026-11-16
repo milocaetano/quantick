@@ -937,6 +937,7 @@ impl quantick_control_handlers::workspace_book::WorkspaceBookHost for QuantickAp
     }
     fn close_market_tab(&mut self, tab: u64, close: bool) -> bool {
         let index = self.runtime.tabs.position(tab);
+        // Without asking; with `close` false it only answers whether it would.
         let Some(index) = index else { return false };
         if !close {
             return self.runtime.tabs.plan_close(index).is_ok();

@@ -185,15 +185,20 @@ impl ManageDialog {
         DeleteClick::Armed
     }
 
-    /// Whether the dialog takes `key` from the window at `now_ms`: only a
-    /// key that acts. None while a row's palette takes its own keys, only
-    /// Esc while a name is typed; F2, Del and C with a chosen row, Enter on
-    /// an armed one, Ctrl+Z while an Undo row stands.
+    /// Whether the dialog takes `key` from the window at `now_ms` over
+    /// `rows` (each name and whether it is protected): only a key that acts.
+    /// None while a row's palette takes its own keys, only Esc while a name
+    /// is typed; C with a chosen row, F2 and Del with a chosen row that is
+    /// not protected, Enter on an armed one, Ctrl+Z while an Undo row stands.
     #[must_use]
-    pub fn takes(&self, key: ManageKey, now_ms: i64) -> bool {
+    pub fn takes(&self, key: ManageKey, now_ms: i64, rows: &[(String, bool)]) -> bool {
+        let open = (self.focus)
+            .and_then(|at| rows.get(at))
+            .is_some_and(|row| !row.1);
         let free = self.palette.is_none() && (self.rename.is_none() || key == ManageKey::Escape);
         free && match key {
-            ManageKey::F2 | ManageKey::Delete | ManageKey::Colour => self.focus.is_some(),
+            ManageKey::F2 | ManageKey::Delete => open,
+            ManageKey::Colour => self.focus.is_some(),
             ManageKey::Enter => self.armed.is_some(),
             ManageKey::Undo => self.undo_row(now_ms).is_some(),
             ManageKey::Up | ManageKey::Down | ManageKey::Escape => true,

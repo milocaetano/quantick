@@ -157,15 +157,20 @@ pub(crate) fn mono_ink(rgb: Rgb) -> Rgb {
     }
 }
 
-/// Light's stripes white at about 35%, Dark's the support ink's.
-fn hatch(dark: bool) -> [u8; 4] {
-    if dark {
-        let [r, g, b, _] = ResolvedTheme::bundled(true)
-            .color(Token::TextSupport)
-            .to_array();
-        [r, g, b, u8::MAX]
-    } else {
-        [u8::MAX, u8::MAX, u8::MAX, 89]
+/// The stripes over a locked swatch at `at`: Light's in its white control
+/// ink at about 35%, Dark's in the support ink.
+fn hatch(at: Area, dark: bool) -> Mark {
+    match dark {
+        true => Mark::Hatch {
+            at,
+            ink: Token::TextSupport,
+            alpha: u8::MAX,
+        },
+        false => Mark::Hatch {
+            at,
+            ink: chrome(false).control,
+            alpha: 89,
+        },
     }
 }
 
@@ -201,12 +206,13 @@ fn text(x: f32, y: f32, words: &str, size: f32, ink: Token, width: f32) -> Mark 
         tracking: 0.0,
         names: false,
         rgb: None,
+        on: None,
     })
 }
 
 fn plate(at: Area, radius: f32, fill: Option<Token>, edge: Option<Token>) -> Plate {
     Plate {
-        rgb: None,
+        toward: None,
         at,
         radius,
         fill,
@@ -280,13 +286,7 @@ fn swatch(
     let rgb = if swatch.locked {
         let mut veil = plate(at, RADIUS, Some(ink.ground), None);
         veil.alpha = VEIL_ALPHA;
-        marks.extend([
-            Mark::Box(veil),
-            Mark::Hatch {
-                at,
-                rgba: hatch(dark),
-            },
-        ]);
+        marks.extend([Mark::Box(veil), hatch(at, dark)]);
         veiled(rgb, dark)
     } else {
         rgb

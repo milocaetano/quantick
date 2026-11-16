@@ -9,6 +9,7 @@ use eframe::egui::scroll_area::ScrollBarVisibility::{AlwaysHidden, VisibleWhenNe
 use eframe::egui::text::{CCursor, CCursorRange};
 use eframe::egui::{self, Color32, Key, Modifiers, Rect, RichText, Sense, TextWrapMode, vec2};
 use quantick_appearance::Token;
+use quantick_appearance::workspace_menu::mixed;
 use quantick_control_handlers::workspace_book::cell_menu::{self as cells, CellMenuCache, CellRow};
 use quantick_control_handlers::workspace_book::colour_popover;
 use quantick_session::colour_popover::{ColourIntent, ColourPopover, Key as PopoverKey};
@@ -327,11 +328,12 @@ pub(super) fn paint(
     let senses = [Sense::hover(), Sense::click(), Sense::click_and_drag()];
     let sense = senses[usize::from(piece.press) + usize::from(piece.drag)];
     let mut response = ui.interact(whole, ui.id().with(("workspace_menu", key)), sense);
+    let opaque = |[r, g, b]: [u8; 3]| Color32::from_rgb(r, g, b);
+    let solid = |t: Token| ink(Some(t)).to_array(); // The theme this paints.
     let plate = |b: &marks::Plate| {
-        let own = b.rgb.map(|[r, g, b]| Color32::from_rgb(r, g, b));
-        let fill = own
-            .unwrap_or_else(|| ink(b.fill))
-            .gamma_multiply(f32::from(b.alpha) / 255.0);
+        let own = (b.toward.zip(b.fill)).map(|(toward, base)| opaque(mixed(solid(base), toward)));
+        let fill = own.unwrap_or_else(|| ink(b.fill));
+        let fill = fill.gamma_multiply(f32::from(b.alpha) / 255.0);
         let stroke = egui::Stroke::new(1.0_f32, ink(b.edge));
         painter.rect(rect(b.at), b.radius, fill, stroke);
     };
@@ -343,13 +345,12 @@ pub(super) fn paint(
                 let words = galley(ui, words.extra_letter_spacing(t.tracking), t.width);
                 let place = at + vec2(t.x, t.y - words.size().y / 2.0);
                 cut |= words.elided && t.names;
-                let own = t.rgb.map(|[r, g, b]| Color32::from_rgb(r, g, b));
-                painter.galley(place, words, own.unwrap_or_else(|| ink(Some(t.ink))));
+                let own = t.rgb.or(t.on.map(|row| row.ink_by(t.ink, solid)));
+                painter.galley(place, words, own.map_or_else(|| ink(Some(t.ink)), opaque));
             }
             Mark::Tree(area, tree) => paint_tree(painter, rect(*area), tree, Token::Accent),
             Mark::Colour { at, radius, rgb } => {
-                let [r, g, b] = *rgb;
-                painter.rect_filled(rect(*at), *radius, Color32::from_rgb(r, g, b));
+                painter.rect_filled(rect(*at), *radius, opaque(*rgb));
             }
             Mark::Shade(corners) => {
                 let mut mesh = egui::Mesh::default();
@@ -362,9 +363,10 @@ pub(super) fn paint(
             }
             Mark::Hatch {
                 at,
-                rgba: [r, g, b, a],
+                ink: tone,
+                alpha,
             } => {
-                let line = Color32::from_rgba_unmultiplied(*r, *g, *b, *a);
+                let line = ink(Some(*tone)).gamma_multiply(f32::from(*alpha) / 255.0);
                 let (area, stroke) = (rect(*at), egui::Stroke::new(1.0_f32, line));
                 for step in (0..(area.width() + area.height()) as i32).step_by(6) {
                     let from = area.left_bottom() + vec2(step as f32 - area.height(), 0.0);

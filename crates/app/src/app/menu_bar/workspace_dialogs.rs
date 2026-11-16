@@ -52,9 +52,7 @@ fn name(
     let esc = ctx.input_mut(|i| i.consume_key(Mods::NONE, Key::Escape));
     // Its top stays where it opens at rest; Custom grows it downward.
     let screen = ctx.screen_rect();
-    let top =
-        screen.top() + ((screen.height() - marks::name_rest_height(book, &held)) / 2.0).max(8.0);
-    let room = screen.bottom() - 8.0 - top;
+    let (top, room) = marks::name_place(book, &held, [screen.top(), screen.bottom()]);
     let view =
         |measure: Measure<'_>| marks::capped(marks::name_dialog(book, &held, dark, measure), room);
     let area = centred(Order::Tooltip).pivot(egui::Align2::CENTER_TOP);
@@ -89,11 +87,12 @@ fn manage(
     let open = dialog.palette.as_ref().map(|open| open.popover.clone());
     let takes = |k: PopKey| open.as_ref().is_some_and(|open| open.takes(k));
     let pop_keys = PopKey::ALL.map(|k| takes(k) && consume(k.name(), false));
-    let ours = ManageKeys::of(
-        ManageKey::ALL.map(|k| dialog.takes(k, now_ms) && consume(k.name(), k.command())),
-    );
     let book = app.runtime.workspace.book.book();
-    let keyed = dialog.keys(ours, &marks::names(book), now_ms);
+    let names = marks::names(book);
+    let ours = ManageKeys::of(
+        ManageKey::ALL.map(|k| dialog.takes(k, now_ms, &names) && consume(k.name(), k.command())),
+    );
+    let keyed = dialog.keys(ours, &names, now_ms);
     let current = book.tab_workspace(tab).to_owned();
     let moved = std::mem::take(&mut dialog.reveal);
     let held = dialog.clone();

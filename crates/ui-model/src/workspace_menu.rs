@@ -5,7 +5,7 @@
 //! these marks into pixels and presses.
 
 use quantick_appearance::Token;
-use quantick_appearance::workspace_menu::{MenuChrome, RowTint, chrome, row_fill, row_ink};
+use quantick_appearance::workspace_menu::{MenuChrome, RowTint, RowWords, chrome};
 use quantick_control_handlers::workspace_book::cell_menu::{
     CAPTION, CellMenu, CellRow, RowKind, UNSAVED,
 };
@@ -77,8 +77,9 @@ pub struct Plate {
     /// The fill's opacity, out of 255.
     pub alpha: u8,
     pub edge: Option<Token>,
-    /// A fill of its own instead of the token's: a workspace row's tint.
-    pub rgb: Option<[u8; 3]>,
+    /// A colour and the share of the way the fill moves toward it: a
+    /// workspace row's tint over the ground the theme paints.
+    pub toward: Option<([u8; 3], f32)>,
 }
 
 /// Words starting at `x`, centred on `y`, cut short to `width`, `tracking`
@@ -96,6 +97,8 @@ pub struct Words {
     pub names: bool,
     /// A colour of its own instead of `ink`'s: black or white on a swatch.
     pub rgb: Option<[u8; 3]>,
+    /// On a workspace row's tint, where the painter chooses the ink.
+    pub on: Option<RowWords>,
 }
 
 /// One thing to paint.
@@ -115,11 +118,12 @@ pub enum Mark {
     /// A box shaded between its corners, each a point and its colour: top
     /// left, top right, bottom right, bottom left (Custom's square and strip).
     Shade([([f32; 2], [u8; 3]); 4]),
-    /// Diagonal stripes in a colour of their own across a box: a colour
-    /// another workspace holds, locked in the create dialogs.
+    /// Diagonal stripes in `ink` at `alpha` across a box: a colour another
+    /// workspace holds, locked in the create dialogs.
     Hatch {
         at: Area,
-        rgba: [u8; 4],
+        ink: Token,
+        alpha: u8,
     },
 }
 
@@ -234,7 +238,7 @@ impl Piece {
 
 fn plate(at: Area, radius: f32, fill: Option<Token>, edge: Option<Token>) -> Mark {
     Mark::Box(Plate {
-        rgb: None,
+        toward: None,
         at,
         radius,
         fill,
@@ -244,51 +248,46 @@ fn plate(at: Area, radius: f32, fill: Option<Token>, edge: Option<Token>) -> Mar
 }
 
 /// A row's fill over `at`: a workspace row's own colour at `tint`'s share
-/// ([`row_fill`]), the one fill menu B and Manage both paint; a row without
-/// a colour keeps the menu's hover and current tokens.
+/// over the ground, mixed as the theme paints it, the one fill menu B and
+/// Manage both paint; a row without a colour keeps the menu's hover and
+/// current tokens.
 pub(crate) fn tinted(at: Area, row: &CellRow, tint: RowTint, dark: bool) -> Plate {
     let ink = chrome(dark);
-    let rgb = row
-        .colour
-        .as_ref()
-        .map(|colour| row_fill(colour.rgb, dark, tint));
+    let toward = (row.colour.as_ref()).map(|colour| (colour.rgb, tint.share()));
     let fill = match tint {
+        _ if toward.is_some() => Some(ink.ground),
         RowTint::Rest => None,
         RowTint::Hover => Some(ink.hover),
         RowTint::Current => Some(ink.current),
     };
     Plate {
-        rgb,
+        toward,
         at,
         radius: RADIUS,
-        fill: fill.filter(|_| rgb.is_none()),
+        fill,
         alpha: u8::MAX,
         edge: None,
     }
 }
 
-/// `marks`' words in the menu's text and support inks on `row`'s tint take
-/// [`row_ink`]'s ink for every fill the row wears: its rest and hover, or
-/// its current. One rule for menu B and Manage.
+/// `marks`' words in the menu's text and support inks on `row`'s tint: the
+/// painter chooses their ink ([`RowWords::ink`]) for every fill the row
+/// wears. One rule for menu B and Manage.
 pub(crate) fn legible(marks: &mut [Mark], row: &CellRow, dark: bool) {
     let (Some(colour), ink) = (row.colour.as_ref(), chrome(dark)) else {
         return;
     };
-    let worn: &[RowTint] = if row.on {
-        &[RowTint::Current]
-    } else {
-        &[RowTint::Rest, RowTint::Hover]
+    let on = RowWords {
+        ground: ink.ground,
+        colour: colour.rgb,
+        current: row.on,
     };
-    let fills: Vec<[u8; 3]> = worn
-        .iter()
-        .map(|tint| row_fill(colour.rgb, dark, *tint))
-        .collect();
     for mark in marks {
         if let Mark::Text(words) = mark
             && words.rgb.is_none()
             && [ink.ink, ink.support].contains(&words.ink)
         {
-            words.rgb = row_ink(&fills, dark, words.ink);
+            words.on = Some(on);
         }
     }
 }
@@ -297,7 +296,7 @@ pub(crate) fn legible(marks: &mut [Mark], row: &CellRow, dark: bool) {
 fn hover(at: Area, ink: Token) -> Option<Plate> {
     let (radius, fill, alpha, edge) = (RADIUS, Some(ink), u8::MAX, None);
     Some(Plate {
-        rgb: None,
+        toward: None,
         at,
         radius,
         fill,
@@ -323,6 +322,7 @@ fn text(x: f32, y: f32, words: &str, size: f32, ink: Token, width: f32) -> Mark 
         tracking: 0.0,
         names: false,
         rgb: None,
+        on: None,
     })
 }
 
@@ -427,7 +427,7 @@ fn swatch(line: Area, row: &CellRow, ink: &MenuChrome) -> Piece {
         row: Some(row.clone()),
         press: true,
         hover: Some(Plate {
-            rgb: None,
+            toward: None,
             at: ring,
             radius: SWATCH_RADIUS_PT + 2.0,
             fill: None,
