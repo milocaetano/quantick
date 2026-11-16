@@ -6,8 +6,8 @@ fn themes() -> [&'static ResolvedTheme; 2] {
 }
 
 /// Every word the picker paints reaches 4.5:1 where it stands: the captions,
-/// hint and status on the ground and the header block, a label on a hover or
-/// pressed plate.
+/// hint and status on the ground and the header block, a label (in the ink)
+/// on a hover or pressed plate too.
 #[test]
 fn every_word_reads_on_its_ground_in_both_themes() {
     for theme in themes() {
@@ -18,8 +18,14 @@ fn every_word_reads_on_its_ground_in_both_themes() {
             ("hover", theme.color(look.hover)),
             ("pressed", pressed(theme)),
         ];
-        for (ink_name, ink) in [("ink", look.ink), ("support", look.support)] {
-            for (ground_name, ground) in grounds {
+        // Support words stand on the ground and the block only; a label or
+        // the lit "was" words on a plate are in the ink.
+        let support = &grounds[..2];
+        for (ink_name, ink, under) in [
+            ("ink", look.ink, &grounds[..]),
+            ("support", look.support, support),
+        ] {
+            for &(ground_name, ground) in under {
                 let ratio = contrast_ratio(theme.color(ink), ground);
                 assert!(
                     ratio >= TEXT_CONTRAST,

@@ -2,7 +2,7 @@
 use super::*;
 
 use crate::app::chrome::capsule::snapshot;
-use crate::canvas_layout::{LAYOUT_PRESETS, PresetGroup, preset};
+use crate::canvas_layout::{LAYOUT_PRESETS, preset};
 
 fn frames(app: &mut QuantickApp, ctx: &egui::Context, count: usize) -> egui::FullOutput {
     for _ in 1..count {
@@ -80,84 +80,162 @@ fn layout_change_shows_unsaved_marks_until_ctrl_s() {
     assert!(!saved.1);
 }
 
-/// C11: popover A lists 8 + 8 cells from the registry, rings the current
-/// layout, tags the saved one, and shows the footer only while they differ.
+fn picker_rect(ctx: &egui::Context) -> egui::Rect {
+    ctx.memory(|memory| memory.area_rect(egui::Id::new("layout_popover")))
+        .expect("the picker was laid out")
+}
+
+fn open_picker(app: &mut QuantickApp, ctx: &egui::Context, size: egui::Vec2) {
+    let miniature = app.chrome.capsule.miniature;
+    click_sized(app, ctx, size, miniature.center());
+    for _ in 0..2 {
+        run_sized_frame(app, ctx, size, Vec::new());
+    }
+    let open = app.surfaces.canvas_popovers.model_state.projection();
+    assert!(open.layout_open, "the miniature opens the picker");
+}
+
+/// The picker's frame is its content's size in every state — saved, unsaved
+/// with autosave off, after several opens — and hangs below its button,
+/// never over the toolbar; a window too short scrolls it instead of lifting it.
 #[test]
-fn popover_lists_registry_rings_current_tags_saved() {
+fn the_picker_is_its_contents_size_and_hangs_below_its_button() {
+    use quantick_ui_model::layout_picker::{DROP_PT, OUTER};
+    let (mut app, _evt, _cmd, _book) = test_app();
+    let ctx = egui::Context::default();
+    frames(&mut app, &ctx, 2);
+    for autosave in [true, false] {
+        app.runtime.workspace.book.book_mut().set_autosave(autosave);
+        if !autosave {
+            app.apply_layout_preset(preset("charts-2").unwrap());
+            frames(&mut app, &ctx, 4);
+        }
+        for _ in 0..3 {
+            open_picker(&mut app, &ctx, TEST_WINDOW);
+            let (frame, button) = (picker_rect(&ctx), app.chrome.capsule.miniature);
+            assert_eq!(
+                frame.size(),
+                egui::vec2(OUTER[0], OUTER[1]),
+                "autosave {autosave}"
+            );
+            assert_eq!(frame.top(), (button.bottom() + DROP_PT).round());
+            assert!(
+                (frame.right() - button.right()).abs() <= 1.0,
+                "{frame:?} {button:?}"
+            );
+            let escape = vec![key_press(egui::Key::Escape)];
+            run_sized_frame(&mut app, &ctx, TEST_WINDOW, escape);
+            let open = app.surfaces.canvas_popovers.model_state.projection();
+            assert!(!open.layout_open, "Esc closes at once");
+        }
+    }
+    let short = egui::vec2(1100.0, 380.0);
+    frames(&mut app, &ctx, 1);
+    run_sized_frame(&mut app, &ctx, short, Vec::new());
+    open_picker(&mut app, &ctx, short);
+    let (frame, button) = (picker_rect(&ctx), app.chrome.capsule.miniature);
+    assert_eq!(
+        frame.top(),
+        (button.bottom() + DROP_PT).round(),
+        "never lifted"
+    );
+    assert!(
+        frame.height() < OUTER[1] && frame.bottom() <= short.y,
+        "{frame:?}"
+    );
+}
+
+/// A pick commits on release, the header says "Changed to" with the unsaved
+/// state, the toolbar's miniature follows the canvas, Ctrl+Z restores the
+/// previous layout, and the confirmation closes the picker on its own.
+#[test]
+fn a_pick_confirms_and_ctrl_z_restores_the_previous_layout() {
     let (mut app, _evt, _cmd, _book) = test_app();
     let ctx = egui::Context::default();
     frames(&mut app, &ctx, 2);
     app.runtime.workspace.book.book_mut().set_autosave(false);
-    let miniature = app.chrome.capsule.miniature;
-    click_sized(&mut app, &ctx, TEST_WINDOW, miniature.center());
-    let output = frames(&mut app, &ctx, 2);
+    frames(&mut app, &ctx, 2);
+    let before = app.active_tab().canvas.state.preset().unwrap();
+    open_picker(&mut app, &ctx, TEST_WINDOW);
+    let cell = control(&app, "toolbar.layout_popover.charts-2")
+        .unwrap()
+        .rect;
+    click_sized(&mut app, &ctx, TEST_WINDOW, cell.center());
+    let output = frames(&mut app, &ctx, 3);
+    let picked = preset("charts-2").unwrap();
+    assert_eq!(app.active_tab().canvas.state.preset(), Some(picked));
+    let miniature = quantick_workspace::canvas::matching_preset(&snapshot(&app, &ctx).tree);
+    assert_eq!(miniature, Some(picked), "the miniature follows");
+    let header = control(&app, "toolbar.layout_popover.header").expect("still open");
+    assert!(
+        header.label.contains("Changed to 2 charts"),
+        "{}",
+        header.label
+    );
+    assert!(header.label.contains("Not saved"), "{}", header.label);
+    assert!(painted_text_center(&output, "Changed to 2 charts").is_some());
+    let undo = control(&app, "toolbar.layout_popover.undo").expect("the was words");
+    assert!(undo.label.contains(before.label), "{}", undo.label);
+    let ctrl_z = vec![key_press_with(egui::Key::Z, egui::Modifiers::COMMAND)];
+    run_sized_frame(&mut app, &ctx, TEST_WINDOW, ctrl_z);
+    frames(&mut app, &ctx, 3);
+    assert_eq!(
+        app.active_tab().canvas.state.preset(),
+        Some(before),
+        "Ctrl+Z"
+    );
+    frames(&mut app, &ctx, 90);
+    let open = app.surfaces.canvas_popovers.model_state.projection();
+    assert!(!open.layout_open, "the confirmation closes the picker");
+}
+
+/// One display name per layout: a cell's scene label, the header after its
+/// pick and the `canvas.layout.picker` read all say the registry's label.
+#[test]
+fn one_display_name_per_layout_in_cell_header_scene_and_read() {
+    use quantick_control_handlers::canvas::CanvasHost as _;
+    let (mut app, _evt, _cmd, _book) = test_app();
+    let ctx = egui::Context::default();
+    frames(&mut app, &ctx, 2);
+    open_picker(&mut app, &ctx, TEST_WINDOW);
     let cells: Vec<_> = (app.chrome.toolbar_controls.iter())
         .filter(|control| control.id.starts_with("toolbar.layout_popover."))
+        .filter(|control| !control.id.ends_with(".header"))
+        .cloned()
         .collect();
     assert_eq!(cells.len(), LAYOUT_PRESETS.len());
-    for group in [PresetGroup::WithFlow, PresetGroup::Timeframes] {
-        let held = LAYOUT_PRESETS.iter().filter(|preset| preset.group == group);
-        assert_eq!(held.count(), 8, "{group:?}");
-    }
+    let read = app.layout_picker().unwrap();
+    assert!(read.open);
     for (cell, preset) in cells.iter().zip(LAYOUT_PRESETS) {
-        assert_eq!(
-            cell.id,
-            format!("toolbar.layout_popover.{}", preset.id),
-            "registry order"
-        );
+        assert_eq!(cell.id, format!("toolbar.layout_popover.{}", preset.id));
+        assert_eq!(cell.label, preset.label);
+        let row = read
+            .cells
+            .iter()
+            .find(|row| row.preset_id == preset.id)
+            .unwrap();
+        assert_eq!(row.name, preset.label);
     }
     let current = app.active_tab().canvas.state.preset().unwrap();
     let lit: Vec<_> = cells.iter().filter(|cell| cell.selected).collect();
     assert_eq!(lit.len(), 1);
     assert_eq!(lit[0].id, format!("toolbar.layout_popover.{}", current.id));
-    let tag = painted_text_center(&output, "saved").expect("the saved layout wears its tag");
-    let saved_cell = cells.iter().find(|cell| cell.selected).unwrap();
-    assert!(
-        saved_cell.rect.expand(4.0).contains(tag),
-        "the tag sits on the saved cell"
-    );
-    assert!(
-        painted_text_center(&output, "Ctrl+S").is_none(),
-        "no footer while they agree"
-    );
-
-    let cell = (cells
-        .iter()
-        .find(|cell| cell.id == "toolbar.layout_popover.charts-2"))
-    .unwrap()
-    .rect;
+    let target = preset("flow-over-2time").unwrap();
+    let cell = control(&app, "toolbar.layout_popover.flow-over-2time")
+        .unwrap()
+        .rect;
     click_sized(&mut app, &ctx, TEST_WINDOW, cell.center());
     frames(&mut app, &ctx, 2);
-    assert_eq!(
-        app.active_tab().canvas.state.preset().map(|p| p.id),
-        Some("charts-2")
-    );
+    let header = control(&app, "toolbar.layout_popover.header").unwrap();
     assert!(
-        !app.surfaces
-            .canvas_popovers
-            .model_state
-            .projection()
-            .layout_open,
-        "a pick closes the popover"
+        header
+            .label
+            .contains(&format!("Changed to {}", target.label))
     );
-    app.surfaces
-        .canvas_popovers
-        .update(quantick_ui_model::canvas_popovers::Intent::SetLayoutOpen(
-            true,
-        ));
-    let output = frames(&mut app, &ctx, 2);
-    let lit = control(&app, "toolbar.layout_popover.charts-2").unwrap();
-    assert!(lit.selected, "the ring follows the canvas");
-    let tag = painted_text_center(&output, "saved").expect("the saved layout keeps its tag");
-    let flow = control(&app, &format!("toolbar.layout_popover.{}", current.id)).unwrap();
-    assert!(
-        flow.rect.expand(4.0).contains(tag),
-        "the tag stays on the saved layout"
-    );
-    assert!(
-        painted_text_center(&output, "Ctrl+S").is_some(),
-        "the footer says it changed"
-    );
+    let read = app.layout_picker().unwrap();
+    assert_eq!(read.changed, Some(format!("Changed to {}", target.label)));
+    assert_eq!(read.current_id.as_deref(), Some(target.id));
+    assert_eq!(read.undo_id.as_deref(), Some(current.id));
 }
 
 /// C9: ≡ | symbol … History | BUY 1 | SELL 1 on the left; the capsule and the

@@ -41,7 +41,7 @@ fn themes() -> [&'static ResolvedTheme; 2] {
     [ResolvedTheme::bundled(true), ResolvedTheme::bundled(false)]
 }
 
-const VIOLET: [u8; 3] = [0x6A, 0x3F, 0xC4];
+const VIOLET: WorkspaceColour = WorkspaceColour::Preset(3);
 
 fn view<'a>(state: &'a State, marks: LayoutMarks) -> View<'a> {
     View {
@@ -100,7 +100,9 @@ fn the_sixteen_cells_sit_on_one_grid_of_equal_cells() {
             .marks
             .iter()
             .filter_map(|mark| match mark {
-                Mark::Fill { at, .. } if at.w == 1.0 && at.x > xs[1] && at.x < xs[2] => Some(at),
+                Mark::Fill(Plate { at, .. }) if at.w == 1.0 && at.x > xs[1] && at.x < xs[2] => {
+                    Some(at)
+                }
                 _ => None,
             })
             .collect();
@@ -122,7 +124,10 @@ fn every_label_fits_one_line_of_its_cell_in_both_weights() {
         }
     }
     // The header's status slot holds its longest words.
-    let longest = LAYOUT_PRESETS.iter().map(|p| p.label).max_by_key(|l| l.len());
+    let longest = LAYOUT_PRESETS
+        .iter()
+        .map(|p| p.label)
+        .max_by_key(|l| l.len());
     let saved = format!("Saved: {}", longest.unwrap());
     assert!(width(&saved, SMALL_PT, &LIGHT_ADVANCE) <= STATUS_W - STATUS_ICON_W);
     let undo = format!("was {} \u{b7} Ctrl+Z", longest.unwrap());
@@ -187,27 +192,27 @@ fn current_hover_pressed_and_focus_differ_visibly() {
             cell.marks
                 .iter()
                 .filter_map(|mark| match mark {
-                    Mark::Fill { at, rgba, .. } if *at == cell.at => Some(*rgba),
+                    Mark::Fill(Plate { at, rgba, .. }) if *at == cell.at => Some(*rgba),
                     _ => None,
                 })
                 .collect()
         };
         let current = cell(&pressed_picker, "time+flow");
-        let inks = colour_inks(VIOLET, theme.color(look.ground), theme.dark);
+        let inks = colour_inks(VIOLET.rgb(theme.dark), theme.color(look.ground), theme.dark);
         assert!(current.current);
         assert!(current.marks.iter().any(|mark| matches!(mark,
-            Mark::Edge { width, rgba, .. } if *width == RING_PT && *rgba == inks.ring.to_array())));
+            Mark::Edge(Plate { rgba, .. }, width) if *width == RING_PT && *rgba == inks.ring.to_array())));
         assert!(current.marks.iter().any(|mark| matches!(mark,
-            Mark::Words { text, .. } if text == CHECK)));
+            Mark::Words(Words { text, .. }) if text == CHECK)));
         assert!(current.marks.iter().any(|mark| matches!(mark,
-            Mark::Words { text, bold: true, .. } if text == "1 TF + Flow")));
+            Mark::Words(Words { text, bold: true, .. }) if text == "1 TF + Flow")));
         let hovered = cell(&hover_picker, "charts-2");
         assert_eq!(fills(hovered), vec![ink(look.hover)]);
         let pressed = cell(&pressed_picker, "charts-2");
         assert_eq!(fills(pressed), vec![look::pressed(theme).to_array()]);
         let label_y = |cell: &Cell| {
             cell.marks.iter().find_map(|mark| match mark {
-                Mark::Words { y, text, .. } if text == cell.preset.label => Some(*y),
+                Mark::Words(Words { y, text, .. }) if text == cell.preset.label => Some(*y),
                 _ => None,
             })
         };
@@ -221,7 +226,7 @@ fn current_hover_pressed_and_focus_differ_visibly() {
             .marks
             .iter()
             .filter_map(|mark| match mark {
-                Mark::Fill { at, rgba, .. } if *rgba == ink(look.focus) => Some(at),
+                Mark::Fill(Plate { at, rgba, .. }) if *rgba == ink(look.focus) => Some(at),
                 _ => None,
             })
             .collect();
@@ -245,7 +250,12 @@ fn current_hover_pressed_and_focus_differ_visibly() {
 /// chart cell, else the edge widens; timeframe edges are the ring at 60%.
 #[test]
 fn every_preset_and_a_custom_colour_pass_the_clamp_in_both_themes() {
-    let customs = [[255, 255, 255], [0, 0, 0], [0x17, 0x1B, 0x26], [0x80, 0x80, 0x80]];
+    let customs = [
+        [255, 255, 255],
+        [0, 0, 0],
+        [0x17, 0x1B, 0x26],
+        [0x80, 0x80, 0x80],
+    ];
     let colours = (0..PRESETS.len() as u8)
         .filter_map(WorkspaceColour::preset)
         .chain(customs.map(WorkspaceColour::Custom));
@@ -266,7 +276,11 @@ fn every_preset_and_a_custom_colour_pass_the_clamp_in_both_themes() {
                 }
                 None => assert_eq!(inks.flow_edge, look::FLOW_EDGE_BARE_PT, "{name}"),
             }
-            assert_eq!(inks.time_edge.to_array()[3], look::TIME_EDGE_ALPHA, "{name}");
+            assert_eq!(
+                inks.time_edge.to_array()[3],
+                look::TIME_EDGE_ALPHA,
+                "{name}"
+            );
         }
     }
 }
@@ -294,14 +308,14 @@ fn one_display_name_per_layout_in_cell_header_and_read() {
         let picker = picker(&shown, theme);
         let drawn = cell(&picker, preset.id);
         assert!(drawn.marks.iter().any(|mark| matches!(mark,
-            Mark::Words { text, .. } if text == preset.label)));
+            Mark::Words(Words { text, .. }) if text == preset.label)));
         assert_eq!(
             picker.header.line,
             format!("{CHANGED} {}", preset.label),
             "header"
         );
         assert_eq!(picker.header.status, format!("{SAVED} {}", preset.label));
-        let read = read(&shown, true);
+        let read = read(shown.workspace, shown.marks, shown.state, true);
         let row = read.cells.iter().find(|row| row.preset_id == preset.id);
         assert_eq!(row.map(|row| row.name.as_str()), Some(preset.label));
         assert_eq!(read.changed.as_deref(), Some(picker.header.line.as_str()));
@@ -328,7 +342,11 @@ fn the_header_never_hides_the_unsaved_state() {
     let unsaved = picker(&view(&after, marks("time+time+flow", "flow", true)), theme);
     assert_eq!(unsaved.header.status, NOT_SAVED);
     assert_eq!(unsaved.header.line, "Changed to 2 TF + Flow");
-    let undo = unsaved.header.undo.as_ref().map(|(_, words)| words.as_str());
+    let undo = unsaved
+        .header
+        .undo
+        .as_ref()
+        .map(|(_, words)| words.as_str());
     assert_eq!(undo, Some("was 1 TF + Flow \u{b7} Ctrl+Z"));
     assert!(unsaved.header.label().contains(NOT_SAVED));
     assert!(unsaved.header.label().contains("Changed to 2 TF + Flow"));
@@ -371,7 +389,10 @@ fn a_pick_commits_on_release_inside_and_dragging_off_cancels() {
     assert_eq!(step.pick, preset("charts-2"));
     assert!(!step.close, "it stays open to confirm");
     let changed = state.changed.expect("the pick is confirmed");
-    assert_eq!((changed.to.id, changed.was.map(|p| p.id)), ("charts-2", Some("flow")));
+    assert_eq!(
+        (changed.to.id, changed.was.map(|p| p.id)),
+        ("charts-2", Some("flow"))
+    );
 }
 
 /// After a pick the popover stays open about 800 ms, then closes; Esc and a
@@ -436,7 +457,10 @@ fn ctrl_z_or_the_was_words_restore_the_previous_layout() {
     let mut state = picked.clone();
     assert_eq!(state.step(undo).pick, preset("flow"));
     let back = state.changed.unwrap();
-    assert_eq!((back.to.id, back.was.map(|p| p.id)), ("flow", Some("charts-2")));
+    assert_eq!(
+        (back.to.id, back.was.map(|p| p.id)),
+        ("flow", Some("charts-2"))
+    );
     let mut state = picked.clone();
     let press = Seen {
         over: Some(Target::Undo),
@@ -467,9 +491,17 @@ fn arrows_cross_the_groups_and_enter_picks() {
     });
     let mut state = State::default();
     state.step(right);
-    assert_eq!(state.focus, preset("time+flow"), "the first arrow lands on the current cell");
+    assert_eq!(
+        state.focus,
+        preset("time+flow"),
+        "the first arrow lands on the current cell"
+    );
     state.step(right);
-    assert_eq!(state.focus, preset("time"), "right of WITH FLOW is TIMEFRAMES");
+    assert_eq!(
+        state.focus,
+        preset("time"),
+        "right of WITH FLOW is TIMEFRAMES"
+    );
     let left = key(Keys {
         left: true,
         ..Keys::default()
@@ -483,7 +515,11 @@ fn arrows_cross_the_groups_and_enter_picks() {
     for _ in 0..5 {
         state.step(down);
     }
-    assert_eq!(state.focus, preset("flow-over-2time"), "held at the last row");
+    assert_eq!(
+        state.focus,
+        preset("flow-over-2time"),
+        "held at the last row"
+    );
     let enter = key(Keys {
         enter: true,
         ..Keys::default()
@@ -494,7 +530,11 @@ fn arrows_cross_the_groups_and_enter_picks() {
         ..State::default()
     };
     let step = same.step(enter);
-    assert_eq!((step.pick, step.close), (None, true), "the current one closes");
+    assert_eq!(
+        (step.pick, step.close),
+        (None, true),
+        "the current one closes"
+    );
 }
 
 /// The popover hangs below its button, right edges flush, and never climbs
@@ -519,13 +559,23 @@ fn it_hangs_below_its_button_and_scrolls_in_a_short_window() {
 #[test]
 fn the_read_names_every_cell_with_its_marks() {
     let state = State::default();
-    let read = read(&view(&state, marks("time+flow", "flow", true)), false);
+    let read = read("Flow", marks("time+flow", "flow", true), &state, false);
     assert!(!read.open);
     assert_eq!(read.workspace, "Flow");
     assert_eq!(read.status, NOT_SAVED);
     assert_eq!(read.cells.len(), LAYOUT_PRESETS.len());
-    let current: Vec<&str> = read.cells.iter().filter(|c| c.current).map(|c| c.preset_id.as_str()).collect();
-    let saved: Vec<&str> = read.cells.iter().filter(|c| c.saved).map(|c| c.preset_id.as_str()).collect();
+    let current: Vec<&str> = read
+        .cells
+        .iter()
+        .filter(|c| c.current)
+        .map(|c| c.preset_id.as_str())
+        .collect();
+    let saved: Vec<&str> = read
+        .cells
+        .iter()
+        .filter(|c| c.saved)
+        .map(|c| c.preset_id.as_str())
+        .collect();
     assert_eq!((current, saved), (vec!["time+flow"], vec!["flow"]));
     let time = read.cells.iter().find(|c| c.preset_id == "time").unwrap();
     assert_eq!((time.row, time.column), (0, 2));

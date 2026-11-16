@@ -25,6 +25,22 @@ impl CanvasHost for FakeCanvas {
         Ok(true)
     }
 
+    fn layout_picker(
+        &mut self,
+    ) -> Result<quantick_control_schema::canvas::LayoutPickerResult, ControlError> {
+        Ok(quantick_control_schema::canvas::LayoutPickerResult {
+            open: true,
+            workspace: "Flow".to_owned(),
+            status: "Saved: Flow".to_owned(),
+            unsaved: false,
+            current_id: Some("flow".to_owned()),
+            saved_id: Some("flow".to_owned()),
+            changed: None,
+            undo_id: None,
+            cells: Vec::new(),
+        })
+    }
+
     fn act_on_canvas(&mut self, act: CanvasAct) -> Result<CanvasResult, ControlError> {
         self.acts.push(act);
         Ok(CanvasResult {
@@ -211,7 +227,35 @@ fn every_canvas_action_is_registered_and_readable() {
             "{id}"
         );
     }
-    assert_eq!(registry.descriptors().count(), CANVAS_CAPABILITY_IDS.len());
+    // The actions and the one read beside them, the layout picker.
+    assert_eq!(
+        registry.descriptors().count(),
+        CANVAS_CAPABILITY_IDS.len() + 1
+    );
+}
+
+/// The layout picker read reaches the host, answers inside its schema, is
+/// read only, and a host without a canvas refuses it.
+#[test]
+fn the_layout_picker_read_answers_the_hosts_picker() {
+    use quantick_control_schema::canvas::{LAYOUT_PICKER_CAPABILITY_ID, LayoutPickerResult};
+    let mut registry = ActionRegistry::<FakeCanvas, ()>::new();
+    register(&mut registry).unwrap();
+    let actor = crate::test_support::FakeWindow::assistant();
+    let action = registry
+        .lookup(LAYOUT_PICKER_CAPABILITY_ID, CAPABILITY_VERSION)
+        .expect("registered");
+    assert!(action.descriptor.read_only);
+    assert!(action.input.validate(&json!({"at": 1})).is_err());
+    let mut host = FakeCanvas::default();
+    let result = (action.handler)(&mut host, &mut (), &actor, &json!({})).unwrap();
+    action.output.validate(&result).unwrap();
+    let read: LayoutPickerResult = serde_json::from_value(result).unwrap();
+    assert_eq!(read.workspace, "Flow");
+    let mut nothing = ActionRegistry::<NoCanvas, ()>::new();
+    register(&mut nothing).unwrap();
+    let refused = nothing.lookup(LAYOUT_PICKER_CAPABILITY_ID, CAPABILITY_VERSION);
+    assert!((refused.unwrap().handler)(&mut NoCanvas, &mut (), &actor, &json!({})).is_err());
 }
 
 #[test]
