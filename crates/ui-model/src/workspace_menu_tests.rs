@@ -112,20 +112,24 @@ fn a_row_wears_its_status_and_the_focus_ring() {
     );
     assert!(lit.press, "the tab's own row closes the menu");
     assert!(words(&lit).contains(&CHECK), "the check");
+    // Every workspace row tinted toward its own colour, its own the most.
+    let fill = |row: &CellRow, tint| Some(row_fill(row.colour.as_ref().unwrap().rgb, true, tint));
     let Mark::Box(back) = &lit.marks[0] else {
         panic!("a box")
     };
-    assert_eq!(back.fill, Some(Token::LedgerSelection));
+    assert_eq!(back.rgb, fill(own, RowTint::Current));
+    let rest = row(other, 310.0, false, true);
+    let Mark::Box(at_rest) = &rest.marks[0] else {
+        panic!("a box")
+    };
+    assert_eq!(at_rest.rgb, fill(other, RowTint::Rest));
     let focused = row(other, 310.0, true, true);
-    let Mark::Box(ring) = &focused.marks[0] else {
+    let Mark::Box(ring) = &focused.marks[1] else {
         panic!("a box")
     };
     assert_eq!(ring.edge, Some(Token::Accent));
-    let hovered = row(other, 310.0, false, true).hover.expect("a hover fill");
-    assert_eq!(
-        (hovered.fill, hovered.radius),
-        (Some(Token::HoverFill), 4.0)
-    );
+    let hovered = rest.hover.expect("a hover fill");
+    assert_eq!((hovered.rgb, hovered.radius), (fill(other, RowTint::Hover), 4.0));
     let named: Vec<bool> = (lit.marks.iter())
         .filter_map(|mark| match mark {
             Mark::Text(words) => Some(words.names),

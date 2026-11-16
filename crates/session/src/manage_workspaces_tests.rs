@@ -200,11 +200,41 @@ fn the_undo_row_stands_until_its_time() {
 #[test]
 fn a_palette_or_a_field_takes_the_keys_first() {
     let mut dialog = ManageDialog::new(7);
-    assert!(ManageKey::ALL.iter().all(|key| dialog.takes(*key)));
+    let takes = |dialog: &ManageDialog, key| dialog.takes(key, 5);
+    for key in [ManageKey::Up, ManageKey::Down, ManageKey::Escape] {
+        assert!(takes(&dialog, key), "{key:?} always acts");
+    }
+    for key in [
+        ManageKey::F2,
+        ManageKey::Delete,
+        ManageKey::Colour,
+        ManageKey::Enter,
+        ManageKey::Undo,
+    ] {
+        assert!(!takes(&dialog, key), "{key:?} has nothing to act on");
+    }
+    dialog.focus = Some(2);
+    assert!(takes(&dialog, ManageKey::F2) && takes(&dialog, ManageKey::Colour));
+    assert!(
+        !takes(&dialog, ManageKey::Enter),
+        "Enter only on an armed row"
+    );
+    dialog.local(&ManageIntent::Arm("Scalp".to_owned()));
+    assert!(takes(&dialog, ManageKey::Enter));
+    dialog.deleted(UndoRow {
+        workspace: "Scalp".to_owned(),
+        words: String::new(),
+        until_ms: 10,
+    });
+    assert!(
+        takes(&dialog, ManageKey::Undo),
+        "Ctrl+Z while an Undo row stands"
+    );
+    assert!(!dialog.takes(ManageKey::Undo, 10), "and not after");
     dialog.local(&ManageIntent::BeginRename("Scalp".to_owned()));
-    assert!(dialog.takes(ManageKey::Escape) && !dialog.takes(ManageKey::Colour));
+    assert!(takes(&dialog, ManageKey::Escape) && !takes(&dialog, ManageKey::Colour));
     dialog.local(&ManageIntent::Chip("Scalp".to_owned()));
-    assert!(!dialog.takes(ManageKey::Escape), "the palette's own Esc");
+    assert!(!takes(&dialog, ManageKey::Escape), "the palette's own Esc");
     assert_eq!(ManageKey::Undo.name(), "Z");
     assert!(ManageKey::Undo.command() && !ManageKey::Delete.command());
     assert_eq!(ManageKeys::of([true; 8]), {

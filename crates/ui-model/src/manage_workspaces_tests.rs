@@ -111,6 +111,12 @@ fn the_rows_follow_the_list_with_the_current_pill() {
 #[test]
 fn default_s_row_says_why_and_only_its_colour_changes() {
     let manage = view(&ManageDialog::new(1), true);
+    let band = piece(&manage.list, "manage_workspaces.Default");
+    let rule = band.marks.iter().find_map(|mark| match mark {
+        Mark::Box(plate) if plate.at.h == 1.0 => Some(plate.at.y),
+        _ => None,
+    });
+    assert_eq!(rule, Some(ROW_PT + 30.0 - 1.0), "the rule under the note");
     let note = piece(&manage.list, "manage_workspaces.Default.note");
     assert_eq!(note.row.as_ref().unwrap().label, text::MANAGE_DEFAULT_NOTE);
     for part in ["rename", "delete"] {
@@ -167,6 +173,12 @@ fn an_inline_rename_keeps_the_row_height_and_the_dialog_size() {
     assert!(renaming.field.is_some());
     let row = piece(&renaming.list, "manage_workspaces.Scalp.rename");
     assert!(!row.press, "the pencil rests while the field is open");
+    let why = row.row.as_ref().unwrap().tip(false);
+    assert_eq!(
+        why,
+        Some("Finish renaming first \u{b7} Enter or Esc"),
+        "its own reason"
+    );
     dialog.refuse_rename("a workspace is already called Tape".to_owned());
     let refused = view(&dialog, true);
     assert!(refused.list_height > rest.list_height, "the list scrolls");
@@ -241,7 +253,12 @@ fn a_chip_opens_the_same_palette_under_its_row() {
     dialog.local(&ManageIntent::Chip("Scalp".to_owned()));
     let open = view(&dialog, true);
     let (at, pop) = open.palette.as_ref().unwrap();
-    assert_eq!(at[0] + 12.0, NAME_X, "the swatches start under the names");
+    assert_eq!(at[0], PAD - 2.0, "hung from the chip");
+    let rest = view(&ManageDialog::new(1), true);
+    assert_eq!(
+        open.list_height, rest.list_height,
+        "every row stays where it was"
+    );
     let sky = piece(&pop.pieces, "manage_workspaces.Scalp.colour.sky");
     assert!(sky.row.as_ref().unwrap().on, "Scalp's own colour");
     let violet = piece(&pop.pieces, "manage_workspaces.Scalp.colour.violet");
@@ -331,6 +348,33 @@ fn the_create_dialog_holds_the_palette_on_the_next_free_colour() {
     assert_eq!(new.size, shown.size, "identical but for title and name");
 }
 
+/// A locked swatch's initials are pure black or white and read at least
+/// 4.5:1 on the veiled colour they stand on, in both themes.
+#[test]
+fn locked_initials_read_on_their_veiled_swatch_in_both_themes() {
+    use quantick_appearance::{PremultipliedRgba, contrast::contrast_ratio};
+    for dark in [true, false] {
+        let shown = name_dialog(&book(), &create("save_as"), dark, &measure);
+        let (_, pop) = shown.palette.as_ref().unwrap();
+        for key in [
+            "cobalt", "orchid", "sky", "violet", "slate", "fuchsia", "ice", "blossom",
+        ] {
+            let swatch = piece(&pop.pieces, &format!("name_dialog.colour.{key}"));
+            let colour = swatch.row.as_ref().unwrap().colour.as_ref().unwrap().rgb;
+            let under = crate::colour_palette::veiled(colour, dark);
+            let words = swatch.marks.iter().find_map(|mark| match mark {
+                Mark::Text(said) if said.rgb.is_some() => said.rgb,
+                _ => None,
+            });
+            let [r, g, b] = words.expect("initials in black or white");
+            assert!(r == g && g == b && (r == 0 || r == 255), "{key}");
+            let on = |[r, g, b]: [u8; 3]| PremultipliedRgba::from_rgb(r, g, b);
+            let ratio = contrast_ratio(on([r, g, b]), on(under));
+            assert!(ratio >= 4.5, "{key} dark {dark}: {ratio}");
+        }
+    }
+}
+
 /// Custom identical to a held colour disables Save and Apply and says
 /// whose colour it is; a free one saves.
 #[test]
@@ -351,8 +395,25 @@ fn custom_identical_to_a_held_colour_disables_save_with_its_reason() {
         .as_ref()
         .unwrap();
     assert_eq!(reason.label, "Used by Scalp. Pick another colour.");
+    let caption = piece(&shown.list, "name_dialog.colour")
+        .row
+        .as_ref()
+        .unwrap();
+    assert_eq!(caption.label, "Colour \u{b7} Petrol", "until Apply");
     dialog.palette.hex = "#3A7BD6".to_owned();
     assert!(name_dialog(&book(), &dialog, true, &measure).saves);
+    let rest = name_rest_height(&book(), &dialog);
+    assert!(
+        rest < name_dialog(&book(), &dialog, true, &measure).size[1],
+        "Custom grows it"
+    );
+    let capped = capped(name_dialog(&book(), &dialog, true, &measure), 300.0);
+    assert_eq!(
+        (capped.size[1], capped.list_view),
+        (300.0, 300.0),
+        "the rest scrolls"
+    );
+    assert!(capped.list_height > 300.0);
 }
 
 /// Rename keeps its dialog without a palette.
@@ -384,6 +445,19 @@ fn a_frame_s_keys_and_presses_answer_one_command() {
     let saved = name_answer(&mut dialog, "Flow", None, ([true, true], true, false));
     assert_eq!(saved, Some(WorkspaceCommand::SubmitDialog));
     assert_eq!(dialog.refusal, None, "the name changed");
+    let after_click = name_answer(&mut dialog, "Flow 2", None, ([false, true], true, false));
+    assert_eq!(
+        after_click,
+        Some(WorkspaceCommand::SubmitDialog),
+        "Enter off the field saves"
+    );
+    dialog.palette.custom = true;
+    let apply = name_answer(&mut dialog, "Flow 2", None, ([true, true], true, false));
+    assert_eq!(
+        apply,
+        Some(WorkspaceCommand::NameColour(ColourIntent::Apply))
+    );
+    dialog.palette.custom = false;
     let esc = name_answer(&mut dialog, "Flow 2", None, ([false, false], true, true));
     assert_eq!(esc, Some(WorkspaceCommand::CloseDialog));
     let keep = Some(ManageIntent::Keep);

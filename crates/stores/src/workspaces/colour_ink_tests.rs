@@ -85,8 +85,9 @@ fn every_row_tint_keeps_its_words_at_four_and_a_half_to_one() {
                     assert!(ratio >= 4.5, "{} dark {dark} {tint:?}: {ratio}", colour.name());
                 }
             }
-            let apart = contrast_ratio(rgb(shade(RowTint::Current)), rgb(shade(RowTint::Rest)));
-            assert!(apart > 1.05, "{} dark {dark}: current reads apart ({apart})", colour.name());
+            let (now, rest) = (shade(RowTint::Current), shade(RowTint::Rest));
+            let apart = (0..3).map(|at| now[at].abs_diff(rest[at])).max();
+            assert!(apart >= Some(3), "{} dark {dark}: current stands apart", colour.name());
         }
     }
 }

@@ -367,16 +367,12 @@ fn the_create_dialog_chooses_and_enter_saves_with_the_colour() {
         colour(ColourIntent::Custom { dark: true }),
     );
     host.menu.dialog.as_mut().unwrap().palette.hex = "#5DBDEB".to_owned();
-    press(
-        &mut host,
-        &mut access,
-        &actor,
-        WorkspaceCommand::SubmitDialog,
-    );
+    press(&mut host, &mut access, &actor, colour(ColourIntent::Apply));
     let dialog = host.menu.dialog.as_ref().unwrap();
     assert_eq!(
-        dialog.refusal.as_deref(),
-        Some("Used by Scalp. Pick another colour.")
+        dialog.colour.as_deref(),
+        Some("lavender"),
+        "Scalp's Sky stays Scalp's"
     );
     assert_eq!(host.writes, 0, "nothing saved");
     host.menu.dialog.as_mut().unwrap().palette.custom = false;
