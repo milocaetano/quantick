@@ -1,26 +1,62 @@
-//! Named whole looks over the pane owner's narrow port.
+//! Named whole looks and tick spheres over the addressed pane's own bubbles:
+//! the window resolves the pane, the pane and its order-flow view serve it.
 use crate::dock::ActionDock;
 use quantick_control::{error::ControlError, registry::RegistryError, wire::ActorContext};
-use quantick_control_schema::bubble_preset::{
-    ApplyInput, ApplyResult, ListInput, ListResult, ResetInput,
-};
-use quantick_orderflow::TickTuning;
+use quantick_control_schema::bubble_preset::{ApplyInput, ListInput, ListResult, ResetInput};
+use quantick_control_schema::orderflow::BubblesStateSnapshot;
+use quantick_orderflow::{HeatmapConfig, TickTuning};
+use quantick_stores::bubble_asset_store::SaveSwitch;
 use serde_json::Value;
 
-/// What wearing a whole preset answers.
-pub type PresetApplied = Result<ApplyResult, ControlError>;
-
-pub trait BubblePresetPort {
-    /// Wear the whole preset `input` names; its tick spheres only when
-    /// `spheres`, the pane's [`TickSpherePane::may_choose`].
-    fn apply_bubble_preset(&mut self, input: &ApplyInput, spheres: bool) -> PresetApplied;
-    fn list_bubble_presets(&mut self, input: &ListInput) -> Result<ListResult, ControlError>;
-    /// Restore the pane's factory look, as the panel's reset button does:
-    /// the look a fresh open shows, its tick spheres included.
-    fn reset_bubbles(&mut self, input: &ResetInput) -> PresetApplied;
+/// The window's one bubble job: resolve the addressed pane. `Theme` is the
+/// window's order-flow appearance, the one a whole look is dressed in.
+pub trait PaneBubblesPort {
+    type Theme;
+    /// The pane `tab_id` and `pane_id` name, and the theme of the window.
+    fn pane_bubbles(
+        &mut self,
+        tab_id: u64,
+        pane_id: u64,
+    ) -> Result<ResolvedPane<'_, Self::Theme>, ControlError>;
 }
 
-pub fn register<D: ActionDock<H, A>, H: BubblePresetPort + TickBubblePort + ?Sized, A>(
+/// The window's theme and the pane it resolved.
+pub type ResolvedPane<'a, T> = (T, &'a mut dyn BubblePane<T>);
+
+/// A chart pane, as its bubble calls read it.
+pub trait BubblePane<T> {
+    /// The pane's facts for [`TickSpherePane::admit`].
+    fn tick_sphere_pane(&self) -> TickSpherePane;
+    /// The pane's order-flow view, when it has one.
+    fn bubble_look(&mut self) -> Option<&mut dyn BubbleLook<T>>;
+}
+
+/// An order-flow view's bubble look: what the calls change and read back.
+pub trait BubbleLook<T> {
+    /// Wear the whole preset `name`; its tick spheres only when `spheres`,
+    /// the pane's [`TickSpherePane::may_choose`].
+    fn apply_named_preset(&mut self, name: &str, spheres: bool, theme: &T) -> Result<bool, String>;
+    /// Restore the factory look, as the panel's reset button does: the look
+    /// a fresh open shows, its tick spheres included.
+    fn reset_bubble_look(&mut self) -> bool;
+    fn bubble_presets_page(&self, input: &ListInput) -> Result<ListResult, String>;
+    /// Wear `preset`'s tick spheres with `tuning` applied, or none.
+    fn wear_tick_spheres(
+        &mut self,
+        preset: Option<&str>,
+        tuning: TickTuning,
+    ) -> Result<bool, String>;
+    fn bubbles_snapshot(&self) -> BubblesStateSnapshot;
+    fn cached_config(&self) -> &HeatmapConfig;
+    /// The key of the asset the look belongs to, once a tab bound one.
+    fn asset_key(&self) -> Option<&str>;
+    /// Switch "Save changes for this asset"; `None` while bound to no asset.
+    fn set_save_asset_changes(&mut self, on: bool) -> Option<SaveSwitch>;
+}
+
+const NO_VIEW: &str = "The pane has no order-flow view";
+
+pub fn register<D: ActionDock<H, A>, H: PaneBubblesPort + ?Sized, A>(
     registry: &mut D,
 ) -> Result<(), RegistryError> {
     registry.register(
@@ -37,41 +73,65 @@ pub fn register<D: ActionDock<H, A>, H: BubblePresetPort + TickBubblePort + ?Siz
     )
 }
 
-fn apply<H: BubblePresetPort + TickBubblePort + ?Sized, A>(
+fn apply<H: PaneBubblesPort + ?Sized, A>(
     host: &mut H,
     _access: &mut A,
     _actor: &ActorContext,
     input: &Value,
 ) -> Result<Value, ControlError> {
     let input: ApplyInput = serde_json::from_value(input.clone()).map_err(invalid)?;
+    let (theme, pane) = host.pane_bubbles(input.tab_id.get(), input.pane_id.get())?;
     // A whole look brings its spheres by the rule tick.set asks.
-    let spheres = host
-        .tick_sphere_pane(input.tab_id.get(), input.pane_id.get())?
-        .may_choose();
-    serde_json::to_value(host.apply_bubble_preset(&input, spheres)?).map_err(invalid)
+    let spheres = pane.tick_sphere_pane().may_choose();
+    let owner = pane.bubble_look().ok_or_else(|| invalid(NO_VIEW))?;
+    let changed = owner
+        .apply_named_preset(&input.preset, spheres, &theme)
+        .map_err(invalid)?;
+    applied(input.tab_id, input.pane_id, changed, owner)
 }
 
-fn reset<H: BubblePresetPort + ?Sized, A>(
+fn reset<H: PaneBubblesPort + ?Sized, A>(
     host: &mut H,
     _access: &mut A,
     _actor: &ActorContext,
     input: &Value,
 ) -> Result<Value, ControlError> {
     let input: ResetInput = serde_json::from_value(input.clone()).map_err(invalid)?;
-    serde_json::to_value(host.reset_bubbles(&input)?).map_err(invalid)
+    let (_, pane) = host.pane_bubbles(input.tab_id.get(), input.pane_id.get())?;
+    let owner = pane.bubble_look().ok_or_else(|| invalid(NO_VIEW))?;
+    let changed = owner.reset_bubble_look();
+    applied(input.tab_id, input.pane_id, changed, owner)
 }
 
-fn list<H: BubblePresetPort + ?Sized, A>(
+fn list<H: PaneBubblesPort + ?Sized, A>(
     host: &mut H,
     _access: &mut A,
     _actor: &ActorContext,
     input: &Value,
 ) -> Result<Value, ControlError> {
-    let input = serde_json::from_value(input.clone()).map_err(invalid)?;
-    serde_json::to_value(host.list_bubble_presets(&input)?).map_err(invalid)
+    let input: ListInput = serde_json::from_value(input.clone()).map_err(invalid)?;
+    let (_, pane) = host.pane_bubbles(input.tab_id.get(), input.pane_id.get())?;
+    let owner = pane.bubble_look().ok_or_else(|| invalid(NO_VIEW))?;
+    serde_json::to_value(owner.bubble_presets_page(&input).map_err(invalid)?).map_err(invalid)
 }
 
-fn invalid(error: impl std::fmt::Display) -> ControlError {
+/// What a whole look answers: whether it moved, and the look it wears now.
+fn applied<T>(
+    tab_id: quantick_control::wire::WireU64,
+    pane_id: quantick_control::wire::WireU64,
+    changed: bool,
+    owner: &dyn BubbleLook<T>,
+) -> Result<Value, ControlError> {
+    serde_json::to_value(quantick_control_schema::bubble_preset::applied(
+        (tab_id, pane_id),
+        changed,
+        owner.bubbles_snapshot(),
+        owner.cached_config(),
+    ))
+    .map_err(invalid)
+}
+
+pub(crate) fn invalid(error: impl std::fmt::Display) -> ControlError {
     ControlError::invalid_request(error.to_string())
 }
 
@@ -188,41 +248,14 @@ impl From<SphereRefusal> for ControlError {
         }
     }
 }
-
-/// What wearing tick spheres answers: whether the look changed, and the
-/// spheres it wears after.
-pub type WornSpheres = Result<
-    (
-        bool,
-        Option<quantick_control_schema::tick_bubbles::TickBubblesSnapshot>,
-    ),
-    ControlError,
->;
-
-/// The chart-only selector's narrow port: the facts the rule reads, and
-/// wearing what the rule admitted. The policy stays here.
-pub trait TickBubblePort {
-    /// The addressed pane's facts for [`TickSpherePane::admit`].
-    fn tick_sphere_pane(
-        &mut self,
-        tab_id: u64,
-        pane_id: u64,
-    ) -> Result<TickSpherePane, ControlError>;
-    /// Wear `preset`'s spheres with `tuning` applied, or none.
-    fn wear_tick_spheres(
-        &mut self,
-        tab_id: u64,
-        pane_id: u64,
-        preset: Option<&str>,
-        tuning: TickTuning,
-    ) -> WornSpheres;
-}
-pub fn register_tick<D: ActionDock<H, A>, H: TickBubblePort + ?Sized, A>(
+/// The chart-only selector: the rule reads the pane's facts, and the pane's
+/// view wears what it admitted. The policy stays here.
+pub fn register_tick<D: ActionDock<H, A>, H: PaneBubblesPort + ?Sized, A>(
     registry: &mut D,
 ) -> Result<(), RegistryError> {
     registry.register(quantick_control_schema::tick_bubbles::descriptor(), tick)
 }
-fn tick<H: TickBubblePort + ?Sized, A>(
+fn tick<H: PaneBubblesPort + ?Sized, A>(
     host: &mut H,
     _access: &mut A,
     _actor: &ActorContext,
@@ -230,19 +263,18 @@ fn tick<H: TickBubblePort + ?Sized, A>(
 ) -> Result<Value, ControlError> {
     let input: quantick_control_schema::tick_bubbles::TickBubblesInput =
         serde_json::from_value(input.clone()).map_err(invalid)?;
-    let (tab, pane, preset) = (
-        input.tab_id.get(),
-        input.pane_id.get(),
-        input.preset.as_deref(),
-    );
+    let preset = input.preset.as_deref();
     let tuning = tick_tuning(&input)?;
-    host.tick_sphere_pane(tab, pane)?.admit(preset)?;
-    let (changed, tick_bubbles) = host.wear_tick_spheres(tab, pane, preset, tuning)?;
+    let (_, pane) = host.pane_bubbles(input.tab_id.get(), input.pane_id.get())?;
+    pane.tick_sphere_pane().admit(preset)?;
+    let owner = pane.bubble_look().ok_or_else(|| invalid(NO_VIEW))?;
+    let changed = owner.wear_tick_spheres(preset, tuning).map_err(invalid)?;
+    let worn = owner.cached_config().volume_dots.tick_bubbles;
     serde_json::to_value(quantick_control_schema::tick_bubbles::TickBubblesResult {
         tab_id: input.tab_id,
         pane_id: input.pane_id,
         changed,
-        tick_bubbles,
+        tick_bubbles: worn.map(Into::into),
     })
     .map_err(invalid)
 }
@@ -348,44 +380,16 @@ mod tick_rule_tests {
         }
     }
 
-    struct Pane {
-        facts: TickSpherePane,
-        worn: Option<Option<String>>,
-        tuning: TickTuning,
-    }
-    impl TickBubblePort for Pane {
-        fn tick_sphere_pane(
-            &mut self,
-            _tab_id: u64,
-            _pane_id: u64,
-        ) -> Result<TickSpherePane, ControlError> {
-            Ok(self.facts)
-        }
-        fn wear_tick_spheres(
-            &mut self,
-            _tab_id: u64,
-            _pane_id: u64,
-            preset: Option<&str>,
-            tuning: TickTuning,
-        ) -> WornSpheres {
-            self.worn = Some(preset.map(str::to_owned));
-            self.tuning = tuning;
-            Ok((true, None))
-        }
-    }
+    use crate::bubble_fake::FakePane;
 
     #[test]
     fn tick_set_asks_the_rule_before_the_pane_wears_anything() {
         let input = |preset: Value| json!({"tab_id": "1", "pane_id": "2", "preset": preset});
         let actor = crate::test_support::FakeWindow::assistant();
-        let mut volume_chart = Pane {
-            facts: TickSpherePane {
-                tick_chart: false,
-                asset_mode: true,
-            },
-            worn: None,
-            tuning: TickTuning::default(),
-        };
+        let mut volume_chart = FakePane::new(TickSpherePane {
+            tick_chart: false,
+            asset_mode: true,
+        });
         let refused = tick(
             &mut volume_chart,
             &mut (),
@@ -403,15 +407,11 @@ mod tick_rule_tests {
             violated(refused.unwrap_err()).as_deref(),
             Some(quantick_control_schema::bubble_scale::TICK_CHART_PRECONDITION)
         );
-        assert_eq!(volume_chart.worn, None, "refused before any edit");
-        let mut no_mode = Pane {
-            facts: TickSpherePane {
-                tick_chart: true,
-                asset_mode: false,
-            },
-            worn: None,
-            tuning: TickTuning::default(),
-        };
+        assert_eq!(volume_chart.look().worn, None, "refused before any edit");
+        let mut no_mode = FakePane::new(TickSpherePane {
+            tick_chart: true,
+            asset_mode: false,
+        });
         let refused = tick(
             &mut no_mode,
             &mut (),
@@ -422,30 +422,22 @@ mod tick_rule_tests {
             violated(refused.unwrap_err()).as_deref(),
             Some(quantick_control_schema::tick_bubbles::ASSET_MODE_PRECONDITION)
         );
-        assert_eq!(no_mode.worn, None, "refused before any edit");
-        let mut plain_asset = Pane {
-            facts: TickSpherePane {
-                tick_chart: true,
-                asset_mode: false,
-            },
-            worn: None,
-            tuning: TickTuning::default(),
-        };
+        assert_eq!(no_mode.look().worn, None, "refused before any edit");
+        let mut plain_asset = FakePane::new(TickSpherePane {
+            tick_chart: true,
+            asset_mode: false,
+        });
         let dropped = tick(&mut plain_asset, &mut (), &actor, &input(Value::Null)).unwrap();
         assert_eq!(
-            plain_asset.worn,
+            plain_asset.look().worn,
             Some(None),
             "spheres can always be dropped"
         );
         assert_eq!(dropped["changed"], true);
-        let mut btc = Pane {
-            facts: TickSpherePane {
-                tick_chart: true,
-                asset_mode: true,
-            },
-            worn: None,
-            tuning: TickTuning::default(),
-        };
+        let mut btc = FakePane::new(TickSpherePane {
+            tick_chart: true,
+            asset_mode: true,
+        });
         tick(
             &mut btc,
             &mut (),
@@ -453,8 +445,11 @@ mod tick_rule_tests {
             &input(json!("Binance BTC Spot spheres")),
         )
         .unwrap();
-        assert_eq!(btc.worn, Some(Some("Binance BTC Spot spheres".to_owned())));
-        assert_eq!(btc.tuning, TickTuning::default());
+        assert_eq!(
+            btc.look().worn,
+            Some(Some("Binance BTC Spot spheres".to_owned()))
+        );
+        assert_eq!(btc.look().tuning, TickTuning::default());
         let tuned = |extra: Value| {
             let mut request = input(json!("mini index regions"));
             for (key, value) in extra.as_object().unwrap() {
@@ -470,13 +465,13 @@ mod tick_rule_tests {
         )
         .unwrap();
         assert_eq!(
-            btc.tuning,
+            btc.look().tuning,
             TickTuning {
                 peak_spheres: Some(false),
                 opacity: Some(0.6),
             }
         );
-        btc.worn = None;
+        btc.look_mut().worn = None;
         for refused in [
             json!({"opacity": "1.5"}),
             json!({"opacity": "0"}),
@@ -489,6 +484,6 @@ mod tick_rule_tests {
         let mut strip = input(Value::Null);
         strip["peak_spheres"] = json!(true);
         assert!(tick(&mut btc, &mut (), &actor, &strip).is_err());
-        assert_eq!(btc.worn, None, "every refusal comes before any edit");
+        assert_eq!(btc.look().worn, None, "every refusal comes before any edit");
     }
 }

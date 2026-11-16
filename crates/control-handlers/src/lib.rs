@@ -22,6 +22,7 @@ pub mod analysis;
 pub mod annotate;
 pub mod attention;
 pub mod bubble_preset;
+pub mod bubble_save;
 pub mod bubble_scale;
 pub mod canvas;
 pub mod chart;
@@ -65,6 +66,8 @@ pub mod workspace_book;
 
 pub use tabs::{JournalAccess, TabDirectory, tab_index};
 
+#[cfg(test)]
+mod bubble_fake;
 #[cfg(test)]
 mod canvas_tests;
 #[cfg(test)]

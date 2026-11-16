@@ -52,7 +52,7 @@ pub(crate) fn standard_actions() -> Result<ActionRegistry, RegistryError> {
     quantick_control_handlers::price_tag_progress::register(&mut registry)?;
     quantick_control_handlers::bubble_preset::register_tick(&mut registry)?;
     quantick_control_handlers::bubble_preset::register(&mut registry)?;
-    super::bubble_save::register(&mut registry)?;
+    quantick_control_handlers::bubble_save::register(&mut registry)?;
     quantick_control_handlers::bubble_scale::register(&mut registry)?;
     quantick_control_handlers::tape_fold::register(&mut registry)?;
     quantick_control_handlers::orderflow_settings::register(&mut registry)?;

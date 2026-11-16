@@ -31,6 +31,7 @@ use crate::viewport::Viewport;
 #[cfg(test)]
 #[path = "orderflow_view/tests/asset_look_tests.rs"]
 mod asset_look_tests;
+mod bubble_look;
 mod constants;
 pub(crate) mod flow_execution;
 mod frame;
@@ -1170,13 +1171,6 @@ impl OrderflowView {
             self.commit_config_changes(before);
         }
         Ok(changed)
-    }
-
-    pub(crate) fn bubble_presets_page(
-        &self,
-        input: &quantick_control_schema::bubble_preset::ListInput,
-    ) -> Result<quantick_control_schema::bubble_preset::ListResult, String> {
-        quantick_control_schema::bubble_preset::page(input, &self.look)
     }
 
     /// Put `settings` on screen as the asset `binding` names. The flow
