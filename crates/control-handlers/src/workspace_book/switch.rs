@@ -85,25 +85,6 @@ impl NotifyAccess for Unjournaled {
     }
 }
 
-/// Put `tab` on `name`, writing its edits into its workspace first when
-/// `save`.
-///
-/// # Errors
-/// The save or the switch was refused, or a write failed; a failed save
-/// leaves the tab where it was.
-fn carry_out<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
-    app: &mut H,
-    to: &mut Journal<'_, A>,
-    tab: u64,
-    name: &str,
-    save: bool,
-) -> Result<SetOutcome, ControlError> {
-    if save {
-        save_to_journaled(app, to, tab)?;
-    }
-    set_journaled(app, to, tab, name)
-}
-
 /// A row's switch: asked when it would drop edits, else carried out. Answers
 /// the toast.
 pub(super) fn row<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
@@ -117,7 +98,7 @@ pub(super) fn row<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
         prompt.ask(question);
         return Ok(None);
     }
-    let set = carry_out(app, to, tab, name, false)?;
+    let set = set_journaled(app, to, tab, name)?;
     Ok(set
         .changed
         .then(|| text::switched_toast(symbol, name, set.dropped_edits)))
@@ -142,7 +123,11 @@ pub(super) fn answer<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
     if on != Some(step.workspace.as_str()) || book.recipe(&step.target).is_none() {
         return Ok(Some(text::SWITCH_QUESTION_STALE.to_owned()));
     }
-    let set = carry_out(app, to, step.tab, &step.target, step.save)?;
+    // A failed save leaves the tab where it was.
+    if step.save {
+        save_to_journaled(app, to, step.tab)?;
+    }
+    let set = set_journaled(app, to, step.tab, &step.target)?;
     let symbol = app.tab_symbols(&[step.tab]).pop().unwrap_or_default();
     Ok(set
         .changed
@@ -155,7 +140,8 @@ pub(super) fn answer<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
 ///
 /// # Errors
 /// Edits the switch would drop and no `edits`: `workspace.unsaved_edits`,
-/// nothing changed. Otherwise as [`ask`] and [`carry_out`].
+/// nothing changed. Otherwise as [`ask`], or the switch was refused or its
+/// write failed.
 pub fn by_call<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
     app: &mut H,
     to: &mut Journal<'_, A>,
@@ -166,7 +152,7 @@ pub fn by_call<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
     if let (Some(asked), None) = (ask(app, to, tab, name)?, edits) {
         return Err(unsaved(&asked));
     }
-    carry_out(app, to, tab, name, false)
+    set_journaled(app, to, tab, name)
 }
 
 fn unsaved(asked: &SwitchQuestion) -> ControlError {
