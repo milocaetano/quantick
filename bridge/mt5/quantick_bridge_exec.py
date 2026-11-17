@@ -318,7 +318,7 @@ class ExecSession(TransportMixin):
         or nobody this bridge can name (None): a submit says so itself, a
         stop change asks the position, a modify asks the order."""
         if kind == "submit":
-            return request.get("side") == "buy"
+            return {"buy": True, "sell": False}.get(request.get("side"))
         if kind == "sltp" and isinstance(request.get("position"), int):
             found = self.terminal.positions_get(ticket=request["position"])
             if found:
