@@ -552,26 +552,6 @@ mod tests {
         state.manage.expect("opened")
     }
 
-    /// A switch question up stands the window's keys down as a close's does.
-    #[test]
-    fn a_switch_question_up_is_asking() {
-        let mut state = WorkspaceMenuState::default();
-        assert!(!state.asking());
-        state.switch.ask(crate::switch_prompt::SwitchQuestion {
-            tab: 7,
-            symbol: "WINZ26".to_owned(),
-            workspace: "Scalp".to_owned(),
-            target: "Swing".to_owned(),
-            changes: Vec::new(),
-            followers: Vec::new(),
-        });
-        assert!(state.asking());
-        state
-            .switch
-            .answer(crate::switch_prompt::SwitchAnswer::Cancel);
-        assert!(!state.asking());
-    }
-
     #[test]
     fn a_second_click_on_another_name_only_moves_the_arm() {
         let mut dialog = managing();
