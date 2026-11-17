@@ -5,7 +5,7 @@
       "oneOf": [
         {
           "const": "all_charts",
-          "description": "Every chart of the drawing's market, at any timeframe.",
+          "description": "Every chart of the drawing's market showing its layout, at any\ntimeframe; with `all_windows`, every chart of its market.",
           "type": "string"
         },
         {
@@ -22,12 +22,28 @@
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "properties": {
+    "all_windows": {
+      "default": false,
+      "description": "Whether every chart of its market shows it after the call, whatever\nlayout: asked for on a drawing on all timeframes, or one saved before\ndrawings recorded their layout. Optional in the schema only so v1\nreaders stay compatible.",
+      "type": "boolean"
+    },
     "changed": {
       "description": "Whether the call moved it; `false` when it already stood there.",
       "type": "boolean"
     },
     "drawing_id": {
       "$ref": "#/$defs/WireU64"
+    },
+    "layout_id": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/WireU64"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "The strip layout it belongs to after the call, the `layout_id` the layout-tab\ncalls (`layout.tab.switch`) name; absent for one saved before drawings recorded their layout."
     },
     "pane_id": {
       "$ref": "#/$defs/WireU64"

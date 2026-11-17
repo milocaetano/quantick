@@ -182,7 +182,6 @@ fn revision<P: AnalysisPort + ?Sized>(app: &P) -> (bool, Vec<AnalysisRevisionKey
 /// not show moves nothing, and one that comes or goes moves it.
 fn pane_revision(pane: &dyn AnalysisPane) -> PaneAnalysisRevisionKey {
     let drawings = pane.drawings();
-    let listed = listed_rows(drawings);
     PaneAnalysisRevisionKey {
         pane_id: pane.pane_id(),
         indicators: pane
@@ -204,44 +203,54 @@ fn pane_revision(pane: &dyn AnalysisPane) -> PaneAnalysisRevisionKey {
             })
             .collect(),
         layout: drawings.layout().map(|layout| layout.0),
-        drawings: listed
-            .iter()
-            .map(|&index| {
-                let drawing = &drawings.items()[index];
-                DrawingRevisionKey {
-                    id: drawing.id.0,
-                    flags: [
-                        drawing.locked,
-                        drawing.own_magnet(),
-                        drawing.hidden,
-                        drawing.name.is_some(),
-                        drawing.author.is_some(),
-                        drawing.foreign_market,
-                        drawing.off_series,
-                        drawing.all_timeframes(),
-                        drawing.in_all_windows(),
-                    ],
-                    layout: drawing.layout.map(|layout| layout.0),
-                }
-            })
-            .collect(),
+        drawings: {
+            let mut rows = Vec::with_capacity(drawings.shown_count());
+            rows.extend(
+                listed_rows(drawings).map(|index| drawing_revision(&drawings.items()[index])),
+            );
+            rows
+        },
         layer_hidden: drawings.all_hidden(),
-        selected_drawing: listed_selection(drawings, &listed),
+        selected_drawing: listed_selection(drawings),
+    }
+}
+
+/// One listed drawing's share of the revision key.
+fn drawing_revision(drawing: &Drawing<DrawingTool>) -> DrawingRevisionKey {
+    DrawingRevisionKey {
+        id: drawing.id.0,
+        flags: [
+            drawing.locked,
+            drawing.own_magnet(),
+            drawing.hidden,
+            drawing.name.is_some(),
+            drawing.author.is_some(),
+            drawing.foreign_market,
+            drawing.off_series,
+            drawing.all_timeframes(),
+            drawing.in_all_windows(),
+        ],
+        layout: drawing.layout.map(|layout| layout.0),
     }
 }
 
 /// The marks the pane's layout shows, the rows its object list has: a mark on
 /// all timeframes another layout owns is held here, not shown.
-fn listed_rows(drawings: &Drawings<DrawingTool>) -> Vec<usize> {
-    (0..drawings.items().len())
-        .filter(|&index| drawings.in_layout(index))
-        .collect()
+/// Walked, never collected: a capture reads it per pane.
+fn listed_rows(drawings: &Drawings<DrawingTool>) -> impl Iterator<Item = usize> + '_ {
+    (0..drawings.items().len()).filter(|&index| drawings.in_layout(index))
 }
 
 /// The listed row the selection sits on.
-fn listed_selection(drawings: &Drawings<DrawingTool>, listed: &[usize]) -> Option<usize> {
-    let selected = drawings.selected()?;
-    listed.iter().position(|&row| row == selected)
+fn listed_selection(drawings: &Drawings<DrawingTool>) -> Option<usize> {
+    let selected = drawings
+        .selected()
+        .filter(|&index| drawings.in_layout(index))?;
+    Some(
+        listed_rows(drawings)
+            .take_while(|&row| row < selected)
+            .count(),
+    )
 }
 
 /// The revision key's rows. Their only contract is [`Eq`]: they are never
@@ -402,19 +411,20 @@ fn drawings_snapshot<P: AnalysisPort + ?Sized>(app: &P) -> DrawingsSnapshot {
 /// The marks the pane's layout shows ([`listed_rows`]).
 fn pane_drawings(pane: &dyn AnalysisPane, side: PaneSideDto) -> PaneDrawingsSnapshot {
     let drawings = pane.drawings();
-    let shown = listed_rows(drawings);
+    let shown = drawings.shown_count();
     PaneDrawingsSnapshot {
         pane_id: WireU64::new(pane.pane_id()),
         side,
-        drawings: shown
-            .iter()
-            .take(CONTROL_SNAPSHOT_MAX_DRAWINGS_PER_PANE)
-            .map(|&index| drawing_snapshot(&drawings.items()[index]))
-            .collect(),
-        drawing_count: wire_usize(shown.len()),
-        drawings_truncated: shown.len() > CONTROL_SNAPSHOT_MAX_DRAWINGS_PER_PANE,
+        drawings: {
+            let mut rows = Vec::with_capacity(shown.min(CONTROL_SNAPSHOT_MAX_DRAWINGS_PER_PANE));
+            let listed = listed_rows(drawings).take(CONTROL_SNAPSHOT_MAX_DRAWINGS_PER_PANE);
+            rows.extend(listed.map(|index| drawing_snapshot(&drawings.items()[index])));
+            rows
+        },
+        drawing_count: wire_usize(shown),
+        drawings_truncated: shown > CONTROL_SNAPSHOT_MAX_DRAWINGS_PER_PANE,
         layer_hidden: drawings.all_hidden(),
-        selected_index: listed_selection(drawings, &shown).map(wire_usize),
+        selected_index: listed_selection(drawings).map(wire_usize),
     }
 }
 

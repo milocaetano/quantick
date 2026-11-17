@@ -29,9 +29,10 @@ fn cockpit(
     (directory, client)
 }
 
-/// `this_chart` pins the drawing to the bars its chart is cut to: a re-cut
-/// hides it and the way back restores it. Naming the scope it stands in is a
-/// no-op.
+/// `all_charts` with `all_windows` reaches the pane's marks on the layout the
+/// pane shows; `this_chart` pins the drawing to the bars its chart is cut to:
+/// a re-cut hides it and the way back restores it. Naming the scope it stands
+/// in is a no-op.
 #[test]
 fn a_drawing_is_kept_to_its_chart_by_a_named_call() {
     let ctx = egui::Context::default();
@@ -41,6 +42,14 @@ fn a_drawing_is_kept_to_its_chart_by_a_named_call() {
     run_frame(&mut app, &ctx);
     let (directory, mut client) = cockpit(&mut app, &ctx, "drawing-scope-control");
     let drawn_at = *app.active_tab().flow_pane.series.state.spec();
+
+    let mut wide = scope_call(&app, 0, "all_charts");
+    wide["all_windows"] = json!(true);
+    let (shared, _) = unkeyed_call(&mut app, &mut client, CAPABILITY, wide);
+    let result = success_result(&shared);
+    assert_eq!(result["all_windows"], json!(true));
+    let layout = app.layout_state().focused_pane_layout();
+    assert_eq!(result["layout_id"], json!(layout.0.to_string()));
 
     let call = scope_call(&app, 0, "this_chart");
     let (kept, _) = unkeyed_call(&mut app, &mut client, CAPABILITY, call.clone());

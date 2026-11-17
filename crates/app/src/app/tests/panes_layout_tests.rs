@@ -2152,6 +2152,35 @@ fn the_status_bar_follows_the_focused_pane() {
     assert_eq!(flow_status.venue, time_status.venue);
 }
 
+/// Each pane's marks learn the layout it shows: a mark on all timeframes
+/// placed on the time pane stays off the flow pane, which shows another
+/// layout, until the inspector's All windows reaches the time pane's store.
+#[test]
+fn a_mark_shows_on_a_pane_of_another_layout_only_with_all_windows_on() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = split_app(&ctx, 200);
+    let time = PaneSide::Time(0);
+    let point = pane_point(&app, time);
+    click_chart(&mut app, &ctx, point);
+    app.layout_adapter()
+        .create_layout(Some("levels"))
+        .expect("second");
+    place_level(&mut app, time, 100.0);
+    set_scope_on(&mut app, time, drawings::DrawingScope::AllCharts);
+    run_frame(&mut app, &ctx);
+    let shown = |app: &QuantickApp| app.active_tab().pane(PaneSide::Flow).drawings.shown_count();
+    assert_eq!(shown(&app), 0, "the flow pane shows another layout");
+
+    app.active_tab_mut().pane_mut(time).drawings.select(Some(0));
+    let ask = crate::surfaces::drawing_chrome::DrawingChromeAsk {
+        toggle_selected_all_windows: true,
+        ..Default::default()
+    };
+    app.resolve_drawing_response(ask, std::time::Instant::now());
+    run_frame(&mut app, &ctx);
+    assert_eq!(shown(&app), 1, "All windows reached the store");
+}
+
 /// Each pane shows its own layout: creating a layout on the focused pane
 /// changes that pane alone, an edit reaches only the panes on the same
 /// layout, and a pane that opens inherits the focused pane's layout.

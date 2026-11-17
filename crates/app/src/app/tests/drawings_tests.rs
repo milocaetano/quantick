@@ -3564,15 +3564,15 @@ fn the_context_bar_shares_a_drawing_across_charts_in_one_click() {
         .expect("a shareable drawing renders the all-charts button");
     assert_eq!(
         app.active_tab().flow_pane.drawings.items()[0].scope,
-        drawings::DrawingScope::AllCharts,
-        "a new drawing shows on all timeframes"
+        drawings::DrawingScope::ThisChart,
+        "a new drawing is kept to its chart"
     );
     click_chart(&mut app, &ctx, sharing.center());
     run_frame(&mut app, &ctx);
 
     assert_eq!(
         app.active_tab().flow_pane.drawings.items()[0].scope,
-        drawings::DrawingScope::ThisChart
+        drawings::DrawingScope::AllCharts
     );
     assert!(
         !app.surfaces.drawing_chrome.inspector_open(),
@@ -3589,7 +3589,7 @@ fn the_context_bar_shares_a_drawing_across_charts_in_one_click() {
     run_frame(&mut app, &ctx);
     assert_eq!(
         app.active_tab().flow_pane.drawings.items()[0].scope,
-        drawings::DrawingScope::AllCharts
+        drawings::DrawingScope::ThisChart
     );
 }
 
@@ -4202,10 +4202,16 @@ fn an_edit_on_the_flow_chart_leaves_the_context_charts_undo() {
     set_scope_on(
         &mut app,
         PaneSide::Time(0),
+        drawings::DrawingScope::AllCharts,
+    );
+    set_scope_on(
+        &mut app,
+        PaneSide::Time(0),
         drawings::DrawingScope::ThisChart,
     );
     run_frame(&mut app, &ctx);
     place_level(&mut app, PaneSide::Flow, 50.0);
+    set_scope_on(&mut app, PaneSide::Flow, drawings::DrawingScope::AllCharts);
     run_frame(&mut app, &ctx);
     assert_eq!(drawings_on(&app, PaneSide::Time(0)), vec![50.0, 100.0]);
 
@@ -4264,6 +4270,7 @@ fn a_strategy_on_a_chart_only_mark_keeps_naming_it_when_another_chart_draws() {
     let drawing = armed_rectangle(&mut app, PaneSide::Time(0));
     run_frame(&mut app, &ctx);
     place_level(&mut app, PaneSide::Flow, 50.0);
+    set_scope_on(&mut app, PaneSide::Flow, drawings::DrawingScope::AllCharts);
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
 
@@ -4280,13 +4287,18 @@ fn a_strategy_on_a_chart_only_mark_keeps_naming_it_when_another_chart_draws() {
     );
 }
 
-/// A level is a level on every timeframe: drawn on one chart, it stays on it
-/// when that chart is cut to other bars, and on the flow chart beside it.
+/// A level on all timeframes: drawn on one chart, it stays on it when that
+/// chart is cut to other bars, and on the flow chart beside it.
 #[test]
 fn a_level_drawn_on_one_timeframe_stays_on_every_other() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = split_app(&ctx, 200);
     place_level(&mut app, PaneSide::Time(0), 100.0);
+    set_scope_on(
+        &mut app,
+        PaneSide::Time(0),
+        drawings::DrawingScope::AllCharts,
+    );
     run_frame(&mut app, &ctx);
     assert_eq!(drawings_on(&app, PaneSide::Flow), vec![100.0]);
 
@@ -4653,12 +4665,10 @@ fn drawings_stay_with_their_market_when_the_layout_changes() {
     );
     app.layout_adapter().switch_layout(second).expect("forth");
     assert_eq!(drawings_on(&app, PaneSide::Time(0)), vec![100.0, 200.0]);
-    let key = crate::layouts::DrawingKey::all_timeframes(
-        quantick_workspace::market_settings::MarketKey {
-            venue: "binance".to_owned(),
-            asset: "TESTUSDT".to_owned(),
-        },
-    );
+    let key = (app.active_tab().pane(PaneSide::Time(0)).layout)
+        .drawings_key
+        .clone()
+        .expect("the pane holds a key");
     assert_eq!(
         app.runtime
             .workspace
@@ -4668,7 +4678,7 @@ fn drawings_stay_with_their_market_when_the_layout_changes() {
             .drawings(&key)
             .len(),
         2,
-        "the market store holds them once, for every chart of the market"
+        "the market store holds them once, under the chart they were drawn on"
     );
 }
 

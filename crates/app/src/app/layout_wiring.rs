@@ -126,9 +126,7 @@ impl<'a> LayoutRead<'a> {
             .by_id(tab)
             .and_then(|tab| tab.pane_at(side.index()))
             .and_then(ChartPane::layout_id);
-        self.session
-            .book()
-            .strip_layout(self.session.resolve_layout(named))
+        self.session.strip_layout_of(named)
     }
     pub(crate) fn focused_pane_layout(&self) -> LayoutId {
         let tab_id = self.tabs.id_at(self.active);
@@ -466,8 +464,10 @@ impl LayoutAdapter<'_> {
         if !selection.changed() {
             return Ok(false);
         }
-        // Onto the tab's copy now, so an edit before the next frame is the tab's.
+        // Onto the tab's copy now, so an edit before the next frame is the tab's,
+        // and its marks shown for the layout it shows now.
         self.own_indicator_copies();
+        self.follow_quiet_recuts();
         let from = selection.from();
         tracing::info!(
             target: "quantick::app",
@@ -560,6 +560,7 @@ impl LayoutAdapter<'_> {
             .tabs
             .iter()
             .flat_map(|tab| tab.panes().map(|(pane, _)| (pane.id, facts_of(pane))));
+        let to = self.store.session().delete_successor(id)?;
         let selections = self.store.session().plan_delete(id, facts)?;
         for selection in selections {
             let (tab, side) = self
@@ -568,6 +569,12 @@ impl LayoutAdapter<'_> {
             self.switch_pane_layout(tab, side, selection.to())?;
         }
         self.store.session_mut().finish_delete(id)?;
+        // Its marks follow its panes, so none is left on a layout nothing shows.
+        let panes = self.tabs.iter_mut().flat_map(|tab| tab.panes_mut());
+        let settings = self.store.market_mut().settings_mut();
+        if quantick_drawings::retarget_layout(settings, id, to, panes.map(marks_of)) {
+            self.mark_market_dirty();
+        }
         self.mark_layouts_dirty();
         Ok(())
     }
@@ -960,10 +967,13 @@ impl LayoutAdapter<'_> {
         }
     }
 
-    /// Each frame before a write: `quantick_drawings::PaneMarks::follow_store`.
+    /// Each frame before a write: `quantick_drawings::PaneMarks::follow_store`,
+    /// and each pane's marks told the strip layout it shows.
     fn follow_quiet_recuts(&mut self) {
-        let store = self.store.market();
+        let (store, session) = (self.store.market(), self.store.session());
         for pane in self.tabs.iter_mut().flat_map(|tab| tab.panes_mut()) {
+            let layout = session.strip_layout_of(pane.layout_id());
+            pane.drawings.set_layout(Some(layout));
             marks_of(pane).follow_store(store);
         }
     }

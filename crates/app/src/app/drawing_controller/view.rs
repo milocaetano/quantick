@@ -153,6 +153,7 @@ impl DrawingControllerAccess<'_> {
             .items()
             .iter()
             .enumerate()
+            .filter(|(index, _)| store.in_layout(*index))
             .map(|(index, drawing)| {
                 crate::surfaces::drawing_chrome::ManagerRow::of(
                     index,

@@ -238,9 +238,9 @@ pub struct DrawingSnapshot {
     /// Whether every chart of its market shows it whatever layout it shows
     /// ("All windows"): only for `all_charts`, and true for one saved before
     /// drawings recorded their layout. A pane lists only the drawings its
-    /// layout shows. Optional in the schema only so v1 readers stay
-    /// compatible.
-    #[serde(default)]
+    /// layout shows. Written only when true; optional in the schema so v1
+    /// readers stay compatible.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub all_windows: bool,
     /// The strip layout it belongs to, the `layout_id` the layout-tab calls
     /// name; absent for one saved before drawings recorded their layout.

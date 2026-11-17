@@ -43,10 +43,12 @@ pub(super) fn body(
     actions.delete |= intent.delete;
 
     ObjectNotes::of(edited).show(ui);
-    actions.edited |= ScopeToggle {
-        edited: &mut *edited,
-    }
-    .show(ui);
+    actions.merge(
+        ScopeToggle {
+            edited: &mut *edited,
+        }
+        .show(ui),
+    );
     if chrome.shared.delete_confirm && locked {
         actions.merge(DeleteConfirm.show(ui));
     }
@@ -141,13 +143,13 @@ struct ScopeToggle<'a> {
 }
 
 impl ScopeToggle<'_> {
-    /// Returns whether the scope changed.
-    fn show(self, ui: &mut egui::Ui) -> bool {
+    /// Reports a changed scope as an edit, and the "All windows" switch.
+    fn show(self, ui: &mut egui::Ui) -> InspectorActions {
         let palette = theme::get(ui.ctx());
         let edited = self.edited;
         let shareable = edited.shareable();
         let mut shared = edited.all_timeframes();
-        let mut changed = false;
+        let mut actions = InspectorActions::default();
         ui.separator();
         let sharing = ui.add_enabled(
             shareable,
@@ -159,11 +161,11 @@ impl ScopeToggle<'_> {
             } else {
                 drawings::DrawingScope::ThisChart
             });
-            changed = true;
+            actions.edited = true;
         }
         // A disabled control with no reason reads as a bug.
         let sharing_hint = if shareable {
-            "Every chart of this market draws it, at any timeframe, at the same moment"
+            "Every chart of this market showing this layout draws it, at any timeframe, at the same moment"
         } else {
             "This drawing has an anchor past the newest bar, so there is no market time to place          it by on another chart"
         };
@@ -175,7 +177,17 @@ impl ScopeToggle<'_> {
                     .color(palette.text_support()),
             );
         }
-        changed
+        let all_timeframes = edited.all_timeframes();
+        let mut everywhere = edited.in_all_windows();
+        let windows = ui.add_enabled(
+            all_timeframes,
+            egui::Checkbox::new(&mut everywhere, "All windows"),
+        );
+        actions.toggle_all_windows = windows.changed();
+        windows
+            .on_hover_text("Every chart of this market draws it, whatever layout it shows")
+            .on_disabled_hover_text("Turn on Show on all timeframes to show it in all windows");
+        actions
     }
 }
 

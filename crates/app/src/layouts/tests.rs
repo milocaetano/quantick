@@ -21,6 +21,8 @@ fn level(price: f64) -> SavedDrawing {
         hidden: false,
         magnet: false,
         shared: false,
+        layout: None,
+        all_windows: false,
         payload: None,
         text: None,
         id: None,

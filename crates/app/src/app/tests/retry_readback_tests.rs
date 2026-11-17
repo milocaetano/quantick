@@ -1277,7 +1277,7 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
                     "tab_id": app.runtime.tabs.active_id().to_string(),
                     "pane_id": pane.id.to_string(),
                     "drawing_id": pane.drawings.items().last().unwrap().id.0.to_string(),
-                    "scope": "this_chart",
+                    "scope": "all_charts",
                 })
             }
             "desk.export" | "desk.import" => {

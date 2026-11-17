@@ -5,7 +5,7 @@
       "oneOf": [
         {
           "const": "all_charts",
-          "description": "Every chart of the drawing's market, at any timeframe.",
+          "description": "Every chart of the drawing's market showing its layout, at any\ntimeframe; with `all_windows`, every chart of its market.",
           "type": "string"
         },
         {
@@ -23,6 +23,13 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "properties": {
+    "all_windows": {
+      "description": "Whether every chart of its market shows it too, whatever layout that\nchart shows; only with `all_charts`. Absent leaves it as it stands.",
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
     "drawing_id": {
       "$ref": "#/$defs/WireU64",
       "description": "The drawing, by the `drawing_id` `analysis.drawings` lists."

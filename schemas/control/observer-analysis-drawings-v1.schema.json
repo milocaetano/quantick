@@ -77,6 +77,10 @@
     },
     "DrawingSnapshot": {
       "properties": {
+        "all_windows": {
+          "description": "Whether every chart of its market shows it whatever layout it shows\n(\"All windows\"): only for `all_charts`, and true for one saved before\ndrawings recorded their layout. A pane lists only the drawings its\nlayout shows. Written only when true; optional in the schema so v1\nreaders stay compatible.",
+          "type": "boolean"
+        },
         "anchor_count": {
           "$ref": "#/$defs/WireU64"
         },
@@ -119,6 +123,17 @@
           "description": "This object's own eye. It is not the whole answer to \"is it on screen\":\nthe pane's `layer_hidden` above hides every object regardless.",
           "type": "boolean"
         },
+        "layout_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WireU64"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The strip layout it belongs to, the `layout_id` the layout-tab calls\nname; absent for one saved before drawings recorded their layout."
+        },
         "locked": {
           "type": "boolean"
         },
@@ -144,7 +159,7 @@
           "description": "The layout and contract a migration merged this object from, when one\ndid. A merged market is labelled, never passed off as one history.\nOptional in the schema only so v1 readers stay compatible."
         },
         "scope": {
-          "description": "`all_charts` (the default) when every chart of its market shows it at\nany timeframe; `this_chart` when only its own chart does, at the bars\nit was kept to.",
+          "description": "`all_charts` when every chart of its market showing its layout shows\nit at any timeframe; `this_chart` (a new drawing's default) when only\nits own chart does, at the bars it was kept to.",
           "type": "string"
         },
         "tool_id": {

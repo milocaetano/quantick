@@ -309,6 +309,9 @@ impl DrawingControllerAccess<'_> {
         if ask.toggle_selected_locked {
             host.update(DrawingIntent::ToggleLockSelected);
         }
+        if ask.toggle_selected_all_windows {
+            host.update(DrawingIntent::ToggleAllWindowsSelected);
+        }
         if ask.request_delete {
             self.request_delete_selected(host, effects, now);
         }

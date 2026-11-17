@@ -206,6 +206,7 @@ pub(super) fn object_facts(drawings: &Drawings, indicators: &IndicatorViews) -> 
         .items()
         .iter()
         .enumerate()
+        .filter(|(index, _)| drawings.in_layout(*index))
         .map(|(index, drawing)| {
             let row = crate::surfaces::drawing_chrome::ManagerRow::of(
                 index,
