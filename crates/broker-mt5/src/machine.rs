@@ -86,15 +86,8 @@ pub struct BrokerConfig {
     pub session_tag: String,
 }
 
-/// Whether the execution channel is up.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LinkState {
-    /// No bridge has said hello yet.
-    NeverConnected,
-    Up,
-    /// It was up and dropped. Reads are the last known state, stale.
-    Lost,
-}
+/// Whether the execution channel is up: the venue-neutral state.
+pub use quantick_trading::broker::LinkState;
 
 /// A position on the symbol that carries another magic.
 #[derive(Debug, Clone, PartialEq, Eq)]

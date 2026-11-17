@@ -45,6 +45,7 @@ use super::FeedNotice;
 
 mod autostart;
 use autostart::{Action, Autostart};
+pub mod exec;
 
 /// How long the autostart waits for a bridge that is already running before
 /// launching its own. Long enough for an attached Expert Advisor's reconnect

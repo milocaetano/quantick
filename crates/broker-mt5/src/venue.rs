@@ -3,8 +3,8 @@
 
 use quantick_engine::Trade;
 use quantick_trading::{
-    Bracket, BracketTarget, CloseAmount, ClosedTrade, Order, OrderId, OrderIntent, Position,
-    TradingVenue, VenueEvent,
+    Bracket, BracketTarget, BrokerVenue, CloseAmount, ClosedTrade, Order, OrderId, OrderIntent,
+    Position, TradingVenue, VenueEvent,
 };
 use rust_decimal::Decimal;
 
@@ -186,5 +186,46 @@ impl TradingVenue for Mt5Venue {
 
     fn realized_points(&self) -> Decimal {
         self.core.realized_points()
+    }
+}
+
+/// The reads the account that routes orders needs, in the venue-neutral
+/// vocabulary: it never names this crate.
+impl BrokerVenue for Mt5Venue {
+    fn poll(&mut self) -> Vec<VenueEvent> {
+        Mt5Venue::poll(self)
+    }
+
+    fn set_symbol(&mut self, symbol: &str) -> Vec<VenueEvent> {
+        Mt5Venue::set_symbol(self, symbol)
+    }
+
+    fn account(&self) -> Option<&AccountFacts> {
+        self.core.account()
+    }
+
+    fn link_state(&self) -> LinkState {
+        self.core.link_state()
+    }
+
+    fn entry_block(&self) -> Option<&'static str> {
+        self.core.entry_block()
+    }
+
+    fn foreign_counts(&self) -> (usize, usize) {
+        let foreign = self.core.foreign_exposure();
+        (foreign.positions.len(), foreign.orders.len())
+    }
+
+    fn order_ref(&self, id: OrderId) -> Option<u64> {
+        self.core.ticket(id)
+    }
+
+    fn position_ref(&self) -> Option<u64> {
+        self.core.position_ticket()
+    }
+
+    fn is_acknowledged(&self, id: OrderId) -> bool {
+        self.core.is_acknowledged(id)
     }
 }

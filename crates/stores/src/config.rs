@@ -1480,6 +1480,7 @@ mod tests {
                 open_interest: false,
                 funding: false,
                 spot_perp_pair: false,
+                order_routing: false,
             }
         );
         assert_eq!(config.side_note("hyperliquid"), None);

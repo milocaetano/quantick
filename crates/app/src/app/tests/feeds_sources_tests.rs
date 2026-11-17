@@ -2087,6 +2087,7 @@ fn a_run_stops_the_moment_the_venue_says_its_record_ends() {
         open_interest: false,
         funding: false,
         spot_perp_pair: false,
+        order_routing: false,
     });
     let mut app = QuantickApp::new(
         test_config(),

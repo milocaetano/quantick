@@ -123,6 +123,7 @@ impl ProviderKind {
                 open_interest: false,
                 funding: false,
                 spot_perp_pair: false,
+                order_routing: false,
             },
             // `recentTrades` is a short recovery window, not a pageable
             // historical API. Trades and the visible 20-level book are factual;
@@ -148,6 +149,7 @@ impl ProviderKind {
                 open_interest: false,
                 funding: false,
                 spot_perp_pair: false,
+                order_routing: false,
             },
             // The bridge streams the terminal's Depth of Market. Whether a
             // given session really has one (symbol, account, EA version) is
@@ -177,6 +179,7 @@ impl ProviderKind {
                 open_interest: false,
                 funding: false,
                 spot_perp_pair: false,
+                order_routing: true,
             },
         }
     }
@@ -304,6 +307,12 @@ pub struct FeedCapabilities {
     /// Streams the same asset's spot and perpetual tapes side by side, for
     /// the Spot vs Perp CVD pane. No provider does yet.
     pub spot_perp_pair: bool,
+    /// Orders placed on this chart can route to the broker account the
+    /// source's own terminal is logged into. Only a live MetaTrader feed:
+    /// a recording has no broker behind it, and a crypto venue's prints are
+    /// not the market a MetaTrader account trades. Every broker route locks
+    /// on the simulator where this is false.
+    pub order_routing: bool,
 }
 
 /// Where a feed's pageable trade history ends, labelled rather than left
@@ -415,6 +424,7 @@ impl FeedCapabilities {
             open_interest: false,
             funding: false,
             spot_perp_pair: false,
+            order_routing: false,
         }
     }
 

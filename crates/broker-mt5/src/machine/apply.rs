@@ -12,7 +12,7 @@ use super::{
     BrokerCore, ForeignExposure, ForeignOrder, ForeignPosition, LinkState, NOT_NETTING, Pending,
     accepted,
 };
-use crate::account::AccountFacts;
+use crate::account::facts_from_line;
 use crate::wire::{
     self, ClosedOrderLine, DealLine, EXEC_SCHEMA_VERSION, Inbound, OrderLine, PositionLine, Reply,
     Request, State,
@@ -237,7 +237,7 @@ impl BrokerCore {
             self.account = None;
             return;
         };
-        let facts = AccountFacts::from_line(line);
+        let facts = facts_from_line(line);
         let changed = self
             .known_account
             .as_ref()

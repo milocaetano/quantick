@@ -747,6 +747,7 @@ fn a_capability_that_rises_later_is_asked_again() {
         open_interest: false,
         funding: false,
         spot_perp_pair: false,
+        order_routing: false,
     });
     let mut app = QuantickApp::new(
         test_config(),
@@ -839,6 +840,7 @@ fn a_new_candle_generation_is_asked_for_again_and_installed() {
         open_interest: false,
         funding: false,
         spot_perp_pair: false,
+        order_routing: false,
     });
     let mut app = QuantickApp::new(
         test_config(),

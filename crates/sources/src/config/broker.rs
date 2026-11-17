@@ -37,6 +37,12 @@ pub struct MetaTraderBrokerSettings {
     /// Whether agents (the control plane, MCP) may place broker orders.
     /// Off by default; even on, an agent can never arm a broker route.
     pub allow_agent_orders: bool,
+    /// The execution bridge to launch when a broker route is first asked
+    /// for, as program plus arguments; `--port` (and `--symbol`) are
+    /// appended from the running app. Resolved and launched the way the
+    /// tick bridge's `bridge_command` is. Empty starts nothing: the trader
+    /// runs the bridge by hand.
+    pub exec_bridge_command: Vec<String>,
 }
 
 /// The largest slippage the config accepts, in points. Past this a market
@@ -51,6 +57,10 @@ impl Default for MetaTraderBrokerSettings {
             magic: 7_710_001,
             deviation_points: 10,
             allow_agent_orders: false,
+            exec_bridge_command: vec![
+                "python".to_string(),
+                "bridge/mt5/quantick_bridge_exec.py".to_string(),
+            ],
         }
     }
 }

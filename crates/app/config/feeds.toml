@@ -304,6 +304,16 @@ US30 = 9103
 #   deviation_points   — slippage a market order accepts, in points.
 #   allow_agent_orders — let agents (control plane, MCP) place broker orders.
 #                        Default false. Agents can never arm a broker route.
+#   exec_bridge_command — the execution bridge quantick launches the first
+#                        time the Account list opens, like the tick bridge's
+#                        bridge_command; --port and --symbol are appended.
+#                        [] launches nothing (run the bridge by hand).
+#
+# A REAL account arms only by holding its row in the Trading panel for about
+# a second; a DEMO account and the way back to the simulator are one click.
+# Every route disarms to the simulator on restart, a lost link, a terminal
+# logged into another account, or a chart whose source cannot route orders.
+# Broker round trips are journaled in `real-trades`, beside the paper folder.
 #
 # Stops and targets are the broker's own SL/TP on the position or the pending
 # order; a hedging account is refused; a symbol switch closes nothing.
@@ -313,6 +323,7 @@ exec_port = 9180
 magic = 7710001
 deviation_points = 10
 allow_agent_orders = false
+exec_bridge_command = ["python", "bridge/mt5/quantick_bridge_exec.py"]
 
 # ---------------------------------------------------------------------------
 # Paper trading.
