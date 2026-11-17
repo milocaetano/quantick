@@ -15,6 +15,7 @@
 //! out; the write side is [`SharedMarksMut`], the owning pane's store beside
 //! the projection its instants resolve through. Neither holds the pane.
 
+use quantick_workspace::layout_document::LayoutId;
 use smallvec::SmallVec;
 
 use super::band::{self, Band};
@@ -181,7 +182,8 @@ impl DrawingProjection<'_> {
     /// What a pointer at `pos` grabs among `source`'s shared marks in `band`
     /// (the band the pointer is in): a handle anywhere first, then the
     /// topmost body — the same order, and the same primitives, this pane
-    /// uses on its own objects.
+    /// uses on its own objects. Only marks this pane, showing layout
+    /// `viewer`, shows ([`Marks::lent_to`]).
     ///
     /// The window runs it on the projection cached by the last frame, which
     /// is the geometry the trader was looking at when they pressed (§D8: no
@@ -192,18 +194,15 @@ impl DrawingProjection<'_> {
     #[must_use]
     pub fn shared_pick_in(
         &self,
-        source: &Marks,
+        (source, viewer): (&Marks, Option<LayoutId>),
         pos: Px,
         band: &Band,
         (history_right, total): (f32, usize),
     ) -> Option<(usize, Option<usize>)> {
         let scale = band.scale?;
         let mut body = None;
-        for (index, drawing) in source.items().iter().enumerate().rev() {
-            if !drawing.shared()
-                || !source.is_visible(index)
-                || !band::drawing_in_band(drawing, band)
-            {
+        for (index, drawing) in source.lent_to(viewer).rev() {
+            if !band::drawing_in_band(drawing, band) {
                 continue;
             }
             let Some((anchors, _)) = self.reproject(drawing) else {
@@ -265,7 +264,8 @@ impl DrawingProjection<'_> {
 
     /// The scenes of the shared drawings that live on `source`, re-expressed
     /// on this pane (`docs/ux/drawing-tools-2026-08.md` §D7), each handed to
-    /// `paint` with the band rect it clips to.
+    /// `paint` with the band rect it clips to: the ones this pane, showing
+    /// layout `viewer`, shows ([`Marks::lent_to`]).
     ///
     /// The two panes cut the same trades into different bars, so a bar index
     /// means nothing across them — the market timestamp each anchor captured
@@ -282,16 +282,13 @@ impl DrawingProjection<'_> {
     /// `ThisChart` default every object opens with.
     pub fn shared_scenes(
         &self,
-        source: SharedSource<'_>,
+        (source, viewer): (SharedSource<'_>, Option<LayoutId>),
         bands: &[Band],
         (history_right, total): (f32, usize),
         (text, appearance): (&dyn TextMetrics, &quantick_appearance::ResolvedTheme),
         paint: &mut dyn FnMut(PxRect, &MarkScene),
     ) {
-        for (index, drawing) in source.drawings.items().iter().enumerate() {
-            if !drawing.shared() || !source.drawings.is_visible(index) {
-                continue;
-            }
+        for (index, drawing) in source.drawings.lent_to(viewer) {
             let Some((anchors, clamped)) = self.reproject(drawing) else {
                 continue;
             };

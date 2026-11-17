@@ -231,13 +231,16 @@ fn a_drawing_call_moves_only_the_named_panes_drawing_when_ids_collide() {
 fn the_scope_call_answers_a_repeat_as_no_change() {
     let ((mut window, id), actor) = (window(), FakeWindow::assistant());
     let mut access = FakeAccess::with_budget(0);
-    let input =
-        json!({"tab_id": "1", "pane_id": "2", "drawing_id": id.to_string(), "scope": "this_chart"});
+    let mut input =
+        json!({"tab_id": "1", "pane_id": "2", "drawing_id": id.to_string(), "scope": "all_charts"});
+    let wide = scope(&mut window, &mut access, &actor, &input).unwrap();
+    assert_eq!(wide["changed"], true, "a new drawing starts on this chart");
+    input["scope"] = json!("this_chart");
     let first = scope(&mut window, &mut access, &actor, &input).unwrap();
     assert_eq!(first["scope"], "this_chart");
     assert_eq!(first["changed"], true);
     let again = scope(&mut window, &mut access, &actor, &input).unwrap();
     assert_eq!(again["changed"], false, "a repeat");
     assert_eq!(again["pinned_bars"], "tick:50");
-    assert_eq!(access.events.len(), 2);
+    assert_eq!(access.events.len(), 3);
 }

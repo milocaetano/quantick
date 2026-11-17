@@ -150,3 +150,23 @@ fn text_repeat_copies_style_without_words_and_is_one_undo_step() {
     );
     assert_eq!(pane.drawings.items().len(), 2);
 }
+
+/// A note the pane holds for merges and its layout does not show is not the
+/// pane's to edit or read back: the store's shown lookup refuses its id.
+#[test]
+fn text_refuses_a_note_the_panes_layout_does_not_show() {
+    use quantick_workspace::layout_document::LayoutId;
+    let (mut pane, target) = note();
+    pane.drawings.items_mut()[0].set_all_timeframes(true);
+    pane.drawings.items_mut()[0].layout = Some(LayoutId(1));
+    pane.drawings.set_layout(Some(LayoutId(2)));
+    let input = SetInput {
+        target,
+        properties: None,
+        text: Some("words".into()),
+        anchor: None,
+    };
+    assert!(set(&mut pane, &input).is_err());
+    pane.drawings.set_layout(Some(LayoutId(1)));
+    assert!(set(&mut pane, &input).unwrap().changed, "shown: editable");
+}

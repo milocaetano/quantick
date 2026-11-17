@@ -69,7 +69,7 @@ pub(super) fn draw_drawing_rail(
     let tab = tabs.runtime_mut(tabs.active_index());
     let drawings = &mut tab.pane_mut(side).drawings;
     surfaces.toolrail.update(Intent::Observe(Facts {
-        count: drawings.items().len(),
+        count: drawings.shown_count(),
         draft: drawings.draft().is_some(),
         draft_len: drawings.draft_len(),
         all_hidden: drawings.all_hidden(),

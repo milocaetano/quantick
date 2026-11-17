@@ -2097,9 +2097,10 @@ fn observer_per_scope_capture_cost() {
 /// more tokens, about 200 bytes. No Linux reading of that tree yet, and Linux
 /// has read a few bytes apart before, so the byte ceiling sits about 3.5%
 /// above the Windows reading: room for a few more tokens, not for a new
-/// scope.
+/// scope. 1349 allocations, 90028 bytes on Windows once each drawing row
+/// named its layout and All windows (forty rows on the fixture).
 const CORE_CAPTURE_MAX_ALLOCS: u64 = 1480;
-const CORE_CAPTURE_MAX_ALLOC_BYTES: u64 = 89800;
+const CORE_CAPTURE_MAX_ALLOC_BYTES: u64 = 93200;
 
 #[test]
 fn observer_core_capture_stays_within_the_ui_budget() {
@@ -3950,7 +3951,7 @@ fn observer_resolves_mirrored_drawings_without_leaking_user_text() {
     flow.drawings
         .selected_mut()
         .expect("selected drawing")
-        .scope = drawings::DrawingScope::AllCharts;
+        .scope = DrawingScope::AllCharts;
     app.active_tab_mut().link.notice = FeedNotice::attention(CANARY, CANARY);
     run_frame(&mut app, &ctx);
 

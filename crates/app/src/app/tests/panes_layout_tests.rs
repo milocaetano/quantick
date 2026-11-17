@@ -824,10 +824,10 @@ fn unsharing_removes_the_copy_from_the_other_pane() {
         .drawings
         .selected_mut()
         .expect("selected")
-        .scope = drawings::DrawingScope::AllCharts;
+        .scope = DrawingScope::AllCharts;
     let shared = drawing_strokes(&run_frame(&mut app, &ctx));
 
-    set_scope_on(&mut app, PaneSide::Flow, drawings::DrawingScope::ThisChart);
+    set_scope_on(&mut app, PaneSide::Flow, DrawingScope::ThisChart);
     let alone = drawing_strokes(&run_frame(&mut app, &ctx));
     assert!(
         alone < shared,
@@ -2094,7 +2094,7 @@ fn the_keyboard_deletes_from_the_focused_pane() {
             .arm(Tool::Drawing(drawing_tool("horizontal-line")));
         let point = pane_point(&app, side);
         click_chart(&mut app, &ctx, point);
-        set_scope_on(&mut app, side, drawings::DrawingScope::ThisChart);
+        set_scope_on(&mut app, side, DrawingScope::ThisChart);
     }
     run_frame(&mut app, &ctx);
     assert_eq!(app.active_tab().flow_pane.drawings.items().len(), 1);
@@ -2150,6 +2150,64 @@ fn the_status_bar_follows_the_focused_pane() {
     // Provenance is the market's and never moves with focus.
     assert_eq!(flow_status.symbol, time_status.symbol);
     assert_eq!(flow_status.venue, time_status.venue);
+}
+
+/// Each pane's marks learn the layout it shows: a mark on all timeframes
+/// placed on the time pane stays off the flow pane, which shows another
+/// layout, until the inspector's All windows reaches the time pane's store.
+#[test]
+fn a_mark_shows_on_a_pane_of_another_layout_only_with_all_windows_on() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = split_app(&ctx, 200);
+    let time = PaneSide::Time(0);
+    let point = pane_point(&app, time);
+    click_chart(&mut app, &ctx, point);
+    app.layout_adapter()
+        .create_layout(Some("levels"))
+        .expect("second");
+    place_level(&mut app, time, 100.0);
+    set_scope_on(&mut app, time, DrawingScope::AllCharts);
+    run_frame(&mut app, &ctx);
+    let shown = |app: &QuantickApp| app.active_tab().pane(PaneSide::Flow).drawings.shown_count();
+    assert_eq!(shown(&app), 0, "the flow pane shows another layout");
+
+    app.active_tab_mut().pane_mut(time).drawings.select(Some(0));
+    let ask = crate::surfaces::drawing_chrome::DrawingChromeAsk {
+        toggle_selected: quantick_ui_model::drawing_chrome::SelectionToggles {
+            all_windows: true,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    app.resolve_drawing_response(ask, std::time::Instant::now());
+    run_frame(&mut app, &ctx);
+    assert_eq!(shown(&app), 1, "All windows reached the store");
+}
+
+/// Deleting the layout a pane shows moves the pane and its marks together,
+/// so the mark selected there stays selected: the marks follow once the
+/// layout is gone, and take back the selection the switch let go of.
+#[test]
+fn deleting_a_panes_layout_keeps_the_mark_it_has_selected() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = split_app(&ctx, 200);
+    let time = PaneSide::Time(0);
+    let point = pane_point(&app, time);
+    click_chart(&mut app, &ctx, point);
+    let levels = app
+        .layout_adapter()
+        .create_layout(Some("levels"))
+        .expect("second");
+    place_level(&mut app, time, 100.0);
+    set_scope_on(&mut app, time, DrawingScope::AllCharts);
+    run_frame(&mut app, &ctx);
+    app.active_tab_mut().pane_mut(time).drawings.select(Some(0));
+
+    app.layout_adapter().delete_layout(levels).expect("deleted");
+    run_frame(&mut app, &ctx);
+    let drawings = &app.active_tab().pane(time).drawings;
+    assert_eq!(drawings.selected(), Some(0), "the selection held");
+    assert_ne!(drawings.items()[0].layout, Some(levels));
 }
 
 /// Each pane shows its own layout: creating a layout on the focused pane

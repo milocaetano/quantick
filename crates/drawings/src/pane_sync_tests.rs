@@ -1,9 +1,10 @@
 //! Panes of one market sharing its all-timeframes marks through the store.
 use super::*;
 use crate::{ChartPoint, DRAWING_TOOLS, DrawingScope};
-use quantick_workspace::layout_document::SavedDrawing;
+use quantick_workspace::layout_document::{LayoutBook, SavedDrawing};
 use quantick_workspace::market_settings::{DrawingKey, MarketSettings};
 use quantick_workspace::market_settings_store::MarketSettingsStore;
+use quantick_workspace::session::LayoutSession;
 use std::path::PathBuf;
 
 const T0: i64 = 1_700_000_000_000;
@@ -15,12 +16,14 @@ fn tool(id: &str) -> DrawingTool {
         .expect("registered test tool")
 }
 
+/// A dated level, turned on all timeframes.
 fn level_at(drawings: &mut Drawings<DrawingTool>, bar: f32, price: f64) {
     let time = Some(T0 + i64::from(bar as i32) * 60_000);
     assert!(drawings.place(
         tool("horizontal-line"),
         ChartPoint::at_time(bar, price, time)
     ));
+    drawings.selected_mut().expect("just placed").scope = DrawingScope::AllCharts;
 }
 
 fn prices(drawings: &Drawings<DrawingTool>) -> Vec<f64> {
@@ -473,14 +476,21 @@ fn market_store() -> MarketSettingsStore {
 #[test]
 fn a_recut_blocked_by_a_pinned_mark_moves_once_the_mark_is_gone() {
     let mut store = market_store();
+    let session = LayoutSession::new(LayoutBook::default());
     let mut chart = Chart::open(store.settings(), flow(), 1);
     level_at(&mut chart.drawings, 1.0, 100.0);
     chart.drawings.items_mut()[0].set_scope(DrawingScope::ThisChart);
     chart.marks().persist(store.settings_mut());
 
     chart.now = 2;
-    chart.marks().follow_store(&store);
-    chart.marks().follow_store(&store);
+    chart.marks().follow_store(&store, &session);
+    chart.marks().follow_store(&store, &session);
+    let shown = session.book().active_id();
+    assert_eq!(
+        chart.drawings.layout(),
+        Some(shown),
+        "told the layout it shows"
+    );
     assert_eq!(
         chart.layout.drawings_spec,
         Some(1),
@@ -490,19 +500,20 @@ fn a_recut_blocked_by_a_pinned_mark_moves_once_the_mark_is_gone() {
     chart.drawings.select(Some(0));
     let _ = chart.drawings.delete_selected(true);
     chart.marks().persist(store.settings_mut());
-    chart.marks().follow_store(&store);
+    chart.marks().follow_store(&store, &session);
     assert_eq!(chart.layout.drawings_spec, Some(2), "asked again, it moves");
 }
 
 #[test]
 fn putting_a_chart_away_forgets_a_blocked_recut() {
     let mut store = market_store();
+    let session = LayoutSession::new(LayoutBook::default());
     let mut chart = Chart::open(store.settings(), flow(), 1);
     level_at(&mut chart.drawings, 1.0, 100.0);
     chart.drawings.items_mut()[0].set_scope(DrawingScope::ThisChart);
     chart.marks().persist(store.settings_mut());
     chart.now = 2;
-    chart.marks().follow_store(&store);
+    chart.marks().follow_store(&store, &session);
     assert!(chart.layout.recut_checked.is_some(), "blocked");
 
     chart.marks().put_away(store.settings_mut());

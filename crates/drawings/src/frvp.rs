@@ -111,7 +111,8 @@ pub fn refresh(drawings: &mut Drawings<DrawingTool>, inputs: &RefreshInputs<'_>)
         budget: inputs.budget,
     };
     let mut folding = false;
-    for drawing in drawings.items_mut() {
+    // A mark this chart holds for merges and does not show costs it nothing.
+    for drawing in drawings.shown_mut() {
         if drawing.tool.id() != TOOL_ID || drawing.points.len() < 2 {
             continue;
         }

@@ -17,20 +17,27 @@ mod drawing_scope_tests;
 /// standing there is left untouched. The next write of the pane stores it:
 /// a drawing kept to its chart is pinned to `bars` then.
 ///
+/// `all_windows`, when named, is set in the same undo step, by the store's
+/// one rule for a pick ([`Drawings::pick_where_shown`]).
+///
 /// # Errors
-/// An id the store does not hold, and `all_charts` for a drawing with an
-/// anchor that names no market instant.
+/// An id the store does not show, `all_charts` for a drawing with an anchor
+/// that names no market instant, and `all_windows: true` beside
+/// `this_chart`.
 pub fn set_scope(
     drawings: &mut Drawings<DrawingTool>,
     input: &DrawingScopeInput,
     bars: &str,
 ) -> Result<DrawingScopeResult, ControlError> {
     let index = drawings
-        .index_of(DrawingId(input.drawing_id.get()))
+        .shown_index_of(DrawingId(input.drawing_id.get()))
         .ok_or_else(|| input.unknown_drawing())?;
     let drawing = &drawings.items()[index];
     if input.scope == ScopeName::AllCharts && !drawing.shareable() {
         return Err(no_market_time(drawing.tool.id()));
+    }
+    if input.scope == ScopeName::ThisChart && input.all_windows == Some(true) {
+        return Err(all_windows_needs_all_charts(drawing.tool.id()));
     }
     let scope = match input.scope {
         ScopeName::AllCharts => DrawingScope::AllCharts,
@@ -38,15 +45,15 @@ pub fn set_scope(
     };
     // The pick, not what shows: an undated copy of a mark on every timeframe
     // shows on its chart alone until dated, and a call keeping it there holds.
-    let changed = drawing.scope != scope;
-    if changed {
-        let before = drawing.clone();
-        drawings.items_mut()[index].set_scope(scope);
-        drawings.record_edit_of(index, before);
-    }
+    let changed = drawings.pick_where_shown(index, scope, input.all_windows);
     let after = &drawings.items()[index];
     let pinned = !after.all_timeframes() && !after.legacy_unpinned;
-    Ok(input.result(pinned.then(|| bars.to_owned()), changed))
+    let readback = ScopeReadback {
+        pinned_bars: pinned.then(|| bars.to_owned()),
+        all_windows: drawings.in_all_windows(index),
+        layout_id: after.layout.map(|layout| layout.0),
+    };
+    Ok(input.result(readback, changed))
 }
 
 /// The whole call: `pane` finds the named pane's store and the bars it is cut

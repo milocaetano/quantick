@@ -12,7 +12,7 @@
 //! a shared entry still under a role reaches every chart of its market. Such
 //! an entry moves to the market's set only when a pane writes an edit to it.
 use super::{DrawingKey, MarketKey, MarketSettings, PaneRole, settled};
-use crate::layout_document::SavedDrawing;
+use crate::layout_document::{LayoutId, SavedDrawing};
 use std::collections::BTreeSet;
 
 /// What a pane's write changed, so the caller brings exactly the panes that
@@ -174,6 +174,22 @@ impl MarketSettings {
             write.all_timeframes = true;
         }
         write
+    }
+
+    /// Strip layout `from` was deleted and its charts moved to `to`: every
+    /// mark of every market that belonged to it belongs to `to`. Answers
+    /// whether any moved.
+    pub fn retarget_layout(&mut self, from: LayoutId, to: LayoutId) -> bool {
+        let entries = self
+            .drawings
+            .iter_mut()
+            .flat_map(|set| set.items.iter_mut());
+        let mut changed = false;
+        for entry in entries.filter(|entry| entry.layout == Some(from)) {
+            entry.layout = Some(to);
+            changed = true;
+        }
+        changed
     }
 
     /// Every mark every chart of `market` shows at any bars.

@@ -25,7 +25,8 @@ fn read_drawings(app: &mut QuantickApp, client: &mut LocalClient) -> Value {
 /// The magnet and scope calls through the window's adapter reach their
 /// owners: the rail's switch, which the scene and the drawings scope read
 /// back with the rail shown or hidden; and one drawing on the addressed pane,
-/// its own magnet and its scope pinned to the bars that pane is cut to. What
+/// its own magnet, its scope shared on the layout that pane shows, and its
+/// scope pinned to the bars that pane is cut to. What
 /// each call decides is proven on the fake window in
 /// `quantick-control-handlers`.
 #[test]
@@ -105,6 +106,19 @@ fn the_magnet_and_scope_calls_reach_the_rail_and_the_addressed_drawing() {
         .expect("the drawings scope lists the object");
     assert_eq!(listed["magnet"], json!(true));
 
+    let mut wide = address.clone();
+    wide["scope"] = json!("all_charts");
+    wide["all_windows"] = json!(true);
+    let (shared, _) = unkeyed_call(&mut app, &mut client, SCOPE_CAPABILITY, wide);
+    let shared = success_result(&shared);
+    assert_eq!(shared["all_windows"], json!(true));
+    let layout = app.layout_state().focused_pane_layout();
+    assert_eq!(
+        shared["layout_id"],
+        json!(layout.0.to_string()),
+        "the pane's own layout"
+    );
+
     let mut scope = address;
     scope["scope"] = json!("this_chart");
     let (scoped, _) = unkeyed_call(&mut app, &mut client, SCOPE_CAPABILITY, scope);
@@ -113,7 +127,10 @@ fn the_magnet_and_scope_calls_reach_the_rail_and_the_addressed_drawing() {
         json!(drawn_at.to_config_string()),
         "pinned to the bars the pane is cut to"
     );
-    assert_eq!(drawing(&app).scope, drawings::DrawingScope::ThisChart);
+    assert_eq!(
+        drawing(&app).scope,
+        quantick_chart_interaction::drawing_model::DrawingScope::ThisChart
+    );
     disable_test_gateway(&mut app, &ctx);
     std::fs::remove_dir_all(directory).ok();
 }

@@ -57,6 +57,8 @@ impl SavedDrawingExt for SavedDrawing {
             hidden: drawing.hidden,
             magnet: drawing.magnet,
             shared: drawing.scope == DrawingScope::AllCharts,
+            layout: drawing.layout,
+            all_windows: drawing.all_windows,
             payload: drawing.payload.export_preset(),
             text: drawing
                 .tool
@@ -122,6 +124,8 @@ impl SavedDrawingExt for SavedDrawing {
             } else {
                 DrawingScope::ThisChart
             },
+            layout: self.layout,
+            all_windows: self.all_windows,
             legacy_unpinned: self.bars.is_none() && !self.all_timeframes(),
             foreign_market: false,
             off_series: false,

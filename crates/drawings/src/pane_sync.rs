@@ -19,6 +19,7 @@ use quantick_workspace::layout_document::SavedDrawing;
 use quantick_workspace::market_settings::{DrawingKey, MarketSettings, PaneWrite};
 use quantick_workspace::market_settings_store::MarketSettingsStore;
 use quantick_workspace::pane_layout::PaneLayout;
+use quantick_workspace::session::LayoutSession;
 
 #[cfg(test)]
 #[path = "pane_sync_tests.rs"]
@@ -355,10 +356,15 @@ impl<B: Copy + PartialEq> PaneMarks<'_, B> {
         Some((key, sync))
     }
 
-    /// Each frame before a write: ids stay above every id the market holds,
-    /// and a quiet re-cut moves only bars (`PaneLayout::recut_in_place`),
-    /// asked again whenever the store has moved.
-    pub fn follow_store(self, store: &MarketSettingsStore) {
+    /// Each frame before a write: the marks told the strip layout the pane
+    /// shows in `session` and the ones its book holds, ids stay above every id the market holds, and a
+    /// quiet re-cut moves only bars (`PaneLayout::recut_in_place`), asked
+    /// again whenever the store has moved.
+    pub fn follow_store(self, store: &MarketSettingsStore, session: &LayoutSession) {
+        let layout = session.strip_layout_of(self.layout.layout_id());
+        self.drawings.set_layout(Some(layout));
+        let live = session.book().layouts().iter().map(|layout| layout.id);
+        self.drawings.set_live_layouts(live);
         let settings = store.settings();
         if let Some(key) = &self.layout.drawings_key {
             self.drawings

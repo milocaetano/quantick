@@ -210,7 +210,7 @@ fn nine_hook_case(case: &str, env: Env) {
                         .items()
                         .iter()
                         .filter(|d| d.shareable())
-                        .all(|d| d.scope == drawings::DrawingScope::AllCharts)
+                        .all(|d| d.scope == DrawingScope::AllCharts)
                 );
                 assert_eq!(
                     pane.drawings.items()[pane.drawings.selected().unwrap()]

@@ -297,7 +297,7 @@ impl<'a> HealthSummary<'a> {
             drawings = self
                 .tab
                 .panes()
-                .map(|(pane, _)| pane.drawings.items().len())
+                .map(|(pane, _)| pane.drawings.shown_count())
                 .sum::<usize>(),
             shared_drawings = self
                 .tab

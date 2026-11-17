@@ -37,6 +37,7 @@ use crate::plot_area::plot_split;
 use crate::style::CandlePreset;
 use crate::surfaces::drawing_chrome::demo::DrawingsDemo;
 use crate::ui_state::WorkspaceExt;
+use quantick_drawings::DrawingScope;
 // Names only the tests read; production `app.rs` no longer imports them.
 use super::control_host::control_quick_range;
 use super::drawing_controller::DUPLICATE_OFFSET_BARS;
@@ -1235,7 +1236,7 @@ fn split_with_a_shared_line(
         .drawings
         .selected_mut()
         .expect("placement selects what it completed")
-        .scope = drawings::DrawingScope::AllCharts;
+        .scope = DrawingScope::AllCharts;
     // Nothing selected to start with, so the assertions cannot pass on the
     // selection placement left behind.
     app.active_tab_mut().flow_pane.drawings.select(None);
@@ -1617,7 +1618,7 @@ fn place_level(app: &mut QuantickApp, side: PaneSide, price: f64) {
 
 /// Set the scope of every mark on `side` as the context bar's sharing button
 /// does: one recorded edit each, so the next frame writes it.
-fn set_scope_on(app: &mut QuantickApp, side: PaneSide, scope: drawings::DrawingScope) {
+fn set_scope_on(app: &mut QuantickApp, side: PaneSide, scope: DrawingScope) {
     let store = &mut app.active_tab_mut().pane_mut(side).drawings;
     for index in 0..store.items().len() {
         let before = store.items()[index].clone();

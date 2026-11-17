@@ -1,5 +1,40 @@
 use super::{Drawing, DrawingEdit, PresetWrite, SavedDefault, quick_range};
 
+/// The selection's on/off switches a surface flipped this frame.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct SelectionToggles {
+    /// Hide or show the selection.
+    pub hidden: bool,
+    /// Lock or unlock the selection.
+    pub locked: bool,
+    /// Show the selection on every chart of its market whatever layout, or
+    /// on its own layout's alone.
+    pub all_windows: bool,
+}
+
+impl SelectionToggles {
+    /// The union of two frames' flips.
+    pub fn merge(&mut self, other: Self) {
+        self.hidden |= other.hidden;
+        self.locked |= other.locked;
+        self.all_windows |= other.all_windows;
+    }
+
+    /// The store intents the flips ask for, in the order the host applies them.
+    pub fn intents(self) -> impl Iterator<Item = quantick_drawings::DrawingIntent> {
+        use quantick_drawings::DrawingIntent::{
+            ToggleAllWindowsSelected, ToggleHideSelected, ToggleLockSelected,
+        };
+        let asks = [
+            (self.hidden, ToggleHideSelected),
+            (self.locked, ToggleLockSelected),
+            (self.all_windows, ToggleAllWindowsSelected),
+        ];
+        asks.into_iter()
+            .filter_map(|(asked, intent)| asked.then_some(intent))
+    }
+}
+
 /// What the drawing chrome asked the host to do.
 ///
 /// A struct of defaults like [`super::SurfaceResponse`] itself: every field
@@ -33,10 +68,8 @@ pub struct DrawingChromeAsk {
     /// `Drawing` inline here would be paid for by every surface in the
     /// application, on every frame, in a response returned by value.
     pub commit_edit_gesture: Option<Box<DrawingEdit>>,
-    /// Hide or show the selection.
-    pub toggle_selected_hidden: bool,
-    /// Lock or unlock the selection.
-    pub toggle_selected_locked: bool,
+    /// The selection's switches the trader flipped.
+    pub toggle_selected: SelectionToggles,
     /// Delete the selection, through the confirmation rule the keyboard uses.
     pub request_delete: bool,
     /// Delete the selection even though it is locked — the trader answered
@@ -123,8 +156,7 @@ impl DrawingChromeAsk {
             .commit_edit_gesture
             .take()
             .or(other.commit_edit_gesture);
-        self.toggle_selected_hidden |= other.toggle_selected_hidden;
-        self.toggle_selected_locked |= other.toggle_selected_locked;
+        self.toggle_selected.merge(other.toggle_selected);
         self.request_delete |= other.request_delete;
         self.force_delete |= other.force_delete;
         self.cancel_delete |= other.cancel_delete;

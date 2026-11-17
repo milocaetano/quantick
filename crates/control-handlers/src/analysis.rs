@@ -50,6 +50,10 @@ use quantick_drawings::{Drawing, DrawingBand, DrawingTool, Drawings};
 
 use crate::dock::ProjectionDock;
 
+#[cfg(test)]
+#[path = "analysis_tests.rs"]
+mod analysis_tests;
+
 /// One chart pane as the analysis scopes read it.
 pub trait AnalysisPane {
     /// The pane's stable id.
@@ -77,8 +81,8 @@ pub trait AnalysisPort {
 }
 
 /// Where a drawing shows, as the wire names it: `all_charts` only when every
-/// chart of its market can show it (asked for, and dated at every anchor),
-/// the same answer the toggle and the chips give.
+/// chart of its market showing its layout can show it (asked for, and dated
+/// at every anchor), the same answer the toggle and the chips give.
 #[must_use]
 pub fn scope_name(drawing: &Drawing<DrawingTool>) -> &'static str {
     if drawing.all_timeframes() {
@@ -169,52 +173,71 @@ fn revision<P: AnalysisPort + ?Sized>(app: &P) -> (bool, Vec<AnalysisRevisionKey
         tab_id,
         panes: panes
             .iter()
-            .map(|entry| {
-                let pane = entry.pane;
-                PaneAnalysisRevisionKey {
-                    pane_id: pane.pane_id(),
-                    indicators: pane
-                        .indicators()
-                        .all()
-                        .iter()
-                        .map(|view| IndicatorAnalysisRevisionKey {
-                            slot: view.slot.0,
-                            kind: view.kind.to_string(),
-                            hidden: view.hidden,
-                            mouse_vertical_line: view.mouse_vertical_line,
-                            failing: view.error.is_some(),
-                            stale: view.stale.is_some(),
-                            inputs: format!("{:?}", view.input_values),
-                            // A hot reload that kept the kind and the
-                            // bound values can still rename a plot or
-                            // declare a new one, and both cross the wire.
-                            declaration: format!("{:?}", view.descriptor),
-                        })
-                        .collect(),
-                    drawings: pane
-                        .drawings()
-                        .items()
-                        .iter()
-                        .map(|drawing| {
-                            (
-                                drawing.id.0,
-                                drawing.locked,
-                                drawing.own_magnet(),
-                                drawing.hidden,
-                                drawing.name.is_some(),
-                                drawing.author.is_some(),
-                                drawing.foreign_market,
-                                drawing.off_series,
-                            )
-                        })
-                        .collect(),
-                    layer_hidden: pane.drawings().all_hidden(),
-                    selected_drawing: pane.drawings().selected(),
-                }
-            })
+            .map(|entry| pane_revision(entry.pane))
             .collect(),
     });
     (magnet, tabs)
+}
+
+/// One pane's share of the revision key, read off the rows the drawings
+/// scope lists ([`Drawings::shown`]): a mark the pane holds for merges and
+/// does not show moves nothing, and one that comes or goes moves it.
+fn pane_revision(pane: &dyn AnalysisPane) -> PaneAnalysisRevisionKey {
+    let drawings = pane.drawings();
+    PaneAnalysisRevisionKey {
+        pane_id: pane.pane_id(),
+        indicators: pane
+            .indicators()
+            .all()
+            .iter()
+            .map(|view| IndicatorAnalysisRevisionKey {
+                slot: view.slot.0,
+                kind: view.kind.to_string(),
+                hidden: view.hidden,
+                mouse_vertical_line: view.mouse_vertical_line,
+                failing: view.error.is_some(),
+                stale: view.stale.is_some(),
+                inputs: format!("{:?}", view.input_values),
+                // A hot reload that kept the kind and the bound values can
+                // still rename a plot or declare a new one, and both cross the
+                // wire.
+                declaration: format!("{:?}", view.descriptor),
+            })
+            .collect(),
+        layout: drawings.layout().map(|layout| layout.0),
+        drawings: {
+            // Sized by what the pane holds, one walk: never more than main.
+            let mut rows = Vec::with_capacity(drawings.items().len());
+            rows.extend(
+                drawings
+                    .shown()
+                    .map(|(index, _)| drawing_revision(drawings, index)),
+            );
+            rows
+        },
+        layer_hidden: drawings.all_hidden(),
+        selected_drawing: drawings.selected_row(),
+    }
+}
+
+/// The listed drawing at `index`'s share of the revision key.
+fn drawing_revision(drawings: &Drawings<DrawingTool>, index: usize) -> DrawingRevisionKey {
+    let drawing = &drawings.items()[index];
+    DrawingRevisionKey {
+        id: drawing.id.0,
+        flags: [
+            drawing.locked,
+            drawing.own_magnet(),
+            drawing.hidden,
+            drawing.name.is_some(),
+            drawing.author.is_some(),
+            drawing.foreign_market,
+            drawing.off_series,
+            drawing.all_timeframes(),
+            drawings.in_all_windows(index),
+        ],
+        layout: drawing.layout.map(|layout| layout.0),
+    }
 }
 
 /// The revision key's rows. Their only contract is [`Eq`]: they are never
@@ -234,17 +257,26 @@ struct PaneAnalysisRevisionKey {
     /// `Eq`; the rendering is exact for every variant and neither value ever
     /// reaches the wire.
     indicators: Vec<IndicatorAnalysisRevisionKey>,
-    /// One [`DrawingRevisionKey`] per drawing.
+    /// The layout the pane's marks are listed for: which of them it shows.
+    layout: Option<u64>,
+    /// One [`DrawingRevisionKey`] per listed drawing.
     drawings: Vec<DrawingRevisionKey>,
     /// The toolrail's "Hide all", which the scope publishes per pane.
     layer_hidden: bool,
-    /// Which row the selection sits on, which the scope publishes too.
+    /// Which listed row the selection sits on, which the scope publishes too.
     selected_drawing: Option<usize>,
 }
 
-/// `(id, locked, magnet, hidden, named, authored, foreign market, off
-/// series)` — never the name itself.
-type DrawingRevisionKey = (u64, bool, bool, bool, bool, bool, bool, bool);
+/// One listed drawing, never its name.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct DrawingRevisionKey {
+    id: u64,
+    /// Locked, magnet, hidden, named, authored, foreign market, off series,
+    /// all timeframes, all windows.
+    flags: [bool; 9],
+    /// The layout it belongs to.
+    layout: Option<u64>,
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct IndicatorAnalysisRevisionKey {
@@ -363,30 +395,39 @@ fn drawings_snapshot<P: AnalysisPort + ?Sized>(app: &P) -> DrawingsSnapshot {
     }
 }
 
+/// The marks the pane's layout shows ([`Drawings::shown`]), in one walk.
 fn pane_drawings(pane: &dyn AnalysisPane, side: PaneSideDto) -> PaneDrawingsSnapshot {
-    let items = pane.drawings().items();
+    let drawings = pane.drawings();
+    let held = drawings.items().len();
+    let mut rows = Vec::with_capacity(held.min(CONTROL_SNAPSHOT_MAX_DRAWINGS_PER_PANE));
+    let mut shown = 0;
+    for (index, _) in drawings.shown() {
+        if shown < CONTROL_SNAPSHOT_MAX_DRAWINGS_PER_PANE {
+            rows.push(drawing_snapshot(drawings, index));
+        }
+        shown += 1;
+    }
     PaneDrawingsSnapshot {
         pane_id: WireU64::new(pane.pane_id()),
         side,
-        drawings: items
-            .iter()
-            .take(CONTROL_SNAPSHOT_MAX_DRAWINGS_PER_PANE)
-            .map(drawing_snapshot)
-            .collect(),
-        drawing_count: wire_usize(items.len()),
-        drawings_truncated: items.len() > CONTROL_SNAPSHOT_MAX_DRAWINGS_PER_PANE,
-        layer_hidden: pane.drawings().all_hidden(),
-        selected_index: pane.drawings().selected().map(wire_usize),
+        drawings: rows,
+        drawing_count: wire_usize(shown),
+        drawings_truncated: shown > CONTROL_SNAPSHOT_MAX_DRAWINGS_PER_PANE,
+        layer_hidden: drawings.all_hidden(),
+        selected_index: drawings.selected_row().map(wire_usize),
     }
 }
 
-fn drawing_snapshot(drawing: &Drawing<DrawingTool>) -> DrawingSnapshot {
+fn drawing_snapshot(drawings: &Drawings<DrawingTool>, index: usize) -> DrawingSnapshot {
+    let drawing = &drawings.items()[index];
     DrawingSnapshot {
         drawing_id: WireU64::new(drawing.id.0),
         tool_id: drawing.tool.id().to_owned(),
         band: drawing_band_name(&drawing.band).to_owned(),
         annotation_band: crate::annotate::annotation_band(&drawing.band),
         scope: scope_name(drawing).to_owned(),
+        all_windows: drawings.in_all_windows(index),
+        layout_id: drawing.layout.map(|layout| WireU64::new(layout.0)),
         locked: drawing.locked,
         magnet: drawing.own_magnet(),
         hidden: drawing.hidden,

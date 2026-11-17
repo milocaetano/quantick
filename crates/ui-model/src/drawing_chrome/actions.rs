@@ -42,9 +42,10 @@ pub fn apply(
     if gesture_settled {
         ask.commit_edit_gesture = core.shared.edit_baseline.take().map(Box::new);
     }
-    ask.toggle_selected_hidden |= actions.toggle_hidden;
+    ask.toggle_selected.hidden |= actions.toggle_hidden;
+    ask.toggle_selected.all_windows |= actions.toggle_all_windows;
     if actions.toggle_lock {
-        ask.toggle_selected_locked = true;
+        ask.toggle_selected.locked = true;
         core.shared.delete_confirm = false;
     }
     if actions.toggle_pin {

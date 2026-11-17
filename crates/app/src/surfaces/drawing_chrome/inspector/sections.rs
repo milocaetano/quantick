@@ -43,10 +43,7 @@ pub(super) fn body(
     actions.delete |= intent.delete;
 
     ObjectNotes::of(edited).show(ui);
-    actions.edited |= ScopeToggle {
-        edited: &mut *edited,
-    }
-    .show(ui);
+    actions.merge(ScopeToggle(&mut *edited, env.selected_all_windows).show(ui));
     if chrome.shared.delete_confirm && locked {
         actions.merge(DeleteConfirm.show(ui));
     }
@@ -136,34 +133,28 @@ impl ObjectNotes {
 /// trader's. Nobody hunting for "also show this on the other chart" opens a
 /// tab called Coordinates, and that is not even the tab the panel opens on.
 /// Reported as unfindable, and it was.
-struct ScopeToggle<'a> {
-    edited: &'a mut Drawing,
-}
+struct ScopeToggle<'a>(&'a mut Drawing, bool);
 
 impl ScopeToggle<'_> {
-    /// Returns whether the scope changed.
-    fn show(self, ui: &mut egui::Ui) -> bool {
+    /// Reports a changed scope as an edit, and the "All windows" switch.
+    fn show(self, ui: &mut egui::Ui) -> InspectorActions {
         let palette = theme::get(ui.ctx());
-        let edited = self.edited;
+        let Self(edited, all_windows) = self;
         let shareable = edited.shareable();
         let mut shared = edited.all_timeframes();
-        let mut changed = false;
+        let mut actions = InspectorActions::default();
         ui.separator();
         let sharing = ui.add_enabled(
             shareable,
             egui::Checkbox::new(&mut shared, "Show on all timeframes"),
         );
         if sharing.changed() {
-            edited.set_scope(if shared {
-                drawings::DrawingScope::AllCharts
-            } else {
-                drawings::DrawingScope::ThisChart
-            });
-            changed = true;
+            edited.set_all_timeframes(shared);
+            actions.edited = true;
         }
         // A disabled control with no reason reads as a bug.
         let sharing_hint = if shareable {
-            "Every chart of this market draws it, at any timeframe, at the same moment"
+            "Every chart of this market showing this layout draws it, at any timeframe, at the same moment"
         } else {
             "This drawing has an anchor past the newest bar, so there is no market time to place          it by on another chart"
         };
@@ -175,7 +166,16 @@ impl ScopeToggle<'_> {
                     .color(palette.text_support()),
             );
         }
-        changed
+        let mut everywhere = all_windows;
+        let windows = ui.add_enabled(
+            edited.all_timeframes(),
+            egui::Checkbox::new(&mut everywhere, "All windows"),
+        );
+        actions.toggle_all_windows = windows.changed();
+        windows
+            .on_hover_text("Every chart of this market draws it, whatever layout it shows")
+            .on_disabled_hover_text("Turn on Show on all timeframes to show it in all windows");
+        actions
     }
 }
 
