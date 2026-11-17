@@ -6,7 +6,8 @@
 use crate::contract_roll::{self, ContractRollPort};
 use crate::feed_source::{check_source, set_source};
 use crate::market_palette::MarketPaletteHost;
-use crate::workspace_book::{WorkspaceBookHost, flush_unjournaled, set_tab_workspace};
+use crate::workspace_book::switch::ask_unjournaled;
+use crate::workspace_book::{WorkspaceBookHost, set_tab_workspace};
 use quantick_control::wire::WireU64;
 use quantick_engine::bar_registry::{BUILTIN_BARS, BarConfiguration};
 use quantick_engine::bar_selection::BarInputAvailability;
@@ -108,25 +109,17 @@ pub fn roll<H: SwitchHost + ?Sized>(
     Ok(roll_toast(&next))
 }
 
-/// A workspace picked here never drops edits unasked: a pending autosave
-/// write goes through first, as a row's switch does; then, the palette
-/// putting no question, a switch that would still drop them is refused
-/// before anything moves, as `tab.workspace.set` refuses one without `edits`.
+/// A workspace picked here never drops edits unasked: the row's question is
+/// asked (a pending autosave write goes through first); the palette putting
+/// no question, a switch that would still drop them is refused before
+/// anything moves, as `tab.workspace.set` refuses one without `edits`.
 fn keeps_edits<H: SwitchHost + ?Sized>(app: &mut H, tab: u64, name: &str) -> Result<(), String> {
-    if app
-        .workspace_book()
-        .is_some_and(|book| book.tab_state(tab).is_some())
-    {
-        flush_unjournaled(app, tab).map_err(|error| error.message)?;
-    }
-    let Some(book) = app.workspace_book() else {
-        return Ok(());
-    };
-    if book.switch_drops(tab, name) != Ok(true) {
+    if !(app.workspace_book()).is_some_and(|book| book.tab_state(tab).is_some()) {
         return Ok(());
     }
-    Err(quantick_control_schema::window_menu::switch_keeps_edits(
-        book.tab_workspace(tab),
-        name,
-    ))
+    let asked = ask_unjournaled(app, tab, name).map_err(|error| error.message)?;
+    asked.map_or(Ok(()), |asked| {
+        let text = quantick_control_schema::window_menu::switch_keeps_edits;
+        Err(text(&asked.workspace, &asked.target))
+    })
 }

@@ -11,6 +11,8 @@
 //! [`WorkspaceBook::switch_drops`]: quantick_stores::workspaces::WorkspaceBook::switch_drops
 
 use quantick_control::error::ControlError;
+use quantick_control::wire::ActorContext;
+use quantick_control_host::journal::NewEvent;
 use quantick_control_schema::workspace_book::{SwitchEdits, UNSAVED_EDITS_CODE};
 use quantick_session::prompt::Prompt;
 use quantick_session::switch_prompt::{SwitchAnswer, SwitchPrompt, SwitchQuestion};
@@ -53,6 +55,31 @@ pub fn ask<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
         target: name.to_owned(),
         changes,
     }))
+}
+
+/// [`ask`] journaling nothing: the market palette's hand journals nothing,
+/// as the window's other source changes do.
+///
+/// # Errors
+/// As [`ask`].
+pub(crate) fn ask_unjournaled<H: WorkspaceBookHost + ?Sized>(
+    app: &mut H,
+    tab: u64,
+    name: &str,
+) -> Result<Option<SwitchQuestion>, ControlError> {
+    ask::<H, Unjournaled>(app, &mut None, tab, name)
+}
+
+/// The access a write with no journal names: there is none.
+enum Unjournaled {}
+
+impl NotifyAccess for Unjournaled {
+    fn allow_notification(&mut self, _: &ActorContext) -> Result<(), std::time::Duration> {
+        match *self {}
+    }
+    fn record_event(&mut self, _: NewEvent) {
+        match *self {}
+    }
 }
 
 /// Put `tab` on `name`, writing its edits into its workspace first when
