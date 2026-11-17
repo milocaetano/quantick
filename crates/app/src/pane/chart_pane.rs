@@ -37,6 +37,12 @@ impl ChartPane {
     pub(crate) fn install_layer_probe(&mut self) {
         render_registry::probe::install(self);
     }
+
+    /// How many times this thread has laid the time labels out, for the
+    /// window's test that the grid and the strip share one layout a frame.
+    pub(crate) fn time_mark_layouts() -> usize {
+        render_registry::MARK_RUNS.with(std::cell::Cell::get)
+    }
 }
 
 /// Which side of the candles a drawing pass paints on. One function serves both, taking this rather

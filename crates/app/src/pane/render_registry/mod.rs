@@ -12,7 +12,7 @@ pub(super) use dividers::DividerPass;
 mod axes;
 use axes::LastPricePass;
 #[cfg(test)]
-pub(crate) use axes::MARK_RUNS;
+pub(in crate::pane) use axes::MARK_RUNS;
 pub(super) use axes::{
     AxisMarksPass, CrosshairPass, GridPass, LaneTimeAxisPass, PointerPass, StripMarks,
     TimeStripPass,
