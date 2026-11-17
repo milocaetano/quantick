@@ -3,7 +3,7 @@
 use super::*;
 use quantick_workspace::market_list::{PaletteIntent, SwitchChoice};
 
-pub(super) fn painted_starting(output: &egui::FullOutput, prefix: &str) -> Vec<String> {
+fn painted_starting(output: &egui::FullOutput, prefix: &str) -> Vec<String> {
     let mut found = painted_text(output);
     found.retain(|text| text.starts_with(prefix));
     found

@@ -120,11 +120,7 @@ pub const READBACKS: &[crate::readback::Readback] = &[crate::readback::snapshot(
     crate::orderflow::BUBBLES_SCOPE_ID,
     "tabs[].panes[].bubbles.display_scale",
     "the addressed pane reports independent tape and candle bubble radius multipliers",
-    &[
-        "bubble_size_is_named_permission_checked_retry_safe_and_read_back",
-        "bubble_size_refuses_invalid_values_stale_targets_and_inactive_context",
-        crate::readback::EVERY_OPTIONAL_TEST,
-    ],
+    &[crate::readback::EVERY_OPTIONAL_TEST],
 )];
 
 /// Published schemas of the bubble scale.

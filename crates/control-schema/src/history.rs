@@ -128,10 +128,6 @@ pub fn cancel_descriptor() -> CapabilityDescriptor {
     )
 }
 
-/// The run's state moves when either call acts.
-pub const HISTORY_TEST: &str =
-    "a_history_load_runs_reads_back_and_cancels_through_the_control_plane";
-
 pub const READBACKS: &[Readback] = &[
     snapshot(
         LOAD_CAPABILITY_ID,
@@ -139,7 +135,7 @@ pub const READBACKS: &[Readback] = &[
         crate::feed::SCOPE_ID,
         "tabs[].history_load.state",
         "the tab's run reads `loading` or `queued` for the target asked for (a target already on the chart answers `finished` and the state stays `idle`, with the note saying so)",
-        &[EVERY_OPTIONAL_TEST, HISTORY_TEST],
+        &[EVERY_OPTIONAL_TEST],
     ),
     snapshot(
         CANCEL_CAPABILITY_ID,
@@ -147,7 +143,7 @@ pub const READBACKS: &[Readback] = &[
         crate::feed::SCOPE_ID,
         "tabs[].history_load.state",
         "the tab's run reads `idle`: nothing pages and nothing is queued",
-        &[EVERY_OPTIONAL_TEST, HISTORY_TEST],
+        &[EVERY_OPTIONAL_TEST],
     ),
 ];
 

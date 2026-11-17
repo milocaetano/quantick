@@ -144,10 +144,7 @@ pub const READBACKS: &[crate::readback::Readback] = &[crate::readback::snapshot(
     crate::orderflow::BUBBLES_SCOPE_ID,
     "tabs[].panes[].bubbles.tick_bubbles",
     "the addressed pane reports the selected tick sphere calibration independently of the tape",
-    &[
-        "tick_spheres_are_scoped_retry_safe_and_preserve_tape_settings",
-        crate::readback::EVERY_OPTIONAL_TEST,
-    ],
+    &[crate::readback::EVERY_OPTIONAL_TEST],
 )];
 
 #[cfg(test)]

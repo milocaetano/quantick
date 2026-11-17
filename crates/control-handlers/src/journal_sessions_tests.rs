@@ -345,3 +345,26 @@ fn the_ledger_view_is_set_and_read_by_name() {
         "invalid_session"
     );
 }
+
+/// Both journal calls act on the trader's own trades journal, which no tape
+/// owns: a replay's control trace never records them, and a trace that holds
+/// one (written by a build from before the rule) never runs it.
+#[test]
+fn journal_edits_are_never_recorded_into_or_replayed_from_a_control_trace() {
+    let mut registry =
+        quantick_control_host::actions::ActionRegistry::<FakeJournal, FakeAccess>::new();
+    register(&mut registry).unwrap();
+    for capability in [
+        quantick_control_schema::journal_sessions::JOURNAL_SESSIONS_CAPABILITY_ID,
+        quantick_control_schema::journal_sessions::JOURNAL_DELETE_CAPABILITY_ID,
+    ] {
+        let action = registry.lookup(capability, 1).expect("the call is docked");
+        assert!(!action.traced(false).unwrap(), "{capability}");
+        let error = action.traced(true).unwrap_err();
+        assert_eq!(
+            error.code.as_str(),
+            codes::CAPABILITY_UNAVAILABLE,
+            "{capability}"
+        );
+    }
+}
