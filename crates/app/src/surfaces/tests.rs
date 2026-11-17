@@ -3,6 +3,23 @@ use quantick_workspace::market_list::PaletteIntent;
 
 /// Test probes reading the typed host effects a response carries.
 impl SurfaceResponse {
+    /// Every ask, folded the way the frame host folds them.
+    pub(crate) fn late(self) -> quantick_ui_model::late_effects::LateEffects {
+        quantick_ui_model::late_effects::LateEffects::fold(self.model_effects)
+    }
+    /// The paper pass's asks, merged, if any surface made one.
+    pub(crate) fn paper_panel(self) -> Option<PaperPanelEffects> {
+        self.model_effects
+            .into_iter()
+            .filter_map(|effect| match effect {
+                HostEffect::Dock(paper) => Some(paper),
+                _ => None,
+            })
+            .reduce(|mut first, later| {
+                first.merge(later);
+                first
+            })
+    }
     pub(crate) fn undo_drawing(&self) -> bool {
         self.model_effects
             .iter()
@@ -95,8 +112,10 @@ fn borrowed_domain_rows_reborrow_in_catalog_order() {
         );
         assert_eq!(registry.borrowed_first.view.immediate, Some(initial));
         assert_eq!(registry.borrowed_second.view.immediate, Some(!initial));
+        let (paper_effects, rows): (Vec<_>, Vec<_>) = (response.model_effects.into_iter())
+            .partition(|effect| matches!(effect, HostEffect::Dock(_)));
         assert_eq!(
-            response.model_effects,
+            rows,
             vec![
                 HostEffect::BorrowedFirst(borrowed_first::Effects(Some((initial, "session")))),
                 HostEffect::BorrowedFirst(borrowed_first::Effects(Some((initial, "returned")))),
@@ -105,7 +124,11 @@ fn borrowed_domain_rows_reborrow_in_catalog_order() {
             ],
             "session then returned response, once per row; host applies after pass"
         );
-        let paper_output = response.paper_panel.unwrap();
+        let paper_output = SurfaceResponse {
+            model_effects: paper_effects,
+        }
+        .paper_panel()
+        .unwrap();
         assert_eq!(paper_output.navigate_to_trade, Some((11, 12)));
         assert_eq!(
             paper_output.journal_edit,
@@ -591,13 +614,7 @@ fn an_outside_typed_view_delivers_boolean_and_value_requests() {
             intent: Some((8, 17)),
             ..Default::default()
         },
-        |effect| {
-            let mut response = first_view::effects(effect);
-            let mut style = crate::style::ChartStyle::default();
-            style.canvas.grid_enabled = !style.canvas.grid_enabled;
-            response.style = Some(style);
-            response
-        },
+        first_view::effects,
     );
     assert_eq!(adapter.view.id(), "first-fixture");
     let ctx = egui::Context::default();
@@ -613,10 +630,6 @@ fn an_outside_typed_view_delivers_boolean_and_value_requests() {
             HostEffect::Toast(quantick_ui_model::toast::Effects { undo_drawing: true })
         ]
     );
-    assert_eq!(
-        response.style.unwrap().canvas.grid_enabled,
-        !crate::style::ChartStyle::default().canvas.grid_enabled
-    );
     assert_eq!(adapter.view.painted, Some(0));
     adapter.view.intent = Some((1, 18));
     let _ = ctx.run(Default::default(), |ctx| {
@@ -627,67 +640,9 @@ fn an_outside_typed_view_delivers_boolean_and_value_requests() {
         "a value request does not imply Undo"
     );
     assert_eq!(response.model_effects, vec![HostEffect::First((9, 18))]);
-    assert_eq!(
-        response.style.unwrap().canvas.grid_enabled,
-        !crate::style::ChartStyle::default().canvas.grid_enabled
-    );
     let _ = ctx.run(Default::default(), |ctx| {
         assert_eq!(drive(&mut adapter, ctx, &env()), SurfaceResponse::default());
     });
-}
-
-/// Every value-carrying request folds first-wins, not just the workspace
-/// name that was the only one when the rule was written. Checked over the
-/// fields together, because the failure this guards against is a new
-/// field being folded with assignment — which silently lets whichever
-/// surface is drawn last overwrite an earlier ask.
-#[test]
-fn every_valued_request_keeps_the_first_asker() {
-    let mut first = SurfaceResponse {
-        style: Some(crate::style::ChartStyle::default()),
-        log_style_change: Some(StyleLogRequest {
-            applied_preset: None,
-        }),
-        footprint: Some(FootprintChange::ResetToDefault),
-        test_alert: Some(crate::audio::Cue::default()),
-        ..SurfaceResponse::default()
-    };
-    let mut contested = crate::style::ChartStyle::default();
-    contested.canvas.grid_enabled = !contested.canvas.grid_enabled;
-    first.merge(SurfaceResponse {
-        paper_panel: None,
-        model_effects: Vec::new(),
-        alerts: None,
-        indicator_actions: Vec::new(),
-        script_editor_actions: Vec::new(),
-        style: Some(contested),
-        log_style_change: Some(StyleLogRequest {
-            applied_preset: Some(crate::style::CandlePreset::Classic),
-        }),
-        footprint: Some(FootprintChange::Applied(Box::default())),
-        arm_strategy: None,
-        test_alert: Some(crate::audio::Cue::new(
-            crate::audio::AlertSound::Critical,
-            None,
-        )),
-    });
-    assert_eq!(first.footprint, Some(FootprintChange::ResetToDefault));
-    // The three the first version of this test set but never contested,
-    // which is how a field folded with assignment instead of `or` would
-    // have shipped: an appearance edit silently clobbered by whatever
-    // surface happened to draw after the style panel.
-    assert_eq!(
-        first.style.map(|style| style.canvas.grid_enabled),
-        Some(crate::style::ChartStyle::default().canvas.grid_enabled),
-        "the first surface's appearance survives a later one's"
-    );
-    assert_eq!(
-        first.log_style_change,
-        Some(StyleLogRequest {
-            applied_preset: None
-        })
-    );
-    assert_eq!(first.test_alert, Some(crate::audio::Cue::default()));
 }
 
 #[test]
@@ -745,7 +700,6 @@ fn a_quiet_surface_cannot_cancel_an_earlier_request() {
         model_effects: vec![HostEffect::Toast(quantick_ui_model::toast::Effects {
             undo_drawing: true,
         })],
-        ..SurfaceResponse::default()
     };
     merged.merge(SurfaceResponse::default());
     assert!(merged.undo_drawing());

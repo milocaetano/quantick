@@ -128,155 +128,51 @@ impl SurfaceEnv<'static> {
     }
 }
 
-/// What drawing the surfaces asked the application to do.
+/// What drawing the surfaces asked the application to do: the typed effect of
+/// every catalog row that asked for something, in draw order.
 ///
-/// A struct of defaults: every field means
-/// "this was not asked for" until a surface sets it, so adding a request never
-/// touches an existing surface.
-///
-/// Not `Eq`: the appearance a surface hands back carries opacities and
-/// widths, and a float has no total equality to derive. `PartialEq` is what
-/// the tests compare with, and it is the honest one.
+/// A row with nothing to ask adds nothing, so adding a request never touches
+/// an existing surface; the host folds the effects it executes through
+/// `quantick_ui_model::late_effects::LateEffects`.
 #[derive(Default, Debug, PartialEq)]
 pub(crate) struct SurfaceResponse {
-    pub paper_panel: Option<Box<PaperPanelEffects>>,
-    /// Typed effects belonging to the host that drew a scoped catalog entry.
     pub model_effects: Vec<HostEffect>,
-    pub alerts: Option<Box<alerts::Request>>,
-    pub indicator_actions: Vec<crate::toolbar::ToolbarAction>,
-    pub script_editor_actions: Vec<quantick_stores::script_library::ScriptEditorAction>,
-    /// The appearance window edited the chart style. The host owns the style
-    /// every renderer reads, and the revision counter they watch, so it takes
-    /// the edited copy rather than lending the original out.
-    pub style: Option<crate::style::ChartStyle>,
-    /// An appearance change settled and is owed a log line.
-    pub log_style_change: Option<StyleLogRequest>,
-    /// The footprint window settled on a setup, or asked for the chart's
-    /// override to be dropped.
-    pub footprint: Option<FootprintChange>,
-    /// The arming dialog's **Arm** was pressed. The host answers through
-    /// `quantick_ui_model::strategy_popup::Intent::SettleArm`, because the answer decides whether
-    /// the dialog closes or shows a refusal.
-    pub arm_strategy: Option<ArmRequest>,
-    /// A sound was auditioned. The host owns the one speaker every armed
-    /// instance shares, so it plays this and reports what happened.
-    pub test_alert: Option<crate::audio::Cue>,
 }
 
-/// Host outputs of the complete borrowed paper-panel pass.
-#[derive(Default, Debug, PartialEq)]
-pub(crate) struct PaperPanelEffects {
-    /// The rail's bell: open the alert manager.
-    pub open_alerts: bool,
-    pub close_replay: bool,
-    pub open_replay_browser: bool,
-    pub navigate_to_trade: Option<(i64, i64)>,
-    pub journal_edit: Option<quantick_paper::report::session_edit::JournalEdit>,
-    pub pick_trades_dir: bool,
-    pub cmd_trading_changed: bool,
-    pub order_strategies_changed: bool,
-    pub risk_settings_changed: bool,
-}
-impl PaperPanelEffects {
-    fn merge(&mut self, other: Self) {
-        self.open_alerts |= other.open_alerts;
-        self.close_replay |= other.close_replay;
-        self.open_replay_browser |= other.open_replay_browser;
-        self.navigate_to_trade = self.navigate_to_trade.or(other.navigate_to_trade);
-        self.journal_edit = self.journal_edit.take().or(other.journal_edit);
-        self.pick_trades_dir |= other.pick_trades_dir;
-        self.cmd_trading_changed |= other.cmd_trading_changed;
-        self.order_strategies_changed |= other.order_strategies_changed;
-        self.risk_settings_changed |= other.risk_settings_changed;
-    }
-}
-
-pub(crate) use quantick_ui_model::strategy_popup::ArmRequest;
-
-/// What the footprint window asked the host to do with the focused chart's
-/// setup.
-///
-/// An enum rather than two fields because the two are exclusive answers to
-/// one question — a frame cannot both set an override and drop it — and this
-/// enum is closed by that fact, not by a hope that nobody adds a variant.
-/// [`SurfaceResponse`] stays a struct; only the *value* one field carries has
-/// two shapes.
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) enum FootprintChange {
-    /// A knob moved: this is the focused chart's setup now, and the window
-    /// default with it.
-    ///
-    /// Boxed because the configuration is by far the largest thing a response
-    /// carries, and every other surface would pay for its size in a response
-    /// that is returned by value on every frame.
-    Applied(Box<crate::footprint_config::FootprintConfig>),
-    /// Put the focused chart back on the window default.
-    ResetToDefault,
-}
-
-/// Ask the host to record an appearance change.
-///
-/// Carries only what the surface knows that the host does not: whether the
-/// trader reached the new appearance by clicking a named preset, which the
-/// log prefers over guessing the name back from the values.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct StyleLogRequest {
-    /// The preset the trader clicked this frame, if they clicked one.
-    pub applied_preset: Option<crate::style::CandlePreset>,
-}
+pub(crate) use quantick_ui_model::chart_settings::FootprintChange;
+pub(crate) use quantick_ui_model::dock::PaperPanelEffects;
 
 impl SurfaceResponse {
     /// A response carrying `effect` when the surface asked for it.
     pub(crate) fn effect_if(wanted: bool, effect: HostEffect) -> Self {
         let model_effects = if wanted { vec![effect] } else { Vec::new() };
-        Self {
-            model_effects,
-            ..Self::default()
-        }
+        Self { model_effects }
     }
 
     /// Validate the complete residual before a paper host performs any effect.
     /// Direct model/domain changes made during painting are not rolled back.
-    pub(crate) fn into_paper_panel(mut self) -> Result<PaperPanelEffects, Box<Self>> {
-        let paper = self.paper_panel.take();
-        if self != Self::default() {
-            self.paper_panel = paper;
+    pub(crate) fn into_paper_panel(self) -> Result<PaperPanelEffects, Box<Self>> {
+        if !(self.model_effects.iter()).all(|effect| matches!(effect, HostEffect::Dock(_))) {
             tracing::warn!(target: "quantick::app", schema_version = 1_u8,
                 event_code = "PAPER_PANEL_UNSUPPORTED_RESPONSE", response = ?self,
                 "paper panel response retained without external host execution");
             return Err(Box::new(self));
         }
-        Ok(paper.map(|paper| *paper).unwrap_or_default())
+        let mut paper = PaperPanelEffects::default();
+        for effect in self.model_effects {
+            if let HostEffect::Dock(asked) = effect {
+                paper.merge(asked);
+            }
+        }
+        Ok(paper)
     }
 
-    /// Fold one surface's response into the frame's. Requests are
-    /// independent, so a set flag stays set: no surface can cancel another's
-    /// ask by being drawn after it.
-    ///
-    /// Where a request carries a value rather than a flag, the **first**
-    /// surface to ask wins and a later one in the same frame is dropped. Two
-    /// surfaces cannot both be right about one workspace name, and dropping
-    /// the later ask deterministically beats writing the file twice or letting
-    /// draw order decide in silence. Only one surface produces it today; the
-    /// rule is pinned by a test so a second producer meets a documented answer
-    /// rather than a surprise. Typed `model_effects` are kept in draw order;
-    /// the host that executes one applies the same first-asker rule.
+    /// Fold one surface's response into the frame's, keeping draw order.
+    /// The host that executes an effect applies the first-asker rule: two
+    /// surfaces cannot both be right about one value, and dropping the later
+    /// ask deterministically beats letting draw order decide in silence.
     fn merge(&mut self, other: Self) {
-        if let Some(paper) = other.paper_panel {
-            self.paper_panel
-                .get_or_insert_with(Default::default)
-                .merge(*paper);
-        }
         self.model_effects.extend(other.model_effects);
-        self.alerts = self.alerts.take().or(other.alerts);
-        self.indicator_actions.extend(other.indicator_actions);
-        self.script_editor_actions
-            .extend(other.script_editor_actions);
-        self.style = self.style.take().or(other.style);
-        self.log_style_change = self.log_style_change.take().or(other.log_style_change);
-        self.footprint = self.footprint.take().or(other.footprint);
-        self.arm_strategy = self.arm_strategy.take().or(other.arm_strategy);
-        self.test_alert = self.test_alert.take().or(other.test_alert);
     }
 }
 

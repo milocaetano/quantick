@@ -301,14 +301,11 @@ impl super::View<Model> for View {
             return SurfaceResponse::default();
         }
         let paper = draw(session, target.context(), env);
-        SurfaceResponse {
-            paper_panel: (paper != PaperPanelEffects::default()).then(|| Box::new(paper)),
-            ..Default::default()
-        }
+        effects(paper)
     }
 }
-pub(crate) fn effects((): ()) -> SurfaceResponse {
-    SurfaceResponse::default()
+pub(crate) fn effects(paper: PaperPanelEffects) -> SurfaceResponse {
+    SurfaceResponse::effect_if(paper != PaperPanelEffects::default(), super::HostEffect::Dock(paper))
 }
 
 #[cfg(test)]

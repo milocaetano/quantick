@@ -35,7 +35,6 @@ pub(crate) fn effects(effects: Effects) -> SurfaceResponse {
             .then_some(HostEffect::AccessPanel(effects))
             .into_iter()
             .collect(),
-        ..Default::default()
     }
 }
 #[cfg(test)]

@@ -25,12 +25,41 @@ pub enum Intent {
     Select(DockTab),
     RememberWidth { tab: DockTab, width: f32 },
 }
+/// Host outputs of the complete borrowed paper-panel pass.
+#[derive(Default, Debug, PartialEq)]
+pub struct PaperPanelEffects {
+    /// The rail's bell: open the alert manager.
+    pub open_alerts: bool,
+    pub close_replay: bool,
+    pub open_replay_browser: bool,
+    pub navigate_to_trade: Option<(i64, i64)>,
+    pub journal_edit: Option<quantick_paper::report::session_edit::JournalEdit>,
+    pub pick_trades_dir: bool,
+    pub cmd_trading_changed: bool,
+    pub order_strategies_changed: bool,
+    pub risk_settings_changed: bool,
+}
+impl PaperPanelEffects {
+    /// Fold a later pass in: a set flag stays set, the first value wins.
+    pub fn merge(&mut self, other: Self) {
+        self.open_alerts |= other.open_alerts;
+        self.close_replay |= other.close_replay;
+        self.open_replay_browser |= other.open_replay_browser;
+        self.navigate_to_trade = self.navigate_to_trade.or(other.navigate_to_trade);
+        self.journal_edit = self.journal_edit.take().or(other.journal_edit);
+        self.pick_trades_dir |= other.pick_trades_dir;
+        self.cmd_trading_changed |= other.cmd_trading_changed;
+        self.order_strategies_changed |= other.order_strategies_changed;
+        self.risk_settings_changed |= other.risk_settings_changed;
+    }
+}
 pub struct Model;
 impl crate::Model for Model {
     type State = State;
     type Intent = Intent;
-    type Effects = ();
-    fn update(state: &mut State, intent: Intent) {
+    /// Dock intents only move chrome; the paper pass reports its own asks.
+    type Effects = PaperPanelEffects;
+    fn update(state: &mut State, intent: Intent) -> PaperPanelEffects {
         match intent {
             Intent::ToggleVisible => state.dock.toggle_visible(),
             Intent::Restore { visible, tab } => state.dock.restore(visible, tab),
@@ -39,6 +68,7 @@ impl crate::Model for Model {
             Intent::Select(tab) => state.dock.select(tab),
             Intent::RememberWidth { tab, width } => state.dock.remember_width(tab, width),
         }
+        PaperPanelEffects::default()
     }
 }
 #[cfg(test)]

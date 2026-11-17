@@ -113,7 +113,7 @@ pub(in crate::app) fn draw(app: &mut QuantickApp, ctx: &egui::Context) {
     let view = app.surfaces.chrome_toolbar.scoped(scope).1;
     app.chrome.history_menu_rect = view.history;
     let (capsule_rects, toolbar_door) = (view.capsule, view.door);
-    let mut actions = response.indicator_actions;
+    let mut actions = Vec::new();
     for effect in response.model_effects {
         if let quantick_ui_model::HostEffect::ChromeToolbar(effects) = effect {
             for effect in effects.0 {

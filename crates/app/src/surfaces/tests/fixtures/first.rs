@@ -60,7 +60,6 @@ pub(crate) fn effects((value, now): (i64, u64)) -> SurfaceResponse {
     }
     SurfaceResponse {
         model_effects,
-        ..Default::default()
     }
 }
 

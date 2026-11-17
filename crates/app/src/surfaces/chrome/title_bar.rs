@@ -98,7 +98,6 @@ pub(crate) fn effects(effects: Effects) -> SurfaceResponse {
     }
     SurfaceResponse {
         model_effects: vec![HostEffect::ChromeTitleBar(effects)],
-        ..Default::default()
     }
 }
 pub(crate) fn tab_width(width: f32, agent: bool) -> f32 {

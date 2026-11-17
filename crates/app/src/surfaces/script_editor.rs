@@ -206,26 +206,8 @@ impl super::View<Model> for View {
 }
 
 pub(crate) fn effects(effects: Vec<Effect>) -> SurfaceResponse {
-    let mut response = SurfaceResponse::default();
-    let mut host = Vec::new();
-    for effect in effects {
-        match effect {
-            Effect::Requests {
-                actions,
-                add_to_chart,
-            } => {
-                response.script_editor_actions.extend(actions);
-                response
-                    .indicator_actions
-                    .extend(add_to_chart.map(crate::toolbar::ToolbarAction::AddScriptIndicator));
-            }
-            effect => host.push(effect),
-        }
-    }
-    if !host.is_empty() {
-        response
-            .model_effects
-            .push(quantick_ui_model::HostEffect::ScriptEditor(host));
-    }
-    response
+    SurfaceResponse::effect_if(
+        !effects.is_empty(),
+        quantick_ui_model::HostEffect::ScriptEditor(effects),
+    )
 }

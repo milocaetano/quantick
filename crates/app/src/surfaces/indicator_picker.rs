@@ -1,6 +1,6 @@
 //! Centered indicator library and active-slot management.
 use super::{SurfaceEnv, SurfaceResponse, ViewContext};
-use crate::{theme, toolbar::ToolbarAction};
+use crate::theme;
 use eframe::egui;
 use egui_phosphor::regular as icons;
 use quantick_stores::indicator_picker::{Category, Choice};
@@ -249,31 +249,16 @@ fn draw_active(ui: &mut egui::Ui, entries: &[ActiveEntry], intents: &mut Vec<Int
 crate::hooks::declare_hooks!["QUANTICK_INDICATOR_PICKER"];
 
 pub(crate) fn effects(effects: Vec<Effect>) -> SurfaceResponse {
-    let mut response = SurfaceResponse::default();
-    for effect in effects {
-        match effect {
-            Effect::Add(Choice::Native(id)) => response
-                .indicator_actions
-                .push(ToolbarAction::AddNative(id)),
-            Effect::Add(Choice::Script(index)) => response
-                .indicator_actions
-                .push(ToolbarAction::AddScriptIndicator(index)),
-            Effect::ViewSource(id) => response
-                .script_editor_actions
-                .push(quantick_stores::script_library::ScriptEditorAction::Open { id }),
-            Effect::Active(slot, action) => response.indicator_actions.push(match action {
-                ActiveAction::ToggleHidden => ToolbarAction::ToggleIndicatorHidden(slot),
-                ActiveAction::Settings => ToolbarAction::OpenIndicatorSettings(slot),
-                ActiveAction::Remove => ToolbarAction::RemoveIndicator(slot),
-            }),
-        }
-    }
-    response
+    SurfaceResponse::effect_if(
+        !effects.is_empty(),
+        super::HostEffect::IndicatorPicker(effects),
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::toolbar::ToolbarAction;
     use crate::surfaces::Surface;
     use std::time::Instant;
     fn frame(
@@ -434,7 +419,7 @@ mod tests {
         );
         let (_, response) = frame(&mut surface, &ctx, vec![pointer(false)], size);
         assert_eq!(
-            response.indicator_actions,
+            response.late().indicator_actions,
             vec![ToolbarAction::AddNative("native.cvd")]
         );
         assert!(surface.model_state.picker.target.is_none());
@@ -475,7 +460,7 @@ mod tests {
         frame(&mut surface, &ctx, click(OUTSIDE, true), size);
         let (_, response) = frame(&mut surface, &ctx, click(OUTSIDE, false), size);
         assert!(surface.model_state.picker.target.is_none());
-        assert!(response.indicator_actions.is_empty());
+        assert!(response.late().indicator_actions.is_empty());
     }
     /// A press on the scrim that is no click leaves the picker open, and the
     /// window has to stay above the scrim or the trader holds a modal nothing
@@ -508,7 +493,7 @@ mod tests {
         frame(&mut surface, &ctx, click(row, true), size);
         let (_, response) = frame(&mut surface, &ctx, click(row, false), size);
         assert_eq!(
-            response.indicator_actions,
+            response.late().indicator_actions,
             vec![ToolbarAction::AddNative("native.cvd")]
         );
     }
@@ -561,7 +546,7 @@ mod tests {
             frame_with_entries(&mut surface, &ctx, click(at, true), size, &entries);
             let (_, response) =
                 frame_with_entries(&mut surface, &ctx, click(at, false), size, &entries);
-            assert_eq!(response.indicator_actions, vec![expected]);
+            assert_eq!(response.late().indicator_actions, vec![expected]);
         }
     }
 }
