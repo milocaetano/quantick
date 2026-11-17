@@ -1365,3 +1365,31 @@ fn a_parked_broker_holds_reverse_and_never_the_exits() {
     let flat = Tabs::new();
     assert!(!ticket.position_actions(&flat.accounts[&1]).exits);
 }
+
+/// A row answers the pointer the way the panel reports it: a click on a
+/// click row, and the REAL row's hold from its start to its release.
+#[test]
+fn a_row_turns_the_pointer_into_its_press() {
+    let row = |gesture, progress| AccountRow {
+        title: String::new(),
+        hint: String::new(),
+        subs: Vec::new(),
+        state: RowState::Enabled,
+        tone: RouteTone::Real,
+        gesture,
+        progress,
+    };
+    let demo = row(RowGesture::Click(Route::Demo), None);
+    assert_eq!(
+        demo.press(true, false),
+        Some(RoutePress::Click(Route::Demo))
+    );
+    assert_eq!(demo.press(false, true), None);
+    let real = row(RowGesture::Hold, None);
+    assert_eq!(real.press(false, true), Some(RoutePress::HoldStart));
+    assert_eq!(real.press(true, false), None, "a click never arms REAL");
+    let holding = row(RowGesture::Hold, Some(0.4));
+    assert_eq!(holding.press(false, true), Some(RoutePress::HoldStill));
+    assert_eq!(holding.press(false, false), Some(RoutePress::HoldRelease));
+    assert_eq!(row(RowGesture::None, None).press(true, true), None);
+}

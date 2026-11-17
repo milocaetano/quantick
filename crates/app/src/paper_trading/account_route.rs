@@ -8,8 +8,7 @@
 use eframe::egui;
 use egui_phosphor::regular::{CARET_DOWN, LOCK_SIMPLE};
 use quantick_paper::route::{
-    AccountsPort, BrokerSession, RouteHost, RoutePress, RouteTone, RowGesture, RowState, Sheet,
-    SourceFacts,
+    AccountsPort, BrokerSession, RouteHost, RoutePress, RouteTone, RowState, Sheet, SourceFacts,
 };
 
 use crate::app::arrangement_host::ArrangementHost;
@@ -170,16 +169,7 @@ fn draw_row(
     }
     let id = ui.id().with(("account_row", &row.title));
     let response = ui.interact(rect, id, egui::Sense::click_and_drag());
-    let held = response.is_pointer_button_down_on();
-    match row.gesture {
-        RowGesture::Click(route) if response.clicked() => Some(RoutePress::Click(route)),
-        RowGesture::Hold if held && row.progress.is_none() => Some(RoutePress::HoldStart),
-        // Said every frame the row is painted and pressed: a hold whose row
-        // stops being painted ends rather than arming unseen.
-        RowGesture::Hold if held => Some(RoutePress::HoldStill),
-        RowGesture::Hold if !held && row.progress.is_some() => Some(RoutePress::HoldRelease),
-        _ => None,
-    }
+    row.press(response.clicked(), response.is_pointer_button_down_on())
 }
 
 #[cfg(any(feature = "scenario-harness", test))]

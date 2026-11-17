@@ -103,6 +103,20 @@ pub struct PositionActions {
     pub exits: bool,
 }
 
+impl PositionActions {
+    /// Whether Reverse may be pressed.
+    #[must_use]
+    pub fn reverse_ready(&self) -> bool {
+        self.reverse_block.is_none()
+    }
+
+    /// Why Reverse is off, for its disabled hover; empty while it is on.
+    #[must_use]
+    pub fn reverse_hover(&self) -> &str {
+        self.reverse_block.as_deref().unwrap_or_default()
+    }
+}
+
 /// Why a press that opens a position - an entry, or Reverse - is refused
 /// now, if it is: the broker's block first, then no market, then the risk
 /// lock in its own sentence.

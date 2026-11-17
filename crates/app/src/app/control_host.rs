@@ -540,8 +540,7 @@ pub(crate) struct ChromeReads<'a> {
     settings: Option<quantick_control_schema::settings_sections::SettingsSection>,
     /// The toolbar's list door, capsule and layout popover, as drawn.
     pub(crate) toolbar: &'a [crate::toolbar::DrawnControl],
-    /// The route block the Trading panel paints, while broker routes are
-    /// offered: its title is the Trading tab's.
+    /// The Trading panel's route block, while broker routes are offered.
     pub(crate) route: Option<&'a quantick_paper::route::Sheet>,
 }
 
@@ -968,14 +967,13 @@ impl ChromePort for QuantickApp {
             feed_popup_tab: self.surfaces.feed_notice.model_state.open(),
             replay_day_before: self.surfaces.replay_browser.day_before(),
         };
-        let (rail, chrome) = (&self.surfaces.toolrail, &self.surfaces.drawing_chrome);
         let mut reads = ChromeReads::new(
             &self.runtime.tabs,
             &self.runtime.style,
-            rail,
+            &self.surfaces.toolrail,
             &self.surfaces.dock.model_state,
             self.runtime.tz,
-            chrome,
+            &self.surfaces.drawing_chrome,
             drawn,
         );
         reads.alerts_open = self.surfaces.alerts.is_open();

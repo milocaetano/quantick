@@ -8,7 +8,7 @@ use rust_decimal::Decimal;
 use quantick_trading::{AccountFacts, BrokerVenue, LinkState};
 use quantick_workspace::dock::DockTab;
 
-use super::desk::{AccountsPort, BrokerDesk, SourceFacts};
+use super::desk::{AccountsPort, BrokerDesk, RoutePress, SourceFacts};
 use super::{AccountRoute, Disarm, Refusal, Route};
 use crate::format::{fmt_decimal, position_word};
 
@@ -100,6 +100,24 @@ pub struct AccountRow {
     pub gesture: RowGesture,
     /// How far a REAL hold has come, while it is held.
     pub progress: Option<f32>,
+}
+
+impl AccountRow {
+    /// What the pointer on this painted row asks this frame, from whether it
+    /// was clicked and whether it is held down: a click selects a click row;
+    /// the REAL row's hold starts, is reported still pressed every frame it
+    /// is painted (a hold whose row stops being painted ends rather than
+    /// arming unseen), and is let go.
+    #[must_use]
+    pub fn press(&self, clicked: bool, held: bool) -> Option<RoutePress> {
+        match self.gesture {
+            RowGesture::Click(route) if clicked => Some(RoutePress::Click(route)),
+            RowGesture::Hold if held && self.progress.is_none() => Some(RoutePress::HoldStart),
+            RowGesture::Hold if held => Some(RoutePress::HoldStill),
+            RowGesture::Hold if !held && self.progress.is_some() => Some(RoutePress::HoldRelease),
+            _ => None,
+        }
+    }
 }
 
 /// The Trading panel's route block and everything around it.
