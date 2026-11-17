@@ -72,3 +72,14 @@ fn paper_passes_merge_flags_and_keep_the_first_value() {
         }
     );
 }
+
+#[test]
+fn reveal_collapsed_shows_the_dock_without_a_tab_either_way() {
+    for (visible, tab) in [(false, None), (true, Some(DockTab::Trading))] {
+        let mut dock = crate::Adapter::<Model, (), ()>::new((), |_| ());
+        dock.restore(visible, tab);
+        dock.reveal_collapsed();
+        assert!(dock.visible());
+        assert_eq!(dock.tab(), None);
+    }
+}

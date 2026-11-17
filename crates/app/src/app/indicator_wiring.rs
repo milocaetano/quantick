@@ -21,17 +21,35 @@ impl<'a> IndicatorWiring<'a> {
     /// The layout ports these fields hold: the one place a [`LayoutAdapter`]
     /// is built, for the edits below and for [`super::LayoutPort`].
     pub(super) fn into_layout(self) -> LayoutAdapter<'a> {
-        LayoutAdapter {
-            active: self.runtime.tabs.active_index(),
-            tabs: &mut self.runtime.tabs,
-            indicators: &mut self.runtime.indicators,
-            store: &mut self.runtime.workspace.layouts,
-            book: &self.runtime.workspace.book,
-            drawing_chrome: &mut self.surfaces.drawing_chrome,
-            toast: &mut self.surfaces.toast,
-            dialogs: &mut self.surfaces.layout_dialogs,
-            indicator_settings: &mut self.surfaces.indicator_settings,
-        }
+        self.into_alerts().0.layout
+    }
+
+    /// The layout ports plus the dock, the alert owner and the alert model an
+    /// alert request settles on, borrowed apart.
+    pub(super) fn into_alerts(
+        self,
+    ) -> (
+        super::alerts_runtime::RequestAdapter<'a>,
+        &'a mut quantick_ui_model::alerts::State,
+    ) {
+        let (runtime, surfaces) = (self.runtime, self.surfaces);
+        let layout = LayoutAdapter {
+            active: runtime.tabs.active_index(),
+            tabs: &mut runtime.tabs,
+            indicators: &mut runtime.indicators,
+            store: &mut runtime.workspace.layouts,
+            book: &runtime.workspace.book,
+            drawing_chrome: &mut surfaces.drawing_chrome,
+            toast: &mut surfaces.toast,
+            dialogs: &mut surfaces.layout_dialogs,
+            indicator_settings: &mut surfaces.indicator_settings,
+        };
+        let host = super::alerts_runtime::RequestAdapter {
+            layout,
+            dock: &mut surfaces.dock,
+            alerts: &mut runtime.alerts.core,
+        };
+        (host, &mut surfaces.alerts.model_state)
     }
 }
 

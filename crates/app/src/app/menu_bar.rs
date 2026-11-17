@@ -302,7 +302,7 @@ impl QuantickApp {
         }
         match command {
             MenuCommand::OpenAlerts => super::alerts_runtime::apply_alert_request(
-                self,
+                self.indicator_wiring(),
                 crate::surfaces::alerts::Request {
                     open: true,
                     ..Default::default()
