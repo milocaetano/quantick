@@ -1249,3 +1249,37 @@ fn a_broker_account_words_every_refusal_and_cancel_in_its_own_route() {
     let toast = account.take_toast().unwrap_or_default();
     assert!(toast.starts_with("DEMO cancelled #9"), "{toast}");
 }
+
+#[test]
+fn a_broker_account_words_the_tickets_complaints_in_its_own_route() {
+    let (_broker, mut tabs, _script) = armed(TradeMode::Demo);
+    let account = tabs.active();
+    account.seed(&print(0, 100));
+    account.take_toast();
+    let mut desk = crate::desk::Desk::default();
+    let limit = quantick_trading::EntryKind::Limit;
+
+    desk.ticket.stop_offset_text = "abc".to_owned();
+    assert_eq!(
+        desk.place_resting(account, Side::Buy, limit, 90.0),
+        Err("DEMO: the stop offset must be a positive number of points - got `abc`".to_owned())
+    );
+    desk.ticket.stop_offset_text.clear();
+    desk.ticket.profit_offset_text = "x".to_owned();
+    assert_eq!(
+        desk.place_resting(account, Side::Buy, limit, 90.0),
+        Err("DEMO: the profit offset must be a positive number of points - got `x`".to_owned())
+    );
+    desk.ticket.profit_offset_text.clear();
+
+    desk.ticket.qty_text = "lots".to_owned();
+    assert_eq!(
+        desk.place_resting(account, Side::Buy, limit, 90.0),
+        Ok(false)
+    );
+    assert_eq!(
+        account.take_toast().as_deref(),
+        Some("DEMO: quantity must be a positive number - got `lots`")
+    );
+    assert!(account.working_orders().is_empty(), "nothing was placed");
+}

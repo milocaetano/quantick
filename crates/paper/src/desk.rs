@@ -261,7 +261,10 @@ impl Desk {
         let price = account.snap(raw_price);
         // The offsets are read here because an unreadable one is a message
         // beside the box the trader typed in. Everything after is placement.
-        let ticket = self.ticket.parse_bracket(side, price)?;
+        let ticket = self
+            .ticket
+            .parse_bracket(side, price)
+            .map_err(|complaint| format!("{}: {complaint}", account.route_kind().word()))?;
         let env = self.account_env(account, side, price);
         Ok(account.place_resting(side, kind, price, ticket, &env))
     }

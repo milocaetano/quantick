@@ -850,7 +850,7 @@ fn the_ticket_reads_its_boxes() {
     };
     assert_eq!(
         ticket.parse_bracket(Side::Buy, Decimal::from(100)),
-        Err("SIM: the stop offset must be a positive number of points - got `x`".to_owned())
+        Err("the stop offset must be a positive number of points - got `x`".to_owned())
     );
     ticket.stop_offset_text = "2".to_owned();
     ticket.profit_offset_text = "4".to_owned();

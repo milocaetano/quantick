@@ -89,7 +89,7 @@ impl Default for TicketForm {
     /// An empty form: no quantity typed, and the complaint that says so.
     fn default() -> Self {
         Self {
-            quantity: Err("SIM: quantity must be a positive number - got ``".to_owned()),
+            quantity: Err("quantity must be a positive number - got ``".to_owned()),
             offsets: Some((None, None)),
         }
     }

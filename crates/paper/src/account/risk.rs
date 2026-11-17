@@ -183,14 +183,16 @@ impl PaperAccount {
         }
         // Off, or nothing to size against: the typed quantity still rules,
         // and a quantity that does not parse complains as it always did -
-        // in the ticket's own words, carried here by the form.
+        // in the ticket's own words, carried here by the form, after the
+        // route's.
         match env.form.quantity.clone() {
             Ok(quantity) => Some((
                 quantity,
                 self.aim_bracket(side, reference, quantity, ticket, env),
             )),
             Err(complaint) => {
-                self.set_toast(complaint);
+                let word = self.route_kind().word();
+                self.set_toast(format!("{word}: {complaint}"));
                 None
             }
         }
