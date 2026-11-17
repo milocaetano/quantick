@@ -16,6 +16,7 @@ use quantick_control_host::{
 use quantick_control_schema::chart::{BarProvenanceContext, ViewportSnapshot};
 use quantick_control_schema::interaction::CursorSnapshot;
 use quantick_control_schema::notify::AgentPopup;
+use quantick_engine::bar_registry::{BUILTIN_BARS, BarConfiguration};
 use quantick_engine::{Bar, BarSpec, Side, Trade};
 use quantick_session::{
     HistoryAct, HistoryOutcome, HistoryReply, SessionSnapshot, sets_window_default,
@@ -29,11 +30,14 @@ use crate::analysis::{AnalysisPaneEntry, AnalysisPort};
 use crate::attention::MarkPort;
 use crate::axis_pane::{AxisPane, NativeTape};
 use crate::bubble_pane::{AssetSave, BubbleLook, BubblePane, PaneBubblesPort, TickSpherePane};
-use crate::chart::{ChartPaneEntry, ChartPaneSource, ChartPort, MissingPane, PaneFraming};
+use crate::chart::{
+    AddressedPane, ChartPaneEntry, ChartPaneSource, ChartPort, MissingPane, PaneFraming,
+};
 use crate::chart_layer::{LayerBlocked, LayerRead};
 use crate::deal_recorder::DealRecorder;
 use crate::history::HistoryPort;
 use crate::notify::{AttentionPort, NotifyAccess};
+use crate::pane_marks::PaneMarks;
 use crate::recovery::{FeedRecoveryPort, RecoveredFeed};
 use crate::tabs::TabDirectory;
 use crate::trade::{TradeDesk, TradePort};
@@ -74,7 +78,7 @@ pub(crate) struct FakePane {
     pub tape: Option<FakeTape>,
     pub drawings: Drawings<DrawingTool>,
     /// The bar rule the pane's marks are cut to.
-    pub bars: String,
+    pub bars: BarConfiguration,
     /// The registered layers, as the pane's menu reads them.
     pub layers: Vec<(LayerSnapshot, Option<LayerBlocked>)>,
 }
@@ -121,15 +125,20 @@ impl FakePane {
             shows_live: true,
             tape: None,
             drawings: Drawings::default(),
-            bars: format!("{ticks}t"),
+            bars: BUILTIN_BARS
+                .parse(&format!("tick:{ticks}"))
+                .expect("a tick rule"),
             layers: Vec::new(),
         }
     }
 }
 
 impl AxisPane for FakePane {
-    fn frame_prices(&mut self, range: Option<(f64, f64)>) {
-        self.framed.push(range);
+    fn frame_price_range(&mut self, low: f64, high: f64) {
+        self.framed.push(Some((low, high)));
+    }
+    fn fit_prices(&mut self) {
+        self.framed.push(None);
     }
     fn reset_time_strip(&mut self, tape: bool) -> bool {
         if tape && self.tape.is_none() {
@@ -158,11 +167,14 @@ impl AxisPane for FakePane {
     fn native_tape(&mut self) -> Option<&mut dyn NativeTape> {
         Some(self.tape.as_mut()?)
     }
+}
+
+impl PaneMarks for FakePane {
     fn marks(&mut self) -> &mut Drawings<DrawingTool> {
         &mut self.drawings
     }
-    fn marks_bars(&self) -> String {
-        self.bars.clone()
+    fn marks_bars(&self) -> BarConfiguration {
+        self.bars
     }
 }
 
@@ -638,11 +650,11 @@ impl ChartPort for FakeWindow {
     fn price_tag_progress(&self, _tab_id: u64) -> bool {
         true
     }
-    fn axis_pane(
+    fn addressed_pane(
         &mut self,
         tab_id: WireU64,
         pane_id: WireU64,
-    ) -> Result<&mut dyn AxisPane, ControlError> {
+    ) -> Result<&mut dyn AddressedPane, ControlError> {
         Ok(self.pane_mut(tab_id, pane_id)?)
     }
     fn apply_chart_settings(

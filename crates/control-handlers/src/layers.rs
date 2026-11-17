@@ -17,7 +17,7 @@ use serde_json::{Value, json};
 use crate::JournalAccess;
 use crate::chart::ChartPort;
 use crate::dock::ActionDock;
-use crate::tabs::invalid;
+use crate::invalid;
 
 /// Dock `layers.visibility.set`.
 ///

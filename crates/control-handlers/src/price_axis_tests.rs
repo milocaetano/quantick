@@ -2,6 +2,7 @@
 //! to do, and what each call refuses before anything moves.
 use super::*;
 use crate::test_support::{FakePane, FakeTab, FakeTape, FakeWindow};
+use quantick_control::error::codes;
 use quantick_control_schema::tape_view::TapeViewSnapshot;
 use quantick_orderflow::LaneWindow;
 use quantick_orderflow::tape_view::TapeEnd;
@@ -40,6 +41,16 @@ fn a_price_call_refuses_bad_bounds_and_unknown_panes_before_framing() {
     assert!(format!("{error:?}").contains("low below high"), "{error:?}");
     let elsewhere = json!({"tab_id": "1", "pane_id": "9", "mode": {"kind": "auto"}});
     assert!(set_price(&mut window, &mut (), &actor, &elsewhere).is_err());
+    for mode in [
+        json!({"kind": "manual", "low": "100", "high": "100"}),
+        json!({"kind": "manual", "low": "NaN", "high": "110"}),
+        json!({"kind": "manual", "low": "90"}),
+        json!({"kind": "unknown"}),
+    ] {
+        let input = json!({"tab_id": "1", "pane_id": "2", "mode": mode});
+        let error = set_price(&mut window, &mut (), &actor, &input).unwrap_err();
+        assert_eq!(error.code.as_str(), codes::INVALID_REQUEST, "{mode}");
+    }
     assert!(pane(&window).framed.is_empty());
 }
 

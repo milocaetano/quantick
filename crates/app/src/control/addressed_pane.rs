@@ -1,12 +1,13 @@
-//! The addressed pane, resolved for the calls that act on it, and the pane
-//! and its native tape as `quantick_control_handlers::axis_pane` acts on
-//! them: the same pane state the axis gestures change.
+//! The addressed pane, resolved for the calls that act on it, and the pane,
+//! its tape and its marks as `quantick_control_handlers::chart::AddressedPane`
+//! acts on them: the state the axis gestures and the context bar change.
 use super::layout;
 use crate::app::{TabsMutPort, TabsPort};
 use crate::orderflow_view::OrderflowView;
 use crate::pane::ChartPane;
 use quantick_control::{error::ControlError, wire::WireU64};
 use quantick_control_handlers::axis_pane::{AxisPane, NativeTape};
+use quantick_control_handlers::pane_marks::PaneMarks;
 use quantick_control_schema::chart::ViewportSnapshot;
 use quantick_control_schema::tape_view::TapeViewSnapshot;
 use quantick_drawings::{DrawingTool, Drawings};
@@ -33,14 +34,13 @@ pub(super) fn pane<P: TabsPort + TabsMutPort + ?Sized>(
 }
 
 impl AxisPane for ChartPane {
-    fn frame_prices(&mut self, range: Option<(f64, f64)>) {
+    fn frame_price_range(&mut self, low: f64, high: f64) {
         self.sync_price_axis_mode();
-        match range {
-            Some((low, high)) => {
-                self.price_view.set_manual_range(low, high);
-            }
-            None => self.price_view.reset(),
-        }
+        self.price_view.set_manual_range(low, high);
+    }
+    fn fit_prices(&mut self) {
+        self.sync_price_axis_mode();
+        self.price_view.reset();
     }
     fn reset_time_strip(&mut self, tape: bool) -> bool {
         self.reset_time_axis(tape)
@@ -58,15 +58,16 @@ impl AxisPane for ChartPane {
         let tape = self.orderflow.as_mut();
         Some(tape.filter(|tape| tape.cached_config().native_tape())?)
     }
+}
+
+impl PaneMarks for ChartPane {
     fn marks(&mut self) -> &mut Drawings<DrawingTool> {
         &mut self.drawings
     }
-    fn marks_bars(&self) -> String {
-        let bars = self
-            .layout
+    fn marks_bars(&self) -> quantick_engine::bar_registry::BarConfiguration {
+        self.layout
             .drawings_spec
-            .unwrap_or(*self.series.state.spec());
-        bars.to_config_string()
+            .unwrap_or(*self.series.state.spec())
     }
 }
 

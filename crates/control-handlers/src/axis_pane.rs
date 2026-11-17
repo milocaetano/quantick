@@ -1,24 +1,23 @@
-//! The pane-addressed chart calls' one owner: the window resolves the
-//! addressed pane ([`crate::chart::ChartPort::axis_pane`]), the pane frames
-//! its axes and keeps its marks, and its native tape frames itself. Its
-//! callers: `chart.price_axis.set` and `chart.tape_view.set`
-//! ([`crate::price_axis`]), `chart.time_axis.reset` ([`crate::time_axis`]),
-//! `annotate.drawing_magnet.set` and `annotate.drawing_scope.set`
-//! ([`crate::drawing_magnet`]). They take the same paths the axis gestures
-//! and the context bar take, so the call and the hand cannot drift.
+//! A chart pane's framing, as the axis calls act on it: the window resolves
+//! the addressed pane ([`crate::chart::ChartPort::addressed_pane`]), the pane
+//! frames its axes and its native tape frames itself. Its callers:
+//! `chart.price_axis.set` and `chart.tape_view.set` ([`crate::price_axis`])
+//! and `chart.time_axis.reset` ([`crate::time_axis`]). They take the same
+//! paths the axis gestures take, so the call and the hand cannot drift. The
+//! pane's marks are [`crate::pane_marks::PaneMarks`].
 use quantick_control_schema::chart::ViewportSnapshot;
 use quantick_control_schema::tape_view::TapeViewSnapshot;
-use quantick_drawings::{DrawingTool, Drawings};
 use quantick_orderflow::LaneWindow;
 use quantick_orderflow::tape_view::TapeEnd;
 
-/// A chart pane, as its axis, tape and drawing calls act on it. Its names
+/// A chart pane, as its axis and tape calls act on it. Its names
 /// differ from the pane's own methods, so an implementation that forwards to
 /// one cannot fall back on itself.
 pub trait AxisPane {
-    /// Frame prices to `range` (low, high), or fit them again on `None`, in
-    /// the axis mode the pane draws.
-    fn frame_prices(&mut self, range: Option<(f64, f64)>);
+    /// Frame prices from `low` to `high`, in the axis mode the pane draws.
+    fn frame_price_range(&mut self, low: f64, high: f64);
+    /// Fit prices to the bars in view again, in the axis mode the pane draws.
+    fn fit_prices(&mut self);
     /// A time strip's double click: the tape's own strip when `tape`, else
     /// the chart's opening framing. Answers whether the pane has that strip.
     fn reset_time_strip(&mut self, tape: bool) -> bool;
@@ -32,10 +31,6 @@ pub trait AxisPane {
     fn framing(&self) -> ViewportSnapshot;
     /// The pane's order-flow view, when it draws a native tape.
     fn native_tape(&mut self) -> Option<&mut dyn NativeTape>;
-    /// The pane's marks.
-    fn marks(&mut self) -> &mut Drawings<DrawingTool>;
-    /// The bar rule the pane's marks are cut to, in config form.
-    fn marks_bars(&self) -> String;
 }
 
 /// A native tape, as `chart.tape_view.set` frames it.

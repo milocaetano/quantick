@@ -9,7 +9,7 @@ use serde_json::Value;
 
 use crate::chart::ChartPort;
 use crate::dock::ActionDock;
-use crate::tabs::invalid;
+use crate::invalid;
 
 /// Dock `chart.time_axis.reset`.
 ///
@@ -30,7 +30,7 @@ fn reset_time<H: ChartPort + ?Sized, A>(
     value: &Value,
 ) -> Result<Value, ControlError> {
     let input: TimeAxisResetInput = serde_json::from_value(value.clone()).map_err(invalid)?;
-    let pane = host.axis_pane(input.tab_id, input.pane_id)?;
+    let pane = host.addressed_pane(input.tab_id, input.pane_id)?;
     let tape = input.axis == TimeAxis::Tape;
     let applied = match input.to {
         TimeAxisTarget::Opening => pane.reset_time_strip(tape),

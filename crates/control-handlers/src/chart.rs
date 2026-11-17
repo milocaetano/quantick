@@ -38,6 +38,13 @@ use quantick_stores::candle_presets::PresetError;
 use crate::axis_pane::AxisPane;
 use crate::chart_layer::LayerRead;
 use crate::dock::ProjectionDock;
+use crate::pane_marks::PaneMarks;
+
+/// A chart pane a call addresses: its framing ([`AxisPane`]) and its marks
+/// ([`PaneMarks`]), two roles the window lends in one resolution.
+pub trait AddressedPane: AxisPane + PaneMarks {}
+
+impl<T: AxisPane + PaneMarks + ?Sized> AddressedPane for T {}
 
 /// One chart pane as the chart projections read it.
 pub trait ChartPaneSource {
@@ -124,13 +131,13 @@ pub trait ChartPort {
     /// Whether tab `tab_id`'s market prints the forming bar's progress on
     /// its last-price tag.
     fn price_tag_progress(&self, tab_id: u64) -> bool;
-    /// The pane `pane_id` on the tab `tab_id`, lent to a call that acts on
-    /// its axes, its tape or its marks.
-    fn axis_pane(
+    /// The pane `pane_id` on the tab `tab_id`, lent to a call that frames
+    /// its axes or its tape, or changes its marks.
+    fn addressed_pane(
         &mut self,
         tab_id: WireU64,
         pane_id: WireU64,
-    ) -> Result<&mut dyn AxisPane, ControlError>;
+    ) -> Result<&mut dyn AddressedPane, ControlError>;
     /// The chart settings window and its candle presets, through the owner
     /// the double click, the toolbar and the menus reach.
     fn apply_chart_settings(

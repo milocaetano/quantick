@@ -3,10 +3,9 @@
 //! it sits on, and what its feed provides.
 
 use quantick_control::{error::ControlError, wire::WireU64};
-use quantick_control_handlers::axis_pane::AxisPane;
 pub(crate) use quantick_control_handlers::chart::chart_window_prevalidated;
 use quantick_control_handlers::chart::{
-    ChartPaneEntry, ChartPaneSource, ChartPort, MissingPane, PaneFraming,
+    AddressedPane, ChartPaneEntry, ChartPaneSource, ChartPort, MissingPane, PaneFraming,
 };
 use quantick_control_handlers::chart_layer::LayerRead;
 pub(crate) use quantick_control_schema::chart::*;
@@ -51,11 +50,11 @@ impl ChartPort for dyn ControlPort {
         self.layout_state().bar_progress_on(tab_id)
     }
 
-    fn axis_pane(
+    fn addressed_pane(
         &mut self,
         tab_id: WireU64,
         pane_id: WireU64,
-    ) -> Result<&mut dyn AxisPane, ControlError> {
+    ) -> Result<&mut dyn AddressedPane, ControlError> {
         Ok(super::addressed_pane::pane(self, tab_id, pane_id)?)
     }
 

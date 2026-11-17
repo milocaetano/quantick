@@ -2,7 +2,7 @@
 //! drawing's own (`annotate.drawing_magnet.set`), decided here beside
 //! `drawing_scope`, whose call docks with them. The window only lends the
 //! rail's switch ([`AnalysisPort`]) or the addressed pane
-//! ([`ChartPort::axis_pane`]).
+//! ([`ChartPort::addressed_pane`]).
 
 use quantick_control::annotation::ANNOTATE_MODULE_ID;
 use quantick_control::error::ControlError;
@@ -18,6 +18,7 @@ use crate::analysis::AnalysisPort;
 use crate::chart::ChartPort;
 use crate::dock::ActionDock;
 use crate::drawing_scope;
+use crate::invalid;
 
 /// Dock the magnet's two calls and `annotate.drawing_scope.set`: the rail's
 /// switch, one drawing's own, the switch its context bar flips, and where
@@ -65,7 +66,7 @@ fn object<H: ChartPort + ?Sized, A: JournalAccess>(
 ) -> Result<Value, ControlError> {
     set_object(
         input,
-        move |tab, pane| Ok(host.axis_pane(tab, pane)?.marks()),
+        move |tab, pane| Ok(host.addressed_pane(tab, pane)?.marks()),
         journal(access, actor),
     )
 }
@@ -79,16 +80,12 @@ fn scope<H: ChartPort + ?Sized, A: JournalAccess>(
     drawing_scope::call(
         input,
         move |tab, pane| {
-            let pane = host.axis_pane(tab, pane)?;
-            let bars = pane.marks_bars();
+            let pane = host.addressed_pane(tab, pane)?;
+            let bars = pane.marks_bars().to_config_string();
             Ok((pane.marks(), bars))
         },
         journal(access, actor),
     )
-}
-
-fn invalid(error: serde_json::Error) -> ControlError {
-    ControlError::invalid_request(error.to_string())
 }
 
 /// The rail's call: `set` flips the rail magnet and answers whether it moved,

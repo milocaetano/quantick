@@ -26,11 +26,6 @@ pub fn tab_index<P: TabDirectory + ?Sized>(
         .ok_or_else(|| ControlError::invalid_request(format!("no open tab has id {}", id.get())))
 }
 
-/// A malformed input or an unencodable answer, as every family refuses it.
-pub(crate) fn invalid(error: impl ToString) -> ControlError {
-    ControlError::invalid_request(error.to_string())
-}
-
 /// The refusal a call gets when the tab it resolved is gone by the time it
 /// acts — the words every tab-scoped action uses.
 pub(crate) fn tab_closed() -> ControlError {

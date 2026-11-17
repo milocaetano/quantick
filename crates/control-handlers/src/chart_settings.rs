@@ -17,6 +17,7 @@ use serde_json::{Value, json};
 use crate::JournalAccess;
 use crate::chart::ChartPort;
 use crate::dock::ActionDock;
+use crate::invalid;
 use quantick_stores::candle_presets::PresetError;
 use quantick_stores::candle_settings::CandleSettings;
 use quantick_stores::chart_style::StyleFile;
@@ -197,7 +198,6 @@ fn set<H: ChartPort + ?Sized, A: JournalAccess>(
     actor: &ActorContext,
     input: &Value,
 ) -> Result<Value, ControlError> {
-    let invalid = |error: serde_json::Error| ControlError::invalid_request(error.to_string());
     let input: ChartSettingsInput = serde_json::from_value(input.clone()).map_err(invalid)?;
     let result = host.apply_chart_settings(input).map_err(preset_error)?;
     let payload = json!({ "chart_settings": result });

@@ -53,6 +53,7 @@ pub mod notify;
 pub mod opening_scale;
 pub mod orderflow;
 pub mod orderflow_settings;
+pub mod pane_marks;
 pub mod pnl_display;
 pub mod price_axis;
 pub mod price_tag_progress;
@@ -72,6 +73,11 @@ pub mod widgets;
 pub mod workspace_book;
 
 pub use tabs::{JournalAccess, TabDirectory, tab_index};
+
+/// A malformed input or an unencodable answer, as every family refuses it.
+pub(crate) fn invalid(error: impl ToString) -> quantick_control::error::ControlError {
+    quantick_control::error::ControlError::invalid_request(error.to_string())
+}
 
 #[cfg(test)]
 mod canvas_tests;
