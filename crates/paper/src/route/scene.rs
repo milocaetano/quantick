@@ -128,7 +128,7 @@ impl BrokerDesk {
                 .hold_start(port, source, now_ms.saturating_sub(HOLD_TO_ARM_MS))
                 .is_ok()
             {
-                self.hold(port, source, now_ms, false);
+                self.hold_still(port, source, now_ms);
             }
         } else {
             let _ = self.request(port, source, (route, Actor::Trader, None));

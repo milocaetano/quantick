@@ -415,7 +415,7 @@ fn armed(mode: TradeMode) -> (BrokerDesk, Tabs, Rc<RefCell<Script>>) {
             .expect("DEMO arms in one click"),
         _ => {
             desk.hold_start(&tabs, LIVE, 0).expect("REAL is available");
-            desk.hold(&mut tabs, LIVE, HOLD_TO_ARM_MS, false);
+            desk.hold_still(&mut tabs, LIVE, HOLD_TO_ARM_MS);
         }
     }
     (desk, tabs, script)
@@ -1006,7 +1006,7 @@ fn the_desk_hands_the_frame_time_to_the_broker_wherever_it_sits() {
 
     desk.hold_start(&tabs, LIVE, 2_000)
         .expect("REAL is available");
-    desk.hold(&mut tabs, LIVE, 2_000 + HOLD_TO_ARM_MS, false);
+    desk.hold_still(&mut tabs, LIVE, 2_000 + HOLD_TO_ARM_MS);
     assert_eq!(desk.route().route(), Route::Real);
     // A hung bridge: the venue declares its silent link lost at the tick.
     let lost = VenueEvent::Notice(VenueNotice::LinkLost);
@@ -1058,7 +1058,7 @@ fn a_hold_begun_on_one_account_never_arms_another() {
     desk.hold_start(&tabs, LIVE, 0).expect("REAL is available");
     script.borrow_mut().login = Some(51_999_999);
     desk.frame(&mut tabs, LIVE, 10);
-    desk.hold(&mut tabs, LIVE, HOLD_TO_ARM_MS, false);
+    desk.hold_still(&mut tabs, LIVE, HOLD_TO_ARM_MS);
     assert_eq!(desk.route().route(), Route::Sim);
 }
 

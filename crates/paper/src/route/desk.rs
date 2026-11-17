@@ -135,7 +135,7 @@ impl BrokerDesk {
         // row reported itself still pressed since the last frame.
         if self.route.hold_progress(now_ms).is_some() {
             if std::mem::take(&mut self.hold_seen) {
-                self.hold(port, source, now_ms, false);
+                self.hold_still(port, source, now_ms);
             } else {
                 self.route.hold_cancel();
             }
@@ -191,20 +191,22 @@ impl BrokerDesk {
         Ok(())
     }
 
-    /// The REAL row is still held (`released` false) or let go.
-    pub fn hold(
-        &mut self,
-        port: &mut dyn AccountsPort,
-        source: SourceFacts,
-        now_ms: i64,
-        released: bool,
-    ) {
+    /// The REAL row is still held: arms once the hold has lasted.
+    pub fn hold_still(&mut self, port: &mut dyn AccountsPort, source: SourceFacts, now_ms: i64) {
         let facts = self.facts(port, source);
-        let change = if released {
-            self.route.hold_release(now_ms, &facts)
-        } else {
-            self.route.hold_update(now_ms, &facts)
-        };
+        let change = self.route.hold_update(now_ms, &facts);
+        self.held(port, change);
+    }
+
+    /// The REAL row is let go: arms only if the hold had lasted.
+    pub fn hold_release(&mut self, port: &mut dyn AccountsPort, source: SourceFacts, now_ms: i64) {
+        let facts = self.facts(port, source);
+        let change = self.route.hold_release(now_ms, &facts);
+        self.held(port, change);
+    }
+
+    /// Carry out what a hold decided; an arm closes the list.
+    fn held(&mut self, port: &mut dyn AccountsPort, change: RouteChange) {
         if change != RouteChange::None {
             self.sheet_open = false;
         }
@@ -239,7 +241,7 @@ impl BrokerDesk {
                 Ok(())
             }
             RoutePress::HoldRelease => {
-                self.hold(port, source, now_ms, true);
+                self.hold_release(port, source, now_ms);
                 Ok(())
             }
             RoutePress::Leave(None) => {
