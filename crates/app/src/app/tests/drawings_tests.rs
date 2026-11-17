@@ -1884,7 +1884,6 @@ fn the_coordinates_tab_offers_sharing_across_charts() {
     );
 }
 
-/// The chore this removes: re-picking the same colour on every object.
 /// A click on the order-flow pane opens with that pane's ground: under the
 /// light theme it is dark, so the light chart's saved look stays off it.
 #[test]
@@ -1917,6 +1916,7 @@ fn a_click_on_the_flow_pane_opens_with_the_dark_ground_s_default() {
     assert_eq!(items[0].style, dark);
 }
 
+/// The chore this removes: re-picking the same colour on every object.
 /// Saving a default must reach the *next* drawing and leave the ones
 /// already on the chart exactly as the trader drew them.
 #[test]

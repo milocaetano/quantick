@@ -1,4 +1,5 @@
 use super::Drawing;
+use quantick_appearance::Ground;
 use quantick_chart_interaction::pane::PaneSide;
 
 /// Which inspector tab is open. Tabs exist per capability: every tool gets
@@ -17,18 +18,57 @@ pub enum InspectorTab {
 /// trader wondering whether it took.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SavedDefault {
-    OneTool,
-    EveryTool,
-    Forgotten,
+    OneTool(Ground),
+    EveryTool(Ground),
+    Forgotten(Ground),
 }
 
 impl SavedDefault {
-    pub const fn message(self) -> &'static str {
+    /// What was remembered, and on which charts: a save on the light chart
+    /// says it does not reach the dark order-flow pane beside it.
+    pub fn message(self) -> String {
         match self {
-            Self::OneTool => "Saved - new drawings of this tool open configured like this one.",
-            Self::EveryTool => "Saved - every new drawing opens with this colour, width and fill.",
-            Self::Forgotten => "Reset - this tool goes back to how it opened out of the box.",
+            Self::OneTool(ground) => format!(
+                "Saved - new drawings of this tool on {} open configured like this one.",
+                charts(ground)
+            ),
+            Self::EveryTool(ground) => format!(
+                "Saved - every new drawing on {} opens with this colour, width and fill.",
+                charts(ground)
+            ),
+            Self::Forgotten(ground) => format!(
+                "Reset - this tool goes back to how it opened out of the box on {}.",
+                charts(ground)
+            ),
         }
+    }
+
+    /// The button's hover, for a `tool` named in lower case.
+    pub fn hint(self, tool: &str) -> String {
+        match self {
+            Self::OneTool(ground) => format!(
+                "New {tool} objects on {} open configured exactly like this one",
+                charts(ground)
+            ),
+            Self::EveryTool(ground) => format!(
+                "Every new drawing on {} opens with this colour, width and fill",
+                charts(ground)
+            ),
+            Self::Forgotten(ground) => format!(
+                "New {tool} objects on {} go back to how they opened out of the box; \
+                 saved presets and the default preset choice are kept",
+                charts(ground)
+            ),
+        }
+    }
+}
+
+/// The charts a ground's defaults speak for, in the trader's words.
+#[must_use]
+pub const fn charts(ground: Ground) -> &'static str {
+    match ground {
+        Ground::Light => "light charts",
+        Ground::Dark => "dark charts",
     }
 }
 
@@ -86,4 +126,20 @@ pub struct DrawingEdit {
     pub side: PaneSide,
     pub index: usize,
     pub before: Drawing,
+}
+
+#[cfg(test)]
+mod saved_default_tests {
+    use super::{Ground, SavedDefault};
+
+    /// A save on the light chart says it stops short of the dark pane beside it.
+    #[test]
+    fn a_saved_default_names_the_charts_it_speaks_for() {
+        let saved = SavedDefault::OneTool(Ground::Light);
+        assert!(saved.message().contains("on light charts"), "{}", saved.message());
+        assert!(saved.hint("trend line").contains("trend line objects on light charts"));
+        let reset = SavedDefault::Forgotten(Ground::Dark);
+        assert!(reset.message().contains("on dark charts"));
+        assert!(reset.hint("fib").contains("default preset choice are kept"));
+    }
 }

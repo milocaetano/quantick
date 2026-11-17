@@ -986,7 +986,9 @@ fn drawing_controller_preserves_undo_before_deferred_preference_notice() {
     app.resolve_drawing_response(
         crate::surfaces::drawing_chrome::DrawingChromeAsk {
             force_delete: true,
-            saved_default: Some(crate::surfaces::drawing_chrome::SavedDefault::OneTool),
+            saved_default: Some(crate::surfaces::drawing_chrome::SavedDefault::OneTool(
+                quantick_appearance::Ground::Dark,
+            )),
             ..Default::default()
         },
         Instant::now(),
@@ -1025,7 +1027,9 @@ fn drawing_controller_combined_destructive_notices_keep_last_undo() {
             cancel_delete: true,
             force_delete: true,
             duplicate: true,
-            saved_default: Some(crate::surfaces::drawing_chrome::SavedDefault::OneTool),
+            saved_default: Some(crate::surfaces::drawing_chrome::SavedDefault::OneTool(
+                quantick_appearance::Ground::Dark,
+            )),
             sweep_authored: true,
             delete_all: true,
             manager_delete: Some(0),

@@ -195,6 +195,8 @@ impl StyleTab<'_, '_> {
     fn show(self, ui: &mut egui::Ui) -> InspectorActions {
         let Self { edited, presets } = self;
         let (tool, surface) = (edited.tool, presets.surface());
+        let ground = drawings::defaults_ground(presets, surface);
+        let name = tool.name().to_lowercase();
         let mut actions = InspectorActions::default();
         ui.label("Style");
         let mut color = edited.style.color32();
@@ -238,45 +240,38 @@ impl StyleTab<'_, '_> {
         ui.label(egui::RichText::new("Default for new drawings").small());
         ui.horizontal_wrapped(|ui| {
             let style = edited.style;
+            let saved = SavedDefault::OneTool(ground);
             if ui
                 .button("Save as default")
-                .on_hover_text(format!(
-                    "New {} objects open configured exactly like this one",
-                    tool.name().to_lowercase()
-                ))
+                .on_hover_text(saved.hint(&name))
                 .clicked()
             {
                 drawings::save_tool_default(presets, surface, edited);
-                actions.saved_default = Some(SavedDefault::OneTool);
+                actions.saved_default = Some(saved);
             }
             // Style only, and that is not a shortcut: a Fib's level list
             // means nothing to a rectangle, so the one property every tool
             // shares is the only one this can carry.
+            let saved = SavedDefault::EveryTool(ground);
             if ui
                 .button("Colour on all tools")
-                .on_hover_text("Every new drawing opens with this colour, width and fill")
+                .on_hover_text(saved.hint(&name))
                 .clicked()
             {
                 for other in DRAWING_TOOLS {
                     drawings::save_default_style(presets, surface, other, style);
                 }
-                actions.saved_default = Some(SavedDefault::EveryTool);
+                actions.saved_default = Some(saved);
             }
+            let saved = SavedDefault::Forgotten(ground);
             if drawings::has_saved_default(presets, surface, tool)
                 && ui
                     .button("Reset to factory")
-                    .on_hover_text(format!(
-                        concat!(
-                            "New {} objects go back to how they opened ",
-                            "out of the box. Clears the default preset ",
-                            "choice too; saved presets are kept"
-                        ),
-                        tool.name().to_lowercase()
-                    ))
+                    .on_hover_text(saved.hint(&name))
                     .clicked()
             {
                 drawings::reset_tool_default(presets, surface, tool);
-                actions.saved_default = Some(SavedDefault::Forgotten);
+                actions.saved_default = Some(saved);
             }
         });
         actions

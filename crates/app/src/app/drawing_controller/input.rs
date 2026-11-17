@@ -335,7 +335,8 @@ impl DrawingControllerAccess<'_> {
         if ask.duplicate {
             self.duplicate_selected_drawing(host, effects, alerts);
         }
-        let surface = host.drawings().surface();
+        let (tab, side) = host.target();
+        let surface = host.surface_of(tab, side);
         if ask.draw_again.is_some()
             && let Some(drawing) = host.drawings_mut().selected_mut()
         {

@@ -282,8 +282,9 @@ impl DrawingControllerAccess<'_> {
         // Through the same door the click path uses, saved defaults and all —
         // and on the same pane every drawing surface reads, so the index the
         // editor opens on is the object this just placed.
-        let surface = host.drawings().surface();
-        let fresh = drawings::new_drawing_from_defaults(self.presets, surface, tool);
+        let (tab, side) = host.target();
+        let fresh =
+            drawings::new_drawing_from_defaults(self.presets, host.surface_of(tab, side), tool);
         let placed =
             host.drawings_mut()
                 .place_with(tool, &drawings::DrawingBand::Price, point, |_| fresh);

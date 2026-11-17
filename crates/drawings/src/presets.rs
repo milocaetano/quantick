@@ -10,7 +10,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-use quantick_appearance::Ground;
+use quantick_appearance::{ChartSurface, Ground};
 
 use crate::{DrawingStyle, PresetHost};
 
@@ -135,6 +135,11 @@ impl ToolPresets {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 struct StoreFile {
     version: u32,
+    /// Whether the defaults are kept per ground. A file written before
+    /// grounds holds one default per tool, saved on whatever chart the theme
+    /// painted; the first theme this store sees decides which ground that is.
+    #[serde(default)]
+    grounds: bool,
     #[serde(default)]
     tools: BTreeMap<String, ToolPresets>,
 }
@@ -161,6 +166,8 @@ pub struct PresetStore {
     theme: Option<(u64, quantick_appearance::ResolvedTheme)>,
     path: PathBuf,
     tools: BTreeMap<String, ToolPresets>,
+    /// See [`StoreFile::grounds`].
+    grounds: bool,
 }
 
 impl PresetStore {
@@ -169,6 +176,27 @@ impl PresetStore {
         if self.theme.as_ref().map(|(revision, _)| *revision) != Some(appearance.revision()) {
             self.theme = Some((appearance.revision(), appearance.resolved().clone()));
         }
+        if !self.grounds {
+            self.adopt_ungrounded_defaults(appearance.resolved().ground(ChartSurface::Paper));
+        }
+    }
+
+    /// Give the defaults of a file from before grounds to the ground the
+    /// trader was saving them on: the time chart's, under the theme the app
+    /// opens with. They load as the light ground's; on a dark theme they move.
+    fn adopt_ungrounded_defaults(&mut self, ground: Ground) {
+        self.grounds = true;
+        let legacy = |slot: &ToolPresets| slot.style.is_some() || slot.config.is_some();
+        if !self.tools.values().any(legacy) {
+            return;
+        }
+        if ground == Ground::Dark {
+            for slot in self.tools.values_mut() {
+                slot.dark_style = slot.dark_style.take().or(slot.style.take());
+                slot.dark_config = slot.dark_config.take().or(slot.config.take());
+            }
+        }
+        self.persist();
     }
 
     /// Load the store, empty when the file is missing, unreadable or from an
@@ -176,16 +204,16 @@ impl PresetStore {
     #[must_use]
     pub fn load_from(path: impl Into<PathBuf>) -> Self {
         let path = path.into();
-        let tools = match std::fs::read_to_string(&path) {
+        let (tools, grounds) = match std::fs::read_to_string(&path) {
             Ok(text) => match toml::from_str::<StoreFile>(&text) {
-                Ok(file) if file.version == STORE_FORMAT_VERSION => file.tools,
+                Ok(file) if file.version == STORE_FORMAT_VERSION => (file.tools, file.grounds),
                 Ok(file) => {
                     tracing::warn!(
                         path = %path.display(),
                         version = file.version,
                         "drawing preset file is from an unknown version; starting empty"
                     );
-                    BTreeMap::new()
+                    (BTreeMap::new(), true)
                 }
                 Err(error) => {
                     tracing::warn!(
@@ -193,14 +221,15 @@ impl PresetStore {
                         %error,
                         "drawing preset file is unreadable; starting empty"
                     );
-                    BTreeMap::new()
+                    (BTreeMap::new(), true)
                 }
             },
-            Err(_) => BTreeMap::new(),
+            Err(_) => (BTreeMap::new(), true),
         };
         Self {
             path,
             tools,
+            grounds,
             theme: None,
         }
     }
@@ -217,6 +246,7 @@ impl PresetStore {
         }
         let file = StoreFile {
             version: STORE_FORMAT_VERSION,
+            grounds: true,
             tools: self.tools.clone(),
         };
         match toml::to_string_pretty(&file) {
@@ -776,5 +806,41 @@ mod appearance_tests {
             reloaded.default_style("trend-line", Ground::Dark),
             Some(light)
         );
+    }
+
+    /// The trader saved those defaults on the chart his theme painted: on the
+    /// dark theme they were dark-ground defaults, and they stay his there.
+    #[test]
+    fn a_file_from_before_grounds_follows_the_theme_it_opens_under_once() {
+        let path = crate::scratch::thread_dir("legacy-dark-defaults").join(PRESETS_FILE);
+        let legacy = "version = 1
+[tools.trend-line.style]
+color = '#dc1e1e'
+width_px = 2.0
+fill_alpha = 0
+";
+        std::fs::write(&path, legacy).unwrap();
+        let red = quantick_appearance::PremultipliedRgba::from_rgb(220, 30, 30);
+        let mut store = PresetStore::load_from(&path);
+        store.sync_theme(&quantick_appearance::Appearance::default());
+        let dark = store
+            .default_style("trend-line", Ground::Dark)
+            .map(|style| style.color);
+        assert_eq!(dark, Some(red));
+        assert_eq!(store.default_style("trend-line", Ground::Light), None);
+
+        let mut light = quantick_appearance::Appearance::default();
+        light.apply(quantick_appearance::LIGHT).unwrap();
+        let mut reopened = PresetStore::load_from(&path);
+        reopened.sync_theme(&light);
+        let dark = reopened
+            .default_style("trend-line", Ground::Dark)
+            .map(|style| style.color);
+        assert_eq!(
+            dark,
+            Some(red),
+            "the file says grounds now; a theme change moves nothing"
+        );
+        assert_eq!(reopened.default_style("trend-line", Ground::Light), None);
     }
 }

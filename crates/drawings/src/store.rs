@@ -63,9 +63,6 @@ pub struct Drawings<T> {
     /// The selection the last switch of layout let go of: a delete of the
     /// layout it was on moves the mark after its charts, and takes it back.
     pub(crate) let_go: Option<crate::DrawingId>,
-    /// The surface the pane paints on, told by the window every frame: it
-    /// picks the ground of saved defaults a new object here opens with.
-    pub(crate) surface: quantick_appearance::ChartSurface,
 }
 
 // By hand: a derive would ask the tool handle for a `Default` it has no
@@ -86,7 +83,6 @@ impl<T> Default for Drawings<T> {
             live_layouts: Vec::new(),
             unclaimed: Vec::new(),
             let_go: None,
-            surface: quantick_appearance::ChartSurface::Paper,
         }
     }
 }

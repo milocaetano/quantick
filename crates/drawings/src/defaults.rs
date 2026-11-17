@@ -2,21 +2,7 @@
 
 use quantick_appearance::{ChartSurface, Ground, ResolvedTheme};
 
-use crate::{Drawing, DrawingStyle, Drawings, NewDrawing, ToolCatalog};
-
-impl<T> Drawings<T> {
-    /// The surface this pane paints on, as the window last told it.
-    #[must_use]
-    pub fn surface(&self) -> ChartSurface {
-        self.surface
-    }
-
-    /// Follow the pane's surface; a new object opens with that ground's
-    /// saved defaults. Objects already placed are never touched.
-    pub fn set_surface(&mut self, surface: ChartSurface) {
-        self.surface = surface;
-    }
-}
+use crate::{Drawing, DrawingStyle, NewDrawing, ToolCatalog};
 
 /// Where a new object opens: the palette the pane paints with and the bank of
 /// saved defaults its ground reads. A host without a theme is the light bank
@@ -144,12 +130,17 @@ pub fn save_default_style<T: ToolCatalog>(
     host.set_default_style(tool.id(), ground, Some(style));
 }
 
-/// Forget everything saved for this tool on `surface`'s ground, so new objects
-/// there open the way they did out of the box — style, configuration and the
-/// named default preset. The other ground's style and configuration stay.
-///
-/// The named preset itself is kept: this restores the factory *start*, it
-/// does not delete work the trader saved under a name.
+/// The ground whose saved defaults a new object on `surface` reads and writes.
+#[must_use]
+pub fn defaults_ground(host: &dyn PresetHost, surface: ChartSurface) -> Ground {
+    opening_on(host, surface).1
+}
+
+/// Forget the style and configuration saved for this tool on `surface`'s
+/// ground, so new objects there open the way they did out of the box. The
+/// other ground's defaults stay, and so do the named presets and the named
+/// default preset: both grounds share those, and a reset on one must not
+/// change what the other opens with.
 pub fn reset_tool_default<T: ToolCatalog>(
     host: &mut dyn PresetHost,
     surface: ChartSurface,
@@ -159,7 +150,6 @@ pub fn reset_tool_default<T: ToolCatalog>(
     let tool_id = tool.id();
     host.set_default_style(tool_id, ground, None);
     host.set_default_config(tool_id, ground, None);
-    host.set_default_preset(tool_id, None);
 }
 
 /// Whether this tool has anything saved to forget on `surface`'s ground — what the reset control
@@ -172,9 +162,7 @@ pub fn has_saved_default<T: ToolCatalog>(
 ) -> bool {
     let (_, ground) = opening_on(host, surface);
     let tool_id = tool.id();
-    host.default_style(tool_id, ground).is_some()
-        || host.has_default_config(tool_id, ground)
-        || host.default_preset(tool_id).is_some()
+    host.default_style(tool_id, ground).is_some() || host.has_default_config(tool_id, ground)
 }
 
 /// Carry a finished edit's look forward as the default of a tool that

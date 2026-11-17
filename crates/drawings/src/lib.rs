@@ -55,8 +55,8 @@ pub use context::{AxisLevels, DrawContext, Handles, ValueUnit};
 #[cfg(any(test, feature = "test-support"))]
 pub use defaults::NullPresetHost;
 pub use defaults::{
-    PresetHost, has_saved_default, new_drawing_from_defaults, prepare_repeat, remember_last_style,
-    repeat_opening, reset_tool_default, save_default_style, save_tool_default,
+    PresetHost, defaults_ground, has_saved_default, new_drawing_from_defaults, prepare_repeat,
+    remember_last_style, repeat_opening, reset_tool_default, save_default_style, save_tool_default,
 };
 pub use family::{
     AnchorSnap, BodySnap, Constrain, IconDots, IconLetter, IconStrokes, ToolFamily, ToolShortcut,

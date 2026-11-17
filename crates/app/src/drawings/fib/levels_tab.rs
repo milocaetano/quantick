@@ -497,9 +497,8 @@ impl NewObjectDefaults<'_> {
                 && ui
                     .small_button("Reset to factory")
                     .on_hover_text(concat!(
-                        "New objects go back to the built-in levels and ",
-                        "colours. Clears the default preset choice too; ",
-                        "saved presets are kept"
+                        "New objects on charts of this ground go back to the built-in ",
+                        "levels and colours; saved presets and the default preset are kept"
                     ))
                     .clicked()
             {
