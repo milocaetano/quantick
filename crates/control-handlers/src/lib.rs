@@ -68,6 +68,7 @@ pub mod schema_documents;
 pub mod script;
 pub mod semantic;
 pub mod session;
+pub mod settings;
 mod tabs;
 pub mod tape_fold;
 pub mod tape_market_fold;

@@ -468,7 +468,7 @@ fn apply_menu_command_on(app: &mut QuantickApp, ctx: &egui::Context, command: Me
     match command {
         MenuCommand::ToggleWindowMenu => app.chrome.window_menu.toggle(viewport, true),
         MenuCommand::OpenSettings(section) => {
-            super::chrome::settings::open(app, viewport, section);
+            super::chrome::settings::open(&mut desk_adapter!(app), viewport, section);
         }
         MenuCommand::OpenHelp(page) => {
             app.chrome.window_menu.windows_viewport = Some(viewport);

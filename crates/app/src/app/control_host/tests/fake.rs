@@ -44,8 +44,6 @@ pub(crate) struct FakeWindow {
     /// The popup and the acknowledgement toast, read back by the test.
     pub(crate) surfaces: crate::surfaces::Surfaces,
     audio: super::super::super::replay_and_history::AlertState,
-    /// The deal-recording default last set.
-    pub(crate) record_deals: Option<bool>,
 }
 
 impl FakeWindow {
@@ -121,7 +119,6 @@ impl FakeWindow {
                 alerts: Box::new(FakeSpeaker),
                 alert_failure: None,
             },
-            record_deals: None,
         }
     }
 
@@ -212,17 +209,5 @@ impl crate::audio::AlertSink for FakeSpeaker {
 impl quantick_control_handlers::drawing_magnet::RailMagnetPort for FakeWindow {
     fn switch_rail_magnet(&mut self, _on: bool) -> bool {
         false
-    }
-}
-
-impl quantick_control_handlers::deal_recorder::DealRecordingPort for FakeWindow {
-    fn deal_recorder(
-        &mut self,
-        index: usize,
-    ) -> Option<&mut dyn quantick_control_handlers::deal_recorder::DealRecorder> {
-        Some(self.tabs_mut().tab_with_config(index)?.0)
-    }
-    fn record_deals_by_default(&mut self, on: bool) {
-        self.record_deals = Some(on);
     }
 }

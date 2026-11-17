@@ -819,6 +819,7 @@ fn replay_plan() -> Vec<(&'static str, u32, Value, Readback)> {
             json!({ "section": "data" }),
             Readback::Moves,
         ),
+        ("settings.set", 1, Value::Null, Readback::Moves),
         ("desk.save", 1, json!({}), Readback::Moves),
         ("desk.export", 1, json!({}), Readback::Stays),
         ("desk.import", 1, json!({}), Readback::Stays),
@@ -1045,6 +1046,7 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
                 "bar": app.active_tab().flow_pane.series.state.spec().to_config_string(),
                 "workspace": app.runtime.workspace.book.tab_row(app.runtime.tabs.active_id()).0,
             }),
+            "settings.set" => json!({ "perf_readings": !app.health.show_perf }),
             "catalog.remove" => {
                 let feed = app.active_tab().feed_id.clone();
                 app.symbol_catalog().add(&feed, "RETRYUSDT").unwrap();

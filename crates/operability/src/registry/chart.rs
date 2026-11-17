@@ -6,12 +6,12 @@
 
 use super::{ExclusionClass, Mapping, Source, UiBehaviour};
 
-/// The venue-candle reach and the two View switches, with no capability yet.
-/// Trade history loads through `feed.history.load` and `feed.history.cancel`.
+/// The venue-candle reach, with no capability yet. Trade history loads
+/// through `feed.history.load` and `feed.history.cancel`.
 const PENDING_HISTORY: Mapping = Mapping::Excluded {
     class: ExclusionClass::PendingCapability,
-    reason: "no capability fetches older venue candles or flips these View switches; trade \
-             history loads through feed.history.load. Tracked in issue 401",
+    reason: "no capability fetches older venue candles; trade history loads through \
+             feed.history.load. Tracked in issue 401",
 };
 
 /// The canvas.
@@ -318,7 +318,7 @@ pub(super) const HISTORY: &[UiBehaviour] = &[
         title: "Build venue history backwards a week at a time, or in one request",
         reach: "window menu",
         keys: &[(Source::MenuEntry, "Progressive venue history")],
-        mapping: PENDING_HISTORY,
+        mapping: capability!("settings.set"),
     },
     UiBehaviour {
         id: "history.trades.cancel",
@@ -339,6 +339,6 @@ pub(super) const HISTORY: &[UiBehaviour] = &[
         title: "Put venue minute candles in front of bars cut by trades",
         reach: "window menu",
         keys: &[(Source::MenuEntry, "Venue candles on charts cut by trades")],
-        mapping: PENDING_HISTORY,
+        mapping: capability!("settings.set"),
     },
 ];
