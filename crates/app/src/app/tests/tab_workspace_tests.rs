@@ -2748,3 +2748,50 @@ fn a_workspace_switch_paints_the_other_workspace_s_layout() {
     }
     assert_eq!(canvas_read(&mut app), quad, "the call paints Quad's layout");
 }
+
+/// The trader's book, cut down. A two-chart workspace whose saved canvas
+/// numbers its slots its own way puts its lower chart on a range rule with a
+/// layer of its own. Landed on a one-chart tab, whose second chart is built
+/// after the canvas, and on a tab still holding a second chart off screen,
+/// each tab reads as the recipe; back on a one-chart workspace, so does the
+/// tab with the second chart built. No landing reads as an edit.
+#[test]
+fn a_switch_lands_every_chart_s_rule_and_layers_and_reads_clean() {
+    let layouts = crate::scratch::ScratchFile::new("workspace-switch-whole", "layouts.toml");
+    let (mut app, first, second) = two_tabs(&layouts);
+    frames(&mut app, 4);
+    let (own, other) = (
+        app.runtime.workspace.book.tab_row(first).0,
+        app.runtime.workspace.book.tab_row(second).0,
+    );
+    let tab = app.runtime.tabs.by_id_mut(first).expect("an open tab");
+    tab.set_layout(CanvasLayout::TimeTimeAndFlow);
+    frames(&mut app, 4);
+    let mut two = live_recipe(&app.runtime, first).expect("an open tab");
+    let stack = quantick_workspace::canvas::preset("stack2+flow").expect("a preset");
+    two.canvas = Some(quantick_workspace::canvas::CanvasState::from_preset(stack));
+    let lower = &mut two.context_panes[1];
+    lower.bars = Some("renko:20".to_owned());
+    let footprint = lower.layers.get("footprint").copied().expect("read");
+    lower.layers.insert("footprint".to_owned(), !footprint);
+    let book = app.runtime.workspace.book.book_mut();
+    book.observe(first, &two).expect("held");
+    book.save_as(first, "Two").expect("a free name");
+    set_tab_workspace(&mut app, first, &own).expect("its own workspace");
+    frames(&mut app, 4);
+    let reads = |app: &QuantickApp, tab: u64, name: &str| {
+        let live = live_recipe(&app.runtime, tab).expect("an open tab");
+        let book = app.runtime.workspace.book.book();
+        let recipe = book.recipe(name).expect("a saved workspace");
+        assert_eq!(recipe.masked(&live), *recipe, "{name} on tab {tab}");
+        let row = app.runtime.workspace.book.tab_row(tab);
+        assert_eq!(row, (name.to_owned(), false), "no edit");
+    };
+    reads(&app, first, &own);
+
+    for (tab, to) in [(second, "Two"), (first, "Two"), (second, other.as_str())] {
+        set_tab_workspace(&mut app, tab, to).expect("a known workspace");
+        frames(&mut app, 5);
+        reads(&app, tab, to);
+    }
+}

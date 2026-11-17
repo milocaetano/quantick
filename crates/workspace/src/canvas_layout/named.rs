@@ -2,7 +2,7 @@
 //! painter draws, and any other registry entry, drawn from its tree.
 
 use super::{LayoutPreset, PaneKind};
-use crate::canvas::CanvasState;
+use crate::canvas::{CanvasState, Seats};
 use crate::workspace_recipe::{DeclaredLayout, WorkspaceRecipe};
 
 /// How many charts a tab's canvas shows for its market (§11), and which.
@@ -111,6 +111,11 @@ pub fn recipe_canvas(recipe: &WorkspaceRecipe) -> CanvasState {
     } else {
         state
     }
+}
+
+/// Lay `recipe`'s canvas over a tab's: the model is the recipe's, whole.
+pub fn lay_recipe_canvas(state: &mut CanvasState, _seats: &mut Seats, recipe: &WorkspaceRecipe) {
+    *state = recipe_canvas(recipe);
 }
 
 impl From<DeclaredLayout> for CanvasLayout {

@@ -291,6 +291,12 @@ impl WorkspaceRecipe {
         })
     }
 
+    /// This reading cut to what its canvas shows.
+    #[must_use]
+    pub fn cut_to_canvas(self) -> Self {
+        self
+    }
+
     /// What the pane at `index` keeps, by its place: 0 is the flow pane, then
     /// the context panes top to bottom. A pane past the recipe keeps nothing.
     #[must_use]

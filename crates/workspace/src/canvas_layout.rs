@@ -76,7 +76,7 @@ pub mod stack;
 mod stack_tests;
 
 pub use column::{ColumnFrame, column_frame};
-pub use named::{CanvasLayout, recipe_canvas};
+pub use named::{CanvasLayout, lay_recipe_canvas, recipe_canvas};
 pub use split::{Span, Split, split};
 pub use stack::{
     ContextPairResult, ContextResizeError, ContextStack, ResizeContextPair, StackFrame, on_stack,
@@ -361,7 +361,7 @@ mod kind_tests {
 #[cfg(test)]
 mod recipe_tests {
     use super::*;
-    use crate::workspace_recipe::{DeclaredLayout, WorkspaceRecipe};
+    use crate::workspace_recipe::{ContextPaneRecipe, DeclaredLayout, WorkspaceRecipe};
 
     /// A stacked layout's recipe rebuilds the chart it saved folded: what a
     /// workspace switch puts on the tab is what a restore does.
@@ -383,6 +383,56 @@ mod recipe_tests {
             ..recipe
         };
         assert!(recipe_canvas(&flat).railed().is_empty(), "the tree's own");
+    }
+
+    /// A recipe numbers its canvas's slots its own way. Laid over a tab whose
+    /// seats were read against the preset a switch picked first, it seats
+    /// every chart afresh: a renumbered slot is no removal, so no standing
+    /// chart is built again, which lost the bar rule and layers the landing
+    /// had just put on it.
+    #[test]
+    fn a_laid_recipe_canvas_builds_no_standing_chart_again() {
+        let stack = crate::canvas::preset("stack2+flow").unwrap();
+        let mut state =
+            crate::canvas::CanvasState::from_preset(crate::canvas::preset("time+flow").unwrap());
+        let mut seats = crate::canvas::Seats::default();
+        seats.refresh(&state);
+        state.apply_preset(stack);
+        seats.clear();
+        seats.refresh(&state);
+        let recipe = WorkspaceRecipe {
+            layout: DeclaredLayout::TimeTimeAndFlow,
+            canvas: Some(crate::canvas::CanvasState::from_preset(stack)),
+            ..WorkspaceRecipe::default()
+        };
+        lay_recipe_canvas(&mut state, &mut seats, &recipe);
+        seats.refresh(&state);
+        assert_eq!(seats.take_reseed(), None, "no chart is built again");
+        assert_eq!(state, recipe_canvas(&recipe));
+    }
+
+    /// A tab keeps, off screen, the charts an earlier layout built. What it
+    /// reads holds the charts its canvas shows: back on one chart from two,
+    /// the second is no part of it, so a tab switched from a two-chart
+    /// workspace onto a one-chart one reads as the one-chart recipe.
+    #[test]
+    fn a_reading_holds_only_the_charts_its_canvas_shows() {
+        let pane = |bars: &str| ContextPaneRecipe {
+            bars: Some(bars.to_owned()),
+            ..ContextPaneRecipe::default()
+        };
+        let read = WorkspaceRecipe {
+            layout: DeclaredLayout::TimeAndFlow,
+            context_panes: vec![pane("time:1m"), pane("renko:20")],
+            ..WorkspaceRecipe::default()
+        };
+        let shown = read.clone().cut_to_canvas().context_panes;
+        assert_eq!(shown, [pane("time:1m")], "the second chart is off screen");
+        let two = WorkspaceRecipe {
+            layout: DeclaredLayout::TimeTimeAndFlow,
+            ..read
+        };
+        assert_eq!(two.clone().cut_to_canvas(), two, "both charts show");
     }
 
     /// A recipe from before the canvas model opens on its declared layout;

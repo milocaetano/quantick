@@ -10,6 +10,7 @@ use quantick_session::workspace_menu::WorkspaceCommand;
 use quantick_stores::market_settings::{DrawingKey, MarketSettingsStore};
 use quantick_stores::workspaces::{TabRecipeSync, WorkspaceBook, WorkspaceRecipe, capture_recipe};
 use quantick_workspace::book_upkeep::{self, TabRecipeHost};
+use quantick_workspace::canvas_layout::lay_recipe_canvas;
 
 use super::control_host::LayoutPort as _;
 use super::workspace_runtime::WorkspaceRuntime as Runtime;
@@ -161,7 +162,7 @@ pub(super) fn live_recipe(runtime: &Runtime, id: u64) -> Option<WorkspaceRecipe>
     let style = Some(tab.flow_pane.footprint_config(window).style.id().to_owned());
     let layouts = runtime.workspace.layouts().book();
     let recipe = capture_recipe(&saved, layouts, layers, style);
-    Some(super::canvas_wiring::with_canvas(recipe, &tab.canvas))
+    Some(super::canvas_wiring::with_canvas(recipe, &tab.canvas).cut_to_canvas())
 }
 
 pub(super) fn symbols_of(open: &ArrangementHost, tabs: &[u64]) -> Vec<String> {
@@ -196,7 +197,7 @@ fn apply_recipe_canvas(runtime: &mut Runtime, id: u64, recipe: &WorkspaceRecipe)
         &intervals,
         legends,
     );
-    tab.canvas.state = quantick_workspace::canvas_layout::recipe_canvas(recipe);
+    lay_recipe_canvas(&mut tab.canvas.state, &mut tab.canvas.seats, recipe);
     let mut monitors = quantick_platform::monitors();
     monitors.push(quantick_control_handlers::canvas::PRIMARY_MONITOR.to_owned());
     let area = super::canvas_wiring::tab_area(&tab.canvas);
