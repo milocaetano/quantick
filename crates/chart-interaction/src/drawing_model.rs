@@ -55,16 +55,18 @@ impl ChartPoint {
 pub enum DrawingScope {
     /// The chart it was drawn on, at the bars it was cut to then: switching
     /// that chart to other bars hides it, and switching back restores it.
+    /// The default: the trader turns "all timeframes" on per drawing.
+    #[default]
     ThisChart,
-    /// Every chart of the same market — one asset on one feed — at any bars:
-    /// time, tick, volume, renko. The anchors are re-expressed through each
-    /// chart's own market clock. The default: a level is a level on every
-    /// timeframe.
+    /// Every chart of the same market — one asset on one feed — showing the
+    /// layout it belongs to, at any bars: time, tick, volume, renko. The
+    /// anchors are re-expressed through each chart's own market clock. The
+    /// drawing's own "All windows" adds the charts of that market showing
+    /// any other layout.
     ///
     /// Never across markets: a price level drawn on BTC means nothing on a
     /// WIN chart, and a mark that says otherwise is the data-honesty failure
     /// this repo refuses.
-    #[default]
     AllCharts,
 }
 

@@ -398,12 +398,13 @@ pub(super) const OBJECTS: &[UiBehaviour] = &[
     },
     UiBehaviour {
         id: "drawing.scope.toggle",
-        title: "Show one drawing on every timeframe of its market, or keep it to its chart",
+        title: "Show one drawing on every timeframe of its layout, or keep it to its chart; \
+                and on every layout of its market",
         reach: "the object context bar's sharing button, beside Hide, and the inspector's \
-                Coordinates tab checkbox",
+                Show on all timeframes and All windows checkboxes",
         keys: &[(
             Source::Authored,
-            "the context bar's sharing button and the inspector checkbox are widgets, not \
+            "the context bar's sharing button and the inspector checkboxes are widgets, not \
              registry entries",
         )],
         mapping: capability!("annotate.drawing_scope.set"),

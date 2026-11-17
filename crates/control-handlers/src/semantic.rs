@@ -17,7 +17,7 @@ use quantick_control_host::{
     wire::PaneSideDto,
 };
 use quantick_control_schema::interaction::SelectionSnapshot;
-use quantick_drawings::{Drawing, DrawingTool};
+use quantick_drawings::{Drawing, DrawingId, DrawingTool};
 use serde_json::{Value, json};
 
 use crate::analysis::AnalysisPane;
@@ -168,6 +168,13 @@ struct DrawingKey {
     /// `(actor kind, client name)` when something other than the trader's hand
     /// placed it.
     author: Option<(String, String)>,
+    /// Whether the pane's layout shows it: a mark it only holds for merges
+    /// is no event of its own, and showing or hiding it is no creation or
+    /// deletion either.
+    shown: bool,
+    /// Whether this pane ever reported it, shown at the baseline or since:
+    /// only a mark it reported can be reported gone.
+    reported: bool,
 }
 
 impl DrawingKey {
@@ -186,8 +193,17 @@ impl DrawingKey {
             }
     }
 
-    fn of(drawing: &Drawing<DrawingTool>) -> Self {
+    /// [`Self::matches`] and the same visibility: what a quiet frame asks.
+    fn holds(&self, drawing: &Drawing<DrawingTool>, shown: bool) -> bool {
+        self.shown == shown && self.matches(drawing)
+    }
+
+    /// The key of `drawing`, shown or not on its pane, reported there if it
+    /// is shown now or `before` was.
+    fn of(drawing: &Drawing<DrawingTool>, shown: bool, before: Option<&Self>) -> Self {
         Self {
+            shown,
+            reported: shown || before.is_some_and(|key| key.reported),
             id: drawing.id.0,
             locked: drawing.locked,
             magnet: drawing.own_magnet(),
@@ -220,13 +236,17 @@ fn tab_key(tab: &dyn SemanticTab) -> TabKey {
         symbol: tab.symbol().to_owned(),
         connection: tab.connection(),
         replay: tab.replay(),
-        panes: pane_analysis_keys(tab),
+        panes: pane_analysis_keys(tab, &[]),
     }
 }
 
-fn pane_analysis_keys(tab: &dyn SemanticTab) -> Vec<PaneAnalysisKey> {
+/// Every mark each pane holds, keyed with whether it shows there; what a
+/// pane of `stored` reported stays reported.
+fn pane_analysis_keys(tab: &dyn SemanticTab, stored: &[PaneAnalysisKey]) -> Vec<PaneAnalysisKey> {
     let mut keys = Vec::new();
     tab.visit_panes(&mut |side, pane| {
+        let was = stored.iter().find(|key| key.pane_id == pane.pane_id());
+        let drawings = pane.drawings();
         keys.push(PaneAnalysisKey {
             pane_id: pane.pane_id(),
             side,
@@ -236,7 +256,16 @@ fn pane_analysis_keys(tab: &dyn SemanticTab) -> Vec<PaneAnalysisKey> {
                 .iter()
                 .map(IndicatorKey::of)
                 .collect(),
-            drawings: pane.drawings().items().iter().map(DrawingKey::of).collect(),
+            drawings: drawings
+                .items()
+                .iter()
+                .enumerate()
+                .map(|(index, drawing)| {
+                    let before =
+                        was.and_then(|key| key.drawings.iter().find(|key| key.id == drawing.id.0));
+                    DrawingKey::of(drawing, drawings.in_layout(index), before)
+                })
+                .collect(),
         });
     });
     keys
@@ -260,18 +289,17 @@ fn analysis_matches(tab: &dyn SemanticTab, stored: &[PaneAnalysisKey]) -> bool {
         };
         seen += 1;
         let indicators = pane.indicators().all();
-        let drawings = pane.drawings().items();
+        let drawings = pane.drawings();
         matched = pane.pane_id() == key.pane_id
             && indicators.len() == key.indicators.len()
-            && drawings.len() == key.drawings.len()
+            && drawings.items().len() == key.drawings.len()
             && indicators
                 .iter()
                 .zip(&key.indicators)
                 .all(|(view, stored)| stored.matches(view))
-            && drawings
-                .iter()
+            && (drawings.items().iter().enumerate())
                 .zip(&key.drawings)
-                .all(|(drawing, stored)| stored.matches(drawing));
+                .all(|((index, drawing), stored)| stored.holds(drawing, drawings.in_layout(index)));
     });
     // Every stored pane must have been consumed too: a closed pane leaves the
     // walk short, and a tab that lost one has changed.
@@ -401,7 +429,7 @@ impl SemanticBaseline {
                     // to say.
                     if !analysis_matches(tab, &old.panes) {
                         record_analysis_changes(journal, tab, &old.panes, now);
-                        old.panes = pane_analysis_keys(tab);
+                        old.panes = pane_analysis_keys(tab, &old.panes);
                     }
                 }
             }
@@ -451,7 +479,7 @@ fn record_analysis_changes<J: SemanticJournal + ?Sized>(
         let pane_id = pane.pane_id().to_string();
 
         let indicators = pane.indicators().all();
-        let drawings = pane.drawings().items();
+        let drawings = pane.drawings();
 
         for view in indicators {
             match previous_indicators
@@ -523,7 +551,10 @@ fn record_analysis_changes<J: SemanticJournal + ?Sized>(
             }
         }
 
-        for drawing in drawings {
+        // Created, edited and removed are what happened to a mark, never
+        // whether this pane's layout shows it: a switch of layout moves
+        // what shows and journals nothing.
+        for (_, drawing) in drawings.shown() {
             match previous_drawings.iter().find(|key| key.id == drawing.id.0) {
                 None => journal.record_observed(
                     "analysis",
@@ -538,7 +569,7 @@ fn record_analysis_changes<J: SemanticJournal + ?Sized>(
                     }),
                     now,
                 ),
-                Some(key) if !key.matches(drawing) => journal.record_observed(
+                Some(key) if !key.matches(drawing) && key.reported => journal.record_observed(
                     "analysis",
                     "analysis.drawing.edited",
                     json!({
@@ -560,8 +591,8 @@ fn record_analysis_changes<J: SemanticJournal + ?Sized>(
                 Some(_) => {}
             }
         }
-        for key in previous_drawings {
-            if !drawings.iter().any(|drawing| drawing.id.0 == key.id) {
+        for key in previous_drawings.iter().filter(|key| key.reported) {
+            if drawings.index_of(DrawingId(key.id)).is_none() {
                 record_drawing_removed(journal, &tab_id, &pane_id, side, key.id, now);
             }
         }
@@ -588,7 +619,7 @@ fn record_analysis_changes<J: SemanticJournal + ?Sized>(
                 now,
             );
         }
-        for drawing in &key.drawings {
+        for drawing in key.drawings.iter().filter(|drawing| drawing.reported) {
             record_drawing_removed(journal, &tab_id, &pane_id, side, drawing.id, now);
         }
     }

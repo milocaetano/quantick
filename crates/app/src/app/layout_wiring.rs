@@ -40,7 +40,7 @@
 
 use crate::state::BarConfiguration;
 use crate::surfaces::drawing_chrome::DrawingChromeExt as _;
-use quantick_drawings::{PaneMarks, PaneSync};
+use quantick_drawings::{PaneMarks, PaneSync, retarget_layout};
 use quantick_workspace::market_settings::{MarketSettings, PaneWrite};
 use quantick_workspace::session::{LayoutEffect, PaneFacts, Selection};
 use std::time::Instant;
@@ -108,11 +108,7 @@ impl<'a> LayoutRead<'a> {
     pub(crate) fn drawing_gesture_on(&self, feed: &str, from: &str, to: &str) -> bool {
         self.tabs.iter_with_ids().any(|(_, tab)| {
             tab.panes().any(|(pane, _)| {
-                let source = pane.layout.drawings_source.as_ref();
-                pane.drawings.in_gesture()
-                    && source.is_some_and(|(venue, symbol)| {
-                        venue == feed && (symbol == from || symbol == to)
-                    })
+                pane.drawings.in_gesture() && pane.layout.holds_marks_of(feed, [from, to])
             })
         })
     }
@@ -126,9 +122,7 @@ impl<'a> LayoutRead<'a> {
             .by_id(tab)
             .and_then(|tab| tab.pane_at(side.index()))
             .and_then(ChartPane::layout_id);
-        self.session
-            .book()
-            .strip_layout(self.session.resolve_layout(named))
+        self.session.strip_layout_of(named)
     }
     pub(crate) fn focused_pane_layout(&self) -> LayoutId {
         let tab_id = self.tabs.id_at(self.active);
@@ -195,11 +189,8 @@ impl LayoutAdapter<'_> {
             return Err(Error::Busy);
         }
         let id = quantick_drawings::DrawingId(selector.drawing_id);
-        let mut matches = pane.drawings.items().iter().filter(|item| item.id == id);
-        let drawing = matches.next().ok_or(Error::Missing)?;
-        if matches.next().is_some() {
-            return Err(Error::Ambiguous);
-        }
+        // Ids are unique in a store; one this pane does not show is not its to name.
+        let drawing = pane.drawings.shown_by_id(id).ok_or(Error::Missing)?;
         if drawing.all_timeframes() {
             key = DrawingKey::all_timeframes(key.market);
         }
@@ -468,6 +459,10 @@ impl LayoutAdapter<'_> {
         }
         // Onto the tab's copy now, so an edit before the next frame is the tab's.
         self.own_indicator_copies();
+        let (store, held) = (&self.store, self.tabs.by_id_mut(tab));
+        if let Some(pane) = held.and_then(|held| held.pane_at_mut(side.index())) {
+            marks_of(pane).follow_store(store.market(), store.session());
+        }
         let from = selection.from();
         tracing::info!(
             target: "quantick::app",
@@ -550,7 +545,7 @@ impl LayoutAdapter<'_> {
     }
 
     /// Delete a layout. Every pane showing it moves to its left neighbour
-    /// first, so no pane is ever left on a layout that no longer exists.
+    /// first, its marks only once it is gone: a refusal midway moves none.
     pub(crate) fn delete_layout(&mut self, id: LayoutId) -> Result<(), LayoutError> {
         // Include unseeded panes named by an opening request without materializing them.
         for (tab, side) in self.layout_pane_targets() {
@@ -567,7 +562,12 @@ impl LayoutAdapter<'_> {
                 .ok_or(LayoutError::Unknown)?;
             self.switch_pane_layout(tab, side, selection.to())?;
         }
-        self.store.session_mut().finish_delete(id)?;
+        let to = self.store.session_mut().finish_delete(id)?;
+        let panes = self.tabs.iter_mut().flat_map(|tab| tab.panes_mut());
+        let settings = self.store.market_mut().settings_mut();
+        if retarget_layout(settings, id, to, panes.map(marks_of)) {
+            self.mark_market_dirty();
+        }
         self.mark_layouts_dirty();
         Ok(())
     }
@@ -962,9 +962,9 @@ impl LayoutAdapter<'_> {
 
     /// Each frame before a write: `quantick_drawings::PaneMarks::follow_store`.
     fn follow_quiet_recuts(&mut self) {
-        let store = self.store.market();
+        let (store, session) = (self.store.market(), self.store.session());
         for pane in self.tabs.iter_mut().flat_map(|tab| tab.panes_mut()) {
-            marks_of(pane).follow_store(store);
+            marks_of(pane).follow_store(store, session);
         }
     }
 

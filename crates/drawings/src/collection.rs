@@ -95,11 +95,12 @@ impl<T: Clone + PartialEq> Drawings<T> {
         self.draft.as_mut()
     }
 
-    /// How many objects are painted on the tab's other panes as well — the
-    /// per-frame reprojection cost, in the health summary.
+    /// How many objects this chart shows are painted on the tab's other
+    /// panes as well — the per-frame reprojection cost, in the health
+    /// summary. A mark it only holds for merges paints nowhere from here.
     #[must_use]
     pub fn shared_count(&self) -> usize {
-        self.items.iter().filter(|item| item.shared()).count()
+        self.shown().filter(|(_, item)| item.shared()).count()
     }
 
     pub(crate) fn alloc_id(&mut self) -> DrawingId {
@@ -133,9 +134,13 @@ impl<T: Clone + PartialEq> Drawings<T> {
         self.selection.get().and_then(|id| self.index_of(id))
     }
 
+    /// Select the object at `index`, or nothing. A mark this chart's layout
+    /// does not show is not this chart's to select: the call selects nothing.
     pub fn select(&mut self, selected: Option<usize>) {
+        self.let_go = None;
         self.selection.set(
             selected
+                .filter(|&index| self.in_layout(index))
                 .and_then(|index| self.items.get(index))
                 .map(|drawing| drawing.id),
         );
@@ -164,7 +169,9 @@ impl<T: Clone + PartialEq> Drawings<T> {
     /// Whether the object at `index` paints and hit-tests this frame.
     #[must_use]
     pub fn is_visible(&self, index: usize) -> bool {
-        !self.all_hidden && self.items.get(index).is_some_and(|item| !item.hidden)
+        !self.all_hidden
+            && self.in_layout(index)
+            && self.items.get(index).is_some_and(|item| !item.hidden)
     }
 
     pub(crate) fn snapshot(&self) -> UndoEntry<T> {
@@ -185,6 +192,7 @@ impl<T: Clone + PartialEq> Drawings<T> {
             self.undo.remove(0);
         }
         self.redo.clear();
+        self.settle_selection();
     }
 
     /// Whether a coalescing gesture is open on this store.
@@ -228,11 +236,15 @@ impl<T: Clone + PartialEq> Drawings<T> {
 
     /// Record an already-applied edit to one object, given its pre-edit
     /// state. Used by the inspector to coalesce slider/color gestures.
+    ///
+    /// A new pick of where it shows is made on this chart's layout
+    /// ([`Self::claim_for_layout`]).
     pub fn record_edit_of(&mut self, index: usize, before_drawing: Drawing<T>) {
         let mut before = self.snapshot();
         let Some(slot) = before.items.get_mut(index) else {
             return;
         };
+        self.claim_for_layout(index, &before_drawing);
         *slot = before_drawing;
         self.record(before);
     }
@@ -259,11 +271,7 @@ impl<T: Clone + PartialEq> Drawings<T> {
         self.items = entry.items;
         self.all_hidden = entry.all_hidden;
         self.draft = None;
-        self.selection.set(
-            self.selection
-                .get()
-                .filter(|id| self.index_of(*id).is_some()),
-        );
+        self.settle_selection();
     }
 
     pub fn undo(&mut self) -> bool {
@@ -288,22 +296,24 @@ impl<T: Clone + PartialEq> Drawings<T> {
     /// Locked objects go too: the caller gates this behind a count-bearing
     /// confirmation, and a lock protects against a stray click, not against
     /// an explicit clear-everything — `Ctrl+Z` brings the whole set back.
+    /// A mark another layout owns is not this chart's to clear: it stays,
+    /// unseen here or lent to it through "All windows" ([`Self::owns`]).
     pub fn delete_all(&mut self) -> usize {
-        let count = self.items.len();
-        if count == 0 {
+        if self.owned_count() == 0 {
             return 0;
         }
         let before = self.snapshot();
-        self.items.clear();
+        let count = self.remove_owned();
         self.selection.set(None);
         self.record(before);
         count
     }
 
     /// One delete command for every trigger (button, manager, keyboard).
-    /// A locked object is never deleted without `force`.
+    /// A locked object is never deleted without `force`, and a mark this
+    /// chart's layout does not show is never deleted from it.
     pub fn delete_selected(&mut self, force: bool) -> DeleteOutcome {
-        let Some(index) = self.selected().filter(|&index| index < self.items.len()) else {
+        let Some(index) = self.selected().filter(|&index| self.in_layout(index)) else {
             return DeleteOutcome::NothingSelected;
         };
         if self.items[index].locked && !force {
@@ -384,17 +394,13 @@ impl<T: Clone + PartialEq> Drawings<T> {
         let before = self.snapshot();
         let previous = self.items.len();
         self.items.retain(|drawing| drawing.author.is_none());
-        self.selection.set(
-            self.selection
-                .get()
-                .filter(|id| self.index_of(*id).is_some()),
-        );
         self.record(before);
         previous - self.items.len()
     }
 
-    /// How many objects on this pane were placed by an operator other than
-    /// the trader — what the sweep gesture shows before it offers itself.
+    /// How many objects this store holds that an operator other than the
+    /// trader placed, whichever layout shows them — what the app-wide sweep
+    /// gesture shows before it offers itself.
     #[must_use]
     pub fn authored_count(&self) -> usize {
         self.items
@@ -481,14 +487,15 @@ impl<T: Clone + PartialEq> Drawings<T> {
     /// lock-all toggle). An empty collection is not "all locked".
     #[must_use]
     pub fn all_locked(&self) -> bool {
-        !self.items.is_empty() && self.items.iter().all(|item| item.locked)
+        let mut owned = self.items.iter().filter(|item| self.owns(item)).peekable();
+        owned.peek().is_some() && owned.all(|item| item.locked)
     }
 
-    /// Reversible bulk protection: locks (or unlocks) every drawing as one
-    /// undo entry. Never deletes anything.
+    /// Reversible bulk protection: locks (or unlocks) every drawing this
+    /// chart owns ([`Self::owns`]) as one undo entry. Never deletes anything.
     pub fn set_all_locked(&mut self, locked: bool) {
         let before = self.snapshot();
-        for item in &mut self.items {
+        for item in self.owned_mut() {
             item.locked = locked;
         }
         self.record(before);
@@ -497,7 +504,7 @@ impl<T: Clone + PartialEq> Drawings<T> {
 
 impl Drawings<crate::DrawingTool> {
     /// Switch the drawing `id`'s own magnet as one undo step; answers whether
-    /// it moved. Refused with `None` for an id this store does not hold, and
+    /// it moved. Refused with `None` for an id this chart does not show, and
     /// with the tool's `(name, id)` when asked on for a tool that snaps by its
     /// own rule. Off is always reachable, so a stale flag can be cleared.
     pub fn set_own_magnet(
@@ -505,7 +512,7 @@ impl Drawings<crate::DrawingTool> {
         id: DrawingId,
         enabled: bool,
     ) -> Result<bool, Option<(&'static str, &'static str)>> {
-        let index = self.index_of(id).ok_or(None)?;
+        let index = self.shown_index_of(id).ok_or(None)?;
         let tool = self.items[index].tool;
         if enabled && !self.items[index].takes_magnet() {
             return Err(Some((tool.name(), tool.id())));

@@ -51,6 +51,18 @@ pub struct Drawings<T> {
     /// Snapshot taken when a pointer gesture starts; committed (as one undo
     /// entry) on release, so a whole drag coalesces into one command.
     pub(crate) gesture_baseline: Option<UndoEntry<T>>,
+    /// The strip layout this store's chart shows, named by its host. `None`
+    /// shows everything it holds.
+    pub(crate) layout: Option<quantick_workspace::layout_document::LayoutId>,
+    /// The strip layouts the book holds, named by its host: a mark whose
+    /// layout is not among them shows on every chart. Empty names no book.
+    pub(crate) live_layouts: Vec<quantick_workspace::layout_document::LayoutId>,
+    /// New marks made before the host named [`Self::layout`]: the first
+    /// layout named claims them, so none is saved as from before layouts.
+    pub(crate) unclaimed: Vec<crate::DrawingId>,
+    /// The selection the last switch of layout let go of: a delete of the
+    /// layout it was on moves the mark after its charts, and takes it back.
+    pub(crate) let_go: Option<crate::DrawingId>,
 }
 
 // By hand: a derive would ask the tool handle for a `Default` it has no
@@ -67,6 +79,10 @@ impl<T> Default for Drawings<T> {
             undo: Vec::new(),
             redo: Vec::new(),
             gesture_baseline: None,
+            layout: None,
+            live_layouts: Vec::new(),
+            unclaimed: Vec::new(),
+            let_go: None,
         }
     }
 }

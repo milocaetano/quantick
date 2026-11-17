@@ -35,11 +35,11 @@ pub(crate) use quantick_drawings::UNDO_HISTORY_LIMIT;
 pub(crate) use quantick_drawings::ValueUnit;
 pub use quantick_drawings::{
     ChartPoint, Constrain, DEFAULT_DRAWING_COLOR, DRAWING_TOOLS, DeleteOutcome, DrawContext,
-    DrawingAuthor, DrawingBand, DrawingId, DrawingPayload, DrawingScope, DrawingStyle, DrawingTool,
-    Duplicated, GlyphSize, IconDots, IconLetter, IconStrokes, MAX_DRAWING_FILL_ALPHA,
-    MAX_DRAWING_WIDTH_PX, MIN_DRAWING_WIDTH_PX, MarkScene, NewDrawing, PresetHost,
-    RECTANGLE_TOOL_ID, ToolFamily, ToolShortcut, has_saved_default, new_drawing_from_defaults,
-    remember_last_style, reset_tool_default, save_tool_default,
+    DrawingAuthor, DrawingBand, DrawingId, DrawingPayload, DrawingStyle, DrawingTool, Duplicated,
+    GlyphSize, IconDots, IconLetter, IconStrokes, MAX_DRAWING_FILL_ALPHA, MAX_DRAWING_WIDTH_PX,
+    MIN_DRAWING_WIDTH_PX, MarkScene, NewDrawing, PresetHost, RECTANGLE_TOOL_ID, ToolFamily,
+    ToolShortcut, has_saved_default, new_drawing_from_defaults, remember_last_style,
+    reset_tool_default, save_tool_default,
 };
 pub use style::{StyleColor32, shortcut_key};
 pub(crate) use style::{painted_color, text_backing, to_color32};

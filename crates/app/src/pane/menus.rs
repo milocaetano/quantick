@@ -203,9 +203,7 @@ impl PaneMenuView<'_> {
 
 pub(super) fn object_facts(drawings: &Drawings, indicators: &IndicatorViews) -> Vec<ObjectFact> {
     drawings
-        .items()
-        .iter()
-        .enumerate()
+        .shown()
         .map(|(index, drawing)| {
             let row = crate::surfaces::drawing_chrome::ManagerRow::of(
                 index,

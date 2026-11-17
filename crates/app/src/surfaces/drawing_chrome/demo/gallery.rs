@@ -42,15 +42,14 @@ impl GalleryHost for GalleryPlan {
     ) -> Option<f32> {
         for anchor in &self.anchors {
             let completed = anchor.apply(target);
-            if matches!(
-                phase(Intent::GalleryPlaced {
-                    tool: anchor.tool,
-                    completed,
-                    selected: target.selected()
-                }),
-                Some(Effect::KeepSelectedLocal)
-            ) {
-                target.keep_selected_to_chart();
+            match phase(Intent::GalleryPlaced {
+                tool: anchor.tool,
+                completed,
+                selected: target.selected(),
+            }) {
+                Some(Effect::KeepSelectedLocal) => target.scope_selected(false),
+                Some(Effect::ShareSelected) => target.scope_selected(true),
+                _ => {}
             }
         }
         if let Some(Effect::GallerySelection(Some(index))) = phase(Intent::GalleryFinished) {
@@ -132,7 +131,8 @@ pub(crate) trait DrawingRecipient {
         look: Look,
     ) -> bool;
     fn finish(&mut self) -> bool;
-    fn keep_selected_to_chart(&mut self);
+    /// Show the selection on every timeframe, or keep it to its chart.
+    fn scope_selected(&mut self, shared: bool);
     fn selected(&self) -> Option<usize>;
     fn select(&mut self, index: usize);
     fn selected_center(&self) -> Option<f32>;
@@ -179,9 +179,9 @@ impl DrawingRecipient for Drawings {
     fn finish(&mut self) -> bool {
         self.finish_draft()
     }
-    fn keep_selected_to_chart(&mut self) {
+    fn scope_selected(&mut self, shared: bool) {
         if let Some(drawing) = self.selected_mut() {
-            drawing.set_scope(drawings::DrawingScope::ThisChart);
+            drawing.set_all_timeframes(shared);
         }
     }
     fn selected(&self) -> Option<usize> {

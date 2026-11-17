@@ -296,3 +296,30 @@ fn what_is_not_shown_names_lost_kinds_and_lost_settings() {
     assert_eq!(other_settings, ["native.cvd"]);
     assert_eq!(unshown(&shown, [&shown[..]]), (Vec::new(), Vec::new()));
 }
+
+/// What a pane's drawings belong to: its strip layout, a copy read as the one
+/// it came from, and the default for a pane that names none.
+#[test]
+fn a_panes_strip_layout_reads_a_copy_as_its_origin() {
+    let mut book = LayoutBook::default();
+    let copy = book.make_private_copy(LayoutId(1)).unwrap();
+    let mut session = LayoutSession::new(book);
+    let other = session.create(Some("other")).unwrap();
+    assert_eq!(session.strip_layout_of(Some(copy)), LayoutId(1));
+    assert_eq!(session.strip_layout_of(Some(other)), other);
+    assert_eq!(session.strip_layout_of(None), session.book().active_id());
+}
+
+#[test]
+fn a_finished_delete_answers_where_its_panes_went() {
+    let mut session = LayoutSession::new(LayoutBook::default());
+    let second = session.create(Some("second")).unwrap();
+    let third = session.create(Some("third")).unwrap();
+    assert_eq!(session.finish_delete(second), Ok(LayoutId(1)), "its left");
+    assert_eq!(
+        session.finish_delete(LayoutId(1)),
+        Ok(third),
+        "the first's right"
+    );
+    assert_eq!(session.finish_delete(third), Err(LayoutError::Last));
+}

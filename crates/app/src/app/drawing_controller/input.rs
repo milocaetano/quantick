@@ -303,11 +303,8 @@ impl DrawingControllerAccess<'_> {
             }
             host.record(edit.tab, edit.side, edit.index, edit.before);
         }
-        if ask.toggle_selected_hidden {
-            host.update(DrawingIntent::ToggleHideSelected);
-        }
-        if ask.toggle_selected_locked {
-            host.update(DrawingIntent::ToggleLockSelected);
+        for intent in ask.toggle_selected.intents() {
+            host.update(intent);
         }
         if ask.request_delete {
             self.request_delete_selected(host, effects, now);

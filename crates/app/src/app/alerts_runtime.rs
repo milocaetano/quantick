@@ -205,7 +205,7 @@ pub(super) fn apply_alert_request(
         for (tab_index, (tab_id, tab)) in app.runtime.tabs.iter_with_ids().enumerate() {
             for (pane, _) in tab.panes() {
                 let mut count = 0;
-                for (index, drawing) in pane.drawings.items().iter().enumerate() {
+                for (index, drawing) in pane.drawings.shown() {
                     if drawing.durable_identity.as_ref() == Some(&target) {
                         count += 1;
                         let known_mirror = pane.layout.drawings_key.as_ref().is_some_and(|key| {

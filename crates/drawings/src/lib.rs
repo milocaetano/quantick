@@ -62,8 +62,10 @@ pub use family::{
     AnchorSnap, BodySnap, Constrain, IconDots, IconLetter, IconStrokes, ToolFamily, ToolShortcut,
 };
 pub use geometry::{distance_to_segment, level_with, off_line_by, pos2, unit_normal, vec2};
+mod layout_scope;
 mod pane_sync;
 mod saved;
+pub use layout_scope::retarget_layout;
 pub use object::{
     ChartPoint, DeleteOutcome, Drawing, DrawingAuthor, DrawingBand, DrawingId, DrawingScope,
     Duplicated, NewDrawing, PaneKey,

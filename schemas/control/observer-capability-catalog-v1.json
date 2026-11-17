@@ -3387,7 +3387,7 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Sets one drawing's scope, named by the `tab_id`, `pane_id` and `drawing_id` analysis.drawings lists (a drawing id is unique only within its pane): `all_charts` shows it on every chart of its market (feed and asset) at any timeframe, placed by market time and price; `this_chart` keeps it to the chart it is on, pinned to the bars that chart is cut to now, so switching that chart to other bars hides it and switching back restores it. The same switch as \"Show on all timeframes\" on the drawing's context bar and inspector; it is saved with the market's drawings, and analysis.drawings reads it back as the drawing's `scope`. `all_charts` on a drawing with an anchor past the newest bar (no market time) is refused with control.invalid_request and `reason` `anchor_without_market_time`; an id no pane on that tab holds is refused too.",
+      "description": "Sets one drawing's scope, named by the `tab_id`, `pane_id` and `drawing_id` analysis.drawings lists (a drawing id is unique only within its pane, and a pane lists only what its layout shows): `all_charts` shows it at any timeframe on every chart of its market (feed and asset) showing the named pane's layout, placed by market time and price; `this_chart`, a new drawing's default, keeps it to its chart, pinned to the bars that chart is cut to now. Optional `all_windows` also shows an `all_charts` drawing on that market's charts on any other layout, never on another market; absent leaves it as it stands. The inspector's \"Show on all timeframes\" and \"All windows\"; saved with the market's drawings and read back as `scope`, `all_windows` and `layout_id`. Refused with control.invalid_request: `all_charts` on a drawing with an anchor past the newest bar (`reason` `anchor_without_market_time`), `all_windows: true` beside `this_chart` (`reason` `all_windows_needs_all_charts`), and an id the named pane does not show.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "cockpit",
@@ -3405,7 +3405,7 @@
             "oneOf": [
               {
                 "const": "all_charts",
-                "description": "Every chart of the drawing's market, at any timeframe.",
+                "description": "Every chart of the drawing's market showing its layout, at any\ntimeframe; with `all_windows`, every chart of its market.",
                 "type": "string"
               },
               {
@@ -3423,6 +3423,13 @@
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
         "properties": {
+          "all_windows": {
+            "description": "Whether every chart of its market shows it too, whatever layout that\nchart shows; only with `all_charts`. Absent leaves it as it stands.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
           "drawing_id": {
             "$ref": "#/$defs/WireU64",
             "description": "The drawing, by the `drawing_id` `analysis.drawings` lists."
@@ -3457,7 +3464,7 @@
             "oneOf": [
               {
                 "const": "all_charts",
-                "description": "Every chart of the drawing's market, at any timeframe.",
+                "description": "Every chart of the drawing's market showing its layout, at any\ntimeframe; with `all_windows`, every chart of its market.",
                 "type": "string"
               },
               {
@@ -3474,12 +3481,28 @@
         },
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "properties": {
+          "all_windows": {
+            "default": false,
+            "description": "Whether every chart of its market shows it after the call, whatever\nlayout: asked for on a drawing on all timeframes, or one saved before\ndrawings recorded their layout. Optional in the schema only so v1\nreaders stay compatible.",
+            "type": "boolean"
+          },
           "changed": {
             "description": "Whether the call moved it; `false` when it already stood there.",
             "type": "boolean"
           },
           "drawing_id": {
             "$ref": "#/$defs/WireU64"
+          },
+          "layout_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The strip layout it belongs to after the call, the `layout_id` the layout-tab\ncalls (`layout.tab.switch`) name; absent for one saved before drawings recorded their layout."
           },
           "pane_id": {
             "$ref": "#/$defs/WireU64"
@@ -32312,6 +32335,10 @@
           },
           "DrawingSnapshot": {
             "properties": {
+              "all_windows": {
+                "description": "Whether every chart of its market shows it whatever layout it shows\n(\"All windows\"): only for `all_charts`, and true for one saved before\ndrawings recorded their layout. A pane lists only the drawings its\nlayout shows. Written only when true; optional in the schema so v1\nreaders stay compatible.",
+                "type": "boolean"
+              },
               "anchor_count": {
                 "$ref": "#/$defs/WireU64"
               },
@@ -32354,6 +32381,17 @@
                 "description": "This object's own eye. It is not the whole answer to \"is it on screen\":\nthe pane's `layer_hidden` above hides every object regardless.",
                 "type": "boolean"
               },
+              "layout_id": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "The strip layout it belongs to, the `layout_id` the layout-tab calls\nname; absent for one saved before drawings recorded their layout."
+              },
               "locked": {
                 "type": "boolean"
               },
@@ -32379,7 +32417,7 @@
                 "description": "The layout and contract a migration merged this object from, when one\ndid. A merged market is labelled, never passed off as one history.\nOptional in the schema only so v1 readers stay compatible."
               },
               "scope": {
-                "description": "`all_charts` (the default) when every chart of its market shows it at\nany timeframe; `this_chart` when only its own chart does, at the bars\nit was kept to.",
+                "description": "`all_charts` when every chart of its market showing its layout shows\nit at any timeframe; `this_chart` (a new drawing's default) when only\nits own chart does, at the bars it was kept to.",
                 "type": "string"
               },
               "tool_id": {

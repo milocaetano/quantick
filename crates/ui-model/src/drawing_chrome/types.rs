@@ -38,6 +38,8 @@ impl SavedDefault {
 pub struct InspectorActions {
     pub toggle_hidden: bool,
     pub toggle_lock: bool,
+    /// The selection's "All windows" switch.
+    pub toggle_all_windows: bool,
     pub toggle_pin: bool,
     pub delete: bool,
     pub cancel_delete: bool,
@@ -54,6 +56,7 @@ impl InspectorActions {
     pub fn merge(&mut self, other: Self) {
         self.toggle_hidden |= other.toggle_hidden;
         self.toggle_lock |= other.toggle_lock;
+        self.toggle_all_windows |= other.toggle_all_windows;
         self.toggle_pin |= other.toggle_pin;
         self.delete |= other.delete;
         self.cancel_delete |= other.cancel_delete;

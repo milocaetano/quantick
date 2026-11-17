@@ -94,6 +94,7 @@ impl PaneHitTest<'_> {
         // mirrored price level can be one pixel apart on screen and mean
         // unrelated things, exactly as they can on the pane that owns them.
         let band = bands::band_at(&self.frame.bands, px(pos))?;
+        let source = (source, self.drawings.layout());
         self.projection
             .shared_pick_in(source, px(pos), band, (history_right, total))
     }
@@ -108,7 +109,7 @@ impl PaneHitTest<'_> {
             return;
         };
         self.projection.shared_scenes(
-            source,
+            (source, self.drawings.layout()),
             &self.frame.bands,
             (history_right, total),
             (

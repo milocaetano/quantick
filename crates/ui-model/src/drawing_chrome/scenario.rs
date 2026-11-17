@@ -168,6 +168,9 @@ pub enum Intent {
 #[derive(Debug, PartialEq)]
 pub enum Effect {
     KeepSelectedLocal,
+    /// The gallery's marks show on every timeframe unless asked to stay
+    /// local: a new drawing is kept to its chart, so the gallery says so.
+    ShareSelected,
     GallerySelection(Option<usize>),
     Launch {
         inspector_position: Option<[f32; 2]>,
@@ -192,7 +195,11 @@ pub(super) fn update(state: &mut super::State, intent: Intent) -> super::Drawing
             if completed && receipt.tool.as_deref() == Some(tool.id()) {
                 receipt.selected = selected;
             }
-            (completed && receipt.local).then_some(Effect::KeepSelectedLocal)
+            completed.then_some(if receipt.local {
+                Effect::KeepSelectedLocal
+            } else {
+                Effect::ShareSelected
+            })
         }),
         Intent::GalleryFinished => scenario
             .gallery_receipt

@@ -168,6 +168,7 @@ fn borrowed_domain_rows_reborrow_in_catalog_order() {
         linked_alerts: 0,
         pane_id: 42,
         selected: None,
+        selected_all_windows: false,
         chart_area: None,
         automatic_bar_area: None,
         focused_chart_area: None,

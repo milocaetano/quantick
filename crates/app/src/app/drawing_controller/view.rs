@@ -75,6 +75,7 @@ fn drawing_env<'a>(
         linked_alerts: read.linked_alerts,
         pane_id: facts.pane_id,
         selected,
+        selected_all_windows: store.selected().is_some_and(|i| store.in_all_windows(i)),
         chart_area: facts.chart_area,
         automatic_bar_area,
         focused_chart_area: facts.focused_chart_area,
@@ -150,9 +151,7 @@ impl DrawingControllerAccess<'_> {
         let store = host.drawings();
         let selected = store.selected();
         store
-            .items()
-            .iter()
-            .enumerate()
+            .shown()
             .map(|(index, drawing)| {
                 crate::surfaces::drawing_chrome::ManagerRow::of(
                     index,

@@ -107,7 +107,7 @@ impl DrawingRecipient for RefusingRecipient {
         self.finishes += 1;
         false
     }
-    fn keep_selected_to_chart(&mut self) {
+    fn scope_selected(&mut self, _: bool) {
         self.shares += 1;
     }
     fn selected(&self) -> Option<usize> {

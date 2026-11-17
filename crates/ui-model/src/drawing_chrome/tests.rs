@@ -29,6 +29,7 @@ fn migration_preserves_state_and_effects() {
             actions: InspectorActions {
                 toggle_pin: true,
                 toggle_lock: true,
+                toggle_all_windows: true,
                 ..Default::default()
             },
             index: 7,
@@ -38,7 +39,8 @@ fn migration_preserves_state_and_effects() {
             gesture_settled: true,
         }),
     );
-    assert!(effects.toggle_selected_locked);
+    assert!(effects.toggle_selected.locked);
+    assert!(effects.toggle_selected.all_windows);
     assert!(!state.core.shared.pinned);
     assert!(state.inspector.pin_touched);
     assert!(state.inspector.settle_frame);
@@ -93,4 +95,33 @@ fn migration_preserves_state_and_effects() {
         Model::update(&mut state, Intent::TakeMenu(42)),
         DrawingChromeAsk::default()
     );
+}
+
+#[test]
+fn the_selection_toggles_ask_the_store_in_order() {
+    use quantick_drawings::DrawingIntent;
+    let names = |toggles: SelectionToggles| -> Vec<String> {
+        toggles
+            .intents()
+            .map(|intent| format!("{intent:?}"))
+            .collect()
+    };
+    assert!(names(SelectionToggles::default()).is_empty());
+    let all = SelectionToggles {
+        hidden: true,
+        locked: true,
+        all_windows: true,
+    };
+    let expected = [
+        DrawingIntent::ToggleHideSelected,
+        DrawingIntent::ToggleLockSelected,
+        DrawingIntent::ToggleAllWindowsSelected,
+    ];
+    let expected: Vec<String> = expected.iter().map(|i| format!("{i:?}")).collect();
+    assert_eq!(names(all), expected);
+    let locked = SelectionToggles {
+        locked: true,
+        ..SelectionToggles::default()
+    };
+    assert_eq!(names(locked), ["ToggleLockSelected"]);
 }

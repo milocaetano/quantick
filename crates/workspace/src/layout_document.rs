@@ -17,8 +17,9 @@
 //! whichever layout shows it, and is kept in the market store under
 //! `DrawingKey`: venue, asset and pane role
 //! ([`crate::market_settings`]). A drawing marked "show on all
-//! charts" is stored once, under the role it was drawn on, and mirrored onto
-//! the other panes of that market by the tab.
+//! timeframes" is stored once for its market and shown on every pane of that
+//! market showing the strip layout it belongs to ([`SavedDrawing::layout`]);
+//! its own "All windows" shows it on every pane of the market whatever layout.
 //!
 //! **The layout is the source of truth; panes materialise it.** The app
 //! holds one [`LayoutBook`] and keeps every pane's indicator set equal to the
@@ -162,10 +163,23 @@ pub struct SavedDrawing {
     /// when on, so a document from before the flag saves back unchanged.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub magnet: bool,
-    /// "Show on all timeframes": every chart of the market shows it, at any
-    /// bars, placed by market time and price.
+    /// "Show on all timeframes": every chart of the market showing `layout`
+    /// shows it, at any bars, placed by market time and price; with
+    /// `all_windows`, every chart of the market whatever its layout.
     #[serde(default)]
     pub shared: bool,
+    /// The strip layout it belongs to: the one the chart it was drawn on, or
+    /// turned on all timeframes on, showed (a pane's own copy counts as the
+    /// strip layout it came from). Absent on a mark from before layouts were
+    /// recorded, which shows on every chart of its market as it always has,
+    /// and on such a mark written back.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layout: Option<LayoutId>,
+    /// "All windows": every chart of its market shows it, whatever layout it
+    /// shows. Written only when on, so a document from before the flag saves
+    /// back unchanged.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub all_windows: bool,
     /// The tool's own state, as its preset export writes it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub payload: Option<toml::Value>,
