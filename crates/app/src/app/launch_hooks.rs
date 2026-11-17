@@ -45,6 +45,8 @@ use crate::toolrail::ToolRailExt as _;
 #[cfg(any(feature = "scenario-harness", test))]
 use crate::{orderflow_panel::open_on, ui_state::PanelSection};
 #[cfg(any(feature = "scenario-harness", test))]
+use quantick_control_schema::{desk, launch_calls, layout};
+#[cfg(any(feature = "scenario-harness", test))]
 use quantick_feed::history_reach;
 
 #[cfg(any(feature = "scenario-harness", test))]
@@ -97,7 +99,7 @@ pub(super) fn apply_launch_phase(
         layout(app, env);
         replay(app, env);
         dock_and_report(app, env);
-        price_axis(app, env);
+        calls::on_flow_pane(app, env, "QUANTICK_PRICE_RANGE", launch_calls::price_range);
         workspace(app, env);
     }
     // An env var is not a user edit: what the autostart hooks switched on
@@ -113,17 +115,51 @@ pub(super) fn apply_launch_phase(
     toast(app, env);
 }
 
+/// The hooks with a registered action, run as an agent would through
+/// `quantick_control_schema::launch_calls`, which reads each value.
 #[cfg(any(feature = "scenario-harness", test))]
-fn price_axis(app: &mut QuantickApp, env: &ScenarioInputs) {
-    let Some((low, high)) = env
-        .var("QUANTICK_PRICE_RANGE")
-        .and_then(|value| quantick_control_schema::price_axis::PriceAxisMode::parse_range(&value))
-    else {
-        return;
-    };
-    let pane = &mut app.active_tab_mut().flow_pane;
-    pane.sync_price_axis_mode();
-    pane.price_view.set_manual_range(low, high);
+mod calls {
+    use super::super::{GatewayPort, LayoutPort, TabsPort};
+    use crate::hooks::ScenarioInputs as Env;
+    use quantick_control_schema::launch_calls::{self as launch, LaunchCall};
+
+    fn run<W: GatewayPort + ?Sized>(window: &mut W, call: Option<LaunchCall>) {
+        if let Some((id, input)) = call {
+            window.run_hook_action(id, input, crate::control::ActionOrigin::LaunchHook);
+        }
+    }
+
+    /// A hook addressed to the active tab's flow pane, the pane it always set.
+    pub(super) fn on_flow_pane<W>(window: &mut W, env: &Env, hook: &str, read: launch::PaneCall)
+    where
+        W: GatewayPort + TabsPort + ?Sized,
+    {
+        let tabs = window.tab_reads().tabs();
+        let pane = tabs.get(tabs.active_index()).map(|tab| tab.flow_pane.id);
+        let (tab, pane) = (tabs.active_id(), pane.unwrap_or_default());
+        run(
+            window,
+            env.var(hook).and_then(|value| read(&value, tab, pane)),
+        );
+    }
+
+    pub(super) fn layout_tab<W: GatewayPort + LayoutPort + ?Sized>(window: &mut W, env: &Env) {
+        let name = env.var("QUANTICK_LAYOUT_TAB");
+        if let Some(name) = name.and_then(|name| crate::layouts::clean_name(&name)) {
+            let known = window.layout_state().layouts().by_name(&name).is_some();
+            run(window, Some(launch::layout_tab(&name, known)));
+        }
+    }
+
+    /// A `1` switch for a call that takes no input.
+    pub(super) fn when_one<W: GatewayPort + ?Sized>(
+        window: &mut W,
+        env: &Env,
+        hook: &str,
+        id: &'static str,
+    ) {
+        run(window, launch::when_one(env.var(hook).as_deref(), id));
+    }
 }
 
 /// The order book and the live strip: the two the map opens with.
@@ -245,17 +281,7 @@ fn tape(app: &mut QuantickApp, env: &ScenarioInputs) {
             pane.price_view.set_inverted(true);
         }
     }
-    // The Tape switch on the pane's header — the one control
-    // that decides whether there is a band at all. The switch that view
-    // reads, so a capture shows what a click shows. Anything but `on`/`off`
-    // leaves the tape alone rather than guessing.
-    if let Some(value) = env.var("QUANTICK_TAPE") {
-        match value.trim() {
-            "on" => app.active_tab_mut().tape_mut().set_lane_enabled(true),
-            "off" => app.active_tab_mut().tape_mut().set_lane_enabled(false),
-            _ => {}
-        }
-    }
+    calls::on_flow_pane(app, env, "QUANTICK_TAPE", launch_calls::tape);
     // The tape's own layer switches. The two panes are configured apart and
     // the tape's menu is a right-click a scripted run cannot perform, so the
     // state behind it needs a door of its own — the state, not a second
@@ -407,33 +433,7 @@ fn indicator(app: &mut QuantickApp, env: &ScenarioInputs) {
 /// the module's order rule.
 #[cfg(any(feature = "scenario-harness", test))]
 fn layout(app: &mut QuantickApp, env: &ScenarioInputs) {
-    // The layout strip's hooks (`ui-harness`): open on a named layout,
-    // creating it when the file has none by that name, and open the
-    // rename box on the active one.
-    if let Some(name) = env.var("QUANTICK_LAYOUT_TAB")
-        && let Some(name) = crate::layouts::clean_name(&name)
-    {
-        let wanted = app
-            .layout_state()
-            .layouts()
-            .by_name(&name)
-            .map(|layout| layout.id);
-        let outcome = match wanted {
-            Some(id) => app.layout_adapter().switch_layout(id).map(|_| id),
-            None => app.layout_adapter().create_layout(Some(&name)),
-        };
-        if let Err(error) = outcome {
-            tracing::warn!(
-                target: "quantick::app",
-                schema_version = 1_u8,
-                event_code = "LAYOUT_TAB_HOOK_REFUSED",
-                layout = %name,
-                %error,
-                action = "hook_ignored",
-                "QUANTICK_LAYOUT_TAB could not open the layout"
-            );
-        }
-    }
+    calls::layout_tab(app, env);
     // One layout per pane, by name, in pane-address order (`flow,top,bottom`):
     // a capture of two charts on two layouts side by side. Names the book
     // lacks are created empty; an empty entry leaves that pane alone.
@@ -815,32 +815,26 @@ fn workspace(app: &mut QuantickApp, env: &ScenarioInputs) {
             ),
         }
     }
-    // Stage the same collapse state the divider and its rail change. This
-    // follows the layout choice because set_layout opens every selected pane.
+    calls::when_one(
+        app,
+        env,
+        "QUANTICK_PANE_COLLAPSED",
+        layout::COLLAPSE_CAPABILITY_ID,
+    );
+    let flow = layout::FLOW_COLLAPSE_CAPABILITY_ID;
+    calls::when_one(app, env, "QUANTICK_FLOW_PANE_COLLAPSED", flow);
     let tab = app.active_tab_mut();
-    if env.var("QUANTICK_PANE_COLLAPSED").as_deref() == Some("1") {
-        tab.canvas.fold(false, true);
-    }
-    if env.var("QUANTICK_FLOW_PANE_COLLAPSED").as_deref() == Some("1") {
-        tab.canvas.fold(true, true);
-    }
     let upper = env.var("QUANTICK_CONTEXT_UPPER_COLLAPSED").as_deref() == Some("1");
     let lower = env.var("QUANTICK_CONTEXT_LOWER_COLLAPSED").as_deref() == Some("1");
     if tab.canvas.layout == CanvasLayout::TimeTimeAndFlow && (upper ^ lower) {
         tab.canvas.fold_context_pane(upper);
     }
-    // The Workspace menu's own path, so a validation run can see the save
-    // confirmation without a click. A menu entry cannot be reached by an
-    // env var, but the state it produces has to be
-    // (`.claude/skills/ui-harness`). This writes the file for real,
-    // exactly as the entry does — a hook that fakes its surface proves
-    // nothing — so point `QUANTICK_UI_STATE` at a scratchpad first.
-    if env
-        .var("QUANTICK_WORKSPACE_SAVE")
-        .is_some_and(|value| value == "1")
-    {
-        app.workspace_save_adapter().save_workspace("autostart");
-    }
+    calls::when_one(
+        app,
+        env,
+        "QUANTICK_WORKSPACE_SAVE",
+        desk::DESK_SAVE_CAPABILITY_ID,
+    );
     // A chart's ⋯ menu open, or one of its rows pressed, as a click does.
     let menu = env.var("QUANTICK_PANE_MENU");
     if let Some((slot, row)) = menu

@@ -643,14 +643,15 @@ fn paper_tail_unsupported_mixed_output_preserves_the_complete_response() {
         retained = app.run_report_tail_test(ctx, [DrawPaperReport]);
     });
     let expected = SurfaceResponse {
-        paper_panel: Some(Box::new(PaperPanelEffects {
-            navigate_to_trade: Some((-20_000, -10_000)),
-            ..Default::default()
-        })),
-        model_effects: vec![crate::surfaces::HostEffect::Toast(
-            quantick_ui_model::toast::Effects { undo_drawing: true },
-        )],
-        ..Default::default()
+        model_effects: vec![
+            crate::surfaces::HostEffect::PaperPanel(PaperPanelEffects {
+                navigate_to_trade: Some((-20_000, -10_000)),
+                ..Default::default()
+            }),
+            crate::surfaces::HostEffect::Toast(quantick_ui_model::toast::Effects {
+                undo_drawing: true,
+            }),
+        ],
     };
     assert_eq!(retained, vec![expected]);
     assert_eq!(
@@ -664,23 +665,22 @@ fn paper_tail_unsupported_mixed_output_preserves_the_complete_response() {
     );
     assert!(!app.surfaces.replay_browser.browser_is_open());
     let response = SurfaceResponse {
-        paper_panel: Some(Box::new(PaperPanelEffects {
-            open_replay_browser: true,
-            navigate_to_trade: Some((-20_000, -10_000)),
-            ..Default::default()
-        })),
-        model_effects: vec![crate::surfaces::HostEffect::Toast(
-            quantick_ui_model::toast::Effects { undo_drawing: true },
-        )],
-        ..Default::default()
+        model_effects: vec![
+            crate::surfaces::HostEffect::PaperPanel(PaperPanelEffects {
+                open_replay_browser: true,
+                navigate_to_trade: Some((-20_000, -10_000)),
+                ..Default::default()
+            }),
+            crate::surfaces::HostEffect::Toast(quantick_ui_model::toast::Effects {
+                undo_drawing: true,
+            }),
+        ],
     };
     let retained = app.settle_paper_response_test(response).unwrap_err();
     assert!(retained.undo_drawing());
-    assert!(retained.paper_panel.as_ref().unwrap().open_replay_browser);
-    assert_eq!(
-        retained.paper_panel.as_ref().unwrap().navigate_to_trade,
-        Some((-20_000, -10_000))
-    );
+    let paper = retained.paper_panel().unwrap();
+    assert!(paper.open_replay_browser);
+    assert_eq!(paper.navigate_to_trade, Some((-20_000, -10_000)));
     assert!(
         !app.surfaces.replay_browser.browser_is_open(),
         "validation precedes the prefix too"

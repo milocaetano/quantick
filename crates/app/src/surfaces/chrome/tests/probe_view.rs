@@ -20,7 +20,6 @@ macro_rules! chrome_probe_view {
         pub(crate) fn effects(effects: Effects) -> crate::surfaces::SurfaceResponse {
             crate::surfaces::SurfaceResponse {
                 model_effects: vec![quantick_ui_model::HostEffect::$tag(effects)],
-                ..Default::default()
             }
         }
     };

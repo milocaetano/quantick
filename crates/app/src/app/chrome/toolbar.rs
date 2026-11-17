@@ -113,7 +113,7 @@ pub(in crate::app) fn draw(app: &mut QuantickApp, ctx: &egui::Context) {
     let view = app.surfaces.chrome_toolbar.scoped(scope).1;
     app.chrome.history_menu_rect = view.history;
     let (capsule_rects, toolbar_door) = (view.capsule, view.door);
-    let mut actions = response.indicator_actions;
+    let mut actions = Vec::new();
     for effect in response.model_effects {
         if let quantick_ui_model::HostEffect::ChromeToolbar(effects) = effect {
             for effect in effects.0 {
@@ -218,23 +218,7 @@ impl QuantickApp {
                 wiring.apply_indicator_edit(IndicatorEdit::Remove(target));
             }
             ToolbarAction::AddScriptIndicator(index) => {
-                crate::app::indicator_manager::IndicatorState::set_legend_collapsed(
-                    self.focused_pane_mut(),
-                    false,
-                );
-                let target = (
-                    self.runtime.tabs.active_id(),
-                    self.active_tab().focused_side(),
-                );
-                let tabs = &mut self.runtime.tabs;
-                let pane = tabs.runtime_mut(tabs.active_index()).pane_mut(target.1);
-                if let Some((_, added)) = self.runtime.indicators.add_library(pane, target, index) {
-                    if let Some(attached) = added.attachment {
-                        self.indicator_wiring()
-                            .apply_indicator_edit(IndicatorEdit::Attached(attached));
-                    }
-                    self.runtime.indicators.watch_attachment(added.watch);
-                }
+                self.indicator_wiring().add_library_script_at(index);
             }
             ToolbarAction::OpenIndicatorSettings(slot) => {
                 let mut wiring = self.indicator_wiring();

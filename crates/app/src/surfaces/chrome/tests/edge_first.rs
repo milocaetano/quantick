@@ -35,6 +35,5 @@ impl crate::surfaces::View<Model> for View {
 pub(crate) fn effects(effects: Effects) -> crate::surfaces::SurfaceResponse {
     crate::surfaces::SurfaceResponse {
         model_effects: vec![quantick_ui_model::HostEffect::ChromeEdgeFirst(effects)],
-        ..Default::default()
     }
 }

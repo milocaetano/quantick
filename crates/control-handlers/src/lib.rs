@@ -21,14 +21,17 @@ pub mod alerts;
 pub mod analysis;
 pub mod annotate;
 pub mod attention;
+pub mod axis_pane;
 pub mod bubble_pane;
 pub mod bubble_preset;
 pub mod bubble_save;
 pub mod bubble_scale;
 pub mod canvas;
 pub mod chart;
+pub mod chart_layer;
 pub mod connection;
 pub mod contract_roll;
+pub mod deal_recorder;
 pub mod deal_recording;
 pub mod desk;
 pub mod dock;
@@ -37,9 +40,14 @@ pub mod drawing_scope;
 pub mod drawing_text;
 pub mod feed_source;
 pub mod feed_status;
+pub mod health;
 pub mod history;
 pub mod home_tab;
+pub mod indicator_guide;
+pub mod indicator_host;
+pub mod indicator_picker;
 pub mod journal_sessions;
+pub mod layers;
 pub mod layout;
 pub mod market_palette;
 pub mod market_switch;
@@ -49,23 +57,33 @@ pub mod notify;
 pub mod opening_scale;
 pub mod orderflow;
 pub mod orderflow_settings;
+pub mod pane_marks;
 pub mod pnl_display;
+pub mod price_axis;
 pub mod price_tag_progress;
 pub mod recovery;
 pub mod retry_matrix;
 pub mod schema_documents;
+pub mod script;
 pub mod semantic;
 pub mod session;
 mod tabs;
 pub mod tape_fold;
 pub mod tape_market_fold;
+pub mod tape_pane;
 pub mod tape_view_set;
 pub mod ticket_money;
+pub mod time_axis;
 pub mod trade;
 pub mod widgets;
 pub mod workspace_book;
 
 pub use tabs::{JournalAccess, TabDirectory, tab_index};
+
+/// A malformed input or an unencodable answer, as every family refuses it.
+pub(crate) fn invalid(error: impl ToString) -> quantick_control::error::ControlError {
+    quantick_control::error::ControlError::invalid_request(error.to_string())
+}
 
 #[cfg(test)]
 mod canvas_tests;

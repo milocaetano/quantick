@@ -78,7 +78,7 @@ impl crate::surfaces::View<Model> for View {
                 .rect,
         );
         let mut response = effects(Effects(Some((observed, "returned"))));
-        response.paper_panel = Some(Box::new(crate::surfaces::PaperPanelEffects {
+        response.model_effects.push(crate::surfaces::HostEffect::PaperPanel(crate::surfaces::PaperPanelEffects {
             navigate_to_trade: Some((21, 22)),
             journal_edit: Some(quantick_paper::report::session_edit::JournalEdit::Delete {
                 session: quantick_paper::report::sessions::SessionKey::parse("PROBE/second.csv")
@@ -100,6 +100,5 @@ pub(crate) fn effects(value: Effects) -> SurfaceResponse {
         } else {
             vec![]
         },
-        ..Default::default()
     }
 }

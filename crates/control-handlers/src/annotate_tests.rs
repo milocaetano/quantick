@@ -11,6 +11,7 @@ use quantick_control_host::actions::ActionRegistry;
 use serde_json::json;
 
 use super::*;
+use crate::test_support::FakeAccess;
 use crate::test_support::FakeWindow as Actors;
 
 /// One pane over three one-second bars opening at 1 s, 2 s and 3 s.
@@ -130,23 +131,6 @@ impl AnnotatePort for FakeWindow {
     }
     fn pane_mut(&mut self, _index: usize, _side: PaneSide) -> &mut dyn AnnotatedPane {
         &mut self.flow
-    }
-}
-
-#[derive(Default)]
-struct FakeAccess {
-    replayed: Option<(ActorKind, String)>,
-    events: Vec<NewEvent>,
-}
-
-impl AnnotateAccess for FakeAccess {
-    fn recorded_actor(&self) -> Option<(ActorKind, &str)> {
-        self.replayed
-            .as_ref()
-            .map(|(kind, client)| (*kind, client.as_str()))
-    }
-    fn record_event(&mut self, event: NewEvent) {
-        self.events.push(event);
     }
 }
 
@@ -277,7 +261,7 @@ fn a_mark_drawn_by_hand_is_refused_and_stays() {
     let mut window = FakeWindow::new();
     let mut access = FakeAccess {
         replayed: Some((ActorKind::HumanUi, "trader".to_owned())),
-        events: Vec::new(),
+        ..FakeAccess::default()
     };
     let input = json!({ "anchors": [{ "time_unix_ms": 1_000, "price": "100" }] });
     let answer = call(&mut window, &mut access, LABEL_CAPABILITY_ID, input).expect("placed");

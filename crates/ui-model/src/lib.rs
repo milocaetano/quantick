@@ -212,6 +212,9 @@ macro_rules! models {
         #[derive(Debug, PartialEq)]
         pub enum HostEffect {
             $($(#[$model_attr])* $tag(<$model::Model as Model>::Effects),)*
+            /// What the dock's borrowed paper pass asked for while painting;
+            /// dock intents themselves ask the host nothing.
+            PaperPanel(dock::PaperPanelEffects),
         }
 
 

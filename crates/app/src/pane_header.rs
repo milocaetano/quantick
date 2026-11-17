@@ -1235,7 +1235,6 @@ pub(crate) fn effects(
     }
     crate::surfaces::SurfaceResponse {
         model_effects: vec![crate::surfaces::HostEffect::PaneHeader(effects)],
-        ..Default::default()
     }
 }
 

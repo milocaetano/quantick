@@ -2,11 +2,18 @@
 //! window can say — where its last frame laid a pane out, which tab and side
 //! it sits on, and what its feed provides.
 
+use quantick_chart::style::ChartStyle;
+use quantick_control::{error::ControlError, wire::WireU64};
 pub(crate) use quantick_control_handlers::chart::chart_window_prevalidated;
 use quantick_control_handlers::chart::{
-    ChartPaneEntry, ChartPaneSource, ChartPort, MissingPane, PaneFraming,
+    AddressedPane, ChartPaneEntry, ChartPaneSource, ChartPort, MissingPane, PaneFraming,
 };
+use quantick_control_handlers::chart_layer::{LayerBlocked, LayerRead};
 pub(crate) use quantick_control_schema::chart::*;
+use quantick_control_schema::chart_settings::{ChartSettingsInput, ChartSettingsResult};
+use quantick_control_schema::layers::LayerSnapshot;
+use quantick_layers::ChartLayer;
+use quantick_stores::candle_presets::PresetError;
 
 use quantick_engine::Bar;
 
@@ -44,6 +51,40 @@ impl ChartPort for dyn ControlPort {
 
     fn price_tag_progress(&self, tab_id: u64) -> bool {
         self.layout_state().bar_progress_on(tab_id)
+    }
+
+    fn addressed_pane(
+        &mut self,
+        tab_id: WireU64,
+        pane_id: WireU64,
+    ) -> Result<&mut dyn AddressedPane, ControlError> {
+        Ok(super::addressed_pane::pane(self, tab_id, pane_id)?)
+    }
+
+    fn apply_chart_settings(
+        &mut self,
+        input: ChartSettingsInput,
+    ) -> Result<ChartSettingsResult, PresetError> {
+        self.layer_wiring().chart_settings(input)
+    }
+
+    fn chart_style(&self) -> &ChartStyle {
+        self.chrome_reads().style()
+    }
+
+    fn switch_chart_layer(&mut self, tab_id: u64, pane_id: u64, layer_id: &str, visible: bool) {
+        let reads = self.tab_reads();
+        let Some(index) = reads.tabs().position(tab_id) else {
+            return;
+        };
+        let found = reads
+            .tab_at(index)
+            .and_then(|tab| tab.panes().find(|(pane, _)| pane.id == pane_id));
+        let Some((pane, side)) = found else { return };
+        let Some(layer) = pane.layers.registry().resolve(layer_id) else {
+            return;
+        };
+        self.layer_wiring().set_visible(index, side, layer, visible);
     }
 
     fn visit_chart_pane(
@@ -136,6 +177,35 @@ impl ChartPaneSource for PaneRead<'_> {
     }
     fn venue_candles(&self) -> Option<quantick_session::SeriesStatus> {
         (self.tab.session).candle_status(self.pane.series.state.spec().time_interval_ms())
+    }
+    fn layers(&self, style: &ChartStyle) -> Vec<LayerSnapshot> {
+        let registered = self.pane.layers.registry().layers().iter();
+        registered
+            .map(|&layer| self.layer_snapshot(layer, style))
+            .collect()
+    }
+    fn layer(&self, layer_id: &str, style: &ChartStyle) -> Option<LayerRead> {
+        let layer = self.pane.layers.registry().resolve(layer_id)?;
+        let blocked = self
+            .pane
+            .layer_blocked(layer, self.tab.capabilities(self.config));
+        Some(LayerRead {
+            layer: self.layer_snapshot(layer, style),
+            blocked: blocked.map(|block| LayerBlocked {
+                code: block.code,
+                explanation: block.explanation,
+            }),
+        })
+    }
+}
+
+impl PaneRead<'_> {
+    /// One registered layer as the pane's menu reads it.
+    fn layer_snapshot(&self, layer: ChartLayer, style: &ChartStyle) -> LayerSnapshot {
+        let facts = self
+            .pane
+            .layer_facts(Some(self.tab.capabilities(self.config)));
+        LayerSnapshot::from_policy(layer, self.pane.layer_switched_on(layer, style), facts)
     }
 }
 

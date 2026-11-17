@@ -14,9 +14,10 @@ use crate::canvas_layout::MAX_CANVAS_PANES;
 use crate::footprint_config::FootprintConfig;
 use crate::pane::PaneSide;
 use crate::style::ChartStyle;
-use crate::surfaces::{StrategyPopupSurface, SurfaceEnv, SurfaceResponse, Surfaces};
+use crate::surfaces::{StrategyPopupSurface, SurfaceEnv, Surfaces};
 use quantick_chart::bar_progress::BarProgressReading;
 use quantick_ui_model::indicator_settings::State as SettingsState;
+use quantick_ui_model::late_effects::LateEffects;
 
 /// A pane's right-click asked to arm one of its drawings. Drained into the
 /// surface that owns the dialog: the click happens while the canvas draws,
@@ -66,7 +67,7 @@ pub(super) fn draw_surfaces(
     now: Instant,
     registry: &mut Surfaces,
     owners: SurfaceOwners<'_>,
-) -> SurfaceResponse {
+) -> LateEffects {
     let SurfaceOwners {
         alerts,
         display_offset_minutes,
@@ -189,7 +190,7 @@ pub(super) fn draw_surfaces(
             display_offset_minutes,
         )
     });
-    let mut asks = registry.draw_all(
+    let asks = registry.draw_all(
         ctx,
         &SurfaceEnv {
             alerts: Some(&alerts.core.book),
@@ -227,32 +228,23 @@ pub(super) fn draw_surfaces(
             .editor
             .observe(target, Some(editor_pane.presentation.candles.context()));
     }
-    let (mut retained, mut bar_switch) = (Vec::new(), None);
-    for effect in std::mem::take(&mut asks.model_effects) {
-        match effect {
-            quantick_ui_model::HostEffect::ChartSettings(effects) => {
-                super::super::chart_settings_wiring::persist(
-                    &mut registry.chart_settings.model_state,
-                    effects.persistence,
-                )
-            }
-            quantick_ui_model::HostEffect::BarSwitch(asked) => bar_switch = bar_switch.or(asked),
-            other => retained.push(other),
-        }
-    }
-    asks.model_effects = retained;
+    let mut late = LateEffects::fold(asks.model_effects);
+    super::super::chart_settings_wiring::persist(
+        &mut registry.chart_settings.model_state,
+        std::mem::take(&mut late.persistence),
+    );
     super::super::script_editor_wiring::frame(
         registry,
         indicators,
         tabs,
         store,
-        std::mem::take(&mut asks.script_editor_actions),
+        std::mem::take(&mut late.script_editor_actions),
         now,
     );
-    if let Some(request) = bar_switch {
+    if let Some(request) = late.bar_switch.take() {
         apply_bar_switch(tabs, &mut registry.toast, request);
     }
-    if let Some(request) = asks.alerts.as_mut()
+    if let Some(request) = late.alerts.as_mut()
         && let Some(command) = request.command.take()
     {
         let result = alerts
@@ -262,7 +254,7 @@ pub(super) fn draw_surfaces(
             .map_err(|error| format!("{error:?}"));
         registry.alerts.settle_command(result);
     }
-    asks
+    late
 }
 
 /// Apply the quick bar switch's choice to the pane it opened over, through

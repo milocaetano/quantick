@@ -531,7 +531,7 @@ impl QuantickApp {
         let palette = &self.surfaces.market_palette.model_state;
         let markets = (self.surfaces.hooks_pending() || palette.is_open())
             .then(|| std::sync::Arc::new(MarketPaletteHost::market_snapshot(self)));
-        let asks = surfaces::draw_surfaces(
+        let late = surfaces::draw_surfaces(
             ctx,
             now,
             &mut self.surfaces,
@@ -547,29 +547,29 @@ impl QuantickApp {
                 markets: markets.as_ref(),
             },
         );
-        if let Some(request) = asks.alerts {
+        if let Some(request) = late.alerts {
             super::alerts_runtime::apply_alert_request(self, *request);
         }
-        for action in asks.indicator_actions {
+        for action in late.indicator_actions {
             self.apply_toolbar_action(action);
         }
-        if let Some(style) = asks.style {
+        if let Some(style) = late.style {
             let _ = self.layer_wiring().apply_editor_style(style);
         }
         // After the assignment, never before: the log line reports the
         // appearance that is now in force, and the revision it landed on.
-        if let Some(request) = asks.log_style_change {
+        if let Some(request) = late.log_style_change {
             self.layer_wiring().log_editor_style(request.applied_preset);
         }
         // The audition goes through the one speaker every armed instance
         // shares, and reports a sound that could not be heard exactly as a
         // missed signal would.
-        if let Some(cue) = asks.test_alert
+        if let Some(cue) = late.test_alert
             && let Some(note) = self.audio.play(&[cue])
         {
             self.alerts().show_toast(note);
         }
-        if let Some(request) = asks.arm_strategy {
+        if let Some(request) = late.arm_strategy {
             let outcome = self
                 .runtime
                 .tabs
@@ -583,11 +583,10 @@ impl QuantickApp {
                 );
             self.surfaces.strategy_popup.update(SettleArm(outcome));
         }
-        let late = quantick_ui_model::late_effects::LateEffects::fold(asks.model_effects);
         if let Some(request) = late.market {
             apply_palette_intent(self, request);
         }
-        if let Some(change) = asks.footprint {
+        if let Some(change) = late.footprint {
             self.layer_wiring().apply_footprint_change(change);
         }
         late.undo_drawing

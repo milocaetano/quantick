@@ -38,8 +38,8 @@ pub(crate) fn standard_actions() -> Result<ActionRegistry, RegistryError> {
     quantick_control_handlers::notify::register(&mut registry)?;
     quantick_control_handlers::layout::register(&mut registry)?;
     quantick_control_handlers::canvas::register(&mut registry)?;
-    super::layers::register_action(&mut registry)?;
-    super::price_axis::register(&mut registry)?;
+    quantick_control_handlers::layers::register(&mut registry)?;
+    quantick_control_handlers::price_axis::register(&mut registry)?;
     quantick_control_handlers::home_tab::register(&mut registry)?;
     quantick_control_handlers::widgets::register(&mut registry)?;
     quantick_control_handlers::market_palette::register(&mut registry)?;
@@ -47,7 +47,7 @@ pub(crate) fn standard_actions() -> Result<ActionRegistry, RegistryError> {
     quantick_control_handlers::workspace_book::register(&mut registry)?;
     quantick_control_handlers::native_window::register(&mut registry)?;
     quantick_control_handlers::market_windows::register(&mut registry)?;
-    super::time_axis::register(&mut registry)?;
+    quantick_control_handlers::time_axis::register(&mut registry)?;
     quantick_control_handlers::opening_scale::register(&mut registry)?;
     quantick_control_handlers::price_tag_progress::register(&mut registry)?;
     quantick_control_handlers::bubble_preset::register_tick(&mut registry)?;
@@ -63,14 +63,14 @@ pub(crate) fn standard_actions() -> Result<ActionRegistry, RegistryError> {
     quantick_control_handlers::history::register(&mut registry)?;
     quantick_control_handlers::journal_sessions::register(&mut registry)?;
     quantick_control_handlers::pnl_display::register(&mut registry)?;
-    super::deal_recording::register(&mut registry)?;
-    super::drawing_magnet::register(&mut registry)?;
-    super::chart_settings::register(&mut registry)?;
-    super::indicator_guide::register(&mut registry)?;
-    super::indicator_picker::register(&mut registry)?;
-    super::native_indicator::register(&mut registry)?;
-    super::script::register(&mut registry)?;
-    super::script_editor::register(&mut registry)?;
+    quantick_control_handlers::deal_recording::register(&mut registry)?;
+    quantick_control_handlers::drawing_magnet::register(&mut registry)?;
+    quantick_control_handlers::chart_settings::register(&mut registry)?;
+    quantick_control_handlers::indicator_guide::register(&mut registry)?;
+    quantick_control_handlers::indicator_picker::register(&mut registry)?;
+    quantick_control_handlers::native_indicator::register(&mut registry)?;
+    quantick_control_handlers::script::register(&mut registry)?;
+    quantick_control_handlers::script_editor::register(&mut registry)?;
     quantick_control_handlers::trade::register(&mut registry)?;
     Ok(registry)
 }

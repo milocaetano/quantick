@@ -188,6 +188,23 @@ pub fn detach_descriptor() -> CapabilityDescriptor {
     )
 }
 
+/// Compile `source` before anything touches a chart, answering the input
+/// names it declares; a script that cannot run is refused with every
+/// problem as data ([`compile_error`]).
+///
+/// # Errors
+///
+/// The compile refusal, its diagnostics in the details.
+pub fn declared_inputs(source: &str, name: &str) -> Result<Vec<String>, ControlError> {
+    let compiled =
+        quantick_pine::compile(source, name).map_err(|errors| compile_error(&errors, source))?;
+    Ok(compiled
+        .inputs
+        .iter()
+        .map(|spec| spec.name().to_owned())
+        .collect())
+}
+
 /// Every compile problem, as data, on one refusal.
 pub fn compile_error(errors: &[quantick_pine::PineError], source: &str) -> ControlError {
     let diagnostics = errors
@@ -236,3 +253,7 @@ pub const READBACKS: &[Readback] = &[
         &[SCRIPT_TEST, EVERY_FORBIDDEN_TEST],
     ),
 ];
+
+#[cfg(test)]
+#[path = "script_tests.rs"]
+mod tests;

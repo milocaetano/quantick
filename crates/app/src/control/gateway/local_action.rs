@@ -27,7 +27,7 @@ use super::super::{
     trace::{ControlTrace, NoTrace, ReplayTraceFile, TRACE_VERSION, TraceEntry, result_digest},
     types::known_error,
 };
-#[cfg(any(feature = "control-harness", test))]
+#[cfg(any(feature = "control-harness", feature = "scenario-harness", test))]
 use super::HOOK_ACTOR_CLIENT_NAME;
 use super::{ActionOrigin, ControlAccess, RecordedActor, UI_ACTOR_CLIENT_NAME};
 #[cfg(any(feature = "control-harness", test))]
@@ -105,11 +105,12 @@ impl ControlAccess {
                 )
             })?;
         let descriptor = &action.descriptor;
-        let traced = action.traced(origin.is_trace_replay())?;
+        let hook = matches!(origin, ActionOrigin::LaunchHook(_));
+        let traced = action.traced(origin.is_trace_replay())? && !hook;
         let actor = match &origin {
             // A remote caller's actor is what the connection proved at the
             // handshake, so an agent cannot sign an action as the trader.
-            ActionOrigin::Remote(actor) => (**actor).clone(),
+            ActionOrigin::Remote(actor) | ActionOrigin::LaunchHook(actor) => (**actor).clone(),
             ActionOrigin::Human => self.local_actor(actor_kind, None),
             ActionOrigin::TraceReplay(_) => self.local_actor(
                 actor_kind,
@@ -206,7 +207,7 @@ impl ControlAccess {
         // leave an agent's object carrying no author at all.
         self.replayed_author = match &origin {
             ActionOrigin::TraceReplay(recorded) => Some((**recorded).clone()),
-            ActionOrigin::Human | ActionOrigin::Remote(_) => None,
+            ActionOrigin::Human | ActionOrigin::Remote(_) | ActionOrigin::LaunchHook(_) => None,
         };
         let outcome = (action.handler)(app, self, &actor, &input).and_then(|result| {
             action
@@ -361,7 +362,7 @@ impl ControlAccess {
     /// The actor a launch hook acts as: an agent, named for what it is, so
     /// nothing it places can pass for the trader's own hand and a screenshot
     /// shows exactly what a connected assistant would have produced.
-    #[cfg(any(feature = "control-harness", test))]
+    #[cfg(any(feature = "control-harness", feature = "scenario-harness", test))]
     pub(crate) fn hook_agent_actor(&mut self) -> Option<ActorContext> {
         self.identity.as_ref()?;
         let mut actor = self.local_actor(ActorKind::Agent, Some("launch hook".to_owned()));
