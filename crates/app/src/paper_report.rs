@@ -281,9 +281,6 @@ impl ReportAdapter {
     pub(crate) fn view_rows(&self) -> Option<&[HistoryRow]> {
         self.report_view().as_ref().map(|view| view.rows.as_slice())
     }
-    pub(crate) fn ledger_loaded(&self) -> bool {
-        self.history_cache().is_some()
-    }
     pub(crate) fn ensure_report_view(&mut self, tz: TzOffset, pnl: PnlReader<'_>) {
         if let Some(receipt) = self.project_report(tz, pnl) {
             self.update(Intent::InstallReport(receipt));

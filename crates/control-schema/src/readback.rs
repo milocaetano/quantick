@@ -36,7 +36,8 @@ pub struct Readback {
     /// What the field says when the call applied, against a reading taken
     /// before the call.
     pub applied_when: &'static str,
-    /// The transport tests that exercise this row.
+    /// The tests that exercise this row: transport tests through the real
+    /// local gateway, or a `control-handlers` test through a fake host.
     pub proven_by: &'static [&'static str],
 }
 

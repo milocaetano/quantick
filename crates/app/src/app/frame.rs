@@ -549,7 +549,7 @@ impl QuantickApp {
             },
         );
         if let Some(request) = late.alerts {
-            super::alerts_runtime::apply_alert_request(self, *request);
+            super::alerts_runtime::apply_alert_request(self.indicator_wiring(), *request);
         }
         for action in late.indicator_actions {
             self.apply_toolbar_action(action);
@@ -842,7 +842,10 @@ fn begin_dock_effects(
         app.runtime.route(&app.config).press(press);
     }
     let bell = begun.as_ref().is_ok_and(|effects| effects.open_alerts);
-    super::alerts_runtime::after_dock(app, ctx, bell);
+    if bell {
+        app.apply_menu_command(super::menu_bar::MenuCommand::OpenAlerts);
+    }
+    super::alerts_runtime::after_dock(&mut app.runtime, &mut app.surfaces, ctx);
     begun
 }
 
@@ -989,7 +992,7 @@ impl QuantickApp {
         mut ask: crate::surfaces::drawing_chrome::DrawingChromeAsk,
         now: Instant,
     ) {
-        super::alerts_runtime::open_drawing_target(self, &mut ask, now);
+        super::alerts_runtime::open_drawing_target(&mut ask, || self.indicator_wiring());
         let mut drawings = self.drawings.with(&mut self.surfaces.drawing_chrome);
         if let Some(action) = drawings.begin_registered_action(&mut ask) {
             let pending = action.pending;

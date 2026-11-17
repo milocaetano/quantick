@@ -8,6 +8,9 @@ use quantick_alerts::{
 };
 use quantick_control_schema::alerts::DrawingSelector;
 
+#[path = "alerts/requests.rs"]
+pub mod requests;
+
 /// The focused chart an alert is created for, read by the host each frame.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Context {

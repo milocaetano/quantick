@@ -193,10 +193,7 @@ pub const READBACKS: &[crate::readback::Readback] = &[
         crate::orderflow::BUBBLES_SCOPE_ID,
         "tabs[].panes[].bubbles.preset",
         "the addressed pane reports the selected whole look and effective tape policy after application",
-        &[
-            "whole_presets_reapply_drift_and_are_authorized_retry_safe",
-            crate::readback::EVERY_OPTIONAL_TEST,
-        ],
+        &[crate::readback::EVERY_OPTIONAL_TEST],
     ),
     crate::readback::snapshot(
         BUBBLE_RESET_CAPABILITY_ID,
@@ -204,10 +201,7 @@ pub const READBACKS: &[crate::readback::Readback] = &[
         crate::orderflow::BUBBLES_SCOPE_ID,
         "tabs[].panes[].bubbles.preset",
         "the addressed pane reports the factory look it wears after the reset, or an empty preset on the code defaults",
-        &[
-            "bubble_reset_wears_the_factory_look_and_is_authorized_retry_safe",
-            crate::readback::EVERY_OPTIONAL_TEST,
-        ],
+        &[crate::readback::EVERY_OPTIONAL_TEST],
     ),
 ];
 

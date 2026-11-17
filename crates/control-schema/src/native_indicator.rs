@@ -285,7 +285,7 @@ pub const READBACKS: &[crate::readback::Readback] = &[crate::readback::journal(
     EVENT,
     "payload.native_indicator.slot_id",
     "the event names the created or edited slot; indicator.native.list reads committed settings",
-    &["native_control_edits_share_layout_persistence"],
+    &["an_edit_is_validated_before_it_is_applied_and_journaled_once"],
 )];
 pub fn documents() -> Vec<(&'static str, serde_json::Value)> {
     use quantick_control::schema::generated_schema as s;

@@ -64,10 +64,6 @@ const CLIENT_NAME: &str = "quantick integration test";
 mod appearance_control;
 #[path = "asset_bubbles_save_tests.rs"]
 mod asset_bubbles_save_tests;
-#[path = "bubble_preset_control_tests.rs"]
-mod bubble_preset_control;
-#[path = "bubble_scale_control_tests.rs"]
-mod bubble_scale_control;
 #[path = "candle_aggression_tests.rs"]
 mod candle_aggression;
 #[path = "chart_settings_control_tests.rs"]
@@ -76,20 +72,10 @@ mod chart_settings_control;
 mod drawing_magnet_control;
 #[path = "drawing_text_control_tests.rs"]
 mod drawing_text_control;
-#[path = "feed_source_control_tests.rs"]
-mod feed_source_control;
-#[path = "history_control_tests.rs"]
-mod history_control_tests;
-#[path = "indicator_picker_control_tests.rs"]
-mod indicator_picker_control;
-#[path = "journal_sessions_control_tests.rs"]
-mod journal_sessions_control_tests;
 #[path = "layer_control_tests.rs"]
 mod layer_control;
 #[path = "native_tape_readback_tests.rs"]
 mod native_tape_readback_tests;
-#[path = "opening_scale_control_tests.rs"]
-mod opening_scale_control;
 #[path = "pane_header_tests.rs"]
 mod pane_header_tests;
 #[path = "price_axis_control_tests.rs"]
@@ -98,8 +84,6 @@ mod price_axis_control;
 mod script_editor_control;
 #[path = "tape_navigation_tests.rs"]
 mod tape_navigation;
-#[path = "tick_bubbles_control_tests.rs"]
-mod tick_bubbles_control;
 #[path = "mutation_uncertainty_tests.rs"]
 mod uncertainty;
 
@@ -234,18 +218,6 @@ fn error_code(response: &ResponseEnvelope) -> Option<&str> {
     match &response.outcome {
         ResponseOutcome::Success { .. } => None,
         ResponseOutcome::Failure { error } => Some(error.code.as_str()),
-    }
-}
-
-/// The declared precondition a refusal names, if any.
-fn violated_precondition(response: &ResponseEnvelope) -> Option<&str> {
-    match &response.outcome {
-        ResponseOutcome::Success { .. } => None,
-        ResponseOutcome::Failure { error } => error
-            .context
-            .violated_precondition
-            .as_ref()
-            .map(|id| id.as_str()),
     }
 }
 
@@ -2241,9 +2213,6 @@ fn layout_focus_refuses_a_hidden_pane_and_takes_a_drawn_one() {
     disable_test_gateway(&mut app, &ctx);
     std::fs::remove_dir_all(directory).ok();
 }
-
-#[path = "native_indicator_control_tests.rs"]
-mod native_indicator_control;
 
 /// On the flow pane alone there is nothing to fold, and the four collapse
 /// calls answer as they always have: the context column's two succeed with

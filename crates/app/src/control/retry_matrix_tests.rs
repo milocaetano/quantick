@@ -11,24 +11,40 @@ use serde_json::json;
 use super::*;
 
 /// Where the transport tests that prove the rows live, relative to
-/// `crates/app`. A row's proving test must be a function in one of these.
-const PROOF_SOURCES: [&str; 15] = [
+/// `crates/app`. A row's proving test must be a function in one of these or
+/// in [`HANDLER_PROOFS`].
+const PROOF_SOURCES: [&str; 8] = [
     "src/app/tests/alerts_control_tests.rs",
-    "src/app/tests/native_indicator_control_tests.rs",
-    "src/app/tests/feed_source_control_tests.rs",
-    "src/app/tests/tick_bubbles_control_tests.rs",
-    "src/app/tests/bubble_preset_control_tests.rs",
-    "src/app/tests/bubble_scale_control_tests.rs",
     "src/app/tests/retry_readback_tests.rs",
     "src/app/tests/drawing_text_control_tests.rs",
-    "src/app/tests/opening_scale_control_tests.rs",
     "src/app/tests/asset_bubbles_save_tests.rs",
-    "src/app/tests/history_control_tests.rs",
     "src/app/tests/price_axis_control_tests.rs",
     "src/app/tests/native_window_control_tests.rs",
     "src/app/tests/market_window_control_tests.rs",
     "src/app/tests/tape_navigation_tests.rs",
 ];
+
+/// The handler crate, relative to `crates/app`: a row may name a fake-host
+/// test anywhere under it, for a call whose result is decided there.
+const HANDLER_PROOFS: &str = "../control-handlers/src";
+
+/// The text of every `.rs` file under `directory`.
+fn sources_under(directory: &std::path::Path) -> String {
+    let mut text = String::new();
+    let mut entries: Vec<_> = std::fs::read_dir(directory)
+        .unwrap_or_else(|error| panic!("cannot read {}: {error}", directory.display()))
+        .map(|entry| entry.expect("a readable entry").path())
+        .collect();
+    entries.sort();
+    for path in entries {
+        if path.is_dir() {
+            text.push_str(&sources_under(&path));
+        } else if path.extension().is_some_and(|extension| extension == "rs") {
+            text.push_str(&std::fs::read_to_string(&path).expect("a readable source"));
+        }
+    }
+    text
+}
 
 fn contract() -> ObserverContract {
     standard_contract().expect("the registry builds")
@@ -276,18 +292,19 @@ fn a_readback_beyond_the_callers_grant_is_drift() {
 }
 
 /// Every row names the tests that prove it, and every name is a function in
-/// the transport suite — a proof column that could name a deleted test would
-/// be a column of claims.
+/// the transport suite or the handler crate — a proof column that could name
+/// a deleted test would be a column of claims.
 #[test]
-fn every_proving_test_is_a_function_in_the_transport_suite() {
+fn every_proving_test_is_a_function_in_the_proof_sources() {
     let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    let sources: String = PROOF_SOURCES
+    let mut sources: String = PROOF_SOURCES
         .iter()
         .map(|relative| {
             std::fs::read_to_string(manifest.join(relative))
                 .unwrap_or_else(|error| panic!("cannot read {relative}: {error}"))
         })
         .collect();
+    sources.push_str(&sources_under(&manifest.join(HANDLER_PROOFS)));
     for row in READBACKS {
         assert!(
             !row.proven_by.is_empty(),
@@ -297,7 +314,7 @@ fn every_proving_test_is_a_function_in_the_transport_suite() {
         for test in row.proven_by {
             assert!(
                 sources.contains(&format!("fn {test}(")),
-                "the row for {} names `{test}`, which is not a test in {PROOF_SOURCES:?}",
+                "the row for {} names `{test}`, which is not a test in {PROOF_SOURCES:?} or {HANDLER_PROOFS}",
                 row.capability
             );
         }

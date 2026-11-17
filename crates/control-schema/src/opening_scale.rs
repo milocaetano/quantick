@@ -74,11 +74,7 @@ pub const READBACKS: &[crate::readback::Readback] = &[crate::readback::snapshot(
     crate::orderflow::BUBBLES_SCOPE_ID,
     "tabs[].panes[].opening_scale",
     "the addressed pane reports independent tape and candle opening-burst scaling preferences",
-    &[
-        "opening_scale_is_default_off_named_permission_checked_and_read_back",
-        "flow_opening_scale_is_independent_retry_safe_and_refuses_context",
-        crate::readback::EVERY_OPTIONAL_TEST,
-    ],
+    &[crate::readback::EVERY_OPTIONAL_TEST],
 )];
 
 /// Published schemas of the opening scale.

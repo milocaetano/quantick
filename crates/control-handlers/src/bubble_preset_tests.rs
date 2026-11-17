@@ -3,6 +3,7 @@
 use super::*;
 use crate::bubble_pane::TickSpherePane;
 use crate::test_support::{FakeBubbles, FakePane, FakeTab, FakeWindow};
+use quantick_control_schema::bubble_preset::ListResult;
 use serde_json::json;
 
 /// One tab (id 1) whose pane (id 2) has these facts and an order-flow view.
@@ -107,6 +108,10 @@ fn tick_set_asks_the_rule_before_the_pane_wears_anything() {
         "spheres can always be dropped"
     );
     assert_eq!(dropped["changed"], true);
+    assert!(
+        dropped["tick_bubbles"].is_null(),
+        "the answer reads what the view wears"
+    );
     let mut btc = window(TickSpherePane {
         tick_chart: true,
         asset_mode: true,
@@ -158,4 +163,101 @@ fn tick_set_asks_the_rule_before_the_pane_wears_anything() {
     strip["peak_spheres"] = json!(true);
     assert!(tick(&mut btc, &mut (), &actor, &strip).is_err());
     assert_eq!(look(&btc).worn, None, "every refusal comes before any edit");
+}
+
+/// A view whose catalog answers one page, or refuses.
+struct Shelf {
+    page: Result<ListResult, String>,
+    config: quantick_orderflow::HeatmapConfig,
+}
+
+impl PaneBubblesPort for Shelf {
+    type Theme = ();
+    fn bubble_theme(&self) {}
+    fn pane_bubbles(
+        &mut self,
+        _: WireU64,
+        _: WireU64,
+    ) -> Result<&mut dyn crate::bubble_pane::BubblePane<()>, ControlError> {
+        Ok(self)
+    }
+}
+
+impl crate::bubble_pane::BubblePane<()> for Shelf {
+    fn tick_sphere_pane(&self) -> TickSpherePane {
+        TickSpherePane::new(false, false)
+    }
+    fn bubble_look(&mut self) -> Option<&mut dyn BubbleLook<()>> {
+        Some(self)
+    }
+    fn asset_save(&mut self) -> Option<&mut dyn crate::bubble_pane::AssetSave> {
+        None
+    }
+}
+
+impl BubbleLook<()> for Shelf {
+    fn wear_preset(&mut self, _: &str, _: bool, _: &()) -> Result<bool, String> {
+        unreachable!("a listing wears nothing")
+    }
+    fn restore_factory_look(&mut self) -> bool {
+        unreachable!("a listing wears nothing")
+    }
+    fn presets_page(&self, input: &ListInput) -> Result<ListResult, String> {
+        self.page.clone().map(|mut page| {
+            page.tab_id = input.tab_id;
+            page.pane_id = input.pane_id;
+            page
+        })
+    }
+    fn wear_tick(&mut self, _: Option<&str>, _: TickTuning) -> Result<bool, String> {
+        unreachable!("a listing wears nothing")
+    }
+    fn look_snapshot(&self) -> quantick_control_schema::orderflow::BubblesStateSnapshot {
+        unreachable!("a listing reads the page alone")
+    }
+    fn look_config(&self) -> &quantick_orderflow::HeatmapConfig {
+        &self.config
+    }
+}
+
+/// The listing answers the view's page for the addressed pane, and the
+/// view's refusal (a stale revision, a limit out of range) is the caller's
+/// to fix.
+#[test]
+fn the_preset_list_answers_the_views_page_or_its_refusal() {
+    let actor = FakeWindow::assistant();
+    let page = ListResult {
+        tab_id: WireU64::new(0),
+        pane_id: WireU64::new(0),
+        preset: "Crypto default".to_owned(),
+        names: vec!["Crypto default".to_owned()],
+        total: WireU64::new(2),
+        revision: "r1".to_owned(),
+        next_offset: Some(WireU64::new(1)),
+    };
+    let mut shelf = Shelf {
+        page: Ok(page),
+        config: quantick_orderflow::HeatmapConfig::default(),
+    };
+    let query = json!({"tab_id": "1", "pane_id": "2", "offset": "0", "limit": 1, "revision": null});
+    let mut unknown = query.clone();
+    unknown["page"] = json!(1);
+    assert!(
+        list(&mut shelf, &mut (), &actor, &unknown).is_err(),
+        "an unknown field is refused while the view would answer"
+    );
+    let listed = list(&mut shelf, &mut (), &actor, &query).unwrap();
+    assert_eq!(
+        (&listed["tab_id"], &listed["pane_id"]),
+        (&json!("1"), &json!("2"))
+    );
+    assert_eq!(listed["names"], json!(["Crypto default"]));
+    assert_eq!(listed["next_offset"], "1");
+    shelf.page = Err("Preset catalog changed; restart at offset zero".to_owned());
+    let error = list(&mut shelf, &mut (), &actor, &query).unwrap_err();
+    assert_eq!(
+        error.code.as_str(),
+        quantick_control::error::codes::INVALID_REQUEST
+    );
+    assert!(error.message.contains("restart"), "{error:?}");
 }

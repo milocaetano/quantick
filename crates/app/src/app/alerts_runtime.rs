@@ -2,6 +2,7 @@
 use crate::metrics::wall_clock_ms;
 use quantick_alerts::{AlertError, DurableDrawingRef};
 use quantick_control_schema::alerts::{DrawingSelector, TargetResolveError};
+use quantick_ui_model::alerts::requests;
 
 /// Only native clock state lives here. The workspace book/store stay headless.
 pub(crate) struct Runtime {
@@ -180,127 +181,109 @@ pub(crate) fn context(
     }
 }
 
-pub(super) fn apply_alert_request(
-    app: &mut super::QuantickApp,
-    mut request: crate::surfaces::alerts::Request,
-) {
-    use super::LayoutPort;
-    if request.open {
-        let dock = &mut app.surfaces.dock;
-        if !dock.visible() {
-            dock.toggle_visible();
-        }
-        let _ = dock.update(quantick_ui_model::dock::Intent::Collapse);
-    }
-    if let Some(selector) = request.resolve.take() {
-        let outcome = app
-            .layout_adapter()
-            .resolve_alert_target(selector)
-            .map_err(|error| format!("{error:?}"));
-        app.surfaces.alerts.settle_target(outcome);
-    }
-    if let Some(target) = request.locate.take() {
-        let mut matches = Vec::new();
-        let mut ambiguous = false;
-        for (tab_index, (tab_id, tab)) in app.runtime.tabs.iter_with_ids().enumerate() {
-            for (pane, _) in tab.panes() {
-                let mut count = 0;
-                for (index, drawing) in pane.drawings.shown() {
-                    if drawing.durable_identity.as_ref() == Some(&target) {
-                        count += 1;
-                        let known_mirror = pane.layout.drawings_key.as_ref().is_some_and(|key| {
-                            let key = if drawing.all_timeframes() {
-                                quantick_workspace::market_settings::DrawingKey::all_timeframes(
-                                    key.market.clone(),
-                                )
-                            } else {
-                                key.clone()
-                            };
-                            quantick_workspace::drawing_identity::belongs_to(&target, &key)
-                        });
-                        ambiguous |= !known_mirror;
-                        let focused = tab_id == app.runtime.tabs.active_id()
-                            && pane.id == tab.focused_pane().id;
-                        matches.push((!focused, tab_index, pane.id, index));
-                    }
-                }
-                ambiguous |= count > 1;
-            }
-        }
-        matches.sort_by_key(|entry| entry.0);
-        if let Some((_, tab_index, pane_id, index)) = matches.first().filter(|_| !ambiguous) {
-            app.runtime.tabs.select(*tab_index);
-            if let Some(tab) = app.runtime.tabs.get_mut(*tab_index) {
-                tab.aim_drawing_at(*pane_id);
-                if let Some(pane) = tab.panes_mut().find(|pane| pane.id == *pane_id) {
-                    pane.drawings.select(Some(*index));
-                }
-            }
-        } else {
-            crate::surfaces::toast::note(
-                &mut app.surfaces.toast,
-                if matches.is_empty() {
-                    "Alert target is missing from the open workspace"
-                } else {
-                    "Alert target identity is ambiguous"
-                },
-                std::time::Instant::now(),
-            );
-        }
-    }
-    let _ =
-        (app.surfaces.alerts).update(quantick_ui_model::alerts::Intent::Apply(Box::new(request)));
+/// The window's side of an alert request: the layout ports a target resolves
+/// through, the dock the manager opens on, and the alert owner.
+pub(super) struct RequestAdapter<'a> {
+    pub(super) layout: super::layout_wiring::LayoutAdapter<'a>,
+    pub(super) dock: &'a mut crate::surfaces::dock::DockSurface,
+    pub(super) alerts: &'a mut quantick_stores::alerts::AlertRuntime,
 }
 
-/// After the dock: its bell opens the manager, another open dock tab closes
-/// it, and the manager reserves its space after the permanent right rail,
-/// before chart layout.
-pub(super) fn after_dock(app: &mut super::QuantickApp, ctx: &eframe::egui::Context, bell: bool) {
-    if bell {
-        app.apply_menu_command(super::menu_bar::MenuCommand::OpenAlerts);
+impl quantick_control_handlers::alerts::AlertDefinitionsPort for RequestAdapter<'_> {
+    fn alert_resolve_target(
+        &mut self,
+        selector: DrawingSelector,
+    ) -> Result<DurableDrawingRef, TargetResolveError> {
+        self.layout.resolve_alert_target(selector)
     }
-    if app.surfaces.dock.tab().is_some() {
-        app.surfaces.alerts.close_manager();
+    fn alert_runtime(&mut self) -> &mut quantick_stores::alerts::AlertRuntime {
+        self.alerts
     }
-    if !app.surfaces.alerts.is_open() {
+}
+
+impl requests::RequestHost for RequestAdapter<'_> {
+    fn reveal_dock(&mut self) {
+        self.dock.reveal_collapsed();
+    }
+    fn shown_panes(&self) -> Vec<requests::ShownPane> {
+        let tabs = &*self.layout.tabs;
+        let active = tabs.active_id();
+        let mut panes = Vec::new();
+        for (tab_index, (tab_id, tab)) in tabs.iter_with_ids().enumerate() {
+            let focused = (tab_id == active).then(|| tab.focused_pane().id);
+            panes.extend(tab.panes().map(|(pane, _)| requests::ShownPane {
+                tab_index,
+                pane_id: pane.id,
+                key: pane.layout.drawings_key.clone(),
+                focused: focused == Some(pane.id),
+                drawings: requests::ShownDrawing::of_shown(&pane.drawings),
+            }));
+        }
+        panes
+    }
+    fn select_copy(&mut self, copy: requests::DrawingCopy) {
+        let tabs = &mut *self.layout.tabs;
+        tabs.select(copy.tab_index);
+        if let Some(tab) = tabs.get_mut(copy.tab_index) {
+            tab.aim_drawing_at(copy.pane_id);
+            if let Some(pane) = tab.panes_mut().find(|pane| pane.id == copy.pane_id) {
+                pane.drawings.select(Some(copy.index));
+            }
+        }
+    }
+    fn note(&mut self, message: String) {
+        crate::surfaces::toast::note(self.layout.toast, message, std::time::Instant::now());
+    }
+}
+
+pub(super) fn apply_alert_request(
+    wiring: super::indicator_wiring::IndicatorWiring<'_>,
+    request: crate::surfaces::alerts::Request,
+) {
+    let (mut host, model) = wiring.into_alerts();
+    requests::apply(model, &mut host, request);
+}
+
+/// After the dock: another open dock tab closes the manager, and the manager
+/// reserves its space after the permanent right rail, before chart layout.
+pub(super) fn after_dock(
+    runtime: &mut super::workspace_runtime::WorkspaceRuntime,
+    surfaces: &mut crate::surfaces::Surfaces,
+    ctx: &eframe::egui::Context,
+) {
+    if surfaces.dock.tab().is_some() {
+        surfaces.alerts.close_manager();
+    }
+    if !surfaces.alerts.is_open() {
         return;
     }
-    let tab = &app.runtime.tabs[app.runtime.tabs.active_index()];
+    let tab = &runtime.tabs[runtime.tabs.active_index()];
     let context = context(
         tab,
         tab.pane(tab.focused_side()),
-        app.runtime.tabs.active_id(),
-        app.runtime.tz.minutes(),
+        runtime.tabs.active_id(),
+        runtime.tz.minutes(),
     );
     let response = crate::surfaces::alerts::draw_manager_panel(
-        &mut app.surfaces.alerts,
+        &mut surfaces.alerts,
         ctx,
-        &app.runtime.alerts.core.book,
-        app.runtime.alerts.core.error.as_ref(),
+        &runtime.alerts.core.book,
+        runtime.alerts.core.error.as_ref(),
         Some(&context),
     );
     let late = quantick_ui_model::late_effects::LateEffects::fold(response.model_effects);
-    if let Some(mut request) = late.alerts
-        && let Some(command) = request.command.take()
-    {
-        let outcome = app
-            .runtime
-            .alerts
-            .core
-            .command(command, wall_clock_ms())
-            .map(|_| ())
-            .map_err(|error| format!("{error:?}"));
-        app.surfaces.alerts.settle_command(outcome);
+    if let Some(command) = late.alerts.and_then(|mut request| request.command.take()) {
+        let model = &mut surfaces.alerts.model_state;
+        requests::settle_command(model, &mut runtime.alerts.core, command, wall_clock_ms());
     }
 }
 
 /// The context bar's Create alert: open the editor on the resolved drawing.
-pub(super) fn open_drawing_target(
-    app: &mut super::QuantickApp,
+/// The wiring is borrowed only when the ask carries a target.
+pub(super) fn open_drawing_target<'a>(
     ask: &mut crate::surfaces::drawing_chrome::DrawingChromeAsk,
-    now: std::time::Instant,
+    wiring: impl FnOnce() -> super::indicator_wiring::IndicatorWiring<'a>,
 ) {
-    use super::LayoutPort;
     let Some(selector) = ask
         .readbacks
         .as_mut()
@@ -308,12 +291,6 @@ pub(super) fn open_drawing_target(
     else {
         return;
     };
-    match app.layout_adapter().resolve_alert_target(selector) {
-        Ok(target) => app.surfaces.alerts.open_drawing(Some(target)),
-        Err(error) => crate::surfaces::toast::note(
-            &mut app.surfaces.toast,
-            format!("Alert target unavailable: {error:?}"),
-            now,
-        ),
-    }
+    let (mut host, model) = wiring().into_alerts();
+    requests::open_drawing(model, &mut host, selector);
 }
