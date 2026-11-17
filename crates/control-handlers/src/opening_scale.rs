@@ -107,4 +107,35 @@ mod tests {
         assert_eq!(call(&mut pane, "candle", true).unwrap()["changed"], true);
         assert_eq!(pane.kept, [true, true]);
     }
+
+    /// A call naming no target sets the tape's preference, answers the value
+    /// it kept, and switching it back is a change; the preference is saved.
+    #[test]
+    fn no_target_means_the_tape_and_the_answer_echoes_the_preference() {
+        assert_eq!(
+            descriptor().persistence,
+            quantick_control::registry::EffectPersistence::Durable
+        );
+        let mut pane = Pane::default();
+        let set = |pane: &mut Pane, ignore: bool| {
+            let input = json!({"tab_id": "1", "pane_id": "0",
+                "ignore_opening_burst_in_scale": ignore});
+            answer(pane, serde_json::from_value(input).unwrap()).unwrap()
+        };
+        let on = set(&mut pane, true);
+        assert_eq!(
+            (
+                &on["target"],
+                &on["ignore_opening_burst_in_scale"],
+                &on["changed"]
+            ),
+            (&json!("tape"), &json!(true), &json!(true))
+        );
+        assert_eq!(pane.kept, [true, false]);
+        let off = set(&mut pane, false);
+        assert_eq!(
+            (&off["ignore_opening_burst_in_scale"], &off["changed"]),
+            (&json!(false), &json!(true))
+        );
+    }
 }

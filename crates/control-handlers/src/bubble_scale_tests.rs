@@ -121,6 +121,11 @@ fn size_set_refusals_name_the_precondition_and_the_step_that_meets_it() {
         [TICK_CHART_PRECONDITION, DISPLAY_ACTIVE_PRECONDITION],
         "the descriptor declares every precondition a refusal names"
     );
+    assert_eq!(
+        descriptor().persistence,
+        quantick_control::registry::EffectPersistence::Durable,
+        "a size is saved with the pane's look"
+    );
 }
 
 struct Pane {
