@@ -140,7 +140,13 @@ THIS TAB  WINZ26 · MetaTrader 5 — B3 │ REC · History ▾ │ BUY 1  SELL 1
 - The workspace is not on this row nor on the toolbar: no "Save to" and no
   "Revert" there. It shows only in the status bar's cell, `⊞ Scalp ▴`, whose
   menu switches this tab only. The toast reads "WINZ26 now on Tape · drawings
-  kept · Undo". Switching never asks for confirmation.
+  kept · Undo". A switch that would drop held edits asks first, as a close
+  does: "Switch WINZ26 to Tape" — what changed since Scalp was saved — Cancel /
+  Switch without saving / Save to Scalp; Cancel changes nothing.
+  `tab.workspace.set` refuses such a switch with `workspace.unsaved_edits`
+  unless its `edits` says `discard`; it never writes the workspace, which
+  `workspace.save_to` does first to keep them. The market palette's
+  workspace pick refuses it too. Any other switch never asks.
 - The tab chip and the status bar cell read one state; a test proves they
   agree.
 
@@ -164,14 +170,14 @@ snapshot reads it as `auto_save`.
   holding edits, due or not, the active tab's, else the lowest tab id's); and
   a copy a restart brought back differing. Such a tab holds its edits as with
   auto save off: marked, never written unasked (not by a later edit, a
-  close, a switch or the exit), closing it or exiting asks, a switch drops it
-  with the "changes dropped" toast, and its Save is the trader's choice.
+  close, a switch or the exit), closing it, switching it or exiting asks, and
+  its Save is the trader's choice.
 - **Off:** the change is held on the tab. An indicator change is the
   exception: every tab on the workspace whose panes show that strip layout
   shows it at once and holds it too, so each is marked, a save from any of
   them writes it, and it stays until the last of them switches away or
-  closes without saving; a switch away from one of them drops, with the
-  "changes dropped" toast, only what that tab held alone. The cell wears the amber mark and a
+  closes without saving; a switch away from one of them asks over, and
+  drops, only what that tab held alone. The cell wears the amber mark and a
   blue "Save" chip (hover "Save to Scalp · Ctrl+S"); Ctrl+S and the menu's "Save to
   Scalp" row (its hover names the tabs that follow) write it. Drawings and
   anchored studies are held too, and Save writes the tab's own drawing sets
@@ -192,7 +198,8 @@ snapshot reads it as `auto_save`.
   marked and retried.
 - There is no Revert: `workspace.revert` answers `workspace.revert_removed`,
   naming `workspace.save_to` and `workspace.autosave.set`. A workspace switch
-  with edits held keeps today's "changes dropped" toast.
+  with edits held asks first; Switch without saving keeps the "changes
+  dropped" toast.
 - Closing a tab, a torn-off window or the app with edits held asks, one tab at
   a time: "Close WINZ26" — "This tab changed its layout since Scalp was last
   saved (RSI, CVD, 3 drawings). Saving also changes WDOZ26." — Cancel /

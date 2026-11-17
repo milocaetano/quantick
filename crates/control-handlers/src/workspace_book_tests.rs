@@ -1396,11 +1396,15 @@ fn closing_an_outvoted_tab_asks_and_never_overwrites_the_winner() {
     assert_eq!(host.writes, writes, "nothing written");
 }
 
-/// A switch drops the outvoted copy, as a held edit is dropped, and says so.
+/// A switch asks over the outvoted copy, as over a held edit; told to
+/// discard, it drops the copy, says so and keeps the winner.
 #[test]
 fn switching_an_outvoted_tab_drops_its_copy_and_keeps_the_winner() {
     let (mut host, mut access, actor) = outvoted_on_scalp();
     let value = json!({ "tab_id": "2", "name": DEFAULT_WORKSPACE });
+    let asked = set(&mut host, &mut access, &actor, &value).unwrap_err();
+    assert_eq!(detail(&asked), UNSAVED_EDITS_CODE);
+    let value = json!({ "tab_id": "2", "name": DEFAULT_WORKSPACE, "edits": "discard" });
     let moved = set(&mut host, &mut access, &actor, &value).unwrap();
     assert_eq!(moved["dropped_edits"], true);
     assert_eq!(scalp_style(&host).as_deref(), Some("heatmap"));
@@ -1506,3 +1510,6 @@ fn colour_set_names_every_owner_when_two_hold_the_colour() {
     assert!(refused.message.contains("A and B"), "{}", refused.message);
     assert_eq!(host.writes, writes, "nothing written");
 }
+
+#[path = "workspace_book/switch_tests.rs"]
+mod switch_tests;

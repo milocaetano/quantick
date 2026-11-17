@@ -33,7 +33,7 @@ pub mod widgets;
 
 pub use bands::{
     LayoutMarks, Seats, Signal, TreeBand, inset_seams, same_layout, seat_drawn, seat_mode,
-    seat_slot, signal, slot_seat, tree_bands,
+    seat_slot, shown_seats, signal, slot_seat, tree_bands,
 };
 pub use columns::{ColumnDrag, ColumnHold, column_drag, revealed};
 pub use drag::{
