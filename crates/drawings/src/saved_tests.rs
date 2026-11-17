@@ -22,13 +22,15 @@ fn context(asset: &str, bars: &str) -> DrawingKey {
     DrawingKey::of_pane("binance", asset.to_owned(), Some(bars.to_owned()))
 }
 
-/// A level placed by hand on a pane, at a bar with a market instant.
+/// A level placed by hand on a pane, at a bar with a market instant, and
+/// turned on all timeframes.
 fn drawn(price: f64) -> Drawings<DrawingTool> {
     let mut drawings = Drawings::default();
     assert!(drawings.place(
         tool("horizontal-line"),
         ChartPoint::at_time(4.0, price, Some(1_700_000_000_000 + 4 * 15 * MINUTE_MS)),
     ));
+    drawings.selected_mut().expect("just placed").scope = DrawingScope::AllCharts;
     drawings
 }
 

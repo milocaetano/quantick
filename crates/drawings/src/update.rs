@@ -66,6 +66,9 @@ pub enum DrawingIntent {
     ToggleLockSelected,
     /// Hide the selected mark, or show it.
     ToggleHideSelected,
+    /// Show the selected mark on every chart of its market whatever layout,
+    /// or on its own layout's alone ([`Drawings::set_all_windows_at`]).
+    ToggleAllWindowsSelected,
     /// Delete the selected mark; `force` overrides its lock.
     DeleteSelected { force: bool },
     /// Place one finished mark through the door a click uses.
@@ -133,6 +136,13 @@ pub fn update(store: &mut Drawings<DrawingTool>, intent: DrawingIntent) -> Vec<D
             if let Some(index) = store.selected() {
                 let locked = store.items()[index].locked;
                 store.set_selected_locked(!locked);
+            }
+            Vec::new()
+        }
+        DrawingIntent::ToggleAllWindowsSelected => {
+            if let Some(index) = store.selected() {
+                let on = store.items()[index].in_all_windows();
+                store.set_all_windows_at(index, !on);
             }
             Vec::new()
         }
@@ -289,6 +299,28 @@ mod tests {
         }
         store.select(None);
         store
+    }
+
+    /// The inspector's "All windows" flips what the selection shows, one
+    /// undo step each way; with nothing selected it does nothing.
+    #[test]
+    fn toggling_all_windows_flips_the_selection_and_undoes() {
+        let mut store = Drawings::default();
+        store.set_layout(Some(quantick_workspace::layout_document::LayoutId(1)));
+        let time = |bar: i64| Some(1_700_000_000_000 + bar * 60_000);
+        assert!(!store.place(line(), ChartPoint::at_time(0.0, 100.0, time(0))));
+        assert!(store.place(line(), ChartPoint::at_time(5.0, 110.0, time(5))));
+        store.items_mut()[0].scope = crate::DrawingScope::AllCharts;
+        store.select(None);
+        update(&mut store, DrawingIntent::ToggleAllWindowsSelected);
+        assert!(!store.items()[0].all_windows, "nothing selected");
+        store.select(Some(0));
+        update(&mut store, DrawingIntent::ToggleAllWindowsSelected);
+        assert!(store.items()[0].in_all_windows());
+        update(&mut store, DrawingIntent::ToggleAllWindowsSelected);
+        assert!(!store.items()[0].in_all_windows());
+        assert!(store.undo());
+        assert!(store.items()[0].in_all_windows());
     }
 
     #[test]

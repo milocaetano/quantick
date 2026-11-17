@@ -38,6 +38,8 @@ fn level(id: u64, price: f64, shared: bool) -> SavedDrawing {
         hidden: false,
         magnet: false,
         shared,
+        layout: None,
+        all_windows: false,
         payload: None,
         text: None,
         durable_identity: None,

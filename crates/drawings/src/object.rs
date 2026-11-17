@@ -39,8 +39,19 @@ pub struct Drawing<T> {
     /// This object's own OHLC magnet: a drag of it snaps whenever this or the
     /// rail's magnet is on. Off unless the trader turned it on.
     pub magnet: bool,
-    /// Whether every chart of its market shows it, or only this one.
+    /// Whether every chart of its market showing [`Self::layout`] shows it at
+    /// any bars, or only this chart at its bars.
     pub scope: DrawingScope,
+    /// The strip layout it belongs to: the one its chart showed when it was
+    /// placed, or turned on all timeframes (a pane's own copy counts as its
+    /// strip layout). On all timeframes it shows only on charts showing this
+    /// layout unless [`Self::all_windows`]. `None` on a mark read from before
+    /// layouts were recorded: it shows on every chart, as it always has.
+    pub layout: Option<quantick_workspace::layout_document::LayoutId>,
+    /// The trader's "All windows": every chart of its market shows it,
+    /// whatever layout it shows. Only for a mark on all timeframes; never
+    /// across markets.
+    pub all_windows: bool,
     /// Read from a file written before a mark kept to its chart recorded its
     /// bars: it shows at every bar rule of its chart, as it always has, and
     /// is written back without bars. Provenance, never an edit, so it stays
@@ -94,11 +105,26 @@ impl<T> Drawing<T> {
         !self.points.is_empty() && self.points.iter().all(|point| point.time_ms.is_some())
     }
 
-    /// Whether every chart of its market shows it, at any bars: asked for, and
-    /// dated at every anchor. What the toggle, the chips and the store read.
+    /// Whether it shows at any bars: asked for, and dated at every anchor.
+    /// What the toggle, the chips and the store read.
     #[must_use]
     pub fn all_timeframes(&self) -> bool {
         self.scope == DrawingScope::AllCharts && self.shareable()
+    }
+
+    /// Whether every chart of its market shows it, whatever layout: on all
+    /// timeframes, and asked for, or read from before layouts were recorded.
+    #[must_use]
+    pub fn in_all_windows(&self) -> bool {
+        self.all_timeframes() && (self.all_windows || self.layout.is_none())
+    }
+
+    /// Whether a chart showing `layout` shows it. A mark kept to its chart is
+    /// held by its own chart alone, so it always does; a store that names no
+    /// layout shows everything it holds.
+    #[must_use]
+    pub fn shows_in(&self, layout: Option<quantick_workspace::layout_document::LayoutId>) -> bool {
+        !self.all_timeframes() || self.in_all_windows() || layout.is_none() || self.layout == layout
     }
 
     /// The trader's pick of where it shows. A pick is a new decision, so a
@@ -159,6 +185,8 @@ impl<T: PartialEq> PartialEq for Drawing<T> {
             && self.hidden == other.hidden
             && self.magnet == other.magnet
             && self.scope == other.scope
+            && self.layout == other.layout
+            && self.all_windows == other.all_windows
             && self.payload.eq_dyn(other.payload.as_ref())
     }
 }

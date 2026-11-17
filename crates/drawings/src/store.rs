@@ -51,6 +51,9 @@ pub struct Drawings<T> {
     /// Snapshot taken when a pointer gesture starts; committed (as one undo
     /// entry) on release, so a whole drag coalesces into one command.
     pub(crate) gesture_baseline: Option<UndoEntry<T>>,
+    /// The strip layout this store's chart shows, named by its host. `None`
+    /// shows everything it holds.
+    pub(crate) layout: Option<quantick_workspace::layout_document::LayoutId>,
 }
 
 // By hand: a derive would ask the tool handle for a `Default` it has no
@@ -67,6 +70,7 @@ impl<T> Default for Drawings<T> {
             undo: Vec::new(),
             redo: Vec::new(),
             gesture_baseline: None,
+            layout: None,
         }
     }
 }

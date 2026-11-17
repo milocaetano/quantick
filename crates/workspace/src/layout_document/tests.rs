@@ -184,9 +184,9 @@ fn a_drawings_own_magnet_round_trips_and_old_documents_default_off() {
 fn a_shared_marks_layout_round_trips_and_a_legacy_entry_saves_back_unchanged() {
     let legacy = concat!(
         "tool = \"horizontal-line\"\n",
-        "points = [{ time_ms = 1000, price = 100.0, bar = 3.0 }]\n",
         "color = [1, 2, 3, 255]\nwidth_px = 1.0\nfill_alpha = 0\n",
         "locked = false\nhidden = false\nshared = true\n",
+        "\n[[points]]\ntime_ms = 1000\nprice = 100.0\nbar = 3.0\n",
         "\n[band]\naxis = \"price\"\n",
     );
     let saved: SavedDrawing = toml::from_str(legacy).expect("a legacy drawing parses");

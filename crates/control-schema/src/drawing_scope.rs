@@ -1,6 +1,7 @@
-//! Where one drawing shows — every chart of its market at any timeframe, or
-//! only its own chart at the bars it is cut to — shared by its context bar,
-//! its inspector and automation.
+//! Where one drawing shows — every chart of its market showing its layout at
+//! any timeframe, or only its own chart at the bars it is cut to, and whether
+//! the charts of its market showing any other layout show it too — shared by
+//! its context bar, its inspector and automation.
 
 use std::collections::BTreeSet;
 
@@ -25,7 +26,8 @@ pub const DRAWING_SCOPE_EVENT_KIND: &str = "annotate.drawing_scope.changed";
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ScopeName {
-    /// Every chart of the drawing's market, at any timeframe.
+    /// Every chart of the drawing's market showing its layout, at any
+    /// timeframe; with `all_windows`, every chart of its market.
     AllCharts,
     /// Only the chart it is on, at the bars that chart is cut to.
     ThisChart,
@@ -53,6 +55,10 @@ pub struct DrawingScopeInput {
     pub drawing_id: WireU64,
     /// Where it should show.
     pub scope: ScopeName,
+    /// Whether every chart of its market shows it too, whatever layout that
+    /// chart shows; only with `all_charts`. Absent leaves it as it stands.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub all_windows: Option<bool>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
@@ -66,20 +72,43 @@ pub struct DrawingScopeResult {
     /// for one shown on all timeframes, and for one saved before drawings
     /// recorded their bars, which shows at every bar rule of its chart.
     pub pinned_bars: Option<String>,
+    /// Whether every chart of its market shows it after the call, whatever
+    /// layout: asked for on a drawing on all timeframes, or one saved before
+    /// drawings recorded their layout. Optional in the schema only so v1
+    /// readers stay compatible.
+    #[serde(default)]
+    pub all_windows: bool,
+    /// The strip layout it belongs to after the call, the `layout_id` the layout-tab
+    /// calls (`layout.tab.switch`) name; absent for one saved before drawings recorded their layout.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layout_id: Option<WireU64>,
     /// Whether the call moved it; `false` when it already stood there.
     pub changed: bool,
+}
+
+/// Where a drawing stands after the call, as the result reads it back.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ScopeReadback {
+    /// See [`DrawingScopeResult::pinned_bars`].
+    pub pinned_bars: Option<String>,
+    /// See [`DrawingScopeResult::all_windows`].
+    pub all_windows: bool,
+    /// See [`DrawingScopeResult::layout_id`].
+    pub layout_id: Option<u64>,
 }
 
 impl DrawingScopeInput {
     /// What the call answers once the drawing stands as asked.
     #[must_use]
-    pub fn result(&self, pinned_bars: Option<String>, changed: bool) -> DrawingScopeResult {
+    pub fn result(&self, readback: ScopeReadback, changed: bool) -> DrawingScopeResult {
         DrawingScopeResult {
             drawing_id: self.drawing_id,
             tab_id: self.tab_id,
             pane_id: self.pane_id,
             scope: self.scope,
-            pinned_bars,
+            pinned_bars: readback.pinned_bars,
+            all_windows: readback.all_windows,
+            layout_id: readback.layout_id.map(WireU64::new),
             changed,
         }
     }
@@ -117,6 +146,21 @@ pub fn no_market_time(tool_id: &str) -> ControlError {
     error
 }
 
+/// The refusal for `all_windows: true` beside `this_chart`: a drawing kept to
+/// the bars of its chart has no place on another chart, so the inspector
+/// greys the switch and the call refuses it, with a reason to branch on.
+#[must_use]
+pub fn all_windows_needs_all_charts(tool_id: &str) -> ControlError {
+    let mut error = ControlError::invalid_request(
+        "all_windows needs scope all_charts: a drawing kept to its chart shows on its own chart only",
+    );
+    error.context.details = Some(serde_json::json!({
+        "reason": "all_windows_needs_all_charts",
+        "tool_id": tool_id,
+    }));
+    error
+}
+
 /// `annotate.drawing_scope.set`: where one drawing shows, the switch its
 /// context bar and inspector flip.
 #[must_use]
@@ -125,7 +169,7 @@ pub fn descriptor() -> CapabilityDescriptor {
         DRAWING_SCOPE_CAPABILITY_ID,
         ANNOTATE_MODULE_ID,
         "Set where one drawing shows",
-        "Sets one drawing's scope, named by the `tab_id`, `pane_id` and `drawing_id` analysis.drawings lists (a drawing id is unique only within its pane): `all_charts` shows it on every chart of its market (feed and asset) at any timeframe, placed by market time and price; `this_chart` keeps it to the chart it is on, pinned to the bars that chart is cut to now, so switching that chart to other bars hides it and switching back restores it. The same switch as \"Show on all timeframes\" on the drawing's context bar and inspector; it is saved with the market's drawings, and analysis.drawings reads it back as the drawing's `scope`. `all_charts` on a drawing with an anchor past the newest bar (no market time) is refused with control.invalid_request and `reason` `anchor_without_market_time`; an id no pane on that tab holds is refused too.",
+        "Sets one drawing's scope, named by the `tab_id`, `pane_id` and `drawing_id` analysis.drawings lists (a drawing id is unique only within its pane): `all_charts` shows it on every chart of its market (feed and asset) showing its layout, at any timeframe, placed by market time and price, and makes it the layout of the named pane; `this_chart` (a new drawing's default) keeps it to the chart it is on, pinned to the bars that chart is cut to now, so switching that chart to other bars hides it and switching back restores it. The same switch as \"Show on all timeframes\" on the drawing's context bar and inspector. Optional `all_windows` (the inspector's \"All windows\") also shows an `all_charts` drawing on every chart of its market whatever layout it shows, never on another market; absent leaves it as it stands. Both are saved with the market's drawings, and analysis.drawings reads them back as the drawing's `scope`, `all_windows` and `layout_id`. `all_charts` on a drawing with an anchor past the newest bar (no market time) is refused with control.invalid_request and `reason` `anchor_without_market_time`, and `all_windows: true` beside `this_chart` with `reason` `all_windows_needs_all_charts`; an id the named pane does not show (another layout's drawing included) is refused too.",
         "The call names the scope it wants rather than flipping it; repeating it is harmless and the result reads the scope back.",
     );
     descriptor.persistence = EffectPersistence::Durable;

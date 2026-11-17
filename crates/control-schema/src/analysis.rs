@@ -231,10 +231,21 @@ pub struct DrawingSnapshot {
     /// so v1 readers stay compatible.
     #[serde(default)]
     pub annotation_band: Option<quantick_control::annotation::AnnotationBand>,
-    /// `all_charts` (the default) when every chart of its market shows it at
-    /// any timeframe; `this_chart` when only its own chart does, at the bars
-    /// it was kept to.
+    /// `all_charts` when every chart of its market showing its layout shows
+    /// it at any timeframe; `this_chart` (a new drawing's default) when only
+    /// its own chart does, at the bars it was kept to.
     pub scope: String,
+    /// Whether every chart of its market shows it whatever layout it shows
+    /// ("All windows"): only for `all_charts`, and true for one saved before
+    /// drawings recorded their layout. A pane lists only the drawings its
+    /// layout shows. Optional in the schema only so v1 readers stay
+    /// compatible.
+    #[serde(default)]
+    pub all_windows: bool,
+    /// The strip layout it belongs to, the `layout_id` the layout-tab calls
+    /// name; absent for one saved before drawings recorded their layout.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layout_id: Option<WireU64>,
     pub locked: bool,
     /// This object's own OHLC magnet (`annotate.drawing_magnet.set`), which
     /// snaps its drags whatever the rail's `magnet` above says; always false

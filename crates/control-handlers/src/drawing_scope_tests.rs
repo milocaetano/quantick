@@ -121,13 +121,23 @@ fn all_windows_is_set_read_back_and_undone_as_one_step() {
     let mut drawings = Drawings::default();
     drawings.set_layout(Some(LEVELS));
     let id = level(&mut drawings, Some(T0));
-    let set = set_scope(&mut drawings, &windows(id, ScopeName::AllCharts, true), "tick:100").unwrap();
+    let set = set_scope(
+        &mut drawings,
+        &windows(id, ScopeName::AllCharts, true),
+        "tick:100",
+    )
+    .unwrap();
     assert!(set.changed);
     assert!(set.all_windows);
     assert_eq!(set.layout_id.map(WireU64::get), Some(LEVELS.0));
     assert!(drawings.items()[0].in_all_windows());
 
-    let again = set_scope(&mut drawings, &windows(id, ScopeName::AllCharts, true), "tick:100").unwrap();
+    let again = set_scope(
+        &mut drawings,
+        &windows(id, ScopeName::AllCharts, true),
+        "tick:100",
+    )
+    .unwrap();
     assert!(!again.changed, "a repeat is a no-op");
     let kept = set_scope(&mut drawings, &input(id, ScopeName::AllCharts), "tick:100").unwrap();
     assert!(kept.all_windows, "absent leaves it as it stands");
@@ -141,8 +151,12 @@ fn all_windows_is_set_read_back_and_undone_as_one_step() {
 fn all_windows_beside_this_chart_is_refused_with_a_reason() {
     let mut drawings = Drawings::default();
     let id = level(&mut drawings, Some(T0));
-    let error = set_scope(&mut drawings, &windows(id, ScopeName::ThisChart, true), "tick:100")
-        .unwrap_err();
+    let error = set_scope(
+        &mut drawings,
+        &windows(id, ScopeName::ThisChart, true),
+        "tick:100",
+    )
+    .unwrap_err();
     let details = error.context.details.unwrap();
     assert_eq!(details["reason"], "all_windows_needs_all_charts");
     assert!(!drawings.items()[0].all_windows, "nothing moved");
@@ -157,7 +171,11 @@ fn a_drawing_the_panes_layout_does_not_show_is_refused() {
     let id = level(&mut drawings, Some(T0));
     let _ = set_scope(&mut drawings, &input(id, ScopeName::AllCharts), "tick:100").unwrap();
     drawings.set_layout(Some(FLOWS));
-    let error = set_scope(&mut drawings, &windows(id, ScopeName::AllCharts, true), "tick:100")
-        .unwrap_err();
+    let error = set_scope(
+        &mut drawings,
+        &windows(id, ScopeName::AllCharts, true),
+        "tick:100",
+    )
+    .unwrap_err();
     assert!(error.message.contains("holds no drawing with id"));
 }

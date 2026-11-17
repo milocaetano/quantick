@@ -196,6 +196,12 @@ impl LayoutSession {
     pub fn book(&self) -> &LayoutBook {
         &self.book
     }
+    /// The strip layout a pane naming `named` shows: a copy counts as the
+    /// strip layout it came from. What its drawings belong to.
+    #[must_use]
+    pub fn strip_layout_of(&self, named: Option<LayoutId>) -> LayoutId {
+        self.book.strip_layout(self.resolve_layout(named))
+    }
     #[must_use]
     pub fn resolve_layout(&self, named: Option<LayoutId>) -> LayoutId {
         named
@@ -1026,11 +1032,9 @@ impl LayoutSession {
                 .is_some_and(|state| state.get().layout == Some(id))
         })
     }
-    pub fn plan_delete(
-        &self,
-        id: LayoutId,
-        ordered_facts: impl Iterator<Item = (u64, PaneFacts)>,
-    ) -> Result<Vec<Selection>, LayoutError> {
+    /// The strip layout the panes of `id` move to when it is deleted: its left
+    /// neighbour, or its right one for the first.
+    pub fn delete_successor(&self, id: LayoutId) -> Result<LayoutId, LayoutError> {
         let index = self.book.index_of(id).ok_or(LayoutError::Unknown)?;
         if self.book.layouts().len() == 1 {
             return Err(LayoutError::Last);
@@ -1040,8 +1044,15 @@ impl LayoutSession {
             .at(index.saturating_sub(1))
             .filter(|layout| layout.id != id)
             .or_else(|| self.book.at(index + 1))
-            .ok_or(LayoutError::Last)?
-            .id;
+            .ok_or(LayoutError::Last)?;
+        Ok(to.id)
+    }
+    pub fn plan_delete(
+        &self,
+        id: LayoutId,
+        ordered_facts: impl Iterator<Item = (u64, PaneFacts)>,
+    ) -> Result<Vec<Selection>, LayoutError> {
+        let to = self.delete_successor(id)?;
         let mut selections = Vec::new();
         let mut seen = std::collections::BTreeSet::new();
         let on = |state: &Rc<Cell<Membership>>| {

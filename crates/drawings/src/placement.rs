@@ -56,6 +56,8 @@ impl<T: ToolCatalog> Drawings<T> {
                 locked: false,
                 hidden: false,
                 scope: DrawingScope::default(),
+                layout: self.layout,
+                all_windows: false,
                 legacy_unpinned: false,
                 magnet: false,
                 foreign_market: false,

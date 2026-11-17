@@ -262,8 +262,15 @@ fn clearing_a_chart_spares_the_marks_it_does_not_show() {
     assert!(!other.drawings.all_locked());
     other.drawings.set_all_locked(true);
     assert!(other.drawings.all_locked());
-    let foreign = other.drawings.items().iter().find(|d| d.layout == Some(LEVELS));
-    assert!(!foreign.unwrap().locked, "the other layout's mark untouched");
+    let foreign = other
+        .drawings
+        .items()
+        .iter()
+        .find(|d| d.layout == Some(LEVELS));
+    assert!(
+        !foreign.unwrap().locked,
+        "the other layout's mark untouched"
+    );
     assert_eq!(other.drawings.delete_all(), 1, "only what it shows");
     other.persist(&mut settings);
     owner.refresh(&settings);

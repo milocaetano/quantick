@@ -17,9 +17,13 @@ mod drawing_scope_tests;
 /// standing there is left untouched. The next write of the pane stores it:
 /// a drawing kept to its chart is pinned to `bars` then.
 ///
+/// `all_windows`, when named, is set in the same undo step, on the store's
+/// layout: a drawing from before layouts were recorded becomes its own.
+///
 /// # Errors
-/// An id the store does not hold, and `all_charts` for a drawing with an
-/// anchor that names no market instant.
+/// An id the store does not show, `all_charts` for a drawing with an anchor
+/// that names no market instant, and `all_windows: true` beside
+/// `this_chart`.
 pub fn set_scope(
     drawings: &mut Drawings<DrawingTool>,
     input: &DrawingScopeInput,
@@ -27,26 +31,48 @@ pub fn set_scope(
 ) -> Result<DrawingScopeResult, ControlError> {
     let index = drawings
         .index_of(DrawingId(input.drawing_id.get()))
+        .filter(|&index| drawings.in_layout(index))
         .ok_or_else(|| input.unknown_drawing())?;
     let drawing = &drawings.items()[index];
     if input.scope == ScopeName::AllCharts && !drawing.shareable() {
         return Err(no_market_time(drawing.tool.id()));
     }
+    if input.scope == ScopeName::ThisChart && input.all_windows == Some(true) {
+        return Err(all_windows_needs_all_charts(drawing.tool.id()));
+    }
     let scope = match input.scope {
         ScopeName::AllCharts => DrawingScope::AllCharts,
         ScopeName::ThisChart => DrawingScope::ThisChart,
     };
+    let before = drawing.clone();
+    let here = drawings.layout();
+    let after = &mut drawings.items_mut()[index];
     // The pick, not what shows: an undated copy of a mark on every timeframe
     // shows on its chart alone until dated, and a call keeping it there holds.
-    let changed = drawing.scope != scope;
+    if after.scope != scope {
+        after.set_scope(scope);
+    }
+    // What shows moves, or a pick left on a drawing kept to its chart is
+    // cleared; an old drawing every chart already shows stays as it is.
+    let windows_moved = input
+        .all_windows
+        .is_some_and(|on| after.in_all_windows() != on || (after.all_windows && !on));
+    if let Some(on) = input.all_windows.filter(|_| windows_moved) {
+        after.all_windows = on;
+        after.layout = after.layout.or(here);
+    }
+    let changed = *after != before;
     if changed {
-        let before = drawing.clone();
-        drawings.items_mut()[index].set_scope(scope);
         drawings.record_edit_of(index, before);
     }
     let after = &drawings.items()[index];
     let pinned = !after.all_timeframes() && !after.legacy_unpinned;
-    Ok(input.result(pinned.then(|| bars.to_owned()), changed))
+    let readback = ScopeReadback {
+        pinned_bars: pinned.then(|| bars.to_owned()),
+        all_windows: after.in_all_windows(),
+        layout_id: after.layout.map(|layout| layout.0),
+    };
+    Ok(input.result(readback, changed))
 }
 
 /// The whole call: `pane` finds the named pane's store and the bars it is cut

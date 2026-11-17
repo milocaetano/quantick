@@ -1,7 +1,9 @@
 //! The drawings scope lists what each pane shows: a mark on all timeframes
 //! that another layout owns is held for merges, never listed there.
 use super::*;
-use quantick_drawings::{ChartPoint, DRAWING_TOOLS, DrawingBand, DrawingScope, DrawingStyle, NewDrawing};
+use quantick_drawings::{
+    ChartPoint, DRAWING_TOOLS, DrawingBand, DrawingScope, DrawingStyle, NewDrawing,
+};
 use quantick_workspace::layout_document::LayoutId;
 
 const LEVELS: LayoutId = LayoutId(1);
@@ -73,10 +75,17 @@ fn a_pane_lists_only_the_marks_its_layout_shows_and_reads_all_windows() {
     assert_eq!(owner.drawing_count.get(), 2);
     assert!(!owner.drawings[0].all_windows);
     assert!(owner.drawings[1].all_windows);
-    assert_eq!(owner.drawings[0].layout_id.map(WireU64::get), Some(LEVELS.0));
+    assert_eq!(
+        owner.drawings[0].layout_id.map(WireU64::get),
+        Some(LEVELS.0)
+    );
 
     let other = pane_drawings(&pane(held), PaneSideDto::Flow);
-    assert_eq!(other.drawing_count.get(), 1, "the other layout's mark is not listed");
+    assert_eq!(
+        other.drawing_count.get(),
+        1,
+        "the other layout's mark is not listed"
+    );
     assert_eq!(other.drawings.len(), 1);
     assert!(other.drawings[0].all_windows);
     assert_eq!(
@@ -99,7 +108,11 @@ fn the_revision_follows_the_listed_rows_and_not_the_held_ones() {
     assert!(quiet.drawings.is_empty(), "nothing listed");
 
     held.set_locked_at(0, true);
-    assert_eq!(pane_revision(&pane(held)), quiet, "a held mark's lock lists nothing");
+    assert_eq!(
+        pane_revision(&pane(held)),
+        quiet,
+        "a held mark's lock lists nothing"
+    );
 
     assert!(owner.set_all_windows_at(0, true));
     let mut shown = held_on(FLOWS, &owner);
@@ -108,5 +121,9 @@ fn the_revision_follows_the_listed_rows_and_not_the_held_ones() {
     assert_eq!(listed.drawings.len(), 1);
 
     shown.set_layout(Some(LEVELS));
-    assert_ne!(pane_revision(&pane(shown)), listed, "and so does the layout it lists for");
+    assert_ne!(
+        pane_revision(&pane(shown)),
+        listed,
+        "and so does the layout it lists for"
+    );
 }

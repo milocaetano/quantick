@@ -15,12 +15,14 @@ fn tool(id: &str) -> DrawingTool {
         .expect("registered test tool")
 }
 
+/// A dated level, turned on all timeframes.
 fn level_at(drawings: &mut Drawings<DrawingTool>, bar: f32, price: f64) {
     let time = Some(T0 + i64::from(bar as i32) * 60_000);
     assert!(drawings.place(
         tool("horizontal-line"),
         ChartPoint::at_time(bar, price, time)
     ));
+    drawings.selected_mut().expect("just placed").scope = DrawingScope::AllCharts;
 }
 
 fn prices(drawings: &Drawings<DrawingTool>) -> Vec<f64> {

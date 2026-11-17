@@ -214,7 +214,7 @@ The three exclusion classes are closed:
 | `drawing.rename` | Rename a drawing | the canvas right-click menu, drawing section | — | `pending_capability` — `annotate.*` places and removes; nothing edits an object that already exists. Tracked in issue 401 |
 | `drawing.select_and_move` | Select a drawing and drag it, or one of its handles | primary click and drag on the canvas | — | `pending_capability` — an object can be placed and removed by capability and not moved, so an operator corrects a level by deleting and replacing it. Tracked in issue 401 |
 | `drawing.magnet.toggle` | Snap one drawing to the candle's open, high, low or close, whatever the rail says | the object context bar's magnet button, beside Lock | `annotate.drawing_magnet.set` | — |
-| `drawing.scope.toggle` | Show one drawing on every timeframe of its market, or keep it to its chart | the object context bar's sharing button, beside Hide, and the inspector's Coordinates tab checkbox | `annotate.drawing_scope.set` | — |
+| `drawing.scope.toggle` | Show one drawing on every timeframe of its layout, or keep it to its chart; and on every layout of its market | the object context bar's sharing button, beside Hide, and the inspector's Show on all timeframes and All windows checkboxes | `annotate.drawing_scope.set` | — |
 | `drawing.hide` | Hide or show one drawing without deleting it | the object context bar, Alt+H, the canvas right-click menu (drawing section and objects submenu), the object manager | — | `pending_capability` — `annotate.*` places and removes; nothing toggles an object that already exists. Tracked in issue 401 |
 | `drawing.clear_all` | Delete every drawing on a chart, behind a count-bearing confirmation | the canvas right-click menu's clear objects entry; the object manager's Delete all | — | `pending_capability` — the annotate tier never discards work done by hand: `annotate.remove` refuses an object the trader drew, so an operator removes its own marks one by one. Tracked in issue 401 |
 | `alerts.list` | List local alerts and manage their definitions, monitoring and history | window menu, Alerts… | `alerts.open`, `alerts.list`, `alerts.read`, `alerts.create`, `alerts.edit`, `alerts.delete`, `alerts.pause`, `alerts.resume`, `alerts.rearm`, `alerts.history` | — |
@@ -364,7 +364,7 @@ declares nothing here is a guard failure.
 | `drawing.rename` | the rename box inside the canvas right-click menu |
 | `drawing.select_and_move` | a primary click and drag on the canvas |
 | `drawing.magnet.toggle` | the context bar's magnet button is a widget, not a registry entry |
-| `drawing.scope.toggle` | the context bar's sharing button and the inspector checkbox are widgets, not registry entries |
+| `drawing.scope.toggle` | the context bar's sharing button and the inspector checkboxes are widgets, not registry entries |
 | `drawing.hide` | Alt+H is read per frame by `app/drawing_controller/input.rs`; the Hide and Show buttons on the menu and manager rows are widgets, not hotkey registry entries |
 | `drawing.clear_all` | a menu entry and a manager button that ask the same question |
 | `workspace.save_as` | the dialog's name field, palette and Save are marks the dialog paints: listed in the scene as toolbar.name_dialog.colour.<key> |

@@ -29,6 +29,7 @@ fn migration_preserves_state_and_effects() {
             actions: InspectorActions {
                 toggle_pin: true,
                 toggle_lock: true,
+                toggle_all_windows: true,
                 ..Default::default()
             },
             index: 7,
@@ -39,6 +40,7 @@ fn migration_preserves_state_and_effects() {
         }),
     );
     assert!(effects.toggle_selected_locked);
+    assert!(effects.toggle_selected_all_windows);
     assert!(!state.core.shared.pinned);
     assert!(state.inspector.pin_touched);
     assert!(state.inspector.settle_frame);
