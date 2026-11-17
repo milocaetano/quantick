@@ -61,6 +61,7 @@ impl Mt5Venue {
     /// The time, from a caller that owns a clock: a link silent past
     /// [`crate::machine::STALE_AFTER_MS`] is declared lost.
     pub fn tick(&mut self, now_ms: i64) -> Vec<VenueEvent> {
+        self.link.clock(now_ms);
         self.core.on_clock(now_ms)
     }
 

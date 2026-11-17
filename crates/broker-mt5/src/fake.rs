@@ -11,12 +11,22 @@ use std::sync::{Arc, Mutex, PoisonError};
 use serde_json::Value;
 
 use crate::link::{BridgeLink, LinkEvent};
+use crate::machine::HEARTBEAT_MS;
 
 #[derive(Debug, Default)]
 struct Wire {
     inbound: Vec<LinkEvent>,
     sent: Vec<String>,
     connected: bool,
+    /// The state a staged bridge repeats while connected, and when it last
+    /// did, as the real bridge repeats its own when nothing changed.
+    beat: Option<Beat>,
+}
+
+#[derive(Debug)]
+struct Beat {
+    line: String,
+    last_ms: Option<i64>,
 }
 
 /// The link end the venue owns.
@@ -58,6 +68,26 @@ impl BridgeLink for FakeBridge {
 
     fn poll(&mut self, out: &mut Vec<LinkEvent>) {
         out.append(&mut lock(&self.wire).inbound);
+    }
+
+    /// A staged bridge repeats its state every [`HEARTBEAT_MS`] of the time
+    /// the venue is handed, while connected: severed, it falls silent.
+    fn clock(&mut self, now_ms: i64) {
+        let wire = &mut *lock(&self.wire);
+        if !wire.connected {
+            return;
+        }
+        let Some(beat) = wire.beat.as_mut() else {
+            return;
+        };
+        if beat
+            .last_ms
+            .is_some_and(|last| now_ms.saturating_sub(last) < HEARTBEAT_MS)
+        {
+            return;
+        }
+        beat.last_ms = Some(now_ms);
+        wire.inbound.push(LinkEvent::Line(beat.line.clone()));
     }
 }
 
@@ -142,7 +172,8 @@ pub const STAGED_POSITION_TICKET: u64 = 88_412_094;
 pub const STAGED_ORDER_TICKET: u64 = 88_412_096;
 
 impl FakeBridgeHandle {
-    /// Say hello and push `session` as the bridge's state.
+    /// Say hello and push `session` as the bridge's state, then repeat it as
+    /// the heartbeat while the link stays connected.
     pub fn stage(&self, session: &StagedSession<'_>) {
         use rust_decimal::Decimal;
         let at = |per_mille: i64| {
@@ -150,7 +181,7 @@ impl FakeBridgeHandle {
             (session.entry + offset).round_dp(0).to_string()
         };
         self.connect("staged");
-        self.push(&serde_json::json!({
+        let state = serde_json::json!({
             "type": "state",
             "symbol": session.symbol,
             "account": {
@@ -174,7 +205,14 @@ impl FakeBridgeHandle {
             }],
             "deals": [],
             "closed_orders": [],
-        }));
+        })
+        .to_string();
+        let mut wire = lock(&self.wire);
+        wire.inbound.push(LinkEvent::Line(state.clone()));
+        wire.beat = Some(Beat {
+            line: state,
+            last_ms: None,
+        });
     }
 }
 

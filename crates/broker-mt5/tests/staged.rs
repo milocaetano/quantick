@@ -57,3 +57,52 @@ fn a_staged_connector_builds_the_account_asked_for_and_cuts_its_link() {
     let _ = venue.poll();
     assert_eq!(venue.link_state(), LinkState::Lost);
 }
+
+/// One frame as the account drives a broker venue: drain, then the time.
+fn frame(
+    venue: &mut dyn quantick_trading::BrokerVenue,
+    now_ms: i64,
+) -> Vec<quantick_trading::VenueEvent> {
+    let mut events = venue.poll();
+    events.extend(venue.tick(now_ms));
+    events
+}
+
+#[test]
+fn a_staged_session_keeps_its_link_alive_past_the_silence_limit() {
+    use quantick_broker_mt5::fake::StagedConnector;
+    use quantick_broker_mt5::machine::STALE_AFTER_MS;
+    use quantick_trading::{BrokerConnector, LinkState, VenueEvent, VenueNotice};
+    let mut connector = StagedConnector::new(false, 7_710_001, Decimal::from(172_796));
+    let mut venue = connector.connect("WINZ26").expect("a staged venue");
+    let start = 1_700_000_000_000_i64;
+    let mut now = start;
+    while now <= start + 4 * STALE_AFTER_MS {
+        let events = frame(&mut *venue, now);
+        assert!(
+            !events.contains(&VenueEvent::Notice(VenueNotice::LinkLost)),
+            "lost at {} ms",
+            now - start
+        );
+        now += 250;
+    }
+    assert_eq!(venue.link_state(), LinkState::Up);
+    assert!(venue.position().is_some(), "the staged long is still held");
+}
+
+#[test]
+fn a_severed_staged_link_stays_lost_while_time_passes() {
+    use quantick_broker_mt5::fake::StagedConnector;
+    use quantick_broker_mt5::machine::STALE_AFTER_MS;
+    use quantick_trading::{BrokerConnector, LinkState};
+    let mut connector = StagedConnector::new(false, 7_710_001, Decimal::from(172_796));
+    let mut venue = connector.connect("WINZ26").expect("a staged venue");
+    let _ = frame(&mut *venue, 1_000);
+    connector.sever();
+    let mut now = 1_000;
+    while now <= 1_000 + 4 * STALE_AFTER_MS {
+        let _ = frame(&mut *venue, now);
+        now += 250;
+    }
+    assert_eq!(venue.link_state(), LinkState::Lost);
+}

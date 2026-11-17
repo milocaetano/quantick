@@ -21,4 +21,9 @@ pub trait BridgeLink: Send {
 
     /// Append everything observed since the last poll, in order.
     fn poll(&mut self, out: &mut Vec<LinkEvent>);
+
+    /// The time the venue was handed, in Unix milliseconds. A real bridge
+    /// keeps its own clock and its own heartbeat, so the socket ignores it;
+    /// a bridge with no process behind it beats against this instead.
+    fn clock(&mut self, _now_ms: i64) {}
 }
