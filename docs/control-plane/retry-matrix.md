@@ -63,9 +63,10 @@ instead, and its row says which further scope its readback needs.
 **Readback** is the read that shows the effect — a `snapshot.read` scope,
 or `events.read` filtered to one journal event kind — and **Field** the
 path within it, `[]` stepping into an array. **Applied when** says what the
-field shows if the call took effect. **Proven by** names the transport
-tests, in `crates/app/src/app/tests/retry_readback_tests.rs`, that exercise
-the row through the real local gateway.
+field shows if the call took effect. **Proven by** names the tests that
+exercise the row: transport tests under `crates/app/src/app/tests/` that
+drive it through the real local gateway, or a `control-handlers` test that
+drives its handler through a fake host.
 
 To reconcile, take the reading *before* the call — the scope's value, or
 an `events.read` cursor at `latest` — and compare it with the same read

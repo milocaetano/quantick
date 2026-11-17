@@ -240,6 +240,12 @@ fn the_preset_list_answers_the_views_page_or_its_refusal() {
         config: quantick_orderflow::HeatmapConfig::default(),
     };
     let query = json!({"tab_id": "1", "pane_id": "2", "offset": "0", "limit": 1, "revision": null});
+    let mut unknown = query.clone();
+    unknown["page"] = json!(1);
+    assert!(
+        list(&mut shelf, &mut (), &actor, &unknown).is_err(),
+        "an unknown field is refused while the view would answer"
+    );
     let listed = list(&mut shelf, &mut (), &actor, &query).unwrap();
     assert_eq!(
         (&listed["tab_id"], &listed["pane_id"]),
@@ -254,7 +260,4 @@ fn the_preset_list_answers_the_views_page_or_its_refusal() {
         quantick_control::error::codes::INVALID_REQUEST
     );
     assert!(error.message.contains("restart"), "{error:?}");
-    let mut unknown = query.clone();
-    unknown["page"] = json!(1);
-    assert!(list(&mut shelf, &mut (), &actor, &unknown).is_err());
 }

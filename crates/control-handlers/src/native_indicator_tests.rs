@@ -45,6 +45,25 @@ fn edit_target(
     edit_request(window, access, &FakeWindow::assistant(), &input)
 }
 
+/// An edit asks the indicators grant and a retry key, unlike a layout edit.
+#[test]
+fn an_edit_needs_the_indicators_grant_and_a_key() {
+    let descriptor = wire::edit_descriptor();
+    let permissions: Vec<_> = descriptor
+        .required_permissions
+        .iter()
+        .map(|permission| permission.as_str())
+        .collect();
+    assert!(
+        permissions.contains(&"cockpit.indicators"),
+        "{permissions:?}"
+    );
+    assert_eq!(
+        descriptor.idempotency,
+        quantick_control::registry::IdempotencyPolicy::Required
+    );
+}
+
 /// Each edit is validated against the slot it names before the owner applies
 /// anything; an applied edit answers its slot and is journaled once.
 #[test]

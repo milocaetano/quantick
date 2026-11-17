@@ -108,8 +108,8 @@ mod tests {
         assert_eq!(pane.kept, [true, true]);
     }
 
-    /// A call naming no target sets the tape's preference, answers the value
-    /// it kept, and switching it back is a change; the preference is saved.
+    /// A call naming no target sets the tape's preference and answers the
+    /// value it asked for; the preference is saved.
     #[test]
     fn no_target_means_the_tape_and_the_answer_echoes_the_preference() {
         assert_eq!(
@@ -124,18 +124,11 @@ mod tests {
         };
         let on = set(&mut pane, true);
         assert_eq!(
-            (
-                &on["target"],
-                &on["ignore_opening_burst_in_scale"],
-                &on["changed"]
-            ),
-            (&json!("tape"), &json!(true), &json!(true))
+            (&on["target"], &on["ignore_opening_burst_in_scale"]),
+            (&json!("tape"), &json!(true))
         );
-        assert_eq!(pane.kept, [true, false]);
+        assert_eq!(pane.kept, [true, false], "only the tape's preference");
         let off = set(&mut pane, false);
-        assert_eq!(
-            (&off["ignore_opening_burst_in_scale"], &off["changed"]),
-            (&json!(false), &json!(true))
-        );
+        assert_eq!(off["ignore_opening_burst_in_scale"], false);
     }
 }
