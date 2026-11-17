@@ -111,6 +111,13 @@ pub trait BrokerVenue: TradingVenue {
     /// with no print to hand calls this once per frame.
     fn poll(&mut self) -> Vec<VenueEvent>;
 
+    /// The time, in Unix milliseconds, handed in by a caller that owns a
+    /// clock, once a frame: a venue whose link has a heartbeat declares a
+    /// silent one lost here. The default has no heartbeat to miss.
+    fn tick(&mut self, _now_ms: i64) -> Vec<VenueEvent> {
+        Vec::new()
+    }
+
     /// Trade and read another symbol. Nothing at the broker is touched.
     fn set_symbol(&mut self, symbol: &str) -> Vec<VenueEvent>;
 

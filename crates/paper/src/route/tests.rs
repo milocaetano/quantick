@@ -218,6 +218,9 @@ struct Script {
     link: Option<LinkState>,
     said: Vec<VenueEvent>,
     tickets: BTreeMap<OrderId, u64>,
+    /// Every time the desk handed the venue, and what it says then.
+    ticked: Vec<i64>,
+    on_tick: Vec<VenueEvent>,
 }
 
 /// A simulator wearing a broker's reads.
@@ -284,6 +287,11 @@ impl TradingVenue for FakeBroker {
 impl BrokerVenue for FakeBroker {
     fn poll(&mut self) -> Vec<VenueEvent> {
         std::mem::take(&mut self.script.borrow_mut().said)
+    }
+    fn tick(&mut self, now_ms: i64) -> Vec<VenueEvent> {
+        let mut script = self.script.borrow_mut();
+        script.ticked.push(now_ms);
+        std::mem::take(&mut script.on_tick)
     }
     fn set_symbol(&mut self, _symbol: &str) -> Vec<VenueEvent> {
         Vec::new()
@@ -944,4 +952,28 @@ fn a_lost_link_takes_the_status_cell_while_its_account_is_shown() {
     assert!(status.is_some(), "the shown account says its link is down");
     let cell = status.map(|status| (status, std::cmp::Ordering::Less));
     assert_eq!(session.status_cell(), cell);
+}
+
+// --- review fixes ---------------------------------------------------------
+
+#[test]
+fn the_desk_hands_the_frame_time_to_the_broker_wherever_it_sits() {
+    let (venue, script) = broker(TradeMode::Real);
+    let mut desk = BrokerDesk::new();
+    let mut tabs = Tabs::new();
+    desk.install(venue);
+    desk.frame(&mut tabs, LIVE, 1_000);
+    assert_eq!(script.borrow().ticked, [1_000], "loose, still counted");
+
+    desk.hold_start(&tabs, LIVE, 2_000)
+        .expect("REAL is available");
+    desk.hold(&mut tabs, LIVE, 2_000 + HOLD_TO_ARM_MS, false);
+    assert_eq!(desk.route().route(), Route::Real);
+    // A hung bridge: the venue declares its silent link lost at the tick.
+    let lost = VenueEvent::Notice(VenueNotice::LinkLost);
+    script.borrow_mut().on_tick.push(lost);
+    desk.frame(&mut tabs, LIVE, 9_000);
+    assert_eq!(script.borrow().ticked.last(), Some(&9_000));
+    assert_eq!(desk.route().route(), Route::Sim);
+    assert_eq!(desk.route().last_disarm(), Some((Disarm::LinkLost, 9_000)));
 }

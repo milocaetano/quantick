@@ -127,7 +127,7 @@ impl BrokerDesk {
         if self.route.hold_progress(now_ms).is_some() {
             self.hold(port, source, now_ms, false);
         }
-        for notice in self.poll(port) {
+        for notice in self.poll(port, now_ms) {
             let change = self.route.on_notice(&notice, now_ms);
             self.apply(port, change);
         }
@@ -254,10 +254,13 @@ impl BrokerDesk {
         self.toast.take()
     }
 
-    fn poll(&mut self, port: &mut dyn AccountsPort) -> Vec<VenueNotice> {
+    /// Drain the venue wherever it sits and hand it the time, so a link
+    /// with a heartbeat can be declared lost while it says nothing.
+    fn poll(&mut self, port: &mut dyn AccountsPort, now_ms: i64) -> Vec<VenueNotice> {
         if let Some(loose) = self.loose.as_mut() {
-            return loose
-                .poll()
+            let mut events = loose.poll();
+            events.extend(loose.tick(now_ms));
+            return events
                 .into_iter()
                 .filter_map(|event| match event {
                     quantick_trading::VenueEvent::Notice(notice) => Some(notice),
@@ -269,7 +272,7 @@ impl BrokerDesk {
             return Vec::new();
         };
         match port.account_mut(home) {
-            Some(account) => account.poll_broker(),
+            Some(account) => account.poll_broker(now_ms),
             // The tab closed and took the venue with it; the next broker
             // request builds a fresh one.
             None => {

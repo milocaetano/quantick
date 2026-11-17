@@ -58,6 +58,12 @@ impl Mt5Venue {
         events
     }
 
+    /// The time, from a caller that owns a clock: a link silent past
+    /// [`crate::machine::STALE_AFTER_MS`] is declared lost.
+    pub fn tick(&mut self, now_ms: i64) -> Vec<VenueEvent> {
+        self.core.on_clock(now_ms)
+    }
+
     fn flush(&mut self) {
         for line in self.core.take_outbox() {
             self.link.send(&line);
@@ -194,6 +200,10 @@ impl TradingVenue for Mt5Venue {
 impl BrokerVenue for Mt5Venue {
     fn poll(&mut self) -> Vec<VenueEvent> {
         Mt5Venue::poll(self)
+    }
+
+    fn tick(&mut self, now_ms: i64) -> Vec<VenueEvent> {
+        Mt5Venue::tick(self, now_ms)
     }
 
     fn set_symbol(&mut self, symbol: &str) -> Vec<VenueEvent> {

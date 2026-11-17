@@ -65,6 +65,13 @@ pub const STOPS_PENDING: &str =
 pub const CLOSE_PENDING: &str =
     "a close for the whole position is already on its way to the broker - wait for its fill";
 
+/// How often the bridge pushes a state when nothing changed
+/// (`STATE_HEARTBEAT_S` in `bridge/mt5/quantick_bridge_exec.py`).
+pub const HEARTBEAT_MS: i64 = 2_000;
+/// Silence for this long - three missed heartbeats - and a connected link is
+/// declared lost: a hung bridge keeps its socket open and says nothing.
+pub const STALE_AFTER_MS: i64 = 3 * HEARTBEAT_MS;
+
 /// MetaTrader's return codes that mean the request was carried out.
 /// `10025` is "no changes": the terminal already held exactly that.
 const ACCEPTED_RETCODES: [i64; 4] = [10008, 10009, 10010, 10025];
@@ -195,6 +202,18 @@ pub struct BrokerCore {
     deals: DealCursor,
     ledger: Ledger,
     malformed_lines: usize,
+    silence: Silence,
+}
+
+/// How long the bridge has said nothing, counted only from times handed in.
+#[derive(Debug, Default)]
+struct Silence {
+    /// A line arrived since the clock last looked.
+    heard: bool,
+    /// When the clock last saw the bridge alive.
+    alive_at: Option<i64>,
+    /// The link was declared lost for its silence, its socket still open.
+    stalled: bool,
 }
 
 /// The last print the venue was shown.
@@ -279,6 +298,7 @@ impl BrokerCore {
             deals: DealCursor::default(),
             ledger: Ledger::default(),
             malformed_lines: 0,
+            silence: Silence::default(),
         }
     }
 
@@ -599,6 +619,33 @@ impl BrokerCore {
         self.closing.clear();
         self.deals = DealCursor::default();
         self.has_state = false;
+    }
+
+    /// The time, handed in by a caller that owns a clock, once a frame or so.
+    /// A link up and silent for [`STALE_AFTER_MS`] is declared lost, once.
+    pub fn on_clock(&mut self, now_ms: i64) -> Vec<VenueEvent> {
+        if self.link != LinkState::Up {
+            self.silence.alive_at = None;
+            return Vec::new();
+        }
+        let heard = std::mem::take(&mut self.silence.heard);
+        let alive_at = match self.silence.alive_at {
+            Some(at) if !heard => at,
+            _ => {
+                self.silence.alive_at = Some(now_ms);
+                return Vec::new();
+            }
+        };
+        if now_ms.saturating_sub(alive_at) < STALE_AFTER_MS {
+            return Vec::new();
+        }
+        self.link = LinkState::Lost;
+        self.has_state = false;
+        self.silence = Silence {
+            stalled: true,
+            ..Silence::default()
+        };
+        vec![VenueEvent::Notice(VenueNotice::LinkLost)]
     }
 
     fn queue(&mut self, pending: Pending, request: &Request) {

@@ -344,14 +344,16 @@ impl PaperAccount {
         }
     }
 
-    /// Drain what the attached broker said, routed or parked, and return
-    /// its notices for the route to read.
-    pub fn poll_broker(&mut self) -> Vec<VenueNotice> {
+    /// Drain what the attached broker said, routed or parked, hand it the
+    /// time `now_ms` (a silent link is declared lost there), and return its
+    /// notices for the route to read.
+    pub fn poll_broker(&mut self, now_ms: i64) -> Vec<VenueNotice> {
         let shown = self.broker_shown();
         let Some(broker) = self.venue_broker_mut() else {
             return Vec::new();
         };
-        let events = broker.poll();
+        let mut events = broker.poll();
+        events.extend(broker.tick(now_ms));
         let notices = notices_of(&events);
         if shown {
             self.handle_events(events);

@@ -21,22 +21,32 @@ use crate::wire::{
 impl BrokerCore {
     /// Fold one line from the bridge into the venue.
     pub fn on_line(&mut self, line: &str) -> Vec<VenueEvent> {
-        match wire::decode(line) {
-            Some(Inbound::ExecHello { schema, instance }) => self.on_hello(schema, instance),
-            Some(Inbound::Reply(reply)) => self.on_reply(&reply),
-            Some(Inbound::State(state)) => self.on_state(&state),
-            // The link drops next; the transport reports that on its own.
-            Some(Inbound::Bye { .. }) => Vec::new(),
-            None => {
-                self.malformed_lines = self.malformed_lines.saturating_add(1);
-                Vec::new()
-            }
+        self.silence.heard = true;
+        let Some(inbound) = wire::decode(line) else {
+            self.malformed_lines = self.malformed_lines.saturating_add(1);
+            return Vec::new();
+        };
+        let mut events = Vec::new();
+        if self.silence.stalled && !matches!(inbound, Inbound::ExecHello { .. }) {
+            // The bridge that went silent speaks again on the same socket.
+            self.silence.stalled = false;
+            self.link = LinkState::Up;
+            events.push(VenueEvent::Notice(VenueNotice::LinkRestored));
         }
+        events.extend(match inbound {
+            Inbound::ExecHello { schema, instance } => self.on_hello(schema, instance),
+            Inbound::Reply(reply) => self.on_reply(&reply),
+            Inbound::State(state) => self.on_state(&state),
+            // The link drops next; the transport reports that on its own.
+            Inbound::Bye { .. } => Vec::new(),
+        });
+        events
     }
 
     /// The bridge's socket closed. Reads stay as they were, stale.
     pub fn on_disconnected(&mut self) -> Vec<VenueEvent> {
         self.has_state = false;
+        self.silence.stalled = false;
         if self.link != LinkState::Up {
             return Vec::new();
         }
@@ -46,6 +56,7 @@ impl BrokerCore {
 
     fn on_hello(&mut self, schema: u32, instance: String) -> Vec<VenueEvent> {
         self.has_state = false;
+        self.silence.stalled = false;
         if schema != EXEC_SCHEMA_VERSION {
             // Never written to: a request in a shape the bridge does not
             // read could be read as some other request.
