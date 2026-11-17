@@ -51,12 +51,13 @@ use quantick_ui_model::dock::State as Dock;
 
 use quantick_feed::history_reach;
 
+use super::QuantickApp;
 use super::arrangement_host::ArrangementHost;
 use super::chart_layers_wiring::LayerWiring;
 use super::indicator_manager::IndicatorEdit;
 use super::layout_wiring::{LayoutAdapter, LayoutRead};
 use super::paper_wiring::PaperSettingsAdapter;
-use super::{ControlFrameMetrics, QuantickApp};
+use quantick_control_handlers::health::FrameReading;
 
 /// The window as the gateway holds it: every family at once, `'static`
 /// because the projection registry is keyed on the type it reads.
@@ -710,8 +711,8 @@ impl<'a> HealthReads<'a> {
         (self.history.history_reach, self.history.venue_lead_in)
     }
 
-    pub(crate) fn frame_metrics(self) -> ControlFrameMetrics {
-        ControlFrameMetrics {
+    pub(crate) fn frame_metrics(self) -> FrameReading {
+        FrameReading {
             wall_average_ms: self.health.frames.avg_ms(),
             wall_worst_ms: self.health.frames.worst_ms(),
             frames_per_second: self.health.frames.fps(),

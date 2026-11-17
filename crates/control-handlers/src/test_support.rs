@@ -5,6 +5,7 @@
 use std::time::Duration;
 
 use quantick_chart::state::ChartState;
+use quantick_chart::style::ChartStyle;
 use quantick_control::{
     id::{ConnectionId, PrincipalId, RequestId},
     wire::{ActorContext, ActorKind, CanonicalDecimal, WireU64},
@@ -303,6 +304,24 @@ impl ChartPaneSource for FakePaneRead<'_> {
             venue_aggressor_split: false,
         }
     }
+    fn layers(&self, _: &ChartStyle) -> Vec<LayerSnapshot> {
+        self.pane
+            .layers
+            .iter()
+            .map(|(layer, _)| layer.clone())
+            .collect()
+    }
+    fn layer(&self, layer_id: &str, _: &ChartStyle) -> Option<LayerRead> {
+        let (layer, blocked) = self
+            .pane
+            .layers
+            .iter()
+            .find(|(layer, _)| layer.id == layer_id)?;
+        Some(LayerRead {
+            layer: layer.clone(),
+            blocked: *blocked,
+        })
+    }
 }
 
 /// A fake pane's framing: the slots a test laid out, the rest fixed.
@@ -449,6 +468,8 @@ pub(crate) struct FakeWindow {
     pub settings_asked: Vec<ChartSettingsInput>,
     /// Every layer switch asked: pane, layer and visibility.
     pub layer_switches: Vec<(u64, String, bool)>,
+    /// The window's shared chart style.
+    pub style: ChartStyle,
     /// The record-by-default setting, once a call kept one.
     pub record_by_default: Option<bool>,
 }
@@ -466,6 +487,7 @@ impl FakeWindow {
             chart_settings: Err(PresetError::Refused("the fake keeps no chart settings")),
             settings_asked: Vec::new(),
             layer_switches: Vec::new(),
+            style: ChartStyle::default(),
             record_by_default: None,
         }
     }
@@ -664,43 +686,21 @@ impl ChartPort for FakeWindow {
         self.settings_asked.push(input);
         self.chart_settings.clone()
     }
-    fn chart_layer(
-        &self,
-        tab_id: WireU64,
-        pane_id: WireU64,
-        layer_id: &str,
-    ) -> Result<LayerRead, ControlError> {
-        let tab = self.tabs.iter().find(|tab| tab.id == tab_id.get());
-        let tab = tab.ok_or_else(|| ControlError::invalid_request("no open tab has that id"))?;
-        let pane = tab.panes.iter().find(|pane| pane.id == pane_id.get());
-        let pane = pane.ok_or_else(|| ControlError::invalid_request("unknown pane"))?;
-        let (layer, blocked) = pane
-            .layers
-            .iter()
-            .find(|(layer, _)| layer.id == layer_id)
-            .ok_or_else(|| ControlError::invalid_request("unknown layer"))?;
-        Ok(LayerRead {
-            layer: layer.clone(),
-            blocked: *blocked,
-        })
+    fn chart_style(&self) -> &ChartStyle {
+        &self.style
     }
-    fn switch_chart_layer(
-        &mut self,
-        tab_id: WireU64,
-        pane_id: WireU64,
-        layer_id: &str,
-        visible: bool,
-    ) -> Result<(), ControlError> {
-        let pane = self.pane_mut(tab_id, pane_id)?;
+    fn switch_chart_layer(&mut self, tab_id: u64, pane_id: u64, layer_id: &str, visible: bool) {
+        let Ok(pane) = self.pane_mut(WireU64::new(tab_id), WireU64::new(pane_id)) else {
+            return;
+        };
         let layer = pane
             .layers
             .iter_mut()
             .find(|(layer, _)| layer.id == layer_id);
-        let (layer, _) = layer.ok_or_else(|| ControlError::invalid_request("unknown layer"))?;
+        let Some((layer, _)) = layer else { return };
         layer.requested = visible;
         self.layer_switches
-            .push((pane_id.get(), layer_id.to_owned(), visible));
-        Ok(())
+            .push((pane_id, layer_id.to_owned(), visible));
     }
     fn visit_chart_panes(&self, visit: &mut dyn FnMut(ChartPaneEntry<'_>, PaneFraming)) {
         for (index, tab) in self.tabs.iter().enumerate() {

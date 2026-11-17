@@ -1,5 +1,5 @@
 //! One pane's layer as its menu reads it: what `layers.visibility.set` asks
-//! the window for ([`crate::chart::ChartPort::chart_layer`]).
+//! the pane for ([`crate::chart::ChartPaneSource::layer`]).
 use quantick_control_schema::layers::LayerSnapshot;
 
 /// One layer of one pane, as its menu reads it.

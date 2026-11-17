@@ -26,7 +26,6 @@ mod price_tag_progress;
 // Moved to `quantick-control-host`; named here so `super::journal` resolves.
 use quantick_control_host::journal;
 mod flow_tabs;
-mod layers;
 pub(crate) mod layout;
 mod notify;
 mod pane_bubbles;
@@ -140,12 +139,12 @@ pub(crate) fn standard_registry() -> Result<ProjectionRegistry, ProjectionRegist
     quantick_control_handlers::market_windows::register_scope(&mut registry)?;
     feed::register(&mut registry)?;
     quantick_control_handlers::chart::register(&mut registry)?;
-    health::register(&mut registry)?;
+    quantick_control_handlers::health::register(&mut registry)?;
     quantick_control_handlers::analysis::register(&mut registry)?;
     interaction::register(&mut registry)?;
     quantick_control_handlers::orderflow::register(&mut registry)?;
     quantick_control_handlers::session::register(&mut registry)?;
     scene::register(&mut registry)?;
-    layers::register(&mut registry)?;
+    quantick_control_handlers::layers::register_scope(&mut registry)?;
     Ok(registry)
 }

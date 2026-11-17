@@ -94,15 +94,6 @@ const FIRST_TAB_ID: u64 = 0;
 #[cfg(any(feature = "scenario-harness", test))]
 const AUTOSTART_NATIVES: &[&str] = &["native.ema", "native.cvd"];
 
-/// Read-only frame observations exposed to on-demand semantic projections.
-pub(crate) struct ControlFrameMetrics {
-    pub wall_average_ms: Option<f32>,
-    pub wall_worst_ms: Option<f32>,
-    pub frames_per_second: Option<f32>,
-    pub cpu_average_ms: Option<f32>,
-    pub cpu_worst_ms: Option<f32>,
-}
-
 /// The quantick chart window.
 ///
 /// One workspace: N open markets ([`Tab`]) and the chrome around them. The
