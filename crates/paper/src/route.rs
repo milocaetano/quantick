@@ -95,17 +95,6 @@ impl Route {
             Self::Real => "real",
         }
     }
-
-    /// Parse a wire name.
-    #[must_use]
-    pub fn from_id(text: &str) -> Option<Self> {
-        match text {
-            "sim" => Some(Self::Sim),
-            "demo" => Some(Self::Demo),
-            "real" => Some(Self::Real),
-            _ => None,
-        }
-    }
 }
 
 /// Which account a terminal is logged into: its login and a fingerprint of

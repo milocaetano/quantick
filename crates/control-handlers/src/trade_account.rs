@@ -12,7 +12,8 @@ use quantick_control_host::authority::TRADE_MODULE_ID;
 use quantick_control_host::journal::NewEvent;
 use quantick_control_schema::trade_account::{
     AccountDisarmInput, AccountReadInput, AccountRouteResult, AccountRowView, AccountSelectInput,
-    LeaveChoice, ROUTE_EVENT_KIND, disarm_descriptor, read_route_descriptor, select_descriptor,
+    LeaveChoice, ROUTE_EVENT_KIND, RouteChoice, disarm_descriptor, read_route_descriptor,
+    select_descriptor,
 };
 use quantick_paper::route::{
     Actor, Leave, Refusal, Route, RouteRead, RouteRequest, RowGesture, RowState,
@@ -85,6 +86,14 @@ pub fn route_result(read: &RouteRead) -> AccountRouteResult {
     }
 }
 
+fn route_of(choice: RouteChoice) -> Route {
+    match choice {
+        RouteChoice::Sim => Route::Sim,
+        RouteChoice::Demo => Route::Demo,
+        RouteChoice::Real => Route::Real,
+    }
+}
+
 fn leave_of(choice: Option<LeaveChoice>) -> Option<Leave> {
     choice.map(|choice| match choice {
         LeaveChoice::FlattenFirst => Leave::FlattenFirst,
@@ -152,13 +161,11 @@ fn select<P: TradePort + ?Sized, A: JournalAccess>(
     let asked = input.clone();
     let input: AccountSelectInput = serde_json::from_value(input.clone())
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
-    let route = Route::from_id(&input.route).ok_or_else(|| {
-        ControlError::invalid_request(format!(
-            "route must be `sim`, `demo` or `real` - got `{}`",
-            input.route
-        ))
-    })?;
-    let request = RouteRequest::new(route, actor_of(actor), leave_of(input.leave));
+    let request = RouteRequest::new(
+        route_of(input.route),
+        actor_of(actor),
+        leave_of(input.leave),
+    );
     route_to(app, access, actor, request, asked)
 }
 

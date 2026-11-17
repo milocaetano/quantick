@@ -28456,6 +28456,26 @@
                 "type": "string"
               }
             ]
+          },
+          "RouteChoice": {
+            "description": "Where orders go.",
+            "oneOf": [
+              {
+                "const": "sim",
+                "description": "The paper simulator, filling from the tape.",
+                "type": "string"
+              },
+              {
+                "const": "demo",
+                "description": "The broker account the terminal reports as demo.",
+                "type": "string"
+              },
+              {
+                "const": "real",
+                "description": "The broker account the terminal reports as real money; arms only by\nholding its row in the Trading panel.",
+                "type": "string"
+              }
+            ]
           }
         },
         "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -28473,8 +28493,7 @@
             "description": "Required to leave a broker route with exposure open."
           },
           "route": {
-            "description": "`sim`, `demo` or `real`.",
-            "type": "string"
+            "$ref": "#/$defs/RouteChoice"
           }
         },
         "required": [

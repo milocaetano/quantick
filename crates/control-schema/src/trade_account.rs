@@ -40,11 +40,23 @@ pub enum LeaveChoice {
     LeaveAtBroker,
 }
 
+/// Where orders go.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RouteChoice {
+    /// The paper simulator, filling from the tape.
+    Sim,
+    /// The broker account the terminal reports as demo.
+    Demo,
+    /// The broker account the terminal reports as real money; arms only by
+    /// holding its row in the Trading panel.
+    Real,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AccountSelectInput {
-    /// `sim`, `demo` or `real`.
-    pub route: String,
+    pub route: RouteChoice,
     /// Required to leave a broker route with exposure open.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub leave: Option<LeaveChoice>,
