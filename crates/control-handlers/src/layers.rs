@@ -17,6 +17,7 @@ use serde_json::{Value, json};
 use crate::JournalAccess;
 use crate::chart::ChartPort;
 use crate::dock::ActionDock;
+use crate::tabs::invalid;
 
 /// Dock `layers.visibility.set`.
 ///
@@ -26,10 +27,6 @@ pub fn register<D: ActionDock<H, A>, H: ChartPort + ?Sized, A: JournalAccess>(
     registry: &mut D,
 ) -> Result<(), RegistryError> {
     registry.register(set_visibility_descriptor(), set_visibility)
-}
-
-fn invalid(error: impl ToString) -> ControlError {
-    ControlError::invalid_request(error.to_string())
 }
 
 fn set_visibility<H: ChartPort + ?Sized, A: JournalAccess>(

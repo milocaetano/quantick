@@ -8,6 +8,7 @@ use serde_json::Value;
 
 use crate::chart::ChartPort;
 use crate::dock::ActionDock;
+use crate::tabs::invalid;
 
 const NO_NATIVE_TAPE: &str = "the pane draws no native tape";
 
@@ -20,10 +21,6 @@ pub fn register<D: ActionDock<H, A>, H: ChartPort + ?Sized, A>(
 ) -> Result<(), RegistryError> {
     registry.register(quantick_control_schema::price_axis::descriptor(), set_price)?;
     registry.register(quantick_control_schema::tape_view::descriptor(), set_tape)
-}
-
-fn invalid(error: impl ToString) -> ControlError {
-    ControlError::invalid_request(error.to_string())
 }
 
 fn set_price<H: ChartPort + ?Sized, A>(

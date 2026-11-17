@@ -44,7 +44,7 @@ fn journal<'a, A: JournalAccess>(
     |kind, value| access.record_event(NewEvent::by(ANNOTATE_MODULE_ID, kind, actor, value))
 }
 
-fn rail<H: AnalysisPort + ChartPort + ?Sized, A: JournalAccess>(
+fn rail<H: AnalysisPort + ?Sized, A: JournalAccess>(
     host: &mut H,
     access: &mut A,
     actor: &ActorContext,
@@ -57,7 +57,7 @@ fn rail<H: AnalysisPort + ChartPort + ?Sized, A: JournalAccess>(
     )
 }
 
-fn object<H: AnalysisPort + ChartPort + ?Sized, A: JournalAccess>(
+fn object<H: ChartPort + ?Sized, A: JournalAccess>(
     host: &mut H,
     access: &mut A,
     actor: &ActorContext,
@@ -70,7 +70,7 @@ fn object<H: AnalysisPort + ChartPort + ?Sized, A: JournalAccess>(
     )
 }
 
-fn scope<H: AnalysisPort + ChartPort + ?Sized, A: JournalAccess>(
+fn scope<H: ChartPort + ?Sized, A: JournalAccess>(
     host: &mut H,
     access: &mut A,
     actor: &ActorContext,

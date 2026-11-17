@@ -1,6 +1,6 @@
 //! The order-flow pane facts the bubble and tape rules read, and keeping what
 //! they admit: bubble size, the tape fold, the view and the opening-burst scale.
-use super::price_axis::{invalid, pane};
+use super::addressed_pane::{invalid, pane};
 use crate::app::{TabsMutPort, TabsPort, control_host::ControlPort};
 use crate::orderflow_view::OrderflowView;
 use quantick_control::{error::ControlError, wire::WireU64};

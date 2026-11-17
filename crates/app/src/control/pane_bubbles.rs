@@ -1,6 +1,6 @@
 //! The window's bubble job: resolve the addressed pane, which serves its own
 //! bubble calls, and lend the theme a whole look is dressed in.
-use super::price_axis::pane;
+use super::addressed_pane::pane;
 use crate::app::control_host::ControlPort;
 use quantick_appearance::orderflow::OrderflowAppearance;
 use quantick_control::{error::ControlError, wire::WireU64};

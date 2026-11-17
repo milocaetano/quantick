@@ -9,6 +9,7 @@ use serde_json::Value;
 
 use crate::chart::ChartPort;
 use crate::dock::ActionDock;
+use crate::tabs::invalid;
 
 /// Dock `chart.time_axis.reset`.
 ///
@@ -18,10 +19,6 @@ pub fn register<D: ActionDock<H, A>, H: ChartPort + ?Sized, A>(
     registry: &mut D,
 ) -> Result<(), RegistryError> {
     registry.register(quantick_control_schema::time_axis::descriptor(), reset_time)
-}
-
-fn invalid(error: impl ToString) -> ControlError {
-    ControlError::invalid_request(error.to_string())
 }
 
 /// The gestures' own paths and eligibility, so the call and the clicks

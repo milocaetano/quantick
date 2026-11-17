@@ -56,7 +56,7 @@ impl ChartPort for dyn ControlPort {
         tab_id: WireU64,
         pane_id: WireU64,
     ) -> Result<&mut dyn AxisPane, ControlError> {
-        Ok(super::price_axis::pane(self, tab_id, pane_id)?)
+        Ok(super::addressed_pane::pane(self, tab_id, pane_id)?)
     }
 
     fn apply_chart_settings(

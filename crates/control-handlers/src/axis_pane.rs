@@ -1,9 +1,11 @@
 //! The pane-addressed chart calls' one owner: the window resolves the
 //! addressed pane ([`crate::chart::ChartPort::axis_pane`]), the pane frames
-//! its axes and keeps its marks, and its native tape frames itself. The
-//! calls are `price_axis`, `time_axis` and `drawing_magnet`'s: the same
-//! paths the axis gestures and the context bar take, so the call and the
-//! hand cannot drift.
+//! its axes and keeps its marks, and its native tape frames itself. Its
+//! callers: `chart.price_axis.set` and `chart.tape_view.set`
+//! ([`crate::price_axis`]), `chart.time_axis.reset` ([`crate::time_axis`]),
+//! `annotate.drawing_magnet.set` and `annotate.drawing_scope.set`
+//! ([`crate::drawing_magnet`]). They take the same paths the axis gestures
+//! and the context bar take, so the call and the hand cannot drift.
 use quantick_control_schema::chart::ViewportSnapshot;
 use quantick_control_schema::tape_view::TapeViewSnapshot;
 use quantick_drawings::{DrawingTool, Drawings};
