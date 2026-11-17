@@ -176,6 +176,10 @@ const SCENARIO_OWNERS: &[(&str, &[HookSpec])] = &[
         "crates/app/src/paper_trading.rs",
         crate::paper_trading::HOOKS,
     ),
+    (
+        "crates/app/src/paper_trading/account_route.rs",
+        crate::paper_trading::account_route::HOOKS,
+    ),
     ("crates/app/src/replay_view.rs", crate::replay_view::HOOKS),
     (
         "crates/app/src/surfaces/agent_popup.rs",

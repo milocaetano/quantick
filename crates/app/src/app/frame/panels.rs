@@ -15,7 +15,6 @@ use crate::surfaces::replay_browser::{ReplayBrowser, ReplayBrowserExt as _};
 use crate::surfaces::{BorrowedSurfaceEnv, PaperPanelEnv, SurfaceResponse};
 use crate::surfaces::{HostEffect, Surfaces, ViewContext};
 use crate::tab::Tab;
-use crate::timezone::TzOffset;
 use quantick_ui_model::tool_rail::{Effect, Facts, Intent};
 
 /// The browser window and, while the *active* tab plays a session, its
@@ -108,16 +107,17 @@ pub(in crate::app) fn settle_rail_effects(
 pub(super) fn draw_dock(
     ctx: &egui::Context,
     surfaces: &mut Surfaces,
-    tabs: &mut ArrangementHost,
-    tz: TzOffset,
+    runtime: &mut crate::app::workspace_runtime::WorkspaceRuntime,
     alerts_open: bool,
 ) -> SurfaceResponse {
+    let (tabs, route) = (&mut runtime.tabs, runtime.broker.sheet());
     let Tab { link, paper, .. } = tabs.runtime_mut(tabs.active_index());
     let mut env = BorrowedSurfaceEnv::Paper(PaperPanelEnv {
         alerts_open,
         replay: link.replay.as_ref(),
         paper,
-        timezone: tz,
+        timezone: runtime.tz,
+        route,
     });
     surfaces.draw_slot_unscoped_with_env(
         quantick_ui_model::Slot::LateEdgePanels,

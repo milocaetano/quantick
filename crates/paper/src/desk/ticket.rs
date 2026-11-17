@@ -73,7 +73,7 @@ impl Ticket {
         TicketForm {
             quantity: self.quantity_preview().ok_or_else(|| {
                 format!(
-                    "SIM: quantity must be a positive number - got `{}`",
+                    "quantity must be a positive number - got `{}`",
                     self.qty_text.trim(),
                 )
             }),
@@ -90,17 +90,18 @@ impl Ticket {
     }
 
     /// The bracket the ticket's offsets describe, or the complaint about the
-    /// text that does not parse - which the host shows beside the box.
+    /// text that does not parse - which the host shows beside the box, after
+    /// the word of the route in force.
     ///
     /// # Errors
     ///
     /// The sentence naming the offset that is not a positive number.
     pub fn parse_bracket(&self, side: Side, reference: Decimal) -> Result<Bracket, String> {
         let stop_offset = parse_offset(&self.stop_offset_text).map_err(|got| {
-            format!("SIM: the stop offset must be a positive number of points - got `{got}`")
+            format!("the stop offset must be a positive number of points - got `{got}`")
         })?;
         let profit_offset = parse_offset(&self.profit_offset_text).map_err(|got| {
-            format!("SIM: the profit offset must be a positive number of points - got `{got}`")
+            format!("the profit offset must be a positive number of points - got `{got}`")
         })?;
         let form = TicketForm {
             quantity: Ok(Decimal::ONE),

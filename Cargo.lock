@@ -2929,6 +2929,7 @@ dependencies = [
  "quantick-anchored-studies",
  "quantick-appearance",
  "quantick-backpressure",
+ "quantick-broker-mt5",
  "quantick-chart",
  "quantick-chart-interaction",
  "quantick-civil",
@@ -3005,6 +3006,17 @@ dependencies = [
  "quantick-sim",
  "quantick-strategy",
  "rust_decimal",
+]
+
+[[package]]
+name = "quantick-broker-mt5"
+version = "0.1.0"
+dependencies = [
+ "quantick-engine",
+ "quantick-trading",
+ "rust_decimal",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -3157,6 +3169,7 @@ dependencies = [
  "crossbeam-channel",
  "dirs",
  "futures-util",
+ "quantick-broker-mt5",
  "quantick-engine",
  "quantick-feed-binance",
  "quantick-feed-hyperliquid",
@@ -3165,6 +3178,7 @@ dependencies = [
  "quantick-orderbook",
  "quantick-replay",
  "quantick-sources",
+ "quantick-trading",
  "rust_decimal",
  "serde",
  "serde_json",

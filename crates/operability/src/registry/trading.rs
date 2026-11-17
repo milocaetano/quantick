@@ -8,6 +8,16 @@ use super::{Mapping, Source, UiBehaviour};
 /// Every row this family owns.
 pub(super) const ROWS: &[UiBehaviour] = &[
     UiBehaviour {
+        id: "trade.account.route",
+        title: "Choose where orders go: the simulator or the broker account",
+        reach: "the Trading panel's Account selector, the toolbar's orders notice",
+        keys: &[
+            (Source::Authored, "the Trading panel Account selector"),
+            (Source::ToolbarAction, "OpenAccountList"),
+        ],
+        mapping: capability!("trade.account.select"),
+    },
+    UiBehaviour {
         id: "trade.aim.bracket",
         title: "Send an entry with its stop and target attached",
         reach: "the ticket's bracket fields, and the aim on the chart",

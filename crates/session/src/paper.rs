@@ -32,8 +32,11 @@ use rust_decimal::Decimal;
 
 #[path = "paper_command.rs"]
 mod command;
+#[path = "paper_settings.rs"]
+mod settings;
 
 pub use command::{NOTHING_TO_REVERSE, TradeCommand, TradeOutcome};
+pub use settings::{SharedChange, SharedSettings};
 
 /// What a rebuilt timeline says when it flattened a position.
 const RESET_POSITION_TOAST: &str = "SIM position flattened - the timeline was rebuilt under it.";
@@ -154,6 +157,13 @@ impl<A: BorrowMut<PaperAccount>> TabPaper<A> {
     #[must_use]
     pub fn trade_bar(&self, reverse_key: &str) -> TradeBar {
         self.desk.trade_bar(self.core(), reverse_key)
+    }
+
+    /// What the open position's buttons may do now: one answer for the
+    /// toolbar, the Trading panel and the chart HUD.
+    #[must_use]
+    pub fn position_actions(&self) -> quantick_paper::desk::PositionActions {
+        self.desk.position_actions(self.core())
     }
 
     /// Whether a chart gesture is in the hand — a line being dragged, a leg

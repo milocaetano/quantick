@@ -32,6 +32,7 @@ mod cases {
                             replay: None,
                             paper: &mut paper,
                             timezone: TzOffset::default(),
+                            route: None,
                         },
                     );
                     assert!(!response.close_replay);
@@ -49,6 +50,7 @@ mod cases {
                     replay: None,
                     paper: &mut paper,
                     timezone: TzOffset::default(),
+                    route: None,
                 },
             );
             assert!(!response.close_replay);
@@ -76,6 +78,7 @@ mod cases {
                             replay: None,
                             paper,
                             timezone: TzOffset::default(),
+                            route: None,
                         },
                     );
                 });
@@ -117,6 +120,7 @@ mod cases {
             paper: env.paper,
             replay: env.replay,
             timezone: env.timezone,
+            route: None,
         });
         registry
             .draw_slot_unscoped_with_env(
@@ -142,6 +146,7 @@ mod cases {
                 paper,
                 replay: None,
                 timezone: Default::default(),
+                route: None,
             });
             response = registry.draw_slot_unscoped_with_env(
                 Slot::LateEdgePanels,
@@ -342,6 +347,7 @@ mod cases {
                         paper: &mut paper,
                         replay: None,
                         timezone: Default::default(),
+                        route: None,
                     });
                     effects = registry
                         .draw_slot_unscoped_with_env(
@@ -498,6 +504,7 @@ fn paper_report_composition_preserves_account_lifetime_and_tail_registration() {
                 paper,
                 replay: None,
                 timezone: Default::default(),
+                route: None,
             });
             assert_eq!(
                 registry.draw_slot_unscoped_with_env(
@@ -546,6 +553,7 @@ fn paper_report_composition_preserves_account_lifetime_and_tail_registration() {
             paper: &mut first,
             replay: None,
             timezone: Default::default(),
+            route: None,
         });
         let response = registry.draw_slot_unscoped_with_env(
             Slot::FrameTailPaperPanels,

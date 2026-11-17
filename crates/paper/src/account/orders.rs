@@ -76,7 +76,8 @@ impl PaperAccount {
     /// counted.
     pub fn reverse_position(&mut self, bracket: Bracket) {
         if let Err(refusal) = self.try_reverse_position(bracket) {
-            self.set_toast(format!("SIM: {}", refusal.sentence()));
+            let word = self.route_kind().word();
+            self.set_toast(format!("{word}: {}", refusal.sentence()));
         }
     }
 
@@ -122,7 +123,8 @@ impl PaperAccount {
                 // the toast; a named caller gets the same sentence as an
                 // error, because `control::trade` asks `risk_refusal_for`
                 // first.
-                self.set_toast(format!("SIM: {}", refusal.sentence()));
+                let word = self.route_kind().word();
+                self.set_toast(format!("{word}: {}", refusal.sentence()));
                 Vec::new()
             }
         }
@@ -177,7 +179,7 @@ impl PaperAccount {
     /// — the strategy kernel, the scripted demo, and the tests that drive
     /// this host the way the kernel does.
     pub fn dispatch(&mut self, command: Command) -> Vec<VenueEvent> {
-        command.dispatch(self.venue.as_mut())
+        command.dispatch(self.venue.active_mut())
     }
 
     /// What a bracket owner looks like to every gesture in this module:
@@ -388,8 +390,19 @@ impl PaperAccount {
     /// orders use — journal, toasts, everything — and hand the simulator's
     /// immediate answer back for the instance to attribute.
     pub fn apply_strategy_command(&mut self, command: Command) -> Vec<VenueEvent> {
+        // An armed strategy is automation: it trades the simulator only,
+        // whatever the route. Nothing it decides reaches a broker, routed or
+        // parked with what the trader left there.
+        if self.broker_shown() {
+            return vec![VenueEvent::Rejected(
+                quantick_trading::RejectReason::Blocked(STRATEGIES_SIM_ONLY),
+            )];
+        }
         let events = self.dispatch(command);
         self.handle_events(events.clone());
         events
     }
 }
+
+/// Why a strategy instance's order is refused on a broker route.
+pub const STRATEGIES_SIM_ONLY: &str = "automated strategies trade the simulator only";

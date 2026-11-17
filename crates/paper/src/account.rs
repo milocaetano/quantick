@@ -26,15 +26,21 @@ use crate::report::sessions::JournaledTrade;
 use crate::risk_sizing::{Capital, InstrumentBook, RiskHook, RiskSettings};
 use quantick_civil::civil_utc;
 
+mod broker_log;
+mod capture_orders;
 mod journal;
 mod orders;
 mod readout;
 mod risk;
 mod ticket_edit;
+mod venues;
 
+pub use capture_orders::{CaptureOrders, MAX_CAPTURE_RUNGS};
 pub use journal::{elide_path, export_csv};
+pub use orders::STRATEGIES_SIM_ONLY;
 pub use risk::{RiskEditor, RiskRefusal};
 pub use ticket_edit::{RiskEdit, RiskEditText};
+pub use venues::{BROKER_TRADES_FOLDER, PARKED_ENTRY_BLOCK};
 
 /// What the account is handed that only the ticket can know.
 ///
@@ -84,7 +90,7 @@ impl Default for TicketForm {
     /// An empty form: no quantity typed, and the complaint that says so.
     fn default() -> Self {
         Self {
-            quantity: Err("SIM: quantity must be a positive number - got ``".to_owned()),
+            quantity: Err("quantity must be a positive number - got ``".to_owned()),
             offsets: Some((None, None)),
         }
     }
@@ -227,10 +233,12 @@ pub struct PaperAccount {
     /// Where orders actually go. A [`TradingVenue`] rather than a
     /// `Simulator`, so the chart's gestures, the ticket and the
     /// control-plane actions are all written against the port a real
-    /// broker will one day implement — see `quantick-trading`. Today the
-    /// only venue constructed here is the deterministic paper simulator,
-    /// and every surface still says `SIM`.
-    venue: Box<dyn TradingVenue>,
+    /// broker implements — see `quantick-trading`. The simulator is always
+    /// here; a broker venue joins it when a broker route is armed, and the
+    /// route decides which one orders go to (see [`crate::route`]).
+    venue: venues::Venues,
+    /// Where broker round trips are journaled, apart from the paper ones.
+    broker_journal: venues::BrokerJournal,
     /// Symbol the journal writes under; follows the app's active symbol.
     symbol: String,
     dir: PathBuf,
@@ -275,6 +283,10 @@ pub struct PaperAccount {
     /// the prints have *ever* shown is stable, monotonic and costs one
     /// comparison per trade.
     tick_scale: u32,
+    /// The instrument's price tick, when the host knows it (a feed's
+    /// `symbol_widgets` tick): the grid a broker route's prices land on.
+    /// `None` until told, and forgotten on a symbol switch.
+    price_tick: Option<Decimal>,
     /// What one trade may lose, and whether an entry over it is refused.
     ///
     /// The policy half of risk sizing; the arithmetic belongs to the kernel.
@@ -386,7 +398,13 @@ impl PaperAccount {
         // carried across a switch it would price the next market's ruler and
         // ladders in a precision that market has never printed.
         self.tick_scale = 0;
+        self.price_tick = None;
         self.journal_path = None;
+        if let Some(broker) = self.venue_broker_mut() {
+            // Never closes anything: the broker's orders stay where they are.
+            let events = broker.set_symbol(symbol);
+            self.handle_events(events);
+        }
         Some(arriving)
     }
 
@@ -407,7 +425,8 @@ impl PaperAccount {
     #[must_use]
     pub fn with_venue(dir: PathBuf, venue: Box<dyn TradingVenue>) -> Self {
         Self {
-            venue,
+            venue: venues::Venues::new(venue),
+            broker_journal: venues::BrokerJournal::default(),
             symbol: String::new(),
             dir,
             journal_path: None,
@@ -420,6 +439,7 @@ impl PaperAccount {
             strategies: Vec::new(),
             selected_strategy: None,
             tick_scale: 0,
+            price_tick: None,
             risk: RiskSettings::default(),
             capital: Capital::new(),
             instrument_money: InstrumentBook::new(),
@@ -626,6 +646,10 @@ impl PaperAccount {
     /// count — an entry, brackets, a partial, a flatten, a resting order,
     /// a short round trip — so every surface has something honest to show.
     pub fn run_demo_step(&mut self) {
+        // The scripted demo is a simulator script: never on a broker.
+        if self.broker_shown() {
+            return;
+        }
         let Some(demo) = &mut self.demo else { return };
         demo.prints += 1;
         let prints = demo.prints;
@@ -674,44 +698,6 @@ impl PaperAccount {
     #[must_use]
     pub fn ready(&self) -> bool {
         self.venue.mark_price().is_some()
-    }
-
-    /// The status-bar cell, honest about open versus flat: `SIM LONG 1 ·
-    /// +2 pts × 1 · — set pt value` while a position is open (side, size
-    /// and its open profit, in the P&L display's figures),
-    /// `SIM flat · +7 pts/ct · — set pt value` otherwise (the session's
-    /// realized total). `None`
-    /// while the simulator has never been touched.
-    #[must_use]
-    pub fn status_cell(&self) -> Option<(String, std::cmp::Ordering)> {
-        if let Some(position) = self.venue.position() {
-            let open = self
-                .venue
-                .mark_price()
-                .map(|mark| position.open_points(mark))
-                .unwrap_or_default();
-            let text = self
-                .pnl_reader()
-                .trade(&self.symbol, open, position.quantity);
-            return Some((
-                format!(
-                    "SIM {} {} · {text}",
-                    position_word(position.side),
-                    fmt_decimal(position.quantity),
-                ),
-                open.cmp(&Decimal::ZERO),
-            ));
-        }
-        let untouched = self.venue.closed_trades().is_empty()
-            && self.venue.working_orders().is_empty()
-            && self.venue.in_flight() == 0;
-        if untouched {
-            return None;
-        }
-        Some((
-            format!("SIM flat · {}", self.realized_pnl_text()),
-            self.realized_pnl_tint().cmp(&Decimal::ZERO),
-        ))
     }
 
     /// The open position as the chrome reports it: side, size, entry, and
@@ -782,7 +768,7 @@ impl PaperAccount {
     /// The venue orders go to, read-only.
     #[must_use]
     pub fn venue(&self) -> &dyn TradingVenue {
-        self.venue.as_ref()
+        self.venue.active()
     }
 
     /// The venue, for a caller that talks to it directly: a gesture that
@@ -790,7 +776,7 @@ impl PaperAccount {
     /// answers must still come back through [`Self::handle_events`], or the
     /// journal, the acknowledgements and the bot buffer never hear of it.
     pub fn venue_mut(&mut self) -> &mut dyn TradingVenue {
-        self.venue.as_mut()
+        self.venue.active_mut()
     }
 
     /// The source rebuilt its timeline (replay seek, feed or symbol switch,
@@ -843,16 +829,28 @@ impl PaperAccount {
         if self.bot_listening && !events.is_empty() {
             self.bot_events.extend(events.iter().cloned());
         }
+        // Every acknowledgement leads with where the order went: a broker's
+        // refusal is its own text, verbatim, after the route's word.
+        let word = self.route_kind().word();
+        let broker = self.broker_shown();
         for event in events {
+            if broker {
+                broker_log::log_broker_event(&event, word, &self.symbol);
+            }
             match event {
-                VenueEvent::Rejected(reason) => self.set_toast(format!("SIM: {reason}")),
+                VenueEvent::Rejected(reason) => self.set_toast(format!("{word}: {reason}")),
                 VenueEvent::BracketDropped { reason } => {
-                    self.set_toast(format!("SIM: dropped at the fill - {reason}"));
+                    self.set_toast(format!("{word}: dropped at the fill - {reason}"));
+                }
+                VenueEvent::Notice(notice) => {
+                    if !matches!(notice, quantick_trading::VenueNotice::Acknowledged { .. }) {
+                        self.set_toast(format!("{word}: {notice}"));
+                    }
                 }
                 VenueEvent::Filled(fill) => {
                     if matches!(fill.role, quantick_trading::FillRole::Entry(_)) {
                         self.set_toast(format!(
-                            "SIM fill: {} {} @ {}",
+                            "{word} fill: {} {} @ {}",
                             side_word(fill.side),
                             fmt_decimal(fill.quantity),
                             fmt_decimal(fill.price),
@@ -860,7 +858,11 @@ impl PaperAccount {
                     }
                 }
                 VenueEvent::Closed(trade) => {
-                    let saved = self.journal(&trade);
+                    let saved = if broker {
+                        self.journal_broker(&trade)
+                    } else {
+                        self.journal(&trade)
+                    };
                     // The report reads from disk and the close just wrote
                     // to disk; the host must re-read now or its window shows
                     // yesterday until the manual refresh - the "my trade is
@@ -874,7 +876,7 @@ impl PaperAccount {
                         // In the ticket's own words: the chosen figure,
                         // then the one that keeps it honest.
                         self.set_toast(format!(
-                            "SIM closed: {} {} for {} ({})",
+                            "{word} closed: {} {} for {} ({})",
                             position_word(trade.side),
                             fmt_decimal(trade.quantity),
                             self.trade_pnl_text(&trade),
@@ -890,14 +892,17 @@ impl PaperAccount {
                     order,
                     reason: quantick_trading::CancelReason::PriceTouched,
                 } => {
-                    self.set_toast(format!("SIM cancelled {}: target traded first", order.id));
+                    self.set_toast(format!(
+                        "{word} cancelled {}: target traded first",
+                        order.id
+                    ));
                 }
                 VenueEvent::Cancelled {
                     order,
                     reason: quantick_trading::CancelReason::AccountOccupied,
                 } => {
                     self.set_toast(format!(
-                        "SIM stood down {}: account busy at its price",
+                        "{word} stood down {}: account busy at its price",
                         order.id
                     ));
                 }
@@ -909,14 +914,14 @@ impl PaperAccount {
                     order,
                     reason: quantick_trading::CancelReason::OcoFilled,
                 } => {
-                    self.set_toast(format!("SIM cancelled {}: its pair filled", order.id));
+                    self.set_toast(format!("{word} cancelled {}: its pair filled", order.id));
                 }
                 VenueEvent::Cancelled {
                     order,
                     reason: quantick_trading::CancelReason::PositionClosed,
                 } => {
                     self.set_toast(format!(
-                        "SIM cancelled {}: the position it protected is closed",
+                        "{word} cancelled {}: the position it protected is closed",
                         order.id
                     ));
                 }
@@ -924,7 +929,17 @@ impl PaperAccount {
                     order,
                     reason: quantick_trading::CancelReason::BracketReplaced,
                 } => {
-                    self.set_toast(format!("SIM cancelled {}: protection replaced", order.id));
+                    self.set_toast(format!(
+                        "{word} cancelled {}: protection replaced",
+                        order.id
+                    ));
+                }
+                // The broker expired or cancelled it at the terminal.
+                VenueEvent::Cancelled {
+                    order,
+                    reason: quantick_trading::CancelReason::Venue,
+                } => {
+                    self.set_toast(format!("{word} cancelled {} at the broker", order.id));
                 }
                 _ => {}
             }

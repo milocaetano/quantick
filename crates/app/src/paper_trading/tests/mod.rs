@@ -637,107 +637,22 @@ fn a_dragged_order_keeps_its_full_statement() {
     );
 }
 
-/// The capture hook rests a rung around the mark on the first print:
-/// one order each side, so whichever way the tape moves a tag is still
-/// on screen for the shutter, and it happens at once rather than 220
-/// prints in.
+/// The capture hook's orders reach the account on the first print, once.
+/// Where they rest is `quantick_paper::account::capture_orders`'s, tested
+/// there.
 #[test]
-fn the_orders_hook_rests_a_rung_either_side_of_the_mark() {
+fn the_orders_hook_rests_through_the_account_once() {
     let mut paper = PaperTrading::new();
-    paper.orders_demo = Some(2);
+    let one = quantick_paper::account::CaptureOrders {
+        rungs: 1,
+        bracket: false,
+    };
+    paper.capture_orders = Some(one);
     paper.on_trade(&print(1, 100_000));
-    assert!(paper.orders_demo.is_none(), "placed once, never again");
-    let prices: Vec<_> = paper
-        .working_orders()
-        .iter()
-        .map(|order| (order.side, order.price.expect("a limit has a price")))
-        .collect();
-    assert_eq!(
-        prices,
-        vec![
-            (Side::Buy, Decimal::from(99_940)),
-            (Side::Sell, Decimal::from(100_060)),
-            (Side::Buy, Decimal::from(99_880)),
-            (Side::Sell, Decimal::from(100_120)),
-        ],
-        "two rungs, each side, stepping out from the mark"
-    );
-    paper.on_trade(&print(2, 100_000));
-    assert_eq!(paper.working_orders().len(), 4, "a second print adds none");
-}
-
-/// The bracket hook dresses those same rungs, so a working order's two
-/// dashed legs are photographable without a hand to drag them into
-/// being. Each leg lands on the correct side of the *order's own*
-/// price, which is what the venue validates against — a hook that
-/// placed one the venue refuses would photograph an empty chart.
-#[test]
-fn the_bracket_hook_dresses_every_rung_it_rests() {
-    let mut paper = PaperTrading::new();
-    paper.orders_demo = Some(1);
-    paper.order_bracket_demo = true;
-    paper.on_trade(&print(1, 100_000));
-
-    let orders = paper.working_orders();
-    assert_eq!(orders.len(), 2, "one rung, both sides");
-    for order in orders {
-        let price = order.price.expect("a limit has a price");
-        let stop = order.bracket.stop_loss().expect("a stop rides along");
-        let target = order.bracket.take_profit().expect("and a target");
-        match order.side {
-            Side::Buy => {
-                assert!(stop < price, "a long's stop sits below its entry");
-                assert!(target > price, "and its target above");
-            }
-            Side::Sell => {
-                assert!(stop > price, "a short's stop sits above its entry");
-                assert!(target < price, "and its target below");
-            }
-        }
-    }
-}
-
-/// A coarsely quoted mark rounds 6 bp to nothing: both legs would
-/// price *at* the mark, the simulator would refuse every one of them,
-/// and the run would photograph an empty chart with nothing to explain
-/// it. The step floors at one unit of the instrument's own precision.
-#[test]
-fn the_orders_hook_still_rests_on_an_integer_quoted_mark() {
-    let mut paper = PaperTrading::new();
-    paper.orders_demo = Some(2);
-    // 620 * 0.0006 = 0.372, which rounds to zero at scale 0.
-    paper.on_trade(&print(1, 620));
-    let prices: Vec<_> = paper
-        .working_orders()
-        .iter()
-        .map(|order| (order.side, order.price.expect("a limit has a price")))
-        .collect();
-    assert_eq!(
-        prices,
-        vec![
-            (Side::Buy, Decimal::from(619)),
-            (Side::Sell, Decimal::from(621)),
-            (Side::Buy, Decimal::from(618)),
-            (Side::Sell, Decimal::from(622)),
-        ],
-        "one tick per rung, and the rungs stay apart"
-    );
-    assert!(paper.orders_demo.is_none(), "orders rested, hook disarmed");
-}
-
-/// Nothing rested means the hook stays armed: disarming before the
-/// simulator has accepted anything is exactly how a silent empty
-/// capture happens.
-#[test]
-fn the_orders_hook_stays_armed_until_something_rests() {
-    let mut paper = PaperTrading::new();
-    paper.orders_demo = Some(1);
-    // No mark yet: nothing to place around, nothing consumed.
-    paper.rest_capture_orders();
-    assert_eq!(paper.orders_demo, Some(1), "no mark, still armed");
-    paper.on_trade(&print(1, 100_000));
+    assert!(paper.capture_orders.is_none(), "placed once, never again");
     assert_eq!(paper.working_orders().len(), 2);
-    assert!(paper.orders_demo.is_none());
+    paper.on_trade(&print(2, 100_000));
+    assert_eq!(paper.working_orders().len(), 2, "a second print adds none");
 }
 
 /// The capture hook opens every tag with nobody at the mouse — the

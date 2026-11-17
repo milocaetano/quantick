@@ -590,12 +590,12 @@ impl Tab {
         preset_label: String,
     ) -> Result<(), String> {
         let (pane, strategies) = self.pane_with_strategies(side);
-        let pane = &*pane;
+        let (pane, closed) = (&*pane, pane.series_read().closed_slots());
         let (replaced_cleanup, cue) = strategies.arm(
             drawing,
             form,
             preset_label,
-            || crate::pane::strategies::check_arm(pane, drawing),
+            || quantick_drawings::alert_geometry::check_arm(&pane.drawings, drawing, closed),
             |depth| pane.series_read().warmup_bars(depth),
         )?;
         for command in replaced_cleanup {

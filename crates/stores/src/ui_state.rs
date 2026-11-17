@@ -998,6 +998,7 @@ mod tests {
                 record_deals: false,
                 short_name: None,
             }],
+            broker: Default::default(),
             metatrader: crate::config::MetaTraderSettings::default(),
             paper: crate::config::PaperSettings::default(),
             deals: crate::config::DealsSettings::default(),

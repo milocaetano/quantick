@@ -38,6 +38,8 @@ pub struct PaperPanelEffects {
     pub cmd_trading_changed: bool,
     pub order_strategies_changed: bool,
     pub risk_settings_changed: bool,
+    /// A press on the account route block.
+    pub route: Option<quantick_paper::route::RoutePress>,
 }
 impl PaperPanelEffects {
     /// Fold a later pass in: a set flag stays set, the first value wins.
@@ -51,6 +53,7 @@ impl PaperPanelEffects {
         self.cmd_trading_changed |= other.cmd_trading_changed;
         self.order_strategies_changed |= other.order_strategies_changed;
         self.risk_settings_changed |= other.risk_settings_changed;
+        self.route = self.route.or(other.route);
     }
 }
 pub struct Model;

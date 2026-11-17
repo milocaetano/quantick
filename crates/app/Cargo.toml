@@ -62,6 +62,8 @@ quantick-orderflow = { path = "../orderflow" }
 # The paper account: orders, sizing, the journal and the report numbers. This
 # crate keeps the ticket that draws it and the host wiring around it.
 quantick-paper = { path = "../paper" }
+# The MetaTrader broker venue: only the window may build it.
+quantick-broker-mt5 = { path = "../broker-mt5" }
 # The OS-window exception: the DPI adapter, the hidden-root paint pump and
 # the exposed-window lookup, behind safe calls; no-ops off Windows.
 quantick-platform = { path = "../platform" }

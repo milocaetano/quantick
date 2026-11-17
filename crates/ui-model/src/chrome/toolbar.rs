@@ -61,6 +61,9 @@ pub enum ToolbarAction {
     PaperClose,
     /// Turn the open simulated position around at the next print.
     PaperReverse,
+    /// The read-only `orders →` notice: open the Trading panel on its
+    /// account list.
+    OpenAccountList,
 }
 
 pub use ToolbarAction as Action;
@@ -168,6 +171,7 @@ impl Snapshot {
             Action::PaperBuy | Action::PaperSell => self.paper.blocked.is_none(),
             Action::PaperReverse => self.paper.blocked.is_none() && self.paper.close.is_some(),
             Action::PaperClose => self.paper.close.is_some(),
+            Action::OpenAccountList => self.paper.notice.is_some(),
             _ => true,
         }
     }

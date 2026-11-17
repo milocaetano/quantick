@@ -51,8 +51,8 @@ pub use gesture::{
 pub use ruler::Ruler;
 pub use ticket::Ticket;
 pub use trade_bar::{
-    EntryTexts, NO_MARKET_YET, TRADE_CLOSE_WIDTH_PX, TRADE_ENTRY_WIDTH_PX, TRADE_GAP_PX,
-    TRADE_REVERSE_LABEL, TRADE_REVERSE_WIDTH_PX, TradeBar, W_TRADE,
+    EntryTexts, NO_MARKET_YET, PositionActions, TRADE_CLOSE_WIDTH_PX, TRADE_ENTRY_WIDTH_PX,
+    TRADE_GAP_PX, TRADE_REVERSE_LABEL, TRADE_REVERSE_WIDTH_PX, TradeBar, W_TRADE,
 };
 
 /// Whether the strategy editor is up, what it has open and whether it holds
@@ -261,7 +261,10 @@ impl Desk {
         let price = account.snap(raw_price);
         // The offsets are read here because an unreadable one is a message
         // beside the box the trader typed in. Everything after is placement.
-        let ticket = self.ticket.parse_bracket(side, price)?;
+        let ticket = self
+            .ticket
+            .parse_bracket(side, price)
+            .map_err(|complaint| format!("{}: {complaint}", account.route_kind().word()))?;
         let env = self.account_env(account, side, price);
         Ok(account.place_resting(side, kind, price, ticket, &env))
     }

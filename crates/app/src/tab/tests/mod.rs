@@ -566,6 +566,7 @@ mod collapse_path_tests {
             default_feed: "binance".to_owned(),
             default_symbol: "BTCUSDT".to_owned(),
             feeds: vec![],
+            broker: Default::default(),
             metatrader: Default::default(),
             paper: Default::default(),
             deals: Default::default(),

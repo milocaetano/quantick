@@ -9,6 +9,7 @@
 use eframe::egui;
 use quantick_control_handlers::market_palette::MarketPaletteHost as _;
 use quantick_engine::Side;
+use quantick_paper::route::RoutePress;
 use quantick_session::paper::TradeCommand;
 
 use crate::app::indicator_manager::IndicatorEdit;
@@ -80,6 +81,7 @@ pub(in crate::app) fn draw(app: &mut QuantickApp, ctx: &egui::Context) {
                 .window(quantick_workspace::arrangement::windows::WindowId(scope))
                 .is_some()
         });
+    let notice = app.runtime.broker.sheet().map(|sheet| sheet.notice.clone());
     let tab = app.active_tab();
     let snapshot = quantick_ui_model::chrome_toolbar::Snapshot {
         capsule: capsule.clone(),
@@ -94,7 +96,8 @@ pub(in crate::app) fn draw(app: &mut QuantickApp, ctx: &egui::Context) {
         dock_visible,
         paper: tab
             .paper
-            .trade_bar(&ctx.format_shortcut(&crate::app::menu_bar::PAPER_REVERSE_SHORTCUT)),
+            .trade_bar(&ctx.format_shortcut(&crate::app::menu_bar::PAPER_REVERSE_SHORTCUT))
+            .with_notice(notice),
     };
     app.surfaces.update_scoped(
         scope,
@@ -177,6 +180,10 @@ impl QuantickApp {
             | ToolbarAction::ToggleWorkspaceMenu
             | ToolbarAction::SaveWorkspace => {}
             ToolbarAction::ToggleDock => self.surfaces.dock.toggle_visible(),
+            ToolbarAction::OpenAccountList => {
+                self.surfaces.dock.open_tab(crate::dock::DockTab::Trading);
+                self.runtime.route(&self.config).press(RoutePress::OpenList);
+            }
             // Every indicator command lands on the focused pane (§11), which
             // is the flow pane whenever the canvas is not split.
             // Adding an indicator by hand is the plainest possible request to

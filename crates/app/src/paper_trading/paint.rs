@@ -17,6 +17,7 @@ use rust_decimal::prelude::ToPrimitive;
 use quantick_paper::desk::geometry::TAG_HOVER_SLACK_PX;
 use quantick_paper::desk::leg_tag::{AimLeg, LegPaint, aim_leg_text, leg_tag_text};
 use quantick_paper::desk::{AimPaint, CmdPreview, PaperDrag, TagKey};
+use quantick_paper::format::aim_label;
 
 use super::input::Axis;
 use super::paint_ctx::{
@@ -26,10 +27,10 @@ use super::paint_ctx::{
 use super::{
     AIM_ECHO_ALPHA, AIM_ECHO_DASH_PX, AIM_ECHO_GAP_PX, AIM_ECHO_WIDTH_PX, CMD_LINE_MAX_DASHES,
     LINE_HOVER_WIDTH_PX, LINE_WIDTH_PX, Leg, ORDER_DASH_PX, ORDER_GAP_PX, POSITION_LINE_WIDTH_PX,
-    PaperTrading, kind_word, leg_color, side_word, side_word_upper,
+    PaperTrading, kind_word, leg_color, side_word,
 };
 use crate::chart::PriceScale;
-use crate::paper_chrome::{fmt_decimal, points_color, position_word};
+use crate::paper_chrome::{fmt_decimal, points_color};
 use crate::theme;
 
 impl PaperTrading {
@@ -131,7 +132,7 @@ impl PaperTrading {
             let mut text = if expanded {
                 format!(
                     "#{} {} {} @ {}",
-                    order.id.0,
+                    self.paper.account.plate_id(order.id),
                     name,
                     fmt_decimal(order.quantity),
                     fmt_decimal(shown),
@@ -146,7 +147,9 @@ impl PaperTrading {
             }
             // The ✕ is painted exactly when the press-side offers it —
             // one value, read twice, never two formulas.
-            ctx.chip_tag(y, color, &text, open.is_some_and(|tag| tag.cancel), false);
+            // A ghost until the broker confirms it as it stands.
+            let sent = self.paper.account.awaiting_ack(order.id);
+            ctx.chip_tag(y, color, &text, open.is_some_and(|tag| tag.cancel), sent);
 
             // The order's own protective legs, and the handles for the ones
             // it does not have yet. Dashed, because they are a promise: they
@@ -176,11 +179,7 @@ impl PaperTrading {
             if ctx.in_range(entry_y) {
                 ctx.level_line(entry_y, color, false, POSITION_LINE_WIDTH_PX, false, false);
                 ctx.gutter_chip(entry_y, color, &fmt_decimal(position.avg_price));
-                let side_text = format!(
-                    "SIM {} {}",
-                    position_word(position.side),
-                    fmt_decimal(position.quantity),
-                );
+                let side_text = self.paper.account.position_chip().unwrap_or_default();
                 let points = self
                     .paper
                     .account
@@ -389,6 +388,7 @@ impl PaperTrading {
                 ctx,
                 &LegPaint {
                     owner,
+                    owner_ref: self.paper.account.venue_ref(owner),
                     leg,
                     side,
                     reference,
@@ -555,13 +555,8 @@ impl PaperTrading {
                 ink
             }
         };
-        let quantity = preview.quantity.map_or_else(|| "?".to_owned(), fmt_decimal);
-        let text = format!(
-            "{} {} {}",
-            side_word_upper(preview.side),
-            kind_word(preview.kind),
-            quantity,
-        );
+        let route = self.paper.account.route_kind();
+        let text = aim_label(route, preview.side, preview.kind, preview.quantity);
         let galley = ctx
             .painter
             .layout_no_wrap(text, palette.mono_font(11.0), ink);

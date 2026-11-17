@@ -42,13 +42,13 @@ The three exclusion classes are closed:
 
 | Outcome | Behaviours |
 | --- | --- |
-| Reachable by capability | 143 |
+| Reachable by capability | 144 |
 | Excluded: `authority` | 4 |
 | Excluded: `ui_only_by_decision` | 7 |
 | Excluded: `pending_capability` | 39 |
-| **Total** | **193** |
+| **Total** | **194** |
 
-99 of the 193 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 94 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
+99 of the 194 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 95 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
 
 ## Behaviours
 
@@ -151,6 +151,7 @@ The three exclusion classes are closed:
 | `indicator.script.remove` | Remove a script indicator | the legend row's close, and the indicator picker | `indicator.script.detach` | — |
 | `indicator.settings.open` | Open an indicator's settings | the legend row's gear, and the indicator picker | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
 | `indicator.source.edit` | Read, copy and edit Pine source | Indicators > Scripts > View source; Pine source window | `indicator.library.edit` | — |
+| `trade.account.route` | Choose where orders go: the simulator or the broker account | the Trading panel's Account selector, the toolbar's orders notice | `trade.account.select` | — |
 | `trade.aim.bracket` | Send an entry with its stop and target attached | the ticket's bracket fields, and the aim on the chart | `trade.order.bracket` | — |
 | `trade.instrument.money.set` | Declare what one point of an instrument is worth | the Trading panel's instrument section | `trade.instrument.set_money` | — |
 | `trade.journal.filter` | Filter the trades ledger by source, dates, #tags or session name | the Trades tab's filter row | `session.journal.set` | — |
@@ -256,7 +257,7 @@ matrix fails the build.
 
 | Source | Claims |
 | --- | --- |
-| `toolbar_action` | 21 |
+| `toolbar_action` | 22 |
 | `strip_action` | 6 |
 | `tab_action` | 4 |
 | `dock_tab` | 3 |
@@ -269,7 +270,7 @@ matrix fails the build.
 | `hotkey` | 25 |
 | `menu_entry` | 47 |
 | `scripted_menu` | 0 |
-| `authored` | 96 |
+| `authored` | 97 |
 
 ## Appendix: rows no registry stands behind
 
@@ -337,6 +338,7 @@ declares nothing here is a guard failure.
 | `indicator.mouse_vertical_line.toggle` | the indicator pane's Mouse vertical line checkbox |
 | `indicator.native.remove` | the legend row close, which the toolbar enum sees only as `RemoveIndicator` |
 | `indicator.source.edit` | View source / Create editable copy / Save / source text editor |
+| `trade.account.route` | the Trading panel Account selector |
 | `trade.aim.bracket` | the ticket bracket fields and the aim on the chart |
 | `trade.instrument.money.set` | the Trading panel instrument section |
 | `trade.journal.filter` | the Trades tab source pills, date picker and search box |

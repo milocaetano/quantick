@@ -36,6 +36,9 @@ pub struct LegPaint {
     /// Whose leg this is. Also the drag identity: a leg being moved and a
     /// leg being created differ only in whether it existed a frame ago.
     pub owner: BracketTarget,
+    /// The broker's ticket for the owner, when a broker holds it: the tag
+    /// names that number (`#88412094 TP`) instead of the account's own.
+    pub owner_ref: Option<u64>,
     pub leg: Leg,
     /// Side of the trade the leg protects.
     pub side: Side,
@@ -66,9 +69,10 @@ pub fn leg_tag_text(
     dragging: bool,
     pnl: SymbolPnl<'_>,
 ) -> String {
-    let owner = match paint.owner {
-        BracketTarget::Order(id) => format!("#{} ", id.0),
-        BracketTarget::Position => String::new(),
+    let owner = match (paint.owner_ref, paint.owner) {
+        (Some(ticket), _) => format!("#{ticket} "),
+        (None, BracketTarget::Order(id)) => format!("#{} ", id.0),
+        (None, BracketTarget::Position) => String::new(),
     };
     let at = signed_points(paint.side, paint.reference, shown, paint.quantity);
     let figure = pnl.reader.compact(pnl.symbol, at, paint.quantity);

@@ -45,6 +45,7 @@ use super::FeedNotice;
 
 mod autostart;
 use autostart::{Action, Autostart};
+pub mod exec;
 
 /// How long the autostart waits for a bridge that is already running before
 /// launching its own. Long enough for an attached Expert Advisor's reconnect
@@ -697,6 +698,20 @@ fn exit_notice(explained: bool, code: Option<i32>) -> Option<FeedNotice> {
     ))
 }
 
+/// Log one line a bridge process printed. Every line reaches the log
+/// verbatim, recognized or not: a Python traceback is exactly the case where
+/// hiding the unknown would hurt.
+fn log_bridge_line(event_code: &'static str, symbol: &str, line: &str) {
+    info!(
+        target: "quantick::app",
+        schema_version = 1_u8,
+        event_code,
+        symbol = %symbol,
+        line = %line,
+        "bridge output"
+    );
+}
+
 /// Log one bridge stderr line and, when it means something to a person, send
 /// it on as a notice. Returns whether the line is one the bridge stops after —
 /// i.e. whether it explains an exit that follows.
@@ -710,16 +725,7 @@ async fn forward_bridge_line(
     if trimmed.is_empty() {
         return false;
     }
-    // Every line reaches the log verbatim, recognized or not: a Python
-    // traceback is exactly the case where hiding the unknown would hurt.
-    info!(
-        target: "quantick::app",
-        schema_version = 1_u8,
-        event_code = "MT5_BRIDGE_SAID",
-        symbol = %symbol,
-        line = %trimmed,
-        "bridge output"
-    );
+    log_bridge_line("MT5_BRIDGE_SAID", symbol, trimmed);
     let Some(report) = report_for_line(trimmed) else {
         return false;
     };

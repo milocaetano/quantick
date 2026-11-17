@@ -166,7 +166,8 @@ impl<A: BorrowMut<PaperAccount>> TabPaper<A> {
             Ok(events) => TradeOutcome::sent(events),
             Err(refusal) => {
                 let sentence = refusal.sentence();
-                self.show_toast(format!("SIM: {sentence}"));
+                let word = self.core().route_kind().word();
+                self.show_toast(format!("{word}: {sentence}"));
                 TradeOutcome::refused(sentence)
             }
         }

@@ -237,6 +237,9 @@ impl TradePort for dyn ControlPort {
         self.paper_settings()
             .persist(PaperSettingsChange::RiskSettings);
     }
+    fn route_call(&mut self) -> Option<quantick_paper::route::RouteCall<'_>> {
+        Some(self.broker_route())
+    }
 }
 
 impl AnalysisPane for ChartPane {

@@ -1,0 +1,17 @@
+[package]
+name = "quantick-broker-mt5"
+description = "A TradingVenue that executes through the logged-in MetaTrader 5 terminal, over the bridge's execution channel"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+quantick-engine = { path = "../engine" }
+quantick-trading = { path = "../trading" }
+rust_decimal = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

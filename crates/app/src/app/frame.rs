@@ -637,13 +637,7 @@ impl QuantickApp {
 
     fn draw_dock_stage(&mut self, ctx: &egui::Context) -> Option<crate::surfaces::SurfaceResponse> {
         let alerts_open = self.surfaces.alerts.is_open();
-        let response = panels::draw_dock(
-            ctx,
-            &mut self.surfaces,
-            &mut self.runtime.tabs,
-            self.runtime.tz,
-            alerts_open,
-        );
+        let response = panels::draw_dock(ctx, &mut self.surfaces, &mut self.runtime, alerts_open);
         let response = match begin_dock_effects(self, ctx, response) {
             Ok(response) => response,
             Err(response) => return Some(*response),
@@ -834,11 +828,16 @@ fn begin_dock_effects(
     ctx: &egui::Context,
     response: crate::surfaces::SurfaceResponse,
 ) -> Result<crate::surfaces::PaperPanelEffects, Box<crate::surfaces::SurfaceResponse>> {
-    let begun = begin_paper_panel_effects(
+    let mut begun = begin_paper_panel_effects(
         &mut app.runtime.tabs,
         &mut app.surfaces.replay_browser,
         response,
     );
+    if let Ok(effects) = begun.as_mut()
+        && let Some(press) = effects.route.take()
+    {
+        app.runtime.route(&app.config).press(press);
+    }
     let bell = begun.as_ref().is_ok_and(|effects| effects.open_alerts);
     super::alerts_runtime::after_dock(app, ctx, bell);
     begun

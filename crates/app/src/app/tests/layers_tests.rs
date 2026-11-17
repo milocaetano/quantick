@@ -1243,6 +1243,7 @@ fn a_layer_the_source_cannot_draw_says_why_in_a_code_not_a_sentence() {
                 open_interest: false,
                 funding: false,
                 spot_perp_pair: false,
+                order_routing: false,
             }),
             commands: cmd_tx,
             replay: None,

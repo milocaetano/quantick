@@ -85,6 +85,7 @@ pub(crate) fn update_indicator_settings(
     }
 }
 
+mod account_route_tests;
 mod alert_target_binding_tests;
 mod alerts_control_tests;
 mod alerts_native_tests;
@@ -430,6 +431,7 @@ fn test_config() -> AppConfig {
             record_deals: false,
             short_name: None,
         }],
+        broker: Default::default(),
         metatrader: Default::default(),
         paper: Default::default(),
         deals: Default::default(),
@@ -1878,6 +1880,7 @@ fn app_backfilled_with(
                 open_interest: false,
                 funding: false,
                 spot_perp_pair: false,
+                order_routing: false,
             }),
             latency: feed::unsplit_latency(),
             commands: cmd_tx,
@@ -2026,6 +2029,7 @@ fn two_metatrader_feeds() -> AppConfig {
                 short_name: None,
             },
         ],
+        broker: Default::default(),
         metatrader: crate::config::MetaTraderSettings {
             ports,
             ..Default::default()

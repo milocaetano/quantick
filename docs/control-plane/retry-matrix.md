@@ -115,8 +115,8 @@ key and lost-reply proofs live in `crates/mcp/tests/fake_gateway.rs`.
 | deduplicated per connection | 93 |
 | key refused; not retryable, read back | 17 |
 | key required; deduplicated per connection | 19 |
-| refused before dispatch: no grant reaches it | 9 |
-| **Total** | **138** |
+| refused before dispatch: no grant reaches it | 11 |
+| **Total** | **140** |
 
 ## Capabilities
 
@@ -238,6 +238,8 @@ key and lost-reply proofs live in `crates/mcp/tests/fake_gateway.rs`.
 | `tab.close` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `workspace.tab_closed` | `payload.tab_id` | an event after the pre-call cursor names the closed tab | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `tab.market.set` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `feed.status` | `tabs[].active_symbol` | the tab reports the requested active_feed_id and active_symbol; feed_generation advances by one when the market changed and not otherwise | `a_market_switch_moves_the_button_chip_and_status_cell_together`, `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `tab.workspace.set` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `workspace.tab_set` | `payload.workspace` | an event after the pre-call cursor names the requested workspace | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
+| `trade.account.disarm` | 1 | optional | refused before dispatch: no grant reaches it | none (`trader` ceiling) | `events.read` `trade.account.routed` | `payload.route` | an event after the pre-call cursor names `sim` as the route | `no_production_grant_reaches_a_trade_capability_keyed_or_not` |
+| `trade.account.select` | 1 | optional | refused before dispatch: no grant reaches it | none (`trader` ceiling) | `events.read` `trade.account.routed` | `payload.route` | an event after the pre-call cursor names the route asked for | `no_production_grant_reaches_a_trade_capability_keyed_or_not` |
 | `trade.instrument.set_money` | 1 | optional | refused before dispatch: no grant reaches it | none (`trader` ceiling) | `events.read` `trade.ticket.changed` | `payload.asked` | an event after the pre-call cursor carries the caller's input as `asked` | `no_production_grant_reaches_a_trade_capability_keyed_or_not` |
 | `trade.order.bracket` | 1 | forbidden | refused before dispatch: no grant reaches it | none (`trader` ceiling) | `snapshot.read` `session.paper` (also needs `observe.paper`) | `tabs[].working_orders[].stop_loss` | the named order carries the stop and target asked for | `no_production_grant_reaches_a_trade_capability_keyed_or_not` |
 | `trade.order.cancel` | 1 | forbidden | refused before dispatch: no grant reaches it | none (`trader` ceiling) | `snapshot.read` `session.paper` (also needs `observe.paper`) | `tabs[].working_orders[].order_id` | the named order is no longer working | `no_production_grant_reaches_a_trade_capability_keyed_or_not` |
@@ -261,4 +263,4 @@ key and lost-reply proofs live in `crates/mcp/tests/fake_gateway.rs`.
 | `workspace.save_as` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `workspace.saved` | `payload.workspace` | an event after the pre-call cursor names the new workspace | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `workspace.save_to` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `workspace.saved` | `payload.workspace` | an event after the pre-call cursor names the tab's workspace | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 
-138 mutable capabilities registered, 138 with a readback.
+140 mutable capabilities registered, 140 with a readback.

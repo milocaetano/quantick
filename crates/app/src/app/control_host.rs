@@ -159,6 +159,8 @@ pub(crate) trait LayoutPort {
 /// The paper-trading settings owner.
 pub(crate) trait PaperPort {
     fn paper_settings(&mut self) -> super::paper_wiring::PaperSettingsAdapter<'_>;
+    /// Where orders go, joined with the tabs it routes for.
+    fn broker_route(&mut self) -> quantick_paper::route::RouteCall<'_>;
 }
 
 /// The chart-layer owner.
@@ -490,6 +492,8 @@ pub(crate) struct ChromeReads<'a> {
     settings: Option<quantick_control_schema::settings_sections::SettingsSection>,
     /// The toolbar's list door, capsule and layout popover, as drawn.
     pub(crate) toolbar: &'a [crate::toolbar::DrawnControl],
+    /// The Trading panel's route block, while broker routes are offered.
+    pub(crate) route: Option<&'a quantick_paper::route::Sheet>,
 }
 
 /// What the last frame published about the window chrome.
@@ -544,6 +548,7 @@ impl<'a> ChromeReads<'a> {
             window_menu: None,
             settings: None,
             toolbar: &[],
+            route: None,
         }
     }
 
@@ -914,14 +919,13 @@ impl ChromePort for QuantickApp {
             feed_popup_tab: self.surfaces.feed_notice.model_state.open(),
             replay_day_before: self.surfaces.replay_browser.day_before(),
         };
-        let (rail, chrome) = (&self.surfaces.toolrail, &self.surfaces.drawing_chrome);
         let mut reads = ChromeReads::new(
             &self.runtime.tabs,
             &self.runtime.style,
-            rail,
+            &self.surfaces.toolrail,
             &self.surfaces.dock.model_state,
             self.runtime.tz,
-            chrome,
+            &self.surfaces.drawing_chrome,
             drawn,
         );
         reads.alerts_open = self.surfaces.alerts.is_open();
@@ -929,6 +933,7 @@ impl ChromePort for QuantickApp {
         reads.window_menu = Some(&self.chrome.window_menu);
         reads.settings = self.surfaces.settings_window.model_state.shown();
         reads.toolbar = &self.chrome.toolbar_controls;
+        reads.route = self.runtime.broker.sheet();
         reads
     }
 }
@@ -964,10 +969,10 @@ impl LayoutPort for QuantickApp {
 
 impl PaperPort for QuantickApp {
     fn paper_settings(&mut self) -> PaperSettingsAdapter<'_> {
-        PaperSettingsAdapter {
-            tabs: &mut self.runtime.tabs,
-            workspace: &mut self.runtime.workspace,
-        }
+        self.runtime.paper_settings()
+    }
+    fn broker_route(&mut self) -> quantick_paper::route::RouteCall<'_> {
+        self.runtime.route(&self.config)
     }
 }
 

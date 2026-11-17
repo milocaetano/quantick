@@ -483,12 +483,19 @@ impl Tab {
     ) {
         for stage in stages {
             match stage {
-                TabDrainStage::ReceiveSource => self.drain_feed_with_stages(
-                    tab_id,
-                    metrics::wall_clock_ms,
-                    quantick_chart_interaction::source_drain_plan::SourceDrainPlan::stages(),
-                    observer,
-                ),
+                TabDrainStage::ReceiveSource => {
+                    self.drain_feed_with_stages(
+                        tab_id,
+                        metrics::wall_clock_ms,
+                        quantick_chart_interaction::source_drain_plan::SourceDrainPlan::stages(),
+                        observer,
+                    );
+                    // After the drain: a symbol switch inside it forgets the old tick.
+                    let tick = config
+                        .feed(&self.feed_id)
+                        .and_then(|f| f.widget_tick(&self.symbol));
+                    self.paper.account_mut().set_price_tick(tick);
+                }
                 TabDrainStage::ApplyIndicatorResults => {
                     for pane in self.panes_mut() {
                         pane.apply_indicator_events();

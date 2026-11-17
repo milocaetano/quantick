@@ -559,3 +559,170 @@ version bumps, so the two sides can be upgraded independently:
   `load_older`, so the bridge's reader simply never has anything to read and its
   `history_start`/`history_end` path never runs. The extra hello field lands in
   the "unknown fields are ignored" rule.
+
+## Execution channel (exec schema 2)
+
+A second, separate socket that carries orders to the terminal and the
+account's state back. It is not part of the feed session above: its own port
+(`[broker.metatrader] exec_port`, default `9180`), its own process
+(`quantick_bridge_exec.py`), its own schema number. The executable counterpart
+is `crates/broker-mt5/src/wire.rs`; its tests parse the example lines below.
+
+**Quantick listens and the bridge dials**, as on the feed socket, and here it
+is a security property rather than an MQL5 limitation: a local process that
+dials quantick's port can at worst show it a false account, while a bridge that
+listened would place orders for any local process that connected. Quantick
+binds `127.0.0.1` only. No credentials exist on either side.
+
+Prices and volumes travel as **decimal strings** both ways (`"124900"`,
+`"2"`); a protective price that is absent is `null`, never `0`.
+
+### Session shape
+
+```
+exec_hello                   bridge → quantick, exactly once, first line
+  ◀─ watch                   quantick → bridge: the symbol to report
+reply | state × …            until the session ends
+  ◀─ submit | cancel | modify | sltp | close
+bye                          optional clean goodbye
+```
+
+### exec_hello
+
+```json
+{"type":"exec_hello","schema":2,"bridge":"quantick-mt5-exec-py","bridge_version":"0.1.0","instance":"9f1c"}
+```
+
+`instance` is unique per bridge process. Quantick compares it across
+reconnects: the same instance still remembers every reply it gave (see
+*Idempotency*); a different one does not. A hello with another `schema` is
+never written to.
+
+### Requests (quantick → bridge)
+
+Every request carries `id`, a string unique across quantick runs (a per-run
+tag plus a counter). Order requests also carry the configured `magic` and
+`deviation` (points), and `comment` is the request id, so the terminal's own
+history shows which request placed what.
+
+Every request but `watch` carries `expires_ms`, Unix milliseconds on the
+machine both ends share: the earliest moment quantick could declare the link
+lost for its silence and stop waiting for the answer. The bridge refuses a
+request it reaches at or after that moment, without calling `order_send`
+(`retcode` `null`, `error` saying it expired), so a bridge that hung and
+woke on the same socket never executes what quantick already reported as of
+unknown outcome. Quantick sends no order request before it has been handed
+the time.
+
+```json
+{"type":"watch","id":"a1b2-1","symbol":"WINZ26"}
+{"type":"submit","id":"a1b2-2","symbol":"WINZ26","side":"buy","kind":"market","volume":"2","sl":"124800","tp":null,"magic":7710001,"deviation":10,"comment":"a1b2-2","expires_ms":1763380806000}
+{"type":"submit","id":"a1b2-3","symbol":"WINZ26","side":"sell","kind":"limit","volume":"1","price":"125300","sl":null,"tp":null,"magic":7710001,"deviation":10,"comment":"a1b2-3","expires_ms":1763380806000}
+{"type":"cancel","id":"a1b2-4","order":601,"expires_ms":1763380806000}
+{"type":"modify","id":"a1b2-5","order":601,"price":"125250","sl":null,"tp":"124900","expires_ms":1763380806000}
+{"type":"sltp","id":"a1b2-6","symbol":"WINZ26","position":77,"sl":"124800","tp":"125400","magic":7710001,"expires_ms":1763380806000}
+{"type":"close","id":"a1b2-7","position":77,"volume":"1","magic":7710001,"deviation":10,"comment":"a1b2-7","expires_ms":1763380806000}
+```
+
+How each maps onto `order_send`, mirroring the request shapes of an existing
+production MT5 connector:
+
+| request | `action` | details |
+| --- | --- | --- |
+| `submit` market | `TRADE_ACTION_DEAL` | `ORDER_TYPE_BUY`/`SELL` at the ask/bid, `ORDER_FILLING_RETURN` |
+| `submit` limit/stop | `TRADE_ACTION_PENDING` | `ORDER_TYPE_{BUY,SELL}_{LIMIT,STOP}`, `ORDER_TIME_DAY`, `ORDER_FILLING_RETURN` |
+| `cancel` | `TRADE_ACTION_REMOVE` | the order ticket |
+| `modify` | `TRADE_ACTION_MODIFY` | price, sl and tp together; the order's own time-in-force kept |
+| `sltp` | `TRADE_ACTION_SLTP` | the position ticket; `null` clears a side |
+| `close` | `TRADE_ACTION_DEAL` | opposite side, `position` = the ticket, volume clamped to what is open |
+
+Stops and targets are always the terminal's native SL/TP. A `close` for a
+position that is not open is refused by the bridge without calling
+`order_send`: on a netting account that deal would open a new position.
+
+**Every price is put on the tick grid before `order_send`.** Each positive
+`price`, `sl` and `tp` of the built request is moved to the nearest multiple
+of the symbol's `trade_tick_size`, then rounded to its `digits`: a stop
+dragged on the chart arrives wherever the pointer was (`172140.82`), and B3
+refuses an off-grid stop or target as `10016` "Invalid stops" — on WINZ26
+(tick 5, digits 0) `172140.82` goes as `172140` and `172207.6` as `172210`.
+An entry `price` goes to the nearest tick; a stop or a target whose side
+the bridge can name (the submit's side, the position's or the order's type)
+goes to the tick on its own side, away from the entry (a long's stop down
+and target up, a short's the other way), so a level dragged next to the
+market never lands on or past it. A positive protection never snaps to `0.0`.
+`0.0` (no stop, no target) stays `0.0`. A symbol whose information or tick
+size is unknown has its prices sent as they came: an exit never waits on
+symbol information.
+
+### reply (bridge → quantick)
+
+```json
+{"type":"reply","id":"a1b2-2","retcode":10009,"comment":"Request executed","order":501,"deal":901,"volume":"2","price":"125000","cached":false}
+{"type":"reply","id":"a1b2-3","retcode":10016,"comment":"Invalid stops","order":0,"deal":0,"volume":"0","price":"0","cached":false}
+{"type":"reply","id":"a1b2-7","retcode":null,"error":"position 77 is not open: nothing to close","cached":false}
+```
+
+`retcode` and `comment` are the terminal's, verbatim; quantick decides which
+codes mean success (10008 placed, 10009 done, 10010 partial, 10025 no
+changes) and shows any other comment to the trader as written. `retcode`
+`null` means the bridge refused before asking the terminal, and `error` says
+why. `order` is the broker ticket quantick shows on the order from then on.
+
+### Idempotency
+
+The bridge remembers every reply by request id for as long as its process
+lives (bounded, oldest forgotten first). A request whose id was already
+answered gets the remembered reply again, `"cached":true`, and **never reaches
+`order_send` a second time** — a refusal is remembered too, never retried
+behind the trader's back. Quantick resends an unanswered request only to the
+same `instance`, same id and same line plus `"replay_only":true`: it asks for
+the remembered answer, never for an execution.
+
+```json
+{"type":"submit","id":"a1b2-2","symbol":"WINZ26","side":"buy","kind":"market","volume":"2","sl":"124800","tp":null,"magic":7710001,"deviation":10,"comment":"a1b2-2","expires_ms":1763380806000,"replay_only":true}
+{"type":"reply","id":"a1b2-2","retcode":null,"unknown":true,"error":"never received: not executed","cached":false}
+```
+
+A `replay_only` request whose id this process never answered was never
+received, so it is not executed — a late fill could land after the trader
+stood down — and the answer is `"unknown":true` (remembered like any other,
+so the id can never execute later). Quantick reports that request's outcome
+as unknown. A bridge with a new instance has no memory, so quantick resends
+nothing and treats those requests' outcome as unknown until the next `state`
+shows it.
+
+### state (bridge → quantick)
+
+```json
+{"type":"state","symbol":"WINZ26","account":{"login":1234567,"server":"Broker-DEMO","company":"Broker Ltd","trade_mode":"demo","margin_mode":"exchange","balance":"100000.00","currency":"BRL"},"positions":[{"ticket":77,"side":"buy","volume":"2","price_open":"125000","sl":"124800","tp":null,"magic":7710001,"time_msc":1000}],"orders":[],"deals":[],"closed_orders":[]}
+```
+
+One line holds everything about the watched symbol, so quantick applies it as
+one fact — deals before positions. Pushed when anything in it changes, after
+every reply, and at least every two seconds.
+
+- `account` — `null` when the terminal is logged out. `trade_mode` is
+  `demo`, `contest` or `real`, read from `account_info().trade_mode`.
+  `margin_mode` is `netting`, `exchange` or `hedging`; quantick refuses a
+  hedging account (the bridge reports it, it does not refuse it).
+- `positions`, `orders` — everything on the symbol, **with its `magic`**:
+  quantick treats any magic other than its own as another program's, shows it,
+  never touches it, and refuses new entries while it exists. An order's `kind`
+  is `market`, `limit`, `stop`, `stop_limit` or `close_by`.
+- `deals` — trade deals on the symbol not yet pushed on this connection
+  (`entry` `in`/`out`/`inout`/`out_by`; `reason` `client`, `expert`, `sl`,
+  `tp`, ...). A new connection pushes the recent history again; quantick dedups
+  by ticket, and the first state of a session is history, not news. A deal the
+  terminal writes late, stamped older than the newest one already pushed, is
+  pushed when the bridge next reads the whole history window (every ten
+  seconds), once.
+- `closed_orders` — orders that left the working list, once the terminal's
+  history says how: `canceled`, `expired`, `rejected`, `partial`, `filled`,
+  or `unknown` when no record of how it ended appeared in time (a record
+  still `started` or `placed` is waited on, never reported). A filled order is
+  answered by its deal.
+
+Deal and position times are the server's wall clock as the terminal stores
+them; quantick stamps fills with the venue time of the last print it saw
+rather than converting them.

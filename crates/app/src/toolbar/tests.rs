@@ -316,6 +316,7 @@ fn the_toolbar_lays_out_against_a_real_context() {
                             open_interest: false,
                             funding: false,
                             spot_perp_pair: false,
+                            order_routing: false,
                         },
                         dock_visible: true,
                         paper: flat_trade(true),
@@ -380,6 +381,7 @@ fn a_quote_driven_feed_lays_the_toolbar_out_with_its_volume_widgets_disabled() {
                         open_interest: false,
                         funding: false,
                         spot_perp_pair: false,
+                        order_routing: false,
                     },
                     dock_visible: true,
                     // Not yet ready: the TRADE pair must lay out in its
@@ -433,6 +435,7 @@ fn flat_trade(ready: bool) -> PaperTradeModel {
         sell: texts("SELL 1", "simulated market sell"),
         close: None,
         reverse_hover: "reverse · Shift+R".to_owned(),
+        notice: None,
     }
 }
 
@@ -494,6 +497,7 @@ fn toolbar_shapes(paper: PaperTradeModel, width: f32) -> Vec<egui::epaint::Clipp
                         open_interest: false,
                         funding: false,
                         spot_perp_pair: false,
+                        order_routing: false,
                     },
                     dock_visible: true,
                     paper: paper.clone(),

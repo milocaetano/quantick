@@ -28143,6 +28143,522 @@
         "status": "available"
       },
       "confirmation_class": "none",
+      "description": "Disarms any broker route: orders go to the simulator from now on. Risk-reducing. With a position or orders open at the broker, `leave` says whether to flatten them first or leave them there, their plates staying on the chart.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "trade",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "trade.account.disarm",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "LeaveChoice": {
+            "description": "How to leave a broker route that still holds a position or orders.",
+            "oneOf": [
+              {
+                "const": "flatten_first",
+                "description": "Close the position and cancel the orders at the broker first.",
+                "type": "string"
+              },
+              {
+                "const": "leave_at_broker",
+                "description": "Leave them at the broker; their plates stay on the chart.",
+                "type": "string"
+              }
+            ]
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "leave": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/LeaveChoice"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Required to leave a broker route with exposure open."
+          }
+        },
+        "title": "AccountDisarmInput",
+        "type": "object"
+      },
+      "module": "trade",
+      "output_schema": {
+        "$defs": {
+          "WorkingOrderView": {
+            "description": "One working order, as a caller reads it back.",
+            "properties": {
+              "kind": {
+                "type": "string"
+              },
+              "order_id": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "price": {
+                "description": "Resting price, absent only for an order that has none.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "quantity": {
+                "type": "string"
+              },
+              "side": {
+                "type": "string"
+              },
+              "stop_loss": {
+                "description": "The protective stop riding this order, armed on its fill.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "take_profit": {
+                "description": "The protective target riding this order; see `stop_loss`.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "order_id",
+              "side",
+              "kind",
+              "quantity"
+            ],
+            "type": "object"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "What every `trade.*` action answers with.\n\n`accepted` is the one field a caller must read. A refusal is not an\nerror return here for the same reason it is not one in the venue port:\nthe venue's messages are written to teach, and a result that carried\nonly a status code would throw away the sentence that says what to do\ninstead.",
+        "properties": {
+          "accepted": {
+            "description": "Whether the venue took the request.",
+            "type": "boolean"
+          },
+          "mark_price": {
+            "description": "The last price the venue had been shown when this call landed.\n\nEvery refusal in this family is a statement about a price relative to\nthe market, so a caller that got one needs the market to understand\nit — and a caller that got an acceptance needs it to know what its\norder is resting away from. Absent before the first print, which is\nalso when nothing can be placed.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "order_id": {
+            "description": "The order this call is about, once the venue has named it.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "rejected_because": {
+            "description": "The venue's own words when it did not. Absent when it did.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ruler_ticks": {
+            "description": "How far the aim's ruler stands from an entry, in ticks; zero when it\nis not in use.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "selected_strategy": {
+            "description": "The named exit ladder the ticket is set to, if any. Every call in\nthis family reports it, because it is what the *next* order will\ncarry and a caller that placed one needs to know which ladder it\njust armed.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "simulated": {
+            "description": "A reminder in every result: these fills are simulated.",
+            "type": "boolean"
+          },
+          "working_orders": {
+            "description": "Every order working after the call, so a caller never has to guess\nwhat the account looks like now.",
+            "items": {
+              "$ref": "#/$defs/WorkingOrderView"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "accepted",
+          "working_orders",
+          "ruler_ticks",
+          "simulated"
+        ],
+        "title": "TradeResult",
+        "type": "object"
+      },
+      "persistence": "transient",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "trade"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": true,
+      "stale_input_safety": "Disarming an unarmed account changes nothing, so a retried call is harmless.",
+      "title": "Go back to the simulator",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Reads the account route - the simulator, or the broker account the MetaTrader terminal is logged into, demo or real - with the account list the Trading panel shows, each row's facts and why a row is off. Changes nothing.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "observe",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "trade.account.read",
+      "idempotency": "forbidden",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "Reads take nothing.",
+        "title": "AccountReadInput",
+        "type": "object"
+      },
+      "module": "trade",
+      "output_schema": {
+        "$defs": {
+          "AccountRowView": {
+            "description": "One row of the account list, as the panel shows it.",
+            "properties": {
+              "details": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "gesture": {
+                "description": "`click`, `hold` or `none`: what the panel's press does.",
+                "type": "string"
+              },
+              "hint": {
+                "description": "`in use`, `one click`, `hold`, or empty when the row is off.",
+                "type": "string"
+              },
+              "state": {
+                "description": "`selected`, `enabled` or `off`.",
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "title",
+              "hint",
+              "state",
+              "gesture",
+              "details"
+            ],
+            "type": "object"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "The route and everything the panel says about it.",
+        "properties": {
+          "accounts": {
+            "items": {
+              "$ref": "#/$defs/AccountRowView"
+            },
+            "type": "array"
+          },
+          "broker_enabled": {
+            "description": "Whether broker routes are offered at all (`[broker.metatrader]`).",
+            "type": "boolean"
+          },
+          "footer": {
+            "description": "Why the broker row is off, when it is.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "leave_pending": {
+            "description": "A leave with exposure waits for `leave`.",
+            "type": "boolean"
+          },
+          "locked": {
+            "description": "The chart's source cannot route: the selector stays on the simulator.",
+            "type": "boolean"
+          },
+          "orders_to": {
+            "description": "Where orders go, in the toolbar notice's words.",
+            "type": "string"
+          },
+          "route": {
+            "description": "`sim`, `demo` or `real`.",
+            "type": "string"
+          },
+          "title": {
+            "description": "The Trading panel's title.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "route",
+          "orders_to",
+          "title",
+          "broker_enabled",
+          "locked",
+          "accounts",
+          "leave_pending"
+        ],
+        "title": "AccountRouteResult",
+        "type": "object"
+      },
+      "persistence": "none",
+      "preconditions": [],
+      "read_only": true,
+      "required_permissions": [
+        "observe",
+        "observe.paper"
+      ],
+      "reversible": false,
+      "revision_policy": "forbidden",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "title": "Read where orders go",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Routes orders to the simulator, or asks for the broker's DEMO account. Only the trader's own hand arms a broker account: any other caller is refused (`route.agent_cannot_arm`), and a REAL account arms only by holding its row in the Trading panel (`route.real_needs_hold`). Leaving a broker route with a position or orders open needs `leave`.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "trade",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "trade.account.select",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "LeaveChoice": {
+            "description": "How to leave a broker route that still holds a position or orders.",
+            "oneOf": [
+              {
+                "const": "flatten_first",
+                "description": "Close the position and cancel the orders at the broker first.",
+                "type": "string"
+              },
+              {
+                "const": "leave_at_broker",
+                "description": "Leave them at the broker; their plates stay on the chart.",
+                "type": "string"
+              }
+            ]
+          },
+          "RouteChoice": {
+            "description": "Where orders go.",
+            "oneOf": [
+              {
+                "const": "sim",
+                "description": "The paper simulator, filling from the tape.",
+                "type": "string"
+              },
+              {
+                "const": "demo",
+                "description": "The broker account the terminal reports as demo.",
+                "type": "string"
+              },
+              {
+                "const": "real",
+                "description": "The broker account the terminal reports as real money; arms only by\nholding its row in the Trading panel.",
+                "type": "string"
+              }
+            ]
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "leave": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/LeaveChoice"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Required to leave a broker route with exposure open."
+          },
+          "route": {
+            "$ref": "#/$defs/RouteChoice"
+          }
+        },
+        "required": [
+          "route"
+        ],
+        "title": "AccountSelectInput",
+        "type": "object"
+      },
+      "module": "trade",
+      "output_schema": {
+        "$defs": {
+          "WorkingOrderView": {
+            "description": "One working order, as a caller reads it back.",
+            "properties": {
+              "kind": {
+                "type": "string"
+              },
+              "order_id": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "price": {
+                "description": "Resting price, absent only for an order that has none.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "quantity": {
+                "type": "string"
+              },
+              "side": {
+                "type": "string"
+              },
+              "stop_loss": {
+                "description": "The protective stop riding this order, armed on its fill.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "take_profit": {
+                "description": "The protective target riding this order; see `stop_loss`.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "order_id",
+              "side",
+              "kind",
+              "quantity"
+            ],
+            "type": "object"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "What every `trade.*` action answers with.\n\n`accepted` is the one field a caller must read. A refusal is not an\nerror return here for the same reason it is not one in the venue port:\nthe venue's messages are written to teach, and a result that carried\nonly a status code would throw away the sentence that says what to do\ninstead.",
+        "properties": {
+          "accepted": {
+            "description": "Whether the venue took the request.",
+            "type": "boolean"
+          },
+          "mark_price": {
+            "description": "The last price the venue had been shown when this call landed.\n\nEvery refusal in this family is a statement about a price relative to\nthe market, so a caller that got one needs the market to understand\nit — and a caller that got an acceptance needs it to know what its\norder is resting away from. Absent before the first print, which is\nalso when nothing can be placed.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "order_id": {
+            "description": "The order this call is about, once the venue has named it.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "rejected_because": {
+            "description": "The venue's own words when it did not. Absent when it did.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ruler_ticks": {
+            "description": "How far the aim's ruler stands from an entry, in ticks; zero when it\nis not in use.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "selected_strategy": {
+            "description": "The named exit ladder the ticket is set to, if any. Every call in\nthis family reports it, because it is what the *next* order will\ncarry and a caller that placed one needs to know which ladder it\njust armed.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "simulated": {
+            "description": "A reminder in every result: these fills are simulated.",
+            "type": "boolean"
+          },
+          "working_orders": {
+            "description": "Every order working after the call, so a caller never has to guess\nwhat the account looks like now.",
+            "items": {
+              "$ref": "#/$defs/WorkingOrderView"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "accepted",
+          "working_orders",
+          "ruler_ticks",
+          "simulated"
+        ],
+        "title": "TradeResult",
+        "type": "object"
+      },
+      "persistence": "transient",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "trade"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "The call answers with the route now in force. Asking for the route already in force changes nothing, so a retried call is harmless.",
+      "title": "Choose where orders go",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
       "description": "Records what one point of price is worth per unit held, the smallest tradable size, and the currency - the three facts no feed reports and nothing here derives, without which risk sizing has nothing to size against. Leaving any of them out clears the declaration rather than half-setting it.",
       "destructive": false,
       "dry_run_supported": false,

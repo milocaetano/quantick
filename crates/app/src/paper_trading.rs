@@ -20,7 +20,7 @@
 use std::path::{Path, PathBuf};
 
 use eframe::egui;
-#[cfg(any(feature = "scenario-harness", test))]
+#[cfg(test)]
 use quantick_engine::Side;
 use quantick_engine::Trade;
 #[cfg(any(feature = "scenario-harness", test))]
@@ -30,13 +30,13 @@ use quantick_paper::desk::ruler::RULER_MAX_NOTCHES;
 use quantick_session::paper::TabPaper;
 // The words every order surface speaks, decided beside the account.
 use quantick_paper::format::{kind_short, kind_word, side_word_upper};
-#[cfg(any(feature = "scenario-harness", test))]
-use quantick_sim::{Bracket, OrderIntent};
+#[cfg(test)]
+use quantick_sim::Bracket;
 // The journal's own format, and the command type the sim takes, are named
 // only by the tests that drive one; the writing moved to `paper_account`.
 #[cfg(test)]
 use quantick_sim::{ClosedTrade, Command, history};
-#[cfg(any(feature = "scenario-harness", test))]
+#[cfg(test)]
 use rust_decimal::Decimal;
 
 use crate::chart::PriceScale;
@@ -61,6 +61,7 @@ pub(crate) use crate::paper_report::LedgerAction;
 #[cfg(any(feature = "scenario-harness", test))]
 pub(crate) use crate::paper_report::LedgerScope;
 
+pub(crate) mod account_route;
 mod cmd;
 mod input;
 mod paint;
@@ -91,20 +92,6 @@ const PAPER_ORDERS_ENV: &str = "QUANTICK_PAPER_ORDERS";
 /// bracket has.
 #[cfg(any(feature = "scenario-harness", test))]
 const PAPER_ORDER_BRACKET_ENV: &str = "QUANTICK_PAPER_ORDER_BRACKET";
-/// How far a hooked bracket's legs sit from the order, as a fraction of the
-/// mark. Wider than the rung step so the legs never land on a neighbouring
-/// order's line, and wide enough apart that stop and target read as two
-/// levels rather than one thick one.
-#[cfg(any(feature = "scenario-harness", test))]
-const PAPER_ORDER_BRACKET_FRACTION: Decimal = Decimal::from_parts(15, 0, 0, false, 4);
-/// How far the first rung sits from the mark, as a fraction of it. Small
-/// on purpose: a line outside the chart's autoscaled price range paints no
-/// tag, so an order that cannot be reached also cannot be seen.
-#[cfg(any(feature = "scenario-harness", test))]
-const PAPER_ORDERS_STEP_FRACTION: Decimal = Decimal::from_parts(6, 0, 0, false, 4);
-/// Rungs past this are refused — a capture wants a tag or two, not a book.
-#[cfg(any(feature = "scenario-harness", test))]
-const PAPER_ORDERS_MAX_RUNGS: u8 = 4;
 /// Dash geometry of a pending order's line (the last-price line's rhythm).
 const ORDER_DASH_PX: f32 = 4.0;
 /// Gap between dashes of a pending order's line.
@@ -223,14 +210,11 @@ pub struct ChartInput<'a> {
 /// The app-side trading host: the tab's paper (desk and account), the
 /// capture hooks, and the paint and widgets around both.
 pub struct PaperTrading {
-    /// Whether `QUANTICK_PAPER_ORDER_BRACKET` asked the capture hook's
-    /// resting orders to carry protective legs.
+    /// Harness override: the resting orders to place on the first mark
+    /// (`QUANTICK_PAPER_ORDERS`, `QUANTICK_PAPER_ORDER_BRACKET`); `None`
+    /// once they rest.
     #[cfg_attr(not(any(feature = "scenario-harness", test)), allow(dead_code))]
-    order_bracket_demo: bool,
-    /// Harness override: how many rungs of resting orders to place on the
-    /// first mark (`QUANTICK_PAPER_ORDERS`); `None` once they are placed.
-    #[cfg_attr(not(any(feature = "scenario-harness", test)), allow(dead_code))]
-    orders_demo: Option<u8>,
+    capture_orders: Option<quantick_paper::account::CaptureOrders>,
     /// The tab's desk and account, and the decisions that join them
     /// (`quantick_session::paper`). The account is held with the report and
     /// the export threads beside it; everything the ticket, the dock and the
@@ -302,8 +286,7 @@ impl PaperTrading {
         )]
         let host = Self {
             paper: TabPaper::new(crate::paper_account::PaperAccount::with_trades_dir(dir)),
-            order_bracket_demo: false,
-            orders_demo: None,
+            capture_orders: None,
         };
         #[cfg(any(feature = "scenario-harness", test))]
         let host = host.with_launch_hooks();
@@ -316,8 +299,6 @@ impl PaperTrading {
     /// (or under test).
     #[cfg(any(feature = "scenario-harness", test))]
     fn with_launch_hooks(mut self) -> Self {
-        self.order_bracket_demo =
-            crate::hooks::captured::var(PAPER_ORDER_BRACKET_ENV).is_some_and(|value| value == "1");
         self.paper.desk.gesture.cmd_preview_force = crate::hooks::captured::var(CMD_PREVIEW_ENV)
             .and_then(|value| {
                 CmdPreviewForce::parse(&value).or_else(|| {
@@ -333,27 +314,10 @@ impl PaperTrading {
             });
         self.paper.desk.gesture.order_hover_force =
             crate::hooks::captured::var(PAPER_ORDER_HOVER_ENV).is_some_and(|value| value == "1");
-        self.orders_demo = crate::hooks::captured::var(PAPER_ORDERS_ENV).and_then(|value| {
-            value
-                .trim()
-                .parse::<u8>()
-                .ok()
-                .filter(|rungs| (1..=PAPER_ORDERS_MAX_RUNGS).contains(rungs))
-                .or_else(|| {
-                    // Refused, never guessed: a typo that silently
-                    // photographed an orderless chart would read as a
-                    // defect in the thing being photographed.
-                    tracing::warn!(
-                        target: "quantick::app",
-                        schema_version = 1_u8,
-                        event_code = "PAPER_ORDERS_AUTOSTART_UNKNOWN",
-                        value = %value,
-                        max = PAPER_ORDERS_MAX_RUNGS,
-                        "QUANTICK_PAPER_ORDERS wants a rung count from 1 to the maximum"
-                    );
-                    None
-                })
-        });
+        let bracket =
+            crate::hooks::captured::var(PAPER_ORDER_BRACKET_ENV).is_some_and(|v| v == "1");
+        self.capture_orders = crate::hooks::captured::var(PAPER_ORDERS_ENV)
+            .and_then(|value| quantick_paper::account::CaptureOrders::parse(&value, bracket));
         self.paper.desk.strategy_editor.open =
             crate::hooks::captured::var(STRATEGY_EDITOR_ENV).is_some_and(|value| value == "1");
         self.paper.desk.ruler.notches = crate::hooks::captured::var(RULER_TICKS_ENV)
@@ -377,110 +341,13 @@ impl PaperTrading {
     pub fn on_trade(&mut self, trade: &Trade) {
         self.paper.on_trade(trade);
         self.paper.account.follow_journal();
-        // `orders_demo` is a harness field, so its orders rest from here.
+        // `capture_orders` is a harness field, so its orders rest from here.
         #[cfg(any(feature = "scenario-harness", test))]
-        if self.orders_demo.is_some() {
-            self.rest_capture_orders();
+        if let Some(orders) = self.capture_orders
+            && self.paper.account.rest_capture_orders(orders)
+        {
+            self.capture_orders = None;
         }
-    }
-
-    /// Place the capture run's resting orders, once, as soon as the tape
-    /// has a mark to place them around. See [`PAPER_ORDERS_ENV`].
-    ///
-    /// The rung offsets snap to the instrument's own precision, and never
-    /// to nothing: on a coarsely quoted mark 6 bp rounds to zero, both
-    /// legs would price *at* the mark, the simulator would refuse every
-    /// one of them and the hook would have disarmed itself already — an
-    /// empty chart with nothing in the log to explain it, which is exactly
-    /// the failure this hook exists to prevent. So the step floors at one
-    /// unit of that precision, and the hook stays armed until at least one
-    /// order is actually resting.
-    #[cfg(any(feature = "scenario-harness", test))]
-    fn rest_capture_orders(&mut self) {
-        let Some(rungs) = self.orders_demo else {
-            return;
-        };
-        let Some(mark) = self.paper.account.venue().mark_price() else {
-            return;
-        };
-        let tick = Decimal::ONE
-            .checked_div(Decimal::from(10_u64.pow(mark.scale().min(18))))
-            .unwrap_or(Decimal::ONE);
-        for rung in 1..=u32::from(rungs) {
-            let step = (mark * PAPER_ORDERS_STEP_FRACTION * Decimal::from(rung))
-                .round_dp(mark.scale())
-                .max(tick * Decimal::from(rung));
-            for (side, price) in [
-                (Side::Buy, mark.saturating_sub(step)),
-                (Side::Sell, mark.saturating_add(step)),
-            ] {
-                // The legs go on the correct side of the *order's own*
-                // price, which is what the venue validates against — the
-                // hook cannot place one the venue would refuse.
-                // A ticket armed with a ladder rests a laddered order, which
-                // is the only way a capture reaches a working order's rungs:
-                // arranging one by hand needs a strategy selected and an
-                // order placed, and a scripted run has neither click.
-                // One contract per rung, so each one gets a whole contract
-                // and the ladder photographs as the trader wrote it rather
-                // than collapsing into a single rounded part.
-                let quantity = self
-                    .account()
-                    .selected_order_strategy()
-                    .map_or(Decimal::ONE, |strategy| {
-                        Decimal::from(strategy.rows.len().max(1))
-                    });
-                let armed = self
-                    .account()
-                    .selected_order_strategy()
-                    .and_then(|strategy| strategy.resolve(side, price, quantity, tick).ok())
-                    .filter(quantick_sim::Bracket::is_laddered);
-                let bracket = if let Some(bracket) = armed {
-                    bracket
-                } else if self.order_bracket_demo {
-                    // The same floor the rung `step` carries, for the same
-                    // reason: on a coarsely quoted market 15 bp rounds to
-                    // nothing, both legs price *at* the order, and
-                    // `validate_bracket` then refuses the whole
-                    // `PlaceLimit` — the hook would rest no orders at all
-                    // and photograph an empty chart with nothing to explain
-                    // it.
-                    let reach = (mark * PAPER_ORDER_BRACKET_FRACTION)
-                        .round_dp(mark.scale())
-                        .max(tick);
-                    match side {
-                        Side::Buy => Bracket::whole(
-                            Some(price.saturating_sub(reach)),
-                            Some(price.saturating_add(reach)),
-                        ),
-                        Side::Sell => Bracket::whole(
-                            Some(price.saturating_add(reach)),
-                            Some(price.saturating_sub(reach)),
-                        ),
-                    }
-                } else {
-                    Bracket::none()
-                };
-                let events = self
-                    .paper
-                    .account
-                    .venue_mut()
-                    .submit(OrderIntent::limit(side, quantity, price).with_bracket(bracket));
-                self.paper.account.handle_events(events);
-            }
-        }
-        if self.paper.account.venue().working_orders().is_empty() {
-            tracing::warn!(
-                target: "quantick::app",
-                schema_version = 1_u8,
-                event_code = "PAPER_ORDERS_HOOK_REJECTED",
-                %mark,
-                action = "retry_next_print",
-                "QUANTICK_PAPER_ORDERS rested nothing around this mark"
-            );
-            return;
-        }
-        self.orders_demo = None;
     }
 }
 

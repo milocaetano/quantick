@@ -75,9 +75,79 @@ pub struct TradeBar {
     pub close: Option<String>,
     /// What the reverse button does, ending in its shortcut.
     pub reverse_hover: String,
+    /// The read-only `orders → <account>` notice beside the group, while
+    /// broker routes are offered; `None` paints nothing.
+    pub notice: Option<crate::route::RouteNotice>,
+}
+
+impl TradeBar {
+    /// The group with the route's notice beside it.
+    #[must_use]
+    pub fn with_notice(mut self, notice: Option<crate::route::RouteNotice>) -> Self {
+        self.notice = notice;
+        self
+    }
+}
+
+/// What the open position's buttons may do now: the one answer the
+/// toolbar, the Trading panel and the chart HUD paint.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PositionActions {
+    /// Why Reverse is off, when it is. It opens the other side, so it is an
+    /// entry and is held by whatever holds one ([`TradeBar::blocked`]): a
+    /// parked broker venue, no market yet, the risk lock.
+    pub reverse_block: Option<String>,
+    /// Close, Close 50% and Flatten: they only take exposure off, so nothing
+    /// that holds an entry holds them - a parked broker venue still answers
+    /// the trader's hand. `false` only while flat.
+    pub exits: bool,
+}
+
+impl PositionActions {
+    /// Whether Reverse may be pressed.
+    #[must_use]
+    pub fn reverse_ready(&self) -> bool {
+        self.reverse_block.is_none()
+    }
+
+    /// Why Reverse is off, for its disabled hover; empty while it is on.
+    #[must_use]
+    pub fn reverse_hover(&self) -> &str {
+        self.reverse_block.as_deref().unwrap_or_default()
+    }
+}
+
+/// Why a press that opens a position - an entry, or Reverse - is refused
+/// now, if it is: the broker's block first, then no market, then the risk
+/// lock in its own sentence.
+fn opening_block(
+    account: &PaperAccount,
+    locked: bool,
+    sentence: impl FnOnce() -> String,
+) -> Option<String> {
+    if let Some(block) = account.entry_block() {
+        Some(block.to_owned())
+    } else if !account.ready() {
+        Some(NO_MARKET_YET.to_owned())
+    } else if locked {
+        Some(format!("the risk lock is on - {}", sentence()))
+    } else {
+        None
+    }
 }
 
 impl Desk {
+    /// What the open position's buttons may do now. See [`PositionActions`].
+    #[must_use]
+    pub fn position_actions(&self, account: &PaperAccount) -> PositionActions {
+        let exits = account.venue().position().is_some();
+        let (state, locked) = self.risk_report(account);
+        PositionActions {
+            reverse_block: opening_block(account, locked, || state.sentence()),
+            exits,
+        }
+    }
+
     /// The TRADE group's words, from one risk read. `reverse_key` is the
     /// reverse shortcut as the host spells it (`Shift+R`), named once where
     /// the key is bound.
@@ -87,13 +157,7 @@ impl Desk {
         let quantity = state
             .derived_quantity()
             .or_else(|| self.ticket.quantity_preview());
-        let blocked = if !account.ready() {
-            Some(NO_MARKET_YET.to_owned())
-        } else if locked {
-            Some(format!("the risk lock is on - {}", state.sentence()))
-        } else {
-            None
-        };
+        let blocked = opening_block(account, locked, || state.sentence());
         let position = account.venue().position();
         let texts = |side: Side| {
             let face = entry_face(side, quantity);
@@ -115,6 +179,7 @@ impl Desk {
                 "reverse the open simulated position: one market order closes it and opens the \
                  same size the other way at the next print · {reverse_key}"
             ),
+            notice: None,
         }
     }
 }

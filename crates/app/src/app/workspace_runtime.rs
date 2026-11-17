@@ -21,6 +21,8 @@ pub(super) struct WorkspaceRuntime {
     pub(super) history: quantick_session::HistorySettings,
     pub(super) tz: crate::timezone::TzOffset,
     pub(super) workspace: crate::workspace_store::WorkspaceStore,
+    /// Where orders go: the simulator or the one broker account.
+    pub(super) broker: quantick_paper::route::BrokerSession,
 }
 
 impl WorkspaceRuntime {
@@ -74,6 +76,7 @@ impl WorkspaceRuntime {
                 layouts,
                 trades_dir,
             ),
+            broker: crate::paper_trading::account_route::session(config),
         }
     }
 
@@ -89,7 +92,23 @@ impl WorkspaceRuntime {
             trades += tab.link.live_trades - before;
         }
         self.alerts.end_frame();
+        self.route(config).frame();
         trades
+    }
+
+    /// The route session, joined with the tabs it routes for.
+    pub(super) fn route<'a>(
+        &'a mut self,
+        config: &'a crate::config::AppConfig,
+    ) -> quantick_paper::route::RouteCall<'a> {
+        let tabs = crate::paper_trading::account_route::RouteTabs(&mut self.tabs, config);
+        quantick_paper::route::RouteCall::new(&mut self.broker, Box::new(tabs))
+    }
+
+    /// The paper settings' owner, over this workspace's tabs and store.
+    pub(super) fn paper_settings(&mut self) -> super::paper_wiring::PaperSettingsAdapter<'_> {
+        let (tabs, workspace) = (&mut self.tabs, &mut self.workspace);
+        super::paper_wiring::PaperSettingsAdapter { tabs, workspace }
     }
 
     pub(super) fn id(&self) -> WorkspaceId {

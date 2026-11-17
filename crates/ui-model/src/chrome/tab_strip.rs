@@ -24,6 +24,9 @@ pub struct Chip {
     /// the tab (`quantick_stores::workspaces::symbol_ink`); `None` keeps the
     /// tab's normal ink.
     pub symbol_ink: Option<[u8; 3]>,
+    /// The venue tag filled in the route's colour while this tab's orders go
+    /// to (or are open at) a broker account; `None` keeps the outline.
+    pub tag_fill: Option<[u8; 3]>,
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Snapshot {
@@ -87,6 +90,7 @@ mod tests {
                 workspace: "Default".into(),
                 venue_code: "BIN".into(),
                 symbol_ink: None,
+                tag_fill: None,
             }],
             active: 0,
             surface: StripSurface::default(),

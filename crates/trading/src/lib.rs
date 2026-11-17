@@ -27,6 +27,7 @@
 //! It depends on `engine` for [`Side`](quantick_engine::Side) and
 //! [`Trade`](quantick_engine::Trade), and on nothing else in the workspace.
 
+pub mod broker;
 mod events;
 mod intent;
 mod money;
@@ -36,7 +37,11 @@ mod venue;
 
 pub mod fake;
 
-pub use events::{CancelReason, ExitReason, Fill, FillRole, RejectReason, VenueEvent};
+pub use broker::{AccountFacts, BrokerConnector, BrokerVenue, LinkState, MarginMode, TradeMode};
+pub use events::{
+    CancelReason, ExitReason, Fill, FillRole, RejectReason, VENUE_TEXT_BYTES, VenueEvent,
+    VenueNotice, VenueRequest, VenueText,
+};
 pub use intent::{BracketTarget, CloseAmount, OrderIntent};
 pub use money::{
     Currency, InstrumentMoney, Money, MoneySource, SizeOutcome, SizeRefusal, SizedEntry, risk_at,

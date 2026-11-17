@@ -34,8 +34,8 @@ use quantick_sources::history_reach;
 // produced and consumed entirely inside the feed host — and a re-export no
 // caller reads is a dead import the workspace lints reject.
 pub use quantick_sources::config::{
-    BackfillState, FeedCapabilities, HistoryBoundary, MetaTraderSettings, Mt5SideSource,
-    ProviderKind, TapeBackfill, split_host_port,
+    BackfillState, BrokerSettings, FeedCapabilities, HistoryBoundary, MetaTraderBrokerSettings,
+    MetaTraderSettings, Mt5SideSource, ProviderKind, TapeBackfill, split_host_port,
 };
 
 /// The built-in default configuration, compiled into the binary so the app runs
@@ -382,6 +382,10 @@ pub struct AppConfig {
     /// MetaTrader bridge settings; defaults apply when the section is absent.
     #[serde(default)]
     pub metatrader: MetaTraderSettings,
+    /// Broker execution settings (`[broker.metatrader]`); every broker is
+    /// off when the section is absent.
+    #[serde(default)]
+    pub broker: BrokerSettings,
     /// Paper-trading settings; defaults apply when the section is absent.
     #[serde(default)]
     pub paper: PaperSettings,
@@ -744,6 +748,7 @@ impl AppConfig {
     /// Returns a human-readable message describing the first problem found.
     pub fn validate(&self) -> Result<(), String> {
         self.metatrader.validate()?;
+        self.broker.validate(&self.metatrader)?;
         self.paper.validate()?;
         self.history.validate()?;
         if self.feeds.is_empty() {
@@ -1108,6 +1113,10 @@ pub fn load_from(
         parse_with_additions(EMBEDDED_DEFAULT, ConfigSource::Embedded, &added, added_path)?;
     Ok((config, ConfigSource::Embedded))
 }
+
+#[cfg(test)]
+#[path = "config/broker_section_tests.rs"]
+mod broker_section_tests;
 
 #[cfg(test)]
 mod tests {
@@ -1475,6 +1484,7 @@ mod tests {
                 open_interest: false,
                 funding: false,
                 spot_perp_pair: false,
+                order_routing: false,
             }
         );
         assert_eq!(config.side_note("hyperliquid"), None);

@@ -36,6 +36,8 @@ pub(super) enum CardCommand {
 /// The snapshot the card paints from: the position, if any, and the few
 /// account and ticket readings its rows need.
 pub(super) struct PositionCard<'a> {
+    /// The chip the card leads with, the HUD's own: `SIM LONG 2`.
+    pub chip: String,
     pub position: Option<&'a Position>,
     pub mark: Option<Decimal>,
     /// The session's realized points, shown on the flat row.
@@ -49,6 +51,8 @@ pub(super) struct PositionCard<'a> {
     /// The ticket's stop and target offsets, when they parse.
     pub stop_offset: Option<Decimal>,
     pub profit_offset: Option<Decimal>,
+    /// Which action buttons a press may take, as the account decides it.
+    pub actions: quantick_paper::desk::PositionActions,
 }
 
 impl PositionCard<'_> {
@@ -64,12 +68,12 @@ impl PositionCard<'_> {
             return self.flat_row(ui);
         };
         let open = self.mark.map(|mark| position.open_points(mark));
-        identity_row(ui, position, open, self.open_text.as_deref());
+        identity_row(ui, (&self.chip, position), open, self.open_text.as_deref());
         let mut command = self
             .brackets(ui, position)
             .map(|c| CardCommand::Venue(Box::new(c)));
         reward_to_risk(ui, position);
-        if let Some(action) = actions(ui, position, open) {
+        if let Some(action) = actions(ui, &self, position) {
             command = Some(action);
         }
         command
@@ -221,7 +225,12 @@ impl BracketLeg {
 }
 
 /// Identity: the HUD's own chip, so the two surfaces read as one.
-fn identity_row(ui: &mut egui::Ui, position: &Position, open: Option<Decimal>, text: Option<&str>) {
+fn identity_row(
+    ui: &mut egui::Ui,
+    (chip, position): (&str, &Position),
+    open: Option<Decimal>,
+    text: Option<&str>,
+) {
     let palette = theme::get(ui.ctx());
     let color = palette.side_color(position.side);
     ui.horizontal_wrapped(|ui| {
@@ -231,14 +240,10 @@ fn identity_row(ui: &mut egui::Ui, position: &Position, open: Option<Decimal>, t
             .inner_margin(egui::Margin::symmetric(5.0, 1.0))
             .show(ui, |ui| {
                 ui.label(
-                    egui::RichText::new(format!(
-                        "SIM {} {}",
-                        position_word(position.side),
-                        fmt_decimal(position.quantity)
-                    ))
-                    .color(trade_action_ink(&palette, color))
-                    .strong()
-                    .small(),
+                    egui::RichText::new(chip)
+                        .color(trade_action_ink(&palette, color))
+                        .strong()
+                        .small(),
                 );
             });
         ui.label(
@@ -278,31 +283,30 @@ fn reward_to_risk(ui: &mut egui::Ui, position: &Position) {
 
 /// Actions, two per row at equal width; consequential ones stay text-first,
 /// never a bare glyph.
-fn actions(ui: &mut egui::Ui, position: &Position, open: Option<Decimal>) -> Option<CardCommand> {
-    let palette = theme::get(ui.ctx());
+fn actions(ui: &mut egui::Ui, card: &PositionCard<'_>, position: &Position) -> Option<CardCommand> {
+    let (palette, may) = (theme::get(ui.ctx()), &card.actions);
+    let open = card.mark.map(|mark| position.open_points(mark));
     ui.add_space(4.0);
     let half = (ui.available_width() - ui.spacing().item_spacing.x) / 2.0;
     let word = position_word(position.side);
     let qty = fmt_decimal(position.quantity);
     let mut command = None;
+    let reverse = format!("{} Reverse", icons::ARROWS_LEFT_RIGHT);
     ui.horizontal(|ui| {
         if ui
-            .add(quiet_action(&palette, "× Close", half))
+            .add_enabled(may.exits, quiet_action(&palette, "× Close", half))
             .on_hover_text(format!("exit the {word} {qty} at the next print (market)"))
             .clicked()
         {
             command = Some(CardCommand::Close);
         }
         if ui
-            .add(quiet_action(
-                &palette,
-                &format!("{} Reverse", icons::ARROWS_LEFT_RIGHT),
-                half,
-            ))
+            .add_enabled(may.reverse_ready(), quiet_action(&palette, &reverse, half))
             .on_hover_text(format!(
                 "close the {word} {qty} and open the opposite side at the same size \
                  (Shift+R)"
             ))
+            .on_disabled_hover_text(may.reverse_hover())
             .clicked()
         {
             command = Some(CardCommand::Reverse);
@@ -328,7 +332,7 @@ fn actions(ui: &mut egui::Ui, position: &Position, open: Option<Decimal>) -> Opt
             })));
         }
         if ui
-            .add(quiet_action(&palette, "Close 50%", half))
+            .add_enabled(may.exits, quiet_action(&palette, "Close 50%", half))
             .on_hover_text(
                 "close half the open quantity at the next print; the rest keeps \
                  its average entry and brackets",
@@ -342,7 +346,7 @@ fn actions(ui: &mut egui::Ui, position: &Position, open: Option<Decimal>) -> Opt
     });
     let full = ui.available_width();
     if ui
-        .add(quiet_action(&palette, "Flatten all", full))
+        .add_enabled(may.exits, quiet_action(&palette, "Flatten all", full))
         .on_hover_text("close the position and cancel every working order (Shift+F)")
         .clicked()
     {
