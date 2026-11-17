@@ -34,8 +34,7 @@ mod chrome;
 pub(crate) mod control_host;
 pub(crate) use control_host::{
     AlertsPort, ChromePort, ControlWindow, GatewayPort, HealthPort, IndicatorPickerPort,
-    LayersPort, LayoutPort, PaperPort, RecordingPort, ScriptsPort, TabsMutPort, TabsPort,
-    ToolRailPort,
+    LayersPort, LayoutPort, PaperPort, ScriptsPort, TabsMutPort, TabsPort, ToolRailPort,
 };
 pub(crate) mod deal_recording_wiring;
 mod demo_hooks;

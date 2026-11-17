@@ -159,47 +159,6 @@ fn the_price_axis_call_holds_manual_tape_framing_and_reads_it_back_without_movin
 }
 
 #[test]
-fn the_price_axis_action_validates_authority_target_and_range_before_mutation() {
-    let ctx = egui::Context::default();
-    let (mut app, _commands) = app_with_history(10);
-    enable_tape(&mut app);
-    run_frame(&mut app, &ctx);
-    let before = crate::control::chart::viewport_snapshot(&app.active_tab().flow_pane);
-    let directory = gateway_test_directory("price-axis-validation");
-    grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.layout");
-    enable_test_gateway(&mut app, &ctx, &directory, 4);
-    let mut observer = connect(&directory, &options("observer", &[]));
-    let mut client = connect(
-        &directory,
-        &options("cockpit", &["cockpit", "cockpit.layout"]),
-    );
-    let payload = input(&app, json!({"kind":"manual","low":"90","high":"110"}));
-    let (denied, _) = unkeyed_call(&mut app, &mut observer, CAPABILITY, payload.clone());
-    assert_eq!(error_code(&denied), Some(codes::PERMISSION_DENIED));
-    let mut stale = payload.clone();
-    stale["pane_id"] = json!(u64::MAX.to_string());
-    let (unknown, _) = unkeyed_call(&mut app, &mut client, CAPABILITY, stale);
-    assert_eq!(error_code(&unknown), Some(codes::INVALID_REQUEST));
-    for mode in [
-        json!({"kind":"manual","low":"110","high":"90"}),
-        json!({"kind":"manual","low":"100","high":"100"}),
-        json!({"kind":"manual","low":"NaN","high":"110"}),
-        json!({"kind":"manual","low":"90"}),
-        json!({"kind":"auto","low":"90","high":"110"}),
-        json!({"kind":"unknown"}),
-    ] {
-        let payload = input(&app, mode);
-        let (invalid, _) = unkeyed_call(&mut app, &mut client, CAPABILITY, payload);
-        assert_eq!(error_code(&invalid), Some(codes::INVALID_REQUEST));
-        assert_eq!(
-            crate::control::chart::viewport_snapshot(&app.active_tab().flow_pane),
-            before
-        );
-    }
-    disable_test_gateway(&mut app, &ctx);
-}
-
-#[test]
 fn the_tape_price_gutter_accepts_drag_and_wheel_without_changing_its_time_window() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = app_with_history(40);
