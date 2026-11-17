@@ -14,11 +14,11 @@ Fit these fields into the repository template without duplication:
 ## Acceptance
 - [ ] <observable result>
 ## Evidence
-Tests/review/CI: <revision and concise result or durable link>.
+Tests/review/CI/Size: <revision, results or links; Size vs plan, why if over>.
 ```
 
 A branch adding a file under `crates/guards/ui-free-baseline.d/` starts its PR title with `[ui-free +N]`.
 
-Add a handoff only when pausing or transferring work: revision, remaining action/owner and blocker. The coordinator updates the same managed section at a real handoff or final delivery, preserving human/template content and review threads. A checkbox alone does not prove completion.
+Add a handoff only when pausing or transferring work: revision, remaining action/owner and blocker. The coordinator updates the same managed section at a real handoff or final delivery, preserving human/template content and review threads.
 
-Delegate bounded work with expected SHA, role, owned paths, acceptance and accessible rules/checkout. Include the PR URL when available; reuse supplied context, never chat history. Verify the revision and return findings, tested SHA, evidence and next action. Parallel writers get separate worktrees and paths. Tie evidence to a stable revision; after edits, recheck what changed and current remote HEAD/CI. Only the coordinator edits the brief or pushes the integrated branch.
+Delegate bounded work with expected SHA, role, owned paths, acceptance and accessible rules/checkout. Include the PR URL when available; reuse supplied context, never chat history. Verify the revision and return findings, tested SHA, evidence and next action. Tie evidence to a stable revision; after edits, recheck what changed and current remote HEAD/CI. Only the coordinator edits the brief or pushes the integrated branch.
