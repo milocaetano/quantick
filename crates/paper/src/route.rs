@@ -37,7 +37,7 @@ mod tests;
 
 pub use desk::{AccountsPort, BrokerDesk, RoutePress, SourceFacts};
 pub use scene::Scene;
-pub use session::{BrokerSession, RouteCall, RouteHost, Staged};
+pub use session::{BrokerSession, RouteCall, RouteHost, RouteRead, Staged};
 pub use sheet::{
     AccountRow, Dot, NOTICE_LEAD, RouteNotice, RouteTone, RowGesture, RowState, SIM_TITLE, Sheet,
     dock_title,
@@ -257,6 +257,26 @@ pub enum Leave {
     /// Route to the simulator and leave the broker's position and orders
     /// where they are; their plates stay on the chart.
     LeaveAtBroker,
+}
+
+/// One ask for a route: which, who asks, and how to leave the broker's
+/// exposure behind when the ask is the simulator.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RouteRequest {
+    pub route: Route,
+    pub actor: Actor,
+    pub leave: Option<Leave>,
+}
+
+impl RouteRequest {
+    #[must_use]
+    pub const fn new(route: Route, actor: Actor, leave: Option<Leave>) -> Self {
+        Self {
+            route,
+            actor,
+            leave,
+        }
+    }
 }
 
 /// What the panel asks when a broker route with exposure is left.

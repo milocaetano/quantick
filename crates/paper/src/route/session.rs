@@ -14,7 +14,7 @@ use rust_decimal::Decimal;
 use super::desk::{AccountsPort, BrokerDesk, RoutePress, SourceFacts};
 use super::scene::Scene;
 use super::sheet::Sheet;
-use super::{AccountRoute, Actor, Leave, Refusal, Route};
+use super::{AccountRoute, Actor, Refusal, Route, RouteRequest};
 
 /// The host as the session reaches it: its tabs' accounts, and what only a
 /// window reads.
@@ -46,6 +46,15 @@ impl BrokerConnector for NoBroker {
     fn connect(&mut self, _symbol: &str) -> Option<Box<dyn BrokerVenue>> {
         None
     }
+}
+
+/// The route as a named read answers it: the sheet as of now, the route
+/// in force, and whether broker routes are offered at all.
+#[derive(Debug, Clone)]
+pub struct RouteRead {
+    pub sheet: Sheet,
+    pub route: Route,
+    pub broker_enabled: bool,
 }
 
 /// The route, the one broker venue and what builds it.
@@ -124,14 +133,14 @@ impl BrokerSession {
     pub fn request(
         &mut self,
         host: &mut dyn RouteHost,
-        request: (Route, Actor, Option<Leave>),
+        request: RouteRequest,
     ) -> Result<(), Refusal> {
         // Asking for a broker route needs the terminal's account; going back
         // to the simulator never starts a bridge.
-        if request.0.is_broker() {
+        if request.route.is_broker() {
             self.ensure_venue(host);
         }
-        let (_, actor, leave) = request;
+        let (actor, leave) = (request.actor, request.leave);
         if let Some(refusal) = AccountRoute::leave_block(actor, leave, self.allow_agent_orders) {
             return Err(refusal);
         }
@@ -162,15 +171,18 @@ impl BrokerSession {
         Some((status, std::cmp::Ordering::Less))
     }
 
-    /// The route as a named read answers it, offered or not: the sheet as of
-    /// now, the route in force and whether broker routes are offered.
+    /// The route as a named read answers it, offered or not.
     #[must_use]
-    pub fn read(&self, host: &dyn RouteHost) -> (Sheet, Route, bool) {
+    pub fn read(&self, host: &dyn RouteHost) -> RouteRead {
         let source = self.source(host);
         let sheet = self
             .desk
             .sheet(host, source, host.ticket_quantity(), host.now_ms());
-        (sheet, self.desk.route().route(), source.broker_enabled)
+        RouteRead {
+            sheet,
+            route: self.desk.route().route(),
+            broker_enabled: source.broker_enabled,
+        }
     }
 
     /// Whether a broker venue has been built this run.
@@ -229,8 +241,8 @@ impl BrokerSession {
     }
 
     fn refresh(&mut self, host: &dyn RouteHost) {
-        let (sheet, _, offered) = self.read(host);
-        self.sheet = offered.then_some(sheet);
+        let read = self.read(host);
+        self.sheet = read.broker_enabled.then_some(read.sheet);
     }
 }
 
@@ -259,7 +271,7 @@ impl<'a> RouteCall<'a> {
 
     /// The route as a named read answers it. See [`BrokerSession::read`].
     #[must_use]
-    pub fn read(&self) -> (Sheet, Route, bool) {
+    pub fn read(&self) -> RouteRead {
         self.session.read(&*self.host)
     }
 
@@ -268,7 +280,7 @@ impl<'a> RouteCall<'a> {
     /// # Errors
     ///
     /// The route's refusal.
-    pub fn request(&mut self, request: (Route, Actor, Option<Leave>)) -> Result<(), Refusal> {
+    pub fn request(&mut self, request: RouteRequest) -> Result<(), Refusal> {
         self.session.request(&mut *self.host, request)
     }
 

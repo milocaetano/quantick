@@ -14,7 +14,9 @@ use quantick_control_schema::trade_account::{
     AccountDisarmInput, AccountReadInput, AccountRouteResult, AccountRowView, AccountSelectInput,
     LeaveChoice, ROUTE_EVENT_KIND, disarm_descriptor, read_route_descriptor, select_descriptor,
 };
-use quantick_paper::route::{Actor, Leave, Refusal, Route, RowGesture, RowState, Sheet};
+use quantick_paper::route::{
+    Actor, Leave, Refusal, Route, RouteRead, RouteRequest, RowGesture, RowState,
+};
 use serde_json::{Value, json};
 
 use crate::JournalAccess;
@@ -49,12 +51,13 @@ pub fn refusal_error(refusal: Refusal) -> ControlError {
 
 /// The panel's sheet, as a caller reads it.
 #[must_use]
-pub fn route_result(sheet: &Sheet, route: Route, broker_enabled: bool) -> AccountRouteResult {
+pub fn route_result(read: &RouteRead) -> AccountRouteResult {
+    let sheet = &read.sheet;
     AccountRouteResult {
-        route: route.id().to_owned(),
+        route: read.route.id().to_owned(),
         orders_to: sheet.notice.text.clone(),
         title: sheet.title.clone(),
-        broker_enabled,
+        broker_enabled: read.broker_enabled,
         locked: sheet.locked,
         accounts: sheet
             .rows
@@ -115,16 +118,16 @@ fn read<P: TradePort + ?Sized, A: JournalAccess>(
     to_value(&current(app)?)
 }
 
-/// Ask the route for `route`, journal the answer, and reply with the route
-/// now in force.
+/// Ask the route for `request`, journal the answer, and reply with the
+/// route now in force.
 fn route_to<P: TradePort + ?Sized, A: JournalAccess>(
     app: &mut P,
     access: &mut A,
     actor: &ActorContext,
-    (route, leave): (Route, Option<Leave>),
+    request: RouteRequest,
     asked: Value,
 ) -> Result<Value, ControlError> {
-    let answer = app.request_route(route, actor_of(actor), leave);
+    let answer = app.request_route(request);
     access.record_event(NewEvent::by(
         TRADE_MODULE_ID,
         ROUTE_EVENT_KIND,
@@ -155,7 +158,8 @@ fn select<P: TradePort + ?Sized, A: JournalAccess>(
             input.route
         ))
     })?;
-    route_to(app, access, actor, (route, leave_of(input.leave)), asked)
+    let request = RouteRequest::new(route, actor_of(actor), leave_of(input.leave));
+    route_to(app, access, actor, request, asked)
 }
 
 fn disarm<P: TradePort + ?Sized, A: JournalAccess>(
@@ -171,7 +175,7 @@ fn disarm<P: TradePort + ?Sized, A: JournalAccess>(
         app,
         access,
         actor,
-        (Route::Sim, leave_of(input.leave)),
+        RouteRequest::new(Route::Sim, actor_of(actor), leave_of(input.leave)),
         asked,
     )
 }

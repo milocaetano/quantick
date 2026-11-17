@@ -3,7 +3,7 @@
 //! venue over a fake bridge.
 
 use super::desk::{AccountsPort, BrokerDesk, SourceFacts};
-use super::{Actor, HOLD_TO_ARM_MS, Route};
+use super::{Actor, HOLD_TO_ARM_MS, Route, RouteRequest};
 
 /// The route a run asked to be staged at.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -131,7 +131,7 @@ impl BrokerDesk {
                 self.hold_still(port, source, now_ms);
             }
         } else {
-            let _ = self.request(port, source, (route, Actor::Trader, None));
+            let _ = self.request(port, source, RouteRequest::new(route, Actor::Trader, None));
         }
         false
     }

@@ -56,12 +56,12 @@ impl TradePort for RouteWindow {
             leave_pending: self.route.leaving(),
         })
     }
-    fn request_route(
-        &mut self,
-        route: Route,
-        actor: Actor,
-        leave: Option<Leave>,
-    ) -> Result<(), Refusal> {
+    fn request_route(&mut self, request: RouteRequest) -> Result<(), Refusal> {
+        let RouteRequest {
+            route,
+            actor,
+            leave,
+        } = request;
         self.route
             .request(route, actor, &self.facts, leave)
             .map(|_| ())

@@ -103,23 +103,21 @@ pub trait TradePort {
     fn account_route(
         &mut self,
     ) -> Option<quantick_control_schema::trade_account::AccountRouteResult> {
-        let (sheet, route, enabled) = self.route_call()?.read();
-        Some(crate::trade_account::route_result(&sheet, route, enabled))
+        let read = self.route_call()?.read();
+        Some(crate::trade_account::route_result(&read))
     }
-    /// Ask the route for `route` on behalf of `actor`.
+    /// Ask the route for what `request` names.
     ///
     /// # Errors
     ///
     /// The route's refusal.
     fn request_route(
         &mut self,
-        route: quantick_paper::route::Route,
-        actor: quantick_paper::route::Actor,
-        leave: Option<quantick_paper::route::Leave>,
+        request: quantick_paper::route::RouteRequest,
     ) -> Result<(), quantick_paper::route::Refusal> {
         self.route_call()
             .ok_or(quantick_paper::route::Refusal::BrokerOff)?
-            .request((route, actor, leave))
+            .request(request)
     }
     /// Why an order from `actor` is refused on the route in force, if it is.
     fn broker_write_block(

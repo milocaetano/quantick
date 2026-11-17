@@ -411,7 +411,11 @@ fn armed(mode: TradeMode) -> (BrokerDesk, Tabs, Rc<RefCell<Script>>) {
     desk.install(venue);
     match mode {
         TradeMode::Demo => desk
-            .request(&mut tabs, LIVE, (Route::Demo, Actor::Trader, None))
+            .request(
+                &mut tabs,
+                LIVE,
+                RouteRequest::new(Route::Demo, Actor::Trader, None),
+            )
             .expect("DEMO arms in one click"),
         _ => {
             desk.hold_start(&tabs, LIVE, 0).expect("REAL is available");
@@ -583,8 +587,12 @@ fn a_lost_link_with_a_position_parks_it_in_view_and_refuses_entries() {
 fn leaving_flat_detaches_the_broker_and_trades_the_simulator() {
     let (mut desk, mut tabs, _script) = armed(TradeMode::Demo);
     assert!(tabs.active().broker_routed());
-    desk.request(&mut tabs, LIVE, (Route::Sim, Actor::Trader, None))
-        .expect("flat, nothing to ask");
+    desk.request(
+        &mut tabs,
+        LIVE,
+        RouteRequest::new(Route::Sim, Actor::Trader, None),
+    )
+    .expect("flat, nothing to ask");
     let account = tabs.active();
     assert!(account.broker().is_none());
     assert_eq!(account.route_kind(), Route::Sim);
@@ -596,7 +604,11 @@ fn leaving_with_a_position_asks_then_keeps_its_plates() {
     let (mut desk, mut tabs, _script) = armed(TradeMode::Demo);
     go_long(tabs.active());
     assert_eq!(
-        desk.request(&mut tabs, LIVE, (Route::Sim, Actor::Trader, None)),
+        desk.request(
+            &mut tabs,
+            LIVE,
+            RouteRequest::new(Route::Sim, Actor::Trader, None)
+        ),
         Err(Refusal::ExposureNeedsChoice)
     );
     let sheet = desk.sheet(&tabs, LIVE, None, 0);
@@ -604,7 +616,7 @@ fn leaving_with_a_position_asks_then_keeps_its_plates() {
     desk.request(
         &mut tabs,
         LIVE,
-        (Route::Sim, Actor::Trader, Some(Leave::LeaveAtBroker)),
+        RouteRequest::new(Route::Sim, Actor::Trader, Some(Leave::LeaveAtBroker)),
     )
     .expect("left at the broker");
     let account = tabs.active();
@@ -877,12 +889,19 @@ fn a_named_demo_request_builds_the_venue_and_arms_for_the_trader_only() {
     session.frame(&mut host);
     let mut call = RouteCall::new(&mut session, Box::new(Host::new(LIVE)));
     assert_eq!(
-        call.request((Route::Demo, Actor::Agent, None)),
+        call.request(RouteRequest::new(Route::Demo, Actor::Agent, None)),
         Err(Refusal::AgentCannotArm)
     );
-    assert_eq!(call.request((Route::Demo, Actor::Trader, None)), Ok(()));
-    let (sheet, route, offered) = call.read();
-    assert_eq!((route, offered), (Route::Demo, true));
+    assert_eq!(
+        call.request(RouteRequest::new(Route::Demo, Actor::Trader, None)),
+        Ok(())
+    );
+    let RouteRead {
+        sheet,
+        route,
+        broker_enabled,
+    } = call.read();
+    assert_eq!((route, broker_enabled), (Route::Demo, true));
     assert_eq!(sheet.notice.tone, RouteTone::Demo);
     assert_eq!(
         call.write_block(Actor::Agent),
@@ -1066,7 +1085,7 @@ fn a_hold_begun_on_one_account_never_arms_another() {
 fn parked() -> (BrokerDesk, Tabs) {
     let (mut desk, mut tabs, _script) = armed(TradeMode::Demo);
     go_long(tabs.active());
-    let leave = (Route::Sim, Actor::Trader, Some(Leave::LeaveAtBroker));
+    let leave = RouteRequest::new(Route::Sim, Actor::Trader, Some(Leave::LeaveAtBroker));
     desk.request(&mut tabs, LIVE, leave)
         .expect("left at the broker");
     assert!(tabs.active().parked_broker().is_some());
@@ -1139,25 +1158,28 @@ fn an_agent_disarms_only_by_leaving_at_the_broker_unless_allowed() {
         let mut session = BrokerSession::new(Box::new(connector), allow);
         let mut host = Host::new(LIVE);
         session
-            .request(&mut host, (Route::Demo, Actor::Trader, None))
+            .request(
+                &mut host,
+                RouteRequest::new(Route::Demo, Actor::Trader, None),
+            )
             .expect("DEMO arms for the trader");
         go_long(host.tabs.active());
-        let flatten = (Route::Sim, Actor::Agent, Some(Leave::FlattenFirst));
+        let flatten = RouteRequest::new(Route::Sim, Actor::Agent, Some(Leave::FlattenFirst));
         let answer = session.request(&mut host, flatten);
         if allow {
             assert_eq!(answer, Ok(()));
             continue;
         }
         assert_eq!(answer, Err(Refusal::AgentOrdersOff));
-        assert_eq!(session.read(&host).1, Route::Demo, "still armed");
+        assert_eq!(session.read(&host).route, Route::Demo, "still armed");
         host.tabs.active().on_trade(&print(2, 101));
         assert!(
             host.tabs.active().venue().position().is_some(),
             "no agent flattened the broker"
         );
-        let leave = (Route::Sim, Actor::Agent, Some(Leave::LeaveAtBroker));
+        let leave = RouteRequest::new(Route::Sim, Actor::Agent, Some(Leave::LeaveAtBroker));
         assert_eq!(session.request(&mut host, leave), Ok(()));
-        assert_eq!(session.read(&host).1, Route::Sim);
+        assert_eq!(session.read(&host).route, Route::Sim);
     }
 }
 
@@ -1201,7 +1223,10 @@ fn a_broker_request_after_the_link_is_lost_revives_what_runs_beside_the_venue() 
     let (mut session, wiring) = session(Some(TradeMode::Demo), None);
     let mut host = Host::new(LIVE);
     session
-        .request(&mut host, (Route::Demo, Actor::Trader, None))
+        .request(
+            &mut host,
+            RouteRequest::new(Route::Demo, Actor::Trader, None),
+        )
         .expect("DEMO arms for the trader");
     session.press(&mut host, RoutePress::OpenList);
     assert_eq!(wiring.borrow().revived, 0, "a live link needs nothing");
@@ -1210,10 +1235,13 @@ fn a_broker_request_after_the_link_is_lost_revives_what_runs_beside_the_venue() 
     let script = wiring.borrow().script.clone().expect("built");
     script.borrow_mut().link = Some(LinkState::Lost);
     session.frame(&mut host);
-    assert_eq!(session.read(&host).1, Route::Sim);
+    assert_eq!(session.read(&host).route, Route::Sim);
 
     assert_eq!(
-        session.request(&mut host, (Route::Demo, Actor::Trader, None)),
+        session.request(
+            &mut host,
+            RouteRequest::new(Route::Demo, Actor::Trader, None)
+        ),
         Err(Refusal::LinkDown),
         "not until the new bridge says hello"
     );

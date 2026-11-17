@@ -10,7 +10,9 @@
 
 use quantick_trading::{BrokerVenue, LinkState, VenueNotice};
 
-use super::{AccountKey, AccountRoute, Actor, Leave, Refusal, Route, RouteChange, RouteFacts};
+use super::{
+    AccountKey, AccountRoute, Actor, Leave, Refusal, Route, RouteChange, RouteFacts, RouteRequest,
+};
 use crate::PaperAccount;
 
 /// The host's tabs, as the desk reaches them: which one is active, and each
@@ -164,9 +166,13 @@ impl BrokerDesk {
         &mut self,
         port: &mut dyn AccountsPort,
         source: SourceFacts,
-        request: (Route, Actor, Option<Leave>),
+        request: RouteRequest,
     ) -> Result<(), Refusal> {
-        let (route, actor, leave) = request;
+        let RouteRequest {
+            route,
+            actor,
+            leave,
+        } = request;
         let facts = self.facts(port, source);
         let change = self.route.request(route, actor, &facts, leave)?;
         self.apply(port, change);
@@ -233,7 +239,7 @@ impl BrokerDesk {
                 Ok(())
             }
             RoutePress::Click(route) => self
-                .request(port, source, (route, Actor::Trader, None))
+                .request(port, source, RouteRequest::new(route, Actor::Trader, None))
                 .map(|()| self.sheet_open = self.route.leaving()),
             RoutePress::HoldStart => self.hold_start(port, source, now_ms),
             RoutePress::HoldStill => {
@@ -249,7 +255,11 @@ impl BrokerDesk {
                 Ok(())
             }
             RoutePress::Leave(Some(leave)) => self
-                .request(port, source, (Route::Sim, Actor::Trader, Some(leave)))
+                .request(
+                    port,
+                    source,
+                    RouteRequest::new(Route::Sim, Actor::Trader, Some(leave)),
+                )
                 .map(|()| self.sheet_open = false),
         };
         if let Err(refusal) = refused
