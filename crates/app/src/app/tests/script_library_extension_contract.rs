@@ -4,7 +4,6 @@ use std::time::Instant;
 
 use eframe::egui;
 use quantick_control::{error::ControlError, wire::ActorContext};
-use quantick_control_handlers::script_editor::{ScriptEditorPort, dispatch};
 use quantick_control_host::actions::ActionRegistry;
 use quantick_stores::script_library::{
     ScriptDocument, ScriptEditorAction, ScriptEntry, ScriptLibrary, ScriptLibraryPort, ScriptOrigin,
@@ -64,7 +63,7 @@ struct FakeEditor {
     library: FakeLibrary,
     state: State,
 }
-impl ScriptEditorPort for FakeEditor {
+impl FakeEditor {
     fn script_editor(
         &mut self,
         action: ScriptEditorAction,
@@ -113,7 +112,9 @@ fn control_dispatch(
 ) -> Result<Value, ControlError> {
     let action = serde_json::from_value(input.clone())
         .map_err(|e| ControlError::invalid_request(e.to_string()))?;
-    let result = dispatch(editor, action).map_err(ControlError::invalid_request)?;
+    let result = editor
+        .script_editor(action)
+        .map_err(ControlError::invalid_request)?;
     serde_json::to_value(result).map_err(|e| ControlError::invalid_request(e.to_string()))
 }
 fn actor() -> ActorContext {
@@ -198,9 +199,10 @@ fn script_library_extension_contract() {
             inputs: vec![],
         },
     );
-    dispatch(&mut editor, ScriptEditorAction::Close).unwrap();
+    editor.script_editor(ScriptEditorAction::Close).unwrap();
     assert!(
-        dispatch(&mut editor, ScriptEditorAction::Inspect)
+        editor
+            .script_editor(ScriptEditorAction::Inspect)
             .unwrap()
             .is_none()
     );

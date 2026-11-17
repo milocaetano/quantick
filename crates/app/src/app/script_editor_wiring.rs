@@ -1,9 +1,11 @@
 //! Bind editor requests and its bounded validation worker to existing chart slots.
+use super::indicator_wiring::IndicatorWiring;
 use super::{arrangement_host::ArrangementHost, indicator_manager::IndicatorState};
 use crate::{
     indicator_worker::{IndicatorCommand, IndicatorSource},
     surfaces::Surfaces,
 };
+use quantick_control_handlers::indicator_host::IndicatorRefusal;
 use quantick_control_schema::script_editor::{
     NumericValue, capture_numeric_inputs, update_numeric_input,
 };
@@ -11,92 +13,94 @@ use quantick_stores::script_library::{ScriptDocument, ScriptEditorAction, Script
 use quantick_ui_model::script_editor::{Effect, Intent};
 use std::time::Instant;
 
-fn attached_target(app: &super::QuantickApp, id: &str) -> Option<super::TabSlot> {
-    app.runtime.indicators.registry.slot_kinds().iter().find_map(|(owner, kind)| {
-        (owner.workspace == app.runtime.id() && owner.tab == app.runtime.tabs.active_id()
-            && owner.side == app.active_tab().focused_side()
+fn attached_target(wiring: &IndicatorWiring<'_>, id: &str) -> Option<super::TabSlot> {
+    let runtime = &*wiring.runtime;
+    runtime.indicators.registry.slot_kinds().iter().find_map(|(owner, kind)| {
+        (owner.workspace == runtime.id() && owner.tab == runtime.tabs.active_id()
+            && owner.side == runtime.active_tab().focused_side()
             && matches!(kind, quantick_workspace::indicator_document::SavedKind::Script { name } if name == id))
             .then_some(*owner)
     })
 }
 
 pub(super) fn set_numeric_input(
-    app: &mut super::QuantickApp,
+    wiring: &mut IndicatorWiring<'_>,
     id: &str,
     name: &str,
     value: NumericValue,
-) -> Result<(), String> {
-    let editor = app.surfaces.script_editor.model_state.editor();
+) -> Result<(), IndicatorRefusal> {
+    let editor = wiring.surfaces.script_editor.model_state.editor();
     if !editor
         .document
         .as_ref()
         .is_some_and(|document| document.id == id)
     {
-        return Err("open the attached script before editing its inputs".into());
+        return Err(IndicatorRefusal::ScriptNotOpen);
     }
-    if app
+    if wiring
         .surfaces
         .indicator_settings
         .model_state
         .dialog()
         .is_some()
     {
-        return Err("close indicator settings before editing inputs through control".into());
+        return Err(IndicatorRefusal::SettingsOpen);
     }
-    let target = attached_target(app, id).ok_or("script is not attached to the focused pane")?;
-    let view = app
+    let target = attached_target(wiring, id).ok_or(IndicatorRefusal::NotAttached)?;
+    let view = wiring
+        .runtime
+        .active_tab()
         .focused_pane()
         .indicators
         .all()
         .iter()
         .find(|view| view.slot == target.slot)
-        .ok_or("wait for the attached script to load")?;
+        .ok_or(IndicatorRefusal::NotLoaded)?;
     if view.stale.is_some() || editor.diagnostics.is_some() {
-        return Err("repair source errors before editing inputs".into());
+        return Err(IndicatorRefusal::SourceErrors);
     }
     if !editor.inputs_ready(&view.descriptor.inputs) {
-        return Err(
-            "wait for current source validation and chart reload before editing inputs".into(),
-        );
+        return Err(IndicatorRefusal::NotValidated);
     }
     let saved = super::layout_wiring::saved_inputs(
-        &app.runtime.tabs,
-        &app.runtime.indicators,
-        app.runtime.workspace.layouts(),
+        &wiring.runtime.tabs,
+        &wiring.runtime.indicators,
+        wiring.runtime.workspace.layouts(),
         target,
     )
-    .ok_or("script input persistence is unavailable")?;
+    .ok_or(IndicatorRefusal::InputsUnavailable)?;
     let values = update_numeric_input(&view.descriptor.inputs, &saved, name, &value)?;
-    app.indicator_wiring().apply_indicator_settings_change(
-        super::indicator_manager::SettingsChange::Inputs {
-            target,
-            slot: target.slot,
-            values,
-            commit: true,
-        },
-    );
+    wiring.apply_indicator_settings_change(super::indicator_manager::SettingsChange::Inputs {
+        target,
+        slot: target.slot,
+        values,
+        commit: true,
+    });
     Ok(())
 }
 
-pub(super) fn add_to_chart(app: &mut super::QuantickApp, id: &str) -> Result<(), String> {
-    ScriptLibraryPort::read(&app.runtime.indicators.script_library, id)?;
-    let index = app
-        .runtime
+pub(super) fn add_to_chart(
+    wiring: &mut IndicatorWiring<'_>,
+    id: &str,
+) -> Result<(), IndicatorRefusal> {
+    let runtime = &*wiring.runtime;
+    ScriptLibraryPort::read(&runtime.indicators.script_library, id)?;
+    let index = runtime
         .indicators
         .script_library
         .entries()
         .iter()
         .position(|entry| entry.name == id)
-        .ok_or("unknown library script")?;
-    let tab = app.runtime.tabs.active_id();
-    let side = app.active_tab().focused_side();
-    if app.runtime.indicators.registry.slot_kinds().iter().any(|(owner, kind)| {
-        owner.workspace == app.runtime.id() && owner.tab == tab && owner.side == side
+        .ok_or(IndicatorRefusal::UnknownLibraryScript)?;
+    let tab = runtime.tabs.active_id();
+    let side = runtime.active_tab().focused_side();
+    if runtime.indicators.registry.slot_kinds().iter().any(|(owner, kind)| {
+        owner.workspace == runtime.id() && owner.tab == tab && owner.side == side
             && matches!(kind, quantick_workspace::indicator_document::SavedKind::Script { name } if name == id)
     }) {
         return Ok(());
     }
-    app.apply_toolbar_action(crate::toolbar::ToolbarAction::AddScriptIndicator(index));
+    wiring.add_library_script_at(index);
     Ok(())
 }
 
@@ -131,7 +135,6 @@ pub(super) fn inspect(
 pub(super) fn apply(
     surfaces: &mut Surfaces,
     indicators: &mut IndicatorState,
-    _tabs: &mut ArrangementHost,
     action: ScriptEditorAction,
 ) -> Result<Option<ScriptDocument>, String> {
     let effects = update(surfaces, Intent::Action(action));
@@ -174,7 +177,7 @@ pub(super) fn frame(
     now: Instant,
 ) {
     for action in actions {
-        if let Err(error) = apply(surfaces, indicators, tabs, action) {
+        if let Err(error) = apply(surfaces, indicators, action) {
             crate::surfaces::toast::note(&mut surfaces.toast, error, now);
         }
     }

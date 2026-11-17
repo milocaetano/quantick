@@ -1,24 +1,41 @@
 //! Native mutation validation and dispatch over the existing indicator owner.
+use crate::indicator_host::{IndicatorHost, IndicatorRefusal, NativePort};
+use crate::{dock::ActionDock, tabs::JournalAccess};
+use quantick_control::{error::ControlError, registry::RegistryError, wire::ActorContext};
+use quantick_control_host::journal::NewEvent;
 use quantick_control_schema::native_indicator as wire;
-use quantick_stores::indicator_state::SavedIndicator;
-pub trait NativePort {
-    fn saved(&self, target: &wire::Target) -> Result<Vec<(u64, SavedIndicator, bool)>, String>;
-    fn settings_open(&self) -> bool;
-    fn apply(
-        &mut self,
-        target: &wire::Target,
-        slot: Option<u64>,
-        edit: wire::Prepared,
-    ) -> Result<u64, String>;
+use serde_json::Value;
+
+/// Dock the native indicator edit and list.
+pub fn register<H: IndicatorHost + ?Sized, A: JournalAccess>(
+    registry: &mut impl ActionDock<H, A>,
+) -> Result<(), RegistryError> {
+    registry.register(wire::edit_descriptor(), edit_request)?;
+    registry.register(wire::list_descriptor(), list_request)
 }
-pub fn list(host: &impl NativePort, input: wire::ListInput) -> Result<wire::ListResult, String> {
+
+/// The page of `input.target`'s native indicators.
+///
+/// # Errors
+///
+/// The target or the page is refused.
+pub fn list(
+    host: &mut (impl NativePort + ?Sized),
+    input: wire::ListInput,
+) -> Result<wire::ListResult, IndicatorRefusal> {
     let saved = host.saved(&input.target)?;
-    wire::capture(input, saved)
+    Ok(wire::capture(input, saved)?)
 }
+
+/// Validate and apply one native edit.
+///
+/// # Errors
+///
+/// The edit is refused, by the request schema or the owner.
 pub fn edit(
-    host: &mut impl NativePort,
+    host: &mut (impl NativePort + ?Sized),
     input: wire::EditInput,
-) -> Result<wire::EditResult, String> {
+) -> Result<wire::EditResult, IndicatorRefusal> {
     let slot = input.operation.slot();
     let saved = host.saved(&input.target)?;
     let selected = saved
@@ -43,18 +60,16 @@ pub fn edit(
     })
 }
 
-/// Transport parsing and event emission stay with the headless handler.
-pub fn edit_request(
-    host: &mut impl NativePort,
-    access: &mut impl crate::tabs::JournalAccess,
-    actor: &quantick_control::wire::ActorContext,
-    input: &serde_json::Value,
-) -> Result<serde_json::Value, quantick_control::error::ControlError> {
-    use quantick_control::error::ControlError;
+fn edit_request<H: IndicatorHost + ?Sized, A: JournalAccess>(
+    host: &mut H,
+    access: &mut A,
+    actor: &ActorContext,
+    input: &Value,
+) -> Result<Value, ControlError> {
     let input = serde_json::from_value(input.clone())
         .map_err(|e| ControlError::invalid_request(e.to_string()))?;
-    let result = edit(host, input).map_err(ControlError::invalid_request)?;
-    access.record_event(quantick_control_host::journal::NewEvent::by(
+    let result = edit(&mut *host.indicators(), input)?;
+    access.record_event(NewEvent::by(
         "indicator",
         wire::EVENT,
         actor,
@@ -62,13 +77,19 @@ pub fn edit_request(
     ));
     serde_json::to_value(result).map_err(|e| ControlError::invalid_request(e.to_string()))
 }
-pub fn list_request(
-    host: &impl NativePort,
-    input: &serde_json::Value,
-) -> Result<serde_json::Value, quantick_control::error::ControlError> {
-    use quantick_control::error::ControlError;
+
+fn list_request<H: IndicatorHost + ?Sized, A>(
+    host: &mut H,
+    _access: &mut A,
+    _actor: &ActorContext,
+    input: &Value,
+) -> Result<Value, ControlError> {
     let input = serde_json::from_value(input.clone())
         .map_err(|e| ControlError::invalid_request(e.to_string()))?;
-    let result = list(host, input).map_err(ControlError::invalid_request)?;
+    let result = list(&mut *host.indicators(), input)?;
     serde_json::to_value(result).map_err(|e| ControlError::invalid_request(e.to_string()))
 }
+
+#[cfg(test)]
+#[path = "native_indicator_tests.rs"]
+mod tests;
