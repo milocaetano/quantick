@@ -61,6 +61,9 @@ pub const CHANGE_PENDING: &str =
 /// A position whose last stop/target change is still unanswered.
 pub const STOPS_PENDING: &str =
     "the broker has not answered the last stop/target change yet - wait for it";
+/// Everything open is already on its way out in a close not yet filled.
+pub const CLOSE_PENDING: &str =
+    "a close for the whole position is already on its way to the broker - wait for its fill";
 
 /// MetaTrader's return codes that mean the request was carried out.
 /// `10025` is "no changes": the terminal already held exactly that.
@@ -141,7 +144,10 @@ enum Pending {
     PositionStops {
         previous: (Option<Decimal>, Option<Decimal>),
     },
-    Close,
+    /// A close of `volume`, sized against what was already closing.
+    Close {
+        volume: Decimal,
+    },
 }
 
 /// A request sent and not yet answered, and the line to resend it with.
@@ -183,8 +189,9 @@ pub struct BrokerCore {
     stops_pending: bool,
     requests: BTreeMap<u64, Unanswered>,
     outbox: Vec<String>,
-    /// Close orders the terminal accepted, whose deal has not arrived yet.
-    closing: BTreeSet<u64>,
+    /// Close orders the terminal accepted, whose deal has not arrived yet,
+    /// by ticket, with the quantity each takes off.
+    closing: BTreeMap<u64, Decimal>,
     deals: DealCursor,
     ledger: Ledger,
     malformed_lines: usize,
@@ -268,7 +275,7 @@ impl BrokerCore {
             stops_pending: false,
             requests: BTreeMap::new(),
             outbox: Vec::new(),
-            closing: BTreeSet::new(),
+            closing: BTreeMap::new(),
             deals: DealCursor::default(),
             ledger: Ledger::default(),
             malformed_lines: 0,
@@ -478,28 +485,49 @@ impl BrokerCore {
         }
     }
 
+    /// Close some or all of the position. Sized against what earlier closes
+    /// still take off, unanswered or accepted and unfilled: on a netting
+    /// account a close for more than is open would open the other way.
     pub fn close(&mut self, amount: CloseAmount) -> Vec<VenueEvent> {
         if let Some(sentence) = self.write_block() {
             return Self::blocked(sentence);
         }
-        let (Some(position), Some(ticket)) = (self.position.as_ref(), self.position_ticket) else {
+        let (Some(open), Some(ticket)) = (self.position.as_ref(), self.position_ticket) else {
             return vec![VenueEvent::Rejected(RejectReason::NoPosition)];
         };
+        let available = open.quantity.saturating_sub(self.closing_quantity());
+        if available <= Decimal::ZERO {
+            return Self::blocked(CLOSE_PENDING);
+        }
         let volume = match amount {
-            CloseAmount::All => position.quantity,
+            CloseAmount::All => available,
             CloseAmount::Partial(quantity) if quantity <= Decimal::ZERO => {
                 return vec![VenueEvent::Rejected(RejectReason::QuantityNotPositive)];
             }
-            CloseAmount::Partial(quantity) => quantity.min(position.quantity),
+            CloseAmount::Partial(quantity) => quantity.min(available),
         };
         self.queue(
-            Pending::Close,
+            Pending::Close { volume },
             &Request::Close {
                 position: ticket,
                 volume,
             },
         );
         Vec::new()
+    }
+
+    /// What closes already sent will take off the position.
+    fn closing_quantity(&self) -> Decimal {
+        let unanswered = self
+            .requests
+            .values()
+            .filter_map(|request| match request.pending {
+                Pending::Close { volume } => Some(volume),
+                _ => None,
+            });
+        unanswered
+            .chain(self.closing.values().copied())
+            .fold(Decimal::ZERO, Decimal::saturating_add)
     }
 
     pub fn flatten(&mut self) -> Vec<VenueEvent> {
@@ -510,7 +538,11 @@ impl BrokerCore {
         for id in ids {
             self.cancel_working(id, CancelReason::Flatten);
         }
-        if self.position.is_some() {
+        // A close already taking everything off is the flatten's close.
+        let rest = self.position.as_ref().map_or(Decimal::ZERO, |open| {
+            open.quantity.saturating_sub(self.closing_quantity())
+        });
+        if rest > Decimal::ZERO {
             return self.close(CloseAmount::All);
         }
         Vec::new()
@@ -630,7 +662,7 @@ impl BrokerCore {
         let closes = self
             .requests
             .values()
-            .filter(|request| matches!(request.pending, Pending::Close))
+            .filter(|request| matches!(request.pending, Pending::Close { .. }))
             .count();
         self.entries.len() + closes + self.closing.len()
     }

@@ -98,7 +98,7 @@ impl BrokerCore {
                     self.stops_pending = false;
                     None
                 }
-                Pending::Close => None,
+                Pending::Close { .. } => None,
             };
             events.push(VenueEvent::Notice(VenueNotice::OutcomeUnknown { id }));
         }
@@ -194,12 +194,14 @@ impl BrokerCore {
                     });
                 }
             }
-            Pending::Close if ok => {
+            Pending::Close { volume } if ok => {
                 if reply.order != 0 {
-                    self.closing.insert(reply.order);
+                    self.closing.insert(reply.order, volume);
                 }
             }
-            Pending::Cancel { .. } | Pending::Close => events.push(VenueEvent::Rejected(refusal)),
+            Pending::Cancel { .. } | Pending::Close { .. } => {
+                events.push(VenueEvent::Rejected(refusal));
+            }
         }
         events
     }
@@ -398,7 +400,7 @@ impl BrokerCore {
             if matches!(line.state.as_str(), "filled" | "started" | "placed") {
                 continue;
             }
-            if self.closing.remove(&line.ticket) {
+            if self.closing.remove(&line.ticket).is_some() {
                 // A close the broker accepted and then dropped unfilled: the
                 // position is still open, and the trader has to know.
                 events.push(VenueEvent::Rejected(RejectReason::Venue {
@@ -431,7 +433,7 @@ impl BrokerCore {
         ) else {
             return;
         };
-        let is_close = self.closing.remove(&deal.order);
+        let is_close = self.closing.remove(&deal.order).is_some();
         let mut order = self.ids.order(deal.order);
         if order.is_none() && !is_close && deal.magic == self.config.magic {
             order = self.claim_unticketed_entry(side, deal.order);
