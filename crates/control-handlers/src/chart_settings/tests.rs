@@ -1,5 +1,6 @@
 //! Readback must describe the addressed surface, including inherited fields.
 use super::*;
+use crate::scratch::ScratchDir;
 use quantick_chart::pane_style::ChartSurface;
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
@@ -394,4 +395,178 @@ fn the_call_journals_the_owners_answer_and_types_its_refusals() {
     assert_eq!(access.events[0].kind.as_str(), CHART_SETTINGS_EVENT_KIND);
     assert_eq!(access.events[0].payload, json!({"chart_settings": answer}));
     assert_eq!(window.settings_asked.len(), 3);
+}
+
+/// Input the schema refuses never reaches the owner, and journals nothing.
+#[test]
+fn malformed_input_is_refused_before_the_owner_is_asked() {
+    use crate::test_support::{FakeAccess, FakeWindow};
+    let (mut window, actor) = (FakeWindow::new(Vec::new()), FakeWindow::assistant());
+    let mut access = FakeAccess::with_budget(0);
+    for invalid in [
+        json!({"action": "open"}),
+        json!({"action": "open", "tab": "drawings"}),
+    ] {
+        let refused = set(&mut window, &mut access, &actor, &invalid).unwrap_err();
+        assert_eq!(refused.code.as_str(), codes::INVALID_REQUEST, "{invalid}");
+    }
+    assert!(window.settings_asked.is_empty());
+    assert!(access.events.is_empty());
+}
+
+/// One pane's look across a settings sitting, as the window's owner holds it.
+struct Sitting<'a> {
+    session: ChartSettingsSession,
+    candles: CandleSettings,
+    look: ChartStyle,
+    surface: StyleSurface<'a>,
+    /// Where the presets are kept; removed with the sitting.
+    _presets: ScratchDir,
+}
+
+impl<'a> Sitting<'a> {
+    /// A sitting over presets kept in a scratch `name` directory.
+    fn new(name: &str, surface: StyleSurface<'a>) -> Self {
+        let directory = ScratchDir::new(name);
+        Self {
+            session: ChartSettingsSession::default(),
+            candles: CandleSettings::open(directory.join("candle_presets.toml")),
+            look: surface.resolve(ChartStyle::default()),
+            surface,
+            _presets: directory,
+        }
+    }
+
+    /// Apply `input` to the pane; a changed look becomes the pane's.
+    fn call(&mut self, input: ChartSettingsInput) -> Result<ChartSettingsResult, PresetError> {
+        let (target, _) = target();
+        let applied = apply(
+            &mut self.session,
+            &mut self.candles,
+            input,
+            Some(target),
+            Some(self.look),
+            self.surface,
+        )?;
+        if let Some(style) = applied.style {
+            self.look = style;
+        }
+        Ok(applied.result)
+    }
+}
+
+/// The window's decisions by name over one sitting: a refusal changes
+/// nothing; opening an open window is no change; a built-in keeps the canvas;
+/// saving reports the new name once; a saved look brings its canvas back;
+/// reset returns the opening look; delete and close report what they moved.
+#[test]
+fn a_sitting_refuses_applies_saves_resets_and_closes_by_name() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let light =
+        quantick_stores::appearance::load(&root.join("../appearance/themes/light.toml")).unwrap();
+    let surface = StyleSurface::new(light.resolved(), ChartSurface::Paper);
+    let mut sitting = Sitting::new("by-name", surface);
+    let (_, wire) = target();
+    let target = Some(wire);
+    let opening = sitting.look;
+    let name = |name: &str| name.to_owned();
+    for refused in [
+        ChartSettingsInput::ApplyCandlePreset {
+            target,
+            name: name("nobody saved this"),
+        },
+        ChartSettingsInput::SaveCandlePreset {
+            target,
+            name: name("Glass"),
+        },
+        ChartSettingsInput::SaveCandlePreset {
+            target,
+            name: name("   "),
+        },
+        ChartSettingsInput::DeleteCandlePreset {
+            name: name("classic"),
+        },
+        // No sitting yet: there is nothing to reset to.
+        ChartSettingsInput::ResetCandles { target },
+    ] {
+        let error = sitting.call(refused.clone()).unwrap_err();
+        assert!(matches!(error, PresetError::Refused(_)), "{refused:?}");
+        assert_eq!(sitting.look, opening, "a refused call changes nothing");
+        assert!(!sitting.session.open);
+    }
+    assert!(sitting.candles.custom_names().is_empty());
+
+    let open = || ChartSettingsInput::Open {
+        target,
+        tab: ChartSettingsTab::Footprint,
+    };
+    let opened = sitting.call(open()).unwrap();
+    assert!(opened.open && opened.changed);
+    assert_eq!(opened.tab, ChartSettingsTab::Footprint);
+    assert!(
+        !sitting.call(open()).unwrap().changed,
+        "opening an open window is harmless"
+    );
+
+    let glass = sitting
+        .call(ChartSettingsInput::ApplyCandlePreset {
+            target,
+            name: name("glass"),
+        })
+        .unwrap();
+    assert!(glass.changed);
+    assert_eq!(glass.candle_preset.as_deref(), Some("Glass"));
+    assert_eq!(
+        sitting.look.canvas, opening.canvas,
+        "a built-in keeps the canvas"
+    );
+
+    let mut edited = sitting.look;
+    edited.candles.gap_px = 4.5;
+    sitting
+        .call(ChartSettingsInput::UpdateCandles {
+            target,
+            style: document(edited.snapshot()),
+        })
+        .unwrap();
+    let night = sitting.look;
+    let save = || ChartSettingsInput::SaveCandlePreset {
+        target,
+        name: name("night"),
+    };
+    let saved = sitting.call(save()).unwrap();
+    assert_eq!(saved.custom_presets, ["night"]);
+    assert_eq!(saved.candle_preset.as_deref(), Some("night"));
+    assert!(saved.changed);
+    assert!(
+        !sitting.call(save()).unwrap().changed,
+        "the same look under the same name"
+    );
+
+    for preset in ["Classic", "night"] {
+        sitting
+            .call(ChartSettingsInput::ApplyCandlePreset {
+                target,
+                name: name(preset),
+            })
+            .unwrap();
+    }
+    assert_eq!(
+        sitting.look, night,
+        "a saved look brings candles and canvas"
+    );
+    let reset = sitting
+        .call(ChartSettingsInput::ResetCandles { target })
+        .unwrap();
+    assert!(reset.changed);
+    assert_eq!(sitting.look, opening, "reset returns to the opening look");
+
+    let deleted = sitting
+        .call(ChartSettingsInput::DeleteCandlePreset {
+            name: name("night"),
+        })
+        .unwrap();
+    assert!(deleted.changed && deleted.custom_presets.is_empty());
+    let closed = sitting.call(ChartSettingsInput::Close).unwrap();
+    assert!(!closed.open && closed.changed);
 }

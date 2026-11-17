@@ -88,7 +88,7 @@ pub const READBACKS: &[Readback] = &[snapshot(
     "The target pane reports manual framing with the requested price_range, or automatic fitting after reset.",
     &[
         EVERY_OPTIONAL_TEST,
-        "the_price_axis_call_holds_manual_tape_framing_and_reads_it_back_without_moving_the_left_pane",
+        "the_axis_calls_reach_the_addressed_window_pane",
     ],
 )];
 

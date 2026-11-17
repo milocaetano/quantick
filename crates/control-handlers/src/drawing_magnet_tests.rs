@@ -110,3 +110,134 @@ fn a_tool_that_snaps_by_its_own_rule_refuses_its_magnet_and_a_stale_flag_clears(
     let again = object(&mut window, &mut access, &actor, &input).unwrap();
     assert_eq!(again["changed"], false);
 }
+
+/// The rail's switch answers the value and whether it moved, journals that
+/// answer on every call, and refuses malformed input before it switches.
+#[test]
+fn the_rail_call_answers_what_moved_and_refuses_malformed_input() {
+    let ((mut window, _), actor) = (window(), FakeWindow::assistant());
+    let mut access = FakeAccess::with_budget(0);
+    for invalid in [
+        json!({"enabled": "yes"}),
+        json!({}),
+        json!({"enabled": true, "x": 1}),
+    ] {
+        let refused = rail(&mut window, &mut access, &actor, &invalid).unwrap_err();
+        assert_eq!(refused.code.as_str(), codes::INVALID_REQUEST, "{invalid}");
+    }
+    assert!(!window.rail_magnet, "a refused call changes nothing");
+    assert!(access.events.is_empty(), "nor journals");
+    for (enabled, changed) in [(true, true), (true, false), (false, true)] {
+        let input = json!({ "enabled": enabled });
+        let answer = rail(&mut window, &mut access, &actor, &input).unwrap();
+        assert_eq!(answer, json!({"enabled": enabled, "changed": changed}));
+        assert_eq!(window.rail_magnet, enabled);
+    }
+    let journaled: Vec<_> = access
+        .events
+        .iter()
+        .map(|event| event.payload["drawing_magnet"]["enabled"].clone())
+        .collect();
+    assert_eq!(journaled, [json!(true), json!(true), json!(false)]);
+}
+
+/// One drawing's switch answers its full address, journals every admitted
+/// call, a repeat included, never moves the rail's magnet, and refuses an
+/// address or input that names nothing before anything moves.
+#[test]
+fn one_drawings_call_answers_its_address_and_refuses_what_names_nothing() {
+    let ((mut window, id), actor) = (window(), FakeWindow::assistant());
+    let mut access = FakeAccess::with_budget(0);
+    let id = id.to_string();
+    let call = |enabled: Value| json!({"tab_id": "1", "pane_id": "2", "drawing_id": id, "enabled": enabled});
+    for invalid in [
+        call(json!("yes")),
+        json!({"tab_id": "1", "pane_id": "2", "enabled": true}),
+        json!({"tab_id": "1", "pane_id": "2", "drawing_id": id}),
+        json!({"pane_id": "2", "drawing_id": id, "enabled": true}),
+        json!({"tab_id": "1", "drawing_id": id, "enabled": true}),
+        json!({"tab_id": "1", "pane_id": "2", "drawing_id": id, "enabled": true, "x": 1}),
+        json!({"tab_id": "1", "pane_id": "2", "drawing_id": "999999", "enabled": true}),
+        json!({"tab_id": "1", "pane_id": "999999", "drawing_id": id, "enabled": true}),
+        json!({"tab_id": "999999", "pane_id": "2", "drawing_id": id, "enabled": true}),
+    ] {
+        let refused = object(&mut window, &mut access, &actor, &invalid).unwrap_err();
+        assert_eq!(refused.code.as_str(), codes::INVALID_REQUEST, "{invalid}");
+    }
+    let own = |window: &FakeWindow| window.tabs[0].panes[0].drawings.items()[0].magnet;
+    assert!(!own(&window), "a refused call changes nothing");
+    assert!(access.events.is_empty(), "nor journals");
+    for (enabled, changed) in [(true, true), (true, false), (false, true)] {
+        let answer = object(&mut window, &mut access, &actor, &call(json!(enabled))).unwrap();
+        let expected = json!({"drawing_id": id, "tab_id": "1", "pane_id": "2",
+            "enabled": enabled, "changed": changed});
+        assert_eq!(answer, expected);
+        assert_eq!(own(&window), enabled);
+        assert!(!window.rail_magnet, "the rail's magnet is another switch");
+    }
+    let journaled: Vec<_> = access
+        .events
+        .iter()
+        .map(|event| event.payload["drawing_magnet"]["enabled"].clone())
+        .collect();
+    assert_eq!(journaled, [json!(true), json!(true), json!(false)]);
+}
+
+/// A drawing id is unique only within its pane: with the same id on two
+/// panes of a tab, a call moves exactly the one on the pane it names.
+#[test]
+fn a_drawing_call_moves_only_the_named_panes_drawing_when_ids_collide() {
+    let ((mut window, id), actor) = (window(), FakeWindow::assistant());
+    let mut access = FakeAccess::with_budget(0);
+    let tool = DRAWING_TOOLS
+        .into_iter()
+        .find(|tool| tool.id() == "horizontal-line")
+        .unwrap();
+    let mut other = FakePane::with_trades(3, 50, []);
+    let fresh = |tool: DrawingTool| NewDrawing {
+        style: DrawingStyle::default(),
+        payload: tool.default_payload(),
+    };
+    let point = ChartPoint::at_time(5.0, 100.0, Some(1_000));
+    assert!(
+        other
+            .drawings
+            .place_with(tool, &DrawingBand::Price, point, fresh)
+    );
+    other.drawings.items_mut()[0].id = DrawingId(id);
+    window.tabs[0].panes.push(other);
+    let own = |window: &FakeWindow| {
+        let panes = &window.tabs[0].panes;
+        (
+            panes[0].drawings.items()[0].magnet,
+            panes[1].drawings.items()[0].magnet,
+        )
+    };
+    for (pane, expected) in [("3", (false, true)), ("2", (true, true))] {
+        let input =
+            json!({"tab_id": "1", "pane_id": pane, "drawing_id": id.to_string(), "enabled": true});
+        let answer = object(&mut window, &mut access, &actor, &input).unwrap();
+        assert_eq!(answer["pane_id"], pane);
+        assert_eq!(
+            own(&window),
+            expected,
+            "only the named pane's drawing moved"
+        );
+    }
+}
+
+/// The docked scope call answers a repeat as no change and journals it too.
+#[test]
+fn the_scope_call_answers_a_repeat_as_no_change() {
+    let ((mut window, id), actor) = (window(), FakeWindow::assistant());
+    let mut access = FakeAccess::with_budget(0);
+    let input =
+        json!({"tab_id": "1", "pane_id": "2", "drawing_id": id.to_string(), "scope": "this_chart"});
+    let first = scope(&mut window, &mut access, &actor, &input).unwrap();
+    assert_eq!(first["scope"], "this_chart");
+    assert_eq!(first["changed"], true);
+    let again = scope(&mut window, &mut access, &actor, &input).unwrap();
+    assert_eq!(again["changed"], false, "a repeat");
+    assert_eq!(again["pinned_bars"], "tick:50");
+    assert_eq!(access.events.len(), 2);
+}

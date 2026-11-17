@@ -88,6 +88,8 @@ pub(crate) fn invalid(error: impl ToString) -> quantick_control::error::ControlE
 #[cfg(test)]
 mod canvas_tests;
 #[cfg(test)]
+mod scratch;
+#[cfg(test)]
 mod test_support;
 
 pub mod appearance;

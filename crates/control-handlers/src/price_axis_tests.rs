@@ -22,6 +22,7 @@ fn pane(window: &FakeWindow) -> &FakePane {
 #[test]
 fn a_price_call_frames_or_fits_the_addressed_pane_and_answers_its_framing() {
     let (mut window, actor) = (window(), FakeWindow::assistant());
+    window.tabs[0].panes.push(FakePane::with_trades(3, 50, []));
     let manual = json!({"tab_id": "1", "pane_id": "2",
         "mode": {"kind": "manual", "low": "10", "high": "20"}});
     let answer = set_price(&mut window, &mut (), &actor, &manual).unwrap();
@@ -30,6 +31,10 @@ fn a_price_call_frames_or_fits_the_addressed_pane_and_answers_its_framing() {
     let auto = json!({"tab_id": "1", "pane_id": "2", "mode": {"kind": "auto"}});
     set_price(&mut window, &mut (), &actor, &auto).unwrap();
     assert_eq!(pane(&window).framed, vec![Some((10.0, 20.0)), None]);
+    assert!(
+        window.tabs[0].panes[1].framed.is_empty(),
+        "the tab's other pane keeps its framing"
+    );
 }
 
 #[test]
@@ -39,8 +44,11 @@ fn a_price_call_refuses_bad_bounds_and_unknown_panes_before_framing() {
         "mode": {"kind": "manual", "low": "20", "high": "10"}});
     let error = set_price(&mut window, &mut (), &actor, &inverted).unwrap_err();
     assert!(format!("{error:?}").contains("low below high"), "{error:?}");
-    let elsewhere = json!({"tab_id": "1", "pane_id": "9", "mode": {"kind": "auto"}});
-    assert!(set_price(&mut window, &mut (), &actor, &elsewhere).is_err());
+    for (tab, pane) in [("1", "9"), ("9", "2")] {
+        let elsewhere = json!({"tab_id": tab, "pane_id": pane, "mode": {"kind": "auto"}});
+        let error = set_price(&mut window, &mut (), &actor, &elsewhere).unwrap_err();
+        assert_eq!(error.code.as_str(), codes::INVALID_REQUEST, "{tab}/{pane}");
+    }
     for mode in [
         json!({"kind": "manual", "low": "100", "high": "100"}),
         json!({"kind": "manual", "low": "NaN", "high": "110"}),
