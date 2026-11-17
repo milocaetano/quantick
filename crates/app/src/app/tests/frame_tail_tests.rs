@@ -644,7 +644,7 @@ fn paper_tail_unsupported_mixed_output_preserves_the_complete_response() {
     });
     let expected = SurfaceResponse {
         model_effects: vec![
-            crate::surfaces::HostEffect::Dock(PaperPanelEffects {
+            crate::surfaces::HostEffect::PaperPanel(PaperPanelEffects {
                 navigate_to_trade: Some((-20_000, -10_000)),
                 ..Default::default()
             }),
@@ -666,7 +666,7 @@ fn paper_tail_unsupported_mixed_output_preserves_the_complete_response() {
     assert!(!app.surfaces.replay_browser.browser_is_open());
     let response = SurfaceResponse {
         model_effects: vec![
-            crate::surfaces::HostEffect::Dock(PaperPanelEffects {
+            crate::surfaces::HostEffect::PaperPanel(PaperPanelEffects {
                 open_replay_browser: true,
                 navigate_to_trade: Some((-20_000, -10_000)),
                 ..Default::default()

@@ -37,7 +37,7 @@ impl crate::surfaces::View<Model> for View {
     }
 }
 pub(crate) fn effects(effects: Effects) -> SurfaceResponse {
-    let mut response = crate::surfaces::dock::effects(PaperPanelEffects {
+    let mut response = crate::surfaces::dock::paper_effects(PaperPanelEffects {
         navigate_to_trade: effects.navigate,
         ..Default::default()
     });

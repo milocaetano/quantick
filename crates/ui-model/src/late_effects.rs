@@ -28,14 +28,24 @@ pub struct LateEffects {
     pub script_editor_actions: Vec<ScriptEditorAction>,
     /// The chart settings window edited the chart style.
     pub style: Option<ChartStyle>,
-    /// An appearance change settled and is owed a log line, naming the preset
-    /// the trader clicked if they clicked one.
-    pub log_style_change: Option<Option<CandlePreset>>,
+    /// An appearance change settled and is owed a log line.
+    pub log_style_change: Option<StyleLogRequest>,
     pub footprint: Option<FootprintChange>,
     pub persistence: Vec<Persistence>,
     pub arm_strategy: Option<ArmRequest>,
     /// A sound was auditioned, by the alert editor or the arming dialog.
     pub test_alert: Option<Cue>,
+}
+
+/// Ask the host to record an appearance change.
+///
+/// Carries only what the surface knows that the host does not: whether the
+/// trader reached the new appearance by clicking a named preset, which the
+/// log prefers over guessing the name back from the values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StyleLogRequest {
+    /// The preset the trader clicked this frame, if they clicked one.
+    pub applied_preset: Option<CandlePreset>,
 }
 
 impl LateEffects {
@@ -63,7 +73,8 @@ impl LateEffects {
             }
             HostEffect::ChartSettings(settings) => {
                 self.style = self.style.take().or(settings.style);
-                self.log_style_change = self.log_style_change.take().or(settings.log);
+                let log = (settings.log).map(|applied_preset| StyleLogRequest { applied_preset });
+                self.log_style_change = self.log_style_change.take().or(log);
                 self.footprint = self.footprint.take().or(settings.footprint);
                 self.persistence.extend(settings.persistence);
             }
@@ -110,178 +121,5 @@ impl LateEffects {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::toast::Effects;
-    use quantick_alerts::sound::AlertSound;
-
-    fn remove(symbol: &str) -> PaletteIntent {
-        PaletteIntent::Remove {
-            feed_id: "binance".to_owned(),
-            symbol: symbol.to_owned(),
-        }
-    }
-
-    #[test]
-    fn the_first_palette_ask_wins_and_undo_folds_to_one() {
-        let late = LateEffects::fold([
-            HostEffect::MarketPalette(None),
-            HostEffect::Toast(Effects { undo_drawing: true }),
-            HostEffect::MarketPalette(Some(remove("FIRST"))),
-            HostEffect::Toast(Effects { undo_drawing: true }),
-            HostEffect::MarketPalette(Some(remove("SECOND"))),
-        ]);
-        assert_eq!(
-            late,
-            LateEffects {
-                market: Some(remove("FIRST")),
-                undo_drawing: true,
-                ..LateEffects::default()
-            }
-        );
-    }
-
-    #[test]
-    fn a_quiet_toast_or_another_surface_asks_nothing() {
-        let late = LateEffects::fold([
-            HostEffect::Toast(Effects {
-                undo_drawing: false,
-            }),
-            HostEffect::BarSwitch(None),
-        ]);
-        assert_eq!(late, LateEffects::default());
-    }
-
-    fn cue(sound: AlertSound) -> Cue {
-        Cue::new(sound, None)
-    }
-
-    fn arm(label: &str) -> ArmRequest {
-        ArmRequest {
-            side: quantick_chart_interaction::pane::PaneSide::Flow,
-            drawing: quantick_drawings::DrawingId(1),
-            form: Box::new(quantick_strategy::presets::StoredPreset::starting_point(
-                quantick_engine::Side::Buy,
-            )),
-            label: label.to_owned(),
-        }
-    }
-
-    #[test]
-    fn alert_and_strategy_asks_go_to_their_first_asker() {
-        let late = LateEffects::fold([
-            HostEffect::StrategyPopup(crate::strategy_popup::Effects {
-                arm: Some(arm("first")),
-                test_alert: Some(cue(AlertSound::Beep)),
-                bank: None,
-            }),
-            HostEffect::Alerts(crate::alerts::Effects {
-                request: Some(Box::new(AlertRequest::default())),
-                preview: Some(cue(AlertSound::Question)),
-            }),
-            HostEffect::StrategyPopup(crate::strategy_popup::Effects {
-                arm: Some(arm("second")),
-                test_alert: None,
-                bank: None,
-            }),
-            HostEffect::Alerts(crate::alerts::Effects {
-                request: Some(Box::new(AlertRequest {
-                    open: true,
-                    ..AlertRequest::default()
-                })),
-                preview: None,
-            }),
-        ]);
-        assert_eq!(
-            late.arm_strategy.map(|arm| arm.label),
-            Some("first".to_owned())
-        );
-        assert_eq!(late.test_alert, Some(cue(AlertSound::Beep)));
-        assert_eq!(late.alerts, Some(Box::new(AlertRequest::default())));
-    }
-
-    #[test]
-    fn chart_settings_asks_keep_the_first_value_and_every_persistence() {
-        let mut edited = ChartStyle::default();
-        edited.candles.corner_radius += 1.0;
-        let late = LateEffects::fold([
-            HostEffect::ChartSettings(crate::chart_settings::Effects {
-                style: Some(edited),
-                footprint: Some(FootprintChange::ResetToDefault),
-                log: Some(Some(CandlePreset::Classic)),
-                persistence: vec![Persistence::DeleteCandle("a".to_owned())],
-            }),
-            HostEffect::ChartSettings(crate::chart_settings::Effects {
-                style: Some(ChartStyle::default()),
-                footprint: None,
-                log: Some(None),
-                persistence: vec![Persistence::SaveFootprint],
-            }),
-        ]);
-        assert_eq!(late.style, Some(edited));
-        assert_eq!(late.footprint, Some(FootprintChange::ResetToDefault));
-        assert_eq!(late.log_style_change, Some(Some(CandlePreset::Classic)));
-        assert_eq!(
-            late.persistence,
-            vec![
-                Persistence::DeleteCandle("a".to_owned()),
-                Persistence::SaveFootprint
-            ]
-        );
-    }
-
-    #[test]
-    fn picker_and_editor_actions_keep_draw_order() {
-        let late = LateEffects::fold([
-            HostEffect::IndicatorPicker(vec![
-                PickerEffect::Add(Choice::Native("native.cvd")),
-                PickerEffect::Add(Choice::Script(2)),
-                PickerEffect::ViewSource("ema".to_owned()),
-                PickerEffect::Active(4, ActiveAction::ToggleHidden),
-                PickerEffect::Active(5, ActiveAction::Settings),
-                PickerEffect::Active(6, ActiveAction::Remove),
-            ]),
-            HostEffect::ScriptEditor(vec![EditorEffect::Requests {
-                actions: vec![ScriptEditorAction::Close],
-                add_to_chart: Some(3),
-            }]),
-        ]);
-        assert_eq!(
-            late.indicator_actions,
-            vec![
-                ToolbarAction::AddNative("native.cvd"),
-                ToolbarAction::AddScriptIndicator(2),
-                ToolbarAction::ToggleIndicatorHidden(4),
-                ToolbarAction::OpenIndicatorSettings(5),
-                ToolbarAction::RemoveIndicator(6),
-                ToolbarAction::AddScriptIndicator(3),
-            ]
-        );
-        assert_eq!(
-            late.script_editor_actions,
-            vec![
-                ScriptEditorAction::Open {
-                    id: "ema".to_owned()
-                },
-                ScriptEditorAction::Close
-            ]
-        );
-    }
-
-    #[test]
-    fn the_first_bar_switch_wins() {
-        let config = quantick_engine::bar_registry::BUILTIN_BARS.quick_matches("1m")[0];
-        let request = |tab| crate::bar_switch::BarSwitchRequest {
-            tab,
-            side: quantick_chart_interaction::pane::PaneSide::Flow,
-            config,
-        };
-        let first = request(1);
-        let late = LateEffects::fold([
-            HostEffect::BarSwitch(None),
-            HostEffect::BarSwitch(Some(request(1))),
-            HostEffect::BarSwitch(Some(request(2))),
-        ]);
-        assert_eq!(late.bar_switch, Some(first));
-    }
-}
+#[path = "late_effects/tests.rs"]
+mod tests;

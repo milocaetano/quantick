@@ -153,7 +153,7 @@ impl SurfaceResponse {
     /// Validate the complete residual before a paper host performs any effect.
     /// Direct model/domain changes made during painting are not rolled back.
     pub(crate) fn into_paper_panel(self) -> Result<PaperPanelEffects, Box<Self>> {
-        if !(self.model_effects.iter()).all(|effect| matches!(effect, HostEffect::Dock(_))) {
+        if !(self.model_effects.iter()).all(|effect| matches!(effect, HostEffect::PaperPanel(_))) {
             tracing::warn!(target: "quantick::app", schema_version = 1_u8,
                 event_code = "PAPER_PANEL_UNSUPPORTED_RESPONSE", response = ?self,
                 "paper panel response retained without external host execution");
@@ -161,7 +161,7 @@ impl SurfaceResponse {
         }
         let mut paper = PaperPanelEffects::default();
         for effect in self.model_effects {
-            if let HostEffect::Dock(asked) = effect {
+            if let HostEffect::PaperPanel(asked) = effect {
                 paper.merge(asked);
             }
         }

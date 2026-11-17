@@ -559,8 +559,8 @@ impl QuantickApp {
         }
         // After the assignment, never before: the log line reports the
         // appearance that is now in force, and the revision it landed on.
-        if let Some(applied_preset) = late.log_style_change {
-            self.layer_wiring().log_editor_style(applied_preset);
+        if let Some(request) = late.log_style_change {
+            self.layer_wiring().log_editor_style(request.applied_preset);
         }
         // The audition goes through the one speaker every armed instance
         // shares, and reports a sound that could not be heard exactly as a

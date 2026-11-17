@@ -12,7 +12,7 @@ impl SurfaceResponse {
         self.model_effects
             .into_iter()
             .filter_map(|effect| match effect {
-                HostEffect::Dock(paper) => Some(paper),
+                HostEffect::PaperPanel(paper) => Some(paper),
                 _ => None,
             })
             .reduce(|mut first, later| {
@@ -113,7 +113,7 @@ fn borrowed_domain_rows_reborrow_in_catalog_order() {
         assert_eq!(registry.borrowed_first.view.immediate, Some(initial));
         assert_eq!(registry.borrowed_second.view.immediate, Some(!initial));
         let (paper_effects, rows): (Vec<_>, Vec<_>) = (response.model_effects.into_iter())
-            .partition(|effect| matches!(effect, HostEffect::Dock(_)));
+            .partition(|effect| matches!(effect, HostEffect::PaperPanel(_)));
         assert_eq!(
             rows,
             vec![

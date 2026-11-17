@@ -57,9 +57,8 @@ pub struct Model;
 impl crate::Model for Model {
     type State = State;
     type Intent = Intent;
-    /// Dock intents only move chrome; the paper pass reports its own asks.
-    type Effects = PaperPanelEffects;
-    fn update(state: &mut State, intent: Intent) -> PaperPanelEffects {
+    type Effects = ();
+    fn update(state: &mut State, intent: Intent) {
         match intent {
             Intent::ToggleVisible => state.dock.toggle_visible(),
             Intent::Restore { visible, tab } => state.dock.restore(visible, tab),
@@ -68,7 +67,6 @@ impl crate::Model for Model {
             Intent::Select(tab) => state.dock.select(tab),
             Intent::RememberWidth { tab, width } => state.dock.remember_width(tab, width),
         }
-        PaperPanelEffects::default()
     }
 }
 #[cfg(test)]
