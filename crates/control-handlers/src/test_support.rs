@@ -38,7 +38,7 @@ use crate::chart_layer::{LayerBlocked, LayerRead};
 use crate::deal_recorder::DealRecorder;
 use crate::history::HistoryPort;
 use crate::indicator_host::{
-    AttachedScript, IndicatorGuidePort, IndicatorHost, IndicatorOwner, IndicatorPickerPort,
+    AttachedScript, IndicatorControlHost, IndicatorGuidePort, IndicatorOwner, IndicatorPickerPort,
     IndicatorRefusal, NativePort, ScriptEditorPort, ScriptsPort,
 };
 use crate::notify::{AttentionPort, NotifyAccess};
@@ -482,7 +482,8 @@ pub(crate) struct FakeIndicators {
     pub applied: Vec<(Option<u64>, wire::Prepared)>,
     /// The saved native indicators every target reads.
     pub saved: Vec<(u64, SavedIndicator, bool)>,
-    /// What every call answers instead of succeeding.
+    /// What the picker, guide, editor and `saved` calls answer instead of
+    /// succeeding; attach, detach and `apply` keep their own rules.
     pub refusal: Option<IndicatorRefusal>,
 }
 
@@ -672,7 +673,7 @@ impl PaneBubblesPort for FakeWindow {
     }
 }
 
-impl IndicatorHost for FakeWindow {
+impl IndicatorControlHost for FakeWindow {
     fn indicators(&mut self) -> Box<dyn IndicatorOwner + '_> {
         Box::new(&mut self.indicators)
     }
@@ -910,8 +911,8 @@ pub(crate) struct FakeAccess {
     pub budget: usize,
     pub retry_after: Duration,
     pub events: Vec<NewEvent>,
-    /// The actor a replayed run recorded, when the call replays one.
-    pub replayed: Option<ActorKind>,
+    /// The actor and client a replayed run recorded, when the call replays one.
+    pub replayed: Option<(ActorKind, String)>,
 }
 
 impl FakeAccess {
@@ -922,6 +923,12 @@ impl FakeAccess {
             events: Vec::new(),
             replayed: None,
         }
+    }
+}
+
+impl Default for FakeAccess {
+    fn default() -> Self {
+        Self::with_budget(0)
     }
 }
 
@@ -937,7 +944,9 @@ impl JournalAccess for FakeAccess {
 
 impl AnnotateAccess for FakeAccess {
     fn recorded_actor(&self) -> Option<(ActorKind, &str)> {
-        self.replayed.map(|kind| (kind, "recorded run"))
+        self.replayed
+            .as_ref()
+            .map(|(kind, client)| (*kind, client.as_str()))
     }
     fn record_event(&mut self, event: NewEvent) {
         self.events.push(event);

@@ -4,6 +4,7 @@ use std::time::Instant;
 
 use eframe::egui;
 use quantick_control::{error::ControlError, wire::ActorContext};
+use quantick_control_handlers::indicator_host::{IndicatorRefusal, ScriptEditorPort};
 use quantick_control_host::actions::ActionRegistry;
 use quantick_stores::script_library::{
     ScriptDocument, ScriptEditorAction, ScriptEntry, ScriptLibrary, ScriptLibraryPort, ScriptOrigin,
@@ -63,11 +64,29 @@ struct FakeEditor {
     library: FakeLibrary,
     state: State,
 }
-impl FakeEditor {
+impl ScriptEditorPort for FakeEditor {
+    fn set_script_numeric_input(
+        &mut self,
+        _id: &str,
+        _name: &str,
+        _value: quantick_control_schema::script_editor::NumericValue,
+    ) -> Result<(), IndicatorRefusal> {
+        Err(IndicatorRefusal::NotAttached)
+    }
+    fn add_library_script(&mut self, _id: &str) -> Result<(), IndicatorRefusal> {
+        Err(IndicatorRefusal::NotAttached)
+    }
+    fn script_library_state(
+        &self,
+        _offset: usize,
+        _limit: usize,
+    ) -> quantick_control_schema::script_editor::EditorResult {
+        Default::default()
+    }
     fn script_editor(
         &mut self,
         action: ScriptEditorAction,
-    ) -> Result<Option<ScriptDocument>, String> {
+    ) -> Result<Option<ScriptDocument>, IndicatorRefusal> {
         use quantick_ui_model::Model as _;
         let Effect::Dispatch { mut editor, action } =
             Model::update(&mut self.state, Intent::Action(action))
@@ -81,7 +100,7 @@ impl FakeEditor {
         let Effect::ActionResult(result) = effects.into_iter().last().unwrap() else {
             panic!("result")
         };
-        result
+        result.map_err(IndicatorRefusal::Rejected)
     }
 }
 struct FakeView {
@@ -112,9 +131,7 @@ fn control_dispatch(
 ) -> Result<Value, ControlError> {
     let action = serde_json::from_value(input.clone())
         .map_err(|e| ControlError::invalid_request(e.to_string()))?;
-    let result = editor
-        .script_editor(action)
-        .map_err(ControlError::invalid_request)?;
+    let result = editor.script_editor(action).map_err(ControlError::from)?;
     serde_json::to_value(result).map_err(|e| ControlError::invalid_request(e.to_string()))
 }
 fn actor() -> ActorContext {

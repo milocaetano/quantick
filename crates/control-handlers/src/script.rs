@@ -7,7 +7,7 @@
 //! parse "line 4, column 12: …" back out of prose cannot fix its own script
 //! reliably.
 use crate::annotate::AnnotateAccess;
-use crate::indicator_host::IndicatorHost;
+use crate::indicator_host::IndicatorControlHost;
 use crate::{dock::ActionDock, tabs::JournalAccess};
 use quantick_control::{
     error::ControlError,
@@ -25,7 +25,7 @@ use serde_json::{Value, json};
 /// Dock the script attach and detach.
 pub fn register<H, A>(registry: &mut impl ActionDock<H, A>) -> Result<(), RegistryError>
 where
-    H: IndicatorHost + ?Sized,
+    H: IndicatorControlHost + ?Sized,
     A: JournalAccess + AnnotateAccess,
 {
     registry.register(attach_descriptor(), attach)?;
@@ -39,7 +39,7 @@ fn attach<H, A>(
     input: &Value,
 ) -> Result<Value, ControlError>
 where
-    H: IndicatorHost + ?Sized,
+    H: IndicatorControlHost + ?Sized,
     A: JournalAccess + AnnotateAccess,
 {
     let input: AttachInput = serde_json::from_value(input.clone())
@@ -79,7 +79,7 @@ fn detach<H, A>(
     input: &Value,
 ) -> Result<Value, ControlError>
 where
-    H: IndicatorHost + ?Sized,
+    H: IndicatorControlHost + ?Sized,
     A: JournalAccess + AnnotateAccess,
 {
     let input: DetachInput = serde_json::from_value(input.clone())

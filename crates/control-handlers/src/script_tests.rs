@@ -37,7 +37,7 @@ fn an_agents_script_is_an_operators_and_detaches() {
 fn a_replayed_hand_attaches_as_the_recorded_actor() {
     let mut window = FakeWindow::new(Vec::new());
     let mut access = FakeAccess::with_budget(0);
-    access.replayed = Some(ActorKind::HumanUi);
+    access.replayed = Some((ActorKind::HumanUi, "trader".to_owned()));
     attach_as(&mut window, &mut access).unwrap();
     assert!(
         !window.indicators.attached[0].2,

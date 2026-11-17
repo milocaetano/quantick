@@ -1,8 +1,8 @@
 //! The indicator owner's control ports: the bound workspace's indicators,
 //! the picker, the script library and its editor, served by the split-borrow
-//! adapter the window lends ([`IndicatorHost`]).
+//! adapter the window lends ([`IndicatorControlHost`]).
 //!
-//! [`IndicatorHost`]: quantick_control_handlers::indicator_host::IndicatorHost
+//! [`IndicatorControlHost`]: quantick_control_handlers::indicator_host::IndicatorControlHost
 use super::indicator_manager::IndicatorEdit;
 use super::indicator_wiring::IndicatorWiring;
 use super::script_editor_wiring;
@@ -23,12 +23,13 @@ impl IndicatorPickerPort for IndicatorWiring<'_> {
             self.runtime.tabs.active_id(),
             self.runtime.active_tab().focused_pane().id,
         );
-        Ok(quantick_ui_model::indicator_picker::Model::control(
+        quantick_ui_model::indicator_picker::Model::control(
             &mut self.surfaces.indicator_picker.model_state,
             target,
             self.runtime.indicators.script_library.entries(),
             input,
-        )?)
+        )
+        .map_err(IndicatorRefusal::Rejected)
     }
 }
 
@@ -82,11 +83,8 @@ impl ScriptEditorPort for IndicatorWiring<'_> {
         &mut self,
         action: ScriptEditorAction,
     ) -> Result<Option<ScriptDocument>, IndicatorRefusal> {
-        Ok(script_editor_wiring::apply(
-            self.surfaces,
-            &mut self.runtime.indicators,
-            action,
-        )?)
+        script_editor_wiring::apply(self.surfaces, &mut self.runtime.indicators, action)
+            .map_err(IndicatorRefusal::Rejected)
     }
     fn script_library_state(&self, offset: usize, limit: usize) -> EditorResult {
         script_editor_wiring::inspect(
@@ -105,7 +103,7 @@ impl NativePort for IndicatorWiring<'_> {
         &mut self,
         target: &wire::Target,
     ) -> Result<Vec<(u64, SavedIndicator, bool)>, IndicatorRefusal> {
-        self.layout().saved(target)
+        self.layout().native_saved(target)
     }
     fn settings_open(&self) -> bool {
         self.surfaces
@@ -120,7 +118,7 @@ impl NativePort for IndicatorWiring<'_> {
         slot: Option<u64>,
         edit: wire::Prepared,
     ) -> Result<u64, IndicatorRefusal> {
-        self.layout().apply(target, slot, edit)
+        self.layout().native_apply(target, slot, edit)
     }
 }
 

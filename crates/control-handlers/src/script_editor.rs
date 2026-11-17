@@ -1,5 +1,5 @@
 //! Source editor dispatch over the indicator owner, with no app dependency.
-use crate::indicator_host::{IndicatorHost, IndicatorRefusal, ScriptEditorPort};
+use crate::indicator_host::{IndicatorControlHost, IndicatorRefusal, ScriptEditorPort};
 use crate::{dock::ActionDock, tabs::JournalAccess};
 use quantick_control::{error::ControlError, registry::RegistryError, wire::ActorContext};
 use quantick_control_host::journal::NewEvent;
@@ -9,13 +9,13 @@ use quantick_control_schema::script_editor::{
 use serde_json::Value;
 
 /// Dock the editor call; a replay never records or runs it.
-pub fn register<H: IndicatorHost + ?Sized, A: JournalAccess>(
+pub fn register<H: IndicatorControlHost + ?Sized, A: JournalAccess>(
     registry: &mut impl ActionDock<H, A>,
 ) -> Result<(), RegistryError> {
     registry.register_outside_replay(descriptor(), edit)
 }
 
-fn edit<H: IndicatorHost + ?Sized, A: JournalAccess>(
+fn edit<H: IndicatorControlHost + ?Sized, A: JournalAccess>(
     host: &mut H,
     access: &mut A,
     actor: &ActorContext,

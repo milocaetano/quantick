@@ -74,7 +74,7 @@ pub(crate) trait ControlPort:
     + LayoutPort
     + PaperPort
     + LayersPort
-    + quantick_control_handlers::indicator_host::IndicatorHost
+    + quantick_control_handlers::indicator_host::IndicatorControlHost
     + RecordingPort
     + ToolRailPort
     + GatewayPort
@@ -92,7 +92,7 @@ impl<T> ControlPort for T where
         + LayoutPort
         + PaperPort
         + LayersPort
-        + quantick_control_handlers::indicator_host::IndicatorHost
+        + quantick_control_handlers::indicator_host::IndicatorControlHost
         + RecordingPort
         + ToolRailPort
         + GatewayPort
@@ -983,7 +983,7 @@ impl LayersPort for QuantickApp {
     }
 }
 
-impl quantick_control_handlers::indicator_host::IndicatorHost for QuantickApp {
+impl quantick_control_handlers::indicator_host::IndicatorControlHost for QuantickApp {
     fn indicators(
         &mut self,
     ) -> Box<dyn quantick_control_handlers::indicator_host::IndicatorOwner + '_> {

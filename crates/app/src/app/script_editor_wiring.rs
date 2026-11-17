@@ -69,7 +69,8 @@ pub(super) fn set_numeric_input(
         target,
     )
     .ok_or(IndicatorRefusal::InputsUnavailable)?;
-    let values = update_numeric_input(&view.descriptor.inputs, &saved, name, &value)?;
+    let values = update_numeric_input(&view.descriptor.inputs, &saved, name, &value)
+        .map_err(IndicatorRefusal::Rejected)?;
     wiring.apply_indicator_settings_change(super::indicator_manager::SettingsChange::Inputs {
         target,
         slot: target.slot,
@@ -84,7 +85,8 @@ pub(super) fn add_to_chart(
     id: &str,
 ) -> Result<(), IndicatorRefusal> {
     let runtime = &*wiring.runtime;
-    ScriptLibraryPort::read(&runtime.indicators.script_library, id)?;
+    ScriptLibraryPort::read(&runtime.indicators.script_library, id)
+        .map_err(IndicatorRefusal::Rejected)?;
     let index = runtime
         .indicators
         .script_library

@@ -15,8 +15,10 @@ impl LayoutAdapter<'_> {
             .ok_or(IndicatorRefusal::UnknownTabOrPane)
     }
 }
-impl quantick_control_handlers::indicator_host::NativePort for LayoutAdapter<'_> {
-    fn saved(
+/// The native indicator edits [`super::super::super::indicator_wiring::IndicatorWiring`]
+/// serves as `NativePort`.
+impl LayoutAdapter<'_> {
+    pub(in crate::app) fn native_saved(
         &mut self,
         target: &wire::Target,
     ) -> Result<Vec<(u64, SavedIndicator, bool)>, IndicatorRefusal> {
@@ -49,10 +51,7 @@ impl quantick_control_handlers::indicator_host::NativePort for LayoutAdapter<'_>
             })
             .collect())
     }
-    fn settings_open(&self) -> bool {
-        self.indicator_settings.model_state.dialog().is_some()
-    }
-    fn apply(
+    pub(in crate::app) fn native_apply(
         &mut self,
         target: &wire::Target,
         slot: Option<u64>,

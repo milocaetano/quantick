@@ -1,5 +1,5 @@
 //! Native mutation validation and dispatch over the existing indicator owner.
-use crate::indicator_host::{IndicatorHost, IndicatorRefusal, NativePort};
+use crate::indicator_host::{IndicatorControlHost, IndicatorRefusal, NativePort};
 use crate::{dock::ActionDock, tabs::JournalAccess};
 use quantick_control::{error::ControlError, registry::RegistryError, wire::ActorContext};
 use quantick_control_host::journal::NewEvent;
@@ -7,7 +7,7 @@ use quantick_control_schema::native_indicator as wire;
 use serde_json::Value;
 
 /// Dock the native indicator edit and list.
-pub fn register<H: IndicatorHost + ?Sized, A: JournalAccess>(
+pub fn register<H: IndicatorControlHost + ?Sized, A: JournalAccess>(
     registry: &mut impl ActionDock<H, A>,
 ) -> Result<(), RegistryError> {
     registry.register(wire::edit_descriptor(), edit_request)?;
@@ -24,7 +24,7 @@ pub fn list(
     input: wire::ListInput,
 ) -> Result<wire::ListResult, IndicatorRefusal> {
     let saved = host.saved(&input.target)?;
-    Ok(wire::capture(input, saved)?)
+    wire::capture(input, saved).map_err(IndicatorRefusal::Rejected)
 }
 
 /// Validate and apply one native edit.
@@ -49,8 +49,10 @@ pub fn edit(
             limit: 1,
         },
         selected,
-    )?;
-    let prepared = wire::prepare(input.operation, state.entries.first(), host.settings_open())?;
+    )
+    .map_err(IndicatorRefusal::Rejected)?;
+    let prepared = wire::prepare(input.operation, state.entries.first(), host.settings_open())
+        .map_err(IndicatorRefusal::Rejected)?;
     let removed = matches!(prepared, wire::Prepared::Remove);
     let slot = host.apply(&input.target, slot, prepared)?;
     Ok(wire::EditResult {
@@ -60,7 +62,7 @@ pub fn edit(
     })
 }
 
-fn edit_request<H: IndicatorHost + ?Sized, A: JournalAccess>(
+fn edit_request<H: IndicatorControlHost + ?Sized, A: JournalAccess>(
     host: &mut H,
     access: &mut A,
     actor: &ActorContext,
@@ -78,7 +80,7 @@ fn edit_request<H: IndicatorHost + ?Sized, A: JournalAccess>(
     serde_json::to_value(result).map_err(|e| ControlError::invalid_request(e.to_string()))
 }
 
-fn list_request<H: IndicatorHost + ?Sized, A>(
+fn list_request<H: IndicatorControlHost + ?Sized, A>(
     host: &mut H,
     _access: &mut A,
     _actor: &ActorContext,

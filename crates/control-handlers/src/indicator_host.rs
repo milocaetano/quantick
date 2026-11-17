@@ -14,7 +14,7 @@ use quantick_stores::indicator_state::SavedIndicator;
 
 /// The window's indicator job: lend the owner of the bound workspace's
 /// indicators. Everything else is the owner's.
-pub trait IndicatorHost {
+pub trait IndicatorControlHost {
     /// The owner every indicator and script call lands on.
     fn indicators(&mut self) -> Box<dyn IndicatorOwner + '_>;
 }
@@ -222,12 +222,6 @@ impl std::fmt::Display for IndicatorRefusal {
 }
 
 impl std::error::Error for IndicatorRefusal {}
-
-impl From<String> for IndicatorRefusal {
-    fn from(reason: String) -> Self {
-        Self::Rejected(reason)
-    }
-}
 
 impl From<IndicatorRefusal> for ControlError {
     fn from(refusal: IndicatorRefusal) -> Self {
