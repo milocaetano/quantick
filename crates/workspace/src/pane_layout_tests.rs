@@ -1,4 +1,3 @@
-
 use super::*;
 #[test]
 fn requested_default_is_distinct_from_no_request() {

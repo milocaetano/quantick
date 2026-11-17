@@ -190,8 +190,7 @@ impl LayoutAdapter<'_> {
         }
         let id = quantick_drawings::DrawingId(selector.drawing_id);
         // Ids are unique in a store; one this pane does not show is not its to name.
-        let index = pane.drawings.shown_index_of(id).ok_or(Error::Missing)?;
-        let drawing = &pane.drawings.items()[index];
+        let drawing = pane.drawings.shown_by_id(id).ok_or(Error::Missing)?;
         if drawing.all_timeframes() {
             key = DrawingKey::all_timeframes(key.market);
         }

@@ -707,6 +707,10 @@ fn edits_by_id_and_counts_reach_only_the_marks_the_chart_shows() {
     let held = other.drawings.items()[0].id;
 
     assert_eq!(other.drawings.shown_index_of(held), None, "held, not shown");
+    assert!(
+        other.drawings.shown_by_id(held).is_none(),
+        "held, not read back"
+    );
     assert_eq!(other.drawings.index_of(held), Some(0));
     assert_eq!(other.drawings.set_own_magnet(held, false), Err(None));
     assert_eq!(other.drawings.shared_count(), 0, "lends nothing it hides");
@@ -718,6 +722,7 @@ fn edits_by_id_and_counts_reach_only_the_marks_the_chart_shows() {
     );
     let own = other.drawings.items()[1].id;
     assert_eq!(other.drawings.shown_index_of(own), Some(1));
+    assert_eq!(other.drawings.shown_by_id(own).map(|d| d.id), Some(own));
 }
 
 /// A chart on a deleted layout moves to the next one with its marks, so the

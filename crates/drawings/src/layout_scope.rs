@@ -130,6 +130,13 @@ impl<T: Clone + PartialEq> Drawings<T> {
         self.index_of(id).filter(|&index| self.in_layout(index))
     }
 
+    /// The object with this identity, if this chart shows it: the read side of
+    /// [`Self::shown_index_of`].
+    #[must_use]
+    pub fn shown_by_id(&self, id: DrawingId) -> Option<&Drawing<T>> {
+        self.shown_index_of(id).map(|index| &self.items[index])
+    }
+
     /// The row of [`Self::shown`] the selection sits on.
     #[must_use]
     pub fn selected_row(&self) -> Option<usize> {
