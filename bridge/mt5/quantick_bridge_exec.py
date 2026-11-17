@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import socket
 import time
 import uuid
@@ -308,17 +309,37 @@ class ExecSession(TransportMixin):
                 "refusing rather than guessing its price digits"
             )
         trade_request = getattr(self, f"build_{kind}")(request)
-        self.snap_to_tick(trade_request, symbol)
+        self.snap_to_tick(trade_request, symbol, self.long_side(kind, request))
         refuse_if_expired(request)
         return self.send_order(request["id"], trade_request)
 
-    def snap_to_tick(self, trade: dict, symbol: str | None) -> None:
+    def long_side(self, kind: str, request: dict) -> bool | None:
+        """Whether the protection belongs to a long (True), a short (False),
+        or nobody this bridge can name (None): a submit says so itself, a
+        stop change asks the position, a modify asks the order."""
+        if kind == "submit":
+            return request.get("side") == "buy"
+        if kind == "sltp" and isinstance(request.get("position"), int):
+            found = self.terminal.positions_get(ticket=request["position"])
+            if found:
+                return int(found[0].type) == 0
+        if kind == "modify" and isinstance(request.get("order"), int):
+            found = self.terminal.orders_get(ticket=request["order"])
+            if found:
+                return int(found[0].type) % 2 == 0
+        return None
+
+    def snap_to_tick(self, trade: dict, symbol: str | None, long: bool | None = None) -> None:
         """Put every price the request carries on the symbol's tick grid.
 
         A price dragged on the chart is wherever the pointer was (172140.82);
-        B3 refuses a stop or a target off its grid as "Invalid stops" (10016),
-        so the nearest tick is what the trader meant. Unknown symbol
-        information leaves the prices as they are: an exit never waits on it.
+        B3 refuses a stop or a target off its grid as "Invalid stops" (10016).
+        An entry price goes to the nearest tick. A stop and a target go to
+        the tick on their own side, away from the entry (a long's stop down,
+        its target up; a short's the other way), so a level dragged close to
+        the market never lands on or past it. A protection never snaps to
+        0.0, which on the wire means "none". Unknown symbol information
+        leaves the prices as they are: an exit never waits on it.
         """
         name = symbol or self.symbol
         info = self.terminal.symbol_info(name) if name else None
@@ -326,10 +347,17 @@ class ExecSession(TransportMixin):
         if tick <= 0.0:
             return
         digits = int(getattr(info, "digits", 0) or 0)
+        away = {"sl": math.floor, "tp": math.ceil} if long else {"sl": math.ceil, "tp": math.floor}
         for key in ("price", "sl", "tp"):
             value = trade.get(key)
-            if isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0.0:
-                trade[key] = round(round(float(value) / tick) * tick, digits)
+            if not isinstance(value, (int, float)) or isinstance(value, bool) or value <= 0.0:
+                continue
+            steps = float(value) / tick
+            if key == "price" or long is None:
+                snapped = round(steps)
+            else:
+                snapped = away[key](round(steps, 9))
+            trade[key] = round(max(snapped, 1) * tick, digits)
 
     def send_order(self, request_id: str, trade_request: dict) -> dict:
         result = self.terminal.order_send(trade_request)

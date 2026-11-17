@@ -510,6 +510,25 @@ def test_stops_targets_and_prices_are_snapped_to_the_symbol_tick():
     check("a modified price lands on the grid and no stop stays 0.0", (modify["price"], modify["sl"], modify["tp"]) == (124855.0, 0.0, 0.0), modify)
 
 
+def test_a_protection_snaps_to_its_own_side_and_never_to_none():
+    broker = FakeBroker()
+    broker.info = ns(digits=0, trade_tick_size=5.0)
+    broker.positions = [ns(ticket=77, symbol=SYMBOL, type=0), ns(ticket=78, symbol=SYMBOL, type=1)]
+    s = session(broker)
+    s.answer({"type": "sltp", "id": "s-long", "symbol": SYMBOL, "position": 77, "sl": "172143", "tp": "172207", "magic": MAGIC})
+    long = broker.sent[-1]
+    check("a long's stop goes down to its tick, its target up", (long["sl"], long["tp"]) == (172140.0, 172210.0), long)
+    s.answer({"type": "sltp", "id": "s-short", "symbol": SYMBOL, "position": 78, "sl": "172143", "tp": "172207", "magic": MAGIC})
+    short = broker.sent[-1]
+    check("a short's stop goes up to its tick, its target down", (short["sl"], short["tp"]) == (172145.0, 172205.0), short)
+    s.answer({"type": "sltp", "id": "s-tiny", "symbol": SYMBOL, "position": 78, "sl": "7", "tp": "2", "magic": MAGIC})
+    tiny = broker.sent[-1]
+    check("a protection under half a tick never becomes 0.0", (tiny["sl"], tiny["tp"]) == (10.0, 5.0), tiny)
+    s.answer({"type": "sltp", "id": "s-grid", "symbol": SYMBOL, "position": 77, "sl": "172140", "tp": "172210", "magic": MAGIC})
+    grid = broker.sent[-1]
+    check("a level already on the grid stays put", (grid["sl"], grid["tp"]) == (172140.0, 172210.0), grid)
+
+
 def test_prices_are_untouched_when_the_tick_size_is_unknown():
     broker = FakeBroker()
     broker.info = ns(digits=0)
