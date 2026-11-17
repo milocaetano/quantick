@@ -86,6 +86,7 @@ fn drawing_env<'a>(
         selected_band: read.selected_band,
         tab: facts.tab,
         side: facts.side,
+        surface: facts.surface,
         drawing_tool_armed: matches!(toolrail.tool(), Tool::Drawing(_)),
         toolbox_dock: toolrail.dock(),
         authored_objects: read.authored_objects,
@@ -281,7 +282,8 @@ impl DrawingControllerAccess<'_> {
         // Through the same door the click path uses, saved defaults and all —
         // and on the same pane every drawing surface reads, so the index the
         // editor opens on is the object this just placed.
-        let fresh = drawings::new_drawing_from_defaults(self.presets, tool);
+        let surface = host.drawings().surface();
+        let fresh = drawings::new_drawing_from_defaults(self.presets, surface, tool);
         let placed =
             host.drawings_mut()
                 .place_with(tool, &drawings::DrawingBand::Price, point, |_| fresh);

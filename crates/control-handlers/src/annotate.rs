@@ -117,9 +117,10 @@ pub trait AnnotatePort: TabDirectory {
     fn time_pane_count(&self, index: usize) -> usize;
     /// Every pane side of the tab at `index`, in the tab's order.
     fn sides(&self, index: usize) -> Vec<PaneSide>;
-    /// What a fresh object of `tool` opens with, through the door the click
-    /// path uses — saved defaults, named preset and all.
-    fn new_drawing(&self, tool: DrawingTool) -> NewDrawing;
+    /// What a fresh object of `tool` opens with on the pane at `side` of the
+    /// tab at `index`, through the door the click path uses — that pane's
+    /// ground of saved defaults, named preset and all.
+    fn new_drawing(&self, index: usize, side: PaneSide, tool: DrawingTool) -> NewDrawing;
     /// The pane on `side` of the tab at `index`, a position this port gave.
     fn pane_mut(&mut self, index: usize, side: PaneSide) -> &mut dyn AnnotatedPane;
 }
@@ -245,7 +246,7 @@ fn place<H: AnnotatePort + ?Sized, A: AnnotateAccess>(
     let author = annotation_author(access, actor);
     // The look a fresh object opens with is read before the pane is borrowed
     // mutably: an annotation looks like what the trader would have drawn.
-    let opening = app.new_drawing(tool);
+    let opening = opening_on(app, tab_id, side, tool)?;
     let pane = target_pane(app, tab_id, side)?;
     let pane_id = pane.pane_id();
     // The trader is mid-gesture: placing would push this call's anchor onto
@@ -322,7 +323,7 @@ fn place_chart<H: AnnotatePort + ?Sized, A: AnnotateAccess>(
     };
     let (tab_id, side) = resolve_target(app, input.target.as_ref())?;
     let author = annotation_author(access, actor);
-    let opening = app.new_drawing(tool);
+    let opening = opening_on(app, tab_id, side, tool)?;
     let pane = target_pane(app, tab_id, side)?;
     let band = resolve_band(&*pane, tool, &input.band)?;
     let validated = resolve_chart(&*pane, tab_id, &input, required)?;
@@ -357,7 +358,10 @@ fn place_horizontal_levels<H: AnnotatePort + ?Sized, A: AnnotateAccess>(
     let tool = registered_tool(HORIZONTAL_LINE_TOOL_ID)?;
     let (tab_id, side) = resolve_target(app, input.target.as_ref())?;
     let author = annotation_author(access, actor);
-    let openings = [(); 2].map(|()| app.new_drawing(tool));
+    let openings = [
+        opening_on(app, tab_id, side, tool)?,
+        opening_on(app, tab_id, side, tool)?,
+    ];
     let pane = target_pane(app, tab_id, side)?;
     let band = resolve_band(&*pane, tool, &input.band)?;
     let validated = resolve_chart(&*pane, tab_id, &input, 2)?;
@@ -694,6 +698,20 @@ fn resolve_target<H: AnnotatePort + ?Sized>(
         }
     };
     Ok((app.tab_id_at(index), side))
+}
+
+/// The look a fresh object opens with on the target pane, read before the pane
+/// is borrowed mutably.
+fn opening_on<H: AnnotatePort + ?Sized>(
+    app: &H,
+    tab_id: u64,
+    side: PaneSide,
+    tool: DrawingTool,
+) -> Result<NewDrawing, ControlError> {
+    let index = app
+        .tab_position(tab_id)
+        .ok_or_else(|| ControlError::invalid_request("the target tab closed"))?;
+    Ok(app.new_drawing(index, side, tool))
 }
 
 fn target_pane<H: AnnotatePort + ?Sized>(

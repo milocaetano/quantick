@@ -12,7 +12,7 @@ use quantick_control_host::journal::NewEvent;
 use super::gateway::ControlAccess;
 use crate::{
     app::control_host::ControlPort,
-    drawings::{self, Drawings},
+    drawings::{self, DrawingTool, Drawings, NewDrawing},
     pane::{ChartPane, PaneSide},
 };
 
@@ -32,8 +32,8 @@ impl AnnotatePort for dyn ControlPort {
             .map(annotated_side)
             .collect()
     }
-    fn new_drawing(&self, tool: drawings::DrawingTool) -> drawings::NewDrawing {
-        self.tab_reads().new_drawing(tool)
+    fn new_drawing(&self, index: usize, side: AnnotatedSide, tool: DrawingTool) -> NewDrawing {
+        self.tab_reads().new_drawing(index, pane_side(side), tool)
     }
     fn pane_mut(&mut self, index: usize, side: AnnotatedSide) -> &mut dyn AnnotatedPane {
         self.tabs_mut().pane_mut(index, pane_side(side))

@@ -12,8 +12,8 @@ use super::super::{
     PRICE_DRAG_STEPS, RecordingPresetHost, SavedDefault,
 };
 use crate::drawings::{
-    self, DRAWING_TOOLS, Drawing, DrawingAuthor, DrawingTool, MAX_DRAWING_FILL_ALPHA,
-    MAX_DRAWING_WIDTH_PX, MIN_DRAWING_WIDTH_PX, PresetHost as _,
+    self, DRAWING_TOOLS, Drawing, DrawingTool, MAX_DRAWING_FILL_ALPHA,
+    MAX_DRAWING_WIDTH_PX, MIN_DRAWING_WIDTH_PX,
 };
 use crate::theme;
 
@@ -42,7 +42,7 @@ pub(super) fn body(
     actions.toggle_lock |= intent.toggle_lock;
     actions.delete |= intent.delete;
 
-    ObjectNotes::of(edited).show(ui);
+    show_object_notes(ui, edited);
     actions.merge(ScopeToggle(&mut *edited, env.selected_all_windows).show(ui));
     if chrome.shared.delete_confirm && locked {
         actions.merge(DeleteConfirm.show(ui));
@@ -79,50 +79,11 @@ pub(super) fn body(
     actions
 }
 
-/// The object's standing, in words: who placed it, and whether it is locked
-/// or hidden.
-struct ObjectNotes {
-    author: Option<String>,
-    locked: bool,
-    hidden: bool,
-}
-
-impl ObjectNotes {
-    fn of(drawing: &Drawing) -> Self {
-        Self {
-            author: drawing.author.as_ref().map(DrawingAuthor::label),
-            locked: drawing.locked,
-            hidden: drawing.hidden,
-        }
-    }
-
-    fn show(self, ui: &mut egui::Ui) {
-        let palette = theme::get(ui.ctx());
-        if let Some(author) = &self.author {
-            // Data honesty, where the trader decides what to do with the
-            // object: an assistant's mark never passes for their own.
-            ui.label(
-                egui::RichText::new(format!("Placed by {author} - not by you."))
-                    .text_style(egui::TextStyle::Body)
-                    .color(palette.text_support()),
-            );
-        }
-        if self.locked {
-            ui.label(
-                egui::RichText::new(
-                    "Locked - protected from accidental moves. Style stays editable.",
-                )
-                .text_style(egui::TextStyle::Body)
-                .color(palette.text_support()),
-            );
-        }
-        if self.hidden {
-            ui.label(
-                egui::RichText::new("Hidden - Show brings it back.")
-                    .text_style(egui::TextStyle::Body)
-                    .color(palette.text_support()),
-            );
-        }
+/// The object's standing, in the words `object_notes` decides.
+fn show_object_notes(ui: &mut egui::Ui, drawing: &Drawing) {
+    let ink = theme::get(ui.ctx()).text_support();
+    for note in quantick_ui_model::drawing_chrome::inspector::object_notes(drawing) {
+        ui.label(egui::RichText::new(note).text_style(egui::TextStyle::Body).color(ink));
     }
 }
 
@@ -233,7 +194,7 @@ struct StyleTab<'a, 'p> {
 impl StyleTab<'_, '_> {
     fn show(self, ui: &mut egui::Ui) -> InspectorActions {
         let Self { edited, presets } = self;
-        let tool = edited.tool;
+        let (tool, surface) = (edited.tool, presets.surface());
         let mut actions = InspectorActions::default();
         ui.label("Style");
         let mut color = edited.style.color32();
@@ -285,7 +246,7 @@ impl StyleTab<'_, '_> {
                 ))
                 .clicked()
             {
-                drawings::save_tool_default(presets, edited);
+                drawings::save_tool_default(presets, surface, edited);
                 actions.saved_default = Some(SavedDefault::OneTool);
             }
             // Style only, and that is not a shortcut: a Fib's level list
@@ -297,11 +258,11 @@ impl StyleTab<'_, '_> {
                 .clicked()
             {
                 for other in DRAWING_TOOLS {
-                    presets.set_default_style(other.id(), Some(style));
+                    drawings::save_default_style(presets, surface, other, style);
                 }
                 actions.saved_default = Some(SavedDefault::EveryTool);
             }
-            if drawings::has_saved_default(presets, tool)
+            if drawings::has_saved_default(presets, surface, tool)
                 && ui
                     .button("Reset to factory")
                     .on_hover_text(format!(
@@ -314,7 +275,7 @@ impl StyleTab<'_, '_> {
                     ))
                     .clicked()
             {
-                drawings::reset_tool_default(presets, tool);
+                drawings::reset_tool_default(presets, surface, tool);
                 actions.saved_default = Some(SavedDefault::Forgotten);
             }
         });

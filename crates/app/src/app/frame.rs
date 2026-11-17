@@ -1034,6 +1034,7 @@ pub(super) fn sync_appearance(
     presets.sync_theme(&runtime.appearance);
     for pane in runtime.tabs.iter_mut().flat_map(|tab| tab.panes_mut()) {
         let surface = pane.surface();
+        pane.drawings.set_surface(surface);
         pane.presentation
             .candles
             .follow_theme(runtime.appearance.resolved(), surface);

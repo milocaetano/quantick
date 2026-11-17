@@ -10,6 +10,7 @@ use super::*;
 use crate::*;
 
 use crate::chart::PriceScale;
+use quantick_appearance::{ChartSurface, Ground};
 use quantick_chart::style::PremultipliedRgba;
 
 type Drawings = crate::Drawings<DrawingTool>;
@@ -31,8 +32,8 @@ fn tool(id: &str) -> DrawingTool {
 struct MemoryPresetHost {
     presets: std::collections::BTreeMap<(String, String), toml::Value>,
     default_preset: std::collections::BTreeMap<String, String>,
-    styles: std::collections::BTreeMap<String, DrawingStyle>,
-    configs: std::collections::BTreeMap<String, toml::Value>,
+    styles: std::collections::BTreeMap<(String, Ground), DrawingStyle>,
+    configs: std::collections::BTreeMap<(String, Ground), toml::Value>,
 }
 
 impl PresetHost for MemoryPresetHost {
@@ -74,26 +75,28 @@ impl PresetHost for MemoryPresetHost {
             None => self.default_preset.remove(tool_id),
         };
     }
-    fn default_style(&self, tool_id: &str) -> Option<DrawingStyle> {
-        self.styles.get(tool_id).copied()
+    fn default_style(&self, tool_id: &str, ground: Ground) -> Option<DrawingStyle> {
+        self.styles.get(&(tool_id.to_owned(), ground)).copied()
     }
-    fn set_default_style(&mut self, tool_id: &str, style: Option<DrawingStyle>) {
+    fn set_default_style(&mut self, tool_id: &str, ground: Ground, style: Option<DrawingStyle>) {
+        let key = (tool_id.to_owned(), ground);
         match style {
-            Some(style) => self.styles.insert(tool_id.to_owned(), style),
-            None => self.styles.remove(tool_id),
+            Some(style) => self.styles.insert(key, style),
+            None => self.styles.remove(&key),
         };
     }
-    fn default_config(&self, tool_id: &str) -> Option<toml::Value> {
-        self.configs.get(tool_id).cloned()
+    fn default_config(&self, tool_id: &str, ground: Ground) -> Option<toml::Value> {
+        self.configs.get(&(tool_id.to_owned(), ground)).cloned()
     }
-    fn set_default_config(&mut self, tool_id: &str, value: Option<toml::Value>) {
+    fn set_default_config(&mut self, tool_id: &str, ground: Ground, value: Option<toml::Value>) {
+        let key = (tool_id.to_owned(), ground);
         match value {
-            Some(value) => self.configs.insert(tool_id.to_owned(), value),
-            None => self.configs.remove(tool_id),
+            Some(value) => self.configs.insert(key, value),
+            None => self.configs.remove(&key),
         };
     }
-    fn has_default_config(&self, tool_id: &str) -> bool {
-        self.configs.contains_key(tool_id)
+    fn has_default_config(&self, tool_id: &str, ground: Ground) -> bool {
+        self.configs.contains_key(&(tool_id.to_owned(), ground))
     }
 }
 
@@ -139,10 +142,10 @@ fn a_saved_default_shapes_the_next_object_and_never_the_ones_already_drawn() {
         payload.levels[1].color = Some([0xFF, 0x00, 0x88]);
         payload.label_mode = LabelMode::RatioPrice;
     }
-    save_tool_default(&mut host, &drawings.items()[0].clone());
+    save_tool_default(&mut host, ChartSurface::Paper, &drawings.items()[0].clone());
 
     // The next one opens configured, with no name invented for it.
-    let fresh = new_drawing_from_defaults(&host, fib);
+    let fresh = new_drawing_from_defaults(&host, ChartSurface::Paper, fib);
     assert_eq!(fresh.style, mine, "the look travels with the configuration");
     let fresh_fib = fresh
         .payload
@@ -154,13 +157,13 @@ fn a_saved_default_shapes_the_next_object_and_never_the_ones_already_drawn() {
     assert_eq!(fresh_fib.label_mode, LabelMode::RatioPrice);
 
     // A tool that was never taught anything still opens factory-fresh.
-    let untouched = new_drawing_from_defaults(&host, tool("fib-extension"));
+    let untouched = new_drawing_from_defaults(&host, ChartSurface::Paper, tool("fib-extension"));
     assert_eq!(untouched.style, tool("fib-extension").default_style());
 
     // Reset puts the tool back the way it shipped...
-    reset_tool_default(&mut host, fib);
-    assert!(!has_saved_default(&host, fib));
-    let after_reset = new_drawing_from_defaults(&host, fib);
+    reset_tool_default(&mut host, ChartSurface::Paper, fib);
+    assert!(!has_saved_default(&host, ChartSurface::Paper, fib));
+    let after_reset = new_drawing_from_defaults(&host, ChartSurface::Paper, fib);
     assert_eq!(
         after_reset
             .payload
@@ -194,7 +197,7 @@ fn a_named_default_preset_outranks_the_button_saved_configuration() {
     let fib = tool("fib-retracement");
     let mut by_button = FibPayload::new(FibKind::Retracement);
     by_button.levels.truncate(2);
-    host.set_default_config(fib.id(), by_button.export_preset());
+    host.set_default_config(fib.id(), Ground::Light, by_button.export_preset());
 
     let mut named = FibPayload::new(FibKind::Retracement);
     named.levels.truncate(5);
@@ -206,7 +209,7 @@ fn a_named_default_preset_outranks_the_button_saved_configuration() {
     );
     host.set_default_preset(fib.id(), Some("mine".to_owned()));
 
-    let fresh = new_drawing_from_defaults(&host, fib);
+    let fresh = new_drawing_from_defaults(&host, ChartSurface::Paper, fib);
     assert_eq!(
         fresh
             .payload

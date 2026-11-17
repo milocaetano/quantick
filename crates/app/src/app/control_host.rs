@@ -40,8 +40,8 @@ use quantick_workspace::market_list::{self as list, OpenChoice};
 use super::deal_recording_wiring as deals;
 use super::tab_workspaces::BookTabs;
 use crate::config::AppConfig;
-use crate::drawings;
-use crate::pane::ChartPane;
+use crate::drawings::{self, DrawingTool, NewDrawing};
+use crate::pane::{ChartPane, PaneSide};
 use crate::style::ChartStyle;
 use crate::tab::Tab;
 use crate::timezone::TzOffset;
@@ -351,10 +351,11 @@ impl<'a> TabReads<'a> {
         self.tabs.active_index()
     }
 
-    /// What a freshly placed object of `tool` opens with, through the same
-    /// door the click path uses — saved defaults, named preset and all.
-    pub(crate) fn new_drawing(self, tool: drawings::DrawingTool) -> drawings::NewDrawing {
-        drawings::new_drawing_from_defaults(self.presets, tool)
+    /// What a freshly placed object of `tool` opens with on the pane at `side`
+    /// of the tab at `index`, through the same door the click path uses.
+    pub(crate) fn new_drawing(self, index: usize, side: PaneSide, tool: DrawingTool) -> NewDrawing {
+        let surface = self.tabs[index].pane(side).surface();
+        drawings::new_drawing_from_defaults(self.presets, surface, tool)
     }
 
     pub(crate) fn config(self) -> &'a AppConfig {

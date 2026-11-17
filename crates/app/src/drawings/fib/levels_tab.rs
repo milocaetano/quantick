@@ -22,9 +22,9 @@ use crate::drawings::DrawingPayload;
 pub(in crate::drawings) fn draw_levels_tab(
     ui: &mut egui::Ui,
     drawing: &mut Drawing,
-    host: &mut dyn PresetHost,
+    host: &mut crate::surfaces::drawing_chrome::RecordingPresetHost<'_>,
 ) -> bool {
-    let tool_id = drawing.tool.id();
+    let (tool_id, surface) = (drawing.tool.id(), host.surface());
     let anchor_prices: Vec<f64> = drawing.points.iter().map(|point| point.price).collect();
     let Some(payload) = drawing.payload.as_any_mut().downcast_mut::<FibPayload>() else {
         return false;
@@ -69,7 +69,7 @@ pub(in crate::drawings) fn draw_levels_tab(
     // asking; sending them to another tab for it is how this ended up being
     // redone every single session.
     ui.separator();
-    NewObjectDefaults { drawing, host }.show(ui);
+    NewObjectDefaults { drawing, host }.show(ui, surface);
 
     edited
 }
@@ -475,7 +475,7 @@ struct NewObjectDefaults<'a> {
 }
 
 impl NewObjectDefaults<'_> {
-    fn show(self, ui: &mut egui::Ui) {
+    fn show(self, ui: &mut egui::Ui, surface: quantick_appearance::ChartSurface) {
         let Self { drawing, host } = self;
         ui.horizontal(|ui| {
             // Named, because "Set as default" sits four rows up and means the
@@ -491,9 +491,9 @@ impl NewObjectDefaults<'_> {
                 )
                 .clicked()
             {
-                crate::drawings::save_tool_default(host, drawing);
+                crate::drawings::save_tool_default(host, surface, drawing);
             }
-            if crate::drawings::has_saved_default(host, drawing.tool)
+            if crate::drawings::has_saved_default(host, surface, drawing.tool)
                 && ui
                     .small_button("Reset to factory")
                     .on_hover_text(concat!(
@@ -503,7 +503,7 @@ impl NewObjectDefaults<'_> {
                     ))
                     .clicked()
             {
-                crate::drawings::reset_tool_default(host, drawing.tool);
+                crate::drawings::reset_tool_default(host, surface, drawing.tool);
             }
         });
     }

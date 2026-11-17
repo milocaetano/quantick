@@ -179,6 +179,7 @@ fn borrowed_domain_rows_reborrow_in_catalog_order() {
         selected_band: None,
         tab: 0,
         side: crate::pane::PaneSide::Flow,
+        surface: quantick_appearance::ChartSurface::Flow,
         drawing_tool_armed: false,
         toolbox_dock: Default::default(),
         authored_objects: 0,

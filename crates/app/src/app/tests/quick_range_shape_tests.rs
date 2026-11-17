@@ -317,10 +317,23 @@ fn one_horizontal_levels_call_is_one_undo_step() {
     assert_eq!(drawings.items(), &placed[..], "one redo restores both");
 }
 
+/// What a fresh `tool` opens with on the active tab's drawing pane.
+fn active_opening(
+    app: &QuantickApp,
+    tool: crate::drawings::DrawingTool,
+) -> crate::drawings::NewDrawing {
+    let reads = app.tab_reads();
+    reads.new_drawing(
+        reads.active_tab_index(),
+        app.active_tab().drawing_side(),
+        tool,
+    )
+}
+
 /// Place one horizontal line by hand, as a click does.
 fn hand_line(app: &mut QuantickApp, price: f64) {
     let tool = crate::drawings::DrawingTool::by_id("horizontal-line").unwrap();
-    let mut fresh = Some(app.tab_reads().new_drawing(tool));
+    let mut fresh = Some(active_opening(app, tool));
     let point = crate::drawings::ChartPoint::at_time(1.5, price, None);
     let band = crate::drawings::DrawingBand::Price;
     let drawings = &mut app.active_tab_mut().drawing_pane_mut().drawings;
@@ -337,7 +350,7 @@ fn fail_on_the_second_line(app: &mut QuantickApp) {
             tool,
             points: vec![crate::drawings::ChartPoint::at_time(1.5, 100.0, None)],
             band: crate::drawings::DrawingBand::Price,
-            opening: app.tab_reads().new_drawing(tool),
+            opening: active_opening(app, tool),
             author: None,
             name: None,
             text: None,

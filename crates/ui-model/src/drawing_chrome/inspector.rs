@@ -110,9 +110,43 @@ pub fn placement(chart: Area, bbox: Area, size: [f32; 2]) -> PanelPlacement {
     )
 }
 
+/// The object's standing, in words, as the inspector lists it: who placed it,
+/// and whether it is locked or hidden. Data honesty, where the trader decides
+/// what to do with the object: an assistant's mark never passes for their own.
+#[must_use]
+pub fn object_notes<T>(drawing: &quantick_drawings::Drawing<T>) -> Vec<String> {
+    let author = drawing.author.as_ref();
+    let placed = author.map(|author| format!("Placed by {} - not by you.", author.label()));
+    let locked = drawing.locked.then_some(LOCKED_NOTE);
+    let hidden = drawing.hidden.then_some(HIDDEN_NOTE);
+    placed.into_iter().chain([locked, hidden].into_iter().flatten().map(String::from)).collect()
+}
+
+const LOCKED_NOTE: &str = "Locked - protected from accidental moves. Style stays editable.";
+const HIDDEN_NOTE: &str = "Hidden - Show brings it back.";
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_object_s_notes_name_its_author_then_its_lock_then_its_eye() {
+        use quantick_drawings::{ChartPoint, DRAWING_TOOLS, DrawingAuthor, DrawingBand, Drawings};
+        let mut store = Drawings::default();
+        let note = DRAWING_TOOLS.into_iter().find(|tool| tool.holds_text()).unwrap();
+        store.place_on(note, &DrawingBand::Price, ChartPoint::at_time(1.0, 10.0, None));
+        let mut drawing = store.items()[0].clone();
+        assert!(object_notes(&drawing).is_empty(), "the trader's own, unlocked, shown");
+        drawing.author = Some(DrawingAuthor {
+            actor_kind: "agent".to_owned(),
+            client_name: "assistant".to_owned(),
+        });
+        (drawing.locked, drawing.hidden) = (true, true);
+        assert_eq!(
+            object_notes(&drawing),
+            ["Placed by assistant (agent) - not by you.", LOCKED_NOTE, HIDDEN_NOTE]
+        );
+    }
     /// Automatic placement is not a preference, so it is not written down.
     /// Only a hand — or the hook standing in for one — makes a position the
     /// file has to remember.

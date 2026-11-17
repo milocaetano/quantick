@@ -303,8 +303,9 @@ impl PaneGestures {
         defaults: PlacementDefaults<'_>,
     ) -> PlacementCompletion {
         // Only a fresh draft constructs defaults; existing objects are untouched.
+        let surface = drawings.surface();
         if !drawings.place_with(tool, band, point, |tool| {
-            new_drawing_from_defaults(defaults.presets, tool)
+            new_drawing_from_defaults(defaults.presets, surface, tool)
         }) {
             return PlacementCompletion::default();
         }

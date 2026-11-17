@@ -10,6 +10,8 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+use quantick_appearance::Ground;
+
 use crate::{DrawingStyle, PresetHost};
 
 /// The file's name inside the durable cockpit home; the window resolves where
@@ -94,6 +96,40 @@ struct ToolPresets {
     /// already refuses a table it does not recognise.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     config: Option<toml::Value>,
+    /// `style` and `config` are the light ground's; these are the dark
+    /// ground's, added the same way for the same reason. A file written
+    /// before grounds keeps every default it held on the light ground.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    dark_style: Option<StoredStyle>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    dark_config: Option<toml::Value>,
+}
+
+impl ToolPresets {
+    fn style(&self, ground: Ground) -> &Option<StoredStyle> {
+        match ground {
+            Ground::Light => &self.style,
+            Ground::Dark => &self.dark_style,
+        }
+    }
+    fn style_mut(&mut self, ground: Ground) -> &mut Option<StoredStyle> {
+        match ground {
+            Ground::Light => &mut self.style,
+            Ground::Dark => &mut self.dark_style,
+        }
+    }
+    fn config(&self, ground: Ground) -> &Option<toml::Value> {
+        match ground {
+            Ground::Light => &self.config,
+            Ground::Dark => &self.dark_config,
+        }
+    }
+    fn config_mut(&mut self, ground: Ground) -> &mut Option<toml::Value> {
+        match ground {
+            Ground::Light => &mut self.config,
+            Ground::Dark => &mut self.dark_config,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -257,30 +293,30 @@ impl PresetHost for PresetStore {
         self.persist();
     }
 
-    fn default_style(&self, tool_id: &str) -> Option<DrawingStyle> {
-        self.tools.get(tool_id)?.style.as_ref()?.to_style()
+    fn default_style(&self, tool_id: &str, ground: Ground) -> Option<DrawingStyle> {
+        self.tools.get(tool_id)?.style(ground).as_ref()?.to_style()
     }
 
-    fn set_default_style(&mut self, tool_id: &str, style: Option<DrawingStyle>) {
+    fn set_default_style(&mut self, tool_id: &str, ground: Ground, style: Option<DrawingStyle>) {
         let slot = self.tools.entry(tool_id.to_owned()).or_default();
-        slot.style = style.map(StoredStyle::from_style);
+        *slot.style_mut(ground) = style.map(StoredStyle::from_style);
         self.persist();
     }
 
-    fn default_config(&self, tool_id: &str) -> Option<toml::Value> {
-        self.tools.get(tool_id)?.config.clone()
+    fn default_config(&self, tool_id: &str, ground: Ground) -> Option<toml::Value> {
+        self.tools.get(tool_id)?.config(ground).clone()
     }
 
-    fn set_default_config(&mut self, tool_id: &str, value: Option<toml::Value>) {
+    fn set_default_config(&mut self, tool_id: &str, ground: Ground, value: Option<toml::Value>) {
         let slot = self.tools.entry(tool_id.to_owned()).or_default();
-        slot.config = value;
+        *slot.config_mut(ground) = value;
         self.persist();
     }
 
-    fn has_default_config(&self, tool_id: &str) -> bool {
+    fn has_default_config(&self, tool_id: &str, ground: Ground) -> bool {
         self.tools
             .get(tool_id)
-            .is_some_and(|slot| slot.config.is_some())
+            .is_some_and(|slot| slot.config(ground).is_some())
     }
 }
 
@@ -368,13 +404,16 @@ mod tests {
         let mine = sample_value("my-levels");
         {
             let mut store = PresetStore::load_from(&path);
-            assert_eq!(store.default_config("fib-retracement"), None);
-            store.set_default_config("fib-retracement", Some(mine.clone()));
+            assert_eq!(store.default_config("fib-retracement", Ground::Light), None);
+            store.set_default_config("fib-retracement", Ground::Light, Some(mine.clone()));
         }
         let store = PresetStore::load_from(&path);
-        assert_eq!(store.default_config("fib-retracement"), Some(mine));
         assert_eq!(
-            store.default_config("fib-extension"),
+            store.default_config("fib-retracement", Ground::Light),
+            Some(mine)
+        );
+        assert_eq!(
+            store.default_config("fib-extension", Ground::Light),
             None,
             "one tool's configuration is not every tool's"
         );
@@ -388,11 +427,11 @@ mod tests {
         let path = scratch_path("reset-config");
         {
             let mut store = PresetStore::load_from(&path);
-            store.set_default_config("rectangle", Some(sample_value("boxy")));
-            store.set_default_config("rectangle", None);
+            store.set_default_config("rectangle", Ground::Light, Some(sample_value("boxy")));
+            store.set_default_config("rectangle", Ground::Light, None);
         }
         let store = PresetStore::load_from(&path);
-        assert_eq!(store.default_config("rectangle"), None);
+        assert_eq!(store.default_config("rectangle", Ground::Light), None);
         let _ = std::fs::remove_file(&path);
     }
 
@@ -414,10 +453,10 @@ fill_alpha = 12
         .expect("the scratch file is writable");
         let store = PresetStore::load_from(&path);
         assert!(
-            store.default_style("trend-line").is_some(),
+            store.default_style("trend-line", Ground::Light).is_some(),
             "the older file must still be read, not rejected"
         );
-        assert_eq!(store.default_config("trend-line"), None);
+        assert_eq!(store.default_config("trend-line", Ground::Light), None);
         let _ = std::fs::remove_file(&path);
     }
 
@@ -432,13 +471,13 @@ fill_alpha = 12
         };
         {
             let mut store = PresetStore::load_from(&path);
-            assert_eq!(store.default_style("trend-line"), None);
-            store.set_default_style("trend-line", Some(mine));
+            assert_eq!(store.default_style("trend-line", Ground::Light), None);
+            store.set_default_style("trend-line", Ground::Light, Some(mine));
         }
         let store = PresetStore::load_from(&path);
-        assert_eq!(store.default_style("trend-line"), Some(mine));
+        assert_eq!(store.default_style("trend-line", Ground::Light), Some(mine));
         assert_eq!(
-            store.default_style("rectangle"),
+            store.default_style("rectangle", Ground::Light),
             None,
             "the choice is per tool, not a global repaint"
         );
@@ -462,7 +501,7 @@ fill_alpha = 10
         )
         .unwrap();
         let store = PresetStore::load_from(&path);
-        assert_eq!(store.default_style("trend-line"), None);
+        assert_eq!(store.default_style("trend-line", Ground::Light), None);
         let _ = std::fs::remove_file(&path);
     }
 
@@ -483,7 +522,9 @@ fill_alpha = 255
         )
         .unwrap();
         let store = PresetStore::load_from(&path);
-        let style = store.default_style("rectangle").expect("a readable style");
+        let style = store
+            .default_style("rectangle", Ground::Light)
+            .expect("a readable style");
         assert_eq!(style.width_px, crate::MAX_DRAWING_WIDTH_PX);
         assert_eq!(style.fill_alpha, crate::MAX_DRAWING_FILL_ALPHA);
         let _ = std::fs::remove_file(&path);
@@ -503,6 +544,7 @@ fill_alpha = 255
 mod appearance_tests {
     use super::*;
     use crate::{DrawingPayload, FontFamily, TextPayload, new_drawing_from_defaults};
+    use quantick_appearance::ChartSurface;
 
     #[test]
     fn light_creates_black_drawings_and_blue_gray_profiles_without_recoloring_saved_styles() {
@@ -512,12 +554,12 @@ mod appearance_tests {
         store.sync_theme(&appearance);
         let original: Vec<_> = crate::DRAWING_TOOLS
             .into_iter()
-            .map(|tool| new_drawing_from_defaults(&store, tool))
+            .map(|tool| new_drawing_from_defaults(&store, ChartSurface::Paper, tool))
             .collect();
         appearance.apply(quantick_appearance::LIGHT).unwrap();
         store.sync_theme(&appearance);
         for (tool, existing) in crate::DRAWING_TOOLS.into_iter().zip(original) {
-            let fresh = new_drawing_from_defaults(&store, tool);
+            let fresh = new_drawing_from_defaults(&store, ChartSurface::Paper, tool);
             // Every tool is born black on paper but those whose colour is
             // their meaning: the buy and sell marks and the profile. The
             // anchored VWAP keeps its own slate role colour.
@@ -540,19 +582,22 @@ mod appearance_tests {
         let legacy: StoredStyle =
             toml::from_str("color = '#8ab4f8'\nwidth_px = 1.0\nfill_alpha = 20").unwrap();
         let authored = legacy.to_style().unwrap();
-        store.set_default_style(line.id(), Some(authored));
+        store.set_default_style(line.id(), Ground::Light, Some(authored));
         let mut loaded = PresetStore::load_from(&path);
         loaded.sync_theme(&appearance);
-        assert_eq!(new_drawing_from_defaults(&loaded, line).style, authored);
+        assert_eq!(
+            new_drawing_from_defaults(&loaded, ChartSurface::Paper, line).style,
+            authored
+        );
         let profile = crate::DRAWING_TOOLS
             .into_iter()
             .find(|tool| tool.id() == "fixed-range-profile")
             .unwrap();
-        loaded.set_default_style(profile.id(), Some(authored));
+        loaded.set_default_style(profile.id(), Ground::Light, Some(authored));
         let mut restored = PresetStore::load_from(&path);
         restored.sync_theme(&appearance);
         assert_eq!(
-            new_drawing_from_defaults(&restored, profile).style,
+            new_drawing_from_defaults(&restored, ChartSurface::Paper, profile).style,
             authored
         );
         assert_ne!(
@@ -581,6 +626,7 @@ mod appearance_tests {
 
     #[test]
     fn new_objects_follow_the_theme_and_saved_defaults_roundtrip_as_authored() {
+        // The bundled appearance paints a dark canvas, so its saves land on the dark ground.
         let path = crate::scratch::thread_dir("appearance-drawing").join(PRESETS_FILE);
         let _ = std::fs::remove_file(&path);
         let mut store = PresetStore::load_from(&path);
@@ -590,11 +636,11 @@ mod appearance_tests {
             .into_iter()
             .find(|tool| tool.id() == "text")
             .unwrap();
-        let original = new_drawing_from_defaults(&store, text);
+        let original = new_drawing_from_defaults(&store, ChartSurface::Paper, text);
         let source = "version = 1\nname = 'new defaults'\n[colors]\ndrawing_default = '#12345680'\n[typography.drawing]\nfamily = 'monospace'\nsize = 32.0";
         appearance.apply(source).unwrap();
         store.sync_theme(&appearance);
-        let themed = new_drawing_from_defaults(&store, text);
+        let themed = new_drawing_from_defaults(&store, ChartSurface::Paper, text);
         assert_ne!(themed.style.color, original.style.color);
         assert_eq!(original.style, text.default_style());
         let payload = themed
@@ -606,27 +652,31 @@ mod appearance_tests {
             (payload.size_px, payload.family),
             (32.0, FontFamily::Monospace)
         );
-        store.set_default_style(text.id(), Some(themed.style));
-        store.set_default_config(text.id(), payload.export_preset());
+        store.set_default_style(text.id(), Ground::Dark, Some(themed.style));
+        store.set_default_config(text.id(), Ground::Dark, payload.export_preset());
         let mut loaded = PresetStore::load_from(&path);
         loaded.sync_theme(&quantick_appearance::Appearance::default());
-        let saved = new_drawing_from_defaults(&loaded, text);
+        let saved = new_drawing_from_defaults(&loaded, ChartSurface::Paper, text);
         assert_eq!(
             saved.style, themed.style,
             "translucent premultiplied bytes roundtrip exactly"
         );
         assert!(saved.payload.eq_dyn(themed.payload.as_ref()));
         // An explicit saved color equal to the old factory default is still authored.
-        loaded.set_default_style(text.id(), Some(original.style));
+        loaded.set_default_style(text.id(), Ground::Dark, Some(original.style));
         let mut loaded = PresetStore::load_from(&path);
         loaded.sync_theme(&appearance);
         assert_eq!(
-            new_drawing_from_defaults(&loaded, text).style,
+            new_drawing_from_defaults(&loaded, ChartSurface::Paper, text).style,
             original.style
         );
         // Legacy config had only a size: it captures the historical proportional face.
-        loaded.set_default_config(text.id(), Some(toml::from_str("size_px = 18.0").unwrap()));
-        let fresh = new_drawing_from_defaults(&loaded, text);
+        loaded.set_default_config(
+            text.id(),
+            Ground::Dark,
+            Some(toml::from_str("size_px = 18.0").unwrap()),
+        );
+        let fresh = new_drawing_from_defaults(&loaded, ChartSurface::Paper, text);
         let payload = fresh
             .payload
             .as_any()
@@ -639,5 +689,92 @@ mod appearance_tests {
         let legacy: StoredStyle =
             toml::from_str("color = '#8ab4f8'\nwidth_px = 1.0\nfill_alpha = 20").unwrap();
         assert_eq!(legacy.to_style().unwrap().color, original.style.color);
+    }
+
+    /// The trader's complaint: a colour saved on the light time chart showed
+    /// up on the dark order-flow pane beside it. Each ground keeps its own.
+    #[test]
+    fn a_default_saved_on_one_ground_never_reaches_the_other() {
+        let path = crate::scratch::thread_dir("ground-drawing-defaults").join(PRESETS_FILE);
+        let _ = std::fs::remove_file(&path);
+        let mut store = PresetStore::load_from(&path);
+        let mut appearance = quantick_appearance::Appearance::default();
+        appearance.apply(quantick_appearance::LIGHT).unwrap();
+        store.sync_theme(&appearance);
+        let line = crate::DRAWING_TOOLS
+            .into_iter()
+            .find(|tool| tool.id() == "trend-line")
+            .unwrap();
+        let (light, dark) = (ChartSurface::Paper, ChartSurface::Flow);
+        let built_in_dark = new_drawing_from_defaults(&store, dark, line).style;
+        let mut drawings = crate::Drawings::default();
+        assert!(!drawings.place(line, crate::ChartPoint::at(1.0, 100.0)));
+        assert!(drawings.place(line, crate::ChartPoint::at(9.0, 200.0)));
+        let mut red = drawings.items()[0].clone();
+        red.style.color = quantick_appearance::PremultipliedRgba::from_rgb(220, 30, 30);
+        crate::save_tool_default(&mut store, light, &red);
+
+        assert_eq!(
+            new_drawing_from_defaults(&store, light, line).style,
+            red.style
+        );
+        assert_eq!(
+            new_drawing_from_defaults(&store, dark, line).style,
+            built_in_dark
+        );
+        assert!(!crate::has_saved_default(&store, dark, line));
+
+        let mut blue = red.clone();
+        blue.style.color = quantick_appearance::PremultipliedRgba::from_rgb(30, 90, 220);
+        crate::save_tool_default(&mut store, dark, &blue);
+        assert_eq!(
+            new_drawing_from_defaults(&store, dark, line).style,
+            blue.style
+        );
+        assert_eq!(
+            new_drawing_from_defaults(&store, light, line).style,
+            red.style
+        );
+
+        crate::reset_tool_default(&mut store, dark, line);
+        assert_eq!(
+            new_drawing_from_defaults(&store, dark, line).style,
+            built_in_dark
+        );
+        let mut reloaded = PresetStore::load_from(&path);
+        reloaded.sync_theme(&appearance);
+        assert_eq!(
+            new_drawing_from_defaults(&reloaded, light, line).style,
+            red.style
+        );
+    }
+
+    /// A file written before grounds held one default per tool; it stays the
+    /// light ground's, and the dark ground starts empty.
+    #[test]
+    fn a_file_from_before_grounds_keeps_its_defaults_on_the_light_ground() {
+        let path = crate::scratch::thread_dir("legacy-ground-defaults").join(PRESETS_FILE);
+        let legacy = "version = 1\n[tools.trend-line]\nconfig = { marker = 'old' }\n[tools.trend-line.style]\ncolor = '#dc1e1e'\nwidth_px = 2.0\nfill_alpha = 0\n";
+        std::fs::write(&path, legacy).unwrap();
+        let mut store = PresetStore::load_from(&path);
+        let red = quantick_appearance::PremultipliedRgba::from_rgb(220, 30, 30);
+        let light = store.default_style("trend-line", Ground::Light).unwrap();
+        assert_eq!(light.color, red);
+        assert!(store.has_default_config("trend-line", Ground::Light));
+        assert_eq!(store.default_style("trend-line", Ground::Dark), None);
+        assert!(!store.has_default_config("trend-line", Ground::Dark));
+
+        store.set_default_style("trend-line", Ground::Dark, Some(light));
+        let written = std::fs::read_to_string(&path).unwrap();
+        assert!(written.contains("dark_style"), "{written}");
+        let reloaded = PresetStore::load_from(&path);
+        assert_eq!(
+            reloaded.default_style("trend-line", Ground::Light),
+            Some(light)
+        );
+        assert_eq!(
+            reloaded.default_style("trend-line", Ground::Dark),
+            Some(light)
+        );
     }
 }

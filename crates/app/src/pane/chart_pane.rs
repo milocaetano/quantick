@@ -314,6 +314,7 @@ impl ChartPane {
                 layout: self.layout_id().map(|id| id.0),
             },
             projection: self.drawing_projection(),
+            surface: self.surface(),
         }
     }
 

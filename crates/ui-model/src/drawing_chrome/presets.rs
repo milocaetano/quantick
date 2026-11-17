@@ -1,3 +1,4 @@
+use quantick_appearance::{ChartSurface, Ground};
 use quantick_drawings::{DrawingStyle, PresetHost};
 
 /// One write to the preset bank, recorded rather than performed.
@@ -23,10 +24,12 @@ pub enum PresetWrite {
     },
     SetDefaultStyle {
         tool_id: String,
+        ground: Ground,
         style: Option<DrawingStyle>,
     },
     SetDefaultConfig {
         tool_id: String,
+        ground: Ground,
         value: Option<toml::Value>,
     },
 }
@@ -51,8 +54,16 @@ impl PresetWrite {
             }
             Self::Delete { tool_id, name } => bank.delete_custom_preset(&tool_id, &name),
             Self::SetDefaultPreset { tool_id, name } => bank.set_default_preset(&tool_id, name),
-            Self::SetDefaultStyle { tool_id, style } => bank.set_default_style(&tool_id, style),
-            Self::SetDefaultConfig { tool_id, value } => bank.set_default_config(&tool_id, value),
+            Self::SetDefaultStyle {
+                tool_id,
+                ground,
+                style,
+            } => bank.set_default_style(&tool_id, ground, style),
+            Self::SetDefaultConfig {
+                tool_id,
+                ground,
+                value,
+            } => bank.set_default_config(&tool_id, ground, value),
         }
     }
 }
@@ -79,13 +90,17 @@ impl PresetWrite {
 /// wins, exactly as replaying them onto the bank would.
 pub struct RecordingPresetHost<'a> {
     bank: &'a dyn PresetHost,
+    /// The surface of the pane the inspector edits: "save as default" and
+    /// "reset" speak for its ground only.
+    surface: ChartSurface,
     writes: Vec<PresetWrite>,
 }
 
 impl<'a> RecordingPresetHost<'a> {
-    pub fn new(bank: &'a dyn PresetHost) -> Self {
+    pub fn new(bank: &'a dyn PresetHost, surface: ChartSurface) -> Self {
         Self {
             bank,
+            surface,
             // Not `with_capacity`: the overwhelmingly common frame records
             // nothing, and an empty `Vec` does not allocate.
             writes: Vec::new(),
@@ -94,6 +109,12 @@ impl<'a> RecordingPresetHost<'a> {
 }
 
 impl RecordingPresetHost<'_> {
+    /// The surface of the pane this recorder speaks for.
+    #[must_use]
+    pub fn surface(&self) -> ChartSurface {
+        self.surface
+    }
+
     /// The writes this frame recorded, in the order they were made.
     pub fn into_writes(self) -> Vec<PresetWrite> {
         self.writes
@@ -204,29 +225,31 @@ impl PresetHost for RecordingPresetHost<'_> {
         });
     }
 
-    fn default_style(&self, tool_id: &str) -> Option<DrawingStyle> {
-        self.bank.default_style(tool_id)
+    fn default_style(&self, tool_id: &str, ground: Ground) -> Option<DrawingStyle> {
+        self.bank.default_style(tool_id, ground)
     }
 
-    fn set_default_style(&mut self, tool_id: &str, style: Option<DrawingStyle>) {
+    fn set_default_style(&mut self, tool_id: &str, ground: Ground, style: Option<DrawingStyle>) {
         self.writes.push(PresetWrite::SetDefaultStyle {
             tool_id: tool_id.to_owned(),
+            ground,
             style,
         });
     }
 
-    fn default_config(&self, tool_id: &str) -> Option<toml::Value> {
-        self.bank.default_config(tool_id)
+    fn default_config(&self, tool_id: &str, ground: Ground) -> Option<toml::Value> {
+        self.bank.default_config(tool_id, ground)
     }
 
-    fn set_default_config(&mut self, tool_id: &str, value: Option<toml::Value>) {
+    fn set_default_config(&mut self, tool_id: &str, ground: Ground, value: Option<toml::Value>) {
         self.writes.push(PresetWrite::SetDefaultConfig {
             tool_id: tool_id.to_owned(),
+            ground,
             value,
         });
     }
 
-    fn has_default_config(&self, tool_id: &str) -> bool {
-        self.bank.has_default_config(tool_id)
+    fn has_default_config(&self, tool_id: &str, ground: Ground) -> bool {
+        self.bank.has_default_config(tool_id, ground)
     }
 }

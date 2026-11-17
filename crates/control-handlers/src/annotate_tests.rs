@@ -123,7 +123,7 @@ impl AnnotatePort for FakeWindow {
     fn sides(&self, _index: usize) -> Vec<PaneSide> {
         vec![PaneSide::Flow]
     }
-    fn new_drawing(&self, tool: DrawingTool) -> NewDrawing {
+    fn new_drawing(&self, _index: usize, _side: PaneSide, tool: DrawingTool) -> NewDrawing {
         NewDrawing {
             style: tool.default_style(),
             payload: tool.default_payload(),
@@ -182,7 +182,7 @@ fn a_label_call_and_its_drawing_intent_give_the_same_mark_and_effect() {
             tool,
             points: vec![ChartPoint::at_time(1.5, 101.5, Some(2_000))],
             band: DrawingBand::Price,
-            opening: window.new_drawing(tool),
+            opening: window.new_drawing(0, PaneSide::Flow, tool),
             author: assistant_author(),
             name: Some("bid wall".to_owned()),
             text: Some("absorption".to_owned()),
@@ -237,7 +237,7 @@ fn horizontal_levels_and_their_intent_place_the_same_lines() {
         tool,
         points: vec![ChartPoint::at_time(0.5, price, Some(1_000))],
         band: DrawingBand::Price,
-        opening: window.new_drawing(tool),
+        opening: window.new_drawing(0, PaneSide::Flow, tool),
         author: assistant_author(),
         name: None,
         text: None,
@@ -281,7 +281,7 @@ fn a_mark_drawn_by_hand_is_refused_and_stays() {
 fn a_draft_in_progress_refuses_before_anything_is_placed() {
     let mut window = FakeWindow::new();
     let tool = DrawingTool::by_id(TREND_LINE_TOOL_ID).expect("registered");
-    let opening = window.new_drawing(tool);
+    let opening = window.new_drawing(0, PaneSide::Flow, tool);
     let point = ChartPoint::at_time(0.5, 100.0, None);
     let band = quantick_drawings::DrawingBand::Price;
     assert!(
@@ -312,7 +312,7 @@ fn a_draft_in_progress_refuses_before_anything_is_placed() {
 fn a_levels_call_that_cannot_place_leaves_no_drawing_and_no_journal_entry() {
     let mut window = FakeWindow::new();
     let tool = DrawingTool::by_id(TREND_LINE_TOOL_ID).expect("registered");
-    let opening = window.new_drawing(tool);
+    let opening = window.new_drawing(0, PaneSide::Flow, tool);
     let point = ChartPoint::at_time(0.5, 100.0, None);
     let band = quantick_drawings::DrawingBand::Price;
     assert!(

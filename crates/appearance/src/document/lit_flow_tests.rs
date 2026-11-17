@@ -258,3 +258,19 @@ fn the_lights_change_nothing_else_a_theme_resolves() {
     full.lit_flow = None;
     assert_eq!(full, without);
 }
+
+#[test]
+fn a_ground_follows_the_surface_canvas_not_the_theme_s_dark_flag() {
+    use super::Ground;
+    let (dark, light) = (ResolvedTheme::parse(DARK).unwrap(), light());
+    for surface in [
+        ChartSurface::Paper,
+        ChartSurface::Flow,
+        ChartSurface::LitFlow,
+    ] {
+        assert_eq!(dark.ground(surface), Ground::Dark, "{surface:?}");
+    }
+    assert_eq!(light.ground(ChartSurface::Paper), Ground::Light);
+    assert_eq!(light.ground(ChartSurface::Flow), Ground::Dark);
+    assert_eq!(light.ground(ChartSurface::LitFlow), Ground::Light);
+}

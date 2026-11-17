@@ -1,5 +1,6 @@
 use super::*;
 use quantick_drawings::PresetHost;
+use quantick_appearance::Ground;
 /// A bank with one saved preset, to test the recorder's refusal against
 /// the real store's.
 ///
@@ -32,7 +33,7 @@ fn recorder_refuses_a_taken_name_exactly_as_the_bank_does() {
         let mut real = bank(&format!("real-{name}-{overwrite}"));
         let real_answer = real.save_custom_preset("fib", name, toml::Value::Integer(2), overwrite);
         let read_only = bank(&format!("copy-{name}-{overwrite}"));
-        let mut recorder = RecordingPresetHost::new(&read_only);
+        let mut recorder = RecordingPresetHost::new(&read_only, quantick_appearance::ChartSurface::Paper);
         let recorded = recorder.save_custom_preset("fib", name, toml::Value::Integer(2), overwrite);
         assert_eq!(
             recorded, real_answer,
@@ -53,7 +54,7 @@ fn recorder_refuses_a_taken_name_exactly_as_the_bank_does() {
 #[test]
 fn recorder_delegates_every_read_to_the_bank() {
     let store = bank("reads");
-    let recorder = RecordingPresetHost::new(&store);
+    let recorder = RecordingPresetHost::new(&store, quantick_appearance::ChartSurface::Paper);
     assert_eq!(
         recorder.custom_preset_names("fib"),
         store.custom_preset_names("fib")
@@ -63,11 +64,11 @@ fn recorder_delegates_every_read_to_the_bank() {
         store.load_custom_preset("fib", "taken")
     );
     assert_eq!(recorder.default_preset("fib"), store.default_preset("fib"));
-    assert_eq!(recorder.default_style("fib"), store.default_style("fib"));
-    assert_eq!(recorder.default_config("fib"), store.default_config("fib"));
+    assert_eq!(recorder.default_style("fib", Ground::Light), store.default_style("fib", Ground::Light));
+    assert_eq!(recorder.default_config("fib", Ground::Light), store.default_config("fib", Ground::Light));
     assert_eq!(
-        recorder.has_default_config("fib"),
-        store.has_default_config("fib")
+        recorder.has_default_config("fib", Ground::Light),
+        store.has_default_config("fib", Ground::Light)
     );
     let _ = std::fs::remove_file(store.path());
 }
@@ -79,7 +80,7 @@ fn recorder_delegates_every_read_to_the_bank() {
 #[test]
 fn a_read_sees_the_writes_the_same_frame_already_made() {
     let store = bank("same-frame");
-    let mut recorder = RecordingPresetHost::new(&store);
+    let mut recorder = RecordingPresetHost::new(&store, quantick_appearance::ChartSurface::Paper);
     assert!(
         !recorder.save_custom_preset("fib", "taken", toml::Value::Integer(2), false),
         "the name is taken and overwrite was not asked for"
@@ -98,7 +99,7 @@ fn a_read_sees_the_writes_the_same_frame_already_made() {
 #[test]
 fn the_name_list_follows_the_frame_s_own_writes() {
     let store = bank("name-list");
-    let mut recorder = RecordingPresetHost::new(&store);
+    let mut recorder = RecordingPresetHost::new(&store, quantick_appearance::ChartSurface::Paper);
     assert_eq!(
         recorder.custom_preset_names("fib"),
         vec!["taken".to_owned()]
