@@ -1,10 +1,14 @@
-//! The desk calls through a fake window: each reaches its act once, a write
-//! that failed journals nothing, and Agent access never opens from a connection.
+//! The desk and Settings calls through a fake window: each reaches its act
+//! once, a write that failed journals nothing, a Settings row settles as its
+//! click does, and Agent access never opens from a connection.
 
+use quantick_civil::TzOffset;
 use quantick_control_schema::desk::READBACKS;
 use serde_json::json;
 
 use super::*;
+use crate::deal_recorder::DealRecorder;
+use crate::settings::{SettingsReadings, SettleError};
 use crate::test_support::{FakeAccess, FakeWindow};
 
 #[derive(Default)]
@@ -16,41 +20,87 @@ struct FakeHost {
     imports: usize,
     reopen: bool,
     write_fails: bool,
+    /// What the rows show; each settled act moves it as the window would.
+    readings: SettingsReadings,
+    settled: Vec<SettingsAct>,
+    /// What every settle answers instead of landing.
+    refusal: Option<SettleError>,
 }
 
+/// The fake's desk, lent for one call.
+struct Door<'a>(&'a mut FakeHost);
+
 impl DeskHost for FakeHost {
-    fn desk(&mut self, act: DeskAct) -> Result<bool, ControlError> {
-        Ok(match act {
+    fn desk(&mut self) -> Option<Box<dyn DeskOwner + '_>> {
+        Some(Box::new(Door(self)))
+    }
+}
+
+/// A host without a desk: the trait's default.
+struct NoDesk;
+impl DeskHost for NoDesk {}
+
+impl DealRecordingPort for Door<'_> {
+    fn deal_recorder(&mut self, _index: usize) -> Option<&mut dyn DealRecorder> {
+        None
+    }
+}
+
+impl SettingsOwner for Door<'_> {
+    fn readings(&self) -> SettingsReadings {
+        self.0.readings
+    }
+    fn settle(&mut self, act: SettingsAct) -> Result<(), SettleError> {
+        if let Some(refusal) = self.0.refusal.clone() {
+            return Err(refusal);
+        }
+        let readings = &mut self.0.readings;
+        match act {
+            SettingsAct::Timezone(zone) => readings.timezone = zone,
+            SettingsAct::PerfReadings(on) => readings.show_perf = on,
+            SettingsAct::ProgressiveHistory(on) => readings.progressive_history = on,
+            SettingsAct::VenueLeadIn(on) => readings.venue_lead_in = on,
+            _ => {}
+        }
+        self.0.settled.push(act);
+        Ok(())
+    }
+}
+
+impl DeskOwner for Door<'_> {
+    fn act(&mut self, act: DeskAct) -> bool {
+        let host = &mut *self.0;
+        match act {
             DeskAct::OpenSettings(section) => {
-                self.section = Some(section);
+                host.section = Some(section);
                 true
             }
             DeskAct::Save => {
-                self.saves += 1;
-                !self.write_fails
+                host.saves += 1;
+                !host.write_fails
             }
             DeskAct::Forget => {
-                self.forgets += 1;
-                !self.write_fails
+                host.forgets += 1;
+                !host.write_fails
             }
             DeskAct::PickExport => {
-                self.exports += 1;
-                self.exports == 1
+                host.exports += 1;
+                host.exports == 1
             }
             DeskAct::PickImport => {
-                self.imports += 1;
+                host.imports += 1;
                 true
             }
-            DeskAct::ReadReopen => self.reopen,
+            DeskAct::ReadReopen => host.reopen,
             DeskAct::SetReopen(reopen) => {
-                self.reopen = if self.write_fails {
-                    self.reopen
+                host.reopen = if host.write_fails {
+                    host.reopen
                 } else {
                     reopen
                 };
-                !self.write_fails
+                !host.write_fails
             }
-        })
+        }
     }
 }
 
@@ -173,12 +223,71 @@ fn a_failed_reopen_write_journals_nothing_and_a_retry_writes_again() {
 }
 
 #[test]
+fn settings_set_settles_each_named_row_and_answers_what_the_rows_show() {
+    let (mut host, mut access, actor) = parts();
+    let value = json!({ "timezone_offset_minutes": 60, "perf_readings": true,
+        "progressive_history": false, "venue_lead_in": true });
+    let answer = set_settings(&mut host, &mut access, &actor, &value).unwrap();
+    assert_eq!(
+        host.settled,
+        [
+            SettingsAct::Timezone(TzOffset::new(60)),
+            SettingsAct::PerfReadings(true),
+            SettingsAct::ProgressiveHistory(false),
+            SettingsAct::VenueLeadIn(true),
+        ]
+    );
+    let expected = json!({ "timezone_offset_minutes": 60, "timezone_label": "UTC+01:00",
+        "theme": "custom", "perf_readings": true, "progressive_history": false,
+        "venue_lead_in": true, "record_deals": false });
+    assert_eq!(answer, expected);
+    assert!(access.events.is_empty(), "the readback is the snapshot");
+}
+
+#[test]
+fn settings_set_with_nothing_named_reads_and_settles_nothing() {
+    let (mut host, mut access, actor) = parts();
+    host.readings.record_deals = true;
+    let answer = set_settings(&mut host, &mut access, &actor, &json!({})).unwrap();
+    assert!(host.settled.is_empty());
+    assert_eq!(answer["record_deals"], true);
+    assert_eq!(answer["timezone_offset_minutes"], -180);
+}
+
+#[test]
+fn an_offset_the_row_does_not_list_is_refused_before_anything_settles() {
+    let (mut host, mut access, actor) = parts();
+    for value in [
+        json!({ "perf_readings": true, "timezone_offset_minutes": 61 }),
+        json!({ "perf_readings": true, "record_deals": true }),
+    ] {
+        let refusal = set_settings(&mut host, &mut access, &actor, &value).unwrap_err();
+        assert_eq!(refusal.code.as_str(), codes::INVALID_REQUEST, "{value}");
+    }
+    assert!(host.settled.is_empty(), "a refused call changes nothing");
+    let refusal = set_settings(&mut NoDesk, &mut access, &actor, &json!({})).unwrap_err();
+    assert!(refusal.message.contains("the desk is unavailable"));
+}
+
+#[test]
+fn a_row_that_does_not_land_answers_its_reason_as_a_control_error() {
+    let (mut host, mut access, actor) = parts();
+    host.refusal = Some(SettleError::Theme("disk full".to_owned()));
+    let value = json!({ "perf_readings": true });
+    let refusal = set_settings(&mut host, &mut access, &actor, &value).unwrap_err();
+    assert_eq!(refusal.code.as_str(), codes::INVALID_REQUEST);
+    assert_eq!(refusal.message, "disk full");
+    assert!(access.events.is_empty());
+}
+
+#[test]
 fn every_call_has_a_readback() {
     let rows: Vec<_> = READBACKS.iter().map(|row| row.capability).collect();
     assert_eq!(
         rows,
         [
             "settings.open",
+            "settings.set",
             "desk.save",
             "desk.export",
             "desk.import",

@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Change Settings rows; each field left out stays as it is, and `{}` reads.",
+  "properties": {
+    "perf_readings": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "progressive_history": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "timezone_offset_minutes": {
+      "description": "Minutes east of UTC, one of the offsets the Timezone row lists.",
+      "format": "int32",
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "venue_lead_in": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    }
+  },
+  "title": "SettingsSetInput",
+  "type": "object"
+}

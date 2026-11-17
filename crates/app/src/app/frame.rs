@@ -39,6 +39,7 @@ use crate::statusbar;
 use crate::tab::CanvasChrome;
 
 use super::QuantickApp;
+use super::menu_bar::MenuCommand;
 
 // The frame's stages, each harness stage compiled only where its hooks are:
 // a default build's plan has none of them, not a no-op arm for each.
@@ -257,7 +258,7 @@ impl QuantickApp {
     pub(super) fn drain_tabs(&mut self) {
         // Before the drain: a reading that arrives this frame lands on a
         // recorder built for the market it belongs to.
-        super::deal_recording_wiring::ensure(self);
+        super::deal_recording_wiring::ensure(&mut self.runtime, &self.chrome, &self.config);
         let trades = self.runtime.drain_tabs(&self.config);
         // What the window ingested, across every market it is holding.
         self.health.trades_since_summary += trades;
@@ -605,7 +606,9 @@ impl QuantickApp {
         let lead = statusbar::StatusLead::of(tab, stall, now_ms, open);
         scratch.status = statusbar::draw(ctx, &self.status_model(), self.runtime.tz, &lead);
         if scratch.status.open_display_settings {
-            super::desk_wiring::open_settings_on(self, ctx);
+            let display = quantick_control_schema::settings_sections::SettingsSection::Display;
+            super::menu_bar::apply_menu_command_on(self, ctx, MenuCommand::OpenSettings(display));
+            ctx.request_repaint();
         }
         if scratch.status.open_trading_tab {
             self.surfaces.dock.open_tab(DockTab::Trading);

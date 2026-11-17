@@ -221,10 +221,17 @@ fn error_code(response: &ResponseEnvelope) -> Option<&str> {
     }
 }
 
-/// Every value at a matrix field path: dotted properties, `[]` stepping into
-/// an array. The same grammar `retry_matrix::schema_has_path` checks against
-/// the published schema, walked here over a real answer.
-fn values_at(value: &Value, path: &str) -> Vec<Value> {
+/// Every value at a matrix field's paths: `, ` between paths, dotted
+/// properties, `[]` stepping into an array. The same grammar
+/// `retry_matrix::schema_has_path` checks against the published schema, walked
+/// here over a real answer.
+fn values_at(value: &Value, row: &quantick_control_schema::readback::Readback) -> Vec<Value> {
+    row.paths()
+        .flat_map(|path| values_at_path(value, path))
+        .collect()
+}
+
+fn values_at_path(value: &Value, path: &str) -> Vec<Value> {
     let mut nodes = vec![value.clone()];
     for segment in path.split('.') {
         let (name, into_array) = match segment.strip_suffix("[]") {
@@ -259,7 +266,7 @@ fn readback(
     if let Some(scope) = row.scope {
         let response = read_call(app, ctx, client, row.read, json!({ "scopes": [scope] }));
         let result = success_result(&response);
-        return values_at(&result["scopes"][scope]["value"], row.field);
+        return values_at(&result["scopes"][scope]["value"], row);
     }
     let kind = row.event.expect("a row reads a scope or an event kind");
     let mut values = Vec::new();
@@ -269,7 +276,7 @@ fn readback(
         let result = success_result(&response);
         for event in result["events"].as_array().expect("a page of events") {
             if event["kind"] == kind {
-                values.extend(values_at(event, row.field));
+                values.extend(values_at(event, row));
             }
         }
         if result["has_more"] != true {
@@ -791,6 +798,7 @@ fn replay_plan() -> Vec<(&'static str, u32, Value, Readback)> {
             json!({ "section": "data" }),
             Readback::Moves,
         ),
+        ("settings.set", 1, Value::Null, Readback::Moves),
         ("desk.save", 1, json!({}), Readback::Moves),
         ("desk.export", 1, json!({}), Readback::Stays),
         ("desk.import", 1, json!({}), Readback::Stays),
@@ -1017,6 +1025,7 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
                 "bar": app.active_tab().flow_pane.series.state.spec().to_config_string(),
                 "workspace": app.runtime.workspace.book.tab_row(app.runtime.tabs.active_id()).0,
             }),
+            "settings.set" => json!({ "perf_readings": !app.health.show_perf }),
             "catalog.remove" => {
                 let feed = app.active_tab().feed_id.clone();
                 app.symbol_catalog().add(&feed, "RETRYUSDT").unwrap();

@@ -2,18 +2,13 @@
 //! what a row asked for. The host owns every value; a row only asks.
 use quantick_appearance::Builtin;
 use quantick_civil::TzOffset;
+use quantick_control_handlers::settings::{SettingsAct, SettingsReadings};
 use quantick_control_schema::settings_sections::{SettingRow, SettingsSection};
 
 /// The values the rows show, read from their owners while Settings is up.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Facts {
-    pub timezone: TzOffset,
-    /// The bundled theme in use; `None` when a custom one is.
-    pub theme: Option<Builtin>,
-    pub show_perf: bool,
-    pub progressive_history: bool,
-    pub venue_lead_in: bool,
-    pub record_deals: bool,
+    pub readings: SettingsReadings,
     /// The local agent gateway, as its panel reads it; the default is no gateway.
     pub agent: crate::access_panel::Facts,
     pub agent_note: Option<AgentNote>,
@@ -24,6 +19,16 @@ pub struct Facts {
 pub enum AgentNote {
     Error(String),
     Status(String),
+}
+
+impl AgentNote {
+    /// The gateway's start error, else its status; a failure outranks news.
+    pub fn of(start_error: Option<&str>, status: Option<&str>) -> Option<Self> {
+        match start_error {
+            Some(error) => Some(Self::Error(error.to_owned())),
+            None => status.map(|note| Self::Status(note.to_owned())),
+        }
+    }
 }
 
 /// What a row draws on its right.
@@ -63,12 +68,12 @@ impl State {
     /// The picked theme is the one in use: the menu closes. A failed pick
     /// keeps it open, with the reason inside.
     pub fn theme_landed(&self) -> bool {
-        self.theme_picked.is_some() && self.theme_picked == self.facts.theme
+        self.theme_picked.is_some() && self.theme_picked == self.facts.readings.theme
     }
 
     /// The control `row` draws, from the observed facts.
     pub fn control(&self, row: SettingRow) -> Control {
-        let facts = &self.facts;
+        let facts = &self.facts.readings;
         let switch = |on| Control::Switch { on, enabled: true };
         match row {
             SettingRow::Appearance => Control::Appearance(facts.theme),
@@ -78,7 +83,7 @@ impl State {
             SettingRow::VenueLeadIn => switch(facts.venue_lead_in),
             SettingRow::RecordDeals => switch(facts.record_deals),
             SettingRow::AgentSwitch => {
-                let (on, enabled) = facts.agent.switch_state();
+                let (on, enabled) = self.facts.agent.switch_state();
                 Control::Switch { on, enabled }
             }
             SettingRow::ManageClients => Control::Button,
@@ -106,14 +111,10 @@ pub enum Intent {
 /// What a row asked its owner to do.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Action {
-    OpenAppearance,
+    /// A row a connection may settle too, through the same owner.
+    Row(SettingsAct),
+    /// The Agent access rows: only the window carries these out.
     OpenAgentAccess,
-    Theme(Builtin),
-    Timezone(TzOffset),
-    PerfReadings(bool),
-    ProgressiveHistory(bool),
-    VenueLeadIn(bool),
-    RecordDeals(bool),
     AgentSwitch(bool),
 }
 
@@ -152,13 +153,12 @@ impl crate::Model for Model {
             }
             Intent::Press(row) => press(row),
             Intent::Flip(row, on) => flip(state, row, on),
-            Intent::PickTimezone(tz) => {
-                (tz != state.facts.timezone).then_some(Action::Timezone(tz))
-            }
+            Intent::PickTimezone(tz) => (tz != state.facts.readings.timezone)
+                .then_some(Action::Row(SettingsAct::Timezone(tz))),
             Intent::PickTheme(choice) => {
                 state.theme_error = None;
                 state.theme_picked = Some(choice);
-                Some(Action::Theme(choice))
+                Some(Action::Row(SettingsAct::Theme(choice)))
             }
             Intent::ThemeFailed(error) => {
                 state.theme_error = Some(error);
@@ -176,7 +176,7 @@ impl crate::Model for Model {
 
 fn press(row: SettingRow) -> Option<Action> {
     match row {
-        SettingRow::Appearance => Some(Action::OpenAppearance),
+        SettingRow::Appearance => Some(Action::Row(SettingsAct::OpenAppearance)),
         SettingRow::ManageClients => Some(Action::OpenAgentAccess),
         _ => None,
     }
@@ -188,14 +188,15 @@ fn flip(state: &State, row: SettingRow, on: bool) -> Option<Action> {
         Control::Switch { on: was, enabled } if enabled && was != on => {}
         _ => return None,
     }
-    match row {
-        SettingRow::PerfReadings => Some(Action::PerfReadings(on)),
-        SettingRow::ProgressiveHistory => Some(Action::ProgressiveHistory(on)),
-        SettingRow::VenueLeadIn => Some(Action::VenueLeadIn(on)),
-        SettingRow::RecordDeals => Some(Action::RecordDeals(on)),
-        SettingRow::AgentSwitch => Some(Action::AgentSwitch(on)),
-        _ => None,
-    }
+    let act = match row {
+        SettingRow::PerfReadings => SettingsAct::PerfReadings(on),
+        SettingRow::ProgressiveHistory => SettingsAct::ProgressiveHistory(on),
+        SettingRow::VenueLeadIn => SettingsAct::VenueLeadIn(on),
+        SettingRow::RecordDeals => SettingsAct::RecordDeals(on),
+        SettingRow::AgentSwitch => return Some(Action::AgentSwitch(on)),
+        _ => return None,
+    };
+    Some(Action::Row(act))
 }
 
 #[cfg(test)]

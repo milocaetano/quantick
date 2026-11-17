@@ -607,6 +607,13 @@ impl AppConfig {
         self.feed(id).is_some_and(|f| f.record_deals)
     }
 
+    /// Whether feed `id`'s markets record unasked: the trader's saved choice,
+    /// else what the feed asks.
+    #[must_use]
+    pub fn records_by_default(&self, saved: Option<bool>, id: &str) -> bool {
+        saved.unwrap_or_else(|| self.records_deals(id))
+    }
+
     /// The configured recording directory, if the config names one.
     #[must_use]
     pub fn deals_dir(&self) -> Option<&str> {
@@ -2219,7 +2226,11 @@ mod tests {
                 &AddedSymbols::default(),
             )
             .unwrap_or_else(|error| panic!("{key} on MetaTrader: {error}"));
-            assert_eq!(ok.records_deals("f"), key.starts_with("record_deals"));
+            let feed_asks = key.starts_with("record_deals");
+            assert_eq!(ok.records_deals("f"), feed_asks);
+            assert_eq!(ok.records_by_default(None, "f"), feed_asks);
+            let saved = ok.records_by_default(Some(!feed_asks), "f");
+            assert_eq!(saved, !feed_asks, "a saved choice outranks the feed");
             if key.starts_with("default_bars") {
                 assert_eq!(
                     ok.startup_spec_for("f"),

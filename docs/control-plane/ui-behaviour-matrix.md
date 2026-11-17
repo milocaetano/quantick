@@ -42,10 +42,10 @@ The three exclusion classes are closed:
 
 | Outcome | Behaviours |
 | --- | --- |
-| Reachable by capability | 144 |
+| Reachable by capability | 148 |
 | Excluded: `authority` | 4 |
 | Excluded: `ui_only_by_decision` | 7 |
-| Excluded: `pending_capability` | 39 |
+| Excluded: `pending_capability` | 35 |
 | **Total** | **194** |
 
 99 of the 194 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 95 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
@@ -133,11 +133,11 @@ The three exclusion classes are closed:
 | `orderflow.bubbles.tick.set` | Select tick-chart spheres for a config-mode asset independently of the tape | Bubbles settings, Tick chart spheres preset picker, Peak spheres checkbox and sphere opacity slider | `orderflow.bubbles.tick.set` | — |
 | `orderflow.bubbles.preset.apply` | Apply or reapply a named whole bubble look | Bubbles settings, whole-look preset picker | `orderflow.bubbles.preset.apply` | — |
 | `orderflow.bubbles.reset` | Reset the bubble look to the asset's factory preset | Bubbles settings, reset bubble visuals | `orderflow.bubbles.reset` | — |
-| `history.candles.load_older` | Fetch another span of older venue candles | toolbar history caret | — | `pending_capability` — no capability fetches older venue candles or flips these View switches; trade history loads through feed.history.load. Tracked in issue 401 |
-| `history.progressive.toggle` | Build venue history backwards a week at a time, or in one request | window menu | — | `pending_capability` — no capability fetches older venue candles or flips these View switches; trade history loads through feed.history.load. Tracked in issue 401 |
+| `history.candles.load_older` | Fetch another span of older venue candles | toolbar history caret | — | `pending_capability` — no capability fetches older venue candles; trade history loads through feed.history.load. Tracked in issue 401 |
+| `history.progressive.toggle` | Build venue history backwards a week at a time, or in one request | window menu | `settings.set` | — |
 | `history.trades.cancel` | Stop loading history and keep what arrived | the loading History button, its menu's Cancel loading, or an Esc no draft, selection or armed tool wants | `feed.history.cancel` | — |
 | `history.trades.load` | Load the chart back by hours of trading or to a previous session's open | toolbar History button (repeats the last target) and its menu's targets | `feed.history.load` | — |
-| `history.venue_lead_in.toggle` | Put venue minute candles in front of bars cut by trades | window menu | — | `pending_capability` — no capability fetches older venue candles or flips these View switches; trade history loads through feed.history.load. Tracked in issue 401 |
+| `history.venue_lead_in.toggle` | Put venue minute candles in front of bars cut by trades | window menu | `settings.set` | — |
 | `appearance.configuration` | Apply a complete appearance configuration | ⋮ › Settings › Display › Theme › Dark/Light; versioned TOML or builtin choice through the local control plane | `appearance.apply` | — |
 | `indicator.picker.open` | Open and search the indicator library | the ƒx glyph on each pane header, searchable centered modal | `indicator.picker.set` | — |
 | `appearance.dialog.toggle` | Open the chart settings on the Candles tab — candles, canvas, grid | Settings window, a double click on a candle | `chart.settings.set` | — |
@@ -246,8 +246,8 @@ The three exclusion classes are closed:
 | `window.help.open` | Read a help page: keyboard shortcuts, workspaces, the version | window menu, Help | — | `ui_only_by_decision` — reference text for a human; the shortcuts and the workspace rules are the contract an operator already reads |
 | `window.command_palette.open` | Open the command palette | window menu, disabled until the market palette ships | — | `ui_only_by_decision` — not built: the row is greyed out and says so, and nothing runs behind it |
 | `control.access.open` | Open the local agent access panel | Settings, Agent access, Manage clients… | — | `authority` — the panel is where the trader grants and revokes an operator's access. A capability that opened it would let a connection widen its own authority, which `docs/control-plane/observer-threat-model.md` exists to prevent |
-| `view.perf_readings.toggle` | Show fps, frame time and trade count on the status bar | Settings window | — | `pending_capability` — `health.diagnostics.read` reports the same numbers to an operator directly, so the switch governs the trader's own status bar and nothing else. A capability would be for parity of the screen, not of the reading. Tracked in issue 401 |
-| `view.timezone.set` | Change the timezone the time axis is labelled in | Settings window, Timezone | — | `pending_capability` — no capability sets the display timezone; every control-plane reading is already absolute, so this is the trader's own axis. Tracked in issue 401 |
+| `view.perf_readings.toggle` | Show fps, frame time and trade count on the status bar | Settings window | `settings.set` | — |
+| `view.timezone.set` | Change the timezone the time axis is labelled in | Settings window, Timezone | `settings.set` | — |
 
 ## Appendix: sources the guard walks
 

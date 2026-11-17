@@ -27,8 +27,6 @@ use crate::surfaces::replay_browser::ReplayBrowserExt as _;
 use crate::toolrail::ToolRailExt as _;
 use eframe::egui;
 use quantick_control::error::ControlError;
-use quantick_control_handlers::deal_recorder::{DealRecorder, DealRecordingPort};
-use quantick_control_handlers::desk::DeskAct;
 use quantick_control_handlers::drawing_magnet::RailMagnetPort;
 use quantick_control_handlers::indicator_host::{IndicatorControlHost, IndicatorOwner};
 use quantick_control_handlers::market_palette::TabOpening;
@@ -40,7 +38,6 @@ use quantick_stores::{market_settings::MarketSettingsStore, workspaces::Workspac
 use quantick_ui_model::market_palette::Intent;
 use quantick_workspace::market_list::{self as list, OpenChoice};
 
-use super::deal_recording_wiring as deals;
 use super::tab_workspaces::BookTabs;
 use crate::config::AppConfig;
 use crate::drawings::{self, DrawingTool, NewDrawing};
@@ -79,7 +76,6 @@ pub(crate) trait ControlPort:
     + PaperPort
     + LayersPort
     + IndicatorControlHost
-    + DealRecordingPort
     + RailMagnetPort
     + GatewayPort
 {
@@ -97,7 +93,6 @@ impl<T> ControlPort for T where
         + PaperPort
         + LayersPort
         + IndicatorControlHost
-        + DealRecordingPort
         + RailMagnetPort
         + GatewayPort
         + ?Sized
@@ -789,8 +784,8 @@ fn widget_answer(
 }
 
 impl quantick_control_handlers::desk::DeskHost for QuantickApp {
-    fn desk(&mut self, act: DeskAct) -> Result<bool, quantick_control::error::ControlError> {
-        Ok(super::desk_wiring::apply(self, act))
+    fn desk(&mut self) -> Option<Box<dyn quantick_control_handlers::desk::DeskOwner + '_>> {
+        Some(Box::new(desk_adapter!(self)))
     }
 }
 
@@ -970,30 +965,14 @@ impl PaperPort for QuantickApp {
 
 impl LayersPort for QuantickApp {
     fn layer_wiring(&mut self) -> LayerWiring<'_> {
-        LayerWiring {
-            tabs: &mut self.runtime.tabs,
-            workspace: &mut self.runtime.workspace,
-            style: &mut self.runtime.style,
-            style_revision: &mut self.runtime.style_revision,
-            footprint_config: &mut self.runtime.footprint_config,
-            chart_settings: &mut self.surfaces.chart_settings.model_state,
-            appearance: &self.runtime.appearance,
-        }
+        let chart_settings = &mut self.surfaces.chart_settings.model_state;
+        LayerWiring::of(&mut self.runtime, chart_settings)
     }
 }
 
 impl IndicatorControlHost for QuantickApp {
     fn indicators(&mut self) -> Box<dyn IndicatorOwner + '_> {
         Box::new(self.indicator_wiring())
-    }
-}
-
-impl DealRecordingPort for QuantickApp {
-    fn deal_recorder(&mut self, index: usize) -> Option<&mut dyn DealRecorder> {
-        Some(self.tabs_mut().tab_with_config(index)?.0)
-    }
-    fn record_deals_by_default(&mut self, on: bool) {
-        deals::set_default(&mut self.chrome.record_deals, &mut self.runtime.tabs, on);
     }
 }
 
