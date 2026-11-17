@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import socket
 import sys
+import time
 import types
 from pathlib import Path
 
@@ -75,6 +76,8 @@ class FakeBroker:
             currency="BRL",
         )
         self.selected: list[str] = []
+        self.info = ns(digits=0)
+        self.deal_ranges: list[tuple[int, int]] = []
 
     def order_send(self, request):
         self.sent.append(dict(request))
@@ -87,7 +90,7 @@ class FakeBroker:
         return self.tick
 
     def symbol_info(self, _symbol):
-        return ns(digits=0)
+        return self.info
 
     def symbol_select(self, symbol, _enable):
         self.selected.append(symbol)
@@ -102,7 +105,8 @@ class FakeBroker:
     def orders_get(self, symbol=None, ticket=None):
         return [o for o in self.orders if (ticket is None or o.ticket == ticket) and (symbol is None or o.symbol == symbol)]
 
-    def history_deals_get(self, _from, _to):
+    def history_deals_get(self, date_from, date_to):
+        self.deal_ranges.append((int(date_from), int(date_to)))
         return list(self.deals)
 
     def history_orders_get(self, ticket=None):
@@ -360,6 +364,59 @@ def test_a_vanished_order_is_reported_with_how_it_ended():
     ended = s.build_state()["closed_orders"]
     check("cancelled, once history has it", ended == [{"ticket": 601, "state": "canceled"}], ended)
     check("reported once", s.build_state()["closed_orders"] == [], "repeat")
+
+
+def test_an_order_dropped_between_two_pushes_is_resolved_through_history():
+    # A market order the exchange accepted and then rejected before any
+    # state listed it as working: only its ticket, from the reply, names it.
+    broker = FakeBroker()
+    broker.result = ns(retcode=10008, comment="Request placed", order=501, deal=0, volume=1.0, price=0.0)
+    s = session(broker)
+    s.answer(submit("market"))
+    check("no history yet, no verdict", s.build_state()["closed_orders"] == [], "waiting")
+    broker.history_orders[501] = ns(state=5)
+    ended = s.build_state()["closed_orders"]
+    check("rejected, once history has it", ended == [{"ticket": 501, "state": "rejected"}], ended)
+    check("reported once", s.build_state()["closed_orders"] == [], "repeat")
+
+
+def test_a_sent_order_that_rests_is_not_resolved_while_it_works():
+    broker = FakeBroker()
+    broker.result = ns(retcode=10008, comment="Request placed", order=601, deal=0, volume=1.0, price=0.0)
+    s = session(broker)
+    s.answer(submit("limit", price="124900"))
+    broker.orders = [ns(ticket=601, symbol=SYMBOL, type=2, volume_current=1.0, price_open=124900.0, sl=0.0, tp=0.0, magic=MAGIC, time_setup_msc=1, type_time=1)]
+    for _ in range(exe.MAX_UNRESOLVED_PASSES + 5):
+        closed = s.build_state()["closed_orders"]
+        check("a working order is never declared ended", closed == [], closed)
+        if closed:
+            break
+
+
+def test_deal_history_is_read_from_the_last_seen_deal_onward():
+    broker = FakeBroker()
+    dealt_s = int(time.time()) - 3_600
+    broker.deals = [
+        ns(ticket=901, order=501, position_id=77, symbol=SYMBOL, type=0, entry=0, reason=3, volume=1.0, price=125000.0, magic=MAGIC, time_msc=dealt_s * 1000),
+    ]
+    s = session(broker)
+    s.build_state()
+    s.build_state()
+    first, second = broker.deal_ranges
+    check("the first read covers the whole window", first[0] < dealt_s - exe.DEAL_OVERLAP_S, broker.deal_ranges)
+    check(
+        "later reads start just before the last deal seen",
+        second[0] == dealt_s - exe.DEAL_OVERLAP_S,
+        broker.deal_ranges,
+    )
+
+
+def test_a_request_is_refused_when_the_terminal_has_no_symbol_information():
+    broker = FakeBroker()
+    broker.info = None
+    reply = session(broker).answer(submit("market"))
+    check("nothing reached the terminal", broker.sent == [], broker.sent)
+    check("refused with the reason", reply["retcode"] is None and "symbol information" in reply["error"], reply)
 
 
 def test_watch_switches_the_symbol_and_selects_it():

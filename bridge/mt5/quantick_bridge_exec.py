@@ -75,6 +75,11 @@ MAX_COMMENT_CHARS = 31
 #: on both sides rather than exact; quantick ignores deals it has already seen.
 DEAL_WINDOW_S = 2 * 24 * 60 * 60
 
+#: After the first read, history is read from this long before the newest deal
+#: already seen, not the whole window again every pass: a deal the terminal
+#: writes a moment late is still inside it.
+DEAL_OVERLAP_S = 5 * 60
+
 #: Passes a vanished order may wait for its history record before it is
 #: reported with state "unknown". The terminal writes history a moment after it
 #: drops the order from the working list; this bounds how long that may take.
@@ -169,10 +174,15 @@ class ExecSession(TransportMixin):
         # empty on purpose: quantick dedups by ticket, and a reconnect must
         # hand it every deal that happened while the link was down.
         self.sent_deals: set[int] = set()
-        # Order tickets in the last pushed working list, and vanished ones
-        # still waiting for their history record, with the passes waited.
+        # Order tickets in the last pushed working list, tickets replies named
+        # that no list has shown yet, and vanished ones still waiting for their
+        # history record, with the passes waited.
         self.known_orders: set[int] = set()
+        self.sent_orders: set[int] = set()
         self.unresolved: dict[int, int] = {}
+        # Server time of the newest deal seen; history is read from just
+        # before it once one has been seen.
+        self.newest_deal_s: int | None = None
         self.last_state_body: str | None = None
         self.last_state_at = 0.0
         self.digits_by_symbol: dict[str, int] = {}
@@ -261,11 +271,21 @@ class ExecSession(TransportMixin):
                 self.symbol = symbol
                 self.sent_deals.clear()
                 self.known_orders.clear()
+                self.sent_orders.clear()
                 self.unresolved.clear()
+                self.newest_deal_s = None
                 self.last_state_body = None
                 if not self.terminal.symbol_select(symbol, True):
                     log("EXEC_SYMBOL_SELECT_FAILED", symbol=symbol, mt5_error=str(self.terminal.last_error()))
             return {"type": "reply", "id": request["id"], "retcode": None, "watching": symbol}
+        symbol = request.get("symbol") if isinstance(request.get("symbol"), str) else self.symbol
+        if self.digits(symbol) is None:
+            # Every price in the reply and the state is written in the
+            # symbol's digits; guessing them would misprice what is shown.
+            raise RequestError(
+                f"the terminal has no symbol information for {symbol or 'the watched symbol'}: "
+                "refusing rather than guessing its price digits"
+            )
         trade_request = getattr(self, f"build_{kind}")(request)
         return self.send_order(request["id"], trade_request)
 
@@ -279,6 +299,10 @@ class ExecSession(TransportMixin):
                 "retcode": None,
                 "error": f"order_send returned nothing ({code}): {message}",
             }
+        if int(result.order):
+            # Followed until it works or history says how it ended: an order
+            # dropped between two pushes would otherwise never be reported.
+            self.sent_orders.add(int(result.order))
         return {
             "type": "reply",
             "id": request_id,
@@ -390,17 +414,24 @@ class ExecSession(TransportMixin):
 
     # -- state -------------------------------------------------------------
 
-    def digits(self) -> int:
-        """The watched symbol's price digits, asked of the terminal once."""
-        if self.symbol not in self.digits_by_symbol:
-            info = self.terminal.symbol_info(self.symbol) if self.symbol else None
+    def digits(self, symbol: str | None = None) -> int | None:
+        """A symbol's price digits (the watched one's by default), asked of
+        the terminal once; `None` while the terminal has no information."""
+        symbol = self.symbol if symbol is None else symbol
+        if symbol not in self.digits_by_symbol:
+            info = self.terminal.symbol_info(symbol) if symbol else None
             if info is None:
-                return 0
-            self.digits_by_symbol[self.symbol] = int(info.digits)
-        return self.digits_by_symbol[self.symbol]
+                return None
+            self.digits_by_symbol[symbol] = int(info.digits)
+        return self.digits_by_symbol[symbol]
 
     def price(self, value: float) -> str:
-        return f"{value:.{self.digits()}f}"
+        digits = self.digits()
+        if digits is None:
+            # Unknown digits: the value as the terminal holds it, never
+            # rounded to a whole number.
+            return f"{value:.10f}".rstrip("0").rstrip(".")
+        return f"{value:.{digits}f}"
 
     def optional_price(self, value: float) -> str | None:
         """MetaTrader writes "no stop" as 0.0; on the wire it is `null`."""
@@ -466,9 +497,15 @@ class ExecSession(TransportMixin):
 
     def new_deals(self) -> list[dict]:
         now = int(time.time())
-        deals = self.terminal.history_deals_get(now - DEAL_WINDOW_S, now + DEAL_WINDOW_S) or ()
+        start = now - DEAL_WINDOW_S
+        if self.newest_deal_s is not None:
+            start = max(start, self.newest_deal_s - DEAL_OVERLAP_S)
+        deals = self.terminal.history_deals_get(start, now + DEAL_WINDOW_S) or ()
         lines = []
         for d in deals:
+            dealt_s = int(d.time_msc) // 1000
+            if self.newest_deal_s is None or dealt_s > self.newest_deal_s:
+                self.newest_deal_s = dealt_s
             ticket = int(d.ticket)
             if d.symbol != self.symbol or ticket in self.sent_deals or int(d.type) not in (0, 1):
                 continue
@@ -492,11 +529,16 @@ class ExecSession(TransportMixin):
 
     def closed_orders(self, working: set[int]) -> list[dict]:
         """How each order that left the working list ended, once history says."""
-        for ticket in self.known_orders - working:
+        for ticket in (self.known_orders | self.sent_orders) - working:
             self.unresolved.setdefault(ticket, 0)
+        self.sent_orders.clear()
         self.known_orders = working
         resolved = []
         for ticket in sorted(self.unresolved):
+            if ticket in working:
+                # Listed after all: the working list follows it from here.
+                self.unresolved.pop(ticket)
+                continue
             history = self.terminal.history_orders_get(ticket=ticket)
             if history:
                 state = ORDER_STATES.get(int(history[0].state), "unknown")
