@@ -11,12 +11,7 @@ struct Pane {
 }
 
 impl TapeFoldPort for Pane {
-    fn set_tape_fold(
-        &mut self,
-        _tab: u64,
-        _pane: u64,
-        fold: TapeFold,
-    ) -> Result<bool, ControlError> {
+    fn set_tape_fold(&mut self, fold: TapeFold) -> Result<bool, ControlError> {
         if self.refuses {
             return Err(ControlError::invalid_request("no order-flow view"));
         }
@@ -25,7 +20,7 @@ impl TapeFoldPort for Pane {
         self.fold = fold;
         Ok(changed)
     }
-    fn set_tape_market_fold(&mut self, _: u64, _: u64, _: bool) -> Result<bool, ControlError> {
+    fn set_tape_market_fold(&mut self, _: bool) -> Result<bool, ControlError> {
         Ok(false)
     }
 }
@@ -39,9 +34,8 @@ fn pane() -> Pane {
 }
 
 fn call(pane: &mut Pane, fold: Value) -> Result<Value, ControlError> {
-    let actor = crate::test_support::FakeWindow::assistant();
     let input = json!({"tab_id": "1", "pane_id": "0", "fold": fold});
-    set(pane, &mut (), &actor, &input)
+    answer(pane, serde_json::from_value(input).map_err(invalid)?)
 }
 
 /// Every word goes through from every view, and repeating one changes nothing.

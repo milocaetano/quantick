@@ -11,13 +11,11 @@ use quantick_control_handlers::{
     history::HistoryPort,
     journal_sessions::JournalSessionsPort,
     notify::AttentionPort,
-    orderflow::{OrderflowEngine, OrderflowPane, OrderflowPaneEntry, OrderflowPort},
     pnl_display::PnlDisplayPort,
     recovery::{FeedRecoveryPort, RecoveredFeed},
     session::{ReplayRead, SessionPort, SessionTab},
     trade::{TradeDesk, TradePort},
 };
-use quantick_control_host::wire::PaneSideDto;
 use quantick_control_schema::notify::AgentPopup;
 use quantick_paper::report::ledger_state::{LedgerView, LedgerViewChange};
 use quantick_paper::report::session_edit::{
@@ -30,7 +28,7 @@ use crate::app::control_host::ControlPort;
 use crate::app::paper_wiring::PaperSettingsChange;
 use crate::control::ControlAccess;
 use crate::paper_trading::PaperTrading;
-use crate::{control::pane_side_dto, orderflow_view::OrderflowView, pane::ChartPane, tab::Tab};
+use crate::{control::pane_side_dto, pane::ChartPane, tab::Tab};
 use quantick_control_handlers::feed_source::{FeedSelection, FeedSourcePort};
 
 impl FeedSourcePort for dyn ControlPort {
@@ -289,106 +287,6 @@ impl JournalAccess for ControlAccess {
     }
     fn now_unix_ms(&self) -> i64 {
         crate::metrics::wall_clock_ms()
-    }
-}
-
-impl OrderflowEngine for OrderflowView {
-    fn config(&self) -> &quantick_orderflow::HeatmapConfig {
-        self.cached_config()
-    }
-    fn book(
-        &self,
-    ) -> (
-        &quantick_orderflow::engine::CaptureStatus,
-        Option<&quantick_orderflow::engine::BookLadder>,
-        rust_decimal::Decimal,
-        &[quantick_orderflow::projection::GapPrimitive],
-    ) {
-        self.cached_book()
-    }
-    fn health(&self) -> &quantick_orderflow::engine::OrderflowHealth {
-        self.cached_health()
-    }
-    fn live_end_ms(&self) -> Option<i64> {
-        self.cached_live_end_ms()
-    }
-    fn book_held_at_ms(&self) -> Option<i64> {
-        OrderflowView::book_held_at_ms(self)
-    }
-    fn bubbles(&self) -> quantick_control_schema::orderflow::BubblesStateSnapshot {
-        self.bubbles_snapshot()
-    }
-    fn flow_execution(&self) -> Option<quantick_control_schema::orderflow::FlowExecutionSnapshot> {
-        self.flow_execution_snapshot_frame()
-            .map(|frame| (frame.as_ref(), self.flow_execution_progress()).into())
-    }
-}
-
-/// One pane read with its tab and the window's footprint setup, as the
-/// order-flow scopes read a pane.
-struct OrderflowPaneRead<'a> {
-    tab: &'a Tab,
-    pane: &'a ChartPane,
-    window: &'a crate::footprint_config::FootprintConfig,
-}
-
-impl OrderflowPane for OrderflowPaneRead<'_> {
-    fn pane_id(&self) -> u64 {
-        self.pane.id
-    }
-    fn footprint_visible(&self) -> bool {
-        self.pane.presentation.footprint.visible
-    }
-    fn footprint_overridden(&self) -> bool {
-        self.pane.presentation.footprint.config.is_own()
-    }
-    fn footprint_config(&self) -> &crate::footprint_config::FootprintConfig {
-        self.pane.footprint_config(self.window)
-    }
-    fn opening_scale(&self) -> quantick_control_schema::orderflow::OpeningScaleSnapshot {
-        let view = self.pane.orderflow.as_ref();
-        quantick_control_schema::orderflow::OpeningScaleSnapshot {
-            tape: view.map(|v| v.cached_config().volume_dots.ignore_opening_burst_in_scale),
-            candle: view.is_some_and(crate::orderflow_view::OrderflowView::ignore_flow_opening),
-        }
-    }
-    fn tape_age_at(&self, now_ms: i64) -> Option<i64> {
-        self.tab.tape_age_at(now_ms)
-    }
-    fn engine(&self) -> Option<&dyn OrderflowEngine> {
-        self.pane
-            .orderflow
-            .as_ref()
-            .map(|view| view as &dyn OrderflowEngine)
-    }
-}
-
-impl OrderflowPort for dyn ControlPort {
-    fn visit_orderflow_tabs(&self, visit: &mut dyn FnMut(u64, &[OrderflowPaneEntry<'_>])) {
-        let reads = self.tab_reads();
-        let window = reads.footprint_config();
-        for (tab_id, tab) in reads.tabs().iter_with_ids() {
-            let panes: Vec<(PaneSideDto, OrderflowPaneRead<'_>)> = tab
-                .panes()
-                .map(|(pane, side)| (pane_side_dto(side), OrderflowPaneRead { tab, pane, window }))
-                .collect();
-            let entries: Vec<OrderflowPaneEntry<'_>> = panes
-                .iter()
-                .map(|(side, pane)| OrderflowPaneEntry { side: *side, pane })
-                .collect();
-            visit(tab_id, &entries);
-        }
-    }
-
-    fn visit_orderflow_panels(
-        &self,
-        visit: &mut quantick_control_handlers::orderflow::PanelVisit<'_>,
-    ) {
-        let (tabs, lit) = (self.tab_reads().tabs(), self.appearance().has_lit_flow());
-        for (tab_id, tab) in tabs.iter_with_ids() {
-            let panel = (&tab.tape().settings_panel, lit);
-            visit(tab_id, &tab.symbol, panel, tabs.panel_folds());
-        }
     }
 }
 

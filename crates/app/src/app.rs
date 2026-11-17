@@ -33,8 +33,8 @@ mod chart_settings_wiring;
 mod chrome;
 pub(crate) mod control_host;
 pub(crate) use control_host::{
-    AlertsPort, ChromePort, ControlWindow, GatewayPort, HealthPort, IndicatorPickerPort,
-    LayersPort, LayoutPort, PaperPort, ScriptsPort, TabsMutPort, TabsPort, ToolRailPort,
+    AlertsPort, ChromePort, ControlWindow, GatewayPort, HealthPort, LayersPort, LayoutPort,
+    PaperPort, TabsMutPort, TabsPort, ToolRailPort,
 };
 pub(crate) mod deal_recording_wiring;
 mod demo_hooks;
@@ -44,9 +44,9 @@ pub(crate) mod drawing_controller;
 mod frame;
 mod frame_tail;
 mod health;
-pub(crate) mod indicator_control;
 mod indicator_manager;
 mod indicator_operations;
+mod indicator_owner;
 mod indicator_wiring;
 pub(crate) mod launch_hooks;
 mod layout_wiring;
@@ -93,15 +93,6 @@ const FIRST_TAB_ID: u64 = 0;
 /// every existing capture shows.
 #[cfg(any(feature = "scenario-harness", test))]
 const AUTOSTART_NATIVES: &[&str] = &["native.ema", "native.cvd"];
-
-/// Read-only frame observations exposed to on-demand semantic projections.
-pub(crate) struct ControlFrameMetrics {
-    pub wall_average_ms: Option<f32>,
-    pub wall_worst_ms: Option<f32>,
-    pub frames_per_second: Option<f32>,
-    pub cpu_average_ms: Option<f32>,
-    pub cpu_worst_ms: Option<f32>,
-}
 
 /// The quantick chart window.
 ///
@@ -257,11 +248,11 @@ impl QuantickApp {
         self.active_tab_mut().drawing_pane_mut()
     }
 
-    /// Launch scenarios invoke the registered label and notification handlers
-    /// through trusted local actions with an agent actor. Unlike remote calls,
-    /// these local actions do not pass through configured remote-grant admission.
+    /// Launch scenarios run the label and notification handlers as a trusted
+    /// local agent: traced on a replay, never through remote-grant admission.
     #[cfg(any(feature = "control-harness", test))]
     pub(super) fn apply_control_annotate_hooks(&mut self) {
+        let remote = crate::control::ActionOrigin::Remote;
         if self.control.scenarios.has_annotation() {
             let pane = self.active_tab().drawing_pane();
             let slot = pane.slots().saturating_sub(1);
@@ -273,12 +264,12 @@ impl QuantickApp {
                 _ => None,
             };
             if let Some(input) = self.control.scenarios.annotation(anchor) {
-                self.run_hook_action("annotate.label.create", input);
+                self.run_hook_action("annotate.label.create", input, remote);
             }
         }
         match self.control.scenarios.notification() {
             Some(control_host::NotificationStep::Ready { capability, input }) => {
-                self.run_hook_action(capability, input)
+                self.run_hook_action(capability, input, remote)
             }
             Some(control_host::NotificationStep::Refused { channel }) => tracing::warn!(
                 target: "quantick::control",

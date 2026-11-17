@@ -1,42 +1,34 @@
 //! Durable per-indicator price-hover guide, shared by UI and automation.
-
-pub(crate) use quantick_control_schema::indicator_guide::*;
-
-use crate::app::LayoutPort;
+use crate::indicator_host::IndicatorControlHost;
+use crate::{dock::ActionDock, tabs::JournalAccess};
 use quantick_control::{error::ControlError, registry::RegistryError, wire::ActorContext};
-
+use quantick_control_host::{authority::SCRIPT_MODULE_ID, journal::NewEvent};
+use quantick_control_schema::indicator_guide::{
+    INDICATOR_GUIDE_EVENT_KIND, IndicatorGuideInput, IndicatorGuideResult, descriptor,
+};
 use serde_json::Value;
 
-use crate::indicator_worker::SlotId;
-
-use super::{
-    actions::ActionRegistry, gateway::ControlAccess, journal::NewEvent, script::SCRIPT_MODULE_ID,
-};
-
-pub(crate) fn register(registry: &mut ActionRegistry) -> Result<(), RegistryError> {
+/// Dock the guide call.
+pub fn register<H: IndicatorControlHost + ?Sized, A: JournalAccess>(
+    registry: &mut impl ActionDock<H, A>,
+) -> Result<(), RegistryError> {
     registry.register(descriptor(), set)
 }
 
-fn set<P: LayoutPort + ?Sized>(
-    app: &mut P,
-    access: &mut ControlAccess,
+fn set<H: IndicatorControlHost + ?Sized, A: JournalAccess>(
+    host: &mut H,
+    access: &mut A,
     actor: &ActorContext,
     input: &Value,
 ) -> Result<Value, ControlError> {
     let input: IndicatorGuideInput = serde_json::from_value(input.clone())
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
-    let changed = crate::app::set_indicator_mouse_vertical_line(
-        &mut app.layout_adapter(),
+    host.indicators().set_indicator_guide(
         input.tab_id.get(),
         input.pane_id.get(),
-        SlotId(input.slot_id.get()),
+        input.slot_id.get(),
         input.enabled,
-    );
-    if !changed {
-        return Err(ControlError::invalid_request(
-            "the target must name a live non-price indicator reported by analysis.indicators",
-        ));
-    }
+    )?;
     let result = IndicatorGuideResult {
         tab_id: input.tab_id,
         pane_id: input.pane_id,
@@ -44,7 +36,7 @@ fn set<P: LayoutPort + ?Sized>(
         enabled: input.enabled,
     };
     let payload = serde_json::json!({ "indicator_guide": result });
-    access.append_event(NewEvent::by(
+    access.record_event(NewEvent::by(
         SCRIPT_MODULE_ID,
         INDICATOR_GUIDE_EVENT_KIND,
         actor,
@@ -52,3 +44,7 @@ fn set<P: LayoutPort + ?Sized>(
     ));
     serde_json::to_value(result).map_err(|error| ControlError::invalid_request(error.to_string()))
 }
+
+#[cfg(test)]
+#[path = "indicator_guide_tests.rs"]
+mod tests;

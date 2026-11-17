@@ -1,5 +1,5 @@
 //! The indicator owner's worker, layout and control recipients at the frame boundary.
-use super::indicator_manager::{IndicatorEdit, SettingsChange};
+use super::indicator_manager::{IndicatorEdit, IndicatorState, SettingsChange};
 use super::{layout_wiring::LayoutAdapter, workspace_runtime::WorkspaceRuntime};
 use crate::canvas_layout::MAX_CANVAS_PANES;
 use crate::indicator_legend::LegendAction;
@@ -36,7 +36,7 @@ impl<'a> IndicatorWiring<'a> {
 }
 
 impl IndicatorWiring<'_> {
-    fn layout(&mut self) -> LayoutAdapter<'_> {
+    pub(super) fn layout(&mut self) -> LayoutAdapter<'_> {
         IndicatorWiring {
             runtime: self.runtime,
             surfaces: self.surfaces,
@@ -44,6 +44,28 @@ impl IndicatorWiring<'_> {
             harness: self.harness,
         }
         .into_layout()
+    }
+
+    /// Attach library script `index` to the focused pane, its legend open:
+    /// the toolbar's pick and `indicator.script_editor.set`'s add share it.
+    pub(super) fn add_library_script_at(&mut self, index: usize) {
+        IndicatorState::set_legend_collapsed(
+            self.runtime.active_tab_mut().focused_pane_mut(),
+            false,
+        );
+        let target = (
+            self.runtime.tabs.active_id(),
+            self.runtime.active_tab().focused_side(),
+        );
+        let runtime = &mut *self.runtime;
+        let tabs = &mut runtime.tabs;
+        let pane = tabs.runtime_mut(tabs.active_index()).pane_mut(target.1);
+        if let Some((_, added)) = runtime.indicators.add_library(pane, target, index) {
+            if let Some(attached) = added.attachment {
+                self.apply_indicator_edit(IndicatorEdit::Attached(attached));
+            }
+            self.runtime.indicators.watch_attachment(added.watch);
+        }
     }
 
     /// Open the indicator library on the pane at `side`. Focus moves there first:

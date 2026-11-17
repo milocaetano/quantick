@@ -22,8 +22,12 @@ pub fn tab_index<P: TabDirectory + ?Sized>(
     let Some(id) = tab_id else {
         return Ok(app.active_tab_index());
     };
-    app.tab_position(id.get())
-        .ok_or_else(|| ControlError::invalid_request(format!("no open tab has id {}", id.get())))
+    app.tab_position(id.get()).ok_or_else(|| no_tab(id.get()))
+}
+
+/// The refusal a call gets when it names a tab id no open tab has.
+pub(crate) fn no_tab(tab_id: u64) -> ControlError {
+    ControlError::invalid_request(format!("no open tab has id {tab_id}"))
 }
 
 /// The refusal a call gets when the tab it resolved is gone by the time it

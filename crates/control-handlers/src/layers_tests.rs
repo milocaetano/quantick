@@ -65,3 +65,61 @@ fn a_blocked_layer_is_refused_with_its_code_and_nothing_switches() {
     assert!(window.layer_switches.is_empty());
     assert!(access.events.is_empty());
 }
+
+#[test]
+fn the_scope_lists_every_pane_tab_by_tab_with_its_layers_in_menu_order() {
+    let mut window = window();
+    let mut second = FakeTab::new(3, "WINZ26");
+    second.panes.push(FakePane::with_trades(4, 50, []));
+    window.tabs.push(second);
+    let scope = snapshot(&window);
+    assert_eq!(scope.omitted_panes.get(), 0);
+    let panes: Vec<_> = scope
+        .panes
+        .iter()
+        .map(|pane| (pane.tab_id.get(), pane.pane_id.get()))
+        .collect();
+    assert_eq!(panes, [(1, 2), (3, 4)]);
+    let ids: Vec<_> = scope.panes[0]
+        .layers
+        .iter()
+        .map(|layer| layer.id.as_str())
+        .collect();
+    assert_eq!(ids, ["grid", "tape"]);
+    assert!(scope.panes[1].layers.is_empty());
+}
+
+#[test]
+fn panes_past_the_bound_are_counted_rather_than_listed() {
+    let mut tab = FakeTab::new(1, "BTCUSDT");
+    for id in 0..MAX_SNAPSHOT_PANES as u64 + 3 {
+        tab.panes.push(FakePane::with_trades(id, 50, []));
+    }
+    let scope = snapshot(&FakeWindow::new(vec![tab]));
+    assert_eq!(scope.panes.len(), MAX_SNAPSHOT_PANES);
+    assert_eq!(scope.omitted_panes.get(), 3);
+}
+
+#[test]
+fn an_address_that_names_nothing_is_refused_in_the_calls_words() {
+    let window = window();
+    let refusal = |tab, pane, layer| {
+        chart_layer(&window, WireU64::new(tab), WireU64::new(pane), layer)
+            .unwrap_err()
+            .message
+    };
+    assert_eq!(refusal(9, 2, "grid"), "no open tab has id 9");
+    assert_eq!(
+        refusal(1, 9, "grid"),
+        "layer visibility names an unknown pane on the requested tab"
+    );
+    assert_eq!(
+        refusal(1, 2, "volume"),
+        "layer visibility names an unknown registered layer"
+    );
+    let read = chart_layer(&window, WireU64::new(1), WireU64::new(2), "tape").unwrap();
+    assert_eq!(
+        read.blocked.map(|blocked| blocked.code),
+        Some("needs_order_flow")
+    );
+}

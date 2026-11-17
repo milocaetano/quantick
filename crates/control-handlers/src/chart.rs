@@ -13,6 +13,7 @@
 //! summary itself, so it runs once per capture, never per frame.
 
 use quantick_chart::state::ChartState;
+use quantick_chart::style::ChartStyle;
 use quantick_control::{
     cursor::PageCursor,
     error::ControlError,
@@ -31,6 +32,7 @@ use quantick_control_schema::chart::{
     VenueCandleStatus, ViewportSnapshot,
 };
 use quantick_control_schema::chart_settings::{ChartSettingsInput, ChartSettingsResult};
+use quantick_control_schema::layers::LayerSnapshot;
 use quantick_engine::Bar;
 use quantick_sources::candle_series::{SeriesState, SeriesStatus};
 use quantick_stores::candle_presets::PresetError;
@@ -81,6 +83,12 @@ pub trait ChartPaneSource {
     fn venue_candles(&self) -> Option<SeriesStatus> {
         None
     }
+    /// The pane's registered layers in its menu's order, as the menu reads
+    /// each under the window's `style`.
+    fn layers(&self, style: &ChartStyle) -> Vec<LayerSnapshot>;
+    /// The registered layer `layer_id`, with why its switch is greyed out
+    /// when it is; `None` when the pane registers no such layer.
+    fn layer(&self, layer_id: &str, style: &ChartStyle) -> Option<LayerRead>;
 }
 
 /// One pane with where it sits: its tab, its side and its market.
@@ -144,22 +152,14 @@ pub trait ChartPort {
         &mut self,
         input: ChartSettingsInput,
     ) -> Result<ChartSettingsResult, PresetError>;
-    /// The registered layer `layer_id` of the addressed pane, as its menu
-    /// reads it.
-    fn chart_layer(
-        &self,
-        tab_id: WireU64,
-        pane_id: WireU64,
-        layer_id: &str,
-    ) -> Result<LayerRead, ControlError>;
-    /// Switch that layer the way the pane's menu does.
-    fn switch_chart_layer(
-        &mut self,
-        tab_id: WireU64,
-        pane_id: WireU64,
-        layer_id: &str,
-        visible: bool,
-    ) -> Result<(), ControlError>;
+    /// The window's shared chart style, which holds the switches of the
+    /// layers no pane owns alone, the grid among them.
+    fn chart_style(&self) -> &ChartStyle;
+    /// Switch the registered layer `layer_id` of pane `pane_id` on tab
+    /// `tab_id` the way the pane's menu does. The call has read the layer
+    /// through [`crate::layers::chart_layer`] first, so an address that no
+    /// longer resolves switches nothing.
+    fn switch_chart_layer(&mut self, tab_id: u64, pane_id: u64, layer_id: &str, visible: bool);
 }
 
 /// Dock the chart module and its summary scope.

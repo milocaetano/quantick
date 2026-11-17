@@ -2,36 +2,39 @@
 //! Beside stands the market's hold down at the default width, as
 //! `orderflow.tape.fold.set` open does.
 use crate::dock::ActionDock;
+use crate::tape_pane::PaneTapePort;
 use quantick_control::{error::ControlError, registry::RegistryError, wire::ActorContext};
 use quantick_control_schema::tape_view_set::{TapeView, TapeViewSetInput, descriptor};
 use serde_json::Value;
 
-/// The view capability's narrow port.
+/// The view capability's narrow port on the pane.
 pub trait TapeViewPort {
-    /// Show `view` on the pane, from any view; answers whether it changed.
-    /// Refuses a pane without an order-flow view.
-    fn set_tape_view(
-        &mut self,
-        tab_id: u64,
-        pane_id: u64,
-        view: TapeView,
-    ) -> Result<bool, ControlError>;
+    /// Show `view`, from any view; answers whether it changed. Refuses a
+    /// pane without an order-flow view.
+    fn set_tape_view(&mut self, view: TapeView) -> Result<bool, ControlError>;
 }
 
-pub fn register<D: ActionDock<H, A>, H: TapeViewPort + ?Sized, A>(
+pub fn register<D: ActionDock<H, A>, H: PaneTapePort<Pane: TapeViewPort> + ?Sized, A>(
     registry: &mut D,
 ) -> Result<(), RegistryError> {
     registry.register(descriptor(), set)
 }
 
-fn set<H: TapeViewPort + ?Sized, A>(
+fn set<H: PaneTapePort<Pane: TapeViewPort> + ?Sized, A>(
     host: &mut H,
     _access: &mut A,
     _actor: &ActorContext,
     input: &Value,
 ) -> Result<Value, ControlError> {
     let input: TapeViewSetInput = serde_json::from_value(input.clone()).map_err(invalid)?;
-    let changed = host.set_tape_view(input.tab_id.get(), input.pane_id.get(), input.view)?;
+    answer(host.pane_tape(input.tab_id, input.pane_id)?, input)
+}
+
+fn answer<P: TapeViewPort + ?Sized>(
+    pane: &mut P,
+    input: TapeViewSetInput,
+) -> Result<Value, ControlError> {
+    let changed = pane.set_tape_view(input.view)?;
     serde_json::to_value(input.result(changed)).map_err(invalid)
 }
 

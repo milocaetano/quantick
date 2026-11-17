@@ -51,12 +51,12 @@ use quantick_ui_model::dock::State as Dock;
 
 use quantick_feed::history_reach;
 
+use super::QuantickApp;
 use super::arrangement_host::ArrangementHost;
 use super::chart_layers_wiring::LayerWiring;
-use super::indicator_manager::IndicatorEdit;
 use super::layout_wiring::{LayoutAdapter, LayoutRead};
 use super::paper_wiring::PaperSettingsAdapter;
-use super::{ControlFrameMetrics, QuantickApp};
+use quantick_control_handlers::health::FrameReading;
 
 /// The window as the gateway holds it: every family at once, `'static`
 /// because the projection registry is keyed on the type it reads.
@@ -75,8 +75,7 @@ pub(crate) trait ControlPort:
     + LayoutPort
     + PaperPort
     + LayersPort
-    + ScriptsPort
-    + IndicatorPickerPort
+    + quantick_control_handlers::indicator_host::IndicatorControlHost
     + RecordingPort
     + ToolRailPort
     + GatewayPort
@@ -94,8 +93,7 @@ impl<T> ControlPort for T where
         + LayoutPort
         + PaperPort
         + LayersPort
-        + ScriptsPort
-        + IndicatorPickerPort
+        + quantick_control_handlers::indicator_host::IndicatorControlHost
         + RecordingPort
         + ToolRailPort
         + GatewayPort
@@ -168,53 +166,6 @@ pub(crate) trait LayersPort {
     fn layer_wiring(&mut self) -> super::chart_layers_wiring::LayerWiring<'_>;
 }
 
-/// The searchable indicator dialog's shared state.
-pub(crate) trait IndicatorPickerPort {
-    fn indicator_picker(
-        &mut self,
-        input: quantick_control_schema::indicator_picker::PickerInput,
-    ) -> Result<quantick_control_schema::indicator_picker::PickerResult, String>;
-}
-
-/// Indicator scripts an operator attaches and detaches.
-pub(crate) trait ScriptsPort {
-    fn set_script_numeric_input(
-        &mut self,
-        _id: &str,
-        _name: &str,
-        _value: quantick_control_schema::script_editor::NumericValue,
-    ) -> Result<(), String> {
-        Err("numeric script inputs are not available in this build".into())
-    }
-    fn add_library_script(&mut self, _id: &str) -> Result<(), String> {
-        Err("library attachment is not available in this build".into())
-    }
-    fn script_library_state(
-        &self,
-        _offset: usize,
-        _limit: usize,
-    ) -> quantick_control_schema::script_editor::EditorResult {
-        Default::default()
-    }
-    /// Editor actions share one value lane with the surface. Unavailable in the skeleton.
-    fn edit_script(
-        &mut self,
-        _action: quantick_stores::script_library::ScriptEditorAction,
-    ) -> Result<Option<quantick_stores::script_library::ScriptDocument>, String> {
-        Err("script editing is not available in this build".into())
-    }
-
-    /// Attach `source` to the focused pane of the tab on screen, as an
-    /// operator's or the trader's own; answers where it landed.
-    fn attach_script(&mut self, name: String, source: String, by_operator: bool) -> ScriptSlot;
-    /// Detach an operator-attached slot. `Err` when the slot is the trader's
-    /// own; `Ok(false)` when there was nothing to detach.
-    fn detach_operator_script(&mut self, slot: u64) -> Result<bool, ()>;
-}
-
-/// Where an attached script landed: tab id, pane side, slot.
-pub(crate) type ScriptSlot = (u64, crate::pane::PaneSide, crate::indicator_worker::SlotId);
-
 /// The deal recorder's window-wide default.
 pub(crate) trait RecordingPort {
     /// Save the default and apply it to undecided recorders.
@@ -264,13 +215,14 @@ pub(crate) trait GatewayPort {
     }
 
     /// Invoke one registered action as an *agent* would, from inside this
-    /// window. The hooks use it so a screenshot shows a real assistant's
-    /// object, attribution and all, without a client on the socket.
-    #[cfg(any(feature = "control-harness", test))]
-    fn run_agent_action(
+    /// window, so what it places carries a real assistant's attribution
+    /// without a client on the socket; `origin` says who the caller is.
+    #[cfg(any(feature = "control-harness", feature = "scenario-harness", test))]
+    fn agent_action(
         &mut self,
         capability_id: &str,
         input: serde_json::Value,
+        origin: fn(Box<quantick_control::wire::ActorContext>) -> crate::control::ActionOrigin,
     ) -> Result<serde_json::Value, quantick_control::error::ControlError> {
         let Some(mut access) = self.gateway_slot().take() else {
             return Err(quantick_control::error::ControlError::invalid_request(
@@ -285,29 +237,29 @@ pub(crate) trait GatewayPort {
                 "this window has no control identity to act with",
             ));
         };
-        let outcome = access.invoke_local_action(
-            self.as_window(),
-            capability_id,
-            1,
-            input,
-            crate::control::ActionOrigin::Remote(Box::new(actor)),
-        );
+        let origin = origin(Box::new(actor));
+        let outcome = access.invoke_local_action(self.as_window(), capability_id, 1, input, origin);
         *self.gateway_slot() = Some(access);
         outcome
     }
 
-    /// A launch hook's action, with its failure reported where a scripted run
-    /// will see it: the hook is fire-and-forget, so nothing else would.
-    #[cfg(any(feature = "control-harness", test))]
-    fn run_hook_action(&mut self, capability_id: &str, input: serde_json::Value) {
-        if let Err(error) = self.run_agent_action(capability_id, input) {
+    /// A hook's action as an agent, `origin` saying which kind of hook, its
+    /// failure reported where a scripted run sees it: nothing else would.
+    #[cfg(any(feature = "control-harness", feature = "scenario-harness", test))]
+    fn run_hook_action(
+        &mut self,
+        capability_id: &str,
+        input: serde_json::Value,
+        origin: fn(Box<quantick_control::wire::ActorContext>) -> crate::control::ActionOrigin,
+    ) {
+        if let Err(error) = self.agent_action(capability_id, input, origin) {
             tracing::warn!(
                 target: "quantick::control",
                 event_code = "CONTROL_HOOK_ACTION_FAILED",
                 capability = capability_id,
                 error_code = %error.code,
                 error = %error.message,
-                "an annotate hook could not run its action"
+                "a hook could not run its action"
             );
         }
     }
@@ -710,8 +662,8 @@ impl<'a> HealthReads<'a> {
         (self.history.history_reach, self.history.venue_lead_in)
     }
 
-    pub(crate) fn frame_metrics(self) -> ControlFrameMetrics {
-        ControlFrameMetrics {
+    pub(crate) fn frame_metrics(self) -> FrameReading {
+        FrameReading {
             wall_average_ms: self.health.frames.avg_ms(),
             wall_worst_ms: self.health.frames.worst_ms(),
             frames_per_second: self.health.frames.fps(),
@@ -1033,87 +985,11 @@ impl LayersPort for QuantickApp {
     }
 }
 
-impl IndicatorPickerPort for QuantickApp {
-    fn indicator_picker(
+impl quantick_control_handlers::indicator_host::IndicatorControlHost for QuantickApp {
+    fn indicators(
         &mut self,
-        input: quantick_control_schema::indicator_picker::PickerInput,
-    ) -> Result<quantick_control_schema::indicator_picker::PickerResult, String> {
-        let target = (self.runtime.tabs.active_id(), self.focused_pane().id);
-        quantick_ui_model::indicator_picker::Model::control(
-            &mut self.surfaces.indicator_picker.model_state,
-            target,
-            self.runtime.indicators.script_library.entries(),
-            input,
-        )
-    }
-}
-
-impl ScriptsPort for QuantickApp {
-    fn set_script_numeric_input(
-        &mut self,
-        id: &str,
-        name: &str,
-        value: quantick_control_schema::script_editor::NumericValue,
-    ) -> Result<(), String> {
-        super::script_editor_wiring::set_numeric_input(self, id, name, value)
-    }
-    fn add_library_script(&mut self, id: &str) -> Result<(), String> {
-        super::script_editor_wiring::add_to_chart(self, id)
-    }
-    fn script_library_state(
-        &self,
-        offset: usize,
-        limit: usize,
-    ) -> quantick_control_schema::script_editor::EditorResult {
-        super::script_editor_wiring::inspect(
-            &self.surfaces,
-            &self.runtime.indicators,
-            &self.runtime.tabs,
-            self.runtime.workspace.layouts(),
-            offset,
-            limit,
-        )
-    }
-    fn edit_script(
-        &mut self,
-        action: quantick_stores::script_library::ScriptEditorAction,
-    ) -> Result<Option<quantick_stores::script_library::ScriptDocument>, String> {
-        super::script_editor_wiring::apply(
-            &mut self.surfaces,
-            &mut self.runtime.indicators,
-            &mut self.runtime.tabs,
-            action,
-        )
-    }
-
-    fn attach_script(&mut self, name: String, source: String, by_operator: bool) -> ScriptSlot {
-        let runtime = self
-            .runtime
-            .resolve_mut(&self.presentation.binding)
-            .expect("bound workspace");
-        let active = runtime.tabs.active_index();
-        let target = (
-            runtime.tabs.active_id(),
-            runtime.tabs[active].focused_side(),
-        );
-        let pane = runtime.tabs.runtime_mut(active).pane_mut(target.1);
-        let attached = runtime
-            .indicators
-            .attach_script(pane, target, name, source, by_operator);
-        let owner = attached.target;
-        self.indicator_wiring()
-            .apply_indicator_edit(IndicatorEdit::Attached(attached));
-        (owner.tab, owner.side, owner.slot)
-    }
-
-    fn detach_operator_script(&mut self, slot: u64) -> Result<bool, ()> {
-        let Some(target) = self.runtime.indicators.operator_target(slot)? else {
-            return Ok(false);
-        };
-        self.runtime.validate_target(target).map_err(|_| ())?;
-        self.indicator_wiring()
-            .apply_indicator_edit(IndicatorEdit::Remove(target));
-        Ok(true)
+    ) -> Box<dyn quantick_control_handlers::indicator_host::IndicatorOwner + '_> {
+        Box::new(self.indicator_wiring())
     }
 }
 
@@ -1269,32 +1145,5 @@ impl quantick_control_handlers::appearance::AppearancePort for QuantickApp {
             &mut self.runtime,
             &mut self.drawings.presets,
         );
-    }
-}
-
-impl quantick_control_handlers::script_editor::ScriptEditorPort for ControlWindow {
-    fn set_script_numeric_input(
-        &mut self,
-        id: &str,
-        name: &str,
-        value: quantick_control_schema::script_editor::NumericValue,
-    ) -> Result<(), String> {
-        ScriptsPort::set_script_numeric_input(self, id, name, value)
-    }
-    fn add_library_script(&mut self, id: &str) -> Result<(), String> {
-        ScriptsPort::add_library_script(self, id)
-    }
-    fn script_library_state(
-        &self,
-        offset: usize,
-        limit: usize,
-    ) -> quantick_control_schema::script_editor::EditorResult {
-        ScriptsPort::script_library_state(self, offset, limit)
-    }
-    fn script_editor(
-        &mut self,
-        action: quantick_stores::script_library::ScriptEditorAction,
-    ) -> Result<Option<quantick_stores::script_library::ScriptDocument>, String> {
-        self.edit_script(action)
     }
 }
