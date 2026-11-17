@@ -6,9 +6,10 @@ use quantick_chart::style::ChartStyle;
 use quantick_control::{error::ControlError, wire::WireU64};
 pub(crate) use quantick_control_handlers::chart::chart_window_prevalidated;
 use quantick_control_handlers::chart::{
-    AddressedPane, ChartPaneEntry, ChartPaneSource, ChartPort, MissingPane, PaneFraming,
+    ChartPaneEntry, ChartPaneSource, ChartPort, MissingPane, PaneFraming,
 };
 use quantick_control_handlers::chart_layer::{LayerBlocked, LayerRead};
+use quantick_control_handlers::chart_settings::ChartStylePort;
 pub(crate) use quantick_control_schema::chart::*;
 use quantick_control_schema::chart_settings::{ChartSettingsInput, ChartSettingsResult};
 use quantick_control_schema::layers::LayerSnapshot;
@@ -53,14 +54,30 @@ impl ChartPort for dyn ControlPort {
         self.layout_state().bar_progress_on(tab_id)
     }
 
-    fn addressed_pane(
-        &mut self,
-        tab_id: WireU64,
-        pane_id: WireU64,
-    ) -> Result<&mut dyn AddressedPane, ControlError> {
-        Ok(super::addressed_pane::pane(self, tab_id, pane_id)?)
+    fn visit_chart_pane(
+        &self,
+        tab_id: u64,
+        pane_id: u64,
+        visit: &mut dyn FnMut(ChartPaneEntry<'_>),
+    ) -> Result<(), MissingPane> {
+        let reads = self.tab_reads();
+        let tab = reads.tabs().by_id(tab_id).ok_or(MissingPane::Tab)?;
+        let on_screen = reads.tabs().id_at(reads.active_tab_index()) == tab_id;
+        let (pane, side) = tab
+            .panes()
+            .find(|(pane, _)| pane.id == pane_id)
+            .ok_or(MissingPane::Pane)?;
+        let read = PaneRead {
+            tab,
+            pane,
+            config: reads.config(),
+        };
+        visit(entry(tab_id, tab, side, &read, on_screen));
+        Ok(())
     }
+}
 
+impl ChartStylePort for dyn ControlPort {
     fn apply_chart_settings(
         &mut self,
         input: ChartSettingsInput,
@@ -87,26 +104,15 @@ impl ChartPort for dyn ControlPort {
         self.layer_wiring().set_visible(index, side, layer, visible);
     }
 
-    fn visit_chart_pane(
-        &self,
-        tab_id: u64,
-        pane_id: u64,
-        visit: &mut dyn FnMut(ChartPaneEntry<'_>),
-    ) -> Result<(), MissingPane> {
-        let reads = self.tab_reads();
-        let tab = reads.tabs().by_id(tab_id).ok_or(MissingPane::Tab)?;
-        let on_screen = reads.tabs().id_at(reads.active_tab_index()) == tab_id;
-        let (pane, side) = tab
-            .panes()
-            .find(|(pane, _)| pane.id == pane_id)
-            .ok_or(MissingPane::Pane)?;
-        let read = PaneRead {
-            tab,
-            pane,
-            config: reads.config(),
-        };
-        visit(entry(tab_id, tab, side, &read, on_screen));
-        Ok(())
+    fn set_price_tag_progress(
+        &mut self,
+        tab: u64,
+        id: u64,
+        on: bool,
+    ) -> Result<bool, ControlError> {
+        super::addressed_pane::pane(self, WireU64::new(tab), WireU64::new(id))?;
+        let changed = self.layer_wiring().set_bar_progress(tab, on);
+        changed.ok_or_else(|| super::addressed_pane::invalid("the tab closed while the call ran"))
     }
 }
 
@@ -279,12 +285,9 @@ pub(crate) fn chart_window(
     instance_id: &quantick_control::id::InstanceId,
     query: &ChartWindowQuery,
     cursor: Option<&quantick_control::cursor::PageCursor>,
-) -> Result<ChartWindowPage, quantick_control::error::ControlError> {
-    let canonical_query = serde_json::to_value(query).map_err(|error| {
-        quantick_control::error::ControlError::invalid_request(format!(
-            "invalid chart query: {error}"
-        ))
-    })?;
+) -> Result<ChartWindowPage, ControlError> {
+    let canonical_query = serde_json::to_value(query)
+        .map_err(|error| ControlError::invalid_request(format!("invalid chart query: {error}")))?;
     let now = crate::metrics::wall_clock_ms();
     chart_window_prevalidated(app, instance_id, query, &canonical_query, cursor, now)
 }

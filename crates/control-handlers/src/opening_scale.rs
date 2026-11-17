@@ -2,8 +2,8 @@
 //! candle target needs active tick FLOW bubbles, the tape target needs only
 //! an order-flow view — lives here; the port reads that fact and keeps the
 //! preference.
+use crate::addressed_pane::AddressedPanePort;
 use crate::dock::ActionDock;
-use crate::tape_pane::PaneTapePort;
 use quantick_control::{error::ControlError, registry::RegistryError, wire::ActorContext};
 use quantick_control_schema::opening_scale::{OpeningScaleInput, OpeningScaleTarget, descriptor};
 use serde_json::Value;
@@ -21,20 +21,20 @@ pub trait OpeningScalePort {
     ) -> Result<bool, ControlError>;
 }
 
-pub fn register<D: ActionDock<H, A>, H: PaneTapePort<Pane: OpeningScalePort> + ?Sized, A>(
+pub fn register<D: ActionDock<H, A>, H: AddressedPanePort<Pane: OpeningScalePort> + ?Sized, A>(
     registry: &mut D,
 ) -> Result<(), RegistryError> {
     registry.register(descriptor(), set)
 }
 
-fn set<H: PaneTapePort<Pane: OpeningScalePort> + ?Sized, A>(
+fn set<H: AddressedPanePort<Pane: OpeningScalePort> + ?Sized, A>(
     host: &mut H,
     _access: &mut A,
     _actor: &ActorContext,
     input: &Value,
 ) -> Result<Value, ControlError> {
     let input: OpeningScaleInput = serde_json::from_value(input.clone()).map_err(invalid)?;
-    answer(host.pane_tape(input.tab_id, input.pane_id)?, input)
+    answer(host.addressed_pane(input.tab_id, input.pane_id)?, input)
 }
 
 fn answer<P: OpeningScalePort + ?Sized>(

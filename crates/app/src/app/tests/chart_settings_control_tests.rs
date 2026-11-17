@@ -28,217 +28,6 @@ fn addressed_style(app: &mut QuantickApp) -> ChartStyle {
     .into()
 }
 
-#[test]
-fn the_window_and_the_candle_presets_are_driven_by_name() {
-    let ctx = egui::Context::default();
-    let (mut app, _commands) = app_with_history(20);
-    run_frame(&mut app, &ctx);
-    let directory = gateway_test_directory("chart-settings-control");
-    grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.layout");
-    enable_test_gateway(&mut app, &ctx, &directory, 4);
-    let mut client = connect(
-        &directory,
-        &options("cockpit", &["cockpit", "cockpit.layout"]),
-    );
-    let original = addressed_style(&mut app);
-    let legacy = app.runtime.style;
-
-    for invalid in [
-        json!({"action": "open"}),
-        json!({"action": "open", "tab": "drawings"}),
-        json!({"action": "close", "x": 1}),
-        json!({"action": "apply_candle_preset", "name": "nobody saved this"}),
-        json!({"action": "save_candle_preset", "name": "Glass"}),
-        json!({"action": "save_candle_preset", "name": "   "}),
-        json!({"action": "delete_candle_preset", "name": "classic"}),
-        // No sitting yet: there is nothing to reset to.
-        json!({"action": "reset_candles"}),
-    ] {
-        let refused = settings_call(&mut app, &mut client, invalid.clone());
-        assert_eq!(
-            error_code(&refused),
-            Some(codes::INVALID_REQUEST),
-            "{invalid}"
-        );
-        assert_eq!(
-            app.runtime.style, original,
-            "a refused call changes nothing"
-        );
-        assert!(!app.surfaces.chart_settings.model_state.is_open());
-    }
-
-    let opened = success_result(&settings_call(
-        &mut app,
-        &mut client,
-        json!({"action": "open", "tab": "footprint"}),
-    ));
-    assert_eq!(opened["open"], true);
-    assert_eq!(opened["tab"], "footprint");
-    assert_eq!(opened["changed"], true);
-    assert_eq!(opened["candle_preset"], "Order flow");
-    assert!(
-        app.surfaces
-            .chart_settings
-            .model_state
-            .is_open_on(ChartSettingsTab::Footprint)
-    );
-    let again = success_result(&settings_call(
-        &mut app,
-        &mut client,
-        json!({"action": "open", "tab": "footprint"}),
-    ));
-    assert_eq!(
-        again["changed"], false,
-        "opening an open window is harmless"
-    );
-
-    let glass = success_result(&settings_call(
-        &mut app,
-        &mut client,
-        json!({"action": "apply_candle_preset", "name": "glass"}),
-    ));
-    assert_eq!(
-        addressed_style(&mut app).candles,
-        CandlePreset::Glass.style()
-    );
-    assert_eq!(
-        addressed_style(&mut app).canvas,
-        original.canvas,
-        "a built-in keeps the canvas"
-    );
-    assert_eq!(glass["candle_preset"], "Glass");
-
-    // A look of the trader's own, saved and brought back.
-    let mut edited = addressed_style(&mut app);
-    edited.candles.gap_px = 4.5;
-    edited.canvas.grid_enabled = !original.canvas.grid_enabled;
-    let night: ChartStyle = edited.snapshot();
-    let document = quantick_control_schema::chart_settings::style_wire::encode(
-        &quantick_stores::chart_style::StyleFile::from(&night),
-    );
-    settings_call(
-        &mut app,
-        &mut client,
-        json!({"action":"update_candles", "style":document}),
-    );
-    let saved = success_result(&settings_call(
-        &mut app,
-        &mut client,
-        json!({"action": "save_candle_preset", "name": "night"}),
-    ));
-    assert_eq!(saved["custom_presets"], json!(["night"]));
-    assert_eq!(saved["candle_preset"], "night");
-    assert_eq!(saved["changed"], true);
-    let resaved = success_result(&settings_call(
-        &mut app,
-        &mut client,
-        json!({"action": "save_candle_preset", "name": "night"}),
-    ));
-    assert_eq!(
-        resaved["changed"], false,
-        "the same look under the same name"
-    );
-    assert_eq!(
-        crate::candle_presets::CandlePresetStore::load(&crate::candle_presets::default_path())
-            .get("night"),
-        Some(&night),
-        "the saved look is on disk"
-    );
-
-    settings_call(
-        &mut app,
-        &mut client,
-        json!({"action": "apply_candle_preset", "name": "Classic"}),
-    );
-    assert_eq!(
-        addressed_style(&mut app).candles,
-        CandlePreset::Classic.style()
-    );
-    settings_call(
-        &mut app,
-        &mut client,
-        json!({"action": "apply_candle_preset", "name": "night"}),
-    );
-    assert_eq!(
-        addressed_style(&mut app),
-        night,
-        "a saved look brings candles and canvas"
-    );
-
-    let reset = success_result(&settings_call(
-        &mut app,
-        &mut client,
-        json!({"action": "reset_candles"}),
-    ));
-    assert_eq!(
-        addressed_style(&mut app),
-        original,
-        "reset returns to the look the window opened on"
-    );
-    assert_eq!(reset["changed"], true);
-
-    // A presets file the disk refuses: the save and the delete say so with
-    // a retryable code, and the list stays what the disk holds.
-    let unwritable = gateway_test_directory("chart-settings-unwritable")
-        .join(crate::candle_presets::PRESETS_FILE);
-    std::fs::create_dir_all(unwritable.parent().unwrap()).unwrap();
-    let mut held = quantick_stores::candle_settings::CandleSettings::open(unwritable.clone());
-    held.save("dawn", addressed_style(&mut app))
-        .expect("written while the path is a file");
-    std::fs::remove_file(&unwritable).unwrap();
-    std::fs::create_dir_all(&unwritable).unwrap();
-    let working = app
-        .surfaces
-        .chart_settings
-        .model_state
-        .candles
-        .replace(held);
-    for unwritten in [
-        json!({"action": "save_candle_preset", "name": "dusk"}),
-        json!({"action": "delete_candle_preset", "name": "dawn"}),
-    ] {
-        let refused = settings_call(&mut app, &mut client, unwritten.clone());
-        assert_eq!(
-            error_code(&refused),
-            Some(codes::CAPABILITY_UNAVAILABLE),
-            "{unwritten}"
-        );
-    }
-    assert_eq!(
-        app.surfaces
-            .chart_settings
-            .model_state
-            .candles
-            .as_ref()
-            .unwrap()
-            .custom_names(),
-        ["dawn"],
-        "neither change outlived its failed write"
-    );
-    app.surfaces.chart_settings.model_state.candles = working;
-    std::fs::remove_dir_all(unwritable.parent().unwrap()).ok();
-
-    let deleted = success_result(&settings_call(
-        &mut app,
-        &mut client,
-        json!({"action": "delete_candle_preset", "name": "night"}),
-    ));
-    assert_eq!(deleted["custom_presets"], json!([]));
-    let closed = success_result(&settings_call(
-        &mut app,
-        &mut client,
-        json!({"action": "close"}),
-    ));
-    assert_eq!(closed["open"], false);
-    assert!(!app.surfaces.chart_settings.model_state.is_open());
-    assert_eq!(
-        app.runtime.style, legacy,
-        "local settings preserve the legacy global seed"
-    );
-    disable_test_gateway(&mut app, &ctx);
-    std::fs::remove_dir_all(directory).ok();
-}
-
 /// The double click on a candle opens the window on the Candles tab;
 /// the same gesture on an axis does not.
 #[test]
@@ -412,82 +201,71 @@ fn a_named_style_change_leaves_the_appearance_log_line() {
     });
 }
 
+/// The look of the pane `target` names, as `inspect` reads it back.
+fn inspected(app: &mut QuantickApp, client: &mut LocalClient, target: &Value) -> Value {
+    let inspect = json!({"action":"inspect", "target":target});
+    success_result(&settings_call(app, client, inspect))["effective_style"].clone()
+}
+
+/// The settings call through the window's adapter reaches the window and the
+/// addressed pane's own look: it opens the window there, an update lands on
+/// that pane alone while the legacy global seed stays, a look saved by name
+/// lands in the app's own presets file, and close closes it.
+/// What the call decides is proven on a sitting and the fake window in
+/// `quantick-control-handlers`.
 #[test]
-fn a_keyed_local_candle_update_checks_authority_and_retries_without_reapplying() {
+fn the_settings_call_reaches_the_window_and_the_addressed_panes_look_only() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = split_app(&ctx, 20);
-    let target = json!({"tab_id":app.runtime.tabs.active_id().to_string(),
-        "pane_id":app.active_tab().time_pane().unwrap().id.to_string()});
-    let directory = gateway_test_directory("local-candle-retry");
+    let tab_id = app.runtime.tabs.active_id().to_string();
+    let time_pane = app.active_tab().time_pane().unwrap().id.to_string();
+    let target = json!({"tab_id": tab_id, "pane_id": time_pane});
+    let sibling = json!({"tab_id": tab_id,
+        "pane_id": app.active_tab().flow_pane.id.to_string()});
+    let directory = gateway_test_directory("chart-settings-wiring");
     grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.layout");
     enable_test_gateway(&mut app, &ctx, &directory, 4);
-    let mut observer = connect(&directory, &options("observer", &[]));
     let mut cockpit = connect(
         &directory,
         &options("cockpit", &["cockpit", "cockpit.layout"]),
     );
-    let before = success_result(&settings_call(
-        &mut app,
-        &mut cockpit,
-        json!({"action":"inspect", "target":target}),
-    ));
-    let mut style = before["effective_style"].clone();
+    let legacy = app.runtime.style;
+    let sibling_before = inspected(&mut app, &mut cockpit, &sibling);
+    let open = json!({"action":"open", "tab":"footprint", "target":target});
+    success_result(&settings_call(&mut app, &mut cockpit, open));
+    let window = &app.surfaces.chart_settings.model_state;
+    assert!(window.is_open_on(ChartSettingsTab::Footprint));
+
+    let mut style = inspected(&mut app, &mut cockpit, &target);
     style["candles"]["gap_px"] = json!("5");
-    let input = json!({"action":"update_candles", "target":target, "style":style});
-    let denied = settings_call(&mut app, &mut observer, input.clone());
-    assert_eq!(error_code(&denied), Some(codes::PERMISSION_DENIED));
     let revision = app.runtime.style_revision;
-    let (first, served) = keyed_call(
-        &mut app,
-        &mut cockpit,
-        "local-style-first",
-        CAPABILITY,
-        input.clone(),
-        "local-style",
-    );
-    assert_eq!(error_code(&first), None);
-    assert!(served.iter().any(|request| request.began));
+    let update = json!({"action":"update_candles", "target":target, "style":style});
+    success_result(&settings_call(&mut app, &mut cockpit, update));
     assert!(app.runtime.style_revision > revision);
-    let sibling = json!({"tab_id":app.runtime.tabs.active_id().to_string(),
-        "pane_id":app.active_tab().flow_pane.id.to_string()});
-    settings_call(
-        &mut app,
-        &mut cockpit,
-        json!({"action":"apply_candle_preset", "target":sibling, "name":"classic"}),
+    assert_eq!(inspected(&mut app, &mut cockpit, &target), style);
+    assert_eq!(
+        inspected(&mut app, &mut cockpit, &sibling),
+        sibling_before,
+        "the sibling pane keeps its look"
     );
-    let sibling_before = success_result(&settings_call(
-        &mut app,
-        &mut cockpit,
-        json!({"action":"inspect", "target":sibling}),
-    ))["effective_style"]
-        .clone();
-    let revision = app.runtime.style_revision;
-    let (retry, served) = keyed_call(
-        &mut app,
-        &mut cockpit,
-        "local-style-retry",
-        CAPABILITY,
-        input,
-        "local-style",
+    assert_eq!(
+        app.runtime.style, legacy,
+        "local settings preserve the legacy global seed"
     );
-    assert_eq!(first.outcome, retry.outcome);
-    assert!(
-        served.is_empty(),
-        "the keyed retry never reaches the mutation adapter"
+    let save = json!({"action":"save_candle_preset", "name":"night", "target":target});
+    success_result(&settings_call(&mut app, &mut cockpit, save));
+    let night: ChartStyle = quantick_control_schema::chart_settings::style_wire::decode(style)
+        .unwrap()
+        .into();
+    assert_eq!(
+        crate::candle_presets::CandlePresetStore::load(&crate::candle_presets::default_path())
+            .get("night"),
+        Some(&night.snapshot()),
+        "the saved look is in the app's presets file"
     );
-    assert_eq!(app.runtime.style_revision, revision);
-    let after = success_result(&settings_call(
-        &mut app,
-        &mut cockpit,
-        json!({"action":"inspect", "target":target}),
-    ));
-    assert_eq!(after["effective_style"], style);
-    let sibling_after = success_result(&settings_call(
-        &mut app,
-        &mut cockpit,
-        json!({"action":"inspect", "target":sibling}),
-    ));
-    assert_eq!(sibling_after["effective_style"], sibling_before);
+    let close = json!({"action":"close"});
+    success_result(&settings_call(&mut app, &mut cockpit, close));
+    assert!(!app.surfaces.chart_settings.model_state.is_open());
     disable_test_gateway(&mut app, &ctx);
     std::fs::remove_dir_all(directory).ok();
 }

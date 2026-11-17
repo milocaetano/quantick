@@ -27,16 +27,17 @@ use quantick_sources::history_run::{Cancelled, Press, RunStatus};
 use rust_decimal::Decimal;
 
 use crate::JournalAccess;
+use crate::addressed_pane::AddressedPanePort;
 use crate::analysis::{AnalysisPaneEntry, AnalysisPort};
 use crate::annotate::AnnotateAccess;
 use crate::attention::MarkPort;
 use crate::axis_pane::{AxisPane, NativeTape};
 use crate::bubble_pane::{AssetSave, BubbleLook, BubblePane, PaneBubblesPort, TickSpherePane};
-use crate::chart::{
-    AddressedPane, ChartPaneEntry, ChartPaneSource, ChartPort, MissingPane, PaneFraming,
-};
+use crate::chart::{ChartPaneEntry, ChartPaneSource, ChartPort, MissingPane, PaneFraming};
 use crate::chart_layer::{LayerBlocked, LayerRead};
-use crate::deal_recorder::DealRecorder;
+use crate::chart_settings::ChartStylePort;
+use crate::deal_recorder::{DealRecorder, DealRecordingPort};
+use crate::drawing_magnet::RailMagnetPort;
 use crate::history::HistoryPort;
 use crate::indicator_host::{
     AttachedScript, IndicatorControlHost, IndicatorGuidePort, IndicatorOwner, IndicatorPickerPort,
@@ -485,6 +486,9 @@ pub(crate) struct FakeWindow {
     pub record_by_default: Option<bool>,
     /// The bound workspace's indicator owner.
     pub indicators: FakeIndicators,
+    /// The tabs whose market has the price tag's progress switched off; each
+    /// fake tab shows one market.
+    pub progress_off: Vec<u64>,
 }
 
 /// A fake indicator owner: what each indicator and script call reached it
@@ -631,6 +635,7 @@ impl FakeWindow {
             style: ChartStyle::default(),
             record_by_default: None,
             indicators: FakeIndicators::default(),
+            progress_off: Vec::new(),
         }
     }
 
@@ -710,6 +715,9 @@ impl FeedRecoveryPort for FakeWindow {
             respawned: tab.respawns,
         })
     }
+}
+
+impl DealRecordingPort for FakeWindow {
     fn deal_recorder(&mut self, index: usize) -> Option<&mut dyn DealRecorder> {
         Some(self.tabs.get_mut(index)?)
     }
@@ -744,10 +752,13 @@ impl AnalysisPort for FakeWindow {
     fn drawing_magnet(&self) -> bool {
         self.rail_magnet
     }
+    fn visit_analysis_tabs(&self, _visit: &mut dyn FnMut(u64, &[AnalysisPaneEntry<'_>])) {}
+}
+
+impl RailMagnetPort for FakeWindow {
     fn switch_rail_magnet(&mut self, on: bool) -> bool {
         std::mem::replace(&mut self.rail_magnet, on) != on
     }
-    fn visit_analysis_tabs(&self, _visit: &mut dyn FnMut(u64, &[AnalysisPaneEntry<'_>])) {}
 }
 
 impl HistoryPort for FakeWindow {
@@ -816,17 +827,18 @@ impl MarkPort for FakeWindow {
     }
 }
 
-impl ChartPort for FakeWindow {
-    fn price_tag_progress(&self, _tab_id: u64) -> bool {
-        true
-    }
+impl AddressedPanePort for FakeWindow {
+    type Pane = FakePane;
     fn addressed_pane(
         &mut self,
         tab_id: WireU64,
         pane_id: WireU64,
-    ) -> Result<&mut dyn AddressedPane, ControlError> {
-        Ok(self.pane_mut(tab_id, pane_id)?)
+    ) -> Result<&mut FakePane, ControlError> {
+        self.pane_mut(tab_id, pane_id)
     }
+}
+
+impl ChartStylePort for FakeWindow {
     fn apply_chart_settings(
         &mut self,
         input: ChartSettingsInput,
@@ -849,6 +861,28 @@ impl ChartPort for FakeWindow {
         layer.requested = visible;
         self.layer_switches
             .push((pane_id, layer_id.to_owned(), visible));
+    }
+    /// The switch is kept for the pane's tab, the market it shows; a repeat
+    /// is no change.
+    fn set_price_tag_progress(
+        &mut self,
+        tab: u64,
+        pane: u64,
+        on: bool,
+    ) -> Result<bool, ControlError> {
+        self.pane_mut(WireU64::new(tab), WireU64::new(pane))?;
+        let was_on = !self.progress_off.contains(&tab);
+        self.progress_off.retain(|off| *off != tab);
+        if !on {
+            self.progress_off.push(tab);
+        }
+        Ok(was_on != on)
+    }
+}
+
+impl ChartPort for FakeWindow {
+    fn price_tag_progress(&self, tab_id: u64) -> bool {
+        !self.progress_off.contains(&tab_id)
     }
     fn visit_chart_panes(&self, visit: &mut dyn FnMut(ChartPaneEntry<'_>, PaneFraming)) {
         for (index, tab) in self.tabs.iter().enumerate() {

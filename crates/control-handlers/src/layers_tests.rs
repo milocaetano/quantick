@@ -123,3 +123,38 @@ fn an_address_that_names_nothing_is_refused_in_the_calls_words() {
         Some("needs_order_flow")
     );
 }
+
+/// A pane the bounded scope leaves out is still addressed by id, and its
+/// switch's journal entry names the request, the connection and the actor
+/// beside the answer, so a client that lost the answer can reconcile.
+#[test]
+fn a_pane_past_the_bound_is_switched_and_its_journal_names_the_request() {
+    let mut tab = FakeTab::new(1, "BTCUSDT");
+    for id in 0..=MAX_SNAPSHOT_PANES as u64 {
+        let mut pane = FakePane::with_trades(id, 50, []);
+        pane.layers.push((layer("crosshair", false), None));
+        tab.panes.push(pane);
+    }
+    let mut window = FakeWindow::new(vec![tab]);
+    let last = MAX_SNAPSHOT_PANES as u64;
+    let scope = snapshot(&window);
+    assert_eq!(scope.omitted_panes.get(), 1);
+    assert!(scope.panes.iter().all(|pane| pane.pane_id.get() != last));
+    let (actor, mut access) = (FakeWindow::assistant(), FakeAccess::with_budget(0));
+    let input = json!({"tab_id": "1", "pane_id": last.to_string(),
+        "layer_id": "crosshair", "visible": true});
+    let answer = set_visibility(&mut window, &mut access, &actor, &input).unwrap();
+    assert_eq!(answer["changed"], true);
+    assert_eq!(answer["pane_id"], last.to_string());
+    let event = &access.events[0];
+    assert_eq!(event.kind.as_str(), EVENT_KIND);
+    assert_eq!(event.payload["request_id"], json!(actor.request_id));
+    assert_eq!(event.payload["connection_id"], json!(actor.connection_id));
+    assert_eq!(event.payload["result"], answer);
+    let author = event.actor.as_ref().map(|actor| actor.client_name.as_str());
+    assert_eq!(author, Some("fake assistant"));
+    assert_eq!(
+        window.layer_switches,
+        [(last, "crosshair".to_owned(), true)]
+    );
+}

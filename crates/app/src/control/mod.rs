@@ -19,7 +19,6 @@ mod gateway;
 mod health;
 mod interaction;
 pub(crate) mod inventory;
-mod price_tag_progress;
 // Moved to `quantick-control-host`; named here so `super::journal` resolves.
 use quantick_control_host::journal;
 mod flow_tabs;

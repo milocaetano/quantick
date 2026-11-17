@@ -5,7 +5,8 @@
 
 pub(crate) use quantick_control_schema::drawing_magnet::*;
 
-use crate::app::{GatewayPort, TabsPort, ToolRailPort};
+use crate::app::{GatewayPort, TabsPort};
+use quantick_control_handlers::drawing_magnet::RailMagnetPort;
 
 use crate::drawings::DrawingId;
 
@@ -17,14 +18,14 @@ use super::journal::NewEvent;
 
 /// A hand's flip of the rail's magnet is `annotate.magnet.set`, so it
 /// journals alike. Without control access it lands directly.
-pub(crate) fn flip_rail_magnet<P: GatewayPort + ToolRailPort + ?Sized>(app: &mut P, on: bool) {
+pub(crate) fn flip_rail_magnet<P: GatewayPort + RailMagnetPort + ?Sized>(app: &mut P, on: bool) {
     let input = serde_json::json!({ "enabled": on });
     let human = super::ActionOrigin::Human;
     if app
         .control_action(DRAWING_MAGNET_CAPABILITY_ID, 1, human, input)
         .is_err()
     {
-        app.set_drawing_magnet(on);
+        app.switch_rail_magnet(on);
     }
 }
 

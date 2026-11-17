@@ -20,8 +20,8 @@ use crate::toolrail::{ToolRail, ToolRailExt as _};
 
 use super::super::super::arrangement_host::ArrangementHost;
 use super::super::{
-    Alerts, AlertsPort, ChromeDrawn, ChromePort, ChromeReads, HealthPort, HealthReads,
-    RecordingPort, TabReads, TabsMut, TabsMutPort, TabsPort, ToolRailPort,
+    Alerts, AlertsPort, ChromeDrawn, ChromePort, ChromeReads, HealthPort, HealthReads, TabReads,
+    TabsMut, TabsMutPort, TabsPort,
 };
 
 /// The feed and symbol the fake's one tab shows.
@@ -209,14 +209,20 @@ impl crate::audio::AlertSink for FakeSpeaker {
     }
 }
 
-impl ToolRailPort for FakeWindow {
-    fn set_drawing_magnet(&mut self, _enabled: bool) -> bool {
+impl quantick_control_handlers::drawing_magnet::RailMagnetPort for FakeWindow {
+    fn switch_rail_magnet(&mut self, _on: bool) -> bool {
         false
     }
 }
 
-impl RecordingPort for FakeWindow {
-    fn set_deal_recording_default(&mut self, enabled: bool) {
-        self.record_deals = Some(enabled);
+impl quantick_control_handlers::deal_recorder::DealRecordingPort for FakeWindow {
+    fn deal_recorder(
+        &mut self,
+        index: usize,
+    ) -> Option<&mut dyn quantick_control_handlers::deal_recorder::DealRecorder> {
+        Some(self.tabs_mut().tab_with_config(index)?.0)
+    }
+    fn record_deals_by_default(&mut self, on: bool) {
+        self.record_deals = Some(on);
     }
 }

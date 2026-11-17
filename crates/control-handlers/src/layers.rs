@@ -26,6 +26,7 @@ use serde_json::{Value, json};
 use crate::JournalAccess;
 use crate::chart::{ChartPort, MissingPane};
 use crate::chart_layer::LayerRead;
+use crate::chart_settings::ChartStylePort;
 use crate::dock::{ActionDock, ProjectionDock};
 use crate::invalid;
 
@@ -33,7 +34,7 @@ use crate::invalid;
 ///
 /// # Errors
 /// A capability already docked.
-pub fn register<D: ActionDock<H, A>, H: ChartPort + ?Sized, A: JournalAccess>(
+pub fn register<D: ActionDock<H, A>, H: ChartPort + ChartStylePort + ?Sized, A: JournalAccess>(
     registry: &mut D,
 ) -> Result<(), RegistryError> {
     registry.register(set_visibility_descriptor(), set_visibility)
@@ -46,7 +47,7 @@ pub fn register<D: ActionDock<H, A>, H: ChartPort + ?Sized, A: JournalAccess>(
 pub fn register_scope<D, H>(registry: &mut D) -> Result<(), ProjectionRegistryError>
 where
     D: ProjectionDock<H>,
-    H: ChartPort + ?Sized + 'static,
+    H: ChartPort + ChartStylePort + ?Sized + 'static,
 {
     let module = ModuleId::new(MODULE_ID).expect("static module ID");
     registry.register_module(
@@ -66,7 +67,7 @@ where
 /// Every pane's registered layers, tab by tab, hidden panes included. Past
 /// [`MAX_SNAPSHOT_PANES`] a pane is counted rather than listed: it can still
 /// be addressed by id.
-pub fn snapshot<H: ChartPort + ?Sized>(host: &H) -> LayersSnapshot {
+pub fn snapshot<H: ChartPort + ChartStylePort + ?Sized>(host: &H) -> LayersSnapshot {
     let mut panes = Vec::new();
     let mut omitted = 0;
     let style = host.chart_style();
@@ -87,7 +88,7 @@ pub fn snapshot<H: ChartPort + ?Sized>(host: &H) -> LayersSnapshot {
     }
 }
 
-fn project<H: ChartPort + ?Sized>(host: &H, _: CaptureContext) -> LayersSnapshot {
+fn project<H: ChartPort + ChartStylePort + ?Sized>(host: &H, _: CaptureContext) -> LayersSnapshot {
     snapshot(host)
 }
 
@@ -96,7 +97,7 @@ fn project<H: ChartPort + ?Sized>(host: &H, _: CaptureContext) -> LayersSnapshot
 ///
 /// # Errors
 /// An unknown tab, pane on that tab, or registered layer on that pane.
-pub fn chart_layer<H: ChartPort + ?Sized>(
+pub fn chart_layer<H: ChartPort + ChartStylePort + ?Sized>(
     host: &H,
     tab_id: WireU64,
     pane_id: WireU64,
@@ -117,7 +118,7 @@ pub fn chart_layer<H: ChartPort + ?Sized>(
     })
 }
 
-fn set_visibility<H: ChartPort + ?Sized, A: JournalAccess>(
+fn set_visibility<H: ChartPort + ChartStylePort + ?Sized, A: JournalAccess>(
     host: &mut H,
     access: &mut A,
     actor: &ActorContext,

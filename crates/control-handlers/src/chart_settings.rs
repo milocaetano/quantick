@@ -15,7 +15,6 @@ use quantick_control_schema::chart_settings::{
 use serde_json::{Value, json};
 
 use crate::JournalAccess;
-use crate::chart::ChartPort;
 use crate::dock::ActionDock;
 use crate::invalid;
 use quantick_stores::candle_presets::PresetError;
@@ -182,17 +181,52 @@ pub fn apply(
     })
 }
 
+/// The window's chart look owner: the shared style, the settings window and
+/// its candle presets the double click, the toolbar and the menus reach, the
+/// layer switches the pane's menu flips, and each market's price-tag
+/// progress.
+pub trait ChartStylePort {
+    /// The window's shared chart style, which holds the switches of the
+    /// layers no pane owns alone, the grid among them.
+    fn chart_style(&self) -> &ChartStyle;
+    /// Apply `input` the way the window's own controls do.
+    ///
+    /// # Errors
+    /// A preset the store refuses.
+    fn apply_chart_settings(
+        &mut self,
+        input: ChartSettingsInput,
+    ) -> Result<ChartSettingsResult, PresetError>;
+    /// Switch the registered layer `layer_id` of pane `pane_id` on tab
+    /// `tab_id` the way the pane's menu does. The call has read the layer
+    /// through [`crate::layers::chart_layer`] first, so an address that no
+    /// longer resolves switches nothing.
+    fn switch_chart_layer(&mut self, tab_id: u64, pane_id: u64, layer_id: &str, visible: bool);
+    /// Keep the forming bar's progress on the last-price tag `on` for the
+    /// market the pane `pane_id` on tab `tab_id` shows; answers whether it
+    /// changed.
+    ///
+    /// # Errors
+    /// An address that names nothing.
+    fn set_price_tag_progress(
+        &mut self,
+        tab_id: u64,
+        pane_id: u64,
+        on: bool,
+    ) -> Result<bool, ControlError>;
+}
+
 /// Dock `chart.settings.set`.
 ///
 /// # Errors
 /// A capability already docked.
-pub fn register<D: ActionDock<H, A>, H: ChartPort + ?Sized, A: JournalAccess>(
+pub fn register<D: ActionDock<H, A>, H: ChartStylePort + ?Sized, A: JournalAccess>(
     registry: &mut D,
 ) -> Result<(), RegistryError> {
     registry.register(descriptor(), set)
 }
 
-fn set<H: ChartPort + ?Sized, A: JournalAccess>(
+fn set<H: ChartStylePort + ?Sized, A: JournalAccess>(
     host: &mut H,
     access: &mut A,
     actor: &ActorContext,

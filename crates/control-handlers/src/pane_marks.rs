@@ -1,7 +1,7 @@
 //! A chart pane's marks, as `annotate.drawing_magnet.set` and
 //! `annotate.drawing_scope.set` act on them ([`crate::drawing_magnet`]):
 //! the window resolves the addressed pane
-//! ([`crate::chart::ChartPort::addressed_pane`]) and the calls change the same
+//! ([`crate::addressed_pane::AddressedPanePort`]) and the calls change the same
 //! marks the context bar does.
 use quantick_drawings::{DrawingTool, Drawings};
 use quantick_engine::bar_registry::BarConfiguration;

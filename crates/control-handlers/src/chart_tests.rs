@@ -75,6 +75,24 @@ fn the_summary_reports_every_pane_with_its_framing_and_coverage() {
     );
 }
 
+/// The fake keeps the price tag's switch: a repeat is no change, the summary
+/// reads what was kept, and an unknown pane keeps nothing.
+#[test]
+fn the_fake_keeps_the_price_tag_switch_the_summary_reads() {
+    use crate::chart_settings::ChartStylePort as _;
+    let mut window = window();
+    assert_eq!(window.set_price_tag_progress(4, 11, false).ok(), Some(true));
+    assert_eq!(
+        window.set_price_tag_progress(4, 11, false).ok(),
+        Some(false)
+    );
+    for pane in snapshot(&window).panes {
+        assert_eq!(pane.price_tag_progress, Some(false), "the whole tab");
+    }
+    assert!(window.set_price_tag_progress(4, 99, true).is_err());
+    assert_eq!(window.progress_off, [4]);
+}
+
 #[test]
 fn coverage_pages_older_history_only_when_the_panes_tab_can() {
     let mut window = window();

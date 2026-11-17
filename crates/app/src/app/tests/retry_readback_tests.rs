@@ -74,8 +74,6 @@ mod candle_aggression;
 mod chart_settings_control;
 #[path = "drawing_magnet_control_tests.rs"]
 mod drawing_magnet_control;
-#[path = "drawing_scope_control_tests.rs"]
-mod drawing_scope_control;
 #[path = "drawing_text_control_tests.rs"]
 mod drawing_text_control;
 #[path = "feed_source_control_tests.rs"]

@@ -1,25 +1,25 @@
 //! `orderflow.tape.market_fold.set` over the fold's narrow port.
+use crate::addressed_pane::AddressedPanePort;
 use crate::dock::ActionDock;
 use crate::tape_fold::TapeFoldPort;
-use crate::tape_pane::PaneTapePort;
 use quantick_control::{error::ControlError, registry::RegistryError, wire::ActorContext};
 use quantick_control_schema::tape_market_fold::{TapeMarketFoldInput, descriptor};
 use serde_json::Value;
 
-pub fn register<D: ActionDock<H, A>, H: PaneTapePort<Pane: TapeFoldPort> + ?Sized, A>(
+pub fn register<D: ActionDock<H, A>, H: AddressedPanePort<Pane: TapeFoldPort> + ?Sized, A>(
     registry: &mut D,
 ) -> Result<(), RegistryError> {
     registry.register(descriptor(), set)
 }
 
-fn set<H: PaneTapePort<Pane: TapeFoldPort> + ?Sized, A>(
+fn set<H: AddressedPanePort<Pane: TapeFoldPort> + ?Sized, A>(
     host: &mut H,
     _access: &mut A,
     _actor: &ActorContext,
     input: &Value,
 ) -> Result<Value, ControlError> {
     let input: TapeMarketFoldInput = serde_json::from_value(input.clone()).map_err(invalid)?;
-    answer(host.pane_tape(input.tab_id, input.pane_id)?, input)
+    answer(host.addressed_pane(input.tab_id, input.pane_id)?, input)
 }
 
 fn answer<P: TapeFoldPort + ?Sized>(

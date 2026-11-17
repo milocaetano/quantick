@@ -84,6 +84,9 @@ fn read_viewport(app: &mut QuantickApp, client: &mut LocalClient, pane_id: u64) 
         .clone()
 }
 
+/// The manual range holds on the real pane while a live trade prints outside
+/// it and reads back through `chart.summary`, the tab's other pane keeps its
+/// framing, and auto lets the next fit take in the latest price.
 #[test]
 fn the_price_axis_call_holds_manual_tape_framing_and_reads_it_back_without_moving_the_left_pane() {
     let ctx = egui::Context::default();
@@ -102,31 +105,9 @@ fn the_price_axis_call_holds_manual_tape_framing_and_reads_it_back_without_movin
         &directory,
         &options("cockpit", &["cockpit", "cockpit.layout"]),
     );
-    let manual = json!({"kind":"manual","low":"90","high":"110"});
-    let payload = input(&app, manual);
-    let (response, _) = keyed_call(
-        &mut app,
-        &mut client,
-        "manual",
-        CAPABILITY,
-        payload.clone(),
-        "manual-range",
-    );
-    let (retry, _) = keyed_call(
-        &mut app,
-        &mut client,
-        "manual-retry",
-        CAPABILITY,
-        payload,
-        "manual-range",
-    );
-    assert_eq!(response.outcome, retry.outcome);
-    let result = success_result(&response);
-    assert_eq!(result["viewport"]["price_auto_fit"], false);
-    assert_eq!(
-        result["viewport"]["price_range"],
-        json!({"low":"90","high":"110"})
-    );
+    let manual = input(&app, json!({"kind":"manual","low":"90","high":"110"}));
+    let (framed, _) = unkeyed_call(&mut app, &mut client, CAPABILITY, manual);
+    success_result(&framed);
     run_frame(&mut app, &ctx);
     let mut next = trade(41);
     next.price = Decimal::from(145);
@@ -138,14 +119,14 @@ fn the_price_axis_call_holds_manual_tape_framing_and_reads_it_back_without_movin
     run_frame(&mut app, &ctx);
     let readback = read_viewport(&mut app, &mut client, pane_id);
     assert_eq!(readback["price_auto_fit"], false);
-    assert_eq!(readback["price_range"], result["viewport"]["price_range"]);
+    assert_eq!(readback["price_range"], json!({"low":"90","high":"110"}));
     assert_eq!(
         crate::control::chart::viewport_snapshot(&app.active_tab().time_panes[0]),
         left_before
     );
     let payload = input(&app, json!({"kind":"auto"}));
     let (reset, _) = unkeyed_call(&mut app, &mut client, CAPABILITY, payload);
-    assert_eq!(success_result(&reset)["viewport"]["price_auto_fit"], true);
+    success_result(&reset);
     run_frame(&mut app, &ctx);
     let restored = read_viewport(&mut app, &mut client, pane_id);
     assert_eq!(restored["price_auto_fit"], true);
@@ -276,7 +257,6 @@ fn the_time_axis_reset_call_matches_the_strip_double_click_and_reads_it_back() {
     let payload =
         |axis: &str| json!({"tab_id": tab_id, "pane_id": pane_id.to_string(), "axis": axis});
     let (candles, _) = unkeyed_call(&mut app, &mut client, RESET, payload("candles"));
-    assert_eq!(success_result(&candles)["price_centre_pending"], false);
     let spacing = success_result(&candles)["viewport"]["pixels_per_bar"].clone();
     assert_eq!(spacing.as_str().unwrap().parse::<f32>().unwrap(), opened);
     assert_ne!(
@@ -290,15 +270,13 @@ fn the_time_axis_reset_call_matches_the_strip_double_click_and_reads_it_back() {
     run_frame(&mut app, &ctx);
     let readback = read_viewport(&mut app, &mut client, pane_id);
     assert_eq!(readback["pixels_per_bar"], spacing);
-    let (unknown, _) = unkeyed_call(&mut app, &mut client, RESET, payload("price"));
-    assert_eq!(error_code(&unknown), Some(codes::INVALID_REQUEST));
     disable_test_gateway(&mut app, &ctx);
 }
 
 /// The canvas's double and triple click, by name: the candles back to the
 /// live edge at the spacing they had (the triple's twice that), and once the
 /// next frame fits the live view, the last price at mid-height with every
-/// bar still on the axis. The tape has no such return.
+/// bar still on the axis.
 #[test]
 fn the_live_centre_calls_match_the_canvas_double_and_triple_click() {
     use rust_decimal::prelude::ToPrimitive as _;
@@ -326,15 +304,13 @@ fn the_live_centre_calls_match_the_canvas_double_and_triple_click() {
         &options("cockpit", &["cockpit", "cockpit.layout"]),
     );
     let tab_id = app.runtime.tabs.active_id().to_string();
-    let payload = |axis: &str, to: &str| json!({"tab_id": tab_id, "pane_id": pane_id.to_string(), "axis": axis, "to": to});
+    let payload = |to: &str| json!({"tab_id": tab_id, "pane_id": pane_id.to_string(), "axis": "candles", "to": to});
     for (to, spacing) in [("live_centre", 20.0_f32), ("live_centre_zoom_in", 40.0)] {
         let viewport = &mut app.active_tab_mut().flow_pane.model.viewport;
         viewport.set_px_per_bar(20.0);
         viewport.pan_pixels(640.0, 200);
         assert!(!viewport.follows_live());
-        let (candles, _) = unkeyed_call(&mut app, &mut client, RESET, payload("candles", to));
-        // The result is the call's moment: the centring is the next frame's.
-        assert_eq!(success_result(&candles)["price_centre_pending"], true);
+        let (candles, _) = unkeyed_call(&mut app, &mut client, RESET, payload(to));
         let viewport = &success_result(&candles)["viewport"];
         assert_eq!(viewport["follows_live"], true, "{to}");
         let px = viewport["pixels_per_bar"].as_str().unwrap();
@@ -356,8 +332,6 @@ fn the_live_centre_calls_match_the_canvas_double_and_triple_click() {
         );
         let auto = app.active_tab().flow_pane.frame.auto_range.unwrap();
         assert!(low <= auto.0 && high >= auto.1, "{to}: no bar clipped");
-        let (tape, _) = unkeyed_call(&mut app, &mut client, RESET, payload("tape", to));
-        assert_eq!(error_code(&tape), Some(codes::INVALID_REQUEST), "{to}");
     }
     disable_test_gateway(&mut app, &ctx);
 }
@@ -410,7 +384,7 @@ fn the_live_centre_call_refuses_a_tape_only_pane() {
 }
 
 /// `to: live_overview`, kept for callers that ask for it: the candles back
-/// to the live edge at the overview spacing; the tape has no overview.
+/// to the live edge at the overview spacing the real pane works out.
 #[test]
 fn the_live_overview_call_returns_the_candles_to_a_live_overview() {
     const RESET: &str = "chart.time_axis.reset";
@@ -436,14 +410,12 @@ fn the_live_overview_call_returns_the_candles_to_a_live_overview() {
         &options("cockpit", &["cockpit", "cockpit.layout"]),
     );
     let tab_id = app.runtime.tabs.active_id().to_string();
-    let payload = |axis: &str| json!({"tab_id": tab_id, "pane_id": pane_id.to_string(), "axis": axis, "to": "live_overview"});
-    let (candles, _) = unkeyed_call(&mut app, &mut client, RESET, payload("candles"));
+    let payload = json!({"tab_id": tab_id, "pane_id": pane_id.to_string(), "axis": "candles", "to": "live_overview"});
+    let (candles, _) = unkeyed_call(&mut app, &mut client, RESET, payload);
     let viewport = &success_result(&candles)["viewport"];
     assert_eq!(viewport["follows_live"], true);
     let spacing = viewport["pixels_per_bar"].as_str().unwrap();
     assert_eq!(spacing.parse::<f32>().unwrap(), overview);
-    let (tape, _) = unkeyed_call(&mut app, &mut client, RESET, payload("tape"));
-    assert_eq!(error_code(&tape), Some(codes::INVALID_REQUEST));
     disable_test_gateway(&mut app, &ctx);
 }
 
@@ -515,9 +487,9 @@ fn summary_panes(app: &mut QuantickApp, client: &mut LocalClient) -> Vec<Value> 
     panes.as_array().unwrap().clone()
 }
 
-/// The call switches the setting of the market the pane shows: a retry is
-/// the same answer and no change, every pane of the tab reads it back, and
-/// both the tick flow pane and the time pane report their forming bar.
+/// The window's adapter switches the market the pane shows: a repeat is no
+/// change, every pane of the tab reads it back, the setting is kept for that
+/// market only, and an unknown tab or pane is refused and keeps nothing.
 #[test]
 fn the_price_tag_progress_call_switches_the_market_and_reads_it_back() {
     let ctx = egui::Context::default();
@@ -540,13 +512,8 @@ fn the_price_tag_progress_call_switches_the_market_and_reads_it_back() {
         );
     }
     let off = json!({"tab_id": tab, "pane_id": time, "on": false});
-    let (first, _) = keyed_call(&mut app, &mut client, "off", PROGRESS, off.clone(), "off");
-    let (retry, _) = keyed_call(&mut app, &mut client, "off-2", PROGRESS, off.clone(), "off");
-    assert_eq!(first.outcome, retry.outcome, "a dropped answer replays");
-    assert_eq!(
-        success_result(&first),
-        json!({"tab_id": tab, "pane_id": time, "on": false, "changed": true})
-    );
+    let (first, _) = unkeyed_call(&mut app, &mut client, PROGRESS, off.clone());
+    assert_eq!(success_result(&first)["changed"], true);
     let (again, _) = unkeyed_call(&mut app, &mut client, PROGRESS, off);
     assert_eq!(
         success_result(&again)["changed"],
@@ -569,7 +536,6 @@ fn the_price_tag_progress_call_switches_the_market_and_reads_it_back() {
         market.bar_progress_on("another venue", &symbol),
         "and for that market only"
     );
-
     for (tab_id, pane_id) in [
         (u64::MAX.to_string(), time.clone()),
         (tab.clone(), u64::MAX.to_string()),
@@ -578,16 +544,8 @@ fn the_price_tag_progress_call_switches_the_market_and_reads_it_back() {
         let (unknown, _) = unkeyed_call(&mut app, &mut client, PROGRESS, stale);
         assert_eq!(error_code(&unknown), Some(codes::INVALID_REQUEST));
     }
-    let extra = json!({"tab_id": tab, "pane_id": time, "on": true, "colour": "red"});
-    let (invalid, _) = unkeyed_call(&mut app, &mut client, PROGRESS, extra);
-    assert_eq!(error_code(&invalid), Some(codes::INVALID_REQUEST));
-    assert!(
-        !app.runtime
-            .workspace
-            .layouts()
-            .market()
-            .bar_progress_on(&venue, &symbol)
-    );
+    let market = app.runtime.workspace.layouts().market();
+    assert!(!market.bar_progress_on(&venue, &symbol), "kept nothing");
     disable_test_gateway(&mut app, &ctx);
 }
 

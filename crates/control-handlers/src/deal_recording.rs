@@ -3,7 +3,7 @@
 //!
 //! The view is the same [`RecordingView`] every chrome surface draws, so the
 //! words here are the chrome's words. `feed.deal_recording.set` reaches the
-//! tab's recorder through [`FeedRecoveryPort::deal_recorder`], the owner the
+//! tab's recorder through [`DealRecordingPort::deal_recorder`], the owner the
 //! REC button acts on; what it refuses and says back is decided here.
 //!
 //! Rate class: a human or an agent asking about, or flipping, the recorder.
@@ -22,21 +22,21 @@ use quantick_replay::recorder::{DealRecordingError, RecState, RecordingView};
 
 use serde_json::Value;
 
+use crate::deal_recorder::DealRecordingPort;
 use crate::dock::ActionDock;
-use crate::recovery::FeedRecoveryPort;
-use crate::tabs::{tab_closed, tab_index};
+use crate::tabs::{TabDirectory, tab_closed, tab_index};
 
 /// Dock `feed.deal_recording.set`.
 ///
 /// # Errors
 /// A capability already docked.
-pub fn register<D: ActionDock<H, A>, H: FeedRecoveryPort + ?Sized, A>(
+pub fn register<D: ActionDock<H, A>, H: DealRecordingPort + TabDirectory + ?Sized, A>(
     registry: &mut D,
 ) -> Result<(), RegistryError> {
     registry.register(descriptor(), set)
 }
 
-fn set<H: FeedRecoveryPort + ?Sized, A>(
+fn set<H: DealRecordingPort + TabDirectory + ?Sized, A>(
     host: &mut H,
     _access: &mut A,
     _actor: &ActorContext,

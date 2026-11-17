@@ -1,5 +1,5 @@
 //! A chart pane's framing, as the axis calls act on it: the window resolves
-//! the addressed pane ([`crate::chart::ChartPort::addressed_pane`]), the pane
+//! the addressed pane ([`crate::addressed_pane::AddressedPanePort`]), the pane
 //! frames its axes and its native tape frames itself. Its callers:
 //! `chart.price_axis.set` and `chart.tape_view.set` ([`crate::price_axis`])
 //! and `chart.time_axis.reset` ([`crate::time_axis`]). They take the same
