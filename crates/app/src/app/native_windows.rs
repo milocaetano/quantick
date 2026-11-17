@@ -1,7 +1,10 @@
 //! Native viewport adapters over one retained workspace and headless membership.
 use super::{ArrangementHost, QuantickApp, title_bar::TitleBarState};
 use eframe::egui;
-use quantick_session::{close_queue::*, workspace_menu::WorkspaceCommand};
+use quantick_session::{
+    close_queue::*,
+    workspace_menu::{WorkspaceCommand, WorkspaceMenuState},
+};
 use quantick_workspace::arrangement::{
     tab_drag::{self, Gesture, Point, Strip},
     windows::{TransferTarget, WindowId},
@@ -176,16 +179,17 @@ pub(super) fn draw(app: &mut QuantickApp, ctx: &egui::Context, now: Instant) {
     ctx.request_repaint_after(std::time::Duration::from_millis(16));
 }
 
-/// The close prompt, in the `focused` window: the answer the trader gave.
-pub(super) fn close_answer(
+/// The workspace menu's question (a close's, else a switch's), in the
+/// `focused` window: the answer the trader gave.
+pub(super) fn prompt_answer(
     focused: WindowId,
-    queue: &CloseQueue,
+    menu: &WorkspaceMenuState,
     ctx: &egui::Context,
 ) -> Option<WorkspaceCommand> {
-    let asked = quantick_control_handlers::workspace_book::close_prompt(queue);
+    let asked = quantick_control_handlers::workspace_book::menu_prompt(menu);
     let asked = asked.filter(|_| viewport(focused) == ctx.viewport_id());
     let at = asked.and_then(|prompt| crate::widgets::ask(ctx, &prompt))?;
-    Some(WorkspaceCommand::AnswerClose(CloseAnswer::BUTTONS[at]))
+    quantick_control_handlers::workspace_book::prompt_answer(menu, at)
 }
 
 pub(super) fn paint(app: &mut QuantickApp, ctx: &egui::Context, window: WindowId, now: Instant) {

@@ -1,16 +1,21 @@
 //! The workspace menus' state, apart from their pixels: the status bar cell's
 //! menu, the Manage workspaces dialog whose delete asks twice, the dialog that
-//! asks for a name and the close that asks per tab holding edits.
+//! asks for a name, the close that asks per tab holding edits and the switch
+//! that asks before it drops them.
 
 use crate::close_queue::{CloseAnswer, CloseQueue, CloseScope};
 use crate::colour_popover::{ColourIntent, ColourPopover};
 pub use crate::manage_workspaces::{DeleteClick, ManageDialog, ManageIntent};
+use crate::switch_prompt::{SwitchAnswer, SwitchPrompt};
 
 /// What a workspace row or the dialog asked the window to do.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WorkspaceCommand {
-    /// Put the active tab on this workspace.
+    /// Put the active tab on this workspace, asking first when the switch
+    /// would drop edits.
     Set(String),
+    /// The switch prompt's answer.
+    AnswerSwitch(SwitchAnswer),
     /// Write the active tab's edits into its workspace.
     SaveTo,
     /// Turn "auto save layout changes" on or off.
@@ -92,6 +97,8 @@ pub struct WorkspaceMenuState {
     pub manage: Option<ManageDialog>,
     pub dialog: Option<NameDialog>,
     pub close: CloseQueue,
+    /// The switch waiting for an answer before it drops edits.
+    pub switch: SwitchPrompt,
     /// The palette popover under the header swatch, while it is open.
     pub colour: Option<ColourPopover>,
     /// A capture staged a dialog before the window presented its tab.

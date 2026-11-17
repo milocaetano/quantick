@@ -988,7 +988,30 @@ fn switch_away(edit: impl Fn(u64, &mut WorkspaceRecipe)) -> SetOutcome {
         edit(tab, &mut copy);
         book.observe(tab, &copy).unwrap();
     }
-    book.set(1, "Swing").unwrap()
+    let asked = book.switch_drops(1, "Swing").unwrap();
+    let set = book.set(1, "Swing").unwrap();
+    assert_eq!(asked, set.dropped_edits, "asking first reads as the switch");
+    set
+}
+
+/// Asking before a switch moves nothing: a repeat drops nothing, an unknown
+/// workspace is refused, and the tab keeps its copy until the switch.
+#[test]
+fn asking_whether_a_switch_drops_edits_moves_nothing() {
+    let mut book = two_tabs_on_scalp();
+    book.observe(1, &recipe(DeclaredLayout::Time)).unwrap();
+    assert_eq!(book.switch_drops(1, "Default"), Ok(true));
+    assert_eq!(book.switch_drops(1, "Scalp"), Ok(false), "a repeat");
+    assert_eq!(book.switch_drops(2, "Default"), Ok(false), "a clean tab");
+    assert_eq!(
+        book.switch_drops(1, "Gone"),
+        Err(WorkspaceRefusal::UnknownWorkspace("Gone".to_owned()))
+    );
+    assert_eq!(
+        book.switch_drops(9, "Default"),
+        Err(WorkspaceRefusal::UnknownTab(9))
+    );
+    assert_eq!(state(&book, 1), ("Scalp".to_owned(), true), "still held");
 }
 
 /// A footprint style is the tab's: a switch away drops it and says so, even

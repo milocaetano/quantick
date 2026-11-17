@@ -282,10 +282,10 @@ impl QuantickApp {
         draw_window_menu(self, ctx, &mut commands);
         help_window::show(self, ctx);
         self.chrome.window_menu.dialog_rows = workspace_dialogs::dialogs(self, ctx, &mut commands);
-        // The close prompt: an answer settles its tab, an exit's last answer closes the app.
+        // The close or switch prompt: an answer settles its tab, an exit's last answer closes the app.
         let focused = self.runtime.tabs.windows().focused();
-        let queue = &self.chrome.window_menu.tab_workspace.close;
-        if let Some(answer) = super::native_windows::close_answer(focused, queue, ctx) {
+        let menu = &self.chrome.window_menu.tab_workspace;
+        if let Some(answer) = super::native_windows::prompt_answer(focused, menu, ctx) {
             super::tab_workspaces::apply_workspace_command(self, answer);
             let queue = &mut self.chrome.window_menu.tab_workspace.close;
             self.presentation.native.exit_when_settled(queue, ctx);

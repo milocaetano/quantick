@@ -1125,15 +1125,41 @@ impl WorkspaceBook {
             .get(name)
             .ok_or_else(|| WorkspaceRefusal::UnknownWorkspace(name.to_owned()))?
             .clone();
-        let state = self.state(tab)?;
-        if state.workspace == name {
+        if self.state(tab)?.workspace == name {
             return Ok(SetOutcome {
                 changed: false,
                 dropped_edits: false,
             });
         }
-        // Indicator sets another tab there still holds are not dropped: they
-        // are that tab's too. Anything else the copy changed is this tab's.
+        let dropped_edits = self.drops_on_leaving(tab);
+        self.tabs.insert(tab, TabWorkspace::on(name, recipe));
+        self.unsynced.remove(&tab);
+        Ok(SetOutcome {
+            changed: true,
+            dropped_edits,
+        })
+    }
+
+    /// Whether putting the tab on `name` drops edits: what [`Self::set`]
+    /// would answer as `dropped_edits`, asked before it moves anything, so a
+    /// switch can ask first. A repeat drops nothing.
+    ///
+    /// # Errors
+    /// No such tab or workspace.
+    pub fn switch_drops(&self, tab: u64, name: &str) -> Result<bool, WorkspaceRefusal> {
+        if !self.recipes.contains_key(name) {
+            return Err(WorkspaceRefusal::UnknownWorkspace(name.to_owned()));
+        }
+        Ok(self.state(tab)?.workspace != name && self.drops_on_leaving(tab))
+    }
+
+    /// Whether the tab leaving its workspace drops edits. Indicator sets
+    /// another tab there still holds are not dropped: they are that tab's
+    /// too. Anything else the copy changed is this tab's.
+    fn drops_on_leaving(&self, tab: u64) -> bool {
+        let Some(state) = self.tabs.get(&tab) else {
+            return false;
+        };
         let base = self.baseline(state);
         let rest = base.is_none_or(|base| !base.holds(&with_sets_of(&state.copy, base)));
         let sets = base.is_none_or(|base| !same_sets(&state.copy, base));
@@ -1141,13 +1167,7 @@ impl WorkspaceBook {
         let shared = others.any(|(_, held)| {
             held.workspace == state.workspace && same_sets(&held.copy, &state.copy)
         });
-        let dropped_edits = rest || (sets && !shared);
-        self.tabs.insert(tab, TabWorkspace::on(name, recipe));
-        self.unsynced.remove(&tab);
-        Ok(SetOutcome {
-            changed: true,
-            dropped_edits,
-        })
+        rest || (sets && !shared)
     }
 
     fn state(&self, tab: u64) -> Result<&TabWorkspace, WorkspaceRefusal> {

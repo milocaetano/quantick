@@ -2794,3 +2794,34 @@ fn a_switch_lands_every_chart_s_rule_and_layers_and_reads_clean() {
         reads(&app, tab, to);
     }
 }
+
+/// Autosave off: a menu switch whose tab holds edits asks first, and Enter
+/// (Save to) writes the workspace to disk before the tab moves.
+#[test]
+fn a_menu_switch_with_held_edits_asks_and_enter_saves_then_switches() {
+    use quantick_session::workspace_menu::WorkspaceCommand;
+    let layouts = crate::scratch::ScratchFile::new("workspace-switch-asks", "layouts.toml");
+    let (mut app, _, _) = two_tabs(&layouts);
+    let tab = app.runtime.tabs.active_id();
+    let workspace = app.runtime.workspace.book.tab_row(tab).0;
+    edit_split(&mut app, tab, 0.31);
+    let set = WorkspaceCommand::Set("Default".to_owned());
+    crate::app::tab_workspaces::apply_workspace_command(&mut app, set);
+    let row = app.runtime.workspace.book.tab_row(tab);
+    assert_eq!(
+        row,
+        (workspace.clone(), true),
+        "nothing moves before the answer"
+    );
+    let menu = &app.chrome.window_menu.tab_workspace;
+    let prompt = quantick_control_handlers::workspace_book::menu_prompt(menu).expect("asks");
+    assert_eq!(prompt.buttons[prompt.enter], format!("Save to {workspace}"));
+
+    let ctx = egui::Context::default();
+    run_frame_with_events(&mut app, &ctx, vec![key_press(egui::Key::Enter)]);
+    assert_eq!(app.runtime.workspace.book.tab_row(tab).0, "Default");
+    let path = quantick_stores::workspaces::path_beside(layouts.as_ref());
+    let (on_disk, _) = quantick_stores::workspaces::load(&path);
+    let saved = on_disk.recipe(&workspace).expect("the workspace on disk");
+    assert_eq!(saved.split_fraction, Some(0.31));
+}

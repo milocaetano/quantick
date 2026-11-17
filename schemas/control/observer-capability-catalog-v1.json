@@ -28002,7 +28002,7 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Switches one tab to a saved workspace: its charts, context intervals, indicators, layers and footprint style. Drawings, anchored studies, bar size and the paper position stay with the market. It never asks: unsaved edits on the tab are dropped and the answer says so. Discover names with workspace.list.",
+      "description": "Switches one tab to a saved workspace: its charts, each chart's bar rule, indicators, layers and footprint style, as the workspace saved them; a rule or style it does not name stays the tab's. Drawings, anchored studies and the paper position stay with the market. A switch that would drop unsaved edits refuses with workspace.unsaved_edits, naming the workspace, the tabs a save also changes and what changed, and changes nothing; edits save writes them into the tab's workspace first (saved true), edits discard drops them (dropped_edits true). Discover names with workspace.list.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "cockpit",
@@ -28015,6 +28015,21 @@
       "idempotency": "optional",
       "input_schema": {
         "$defs": {
+          "SwitchEdits": {
+            "description": "What a switch does with the edits it would drop.",
+            "oneOf": [
+              {
+                "const": "save",
+                "description": "Write them into the tab's workspace first, then switch.",
+                "type": "string"
+              },
+              {
+                "const": "discard",
+                "description": "Switch and let them go.",
+                "type": "string"
+              }
+            ]
+          },
           "WireU64": {
             "pattern": "^(0|[1-9][0-9]*)$",
             "type": "string"
@@ -28024,6 +28039,17 @@
         "additionalProperties": false,
         "description": "Put a tab on a workspace.",
         "properties": {
+          "edits": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/SwitchEdits"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What becomes of unsaved edits the switch would drop. Left out, such a\nswitch refuses with `workspace.unsaved_edits` and changes nothing."
+          },
           "name": {
             "type": "string"
           },
@@ -28054,13 +28080,18 @@
           }
         },
         "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "description": "The tab, and whether unsaved edits were dropped by the switch.",
+        "description": "The tab, and what became of its unsaved edits.",
         "properties": {
           "changed": {
             "description": "`false` for a repeat, which keeps any edits.",
             "type": "boolean"
           },
           "dropped_edits": {
+            "type": "boolean"
+          },
+          "saved": {
+            "default": false,
+            "description": "The edits were written into the workspace the tab left.",
             "type": "boolean"
           },
           "tab_id": {

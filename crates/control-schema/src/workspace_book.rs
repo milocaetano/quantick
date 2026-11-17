@@ -78,9 +78,23 @@ pub struct TabWorkspaceSetInput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tab_id: Option<WireU64>,
     pub name: String,
+    /// What becomes of unsaved edits the switch would drop. Left out, such a
+    /// switch refuses with `workspace.unsaved_edits` and changes nothing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub edits: Option<SwitchEdits>,
 }
 
-/// The tab, and whether unsaved edits were dropped by the switch.
+/// What a switch does with the edits it would drop.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SwitchEdits {
+    /// Write them into the tab's workspace first, then switch.
+    Save,
+    /// Switch and let them go.
+    Discard,
+}
+
+/// The tab, and what became of its unsaved edits.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
 pub struct TabWorkspaceSetResult {
     pub tab_id: WireU64,
@@ -88,6 +102,9 @@ pub struct TabWorkspaceSetResult {
     /// `false` for a repeat, which keeps any edits.
     pub changed: bool,
     pub dropped_edits: bool,
+    /// The edits were written into the workspace the tab left.
+    #[serde(default)]
+    pub saved: bool,
 }
 
 /// A call about one tab's copy.
@@ -302,7 +319,7 @@ pub fn tab_workspace_set_descriptor() -> CapabilityDescriptor {
         TAB_WORKSPACE_SET_CAPABILITY_ID,
         quantick_control_host::authority::TAB_MODULE_ID,
         "Put a tab on a workspace",
-        "Switches one tab to a saved workspace: its charts, context intervals, indicators, layers and footprint style. Drawings, anchored studies, bar size and the paper position stay with the market. It never asks: unsaved edits on the tab are dropped and the answer says so. Discover names with workspace.list.",
+        "Switches one tab to a saved workspace: its charts, each chart's bar rule, indicators, layers and footprint style, as the workspace saved them; a rule or style it does not name stays the tab's. Drawings, anchored studies and the paper position stay with the market. A switch that would drop unsaved edits refuses with workspace.unsaved_edits, naming the workspace, the tabs a save also changes and what changed, and changes nothing; edits save writes them into the tab's workspace first (saved true), edits discard drops them (dropped_edits true). Discover names with workspace.list.",
         "The call names the workspace it wants, so a repeat leaves the tab there, keeps any edits made since and answers changed false.",
     ))
 }
