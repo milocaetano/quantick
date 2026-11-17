@@ -299,6 +299,25 @@ impl PaperAccount {
             .map_or(Route::Real, |facts| Route::of_mode(facts.trade_mode))
     }
 
+    /// Why an entry is refused now on the broker shown, if one is: parked
+    /// exposure the trader left there, or the routed venue's own block. The
+    /// toolbar and the ticket read this one answer.
+    #[must_use]
+    pub fn entry_block(&self) -> Option<&'static str> {
+        let broker = self.broker()?;
+        if !self.broker_routed() {
+            return self.broker_shown().then_some(PARKED_ENTRY_BLOCK);
+        }
+        broker.entry_block()
+    }
+
+    /// Whether an entry button may be pressed: a price to trade against and
+    /// no broker block.
+    #[must_use]
+    pub fn entry_ready(&self) -> bool {
+        self.ready() && self.entry_block().is_none()
+    }
+
     /// The chip every position surface leads with, in the route's word:
     /// `SIM LONG 2`, `REAL SHORT 1`; `None` while flat.
     #[must_use]

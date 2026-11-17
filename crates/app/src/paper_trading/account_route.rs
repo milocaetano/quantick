@@ -6,6 +6,7 @@
 //! [`Sheet`] and hands each press back as a [`RoutePress`].
 
 use eframe::egui;
+use egui_phosphor::regular::{CARET_DOWN, LOCK_SIMPLE};
 use quantick_paper::route::{
     AccountsPort, BrokerSession, RouteHost, RoutePress, RouteTone, RowGesture, RowState, Sheet,
     SourceFacts,
@@ -91,7 +92,7 @@ pub(crate) fn draw_route_block(ui: &mut egui::Ui, sheet: &Sheet) -> Option<Route
     let mut press = None;
     ui.horizontal(|ui| {
         ui.label(egui::RichText::new(sheet.selector_label).color(palette.text_muted()));
-        let caret = if sheet.locked { "🔒" } else { "▾" };
+        let caret = [CARET_DOWN, LOCK_SIMPLE][usize::from(sheet.locked)];
         let face = format!("{}{}   {caret}", sheet.notice.dot.mark(), sheet.selector);
         let selector = egui::Button::new(egui::RichText::new(face).color(ink).strong())
             .stroke(egui::Stroke::new(1.0_f32, ink.gamma_multiply(0.8)))

@@ -53,8 +53,8 @@ impl Dot {
     pub const fn mark(self) -> &'static str {
         match self {
             Self::None => "",
-            Self::Up => "● ",
-            Self::Hollow => "○ ",
+            Self::Up => "🔴 ",
+            Self::Hollow => "⭕ ",
         }
     }
 }
@@ -266,7 +266,9 @@ fn tone_of(route: Route) -> RouteTone {
 fn lost_status(reason: Disarm, at_ms: i64, now_ms: i64) -> String {
     let seconds = now_ms.saturating_sub(at_ms).max(0) / 1_000;
     match reason {
-        Disarm::LinkLost => format!("no link with the broker for {seconds} s · disarmed"),
+        Disarm::LinkLost => format!(
+            "no link with the broker for {seconds} s · disarmed · stop and target stay at the broker"
+        ),
         other => other.sentence().to_owned(),
     }
 }

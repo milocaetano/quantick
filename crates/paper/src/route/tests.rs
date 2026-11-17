@@ -511,6 +511,14 @@ fn a_lost_link_with_a_position_parks_it_in_view_and_refuses_entries() {
         "the broker position stays on the chart"
     );
     assert_eq!(account.route_kind(), Route::Real);
+    assert_eq!(
+        account.entry_block(),
+        Some(crate::account::PARKED_ENTRY_BLOCK)
+    );
+    assert!(
+        !account.entry_ready(),
+        "the toolbar and the ticket both refuse"
+    );
     let refused = account
         .venue_mut()
         .submit(OrderIntent::market(Side::Buy, Decimal::ONE));
@@ -524,7 +532,7 @@ fn a_lost_link_with_a_position_parks_it_in_view_and_refuses_entries() {
     assert_eq!(sheet.tone, RouteTone::Lost);
     assert_eq!(
         sheet.status.as_deref(),
-        Some("no link with the broker for 14 s · disarmed")
+        Some("no link with the broker for 14 s · disarmed · stop and target stay at the broker")
     );
 }
 

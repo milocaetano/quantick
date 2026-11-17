@@ -99,16 +99,7 @@ impl Desk {
         let quantity = state
             .derived_quantity()
             .or_else(|| self.ticket.quantity_preview());
-        // A broker shown but not routed holds exposure the trader left
-        // there: no entry until it is closed or the account is armed again.
-        let broker_block = match account.broker() {
-            Some(_) if account.broker_shown() && !account.broker_routed() => {
-                Some(crate::account::PARKED_ENTRY_BLOCK)
-            }
-            Some(broker) if account.broker_routed() => broker.entry_block(),
-            _ => None,
-        };
-        let blocked = if let Some(block) = broker_block {
+        let blocked = if let Some(block) = account.entry_block() {
             Some(block.to_owned())
         } else if !account.ready() {
             Some(NO_MARKET_YET.to_owned())

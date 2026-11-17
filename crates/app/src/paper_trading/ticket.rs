@@ -96,7 +96,8 @@ impl PaperTrading {
     pub fn draw_trading_tab(&mut self, ui: &mut egui::Ui) -> Option<TradingTabAction> {
         let palette = theme::get(ui.ctx());
         self.paper.desk.gesture.hovered_order = None;
-        ui.vertical(|ui| {
+        // Said only while orders go to the simulator; a broker route says its own.
+        if !self.paper.account.route_kind().is_broker() {
             ui.label(
                 egui::RichText::new("Simulated fills from the tape - no broker.")
                     .color(palette.text_muted()),
@@ -107,7 +108,7 @@ impl PaperTrading {
              Nothing here touches a real account. Money comes from the point value \
              you declared, else from instruments.toml.",
             );
-        });
+        }
         let pnl_mode_changed = ui.horizontal(|ui| self.draw_pnl_mode_switch(ui)).inner;
         ui.add_space(6.0);
 
@@ -235,7 +236,7 @@ impl PaperTrading {
         // The lock, enforced on the surface as well as at the click: a
         // ceiling the trader can still press through is one they will press
         // through by accident on a fast tape.
-        let ready = self.paper.account.ready() && !risk_blocks;
+        let ready = self.paper.account.entry_ready() && !risk_blocks;
         match entry_pair(ui, self, ready) {
             None => {}
             Some(EntryPress::Disarm) => self.paper.desk.armed = None,

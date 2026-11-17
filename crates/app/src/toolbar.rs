@@ -559,7 +559,7 @@ fn draw_route_notice(
     let palette = theme::get(ui.ctx());
     let ink = crate::paper_trading::account_route::tone_color(notice.tone, palette.text_primary());
     let (font, mut job) = (palette.body_font(12.0), egui::text::LayoutJob::default());
-    let lead = format!("{} ", notice.lead);
+    let lead = format!("{} ", notice.lead).replace('→', icons::ARROW_RIGHT);
     let account = format!("{}{}", notice.dot.mark(), notice.text);
     for (text, color) in [(lead, palette.text_muted()), (account, ink)] {
         job.append(&text, 0.0, egui::TextFormat::simple(font.clone(), color));
