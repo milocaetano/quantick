@@ -96,9 +96,10 @@ impl BrokerCore {
     }
 
     /// A new bridge process has no memory of what the old one answered, so
-    /// resending could execute a request twice. Each one is dropped and
-    /// reported as of unknown outcome; the next state shows what happened.
-    fn abandon_unanswered(&mut self, events: &mut Vec<VenueEvent>) {
+    /// resending could execute a request twice; a silent one may answer late
+    /// or never. Each one is dropped and reported as of unknown outcome; the
+    /// next state shows what happened.
+    pub(super) fn abandon_unanswered(&mut self, events: &mut Vec<VenueEvent>) {
         for (_, request) in std::mem::take(&mut self.requests) {
             self.abandon(request.pending, events);
         }

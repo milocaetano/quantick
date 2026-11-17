@@ -560,7 +560,7 @@ version bumps, so the two sides can be upgraded independently:
   `history_start`/`history_end` path never runs. The extra hello field lands in
   the "unknown fields are ignored" rule.
 
-## Execution channel (exec schema 1)
+## Execution channel (exec schema 2)
 
 A second, separate socket that carries orders to the terminal and the
 account's state back. It is not part of the feed session above: its own port
@@ -590,7 +590,7 @@ bye                          optional clean goodbye
 ### exec_hello
 
 ```json
-{"type":"exec_hello","schema":1,"bridge":"quantick-mt5-exec-py","bridge_version":"0.1.0","instance":"9f1c"}
+{"type":"exec_hello","schema":2,"bridge":"quantick-mt5-exec-py","bridge_version":"0.1.0","instance":"9f1c"}
 ```
 
 `instance` is unique per bridge process. Quantick compares it across
@@ -605,14 +605,23 @@ tag plus a counter). Order requests also carry the configured `magic` and
 `deviation` (points), and `comment` is the request id, so the terminal's own
 history shows which request placed what.
 
+Every request but `watch` carries `expires_ms`, Unix milliseconds on the
+machine both ends share: the earliest moment quantick could declare the link
+lost for its silence and stop waiting for the answer. The bridge refuses a
+request it reaches at or after that moment, without calling `order_send`
+(`retcode` `null`, `error` saying it expired), so a bridge that hung and
+woke on the same socket never executes what quantick already reported as of
+unknown outcome. Quantick sends no order request before it has been handed
+the time.
+
 ```json
 {"type":"watch","id":"a1b2-1","symbol":"WINZ26"}
-{"type":"submit","id":"a1b2-2","symbol":"WINZ26","side":"buy","kind":"market","volume":"2","sl":"124800","tp":null,"magic":7710001,"deviation":10,"comment":"a1b2-2"}
-{"type":"submit","id":"a1b2-3","symbol":"WINZ26","side":"sell","kind":"limit","volume":"1","price":"125300","sl":null,"tp":null,"magic":7710001,"deviation":10,"comment":"a1b2-3"}
-{"type":"cancel","id":"a1b2-4","order":601}
-{"type":"modify","id":"a1b2-5","order":601,"price":"125250","sl":null,"tp":"124900"}
-{"type":"sltp","id":"a1b2-6","symbol":"WINZ26","position":77,"sl":"124800","tp":"125400","magic":7710001}
-{"type":"close","id":"a1b2-7","position":77,"volume":"1","magic":7710001,"deviation":10,"comment":"a1b2-7"}
+{"type":"submit","id":"a1b2-2","symbol":"WINZ26","side":"buy","kind":"market","volume":"2","sl":"124800","tp":null,"magic":7710001,"deviation":10,"comment":"a1b2-2","expires_ms":1763380806000}
+{"type":"submit","id":"a1b2-3","symbol":"WINZ26","side":"sell","kind":"limit","volume":"1","price":"125300","sl":null,"tp":null,"magic":7710001,"deviation":10,"comment":"a1b2-3","expires_ms":1763380806000}
+{"type":"cancel","id":"a1b2-4","order":601,"expires_ms":1763380806000}
+{"type":"modify","id":"a1b2-5","order":601,"price":"125250","sl":null,"tp":"124900","expires_ms":1763380806000}
+{"type":"sltp","id":"a1b2-6","symbol":"WINZ26","position":77,"sl":"124800","tp":"125400","magic":7710001,"expires_ms":1763380806000}
+{"type":"close","id":"a1b2-7","position":77,"volume":"1","magic":7710001,"deviation":10,"comment":"a1b2-7","expires_ms":1763380806000}
 ```
 
 How each maps onto `order_send`, mirroring the request shapes of an existing
@@ -656,7 +665,7 @@ same `instance`, same id and same line plus `"replay_only":true`: it asks for
 the remembered answer, never for an execution.
 
 ```json
-{"type":"submit","id":"a1b2-2","symbol":"WINZ26","side":"buy","kind":"market","volume":"2","sl":"124800","tp":null,"magic":7710001,"deviation":10,"comment":"a1b2-2","replay_only":true}
+{"type":"submit","id":"a1b2-2","symbol":"WINZ26","side":"buy","kind":"market","volume":"2","sl":"124800","tp":null,"magic":7710001,"deviation":10,"comment":"a1b2-2","expires_ms":1763380806000,"replay_only":true}
 {"type":"reply","id":"a1b2-2","retcode":null,"unknown":true,"error":"never received: not executed","cached":false}
 ```
 

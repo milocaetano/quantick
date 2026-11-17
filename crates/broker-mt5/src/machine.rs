@@ -61,6 +61,10 @@ pub const CHANGE_PENDING: &str =
 /// A position whose last stop/target change is still unanswered.
 pub const STOPS_PENDING: &str =
     "the broker has not answered the last stop/target change yet - wait for it";
+/// The venue has not been handed the time yet, so a request could not say
+/// when it stops being waited for.
+pub const NO_CLOCK: &str =
+    "the broker venue has not been handed the time yet - wait a moment and try again";
 /// Everything open is already on its way out in a close not yet filled.
 pub const CLOSE_PENDING: &str =
     "a close for the whole position is already on its way to the broker - wait for its fill";
@@ -218,6 +222,8 @@ struct Silence {
     alive_at: Option<i64>,
     /// The link was declared lost for its silence, its socket still open.
     stalled: bool,
+    /// The last time handed in.
+    clock: Option<i64>,
 }
 
 /// The last print the venue was shown.
@@ -324,7 +330,7 @@ impl BrokerCore {
         match &self.account {
             None => Some(NO_ACCOUNT),
             Some(account) if !account.margin_mode.nets() => Some(NOT_NETTING),
-            Some(_) => None,
+            Some(_) => self.silence.clock.is_none().then_some(NO_CLOCK),
         }
     }
 
@@ -628,8 +634,12 @@ impl BrokerCore {
     }
 
     /// The time, handed in by a caller that owns a clock, once a frame or so.
-    /// A link up and silent for [`STALE_AFTER_MS`] is declared lost, once.
+    /// A link up and silent for [`STALE_AFTER_MS`] is declared lost, once,
+    /// and every request still unanswered is given up on: the bridge behind
+    /// the silent socket may still wake, but it refuses each of them as
+    /// expired (see [`Self::expiry`]).
     pub fn on_clock(&mut self, now_ms: i64) -> Vec<VenueEvent> {
+        self.silence.clock = Some(now_ms);
         if self.link != LinkState::Up {
             self.silence.alive_at = None;
             return Vec::new();
@@ -649,9 +659,26 @@ impl BrokerCore {
         self.has_state = false;
         self.silence = Silence {
             stalled: true,
+            clock: Some(now_ms),
             ..Silence::default()
         };
-        vec![VenueEvent::Notice(VenueNotice::LinkLost)]
+        let mut events = vec![VenueEvent::Notice(VenueNotice::LinkLost)];
+        self.abandon_unanswered(&mut events);
+        events
+    }
+
+    /// When a request sent now stops being waited for: the earliest moment
+    /// [`Self::on_clock`] could declare the link lost if the bridge says
+    /// nothing more. Heard since the clock last read, it is alive from that
+    /// reading on; otherwise from when the clock last saw it alive.
+    fn expiry(&self) -> Option<i64> {
+        let now = self.silence.clock?;
+        let alive = if self.silence.heard {
+            now
+        } else {
+            self.silence.alive_at.unwrap_or(now)
+        };
+        Some(alive.saturating_add(STALE_AFTER_MS))
     }
 
     fn queue(&mut self, pending: Pending, request: &Request) {
@@ -663,6 +690,7 @@ impl BrokerCore {
             Stamp {
                 magic: self.config.magic,
                 deviation_points: self.config.deviation_points,
+                expires_ms: self.expiry(),
             },
         );
         self.outbox.push(line.clone());

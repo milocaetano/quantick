@@ -11,8 +11,9 @@ use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
 /// The protocol version this crate speaks. A bridge announcing another is
-/// never written to.
-pub const EXEC_SCHEMA_VERSION: u32 = 1;
+/// never written to. 2: order requests carry `expires_ms`, which a bridge
+/// that predates it would ignore.
+pub const EXEC_SCHEMA_VERSION: u32 = 2;
 
 /// One line from the bridge.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -171,6 +172,10 @@ fn optional(value: Option<Decimal>) -> Value {
 pub struct Stamp {
     pub magic: u64,
     pub deviation_points: u32,
+    /// Unix milliseconds from which the bridge must not execute the request:
+    /// by then quantick may have declared the link lost and stopped waiting
+    /// for its answer. Never on a `watch`, which trades nothing.
+    pub expires_ms: Option<i64>,
 }
 
 /// One request to the bridge, before its id is attached.
@@ -298,6 +303,11 @@ impl Request {
                 put("comment", json!(id));
             }
         }
+        if let Some(expires_ms) = stamp.expires_ms
+            && !matches!(self, Self::Watch { .. })
+        {
+            line.insert("expires_ms".into(), json!(expires_ms));
+        }
         Value::Object(line).to_string()
     }
 }
@@ -322,6 +332,7 @@ mod tests {
             Stamp {
                 magic: 7_710_001,
                 deviation_points: 10,
+                expires_ms: Some(1_763_380_806_000),
             },
         );
         let value: Value = serde_json::from_str(&line).expect("json");
@@ -334,6 +345,7 @@ mod tests {
         assert_eq!(value["magic"], 7_710_001);
         assert_eq!(value["deviation"], 10);
         assert_eq!(value["comment"], "ab12-7");
+        assert_eq!(value["expires_ms"], 1_763_380_806_000_i64);
     }
 
     /// The example lines in PROTOCOL.md's execution-channel section: every
@@ -353,6 +365,7 @@ mod tests {
         let stamp = Stamp {
             magic: 7_710_001,
             deviation_points: 10,
+            expires_ms: Some(1_763_380_806_000),
         };
         let symbol = || "WINZ26".to_owned();
         let expected = [
@@ -434,6 +447,7 @@ mod tests {
             Stamp {
                 magic: 1,
                 deviation_points: 1,
+                expires_ms: None,
             },
         );
         let replay: Value = serde_json::from_str(&replay_only(&line)).expect("json");
@@ -449,11 +463,11 @@ mod tests {
 
     #[test]
     fn the_protocol_examples_decode() {
-        let hello = r#"{"type":"exec_hello","schema":1,"bridge":"quantick-mt5-exec-py","bridge_version":"0.1.0","instance":"9f1c"}"#;
+        let hello = r#"{"type":"exec_hello","schema":2,"bridge":"quantick-mt5-exec-py","bridge_version":"0.1.0","instance":"9f1c"}"#;
         assert_eq!(
             decode(hello),
             Some(Inbound::ExecHello {
-                schema: 1,
+                schema: 2,
                 instance: "9f1c".into()
             })
         );

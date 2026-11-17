@@ -49,13 +49,14 @@ fn a_bridge_on_loopback_gets_the_request_and_its_answer_lands() {
     let mut reader = BufReader::new(bridge.try_clone().expect("clone"));
     send(
         &mut bridge,
-        &serde_json::json!({"type": "exec_hello", "schema": 1, "instance": "loop"}),
+        &serde_json::json!({"type": "exec_hello", "schema": 2, "instance": "loop"}),
     );
     poll_until(&mut venue, |venue, _| venue.link_state() == LinkState::Up);
     let mut line = String::new();
     reader.read_line(&mut line).expect("the watch request");
     assert!(line.contains("\"watch\""), "{line}");
     send(&mut bridge, &Snapshot::new().line());
+    venue.tick(0);
     poll_until(&mut venue, |venue, _| venue.entry_block().is_none());
 
     venue.submit(OrderIntent::market(Side::Buy, dec(1)));

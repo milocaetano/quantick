@@ -450,5 +450,27 @@ def test_a_socket_round_trip_answers_and_pushes_state():
         theirs.close()
 
 
+def now_ms() -> int:
+    return int(time.time() * 1000)
+
+
+def test_a_request_reached_at_or_past_its_expiry_is_refused_and_never_executed():
+    broker = FakeBroker()
+    broker.positions = [position(volume=2.0)]
+    s = session(broker)
+    past = now_ms() - 1
+    late = s.answer(submit("market", expires_ms=past))
+    check("nothing reached the terminal", broker.sent == [], broker.sent)
+    check("refused as expired, with no retcode", late["retcode"] is None and "expired" in str(late.get("error")), late)
+    again = s.answer(submit("market", expires_ms=past))
+    check("remembered, so it can never run later", broker.sent == [] and again["cached"] is True, again)
+    close = s.answer({"type": "close", "id": "x-late", "position": 77, "volume": "1", "deviation": 10, "magic": MAGIC, "expires_ms": past})
+    check("an expired close is refused too", broker.sent == [] and "expired" in str(close.get("error")), close)
+    fresh = s.answer(dict(submit("market"), id="t-fresh", expires_ms=now_ms() + 60_000))
+    check("one reached in time executes", len(broker.sent) == 1 and fresh["retcode"] == 10009, fresh)
+    watch = s.answer({"type": "watch", "id": "w-late", "symbol": "WDOZ26", "expires_ms": past})
+    check("a watch trades nothing and never expires", watch.get("watching") == "WDOZ26", watch)
+
+
 if __name__ == "__main__":
     sys.exit(run_tests(dict(globals())))

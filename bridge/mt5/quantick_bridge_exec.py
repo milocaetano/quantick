@@ -25,6 +25,11 @@ Three promises shape this file:
   ``order_send`` a second time, and a resend (``replay_only``) this process
   never answered is reported ``unknown`` rather than executed late. The memory lives as long as this process; the
   ``instance`` in the hello tells quantick when a restart has emptied it.
+- **Nothing runs after quantick stopped waiting.** An order request carries
+  ``expires_ms``, the moment quantick could declare this bridge lost for its
+  silence; one reached at or past it is refused unexecuted, so a bridge that
+  hung and wakes on the same socket never fills what quantick already gave up
+  on.
 - **Nothing is decided here.** The terminal's return code and comment travel
   verbatim; which ones mean success, and what is the trader's and what is
   another program's, is quantick's to judge. The one refusal this file makes
@@ -51,7 +56,7 @@ from quantick_bridge_core import (
 )
 from quantick_bridge_transport import TransportMixin
 
-EXEC_SCHEMA_VERSION = 1
+EXEC_SCHEMA_VERSION = 2
 EXEC_BRIDGE_NAME = "quantick-mt5-exec-py"
 EXEC_BRIDGE_VERSION = "0.1.0"
 
@@ -287,6 +292,7 @@ class ExecSession(TransportMixin):
                 "refusing rather than guessing its price digits"
             )
         trade_request = getattr(self, f"build_{kind}")(request)
+        refuse_if_expired(request)
         return self.send_order(request["id"], trade_request)
 
     def send_order(self, request_id: str, trade_request: dict) -> dict:
@@ -565,6 +571,27 @@ class ExecSession(TransportMixin):
 
 
 # -- request fields -----------------------------------------------------------
+
+
+def now_ms() -> int:
+    """Unix milliseconds: the clock quantick stamps `expires_ms` with, on the
+    same machine."""
+    return int(time.time() * 1000)
+
+
+def refuse_if_expired(request: dict) -> None:
+    """Refuse a request reached at or after its `expires_ms`: quantick may
+    already have declared the link lost and reported the request's outcome
+    unknown, and executing it now could fill after the trader stood down.
+    Checked last, just before `order_send`. Absent, there is no deadline."""
+    expires_ms = request.get("expires_ms")
+    if expires_ms is None:
+        return
+    if isinstance(expires_ms, bool) or not isinstance(expires_ms, int):
+        raise RequestError("expires_ms must be whole milliseconds")
+    late_ms = now_ms() - expires_ms
+    if late_ms >= 0:
+        raise RequestError(f"expired {late_ms} ms ago: quantick stopped waiting for it - not executed")
 
 
 def need_text(request: dict, key: str) -> str:

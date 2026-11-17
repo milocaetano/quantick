@@ -32,13 +32,15 @@ pub fn venue() -> (Mt5Venue, FakeBridgeHandle) {
     (Mt5Venue::new(config(), Box::new(bridge)), handle)
 }
 
-/// A venue whose bridge said hello and pushed an empty demo state.
+/// A venue whose bridge said hello and pushed an empty demo state, handed
+/// the time 0 just after.
 pub fn connected() -> (Mt5Venue, FakeBridgeHandle) {
     let (mut venue, handle) = venue();
     handle.connect("bridge-1");
     venue.poll();
     handle.push(&Snapshot::new().line());
     venue.poll();
+    venue.tick(0);
     handle.take_sent();
     if let Some(why) = venue.core().write_block() {
         panic!("not ready to trade: {why}");
