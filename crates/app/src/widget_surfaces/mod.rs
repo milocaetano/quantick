@@ -153,26 +153,31 @@ pub(crate) fn draw(
     closed
 }
 
-/// The control plane's door: open or close `id` when asked, then the
-/// scene the window paints for it, at the size it paints it.
-pub(crate) fn answer(
-    (surfaces, tabs): (&mut WidgetSurfaces, &mut ArrangementHost),
-    reads: (&AppConfig, TzOffset),
-    (id, open): (&str, Option<bool>),
-) -> Result<WidgetRead, String> {
-    let spec = handlers::find(&WIDGET_SURFACES, id)?;
-    if let Some(open) = open {
-        surfaces.deck.set_open(spec.id, open);
+/// The widget panes' owner for one control call: the panes beside the tab
+/// they paint for.
+pub(crate) struct WidgetDesk<'a> {
+    pub(crate) surfaces: &'a mut WidgetSurfaces,
+    pub(crate) tabs: &'a mut ArrangementHost,
+    pub(crate) reads: (&'a AppConfig, TzOffset),
+}
+
+impl handlers::WidgetHost for WidgetDesk<'_> {
+    fn widget(&mut self, id: &str, open: Option<bool>) -> Result<WidgetRead, String> {
+        let spec = handlers::find(&WIDGET_SURFACES, id)?;
+        let surfaces = &mut *self.surfaces;
+        if let Some(open) = open {
+            surfaces.deck.set_open(spec.id, open);
+        }
+        let size = surfaces.sizes.get(spec.id).copied().unwrap_or(BODY);
+        with_feed(self.tabs, self.reads, |feed, market| {
+            let state = handlers::state(spec, &surfaces.deck, &feed.capabilities);
+            Ok(handlers::read(
+                state,
+                market,
+                surfaces.deck.scene(spec, &feed, size),
+            ))
+        })
     }
-    let size = surfaces.sizes.get(spec.id).copied().unwrap_or(BODY);
-    with_feed(tabs, reads, |feed, market| {
-        let state = handlers::state(spec, &surfaces.deck, &feed.capabilities);
-        Ok(handlers::read(
-            state,
-            market,
-            surfaces.deck.scene(spec, &feed, size),
-        ))
-    })
 }
 
 #[cfg(any(feature = "scenario-harness", test))]

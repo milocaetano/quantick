@@ -11,6 +11,8 @@
 use std::borrow::Cow;
 use std::collections::BTreeMap;
 
+use crate::chrome_owners::ChromeOwners;
+pub use crate::chrome_owners::WidgetHost;
 use quantick_chart::widgets::big_trades::{BigTradesLayout, NotionalUnit, big_trades_view};
 use quantick_chart::widgets::depth::{
     DEPTH_RESTING_BAR_SHARE, DEPTH_VOLUME_BAR_SHARE, depth_rows_per_side, depth_view,
@@ -369,13 +371,16 @@ pub fn read(state: WidgetState, market: String, scene: &WidgetScene) -> WidgetRe
     }
 }
 
-/// What the window lends the three capabilities.
-pub trait WidgetHost {
-    /// Open or close the pane `id` names when `open` says so, then what it
-    /// paints for the active tab; or why not.
-    fn widget(&mut self, _id: &str, _open: Option<bool>) -> Result<WidgetRead, String> {
-        Err(UNAVAILABLE.to_owned())
-    }
+/// [`WidgetHost::widget`] on the panes the window lends.
+///
+/// # Errors
+/// Why not, or a window that lends no panes.
+pub fn widget<H: ChromeOwners + ?Sized>(
+    app: &mut H,
+    id: &str,
+    open: Option<bool>,
+) -> Result<WidgetRead, String> {
+    app.widgets().ok_or(UNAVAILABLE)?.widget(id, open)
 }
 
 /// `spec` in `registry` by id, or the ids there are.
@@ -393,7 +398,7 @@ pub fn find<'a>(registry: &'a [WidgetSpec], id: &str) -> Result<&'a WidgetSpec, 
 pub fn register<D, H, A>(registry: &mut D) -> Result<(), RegistryError>
 where
     D: ActionDock<H, A>,
-    H: WidgetHost + ?Sized,
+    H: ChromeOwners + ?Sized,
     A: NotifyAccess,
 {
     registry.register_outside_replay(open_descriptor(), open)?;
@@ -401,7 +406,7 @@ where
     registry.register(read_widget_descriptor(), read_action)
 }
 
-fn open<H: WidgetHost + ?Sized, A: NotifyAccess>(
+fn open<H: ChromeOwners + ?Sized, A: NotifyAccess>(
     app: &mut H,
     access: &mut A,
     actor: &ActorContext,
@@ -410,7 +415,7 @@ fn open<H: WidgetHost + ?Sized, A: NotifyAccess>(
     toggle(app, access, actor, input, true)
 }
 
-fn close<H: WidgetHost + ?Sized, A: NotifyAccess>(
+fn close<H: ChromeOwners + ?Sized, A: NotifyAccess>(
     app: &mut H,
     access: &mut A,
     actor: &ActorContext,
@@ -419,7 +424,7 @@ fn close<H: WidgetHost + ?Sized, A: NotifyAccess>(
     toggle(app, access, actor, input, false)
 }
 
-fn toggle<H: WidgetHost + ?Sized, A: NotifyAccess>(
+fn toggle<H: ChromeOwners + ?Sized, A: NotifyAccess>(
     app: &mut H,
     access: &mut A,
     actor: &ActorContext,
@@ -427,8 +432,7 @@ fn toggle<H: WidgetHost + ?Sized, A: NotifyAccess>(
     open: bool,
 ) -> Result<Value, ControlError> {
     let input = parse(input)?;
-    let state = app
-        .widget(&input.id, Some(open))
+    let state = widget(app, &input.id, Some(open))
         .map_err(ControlError::invalid_request)?
         .state;
     let payload = json!({"id": state.id, "open": state.open});
@@ -441,16 +445,14 @@ fn toggle<H: WidgetHost + ?Sized, A: NotifyAccess>(
     serde_json::to_value(state).map_err(|error| ControlError::invalid_request(error.to_string()))
 }
 
-fn read_action<H: WidgetHost + ?Sized, A>(
+fn read_action<H: ChromeOwners + ?Sized, A>(
     app: &mut H,
     _: &mut A,
     _: &ActorContext,
     input: &Value,
 ) -> Result<Value, ControlError> {
     let input = parse(input)?;
-    let read = app
-        .widget(&input.id, None)
-        .map_err(ControlError::invalid_request)?;
+    let read = widget(app, &input.id, None).map_err(ControlError::invalid_request)?;
     serde_json::to_value(read).map_err(|error| ControlError::invalid_request(error.to_string()))
 }
 

@@ -6,7 +6,9 @@ use crate::surfaces::drawing_chrome::DrawingChromeExt as _;
 use crate::tab::Tab;
 use crate::timezone::TzOffset;
 use crate::ui_state::{self, SavedFocusExt};
+use quantick_control_handlers::market_palette::TabOpening;
 use quantick_feed::{self as feed, FeedHandle, history_reach};
+use quantick_workspace::market_list::{MarketSnapshot, OpenChoice, OpenMarket, RecentMarkets};
 
 use crate::toolrail::ToolRailExt as _;
 pub(crate) struct ArrangementAdapter<'a> {
@@ -436,6 +438,63 @@ impl ArrangementRead<'_> {
             orderflow_folds: self.tabs.panel_folds().clone(),
         };
         (tabs, chrome)
+    }
+}
+
+impl quantick_control_handlers::market_palette::MarketTabs for ArrangementAdapter<'_> {
+    fn focus_tab(&mut self, index: usize) {
+        self.tabs.select(index);
+        self.surface.show_market();
+    }
+    fn open_tab(&mut self, choice: &OpenChoice, bar: Option<BarConfiguration>) -> TabOpening {
+        let shown = self.tabs.active_index();
+        ArrangementAdapter::open_tab(self, choice.feed_id.clone(), choice.symbol.clone(), bar);
+        let timeframes = super::saved_context_intervals(&choice.context_bars, None);
+        self.active_tab_mut().canvas.open_context_on(&timeframes);
+        let tab = self.tabs.active_id();
+        self.workspace.book.sync_mut().join(tab, choice.arrival());
+        (choice.background).then(|| self.tabs.select(shown));
+        Ok(tab)
+    }
+    fn set_flow_bar(&mut self, tab: u64, bar: BarConfiguration) -> Result<(), String> {
+        let tab = self.tabs.by_id_mut(tab).ok_or("The tab has closed")?;
+        let set = tab.set_pane_bar_spec(0, bar);
+        set.map(drop).map_err(|e| e.to_string())
+    }
+}
+
+/// What "Open a market" lists: the config's markets and the open tabs.
+pub(super) fn market_snapshot(
+    tabs: &ArrangementHost,
+    (config, added): (&AppConfig, &quantick_stores::symbols_file::AddedSymbols),
+    book: &quantick_stores::workspaces::WorkspaceBookStore,
+    recent: &RecentMarkets,
+) -> MarketSnapshot {
+    let (venues, markets) = config.market_catalog(added);
+    let open = (tabs.iter().enumerate())
+        .map(|(index, tab)| OpenMarket {
+            tab_id: tabs.id_at(index),
+            position: index + 1,
+            feed_id: tab.feed_id.clone(),
+            symbol: tab.symbol.clone(),
+            asset: config.market_asset(&tab.feed_id, &tab.symbol),
+            workspace: book.tab_row(tabs.id_at(index)).0,
+            bar: tab.flow_pane.series.bar_config(),
+            context_bars: saved_tab_of(tab).context_bars,
+            replay: tab.link.replay.is_some(),
+            streaming: tab.link.latest_trade_ms.is_some(),
+            price: super::menu_bar::last_price(tab),
+            trades_per_s: None,
+        })
+        .collect();
+    MarketSnapshot {
+        venues,
+        markets,
+        open,
+        recent: recent.clone(),
+        starter_feed: config.default_feed.clone(),
+        workspaces: book.book().list().into_iter().map(|row| row.name).collect(),
+        inherited_bar: Some(tabs[tabs.active_index()].flow_pane.series.bar_config()),
     }
 }
 

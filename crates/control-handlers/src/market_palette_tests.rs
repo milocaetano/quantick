@@ -114,8 +114,12 @@ impl MarketPaletteHost for Host {
         Ok(())
     }
 
-    fn open_market_palette(&mut self, query: &str, switch: bool) -> Result<(), ControlError> {
-        self.palette = Some((query.to_owned(), switch));
+    fn open_market_palette(
+        &mut self,
+        query: &str,
+        target: Option<SwitchTarget>,
+    ) -> Result<(), ControlError> {
+        self.palette = Some((query.to_owned(), target.is_some()));
         Ok(())
     }
 
@@ -326,6 +330,25 @@ fn the_palette_opens_with_its_query() {
     assert_eq!(answer["switch"], true);
     assert_eq!(host.palette, Some((String::new(), true)), "switch mode");
     assert_eq!(access.events[1].payload["switch"], true);
+}
+
+#[test]
+fn switch_mode_on_a_recording_is_refused_before_the_palette_shows() {
+    let mut host = Host::new();
+    host.snapshot.open[0].replay = true;
+    let mut access = FakeAccess::with_budget(0);
+    let value = serde_json::json!({"switch": true});
+    let refused = palette_call(&mut host, &mut access, &FakeWindow::assistant(), &value);
+    let refused = refused.unwrap_err().message;
+    assert_eq!(refused, "A recorded session has no market to switch");
+    assert_eq!(host.palette, None);
+    assert!(access.events.is_empty(), "nothing came up to journal");
+    show(&mut host, "", false).unwrap();
+    assert_eq!(
+        host.palette,
+        Some((String::new(), false)),
+        "plain mode still opens"
+    );
 }
 
 #[test]
