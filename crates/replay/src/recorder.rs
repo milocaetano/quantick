@@ -52,6 +52,9 @@ use std::rc::Rc;
 use quantick_civil::{CivilDate, TzOffset, civil_utc};
 use quantick_engine::DealSample;
 
+mod chip;
+pub use chip::{DealChip, chip_for};
+
 /// How long the counter may stand still while prints keep coming before
 /// REC calls it stale: three of the terminal's readings, which refresh about
 /// every 31 seconds (measured over a whole B3 session). Distinct from the

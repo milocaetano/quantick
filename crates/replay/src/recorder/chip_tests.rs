@@ -1,4 +1,5 @@
 use super::*;
+use quantick_engine::BarKind;
 use std::path::PathBuf;
 
 fn view(state: RecState) -> RecordingView {

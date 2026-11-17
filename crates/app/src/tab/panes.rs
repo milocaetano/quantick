@@ -10,8 +10,7 @@ use quantick_engine::DealSample;
 use super::{CanvasCollapseRestore, CanvasLayout, LegendFold, Tab};
 use crate::canvas_layout::{MAX_CANVAS_PANES, MAX_CONTEXT_PANES, PaneIdAllocator, PaneKind};
 use crate::config::AppConfig;
-use crate::deal_recording::{DealRecordingAction, RecordingView};
-use crate::deal_recording_ui::{self, DealChip};
+use crate::deal_recording::{DealChip, DealRecordingAction, RecordingView};
 use crate::loading::LoadingTask;
 use crate::metrics;
 use crate::orderflow_view::OrderflowView;
@@ -497,7 +496,7 @@ impl Tab {
             .deal_recorder
             .chip_view(self.link.replay.is_some(), self.link.latest_trade_ms);
         let pane = &self.flow_pane;
-        deal_recording_ui::chip_for(
+        crate::deal_recording::chip_for(
             &view,
             pane.spec.spec().definition(),
             pane.series.state.deal_samples().last().is_some(),
