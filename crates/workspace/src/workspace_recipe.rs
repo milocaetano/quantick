@@ -291,9 +291,16 @@ impl WorkspaceRecipe {
         })
     }
 
-    /// This reading cut to what its canvas shows.
+    /// A tab's reading cut to what its canvas shows. A tab keeps the charts
+    /// an earlier layout built, off screen: their panes are no part of it, so
+    /// a tab switched onto a workspace showing fewer charts reads as that
+    /// workspace.
     #[must_use]
-    pub fn cut_to_canvas(self) -> Self {
+    pub fn cut_to_canvas(mut self) -> Self {
+        let state = self.canvas_state();
+        let panes = state.panes();
+        let shown = panes.iter().filter(|(_, kind, _)| *kind == PaneKind::Time);
+        self.context_panes.truncate(shown.count());
         self
     }
 
@@ -413,10 +420,20 @@ impl WorkspaceRecipe {
     }
 
     /// `copy` read against this recipe: a bar rule this recipe does not name
-    /// is the tab's own, never an edit, so it is left out.
+    /// is the tab's own, never an edit, so it is left out; and a context size
+    /// or fold past the end of either list reads as automatic and open, which
+    /// is what a missing entry means, so padding is no edit.
     #[must_use]
     pub fn masked(&self, copy: &Self) -> Self {
         let mut read = copy.clone();
+        fit_open(&mut read.context_heights, &self.context_heights, |share| {
+            *share == 0.0
+        });
+        fit_open(
+            &mut read.context_panes_collapsed,
+            &self.context_panes_collapsed,
+            |folded| !*folded,
+        );
         if self.flow_bars.is_none() {
             read.flow_bars = None;
         }
@@ -531,5 +548,17 @@ impl WorkspaceRecipe {
             note("timeframe".to_owned());
         }
         words
+    }
+}
+
+/// `read` as long as `mine` where the entries one has past the other read as
+/// `open`: a list padded with automatic, open entries, or cut short of them,
+/// says the same.
+fn fit_open<T: Clone>(read: &mut Vec<T>, mine: &[T], open: impl Fn(&T) -> bool) {
+    let held = read.len();
+    if held > mine.len() && read[mine.len()..].iter().all(&open) {
+        read.truncate(mine.len());
+    } else if held < mine.len() && mine[held..].iter().all(&open) {
+        read.extend_from_slice(&mine[held..]);
     }
 }

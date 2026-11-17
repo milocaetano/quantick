@@ -435,6 +435,39 @@ mod recipe_tests {
         assert_eq!(two.clone().cut_to_canvas(), two, "both charts show");
     }
 
+    /// A context size or fold past the end of a list is automatic and open,
+    /// as a missing entry is: a reading padded with them, or cut short of a
+    /// recipe's, holds that recipe; a real size or fold past the end does not.
+    #[test]
+    fn padding_a_size_or_fold_list_is_no_edit() {
+        let recipe = WorkspaceRecipe {
+            layout: DeclaredLayout::TimeAndFlow,
+            context_heights: vec![0.4, 0.0],
+            context_panes_collapsed: vec![false],
+            ..WorkspaceRecipe::default()
+        };
+        let padded = WorkspaceRecipe {
+            context_heights: vec![0.4, 0.0, 0.0],
+            context_panes_collapsed: vec![false, false, false],
+            ..recipe.clone()
+        };
+        let short = WorkspaceRecipe {
+            context_heights: vec![0.4],
+            context_panes_collapsed: Vec::new(),
+            ..recipe.clone()
+        };
+        assert!(recipe.holds(&padded) && recipe.holds(&short));
+        let sized = WorkspaceRecipe {
+            context_heights: vec![0.4, 0.0, 0.3],
+            ..recipe.clone()
+        };
+        let folded = WorkspaceRecipe {
+            context_panes_collapsed: vec![false, true],
+            ..recipe.clone()
+        };
+        assert!(!recipe.holds(&sized) && !recipe.holds(&folded));
+    }
+
     /// A recipe from before the canvas model opens on its declared layout;
     /// one with a saved canvas on that canvas's preset. The canvas it
     /// restores holds the layout's panes, folds as saved.

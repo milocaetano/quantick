@@ -113,9 +113,14 @@ pub fn recipe_canvas(recipe: &WorkspaceRecipe) -> CanvasState {
     }
 }
 
-/// Lay `recipe`'s canvas over a tab's: the model is the recipe's, whole.
-pub fn lay_recipe_canvas(state: &mut CanvasState, _seats: &mut Seats, recipe: &WorkspaceRecipe) {
+/// Lay `recipe`'s canvas over a tab's: the model is the recipe's, whole, and
+/// every chart is seated afresh, as a picked layout seats them. The recipe
+/// numbers its slots its own way; seats kept from the tab's model would read
+/// a renumbered slot as a removal and build a standing chart again, losing
+/// the bar rule and layers the landing just put on it.
+pub fn lay_recipe_canvas(state: &mut CanvasState, seats: &mut Seats, recipe: &WorkspaceRecipe) {
     *state = recipe_canvas(recipe);
+    seats.clear();
 }
 
 impl From<DeclaredLayout> for CanvasLayout {

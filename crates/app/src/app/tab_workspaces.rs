@@ -202,16 +202,6 @@ fn apply_recipe_canvas(runtime: &mut Runtime, id: u64, recipe: &WorkspaceRecipe)
     monitors.push(quantick_control_handlers::canvas::PRIMARY_MONITOR.to_owned());
     let area = super::canvas_wiring::tab_area(&tab.canvas);
     tab.canvas.state.settle_monitors(&monitors, area);
-    let rules = &quantick_engine::bar_registry::BUILTIN_BARS;
-    for (address, rule) in recipe.rules_over(&saved.flow_bars, &saved.context_bars) {
-        let put = (rules.parse(rule).map_err(|e| e.to_string())).and_then(|spec| {
-            tab.set_pane_bar_spec(address, spec)
-                .map_err(|e| e.to_string())
-        });
-        if let Err(error) = put {
-            tracing::warn!(target: "quantick::workspace", address, rule, %error, "WORKSPACE_BAR_RULE_REFUSED: the pane keeps its own rule");
-        }
-    }
     apply_recipe_switches(runtime, id, recipe);
 }
 
@@ -224,6 +214,18 @@ fn apply_recipe_switches(runtime: &mut Runtime, id: u64, recipe: &WorkspaceRecip
     let Some(tab) = runtime.tabs.by_id_mut(id) else {
         return;
     };
+    // Again once the panes stand: a chart built after the canvas opened on an interval.
+    let saved = super::arrangement_adapter::saved_tab_of(tab);
+    let rules = &quantick_engine::bar_registry::BUILTIN_BARS;
+    for (address, rule) in recipe.rules_over(&saved.flow_bars, &saved.context_bars) {
+        let put = (rules.parse(rule).map_err(|e| e.to_string())).and_then(|spec| {
+            tab.set_pane_bar_spec(address, spec)
+                .map_err(|e| e.to_string())
+        });
+        if let Err(error) = put {
+            tracing::warn!(target: "quantick::workspace", address, rule, %error, "WORKSPACE_BAR_RULE_REFUSED: the pane keeps its own rule");
+        }
+    }
     for (pane, side) in tab.panes_with_sides_mut() {
         pane.layer_write()
             .apply_states(&layer_states(recipe.for_pane(side.index()).1));

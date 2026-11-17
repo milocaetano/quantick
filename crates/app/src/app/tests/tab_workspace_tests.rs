@@ -2749,9 +2749,8 @@ fn a_workspace_switch_paints_the_other_workspace_s_layout() {
     assert_eq!(canvas_read(&mut app), quad, "the call paints Quad's layout");
 }
 
-/// The trader's book, cut down. A two-chart workspace whose saved canvas
-/// numbers its slots its own way puts its lower chart on a range rule with a
-/// layer of its own. Landed on a one-chart tab, whose second chart is built
+/// The trader's book, cut down. A two-chart workspace puts its lower chart
+/// on a range rule with a layer of its own. Landed on a one-chart tab, whose second chart is built
 /// after the canvas, and on a tab still holding a second chart off screen,
 /// each tab reads as the recipe; back on a one-chart workspace, so does the
 /// tab with the second chart built. No landing reads as an edit.
@@ -2767,9 +2766,9 @@ fn a_switch_lands_every_chart_s_rule_and_layers_and_reads_clean() {
     let tab = app.runtime.tabs.by_id_mut(first).expect("an open tab");
     tab.set_layout(CanvasLayout::TimeTimeAndFlow);
     frames(&mut app, 4);
+    // Read back as a save writes it: a stacked canvas whose slots a landing
+    // numbers its own way, unlike the slots the pick above gave this tab.
     let mut two = live_recipe(&app.runtime, first).expect("an open tab");
-    let stack = quantick_workspace::canvas::preset("stack2+flow").expect("a preset");
-    two.canvas = Some(quantick_workspace::canvas::CanvasState::from_preset(stack));
     let lower = &mut two.context_panes[1];
     lower.bars = Some("renko:20".to_owned());
     let footprint = lower.layers.get("footprint").copied().expect("read");
