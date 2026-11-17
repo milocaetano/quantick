@@ -1,6 +1,6 @@
 //! Native binding exercises over the actual workspace, feeds and frame adapters.
 use super::*;
-use crate::app::control_host::ScriptsPort;
+use quantick_control_handlers::indicator_host::{IndicatorRefusal, ScriptsPort};
 use quantick_workspace::lifetime::{LifetimeError, ResourceError, WorkspaceId};
 
 fn native_frame(
@@ -47,7 +47,7 @@ fn workspace_lifetime_native_rebind_retains_the_full_runtime_and_drains_without_
     second.events.try_send(FeedEvent::Live(trade(201))).unwrap();
     app.drain_tabs();
     assert!(app.active_tab().paper.status_cell().is_some());
-    app.attach_script(
+    app.indicator_wiring().attach_script(
         "owned".into(),
         "indicator(\"owned\")\nplot(close)".into(),
         true,
@@ -287,7 +287,7 @@ fn workspace_lifetime_rebind_keeps_report_and_popup_while_unpresented_tail_settl
 #[test]
 fn workspace_lifetime_refuses_foreign_missing_and_replaced_targets_before_detach() {
     let (mut app, _events, _commands, _book) = test_app();
-    app.attach_script(
+    app.indicator_wiring().attach_script(
         "owned".into(),
         "indicator(\"owned\")\nplot(close)".into(),
         true,
@@ -332,7 +332,11 @@ fn workspace_lifetime_refuses_foreign_missing_and_replaced_targets_before_detach
     ] {
         assert_eq!(app.runtime.validate_target(invalid), Err(reason));
         if reason == ResourceError::MissingSlot {
-            assert_eq!(app.detach_operator_script(invalid.slot.0), Ok(false));
+            assert_eq!(
+                app.indicator_wiring()
+                    .detach_operator_script(invalid.slot.0),
+                Ok(false)
+            );
             continue;
         }
         // Construct another ordinary owner to exercise stale/foreign dispatch;
@@ -359,7 +363,11 @@ fn workspace_lifetime_refuses_foreign_missing_and_replaced_targets_before_detach
             true,
         );
         let original = std::mem::replace(&mut app.runtime.indicators.registry, registry);
-        assert_eq!(app.detach_operator_script(invalid.slot.0), Err(()));
+        assert_eq!(
+            app.indicator_wiring()
+                .detach_operator_script(invalid.slot.0),
+            Err(IndicatorRefusal::TradersOwn)
+        );
         assert!(
             app.runtime
                 .indicators
@@ -373,8 +381,14 @@ fn workspace_lifetime_refuses_foreign_missing_and_replaced_targets_before_detach
     let _other = open_second_tab(&mut app, &ctx, "ETHUSDT");
     assert_ne!(target.tab, app.runtime.tabs.active_id());
     assert_eq!(app.runtime.validate_target(target), Ok(()));
-    assert_eq!(app.detach_operator_script(target.slot.0), Ok(true));
-    assert_eq!(app.detach_operator_script(target.slot.0), Ok(false));
+    assert_eq!(
+        app.indicator_wiring().detach_operator_script(target.slot.0),
+        Ok(true)
+    );
+    assert_eq!(
+        app.indicator_wiring().detach_operator_script(target.slot.0),
+        Ok(false)
+    );
     assert!(
         !app.runtime
             .indicators
@@ -512,7 +526,7 @@ fn workspace_lifetime_reordered_pane_never_retargets_a_captured_slot() {
 #[test]
 fn workspace_lifetime_deferred_state_waits_for_its_stable_pane_not_a_replacement() {
     let (mut app, _events, _commands, _book) = test_app();
-    app.attach_script(
+    app.indicator_wiring().attach_script(
         "pending".into(),
         "indicator(\"pending\")\nplot(close)".into(),
         true,

@@ -1,7 +1,7 @@
 //! C3-C7: the UI and gateway share source persistence and the reload adapter.
 use super::*;
-use crate::app::control_host::ScriptsPort;
 use crate::indicator_worker::IndicatorCommand;
+use quantick_control_handlers::indicator_host::ScriptEditorPort;
 use quantick_stores::script_library::{
     ScriptEditorAction as Action, ScriptLibrary, ScriptLibraryPort,
 };
@@ -11,7 +11,7 @@ fn editor(app: &QuantickApp) -> &quantick_stores::script_editor::ScriptEditor {
     app.surfaces.script_editor.model_state.editor()
 }
 fn edit(app: &mut QuantickApp, action: Action) {
-    app.edit_script(action).unwrap();
+    app.indicator_wiring().script_editor(action).unwrap();
 }
 pub(super) fn editor_frame(app: &mut QuantickApp, elapsed_ms: u64) {
     let now = app.surfaces.script_editor.view.epoch + Duration::from_millis(elapsed_ms);
@@ -394,17 +394,25 @@ fn script_editor_defaults_and_explicit_numeric_settings_match_restart() {
             0,
         );
         assert_eq!(
-            app.script_library_state(0, 64).numeric_inputs[0].value,
+            app.indicator_wiring()
+                .script_library_state(0, 64)
+                .numeric_inputs[0]
+                .value,
             NumericValue::Int(9)
         );
         if explicit {
-            app.set_script_numeric_input("my-ema.pine", "length", NumericValue::Int(4))
+            app.indicator_wiring()
+                .set_script_numeric_input("my-ema.pine", "length", NumericValue::Int(4))
                 .unwrap();
             // Immediate retry before worker publication reads the durable setting.
-            app.set_script_numeric_input("my-ema.pine", "length", NumericValue::Int(4))
+            app.indicator_wiring()
+                .set_script_numeric_input("my-ema.pine", "length", NumericValue::Int(4))
                 .unwrap();
             assert_eq!(
-                app.script_library_state(0, 64).numeric_inputs[0].value,
+                app.indicator_wiring()
+                    .script_library_state(0, 64)
+                    .numeric_inputs[0]
+                    .value,
                 NumericValue::Int(4)
             );
         }
@@ -415,7 +423,10 @@ fn script_editor_defaults_and_explicit_numeric_settings_match_restart() {
         );
         let expected = if explicit { 4 } else { 17 };
         assert_eq!(
-            app.script_library_state(0, 64).numeric_inputs[0].value,
+            app.indicator_wiring()
+                .script_library_state(0, 64)
+                .numeric_inputs[0]
+                .value,
             NumericValue::Int(expected)
         );
         assert_eq!(values(&app)[0][39], (39 * expected + 1) as f64);
@@ -456,10 +467,16 @@ fn script_editor_numeric_edits_wait_for_saved_validation_and_published_specs() {
         );
         edit(&mut app, Action::Save);
         assert!(
-            app.set_script_numeric_input("my-ema.pine", "factor", NumericValue::Int(4))
+            app.indicator_wiring()
+                .set_script_numeric_input("my-ema.pine", "factor", NumericValue::Int(4))
                 .is_err()
         );
-        assert!(app.script_library_state(0, 64).numeric_inputs.is_empty());
+        assert!(
+            app.indicator_wiring()
+                .script_library_state(0, 64)
+                .numeric_inputs
+                .is_empty()
+        );
         let document = editor(&app).document.clone().unwrap();
         let revision = editor(&app).revision;
         let inputs = quantick_pine::compile(&source, &document.title)
@@ -472,12 +489,19 @@ fn script_editor_numeric_edits_wait_for_saved_validation_and_published_specs() {
         // The reload may have finished on the worker, but publication has not
         // been drained: its old declaration cannot authorize any input edit.
         assert!(
-            app.set_script_numeric_input("my-ema.pine", "factor", NumericValue::Int(4))
+            app.indicator_wiring()
+                .set_script_numeric_input("my-ema.pine", "factor", NumericValue::Int(4))
                 .is_err()
         );
-        assert!(app.script_library_state(0, 64).numeric_inputs.is_empty());
+        assert!(
+            app.indicator_wiring()
+                .script_library_state(0, 64)
+                .numeric_inputs
+                .is_empty()
+        );
         settle_indicators(&mut app);
-        app.set_script_numeric_input("my-ema.pine", "factor", NumericValue::Int(4))
+        app.indicator_wiring()
+            .set_script_numeric_input("my-ema.pine", "factor", NumericValue::Int(4))
             .unwrap();
         settle_indicators(&mut app);
         assert_eq!(
@@ -486,7 +510,10 @@ fn script_editor_numeric_edits_wait_for_saved_validation_and_published_specs() {
             "the untouched first input adopts its new default"
         );
         assert_eq!(
-            app.script_library_state(0, 64).numeric_inputs[1].value,
+            app.indicator_wiring()
+                .script_library_state(0, 64)
+                .numeric_inputs[1]
+                .value,
             NumericValue::Int(4)
         );
     }
@@ -497,11 +524,13 @@ fn script_editor_initial_and_reopened_source_require_current_validation() {
     use quantick_control_schema::script_editor::NumericValue;
     let (mut app, _directory, _commands) = copy_fixture();
     assert!(
-        app.set_script_numeric_input("my-ema.pine", "length", NumericValue::Int(4))
+        app.indicator_wiring()
+            .set_script_numeric_input("my-ema.pine", "length", NumericValue::Int(4))
             .is_err()
     );
     validate_open_editor(&mut app, 0);
-    app.set_script_numeric_input("my-ema.pine", "length", NumericValue::Int(4))
+    app.indicator_wiring()
+        .set_script_numeric_input("my-ema.pine", "length", NumericValue::Int(4))
         .unwrap();
     settle_indicators(&mut app);
     let previous_output: Vec<_> = values(&app)
@@ -518,9 +547,15 @@ fn script_editor_initial_and_reopened_source_require_current_validation() {
         .save(&external)
         .unwrap();
     edit(&mut app, Action::Open { id: external.id });
-    assert!(app.script_library_state(0, 64).numeric_inputs.is_empty());
     assert!(
-        app.set_script_numeric_input("my-ema.pine", "length", NumericValue::Int(3))
+        app.indicator_wiring()
+            .script_library_state(0, 64)
+            .numeric_inputs
+            .is_empty()
+    );
+    assert!(
+        app.indicator_wiring()
+            .set_script_numeric_input("my-ema.pine", "length", NumericValue::Int(3))
             .is_err()
     );
     validate_open_editor(&mut app, 1000);
@@ -534,14 +569,19 @@ fn script_editor_initial_and_reopened_source_require_current_validation() {
         "reading source never publishes a replacement"
     );
     assert!(
-        app.set_script_numeric_input("my-ema.pine", "length", NumericValue::Int(3))
+        app.indicator_wiring()
+            .set_script_numeric_input("my-ema.pine", "length", NumericValue::Int(3))
             .is_err()
     );
     poll_external_reload(&mut app);
-    app.set_script_numeric_input("my-ema.pine", "factor", NumericValue::Int(3))
+    app.indicator_wiring()
+        .set_script_numeric_input("my-ema.pine", "factor", NumericValue::Int(3))
         .unwrap();
     assert_eq!(
-        app.script_library_state(0, 64).numeric_inputs[0].name,
+        app.indicator_wiring()
+            .script_library_state(0, 64)
+            .numeric_inputs[0]
+            .name,
         "factor"
     );
 }
@@ -557,7 +597,8 @@ fn script_editor_external_default_changes_match_live_and_restart() {
             0,
         );
         if explicit {
-            app.set_script_numeric_input("my-ema.pine", "length", NumericValue::Int(4))
+            app.indicator_wiring()
+                .set_script_numeric_input("my-ema.pine", "length", NumericValue::Int(4))
                 .unwrap();
             settle_indicators(&mut app);
         }
@@ -634,15 +675,24 @@ fn script_editor_read_validation_never_republishes_an_old_open_snapshot() {
     editor_frame(&mut app, 500);
     settle_indicators(&mut app);
     assert_eq!(values(&app), current);
-    assert!(app.script_library_state(0, 64).numeric_inputs.is_empty());
     assert!(
-        app.set_script_numeric_input("my-ema.pine", "length", NumericValue::Int(4))
+        app.indicator_wiring()
+            .script_library_state(0, 64)
+            .numeric_inputs
+            .is_empty()
+    );
+    assert!(
+        app.indicator_wiring()
+            .set_script_numeric_input("my-ema.pine", "length", NumericValue::Int(4))
             .is_err()
     );
     edit(&mut app, Action::Open { id: external.id });
     validate_open_editor(&mut app, 1000);
     assert_eq!(
-        app.script_library_state(0, 64).numeric_inputs[0].value,
+        app.indicator_wiring()
+            .script_library_state(0, 64)
+            .numeric_inputs[0]
+            .value,
         NumericValue::Int(23)
     );
 }
@@ -774,13 +824,22 @@ fn script_editor_action_batch_settles_success_and_refusal_before_next_request() 
         ],
         now,
     );
-    let readback = app.edit_script(Action::Inspect).unwrap().unwrap();
+    let readback = app
+        .indicator_wiring()
+        .script_editor(Action::Inspect)
+        .unwrap()
+        .unwrap();
     assert_eq!(readback.id, "batch.pine");
     assert_eq!(readback.source, "plot(high)");
     assert_eq!(
         ScriptLibraryPort::read(&app.runtime.indicators.script_library, "batch.pine").unwrap(),
         readback
     );
-    assert!(app.edit_script(Action::Close).is_err());
-    assert_eq!(app.edit_script(Action::Inspect).unwrap(), Some(readback));
+    assert!(app.indicator_wiring().script_editor(Action::Close).is_err());
+    assert_eq!(
+        app.indicator_wiring()
+            .script_editor(Action::Inspect)
+            .unwrap(),
+        Some(readback)
+    );
 }

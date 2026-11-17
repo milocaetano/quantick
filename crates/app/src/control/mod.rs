@@ -17,11 +17,8 @@ mod evidence;
 mod feed;
 mod gateway;
 mod health;
-mod indicator_guide;
-mod indicator_picker;
 mod interaction;
 pub(crate) mod inventory;
-mod native_indicator;
 mod price_tag_progress;
 // Moved to `quantick-control-host`; named here so `super::journal` resolves.
 use quantick_control_host::journal;
@@ -38,8 +35,6 @@ pub(crate) mod retry_matrix;
 mod scene;
 #[cfg(test)]
 pub(crate) mod schema_catalog;
-pub(crate) mod script;
-mod script_editor;
 mod system;
 mod trace;
 mod types;
@@ -51,13 +46,13 @@ pub(crate) use contract::{DESCRIBE_CAPABILITY_ID, SNAPSHOT_CAPABILITY_ID, TRADER
 pub(crate) use drawing_magnet::{flip_rail_magnet, journal_own_magnet_flip};
 #[cfg(test)]
 pub(crate) use evidence::{RawScreenshot, ScreenshotPixels};
-pub(crate) use indicator_guide::INDICATOR_GUIDE_CAPABILITY_ID;
 #[cfg(test)]
 pub(crate) use quantick_control::annotation::{
     FIB_CAPABILITY_VERSION, FIB_PROJECTION_CAPABILITY_ID, FIB_RETRACEMENT_CAPABILITY_ID,
     HORIZONTAL_LEVELS_CAPABILITY_ID, PARALLEL_CHANNEL_CAPABILITY_ID, PROFILE_CAPABILITY_ID,
     PROFILE_CAPABILITY_VERSION, RECTANGLE_CAPABILITY_ID, TREND_LINE_CAPABILITY_ID,
 };
+pub(crate) use quantick_control_schema::indicator_guide::INDICATOR_GUIDE_CAPABILITY_ID;
 #[cfg(test)]
 pub(crate) use scene::scene_snapshot;
 

@@ -33,8 +33,8 @@ mod chart_settings_wiring;
 mod chrome;
 pub(crate) mod control_host;
 pub(crate) use control_host::{
-    AlertsPort, ChromePort, ControlWindow, GatewayPort, HealthPort, IndicatorPickerPort,
-    LayersPort, LayoutPort, PaperPort, ScriptsPort, TabsMutPort, TabsPort, ToolRailPort,
+    AlertsPort, ChromePort, ControlWindow, GatewayPort, HealthPort, LayersPort, LayoutPort,
+    PaperPort, TabsMutPort, TabsPort, ToolRailPort,
 };
 pub(crate) mod deal_recording_wiring;
 mod demo_hooks;
@@ -44,9 +44,9 @@ pub(crate) mod drawing_controller;
 mod frame;
 mod frame_tail;
 mod health;
-pub(crate) mod indicator_control;
 mod indicator_manager;
 mod indicator_operations;
+mod indicator_owner;
 mod indicator_wiring;
 pub(crate) mod launch_hooks;
 mod layout_wiring;
