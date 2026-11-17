@@ -209,19 +209,19 @@ impl<T: Clone + PartialEq> Drawings<T> {
         true
     }
 
-    /// A pick of where the object at `index` shows was made on this chart.
-    /// Put on or off all timeframes (`rescoped`), it becomes this layout's:
-    /// the trader turned it on looking at this layout. Its "All windows"
-    /// moved (`rewindowed`), a mark with no [`Drawing::home`] becomes this
-    /// layout's, and one with a home keeps it.
-    pub(crate) fn claim_for_layout(&mut self, index: usize, rescoped: bool, rewindowed: bool) {
+    /// A pick of where the object at `index` shows was made on this chart;
+    /// `before` is the object ahead of it. Put on or off all timeframes, it
+    /// becomes this layout's: the trader turned it on looking at this
+    /// layout. Its "All windows" moved, a mark with no [`Drawing::home`]
+    /// becomes this layout's, and one with a home keeps it.
+    pub(crate) fn claim_for_layout(&mut self, index: usize, before: &Drawing<T>) {
         let (here, live) = (self.layout, &self.live_layouts);
         let Some(drawing) = self.items.get_mut(index) else {
             return;
         };
-        if rescoped {
+        if drawing.scope != before.scope {
             drawing.layout = here.or(drawing.layout);
-        } else if rewindowed {
+        } else if drawing.all_windows != before.all_windows {
             drawing.layout = drawing.home(live).or(here);
         }
     }

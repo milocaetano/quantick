@@ -244,10 +244,8 @@ impl<T: Clone + PartialEq> Drawings<T> {
         let Some(slot) = before.items.get_mut(index) else {
             return;
         };
-        let rescoped = before_drawing.scope != slot.scope;
-        let rewindowed = before_drawing.all_windows != slot.all_windows;
+        self.claim_for_layout(index, &before_drawing);
         *slot = before_drawing;
-        self.claim_for_layout(index, rescoped, rewindowed);
         self.record(before);
     }
 
