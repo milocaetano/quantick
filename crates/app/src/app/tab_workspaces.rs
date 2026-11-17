@@ -162,7 +162,8 @@ pub(super) fn live_recipe(runtime: &Runtime, id: u64) -> Option<WorkspaceRecipe>
     let style = Some(tab.flow_pane.footprint_config(window).style.id().to_owned());
     let layouts = runtime.workspace.layouts().book();
     let recipe = capture_recipe(&saved, layouts, layers, style);
-    Some(super::canvas_wiring::with_canvas(recipe, &tab.canvas).cut_to_canvas())
+    let recipe = super::canvas_wiring::with_canvas(recipe, &tab.canvas);
+    Some(recipe.cut_to_canvas(&tab.canvas.state, &tab.canvas.seats))
 }
 
 pub(super) fn symbols_of(open: &ArrangementHost, tabs: &[u64]) -> Vec<String> {

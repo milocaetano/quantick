@@ -15,7 +15,7 @@
 //! [`crate::layout_document::LayoutBook`], so an edit on a shared id would
 //! reach every tab holding it, and a workspace's whole promise is that nothing
 //! reaches another tab until Save to.
-use crate::canvas::{CanvasState, PaneKind, PaneTree, preset};
+use crate::canvas::{CanvasState, PaneKind, PaneTree, Seats, preset, shown_seats};
 use crate::indicator_document::SavedIndicator;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -229,7 +229,7 @@ impl From<StoredRecipe> for WorkspaceRecipe {
             (context_collapsed, flow_collapsed),
             CanvasState::flow_side_folds,
         );
-        Self {
+        let mut recipe = Self {
             layout,
             split_fraction,
             context_collapsed,
@@ -243,7 +243,13 @@ impl From<StoredRecipe> for WorkspaceRecipe {
             flow_bars,
             legacy_context_bars,
             canvas,
-        }
+        };
+        // A save from before readings were cut to the canvas kept the panes
+        // of charts it built off screen: no tab on it shows them, so read as
+        // they are they would never read clean.
+        let shown = recipe.shown_charts();
+        recipe.context_panes.truncate(shown);
+        recipe
     }
 }
 
@@ -291,17 +297,26 @@ impl WorkspaceRecipe {
         })
     }
 
-    /// A tab's reading cut to what its canvas shows. A tab keeps the charts
-    /// an earlier layout built, off screen: their panes are no part of it, so
-    /// a tab switched onto a workspace showing fewer charts reads as that
-    /// workspace.
+    /// A tab's reading cut to what its canvas shows: the context panes of
+    /// the built charts `state` seats by `seats`, in [`shown_seats`] order. A
+    /// tab keeps the charts an earlier layout built, or a removal took off
+    /// screen; their panes are no part of it, so a tab switched onto a
+    /// workspace showing fewer charts reads as that workspace.
     #[must_use]
-    pub fn cut_to_canvas(mut self) -> Self {
-        let state = self.canvas_state();
-        let panes = state.panes();
-        let shown = panes.iter().filter(|(_, kind, _)| *kind == PaneKind::Time);
-        self.context_panes.truncate(shown.count());
+    pub fn cut_to_canvas(mut self, state: &CanvasState, seats: &Seats) -> Self {
+        let panes = std::mem::take(&mut self.context_panes);
+        let shown = shown_seats(state, seats).into_iter();
+        self.context_panes = shown.filter_map(|seat| panes.get(seat).cloned()).collect();
         self
+    }
+
+    /// How many time charts this recipe's canvas shows.
+    fn shown_charts(&self) -> usize {
+        let panes = self.canvas_state().panes();
+        panes
+            .iter()
+            .filter(|(_, kind, _)| *kind == PaneKind::Time)
+            .count()
     }
 
     /// What the pane at `index` keeps, by its place: 0 is the flow pane, then

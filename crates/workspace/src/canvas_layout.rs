@@ -417,22 +417,62 @@ mod recipe_tests {
     /// workspace onto a one-chart one reads as the one-chart recipe.
     #[test]
     fn a_reading_holds_only_the_charts_its_canvas_shows() {
-        let pane = |bars: &str| ContextPaneRecipe {
-            bars: Some(bars.to_owned()),
-            ..ContextPaneRecipe::default()
-        };
         let read = WorkspaceRecipe {
             layout: DeclaredLayout::TimeAndFlow,
-            context_panes: vec![pane("time:1m"), pane("renko:20")],
+            context_panes: vec![ruled("time:1m"), ruled("renko:20")],
             ..WorkspaceRecipe::default()
         };
-        let shown = read.clone().cut_to_canvas().context_panes;
-        assert_eq!(shown, [pane("time:1m")], "the second chart is off screen");
+        let seats = crate::canvas::Seats::default();
+        let cut = |recipe: &WorkspaceRecipe| {
+            let state = recipe.canvas_state();
+            recipe.clone().cut_to_canvas(&state, &seats).context_panes
+        };
+        assert_eq!(cut(&read), [ruled("time:1m")], "the second is off screen");
         let two = WorkspaceRecipe {
             layout: DeclaredLayout::TimeTimeAndFlow,
             ..read
         };
-        assert_eq!(two.clone().cut_to_canvas(), two, "both charts show");
+        assert_eq!(cut(&two), two.context_panes, "both charts show");
+    }
+
+    /// The top chart of two removed, the chart left keeps its seat: what
+    /// the tab reads is that chart's pane, not the removed one's.
+    #[test]
+    fn a_reading_after_a_removal_holds_the_chart_still_shown() {
+        let mut state =
+            crate::canvas::CanvasState::from_preset(crate::canvas::preset("stack2+flow").unwrap());
+        let mut seats = crate::canvas::Seats::default();
+        seats.refresh(&state);
+        let top = state.tree().panes()[0].0;
+        state.remove(top).unwrap();
+        let read = WorkspaceRecipe {
+            layout: DeclaredLayout::TimeTimeAndFlow,
+            context_panes: vec![ruled("time:1m"), ruled("renko:20")],
+            ..WorkspaceRecipe::default()
+        };
+        let shown = read.cut_to_canvas(&state, &seats).context_panes;
+        assert_eq!(shown, [ruled("renko:20")], "the chart left on screen");
+    }
+
+    /// A recipe saved before readings were cut held the panes of charts its
+    /// canvas did not show; read back, it holds only the ones it shows.
+    #[test]
+    fn a_stored_recipe_reads_back_with_the_charts_its_canvas_shows() {
+        let stored = "layout = \"time+flow\"
+            [[context_panes]]
+bars = \"time:1m\"
+            [[context_panes]]
+bars = \"renko:20\"
+";
+        let read: WorkspaceRecipe = toml::from_str(stored).unwrap();
+        assert_eq!(read.context_panes, [ruled("time:1m")]);
+    }
+
+    fn ruled(bars: &str) -> ContextPaneRecipe {
+        ContextPaneRecipe {
+            bars: Some(bars.to_owned()),
+            ..ContextPaneRecipe::default()
+        }
     }
 
     /// A context size or fold past the end of a list is automatic and open,
