@@ -1,5 +1,8 @@
-# +169: each goal carries a measured Size (guards --report, app delta <=0) that
-# the PR evidence and the reviewer check, plus the owner-type, wire-DTO,
-# comment and tests-in-the-owner-crate rules. Paid for in part by cutting
+# +557: each goal carries a measured Size (guards --report, app delta <=0 or a
+# reason) that the PR evidence and the reviewer check, plus the owner-type,
+# wire-DTO, comment and tests-in-the-owner-crate rules. Five quality reviews
+# then required the counterweights: Size never cuts validation, error paths,
+# named types, docs or edge cases; the operability checklist stays; an app test
+# leaves only with named owner tests on real types. Paid for in part by cutting
 # rules CLAUDE.md, the size guard and the done clause already state.
-.claude/skills/implement/ +169
+.claude/skills/implement/ +557

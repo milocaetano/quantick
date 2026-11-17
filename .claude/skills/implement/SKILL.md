@@ -25,7 +25,7 @@ Rules: <absolute-path>/references/execute.md
 Do: <change and essential contract>.
 Touch: <paths/symbols: headless crate outside `crates/app` for logic first; `crates/app` only for the field, calls and painting>.
 Done: <verifiable acceptance>.
-Size: <crate.lines.app (<=0) and .total deltas, guards --report>.
+Size: <crate.lines.app (<=0, or why) and .total deltas, guards --report>.
 Check: <known checks or discovery location; performance if relevant>.
 Review: <requested low|medium|high; only when the request starts with small|medium|high>.
 No: <essential exclusion; optional>.
