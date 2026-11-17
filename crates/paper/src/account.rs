@@ -282,6 +282,10 @@ pub struct PaperAccount {
     /// the prints have *ever* shown is stable, monotonic and costs one
     /// comparison per trade.
     tick_scale: u32,
+    /// The instrument's price tick, when the host knows it (a feed's
+    /// `symbol_widgets` tick): the grid a broker route's prices land on.
+    /// `None` until told, and forgotten on a symbol switch.
+    price_tick: Option<Decimal>,
     /// What one trade may lose, and whether an entry over it is refused.
     ///
     /// The policy half of risk sizing; the arithmetic belongs to the kernel.
@@ -393,6 +397,7 @@ impl PaperAccount {
         // carried across a switch it would price the next market's ruler and
         // ladders in a precision that market has never printed.
         self.tick_scale = 0;
+        self.price_tick = None;
         self.journal_path = None;
         if let Some(broker) = self.venue_broker_mut() {
             // Never closes anything: the broker's orders stay where they are.
@@ -433,6 +438,7 @@ impl PaperAccount {
             strategies: Vec::new(),
             selected_strategy: None,
             tick_scale: 0,
+            price_tick: None,
             risk: RiskSettings::default(),
             capital: Capital::new(),
             instrument_money: InstrumentBook::new(),

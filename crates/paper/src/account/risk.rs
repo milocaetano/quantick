@@ -15,6 +15,7 @@ use super::{AccountEnv, PaperAccount};
 use crate::format::fmt_decimal;
 use crate::pnl::{PnlBook, PnlSettings};
 use crate::risk_sizing::{self, Capital, InstrumentBook, RiskSettings};
+use crate::route::Route;
 
 /// The risk lock refused an order: what it would have risked, and the risk
 /// per trade it went over, both in the instrument's own currency.
@@ -417,7 +418,23 @@ impl PaperAccount {
     /// Round a pointer price to the precision the tape itself uses (the
     /// mark's decimal places), so a dragged line lands on a price the
     /// instrument can actually print.
+    ///
+    /// On a broker route whose instrument tick is known the price lands on
+    /// that grid instead: a dragged stop is wherever the pointer was, and B3
+    /// refuses an off-grid stop or target as "Invalid stops" (10016). The
+    /// simulator keeps the tape's precision.
     pub fn snap(&self, price: f64) -> Decimal {
+        if let Some(tick) = self.price_tick
+            && self.route_kind() != Route::Sim
+            && let Some(steps) =
+                Decimal::from_f64_retain(price).and_then(|price| price.checked_div(tick))
+        {
+            return steps
+                .round()
+                .saturating_mul(tick)
+                .round_dp(tick.scale())
+                .normalize();
+        }
         // The instrument's own precision, learned from the tape - not the
         // raw scale of the last print. A venue that quotes
         // `79172.37000000` has a raw scale of eight, and snapping to it put
@@ -464,6 +481,12 @@ impl PaperAccount {
             SNAP_FALLBACK_DECIMALS
         };
         Decimal::new(1, places)
+    }
+
+    /// Tell the account its instrument's price tick (`None` when the host
+    /// knows none); a tick that is not positive is no tick.
+    pub fn set_price_tick(&mut self, tick: Option<Decimal>) {
+        self.price_tick = tick.filter(|tick| *tick > Decimal::ZERO);
     }
 
     /// The size one stepper press moves, for the hover that promises it.

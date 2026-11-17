@@ -91,6 +91,13 @@ impl FeedConfig {
             .unwrap_or_default()
     }
 
+    /// `symbol`'s configured price tick on this feed, without copying its
+    /// whole widget setup: read every frame by the tab's paper account.
+    #[must_use]
+    pub fn widget_tick(&self, symbol: &str) -> Option<Decimal> {
+        declared(&self.symbol_widgets, symbol).and_then(|(_, setup)| setup.tick())
+    }
+
     pub(super) fn validate_widgets(&self) -> Result<(), String> {
         for (symbol, setup) in &self.symbol_widgets {
             if !self
@@ -164,6 +171,8 @@ mod tests {
         );
         let win = feed.widget_setup("WINZ26");
         assert_eq!(win.tick(), Some(Decimal::from(5)));
+        assert_eq!(feed.widget_tick("WINZ26"), Some(Decimal::from(5)));
+        assert_eq!(feed.widget_tick("WDOZ26"), None);
         assert_eq!(win.notional_unit, NotionalKind::Quote);
         assert_eq!(win.big_trade_min(), 500_000);
         assert!(win.merge_fills);

@@ -636,3 +636,39 @@ fn a_row_turns_the_pointer_into_its_press() {
     assert_eq!(holding.press(false, false), Some(RoutePress::HoldRelease));
     assert_eq!(row(RowGesture::None, None).press(true, true), None);
 }
+
+/// A price the hand drops on a broker route - a dragged stop or target, an
+/// aimed entry - lands on the instrument's tick grid once the tick is known:
+/// B3 refuses an off-grid stop as "Invalid stops" (10016). The simulator
+/// keeps the tape's precision, and so does a broker with no tick known.
+#[test]
+fn a_broker_route_snaps_the_hand_to_the_instrument_tick() {
+    let (_desk, mut tabs, _script) = armed(TradeMode::Real);
+    let broker = tabs.active();
+    broker.seed(&print(0, 172_140));
+    assert_eq!(
+        broker.snap(172_140.82),
+        Decimal::from(172_141),
+        "no tick known: the tape's precision"
+    );
+    broker.set_price_tick(Some(Decimal::from(5)));
+    assert_eq!(broker.snap(172_140.82), Decimal::from(172_140), "a stop");
+    assert_eq!(broker.snap(172_207.6), Decimal::from(172_210), "a target");
+    assert_eq!(
+        broker.snap(172_142.5),
+        Decimal::from(172_140),
+        "half a tick"
+    );
+    broker.set_price_tick(None);
+    assert_eq!(broker.snap(172_140.82), Decimal::from(172_141));
+
+    let sim = tabs.accounts.get_mut(&2).expect("the paper tab");
+    sim.seed(&print(0, 172_140));
+    sim.set_price_tick(Some(Decimal::from(5)));
+    assert_eq!(sim.route_kind(), Route::Sim);
+    assert_eq!(
+        sim.snap(172_140.82),
+        Decimal::from(172_141),
+        "the simulator is unchanged"
+    );
+}
