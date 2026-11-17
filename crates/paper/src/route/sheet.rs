@@ -154,6 +154,17 @@ pub fn dock_title(tab: DockTab, sheet: Option<&Sheet>) -> &str {
 pub const NOTICE_LEAD: &str = "orders →";
 const SIMULATED: &str = "Simulated";
 
+/// The toast a disarm leaves: the route that was disarmed, why, and where
+/// orders go now - `REAL: no link with the broker - disarmed, orders now go
+/// to Simulated`.
+pub(super) fn disarm_toast(disarmed: Route, reason: Disarm) -> String {
+    format!(
+        "{}: {}, orders now go to {SIMULATED}",
+        disarmed.word(),
+        reason.sentence()
+    )
+}
+
 /// The broker row's hint while the venue waits for the terminal's account.
 const CONNECTING: &str = "connecting…";
 /// The broker row while no venue could be built (the port was taken).

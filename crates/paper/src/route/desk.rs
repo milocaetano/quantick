@@ -130,6 +130,7 @@ impl BrokerDesk {
     /// to the facts, and put the venue where the route wants it.
     pub fn frame(&mut self, port: &mut dyn AccountsPort, source: SourceFacts, now_ms: i64) {
         let before = self.route.last_disarm();
+        let was = self.route.route();
         // A held REAL row arms the frame its hold completes, as long as the
         // row reported itself still pressed since the last frame.
         if self.route.hold_progress(now_ms).is_some() {
@@ -150,7 +151,7 @@ impl BrokerDesk {
         if let Some((reason, _)) = self.route.last_disarm()
             && self.route.last_disarm() != before
         {
-            self.toast = Some(format!("{}: {}", Route::Sim.word(), reason.sentence()));
+            self.toast = Some(super::sheet::disarm_toast(was, reason));
         }
     }
 

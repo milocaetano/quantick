@@ -545,7 +545,7 @@ fn a_lost_link_with_a_position_parks_it_in_view_and_refuses_entries() {
     assert_eq!(desk.route().route(), Route::Sim);
     assert_eq!(
         desk.take_toast().as_deref(),
-        Some("SIM: no link with the broker - disarmed")
+        Some("REAL: no link with the broker - disarmed, orders now go to Simulated")
     );
     let account = tabs.active();
     assert!(!account.broker_routed());
@@ -1308,4 +1308,20 @@ fn a_broker_account_words_the_tickets_complaints_in_its_own_route() {
         Some("DEMO: quantity must be a positive number - got `lots`")
     );
     assert!(account.working_orders().is_empty(), "nothing was placed");
+}
+
+#[test]
+fn a_disarm_toast_names_the_route_that_was_disarmed() {
+    let (mut desk, mut tabs, _script) = armed(TradeMode::Demo);
+    let replay = SourceFacts {
+        broker_enabled: true,
+        source_routes: false,
+        replay: true,
+    };
+    desk.frame(&mut tabs, replay, 5_000);
+    assert_eq!(desk.route().route(), Route::Sim);
+    assert_eq!(
+        desk.take_toast().as_deref(),
+        Some("DEMO: this source does not route orders - disarmed, orders now go to Simulated")
+    );
 }
