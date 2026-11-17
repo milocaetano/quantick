@@ -1,8 +1,8 @@
 //! The OHLC magnet's two calls: the rail's (`annotate.magnet.set`) and one
 //! drawing's own (`annotate.drawing_magnet.set`), decided here beside
 //! `drawing_scope`, whose call docks with them. The window only lends the
-//! rail's switch ([`AnalysisPort`]) or the addressed pane
-//! ([`ChartPort::addressed_pane`]).
+//! rail's switch ([`RailMagnetPort`]) or the addressed pane
+//! ([`AddressedPanePort::addressed_pane`]).
 
 use quantick_control::annotation::ANNOTATE_MODULE_ID;
 use quantick_control::error::ControlError;
@@ -14,11 +14,16 @@ use quantick_drawings::{DrawingId, DrawingTool, Drawings};
 use serde_json::Value;
 
 use crate::JournalAccess;
-use crate::analysis::AnalysisPort;
-use crate::chart::ChartPort;
+use crate::axis_pane::AddressedPanePort;
 use crate::dock::ActionDock;
 use crate::drawing_scope;
 use crate::invalid;
+
+/// The drawing rail's magnet switch, owned by the tool rail.
+pub trait RailMagnetPort {
+    /// Turn the rail magnet on or off; answers whether it moved.
+    fn switch_rail_magnet(&mut self, on: bool) -> bool;
+}
 
 /// Dock the magnet's two calls and `annotate.drawing_scope.set`: the rail's
 /// switch, one drawing's own, the switch its context bar flips, and where
@@ -29,7 +34,7 @@ use crate::invalid;
 pub fn register<D, H, A>(registry: &mut D) -> Result<(), RegistryError>
 where
     D: ActionDock<H, A>,
-    H: AnalysisPort + ChartPort + ?Sized,
+    H: RailMagnetPort + AddressedPanePort + ?Sized,
     A: JournalAccess,
 {
     registry.register(rail_descriptor(), rail)?;
@@ -45,7 +50,7 @@ fn journal<'a, A: JournalAccess>(
     |kind, value| access.record_event(NewEvent::by(ANNOTATE_MODULE_ID, kind, actor, value))
 }
 
-fn rail<H: AnalysisPort + ?Sized, A: JournalAccess>(
+fn rail<H: RailMagnetPort + ?Sized, A: JournalAccess>(
     host: &mut H,
     access: &mut A,
     actor: &ActorContext,
@@ -58,7 +63,7 @@ fn rail<H: AnalysisPort + ?Sized, A: JournalAccess>(
     )
 }
 
-fn object<H: ChartPort + ?Sized, A: JournalAccess>(
+fn object<H: AddressedPanePort + ?Sized, A: JournalAccess>(
     host: &mut H,
     access: &mut A,
     actor: &ActorContext,
@@ -71,7 +76,7 @@ fn object<H: ChartPort + ?Sized, A: JournalAccess>(
     )
 }
 
-fn scope<H: ChartPort + ?Sized, A: JournalAccess>(
+fn scope<H: AddressedPanePort + ?Sized, A: JournalAccess>(
     host: &mut H,
     access: &mut A,
     actor: &ActorContext,

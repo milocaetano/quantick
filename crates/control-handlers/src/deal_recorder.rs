@@ -3,6 +3,19 @@
 //! [`crate::recovery::FeedRecoveryPort::deal_recorder`].
 use quantick_replay::recorder::{DealRecordingError, RecordingView};
 
+use crate::tabs::TabDirectory;
+
+/// The window's REC control: each tab's recorder and the record-by-default
+/// setting the REC menu keeps.
+pub trait DealRecordingPort: TabDirectory {
+    /// The deal recorder of the tab at `index`, the REC control's owner;
+    /// `None` when that tab is gone.
+    fn deal_recorder(&mut self, index: usize) -> Option<&mut dyn DealRecorder>;
+    /// Whether every market records by default, the setting the REC menu
+    /// keeps.
+    fn record_deals_by_default(&mut self, on: bool);
+}
+
 /// One tab's deal recorder, as the REC control acts on it. Its names differ
 /// from the tab's own methods, so an implementation that forwards to one
 /// cannot fall back on itself.

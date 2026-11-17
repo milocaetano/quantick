@@ -4,11 +4,14 @@
 
 use quantick_chart::style::ChartStyle;
 use quantick_control::{error::ControlError, wire::WireU64};
+use quantick_control_handlers::axis_pane::{AddressedPane, AddressedPanePort};
 pub(crate) use quantick_control_handlers::chart::chart_window_prevalidated;
 use quantick_control_handlers::chart::{
-    AddressedPane, ChartPaneEntry, ChartPaneSource, ChartPort, MissingPane, PaneFraming,
+    ChartPaneEntry, ChartPaneSource, ChartPort, MissingPane, PaneFraming,
 };
 use quantick_control_handlers::chart_layer::{LayerBlocked, LayerRead};
+use quantick_control_handlers::chart_settings::ChartSettingsPort;
+use quantick_control_handlers::layers::LayersPort;
 pub(crate) use quantick_control_schema::chart::*;
 use quantick_control_schema::chart_settings::{ChartSettingsInput, ChartSettingsResult};
 use quantick_control_schema::layers::LayerSnapshot;
@@ -53,40 +56,6 @@ impl ChartPort for dyn ControlPort {
         self.layout_state().bar_progress_on(tab_id)
     }
 
-    fn addressed_pane(
-        &mut self,
-        tab_id: WireU64,
-        pane_id: WireU64,
-    ) -> Result<&mut dyn AddressedPane, ControlError> {
-        Ok(super::addressed_pane::pane(self, tab_id, pane_id)?)
-    }
-
-    fn apply_chart_settings(
-        &mut self,
-        input: ChartSettingsInput,
-    ) -> Result<ChartSettingsResult, PresetError> {
-        self.layer_wiring().chart_settings(input)
-    }
-
-    fn chart_style(&self) -> &ChartStyle {
-        self.chrome_reads().style()
-    }
-
-    fn switch_chart_layer(&mut self, tab_id: u64, pane_id: u64, layer_id: &str, visible: bool) {
-        let reads = self.tab_reads();
-        let Some(index) = reads.tabs().position(tab_id) else {
-            return;
-        };
-        let found = reads
-            .tab_at(index)
-            .and_then(|tab| tab.panes().find(|(pane, _)| pane.id == pane_id));
-        let Some((pane, side)) = found else { return };
-        let Some(layer) = pane.layers.registry().resolve(layer_id) else {
-            return;
-        };
-        self.layer_wiring().set_visible(index, side, layer, visible);
-    }
-
     fn visit_chart_pane(
         &self,
         tab_id: u64,
@@ -107,6 +76,46 @@ impl ChartPort for dyn ControlPort {
         };
         visit(entry(tab_id, tab, side, &read, on_screen));
         Ok(())
+    }
+}
+
+impl AddressedPanePort for dyn ControlPort {
+    fn addressed_pane(
+        &mut self,
+        tab_id: WireU64,
+        pane_id: WireU64,
+    ) -> Result<&mut dyn AddressedPane, ControlError> {
+        Ok(super::addressed_pane::pane(self, tab_id, pane_id)?)
+    }
+}
+
+impl ChartSettingsPort for dyn ControlPort {
+    fn apply_chart_settings(
+        &mut self,
+        input: ChartSettingsInput,
+    ) -> Result<ChartSettingsResult, PresetError> {
+        self.layer_wiring().chart_settings(input)
+    }
+}
+
+impl LayersPort for dyn ControlPort {
+    fn chart_style(&self) -> &ChartStyle {
+        self.chrome_reads().style()
+    }
+
+    fn switch_chart_layer(&mut self, tab_id: u64, pane_id: u64, layer_id: &str, visible: bool) {
+        let reads = self.tab_reads();
+        let Some(index) = reads.tabs().position(tab_id) else {
+            return;
+        };
+        let found = reads
+            .tab_at(index)
+            .and_then(|tab| tab.panes().find(|(pane, _)| pane.id == pane_id));
+        let Some((pane, side)) = found else { return };
+        let Some(layer) = pane.layers.registry().resolve(layer_id) else {
+            return;
+        };
+        self.layer_wiring().set_visible(index, side, layer, visible);
     }
 }
 

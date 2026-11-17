@@ -15,7 +15,6 @@ use quantick_control_schema::chart_settings::{
 use serde_json::{Value, json};
 
 use crate::JournalAccess;
-use crate::chart::ChartPort;
 use crate::dock::ActionDock;
 use crate::invalid;
 use quantick_stores::candle_presets::PresetError;
@@ -186,13 +185,26 @@ pub fn apply(
 ///
 /// # Errors
 /// A capability already docked.
-pub fn register<D: ActionDock<H, A>, H: ChartPort + ?Sized, A: JournalAccess>(
+/// The chart settings window and its candle presets, through the owner the
+/// double click, the toolbar and the menus reach.
+pub trait ChartSettingsPort {
+    /// Apply `input` the way the window's own controls do.
+    ///
+    /// # Errors
+    /// A preset the store refuses.
+    fn apply_chart_settings(
+        &mut self,
+        input: ChartSettingsInput,
+    ) -> Result<ChartSettingsResult, PresetError>;
+}
+
+pub fn register<D: ActionDock<H, A>, H: ChartSettingsPort + ?Sized, A: JournalAccess>(
     registry: &mut D,
 ) -> Result<(), RegistryError> {
     registry.register(descriptor(), set)
 }
 
-fn set<H: ChartPort + ?Sized, A: JournalAccess>(
+fn set<H: ChartSettingsPort + ?Sized, A: JournalAccess>(
     host: &mut H,
     access: &mut A,
     actor: &ActorContext,

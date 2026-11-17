@@ -7,7 +7,8 @@ use quantick_control_handlers::{
     JournalAccess, TabDirectory,
     analysis::{AnalysisPane, AnalysisPaneEntry, AnalysisPort},
     attention::MarkPort,
-    deal_recorder::DealRecorder,
+    deal_recorder::{DealRecorder, DealRecordingPort},
+    drawing_magnet::RailMagnetPort,
     history::HistoryPort,
     journal_sessions::JournalSessionsPort,
     notify::AttentionPort,
@@ -114,6 +115,9 @@ impl FeedRecoveryPort for dyn ControlPort {
             respawned,
         })
     }
+}
+
+impl DealRecordingPort for dyn ControlPort {
     fn deal_recorder(&mut self, index: usize) -> Option<&mut dyn DealRecorder> {
         Some(self.tabs_mut().tab_with_config(index)?.0)
     }
@@ -251,12 +255,15 @@ impl AnalysisPane for ChartPane {
     }
 }
 
+impl RailMagnetPort for dyn ControlPort {
+    fn switch_rail_magnet(&mut self, on: bool) -> bool {
+        self.set_drawing_magnet(on)
+    }
+}
+
 impl AnalysisPort for dyn ControlPort {
     fn drawing_magnet(&self) -> bool {
         self.chrome_reads().tool_rail().magnet()
-    }
-    fn switch_rail_magnet(&mut self, on: bool) -> bool {
-        self.set_drawing_magnet(on)
     }
     fn visit_analysis_tabs(&self, visit: &mut dyn FnMut(u64, &[AnalysisPaneEntry<'_>])) {
         for (tab_id, tab) in self.tab_reads().tabs().iter_with_ids() {

@@ -29,7 +29,6 @@ use quantick_control_schema::recovery::{
 use quantick_sources::recovery::Recovery;
 use serde_json::{Value, json};
 
-use crate::deal_recorder::DealRecorder;
 use crate::dock::ActionDock;
 use crate::notify::NotifyAccess;
 use crate::tabs::{TabDirectory, tab_closed, tab_index};
@@ -50,12 +49,6 @@ pub trait FeedRecoveryPort: TabDirectory {
     /// Reconnect (`keep_timeline`) or reload the feed of the tab at `index`;
     /// `None` when that tab is gone.
     fn recover_feed(&mut self, index: usize, keep_timeline: bool) -> Option<RecoveredFeed>;
-    /// The deal recorder of the tab at `index`, the REC control's owner;
-    /// `None` when that tab is gone.
-    fn deal_recorder(&mut self, index: usize) -> Option<&mut dyn DealRecorder>;
-    /// Whether every market records by default, the setting the REC menu
-    /// keeps.
-    fn record_deals_by_default(&mut self, on: bool);
 }
 
 /// The capability a recovery control calls.

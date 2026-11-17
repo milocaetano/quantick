@@ -30,18 +30,19 @@ use crate::JournalAccess;
 use crate::analysis::{AnalysisPaneEntry, AnalysisPort};
 use crate::annotate::AnnotateAccess;
 use crate::attention::MarkPort;
-use crate::axis_pane::{AxisPane, NativeTape};
+use crate::axis_pane::{AddressedPane, AddressedPanePort, AxisPane, NativeTape};
 use crate::bubble_pane::{AssetSave, BubbleLook, BubblePane, PaneBubblesPort, TickSpherePane};
-use crate::chart::{
-    AddressedPane, ChartPaneEntry, ChartPaneSource, ChartPort, MissingPane, PaneFraming,
-};
+use crate::chart::{ChartPaneEntry, ChartPaneSource, ChartPort, MissingPane, PaneFraming};
 use crate::chart_layer::{LayerBlocked, LayerRead};
-use crate::deal_recorder::DealRecorder;
+use crate::chart_settings::ChartSettingsPort;
+use crate::deal_recorder::{DealRecorder, DealRecordingPort};
+use crate::drawing_magnet::RailMagnetPort;
 use crate::history::HistoryPort;
 use crate::indicator_host::{
     AttachedScript, IndicatorControlHost, IndicatorGuidePort, IndicatorOwner, IndicatorPickerPort,
     IndicatorRefusal, NativePort, ScriptEditorPort, ScriptsPort,
 };
+use crate::layers::LayersPort;
 use crate::notify::{AttentionPort, NotifyAccess};
 use crate::pane_marks::PaneMarks;
 use crate::recovery::{FeedRecoveryPort, RecoveredFeed};
@@ -710,6 +711,9 @@ impl FeedRecoveryPort for FakeWindow {
             respawned: tab.respawns,
         })
     }
+}
+
+impl DealRecordingPort for FakeWindow {
     fn deal_recorder(&mut self, index: usize) -> Option<&mut dyn DealRecorder> {
         Some(self.tabs.get_mut(index)?)
     }
@@ -744,10 +748,13 @@ impl AnalysisPort for FakeWindow {
     fn drawing_magnet(&self) -> bool {
         self.rail_magnet
     }
+    fn visit_analysis_tabs(&self, _visit: &mut dyn FnMut(u64, &[AnalysisPaneEntry<'_>])) {}
+}
+
+impl RailMagnetPort for FakeWindow {
     fn switch_rail_magnet(&mut self, on: bool) -> bool {
         std::mem::replace(&mut self.rail_magnet, on) != on
     }
-    fn visit_analysis_tabs(&self, _visit: &mut dyn FnMut(u64, &[AnalysisPaneEntry<'_>])) {}
 }
 
 impl HistoryPort for FakeWindow {
@@ -816,10 +823,7 @@ impl MarkPort for FakeWindow {
     }
 }
 
-impl ChartPort for FakeWindow {
-    fn price_tag_progress(&self, _tab_id: u64) -> bool {
-        true
-    }
+impl AddressedPanePort for FakeWindow {
     fn addressed_pane(
         &mut self,
         tab_id: WireU64,
@@ -827,6 +831,9 @@ impl ChartPort for FakeWindow {
     ) -> Result<&mut dyn AddressedPane, ControlError> {
         Ok(self.pane_mut(tab_id, pane_id)?)
     }
+}
+
+impl ChartSettingsPort for FakeWindow {
     fn apply_chart_settings(
         &mut self,
         input: ChartSettingsInput,
@@ -834,6 +841,9 @@ impl ChartPort for FakeWindow {
         self.settings_asked.push(input);
         self.chart_settings.clone()
     }
+}
+
+impl LayersPort for FakeWindow {
     fn chart_style(&self) -> &ChartStyle {
         &self.style
     }
@@ -849,6 +859,12 @@ impl ChartPort for FakeWindow {
         layer.requested = visible;
         self.layer_switches
             .push((pane_id, layer_id.to_owned(), visible));
+    }
+}
+
+impl ChartPort for FakeWindow {
+    fn price_tag_progress(&self, _tab_id: u64) -> bool {
+        true
     }
     fn visit_chart_panes(&self, visit: &mut dyn FnMut(ChartPaneEntry<'_>, PaneFraming)) {
         for (index, tab) in self.tabs.iter().enumerate() {

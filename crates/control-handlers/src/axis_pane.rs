@@ -1,14 +1,38 @@
 //! A chart pane's framing, as the axis calls act on it: the window resolves
-//! the addressed pane ([`crate::chart::ChartPort::addressed_pane`]), the pane
+//! the addressed pane ([`AddressedPanePort::addressed_pane`]), the pane
 //! frames its axes and its native tape frames itself. Its callers:
 //! `chart.price_axis.set` and `chart.tape_view.set` ([`crate::price_axis`])
 //! and `chart.time_axis.reset` ([`crate::time_axis`]). They take the same
 //! paths the axis gestures take, so the call and the hand cannot drift. The
 //! pane's marks are [`crate::pane_marks::PaneMarks`].
+use quantick_control::{error::ControlError, wire::WireU64};
 use quantick_control_schema::chart::ViewportSnapshot;
 use quantick_control_schema::tape_view::TapeViewSnapshot;
 use quantick_orderflow::LaneWindow;
 use quantick_orderflow::tape_view::TapeEnd;
+
+use crate::pane_marks::PaneMarks;
+
+/// A chart pane a call addresses: its framing ([`AxisPane`]) and its marks
+/// ([`PaneMarks`]), two roles the window lends in one resolution.
+pub trait AddressedPane: AxisPane + PaneMarks {}
+
+impl<T: AxisPane + PaneMarks + ?Sized> AddressedPane for T {}
+
+/// The window's panes, lent one at a time to a call that frames an axis or a
+/// tape, or changes a pane's marks.
+pub trait AddressedPanePort {
+    /// The pane `pane_id` on the tab `tab_id`, or the refusal naming the part
+    /// of the address that resolves to nothing.
+    ///
+    /// # Errors
+    /// An unknown tab or pane.
+    fn addressed_pane(
+        &mut self,
+        tab_id: WireU64,
+        pane_id: WireU64,
+    ) -> Result<&mut dyn AddressedPane, ControlError>;
+}
 
 /// A chart pane, as its axis and tape calls act on it. Its names
 /// differ from the pane's own methods, so an implementation that forwards to

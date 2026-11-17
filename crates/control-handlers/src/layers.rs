@@ -7,6 +7,7 @@
 //! which are switched on. What the scope bounds, which address a call names
 //! and the refusal when it names nothing, what is refused, what changed and
 //! what the journal keeps are decided here.
+use quantick_chart::style::ChartStyle;
 use quantick_control::{
     error::{ControlError, codes},
     id::{ErrorCode, ModuleId, SnapshotScopeId},
@@ -29,11 +30,25 @@ use crate::chart_layer::LayerRead;
 use crate::dock::{ActionDock, ProjectionDock};
 use crate::invalid;
 
+/// The chart's registered layers: the pane reads [`ChartPort`] lends, the
+/// shared style that holds the switches no pane owns alone, and the switch
+/// the pane's menu flips.
+pub trait LayersPort: ChartPort {
+    /// The window's shared chart style, which holds the switches of the
+    /// layers no pane owns alone, the grid among them.
+    fn chart_style(&self) -> &ChartStyle;
+    /// Switch the registered layer `layer_id` of pane `pane_id` on tab
+    /// `tab_id` the way the pane's menu does. The call has read the layer
+    /// through [`chart_layer`] first, so an address that no longer resolves
+    /// switches nothing.
+    fn switch_chart_layer(&mut self, tab_id: u64, pane_id: u64, layer_id: &str, visible: bool);
+}
+
 /// Dock `layers.visibility.set`.
 ///
 /// # Errors
 /// A capability already docked.
-pub fn register<D: ActionDock<H, A>, H: ChartPort + ?Sized, A: JournalAccess>(
+pub fn register<D: ActionDock<H, A>, H: LayersPort + ?Sized, A: JournalAccess>(
     registry: &mut D,
 ) -> Result<(), RegistryError> {
     registry.register(set_visibility_descriptor(), set_visibility)
@@ -46,7 +61,7 @@ pub fn register<D: ActionDock<H, A>, H: ChartPort + ?Sized, A: JournalAccess>(
 pub fn register_scope<D, H>(registry: &mut D) -> Result<(), ProjectionRegistryError>
 where
     D: ProjectionDock<H>,
-    H: ChartPort + ?Sized + 'static,
+    H: LayersPort + ?Sized + 'static,
 {
     let module = ModuleId::new(MODULE_ID).expect("static module ID");
     registry.register_module(
@@ -66,7 +81,7 @@ where
 /// Every pane's registered layers, tab by tab, hidden panes included. Past
 /// [`MAX_SNAPSHOT_PANES`] a pane is counted rather than listed: it can still
 /// be addressed by id.
-pub fn snapshot<H: ChartPort + ?Sized>(host: &H) -> LayersSnapshot {
+pub fn snapshot<H: LayersPort + ?Sized>(host: &H) -> LayersSnapshot {
     let mut panes = Vec::new();
     let mut omitted = 0;
     let style = host.chart_style();
@@ -87,7 +102,7 @@ pub fn snapshot<H: ChartPort + ?Sized>(host: &H) -> LayersSnapshot {
     }
 }
 
-fn project<H: ChartPort + ?Sized>(host: &H, _: CaptureContext) -> LayersSnapshot {
+fn project<H: LayersPort + ?Sized>(host: &H, _: CaptureContext) -> LayersSnapshot {
     snapshot(host)
 }
 
@@ -96,7 +111,7 @@ fn project<H: ChartPort + ?Sized>(host: &H, _: CaptureContext) -> LayersSnapshot
 ///
 /// # Errors
 /// An unknown tab, pane on that tab, or registered layer on that pane.
-pub fn chart_layer<H: ChartPort + ?Sized>(
+pub fn chart_layer<H: LayersPort + ?Sized>(
     host: &H,
     tab_id: WireU64,
     pane_id: WireU64,
@@ -117,7 +132,7 @@ pub fn chart_layer<H: ChartPort + ?Sized>(
     })
 }
 
-fn set_visibility<H: ChartPort + ?Sized, A: JournalAccess>(
+fn set_visibility<H: LayersPort + ?Sized, A: JournalAccess>(
     host: &mut H,
     access: &mut A,
     actor: &ActorContext,

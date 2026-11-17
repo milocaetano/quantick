@@ -7,7 +7,7 @@ use quantick_control_schema::time_axis::{
 };
 use serde_json::Value;
 
-use crate::chart::ChartPort;
+use crate::axis_pane::AddressedPanePort;
 use crate::dock::ActionDock;
 use crate::invalid;
 
@@ -15,7 +15,7 @@ use crate::invalid;
 ///
 /// # Errors
 /// A capability already docked.
-pub fn register<D: ActionDock<H, A>, H: ChartPort + ?Sized, A>(
+pub fn register<D: ActionDock<H, A>, H: AddressedPanePort + ?Sized, A>(
     registry: &mut D,
 ) -> Result<(), RegistryError> {
     registry.register(quantick_control_schema::time_axis::descriptor(), reset_time)
@@ -23,7 +23,7 @@ pub fn register<D: ActionDock<H, A>, H: ChartPort + ?Sized, A>(
 
 /// The gestures' own paths and eligibility, so the call and the clicks
 /// cannot drift.
-fn reset_time<H: ChartPort + ?Sized, A>(
+fn reset_time<H: AddressedPanePort + ?Sized, A>(
     host: &mut H,
     _access: &mut A,
     _actor: &ActorContext,
