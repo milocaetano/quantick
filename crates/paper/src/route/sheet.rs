@@ -9,7 +9,7 @@ use quantick_trading::{AccountFacts, BrokerVenue, LinkState};
 use quantick_workspace::dock::DockTab;
 
 use super::desk::{AccountsPort, BrokerDesk, RoutePress, SourceFacts};
-use super::{AccountRoute, Disarm, Refusal, Route};
+use super::{AccountRoute, Disarm, Leave, Refusal, Route};
 use crate::format::{fmt_decimal, position_word};
 
 /// The colour family a route wears. The window owns the pixels; the two
@@ -167,6 +167,17 @@ pub fn dock_title(tab: DockTab, sheet: Option<&Sheet>) -> &str {
         _ => tab.title(),
     }
 }
+
+/// What the panel asks when a broker route with exposure is left.
+pub const LEAVE_PROMPT: &str = "Orders are open at the broker. Leave how?";
+
+/// The answers to [`LEAVE_PROMPT`], in the order they are offered; `None`
+/// stays on the broker route.
+pub const LEAVE_CHOICES: [(&str, Option<Leave>); 3] = [
+    ("Flatten first", Some(Leave::FlattenFirst)),
+    ("Leave at broker", Some(Leave::LeaveAtBroker)),
+    ("Stay", None),
+];
 
 /// The notice's lead.
 pub const NOTICE_LEAD: &str = "orders →";
