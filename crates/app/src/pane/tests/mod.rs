@@ -12,6 +12,7 @@ mod pane_model_tests;
 
 use crate::drawings::StyleColor32;
 use eframe::egui;
+use quantick_drawings::DrawingScope;
 use rust_decimal::Decimal;
 
 use quantick_layers::{ChartLayer, LayerActions};
@@ -556,7 +557,7 @@ fn shared_mark_at(pane: &mut ChartPane, slot: usize, price: f64) {
     pane.drawings
         .selected_mut()
         .expect("placement selects what it completed")
-        .scope = drawings::DrawingScope::AllCharts;
+        .scope = DrawingScope::AllCharts;
 }
 
 /// The pane hands an edit from another pane to its marks through its own

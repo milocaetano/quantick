@@ -1,6 +1,6 @@
 use super::*;
-use crate::drawings::{DrawingId, DrawingScope, StyleColor32};
-use quantick_drawings::SavedDrawingExt;
+use crate::drawings::{DrawingId, StyleColor32};
+use quantick_drawings::{DrawingScope, SavedDrawingExt};
 use quantick_stores::layouts::save;
 use quantick_workspace::layout_document::{SavedBand, SavedDrawing, SavedPoint, parse};
 fn level(price: f64) -> SavedDrawing {

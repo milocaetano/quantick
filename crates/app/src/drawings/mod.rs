@@ -25,8 +25,6 @@ mod tool_tabs;
 mod headless_pin_tests;
 
 pub(crate) use geometry::{distance_to_segment, egui_rect, pos, px, px_rect};
-#[cfg(test)]
-pub(crate) use quantick_drawings::DrawingScope;
 #[cfg(any(feature = "drawing-harness", test))]
 pub(crate) use quantick_drawings::FrvpPayload;
 #[cfg(test)]

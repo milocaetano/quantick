@@ -3951,7 +3951,7 @@ fn observer_resolves_mirrored_drawings_without_leaking_user_text() {
     flow.drawings
         .selected_mut()
         .expect("selected drawing")
-        .scope = drawings::DrawingScope::AllCharts;
+        .scope = DrawingScope::AllCharts;
     app.active_tab_mut().link.notice = FeedNotice::attention(CANARY, CANARY);
     run_frame(&mut app, &ctx);
 

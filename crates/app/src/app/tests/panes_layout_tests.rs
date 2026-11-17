@@ -824,10 +824,10 @@ fn unsharing_removes_the_copy_from_the_other_pane() {
         .drawings
         .selected_mut()
         .expect("selected")
-        .scope = drawings::DrawingScope::AllCharts;
+        .scope = DrawingScope::AllCharts;
     let shared = drawing_strokes(&run_frame(&mut app, &ctx));
 
-    set_scope_on(&mut app, PaneSide::Flow, drawings::DrawingScope::ThisChart);
+    set_scope_on(&mut app, PaneSide::Flow, DrawingScope::ThisChart);
     let alone = drawing_strokes(&run_frame(&mut app, &ctx));
     assert!(
         alone < shared,
@@ -2094,7 +2094,7 @@ fn the_keyboard_deletes_from_the_focused_pane() {
             .arm(Tool::Drawing(drawing_tool("horizontal-line")));
         let point = pane_point(&app, side);
         click_chart(&mut app, &ctx, point);
-        set_scope_on(&mut app, side, drawings::DrawingScope::ThisChart);
+        set_scope_on(&mut app, side, DrawingScope::ThisChart);
     }
     run_frame(&mut app, &ctx);
     assert_eq!(app.active_tab().flow_pane.drawings.items().len(), 1);
@@ -2166,7 +2166,7 @@ fn a_mark_shows_on_a_pane_of_another_layout_only_with_all_windows_on() {
         .create_layout(Some("levels"))
         .expect("second");
     place_level(&mut app, time, 100.0);
-    set_scope_on(&mut app, time, drawings::DrawingScope::AllCharts);
+    set_scope_on(&mut app, time, DrawingScope::AllCharts);
     run_frame(&mut app, &ctx);
     let shown = |app: &QuantickApp| app.active_tab().pane(PaneSide::Flow).drawings.shown_count();
     assert_eq!(shown(&app), 0, "the flow pane shows another layout");
@@ -2199,7 +2199,7 @@ fn deleting_a_panes_layout_keeps_the_mark_it_has_selected() {
         .create_layout(Some("levels"))
         .expect("second");
     place_level(&mut app, time, 100.0);
-    set_scope_on(&mut app, time, drawings::DrawingScope::AllCharts);
+    set_scope_on(&mut app, time, DrawingScope::AllCharts);
     run_frame(&mut app, &ctx);
     app.active_tab_mut().pane_mut(time).drawings.select(Some(0));
 

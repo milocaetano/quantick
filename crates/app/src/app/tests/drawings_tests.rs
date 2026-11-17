@@ -2099,7 +2099,7 @@ fn a_shared_drawing_is_painted_on_the_other_pane_of_the_tab() {
             }
         },
     ));
-    pane.drawings.selected_mut().expect("just placed").scope = drawings::DrawingScope::ThisChart;
+    pane.drawings.selected_mut().expect("just placed").scope = DrawingScope::ThisChart;
 
     let own_pane_only = drawing_strokes(&run_frame(&mut app, &ctx));
     assert!(
@@ -2109,7 +2109,7 @@ fn a_shared_drawing_is_painted_on_the_other_pane_of_the_tab() {
 
     let drawing = app.active_tab().flow_pane.drawings.items();
     assert!(drawing[0].shareable(), "an anchor on a real bar has a time");
-    set_scope_on(&mut app, PaneSide::Flow, drawings::DrawingScope::AllCharts);
+    set_scope_on(&mut app, PaneSide::Flow, DrawingScope::AllCharts);
 
     let both_panes = drawing_strokes(&run_frame(&mut app, &ctx));
     assert!(
@@ -2282,7 +2282,7 @@ fn a_local_drag_of_a_shared_mark_carries_time_and_commits_one_undo() {
         .drawings
         .selected_mut()
         .expect("placed line")
-        .scope = drawings::DrawingScope::AllCharts;
+        .scope = DrawingScope::AllCharts;
     let start = canvas_point_clear_of_inspector(&mut app, &ctx, 300.0);
     let pane = &app.active_tab().flow_pane;
     let before = pane.drawings.items()[0].points[0];
@@ -3564,7 +3564,7 @@ fn the_context_bar_shares_a_drawing_across_charts_in_one_click() {
         .expect("a shareable drawing renders the all-charts button");
     assert_eq!(
         app.active_tab().flow_pane.drawings.items()[0].scope,
-        drawings::DrawingScope::ThisChart,
+        DrawingScope::ThisChart,
         "a new drawing is kept to its chart"
     );
     click_chart(&mut app, &ctx, sharing.center());
@@ -3572,7 +3572,7 @@ fn the_context_bar_shares_a_drawing_across_charts_in_one_click() {
 
     assert_eq!(
         app.active_tab().flow_pane.drawings.items()[0].scope,
-        drawings::DrawingScope::AllCharts
+        DrawingScope::AllCharts
     );
     assert!(
         !app.surfaces.drawing_chrome.inspector_open(),
@@ -3589,7 +3589,7 @@ fn the_context_bar_shares_a_drawing_across_charts_in_one_click() {
     run_frame(&mut app, &ctx);
     assert_eq!(
         app.active_tab().flow_pane.drawings.items()[0].scope,
-        drawings::DrawingScope::ThisChart
+        DrawingScope::ThisChart
     );
 }
 
@@ -4159,12 +4159,8 @@ fn a_context_chart_recut_to_other_bars_puts_its_level_away_until_it_returns() {
     let (mut app, _commands) = split_app(&ctx, 200);
     place_level(&mut app, PaneSide::Time(0), 100.0);
     place_level(&mut app, PaneSide::Flow, 50.0);
-    set_scope_on(
-        &mut app,
-        PaneSide::Time(0),
-        drawings::DrawingScope::ThisChart,
-    );
-    set_scope_on(&mut app, PaneSide::Flow, drawings::DrawingScope::ThisChart);
+    set_scope_on(&mut app, PaneSide::Time(0), DrawingScope::ThisChart);
+    set_scope_on(&mut app, PaneSide::Flow, DrawingScope::ThisChart);
     run_frame(&mut app, &ctx);
     let drawn_at = *app.active_tab().pane(PaneSide::Time(0)).series.state.spec();
 
@@ -4199,19 +4195,11 @@ fn an_edit_on_the_flow_chart_leaves_the_context_charts_undo() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = split_app(&ctx, 200);
     place_level(&mut app, PaneSide::Time(0), 100.0);
-    set_scope_on(
-        &mut app,
-        PaneSide::Time(0),
-        drawings::DrawingScope::AllCharts,
-    );
-    set_scope_on(
-        &mut app,
-        PaneSide::Time(0),
-        drawings::DrawingScope::ThisChart,
-    );
+    set_scope_on(&mut app, PaneSide::Time(0), DrawingScope::AllCharts);
+    set_scope_on(&mut app, PaneSide::Time(0), DrawingScope::ThisChart);
     run_frame(&mut app, &ctx);
     place_level(&mut app, PaneSide::Flow, 50.0);
-    set_scope_on(&mut app, PaneSide::Flow, drawings::DrawingScope::AllCharts);
+    set_scope_on(&mut app, PaneSide::Flow, DrawingScope::AllCharts);
     run_frame(&mut app, &ctx);
     assert_eq!(drawings_on(&app, PaneSide::Time(0)), vec![50.0, 100.0]);
 
@@ -4229,7 +4217,7 @@ fn an_edit_on_the_flow_chart_leaves_the_context_charts_undo() {
         .collect();
     assert_eq!(
         scopes,
-        [drawings::DrawingScope::AllCharts; 2],
+        [DrawingScope::AllCharts; 2],
         "the scope change made on the context chart is undone there"
     );
     assert_eq!(drawings_on(&app, PaneSide::Flow), vec![50.0, 100.0]);
@@ -4242,7 +4230,7 @@ fn a_flow_chart_recut_hides_a_mark_kept_to_it_until_it_returns() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = split_app(&ctx, 200);
     place_level(&mut app, PaneSide::Flow, 50.0);
-    set_scope_on(&mut app, PaneSide::Flow, drawings::DrawingScope::ThisChart);
+    set_scope_on(&mut app, PaneSide::Flow, DrawingScope::ThisChart);
     run_frame(&mut app, &ctx);
     let drawn_at = *app.active_tab().flow_pane.series.state.spec();
 
@@ -4270,7 +4258,7 @@ fn a_strategy_on_a_chart_only_mark_keeps_naming_it_when_another_chart_draws() {
     let drawing = armed_rectangle(&mut app, PaneSide::Time(0));
     run_frame(&mut app, &ctx);
     place_level(&mut app, PaneSide::Flow, 50.0);
-    set_scope_on(&mut app, PaneSide::Flow, drawings::DrawingScope::AllCharts);
+    set_scope_on(&mut app, PaneSide::Flow, DrawingScope::AllCharts);
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
 
@@ -4294,11 +4282,7 @@ fn a_level_drawn_on_one_timeframe_stays_on_every_other() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = split_app(&ctx, 200);
     place_level(&mut app, PaneSide::Time(0), 100.0);
-    set_scope_on(
-        &mut app,
-        PaneSide::Time(0),
-        drawings::DrawingScope::AllCharts,
-    );
+    set_scope_on(&mut app, PaneSide::Time(0), DrawingScope::AllCharts);
     run_frame(&mut app, &ctx);
     assert_eq!(drawings_on(&app, PaneSide::Flow), vec![100.0]);
 
@@ -4409,11 +4393,7 @@ points = [{ time_ms = 1000, price = 200.0, bar = 3.0 }]
     assert_eq!(drawings_on(&app, PaneSide::Time(1)), both);
 
     place_level(&mut app, PaneSide::Time(0), 300.0);
-    set_scope_on(
-        &mut app,
-        PaneSide::Time(0),
-        drawings::DrawingScope::ThisChart,
-    );
+    set_scope_on(&mut app, PaneSide::Time(0), DrawingScope::ThisChart);
     run_frame(&mut app, &ctx);
     let all = vec![100.0, 200.0, 300.0];
     assert_eq!(drawings_on(&app, PaneSide::Time(0)), all);
@@ -4757,11 +4737,7 @@ fn moving_a_context_chart_moves_its_drawings_and_slots_with_it() {
     app.apply_toolbar_action(ToolbarAction::AddNative("native.ema"));
     settle_indicators(&mut app);
     place_level(&mut app, PaneSide::Time(0), 100.0);
-    set_scope_on(
-        &mut app,
-        PaneSide::Time(0),
-        drawings::DrawingScope::ThisChart,
-    );
+    set_scope_on(&mut app, PaneSide::Time(0), DrawingScope::ThisChart);
     run_frame(&mut app, &ctx);
     let top_id = app.active_tab().pane(PaneSide::Time(0)).id;
 
@@ -4871,7 +4847,7 @@ fn an_inspector_edit_commits_on_the_pane_it_started_on() {
             .arm(Tool::Drawing(drawing_tool("horizontal-line")));
         let point = pane_point(&app, side);
         click_chart(&mut app, &ctx, point);
-        set_scope_on(&mut app, side, drawings::DrawingScope::ThisChart);
+        set_scope_on(&mut app, side, DrawingScope::ThisChart);
     }
     run_frame(&mut app, &ctx);
     let time_depth = app
