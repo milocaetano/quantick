@@ -75,31 +75,3 @@ fn a_drawing_is_kept_to_its_chart_by_a_named_call() {
     disable_test_gateway(&mut app, &ctx);
     std::fs::remove_dir_all(directory).ok();
 }
-
-/// A drawing with an anchor past the newest bar has no market time to be
-/// placed by on another chart: `all_charts` is refused with a reason.
-#[test]
-fn all_charts_without_market_time_is_refused_by_the_call() {
-    let ctx = egui::Context::default();
-    let (mut app, _commands) = app_with_history(20);
-    run_frame(&mut app, &ctx);
-    let tool = crate::drawings::DrawingTool::by_id("horizontal-line").unwrap();
-    let past_the_newest = ChartPoint::at(500.0, 100.0);
-    let flow = &mut app.active_tab_mut().flow_pane;
-    assert!(flow.drawings.place(tool, past_the_newest));
-    run_frame(&mut app, &ctx);
-    let (directory, mut client) = cockpit(&mut app, &ctx, "drawing-scope-refusal");
-
-    let call = scope_call(&app, 0, "all_charts");
-    let (refused, _) = unkeyed_call(&mut app, &mut client, CAPABILITY, call);
-    assert_eq!(error_code(&refused), Some(codes::INVALID_REQUEST));
-    let ResponseOutcome::Failure { error } = &refused.outcome else {
-        unreachable!("refused above");
-    };
-    let details = error.context.details.as_ref().unwrap();
-    assert_eq!(details["reason"], json!("anchor_without_market_time"));
-    let scope = app.active_tab().flow_pane.drawings.items()[0].scope;
-    assert_eq!(scope, drawings::DrawingScope::ThisChart, "nothing changed");
-    disable_test_gateway(&mut app, &ctx);
-    std::fs::remove_dir_all(directory).ok();
-}

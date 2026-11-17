@@ -292,7 +292,6 @@ pub(crate) fn effects(effects: DrawingChromeAsk) -> super::SurfaceResponse {
     }
     super::SurfaceResponse {
         model_effects: vec![quantick_ui_model::HostEffect::DrawingChrome(effects)],
-        ..Default::default()
     }
 }
 impl Chrome<'_> {

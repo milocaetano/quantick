@@ -253,7 +253,8 @@ pub(super) fn apply_alert_request(
 }
 
 /// After the dock: its bell opens the manager, another open dock tab closes
-/// it, and the manager takes its space before chart layout.
+/// it, and the manager reserves its space after the permanent right rail,
+/// before chart layout.
 pub(super) fn after_dock(app: &mut super::QuantickApp, ctx: &eframe::egui::Context, bell: bool) {
     if bell {
         app.apply_menu_command(super::menu_bar::MenuCommand::OpenAlerts);
@@ -261,7 +262,36 @@ pub(super) fn after_dock(app: &mut super::QuantickApp, ctx: &eframe::egui::Conte
     if app.surfaces.dock.tab().is_some() {
         app.surfaces.alerts.close_manager();
     }
-    draw_manager_panel(app, ctx);
+    if !app.surfaces.alerts.is_open() {
+        return;
+    }
+    let tab = &app.runtime.tabs[app.runtime.tabs.active_index()];
+    let context = context(
+        tab,
+        tab.pane(tab.focused_side()),
+        app.runtime.tabs.active_id(),
+        app.runtime.tz.minutes(),
+    );
+    let response = crate::surfaces::alerts::draw_manager_panel(
+        &mut app.surfaces.alerts,
+        ctx,
+        &app.runtime.alerts.core.book,
+        app.runtime.alerts.core.error.as_ref(),
+        Some(&context),
+    );
+    let late = quantick_ui_model::late_effects::LateEffects::fold(response.model_effects);
+    if let Some(mut request) = late.alerts
+        && let Some(command) = request.command.take()
+    {
+        let outcome = app
+            .runtime
+            .alerts
+            .core
+            .command(command, wall_clock_ms())
+            .map(|_| ())
+            .map_err(|error| format!("{error:?}"));
+        app.surfaces.alerts.settle_command(outcome);
+    }
 }
 
 /// The context bar's Create alert: open the editor on the resolved drawing.
@@ -285,38 +315,5 @@ pub(super) fn open_drawing_target(
             format!("Alert target unavailable: {error:?}"),
             now,
         ),
-    }
-}
-
-/// Reserve manager space after the permanent right rail, before chart layout.
-fn draw_manager_panel(app: &mut super::QuantickApp, ctx: &eframe::egui::Context) {
-    if !app.surfaces.alerts.is_open() {
-        return;
-    }
-    let tab = &app.runtime.tabs[app.runtime.tabs.active_index()];
-    let context = context(
-        tab,
-        tab.pane(tab.focused_side()),
-        app.runtime.tabs.active_id(),
-        app.runtime.tz.minutes(),
-    );
-    let mut response = crate::surfaces::alerts::draw_manager_panel(
-        &mut app.surfaces.alerts,
-        ctx,
-        &app.runtime.alerts.core.book,
-        app.runtime.alerts.core.error.as_ref(),
-        Some(&context),
-    );
-    if let Some(request) = response.alerts.as_mut()
-        && let Some(command) = request.command.take()
-    {
-        let outcome = app
-            .runtime
-            .alerts
-            .core
-            .command(command, wall_clock_ms())
-            .map(|_| ())
-            .map_err(|error| format!("{error:?}"));
-        app.surfaces.alerts.settle_command(outcome);
     }
 }

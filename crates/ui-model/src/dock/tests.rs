@@ -47,3 +47,28 @@ fn dock_intents_delegate_to_the_workspace_owner() {
         }
     }
 }
+
+#[test]
+fn paper_passes_merge_flags_and_keep_the_first_value() {
+    let mut first = PaperPanelEffects {
+        open_alerts: true,
+        navigate_to_trade: Some((1, 2)),
+        ..PaperPanelEffects::default()
+    };
+    first.merge(PaperPanelEffects {
+        close_replay: true,
+        navigate_to_trade: Some((3, 4)),
+        risk_settings_changed: true,
+        ..PaperPanelEffects::default()
+    });
+    assert_eq!(
+        first,
+        PaperPanelEffects {
+            open_alerts: true,
+            close_replay: true,
+            navigate_to_trade: Some((1, 2)),
+            risk_settings_changed: true,
+            ..PaperPanelEffects::default()
+        }
+    );
+}

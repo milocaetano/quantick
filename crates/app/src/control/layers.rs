@@ -1,28 +1,26 @@
-//! Layer discovery and visibility actions over the same catalog used by pane menus.
+//! Layer discovery over the same catalog the pane menus use, and the pane
+//! and layer `layers.visibility.set` names, read and switched as those menus
+//! do; the call itself is `quantick_control_handlers::layers`.
 
 pub(crate) use quantick_control_schema::layers::*;
 
 use super::{
-    actions::ActionRegistry,
-    gateway::ControlAccess,
-    journal::NewEvent,
     layout::{self, TabTarget},
     registry::{CaptureContext, ProjectionRegistry, ProjectionRegistryError},
 };
 
 use crate::app::{ChromePort, LayersPort, TabsPort};
-use crate::pane::ChartPane;
+use crate::pane::{ChartPane, PaneSide};
 
 use quantick_control::{
-    error::{ControlError, codes},
-    id::{ErrorCode, ModuleId, SnapshotScopeId},
-    registry::{ModuleDescriptor, RegistryError},
-    wire::{ActorContext, WireU64},
+    error::ControlError,
+    id::{ModuleId, SnapshotScopeId},
+    registry::ModuleDescriptor,
+    wire::WireU64,
 };
+use quantick_control_handlers::chart_layer::{LayerBlocked, LayerRead};
 
 use quantick_layers::ChartLayer;
-
-use serde_json::Value;
 
 fn read_layer<P: TabsPort + ChromePort + ?Sized>(
     app: &P,
@@ -86,70 +84,66 @@ pub(crate) fn register(registry: &mut ProjectionRegistry) -> Result<(), Projecti
         &["observe", "observe.workspace", "observe.market"], project)
 }
 
-pub(crate) fn register_action(registry: &mut ActionRegistry) -> Result<(), RegistryError> {
-    registry.register(set_visibility_descriptor(), set_visibility)
-}
-
-fn set_visibility<P: TabsPort + ChromePort + LayersPort + ?Sized>(
-    app: &mut P,
-    access: &mut ControlAccess,
-    actor: &ActorContext,
-    value: &Value,
-) -> Result<Value, ControlError> {
-    let input: SetVisibilityInput = serde_json::from_value(value.clone())
-        .map_err(|error| ControlError::invalid_request(error.to_string()))?;
-    let index = layout::tab_index(
-        app,
-        TabTarget {
-            tab_id: Some(input.tab_id),
-        },
-    )?;
+/// Which pane and which registered layer a layer call names: the tab's
+/// position, the pane's side and the layer, refused in the call's words.
+fn resolve<P: TabsPort + ?Sized>(
+    app: &P,
+    tab_id: WireU64,
+    pane_id: WireU64,
+    layer_id: &str,
+) -> Result<(usize, PaneSide, ChartLayer), ControlError> {
+    let tab_id = Some(tab_id);
+    let index = layout::tab_index(app, TabTarget { tab_id })?;
     let tab = app
         .tab_reads()
         .tab_at(index)
         .ok_or_else(|| ControlError::invalid_request("the tab closed"))?;
     let (pane, side) = tab
         .panes()
-        .find(|(pane, _)| pane.id == input.pane_id.get())
+        .find(|(pane, _)| pane.id == pane_id.get())
         .ok_or_else(|| {
             ControlError::invalid_request(
                 "layer visibility names an unknown pane on the requested tab",
             )
         })?;
-    let layer = pane
-        .layers
-        .registry()
-        .resolve(&input.layer_id)
-        .ok_or_else(|| {
-            ControlError::invalid_request("layer visibility names an unknown registered layer")
-        })?;
-    if let Some(blocked) = pane.layer_blocked(layer, tab.capabilities(app.tab_reads().config())) {
-        let mut error = ControlError::new(
-            ErrorCode::new(codes::CAPABILITY_UNAVAILABLE).expect("static error code"),
-            blocked.explanation,
-            false,
-        );
-        error.context.details = Some(serde_json::json!({ "reason": blocked.code }));
-        return Err(error);
-    }
-    let before = pane.layer_switched_on(layer, app.chrome_reads().style());
-    app.layer_wiring()
-        .set_visible(index, side, layer, input.visible);
-    let tab = app
-        .tab_reads()
+    let layer = pane.layers.registry().resolve(layer_id).ok_or_else(|| {
+        ControlError::invalid_request("layer visibility names an unknown registered layer")
+    })?;
+    Ok((index, side, layer))
+}
+
+/// The layer a call names, as the pane's menu reads it.
+pub(super) fn chart_layer<P: TabsPort + ChromePort + ?Sized>(
+    app: &P,
+    tab_id: WireU64,
+    pane_id: WireU64,
+    layer_id: &str,
+) -> Result<LayerRead, ControlError> {
+    let (index, side, layer) = resolve(app, tab_id, pane_id, layer_id)?;
+    let reads = app.tab_reads();
+    let tab = reads
         .tab_at(index)
         .ok_or_else(|| ControlError::invalid_request("the tab closed"))?;
     let pane = tab.pane(side);
-    let result = serde_json::to_value(VisibilityResult {
-        tab_id: input.tab_id,
-        pane_id: input.pane_id,
+    let blocked = pane.layer_blocked(layer, tab.capabilities(reads.config()));
+    Ok(LayerRead {
         layer: read_layer(app, tab, pane, layer),
-        changed: before != pane.layer_switched_on(layer, app.chrome_reads().style()),
+        blocked: blocked.map(|blocked| LayerBlocked {
+            code: blocked.code,
+            explanation: blocked.explanation,
+        }),
     })
-    .map_err(|error| ControlError::invalid_request(error.to_string()))?;
-    // Every admitted application, including a no-op, has a bounded readback.
-    // The idempotency host replays keyed answers without reaching this point.
-    let payload = serde_json::json!({ "connection_id": actor.connection_id, "request_id": actor.request_id, "result": result });
-    access.append_event(NewEvent::by(MODULE_ID, EVENT_KIND, actor, payload));
-    Ok(result)
+}
+
+/// Switch the layer a call names the way the pane's menu does.
+pub(super) fn switch_chart_layer<P: TabsPort + LayersPort + ?Sized>(
+    app: &mut P,
+    tab_id: WireU64,
+    pane_id: WireU64,
+    layer_id: &str,
+    visible: bool,
+) -> Result<(), ControlError> {
+    let (index, side, layer) = resolve(app, tab_id, pane_id, layer_id)?;
+    app.layer_wiring().set_visible(index, side, layer, visible);
+    Ok(())
 }

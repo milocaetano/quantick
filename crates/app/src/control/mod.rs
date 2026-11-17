@@ -6,9 +6,9 @@
 //! the local gateway workers.
 
 mod actions;
+mod addressed_pane;
 mod annotate;
 pub(crate) mod chart;
-mod chart_settings;
 mod contract;
 mod deal_recording;
 mod drawing_magnet;
@@ -22,9 +22,7 @@ mod indicator_picker;
 mod interaction;
 pub(crate) mod inventory;
 mod native_indicator;
-mod price_axis;
 mod price_tag_progress;
-mod time_axis;
 // Moved to `quantick-control-host`; named here so `super::journal` resolves.
 use quantick_control_host::journal;
 mod layers;

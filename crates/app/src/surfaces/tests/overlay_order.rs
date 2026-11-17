@@ -188,12 +188,16 @@ fn leading_effect_wins_and_real_toast_undo_survives_the_same_overlay_fold() {
             ..Default::default()
         },
         |effect| SurfaceResponse {
-            model_effects: vec![HostEffect::First(effect)],
-            test_alert: Some(crate::audio::Cue::new(
-                crate::audio::AlertSound::default(),
-                Some(1),
-            )),
-            ..Default::default()
+            model_effects: vec![
+                HostEffect::First(effect),
+                HostEffect::StrategyPopup(quantick_ui_model::strategy_popup::Effects {
+                    test_alert: Some(crate::audio::Cue::new(
+                        crate::audio::AlertSound::default(),
+                        Some(1),
+                    )),
+                    ..Default::default()
+                }),
+            ],
         },
     )
     .in_slots(&[Slot::LeadingOverlay, Slot::Overlay]);
@@ -203,12 +207,16 @@ fn leading_effect_wins_and_real_toast_undo_survives_the_same_overlay_fold() {
             ..Default::default()
         },
         |effect| SurfaceResponse {
-            model_effects: vec![HostEffect::Second(effect)],
-            test_alert: Some(crate::audio::Cue::new(
-                crate::audio::AlertSound::default(),
-                Some(2),
-            )),
-            ..Default::default()
+            model_effects: vec![
+                HostEffect::Second(effect),
+                HostEffect::StrategyPopup(quantick_ui_model::strategy_popup::Effects {
+                    test_alert: Some(crate::audio::Cue::new(
+                        crate::audio::AlertSound::default(),
+                        Some(2),
+                    )),
+                    ..Default::default()
+                }),
+            ],
         },
     )
     .in_slots(&[Slot::Overlay]);
@@ -275,15 +283,17 @@ fn leading_effect_wins_and_real_toast_undo_survives_the_same_overlay_fold() {
         response.undo_drawing(),
         "actual toast effect survives between model passes"
     );
+    let (auditions, fixtures): (Vec<_>, Vec<_>) = (response.model_effects.into_iter())
+        .partition(|effect| matches!(effect, HostEffect::StrategyPopup(_)));
     assert_eq!(
-        response.test_alert,
+        quantick_ui_model::late_effects::LateEffects::fold(auditions).test_alert,
         Some(crate::audio::Cue::new(
             crate::audio::AlertSound::default(),
             Some(1)
         ))
     );
     assert_eq!(
-        response.model_effects,
+        fixtures,
         vec![
             HostEffect::First((5, 10)),
             HostEffect::Toast(quantick_ui_model::toast::Effects { undo_drawing: true }),

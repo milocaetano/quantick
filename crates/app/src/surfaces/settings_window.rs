@@ -92,7 +92,6 @@ pub(crate) fn effects(effects: Effects) -> SurfaceResponse {
         (effects != Effects::default()).then_some(HostEffect::SettingsWindow(effects));
     SurfaceResponse {
         model_effects: model_effects.into_iter().collect(),
-        ..Default::default()
     }
 }
 

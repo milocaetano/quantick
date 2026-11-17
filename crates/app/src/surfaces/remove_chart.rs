@@ -22,7 +22,6 @@ impl super::View<Model> for View {
 pub(crate) fn effects(answer: Effects) -> super::SurfaceResponse {
     super::SurfaceResponse {
         model_effects: vec![super::HostEffect::RemoveChart(answer)],
-        ..Default::default()
     }
 }
 

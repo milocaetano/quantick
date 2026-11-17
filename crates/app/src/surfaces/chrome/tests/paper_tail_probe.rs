@@ -37,17 +37,14 @@ impl crate::surfaces::View<Model> for View {
     }
 }
 pub(crate) fn effects(effects: Effects) -> SurfaceResponse {
-    SurfaceResponse {
-        paper_panel: effects.navigate.map(|navigate| {
-            Box::new(PaperPanelEffects {
-                navigate_to_trade: Some(navigate),
-                ..Default::default()
-            })
-        }),
-        model_effects: crate::surfaces::toast::effects(quantick_ui_model::toast::Effects {
-            undo_drawing: effects.mixed,
-        })
-        .model_effects,
+    let mut response = crate::surfaces::dock::paper_effects(PaperPanelEffects {
+        navigate_to_trade: effects.navigate,
         ..Default::default()
-    }
+    });
+    response.merge(crate::surfaces::toast::effects(
+        quantick_ui_model::toast::Effects {
+            undo_drawing: effects.mixed,
+        },
+    ));
+    response
 }
