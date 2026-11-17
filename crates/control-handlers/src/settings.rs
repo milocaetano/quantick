@@ -78,14 +78,14 @@ impl From<SettingsReadings> for SettingsResult {
 /// The offset `minutes` names, when the Timezone row offers it.
 ///
 /// # Errors
-/// An offset the row does not list.
-pub fn offered_zone(minutes: i32) -> Result<TzOffset, String> {
+/// An offset the row does not list, as an invalid request.
+pub fn offered_zone(minutes: i32) -> Result<TzOffset, ControlError> {
     let zone = TzOffset::new(minutes);
     if TzOffset::ALL.contains(&zone) {
         return Ok(zone);
     }
-    Err(format!(
+    Err(ControlError::invalid_request(format!(
         "{minutes} is not an offset the Timezone row offers; it lists the standard zones \
          from -720 to 840 minutes east of UTC"
-    ))
+    )))
 }

@@ -146,10 +146,12 @@ fn set_settings<H: DeskHost + ?Sized, A>(
     value: &Value,
 ) -> Result<Value, ControlError> {
     let asked: SettingsSetInput = input(value)?;
-    let zone = asked.timezone_offset_minutes.map(offered_zone).transpose();
+    let zone = asked
+        .timezone_offset_minutes
+        .map(offered_zone)
+        .transpose()?;
     let acts = [
-        zone.map_err(ControlError::invalid_request)?
-            .map(SettingsAct::Timezone),
+        zone.map(SettingsAct::Timezone),
         asked.perf_readings.map(SettingsAct::PerfReadings),
         asked
             .progressive_history
