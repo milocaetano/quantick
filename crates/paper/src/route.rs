@@ -16,8 +16,8 @@
 //!   the simulator - leaving the broker's exposure where it is, unless the
 //!   config allows agent orders; arming DEMO or REAL from it is refused with
 //!   a code, and its broker orders are refused unless the config allows them
-//!   and the route is armed. What the trader left at the broker answers his
-//!   hand alone.
+//!   and the route is armed. What the trader left at the broker answers the
+//!   trader's hand alone.
 //! - **Leaving never hides money.** Going back to the simulator with a
 //!   position or orders at the broker asks first: flatten them, or leave them
 //!   there (their plates stay on the chart).
