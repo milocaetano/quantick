@@ -53,6 +53,25 @@ pub fn kind_word(kind: EntryKind) -> &'static str {
     }
 }
 
+/// The aim's words before the click: `BUY limit 1`, led by the route's
+/// word on a broker (`REAL BUY limit 1`) so a held key never aims at a
+/// broker account without saying so. `?` while the size does not parse.
+#[must_use]
+pub fn aim_label(
+    route: crate::route::Route,
+    side: Side,
+    kind: EntryKind,
+    quantity: Option<Decimal>,
+) -> String {
+    let quantity = quantity.map_or_else(|| "?".to_owned(), fmt_decimal);
+    let words = format!("{} {} {quantity}", side_word_upper(side), kind_word(kind));
+    if route.is_broker() {
+        format!("{} {words}", route.word())
+    } else {
+        words
+    }
+}
+
 /// Three-letter order kind for the compact chart tags (`LMT`, `STP`, `MKT`).
 pub fn kind_short(kind: EntryKind) -> &'static str {
     match kind {

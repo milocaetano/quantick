@@ -1060,6 +1060,7 @@ fn a_new_row_takes_what_is_left_or_halves_the_last() {
 fn a_leg_tag_says_what_it_is_and_what_it_is_worth() {
     let mut paint = LegPaint {
         owner: BracketTarget::Position,
+        owner_ref: None,
         leg: Leg::StopLoss,
         side: Side::Buy,
         reference: Decimal::from(100),
@@ -1100,6 +1101,7 @@ fn a_leg_tag_says_what_it_is_and_what_it_is_worth() {
 fn a_leg_tag_reads_the_figure_the_ticket_leads_with() {
     let paint = LegPaint {
         owner: BracketTarget::Position,
+        owner_ref: None,
         leg: Leg::StopLoss,
         side: Side::Buy,
         reference: Decimal::from(100),

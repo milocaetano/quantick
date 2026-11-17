@@ -34,6 +34,7 @@ pub mod order_strategies;
 pub mod pnl;
 pub mod report;
 pub mod risk_sizing;
+pub mod route;
 pub mod state;
 
 #[cfg(test)]
