@@ -60,6 +60,7 @@ pub mod tick_bubbles;
 pub mod time_axis;
 pub mod trace_replay;
 pub mod trade;
+pub mod trade_account;
 pub mod widget;
 pub mod window_menu;
 pub mod workspace;

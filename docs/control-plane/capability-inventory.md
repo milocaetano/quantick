@@ -167,6 +167,9 @@ capability that cannot change application state.
 | `tab.close` | 1 | `tab` | no | `cockpit`, `cockpit.desk` |
 | `tab.market.set` | 1 | `tab` | no | `cockpit`, `cockpit.recover` |
 | `tab.workspace.set` | 1 | `tab` | no | `cockpit`, `cockpit.layout` |
+| `trade.account.disarm` | 1 | `trade` | no | `trade` |
+| `trade.account.read` | 1 | `trade` | yes | `observe`, `observe.paper` |
+| `trade.account.select` | 1 | `trade` | no | `trade` |
 | `trade.instrument.set_money` | 1 | `trade` | no | `trade` |
 | `trade.order.bracket` | 1 | `trade` | no | `trade` |
 | `trade.order.cancel` | 1 | `trade` | no | `trade` |
@@ -193,4 +196,4 @@ capability that cannot change application state.
 | `workspace.save_as` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
 | `workspace.save_to` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
 
-168 capabilities registered.
+171 capabilities registered.

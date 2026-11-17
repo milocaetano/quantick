@@ -75,6 +75,18 @@ pub struct TradeBar {
     pub close: Option<String>,
     /// What the reverse button does, ending in its shortcut.
     pub reverse_hover: String,
+    /// The read-only `orders → <account>` notice beside the group, while
+    /// broker routes are offered; `None` paints nothing.
+    pub notice: Option<crate::route::RouteNotice>,
+}
+
+impl TradeBar {
+    /// The group with the route's notice beside it.
+    #[must_use]
+    pub fn with_notice(mut self, notice: Option<crate::route::RouteNotice>) -> Self {
+        self.notice = notice;
+        self
+    }
 }
 
 impl Desk {
@@ -87,7 +99,18 @@ impl Desk {
         let quantity = state
             .derived_quantity()
             .or_else(|| self.ticket.quantity_preview());
-        let blocked = if !account.ready() {
+        // A broker shown but not routed holds exposure the trader left
+        // there: no entry until it is closed or the account is armed again.
+        let broker_block = match account.broker() {
+            Some(_) if account.broker_shown() && !account.broker_routed() => {
+                Some(crate::account::PARKED_ENTRY_BLOCK)
+            }
+            Some(broker) if account.broker_routed() => broker.entry_block(),
+            _ => None,
+        };
+        let blocked = if let Some(block) = broker_block {
+            Some(block.to_owned())
+        } else if !account.ready() {
             Some(NO_MARKET_YET.to_owned())
         } else if locked {
             Some(format!("the risk lock is on - {}", state.sentence()))
@@ -115,6 +138,7 @@ impl Desk {
                 "reverse the open simulated position: one market order closes it and opens the \
                  same size the other way at the next print · {reverse_key}"
             ),
+            notice: None,
         }
     }
 }

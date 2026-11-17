@@ -291,7 +291,12 @@ fn paint_chip_face(
         left + face.tag..=left + face.tag + face.tag_width,
         egui::Rangef::point(y).expand(face_layout::TAG_HEIGHT_PT / 2.0),
     );
-    let muted = palette.text_muted();
+    let mut muted = palette.text_muted();
+    // Filled in the route's colour while the tab's orders go to a broker.
+    if let Some([r, g, b]) = chip.tag_fill {
+        painter.rect_filled(tag, 3.0, egui::Color32::from_rgb(r, g, b));
+        muted = egui::Color32::WHITE;
+    }
     painter.rect_stroke(tag.shrink(0.5), 3.0, (1.0, muted));
     let code = laid(ui, &chip.venue_code, face_layout::TAG_TEXT_PT);
     let x = face.tag + face_layout::TAG_PADDING_PT;

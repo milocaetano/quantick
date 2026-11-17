@@ -47,6 +47,18 @@ pub enum Dot {
     Hollow,
 }
 
+impl Dot {
+    /// The mark as text, with the space that follows it.
+    #[must_use]
+    pub const fn mark(self) -> &'static str {
+        match self {
+            Self::None => "",
+            Self::Up => "● ",
+            Self::Hollow => "○ ",
+        }
+    }
+}
+
 /// The toolbar's read-only notice: `orders → XP 51234567 · REAL`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RouteNotice {
@@ -107,18 +119,20 @@ pub struct Sheet {
     pub footer: Option<String>,
     /// A leave with exposure waits for the trader's choice.
     pub leave_prompt: bool,
+    /// The account list is open.
+    pub open: bool,
     /// The status line's words while a broker account is shown without a
     /// link: `no link with the broker for 14 s · disarmed`.
     pub status: Option<String>,
 }
 
-/// What the sheet reads from the ticket for the REAL row's facts.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct TicketFacts<'a> {
-    pub symbol: &'a str,
-    /// What one point is worth, as the ticket shows it (`0.20 BRL/pt`).
-    pub point_value: Option<&'a str>,
-    pub quantity: Option<Decimal>,
+/// What the REAL row says about the next order: the instrument, what one
+/// point of it is worth (`0.20 BRL/pt`) and the size the ticket holds.
+#[derive(Debug, Clone, Default)]
+struct TicketFacts {
+    symbol: String,
+    point_value: Option<String>,
+    quantity: Option<Decimal>,
 }
 
 /// The panel title for the simulator.
@@ -126,17 +140,38 @@ pub const SIM_TITLE: &str = "PAPER TRADING · SIM";
 /// The notice's lead.
 pub const NOTICE_LEAD: &str = "orders →";
 const SIMULATED: &str = "Simulated";
+/// The broker row's hint while the venue waits for the terminal's account.
+const CONNECTING: &str = "connecting…";
+/// The broker row while no venue could be built (the port was taken).
+const NOT_CONNECTED: &str = "not connected";
 
 impl BrokerDesk {
-    /// The words and tones for this frame.
+    /// The words and tones for this frame. `quantity` is the size the
+    /// ticket would send; the instrument is the active chart's.
     #[must_use]
     pub fn sheet(
         &self,
         port: &dyn AccountsPort,
         source: SourceFacts,
-        ticket: TicketFacts<'_>,
+        quantity: Option<Decimal>,
         now_ms: i64,
     ) -> Sheet {
+        let active = port.account(port.active_tab());
+        let ticket = TicketFacts {
+            symbol: active
+                .map(|account| account.symbol().to_owned())
+                .unwrap_or_default(),
+            point_value: active
+                .and_then(crate::PaperAccount::symbol_money)
+                .map(|money| {
+                    format!(
+                        "{} {}/pt",
+                        money_text(money.point_value),
+                        money.currency.code()
+                    )
+                }),
+            quantity,
+        };
         let route = self.route();
         let facts = self.facts(port, source);
         let venue = self.venue(port);
@@ -198,7 +233,7 @@ impl BrokerDesk {
             .then(|| route.last_disarm())
             .flatten()
             .map(|(reason, at)| lost_status(reason, at, now_ms));
-        let (rows, footer) = rows(route, &facts, source, venue, ticket, now_ms);
+        let (rows, footer) = rows(route, &facts, source, venue, &ticket, now_ms);
         Sheet {
             title,
             tone,
@@ -214,6 +249,7 @@ impl BrokerDesk {
             rows,
             footer,
             leave_prompt: route.leaving(),
+            open: self.sheet_open || route.leaving(),
             status,
         }
     }
@@ -240,7 +276,7 @@ fn rows(
     facts: &super::RouteFacts,
     source: SourceFacts,
     venue: Option<&dyn BrokerVenue>,
-    ticket: TicketFacts<'_>,
+    ticket: &TicketFacts,
     now_ms: i64,
 ) -> (Vec<AccountRow>, Option<String>) {
     let on_sim = route.route() == Route::Sim;
@@ -265,13 +301,19 @@ fn rows(
         return (rows, None);
     }
     let Some(account) = venue.and_then(BrokerVenue::account) else {
-        let waiting = match venue.map(BrokerVenue::link_state) {
-            Some(LinkState::Lost) => "no link with the execution bridge",
-            _ => "waiting for the execution bridge",
+        // The list opening is what builds the venue: until the terminal has
+        // said which account it holds, the row is connecting.
+        let (hint, waiting) = match venue.map(BrokerVenue::link_state) {
+            None => ("", NOT_CONNECTED),
+            Some(LinkState::Lost) => ("", "no link with the execution bridge"),
+            Some(_) => (
+                CONNECTING,
+                "connecting to the terminal through the execution bridge",
+            ),
         };
         rows.push(AccountRow {
             title: "MetaTrader 5".to_owned(),
-            hint: String::new(),
+            hint: hint.to_owned(),
             subs: vec![waiting.to_owned()],
             state: RowState::Off,
             tone: RouteTone::Locked,
@@ -324,7 +366,7 @@ fn rows(
 fn balance_line(account: &AccountFacts, kind: Route) -> String {
     let balance = account.balance.map_or_else(
         || "balance unknown".to_owned(),
-        |balance| format!("balance {} {}", fmt_decimal(balance), account.currency),
+        |balance| format!("balance {} {}", money_text(balance), account.currency),
     );
     if kind == Route::Real {
         format!("real money · {balance}")
@@ -336,9 +378,9 @@ fn balance_line(account: &AccountFacts, kind: Route) -> String {
 /// What the REAL row adds while it is held or in use: the instrument and
 /// size the next order takes, who else holds the symbol, and where the
 /// protection lives.
-fn real_facts(venue: Option<&dyn BrokerVenue>, ticket: TicketFacts<'_>) -> Vec<String> {
-    let mut instrument = ticket.symbol.to_owned();
-    if let Some(value) = ticket.point_value {
+fn real_facts(venue: Option<&dyn BrokerVenue>, ticket: &TicketFacts) -> Vec<String> {
+    let mut instrument = ticket.symbol.clone();
+    if let Some(value) = &ticket.point_value {
         instrument.push_str(&format!(" · {value}"));
     }
     if let Some(quantity) = ticket.quantity {
@@ -370,6 +412,11 @@ fn real_facts(venue: Option<&dyn BrokerVenue>, ticket: TicketFacts<'_>) -> Vec<S
         format!("you: {own} · other robots: {others}"),
         "Stop and target rest on the server.".to_owned(),
     ]
+}
+
+/// Money as a broker statement writes it: two places, `12340.00`.
+fn money_text(amount: Decimal) -> String {
+    format!("{:.2}", amount.round_dp(2))
 }
 
 fn plural(count: usize, word: &str) -> String {

@@ -24,6 +24,10 @@ quantick-sources = { path = "../sources" }
 quantick-feed-binance = { path = "../feed-binance" }
 quantick-feed-hyperliquid = { path = "../feed-hyperliquid" }
 quantick-feed-mt5 = { path = "../feed-mt5" }
+# The MetaTrader broker venue, built here behind the route's connector port
+# (`mt5_bridge::exec::Mt5Connector`) beside the bridge process it needs.
+quantick-broker-mt5 = { path = "../broker-mt5" }
+quantick-trading = { path = "../trading" }
 # The async runtimes and the background threads live at this level of the
 # graph, never below it. See `README.md`.
 tokio = { workspace = true }

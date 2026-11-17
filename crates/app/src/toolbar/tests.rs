@@ -435,6 +435,7 @@ fn flat_trade(ready: bool) -> PaperTradeModel {
         sell: texts("SELL 1", "simulated market sell"),
         close: None,
         reverse_hover: "reverse · Shift+R".to_owned(),
+        notice: None,
     }
 }
 

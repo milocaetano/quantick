@@ -137,3 +137,20 @@ pub trait BrokerVenue: TradingVenue {
     /// it dashed: sent, not yet held.
     fn is_acknowledged(&self, id: OrderId) -> bool;
 }
+
+/// What builds the one broker venue the first time a route needs it, with
+/// whatever it needs running beside it (a bridge process, a socket).
+///
+/// The route owns the decision of *when*; the implementor owns *how*, so the
+/// account that routes orders never learns which broker answers or what it
+/// takes to reach it. Ending the implementor ends what it started.
+pub trait BrokerConnector {
+    /// A venue trading `symbol`, or `None` when it cannot be built now (the
+    /// implementor says why in its log). Asked again the next time a route
+    /// needs one.
+    fn connect(&mut self, symbol: &str) -> Option<Box<dyn BrokerVenue>>;
+
+    /// Cut the link on purpose: a staged capture's lost link. A real link
+    /// only drops on its own, so the default does nothing.
+    fn sever(&mut self) {}
+}

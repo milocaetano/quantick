@@ -24,15 +24,18 @@
 use quantick_trading::{TradeMode, VenueNotice};
 
 mod desk;
+mod scene;
+mod session;
 mod sheet;
 
 #[cfg(test)]
 mod tests;
 
-pub use desk::{AccountsPort, BrokerDesk, SourceFacts};
+pub use desk::{AccountsPort, BrokerDesk, RoutePress, SourceFacts};
+pub use scene::Scene;
+pub use session::{BrokerSession, RouteCall, RouteHost, Staged};
 pub use sheet::{
     AccountRow, Dot, NOTICE_LEAD, RouteNotice, RouteTone, RowGesture, RowState, SIM_TITLE, Sheet,
-    TicketFacts,
 };
 
 /// How long a REAL row is held before it arms, in milliseconds.
@@ -216,6 +219,17 @@ pub enum Leave {
     /// where they are; their plates stay on the chart.
     LeaveAtBroker,
 }
+
+/// What the panel asks when a broker route with exposure is left.
+pub const LEAVE_PROMPT: &str = "Orders are open at the broker. Leave how?";
+
+/// The answers to [`LEAVE_PROMPT`], in the order they are offered; `None`
+/// stays on the broker route.
+pub const LEAVE_CHOICES: [(&str, Option<Leave>); 3] = [
+    ("Flatten first", Some(Leave::FlattenFirst)),
+    ("Leave at broker", Some(Leave::LeaveAtBroker)),
+    ("Stay", None),
+];
 
 /// What the host must carry out after a route decision.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

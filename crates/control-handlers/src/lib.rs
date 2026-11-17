@@ -62,6 +62,7 @@ pub mod tape_market_fold;
 pub mod tape_view_set;
 pub mod ticket_money;
 pub mod trade;
+pub mod trade_account;
 pub mod widgets;
 pub mod workspace_book;
 

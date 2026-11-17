@@ -24,6 +24,25 @@ pub trait AccountsPort {
     fn account_mut(&mut self, key: u64) -> Option<&mut PaperAccount>;
 }
 
+/// What the trader did to the route block in the Trading panel or the
+/// toolbar notice: the window turns a press into one of these and the desk
+/// decides what it means.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RoutePress {
+    /// Open or close the account list.
+    ToggleList,
+    /// Open the account list (the toolbar notice).
+    OpenList,
+    /// A one-click row.
+    Click(Route),
+    /// The REAL row is pressed.
+    HoldStart,
+    /// The REAL row is let go.
+    HoldRelease,
+    /// The choice asked for when leaving with exposure; `None` stays.
+    Leave(Option<Leave>),
+}
+
 /// What the host knows about the active chart and the config.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct SourceFacts {
@@ -104,6 +123,10 @@ impl BrokerDesk {
     /// to the facts, and put the venue where the route wants it.
     pub fn frame(&mut self, port: &mut dyn AccountsPort, source: SourceFacts, now_ms: i64) {
         let before = self.route.last_disarm();
+        // A held REAL row arms the frame its hold completes, released or not.
+        if self.route.hold_progress(now_ms).is_some() {
+            self.hold(port, source, now_ms, false);
+        }
         for notice in self.poll(port) {
             let change = self.route.on_notice(&notice, now_ms);
             self.apply(port, change);
@@ -172,6 +195,47 @@ impl BrokerDesk {
         }
         self.apply(port, change);
         self.place(port);
+    }
+
+    /// Carry out what the trader pressed. A refusal is left as the toast,
+    /// in the route's words.
+    pub fn press(
+        &mut self,
+        port: &mut dyn AccountsPort,
+        source: SourceFacts,
+        press: RoutePress,
+        now_ms: i64,
+    ) {
+        let refused = match press {
+            RoutePress::ToggleList => {
+                self.sheet_open = !self.sheet_open;
+                Ok(())
+            }
+            RoutePress::OpenList => {
+                self.sheet_open = true;
+                Ok(())
+            }
+            RoutePress::Click(route) => self
+                .request(port, source, (route, Actor::Trader, None))
+                .map(|()| self.sheet_open = self.route.leaving()),
+            RoutePress::HoldStart => self.hold_start(port, source, now_ms),
+            RoutePress::HoldRelease => {
+                self.hold(port, source, now_ms, true);
+                Ok(())
+            }
+            RoutePress::Leave(None) => {
+                self.route.cancel_leave();
+                Ok(())
+            }
+            RoutePress::Leave(Some(leave)) => self
+                .request(port, source, (Route::Sim, Actor::Trader, Some(leave)))
+                .map(|()| self.sheet_open = false),
+        };
+        if let Err(refusal) = refused
+            && refusal != Refusal::ExposureNeedsChoice
+        {
+            self.toast = Some(format!("{}: {}", Route::Sim.word(), refusal.sentence()));
+        }
     }
 
     /// Withdraw a pending leave.

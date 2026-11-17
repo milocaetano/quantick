@@ -37,7 +37,7 @@ mod venue;
 
 pub mod fake;
 
-pub use broker::{AccountFacts, BrokerVenue, LinkState, MarginMode, TradeMode};
+pub use broker::{AccountFacts, BrokerConnector, BrokerVenue, LinkState, MarginMode, TradeMode};
 pub use events::{
     CancelReason, ExitReason, Fill, FillRole, RejectReason, VENUE_TEXT_BYTES, VenueEvent,
     VenueNotice, VenueText,

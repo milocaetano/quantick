@@ -26,6 +26,7 @@ use crate::report::sessions::JournaledTrade;
 use crate::risk_sizing::{Capital, InstrumentBook, RiskHook, RiskSettings};
 use quantick_civil::civil_utc;
 
+mod capture_orders;
 mod journal;
 mod orders;
 mod readout;
@@ -33,6 +34,7 @@ mod risk;
 mod ticket_edit;
 mod venues;
 
+pub use capture_orders::{CaptureOrders, MAX_CAPTURE_RUNGS};
 pub use journal::{elide_path, export_csv};
 pub use orders::STRATEGIES_SIM_ONLY;
 pub use risk::{RiskEditor, RiskRefusal};

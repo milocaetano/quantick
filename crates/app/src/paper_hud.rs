@@ -110,12 +110,14 @@ pub fn draw(
                             .inner_margin(egui::Margin::symmetric(5.0, 1.0))
                             .show(ui, |ui| {
                                 ui.label(
-                                    egui::RichText::new(format!("SIM {word} {qty}"))
-                                        .color(crate::paper_chrome::trade_action_ink(
-                                            &palette, side_color,
-                                        ))
-                                        .strong()
-                                        .small(),
+                                    egui::RichText::new(
+                                        paper.account.position_chip().unwrap_or_default(),
+                                    )
+                                    .color(crate::paper_chrome::trade_action_ink(
+                                        &palette, side_color,
+                                    ))
+                                    .strong()
+                                    .small(),
                                 );
                             });
                         ui.label(

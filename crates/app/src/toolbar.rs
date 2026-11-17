@@ -168,8 +168,18 @@ pub fn draw(ctx: &egui::Context, model: &mut ToolbarModel) -> Vec<ToolbarAction>
                 }
                 if plan.trade_inline {
                     row_separator(ui, SEPARATOR_AIR_PX, SEPARATOR_AIR_PX);
+                    let trade_left = ui.cursor().left();
                     draw_trade(ui, &model.paper, &mut actions);
                     row_separator(ui, SEPARATOR_AIR_PX, 0.0);
+                    if let Some(notice) = &model.paper.notice {
+                        // Where the group ends with Close and Reverse shown,
+                        // so the notice never moves when a fill lands.
+                        let at = trade_left + W_TRADE + 2.0 * SEPARATOR_AIR_PX + SEPARATOR_WIDTH_PX;
+                        ui.add_space((at - ui.cursor().left()).max(0.0));
+                        if draw_route_notice(ui, notice).clicked() {
+                            actions.push(ToolbarAction::OpenAccountList);
+                        }
+                    }
                 }
                 // The right run grows inwards, opening free space after HISTORY.
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -538,6 +548,24 @@ fn draw_trade(ui: &mut egui::Ui, paper: &PaperTradeModel, actions: &mut Vec<Tool
             }
         }
     });
+}
+
+/// The read-only `orders → <account>` notice: where the next order goes,
+/// in the route's colour, with the link's dot. A click opens the account list.
+fn draw_route_notice(
+    ui: &mut egui::Ui,
+    notice: &quantick_paper::route::RouteNotice,
+) -> egui::Response {
+    let palette = theme::get(ui.ctx());
+    let ink = crate::paper_trading::account_route::tone_color(notice.tone, palette.text_primary());
+    let (font, mut job) = (palette.body_font(12.0), egui::text::LayoutJob::default());
+    let lead = format!("{} ", notice.lead);
+    let account = format!("{}{}", notice.dot.mark(), notice.text);
+    for (text, color) in [(lead, palette.text_muted()), (account, ink)] {
+        job.append(&text, 0.0, egui::TextFormat::simple(font.clone(), color));
+    }
+    ui.add(egui::Label::new(job).sense(egui::Sense::click()))
+        .on_hover_text("where orders go - click to choose the account in the Trading panel")
 }
 
 /// The `⋯` menu holding every folded group, in a fixed order so muscle

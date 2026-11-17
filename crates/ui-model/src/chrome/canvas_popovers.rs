@@ -171,6 +171,7 @@ mod tests {
                 sell: words,
                 close: None,
                 reverse_hover: String::new(),
+                notice: None,
             },
         };
         let mut toolbar = toolbar::State::default();

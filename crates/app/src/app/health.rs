@@ -124,7 +124,8 @@ impl HealthCounters {
             // Provenance follows the active tab (§11), and so does the
             // simulated P&L: the cell speaks for the market on screen, never
             // for a background tab's position.
-            sim_pnl: tab.paper.status_cell(),
+            // A broker account shown without its link says so where the P&L sits.
+            sim_pnl: (runtime.broker.status_cell()).or_else(|| tab.paper.status_cell()),
             price_auto: pane.price_view.is_auto(),
             fps: self.frames.fps(),
             frame_avg_ms: self.frames.avg_ms(),

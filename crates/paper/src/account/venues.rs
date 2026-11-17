@@ -299,6 +299,32 @@ impl PaperAccount {
             .map_or(Route::Real, |facts| Route::of_mode(facts.trade_mode))
     }
 
+    /// The chip every position surface leads with, in the route's word:
+    /// `SIM LONG 2`, `REAL SHORT 1`; `None` while flat.
+    #[must_use]
+    pub fn position_chip(&self) -> Option<String> {
+        let position = self.venue().position()?;
+        let side = crate::format::position_word(position.side);
+        let quantity = crate::format::fmt_decimal(position.quantity);
+        Some(format!("{} {side} {quantity}", self.route_kind().word()))
+    }
+
+    /// The tone the chart's broker marks wear: the route's colour while a
+    /// broker venue is shown, lost while its link is down.
+    #[must_use]
+    pub fn route_tone(&self) -> crate::route::RouteTone {
+        use crate::route::RouteTone;
+        match (
+            self.route_kind(),
+            self.broker().map(BrokerVenue::link_state),
+        ) {
+            (Route::Sim, _) => RouteTone::Sim,
+            (_, Some(quantick_trading::LinkState::Lost)) => RouteTone::Lost,
+            (Route::Demo, _) => RouteTone::Demo,
+            (Route::Real, _) => RouteTone::Real,
+        }
+    }
+
     /// Drain what the attached broker said, routed or parked, and return
     /// its notices for the route to read.
     pub fn poll_broker(&mut self) -> Vec<VenueNotice> {

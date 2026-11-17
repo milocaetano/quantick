@@ -36,6 +36,8 @@ pub(super) enum CardCommand {
 /// The snapshot the card paints from: the position, if any, and the few
 /// account and ticket readings its rows need.
 pub(super) struct PositionCard<'a> {
+    /// The chip the card leads with, the HUD's own: `SIM LONG 2`.
+    pub chip: String,
     pub position: Option<&'a Position>,
     pub mark: Option<Decimal>,
     /// The session's realized points, shown on the flat row.
@@ -64,7 +66,7 @@ impl PositionCard<'_> {
             return self.flat_row(ui);
         };
         let open = self.mark.map(|mark| position.open_points(mark));
-        identity_row(ui, position, open, self.open_text.as_deref());
+        identity_row(ui, (&self.chip, position), open, self.open_text.as_deref());
         let mut command = self
             .brackets(ui, position)
             .map(|c| CardCommand::Venue(Box::new(c)));
@@ -221,7 +223,12 @@ impl BracketLeg {
 }
 
 /// Identity: the HUD's own chip, so the two surfaces read as one.
-fn identity_row(ui: &mut egui::Ui, position: &Position, open: Option<Decimal>, text: Option<&str>) {
+fn identity_row(
+    ui: &mut egui::Ui,
+    (chip, position): (&str, &Position),
+    open: Option<Decimal>,
+    text: Option<&str>,
+) {
     let palette = theme::get(ui.ctx());
     let color = palette.side_color(position.side);
     ui.horizontal_wrapped(|ui| {
@@ -231,14 +238,10 @@ fn identity_row(ui: &mut egui::Ui, position: &Position, open: Option<Decimal>, t
             .inner_margin(egui::Margin::symmetric(5.0, 1.0))
             .show(ui, |ui| {
                 ui.label(
-                    egui::RichText::new(format!(
-                        "SIM {} {}",
-                        position_word(position.side),
-                        fmt_decimal(position.quantity)
-                    ))
-                    .color(trade_action_ink(&palette, color))
-                    .strong()
-                    .small(),
+                    egui::RichText::new(chip)
+                        .color(trade_action_ink(&palette, color))
+                        .strong()
+                        .small(),
                 );
             });
         ui.label(

@@ -81,6 +81,7 @@ fn borrowed_domain_rows_reborrow_in_catalog_order() {
             paper: &mut paper,
             replay: None,
             timezone: Default::default(),
+            route: None,
         });
         let (response, canvas) = pass(&mut registry, &ctx, Slot::LateEdgePanels, Some(&mut env));
         assert_eq!(
@@ -169,6 +170,7 @@ fn borrowed_domain_rows_reborrow_in_catalog_order() {
             paper: &mut paper,
             replay: None,
             timezone: Default::default(),
+            route: None,
         });
         pass(
             &mut registry,
@@ -227,6 +229,7 @@ fn borrowed_domain_rows_reborrow_in_catalog_order() {
         paper: &mut paper,
         replay: None,
         timezone: Default::default(),
+        route: None,
     });
     let (response, canvas) = pass(&mut registry, &ctx, Slot::StatusLine, Some(&mut env));
     assert_eq!(response, SurfaceResponse::default());

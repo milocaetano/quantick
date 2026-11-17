@@ -289,7 +289,8 @@ impl BrokerVenue for FakeBroker {
         Vec::new()
     }
     fn account(&self) -> Option<&AccountFacts> {
-        Some(&self.facts)
+        // A terminal that has not said hello has not said which account.
+        (self.script.borrow().link != Some(LinkState::NeverConnected)).then_some(&self.facts)
     }
     fn link_state(&self) -> LinkState {
         self.script.borrow().link.unwrap_or(LinkState::Up)
@@ -419,7 +420,7 @@ fn arming_routes_the_active_chart_to_the_broker() {
     assert_eq!(desk.route().route(), Route::Real);
     assert!(tabs.active().broker_routed());
     assert_eq!(tabs.active().route_kind(), Route::Real);
-    let sheet = desk.sheet(&tabs, LIVE, TicketFacts::default(), HOLD_TO_ARM_MS);
+    let sheet = desk.sheet(&tabs, LIVE, None, HOLD_TO_ARM_MS);
     assert_eq!(sheet.title, "TRADING · REAL");
     assert_eq!(sheet.notice.text, "XP 51234567 · REAL");
     assert_eq!(sheet.notice.tone, RouteTone::Real);
@@ -429,15 +430,18 @@ fn arming_routes_the_active_chart_to_the_broker() {
 fn the_held_real_row_shows_its_facts_and_progress() {
     let (venue, _script) = broker(TradeMode::Real);
     let mut desk = BrokerDesk::new();
-    let tabs = Tabs::new();
+    let mut tabs = Tabs::new();
     desk.install(venue);
     desk.hold_start(&tabs, LIVE, 0).expect("REAL is available");
-    let ticket = TicketFacts {
-        symbol: "WINZ26",
-        point_value: Some("0.20 BRL/pt"),
-        quantity: Some(Decimal::ONE),
-    };
-    let sheet = desk.sheet(&tabs, LIVE, ticket, 620);
+    let money = quantick_trading::InstrumentMoney::declared(
+        ("BRL", Decimal::new(20, 2), Decimal::ONE),
+        None,
+    )
+    .expect("a declaration");
+    let mut book = crate::risk_sizing::InstrumentBook::new();
+    book.insert("WINZ26".to_owned(), money);
+    tabs.active().set_instrument_money(book);
+    let sheet = desk.sheet(&tabs, LIVE, Some(Decimal::ONE), 620);
     let real = &sheet.rows[1];
     assert_eq!(real.title, "XP · 51234567 · REAL");
     assert_eq!(real.hint, "holding…");
@@ -446,7 +450,7 @@ fn the_held_real_row_shows_its_facts_and_progress() {
     assert_eq!(
         real.subs,
         [
-            "real money · balance 12340 BRL",
+            "real money · balance 12340.00 BRL",
             "WINZ26 · 0.20 BRL/pt · qty 1",
             "you: flat · other robots: 1 position",
             "Stop and target rest on the server.",
@@ -470,11 +474,7 @@ fn a_replay_locks_the_selector_with_the_reason() {
         desk.hold_start(&tabs, replay, 0),
         Err(Refusal::SourceCannotRoute)
     );
-    let ticket = TicketFacts {
-        symbol: "WINZ26",
-        ..TicketFacts::default()
-    };
-    let sheet = desk.sheet(&tabs, replay, ticket, 0);
+    let sheet = desk.sheet(&tabs, replay, None, 0);
     assert!(sheet.locked);
     assert_eq!(sheet.selector, "Simulated · replay");
     assert_eq!(sheet.rows[1].state, RowState::Off);
@@ -518,7 +518,7 @@ fn a_lost_link_with_a_position_parks_it_in_view_and_refuses_entries() {
         refused.as_slice(),
         [VenueEvent::Rejected(RejectReason::Blocked(_))]
     ));
-    let sheet = desk.sheet(&tabs, LIVE, TicketFacts::default(), 19_000);
+    let sheet = desk.sheet(&tabs, LIVE, None, 19_000);
     assert_eq!(sheet.notice.text, "XP 51234567 · no link");
     assert_eq!(sheet.notice.dot, Dot::Hollow);
     assert_eq!(sheet.tone, RouteTone::Lost);
@@ -548,7 +548,7 @@ fn leaving_with_a_position_asks_then_keeps_its_plates() {
         desk.request(&mut tabs, LIVE, (Route::Sim, Actor::Trader, None)),
         Err(Refusal::ExposureNeedsChoice)
     );
-    let sheet = desk.sheet(&tabs, LIVE, TicketFacts::default(), 0);
+    let sheet = desk.sheet(&tabs, LIVE, None, 0);
     assert!(sheet.leave_prompt);
     desk.request(
         &mut tabs,
@@ -637,4 +637,303 @@ fn automated_strategies_never_reach_a_broker() {
             crate::account::STRATEGIES_SIM_ONLY
         ))]
     );
+}
+
+#[test]
+fn a_press_on_the_real_row_arms_only_when_the_hold_completes() {
+    let (venue, _script) = broker(TradeMode::Real);
+    let mut desk = BrokerDesk::new();
+    let mut tabs = Tabs::new();
+    desk.install(venue);
+    desk.press(&mut tabs, LIVE, RoutePress::OpenList, 0);
+    desk.press(&mut tabs, LIVE, RoutePress::HoldStart, 0);
+    desk.frame(&mut tabs, LIVE, HOLD_TO_ARM_MS / 2);
+    assert_eq!(desk.route().route(), Route::Sim);
+    desk.press(&mut tabs, LIVE, RoutePress::HoldRelease, HOLD_TO_ARM_MS / 2);
+    desk.frame(&mut tabs, LIVE, 5 * HOLD_TO_ARM_MS);
+    assert_eq!(desk.route().route(), Route::Sim, "released early");
+
+    desk.press(&mut tabs, LIVE, RoutePress::HoldStart, 10_000);
+    desk.frame(&mut tabs, LIVE, 10_000 + HOLD_TO_ARM_MS);
+    assert_eq!(desk.route().route(), Route::Real, "held through");
+    assert!(!desk.sheet_open, "the list closes once armed");
+}
+
+#[test]
+fn a_staged_scene_arms_as_the_trader_would_and_drops_its_link_once() {
+    let scene = Scene::parse(Some("lost"), Some("1"), None).expect("a scene");
+    assert!(scene.needs_broker() && scene.stands_in_live() && scene.lost);
+    let (venue, _script) = broker(TradeMode::Real);
+    let mut desk = BrokerDesk::new();
+    let mut tabs = Tabs::new();
+    desk.install(venue);
+    assert!(!desk.stage(&mut tabs, LIVE, &scene, 5_000), "arming first");
+    assert!(desk.sheet_open);
+    assert_eq!(desk.route().route(), Route::Real, "through the full hold");
+    assert!(
+        desk.stage(&mut tabs, LIVE, &scene, 5_016),
+        "then the link drops"
+    );
+    assert_eq!(Scene::parse(None, None, None), None);
+    let idle = Scene::parse(Some("idle"), None, None).expect("a scene");
+    assert!(idle.needs_broker() && !idle.stands_in_live());
+}
+
+// --- the session, over a connector double --------------------------------
+
+/// The tabs as a window hands them to the session: the config and chart
+/// facts, a clock the test sets, and the toasts it was told.
+struct Host {
+    tabs: Tabs,
+    source: SourceFacts,
+    now_ms: i64,
+    toasts: Vec<String>,
+}
+
+impl Host {
+    fn new(source: SourceFacts) -> Self {
+        Self {
+            tabs: Tabs::new(),
+            source,
+            now_ms: 0,
+            toasts: Vec::new(),
+        }
+    }
+}
+
+impl AccountsPort for Host {
+    fn active_tab(&self) -> u64 {
+        self.tabs.active_tab()
+    }
+    fn account(&self, key: u64) -> Option<&PaperAccount> {
+        self.tabs.account(key)
+    }
+    fn account_mut(&mut self, key: u64) -> Option<&mut PaperAccount> {
+        self.tabs.account_mut(key)
+    }
+}
+
+impl RouteHost for Host {
+    fn source(&self) -> SourceFacts {
+        self.source
+    }
+    fn now_ms(&self) -> i64 {
+        self.now_ms
+    }
+    fn ticket_quantity(&self) -> Option<Decimal> {
+        None
+    }
+    fn toast(&mut self, text: String) {
+        self.toasts.push(text);
+    }
+}
+
+/// What the connector double did, shared with the test.
+#[derive(Default)]
+struct Wiring {
+    built: usize,
+    severed: bool,
+    script: Option<Rc<RefCell<Script>>>,
+}
+
+/// Builds a broker of `mode`, or nothing when `mode` is `None` (the port is
+/// taken).
+struct Connector {
+    mode: Option<TradeMode>,
+    link: Option<LinkState>,
+    wiring: Rc<RefCell<Wiring>>,
+}
+
+impl quantick_trading::BrokerConnector for Connector {
+    fn connect(&mut self, _symbol: &str) -> Option<Box<dyn BrokerVenue>> {
+        let (venue, script) = broker(self.mode?);
+        script.borrow_mut().link = self.link;
+        let mut wiring = self.wiring.borrow_mut();
+        wiring.built += 1;
+        wiring.script = Some(script);
+        Some(venue)
+    }
+    fn sever(&mut self) {
+        self.wiring.borrow_mut().severed = true;
+    }
+}
+
+fn session(
+    mode: Option<TradeMode>,
+    link: Option<LinkState>,
+) -> (BrokerSession, Rc<RefCell<Wiring>>) {
+    let wiring = Rc::new(RefCell::new(Wiring::default()));
+    let connector = Connector {
+        mode,
+        link,
+        wiring: Rc::clone(&wiring),
+    };
+    (BrokerSession::new(Box::new(connector), false), wiring)
+}
+
+#[test]
+fn the_list_builds_the_venue_once_and_only_while_broker_routes_are_offered() {
+    let (mut session, wiring) = session(Some(TradeMode::Real), None);
+    let mut host = Host::new(SourceFacts::default());
+    session.press(&mut host, RoutePress::OpenList);
+    session.frame(&mut host);
+    assert_eq!(wiring.borrow().built, 0, "broker routes are off");
+    assert!(session.sheet().is_none());
+
+    host.source = LIVE;
+    session.frame(&mut host);
+    assert_eq!(
+        wiring.borrow().built,
+        0,
+        "nothing is built until the list opens"
+    );
+    session.press(&mut host, RoutePress::ToggleList);
+    session.press(&mut host, RoutePress::ToggleList);
+    session.press(&mut host, RoutePress::OpenList);
+    assert_eq!(wiring.borrow().built, 1, "one terminal, one venue");
+    let sheet = session.sheet().expect("broker routes are offered");
+    assert!(sheet.open);
+    assert_eq!(sheet.rows[1].title, "XP · 51234567 · REAL");
+}
+
+#[test]
+fn the_broker_row_says_connecting_until_the_terminal_names_its_account() {
+    let (mut session, _wiring) = session(Some(TradeMode::Real), Some(LinkState::NeverConnected));
+    let mut host = Host::new(LIVE);
+    session.press(&mut host, RoutePress::OpenList);
+    let row = &session.sheet().expect("offered").rows[1];
+    assert_eq!(row.hint, "connecting…");
+    assert_eq!(row.state, RowState::Off);
+
+    let (mut session, _wiring) = session_without_terminal();
+    session.press(&mut host, RoutePress::OpenList);
+    let row = &session.sheet().expect("offered").rows[1];
+    assert_eq!(row.subs, ["not connected"]);
+}
+
+fn session_without_terminal() -> (BrokerSession, Rc<RefCell<Wiring>>) {
+    session(None, None)
+}
+
+#[test]
+fn a_named_demo_request_builds_the_venue_and_arms_for_the_trader_only() {
+    let (mut session, wiring) = session(Some(TradeMode::Demo), None);
+    let mut host = Host::new(LIVE);
+    session.frame(&mut host);
+    let mut call = RouteCall::new(&mut session, Box::new(Host::new(LIVE)));
+    assert_eq!(
+        call.request((Route::Demo, Actor::Agent, None)),
+        Err(Refusal::AgentCannotArm)
+    );
+    assert_eq!(call.request((Route::Demo, Actor::Trader, None)), Ok(()));
+    let (sheet, route, offered) = call.read();
+    assert_eq!((route, offered), (Route::Demo, true));
+    assert_eq!(sheet.notice.tone, RouteTone::Demo);
+    assert_eq!(
+        call.write_block(Actor::Agent),
+        Some(Refusal::AgentOrdersOff)
+    );
+    assert_eq!(wiring.borrow().built, 1);
+}
+
+/// A host whose capture staged `scene`, over a connector wired to the test.
+struct StagedHost(Host, Option<Scene>, Rc<RefCell<Wiring>>);
+
+impl AccountsPort for StagedHost {
+    fn active_tab(&self) -> u64 {
+        self.0.active_tab()
+    }
+    fn account(&self, key: u64) -> Option<&PaperAccount> {
+        self.0.account(key)
+    }
+    fn account_mut(&mut self, key: u64) -> Option<&mut PaperAccount> {
+        self.0.account_mut(key)
+    }
+}
+
+impl RouteHost for StagedHost {
+    fn source(&self) -> SourceFacts {
+        self.0.source
+    }
+    fn now_ms(&self) -> i64 {
+        self.0.now_ms
+    }
+    fn ticket_quantity(&self) -> Option<Decimal> {
+        None
+    }
+    fn toast(&mut self, text: String) {
+        self.0.toasts.push(text);
+    }
+    fn staged(&self) -> Option<Staged> {
+        let connector = Connector {
+            mode: Some(TradeMode::Real),
+            link: None,
+            wiring: Rc::clone(&self.2),
+        };
+        Some((self.1, Some(Box::new(connector))))
+    }
+}
+
+#[test]
+fn a_staged_lost_link_arms_over_a_replay_then_drops_and_disarms() {
+    let scene = Scene::parse(Some("lost"), None, None);
+    let replay = SourceFacts {
+        broker_enabled: true,
+        source_routes: false,
+        replay: true,
+    };
+    let (mut session, configured) = session(Some(TradeMode::Demo), None);
+    let staged = Rc::new(RefCell::new(Wiring::default()));
+    let mut host = StagedHost(Host::new(replay), scene, Rc::clone(&staged));
+    session.frame(&mut host);
+    assert_eq!(session.sheet().expect("offered").tone, RouteTone::Real);
+    assert_eq!(staged.borrow().built, 1, "the staged connector stands in");
+    assert_eq!(configured.borrow().built, 0);
+    assert!(!staged.borrow().severed);
+    session.frame(&mut host);
+    assert!(staged.borrow().severed, "armed, the staged link drops");
+}
+
+#[test]
+fn a_staged_broker_scene_waits_for_a_mark_and_opens_at_whole_points() {
+    let wiring = Rc::new(RefCell::new(Wiring::default()));
+    let connect = |demo: bool, entry: Decimal| -> Box<dyn quantick_trading::BrokerConnector> {
+        assert!(demo);
+        assert_eq!(entry, Decimal::from(125_431));
+        let (mode, link) = (Some(TradeMode::Demo), None);
+        Box::new(Connector {
+            mode,
+            link,
+            wiring: Rc::clone(&wiring),
+        })
+    };
+    let list = [None, Some("1"), None];
+    let (scene, connector) = Scene::stage(list, None, |_, _| unreachable!()).expect("no broker");
+    assert!(scene.is_some_and(|scene| scene.list) && connector.is_none());
+    let demo = [Some("demo"), None, None];
+    assert!(Scene::stage(demo, None, |_, _| unreachable!()).is_none());
+    let mark = Some(Decimal::new(1_254_306, 1));
+    let (scene, connector) = Scene::stage(demo, mark, connect).expect("a mark");
+    assert!(scene.is_some_and(|scene| scene.demo()) && connector.is_some());
+}
+
+#[test]
+fn a_lost_link_takes_the_status_cell_while_its_account_is_shown() {
+    let scene = Scene::parse(Some("real"), None, None);
+    let (mut session, _configured) = session(Some(TradeMode::Demo), None);
+    let staged = Rc::new(RefCell::new(Wiring::default()));
+    let mut host = StagedHost(Host::new(LIVE), scene, Rc::clone(&staged));
+    session.frame(&mut host);
+    assert_eq!(session.status_cell(), None, "the link is up");
+    go_long(host.0.tabs.active());
+    let script = staged.borrow().script.clone().expect("built");
+    script.borrow_mut().link = Some(LinkState::Lost);
+    let lost = VenueEvent::Notice(VenueNotice::LinkLost);
+    script.borrow_mut().said.push(lost);
+    host.0.now_ms = 3_000;
+    session.frame(&mut host);
+    let status = session.sheet().and_then(|sheet| sheet.status.clone());
+    assert!(status.is_some(), "the shown account says its link is down");
+    let cell = status.map(|status| (status, std::cmp::Ordering::Less));
+    assert_eq!(session.status_cell(), cell);
 }

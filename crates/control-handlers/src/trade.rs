@@ -92,6 +92,42 @@ pub trait TradePort {
     /// Persist the risk per trade, the declared capital and the instrument
     /// money.
     fn persist_risk_settings(&mut self);
+    /// Where orders go: the route session joined with the tabs it routes
+    /// for, `None` where the host keeps no route. The three calls below are
+    /// answered through it.
+    fn route_call(&mut self) -> Option<quantick_paper::route::RouteCall<'_>> {
+        None
+    }
+    /// Where orders go and the account list, as the Trading panel shows
+    /// them; `None` where the host keeps no route.
+    fn account_route(
+        &mut self,
+    ) -> Option<quantick_control_schema::trade_account::AccountRouteResult> {
+        let (sheet, route, enabled) = self.route_call()?.read();
+        Some(crate::trade_account::route_result(&sheet, route, enabled))
+    }
+    /// Ask the route for `route` on behalf of `actor`.
+    ///
+    /// # Errors
+    ///
+    /// The route's refusal.
+    fn request_route(
+        &mut self,
+        route: quantick_paper::route::Route,
+        actor: quantick_paper::route::Actor,
+        leave: Option<quantick_paper::route::Leave>,
+    ) -> Result<(), quantick_paper::route::Refusal> {
+        self.route_call()
+            .ok_or(quantick_paper::route::Refusal::BrokerOff)?
+            .request((route, actor, leave))
+    }
+    /// Why an order from `actor` is refused on the route in force, if it is.
+    fn broker_write_block(
+        &mut self,
+        actor: quantick_paper::route::Actor,
+    ) -> Option<quantick_paper::route::Refusal> {
+        self.route_call()?.write_block(actor)
+    }
 }
 
 /// Turn the venue's answer into the result, whatever the call was.
@@ -227,6 +263,11 @@ fn run<P: TradePort + ?Sized, A: JournalAccess>(
     kind: &str,
     asked: Value,
 ) -> Result<Value, ControlError> {
+    // A broker order from anyone but the trader's hand is the config's to
+    // allow; refused before it reaches the desk, and journaled as asked.
+    if let Some(refusal) = app.broker_write_block(crate::trade_account::actor_of(actor)) {
+        return Err(crate::trade_account::refusal_error(refusal));
+    }
     let outcome = app
         .active_desk_mut()
         .ok_or_else(no_chart_open)?
@@ -423,7 +464,7 @@ where
     registry.register(cancel_descriptor(), cancel_order::<H, A>)?;
     registry.register(flatten_descriptor(), flatten_position::<H, A>)?;
     registry.register(reverse_descriptor(), reverse_position::<H, A>)?;
-    Ok(())
+    crate::trade_account::register(registry)
 }
 
 #[cfg(test)]

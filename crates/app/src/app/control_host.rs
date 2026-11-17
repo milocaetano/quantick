@@ -161,6 +161,8 @@ pub(crate) trait LayoutPort {
 /// The paper-trading settings owner.
 pub(crate) trait PaperPort {
     fn paper_settings(&mut self) -> super::paper_wiring::PaperSettingsAdapter<'_>;
+    /// Where orders go, joined with the tabs it routes for.
+    fn broker_route(&mut self) -> quantick_paper::route::RouteCall<'_>;
 }
 
 /// The chart-layer owner.
@@ -1012,10 +1014,10 @@ impl LayoutPort for QuantickApp {
 
 impl PaperPort for QuantickApp {
     fn paper_settings(&mut self) -> PaperSettingsAdapter<'_> {
-        PaperSettingsAdapter {
-            tabs: &mut self.runtime.tabs,
-            workspace: &mut self.runtime.workspace,
-        }
+        self.runtime.paper_settings()
+    }
+    fn broker_route(&mut self) -> quantick_paper::route::RouteCall<'_> {
+        self.runtime.route(&self.config)
     }
 }
 

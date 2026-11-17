@@ -8,6 +8,7 @@
 //! settings live in the flow pane's own panel, [`crate::orderflow_panel`].
 
 use super::{BorrowedSurfaceEnv, PaperPanelEffects, PaperPanelEnv, SurfaceResponse, ViewContext};
+use crate::paper_trading::account_route;
 use eframe::egui;
 use egui_phosphor::regular as icons;
 use quantick_engine::Side;
@@ -129,7 +130,8 @@ fn draw(
             })
             .show(ctx, |ui| {
                 let mut export = false;
-                draw_tab_header(ui, tab, &mut collapse, |ui| {
+                let title = env.route.filter(|_| tab == DockTab::Trading);
+                draw_tab_header(ui, (tab, title), &mut collapse, |ui| {
                     if tab == DockTab::Trades
                         && ui
                             .small_button(icons::DOWNLOAD_SIMPLE)
@@ -151,9 +153,15 @@ fn draw(
                         // pending orders used to
                         // clip the session summary and the report button
                         // with no way to reach them.
-                        egui::ScrollArea::vertical()
+                        let scrolled = egui::ScrollArea::vertical()
                             .auto_shrink([false, true])
-                            .show(ui, |ui| match env.paper.draw_trading_tab(ui) {
+                            .show(ui, |ui| {
+                                if let Some(sheet) = env.route {
+                                    response.route = account_route::draw_route_block(ui, sheet);
+                                }
+                                env.paper.draw_trading_tab(ui)
+                            });
+                        match scrolled.inner {
                                 Some(TradingTabAction::PickTradesDir) => {
                                     response.pick_trades_dir = true;
                                 }
@@ -167,7 +175,7 @@ fn draw(
                                     response.risk_settings_changed = true;
                                 }
                                 None => {}
-                            });
+                            }
                     }
                     // The ledger manages its own scroll (a virtualised
                     // list with a pinned totals strip).
@@ -200,15 +208,17 @@ fn draw(
 /// The Trades tab writes it on the settings panels' title plate.
 fn draw_tab_header(
     ui: &mut egui::Ui,
-    tab: DockTab,
+    (tab, route): (DockTab, Option<&quantick_paper::route::Sheet>),
     collapse: &mut bool,
     actions: impl FnOnce(&mut egui::Ui),
 ) {
     let palette = theme::get(ui.ctx());
     let row = |ui: &mut egui::Ui| {
-        let ink = ui.visuals().override_text_color;
-        let words = egui::RichText::new(tab.title()).strong();
-        ui.label(words.color(ink.unwrap_or(palette.text_primary())));
+        let ink = ui.visuals().override_text_color.unwrap_or(palette.text_primary());
+        let (title, ink) = route.map_or((tab.title(), ink), |sheet| {
+            (sheet.title.as_str(), account_route::tone_color(sheet.tone, ink))
+        });
+        ui.label(egui::RichText::new(title).strong().color(ink));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             // `×` is Latin-1, so it renders in egui's default proportional
             // font without borrowing an icon that means "delete".

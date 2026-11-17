@@ -84,6 +84,7 @@ pub(crate) fn update_indicator_settings(
     }
 }
 
+mod account_route_tests;
 mod alert_target_binding_tests;
 mod alerts_control_tests;
 mod alerts_native_tests;

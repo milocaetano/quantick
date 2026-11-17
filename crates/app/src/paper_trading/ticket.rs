@@ -140,6 +140,7 @@ impl PaperTrading {
         let venue = self.paper.account.venue();
         let position = venue.position().cloned();
         let card = PositionCard {
+            chip: self.paper.account.position_chip().unwrap_or_default(),
             position: position.as_ref(),
             mark: venue.mark_price(),
             realized: self.paper.account.realized_pnl_tint(),

@@ -1856,6 +1856,7 @@ mod tests {
                 magic: 42,
                 deviation_points: 5,
                 allow_agent_orders: true,
+                ..MetaTraderBrokerSettings::default()
             }
         );
 

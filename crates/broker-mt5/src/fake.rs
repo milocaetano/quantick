@@ -118,3 +118,117 @@ impl FakeBridgeHandle {
             .collect()
     }
 }
+
+/// A session staged for a capture or a demo: an account, an own position
+/// with its stop and target at the broker, and one own working order — every
+/// state the order surfaces paint, with no terminal behind it.
+#[derive(Debug, Clone)]
+pub struct StagedSession<'a> {
+    pub symbol: &'a str,
+    pub magic: u64,
+    pub login: u64,
+    pub company: &'a str,
+    /// `demo` or `real`, as `account_info().trade_mode` names it.
+    pub trade_mode: &'a str,
+    pub balance: &'a str,
+    pub currency: &'a str,
+    /// The position's entry; the stop, target and working order sit at
+    /// fixed fractions of it.
+    pub entry: rust_decimal::Decimal,
+}
+
+/// The tickets a staged session's position and working order carry.
+pub const STAGED_POSITION_TICKET: u64 = 88_412_094;
+pub const STAGED_ORDER_TICKET: u64 = 88_412_096;
+
+impl FakeBridgeHandle {
+    /// Say hello and push `session` as the bridge's state.
+    pub fn stage(&self, session: &StagedSession<'_>) {
+        use rust_decimal::Decimal;
+        let at = |per_mille: i64| {
+            let offset = (session.entry * Decimal::new(per_mille, 4)).round_dp(0);
+            (session.entry + offset).round_dp(0).to_string()
+        };
+        self.connect("staged");
+        self.push(&serde_json::json!({
+            "type": "state",
+            "symbol": session.symbol,
+            "account": {
+                "login": session.login,
+                "server": format!("{}-MT5", session.company.split_whitespace().next().unwrap_or("Broker")),
+                "company": session.company,
+                "trade_mode": session.trade_mode,
+                "margin_mode": "exchange",
+                "balance": session.balance,
+                "currency": session.currency,
+            },
+            "positions": [{
+                "ticket": STAGED_POSITION_TICKET, "side": "buy", "volume": "1",
+                "price_open": session.entry.to_string(), "sl": at(-15), "tp": at(15),
+                "magic": session.magic, "time_msc": 0,
+            }],
+            "orders": [{
+                "ticket": STAGED_ORDER_TICKET, "side": "buy", "kind": "limit", "volume": "1",
+                "price": at(-30), "sl": null, "tp": null,
+                "magic": session.magic, "time_setup_msc": 0,
+            }],
+            "deals": [],
+            "closed_orders": [],
+        }));
+    }
+}
+
+/// A connector whose venue speaks to a staged session: what a capture asks
+/// for instead of a terminal. `demo` picks the staged account's kind;
+/// `entry` is where the staged position opened.
+#[derive(Debug)]
+pub struct StagedConnector {
+    pub demo: bool,
+    pub magic: u64,
+    pub entry: rust_decimal::Decimal,
+    handle: Option<FakeBridgeHandle>,
+}
+
+impl StagedConnector {
+    #[must_use]
+    pub fn new(demo: bool, magic: u64, entry: rust_decimal::Decimal) -> Self {
+        Self {
+            demo,
+            magic,
+            entry,
+            handle: None,
+        }
+    }
+}
+
+impl quantick_trading::BrokerConnector for StagedConnector {
+    fn connect(&mut self, symbol: &str) -> Option<Box<dyn quantick_trading::BrokerVenue>> {
+        let (bridge, handle) = FakeBridge::new();
+        let config = crate::BrokerConfig {
+            symbol: symbol.to_owned(),
+            magic: self.magic,
+            deviation_points: 10,
+            session_tag: "staged".to_owned(),
+        };
+        let venue = crate::Mt5Venue::new(config, Box::new(bridge));
+        let demo = self.demo;
+        handle.stage(&StagedSession {
+            symbol,
+            magic: self.magic,
+            login: if demo { 59_001_122 } else { 51_234_567 },
+            company: "XP Investimentos",
+            trade_mode: if demo { "demo" } else { "real" },
+            balance: if demo { "100000.00" } else { "12340.00" },
+            currency: "BRL",
+            entry: self.entry,
+        });
+        self.handle = Some(handle);
+        Some(Box::new(venue))
+    }
+
+    fn sever(&mut self) {
+        if let Some(handle) = self.handle.take() {
+            handle.disconnect();
+        }
+    }
+}

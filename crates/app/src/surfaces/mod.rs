@@ -14,6 +14,8 @@ pub(crate) struct PaperPanelEnv<'a> {
     pub paper: &'a mut crate::paper_trading::PaperTrading,
     pub replay: Option<&'a quantick_feed::ReplayLink>,
     pub timezone: crate::timezone::TzOffset,
+    /// The account route's words, while broker routes are offered.
+    pub route: Option<&'a quantick_paper::route::Sheet>,
 }
 /// Validated indicator address and authoritative descriptor/preset services.
 pub(crate) struct IndicatorPanelEnv<'a> {
@@ -176,6 +178,8 @@ pub(crate) struct PaperPanelEffects {
     pub cmd_trading_changed: bool,
     pub order_strategies_changed: bool,
     pub risk_settings_changed: bool,
+    /// A press on the account route block.
+    pub route: Option<quantick_paper::route::RoutePress>,
 }
 impl PaperPanelEffects {
     fn merge(&mut self, other: Self) {
@@ -188,6 +192,7 @@ impl PaperPanelEffects {
         self.cmd_trading_changed |= other.cmd_trading_changed;
         self.order_strategies_changed |= other.order_strategies_changed;
         self.risk_settings_changed |= other.risk_settings_changed;
+        self.route = self.route.or(other.route);
     }
 }
 

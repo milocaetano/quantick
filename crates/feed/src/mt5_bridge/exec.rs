@@ -6,12 +6,70 @@
 //! ([`interpreter_candidates`]) — but supervised by nobody: the broker venue
 //! sees the link drop and disarms, and the next time a broker route is asked
 //! for, a fresh process is launched. The process ends with its owner.
+//!
+//! [`Mt5Connector`] is that owner: the route's [`BrokerConnector`], which
+//! listens on the configured loopback port, launches the bridge and builds
+//! the MetaTrader venue over the socket.
 
 use std::process::{Child, Command, Stdio};
 
+use quantick_broker_mt5::{BrokerConfig, Mt5Venue, TcpBridgeLink};
+use quantick_sources::config::MetaTraderBrokerSettings;
+use quantick_trading::{BrokerConnector, BrokerVenue};
 use tracing::{info, warn};
 
 use super::{default_search_roots, interpreter_candidates, resolve_script};
+
+/// The MetaTrader route's connector: `[broker.metatrader]`, and the bridge
+/// it launched, ended with it.
+#[derive(Debug)]
+pub struct Mt5Connector {
+    settings: MetaTraderBrokerSettings,
+    bridge: Option<ExecBridge>,
+}
+
+impl Mt5Connector {
+    #[must_use]
+    pub fn new(settings: MetaTraderBrokerSettings) -> Self {
+        Self {
+            settings,
+            bridge: None,
+        }
+    }
+}
+
+impl BrokerConnector for Mt5Connector {
+    fn connect(&mut self, symbol: &str) -> Option<Box<dyn BrokerVenue>> {
+        let settings = &self.settings;
+        let link = match TcpBridgeLink::listen(settings.exec_port) {
+            Ok(link) => link,
+            Err(error) => {
+                warn!(
+                    target: "quantick::app",
+                    schema_version = 1_u8,
+                    event_code = "BROKER_EXEC_LISTEN_FAILED",
+                    port = settings.exec_port,
+                    %error,
+                    action = "retry_when_the_list_opens",
+                    "could not listen for the execution bridge"
+                );
+                return None;
+            }
+        };
+        self.bridge = ExecBridge::launch(&settings.exec_bridge_command, settings.exec_port, symbol);
+        // Unique per run: the process and the moment it built the venue.
+        let started_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |since| since.as_millis());
+        let config = BrokerConfig {
+            symbol: symbol.to_owned(),
+            magic: settings.magic,
+            deviation_points: settings.deviation_points,
+            session_tag: format!("q{}-{started_ms}", std::process::id()),
+        };
+        Some(Box::new(Mt5Venue::new(config, Box::new(link))))
+    }
+}
 
 /// A running execution bridge, ended when dropped.
 #[derive(Debug)]
