@@ -59,6 +59,24 @@ impl Seats {
     }
 }
 
+/// The built time charts `state` shows, in the order a fresh seating gives
+/// them slots: the docked panes as the tree draws them, then the floating
+/// ones. What a recipe's context panes are read in, so a landing, which seats
+/// every chart afresh, puts each pane's set back on the slot it was read off.
+#[must_use]
+pub fn shown_seats(state: &CanvasState, seats: &Seats) -> Vec<usize> {
+    let seats = seats.current(state);
+    let docked = state.tree().panes().into_iter();
+    let floating = (state.floating().iter()).map(|pane| (pane.slot, pane.kind));
+    let time = docked
+        .chain(floating)
+        .filter(|(_, kind)| *kind == PaneKind::Time);
+    time.filter_map(|(slot, _)| {
+        (seats.held.iter()).find_map(|(on, seat)| (*on == slot).then_some(*seat))
+    })
+    .collect()
+}
+
 /// One docked pane of the tree, ready to paint.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TreeBand {

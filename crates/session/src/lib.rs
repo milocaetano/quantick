@@ -35,6 +35,7 @@ pub mod paper;
 pub mod prompt;
 pub mod series;
 pub mod strategies;
+pub mod switch_prompt;
 pub mod tab_chip;
 mod venue;
 mod view;

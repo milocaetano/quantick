@@ -939,15 +939,25 @@ impl WorkspaceBook {
         if !holds {
             return None;
         }
-        let mut changes = (self.baseline(state).filter(|_| modified))
-            .map(|base| base.masked(&state.copy).changes_from(base))
-            .unwrap_or_default();
+        let mut changes = self.layout_changes(tab);
         changes.extend((held > 0).then(|| drawings_change(held)));
         Some(UnsavedEdits {
             workspace: state.workspace.clone(),
             followers: self.save_to_preview(tab).unwrap_or_default(),
             changes,
         })
+    }
+
+    /// What the tab's copy changed since its workspace was saved, in the
+    /// close prompt's words, its drawings aside: what a switch drops.
+    #[must_use]
+    pub fn layout_changes(&self, tab: u64) -> Vec<String> {
+        let Some(state) = self.tabs.get(&tab) else {
+            return Vec::new();
+        };
+        (self.baseline(state).filter(|_| self.is_modified(state)))
+            .map(|base| base.masked(&state.copy).changes_from(base))
+            .unwrap_or_default()
     }
 
     /// The arrangement the tab holds now.
@@ -1103,10 +1113,12 @@ impl WorkspaceBook {
             .tabs
             .get_mut(&tab)
             .ok_or(WorkspaceRefusal::UnknownTab(tab))?;
-        if state.copy == *live {
+        // The copy keeps the panes it holds for charts the tab does not show.
+        let live = live.clone().with_unshown_of(&state.copy);
+        if state.copy == live {
             return Ok(false);
         }
-        state.copy = live.clone();
+        state.copy = live;
         // A copy back on its workspace holds nothing: its next edit is new.
         if !self.differs(tab) {
             self.unsynced.remove(&tab);
@@ -1125,15 +1137,41 @@ impl WorkspaceBook {
             .get(name)
             .ok_or_else(|| WorkspaceRefusal::UnknownWorkspace(name.to_owned()))?
             .clone();
-        let state = self.state(tab)?;
-        if state.workspace == name {
+        if self.state(tab)?.workspace == name {
             return Ok(SetOutcome {
                 changed: false,
                 dropped_edits: false,
             });
         }
-        // Indicator sets another tab there still holds are not dropped: they
-        // are that tab's too. Anything else the copy changed is this tab's.
+        let dropped_edits = self.drops_on_leaving(tab);
+        self.tabs.insert(tab, TabWorkspace::on(name, recipe));
+        self.unsynced.remove(&tab);
+        Ok(SetOutcome {
+            changed: true,
+            dropped_edits,
+        })
+    }
+
+    /// Whether putting the tab on `name` drops edits: what [`Self::set`]
+    /// would answer as `dropped_edits`, asked before it moves anything, so a
+    /// switch can ask first. A repeat drops nothing.
+    ///
+    /// # Errors
+    /// No such tab or workspace.
+    pub fn switch_drops(&self, tab: u64, name: &str) -> Result<bool, WorkspaceRefusal> {
+        if !self.recipes.contains_key(name) {
+            return Err(WorkspaceRefusal::UnknownWorkspace(name.to_owned()));
+        }
+        Ok(self.state(tab)?.workspace != name && self.drops_on_leaving(tab))
+    }
+
+    /// Whether the tab leaving its workspace drops edits. Indicator sets
+    /// another tab there still holds are not dropped: they are that tab's
+    /// too. Anything else the copy changed is this tab's.
+    fn drops_on_leaving(&self, tab: u64) -> bool {
+        let Some(state) = self.tabs.get(&tab) else {
+            return false;
+        };
         let base = self.baseline(state);
         let rest = base.is_none_or(|base| !base.holds(&with_sets_of(&state.copy, base)));
         let sets = base.is_none_or(|base| !same_sets(&state.copy, base));
@@ -1141,13 +1179,7 @@ impl WorkspaceBook {
         let shared = others.any(|(_, held)| {
             held.workspace == state.workspace && same_sets(&held.copy, &state.copy)
         });
-        let dropped_edits = rest || (sets && !shared);
-        self.tabs.insert(tab, TabWorkspace::on(name, recipe));
-        self.unsynced.remove(&tab);
-        Ok(SetOutcome {
-            changed: true,
-            dropped_edits,
-        })
+        rest || (sets && !shared)
     }
 
     fn state(&self, tab: u64) -> Result<&TabWorkspace, WorkspaceRefusal> {

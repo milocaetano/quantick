@@ -69,6 +69,8 @@ pub use crate::canvas::{
 pub mod column;
 #[cfg(test)]
 mod column_tests;
+#[cfg(test)]
+mod landing_tests;
 pub mod named;
 pub mod split;
 pub mod stack;
@@ -76,7 +78,7 @@ pub mod stack;
 mod stack_tests;
 
 pub use column::{ColumnFrame, column_frame};
-pub use named::{CanvasLayout, recipe_canvas};
+pub use named::{CanvasLayout, lay_recipe_canvas, recipe_canvas};
 pub use split::{Span, Split, split};
 pub use stack::{
     ContextPairResult, ContextResizeError, ContextStack, ResizeContextPair, StackFrame, on_stack,

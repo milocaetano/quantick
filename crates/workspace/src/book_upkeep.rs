@@ -58,11 +58,14 @@ pub trait TabRecipeHost {
     /// with now, and only the style, so an edit on another tab reaches every
     /// other knob here but never the style. No pixel changes.
     fn pin_tab_footprint(&mut self, tab: u64);
-    /// The canvas and the bar rules: the context intervals and the flow bar,
-    /// where the recipe names one. Drawings, anchored studies and the paper
-    /// position are not touched: they are the market's.
+    /// The canvas, the intervals the charts it builds open on, and what
+    /// [`Self::apply_recipe_switches`] puts on the panes standing. Drawings,
+    /// anchored studies and the paper position are not touched: they are the
+    /// market's.
     fn apply_recipe_canvas(&mut self, tab: u64, recipe: &WorkspaceRecipe);
-    /// Layers and the footprint style, on every pane the tab has now.
+    /// The bar rules the recipe names, the layers and the footprint style, on
+    /// every pane the tab has now: run again once every pane stands, so a
+    /// chart built after the canvas takes a rule that is not an interval.
     fn apply_recipe_switches(&mut self, tab: u64, recipe: &WorkspaceRecipe);
     /// Each pane by role takes the recipe's set, onto a layout entry only it holds.
     fn apply_recipe_indicators(&mut self, tab: u64, recipe: &WorkspaceRecipe);
@@ -264,7 +267,10 @@ pub fn apply_pending_recipes<H: TabRecipeHost + ?Sized>(host: &mut H) {
         let on = book.tab_state(id).map(|state| state.workspace);
         let arrived = sync.stands_on(id, on)
             && host.tab_settled(id)
-            && host.live_recipe(id).as_ref() == host.recipe_book().1.pending_recipe(id);
+            && (host
+                .live_recipe(id)
+                .zip(host.recipe_book().1.pending_recipe(id)))
+            .is_some_and(|(live, pending)| pending.holds(&live));
         if !arrived && let Some(recipe) = host.recipe_book_mut().1.take_canvas(id) {
             host.apply_recipe_canvas(id, &recipe);
         }

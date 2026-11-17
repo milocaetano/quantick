@@ -2654,3 +2654,208 @@ fn a_folded_stacked_chart_survives_a_workspace_switch() {
         "the save still holds"
     );
 }
+
+/// The active tab's canvas as the trader sees it: the preset it draws, the
+/// panes it holds, and what `canvas.layout.picker` reads.
+fn canvas_read(app: &mut QuantickApp) -> (Option<&'static str>, usize, Option<String>) {
+    use crate::control::ActionOrigin;
+    let canvas = &app.active_tab().canvas.state;
+    let (preset, panes) = (
+        canvas.preset().map(|preset| preset.id),
+        canvas.panes().len(),
+    );
+    let input = serde_json::json!({});
+    let picker = app.control_action("canvas.layout.picker", 1, ActionOrigin::Human, input);
+    let current = picker.expect("the picker reads")["current_id"]
+        .as_str()
+        .map(str::to_owned);
+    (preset, panes, current)
+}
+
+/// A switch puts the other workspace's layout on the canvas, read as the
+/// model, the picker and the panes: by the capsule menu's row, by the window
+/// menu's Workspace submenu and by `tab.workspace.set`, each way.
+#[test]
+fn a_workspace_switch_paints_the_other_workspace_s_layout() {
+    use crate::control::ActionOrigin;
+    use serde_json::json;
+    let layouts = crate::scratch::ScratchFile::new("workspace-switch-layout", "layouts.toml");
+    let (mut app, first, _) = two_tabs(&layouts);
+    app.runtime.tabs.select(0);
+    let ctx = egui::Context::default();
+    let call = |app: &mut QuantickApp, id: &str, input: serde_json::Value| {
+        app.control_action(id, 1, ActionOrigin::Human, input)
+            .unwrap_or_else(|error| panic!("{id}: {error:?}"))
+    };
+    for _ in 0..4 {
+        run_frame_at(&mut app, &ctx, FULL_HD);
+    }
+    let default = canvas_read(&mut app);
+    call(
+        &mut app,
+        "canvas.layout.pick",
+        json!({ "preset_id": "charts-4" }),
+    );
+    for _ in 0..4 {
+        run_frame_at(&mut app, &ctx, FULL_HD);
+    }
+    let quad = canvas_read(&mut app);
+    assert_eq!(quad.0, Some("charts-4"));
+    assert_ne!(quad, default, "the pick changed the canvas");
+    call(&mut app, "workspace.save_as", json!({ "name": "Quad" }));
+    run_frame_at(&mut app, &ctx, FULL_HD);
+    assert_eq!(
+        app.runtime.workspace.book.tab_row(first),
+        ("Quad".to_owned(), false)
+    );
+
+    let shown = open_cell_menu(&mut app, &ctx);
+    let row = shown
+        .row("workspace_menu.workspace.Default")
+        .expect("Default");
+    click_sized(&mut app, &ctx, FULL_HD, row.center());
+    for _ in 0..4 {
+        run_frame_at(&mut app, &ctx, FULL_HD);
+    }
+    assert_eq!(app.runtime.workspace.book.tab_row(first).0, "Default");
+    assert_eq!(
+        canvas_read(&mut app),
+        default,
+        "the menu's row paints Default's layout"
+    );
+
+    let (_, submenu, output) = open_workspace_submenu(&mut app, &ctx);
+    let row = painted_text_center(&output, "Quad").expect("Quad's row");
+    assert!(submenu.contains(row), "Quad in the Workspace submenu");
+    click_sized(&mut app, &ctx, TEST_WINDOW, row);
+    for _ in 0..4 {
+        run_frame_at(&mut app, &ctx, FULL_HD);
+    }
+    assert_eq!(app.runtime.workspace.book.tab_row(first).0, "Quad");
+    assert_eq!(
+        canvas_read(&mut app),
+        quad,
+        "the window menu paints Quad's layout"
+    );
+    call(&mut app, "tab.workspace.set", json!({ "name": "Default" }));
+    for _ in 0..4 {
+        run_frame_at(&mut app, &ctx, FULL_HD);
+    }
+    assert_eq!(canvas_read(&mut app), default, "the call paints Default's");
+    call(&mut app, "tab.workspace.set", json!({ "name": "Quad" }));
+    for _ in 0..4 {
+        run_frame_at(&mut app, &ctx, FULL_HD);
+    }
+    assert_eq!(canvas_read(&mut app), quad, "the call paints Quad's layout");
+}
+
+/// The trader's book, cut down. A two-chart workspace puts its lower chart
+/// on a range rule with a layer of its own. Landed on a one-chart tab, whose second chart is built
+/// after the canvas, and on a tab still holding a second chart off screen,
+/// each tab reads as the recipe; back on a one-chart workspace, so does the
+/// tab with the second chart built. No landing reads as an edit.
+#[test]
+fn a_switch_lands_every_chart_s_rule_and_layers_and_reads_clean() {
+    let layouts = crate::scratch::ScratchFile::new("workspace-switch-whole", "layouts.toml");
+    let (mut app, first, second) = two_tabs(&layouts);
+    frames(&mut app, 4);
+    let (own, other) = (
+        app.runtime.workspace.book.tab_row(first).0,
+        app.runtime.workspace.book.tab_row(second).0,
+    );
+    let tab = app.runtime.tabs.by_id_mut(first).expect("an open tab");
+    tab.set_layout(CanvasLayout::TimeTimeAndFlow);
+    frames(&mut app, 4);
+    // Read back as a save writes it: a stacked canvas whose slots a landing
+    // numbers its own way, unlike the slots the pick above gave this tab.
+    let mut two = live_recipe(&app.runtime, first).expect("an open tab");
+    let lower = &mut two.context_panes[1];
+    lower.bars = Some("renko:20".to_owned());
+    let footprint = lower.layers.get("footprint").copied().expect("read");
+    lower.layers.insert("footprint".to_owned(), !footprint);
+    let book = app.runtime.workspace.book.book_mut();
+    book.observe(first, &two).expect("held");
+    book.save_as(first, "Two").expect("a free name");
+    set_tab_workspace(&mut app, first, &own).expect("its own workspace");
+    frames(&mut app, 4);
+    let reads = |app: &QuantickApp, tab: u64, name: &str| {
+        let live = live_recipe(&app.runtime, tab).expect("an open tab");
+        let book = app.runtime.workspace.book.book();
+        let recipe = book.recipe(name).expect("a saved workspace");
+        assert_eq!(recipe.masked(&live), *recipe, "{name} on tab {tab}");
+        let row = app.runtime.workspace.book.tab_row(tab);
+        assert_eq!(row, (name.to_owned(), false), "no edit");
+    };
+    reads(&app, first, &own);
+
+    for (tab, to) in [(second, "Two"), (first, "Two"), (second, other.as_str())] {
+        set_tab_workspace(&mut app, tab, to).expect("a known workspace");
+        frames(&mut app, 5);
+        reads(&app, tab, to);
+    }
+}
+
+/// Autosave off: a menu switch whose tab holds edits asks first, and Enter
+/// (Save to) writes the workspace to disk before the tab moves.
+#[test]
+fn a_menu_switch_with_held_edits_asks_and_enter_saves_then_switches() {
+    use quantick_session::workspace_menu::WorkspaceCommand;
+    let layouts = crate::scratch::ScratchFile::new("workspace-switch-asks", "layouts.toml");
+    let (mut app, _, _) = two_tabs(&layouts);
+    let tab = app.runtime.tabs.active_id();
+    let workspace = app.runtime.workspace.book.tab_row(tab).0;
+    edit_split(&mut app, tab, 0.31);
+    let set = WorkspaceCommand::Set("Default".to_owned());
+    crate::app::tab_workspaces::apply_workspace_command(&mut app, set);
+    let row = app.runtime.workspace.book.tab_row(tab);
+    assert_eq!(
+        row,
+        (workspace.clone(), true),
+        "nothing moves before the answer"
+    );
+    let menu = &app.chrome.window_menu.tab_workspace;
+    let prompt = quantick_control_handlers::workspace_book::menu_prompt(menu).expect("asks");
+    assert_eq!(prompt.buttons[prompt.enter], format!("Save to {workspace}"));
+
+    let ctx = egui::Context::default();
+    run_frame_with_events(&mut app, &ctx, vec![key_press(egui::Key::Enter)]);
+    assert_eq!(app.runtime.workspace.book.tab_row(tab).0, "Default");
+    let path = quantick_stores::workspaces::path_beside(layouts.as_ref());
+    let (on_disk, _) = quantick_stores::workspaces::load(&path);
+    let saved = on_disk.recipe(&workspace).expect("the workspace on disk");
+    assert_eq!(saved.split_fraction, Some(0.31));
+}
+
+/// The switch prompt's Esc only cancels the switch, as the close prompt's
+/// does: the chart under it keeps its selected drawing.
+#[test]
+fn the_switch_prompt_s_esc_leaves_the_chart_s_selection_alone() {
+    use quantick_session::workspace_menu::WorkspaceCommand;
+    let layouts = crate::scratch::ScratchFile::new("workspace-switch-esc", "layouts.toml");
+    let (mut app, _, _) = two_tabs(&layouts);
+    let tab = app.runtime.tabs.active_id();
+    let drawings = &mut app.active_tab_mut().flow_pane.drawings;
+    drawings.place(
+        drawing_tool("horizontal-line"),
+        ChartPoint::at_time(1.0, 100.0, None),
+    );
+    drawings.select(Some(0));
+    edit_split(&mut app, tab, 0.33);
+    let row = app.runtime.workspace.book.tab_row(tab);
+    let set = WorkspaceCommand::Set("Default".to_owned());
+    crate::app::tab_workspaces::apply_workspace_command(&mut app, set);
+    assert!(app.chrome.window_menu.tab_workspace.asking());
+    let ctx = egui::Context::default();
+    run_frame_with_events(&mut app, &ctx, vec![key_press(egui::Key::Escape)]);
+    assert!(
+        !app.chrome.window_menu.tab_workspace.asking(),
+        "Esc cancelled"
+    );
+    assert_eq!(
+        app.runtime.workspace.book.tab_row(tab),
+        row,
+        "the tab stays"
+    );
+    let selected = app.active_tab().flow_pane.drawings.selected();
+    assert_eq!(selected, Some(0), "the drawing stays selected");
+}

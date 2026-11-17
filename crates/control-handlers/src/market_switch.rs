@@ -6,6 +6,7 @@
 use crate::contract_roll::{self, ContractRollPort};
 use crate::feed_source::{check_source, set_source};
 use crate::market_palette::MarketPaletteHost;
+use crate::workspace_book::switch::ask_unjournaled;
 use crate::workspace_book::{WorkspaceBookHost, set_tab_workspace};
 use quantick_control::wire::WireU64;
 use quantick_engine::bar_registry::{BUILTIN_BARS, BarConfiguration};
@@ -56,6 +57,7 @@ pub fn switch<H: SwitchHost + ?Sized>(
     let bar = choice.bar.as_deref().map(arrival_bar).transpose()?;
     if let Some(name) = &choice.workspace {
         app.market_snapshot().check_workspace(name)?;
+        keeps_edits(app, choice.tab_id, name)?;
     }
     let tab = WireU64::new(choice.tab_id);
     let listed = (!choice.add).then_some(choice.symbol.as_str());
@@ -105,4 +107,19 @@ pub fn roll<H: SwitchHost + ?Sized>(
         .map_err(|refusal| refusal.reason().to_owned())?;
     contract_roll::apply(app, index, &next).ok_or(TAB_GONE)?;
     Ok(roll_toast(&next))
+}
+
+/// A workspace picked here never drops edits unasked: the row's question is
+/// asked (a pending autosave write goes through first); the palette putting
+/// no question, a switch that would still drop them is refused before
+/// anything moves, as `tab.workspace.set` refuses one without `edits`.
+fn keeps_edits<H: SwitchHost + ?Sized>(app: &mut H, tab: u64, name: &str) -> Result<(), String> {
+    if !(app.workspace_book()).is_some_and(|book| book.tab_state(tab).is_some()) {
+        return Ok(());
+    }
+    let asked = ask_unjournaled(app, tab, name).map_err(|error| error.message)?;
+    asked.map_or(Ok(()), |asked| {
+        let text = quantick_control_schema::window_menu::switch_keeps_edits;
+        Err(text(&asked.workspace, &asked.target))
+    })
 }

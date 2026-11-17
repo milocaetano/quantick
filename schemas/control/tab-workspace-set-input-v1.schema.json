@@ -1,5 +1,15 @@
 {
   "$defs": {
+    "SwitchEdits": {
+      "description": "What a switch does with the edits it would drop.",
+      "oneOf": [
+        {
+          "const": "discard",
+          "description": "Switch and let them go.",
+          "type": "string"
+        }
+      ]
+    },
     "WireU64": {
       "pattern": "^(0|[1-9][0-9]*)$",
       "type": "string"
@@ -9,6 +19,17 @@
   "additionalProperties": false,
   "description": "Put a tab on a workspace.",
   "properties": {
+    "edits": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/SwitchEdits"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "What becomes of unsaved edits the switch would drop. Left out, such a\nswitch refuses with `workspace.unsaved_edits` and changes nothing; to\nkeep them, `workspace.save_to` writes them first, behind the desk's\nconsent this call does not ask for."
+    },
     "name": {
       "type": "string"
     },
