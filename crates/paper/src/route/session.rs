@@ -8,7 +8,7 @@
 //! broker routes are offered), what a staged capture shows, and the words
 //! painted until the next change.
 
-use quantick_trading::{BrokerConnector, BrokerVenue};
+use quantick_trading::{BrokerConnector, BrokerVenue, LinkState};
 use rust_decimal::Decimal;
 
 use super::desk::{AccountsPort, BrokerDesk, RoutePress, SourceFacts};
@@ -204,14 +204,25 @@ impl BrokerSession {
     }
 
     /// Build the venue for the active chart's symbol, once, and only while
-    /// broker routes are offered.
+    /// broker routes are offered. Asked again while the venue's link is
+    /// down, the connector restarts what that link needs, if it ended.
     fn ensure_venue(&mut self, host: &dyn RouteHost) {
-        if self.desk.has_venue() || !host.source().broker_enabled {
+        if !host.source().broker_enabled {
             return;
         }
         let Some(account) = host.account(host.active_tab()) else {
             return;
         };
+        if self.desk.has_venue() {
+            let down = self
+                .desk
+                .venue(host)
+                .is_some_and(|venue| venue.link_state() != LinkState::Up);
+            if down {
+                self.connector.revive(account.symbol());
+            }
+            return;
+        }
         if let Some(venue) = self.connector.connect(account.symbol()) {
             self.desk.install(venue);
         }

@@ -757,6 +757,7 @@ impl RouteHost for Host {
 #[derive(Default)]
 struct Wiring {
     built: usize,
+    revived: usize,
     severed: bool,
     script: Option<Rc<RefCell<Script>>>,
 }
@@ -780,6 +781,9 @@ impl quantick_trading::BrokerConnector for Connector {
     }
     fn sever(&mut self) {
         self.wiring.borrow_mut().severed = true;
+    }
+    fn revive(&mut self, _symbol: &str) {
+        self.wiring.borrow_mut().revived += 1;
     }
 }
 
@@ -1164,4 +1168,31 @@ fn a_hold_reported_every_frame_arms_when_it_completes() {
         desk.frame(&mut tabs, LIVE, now);
     }
     assert_eq!(desk.route().route(), Route::Real);
+}
+
+#[test]
+fn a_broker_request_after_the_link_is_lost_revives_what_runs_beside_the_venue() {
+    let (mut session, wiring) = session(Some(TradeMode::Demo), None);
+    let mut host = Host::new(LIVE);
+    session
+        .request(&mut host, (Route::Demo, Actor::Trader, None))
+        .expect("DEMO arms for the trader");
+    session.press(&mut host, RoutePress::OpenList);
+    assert_eq!(wiring.borrow().revived, 0, "a live link needs nothing");
+
+    // The bridge process died: the link is lost and the route disarms.
+    let script = wiring.borrow().script.clone().expect("built");
+    script.borrow_mut().link = Some(LinkState::Lost);
+    session.frame(&mut host);
+    assert_eq!(session.read(&host).1, Route::Sim);
+
+    assert_eq!(
+        session.request(&mut host, (Route::Demo, Actor::Trader, None)),
+        Err(Refusal::LinkDown),
+        "not until the new bridge says hello"
+    );
+    assert_eq!(wiring.borrow().revived, 1, "the request relaunches it");
+    session.press(&mut host, RoutePress::OpenList);
+    assert_eq!(wiring.borrow().revived, 2, "so does opening the list");
+    assert_eq!(wiring.borrow().built, 1, "the same venue, waiting");
 }

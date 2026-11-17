@@ -5,7 +5,9 @@
 //! search ([`resolve_script`]), the same interpreter fallbacks
 //! ([`interpreter_candidates`]) — but supervised by nobody: the broker venue
 //! sees the link drop and disarms, and the next time a broker route is asked
-//! for, a fresh process is launched. The process ends with its owner.
+//! for ([`BrokerConnector::revive`]), a fresh process is launched if the old
+//! one has exited; it dials the same listener and the same venue. The process
+//! ends with its owner.
 //!
 //! [`Mt5Connector`] is that owner: the route's [`BrokerConnector`], which
 //! listens on the configured loopback port, launches the bridge and builds
@@ -26,6 +28,8 @@ use super::{default_search_roots, interpreter_candidates, resolve_script};
 pub struct Mt5Connector {
     settings: MetaTraderBrokerSettings,
     bridge: Option<ExecBridge>,
+    /// A venue was built and its listener waits for a bridge to dial.
+    listening: bool,
 }
 
 impl Mt5Connector {
@@ -34,6 +38,7 @@ impl Mt5Connector {
         Self {
             settings,
             bridge: None,
+            listening: false,
         }
     }
 }
@@ -56,6 +61,7 @@ impl BrokerConnector for Mt5Connector {
                 return None;
             }
         };
+        self.listening = true;
         self.bridge = ExecBridge::launch(&settings.exec_bridge_command, settings.exec_port, symbol);
         // Unique per run: the process and the moment it built the venue.
         let started_ms = std::time::SystemTime::now()
@@ -68,6 +74,27 @@ impl BrokerConnector for Mt5Connector {
             session_tag: format!("q{}-{started_ms}", std::process::id()),
         };
         Some(Box::new(Mt5Venue::new(config, Box::new(link))))
+    }
+
+    fn revive(&mut self, symbol: &str) {
+        if !self.listening || self.bridge.as_mut().is_some_and(ExecBridge::running) {
+            return;
+        }
+        info!(
+            target: "quantick::app",
+            schema_version = 1_u8,
+            event_code = "MT5_EXEC_BRIDGE_RELAUNCH",
+            port = self.settings.exec_port,
+            "the execution bridge is not running; starting it again"
+        );
+        // The listener is still the venue's: the new process dials it, and
+        // its new instance tells the venue nothing it sent is remembered.
+        self.bridge = None;
+        self.bridge = ExecBridge::launch(
+            &self.settings.exec_bridge_command,
+            self.settings.exec_port,
+            symbol,
+        );
     }
 }
 
@@ -150,6 +177,11 @@ impl ExecBridge {
         None
     }
 
+    /// Whether the process is still running.
+    pub fn running(&mut self) -> bool {
+        matches!(self.child.try_wait(), Ok(None))
+    }
+
     /// The process id, for a log line or a test that ends it.
     #[must_use]
     pub fn id(&self) -> u32 {
@@ -168,7 +200,50 @@ impl Drop for ExecBridge {
 
 #[cfg(test)]
 mod tests {
-    use super::ExecBridge;
+    use super::{ExecBridge, Mt5Connector};
+    use quantick_sources::config::MetaTraderBrokerSettings;
+    use quantick_trading::BrokerConnector;
+
+    /// A bridge whose process ran and ended: the test binary listing itself.
+    fn ended_bridge() -> ExecBridge {
+        let child = std::process::Command::new(std::env::current_exe().expect("test binary"))
+            .arg("--list")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("the test binary starts");
+        let mut bridge = ExecBridge { child };
+        bridge.child.wait().expect("it ends");
+        bridge
+    }
+
+    #[test]
+    fn a_bridge_that_exited_is_not_running() {
+        assert!(!ended_bridge().running());
+    }
+
+    #[test]
+    fn revive_relaunches_only_an_ended_bridge_behind_a_listener() {
+        let settings = MetaTraderBrokerSettings {
+            exec_bridge_command: Vec::new(),
+            ..MetaTraderBrokerSettings::default()
+        };
+        let mut never_listened = Mt5Connector::new(settings.clone());
+        never_listened.bridge = Some(ended_bridge());
+        never_listened.revive("WINZ26");
+        assert!(
+            never_listened.bridge.is_some(),
+            "no venue was built, so nothing is relaunched"
+        );
+
+        let mut connector = Mt5Connector::new(settings);
+        connector.listening = true;
+        connector.bridge = Some(ended_bridge());
+        connector.revive("WINZ26");
+        // The ended one is let go and a launch attempted; an empty command
+        // launches nothing, which is all a test without Python can see.
+        assert!(connector.bridge.is_none());
+    }
 
     #[test]
     fn an_empty_command_launches_nothing() {

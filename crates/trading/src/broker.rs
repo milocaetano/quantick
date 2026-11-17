@@ -160,4 +160,10 @@ pub trait BrokerConnector {
     /// Cut the link on purpose: a staged capture's lost link. A real link
     /// only drops on its own, so the default does nothing.
     fn sever(&mut self) {}
+
+    /// The venue built earlier has lost its link and a route asks for it
+    /// again: restart whatever it needs running beside it, trading `symbol`,
+    /// if that has ended. The same venue then hears the new link's hello.
+    /// The default has nothing to restart.
+    fn revive(&mut self, _symbol: &str) {}
 }
