@@ -164,19 +164,35 @@ fn the_call_refuses_until_told_to_discard_and_never_saves() {
     assert_eq!(host.writes, 0, "the call wrote nothing");
 }
 
-/// A question gone stale carries out nothing: the tab left the workspace it
-/// named by another route, so a Save would write a workspace it never named.
+/// A question gone stale carries out nothing and says so: the tab left the
+/// workspace it named by another route, so a Save would write a workspace
+/// it never named; or the target is gone, so the switch could not follow.
 #[test]
-fn an_answer_to_a_stale_question_does_nothing() {
-    let (mut host, mut access, actor) = held_on_scalp();
-    let mut menu = WorkspaceMenuState::default();
-    let set = WorkspaceCommand::Set(DEFAULT_WORKSPACE.to_owned());
-    row(&mut host, &mut access, &actor, &mut menu, set);
-    host.book.save_as(1, "Moved").unwrap();
-    let before = host.book.clone();
-    let save = WorkspaceCommand::AnswerSwitch(SwitchAnswer::Save);
-    assert_eq!(row(&mut host, &mut access, &actor, &mut menu, save), None);
-    assert_eq!(menu.switch.question(), None, "the question is down");
-    assert_eq!(host.book, before, "nothing saved, nothing switched");
-    assert_eq!((host.writes, access.events.len()), (0, 0));
+fn an_answer_to_a_stale_question_does_nothing_and_says_so() {
+    let stale = Some(text::SWITCH_QUESTION_STALE.to_owned());
+    let moved = |host: &mut FakeHost| {
+        host.book.save_as(1, "Moved").unwrap();
+    };
+    let gone = |host: &mut FakeHost| {
+        host.book.delete("Swing").unwrap();
+    };
+    for (target, change) in [
+        (DEFAULT_WORKSPACE, &moved as &dyn Fn(&mut FakeHost)),
+        ("Swing", &gone),
+    ] {
+        let (mut host, mut access, actor) = held_on_scalp();
+        host.book.save_as(2, "Swing").unwrap();
+        let mut menu = WorkspaceMenuState::default();
+        let set = WorkspaceCommand::Set(target.to_owned());
+        row(&mut host, &mut access, &actor, &mut menu, set);
+        assert!(menu.switch.question().is_some(), "{target}: asked");
+        change(&mut host);
+        let before = host.book.clone();
+        let save = WorkspaceCommand::AnswerSwitch(SwitchAnswer::Save);
+        let note = row(&mut host, &mut access, &actor, &mut menu, save);
+        assert_eq!(note, stale, "{target}");
+        assert_eq!(menu.switch.question(), None, "the question is down");
+        assert_eq!(host.book, before, "{target}: nothing saved or switched");
+        assert_eq!((host.writes, access.events.len()), (0, 0));
+    }
 }

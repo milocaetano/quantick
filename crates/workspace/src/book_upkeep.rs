@@ -267,7 +267,10 @@ pub fn apply_pending_recipes<H: TabRecipeHost + ?Sized>(host: &mut H) {
         let on = book.tab_state(id).map(|state| state.workspace);
         let arrived = sync.stands_on(id, on)
             && host.tab_settled(id)
-            && host.live_recipe(id).as_ref() == host.recipe_book().1.pending_recipe(id);
+            && (host
+                .live_recipe(id)
+                .zip(host.recipe_book().1.pending_recipe(id)))
+            .is_some_and(|(live, pending)| pending.holds(&live));
         if !arrived && let Some(recipe) = host.recipe_book_mut().1.take_canvas(id) {
             host.apply_recipe_canvas(id, &recipe);
         }

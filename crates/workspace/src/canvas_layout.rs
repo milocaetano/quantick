@@ -454,20 +454,6 @@ mod recipe_tests {
         assert_eq!(shown, [ruled("renko:20")], "the chart left on screen");
     }
 
-    /// A recipe saved before readings were cut held the panes of charts its
-    /// canvas did not show; read back, it holds only the ones it shows.
-    #[test]
-    fn a_stored_recipe_reads_back_with_the_charts_its_canvas_shows() {
-        let stored = "layout = \"time+flow\"
-            [[context_panes]]
-bars = \"time:1m\"
-            [[context_panes]]
-bars = \"renko:20\"
-";
-        let read: WorkspaceRecipe = toml::from_str(stored).unwrap();
-        assert_eq!(read.context_panes, [ruled("time:1m")]);
-    }
-
     fn ruled(bars: &str) -> ContextPaneRecipe {
         ContextPaneRecipe {
             bars: Some(bars.to_owned()),

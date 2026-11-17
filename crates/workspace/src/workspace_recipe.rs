@@ -229,7 +229,7 @@ impl From<StoredRecipe> for WorkspaceRecipe {
             (context_collapsed, flow_collapsed),
             CanvasState::flow_side_folds,
         );
-        let mut recipe = Self {
+        Self {
             layout,
             split_fraction,
             context_collapsed,
@@ -243,13 +243,7 @@ impl From<StoredRecipe> for WorkspaceRecipe {
             flow_bars,
             legacy_context_bars,
             canvas,
-        };
-        // A save from before readings were cut to the canvas kept the panes
-        // of charts it built off screen: no tab on it shows them, so read as
-        // they are they would never read clean.
-        let shown = recipe.shown_charts();
-        recipe.context_panes.truncate(shown);
-        recipe
+        }
     }
 }
 
@@ -317,6 +311,20 @@ impl WorkspaceRecipe {
             .iter()
             .filter(|(_, kind, _)| *kind == PaneKind::Time)
             .count()
+    }
+
+    /// A reading, cut to its canvas, with the panes `stored` keeps for
+    /// charts past that canvas put back as stored. A save before readings
+    /// were cut kept panes of charts it built off screen: no tab shows them,
+    /// so they are no edit, and they are never lost by a later save. A
+    /// reading short of its canvas (a chart still to be built) takes none.
+    #[must_use]
+    pub fn with_unshown_of(mut self, stored: &Self) -> Self {
+        let held = self.context_panes.len();
+        if held == self.shown_charts() {
+            (self.context_panes).extend(stored.context_panes.iter().skip(held).cloned());
+        }
+        self
     }
 
     /// What the pane at `index` keeps, by its place: 0 is the flow pane, then
@@ -435,12 +443,14 @@ impl WorkspaceRecipe {
     }
 
     /// `copy` read against this recipe: a bar rule this recipe does not name
-    /// is the tab's own, never an edit, so it is left out; and a context size
+    /// is the tab's own, never an edit, so it is left out; a pane this recipe
+    /// keeps for a chart past the copy's canvas is no edit either (see
+    /// [`Self::with_unshown_of`]); and a context size
     /// or fold past the end of either list reads as automatic and open, which
     /// is what a missing entry means, so padding is no edit.
     #[must_use]
     pub fn masked(&self, copy: &Self) -> Self {
-        let mut read = copy.clone();
+        let mut read = copy.clone().with_unshown_of(self);
         fit_open(&mut read.context_heights, &self.context_heights, |share| {
             *share == 0.0
         });

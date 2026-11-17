@@ -1113,10 +1113,12 @@ impl WorkspaceBook {
             .tabs
             .get_mut(&tab)
             .ok_or(WorkspaceRefusal::UnknownTab(tab))?;
-        if state.copy == *live {
+        // The copy keeps the panes it holds for charts the tab does not show.
+        let live = live.clone().with_unshown_of(&state.copy);
+        if state.copy == live {
             return Ok(false);
         }
-        state.copy = live.clone();
+        state.copy = live;
         // A copy back on its workspace holds nothing: its next edit is new.
         if !self.differs(tab) {
             self.unsynced.remove(&tab);

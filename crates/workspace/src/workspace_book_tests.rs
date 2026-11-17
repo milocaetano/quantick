@@ -1012,6 +1012,53 @@ fn a_switch_names_the_layout_changes_alone() {
     assert!(book.layout_changes(2).is_empty(), "a clean tab");
 }
 
+/// A recipe saved before readings were cut keeps panes for charts its canvas
+/// does not show. Read and written back it is unchanged; landed, edited and
+/// saved it writes them back as stored; and the tab on it reads clean, after
+/// a switch too.
+#[test]
+fn a_stored_recipe_keeps_its_off_screen_panes_through_a_save() {
+    let stored = "version = 1
+[recipes.Pair]
+layout = \"time+flow\"
+        [[recipes.Pair.context_panes]]
+bars = \"time:1m\"
+        [[recipes.Pair.context_panes]]
+bars = \"renko:20\"
+";
+    let mut book = parse_book(stored).unwrap();
+    let pair = book.recipe("Pair").unwrap().clone();
+    assert_eq!(pair.context_panes.len(), 2, "read as stored");
+    let written = toml::to_string_pretty(&book).unwrap();
+    let reread = parse_book(&written).unwrap();
+    assert_eq!(reread.recipe("Pair"), Some(&pair), "written back unchanged");
+
+    book.set_autosave(false);
+    book.open_tab(1);
+    book.set(1, "Pair").unwrap();
+    // The tab reads the one chart its canvas shows.
+    let mut live = pair.clone();
+    live.context_panes.truncate(1);
+    book.observe(1, &live).unwrap();
+    assert_eq!(state(&book, 1), ("Pair".to_owned(), false), "clean");
+    live.split_fraction = Some(0.3);
+    book.observe(1, &live).unwrap();
+    assert!(book.tab_state(1).unwrap().modified);
+    book.save_to(1).unwrap();
+    let saved = book.recipe("Pair").unwrap();
+    assert_eq!(saved.context_panes, pair.context_panes, "as stored");
+    assert_eq!(saved.split_fraction, Some(0.3));
+
+    book.set(1, DEFAULT_WORKSPACE).unwrap();
+    book.set(1, "Pair").unwrap();
+    book.observe(1, &live).unwrap();
+    assert_eq!(
+        state(&book, 1),
+        ("Pair".to_owned(), false),
+        "after a switch"
+    );
+}
+
 /// Asking before a switch moves nothing: a repeat drops nothing, an unknown
 /// workspace is refused, and the tab keeps its copy until the switch.
 #[test]

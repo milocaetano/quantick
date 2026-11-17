@@ -625,6 +625,27 @@ fn flush<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
     Ok(())
 }
 
+/// [`flush`] journaling nothing: the market palette's hand journals nothing,
+/// as the window's other source changes do.
+pub(crate) fn flush_unjournaled<H: WorkspaceBookHost + ?Sized>(
+    app: &mut H,
+    tab: u64,
+) -> Result<(), ControlError> {
+    flush::<H, Unjournaled>(app, &mut None, tab)
+}
+
+/// The access a write with no journal names: there is none.
+enum Unjournaled {}
+
+impl NotifyAccess for Unjournaled {
+    fn allow_notification(&mut self, _: &ActorContext) -> Result<(), std::time::Duration> {
+        match *self {}
+    }
+    fn record_event(&mut self, _: NewEvent) {
+        match *self {}
+    }
+}
+
 /// Autosave's write-through for the tabs the frame found quiet (one per
 /// workspace, as `quantick_workspace::book_upkeep::maintain` chose them),
 /// journaled as the hand that edited. Answers the toasts: one only where

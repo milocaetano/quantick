@@ -95,8 +95,9 @@ pub(super) fn row<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
 
 /// The prompt's answer: Cancel changes nothing; Save writes the edits into
 /// the tab's workspace, then switches; Switch without saving drops them. A
-/// question gone stale (its tab closed, or moved off the workspace it named)
-/// carries out nothing: a Save never writes a workspace it did not name.
+/// question gone stale (its tab closed or moved off the workspace it named,
+/// or its target deleted or renamed) carries out nothing and says so: a Save
+/// never writes a workspace it did not name, nor one a switch cannot follow.
 pub(super) fn answer<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
     app: &mut H,
     to: &mut Journal<'_, A>,
@@ -106,9 +107,10 @@ pub(super) fn answer<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
     let Some(step) = prompt.answer(answer) else {
         return Ok(None);
     };
-    let on = book(app)?.tab_state(step.tab).map(|state| state.workspace);
-    if on != Some(step.workspace.as_str()) {
-        return Ok(None);
+    let book = book(app)?;
+    let on = book.tab_state(step.tab).map(|state| state.workspace);
+    if on != Some(step.workspace.as_str()) || book.recipe(&step.target).is_none() {
+        return Ok(Some(text::SWITCH_QUESTION_STALE.to_owned()));
     }
     let set = carry_out(app, to, step.tab, &step.target, step.save)?;
     let symbol = app.tab_symbols(&[step.tab]).pop().unwrap_or_default();

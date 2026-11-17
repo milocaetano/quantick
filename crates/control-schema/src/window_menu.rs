@@ -413,6 +413,9 @@ pub const CLOSE_CANCEL: &str = "Cancel";
 pub const CLOSE_WITHOUT_SAVING: &str = "Close without saving";
 /// The switch prompt's middle button; Cancel and the save stand as the close's.
 pub const SWITCH_WITHOUT_SAVING: &str = "Switch without saving";
+/// The toast when a switch question was answered after its tab, its
+/// workspace or its target changed: nothing is carried out.
+pub const SWITCH_QUESTION_STALE: &str = "That switch no longer applies; nothing changed";
 
 /// The pill's hover: `Save to Scalp · Ctrl+S`.
 #[must_use]
