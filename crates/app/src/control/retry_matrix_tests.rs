@@ -10,24 +10,20 @@ use serde_json::json;
 
 use super::*;
 
-/// Where the transport tests that prove the rows live, relative to
-/// `crates/app`. A row's proving test must be a function in one of these.
-const PROOF_SOURCES: [&str; 15] = [
+/// Where the tests that prove the rows live, relative to `crates/app`. A
+/// row's proving test must be a function in one of these: the transport
+/// suite, or the handler test that proves a row whose key handling the
+/// gateway's other `required` rows already prove.
+const PROOF_SOURCES: [&str; 9] = [
     "src/app/tests/alerts_control_tests.rs",
-    "src/app/tests/native_indicator_control_tests.rs",
-    "src/app/tests/feed_source_control_tests.rs",
-    "src/app/tests/tick_bubbles_control_tests.rs",
-    "src/app/tests/bubble_preset_control_tests.rs",
-    "src/app/tests/bubble_scale_control_tests.rs",
     "src/app/tests/retry_readback_tests.rs",
     "src/app/tests/drawing_text_control_tests.rs",
-    "src/app/tests/opening_scale_control_tests.rs",
     "src/app/tests/asset_bubbles_save_tests.rs",
-    "src/app/tests/history_control_tests.rs",
     "src/app/tests/price_axis_control_tests.rs",
     "src/app/tests/native_window_control_tests.rs",
     "src/app/tests/market_window_control_tests.rs",
     "src/app/tests/tape_navigation_tests.rs",
+    "../control-handlers/src/native_indicator_tests.rs",
 ];
 
 fn contract() -> ObserverContract {

@@ -107,7 +107,20 @@ fn an_edit_is_validated_before_it_is_applied_and_journaled_once() {
         .map(|(slot, edit)| (*slot, matches!(edit, wire::Prepared::Remove)))
         .collect();
     assert_eq!(applied, [(None, false), (Some(3), false), (Some(3), true)]);
-    assert_eq!(access.events.len(), 3, "one event per applied edit");
+    // The retry matrix reconciles an edit by this event's slot.
+    let slots: Vec<_> = access
+        .events
+        .iter()
+        .map(|event| {
+            assert_eq!(event.kind.as_str(), wire::EVENT);
+            event.payload["native_indicator"]["slot_id"].clone()
+        })
+        .collect();
+    assert_eq!(
+        slots,
+        [json!("7"), json!("3"), json!("3")],
+        "one event per applied edit"
+    );
 }
 
 /// Style and visibility wait for the slot to load; inputs do not.
