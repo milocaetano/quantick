@@ -1,6 +1,6 @@
 //! "Save changes for this asset" over the addressed pane's bubble look: the
 //! window resolves the pane, the look's asset binding answers the switch.
-use crate::bubble_preset::PaneBubblesPort;
+use crate::bubble_pane::PaneBubblesPort;
 use crate::dock::ActionDock;
 use quantick_control::{error::ControlError, registry::RegistryError, wire::ActorContext};
 use quantick_control_schema::bubble_save::{SaveChangesInput, descriptor};
@@ -19,7 +19,7 @@ fn set<H: PaneBubblesPort + ?Sized, A>(
     value: &Value,
 ) -> Result<Value, ControlError> {
     let input: SaveChangesInput = serde_json::from_value(value.clone()).map_err(invalid)?;
-    let pane = host.pane_bubbles(input.tab_id.get(), input.pane_id.get())?;
+    let pane = host.pane_bubbles(input.tab_id, input.pane_id)?;
     let view = pane
         .asset_save()
         .ok_or_else(|| invalid("the requested pane has no order-flow view"))?;

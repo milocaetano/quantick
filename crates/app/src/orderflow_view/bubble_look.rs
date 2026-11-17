@@ -1,7 +1,7 @@
 //! The order-flow view serves its pane's bubble calls from its own look.
 use super::OrderflowView;
 use quantick_appearance::orderflow::OrderflowAppearance as Theme;
-use quantick_control_handlers::bubble_preset::{AssetSave, BubbleLook};
+use quantick_control_handlers::bubble_pane::{AssetSave, BubbleLook};
 use quantick_control_schema::bubble_preset::{ListInput, ListResult, page};
 use quantick_control_schema::orderflow::BubblesStateSnapshot;
 use quantick_orderflow::{HeatmapConfig, TickTuning};

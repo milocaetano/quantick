@@ -9,7 +9,7 @@
 
 use eframe::egui;
 use egui_phosphor::regular as icons;
-use quantick_control_handlers::bubble_preset::TickSpherePane;
+use quantick_control_handlers::bubble_pane::TickSpherePane;
 use rust_decimal::prelude::ToPrimitive as _;
 
 use crate::bubble_presets;

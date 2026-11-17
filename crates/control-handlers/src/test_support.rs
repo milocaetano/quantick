@@ -26,12 +26,18 @@ use rust_decimal::Decimal;
 
 use crate::JournalAccess;
 use crate::attention::MarkPort;
+use crate::bubble_pane::{AssetSave, BubbleLook, BubblePane, PaneBubblesPort, TickSpherePane};
 use crate::chart::{ChartPaneEntry, ChartPaneSource, ChartPort, MissingPane, PaneFraming};
 use crate::history::HistoryPort;
 use crate::notify::{AttentionPort, NotifyAccess};
 use crate::recovery::{FeedRecoveryPort, RecoveredFeed};
 use crate::tabs::TabDirectory;
 use crate::trade::{TradeDesk, TradePort};
+use quantick_control::error::ControlError;
+use quantick_control_schema::bubble_preset::{ListInput, ListResult};
+use quantick_control_schema::orderflow::BubblesStateSnapshot;
+use quantick_orderflow::{HeatmapConfig, TickTuning};
+use quantick_stores::bubble_asset_store::SaveSwitch;
 
 /// One pane of a fake tab: a real chart model, an optional venue prefix, and
 /// the framing a frame would have laid out.
@@ -42,6 +48,23 @@ pub(crate) struct FakePane {
     pub pagination_revision: u64,
     pub visible_slots: Option<(usize, usize)>,
     pub record_starts_inside: bool,
+    /// What the tick sphere rule reads about the pane.
+    pub sphere_facts: TickSpherePane,
+    /// The pane's order-flow view, which serves its bubble calls.
+    pub bubbles: Option<FakeBubbles>,
+}
+
+/// A fake order-flow view's bubble look: what it last wore and its asset.
+#[derive(Default)]
+pub(crate) struct FakeBubbles {
+    /// The whole look last worn, and whether it brought its spheres.
+    pub preset: Option<(String, bool)>,
+    pub worn: Option<Option<String>>,
+    pub tuning: TickTuning,
+    /// The bound asset's key; `None` is a view bound to no asset.
+    pub asset: Option<String>,
+    pub save_changes: bool,
+    pub config: HeatmapConfig,
 }
 
 impl FakePane {
@@ -58,7 +81,61 @@ impl FakePane {
             pagination_revision: 0,
             visible_slots: None,
             record_starts_inside: false,
+            sphere_facts: TickSpherePane::new(false, false),
+            bubbles: None,
         }
+    }
+}
+
+impl BubblePane<()> for FakePane {
+    fn tick_sphere_pane(&self) -> TickSpherePane {
+        self.sphere_facts
+    }
+    fn bubble_look(&mut self) -> Option<&mut dyn BubbleLook<()>> {
+        Some(self.bubbles.as_mut()?)
+    }
+    fn asset_save(&mut self) -> Option<&mut dyn AssetSave> {
+        Some(self.bubbles.as_mut()?)
+    }
+}
+
+impl BubbleLook<()> for FakeBubbles {
+    fn wear_preset(&mut self, name: &str, spheres: bool, _: &()) -> Result<bool, String> {
+        self.preset = Some((name.to_owned(), spheres));
+        Ok(true)
+    }
+    fn restore_factory_look(&mut self) -> bool {
+        self.preset.take().is_some()
+    }
+    fn presets_page(&self, _: &ListInput) -> Result<ListResult, String> {
+        unreachable!("no fake test lists presets")
+    }
+    fn wear_tick(&mut self, preset: Option<&str>, tuning: TickTuning) -> Result<bool, String> {
+        self.worn = Some(preset.map(str::to_owned));
+        self.tuning = tuning;
+        Ok(true)
+    }
+    fn look_snapshot(&self) -> BubblesStateSnapshot {
+        BubblesStateSnapshot::from_config(&self.config, Decimal::ZERO, None, &[], None, Vec::new())
+    }
+    fn look_config(&self) -> &HeatmapConfig {
+        &self.config
+    }
+}
+
+impl AssetSave for FakeBubbles {
+    fn asset_key(&self) -> Option<&str> {
+        self.asset.as_deref()
+    }
+    fn switch_asset_save(&mut self, on: bool) -> Option<SaveSwitch> {
+        self.asset.as_ref()?;
+        let moved = self.save_changes != on;
+        self.save_changes = on;
+        Some(match (moved, on) {
+            (false, _) => SaveSwitch::Unmoved,
+            (true, true) => SaveSwitch::ScreenStored,
+            (true, false) => SaveSwitch::Off,
+        })
     }
 }
 
@@ -284,6 +361,21 @@ impl TabDirectory for FakeWindow {
     }
     fn tab_id_at(&self, index: usize) -> u64 {
         self.tabs[index].id
+    }
+}
+
+impl PaneBubblesPort for FakeWindow {
+    type Theme = ();
+    fn bubble_theme(&self) {}
+    fn pane_bubbles(
+        &mut self,
+        tab_id: WireU64,
+        pane_id: WireU64,
+    ) -> Result<&mut dyn BubblePane<()>, ControlError> {
+        let tab = self.tabs.iter_mut().find(|tab| tab.id == tab_id.get());
+        let tab = tab.ok_or_else(|| ControlError::invalid_request("no open tab has that id"))?;
+        let pane = tab.panes.iter_mut().find(|pane| pane.id == pane_id.get());
+        Ok(pane.ok_or_else(|| ControlError::invalid_request("the call names an unknown pane"))?)
     }
 }
 

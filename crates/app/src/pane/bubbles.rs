@@ -2,7 +2,7 @@
 //! bars and its view's asset, the look and the save switch from its view.
 use super::ChartPane;
 use quantick_appearance::orderflow::OrderflowAppearance as Theme;
-use quantick_control_handlers::bubble_preset::{AssetSave, BubbleLook, BubblePane, TickSpherePane};
+use quantick_control_handlers::bubble_pane::{AssetSave, BubbleLook, BubblePane, TickSpherePane};
 impl BubblePane<Theme> for ChartPane {
     fn tick_sphere_pane(&self) -> TickSpherePane {
         let asset = self.orderflow.as_ref().and_then(|owner| owner.asset());
