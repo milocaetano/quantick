@@ -6,11 +6,9 @@
 use eframe::egui;
 use quantick_appearance::panel_chrome::BLOCK_GAP_PX;
 use quantick_chart::pane_header::HeaderControl;
-use quantick_control::{error::ControlError, wire::WireU64};
-use quantick_control_handlers::orderflow_settings::{OrderflowSettingsPort, PanelSeat};
+use quantick_control_handlers::orderflow_settings::PanelSeat;
 use quantick_workspace::orderflow_panel::{PANEL_MAX_WIDTH_PX, PANEL_MIN_WIDTH_PX, PanelControl};
 
-use crate::app::control_host::ControlPort;
 use crate::pane_header::{PaintedControls, record};
 use crate::panel_chrome;
 use crate::tab::Tab;
@@ -171,25 +169,20 @@ fn section_block(
     (header.clicked(), body.unwrap_or(false))
 }
 
-impl OrderflowSettingsPort for dyn ControlPort {
-    fn panel_seat(&mut self, tab: u64) -> Result<PanelSeat<'_>, ControlError> {
-        let target = crate::control::layout::TabTarget {
-            tab_id: Some(WireU64::new(tab)),
-        };
-        let index = crate::control::layout::tab_index(self, target)?;
-        let lights_offered = self.appearance().has_lit_flow();
-        let (tab, folds) = self
-            .tabs_mut()
-            .tab_with_panel_folds(index)
-            .ok_or_else(|| ControlError::invalid_request("the tab closed while the call ran"))?;
-        let flow_shown = flow_pane_shown(tab);
-        let view = tab.flow_pane.orderflow.as_mut();
-        Ok(PanelSeat {
-            panel: &mut view.expect("the flow pane keeps a tape").settings_panel,
-            folds,
-            asset: &tab.symbol,
-            flow_shown,
-            lights_offered,
-        })
+/// What the panel's named calls work on: the tab's panel beside the window's
+/// folds, and whether the theme offers the lights.
+pub(crate) fn panel_seat<'a>(
+    tab: &'a mut Tab,
+    folds: &'a mut AssetFolds,
+    lights_offered: bool,
+) -> PanelSeat<'a> {
+    let flow_shown = flow_pane_shown(tab);
+    let view = tab.flow_pane.orderflow.as_mut();
+    PanelSeat {
+        panel: &mut view.expect("the flow pane keeps a tape").settings_panel,
+        folds,
+        asset: &tab.symbol,
+        flow_shown,
+        lights_offered,
     }
 }

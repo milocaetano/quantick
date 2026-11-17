@@ -2,6 +2,7 @@
 //! which bubbles a pane may size; the pane's size sliders and
 //! `orderflow.bubbles.size.set` both ask it, so they cannot disagree.
 use crate::dock::ActionDock;
+use crate::tape_pane::PaneTapePort;
 use quantick_control::{
     error::ControlError, id::PreconditionId, registry::RegistryError, wire::ActorContext,
 };
@@ -115,34 +116,28 @@ pub(crate) fn refused_precondition(
     error
 }
 
-/// The size capability's narrow port: the facts the rule reads, and setting
-/// a gain the rule admitted. The policy stays here.
+/// The size capability's narrow port on the pane: the facts the rule reads,
+/// and setting a gain the rule admitted. The policy stays here.
 pub trait BubbleScalePort {
-    /// The addressed pane's facts for [`BubbleScalePane::admit`]; refuses a
-    /// pane without an order-flow view.
-    fn bubble_scale_pane(
-        &mut self,
-        tab_id: u64,
-        pane_id: u64,
-    ) -> Result<BubbleScalePane, ControlError>;
+    /// The pane's facts for [`BubbleScalePane::admit`]; refuses a pane
+    /// without an order-flow view.
+    fn bubble_scale_pane(&self) -> Result<BubbleScalePane, ControlError>;
     /// Set `target`'s gain to `scale`; answers whether the look changed and
     /// the gain the owner keeps.
     fn set_bubble_scale(
         &mut self,
-        tab_id: u64,
-        pane_id: u64,
         target: BubbleScaleTarget,
         scale: f32,
     ) -> Result<(bool, f32), ControlError>;
 }
 
-pub fn register<D: ActionDock<H, A>, H: BubbleScalePort + ?Sized, A>(
+pub fn register<D: ActionDock<H, A>, H: PaneTapePort<Pane: BubbleScalePort> + ?Sized, A>(
     registry: &mut D,
 ) -> Result<(), RegistryError> {
     registry.register(descriptor(), set)
 }
 
-fn set<H: BubbleScalePort + ?Sized, A>(
+fn set<H: PaneTapePort<Pane: BubbleScalePort> + ?Sized, A>(
     host: &mut H,
     _access: &mut A,
     _actor: &ActorContext,
@@ -150,9 +145,17 @@ fn set<H: BubbleScalePort + ?Sized, A>(
 ) -> Result<Value, ControlError> {
     let input: BubbleScaleInput = serde_json::from_value(input.clone()).map_err(invalid)?;
     let scale = input.validated_scale()?;
-    let (tab, pane) = (input.tab_id.get(), input.pane_id.get());
-    host.bubble_scale_pane(tab, pane)?.admit(input.target)?;
-    let (changed, kept) = host.set_bubble_scale(tab, pane, input.target, scale)?;
+    answer(host.pane_tape(input.tab_id, input.pane_id)?, input, scale)
+}
+
+/// The rule, then the pane's gain, for an input whose scale is in range.
+fn answer<P: BubbleScalePort + ?Sized>(
+    pane: &mut P,
+    input: BubbleScaleInput,
+    scale: f32,
+) -> Result<Value, ControlError> {
+    pane.bubble_scale_pane()?.admit(input.target)?;
+    let (changed, kept) = pane.set_bubble_scale(input.target, scale)?;
     serde_json::to_value(input.result(kept, changed)?).map_err(invalid)
 }
 

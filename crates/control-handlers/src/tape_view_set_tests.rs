@@ -11,12 +11,7 @@ struct Pane {
 }
 
 impl TapeViewPort for Pane {
-    fn set_tape_view(
-        &mut self,
-        _tab: u64,
-        _pane: u64,
-        view: TapeView,
-    ) -> Result<bool, ControlError> {
+    fn set_tape_view(&mut self, view: TapeView) -> Result<bool, ControlError> {
         if let Some(error) = self.refuse.clone() {
             return Err(error);
         }
@@ -36,9 +31,8 @@ fn pane(view: TapeView) -> Pane {
 }
 
 fn call(pane: &mut Pane, view: Value) -> Result<Value, ControlError> {
-    let actor = crate::test_support::FakeWindow::assistant();
     let input = json!({"tab_id": "1", "pane_id": "0", "view": view});
-    set(pane, &mut (), &actor, &input)
+    answer(pane, serde_json::from_value(input).map_err(invalid)?)
 }
 
 const VIEWS: [(&str, TapeView); 3] = [

@@ -139,17 +139,11 @@ impl Pane {
 }
 
 impl BubbleScalePort for Pane {
-    fn bubble_scale_pane(
-        &mut self,
-        _tab_id: u64,
-        _pane_id: u64,
-    ) -> Result<BubbleScalePane, ControlError> {
+    fn bubble_scale_pane(&self) -> Result<BubbleScalePane, ControlError> {
         self.facts.clone()
     }
     fn set_bubble_scale(
         &mut self,
-        _tab_id: u64,
-        _pane_id: u64,
         target: BubbleScaleTarget,
         scale: f32,
     ) -> Result<(bool, f32), ControlError> {
@@ -162,9 +156,10 @@ impl BubbleScalePort for Pane {
 }
 
 fn call(pane: &mut Pane, target: &str, scale: Value) -> Result<Value, ControlError> {
-    let actor = crate::test_support::FakeWindow::assistant();
     let input = json!({"tab_id": "1", "pane_id": "2", "target": target, "scale": scale});
-    set(pane, &mut (), &actor, &input)
+    let input: BubbleScaleInput = serde_json::from_value(input).map_err(invalid)?;
+    let scale = input.validated_scale()?;
+    answer(pane, input, scale)
 }
 
 #[test]

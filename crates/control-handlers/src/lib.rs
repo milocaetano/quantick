@@ -65,6 +65,7 @@ pub mod session;
 mod tabs;
 pub mod tape_fold;
 pub mod tape_market_fold;
+pub mod tape_pane;
 pub mod tape_view_set;
 pub mod ticket_money;
 pub mod time_axis;

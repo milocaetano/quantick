@@ -25,12 +25,12 @@ mod native_indicator;
 mod price_tag_progress;
 // Moved to `quantick-control-host`; named here so `super::journal` resolves.
 use quantick_control_host::journal;
+mod flow_tabs;
 mod layers;
 pub(crate) mod layout;
 mod notify;
 mod pane_bubbles;
 mod ports;
-mod tape_ports;
 pub(crate) use interaction::drawing_band_name;
 #[cfg(test)]
 pub(crate) use interaction::flow_cell_snapshot;

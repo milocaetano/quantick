@@ -17,6 +17,8 @@ mod axes_and_panes;
 mod bubbles;
 mod canvas_gestures;
 mod constants;
+mod orderflow_read;
+mod tape;
 // `pub(crate)`, like `app::launch_hooks`: `split_pane_header` returns
 // `PaneHeaderAreas`, which nothing outside names yet, so a `pub use` of it is an
 // unused import under the workspace's deny-warnings policy while a public
@@ -60,6 +62,7 @@ pub use canvas_split::{
     CANVAS_DIVIDER_HANDLE_PX, DEFAULT_PANE_FRACTION, PaneSide, clamp_pane_fraction,
     split_flow_pane, split_pane_header,
 };
+pub(crate) use orderflow_read::visit_orderflow_panes;
 pub(crate) use pointer_hit::PaneHitTest;
 pub(crate) use pointer_hit::{ControlDrawingHit, ControlPointerHit};
 use quantick_drawings::gesture::{self, SharedPointer};
