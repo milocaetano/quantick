@@ -4,11 +4,6 @@
       "description": "What a switch does with the edits it would drop.",
       "oneOf": [
         {
-          "const": "save",
-          "description": "Write them into the tab's workspace first, then switch.",
-          "type": "string"
-        },
-        {
           "const": "discard",
           "description": "Switch and let them go.",
           "type": "string"
@@ -33,7 +28,7 @@
           "type": "null"
         }
       ],
-      "description": "What becomes of unsaved edits the switch would drop. Left out, such a\nswitch refuses with `workspace.unsaved_edits` and changes nothing."
+      "description": "What becomes of unsaved edits the switch would drop. Left out, such a\nswitch refuses with `workspace.unsaved_edits` and changes nothing; to\nkeep them, `workspace.save_to` writes them first, behind the desk's\nconsent this call does not ask for."
     },
     "name": {
       "type": "string"

@@ -4,7 +4,9 @@
 //! The book says whether a switch drops edits ([`WorkspaceBook::switch_drops`],
 //! the rule the switch drops by); [`SwitchPrompt`] holds the window's
 //! question; this module asks it and carries out the answer. A row asks; the
-//! call refuses with `workspace.unsaved_edits` unless its input decides.
+//! call refuses with `workspace.unsaved_edits` unless told to discard: it
+//! never writes the book, which `workspace.save_to` does behind the desk's
+//! consent.
 //!
 //! [`WorkspaceBook::switch_drops`]: quantick_stores::workspaces::WorkspaceBook::switch_drops
 
@@ -12,7 +14,7 @@ use quantick_control::error::ControlError;
 use quantick_control_schema::workspace_book::{SwitchEdits, UNSAVED_EDITS_CODE};
 use quantick_session::prompt::Prompt;
 use quantick_session::switch_prompt::{SwitchAnswer, SwitchPrompt, SwitchQuestion};
-use quantick_stores::workspaces::{SetOutcome, UnsavedEdits};
+use quantick_stores::workspaces::SetOutcome;
 use serde_json::json;
 
 use super::{
@@ -40,15 +42,9 @@ pub fn ask<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
     {
         return Ok(None);
     }
-    let UnsavedEdits {
-        workspace,
-        followers,
-        changes,
-    } = book.unsaved_edits(tab).unwrap_or_else(|| UnsavedEdits {
-        workspace: book.tab_workspace(tab).to_owned(),
-        followers: Vec::new(),
-        changes: Vec::new(),
-    });
+    // What the switch drops: drawings are the market's, and stay.
+    let (workspace, changes) = (book.tab_workspace(tab).to_owned(), book.layout_changes(tab));
+    let followers = book.save_to_preview(tab).unwrap_or_default();
     Ok(Some(SwitchQuestion {
         tab,
         symbol: app.tab_symbols(&[tab]).pop().unwrap_or_default(),
@@ -60,20 +56,22 @@ pub fn ask<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
 }
 
 /// Put `tab` on `name`, writing its edits into its workspace first when
-/// `save`. Answers the switch and whether the save wrote anything.
+/// `save`.
 ///
 /// # Errors
 /// The save or the switch was refused, or a write failed; a failed save
 /// leaves the tab where it was.
-pub fn carry_out<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
+fn carry_out<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
     app: &mut H,
     to: &mut Journal<'_, A>,
     tab: u64,
     name: &str,
     save: bool,
-) -> Result<(SetOutcome, bool), ControlError> {
-    let saved = save && save_to_journaled(app, to, tab)?.changed;
-    Ok((set_journaled(app, to, tab, name)?, saved))
+) -> Result<SetOutcome, ControlError> {
+    if save {
+        save_to_journaled(app, to, tab)?;
+    }
+    set_journaled(app, to, tab, name)
 }
 
 /// A row's switch: asked when it would drop edits, else carried out. Answers
@@ -89,14 +87,16 @@ pub(super) fn row<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
         prompt.ask(question);
         return Ok(None);
     }
-    let (set, _) = carry_out(app, to, tab, name, false)?;
+    let set = carry_out(app, to, tab, name, false)?;
     Ok(set
         .changed
         .then(|| text::switched_toast(symbol, name, set.dropped_edits)))
 }
 
 /// The prompt's answer: Cancel changes nothing; Save writes the edits into
-/// the tab's workspace, then switches; Switch without saving drops them.
+/// the tab's workspace, then switches; Switch without saving drops them. A
+/// question gone stale (its tab closed, or moved off the workspace it named)
+/// carries out nothing: a Save never writes a workspace it did not name.
 pub(super) fn answer<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
     app: &mut H,
     to: &mut Journal<'_, A>,
@@ -106,15 +106,20 @@ pub(super) fn answer<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
     let Some(step) = prompt.answer(answer) else {
         return Ok(None);
     };
-    let (set, _) = carry_out(app, to, step.tab, &step.target, step.save)?;
+    let on = book(app)?.tab_state(step.tab).map(|state| state.workspace);
+    if on != Some(step.workspace.as_str()) {
+        return Ok(None);
+    }
+    let set = carry_out(app, to, step.tab, &step.target, step.save)?;
     let symbol = app.tab_symbols(&[step.tab]).pop().unwrap_or_default();
     Ok(set
         .changed
         .then(|| text::switched_toast(&symbol, &step.target, set.dropped_edits)))
 }
 
-/// `tab.workspace.set`'s switch: one that would drop edits goes ahead only as
-/// `edits` says. Answers the switch and whether the edits were saved first.
+/// `tab.workspace.set`'s switch: one that would drop edits goes ahead only
+/// when `edits` says discard. The call never saves: that is
+/// `workspace.save_to`'s, behind the desk's consent.
 ///
 /// # Errors
 /// Edits the switch would drop and no `edits`: `workspace.unsaved_edits`,
@@ -125,13 +130,11 @@ pub fn by_call<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
     tab: u64,
     name: &str,
     edits: Option<SwitchEdits>,
-) -> Result<(SetOutcome, bool), ControlError> {
-    let asked = ask(app, to, tab, name)?;
-    if let (Some(asked), None) = (&asked, edits) {
-        return Err(unsaved(asked));
+) -> Result<SetOutcome, ControlError> {
+    if let (Some(asked), None) = (ask(app, to, tab, name)?, edits) {
+        return Err(unsaved(&asked));
     }
-    let save = asked.is_some() && edits == Some(SwitchEdits::Save);
-    carry_out(app, to, tab, name, save)
+    carry_out(app, to, tab, name, false)
 }
 
 fn unsaved(asked: &SwitchQuestion) -> ControlError {
@@ -143,7 +146,7 @@ fn unsaved(asked: &SwitchQuestion) -> ControlError {
         ..
     } = asked;
     let mut error = ControlError::invalid_request(format!(
-        "{} Pass edits save to save to {workspace} first, or edits discard to switch to {target} without saving.",
+        "{} Call workspace.save_to first to keep them, or pass edits discard to switch to {target} without saving.",
         text::close_prompt_body(workspace, changes, followers),
     ));
     error.context.details = Some(json!({ "code": UNSAVED_EDITS_CODE, "workspace": workspace,

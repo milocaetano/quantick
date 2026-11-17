@@ -106,6 +106,13 @@ pub struct WorkspaceMenuState {
 }
 
 impl WorkspaceMenuState {
+    /// Whether a close or a switch question is up: the window's keys stand
+    /// down for it, so Esc and Enter answer it alone.
+    #[must_use]
+    pub fn asking(&self) -> bool {
+        self.close.question().is_some() || self.switch.question().is_some()
+    }
+
     /// The cell of `tab` was clicked, or its shortcut pressed: open the menu
     /// on that tab, or close it when it was already open there.
     pub fn toggle_chip_menu(&mut self, tab: u64) {
@@ -543,6 +550,26 @@ mod tests {
         let mut state = WorkspaceMenuState::default();
         state.open_manage(7);
         state.manage.expect("opened")
+    }
+
+    /// A switch question up stands the window's keys down as a close's does.
+    #[test]
+    fn a_switch_question_up_is_asking() {
+        let mut state = WorkspaceMenuState::default();
+        assert!(!state.asking());
+        state.switch.ask(crate::switch_prompt::SwitchQuestion {
+            tab: 7,
+            symbol: "WINZ26".to_owned(),
+            workspace: "Scalp".to_owned(),
+            target: "Swing".to_owned(),
+            changes: Vec::new(),
+            followers: Vec::new(),
+        });
+        assert!(state.asking());
+        state
+            .switch
+            .answer(crate::switch_prompt::SwitchAnswer::Cancel);
+        assert!(!state.asking());
     }
 
     #[test]

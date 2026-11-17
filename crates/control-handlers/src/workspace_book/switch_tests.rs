@@ -134,45 +134,49 @@ fn a_close_question_comes_before_a_switch_question() {
     assert_eq!(prompt_answer(&menu, 0), answer);
 }
 
-/// `tab.workspace.set` never drops edits unasked: without `edits` it refuses,
-/// naming the workspace and the target, and changes nothing; `discard` drops
-/// them; `save` writes them first.
+/// `tab.workspace.set` never drops edits unasked and never writes the book:
+/// without `edits` it refuses, naming the workspace and the target, and
+/// changes nothing; `discard` drops them; `save` is no answer it takes, as
+/// writing the book is `workspace.save_to`'s, behind the desk's consent.
 #[test]
-fn the_call_refuses_until_its_input_decides_the_edits() {
+fn the_call_refuses_until_told_to_discard_and_never_saves() {
     let (mut host, mut access, actor) = held_on_scalp();
     let before = host.book.clone();
-    let value = json!({ "tab_id": "1", "name": DEFAULT_WORKSPACE });
-    let refused = set(&mut host, &mut access, &actor, &value).unwrap_err();
-    assert_eq!(detail(&refused), UNSAVED_EDITS_CODE);
-    let details = refused.context.details.as_ref().unwrap();
-    assert_eq!(details["workspace"], "Scalp");
-    assert_eq!(details["target"], DEFAULT_WORKSPACE);
-    assert_eq!(host.book, before, "nothing changed");
-    assert_eq!((host.writes, access.events.len()), (0, 0));
-
-    for (edits, saved, style) in [("discard", false, None), ("save", true, Some("heatmap"))] {
-        let (mut host, mut access, actor) = held_on_scalp();
-        let value = json!({ "tab_id": "1", "name": DEFAULT_WORKSPACE, "edits": edits });
-        let moved = set(&mut host, &mut access, &actor, &value).unwrap();
-        assert_eq!(moved["saved"], saved, "{edits}");
-        assert_eq!(moved["dropped_edits"], !saved, "{edits}");
-        assert_eq!(scalp_style(&host).as_deref(), style, "{edits}");
-        assert_eq!(host.book.tab_state(1).unwrap().workspace, DEFAULT_WORKSPACE);
+    for value in [
+        json!({ "tab_id": "1", "name": DEFAULT_WORKSPACE }),
+        json!({ "tab_id": "1", "name": DEFAULT_WORKSPACE, "edits": "save" }),
+    ] {
+        let refused = set(&mut host, &mut access, &actor, &value).unwrap_err();
+        assert_eq!(host.book, before, "nothing changed: {value}");
+        assert_eq!((host.writes, access.events.len()), (0, 0));
+        if value.get("edits").is_none() {
+            assert_eq!(detail(&refused), UNSAVED_EDITS_CODE);
+            let details = refused.context.details.as_ref().unwrap();
+            assert_eq!(details["workspace"], "Scalp");
+            assert_eq!(details["target"], DEFAULT_WORKSPACE);
+        }
     }
+    let value = json!({ "tab_id": "1", "name": DEFAULT_WORKSPACE, "edits": "discard" });
+    let moved = set(&mut host, &mut access, &actor, &value).unwrap();
+    assert_eq!(moved["dropped_edits"], true);
+    assert_eq!(scalp_style(&host), None, "Scalp as saved");
+    assert_eq!(host.book.tab_state(1).unwrap().workspace, DEFAULT_WORKSPACE);
+    assert_eq!(host.writes, 0, "the call wrote nothing");
 }
 
-/// `edits` on a switch that drops nothing writes nothing: there is nothing
-/// to save.
+/// A question gone stale carries out nothing: the tab left the workspace it
+/// named by another route, so a Save would write a workspace it never named.
 #[test]
-fn edits_on_a_clean_switch_write_nothing() {
-    let (mut host, mut access, actor) = parts();
-    save_as(&mut host, &mut access, &actor, &json!({ "name": "Scalp" })).unwrap();
-    let writes = host.writes;
-    let value = json!({ "tab_id": "1", "name": DEFAULT_WORKSPACE, "edits": "save" });
-    let moved = set(&mut host, &mut access, &actor, &value).unwrap();
-    assert_eq!(
-        (moved["saved"].clone(), moved["changed"].clone()),
-        (json!(false), json!(true))
-    );
-    assert_eq!(host.writes, writes, "nothing to save");
+fn an_answer_to_a_stale_question_does_nothing() {
+    let (mut host, mut access, actor) = held_on_scalp();
+    let mut menu = WorkspaceMenuState::default();
+    let set = WorkspaceCommand::Set(DEFAULT_WORKSPACE.to_owned());
+    row(&mut host, &mut access, &actor, &mut menu, set);
+    host.book.save_as(1, "Moved").unwrap();
+    let before = host.book.clone();
+    let save = WorkspaceCommand::AnswerSwitch(SwitchAnswer::Save);
+    assert_eq!(row(&mut host, &mut access, &actor, &mut menu, save), None);
+    assert_eq!(menu.switch.question(), None, "the question is down");
+    assert_eq!(host.book, before, "nothing saved, nothing switched");
+    assert_eq!((host.writes, access.events.len()), (0, 0));
 }

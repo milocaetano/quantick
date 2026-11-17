@@ -56,6 +56,7 @@ pub fn switch<H: SwitchHost + ?Sized>(
     let bar = choice.bar.as_deref().map(arrival_bar).transpose()?;
     if let Some(name) = &choice.workspace {
         app.market_snapshot().check_workspace(name)?;
+        keeps_edits(app, choice.tab_id, name)?;
     }
     let tab = WireU64::new(choice.tab_id);
     let listed = (!choice.add).then_some(choice.symbol.as_str());
@@ -105,4 +106,20 @@ pub fn roll<H: SwitchHost + ?Sized>(
         .map_err(|refusal| refusal.reason().to_owned())?;
     contract_roll::apply(app, index, &next).ok_or(TAB_GONE)?;
     Ok(roll_toast(&next))
+}
+
+/// A workspace picked here never drops edits unasked: the palette puts no
+/// question, so a switch that would drop them is refused before anything
+/// moves, as `tab.workspace.set` refuses one without `edits`.
+fn keeps_edits<H: SwitchHost + ?Sized>(app: &mut H, tab: u64, name: &str) -> Result<(), String> {
+    let Some(book) = app.workspace_book() else {
+        return Ok(());
+    };
+    if book.switch_drops(tab, name) != Ok(true) {
+        return Ok(());
+    }
+    Err(quantick_control_schema::window_menu::switch_keeps_edits(
+        book.tab_workspace(tab),
+        name,
+    ))
 }

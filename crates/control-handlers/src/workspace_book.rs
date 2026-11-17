@@ -1114,13 +1114,12 @@ fn set<H: WorkspaceBookHost + TabDirectory + ?Sized, A: NotifyAccess>(
     } = input(value)?;
     let tab = tab_on_book(app, tab_id)?;
     let to = &mut Some((access, actor));
-    let (outcome, saved) = switch::by_call(app, to, tab, &name, edits)?;
+    let outcome = switch::by_call(app, to, tab, &name, edits)?;
     answer(&TabWorkspaceSetResult {
         tab_id: WireU64::new(tab),
         workspace: name,
         changed: outcome.changed,
         dropped_edits: outcome.dropped_edits,
-        saved,
     })
 }
 

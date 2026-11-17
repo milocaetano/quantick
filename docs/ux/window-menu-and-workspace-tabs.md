@@ -144,7 +144,9 @@ THIS TAB  WINZ26 · MetaTrader 5 — B3 │ REC · History ▾ │ BUY 1  SELL 1
   does: "Switch WINZ26 to Tape" — what changed since Scalp was saved — Cancel /
   Switch without saving / Save to Scalp; Cancel changes nothing.
   `tab.workspace.set` refuses such a switch with `workspace.unsaved_edits`
-  unless its `edits` says `save` or `discard`. Any other switch never asks.
+  unless its `edits` says `discard`; it never writes the workspace, which
+  `workspace.save_to` does first to keep them. The market palette's
+  workspace pick refuses it too. Any other switch never asks.
 - The tab chip and the status bar cell read one state; a test proves they
   agree.
 

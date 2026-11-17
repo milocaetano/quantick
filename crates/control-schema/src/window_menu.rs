@@ -432,6 +432,15 @@ pub fn switch_prompt_title(symbol: &str, target: &str) -> String {
     format!("Switch {symbol} to {target}")
 }
 
+/// Why the market palette will not put a tab holding edits on another
+/// workspace: it has no question to ask, so it names the way that does.
+#[must_use]
+pub fn switch_keeps_edits(workspace: &str, target: &str) -> String {
+    format!(
+        "This tab holds unsaved edits on {workspace}: save them, or switch it to {target} from the workspace menu, first"
+    )
+}
+
 /// The close prompt's body, naming what changed and who follows a save.
 #[must_use]
 pub fn close_prompt_body(workspace: &str, changes: &[String], followers: &[String]) -> String {

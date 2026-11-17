@@ -41,6 +41,9 @@ pub struct SwitchQuestion {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SwitchStep {
     pub tab: u64,
+    /// The workspace the question named: a tab no longer on it makes the
+    /// answer stale, and the caller carries out nothing.
+    pub workspace: String,
     pub target: String,
     /// Write the edits into the tab's workspace before it moves.
     pub save: bool,
@@ -76,6 +79,7 @@ impl SwitchPrompt {
         };
         Some(SwitchStep {
             tab: asked.tab,
+            workspace: asked.workspace,
             target: asked.target,
             save,
         })
@@ -106,15 +110,14 @@ mod tests {
             let mut prompt = SwitchPrompt::default();
             prompt.ask(question(3, "Swing"));
             let step = prompt.answer(answer);
-            let target = "Swing".to_owned();
-            assert_eq!(
-                step,
-                Some(SwitchStep {
-                    tab: 3,
-                    target,
-                    save
-                })
-            );
+            let (workspace, target) = ("Scalp".to_owned(), "Swing".to_owned());
+            let asked = SwitchStep {
+                tab: 3,
+                workspace,
+                target,
+                save,
+            };
+            assert_eq!(step, Some(asked));
             assert_eq!(prompt.question(), None, "answered once");
         }
     }

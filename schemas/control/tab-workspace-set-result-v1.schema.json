@@ -6,18 +6,13 @@
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "The tab, and what became of its unsaved edits.",
+  "description": "The tab, and whether unsaved edits were dropped by the switch.",
   "properties": {
     "changed": {
       "description": "`false` for a repeat, which keeps any edits.",
       "type": "boolean"
     },
     "dropped_edits": {
-      "type": "boolean"
-    },
-    "saved": {
-      "default": false,
-      "description": "The edits were written into the workspace the tab left.",
       "type": "boolean"
     },
     "tab_id": {

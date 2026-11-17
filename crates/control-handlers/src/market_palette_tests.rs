@@ -489,6 +489,29 @@ fn the_palette_switches_the_tab_through_the_source_switch() {
     assert!(host.catalog.is_empty());
 }
 
+/// A workspace picked in the palette never drops a tab's edits unasked: the
+/// switch is refused before the tab, its bar or its workspace moves.
+#[test]
+fn a_workspace_pick_that_would_drop_edits_is_refused_before_the_switch() {
+    let mut host = Host::new();
+    host.book.open_tab(5);
+    let edited = quantick_stores::workspaces::WorkspaceRecipe {
+        footprint_style: Some("heatmap".to_owned()),
+        ..Default::default()
+    };
+    host.book.observe(5, &edited).unwrap();
+    let picked = SwitchChoice {
+        workspace: Some("Swing".to_owned()),
+        ..switch_to("PEPEUSDT")
+    };
+    let reason = settle(&mut host, PaletteIntent::Switch(picked)).unwrap_err();
+    let expected = quantick_control_schema::window_menu::switch_keeps_edits("Default", "Swing");
+    assert_eq!(reason, expected);
+    assert!(host.switches.is_empty(), "the tab stays where it was");
+    assert_eq!(host.book.tab_state(5).unwrap().workspace, "Default");
+    assert_eq!(host.book.tab_copy(5), Some(&edited), "the edit is kept");
+}
+
 /// A bar the pane would refuse once on the new market (a deal bar: the fresh
 /// timeline holds no deal count) is refused before the tab moves, so the
 /// switch is never half done.

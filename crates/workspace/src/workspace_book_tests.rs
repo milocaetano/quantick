@@ -994,6 +994,24 @@ fn switch_away(edit: impl Fn(u64, &mut WorkspaceRecipe)) -> SetOutcome {
     set
 }
 
+/// A switch drops the layout, never the drawings, which are the market's:
+/// the changes it names leave them out, where a close names them.
+#[test]
+fn a_switch_names_the_layout_changes_alone() {
+    let mut book = two_tabs_on_scalp();
+    book.observe(1, &recipe(DeclaredLayout::Time)).unwrap();
+    book.note_drawings(1, vec![flow_key()], 2);
+    let close = book.unsaved_edits(1).expect("held").changes;
+    let switch = book.layout_changes(1);
+    assert_eq!(
+        close.len(),
+        switch.len() + 1,
+        "{close:?} against {switch:?}"
+    );
+    assert!(close.starts_with(&switch) && !switch.is_empty());
+    assert!(book.layout_changes(2).is_empty(), "a clean tab");
+}
+
 /// Asking before a switch moves nothing: a repeat drops nothing, an unknown
 /// workspace is refused, and the tab keeps its copy until the switch.
 #[test]

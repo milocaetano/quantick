@@ -2825,3 +2825,37 @@ fn a_menu_switch_with_held_edits_asks_and_enter_saves_then_switches() {
     let saved = on_disk.recipe(&workspace).expect("the workspace on disk");
     assert_eq!(saved.split_fraction, Some(0.31));
 }
+
+/// The switch prompt's Esc only cancels the switch, as the close prompt's
+/// does: the chart under it keeps its selected drawing.
+#[test]
+fn the_switch_prompt_s_esc_leaves_the_chart_s_selection_alone() {
+    use quantick_session::workspace_menu::WorkspaceCommand;
+    let layouts = crate::scratch::ScratchFile::new("workspace-switch-esc", "layouts.toml");
+    let (mut app, _, _) = two_tabs(&layouts);
+    let tab = app.runtime.tabs.active_id();
+    let drawings = &mut app.active_tab_mut().flow_pane.drawings;
+    drawings.place(
+        drawing_tool("horizontal-line"),
+        ChartPoint::at_time(1.0, 100.0, None),
+    );
+    drawings.select(Some(0));
+    edit_split(&mut app, tab, 0.33);
+    let row = app.runtime.workspace.book.tab_row(tab);
+    let set = WorkspaceCommand::Set("Default".to_owned());
+    crate::app::tab_workspaces::apply_workspace_command(&mut app, set);
+    assert!(app.chrome.window_menu.tab_workspace.asking());
+    let ctx = egui::Context::default();
+    run_frame_with_events(&mut app, &ctx, vec![key_press(egui::Key::Escape)]);
+    assert!(
+        !app.chrome.window_menu.tab_workspace.asking(),
+        "Esc cancelled"
+    );
+    assert_eq!(
+        app.runtime.workspace.book.tab_row(tab),
+        row,
+        "the tab stays"
+    );
+    let selected = app.active_tab().flow_pane.drawings.selected();
+    assert_eq!(selected, Some(0), "the drawing stays selected");
+}

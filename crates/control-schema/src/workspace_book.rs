@@ -79,7 +79,9 @@ pub struct TabWorkspaceSetInput {
     pub tab_id: Option<WireU64>,
     pub name: String,
     /// What becomes of unsaved edits the switch would drop. Left out, such a
-    /// switch refuses with `workspace.unsaved_edits` and changes nothing.
+    /// switch refuses with `workspace.unsaved_edits` and changes nothing; to
+    /// keep them, `workspace.save_to` writes them first, behind the desk's
+    /// consent this call does not ask for.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub edits: Option<SwitchEdits>,
 }
@@ -88,13 +90,11 @@ pub struct TabWorkspaceSetInput {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SwitchEdits {
-    /// Write them into the tab's workspace first, then switch.
-    Save,
     /// Switch and let them go.
     Discard,
 }
 
-/// The tab, and what became of its unsaved edits.
+/// The tab, and whether unsaved edits were dropped by the switch.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
 pub struct TabWorkspaceSetResult {
     pub tab_id: WireU64,
@@ -102,9 +102,6 @@ pub struct TabWorkspaceSetResult {
     /// `false` for a repeat, which keeps any edits.
     pub changed: bool,
     pub dropped_edits: bool,
-    /// The edits were written into the workspace the tab left.
-    #[serde(default)]
-    pub saved: bool,
 }
 
 /// A call about one tab's copy.
@@ -319,7 +316,7 @@ pub fn tab_workspace_set_descriptor() -> CapabilityDescriptor {
         TAB_WORKSPACE_SET_CAPABILITY_ID,
         quantick_control_host::authority::TAB_MODULE_ID,
         "Put a tab on a workspace",
-        "Switches one tab to a saved workspace: its charts, each chart's bar rule, indicators, layers and footprint style, as the workspace saved them; a rule or style it does not name stays the tab's. Drawings, anchored studies and the paper position stay with the market. A switch that would drop unsaved edits refuses with workspace.unsaved_edits, naming the workspace, the tabs a save also changes and what changed, and changes nothing; edits save writes them into the tab's workspace first (saved true), edits discard drops them (dropped_edits true). Discover names with workspace.list.",
+        "Switches one tab to a saved workspace: its charts, each chart's bar rule, indicators, layers and footprint style, as the workspace saved them; a rule or style it does not name stays the tab's. Drawings, anchored studies and the paper position stay with the market. A switch that would drop unsaved edits refuses with workspace.unsaved_edits, naming the workspace, the target, the tabs a save also changes and what changed, and changes nothing; edits discard drops them (dropped_edits true), and workspace.save_to first keeps them. Discover names with workspace.list.",
         "The call names the workspace it wants, so a repeat leaves the tab there, keeps any edits made since and answers changed false.",
     ))
 }
@@ -369,7 +366,7 @@ pub fn workspace_revert_descriptor() -> CapabilityDescriptor {
         WORKSPACE_REVERT_CAPABILITY_ID,
         MODULE_ID,
         "Removed: always refuses",
-        "Revert is gone. Every call refuses with workspace.revert_removed, naming workspace.save_to to keep edits and workspace.autosave.set to write them as they are made. A switch with tab.workspace.set drops held edits.",
+        "Revert is gone. Every call refuses with workspace.revert_removed, naming workspace.save_to to keep edits and workspace.autosave.set to write them as they are made. A switch with tab.workspace.set refuses over held edits unless told to discard them.",
         "Always refuses; nothing changes.",
     ))
 }
@@ -382,7 +379,7 @@ pub fn workspace_autosave_set_descriptor() -> CapabilityDescriptor {
         WORKSPACE_AUTOSAVE_SET_CAPABILITY_ID,
         MODULE_ID,
         "Turn auto save layout changes on or off",
-        "On, every layout edit on a tab is written into its workspace a second after it stops, and the clean tabs on that workspace follow; a tab reads as modified only while its copy is not in its workspace: a write that failed (retried each quiet second until another tab saves that workspace), a second tab on that workspace holding edits (one copy is written: of every tab there holding edits, the active tab's, else the lowest id's), or a copy a restart brought back differing. Such a tab holds its edits as with autosave off: autosave never writes it, closing it or exiting asks, and a switch drops it. Off, a tab holds its edits, marked, until workspace.save_to, and closing it asks. Turning it on saves every tab holding edits at once, one per workspace (never one marked as above), and answers each save; when one fails the setting stays on, the setting and the saves that landed are journaled, and the call refuses with workspace.write_failed whose details name auto_save and the workspaces saved. The desk keeps the choice; the workspace snapshot reads it as auto_save.",
+        "On, every layout edit on a tab is written into its workspace a second after it stops, and the clean tabs on that workspace follow; a tab reads as modified only while its copy is not in its workspace: a write that failed (retried each quiet second until another tab saves that workspace), a second tab on that workspace holding edits (one copy is written: of every tab there holding edits, the active tab's, else the lowest id's), or a copy a restart brought back differing. Such a tab holds its edits as with autosave off: autosave never writes it, and closing it, switching it or exiting asks. Off, a tab holds its edits, marked, until workspace.save_to, and closing it asks. Turning it on saves every tab holding edits at once, one per workspace (never one marked as above), and answers each save; when one fails the setting stays on, the setting and the saves that landed are journaled, and the call refuses with workspace.write_failed whose details name auto_save and the workspaces saved. The desk keeps the choice; the workspace snapshot reads it as auto_save.",
         "The call names the state it wants, so a repeat answers changed false and writes only a save still owed, as after a failure.",
     ))
 }

@@ -939,15 +939,25 @@ impl WorkspaceBook {
         if !holds {
             return None;
         }
-        let mut changes = (self.baseline(state).filter(|_| modified))
-            .map(|base| base.masked(&state.copy).changes_from(base))
-            .unwrap_or_default();
+        let mut changes = self.layout_changes(tab);
         changes.extend((held > 0).then(|| drawings_change(held)));
         Some(UnsavedEdits {
             workspace: state.workspace.clone(),
             followers: self.save_to_preview(tab).unwrap_or_default(),
             changes,
         })
+    }
+
+    /// What the tab's copy changed since its workspace was saved, in the
+    /// close prompt's words, its drawings aside: what a switch drops.
+    #[must_use]
+    pub fn layout_changes(&self, tab: u64) -> Vec<String> {
+        let Some(state) = self.tabs.get(&tab) else {
+            return Vec::new();
+        };
+        (self.baseline(state).filter(|_| self.is_modified(state)))
+            .map(|base| base.masked(&state.copy).changes_from(base))
+            .unwrap_or_default()
     }
 
     /// The arrangement the tab holds now.
