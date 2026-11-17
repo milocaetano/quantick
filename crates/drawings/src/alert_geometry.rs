@@ -1,5 +1,7 @@
 //! Shared drawing visibility and rectangle-domain facts for alert consumers.
-use crate::{Drawing, DrawingId, DrawingTool, Drawings, RectanglePayload};
+use crate::{
+    Drawing, DrawingBand, DrawingId, DrawingTool, Drawings, RECTANGLE_TOOL_ID, RectanglePayload,
+};
 
 pub fn region_pause<T>(drawing: &Drawing<T>, all_hidden: bool) -> Option<&'static str> {
     if drawing.foreign_market {
@@ -61,3 +63,54 @@ pub fn region_can_fire<T>(drawing: &Drawing<T>, closed_slots: usize) -> bool {
     let next_slot = closed_slots as f32;
     a.bar.max(b.bar) >= next_slot
 }
+
+/// Whether `id` can carry a strategy on a pane that has closed
+/// `closed_slots` bars, in the words the trader reads when it cannot.
+///
+/// Re-validates everything the menu's gate promised: this is also the seam
+/// a programmatic caller comes through, and it must not be able to arm what
+/// the menu would refuse — the wrong shape, another band, a drawing with no
+/// footing here, or one nobody can see.
+pub fn check_arm(
+    drawings: &Drawings<DrawingTool>,
+    id: DrawingId,
+    closed_slots: usize,
+) -> Result<(), String> {
+    let Some(index) = drawings.index_of(id) else {
+        return Err("the drawing is gone".to_owned());
+    };
+    let target = &drawings.items()[index];
+    if target.tool.id() != RECTANGLE_TOOL_ID
+        || target.band != DrawingBand::Price
+        || target.points.len() != 2
+    {
+        return Err("only price-band rectangles carry strategies".to_owned());
+    }
+    if target.foreign_market || target.off_series {
+        return Err(
+            "this drawing belongs to another market or lost its series — redraw the \
+             region here first"
+                .to_owned(),
+        );
+    }
+    if target.hidden || drawings.all_hidden() {
+        return Err("unhide the drawing first — an armed region stays visible".to_owned());
+    }
+    // A region whose drawn span can no longer cover a future bar can never
+    // fire: the badge would show "armed" over a bot that is structurally
+    // done. One predicate, shared with re-arm and the badge, refuses it with
+    // the fix in hand.
+    if !region_can_fire(target, closed_slots) {
+        return Err(
+            "the region ends before the next bar, so nothing can ever fire — \
+             stretch it past the right edge, or turn on \"extend right\" in its \
+             Region settings"
+                .to_owned(),
+        );
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+#[path = "alert_geometry_tests.rs"]
+mod tests;

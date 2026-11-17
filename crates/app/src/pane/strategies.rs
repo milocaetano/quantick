@@ -1,6 +1,7 @@
 //! The strategies armed on this pane's drawings, as the chart sees them: the
-//! region a drawing marks, the gate a drawing must pass to be armed, and the
-//! badge that says what the bot riding it is doing.
+//! region a drawing marks and the badge that says what the bot riding it is
+//! doing. The gate a drawing must pass to be armed is
+//! `quantick_drawings::alert_geometry::check_arm`.
 //!
 //! The instances themselves are the tab's
 //! ([`crate::strategy_anchors::TabStrategies`], keyed by pane id); a pane
@@ -16,7 +17,7 @@ use crate::drawings::{self, Drawing, Drawings};
 use crate::state::dec_from_f64;
 use crate::theme;
 
-use super::{ChartPane, region_pause};
+use super::region_pause;
 
 /// Resolve the drawing an instance is anchored to into the kernel's
 /// terms, for the bar that closed at `slot`: the price band between the
@@ -37,50 +38,6 @@ pub fn drawing_region(
         quantick_strategy::Region::new(dec_from_f64(a), dec_from_f64(b)),
         active,
     ))
-}
-
-/// Whether `drawing` on `pane` can carry a strategy, in the words the
-/// trader reads when it cannot.
-///
-/// Re-validates everything the menu's gate promised: this is also the seam
-/// a programmatic caller comes through, and it must not be able to arm what
-/// the menu would refuse — the wrong shape, another band, a drawing with no
-/// footing here, or one nobody can see.
-pub(crate) fn check_arm(pane: &ChartPane, drawing: drawings::DrawingId) -> Result<(), String> {
-    let drawings = &pane.drawings;
-    let Some(index) = drawings.index_of(drawing) else {
-        return Err("the drawing is gone".to_owned());
-    };
-    let target = &drawings.items()[index];
-    if target.tool.id() != drawings::RECTANGLE_TOOL_ID
-        || target.band != drawings::DrawingBand::Price
-        || target.points.len() != 2
-    {
-        return Err("only price-band rectangles carry strategies".to_owned());
-    }
-    if target.foreign_market || target.off_series {
-        return Err(
-            "this drawing belongs to another market or lost its series — redraw the \
-             region here first"
-                .to_owned(),
-        );
-    }
-    if target.hidden || drawings.all_hidden() {
-        return Err("unhide the drawing first — an armed region stays visible".to_owned());
-    }
-    // A region whose drawn span can no longer cover a future bar can never
-    // fire: the badge would show "armed" over a bot that is structurally
-    // done. One predicate, shared with re-arm and the badge, refuses it with
-    // the fix in hand.
-    if !region_can_fire(target, pane.series_read().closed_slots()) {
-        return Err(
-            "the region ends before the next bar, so nothing can ever fire — \
-             stretch it past the right edge, or turn on \"extend right\" in its \
-             Region settings"
-                .to_owned(),
-        );
-    }
-    Ok(())
 }
 
 pub(crate) use quantick_drawings::alert_geometry::region_can_fire;
