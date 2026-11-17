@@ -693,55 +693,6 @@ impl PaperAccount {
         self.venue.mark_price().is_some()
     }
 
-    /// The status-bar cell, honest about open versus flat: `SIM LONG 1 ·
-    /// +2 pts × 1 · — set pt value` while a position is open (side, size
-    /// and its open profit, in the P&L display's figures),
-    /// `SIM flat · +7 pts/ct · — set pt value` otherwise (the session's
-    /// realized total). `None`
-    /// while the simulator has never been touched.
-    #[must_use]
-    pub fn status_cell(&self) -> Option<(String, std::cmp::Ordering)> {
-        if let Some(position) = self.venue.position() {
-            let open = self
-                .venue
-                .mark_price()
-                .map(|mark| position.open_points(mark))
-                .unwrap_or_default();
-            let text = self
-                .pnl_reader()
-                .trade(&self.symbol, open, position.quantity);
-            let account = self
-                .broker_shown()
-                .then(|| self.broker().and_then(|broker| broker.account()))
-                .flatten()
-                .map(|facts| format!(" · {}", facts.short_name()))
-                .unwrap_or_default();
-            return Some((
-                format!(
-                    "{} {} {}{account} · {text}",
-                    self.route_kind().word(),
-                    position_word(position.side),
-                    fmt_decimal(position.quantity),
-                ),
-                open.cmp(&Decimal::ZERO),
-            ));
-        }
-        let untouched = self.venue.closed_trades().is_empty()
-            && self.venue.working_orders().is_empty()
-            && self.venue.in_flight() == 0;
-        if untouched {
-            return None;
-        }
-        Some((
-            format!(
-                "{} flat · {}",
-                self.route_kind().word(),
-                self.realized_pnl_text()
-            ),
-            self.realized_pnl_tint().cmp(&Decimal::ZERO),
-        ))
-    }
-
     /// The open position as the chrome reports it: side, size, entry, and
     /// the open profit at the current mark. `None` while flat.
     #[must_use]
