@@ -646,6 +646,11 @@ of the symbol's `trade_tick_size`, then rounded to its `digits`: a stop
 dragged on the chart arrives wherever the pointer was (`172140.82`), and B3
 refuses an off-grid stop or target as `10016` "Invalid stops" — on WINZ26
 (tick 5, digits 0) `172140.82` goes as `172140` and `172207.6` as `172210`.
+An entry `price` goes to the nearest tick; a stop or a target whose side
+the bridge can name (the submit's side, the position's or the order's type)
+goes to the tick on its own side, away from the entry (a long's stop down
+and target up, a short's the other way), so a level dragged next to the
+market never lands on or past it. A positive protection never snaps to `0.0`.
 `0.0` (no stop, no target) stays `0.0`. A symbol whose information or tick
 size is unknown has its prices sent as they came: an exit never waits on
 symbol information.
