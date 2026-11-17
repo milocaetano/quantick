@@ -110,52 +110,24 @@ pub fn placement(chart: Area, bbox: Area, size: [f32; 2]) -> PanelPlacement {
     )
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    /// Automatic placement is not a preference, so it is not written down.
-    /// Only a hand — or the hook standing in for one — makes a position the
-    /// file has to remember.
-    #[test]
-    fn only_a_hand_placed_position_reaches_the_file() {
-        let mut inspector = State::default();
-        assert_eq!(inspector.remembered_position(), None);
-        inspector.pos = Some([10.0, 20.0]);
-        assert_eq!(
-            inspector.remembered_position(),
-            None,
-            "a placed position is the app's decision, not the trader's"
-        );
-        inspector.place_by_hand([30.0, 40.0]);
-        assert_eq!(inspector.remembered_position(), Some([30.0, 40.0]));
-        assert!(
-            !inspector.take_position_dirty(),
-            "parking alone owes nothing: the drag calls it on every frame the              hand moves, and the file write is owed when the hand comes off"
-        );
-        inspector.position_dirty = true;
-        assert!(inspector.take_position_dirty(), "and then exactly once");
-        assert!(!inspector.take_position_dirty());
-    }
-
-    /// A file with a nonsense position leaves automatic placement in charge
-    /// rather than parking the panel at an invented pixel: NaN survives
-    /// `clamp`, so neither coordinate may slip through, and neither the point
-    /// nor the hand's claim may outlive the refusal.
-    #[test]
-    fn a_nonsense_remembered_position_is_refused() {
-        let mut inspector = State::default();
-        for pair in [
-            [f32::NAN, 40.0],
-            [30.0, f32::NAN],
-            [f32::INFINITY, 40.0],
-            [30.0, f32::INFINITY],
-        ] {
-            inspector.place_by_hand([30.0, 40.0]);
-            inspector.restore_position(Some(pair));
-            assert_eq!(inspector.pos, None, "{pair:?} is not a position");
-            assert!(!inspector.moved, "{pair:?} hands back automatic placement");
-        }
-        inspector.restore_position(Some([12.0, 34.0]));
-        assert_eq!(inspector.remembered_position(), Some([12.0, 34.0]));
-    }
+/// The object's standing, in words, as the inspector lists it: who placed it,
+/// and whether it is locked or hidden. Data honesty, where the trader decides
+/// what to do with the object: an assistant's mark never passes for their own.
+#[must_use]
+pub fn object_notes<T>(drawing: &quantick_drawings::Drawing<T>) -> Vec<String> {
+    let author = drawing.author.as_ref();
+    let placed = author.map(|author| format!("Placed by {} - not by you.", author.label()));
+    let locked = drawing.locked.then_some(LOCKED_NOTE);
+    let hidden = drawing.hidden.then_some(HIDDEN_NOTE);
+    placed
+        .into_iter()
+        .chain([locked, hidden].into_iter().flatten().map(String::from))
+        .collect()
 }
+
+const LOCKED_NOTE: &str = "Locked - protected from accidental moves. Style stays editable.";
+const HIDDEN_NOTE: &str = "Hidden - Show brings it back.";
+
+#[cfg(test)]
+#[path = "inspector_tests.rs"]
+mod tests;

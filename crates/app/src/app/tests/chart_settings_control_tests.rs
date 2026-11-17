@@ -524,7 +524,11 @@ fn the_frame_publishes_chart_and_new_drawing_defaults_together() {
     let (mut app, _commands) = app_with_history(20);
     run_frame(&mut app, &ctx);
     let tool = crate::drawings::DrawingTool::by_id("text").unwrap();
-    let old = crate::drawings::new_drawing_from_defaults(&app.drawings.presets, tool);
+    let old = crate::drawings::new_drawing_from_defaults(
+        &app.drawings.presets,
+        quantick_appearance::ChartSurface::Paper,
+        tool,
+    );
     let old_fill = app.runtime.style.candles.bull_fill;
     app.runtime.style.ownership.bull_fill = Inheritance::Explicit;
     app.runtime.style.candles.wick_width = 3.0;
@@ -541,7 +545,11 @@ fn the_frame_publishes_chart_and_new_drawing_defaults_together() {
     );
     assert_eq!(app.runtime.style.candles.bull_fill, old_fill);
     assert_eq!(app.runtime.style.candles.wick_width, 3.0);
-    let new = crate::drawings::new_drawing_from_defaults(&app.drawings.presets, tool);
+    let new = crate::drawings::new_drawing_from_defaults(
+        &app.drawings.presets,
+        quantick_appearance::ChartSurface::Paper,
+        tool,
+    );
     assert_eq!(new.style.color, theme.color(Token::DrawingDefault));
     assert_ne!(new.style.color, old.style.color);
     assert_eq!(old.style, tool.default_style());

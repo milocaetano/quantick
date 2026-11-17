@@ -299,7 +299,8 @@ impl DrawingControllerAccess<'_> {
         }
         if let Some(edit) = ask.commit_edit_gesture.take() {
             if let Some(after) = host.drawing_at(edit.tab, edit.side, edit.index) {
-                drawings::remember_last_style(self.presets, &edit.before, after);
+                let surface = host.surface_of(edit.tab, edit.side);
+                drawings::remember_last_style(self.presets, surface, &edit.before, after);
             }
             host.record(edit.tab, edit.side, edit.index, edit.before);
         }
@@ -334,10 +335,12 @@ impl DrawingControllerAccess<'_> {
         if ask.duplicate {
             self.duplicate_selected_drawing(host, effects, alerts);
         }
+        let (tab, side) = host.target();
+        let surface = host.surface_of(tab, side);
         if ask.draw_again.is_some()
             && let Some(drawing) = host.drawings_mut().selected_mut()
         {
-            quantick_drawings::prepare_repeat(&mut *self.presets, drawing);
+            quantick_drawings::prepare_repeat(&mut *self.presets, surface, drawing);
         }
         effects.arm = effects.arm.or(ask.draw_again);
         if let Some(saved) = ask.saved_default {
@@ -546,8 +549,9 @@ impl DrawingControllerAccess<'_> {
         let points = operation
             .anchors
             .map(|anchor| drawings::ChartPoint::at_time(anchor.bar, anchor.price, anchor.time_ms));
+        let surface = host.surface_of(tab, side);
         let seeded = drawings::DrawingTool::by_id(operation.action.tool_id()).filter(|tool| {
-            let opening = drawings::new_drawing_from_defaults(self.presets, *tool);
+            let opening = drawings::new_drawing_from_defaults(self.presets, surface, *tool);
             host.seed_draft(tab, side, *tool, &operation.band, &points, opening)
         });
         let outcome = PlacementOutcome::of(seeded.is_some());

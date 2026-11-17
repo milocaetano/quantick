@@ -1,3 +1,4 @@
+use quantick_appearance::Ground;
 use quantick_drawings::{DrawingStyle, PresetHost};
 
 /// One write to the preset bank, recorded rather than performed.
@@ -23,10 +24,12 @@ pub enum PresetWrite {
     },
     SetDefaultStyle {
         tool_id: String,
+        ground: Ground,
         style: Option<DrawingStyle>,
     },
     SetDefaultConfig {
         tool_id: String,
+        ground: Ground,
         value: Option<toml::Value>,
     },
 }
@@ -51,8 +54,16 @@ impl PresetWrite {
             }
             Self::Delete { tool_id, name } => bank.delete_custom_preset(&tool_id, &name),
             Self::SetDefaultPreset { tool_id, name } => bank.set_default_preset(&tool_id, name),
-            Self::SetDefaultStyle { tool_id, style } => bank.set_default_style(&tool_id, style),
-            Self::SetDefaultConfig { tool_id, value } => bank.set_default_config(&tool_id, value),
+            Self::SetDefaultStyle {
+                tool_id,
+                ground,
+                style,
+            } => bank.set_default_style(&tool_id, ground, style),
+            Self::SetDefaultConfig {
+                tool_id,
+                ground,
+                value,
+            } => bank.set_default_config(&tool_id, ground, value),
         }
     }
 }
@@ -204,29 +215,31 @@ impl PresetHost for RecordingPresetHost<'_> {
         });
     }
 
-    fn default_style(&self, tool_id: &str) -> Option<DrawingStyle> {
-        self.bank.default_style(tool_id)
+    fn default_style(&self, tool_id: &str, ground: Ground) -> Option<DrawingStyle> {
+        self.bank.default_style(tool_id, ground)
     }
 
-    fn set_default_style(&mut self, tool_id: &str, style: Option<DrawingStyle>) {
+    fn set_default_style(&mut self, tool_id: &str, ground: Ground, style: Option<DrawingStyle>) {
         self.writes.push(PresetWrite::SetDefaultStyle {
             tool_id: tool_id.to_owned(),
+            ground,
             style,
         });
     }
 
-    fn default_config(&self, tool_id: &str) -> Option<toml::Value> {
-        self.bank.default_config(tool_id)
+    fn default_config(&self, tool_id: &str, ground: Ground) -> Option<toml::Value> {
+        self.bank.default_config(tool_id, ground)
     }
 
-    fn set_default_config(&mut self, tool_id: &str, value: Option<toml::Value>) {
+    fn set_default_config(&mut self, tool_id: &str, ground: Ground, value: Option<toml::Value>) {
         self.writes.push(PresetWrite::SetDefaultConfig {
             tool_id: tool_id.to_owned(),
+            ground,
             value,
         });
     }
 
-    fn has_default_config(&self, tool_id: &str) -> bool {
-        self.bank.has_default_config(tool_id)
+    fn has_default_config(&self, tool_id: &str, ground: Ground) -> bool {
+        self.bank.has_default_config(tool_id, ground)
     }
 }

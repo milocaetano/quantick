@@ -7,7 +7,7 @@ mod plot_ink;
 mod title_strip;
 pub use bookmap::BookmapOverride;
 pub use chart::{AXIS_RESERVATION_RANGE, CANDLE_OUTLINE_WIDTH_RANGE, ChartAxes};
-pub use lit_flow::{ChartSurface, LitFlowOverride};
+pub use lit_flow::{ChartSurface, DARK_GROUND_MAX_LUMINANCE, Ground, LitFlowOverride};
 pub use title_strip::TitleStripOverride;
 
 use std::{collections::BTreeMap, sync::OnceLock};

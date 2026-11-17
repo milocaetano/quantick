@@ -1,4 +1,5 @@
 use super::*;
+use quantick_appearance::Ground;
 use quantick_drawings::PresetHost;
 /// A bank with one saved preset, to test the recorder's refusal against
 /// the real store's.
@@ -63,11 +64,17 @@ fn recorder_delegates_every_read_to_the_bank() {
         store.load_custom_preset("fib", "taken")
     );
     assert_eq!(recorder.default_preset("fib"), store.default_preset("fib"));
-    assert_eq!(recorder.default_style("fib"), store.default_style("fib"));
-    assert_eq!(recorder.default_config("fib"), store.default_config("fib"));
     assert_eq!(
-        recorder.has_default_config("fib"),
-        store.has_default_config("fib")
+        recorder.default_style("fib", Ground::Light),
+        store.default_style("fib", Ground::Light)
+    );
+    assert_eq!(
+        recorder.default_config("fib", Ground::Light),
+        store.default_config("fib", Ground::Light)
+    );
+    assert_eq!(
+        recorder.has_default_config("fib", Ground::Light),
+        store.has_default_config("fib", Ground::Light)
     );
     let _ = std::fs::remove_file(store.path());
 }

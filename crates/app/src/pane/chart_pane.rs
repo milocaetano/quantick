@@ -314,6 +314,7 @@ impl ChartPane {
                 layout: self.layout_id().map(|id| id.0),
             },
             projection: self.drawing_projection(),
+            surface: self.surface(),
         }
     }
 
@@ -757,6 +758,7 @@ impl ChartPane {
             },
             parked_position: hand.map(|hand| hand.1),
         };
+        let surface = self.surface();
         let placement = gesture_input::update_placement(
             &mut self.gestures,
             &mut self.drawings,
@@ -779,6 +781,7 @@ impl ChartPane {
             options,
             gesture::PlacementDefaults {
                 presets: chrome.presets,
+                surface,
                 repeat: chrome.toolrail.repeat(),
             },
         );
@@ -1026,6 +1029,7 @@ impl ChartPane {
                 else {
                     return;
                 };
+                let surface = self.surface();
                 let completion = self.gestures.place_point(
                     &mut self.drawings,
                     tool,
@@ -1033,6 +1037,7 @@ impl ChartPane {
                     point,
                     gesture::PlacementDefaults {
                         presets: chrome.presets,
+                        surface,
                         repeat: chrome.toolrail.repeat(),
                     },
                 );

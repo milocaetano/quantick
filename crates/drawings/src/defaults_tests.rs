@@ -4,12 +4,13 @@ use std::collections::BTreeMap;
 
 use super::{PresetHost, new_drawing_from_defaults, remember_style};
 use crate::{DRAWING_TOOLS, DrawingStyle, DrawingTool, ToolCatalog};
+use quantick_appearance::{ChartSurface, Ground};
 use quantick_chart::style::PremultipliedRgba;
 
 /// A bank that counts its style writes, so "did not rewrite" is checkable.
 #[derive(Default)]
 struct CountingHost {
-    styles: BTreeMap<String, DrawingStyle>,
+    styles: BTreeMap<(String, Ground), DrawingStyle>,
     style_writes: usize,
 }
 
@@ -34,21 +35,23 @@ impl PresetHost for CountingHost {
         None
     }
     fn set_default_preset(&mut self, _tool_id: &str, _name: Option<String>) {}
-    fn default_style(&self, tool_id: &str) -> Option<DrawingStyle> {
-        self.styles.get(tool_id).copied()
+    fn default_style(&self, tool_id: &str, ground: Ground) -> Option<DrawingStyle> {
+        self.styles.get(&(tool_id.to_owned(), ground)).copied()
     }
-    fn set_default_style(&mut self, tool_id: &str, style: Option<DrawingStyle>) {
+    fn set_default_style(&mut self, tool_id: &str, ground: Ground, style: Option<DrawingStyle>) {
         self.style_writes += 1;
+        let key = (tool_id.to_owned(), ground);
         match style {
-            Some(style) => self.styles.insert(tool_id.to_owned(), style),
-            None => self.styles.remove(tool_id),
+            Some(style) => self.styles.insert(key, style),
+            None => self.styles.remove(&key),
         };
     }
-    fn default_config(&self, _tool_id: &str) -> Option<toml::Value> {
+    fn default_config(&self, _tool_id: &str, _ground: Ground) -> Option<toml::Value> {
         None
     }
-    fn set_default_config(&mut self, _tool_id: &str, _value: Option<toml::Value>) {}
-    fn has_default_config(&self, _tool_id: &str) -> bool {
+    fn set_default_config(&mut self, _tool_id: &str, _ground: Ground, _value: Option<toml::Value>) {
+    }
+    fn has_default_config(&self, _tool_id: &str, _ground: Ground) -> bool {
         false
     }
 }
@@ -85,12 +88,16 @@ fn a_pencil_restyle_reaches_the_next_stroke() {
     let style = restyled(brush);
     assert!(remember_style(
         &mut host,
+        ChartSurface::Paper,
         brush,
         brush.default_style(),
         style
     ));
     assert_eq!(host.style_writes, 1);
-    assert_eq!(new_drawing_from_defaults(&host, brush).style, style);
+    assert_eq!(
+        new_drawing_from_defaults(&host, ChartSurface::Paper, brush).style,
+        style
+    );
 }
 
 #[test]
@@ -100,7 +107,13 @@ fn an_edit_that_leaves_the_style_alone_is_not_remembered() {
     let brush = tool("brush");
     let mut host = CountingHost::default();
     let style = restyled(brush);
-    assert!(!remember_style(&mut host, brush, style, style));
+    assert!(!remember_style(
+        &mut host,
+        ChartSurface::Paper,
+        brush,
+        style,
+        style
+    ));
     assert_eq!(host.style_writes, 0);
 }
 
@@ -110,11 +123,12 @@ fn other_tools_keep_their_explicit_save_as_default() {
     let mut host = CountingHost::default();
     assert!(!remember_style(
         &mut host,
+        ChartSurface::Paper,
         line,
         line.default_style(),
         restyled(line)
     ));
-    assert_eq!(host.default_style(line.id()), None);
+    assert_eq!(host.default_style(line.id(), Ground::Light), None);
 }
 
 #[test]
@@ -122,9 +136,10 @@ fn a_look_already_stored_is_not_written_again() {
     let brush = tool("brush");
     let mut host = CountingHost::default();
     let style = restyled(brush);
-    host.set_default_style(brush.id(), Some(style));
+    host.set_default_style(brush.id(), Ground::Light, Some(style));
     assert!(!remember_style(
         &mut host,
+        ChartSurface::Paper,
         brush,
         brush.default_style(),
         style
@@ -138,16 +153,42 @@ fn going_back_to_the_built_in_look_forgets_the_default() {
     let brush = tool("brush");
     let mut host = CountingHost::default();
     let style = restyled(brush);
-    host.set_default_style(brush.id(), Some(style));
+    host.set_default_style(brush.id(), Ground::Light, Some(style));
     assert!(remember_style(
         &mut host,
+        ChartSurface::Paper,
         brush,
         style,
         brush.default_style()
     ));
-    assert_eq!(host.default_style(brush.id()), None);
+    assert_eq!(host.default_style(brush.id(), Ground::Light), None);
     assert!(
-        !remember_style(&mut host, brush, style, brush.default_style()),
+        !remember_style(
+            &mut host,
+            ChartSurface::Paper,
+            brush,
+            style,
+            brush.default_style()
+        ),
         "nothing stored and nothing to store"
     );
+}
+
+/// "Colour on all tools" writes one look for every tool, on the saving
+/// pane's ground alone.
+#[test]
+fn a_colour_for_every_tool_reaches_every_tool_on_one_ground() {
+    let mut host = CountingHost::default();
+    let style = restyled(tool("trend-line"));
+    super::save_style_on_every_tool(&mut host, ChartSurface::Paper, style);
+    for each in DRAWING_TOOLS {
+        assert_eq!(
+            host.default_style(each.id(), Ground::Light),
+            Some(style),
+            "{}",
+            each.id()
+        );
+        assert_eq!(host.default_style(each.id(), Ground::Dark), None);
+    }
+    assert_eq!(host.style_writes, DRAWING_TOOLS.len());
 }

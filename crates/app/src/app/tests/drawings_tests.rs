@@ -6,6 +6,7 @@ mod text_note_tests;
 use super::bare_canvas::{app_with_history, app_with_history_and_launch};
 use super::*;
 use crate::drawings::StyleColor32;
+use quantick_appearance::Ground;
 use quantick_feed::replay::test_support as replay_test_support;
 mod placement_characterization {
     use super::*;
@@ -1884,6 +1885,38 @@ fn the_coordinates_tab_offers_sharing_across_charts() {
     );
 }
 
+/// A click on the order-flow pane opens with that pane's ground: under the
+/// light theme it is dark, so the light chart's saved look stays off it.
+#[test]
+fn a_click_on_the_flow_pane_opens_with_the_dark_ground_s_default() {
+    let (mut app, _commands) = app_with_history(200);
+    let ctx = egui::Context::default();
+    let presets = crate::scratch::ScratchFile::new("ground-default", "presets.toml");
+    app.drawings.presets = drawings::presets::PresetStore::load_from(presets.path().to_path_buf());
+    app.runtime
+        .appearance
+        .apply_candidate(quantick_appearance::LIGHT, false)
+        .unwrap();
+    run_frame(&mut app, &ctx);
+    let style = |rgb: [u8; 3]| drawings::DrawingStyle {
+        color: quantick_appearance::PremultipliedRgba::from_rgb(rgb[0], rgb[1], rgb[2]),
+        width_px: 2.0,
+        fill_alpha: 0,
+    };
+    let (light, dark) = (style([220, 30, 30]), style([30, 90, 220]));
+    let presets = &mut app.drawings.presets;
+    presets.set_default_style("horizontal-line", Ground::Light, Some(light));
+    presets.set_default_style("horizontal-line", Ground::Dark, Some(dark));
+
+    arm_drawing_from_toolbox(&mut app, &ctx, "horizontal-line");
+    click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
+    run_frame(&mut app, &ctx);
+
+    let items = app.active_tab().flow_pane.drawings.items();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].style, dark);
+}
+
 /// The chore this removes: re-picking the same colour on every object.
 /// Saving a default must reach the *next* drawing and leave the ones
 /// already on the chart exactly as the trader drew them.
@@ -1911,13 +1944,15 @@ fn a_saved_default_style_reaches_the_next_drawing_and_only_that() {
         drawing.style.width_px = 2.5;
     }
     let edited = app.active_tab().flow_pane.drawings.items()[0].style;
-    app.drawings
-        .presets
-        .set_default_style(drawings::DRAWING_TOOLS[0].id(), Some(edited));
+    app.drawings.presets.set_default_style(
+        drawings::DRAWING_TOOLS[0].id(),
+        Ground::Dark,
+        Some(edited),
+    );
     // Saving for one tool is saving for one tool.
     app.drawings
         .presets
-        .set_default_style("horizontal-line", Some(edited));
+        .set_default_style("horizontal-line", Ground::Dark, Some(edited));
 
     arm_drawing_from_toolbox(&mut app, &ctx, "horizontal-line");
     click_chart(&mut app, &ctx, egui::pos2(700.0, 380.0));
@@ -3504,7 +3539,7 @@ fn a_recoloured_stroke_sets_the_next_pencil_stroke() {
     // Remembered on disk too, so a restart keeps it.
     let reloaded = drawings::presets::PresetStore::load_from(presets.path().to_path_buf());
     assert_eq!(
-        drawings::PresetHost::default_style(&reloaded, "brush"),
+        drawings::PresetHost::default_style(&reloaded, "brush", Ground::Dark),
         Some(recoloured)
     );
 }

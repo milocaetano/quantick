@@ -52,6 +52,23 @@ impl ChartSurface {
     }
 }
 
+/// Which bank of saved drawing defaults a pane reads and writes: a look the
+/// trader saved on a light chart is unreadable on a dark one, so each ground
+/// remembers its own.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Ground {
+    /// A light chart canvas. The bank every default saved before grounds
+    /// existed belongs to.
+    #[default]
+    Light,
+    /// A dark chart canvas: a dark theme's time chart or the order-flow island.
+    Dark,
+}
+
+/// The relative luminance below which a canvas is dark: the point where white
+/// ink out-contrasts black on it.
+pub const DARK_GROUND_MAX_LUMINANCE: f32 = 0.179;
+
 impl LitFlowOverride {
     pub(crate) fn resolve(&self, parent: &ResolvedTheme) -> Result<ResolvedTheme, ThemeError> {
         if let Some(width) = self.candle_casing_px
@@ -107,6 +124,19 @@ impl ResolvedTheme {
             ChartSurface::Paper => self,
             ChartSurface::Flow => self.bookmap(),
             ChartSurface::LitFlow => self.lit_flow.as_deref().unwrap_or_else(|| self.bookmap()),
+        }
+    }
+
+    /// The ground `surface` paints on, read from its chart canvas rather than
+    /// from the theme's `dark` flag, which the order-flow island inherits from
+    /// the root.
+    #[must_use]
+    pub fn ground(&self, surface: ChartSurface) -> Ground {
+        let canvas = self.surface(surface).color(crate::Token::ChartCanvas);
+        if crate::contrast::relative_luminance(canvas) < DARK_GROUND_MAX_LUMINANCE {
+            Ground::Dark
+        } else {
+            Ground::Light
         }
     }
 }
