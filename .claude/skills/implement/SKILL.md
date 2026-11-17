@@ -25,6 +25,7 @@ Rules: <absolute-path>/references/execute.md
 Do: <change and essential contract>.
 Touch: <paths/symbols: headless crate outside `crates/app` for logic first; `crates/app` only for the field, calls and painting>.
 Done: <verifiable acceptance>.
+Size: <net non-test .rs lines; <=0 for a refactor>.
 Check: <known checks or discovery location; performance if relevant>.
 Review: <requested low|medium|high; only when the request starts with small|medium|high>.
 No: <essential exclusion; optional>.
@@ -35,6 +36,6 @@ Be unambiguous. Omit empty optional fields. Never invent commands. Set `Review:`
 # Output
 Recheck and compact the saved plan. Ask if a blocking decision remains; otherwise output only:
 ```text
-/goal Implement "<absolute-plan-path>" under its Rules; done only when its PR is open non-draft, tested by an independent agent, reviewed, CI green at the current remote HEAD, not merged.
+/goal Implement "<absolute-plan-path>" under its Rules; done only when its PR is open non-draft, within Size or saying why, tested by an independent agent, reviewed, CI green at the current remote HEAD, not merged.
 ```
 Do not run it.
