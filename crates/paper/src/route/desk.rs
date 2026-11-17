@@ -244,10 +244,28 @@ impl BrokerDesk {
         self.route.cancel_leave();
     }
 
-    /// Why a broker order from `actor` is refused, if it is.
+    /// Why an order from `actor` on the active chart is refused, if it is.
+    /// Every write that reaches a broker venue is judged: an agent's only
+    /// on an armed route the config opened to agents, and never on a venue
+    /// parked with what the trader left at the broker.
     #[must_use]
-    pub fn write_block(&self, actor: Actor, allow_agent_orders: bool) -> Option<Refusal> {
-        self.route.write_block(actor, allow_agent_orders)
+    pub fn write_block(
+        &self,
+        port: &dyn AccountsPort,
+        actor: Actor,
+        allow_agent_orders: bool,
+    ) -> Option<Refusal> {
+        if actor == Actor::Trader {
+            return None;
+        }
+        if let Some(refusal) = self.route.write_block(actor, allow_agent_orders) {
+            return Some(refusal);
+        }
+        let parked = !self.route.route().is_broker()
+            && port
+                .account(port.active_tab())
+                .is_some_and(PaperAccount::broker_shown);
+        parked.then_some(Refusal::ParkedAtBroker)
     }
 
     /// The sentence waiting for the trader, once.

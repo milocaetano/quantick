@@ -14,7 +14,7 @@ use rust_decimal::Decimal;
 use super::desk::{AccountsPort, BrokerDesk, RoutePress, SourceFacts};
 use super::scene::Scene;
 use super::sheet::Sheet;
-use super::{Actor, Leave, Refusal, Route};
+use super::{AccountRoute, Actor, Leave, Refusal, Route};
 
 /// The host as the session reaches it: its tabs' accounts, and what only a
 /// window reads.
@@ -131,16 +131,21 @@ impl BrokerSession {
         if request.0.is_broker() {
             self.ensure_venue(host);
         }
+        let (_, actor, leave) = request;
+        if let Some(refusal) = AccountRoute::leave_block(actor, leave, self.allow_agent_orders) {
+            return Err(refusal);
+        }
         let source = self.source(host);
         let answer = self.desk.request(host, source, request);
         self.refresh(host);
         answer
     }
 
-    /// Why a broker order from `actor` is refused now, if it is.
+    /// Why an order from `actor` on the active chart is refused now, if it
+    /// is. See [`BrokerDesk::write_block`].
     #[must_use]
-    pub fn write_block(&self, actor: Actor) -> Option<Refusal> {
-        self.desk.write_block(actor, self.allow_agent_orders)
+    pub fn write_block(&self, port: &dyn AccountsPort, actor: Actor) -> Option<Refusal> {
+        self.desk.write_block(port, actor, self.allow_agent_orders)
     }
 
     /// The route block's words, while broker routes are offered.
@@ -256,9 +261,10 @@ impl<'a> RouteCall<'a> {
         self.session.request(&mut *self.host, request)
     }
 
-    /// Why a broker order from `actor` is refused now, if it is.
+    /// Why an order from `actor` on the active chart is refused now, if it
+    /// is.
     #[must_use]
     pub fn write_block(&self, actor: Actor) -> Option<Refusal> {
-        self.session.write_block(actor)
+        self.session.write_block(&*self.host, actor)
     }
 }

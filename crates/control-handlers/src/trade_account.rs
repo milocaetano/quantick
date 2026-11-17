@@ -35,9 +35,10 @@ pub fn actor_of(actor: &ActorContext) -> Actor {
 #[must_use]
 pub fn refusal_error(refusal: Refusal) -> ControlError {
     let code = match refusal {
-        Refusal::AgentCannotArm | Refusal::RealNeedsHold | Refusal::AgentOrdersOff => {
-            codes::PERMISSION_DENIED
-        }
+        Refusal::AgentCannotArm
+        | Refusal::RealNeedsHold
+        | Refusal::AgentOrdersOff
+        | Refusal::ParkedAtBroker => codes::PERMISSION_DENIED,
         Refusal::ExposureNeedsChoice => codes::INVALID_REQUEST,
         _ => codes::CAPABILITY_UNAVAILABLE,
     };

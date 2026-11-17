@@ -389,8 +389,9 @@ impl PaperAccount {
     /// immediate answer back for the instance to attribute.
     pub fn apply_strategy_command(&mut self, command: Command) -> Vec<VenueEvent> {
         // An armed strategy is automation: it trades the simulator only,
-        // whatever the route. Nothing it decides reaches a broker.
-        if self.broker_routed() {
+        // whatever the route. Nothing it decides reaches a broker, routed or
+        // parked with what the trader left there.
+        if self.broker_shown() {
             return vec![VenueEvent::Rejected(
                 quantick_trading::RejectReason::Blocked(STRATEGIES_SIM_ONLY),
             )];

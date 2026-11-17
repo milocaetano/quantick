@@ -1031,3 +1031,102 @@ fn a_hold_begun_on_one_account_never_arms_another() {
     desk.hold(&mut tabs, LIVE, HOLD_TO_ARM_MS, false);
     assert_eq!(desk.route().route(), Route::Sim);
 }
+
+/// DEMO armed on the active tab, long one, then left at the broker.
+fn parked() -> (BrokerDesk, Tabs) {
+    let (mut desk, mut tabs, _script) = armed(TradeMode::Demo);
+    go_long(tabs.active());
+    let leave = (Route::Sim, Actor::Trader, Some(Leave::LeaveAtBroker));
+    desk.request(&mut tabs, LIVE, leave)
+        .expect("left at the broker");
+    assert!(tabs.active().parked_broker().is_some());
+    (desk, tabs)
+}
+
+#[test]
+fn a_parked_broker_answers_only_the_traders_hand() {
+    let (desk, mut tabs) = parked();
+    assert_eq!(desk.route().route(), Route::Sim);
+    for allow in [false, true] {
+        assert_eq!(
+            desk.write_block(&tabs, Actor::Agent, allow),
+            Some(Refusal::ParkedAtBroker),
+            "an agent never touches what the trader left at the broker"
+        );
+    }
+    assert_eq!(desk.write_block(&tabs, Actor::Trader, false), None);
+    tabs.active = 2;
+    assert_eq!(
+        desk.write_block(&tabs, Actor::Agent, false),
+        None,
+        "a tab trading the simulator is open to agents"
+    );
+}
+
+#[test]
+fn an_armed_broker_takes_agent_orders_only_where_the_config_allows() {
+    let (desk, tabs, _script) = armed(TradeMode::Demo);
+    assert_eq!(
+        desk.write_block(&tabs, Actor::Agent, false),
+        Some(Refusal::AgentOrdersOff)
+    );
+    assert_eq!(desk.write_block(&tabs, Actor::Agent, true), None);
+}
+
+#[test]
+fn automated_strategies_never_reach_a_parked_broker() {
+    let (_desk, mut tabs) = parked();
+    let account = tabs.active();
+    let refused = [
+        quantick_sim::Command::ClosePosition,
+        quantick_sim::Command::SetBracket {
+            stop_loss: Some(Decimal::from(90)),
+            take_profit: None,
+        },
+    ]
+    .map(|command| account.apply_strategy_command(command));
+    for events in refused {
+        assert_eq!(
+            events,
+            [VenueEvent::Rejected(RejectReason::Blocked(
+                crate::account::STRATEGIES_SIM_ONLY
+            ))]
+        );
+    }
+    account.on_trade(&print(2, 101));
+    assert!(account.venue().position().is_some(), "nothing was closed");
+}
+
+#[test]
+fn an_agent_disarms_only_by_leaving_at_the_broker_unless_allowed() {
+    for allow in [false, true] {
+        let wiring = Rc::new(RefCell::new(Wiring::default()));
+        let connector = Connector {
+            mode: Some(TradeMode::Demo),
+            link: None,
+            wiring: Rc::clone(&wiring),
+        };
+        let mut session = BrokerSession::new(Box::new(connector), allow);
+        let mut host = Host::new(LIVE);
+        session
+            .request(&mut host, (Route::Demo, Actor::Trader, None))
+            .expect("DEMO arms for the trader");
+        go_long(host.tabs.active());
+        let flatten = (Route::Sim, Actor::Agent, Some(Leave::FlattenFirst));
+        let answer = session.request(&mut host, flatten);
+        if allow {
+            assert_eq!(answer, Ok(()));
+            continue;
+        }
+        assert_eq!(answer, Err(Refusal::AgentOrdersOff));
+        assert_eq!(session.read(&host).1, Route::Demo, "still armed");
+        host.tabs.active().on_trade(&print(2, 101));
+        assert!(
+            host.tabs.active().venue().position().is_some(),
+            "no agent flattened the broker"
+        );
+        let leave = (Route::Sim, Actor::Agent, Some(Leave::LeaveAtBroker));
+        assert_eq!(session.request(&mut host, leave), Ok(()));
+        assert_eq!(session.read(&host).1, Route::Sim);
+    }
+}

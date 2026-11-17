@@ -12,8 +12,11 @@
 //!   after its row is held for [`HOLD_TO_ARM_MS`]; releasing earlier cancels.
 //!   No named call can stand in for the hold.
 //! - **An agent never arms.** The control plane may take the account back to
-//!   the simulator; arming DEMO or REAL from it is refused with a code, and
-//!   its broker orders are refused unless the config allows them.
+//!   the simulator - leaving the broker's exposure where it is, unless the
+//!   config allows agent orders; arming DEMO or REAL from it is refused with
+//!   a code, and its broker orders are refused unless the config allows them
+//!   and the route is armed. What the trader left at the broker answers his
+//!   hand alone.
 //! - **Leaving never hides money.** Going back to the simulator with a
 //!   position or orders at the broker asks first: flatten them, or leave them
 //!   there (their plates stay on the chart).
@@ -170,6 +173,7 @@ pub enum Refusal {
     RealNeedsHold,
     ExposureNeedsChoice,
     AgentOrdersOff,
+    ParkedAtBroker,
 }
 
 impl Refusal {
@@ -186,6 +190,7 @@ impl Refusal {
             Self::RealNeedsHold => "route.real_needs_hold",
             Self::ExposureNeedsChoice => "route.exposure_needs_choice",
             Self::AgentOrdersOff => "route.agent_orders_off",
+            Self::ParkedAtBroker => "route.parked_at_broker",
         }
     }
 
@@ -209,6 +214,9 @@ impl Refusal {
             }
             Self::AgentOrdersOff => {
                 "agents may not place broker orders - set [broker.metatrader] allow_agent_orders = true to allow it"
+            }
+            Self::ParkedAtBroker => {
+                "orders left at the broker answer only the trader's own hand - close them in the window, or arm the account again"
             }
         }
     }
@@ -525,6 +533,19 @@ impl AccountRoute {
     #[must_use]
     pub fn write_block(&self, actor: Actor, allow_agent_orders: bool) -> Option<Refusal> {
         (self.route.is_broker() && actor == Actor::Agent && !allow_agent_orders)
+            .then_some(Refusal::AgentOrdersOff)
+    }
+
+    /// Why `actor` may not leave the broker route as `leave` asks, if it may
+    /// not: flattening first is a broker order, so an agent leaves with the
+    /// exposure where it is unless the config allows agent orders.
+    #[must_use]
+    pub fn leave_block(
+        actor: Actor,
+        leave: Option<Leave>,
+        allow_agent_orders: bool,
+    ) -> Option<Refusal> {
+        (actor == Actor::Agent && leave == Some(Leave::FlattenFirst) && !allow_agent_orders)
             .then_some(Refusal::AgentOrdersOff)
     }
 }
