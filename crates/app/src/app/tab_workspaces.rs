@@ -208,14 +208,11 @@ fn apply_recipe_canvas(runtime: &mut Runtime, id: u64, recipe: &WorkspaceRecipe)
 
 fn apply_recipe_switches(runtime: &mut Runtime, id: u64, recipe: &WorkspaceRecipe) {
     let window = &runtime.footprint_config;
-    let style = recipe
-        .footprint_style
-        .as_deref()
-        .and_then(crate::footprint_config::FootprintStyle::from_id);
+    let named = recipe.footprint_style.as_deref();
+    let style = named.and_then(crate::footprint_config::FootprintStyle::from_id);
     let Some(tab) = runtime.tabs.by_id_mut(id) else {
         return;
     };
-    // Again once the panes stand: a chart built after the canvas opened on an interval.
     let saved = super::arrangement_adapter::saved_tab_of(tab);
     let rules = &quantick_engine::bar_registry::BUILTIN_BARS;
     for (address, rule) in recipe.rules_over(&saved.flow_bars, &saved.context_bars) {

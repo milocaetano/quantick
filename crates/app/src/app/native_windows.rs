@@ -1,10 +1,7 @@
 //! Native viewport adapters over one retained workspace and headless membership.
 use super::{ArrangementHost, QuantickApp, title_bar::TitleBarState};
 use eframe::egui;
-use quantick_session::{
-    close_queue::*,
-    workspace_menu::{WorkspaceCommand, WorkspaceMenuState},
-};
+use quantick_session::{close_queue::*, workspace_menu::WorkspaceCommand};
 use quantick_workspace::arrangement::{
     tab_drag::{self, Gesture, Point, Strip},
     windows::{TransferTarget, WindowId},
@@ -179,11 +176,10 @@ pub(super) fn draw(app: &mut QuantickApp, ctx: &egui::Context, now: Instant) {
     ctx.request_repaint_after(std::time::Duration::from_millis(16));
 }
 
-/// The workspace menu's question (a close's, else a switch's), in the
-/// `focused` window: the answer the trader gave.
+/// The close or switch prompt, in the `focused` window: the answer the trader gave.
 pub(super) fn prompt_answer(
     focused: WindowId,
-    menu: &WorkspaceMenuState,
+    menu: &quantick_session::workspace_menu::WorkspaceMenuState,
     ctx: &egui::Context,
 ) -> Option<WorkspaceCommand> {
     let asked = quantick_control_handlers::workspace_book::menu_prompt(menu);
