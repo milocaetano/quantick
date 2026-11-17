@@ -305,7 +305,11 @@ Both sides speak structured logs:
   rest — are tabulated in `crates/feed-mt5/src/lib.rs`. The app layer emits a
   few more around them, notably `MT5_ENDPOINT_RESOLVED` (which port this
   symbol got, and whether it came from `[metatrader.ports]`); those live in
-  `crates/app/src/feed/metatrader.rs`.
+  `crates/app/src/feed/metatrader.rs`. The execution bridge's own lines
+  (`EXEC_REQUEST_ANSWERED`: each request's kind, retcode and comment) arrive
+  as `MT5_EXEC_BRIDGE_SAID`, and every broker refusal and notice the account
+  handles is logged once as `BROKER_ORDER_REFUSED` (retcode, comment,
+  request kind) or `BROKER_NOTICE`.
 
 No terminal at hand? Replay the committed real recording against a running
 quantick instead:
