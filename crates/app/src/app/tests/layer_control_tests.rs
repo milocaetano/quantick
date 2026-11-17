@@ -26,8 +26,8 @@ fn listed(snapshot: &Value, id: &str) -> Value {
 /// The layer call through the window's adapter reaches the addressed pane's
 /// own switches, whatever owns them: an additive probe the registry lists
 /// with no adapter vocabulary, the two grids apart (the time grid then the
-/// trader's, no longer the theme's), the order-flow switches the pane's
-/// config carries; and a tape child the pane blocks is refused there. What
+/// trader's, no longer the theme's); and a tape child the pane blocks is
+/// refused there. What
 /// the call decides is proven on the fake window in
 /// `quantick-control-handlers`.
 #[test]
@@ -54,13 +54,7 @@ fn the_layer_call_reaches_the_addressed_panes_own_switches() {
     ] {
         assert_eq!(listed(&initial, id)["persistence"], persistence, "{id}");
     }
-    for (id, visible) in [
-        ("test_probe", true),
-        ("time_grid", true),
-        ("grid", false),
-        ("bubble_overlap_merge", true),
-        ("tape_only", true),
-    ] {
+    for (id, visible) in [("test_probe", true), ("time_grid", true), ("grid", false)] {
         let payload = layer_input(&app, id, visible);
         let (response, _) = unkeyed_call(&mut app, &mut cockpit, "layers.visibility.set", payload);
         success_result(&response);
@@ -75,9 +69,6 @@ fn the_layer_call_reaches_the_addressed_panes_own_switches() {
         quantick_appearance::Inheritance::Explicit,
         "a switched time grid no longer follows the theme"
     );
-    let config = pane.orderflow.as_ref().unwrap().cached_config();
-    assert!(config.volume_dots.enabled, "the pane's own volume dots");
-    assert!(config.live_lane.tape_only, "the pane's own tape only");
     let probe = listed(&snapshot(&mut app, &mut observer), "test_probe");
     assert_eq!(
         (&probe["requested"], &probe["effective"]),
@@ -100,6 +91,57 @@ fn the_layer_call_reaches_the_addressed_panes_own_switches() {
         heatmap,
         "the refusal switched nothing"
     );
+    disable_test_gateway(&mut app, &ctx);
+}
+
+/// Volume dots and tape only are registered display switches: the layer
+/// call turns each on and off in the pane's own config, and the bubbles
+/// scope reads the same switch back.
+#[test]
+fn tape_only_is_switched_by_the_layer_call_and_read_back() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(4);
+    let directory = gateway_test_directory("tape-only-switch");
+    grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.layout");
+    enable_test_gateway(&mut app, &ctx, &directory, 4);
+    let mut observer = connect(&directory, &options("observer", &[]));
+    let mut cockpit = connect(
+        &directory,
+        &options("cockpit", &["cockpit", "cockpit.layout"]),
+    );
+    let pane_id = app.active_tab().flow_pane.id.to_string();
+    let switches = |app: &QuantickApp| {
+        let flow = app.active_tab().flow_pane.orderflow.as_ref();
+        let config = flow.expect("the flow pane has an engine").cached_config();
+        (config.volume_dots.enabled, config.live_lane.tape_only)
+    };
+    assert_eq!(switches(&app), (false, false), "off until someone asks");
+    for on in [true, false] {
+        for id in ["bubble_overlap_merge", "tape_only"] {
+            let payload = layer_input(&app, id, on);
+            let (response, _) =
+                unkeyed_call(&mut app, &mut cockpit, "layers.visibility.set", payload);
+            success_result(&response);
+        }
+        assert_eq!(switches(&app), (on, on), "the pane's own switches");
+        let (read, _) = unkeyed_call(
+            &mut app,
+            &mut observer,
+            "snapshot.read",
+            json!({ "scopes": ["orderflow.bubbles"] }),
+        );
+        let value = success_result(&read)["scopes"]["orderflow.bubbles"]["value"].clone();
+        let pane = value["tabs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|tab| tab["panes"].as_array().unwrap().iter())
+            .find(|pane| pane["pane_id"] == pane_id.as_str())
+            .expect("the flow pane is in the bubbles scope")
+            .clone();
+        assert_eq!(pane["bubbles"]["tape_only"], on, "{pane}");
+        assert_eq!(pane["bubbles"]["overlap_merge"], on, "{pane}");
+    }
     disable_test_gateway(&mut app, &ctx);
 }
 

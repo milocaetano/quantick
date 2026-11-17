@@ -74,8 +74,6 @@ pub struct AnalysisPaneEntry<'a> {
 pub trait AnalysisPort {
     /// The tool rail's magnet, which the drawings scope publishes.
     fn drawing_magnet(&self) -> bool;
-    /// Flip the tool rail's magnet as its button does; answers whether it
-    /// moved.
     /// Visit every tab in screen order with its panes in the tab's order.
     fn visit_analysis_tabs(&self, visit: &mut dyn FnMut(u64, &[AnalysisPaneEntry<'_>]));
 }

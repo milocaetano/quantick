@@ -181,10 +181,6 @@ pub fn apply(
     })
 }
 
-/// Dock `chart.settings.set`.
-///
-/// # Errors
-/// A capability already docked.
 /// The window's chart look owner: the shared style, the settings window and
 /// its candle presets the double click, the toolbar and the menus reach, the
 /// layer switches the pane's menu flips, and each market's price-tag
@@ -220,6 +216,10 @@ pub trait ChartStylePort {
     ) -> Result<bool, ControlError>;
 }
 
+/// Dock `chart.settings.set`.
+///
+/// # Errors
+/// A capability already docked.
 pub fn register<D: ActionDock<H, A>, H: ChartStylePort + ?Sized, A: JournalAccess>(
     registry: &mut D,
 ) -> Result<(), RegistryError> {

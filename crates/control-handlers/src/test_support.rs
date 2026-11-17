@@ -486,6 +486,9 @@ pub(crate) struct FakeWindow {
     pub record_by_default: Option<bool>,
     /// The bound workspace's indicator owner.
     pub indicators: FakeIndicators,
+    /// The tabs whose market has the price tag's progress switched off; each
+    /// fake tab shows one market.
+    pub progress_off: Vec<u64>,
 }
 
 /// A fake indicator owner: what each indicator and script call reached it
@@ -632,6 +635,7 @@ impl FakeWindow {
             style: ChartStyle::default(),
             record_by_default: None,
             indicators: FakeIndicators::default(),
+            progress_off: Vec::new(),
         }
     }
 
@@ -858,7 +862,8 @@ impl ChartStylePort for FakeWindow {
         self.layer_switches
             .push((pane_id, layer_id.to_owned(), visible));
     }
-    /// The fake's markets all show progress: a resolved pane changes on off.
+    /// The switch is kept for the pane's tab, the market it shows; a repeat
+    /// is no change.
     fn set_price_tag_progress(
         &mut self,
         tab: u64,
@@ -866,13 +871,18 @@ impl ChartStylePort for FakeWindow {
         on: bool,
     ) -> Result<bool, ControlError> {
         self.pane_mut(WireU64::new(tab), WireU64::new(pane))?;
-        Ok(!on)
+        let was_on = !self.progress_off.contains(&tab);
+        self.progress_off.retain(|off| *off != tab);
+        if !on {
+            self.progress_off.push(tab);
+        }
+        Ok(was_on != on)
     }
 }
 
 impl ChartPort for FakeWindow {
-    fn price_tag_progress(&self, _tab_id: u64) -> bool {
-        true
+    fn price_tag_progress(&self, tab_id: u64) -> bool {
+        !self.progress_off.contains(&tab_id)
     }
     fn visit_chart_panes(&self, visit: &mut dyn FnMut(ChartPaneEntry<'_>, PaneFraming)) {
         for (index, tab) in self.tabs.iter().enumerate() {

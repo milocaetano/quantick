@@ -110,7 +110,9 @@ pub const READBACKS: &[Readback] = &[snapshot(
     "The target pane reports its opening pixels_per_bar, or its tape window back on the asset's setting; after the live overview, follows_live and the overview pixels_per_bar; after the live centre, follows_live, the kept (or doubled) pixels_per_bar and, from the next frame, a manual price_range centred on the last price.",
     &[
         EVERY_OPTIONAL_TEST,
-        "the_axis_calls_reach_the_addressed_window_pane",
+        "the_time_axis_reset_call_matches_the_strip_double_click_and_reads_it_back",
+        "the_live_overview_call_returns_the_candles_to_a_live_overview",
+        "the_live_centre_calls_match_the_canvas_double_and_triple_click",
     ],
 )];
 

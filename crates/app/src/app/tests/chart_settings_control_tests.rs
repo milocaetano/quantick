@@ -209,7 +209,8 @@ fn inspected(app: &mut QuantickApp, client: &mut LocalClient, target: &Value) ->
 
 /// The settings call through the window's adapter reaches the window and the
 /// addressed pane's own look: it opens the window there, an update lands on
-/// that pane alone while the legacy global seed stays, and close closes it.
+/// that pane alone while the legacy global seed stays, a look saved by name
+/// lands in the app's own presets file, and close closes it.
 /// What the call decides is proven on a sitting and the fake window in
 /// `quantick-control-handlers`.
 #[test]
@@ -250,6 +251,17 @@ fn the_settings_call_reaches_the_window_and_the_addressed_panes_look_only() {
     assert_eq!(
         app.runtime.style, legacy,
         "local settings preserve the legacy global seed"
+    );
+    let save = json!({"action":"save_candle_preset", "name":"night", "target":target});
+    success_result(&settings_call(&mut app, &mut cockpit, save));
+    let night: ChartStyle = quantick_control_schema::chart_settings::style_wire::decode(style)
+        .unwrap()
+        .into();
+    assert_eq!(
+        crate::candle_presets::CandlePresetStore::load(&crate::candle_presets::default_path())
+            .get("night"),
+        Some(&night.snapshot()),
+        "the saved look is in the app's presets file"
     );
     let close = json!({"action":"close"});
     success_result(&settings_call(&mut app, &mut cockpit, close));
