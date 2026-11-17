@@ -253,9 +253,8 @@ fn violated_precondition(response: &ResponseEnvelope) -> Option<&str> {
 /// properties, `[]` stepping into an array. The same grammar
 /// `retry_matrix::schema_has_path` checks against the published schema, walked
 /// here over a real answer.
-fn values_at(value: &Value, field: &str) -> Vec<Value> {
-    field
-        .split(", ")
+fn values_at(value: &Value, row: &quantick_control_schema::readback::Readback) -> Vec<Value> {
+    row.paths()
         .flat_map(|path| values_at_path(value, path))
         .collect()
 }
@@ -295,7 +294,7 @@ fn readback(
     if let Some(scope) = row.scope {
         let response = read_call(app, ctx, client, row.read, json!({ "scopes": [scope] }));
         let result = success_result(&response);
-        return values_at(&result["scopes"][scope]["value"], row.field);
+        return values_at(&result["scopes"][scope]["value"], row);
     }
     let kind = row.event.expect("a row reads a scope or an event kind");
     let mut values = Vec::new();
@@ -305,7 +304,7 @@ fn readback(
         let result = success_result(&response);
         for event in result["events"].as_array().expect("a page of events") {
             if event["kind"] == kind {
-                values.extend(values_at(event, row.field));
+                values.extend(values_at(event, row));
             }
         }
         if result["has_more"] != true {

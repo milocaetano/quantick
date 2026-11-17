@@ -40,6 +40,13 @@ pub struct Readback {
     pub proven_by: &'static [&'static str],
 }
 
+impl Readback {
+    /// Each path [`Self::field`] names, in order.
+    pub fn paths(&self) -> impl Iterator<Item = &'static str> {
+        self.field.split(", ")
+    }
+}
+
 /// Every reachable `optional` row, one keyed call and its retry each.
 pub const EVERY_OPTIONAL_TEST: &str =
     "every_reachable_optional_row_replays_a_dropped_answer_and_begins_once";
