@@ -12,8 +12,8 @@ use super::super::{
     PRICE_DRAG_STEPS, RecordingPresetHost, SavedDefault,
 };
 use crate::drawings::{
-    self, DRAWING_TOOLS, Drawing, DrawingTool, MAX_DRAWING_FILL_ALPHA,
-    MAX_DRAWING_WIDTH_PX, MIN_DRAWING_WIDTH_PX,
+    self, DRAWING_TOOLS, Drawing, DrawingTool, MAX_DRAWING_FILL_ALPHA, MAX_DRAWING_WIDTH_PX,
+    MIN_DRAWING_WIDTH_PX,
 };
 use crate::theme;
 
@@ -62,9 +62,17 @@ pub(super) fn body(
 
     match chrome.state().inspector.tab {
         InspectorTab::Extra => {
-            actions.edited |= crate::drawings::draw_extra_tab(tool, ui, edited, presets);
+            actions.edited |=
+                crate::drawings::draw_extra_tab(tool, ui, edited, presets, env.surface);
         }
-        InspectorTab::Style => actions.merge(StyleTab { edited, presets }.show(ui)),
+        InspectorTab::Style => actions.merge(
+            StyleTab {
+                edited,
+                presets,
+                surface: env.surface,
+            }
+            .show(ui),
+        ),
         InspectorTab::Coordinates => {
             let price_speed = env.auto_range.map_or(1.0, |(lo, hi)| {
                 ((hi - lo) / PRICE_DRAG_STEPS).abs().max(1e-9)
@@ -83,7 +91,11 @@ pub(super) fn body(
 fn show_object_notes(ui: &mut egui::Ui, drawing: &Drawing) {
     let ink = theme::get(ui.ctx()).text_support();
     for note in quantick_ui_model::drawing_chrome::inspector::object_notes(drawing) {
-        ui.label(egui::RichText::new(note).text_style(egui::TextStyle::Body).color(ink));
+        ui.label(
+            egui::RichText::new(note)
+                .text_style(egui::TextStyle::Body)
+                .color(ink),
+        );
     }
 }
 
@@ -189,12 +201,19 @@ impl TabStrip<'_> {
 struct StyleTab<'a, 'p> {
     edited: &'a mut Drawing,
     presets: &'a mut RecordingPresetHost<'p>,
+    /// The surface of the pane the inspector edits: its ground is the one
+    /// "save as default" and "reset" speak for.
+    surface: quantick_appearance::ChartSurface,
 }
 
 impl StyleTab<'_, '_> {
     fn show(self, ui: &mut egui::Ui) -> InspectorActions {
-        let Self { edited, presets } = self;
-        let (tool, surface) = (edited.tool, presets.surface());
+        let Self {
+            edited,
+            presets,
+            surface,
+        } = self;
+        let tool = edited.tool;
         let ground = drawings::defaults_ground(presets, surface);
         let name = tool.name().to_lowercase();
         let mut actions = InspectorActions::default();

@@ -22,9 +22,10 @@ use crate::drawings::DrawingPayload;
 pub(in crate::drawings) fn draw_levels_tab(
     ui: &mut egui::Ui,
     drawing: &mut Drawing,
-    host: &mut crate::surfaces::drawing_chrome::RecordingPresetHost<'_>,
+    host: &mut dyn PresetHost,
+    surface: quantick_appearance::ChartSurface,
 ) -> bool {
-    let (tool_id, surface) = (drawing.tool.id(), host.surface());
+    let tool_id = drawing.tool.id();
     let anchor_prices: Vec<f64> = drawing.points.iter().map(|point| point.price).collect();
     let Some(payload) = drawing.payload.as_any_mut().downcast_mut::<FibPayload>() else {
         return false;

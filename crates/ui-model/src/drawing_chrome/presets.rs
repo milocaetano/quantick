@@ -1,4 +1,4 @@
-use quantick_appearance::{ChartSurface, Ground};
+use quantick_appearance::Ground;
 use quantick_drawings::{DrawingStyle, PresetHost};
 
 /// One write to the preset bank, recorded rather than performed.
@@ -90,17 +90,13 @@ impl PresetWrite {
 /// wins, exactly as replaying them onto the bank would.
 pub struct RecordingPresetHost<'a> {
     bank: &'a dyn PresetHost,
-    /// The surface of the pane the inspector edits: "save as default" and
-    /// "reset" speak for its ground only.
-    surface: ChartSurface,
     writes: Vec<PresetWrite>,
 }
 
 impl<'a> RecordingPresetHost<'a> {
-    pub fn new(bank: &'a dyn PresetHost, surface: ChartSurface) -> Self {
+    pub fn new(bank: &'a dyn PresetHost) -> Self {
         Self {
             bank,
-            surface,
             // Not `with_capacity`: the overwhelmingly common frame records
             // nothing, and an empty `Vec` does not allocate.
             writes: Vec::new(),
@@ -109,12 +105,6 @@ impl<'a> RecordingPresetHost<'a> {
 }
 
 impl RecordingPresetHost<'_> {
-    /// The surface of the pane this recorder speaks for.
-    #[must_use]
-    pub fn surface(&self) -> ChartSurface {
-        self.surface
-    }
-
     /// The writes this frame recorded, in the order they were made.
     pub fn into_writes(self) -> Vec<PresetWrite> {
         self.writes

@@ -100,7 +100,7 @@ pub(crate) fn draw_pinned(
     let index = selected.index;
     chrome.emit(Intent::InspectorClaim(index));
     let mut edited = selected.drawing.clone();
-    let mut recorder = RecordingPresetHost::new(env.presets, env.surface);
+    let mut recorder = RecordingPresetHost::new(env.presets);
     let mut actions = InspectorActions::default();
     let id = egui::Id::new((ctx.viewport_id(), "drawing_inspector_panel"));
     egui::SidePanel::right(id)
@@ -171,7 +171,7 @@ pub(crate) fn draw_floating(
         })
     });
     let mut edited = selected.drawing.clone();
-    let mut recorder = RecordingPresetHost::new(env.presets, env.surface);
+    let mut recorder = RecordingPresetHost::new(env.presets);
     // The level editor earns the wider default the spec reserves for it.
     let default_width = if edited.tool.extra_tab().is_some() {
         INSPECTOR_LEVELS_WIDTH_PX
