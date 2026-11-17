@@ -989,7 +989,7 @@ impl QuantickApp {
         mut ask: crate::surfaces::drawing_chrome::DrawingChromeAsk,
         now: Instant,
     ) {
-        super::alerts_runtime::open_drawing_target(self.indicator_wiring(), &mut ask);
+        super::alerts_runtime::open_drawing_target(&mut ask, || self.indicator_wiring());
         let mut drawings = self.drawings.with(&mut self.surfaces.drawing_chrome);
         if let Some(action) = drawings.begin_registered_action(&mut ask) {
             let pending = action.pending;

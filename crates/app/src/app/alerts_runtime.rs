@@ -182,8 +182,7 @@ pub(crate) fn context(
 }
 
 /// The window's side of an alert request: the layout ports a target resolves
-/// through, the dock the manager opens on, and the alert owner. Which copy a
-/// located target is, and what settles where, is `requests`' to decide.
+/// through, the dock the manager opens on, and the alert owner.
 pub(super) struct RequestAdapter<'a> {
     pub(super) layout: super::layout_wiring::LayoutAdapter<'a>,
     pub(super) dock: &'a mut crate::surfaces::dock::DockSurface,
@@ -247,7 +246,6 @@ pub(super) fn apply_alert_request(
 
 /// After the dock: another open dock tab closes the manager, and the manager
 /// reserves its space after the permanent right rail, before chart layout.
-/// The dock's bell opens it before this runs.
 pub(super) fn after_dock(
     runtime: &mut super::workspace_runtime::WorkspaceRuntime,
     surfaces: &mut crate::surfaces::Surfaces,
@@ -281,9 +279,10 @@ pub(super) fn after_dock(
 }
 
 /// The context bar's Create alert: open the editor on the resolved drawing.
-pub(super) fn open_drawing_target(
-    wiring: super::indicator_wiring::IndicatorWiring<'_>,
+/// The wiring is borrowed only when the ask carries a target.
+pub(super) fn open_drawing_target<'a>(
     ask: &mut crate::surfaces::drawing_chrome::DrawingChromeAsk,
+    wiring: impl FnOnce() -> super::indicator_wiring::IndicatorWiring<'a>,
 ) {
     let Some(selector) = ask
         .readbacks
@@ -292,6 +291,6 @@ pub(super) fn open_drawing_target(
     else {
         return;
     };
-    let (mut host, model) = wiring.into_alerts();
+    let (mut host, model) = wiring().into_alerts();
     requests::open_drawing(model, &mut host, selector);
 }
