@@ -237,6 +237,15 @@ The ui-model + alerts merge identity (origin/main into feature/headless-ui) bind
 member-only amendments above (ui-model, #922) and below (alerts, PR #867), with no other
 manifest change. Every numerical ceiling, representative and the protocol hash are main's.
 
+The broker-mt5 member-only amendment (feat/mt5-real-account, phase A of real
+MT5 trading) binds root SHA256
+`4a3e51dba90cacab604b442a538173d7d016c6aa42b528c10669b9284f27e3b1`.
+Relative to the ui-model + alerts identity above, only the `crates/broker-mt5`
+member is added; all other parsed manifest values are equal. This is
+applicability, not recalibration: every ceiling, host, toolchain, jobs,
+protocol, top-three selection and representative is unchanged, and the PR's
+own ordinary exact-final-head run must pass every one.
+
 The drawings top-three change (#662, under the #660 authorization for
 feature #659) happened when the tools moved into `quantick-drawings`: by the
 frozen lexer it holds 7,241 production lines to `guards`' 5,898, so the

@@ -10,6 +10,10 @@ use std::collections::BTreeMap;
 
 use serde::Deserialize;
 
+mod broker;
+
+pub use broker::{BrokerSettings, MAX_DEVIATION_POINTS, MetaTraderBrokerSettings};
+
 /// Which backend streams a feed. This is the one place a config string is mapped
 /// to a code path; adding a provider means adding a variant here and a matching
 /// arm in the feed host's `spawn`.

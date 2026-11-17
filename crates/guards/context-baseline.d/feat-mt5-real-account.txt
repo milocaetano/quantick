@@ -1,0 +1,3 @@
+# +57: AGENTS.md's crate map gains the `broker-mt5` row, the second
+# `TradingVenue` (MT5 real/demo execution); one row, no prose.
+AGENTS.md +57

@@ -235,9 +235,13 @@ pub const ALLOWED: &[(&str, &[&str])] = &[
         ],
     ),
     // The venue-neutral trading vocabulary sits beside `engine`, not above
-    // it: it is what `sim` and any future broker adapter both speak.
+    // it: it is what `sim` and the broker adapter both speak.
     ("trading", &["engine"]),
     ("sim", &["engine", "trading"]),
+    // The MetaTrader 5 broker venue, the second `TradingVenue`. Its decisions
+    // are a pure state machine; its transport owns one loopback socket and
+    // its threads, the exception `feed` also is. Only `app` may build it.
+    ("broker-mt5", &["engine", "trading"]),
     // The cockpit stores: documents over the vocabularies they persist. The
     // window resolves every path; the store never reads the environment.
     // `orderbook` for the approved WIN tape's depth golden alone, a test that

@@ -147,6 +147,8 @@ pub fn reject_code(reason: &RejectReason) -> &'static str {
         RejectReason::TakeProfitOnWrongSide(_) => "take_profit_on_wrong_side",
         RejectReason::NoPosition => "no_position",
         RejectReason::UnknownOrder(_) => "unknown_order",
+        RejectReason::Venue { .. } => "venue_refused",
+        RejectReason::Blocked(_) => "venue_blocked",
     }
 }
 
@@ -164,6 +166,7 @@ pub fn cancel_code(reason: &quantick_sim::CancelReason) -> &'static str {
         CancelReason::OcoFilled => "oco_filled",
         CancelReason::PositionClosed => "position_closed",
         CancelReason::BracketReplaced => "bracket_replaced",
+        CancelReason::Venue => "venue",
     }
 }
 

@@ -36,7 +36,10 @@ mod venue;
 
 pub mod fake;
 
-pub use events::{CancelReason, ExitReason, Fill, FillRole, RejectReason, VenueEvent};
+pub use events::{
+    CancelReason, ExitReason, Fill, FillRole, RejectReason, VENUE_TEXT_BYTES, VenueEvent,
+    VenueNotice, VenueText,
+};
 pub use intent::{BracketTarget, CloseAmount, OrderIntent};
 pub use money::{
     Currency, InstrumentMoney, Money, MoneySource, SizeOutcome, SizeRefusal, SizedEntry, risk_at,

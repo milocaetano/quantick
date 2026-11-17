@@ -983,6 +983,7 @@ fn changing_feed_falls_back_to_a_valid_symbol() {
                 short_name: None,
             },
         ],
+        broker: Default::default(),
         metatrader: Default::default(),
         paper: Default::default(),
         deals: Default::default(),

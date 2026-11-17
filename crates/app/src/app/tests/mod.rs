@@ -429,6 +429,7 @@ fn test_config() -> AppConfig {
             record_deals: false,
             short_name: None,
         }],
+        broker: Default::default(),
         metatrader: Default::default(),
         paper: Default::default(),
         deals: Default::default(),
@@ -2005,6 +2006,7 @@ fn two_metatrader_feeds() -> AppConfig {
                 short_name: None,
             },
         ],
+        broker: Default::default(),
         metatrader: crate::config::MetaTraderSettings {
             ports,
             ..Default::default()

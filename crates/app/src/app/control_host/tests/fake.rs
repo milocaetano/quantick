@@ -98,6 +98,7 @@ impl FakeWindow {
                     record_deals: false,
                     short_name: None,
                 }],
+                broker: Default::default(),
                 metatrader: Default::default(),
                 paper: Default::default(),
                 deals: Default::default(),

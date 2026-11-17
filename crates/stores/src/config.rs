@@ -34,8 +34,8 @@ use quantick_sources::history_reach;
 // produced and consumed entirely inside the feed host — and a re-export no
 // caller reads is a dead import the workspace lints reject.
 pub use quantick_sources::config::{
-    BackfillState, FeedCapabilities, HistoryBoundary, MetaTraderSettings, Mt5SideSource,
-    ProviderKind, TapeBackfill, split_host_port,
+    BackfillState, BrokerSettings, FeedCapabilities, HistoryBoundary, MetaTraderBrokerSettings,
+    MetaTraderSettings, Mt5SideSource, ProviderKind, TapeBackfill, split_host_port,
 };
 
 /// The built-in default configuration, compiled into the binary so the app runs
@@ -382,6 +382,10 @@ pub struct AppConfig {
     /// MetaTrader bridge settings; defaults apply when the section is absent.
     #[serde(default)]
     pub metatrader: MetaTraderSettings,
+    /// Broker execution settings (`[broker.metatrader]`); every broker is
+    /// off when the section is absent.
+    #[serde(default)]
+    pub broker: BrokerSettings,
     /// Paper-trading settings; defaults apply when the section is absent.
     #[serde(default)]
     pub paper: PaperSettings,
@@ -744,6 +748,7 @@ impl AppConfig {
     /// Returns a human-readable message describing the first problem found.
     pub fn validate(&self) -> Result<(), String> {
         self.metatrader.validate()?;
+        self.broker.validate(&self.metatrader)?;
         self.paper.validate()?;
         self.history.validate()?;
         if self.feeds.is_empty() {
@@ -1806,6 +1811,61 @@ mod tests {
         assert!(ProviderKind::Hyperliquid.is_implemented());
         // No [metatrader] section: defaults apply.
         assert_eq!(config.metatrader, MetaTraderSettings::default());
+    }
+
+    #[test]
+    fn the_broker_section_is_read_and_off_unless_it_says_otherwise() {
+        let shipped = parse(
+            EMBEDDED_DEFAULT,
+            ConfigSource::Embedded,
+            &AddedSymbols::default(),
+        )
+        .expect("the shipped config parses");
+        assert_eq!(
+            shipped.broker.metatrader,
+            MetaTraderBrokerSettings::default()
+        );
+        assert!(
+            !shipped.broker.metatrader.enabled,
+            "a real broker stays off until enabled"
+        );
+        assert!(!shipped.broker.metatrader.allow_agent_orders);
+
+        let text = r#"
+            default_feed = "mt"
+            default_symbol = "WIN$N"
+            [[feeds]]
+            id = "mt"
+            name = "MetaTrader 5"
+            provider = "metatrader"
+            symbols = ["WIN$N"]
+            [broker.metatrader]
+            enabled = true
+            exec_port = 9300
+            magic = 42
+            deviation_points = 5
+            allow_agent_orders = true
+        "#;
+        let config = parse(text, ConfigSource::Embedded, &AddedSymbols::default()).unwrap();
+        assert_eq!(
+            config.broker.metatrader,
+            MetaTraderBrokerSettings {
+                enabled: true,
+                exec_port: 9300,
+                magic: 42,
+                deviation_points: 5,
+                allow_agent_orders: true,
+            }
+        );
+
+        let clash = text.replace("exec_port = 9300", "exec_port = 9100");
+        let refused = parse(&clash, ConfigSource::Embedded, &AddedSymbols::default());
+        assert!(
+            refused.is_err(),
+            "the execution port may not be a feed port"
+        );
+        let misspelt = text.replace("enabled = true", "enable = true");
+        assert!(parse(&misspelt, ConfigSource::Embedded, &AddedSymbols::default()).is_err());
     }
 
     #[test]

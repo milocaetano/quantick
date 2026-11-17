@@ -42,6 +42,7 @@
 | `paper` | sim, trading, replay, workspace, civil, engine | Paper account, risk, journal and report. |
 | `sim` | trading, engine | `TradingVenue` impl; fills only on tape, never quotes. |
 | `trading` | engine | Venue-neutral order vocabulary and the `TradingVenue` port. |
+| `broker-mt5` | trading, engine | MT5 broker `TradingVenue`; owns one socket. |
 | `feed` | feed-*, sources, replay, operability, orderbook, engine | The `FeedEvent`/`FeedCommand` port and adapters; owns runtimes, threads, clock. |
 | `feed-binance`, `feed-hyperliquid`, `feed-mt5` | engine, orderbook; binance also sources | Produce trades. |
 | `sources` | engine | Feed config vocabulary and history reach. |

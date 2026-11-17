@@ -278,6 +278,43 @@ US500 = 9102
 US30 = 9103
 
 # ---------------------------------------------------------------------------
+# Broker execution — MetaTrader 5.
+#
+# Lets the existing order surfaces (ticket, chart gestures, Close, Reverse,
+# flatten) execute on the account the MetaTrader terminal is logged into, demo
+# or real — read from the terminal, never set here. OFF unless `enabled` says
+# otherwise; even on, quantick always starts on the simulator and a broker
+# route is the trader's own pick. No credentials: the terminal is already
+# logged in, and nothing leaves 127.0.0.1.
+#
+# The execution bridge is its own process beside the tick bridge:
+#   python bridge/mt5/quantick_bridge_exec.py --port <exec_port>
+# It dials quantick (quantick listens, so no other local process can place
+# orders through it). Its wire is the "Execution channel" of
+# bridge/mt5/PROTOCOL.md.
+#
+#   enabled            — offer broker routes at all. Default false.
+#   exec_port          — loopback port quantick listens on for the execution
+#                        bridge; never one of the [metatrader] feed ports.
+#   magic              — stamped on every order quantick sends. Positions and
+#                        orders on the symbol with any other magic (another
+#                        robot, a hand at the terminal: magic 0) are shown,
+#                        never modified, and block new orders on that symbol
+#                        while they exist. Never 0.
+#   deviation_points   — slippage a market order accepts, in points.
+#   allow_agent_orders — let agents (control plane, MCP) place broker orders.
+#                        Default false. Agents can never arm a broker route.
+#
+# Stops and targets are the broker's own SL/TP on the position or the pending
+# order; a hedging account is refused; a symbol switch closes nothing.
+[broker.metatrader]
+enabled = false
+exec_port = 9180
+magic = 7710001
+deviation_points = 10
+allow_agent_orders = false
+
+# ---------------------------------------------------------------------------
 # Paper trading.
 #
 # Closed simulated trades are journaled the moment they close, one CSV per

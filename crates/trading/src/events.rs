@@ -106,6 +106,77 @@ pub enum CancelReason {
     /// The trader replaced the protection wholesale: a new bracket, or a
     /// bracketed entry averaging into the same position.
     BracketReplaced,
+    /// The venue removed it on its own account: it expired, or it was
+    /// cancelled at the venue's own terminal. Only a real venue reports
+    /// this; a simulator removes nothing it was not told to.
+    Venue,
+}
+
+/// The most bytes of a venue's own words a [`VenueText`] holds. Sized past
+/// every return-code comment MetaTrader writes (the longest are under fifty)
+/// and past the bridge's own refusals.
+pub const VENUE_TEXT_BYTES: usize = 96;
+
+/// A venue's own words, held inline so a refusal stays `Copy`: the strategy
+/// kernel keeps the reason it was refused in plain-`Copy` state, and a heap
+/// string here would ripple through every one of those types for one
+/// adapter's sake. Longer text is cut at a character boundary and says so
+/// ([`VenueText::is_truncated`], and a trailing `...` when displayed) rather
+/// than ending silently mid-sentence.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct VenueText {
+    bytes: [u8; VENUE_TEXT_BYTES],
+    len: u8,
+    truncated: bool,
+}
+
+impl VenueText {
+    /// Hold `text`, or as much of it as fits.
+    #[must_use]
+    pub fn new(text: &str) -> Self {
+        let mut end = text.len().min(VENUE_TEXT_BYTES);
+        while !text.is_char_boundary(end) {
+            end -= 1;
+        }
+        let mut bytes = [0; VENUE_TEXT_BYTES];
+        bytes[..end].copy_from_slice(&text.as_bytes()[..end]);
+        Self {
+            bytes,
+            len: u8::try_from(end).unwrap_or(u8::MAX),
+            truncated: end < text.len(),
+        }
+    }
+
+    /// The words held, exactly as the venue wrote them up to the cut.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        let held = &self.bytes[..usize::from(self.len)];
+        // `new` only ever cuts at a character boundary, so this never fails;
+        // an empty answer is still better than a panic on a refusal path.
+        std::str::from_utf8(held).unwrap_or_default()
+    }
+
+    /// Whether the venue said more than this holds.
+    #[must_use]
+    pub fn is_truncated(&self) -> bool {
+        self.truncated
+    }
+}
+
+impl std::fmt::Display for VenueText {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())?;
+        if self.truncated {
+            f.write_str("...")?;
+        }
+        Ok(())
+    }
+}
+
+impl std::fmt::Debug for VenueText {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self.to_string())
+    }
 }
 
 /// Why a command was refused. Messages are written for a beginner: they say
@@ -133,6 +204,19 @@ pub enum RejectReason {
     NoPosition,
     /// The order id does not name a pending order (it may have filled).
     UnknownOrder(OrderId),
+    /// The venue itself refused: `code` is its numeric answer (a broker
+    /// return code), `message` its own comment, reproduced verbatim. No
+    /// code means the venue's own gateway refused before asking the venue,
+    /// and the message is that gateway's.
+    Venue {
+        code: Option<i64>,
+        message: VenueText,
+    },
+    /// The venue adapter will not carry the command to the venue at all:
+    /// the link is down, the account cannot be traded here, or the command
+    /// asks for something the venue has no native way to do. The sentence
+    /// says which, and what to do instead.
+    Blocked(&'static str),
 }
 
 impl std::fmt::Display for RejectReason {
@@ -213,6 +297,15 @@ impl std::fmt::Display for RejectReason {
                     "order {id} is not pending - it may have already filled or been cancelled"
                 )
             }
+            Self::Venue {
+                code: Some(code),
+                message,
+            } => write!(f, "the broker refused: {message} (code {code})"),
+            Self::Venue {
+                code: None,
+                message,
+            } => write!(f, "the broker bridge refused: {message}"),
+            Self::Blocked(sentence) => f.write_str(sentence),
         }
     }
 }
@@ -244,4 +337,110 @@ pub enum VenueEvent {
     /// would exit instantly with a lying label is dropped and reported —
     /// never silently kept.
     BracketDropped { reason: RejectReason },
+    /// Something the venue reports that is no order's fate: its link, its
+    /// account, an acknowledgement, what a reset left alone.
+    Notice(VenueNotice),
+}
+
+/// What a real venue says about itself rather than about one order's fate.
+///
+/// A simulator never emits these: it has no link to lose, no account to
+/// change under it and no acknowledgement to wait for. They exist so a venue
+/// that does can say so on the same event stream every surface already
+/// reads, rather than through a side channel one of them forgets.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VenueNotice {
+    /// The venue confirmed an order (or a change to it) and holds it under
+    /// its own reference, a broker ticket.
+    Acknowledged { id: OrderId, venue_ref: u64 },
+    /// A reset (a symbol switch, a replay seek) left the venue's orders and
+    /// position exactly where they are: a real account does not rewind with
+    /// the chart. Counts what stayed, so the sentence can say so.
+    ResetLeftOpen { working: usize, position: bool },
+    /// The link to the venue is down. Reads show the last known state,
+    /// marked stale; protective prices already at the venue still rest
+    /// there.
+    LinkLost,
+    /// The link is back and the venue's state is current again.
+    LinkRestored,
+    /// The venue now speaks for a different account than before. Nothing
+    /// known about the previous one carries over.
+    AccountChanged,
+    /// The venue's account cannot be traded from here; the sentence says why.
+    AccountRefused(&'static str),
+    /// An action was sent but its answer was lost with the link, and
+    /// resending it could repeat it. Its outcome is whatever the venue's own
+    /// state shows next, never assumed.
+    OutcomeUnknown { id: Option<OrderId> },
+}
+
+impl std::fmt::Display for VenueNotice {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Acknowledged { id, venue_ref } => {
+                write!(
+                    f,
+                    "order {id} acknowledged by the broker as ticket {venue_ref}"
+                )
+            }
+            Self::ResetLeftOpen { working, position } => {
+                let held = if *position { "the position and " } else { "" };
+                write!(
+                    f,
+                    "nothing was closed at the broker: {held}{working} working order(s) stay open there"
+                )
+            }
+            Self::LinkLost => write!(
+                f,
+                "broker link lost - showing the last known state; stops and targets already at the broker still rest there"
+            ),
+            Self::LinkRestored => write!(f, "broker link restored"),
+            Self::AccountChanged => write!(
+                f,
+                "the terminal is logged into a different account now - nothing from the previous one carries over"
+            ),
+            Self::AccountRefused(sentence) => f.write_str(sentence),
+            Self::OutcomeUnknown { id: Some(id) } => write!(
+                f,
+                "the answer for order {id} was lost with the link - check the broker's state before acting again"
+            ),
+            Self::OutcomeUnknown { id: None } => write!(
+                f,
+                "the answer for an action was lost with the link - check the broker's state before acting again"
+            ),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_venue_refusal_keeps_the_brokers_words_and_stays_copy() {
+        let reason = RejectReason::Venue {
+            code: Some(10016),
+            message: VenueText::new("Invalid stops"),
+        };
+        let copied = reason;
+        assert_eq!(copied, reason);
+        assert_eq!(
+            reason.to_string(),
+            "the broker refused: Invalid stops (code 10016)"
+        );
+    }
+
+    #[test]
+    fn long_venue_text_is_cut_at_a_character_and_says_so() {
+        let long = "é".repeat(VENUE_TEXT_BYTES);
+        let text = VenueText::new(&long);
+        assert!(text.is_truncated());
+        assert_eq!(text.as_str().len(), VENUE_TEXT_BYTES);
+        assert!(text.to_string().ends_with("..."));
+        // Under clippy's large-error bound: refusals travel in `Result`s.
+        assert!(std::mem::size_of::<RejectReason>() < 128);
+        let short = VenueText::new("No money");
+        assert!(!short.is_truncated());
+        assert_eq!(short.to_string(), "No money");
+    }
 }

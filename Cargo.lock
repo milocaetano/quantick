@@ -3008,6 +3008,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "quantick-broker-mt5"
+version = "0.1.0"
+dependencies = [
+ "quantick-engine",
+ "quantick-trading",
+ "rust_decimal",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "quantick-chart"
 version = "0.1.0"
 dependencies = [
