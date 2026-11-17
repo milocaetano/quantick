@@ -257,12 +257,11 @@ impl QuantickApp {
         self.active_tab_mut().drawing_pane_mut()
     }
 
-    /// Launch scenarios invoke the registered label and notification handlers
-    /// through trusted local actions with an agent actor. Unlike remote calls,
-    /// these local actions do not pass through configured remote-grant admission.
+    /// Launch scenarios run the label and notification handlers as a trusted
+    /// local agent: traced on a replay, never through remote-grant admission.
     #[cfg(any(feature = "control-harness", test))]
     pub(super) fn apply_control_annotate_hooks(&mut self) {
-        let remote = crate::control::ActionOrigin::Remote; // traced, as an agent's call is
+        let remote = crate::control::ActionOrigin::Remote;
         if self.control.scenarios.has_annotation() {
             let pane = self.active_tab().drawing_pane();
             let slot = pane.slots().saturating_sub(1);
