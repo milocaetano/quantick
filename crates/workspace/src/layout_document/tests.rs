@@ -176,3 +176,32 @@ fn a_drawings_own_magnet_round_trips_and_old_documents_default_off() {
     assert!(back.magnet);
     assert_eq!(back, on);
 }
+
+/// A shared mark written before layouts were recorded loads with no layout
+/// and "All windows" off, and saves back byte for byte; a recorded layout and
+/// an "All windows" on travel with the mark.
+#[test]
+fn a_shared_marks_layout_round_trips_and_a_legacy_entry_saves_back_unchanged() {
+    let legacy = concat!(
+        "tool = \"horizontal-line\"\n",
+        "points = [{ time_ms = 1000, price = 100.0, bar = 3.0 }]\n",
+        "color = [1, 2, 3, 255]\nwidth_px = 1.0\nfill_alpha = 0\n",
+        "locked = false\nhidden = false\nshared = true\n",
+        "\n[band]\naxis = \"price\"\n",
+    );
+    let saved: SavedDrawing = toml::from_str(legacy).expect("a legacy drawing parses");
+    assert_eq!(saved.layout, None);
+    assert!(!saved.all_windows);
+    assert_eq!(toml::to_string(&saved).unwrap(), legacy, "byte for byte");
+
+    let owned = SavedDrawing {
+        layout: Some(LayoutId(3)),
+        all_windows: true,
+        ..saved
+    };
+    let text = toml::to_string(&owned).unwrap();
+    assert!(text.contains("layout = 3"), "{text}");
+    assert!(text.contains("all_windows = true"), "{text}");
+    let back: SavedDrawing = toml::from_str(&text).unwrap();
+    assert_eq!(back, owned);
+}
