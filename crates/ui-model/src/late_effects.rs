@@ -185,7 +185,10 @@ mod tests {
                 bank: None,
             }),
             HostEffect::Alerts(crate::alerts::Effects {
-                request: None,
+                request: Some(Box::new(AlertRequest {
+                    open: true,
+                    ..AlertRequest::default()
+                })),
                 preview: None,
             }),
         ]);

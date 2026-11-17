@@ -205,7 +205,11 @@ impl super::View<Model> for View {
     }
 }
 
-pub(crate) fn effects(effects: Vec<Effect>) -> SurfaceResponse {
+pub(crate) fn effects(mut effects: Vec<Effect>) -> SurfaceResponse {
+    // A copy-name edit settles in the model and asks the host nothing.
+    effects.retain(|effect| {
+        !matches!(effect, Effect::Requests { actions, add_to_chart: None } if actions.is_empty())
+    });
     SurfaceResponse::effect_if(
         !effects.is_empty(),
         quantick_ui_model::HostEffect::ScriptEditor(effects),

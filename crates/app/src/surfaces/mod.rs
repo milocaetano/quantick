@@ -132,8 +132,9 @@ impl SurfaceEnv<'static> {
 /// every catalog row that asked for something, in draw order.
 ///
 /// A row with nothing to ask adds nothing, so adding a request never touches
-/// an existing surface; the host folds the effects it executes through
-/// `quantick_ui_model::late_effects::LateEffects`.
+/// an existing surface. The late surface stage and the alert manager fold
+/// theirs through `quantick_ui_model::late_effects::LateEffects`; chrome hosts
+/// (toolbar, menu bar, settings, tab strip) match their own variants directly.
 #[derive(Default, Debug, PartialEq)]
 pub(crate) struct SurfaceResponse {
     pub model_effects: Vec<HostEffect>,
