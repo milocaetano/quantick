@@ -136,6 +136,8 @@ pub(crate) struct DrawingEnv<'a> {
     pub pane_id: u64,
     /// The selected object on the pane the chrome speaks for, if any.
     pub selected: Option<SelectedDrawing<'a>>,
+    /// Whether the store shows the selection in all windows: its word.
+    pub selected_all_windows: bool,
     /// That pane's chart rectangle, or `None` before it has been laid out.
     pub chart_area: Option<egui::Rect>,
     /// Selected indicator band's body, excluding its header. Parked chrome

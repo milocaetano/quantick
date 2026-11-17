@@ -112,9 +112,8 @@ pub fn refresh(drawings: &mut Drawings<DrawingTool>, inputs: &RefreshInputs<'_>)
     };
     let mut folding = false;
     // A mark this chart holds for merges and does not show costs it nothing.
-    let layout = drawings.layout();
-    for drawing in drawings.items_mut() {
-        if drawing.tool.id() != TOOL_ID || drawing.points.len() < 2 || !drawing.shows_in(layout) {
+    for drawing in drawings.shown_mut() {
+        if drawing.tool.id() != TOOL_ID || drawing.points.len() < 2 {
             continue;
         }
         let (a, b) = (drawing.points[0].bar, drawing.points[1].bar);

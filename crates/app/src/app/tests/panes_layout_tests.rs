@@ -2184,6 +2184,32 @@ fn a_mark_shows_on_a_pane_of_another_layout_only_with_all_windows_on() {
     assert_eq!(shown(&app), 1, "All windows reached the store");
 }
 
+/// Deleting the layout a pane shows moves the pane and its marks together,
+/// so the mark selected there stays selected: the delete reaches the marks'
+/// store before the pane switches.
+#[test]
+fn deleting_a_panes_layout_keeps_the_mark_it_has_selected() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = split_app(&ctx, 200);
+    let time = PaneSide::Time(0);
+    let point = pane_point(&app, time);
+    click_chart(&mut app, &ctx, point);
+    let levels = app
+        .layout_adapter()
+        .create_layout(Some("levels"))
+        .expect("second");
+    place_level(&mut app, time, 100.0);
+    set_scope_on(&mut app, time, drawings::DrawingScope::AllCharts);
+    run_frame(&mut app, &ctx);
+    app.active_tab_mut().pane_mut(time).drawings.select(Some(0));
+
+    app.layout_adapter().delete_layout(levels).expect("deleted");
+    run_frame(&mut app, &ctx);
+    let drawings = &app.active_tab().pane(time).drawings;
+    assert_eq!(drawings.selected(), Some(0), "the selection held");
+    assert_ne!(drawings.items()[0].layout, Some(levels));
+}
+
 /// Each pane shows its own layout: creating a layout on the focused pane
 /// changes that pane alone, an edit reaches only the panes on the same
 /// layout, and a pane that opens inherits the focused pane's layout.

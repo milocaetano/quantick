@@ -130,7 +130,7 @@ fn all_windows_is_set_read_back_and_undone_as_one_step() {
     assert!(set.changed);
     assert!(set.all_windows);
     assert_eq!(set.layout_id.map(WireU64::get), Some(LEVELS.0));
-    assert!(drawings.items()[0].in_all_windows());
+    assert!(drawings.in_all_windows(0));
 
     let again = set_scope(
         &mut drawings,

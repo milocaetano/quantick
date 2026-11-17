@@ -43,7 +43,7 @@ pub(super) fn body(
     actions.delete |= intent.delete;
 
     ObjectNotes::of(edited).show(ui);
-    actions.merge(ScopeToggle(&mut *edited).show(ui));
+    actions.merge(ScopeToggle(&mut *edited, env.selected_all_windows).show(ui));
     if chrome.shared.delete_confirm && locked {
         actions.merge(DeleteConfirm.show(ui));
     }
@@ -133,13 +133,13 @@ impl ObjectNotes {
 /// trader's. Nobody hunting for "also show this on the other chart" opens a
 /// tab called Coordinates, and that is not even the tab the panel opens on.
 /// Reported as unfindable, and it was.
-struct ScopeToggle<'a>(&'a mut Drawing);
+struct ScopeToggle<'a>(&'a mut Drawing, bool);
 
 impl ScopeToggle<'_> {
     /// Reports a changed scope as an edit, and the "All windows" switch.
     fn show(self, ui: &mut egui::Ui) -> InspectorActions {
         let palette = theme::get(ui.ctx());
-        let edited = self.0;
+        let Self(edited, all_windows) = self;
         let shareable = edited.shareable();
         let mut shared = edited.all_timeframes();
         let mut actions = InspectorActions::default();
@@ -166,7 +166,7 @@ impl ScopeToggle<'_> {
                     .color(palette.text_support()),
             );
         }
-        let mut everywhere = edited.in_all_windows();
+        let mut everywhere = all_windows;
         let windows = ui.add_enabled(
             edited.all_timeframes(),
             egui::Checkbox::new(&mut everywhere, "All windows"),

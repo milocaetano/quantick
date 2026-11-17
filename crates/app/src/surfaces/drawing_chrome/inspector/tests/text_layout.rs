@@ -53,6 +53,7 @@ fn inspect_long_text(pinned: bool) {
                     linked_alerts: 0,
                     pane_id: 1,
                     selected: Some(SelectedDrawing { index: 0, drawing }),
+                    selected_all_windows: false,
                     chart_area: Some(screen),
                     automatic_bar_area: None,
                     focused_chart_area: Some(screen),

@@ -95,11 +95,12 @@ impl<T: Clone + PartialEq> Drawings<T> {
         self.draft.as_mut()
     }
 
-    /// How many objects are painted on the tab's other panes as well — the
-    /// per-frame reprojection cost, in the health summary.
+    /// How many objects this chart shows are painted on the tab's other
+    /// panes as well — the per-frame reprojection cost, in the health
+    /// summary. A mark it only holds for merges paints nowhere from here.
     #[must_use]
     pub fn shared_count(&self) -> usize {
-        self.items.iter().filter(|item| item.shared()).count()
+        self.shown().filter(|(_, item)| item.shared()).count()
     }
 
     pub(crate) fn alloc_id(&mut self) -> DrawingId {
@@ -304,8 +305,8 @@ impl<T: Clone + PartialEq> Drawings<T> {
             return 0;
         }
         let before = self.snapshot();
-        let layout = self.layout;
-        self.items.retain(|drawing| !drawing.shows_in(layout));
+        let (layout, live) = (self.layout, &self.live_layouts);
+        self.items.retain(|drawing| !drawing.shows_in(layout, live));
         self.selection.set(None);
         self.record(before);
         count
@@ -489,20 +490,15 @@ impl<T: Clone + PartialEq> Drawings<T> {
     /// lock-all toggle). An empty collection is not "all locked".
     #[must_use]
     pub fn all_locked(&self) -> bool {
-        let mut shown = self
-            .items
-            .iter()
-            .filter(|item| item.shows_in(self.layout))
-            .peekable();
-        shown.peek().is_some() && shown.all(|item| item.locked)
+        let mut shown = self.shown().peekable();
+        shown.peek().is_some() && shown.all(|(_, item)| item.locked)
     }
 
     /// Reversible bulk protection: locks (or unlocks) every drawing as one
     /// undo entry. Never deletes anything.
     pub fn set_all_locked(&mut self, locked: bool) {
         let before = self.snapshot();
-        let layout = self.layout;
-        for item in self.items.iter_mut().filter(|item| item.shows_in(layout)) {
+        for item in self.shown_mut() {
             item.locked = locked;
         }
         self.record(before);
@@ -511,7 +507,7 @@ impl<T: Clone + PartialEq> Drawings<T> {
 
 impl Drawings<crate::DrawingTool> {
     /// Switch the drawing `id`'s own magnet as one undo step; answers whether
-    /// it moved. Refused with `None` for an id this store does not hold, and
+    /// it moved. Refused with `None` for an id this chart does not show, and
     /// with the tool's `(name, id)` when asked on for a tool that snaps by its
     /// own rule. Off is always reachable, so a stale flag can be cleared.
     pub fn set_own_magnet(
@@ -519,7 +515,7 @@ impl Drawings<crate::DrawingTool> {
         id: DrawingId,
         enabled: bool,
     ) -> Result<bool, Option<(&'static str, &'static str)>> {
-        let index = self.index_of(id).ok_or(None)?;
+        let index = self.shown_index_of(id).ok_or(None)?;
         let tool = self.items[index].tool;
         if enabled && !self.items[index].takes_magnet() {
             return Err(Some((tool.name(), tool.id())));

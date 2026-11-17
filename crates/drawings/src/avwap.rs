@@ -50,9 +50,8 @@ pub fn refresh(drawings: &mut Drawings<DrawingTool>, inputs: &RefreshInputs<'_>)
         timeline_revision: inputs.state.timeline_revision(),
     };
     // A mark this chart holds for merges and does not show costs it nothing.
-    let layout = drawings.layout();
-    for drawing in drawings.items_mut() {
-        if drawing.tool.id() != TOOL_ID || !drawing.shows_in(layout) {
+    for drawing in drawings.shown_mut() {
+        if drawing.tool.id() != TOOL_ID {
             continue;
         }
         let Some(anchor_bar) = drawing.points.first().map(|point| point.bar) else {

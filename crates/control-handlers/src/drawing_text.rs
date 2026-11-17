@@ -80,7 +80,7 @@ fn answer<A: AnnotateAccess>(
 fn index(pane: &dyn AnnotatedPane, target: &TextTarget) -> Result<usize, ControlError> {
     let index = pane
         .drawings()
-        .index_of(DrawingId(target.drawing_id.get()))
+        .shown_index_of(DrawingId(target.drawing_id.get()))
         .ok_or_else(|| invalid("unknown drawing in pane"))?;
     if !pane.drawings().items()[index].tool.holds_text() {
         return Err(invalid("drawing is not a text note"));

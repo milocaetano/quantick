@@ -265,3 +265,51 @@ fn a_pane_the_layout_opened_or_closed_changes_the_tab_without_an_event_when_empt
         "and nothing to retire"
     );
 }
+
+/// The journal diffs what a pane shows, the rows `analysis.drawings` lists: a
+/// mark it holds for merges and its layout does not show is no event, and
+/// one its layout comes to show is created there.
+#[test]
+fn the_journal_sees_only_the_marks_a_panes_layout_shows() {
+    use quantick_drawings::{ChartPoint, DRAWING_TOOLS, DrawingBand, DrawingScope};
+    use quantick_drawings::{DrawingStyle, NewDrawing};
+    use quantick_workspace::layout_document::LayoutId;
+    let mut source = Source::new(vec![Tab::new(1, "WIN")]);
+    let drawings = &mut source.tabs[0].panes[0].drawings;
+    drawings.set_layout(Some(LayoutId(1)));
+    let mut baseline = SemanticBaseline::capture(&source);
+
+    let drawings = &mut source.tabs[0].panes[0].drawings;
+    let tool = DRAWING_TOOLS
+        .into_iter()
+        .find(|tool| tool.id() == "horizontal-line");
+    let point = ChartPoint::at_time(3.0, 100.0, Some(NOW));
+    let fresh = |tool: DrawingTool| NewDrawing {
+        style: DrawingStyle::default(),
+        payload: tool.default_payload(),
+    };
+    drawings.set_layout(Some(LayoutId(2)));
+    assert!(drawings.place_with(tool.unwrap(), &DrawingBand::Price, point, fresh));
+    let before = drawings.items()[0].clone();
+    drawings.items_mut()[0].set_scope(DrawingScope::AllCharts);
+    drawings.record_edit_of(0, before);
+    drawings.set_layout(Some(LayoutId(1)));
+    assert_eq!(drawings.items().len(), 1, "held");
+    assert!(
+        frame(&mut baseline, &source).is_empty(),
+        "not shown: no event"
+    );
+
+    source.tabs[0].panes[0]
+        .drawings
+        .set_layout(Some(LayoutId(2)));
+    let events = frame(&mut baseline, &source);
+    let kinds: Vec<&str> = events.iter().map(|(kind, _)| kind.as_str()).collect();
+    assert_eq!(kinds, ["analysis.drawing.created"], "shown: created here");
+    source.tabs[0].panes[0]
+        .drawings
+        .set_layout(Some(LayoutId(1)));
+    let events = frame(&mut baseline, &source);
+    let kinds: Vec<&str> = events.iter().map(|(kind, _)| kind.as_str()).collect();
+    assert_eq!(kinds, ["analysis.drawing.removed"], "gone from it");
+}

@@ -482,11 +482,7 @@ impl BarEdit {
         let mut edited = drawing.clone();
         edited.style = self.style;
         if self.toggle_shared {
-            edited.set_scope(if edited.all_timeframes() {
-                drawings::DrawingScope::ThisChart
-            } else {
-                drawings::DrawingScope::AllCharts
-            });
+            edited.set_all_timeframes(!edited.all_timeframes());
         }
         edited.magnet ^= self.toggle_magnet;
         if let Some(px) = self.glyph_px {

@@ -189,11 +189,9 @@ impl LayoutAdapter<'_> {
             return Err(Error::Busy);
         }
         let id = quantick_drawings::DrawingId(selector.drawing_id);
-        let mut matches = pane.drawings.items().iter().filter(|item| item.id == id);
-        let drawing = matches.next().ok_or(Error::Missing)?;
-        if matches.next().is_some() {
-            return Err(Error::Ambiguous);
-        }
+        // Ids are unique in a store; one this pane does not show is not its to name.
+        let index = pane.drawings.shown_index_of(id).ok_or(Error::Missing)?;
+        let drawing = &pane.drawings.items()[index];
         if drawing.all_timeframes() {
             key = DrawingKey::all_timeframes(key.market);
         }
@@ -556,18 +554,19 @@ impl LayoutAdapter<'_> {
             .iter()
             .flat_map(|tab| tab.panes().map(|(pane, _)| (pane.id, facts_of(pane))));
         let selections = self.store.session().plan_delete(id, facts)?;
+        let to = self.store.session().delete_successor(id)?;
+        let panes = self.tabs.iter_mut().flat_map(|tab| tab.panes_mut());
+        let settings = self.store.market_mut().settings_mut();
+        if retarget_layout(settings, id, to, panes.map(marks_of)) {
+            self.mark_market_dirty();
+        }
         for selection in selections {
             let (tab, side) = self
                 .pane_address(selection.pane())
                 .ok_or(LayoutError::Unknown)?;
             self.switch_pane_layout(tab, side, selection.to())?;
         }
-        let to = self.store.session_mut().finish_delete(id)?;
-        let panes = self.tabs.iter_mut().flat_map(|tab| tab.panes_mut());
-        let settings = self.store.market_mut().settings_mut();
-        if retarget_layout(settings, id, to, panes.map(marks_of)) {
-            self.mark_market_dirty();
-        }
+        self.store.session_mut().finish_delete(id)?;
         self.mark_layouts_dirty();
         Ok(())
     }

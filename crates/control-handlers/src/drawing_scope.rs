@@ -17,8 +17,8 @@ mod drawing_scope_tests;
 /// standing there is left untouched. The next write of the pane stores it:
 /// a drawing kept to its chart is pinned to `bars` then.
 ///
-/// `all_windows`, when named, is set in the same undo step, on the store's
-/// layout: a drawing from before layouts were recorded becomes its own.
+/// `all_windows`, when named, is set in the same undo step, by the store's
+/// one rule for a pick ([`Drawings::pick_where_shown`]).
 ///
 /// # Errors
 /// An id the store does not show, `all_charts` for a drawing with an anchor
@@ -30,8 +30,7 @@ pub fn set_scope(
     bars: &str,
 ) -> Result<DrawingScopeResult, ControlError> {
     let index = drawings
-        .index_of(DrawingId(input.drawing_id.get()))
-        .filter(|&index| drawings.in_layout(index))
+        .shown_index_of(DrawingId(input.drawing_id.get()))
         .ok_or_else(|| input.unknown_drawing())?;
     let drawing = &drawings.items()[index];
     if input.scope == ScopeName::AllCharts && !drawing.shareable() {
@@ -44,32 +43,14 @@ pub fn set_scope(
         ScopeName::AllCharts => DrawingScope::AllCharts,
         ScopeName::ThisChart => DrawingScope::ThisChart,
     };
-    let before = drawing.clone();
-    let here = drawings.layout();
-    let after = &mut drawings.items_mut()[index];
     // The pick, not what shows: an undated copy of a mark on every timeframe
     // shows on its chart alone until dated, and a call keeping it there holds.
-    if after.scope != scope {
-        after.set_scope(scope);
-    }
-    // What shows moves, or a pick left on a drawing kept to its chart is
-    // cleared; an old drawing every chart already shows stays as it is.
-    let windows_moved = input
-        .all_windows
-        .is_some_and(|on| after.in_all_windows() != on || (after.all_windows && !on));
-    if let Some(on) = input.all_windows.filter(|_| windows_moved) {
-        after.all_windows = on;
-        after.layout = after.layout.or(here);
-    }
-    let changed = *after != before;
-    if changed {
-        drawings.record_edit_of(index, before);
-    }
+    let changed = drawings.pick_where_shown(index, scope, input.all_windows);
     let after = &drawings.items()[index];
     let pinned = !after.all_timeframes() && !after.legacy_unpinned;
     let readback = ScopeReadback {
         pinned_bars: pinned.then(|| bars.to_owned()),
-        all_windows: after.in_all_windows(),
+        all_windows: drawings.in_all_windows(index),
         layout_id: after.layout.map(|layout| layout.0),
     };
     Ok(input.result(readback, changed))

@@ -39,7 +39,7 @@ impl<T: Clone + PartialEq> Drawings<T> {
         copy.legacy_unpinned = false;
         // It belongs to the layout it lands in, and to that layout alone until
         // the trader says otherwise there.
-        copy.layout = self.layout;
+        copy.layout = self.new_mark_layout(copy.id);
         copy.all_windows = false;
         let id = copy.id;
         self.items.push(copy);

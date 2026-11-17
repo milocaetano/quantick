@@ -357,12 +357,14 @@ impl<B: Copy + PartialEq> PaneMarks<'_, B> {
     }
 
     /// Each frame before a write: the marks told the strip layout the pane
-    /// shows in `session`, ids stay above every id the market holds, and a
+    /// shows in `session` and the ones its book holds, ids stay above every id the market holds, and a
     /// quiet re-cut moves only bars (`PaneLayout::recut_in_place`), asked
     /// again whenever the store has moved.
     pub fn follow_store(self, store: &MarketSettingsStore, session: &LayoutSession) {
         let layout = session.strip_layout_of(self.layout.layout_id());
         self.drawings.set_layout(Some(layout));
+        let live = session.book().layouts().iter().map(|layout| layout.id);
+        self.drawings.set_live_layouts(live);
         let settings = store.settings();
         if let Some(key) = &self.layout.drawings_key {
             self.drawings

@@ -236,7 +236,11 @@ fn pane_analysis_keys(tab: &dyn SemanticTab) -> Vec<PaneAnalysisKey> {
                 .iter()
                 .map(IndicatorKey::of)
                 .collect(),
-            drawings: pane.drawings().items().iter().map(DrawingKey::of).collect(),
+            drawings: pane
+                .drawings()
+                .shown()
+                .map(|(_, drawing)| DrawingKey::of(drawing))
+                .collect(),
         });
     });
     keys
@@ -260,18 +264,19 @@ fn analysis_matches(tab: &dyn SemanticTab, stored: &[PaneAnalysisKey]) -> bool {
         };
         seen += 1;
         let indicators = pane.indicators().all();
-        let drawings = pane.drawings().items();
+        let mut stored_drawings = key.drawings.iter();
         matched = pane.pane_id() == key.pane_id
             && indicators.len() == key.indicators.len()
-            && drawings.len() == key.drawings.len()
             && indicators
                 .iter()
                 .zip(&key.indicators)
                 .all(|(view, stored)| stored.matches(view))
-            && drawings
-                .iter()
-                .zip(&key.drawings)
-                .all(|(drawing, stored)| stored.matches(drawing));
+            && pane.drawings().shown().all(|(_, drawing)| {
+                stored_drawings
+                    .next()
+                    .is_some_and(|stored| stored.matches(drawing))
+            })
+            && stored_drawings.next().is_none();
     });
     // Every stored pane must have been consumed too: a closed pane leaves the
     // walk short, and a tab that lost one has changed.
@@ -451,7 +456,7 @@ fn record_analysis_changes<J: SemanticJournal + ?Sized>(
         let pane_id = pane.pane_id().to_string();
 
         let indicators = pane.indicators().all();
-        let drawings = pane.drawings().items();
+        let drawings = pane.drawings();
 
         for view in indicators {
             match previous_indicators
@@ -523,7 +528,7 @@ fn record_analysis_changes<J: SemanticJournal + ?Sized>(
             }
         }
 
-        for drawing in drawings {
+        for (_, drawing) in drawings.shown() {
             match previous_drawings.iter().find(|key| key.id == drawing.id.0) {
                 None => journal.record_observed(
                     "analysis",
@@ -561,7 +566,7 @@ fn record_analysis_changes<J: SemanticJournal + ?Sized>(
             }
         }
         for key in previous_drawings {
-            if !drawings.iter().any(|drawing| drawing.id.0 == key.id) {
+            if !drawings.shown().any(|(_, drawing)| drawing.id.0 == key.id) {
                 record_drawing_removed(journal, &tab_id, &pane_id, side, key.id, now);
             }
         }

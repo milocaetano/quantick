@@ -9,6 +9,7 @@ pub use quantick_chart_interaction::drawing_model::{
 };
 
 use crate::{DrawingPayload, DrawingStyle, ToolCatalog};
+use quantick_workspace::layout_document::LayoutId;
 
 #[derive(Debug, Clone)]
 pub struct Drawing<T> {
@@ -47,7 +48,7 @@ pub struct Drawing<T> {
     /// strip layout). On all timeframes it shows only on charts showing this
     /// layout unless [`Self::all_windows`]. `None` on a mark read from before
     /// layouts were recorded: it shows on every chart, as it always has.
-    pub layout: Option<quantick_workspace::layout_document::LayoutId>,
+    pub layout: Option<LayoutId>,
     /// The trader's "All windows": every chart of its market shows it,
     /// whatever layout it shows. Only for a mark on all timeframes; never
     /// across markets.
@@ -112,19 +113,38 @@ impl<T> Drawing<T> {
         self.scope == DrawingScope::AllCharts && self.shareable()
     }
 
-    /// Whether every chart of its market shows it, whatever layout: on all
-    /// timeframes, and asked for, or read from before layouts were recorded.
+    /// The strip layout it shows with, given the strip layouts `live` the
+    /// book holds: its own while the book still holds it. A mark whose layout
+    /// the book lost (a bundle imported without its layouts, a book that fell
+    /// back to the starter after a corrupt file) has none, like one read from
+    /// before layouts were recorded, so it shows on every chart of its market
+    /// rather than on none, where nobody could see, select or clear it. Its
+    /// layout is kept, never rewritten here, so a book that holds it again
+    /// takes it back; a pick made on a chart makes it that chart's layout's.
+    /// An empty `live` names no book (one always holds a layout): every
+    /// layout counts as held.
     #[must_use]
-    pub fn in_all_windows(&self) -> bool {
-        self.all_timeframes() && (self.all_windows || self.layout.is_none())
+    pub fn home(&self, live: &[LayoutId]) -> Option<LayoutId> {
+        self.layout
+            .filter(|own| live.is_empty() || live.contains(own))
     }
 
-    /// Whether a chart showing `layout` shows it. A mark kept to its chart is
-    /// held by its own chart alone, so it always does; a store that names no
-    /// layout shows everything it holds.
+    /// Whether every chart of its market shows it, whatever layout: on all
+    /// timeframes, and asked for, or with no [`Self::home`] among `live`.
     #[must_use]
-    pub fn shows_in(&self, layout: Option<quantick_workspace::layout_document::LayoutId>) -> bool {
-        !self.all_timeframes() || self.in_all_windows() || layout.is_none() || self.layout == layout
+    pub fn in_all_windows(&self, live: &[LayoutId]) -> bool {
+        self.all_timeframes() && (self.all_windows || self.home(live).is_none())
+    }
+
+    /// Whether a chart showing `layout` shows it, the book holding `live`. A
+    /// mark kept to its chart is held by its own chart alone, so it always
+    /// does; a store that names no layout shows everything it holds.
+    #[must_use]
+    pub fn shows_in(&self, layout: Option<LayoutId>, live: &[LayoutId]) -> bool {
+        !self.all_timeframes()
+            || self.in_all_windows(live)
+            || layout.is_none()
+            || self.layout == layout
     }
 
     /// The trader's pick of where it shows. A pick is a new decision, so a

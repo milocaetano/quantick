@@ -141,7 +141,7 @@ pub fn update(store: &mut Drawings<DrawingTool>, intent: DrawingIntent) -> Vec<D
         }
         DrawingIntent::ToggleAllWindowsSelected => {
             if let Some(index) = store.selected() {
-                let on = store.items()[index].in_all_windows();
+                let on = store.in_all_windows(index);
                 store.set_all_windows_at(index, !on);
             }
             Vec::new()
@@ -316,11 +316,11 @@ mod tests {
         assert!(!store.items()[0].all_windows, "nothing selected");
         store.select(Some(0));
         update(&mut store, DrawingIntent::ToggleAllWindowsSelected);
-        assert!(store.items()[0].in_all_windows());
+        assert!(store.in_all_windows(0));
         update(&mut store, DrawingIntent::ToggleAllWindowsSelected);
-        assert!(!store.items()[0].in_all_windows());
+        assert!(!store.in_all_windows(0));
         assert!(store.undo());
-        assert!(store.items()[0].in_all_windows());
+        assert!(store.in_all_windows(0));
     }
 
     #[test]

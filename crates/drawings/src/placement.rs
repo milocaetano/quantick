@@ -42,6 +42,7 @@ impl<T: ToolCatalog> Drawings<T> {
         if self.draft.as_ref().is_none_or(|draft| draft.tool != tool) {
             let fresh = new_drawing(tool);
             let id = self.alloc_id();
+            let layout = self.new_mark_layout(id);
             self.draft = Some(Drawing {
                 id,
                 author: None,
@@ -56,7 +57,7 @@ impl<T: ToolCatalog> Drawings<T> {
                 locked: false,
                 hidden: false,
                 scope: DrawingScope::default(),
-                layout: self.layout,
+                layout,
                 all_windows: false,
                 legacy_unpinned: false,
                 magnet: false,
