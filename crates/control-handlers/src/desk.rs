@@ -75,8 +75,10 @@ fn desk_act<H: DeskHost + ?Sized>(app: &mut H, act: DeskAct) -> Result<bool, Con
     Ok(app.desk().ok_or_else(unavailable)?.act(act))
 }
 
-/// Outside the replay trace: none of these changes a market, and a recorded
-/// call must not rewrite the trader's desk when a session re-runs.
+/// Outside the replay trace. The desk acts change no market, and the Settings
+/// rows are the trader's view choices, which a row click also changes outside
+/// the trace: a re-run session keeps the trader's current desk and view rather
+/// than the recorded ones.
 pub fn register<H, A, D>(registry: &mut D) -> Result<(), RegistryError>
 where
     H: DeskHost + ?Sized,
@@ -156,7 +158,7 @@ fn set_settings<H: DeskHost + ?Sized, A>(
     ];
     let mut desk = app.desk().ok_or_else(unavailable)?;
     for act in acts.into_iter().flatten() {
-        desk.settle(act).map_err(ControlError::invalid_request)?;
+        desk.settle(act)?;
     }
     answer(&SettingsResult::from(desk.readings()))
 }

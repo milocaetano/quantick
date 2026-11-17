@@ -51,7 +51,7 @@ macro_rules! arrangement_adapter {
 }
 
 /// The Settings, desk and REC owner over `$app`'s own fields: the `DeskHost`
-/// door's answer, and what the window's own draw and menu callers act through.
+/// door's answer, and what the window's own Settings draw acts through.
 macro_rules! desk_adapter {
     ($app:expr) => {
         $crate::app::desk_wiring::DeskAdapter {

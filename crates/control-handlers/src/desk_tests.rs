@@ -8,7 +8,7 @@ use serde_json::json;
 
 use super::*;
 use crate::deal_recorder::DealRecorder;
-use crate::settings::SettingsReadings;
+use crate::settings::{SettingsReadings, SettleError};
 use crate::test_support::{FakeAccess, FakeWindow};
 
 #[derive(Default)]
@@ -23,6 +23,8 @@ struct FakeHost {
     /// What the rows show; each settled act moves it as the window would.
     readings: SettingsReadings,
     settled: Vec<SettingsAct>,
+    /// What every settle answers instead of landing.
+    refusal: Option<SettleError>,
 }
 
 /// The fake's desk, lent for one call.
@@ -48,7 +50,10 @@ impl SettingsOwner for Door<'_> {
     fn readings(&self) -> SettingsReadings {
         self.0.readings
     }
-    fn settle(&mut self, act: SettingsAct) -> Result<(), String> {
+    fn settle(&mut self, act: SettingsAct) -> Result<(), SettleError> {
+        if let Some(refusal) = self.0.refusal.clone() {
+            return Err(refusal);
+        }
         let readings = &mut self.0.readings;
         match act {
             SettingsAct::Timezone(zone) => readings.timezone = zone,
@@ -262,6 +267,17 @@ fn an_offset_the_row_does_not_list_is_refused_before_anything_settles() {
     assert!(host.settled.is_empty(), "a refused call changes nothing");
     let refusal = set_settings(&mut NoDesk, &mut access, &actor, &json!({})).unwrap_err();
     assert!(refusal.message.contains("the desk is unavailable"));
+}
+
+#[test]
+fn a_row_that_does_not_land_answers_its_reason_as_a_control_error() {
+    let (mut host, mut access, actor) = parts();
+    host.refusal = Some(SettleError::Theme("disk full".to_owned()));
+    let value = json!({ "perf_readings": true });
+    let refusal = set_settings(&mut host, &mut access, &actor, &value).unwrap_err();
+    assert_eq!(refusal.code.as_str(), codes::INVALID_REQUEST);
+    assert_eq!(refusal.message, "disk full");
+    assert!(access.events.is_empty());
 }
 
 #[test]

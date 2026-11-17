@@ -68,8 +68,7 @@ fn set<H: DeskHost + TabDirectory + ?Sized, A>(
         None => {}
     }
     if let Some(on) = input.record_by_default {
-        let act = SettingsAct::RecordDeals(on);
-        desk.settle(act).map_err(ControlError::invalid_request)?;
+        desk.settle(SettingsAct::RecordDeals(on))?;
     }
     let tab = desk.deal_recorder(index).ok_or_else(tab_closed)?;
     let result = DealRecordingResult {

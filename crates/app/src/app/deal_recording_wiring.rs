@@ -20,9 +20,7 @@ fn recorder_for(
     let scripted = chrome.harness.deal_recording_default();
     #[cfg(not(any(feature = "scenario-harness", test)))]
     let scripted = None;
-    let default_on = scripted
-        .or(chrome.record_deals)
-        .unwrap_or_else(|| config.records_deals(feed_id));
+    let default_on = config.records_by_default(scripted.or(chrome.record_deals), feed_id);
     let dir = deal_recording::resolve_dir(config.deals_dir());
     DealRecorder::with_cache(symbol, dir, default_on, day_cache).for_feed(feed_id)
 }

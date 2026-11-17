@@ -109,9 +109,18 @@ pub enum Intent {
 }
 
 /// What a row asked its owner to do.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Action {
+    /// A row a connection may settle too, through the same owner.
+    Row(SettingsAct),
+    /// The Agent access rows: only the window carries these out.
+    OpenAgentAccess,
+    AgentSwitch(bool),
+}
+
 #[derive(Debug, Default, PartialEq)]
 pub struct Effects {
-    pub action: Option<SettingsAct>,
+    pub action: Option<Action>,
 }
 
 pub struct Model;
@@ -144,13 +153,12 @@ impl crate::Model for Model {
             }
             Intent::Press(row) => press(row),
             Intent::Flip(row, on) => flip(state, row, on),
-            Intent::PickTimezone(tz) => {
-                (tz != state.facts.readings.timezone).then_some(SettingsAct::Timezone(tz))
-            }
+            Intent::PickTimezone(tz) => (tz != state.facts.readings.timezone)
+                .then_some(Action::Row(SettingsAct::Timezone(tz))),
             Intent::PickTheme(choice) => {
                 state.theme_error = None;
                 state.theme_picked = Some(choice);
-                Some(SettingsAct::Theme(choice))
+                Some(Action::Row(SettingsAct::Theme(choice)))
             }
             Intent::ThemeFailed(error) => {
                 state.theme_error = Some(error);
@@ -166,28 +174,29 @@ impl crate::Model for Model {
     }
 }
 
-fn press(row: SettingRow) -> Option<SettingsAct> {
+fn press(row: SettingRow) -> Option<Action> {
     match row {
-        SettingRow::Appearance => Some(SettingsAct::OpenAppearance),
-        SettingRow::ManageClients => Some(SettingsAct::OpenAgentAccess),
+        SettingRow::Appearance => Some(Action::Row(SettingsAct::OpenAppearance)),
+        SettingRow::ManageClients => Some(Action::OpenAgentAccess),
         _ => None,
     }
 }
 
 /// A switch asks only when it can move and its value changes.
-fn flip(state: &State, row: SettingRow, on: bool) -> Option<SettingsAct> {
+fn flip(state: &State, row: SettingRow, on: bool) -> Option<Action> {
     match state.control(row) {
         Control::Switch { on: was, enabled } if enabled && was != on => {}
         _ => return None,
     }
-    match row {
-        SettingRow::PerfReadings => Some(SettingsAct::PerfReadings(on)),
-        SettingRow::ProgressiveHistory => Some(SettingsAct::ProgressiveHistory(on)),
-        SettingRow::VenueLeadIn => Some(SettingsAct::VenueLeadIn(on)),
-        SettingRow::RecordDeals => Some(SettingsAct::RecordDeals(on)),
-        SettingRow::AgentSwitch => Some(SettingsAct::AgentSwitch(on)),
-        _ => None,
-    }
+    let act = match row {
+        SettingRow::PerfReadings => SettingsAct::PerfReadings(on),
+        SettingRow::ProgressiveHistory => SettingsAct::ProgressiveHistory(on),
+        SettingRow::VenueLeadIn => SettingsAct::VenueLeadIn(on),
+        SettingRow::RecordDeals => SettingsAct::RecordDeals(on),
+        SettingRow::AgentSwitch => return Some(Action::AgentSwitch(on)),
+        _ => return None,
+    };
+    Some(Action::Row(act))
 }
 
 #[cfg(test)]

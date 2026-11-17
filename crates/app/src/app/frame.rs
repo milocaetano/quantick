@@ -39,6 +39,7 @@ use crate::statusbar;
 use crate::tab::CanvasChrome;
 
 use super::QuantickApp;
+use super::menu_bar::MenuCommand;
 
 // The frame's stages, each harness stage compiled only where its hooks are:
 // a default build's plan has none of them, not a no-op arm for each.
@@ -606,7 +607,7 @@ impl QuantickApp {
         scratch.status = statusbar::draw(ctx, &self.status_model(), self.runtime.tz, &lead);
         if scratch.status.open_display_settings {
             let display = quantick_control_schema::settings_sections::SettingsSection::Display;
-            super::chrome::settings::open(&mut desk_adapter!(self), ctx.viewport_id(), display);
+            super::menu_bar::apply_menu_command_on(self, ctx, MenuCommand::OpenSettings(display));
             ctx.request_repaint();
         }
         if scratch.status.open_trading_tab {

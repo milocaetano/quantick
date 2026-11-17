@@ -222,8 +222,8 @@ pub const READBACKS: &[Readback] = &[
         SETTINGS_SET_CAPABILITY_ID,
         IdempotencyPolicy::Optional,
         crate::workspace::SCOPE_ID,
-        "performance_readings_visible",
-        "the asked perf readings value is the one read",
+        "timezone_offset_minutes, performance_readings_visible, progressive_venue_history, venue_lead_in",
+        "each asked value is the one read",
         &[EVERY_OPTIONAL_TEST],
     ),
     journal(

@@ -232,7 +232,8 @@ pub fn row_drift<P>(
                 scope: scope_id.to_owned(),
             }),
             Some(scope) => {
-                if !schema_has_path(&scope.schema, row.field) {
+                let mut paths = row.field.split(", ");
+                if !paths.all(|path| schema_has_path(&scope.schema, path)) {
                     findings.push(Drift::FieldMissing {
                         capability: capability.clone(),
                         scope: scope_id.to_owned(),

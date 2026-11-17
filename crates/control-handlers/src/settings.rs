@@ -6,21 +6,37 @@
 //! Rate class: a human or an agent changing a setting. Never per trade.
 
 use quantick_civil::TzOffset;
+use quantick_control::error::ControlError;
 use quantick_control_schema::desk::SettingsResult;
 use quantick_stores::appearance::Builtin;
 
-/// What a Settings row asks the window to do.
+/// What a Settings row asks the window to do, for the rows a connection may
+/// settle too. The Agent access rows widen a connection's own authority, so
+/// they are not acts here: only the window's own draw carries them out.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum SettingsAct {
     OpenAppearance,
-    OpenAgentAccess,
     Theme(Builtin),
     Timezone(TzOffset),
     PerfReadings(bool),
     ProgressiveHistory(bool),
     VenueLeadIn(bool),
     RecordDeals(bool),
-    AgentSwitch(bool),
+}
+
+/// Why an act did not land.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SettleError {
+    /// The theme could not be applied, in the words its menu shows.
+    Theme(String),
+}
+
+impl From<SettleError> for ControlError {
+    fn from(error: SettleError) -> Self {
+        match error {
+            SettleError::Theme(message) => Self::invalid_request(message),
+        }
+    }
 }
 
 /// The values the rows show, read from their owners.
@@ -41,8 +57,8 @@ pub trait SettingsOwner {
     /// Carry out one act, as the row's click does.
     ///
     /// # Errors
-    /// Why a theme could not be applied, in the words its menu shows.
-    fn settle(&mut self, act: SettingsAct) -> Result<(), String>;
+    /// Why the act did not land; a refused act changed nothing.
+    fn settle(&mut self, act: SettingsAct) -> Result<(), SettleError>;
 }
 
 impl From<SettingsReadings> for SettingsResult {

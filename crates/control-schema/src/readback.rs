@@ -29,8 +29,9 @@ pub struct Readback {
     /// The journal event kind, when `read` is `events.read`.
     pub event: Option<&'static str>,
     /// The field that shows the effect: a dotted path, `[]` stepping into an
-    /// array. Inside the scope's value for a snapshot, inside each event of
-    /// `event`'s kind for the journal.
+    /// array; a call that sets several names each path, `, ` between them.
+    /// Inside the scope's value for a snapshot, inside each event of `event`'s
+    /// kind for the journal.
     pub field: &'static str,
     /// What the field says when the call applied, against a reading taken
     /// before the call.

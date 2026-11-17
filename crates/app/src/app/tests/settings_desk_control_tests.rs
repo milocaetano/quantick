@@ -305,25 +305,29 @@ fn settings_set_moves_the_rows_owners_and_the_summary_agrees() {
     disable_test_gateway(&mut app, &ctx);
 }
 
-/// The rows no named call sets reach their owners through the same door.
+/// The record row reaches its owner through the desk door; the Agent access
+/// rows only through the window's own settle.
 #[test]
-fn the_desk_door_settles_the_record_and_agent_rows_on_the_window() {
+fn the_desk_door_settles_the_record_row_and_the_window_the_agent_rows() {
+    use crate::app::chrome::settings::settle;
     use quantick_control_handlers::desk::DeskHost as _;
     use quantick_control_handlers::settings::SettingsAct;
+    use quantick_ui_model::settings_window::Action;
     let (mut app, _evt, _cmd, _book) = test_app();
-    run_frame(&mut app, &egui::Context::default());
-    let settle = |app: &mut QuantickApp, act| app.desk().unwrap().settle(act).unwrap();
+    let ctx = egui::Context::default();
+    run_frame(&mut app, &ctx);
     let record = !app.desk().unwrap().readings().record_deals;
-    settle(&mut app, SettingsAct::RecordDeals(record));
+    let act = SettingsAct::RecordDeals(record);
+    app.desk().unwrap().settle(act).unwrap();
     assert_eq!(app.chrome.record_deals, Some(record));
     assert_eq!(app.desk().unwrap().readings().record_deals, record);
     app.control.control_access = None;
-    settle(&mut app, SettingsAct::OpenAgentAccess);
+    settle(&mut desk_adapter!(app), &ctx, Action::OpenAgentAccess);
     assert!(
         !app.surfaces.access_panel.model_state.open,
         "no gateway, no panel"
     );
     app.control.control_access = Some(crate::control::ControlAccess::new());
-    settle(&mut app, SettingsAct::OpenAgentAccess);
+    settle(&mut desk_adapter!(app), &ctx, Action::OpenAgentAccess);
     assert!(app.surfaces.access_panel.model_state.open);
 }

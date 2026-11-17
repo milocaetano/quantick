@@ -249,10 +249,18 @@ fn violated_precondition(response: &ResponseEnvelope) -> Option<&str> {
     }
 }
 
-/// Every value at a matrix field path: dotted properties, `[]` stepping into
-/// an array. The same grammar `retry_matrix::schema_has_path` checks against
-/// the published schema, walked here over a real answer.
-fn values_at(value: &Value, path: &str) -> Vec<Value> {
+/// Every value at a matrix field's paths: `, ` between paths, dotted
+/// properties, `[]` stepping into an array. The same grammar
+/// `retry_matrix::schema_has_path` checks against the published schema, walked
+/// here over a real answer.
+fn values_at(value: &Value, field: &str) -> Vec<Value> {
+    field
+        .split(", ")
+        .flat_map(|path| values_at_path(value, path))
+        .collect()
+}
+
+fn values_at_path(value: &Value, path: &str) -> Vec<Value> {
     let mut nodes = vec![value.clone()];
     for segment in path.split('.') {
         let (name, into_array) = match segment.strip_suffix("[]") {

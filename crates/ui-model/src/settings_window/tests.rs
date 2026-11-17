@@ -8,7 +8,7 @@ fn opened(facts: Facts) -> State {
     state
 }
 
-fn action(state: &mut State, intent: Intent) -> Option<SettingsAct> {
+fn action(state: &mut State, intent: Intent) -> Option<Action> {
     Model::update(state, intent).action
 }
 
@@ -52,7 +52,10 @@ fn each_switch_asks_its_owner_only_when_its_value_changes() {
         (SettingRow::RecordDeals, SettingsAct::RecordDeals(true)),
     ] {
         let on = !matches!(row, SettingRow::PerfReadings);
-        assert_eq!(action(&mut state, Intent::Flip(row, on)), Some(asked));
+        assert_eq!(
+            action(&mut state, Intent::Flip(row, on)),
+            Some(Action::Row(asked))
+        );
     }
     assert_eq!(
         action(&mut state, Intent::Flip(SettingRow::ManageClients, true)),
@@ -85,7 +88,8 @@ fn the_agent_switch_moves_only_when_its_gateway_lets_it() {
     let mut free = opened(agent(true));
     assert_eq!(
         action(&mut free, Intent::Flip(SettingRow::AgentSwitch, true)),
-        Some(SettingsAct::AgentSwitch(true))
+        Some(Action::AgentSwitch(true)),
+        "the window's own act, never a row a connection settles"
     );
 }
 
@@ -94,11 +98,11 @@ fn buttons_timezone_and_theme_ask_their_owners() {
     let mut state = opened(Facts::default());
     assert_eq!(
         action(&mut state, Intent::Press(SettingRow::Appearance)),
-        Some(SettingsAct::OpenAppearance)
+        Some(Action::Row(SettingsAct::OpenAppearance))
     );
     assert_eq!(
         action(&mut state, Intent::Press(SettingRow::ManageClients)),
-        Some(SettingsAct::OpenAgentAccess)
+        Some(Action::OpenAgentAccess)
     );
     assert_eq!(
         action(&mut state, Intent::Press(SettingRow::Timezone)),
@@ -112,7 +116,7 @@ fn buttons_timezone_and_theme_ask_their_owners() {
         .expect("a second offset");
     assert_eq!(
         action(&mut state, Intent::PickTimezone(other)),
-        Some(SettingsAct::Timezone(other))
+        Some(Action::Row(SettingsAct::Timezone(other)))
     );
     let choice = Builtin::ALL[0];
     action(&mut state, Intent::PickTheme(choice));
@@ -122,7 +126,7 @@ fn buttons_timezone_and_theme_ask_their_owners() {
     assert_eq!(state.theme_error(), Some("disk full"));
     assert_eq!(
         action(&mut state, Intent::PickTheme(choice)),
-        Some(SettingsAct::Theme(choice))
+        Some(Action::Row(SettingsAct::Theme(choice)))
     );
     assert_eq!(
         state.theme_error(),

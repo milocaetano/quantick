@@ -463,17 +463,18 @@ pub(super) fn workspace_cell(
 }
 
 /// The commands that need to know which window asked, then all the others.
-fn apply_menu_command_on(app: &mut QuantickApp, ctx: &egui::Context, command: MenuCommand) {
+pub(super) fn apply_menu_command_on(app: &mut QuantickApp, ctx: &egui::Context, ask: MenuCommand) {
     let viewport = ctx.viewport_id();
-    match command {
+    match ask {
         MenuCommand::ToggleWindowMenu => app.chrome.window_menu.toggle(viewport, true),
         MenuCommand::OpenSettings(section) => {
-            super::chrome::settings::open(&mut desk_adapter!(app), viewport, section);
+            let settings = &mut app.surfaces.settings_window;
+            super::chrome::settings::open(&mut app.chrome.window_menu, settings, viewport, section);
         }
         MenuCommand::OpenHelp(page) => {
             app.chrome.window_menu.windows_viewport = Some(viewport);
             app.chrome.window_menu.help = Some(page);
         }
-        command => app.apply_menu_command(command),
+        ask => app.apply_menu_command(ask),
     }
 }

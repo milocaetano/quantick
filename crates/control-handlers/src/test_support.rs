@@ -46,7 +46,7 @@ use crate::indicator_host::{
 use crate::notify::{AttentionPort, NotifyAccess};
 use crate::pane_marks::PaneMarks;
 use crate::recovery::{FeedRecoveryPort, RecoveredFeed};
-use crate::settings::{SettingsAct, SettingsOwner, SettingsReadings};
+use crate::settings::{SettingsAct, SettingsOwner, SettingsReadings, SettleError};
 use crate::tabs::TabDirectory;
 use crate::trade::{TradeDesk, TradePort};
 use quantick_control::error::ControlError;
@@ -747,7 +747,7 @@ impl SettingsOwner for FakeDesk<'_> {
             ..SettingsReadings::default()
         }
     }
-    fn settle(&mut self, act: SettingsAct) -> Result<(), String> {
+    fn settle(&mut self, act: SettingsAct) -> Result<(), SettleError> {
         if let SettingsAct::RecordDeals(on) = act {
             *self.record_by_default = Some(on);
         }

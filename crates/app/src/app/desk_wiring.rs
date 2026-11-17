@@ -31,9 +31,10 @@ impl DeskOwner for DeskAdapter<'_> {
     fn act(&mut self, act: DeskAct) -> bool {
         match act {
             DeskAct::OpenSettings(section) => {
-                let viewport =
-                    (self.chrome.window_menu.windows_viewport).unwrap_or(egui::ViewportId::ROOT);
-                super::chrome::settings::open(self, viewport, section);
+                let menu = &mut self.chrome.window_menu;
+                let viewport = menu.windows_viewport.unwrap_or(egui::ViewportId::ROOT);
+                let settings = &mut self.surfaces.settings_window;
+                super::chrome::settings::open(menu, settings, viewport, section);
                 true
             }
             DeskAct::Save => self.save().save_workspace("control"),
