@@ -215,9 +215,8 @@ fn draw_tab_header(
     let palette = theme::get(ui.ctx());
     let row = |ui: &mut egui::Ui| {
         let ink = ui.visuals().override_text_color.unwrap_or(palette.text_primary());
-        let (title, ink) = route.map_or((tab.title(), ink), |sheet| {
-            (sheet.title.as_str(), account_route::tone_color(sheet.tone, ink))
-        });
+        let title = quantick_paper::route::dock_title(tab, route);
+        let ink = route.map_or(ink, |sheet| account_route::tone_color(sheet.tone, ink));
         ui.label(egui::RichText::new(title).strong().color(ink));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             // `×` is Latin-1, so it renders in egui's default proportional

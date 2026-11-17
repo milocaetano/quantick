@@ -630,11 +630,11 @@ fn push_dock<P: ChromePort + ?Sized>(controls: &mut Vec<SceneControlSnapshot>, a
         bounds_availability: bounds_not_recorded(),
         capability_id: Some(quantick_control_schema::alerts::OPEN.to_owned()),
     });
-    let open = dock.tab();
+    let (open, route) = (dock.tab(), app.chrome_reads().route);
     for tab in DockTab::ALL {
         controls.push(SceneControlSnapshot {
             control_id: dock_tab_control_id(tab),
-            label: tab.title().to_owned(),
+            label: quantick_paper::route::dock_title(tab, route).to_owned(),
             description: None,
             role: SceneRoleDto::Tab,
             owner: SceneOwnerSnapshot {

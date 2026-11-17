@@ -40,6 +40,7 @@ pub use scene::Scene;
 pub use session::{BrokerSession, RouteCall, RouteHost, Staged};
 pub use sheet::{
     AccountRow, Dot, NOTICE_LEAD, RouteNotice, RouteTone, RowGesture, RowState, SIM_TITLE, Sheet,
+    dock_title,
 };
 
 /// How long a REAL row is held before it arms, in milliseconds.

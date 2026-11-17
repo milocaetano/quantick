@@ -444,6 +444,32 @@ fn arming_routes_the_active_chart_to_the_broker() {
 }
 
 #[test]
+fn the_trading_tab_goes_by_the_route_word_the_panel_paints() {
+    use quantick_workspace::dock::DockTab;
+    assert_eq!(dock_title(DockTab::Trading, None), SIM_TITLE);
+    let (venue, _script) = broker(TradeMode::Real);
+    let mut desk = BrokerDesk::new();
+    let tabs = Tabs::new();
+    desk.install(venue);
+    let sim = desk.sheet(&tabs, LIVE, None, 0);
+    assert_eq!(dock_title(DockTab::Trading, Some(&sim)), SIM_TITLE);
+    for (mode, title) in [
+        (TradeMode::Demo, "TRADING · DEMO"),
+        (TradeMode::Real, "TRADING · REAL"),
+    ] {
+        let (desk, tabs, _script) = armed(mode);
+        let sheet = desk.sheet(&tabs, LIVE, None, HOLD_TO_ARM_MS);
+        assert_eq!(sheet.title, title);
+        assert_eq!(dock_title(DockTab::Trading, Some(&sheet)), title);
+        assert_eq!(
+            dock_title(DockTab::Trades, Some(&sheet)),
+            DockTab::Trades.title(),
+            "the ledger keeps its own title"
+        );
+    }
+}
+
+#[test]
 fn the_held_real_row_shows_its_facts_and_progress() {
     let (venue, _script) = broker(TradeMode::Real);
     let mut desk = BrokerDesk::new();

@@ -6,6 +6,7 @@
 use rust_decimal::Decimal;
 
 use quantick_trading::{AccountFacts, BrokerVenue, LinkState};
+use quantick_workspace::dock::DockTab;
 
 use super::desk::{AccountsPort, BrokerDesk, SourceFacts};
 use super::{AccountRoute, Disarm, Refusal, Route};
@@ -136,10 +137,23 @@ struct TicketFacts {
 }
 
 /// The panel title for the simulator.
-pub const SIM_TITLE: &str = "PAPER TRADING · SIM";
+pub const SIM_TITLE: &str = DockTab::Trading.title();
+
+/// The title a dock tab goes by while `sheet` is the route block shown
+/// (`None` while broker routes are not offered). The panel paints it and the
+/// control plane's scene reports it, so the words and the image agree.
+#[must_use]
+pub fn dock_title(tab: DockTab, sheet: Option<&Sheet>) -> &str {
+    match (tab, sheet) {
+        (DockTab::Trading, Some(sheet)) => &sheet.title,
+        _ => tab.title(),
+    }
+}
+
 /// The notice's lead.
 pub const NOTICE_LEAD: &str = "orders →";
 const SIMULATED: &str = "Simulated";
+
 /// The broker row's hint while the venue waits for the terminal's account.
 const CONNECTING: &str = "connecting…";
 /// The broker row while no venue could be built (the port was taken).

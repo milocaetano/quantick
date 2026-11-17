@@ -56,3 +56,31 @@ fn a_named_route_call_reaches_the_route() {
         .map(|d| d["route_code"].clone());
     assert_eq!(code, Some(json!("route.real_needs_hold")));
 }
+
+#[test]
+fn the_scene_names_the_trading_tab_with_the_route_the_panel_paints() {
+    let (mut app, _commands) = app_with_history(4);
+    with_broker_routes(&mut app);
+    let trading_label = |app: &QuantickApp| {
+        crate::control::scene_snapshot(app)
+            .controls
+            .iter()
+            .find(|control| control.control_id == "dock.tab.trading")
+            .map(|control| control.label.clone())
+            .expect("the dock lists its Trading tab")
+    };
+    app.runtime.route(&app.config).frame();
+    assert_eq!(trading_label(&app), quantick_paper::route::SIM_TITLE);
+
+    // The staged REAL scene a capture launches: armed as the trader would,
+    // over a fake bridge, the chart's tape standing in for a live one.
+    crate::hooks::captured::set_on_this_thread(Some(&[("QUANTICK_ACCOUNT_ROUTE", "real")]));
+    app.runtime.broker = crate::paper_trading::account_route::session(&app.config);
+    for _ in 0..3 {
+        app.runtime.route(&app.config).frame();
+    }
+    crate::hooks::captured::set_on_this_thread(None);
+    let painted = app.runtime.broker.sheet().expect("a broker route is shown");
+    assert_eq!(painted.title, "TRADING · REAL");
+    assert_eq!(trading_label(&app), painted.title);
+}
