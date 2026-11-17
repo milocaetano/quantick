@@ -41,7 +41,6 @@ use quantick_session::close_queue::{
     CloseAnswer, CloseQuestion, CloseQueue, CloseScope, CloseStep,
 };
 use quantick_session::prompt::Prompt;
-use quantick_session::switch_prompt::SwitchAnswer;
 use quantick_session::workspace_menu::{NameDialogMode, WorkspaceCommand, WorkspaceMenuState};
 use quantick_stores::market_settings::{self, DrawingKey, MarketSettingsStore};
 use quantick_stores::workspaces::{
@@ -60,6 +59,7 @@ pub mod cell_menu;
 pub mod colour_popover;
 pub mod manage;
 pub mod switch;
+pub use switch::{menu_prompt, prompt_answer};
 
 fn unavailable() -> ControlError {
     ControlError::invalid_request("the workspaces are unavailable")
@@ -818,26 +818,6 @@ pub fn close_prompt(queue: &CloseQueue) -> Option<Prompt> {
         enter: CloseAnswer::BUTTONS.len() - 1,
         escape: 0,
     })
-}
-
-/// The question up in the workspace menu, in the window's words: a close's,
-/// else a switch's.
-#[must_use]
-pub fn menu_prompt(menu: &WorkspaceMenuState) -> Option<Prompt> {
-    close_prompt(&menu.close).or_else(|| switch::prompt(&menu.switch))
-}
-
-/// What the button at `at` of [`menu_prompt`]'s question answers.
-#[must_use]
-pub fn prompt_answer(menu: &WorkspaceMenuState, at: usize) -> Option<WorkspaceCommand> {
-    if menu.close.question().is_some() {
-        return CloseAnswer::BUTTONS
-            .get(at)
-            .copied()
-            .map(WorkspaceCommand::AnswerClose);
-    }
-    let switch = menu.switch.question().and(SwitchAnswer::BUTTONS.get(at));
-    switch.copied().map(WorkspaceCommand::AnswerSwitch)
 }
 
 /// Carry a close as far as it goes without the trader: settle each tab that

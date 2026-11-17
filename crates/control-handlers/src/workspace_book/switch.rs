@@ -14,13 +14,16 @@ use quantick_control::error::ControlError;
 use quantick_control::wire::ActorContext;
 use quantick_control_host::journal::NewEvent;
 use quantick_control_schema::workspace_book::{SwitchEdits, UNSAVED_EDITS_CODE};
+use quantick_session::close_queue::CloseAnswer;
 use quantick_session::prompt::Prompt;
 use quantick_session::switch_prompt::{SwitchAnswer, SwitchPrompt, SwitchQuestion};
+use quantick_session::workspace_menu::{WorkspaceCommand, WorkspaceMenuState};
 use quantick_stores::workspaces::SetOutcome;
 use serde_json::json;
 
 use super::{
-    Journal, WorkspaceBookHost, book, flush, refused, save_to_journaled, set_journaled, text,
+    Journal, WorkspaceBookHost, book, close_prompt, flush, refused, save_to_journaled,
+    set_journaled, text,
 };
 use crate::notify::NotifyAccess;
 
@@ -203,4 +206,24 @@ pub fn prompt(prompt: &SwitchPrompt) -> Option<Prompt> {
         enter: SwitchAnswer::BUTTONS.len() - 1,
         escape: 0,
     })
+}
+
+/// The question up in the workspace menu, in the window's words: a close's,
+/// else a switch's.
+#[must_use]
+pub fn menu_prompt(menu: &WorkspaceMenuState) -> Option<Prompt> {
+    close_prompt(&menu.close).or_else(|| prompt(&menu.switch))
+}
+
+/// What the button at `at` of [`menu_prompt`]'s question answers.
+#[must_use]
+pub fn prompt_answer(menu: &WorkspaceMenuState, at: usize) -> Option<WorkspaceCommand> {
+    if menu.close.question().is_some() {
+        return CloseAnswer::BUTTONS
+            .get(at)
+            .copied()
+            .map(WorkspaceCommand::AnswerClose);
+    }
+    let switch = menu.switch.question().and(SwitchAnswer::BUTTONS.get(at));
+    switch.copied().map(WorkspaceCommand::AnswerSwitch)
 }

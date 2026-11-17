@@ -2,6 +2,7 @@
 //! answer does what it says, and the call refuses until its input decides.
 
 use super::*;
+use quantick_session::switch_prompt::SwitchAnswer;
 
 /// Tab 1 on Scalp holding an edit of its own (a footprint style), tab 2 on
 /// Default; autosave off, so the edit is held.
