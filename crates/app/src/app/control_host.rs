@@ -264,13 +264,14 @@ pub(crate) trait GatewayPort {
     }
 
     /// Invoke one registered action as an *agent* would, from inside this
-    /// window. The hooks use it so a screenshot shows a real assistant's
-    /// object, attribution and all, without a client on the socket.
-    #[cfg(any(feature = "control-harness", test))]
-    fn run_agent_action(
+    /// window, so what it places carries a real assistant's attribution
+    /// without a client on the socket; `origin` says who the caller is.
+    #[cfg(any(feature = "control-harness", feature = "scenario-harness", test))]
+    fn agent_action(
         &mut self,
         capability_id: &str,
         input: serde_json::Value,
+        origin: fn(quantick_control::wire::ActorContext) -> crate::control::ActionOrigin,
     ) -> Result<serde_json::Value, quantick_control::error::ControlError> {
         let Some(mut access) = self.gateway_slot().take() else {
             return Err(quantick_control::error::ControlError::invalid_request(
@@ -285,29 +286,25 @@ pub(crate) trait GatewayPort {
                 "this window has no control identity to act with",
             ));
         };
-        let outcome = access.invoke_local_action(
-            self.as_window(),
-            capability_id,
-            1,
-            input,
-            crate::control::ActionOrigin::Remote(Box::new(actor)),
-        );
+        let outcome =
+            access.invoke_local_action(self.as_window(), capability_id, 1, input, origin(actor));
         *self.gateway_slot() = Some(access);
         outcome
     }
 
-    /// A launch hook's action, with its failure reported where a scripted run
-    /// will see it: the hook is fire-and-forget, so nothing else would.
-    #[cfg(any(feature = "control-harness", test))]
+    /// A launch hook's action, as an agent and outside every replay's trace,
+    /// its failure reported where a scripted run sees it: nothing else would.
+    #[cfg(any(feature = "control-harness", feature = "scenario-harness", test))]
     fn run_hook_action(&mut self, capability_id: &str, input: serde_json::Value) {
-        if let Err(error) = self.run_agent_action(capability_id, input) {
+        let hook = |actor| crate::control::ActionOrigin::LaunchHook(Box::new(actor));
+        if let Err(error) = self.agent_action(capability_id, input, hook) {
             tracing::warn!(
                 target: "quantick::control",
                 event_code = "CONTROL_HOOK_ACTION_FAILED",
                 capability = capability_id,
                 error_code = %error.code,
                 error = %error.message,
-                "an annotate hook could not run its action"
+                "a launch hook could not run its action"
             );
         }
     }

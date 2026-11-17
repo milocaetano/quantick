@@ -66,6 +66,82 @@ fn two_pane_launch_hooks_reach_both_horizontal_rails() {
     }
 }
 
+fn launched_with(pairs: &[(&str, &str)]) -> QuantickApp {
+    let scenario = crate::hooks::ScenarioInputs::from_pairs(pairs);
+    let launch = AppLaunch {
+        scenario,
+        ..AppLaunch::default()
+    };
+    test_app_with_launch(launch).0
+}
+
+/// The journal's events of `kind`, each with the client it names.
+fn journaled(app: &QuantickApp, kind: &str) -> Vec<String> {
+    let access = app.control.control_access.as_ref().unwrap();
+    let events = access.journal().read(1, 256, 1 << 20).events;
+    let of_kind = events.iter().filter(|event| event.kind.as_str() == kind);
+    of_kind
+        .map(|event| event.actor.as_ref().unwrap().client_name.clone())
+        .collect()
+}
+
+#[test]
+fn the_tape_hook_switches_the_lane_through_the_layer_call() {
+    let app = launched_with(&[("QUANTICK_TAPE", "off")]);
+    assert!(!app.active_tab().tape().lane_enabled());
+    let kind = quantick_control_schema::layers::EVENT_KIND;
+    assert_eq!(journaled(&app, kind), ["launch hook (agent)"]);
+}
+
+#[test]
+fn the_layout_tab_hook_switches_to_a_named_layout_or_creates_it() {
+    let existing = test_app().0.layout_state().layouts().active().name.clone();
+    for (name, count) in [(existing.as_str(), 1), ("Scalp", 2)] {
+        let app = launched_with(&[("QUANTICK_LAYOUT_TAB", name)]);
+        let layouts = app.layout_state();
+        let focused = layouts.focused_pane_layout();
+        assert_eq!(layouts.layouts().get(focused).unwrap().name, name);
+        assert_eq!(layouts.layouts().layouts().len(), count, "{name}");
+    }
+}
+
+#[test]
+fn the_workspace_save_hook_writes_the_desk_through_its_call() {
+    let app = launched_with(&[("QUANTICK_WORKSPACE_SAVE", "1")]);
+    assert!(app.runtime.workspace.session().saved());
+    let kind = quantick_control_schema::desk::DESK_SAVED_EVENT_KIND;
+    assert_eq!(journaled(&app, kind), ["launch hook (agent)"]);
+}
+
+/// A launch hook's call is one launch's environment: a replaying tab's
+/// control trace records the trader's hand, never the hook, or every later
+/// run of the recording would replay what one launch asked for.
+#[test]
+fn a_launch_hooks_call_never_lands_in_a_replays_control_trace() {
+    use quantick_feed::replay::test_support::detached_link;
+    let dir = crate::scratch::ScratchDir::new("launch-hook-trace");
+    let session = recording_at(&dir);
+    let sidecar = crate::control::replay_trace_path_for(&session.path);
+    let (mut app, _commands) = app_with_history(12);
+    app.active_tab_mut().link.replay = Some(detached_link(session));
+    let input = serde_json::json!({
+        "tab_id": app.runtime.tabs.active_id().to_string(),
+        "pane_id": app.active_tab().flow_pane.id.to_string(),
+        "mode": { "kind": "manual", "low": "90", "high": "110" },
+    });
+    let capability = quantick_control_schema::price_axis::PRICE_AXIS_CAPABILITY_ID;
+    let traced = || std::fs::read_to_string(&sidecar).unwrap_or_default();
+
+    app.run_hook_action(capability, input.clone());
+    let pane = &app.active_tab().flow_pane;
+    assert_eq!(pane.price_view.manual_range(), Some((90.0, 110.0)));
+    assert!(!traced().contains(capability), "{}", traced());
+
+    let human = crate::control::ActionOrigin::Human;
+    app.control_action(capability, 1, human, input).unwrap();
+    assert!(traced().contains(capability), "the hand's call is traced");
+}
+
 #[test]
 fn an_app_without_scenario_inputs_applies_no_scenario() {
     let (app, _evt, _cmd, _book) = test_app();

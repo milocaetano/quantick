@@ -73,9 +73,9 @@ const ACCEPT_POLL_MS: u64 = 5;
 const WAITER_POLL_MS: u64 = 250;
 /// What the journal records as the author of a human action taken in this
 /// window. Self-declared like every client name, and honest.
-/// What the annotate launch hooks call themselves. A name, never a
-/// disguise: the object they place says an assistant put it there.
-#[cfg(any(feature = "control-harness", test))]
+/// What the launch hooks call themselves. A name, never a disguise: the
+/// object they place says an assistant put it there.
+#[cfg(any(feature = "control-harness", feature = "scenario-harness", test))]
 const HOOK_ACTOR_CLIENT_NAME: &str = "launch hook (agent)";
 const UI_ACTOR_CLIENT_NAME: &str = "quantick-ui";
 /// Take a mark of what is under the pointer (`attention.mark.create`).
@@ -130,6 +130,10 @@ pub(crate) enum ActionOrigin {
     /// would not be the session it claims to reproduce.
     TraceReplay(Box<RecordedActor>),
     Remote(Box<ActorContext>),
+    /// A launch hook acting as an agent: one launch's request, which no
+    /// replay's control trace records, or every later run would replay it.
+    #[cfg(any(feature = "control-harness", feature = "scenario-harness", test))]
+    LaunchHook(Box<ActorContext>),
 }
 
 /// Who a recorded action belonged to, as its trace line says.
@@ -145,11 +149,22 @@ impl ActionOrigin {
             Self::Human => ActorKind::HumanUi,
             Self::TraceReplay(_) => ActorKind::Automation,
             Self::Remote(actor) => actor.actor_kind,
+            #[cfg(any(feature = "control-harness", feature = "scenario-harness", test))]
+            Self::LaunchHook(actor) => actor.actor_kind,
         }
     }
 
     fn is_trace_replay(&self) -> bool {
         matches!(self, Self::TraceReplay(_))
+    }
+
+    /// Whether a replaying tab's control trace may record this action.
+    fn may_be_traced(&self) -> bool {
+        match self {
+            #[cfg(any(feature = "control-harness", feature = "scenario-harness", test))]
+            Self::LaunchHook(_) => false,
+            _ => true,
+        }
     }
 }
 
