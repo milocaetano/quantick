@@ -87,6 +87,13 @@ impl<V, E> crate::Adapter<Model, V, E> {
     pub fn toggle_visible(&mut self) {
         self.update(Intent::ToggleVisible);
     }
+    /// Show the dock with its panel collapsed, leaving the edge to a manager.
+    pub fn reveal_collapsed(&mut self) {
+        if !self.visible() {
+            self.toggle_visible();
+        }
+        self.update(Intent::Collapse);
+    }
     pub fn restore(&mut self, visible: bool, tab: Option<DockTab>) {
         self.update(Intent::Restore { visible, tab });
     }

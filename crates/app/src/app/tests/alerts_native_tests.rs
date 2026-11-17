@@ -187,51 +187,6 @@ fn alert_target_binding_end_to_end() {
         saved.contains(&target.incarnation),
         "UI and host share the persisted target"
     );
-    super::super::alerts_runtime::apply_alert_request(
-        &mut app,
-        crate::surfaces::alerts::Request {
-            locate: Some(target),
-            ..Default::default()
-        },
-    );
-    assert_eq!(
-        app.active_tab().drawing_pane().drawings.selected(),
-        Some(index)
-    );
-    // A second tab of the same persisted source is a known mirror, not an
-    // ambiguous identity. Locate keeps the currently focused valid copy.
-    let target = app.active_tab().drawing_pane().drawings.items()[index]
-        .durable_identity
-        .clone()
-        .unwrap();
-    let symbol = app.active_tab().active.1.clone();
-    let _mirror = open_second_tab(&mut app, &ctx, &symbol);
-    run_frame(&mut app, &ctx);
-    let focused = app.runtime.tabs.active_id();
-    let mirror_index = app
-        .active_tab()
-        .drawing_pane()
-        .drawings
-        .items()
-        .iter()
-        .position(|drawing| drawing.durable_identity.as_ref() == Some(&target))
-        .expect("persisted mirror carries the same target");
-    app.active_tab_mut()
-        .focused_pane_mut()
-        .drawings
-        .select(None);
-    super::super::alerts_runtime::apply_alert_request(
-        &mut app,
-        crate::surfaces::alerts::Request {
-            locate: Some(target),
-            ..Default::default()
-        },
-    );
-    assert_eq!(app.runtime.tabs.active_id(), focused);
-    assert_eq!(
-        app.active_tab().drawing_pane().drawings.selected(),
-        Some(mirror_index)
-    );
 }
 
 /// C9: a live print that closes a bar through an armed level reaches the

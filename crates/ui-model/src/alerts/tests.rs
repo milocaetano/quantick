@@ -2,7 +2,7 @@ use super::*;
 use crate::Model as _;
 use quantick_alerts::{AlertBook, SourceContext, sound};
 
-fn context() -> Context {
+pub(super) fn context() -> Context {
     Context {
         market: MarketRef {
             source: SourceContext::Live {
@@ -18,7 +18,7 @@ fn context() -> Context {
     }
 }
 
-fn opened_draft() -> State {
+pub(super) fn opened_draft() -> State {
     let mut state = State::default();
     Model::update(&mut state, Intent::Apply(Box::new(Request {
         open: true,
