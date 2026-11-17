@@ -24,19 +24,19 @@ use serde_json::Value;
 
 use crate::deal_recorder::DealRecordingPort;
 use crate::dock::ActionDock;
-use crate::tabs::{tab_closed, tab_index};
+use crate::tabs::{TabDirectory, tab_closed, tab_index};
 
 /// Dock `feed.deal_recording.set`.
 ///
 /// # Errors
 /// A capability already docked.
-pub fn register<D: ActionDock<H, A>, H: DealRecordingPort + ?Sized, A>(
+pub fn register<D: ActionDock<H, A>, H: DealRecordingPort + TabDirectory + ?Sized, A>(
     registry: &mut D,
 ) -> Result<(), RegistryError> {
     registry.register(descriptor(), set)
 }
 
-fn set<H: DealRecordingPort + ?Sized, A>(
+fn set<H: DealRecordingPort + TabDirectory + ?Sized, A>(
     host: &mut H,
     _access: &mut A,
     _actor: &ActorContext,

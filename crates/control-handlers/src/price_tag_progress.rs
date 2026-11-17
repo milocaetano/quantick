@@ -1,35 +1,24 @@
-//! The forming bar's progress on the last-price tag, over the market
-//! settings owner's narrow port. The setting belongs to the market the
+//! The forming bar's progress on the last-price tag, over the chart look
+//! owner's port ([`ChartStylePort`]). The setting belongs to the market the
 //! addressed pane shows; the port resolves that market and keeps it.
 //!
 //! A display preference with no market-data side effect, docked outside
 //! every replay: a replay's control trace never re-runs it.
 //!
 //! Rate class: a human or an agent changing a preference. Never per trade.
+use crate::chart_settings::ChartStylePort;
 use crate::dock::ActionDock;
 use quantick_control::{error::ControlError, registry::RegistryError, wire::ActorContext};
 use quantick_control_schema::price_tag_progress::{PriceTagProgressInput, descriptor};
 use serde_json::Value;
 
-/// The price-tag progress capability's narrow port.
-pub trait PriceTagProgressPort {
-    /// Keep `on` for the market the pane `pane_id` on tab `tab_id` shows;
-    /// answers whether it changed, or refuses an address that names nothing.
-    fn set_price_tag_progress(
-        &mut self,
-        tab_id: u64,
-        pane_id: u64,
-        on: bool,
-    ) -> Result<bool, ControlError>;
-}
-
-pub fn register<D: ActionDock<H, A>, H: PriceTagProgressPort + ?Sized, A>(
+pub fn register<D: ActionDock<H, A>, H: ChartStylePort + ?Sized, A>(
     registry: &mut D,
 ) -> Result<(), RegistryError> {
     registry.register_outside_replay(descriptor(), set)
 }
 
-fn set<H: PriceTagProgressPort + ?Sized, A>(
+fn set<H: ChartStylePort + ?Sized, A>(
     host: &mut H,
     _access: &mut A,
     _actor: &ActorContext,
@@ -53,9 +42,25 @@ mod tests {
     #[derive(Default)]
     struct Markets {
         off: Vec<&'static str>,
+        style: quantick_chart::style::ChartStyle,
     }
 
-    impl PriceTagProgressPort for Markets {
+    impl ChartStylePort for Markets {
+        fn chart_style(&self) -> &quantick_chart::style::ChartStyle {
+            &self.style
+        }
+        fn apply_chart_settings(
+            &mut self,
+            _: quantick_control_schema::chart_settings::ChartSettingsInput,
+        ) -> Result<
+            quantick_control_schema::chart_settings::ChartSettingsResult,
+            quantick_stores::candle_presets::PresetError,
+        > {
+            unreachable!("the price-tag call never opens chart settings")
+        }
+        fn switch_chart_layer(&mut self, _: u64, _: u64, _: &str, _: bool) {
+            unreachable!("the price-tag call never switches a layer")
+        }
         fn set_price_tag_progress(
             &mut self,
             tab: u64,

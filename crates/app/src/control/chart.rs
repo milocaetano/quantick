@@ -4,14 +4,12 @@
 
 use quantick_chart::style::ChartStyle;
 use quantick_control::{error::ControlError, wire::WireU64};
-use quantick_control_handlers::axis_pane::{AddressedPane, AddressedPanePort};
 pub(crate) use quantick_control_handlers::chart::chart_window_prevalidated;
 use quantick_control_handlers::chart::{
     ChartPaneEntry, ChartPaneSource, ChartPort, MissingPane, PaneFraming,
 };
 use quantick_control_handlers::chart_layer::{LayerBlocked, LayerRead};
-use quantick_control_handlers::chart_settings::ChartSettingsPort;
-use quantick_control_handlers::layers::LayersPort;
+use quantick_control_handlers::chart_settings::ChartStylePort;
 pub(crate) use quantick_control_schema::chart::*;
 use quantick_control_schema::chart_settings::{ChartSettingsInput, ChartSettingsResult};
 use quantick_control_schema::layers::LayerSnapshot;
@@ -79,26 +77,14 @@ impl ChartPort for dyn ControlPort {
     }
 }
 
-impl AddressedPanePort for dyn ControlPort {
-    fn addressed_pane(
-        &mut self,
-        tab_id: WireU64,
-        pane_id: WireU64,
-    ) -> Result<&mut dyn AddressedPane, ControlError> {
-        Ok(super::addressed_pane::pane(self, tab_id, pane_id)?)
-    }
-}
-
-impl ChartSettingsPort for dyn ControlPort {
+impl ChartStylePort for dyn ControlPort {
     fn apply_chart_settings(
         &mut self,
         input: ChartSettingsInput,
     ) -> Result<ChartSettingsResult, PresetError> {
         self.layer_wiring().chart_settings(input)
     }
-}
 
-impl LayersPort for dyn ControlPort {
     fn chart_style(&self) -> &ChartStyle {
         self.chrome_reads().style()
     }
@@ -116,6 +102,17 @@ impl LayersPort for dyn ControlPort {
             return;
         };
         self.layer_wiring().set_visible(index, side, layer, visible);
+    }
+
+    fn set_price_tag_progress(
+        &mut self,
+        tab: u64,
+        id: u64,
+        on: bool,
+    ) -> Result<bool, ControlError> {
+        super::addressed_pane::pane(self, WireU64::new(tab), WireU64::new(id))?;
+        let changed = self.layer_wiring().set_bar_progress(tab, on);
+        changed.ok_or_else(|| super::addressed_pane::invalid("the tab closed while the call ran"))
     }
 }
 
@@ -288,12 +285,9 @@ pub(crate) fn chart_window(
     instance_id: &quantick_control::id::InstanceId,
     query: &ChartWindowQuery,
     cursor: Option<&quantick_control::cursor::PageCursor>,
-) -> Result<ChartWindowPage, quantick_control::error::ControlError> {
-    let canonical_query = serde_json::to_value(query).map_err(|error| {
-        quantick_control::error::ControlError::invalid_request(format!(
-            "invalid chart query: {error}"
-        ))
-    })?;
+) -> Result<ChartWindowPage, ControlError> {
+    let canonical_query = serde_json::to_value(query)
+        .map_err(|error| ControlError::invalid_request(format!("invalid chart query: {error}")))?;
     let now = crate::metrics::wall_clock_ms();
     chart_window_prevalidated(app, instance_id, query, &canonical_query, cursor, now)
 }

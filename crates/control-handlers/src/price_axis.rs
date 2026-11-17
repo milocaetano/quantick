@@ -6,7 +6,8 @@ use quantick_control_schema::price_axis::{PriceAxisInput, PriceAxisResult};
 use quantick_control_schema::tape_view::{TapeViewInput, TapeViewResult};
 use serde_json::Value;
 
-use crate::axis_pane::AddressedPanePort;
+use crate::addressed_pane::AddressedPanePort;
+use crate::axis_pane::AxisPane;
 use crate::dock::ActionDock;
 use crate::invalid;
 
@@ -16,14 +17,14 @@ const NO_NATIVE_TAPE: &str = "the pane draws no native tape";
 ///
 /// # Errors
 /// A capability already docked.
-pub fn register<D: ActionDock<H, A>, H: AddressedPanePort + ?Sized, A>(
+pub fn register<D: ActionDock<H, A>, H: AddressedPanePort<Pane: AxisPane> + ?Sized, A>(
     registry: &mut D,
 ) -> Result<(), RegistryError> {
     registry.register(quantick_control_schema::price_axis::descriptor(), set_price)?;
     registry.register(quantick_control_schema::tape_view::descriptor(), set_tape)
 }
 
-fn set_price<H: AddressedPanePort + ?Sized, A>(
+fn set_price<H: AddressedPanePort<Pane: AxisPane> + ?Sized, A>(
     host: &mut H,
     _access: &mut A,
     _actor: &ActorContext,
@@ -45,7 +46,7 @@ fn set_price<H: AddressedPanePort + ?Sized, A>(
 }
 
 /// The window first, so a past end is clamped against the window it shows.
-fn set_tape<H: AddressedPanePort + ?Sized, A>(
+fn set_tape<H: AddressedPanePort<Pane: AxisPane> + ?Sized, A>(
     host: &mut H,
     _access: &mut A,
     _actor: &ActorContext,

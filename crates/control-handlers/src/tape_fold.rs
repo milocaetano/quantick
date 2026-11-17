@@ -1,8 +1,8 @@
 //! `orderflow.tape.fold.set` over the pane owner's narrow port: the view by the
 //! side it closes. No rule of its own: every word is allowed from every view, and
 //! repeating one changes nothing.
+use crate::addressed_pane::AddressedPanePort;
 use crate::dock::ActionDock;
-use crate::tape_pane::PaneTapePort;
 use quantick_control::{error::ControlError, registry::RegistryError, wire::ActorContext};
 use quantick_control_schema::tape_fold::{TapeFold, TapeFoldInput, descriptor};
 use serde_json::Value;
@@ -16,21 +16,21 @@ pub trait TapeFoldPort {
     fn set_tape_market_fold(&mut self, enabled: bool) -> Result<bool, ControlError>;
 }
 
-pub fn register<D: ActionDock<H, A>, H: PaneTapePort<Pane: TapeFoldPort> + ?Sized, A>(
+pub fn register<D: ActionDock<H, A>, H: AddressedPanePort<Pane: TapeFoldPort> + ?Sized, A>(
     registry: &mut D,
 ) -> Result<(), RegistryError> {
     registry.register(descriptor(), set)?;
     crate::tape_market_fold::register(registry)
 }
 
-fn set<H: PaneTapePort<Pane: TapeFoldPort> + ?Sized, A>(
+fn set<H: AddressedPanePort<Pane: TapeFoldPort> + ?Sized, A>(
     host: &mut H,
     _access: &mut A,
     _actor: &ActorContext,
     input: &Value,
 ) -> Result<Value, ControlError> {
     let input: TapeFoldInput = serde_json::from_value(input.clone()).map_err(invalid)?;
-    answer(host.pane_tape(input.tab_id, input.pane_id)?, input)
+    answer(host.addressed_pane(input.tab_id, input.pane_id)?, input)
 }
 
 fn answer<P: TapeFoldPort + ?Sized>(

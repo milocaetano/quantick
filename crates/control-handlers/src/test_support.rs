@@ -27,14 +27,15 @@ use quantick_sources::history_run::{Cancelled, Press, RunStatus};
 use rust_decimal::Decimal;
 
 use crate::JournalAccess;
+use crate::addressed_pane::AddressedPanePort;
 use crate::analysis::{AnalysisPaneEntry, AnalysisPort};
 use crate::annotate::AnnotateAccess;
 use crate::attention::MarkPort;
-use crate::axis_pane::{AddressedPane, AddressedPanePort, AxisPane, NativeTape};
+use crate::axis_pane::{AxisPane, NativeTape};
 use crate::bubble_pane::{AssetSave, BubbleLook, BubblePane, PaneBubblesPort, TickSpherePane};
 use crate::chart::{ChartPaneEntry, ChartPaneSource, ChartPort, MissingPane, PaneFraming};
 use crate::chart_layer::{LayerBlocked, LayerRead};
-use crate::chart_settings::ChartSettingsPort;
+use crate::chart_settings::ChartStylePort;
 use crate::deal_recorder::{DealRecorder, DealRecordingPort};
 use crate::drawing_magnet::RailMagnetPort;
 use crate::history::HistoryPort;
@@ -42,7 +43,6 @@ use crate::indicator_host::{
     AttachedScript, IndicatorControlHost, IndicatorGuidePort, IndicatorOwner, IndicatorPickerPort,
     IndicatorRefusal, NativePort, ScriptEditorPort, ScriptsPort,
 };
-use crate::layers::LayersPort;
 use crate::notify::{AttentionPort, NotifyAccess};
 use crate::pane_marks::PaneMarks;
 use crate::recovery::{FeedRecoveryPort, RecoveredFeed};
@@ -824,16 +824,17 @@ impl MarkPort for FakeWindow {
 }
 
 impl AddressedPanePort for FakeWindow {
+    type Pane = FakePane;
     fn addressed_pane(
         &mut self,
         tab_id: WireU64,
         pane_id: WireU64,
-    ) -> Result<&mut dyn AddressedPane, ControlError> {
-        Ok(self.pane_mut(tab_id, pane_id)?)
+    ) -> Result<&mut FakePane, ControlError> {
+        self.pane_mut(tab_id, pane_id)
     }
 }
 
-impl ChartSettingsPort for FakeWindow {
+impl ChartStylePort for FakeWindow {
     fn apply_chart_settings(
         &mut self,
         input: ChartSettingsInput,
@@ -841,9 +842,6 @@ impl ChartSettingsPort for FakeWindow {
         self.settings_asked.push(input);
         self.chart_settings.clone()
     }
-}
-
-impl LayersPort for FakeWindow {
     fn chart_style(&self) -> &ChartStyle {
         &self.style
     }
@@ -859,6 +857,16 @@ impl LayersPort for FakeWindow {
         layer.requested = visible;
         self.layer_switches
             .push((pane_id, layer_id.to_owned(), visible));
+    }
+    /// The fake's markets all show progress: a resolved pane changes on off.
+    fn set_price_tag_progress(
+        &mut self,
+        tab: u64,
+        pane: u64,
+        on: bool,
+    ) -> Result<bool, ControlError> {
+        self.pane_mut(WireU64::new(tab), WireU64::new(pane))?;
+        Ok(!on)
     }
 }
 

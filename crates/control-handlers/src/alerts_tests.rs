@@ -1,7 +1,6 @@
 //! A second host consumes published wire schemas and the real admission gate.
-#[path = "../../stores/src/scratch.rs"]
-mod scratch;
 use super::*;
+use crate::scratch;
 use quantick_control::{error::codes, id::*, wire::*};
 use quantick_control_host::{
     actions::ActionRegistry, admission::TierPolicy, authority, contract::CapabilityContract,

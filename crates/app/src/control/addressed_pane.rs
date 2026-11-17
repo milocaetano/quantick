@@ -1,6 +1,6 @@
-//! The addressed pane, resolved for the calls that act on it, and the pane,
-//! its tape and its marks as `quantick_control_handlers::axis_pane::AddressedPane`
-//! acts on them: the state the axis gestures and the context bar change.
+//! The addressed pane, resolved for the calls that act on it: the pane
+//! `quantick_control_handlers::addressed_pane::AddressedPanePort` lends, the
+//! state the axis gestures and the context bar change.
 use super::layout;
 use crate::app::{TabsMutPort, TabsPort};
 use crate::orderflow_view::OrderflowView;

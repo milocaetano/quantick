@@ -1,13 +1,11 @@
 //! One tab's deal recorder, the REC control's owner, as
 //! `feed.deal_recording.set` acts on it through
-//! [`crate::recovery::FeedRecoveryPort::deal_recorder`].
+//! [`DealRecordingPort::deal_recorder`].
 use quantick_replay::recorder::{DealRecordingError, RecordingView};
-
-use crate::tabs::TabDirectory;
 
 /// The window's REC control: each tab's recorder and the record-by-default
 /// setting the REC menu keeps.
-pub trait DealRecordingPort: TabDirectory {
+pub trait DealRecordingPort {
     /// The deal recorder of the tab at `index`, the REC control's owner;
     /// `None` when that tab is gone.
     fn deal_recorder(&mut self, index: usize) -> Option<&mut dyn DealRecorder>;

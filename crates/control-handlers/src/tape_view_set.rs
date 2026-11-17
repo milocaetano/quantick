@@ -1,8 +1,8 @@
 //! The flow pane's view over the pane owner's narrow port: allowed from any view.
 //! Beside stands the market's hold down at the default width, as
 //! `orderflow.tape.fold.set` open does.
+use crate::addressed_pane::AddressedPanePort;
 use crate::dock::ActionDock;
-use crate::tape_pane::PaneTapePort;
 use quantick_control::{error::ControlError, registry::RegistryError, wire::ActorContext};
 use quantick_control_schema::tape_view_set::{TapeView, TapeViewSetInput, descriptor};
 use serde_json::Value;
@@ -14,20 +14,20 @@ pub trait TapeViewPort {
     fn set_tape_view(&mut self, view: TapeView) -> Result<bool, ControlError>;
 }
 
-pub fn register<D: ActionDock<H, A>, H: PaneTapePort<Pane: TapeViewPort> + ?Sized, A>(
+pub fn register<D: ActionDock<H, A>, H: AddressedPanePort<Pane: TapeViewPort> + ?Sized, A>(
     registry: &mut D,
 ) -> Result<(), RegistryError> {
     registry.register(descriptor(), set)
 }
 
-fn set<H: PaneTapePort<Pane: TapeViewPort> + ?Sized, A>(
+fn set<H: AddressedPanePort<Pane: TapeViewPort> + ?Sized, A>(
     host: &mut H,
     _access: &mut A,
     _actor: &ActorContext,
     input: &Value,
 ) -> Result<Value, ControlError> {
     let input: TapeViewSetInput = serde_json::from_value(input.clone()).map_err(invalid)?;
-    answer(host.pane_tape(input.tab_id, input.pane_id)?, input)
+    answer(host.addressed_pane(input.tab_id, input.pane_id)?, input)
 }
 
 fn answer<P: TapeViewPort + ?Sized>(

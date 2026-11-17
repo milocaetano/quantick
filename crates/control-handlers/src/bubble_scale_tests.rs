@@ -232,9 +232,9 @@ struct Window {
     lookups: usize,
 }
 
-impl PaneTapePort for Window {
+impl AddressedPanePort for Window {
     type Pane = Pane;
-    fn pane_tape(&mut self, _: WireU64, _: WireU64) -> Result<&mut Pane, ControlError> {
+    fn addressed_pane(&mut self, _: WireU64, _: WireU64) -> Result<&mut Pane, ControlError> {
         self.lookups += 1;
         Ok(&mut self.pane)
     }

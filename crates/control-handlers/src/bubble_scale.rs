@@ -1,8 +1,8 @@
 //! Bubble magnification over the pane owner's narrow port. One rule says
 //! which bubbles a pane may size; the pane's size sliders and
 //! `orderflow.bubbles.size.set` both ask it, so they cannot disagree.
+use crate::addressed_pane::AddressedPanePort;
 use crate::dock::ActionDock;
-use crate::tape_pane::PaneTapePort;
 use quantick_control::{
     error::ControlError, id::PreconditionId, registry::RegistryError, wire::ActorContext,
 };
@@ -131,13 +131,13 @@ pub trait BubbleScalePort {
     ) -> Result<(bool, f32), ControlError>;
 }
 
-pub fn register<D: ActionDock<H, A>, H: PaneTapePort<Pane: BubbleScalePort> + ?Sized, A>(
+pub fn register<D: ActionDock<H, A>, H: AddressedPanePort<Pane: BubbleScalePort> + ?Sized, A>(
     registry: &mut D,
 ) -> Result<(), RegistryError> {
     registry.register(descriptor(), set)
 }
 
-fn set<H: PaneTapePort<Pane: BubbleScalePort> + ?Sized, A>(
+fn set<H: AddressedPanePort<Pane: BubbleScalePort> + ?Sized, A>(
     host: &mut H,
     _access: &mut A,
     _actor: &ActorContext,
@@ -145,7 +145,11 @@ fn set<H: PaneTapePort<Pane: BubbleScalePort> + ?Sized, A>(
 ) -> Result<Value, ControlError> {
     let input: BubbleScaleInput = serde_json::from_value(input.clone()).map_err(invalid)?;
     let scale = input.validated_scale()?;
-    answer(host.pane_tape(input.tab_id, input.pane_id)?, input, scale)
+    answer(
+        host.addressed_pane(input.tab_id, input.pane_id)?,
+        input,
+        scale,
+    )
 }
 
 /// The rule, then the pane's gain, for an input whose scale is in range.

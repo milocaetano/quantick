@@ -14,10 +14,11 @@ use quantick_drawings::{DrawingId, DrawingTool, Drawings};
 use serde_json::Value;
 
 use crate::JournalAccess;
-use crate::axis_pane::AddressedPanePort;
+use crate::addressed_pane::AddressedPanePort;
 use crate::dock::ActionDock;
 use crate::drawing_scope;
 use crate::invalid;
+use crate::pane_marks::PaneMarks;
 
 /// The drawing rail's magnet switch, owned by the tool rail.
 pub trait RailMagnetPort {
@@ -34,7 +35,7 @@ pub trait RailMagnetPort {
 pub fn register<D, H, A>(registry: &mut D) -> Result<(), RegistryError>
 where
     D: ActionDock<H, A>,
-    H: RailMagnetPort + AddressedPanePort + ?Sized,
+    H: RailMagnetPort + AddressedPanePort<Pane: PaneMarks> + ?Sized,
     A: JournalAccess,
 {
     registry.register(rail_descriptor(), rail)?;
@@ -63,7 +64,7 @@ fn rail<H: RailMagnetPort + ?Sized, A: JournalAccess>(
     )
 }
 
-fn object<H: AddressedPanePort + ?Sized, A: JournalAccess>(
+fn object<H: AddressedPanePort<Pane: PaneMarks> + ?Sized, A: JournalAccess>(
     host: &mut H,
     access: &mut A,
     actor: &ActorContext,
@@ -76,7 +77,7 @@ fn object<H: AddressedPanePort + ?Sized, A: JournalAccess>(
     )
 }
 
-fn scope<H: AddressedPanePort + ?Sized, A: JournalAccess>(
+fn scope<H: AddressedPanePort<Pane: PaneMarks> + ?Sized, A: JournalAccess>(
     host: &mut H,
     access: &mut A,
     actor: &ActorContext,

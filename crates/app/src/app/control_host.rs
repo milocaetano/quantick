@@ -27,7 +27,10 @@ use crate::surfaces::replay_browser::ReplayBrowserExt as _;
 use crate::toolrail::ToolRailExt as _;
 use eframe::egui;
 use quantick_control::error::ControlError;
+use quantick_control_handlers::deal_recorder::{DealRecorder, DealRecordingPort};
 use quantick_control_handlers::desk::DeskAct;
+use quantick_control_handlers::drawing_magnet::RailMagnetPort;
+use quantick_control_handlers::indicator_host::{IndicatorControlHost, IndicatorOwner};
 use quantick_control_handlers::market_palette::TabOpening;
 use quantick_control_handlers::market_switch;
 use quantick_control_handlers::workspace_book::cell_menu::CellRow;
@@ -75,9 +78,9 @@ pub(crate) trait ControlPort:
     + LayoutPort
     + PaperPort
     + LayersPort
-    + quantick_control_handlers::indicator_host::IndicatorControlHost
-    + RecordingPort
-    + ToolRailPort
+    + IndicatorControlHost
+    + DealRecordingPort
+    + RailMagnetPort
     + GatewayPort
 {
 }
@@ -93,9 +96,9 @@ impl<T> ControlPort for T where
         + LayoutPort
         + PaperPort
         + LayersPort
-        + quantick_control_handlers::indicator_host::IndicatorControlHost
-        + RecordingPort
-        + ToolRailPort
+        + IndicatorControlHost
+        + DealRecordingPort
+        + RailMagnetPort
         + GatewayPort
         + ?Sized
 {
@@ -164,18 +167,6 @@ pub(crate) trait PaperPort {
 /// The chart-layer owner.
 pub(crate) trait LayersPort {
     fn layer_wiring(&mut self) -> super::chart_layers_wiring::LayerWiring<'_>;
-}
-
-/// The deal recorder's window-wide default.
-pub(crate) trait RecordingPort {
-    /// Save the default and apply it to undecided recorders.
-    fn set_deal_recording_default(&mut self, enabled: bool);
-}
-
-/// The drawing rail's switches an operator sets.
-pub(crate) trait ToolRailPort {
-    /// Set the OHLC magnet; answers whether it moved.
-    fn set_drawing_magnet(&mut self, enabled: bool) -> bool;
 }
 
 /// The gateway's own seat on the window, and the doors every in-window
@@ -985,23 +976,24 @@ impl LayersPort for QuantickApp {
     }
 }
 
-impl quantick_control_handlers::indicator_host::IndicatorControlHost for QuantickApp {
-    fn indicators(
-        &mut self,
-    ) -> Box<dyn quantick_control_handlers::indicator_host::IndicatorOwner + '_> {
+impl IndicatorControlHost for QuantickApp {
+    fn indicators(&mut self) -> Box<dyn IndicatorOwner + '_> {
         Box::new(self.indicator_wiring())
     }
 }
 
-impl RecordingPort for QuantickApp {
-    fn set_deal_recording_default(&mut self, on: bool) {
+impl DealRecordingPort for QuantickApp {
+    fn deal_recorder(&mut self, index: usize) -> Option<&mut dyn DealRecorder> {
+        Some(self.tabs_mut().tab_with_config(index)?.0)
+    }
+    fn record_deals_by_default(&mut self, on: bool) {
         deals::set_default(&mut self.chrome.record_deals, &mut self.runtime.tabs, on);
     }
 }
 
-impl ToolRailPort for QuantickApp {
-    fn set_drawing_magnet(&mut self, enabled: bool) -> bool {
-        self.surfaces.toolrail.set_magnet(enabled)
+impl RailMagnetPort for QuantickApp {
+    fn switch_rail_magnet(&mut self, on: bool) -> bool {
+        self.surfaces.toolrail.set_magnet(on)
     }
 }
 
@@ -1009,7 +1001,6 @@ impl GatewayPort for QuantickApp {
     fn gateway_slot(&mut self) -> &mut Option<crate::control::ControlAccess> {
         &mut self.control.control_access
     }
-
     fn as_window(&mut self) -> &mut ControlWindow {
         self
     }

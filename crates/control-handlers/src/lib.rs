@@ -17,6 +17,7 @@
 //! Nothing here reads a clock: a handler that stamps an event or a page is
 //! handed the time, or asks its port to stamp it.
 
+pub mod addressed_pane;
 pub mod alerts;
 pub mod analysis;
 pub mod annotate;
@@ -70,7 +71,6 @@ pub mod session;
 mod tabs;
 pub mod tape_fold;
 pub mod tape_market_fold;
-pub mod tape_pane;
 pub mod tape_view_set;
 pub mod ticket_money;
 pub mod time_axis;
@@ -88,6 +88,7 @@ pub(crate) fn invalid(error: impl ToString) -> quantick_control::error::ControlE
 #[cfg(test)]
 mod canvas_tests;
 #[cfg(test)]
+#[path = "../../stores/src/scratch.rs"]
 mod scratch;
 #[cfg(test)]
 mod test_support;

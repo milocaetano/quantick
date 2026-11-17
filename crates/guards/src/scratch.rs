@@ -42,7 +42,6 @@ const SCRATCH_MODULES: &[&str] = &[
     // The paper account journals every close, so the harness test that
     // drives one needs a folder of its own.
     "crates/backtest/tests/common/mod.rs",
-    "crates/control-handlers/src/scratch.rs",
     "crates/control-host/src/scratch.rs",
     "crates/control-local/src/scratch.rs",
     "crates/drawings/src/scratch.rs",
