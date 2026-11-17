@@ -2,6 +2,7 @@
 //! rule decides before anything is set, and a refused call edits nothing.
 
 use super::*;
+use quantick_control::wire::WireU64;
 use serde_json::json;
 
 const T: bool = true;
@@ -222,5 +223,40 @@ fn size_set_asks_the_rule_and_the_range_before_the_pane_sets_anything() {
         call(&mut pane, "tape", json!("3")).unwrap()["changed"],
         true,
         "Tape alone still sizes its bubbles"
+    );
+}
+
+/// A window holding one pane, counting how often a call resolved it.
+struct Window {
+    pane: Pane,
+    lookups: usize,
+}
+
+impl PaneTapePort for Window {
+    type Pane = Pane;
+    fn pane_tape(&mut self, _: WireU64, _: WireU64) -> Result<&mut Pane, ControlError> {
+        self.lookups += 1;
+        Ok(&mut self.pane)
+    }
+}
+
+/// The registered handler checks the range before it resolves the pane, so an
+/// out-of-range scale is refused whichever pane it names.
+#[test]
+fn the_range_is_checked_before_the_window_resolves_the_pane() {
+    let actor = crate::test_support::FakeWindow::assistant();
+    let mut window = Window {
+        pane: Pane::with(BubbleScalePane::default()),
+        lookups: 0,
+    };
+    let input =
+        |scale: &str| json!({"tab_id": "1", "pane_id": "2", "target": "tape", "scale": scale});
+    assert!(set(&mut window, &mut (), &actor, &input("9")).is_err());
+    assert_eq!(window.lookups, 0, "the range refused before any lookup");
+    assert!(set(&mut window, &mut (), &actor, &input("2")).is_err());
+    assert_eq!(
+        (window.lookups, window.pane.sets),
+        (1, 0),
+        "the rule refused after it"
     );
 }

@@ -1,7 +1,7 @@
 //! Frame, loading, indicator, and order-flow health projection.
 //!
 //! The window lends its frame cost and each of its tabs through
-//! [`HealthPort`]; a tab answers through [`HealthTab`] with the readings only
+//! [`HealthScopePort`]; a tab answers through [`HealthTab`] with the readings only
 //! it holds — the feed's integrity counters and latency split, its loading
 //! tracker, and each pane's indicators and published order-flow health. What
 //! is worth reporting is decided here: integrity only once something was
@@ -71,7 +71,7 @@ pub trait HealthTab {
 }
 
 /// The window as the health scope reads it.
-pub trait HealthPort {
+pub trait HealthScopePort {
     /// The arrival latency past which the chart calls its tape late.
     const HIGH_LAG_MS: i64;
     /// The frame cost last measured.
@@ -91,7 +91,7 @@ pub type TabVisit<'a> = dyn FnMut(&mut dyn Iterator<Item = (u64, &dyn HealthTab)
 pub fn register<D, H>(registry: &mut D) -> Result<(), ProjectionRegistryError>
 where
     D: ProjectionDock<H>,
-    H: HealthPort + ?Sized + 'static,
+    H: HealthScopePort + ?Sized + 'static,
 {
     let module_id = ModuleId::new(MODULE_ID).expect("static module ID is valid");
     registry.register_module(
@@ -118,16 +118,16 @@ where
     )
 }
 
-fn revision<H: HealthPort + ?Sized>(host: &H) -> Vec<TabHealthRevisionKey> {
+fn revision<H: HealthScopePort + ?Sized>(host: &H) -> Vec<TabHealthRevisionKey> {
     snapshot(host).revision_keys(H::HIGH_LAG_MS)
 }
 
-fn project<H: HealthPort + ?Sized>(host: &H, _context: CaptureContext) -> HealthSnapshot {
+fn project<H: HealthScopePort + ?Sized>(host: &H, _context: CaptureContext) -> HealthSnapshot {
     snapshot(host)
 }
 
 /// The health summary as the window reads now.
-pub fn snapshot<H: HealthPort + ?Sized>(host: &H) -> HealthSnapshot {
+pub fn snapshot<H: HealthScopePort + ?Sized>(host: &H) -> HealthSnapshot {
     let frame = host.frame();
     let mut tabs = Vec::new();
     host.visit_health_tabs(&mut |all| {

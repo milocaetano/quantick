@@ -49,7 +49,7 @@ struct FakeWindow {
     tabs: Vec<FakeTab>,
 }
 
-impl HealthPort for FakeWindow {
+impl HealthScopePort for FakeWindow {
     const HIGH_LAG_MS: i64 = 5_000;
     fn frame(&self) -> FrameReading {
         self.frame

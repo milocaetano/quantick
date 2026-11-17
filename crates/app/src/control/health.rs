@@ -6,12 +6,12 @@ use crate::{control::pane_side_dto, orderflow_view::OrderflowView, tab::Tab};
 use quantick_chart::loading::LoadingTracker;
 use quantick_control::wire::WireU64;
 use quantick_control_handlers::health::{
-    FrameReading, HealthPort, HealthTab, PaneHealthRead, TabVisit,
+    FrameReading, HealthScopePort, HealthTab, PaneHealthRead, TabVisit,
 };
 use quantick_control_schema::health::{FeedIntegritySnapshot, IntakeLagSnapshot};
 use quantick_feed::FeedLatency;
 
-impl HealthPort for dyn ControlPort {
+impl HealthScopePort for dyn ControlPort {
     const HIGH_LAG_MS: i64 = crate::metrics::HIGH_LAG_MS;
     fn frame(&self) -> FrameReading {
         self.health_reads().frame_metrics()
