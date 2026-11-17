@@ -174,7 +174,8 @@ impl PaperAccount {
     ) -> Option<(Decimal, Bracket)> {
         let (state, resting) = self.risk_sized(side, reference, ticket, env);
         if state.blocks_entry(self.risk.lock) {
-            self.set_toast(format!("SIM: {}", state.sentence()));
+            let word = self.route_kind().word();
+            self.set_toast(format!("{word}: {}", state.sentence()));
             return None;
         }
         if let Some(quantity) = state.derived_quantity() {

@@ -1196,3 +1196,56 @@ fn a_broker_request_after_the_link_is_lost_revives_what_runs_beside_the_venue() 
     assert_eq!(wiring.borrow().revived, 2, "so does opening the list");
     assert_eq!(wiring.borrow().built, 1, "the same venue, waiting");
 }
+
+#[test]
+fn a_broker_account_words_every_refusal_and_cancel_in_its_own_route() {
+    let (_desk, mut tabs, _script) = armed(TradeMode::Demo);
+    let account = tabs.active();
+    go_long(account);
+    account.take_toast();
+    let mut book = crate::risk_sizing::InstrumentBook::new();
+    let money = quantick_trading::InstrumentMoney::declared(
+        ("BRL", Decimal::new(20, 2), Decimal::ONE),
+        None,
+    )
+    .expect("a declaration");
+    book.insert("WINZ26".to_owned(), money);
+    account.set_instrument_money(book);
+    let mut risk = account.risk_settings().clone();
+    risk.lock = true;
+    risk.basis = crate::risk_sizing::RiskBasis::Amount;
+    risk.amount = Decimal::ONE;
+    account.set_risk_settings(risk);
+
+    // A short of one stopped 99 points above is past a 1 BRL budget.
+    account.reverse_position(Bracket::whole(Some(Decimal::from(199)), None));
+    let toast = account.take_toast().unwrap_or_default();
+    assert!(toast.starts_with("DEMO: "), "{toast}");
+
+    let intent = OrderIntent::market(Side::Sell, Decimal::from(1000))
+        .with_bracket(Bracket::whole(Some(Decimal::from(199)), None));
+    assert!(account.place_intent(intent).is_empty());
+    let toast = account.take_toast().unwrap_or_default();
+    assert!(toast.starts_with("DEMO: "), "{toast}");
+
+    let order = quantick_trading::Order {
+        id: OrderId(9),
+        side: Side::Sell,
+        kind: quantick_trading::EntryKind::Limit,
+        price: Some(Decimal::from(110)),
+        quantity: Decimal::ONE,
+        bracket: Bracket::none(),
+        cancel_at: None,
+        flat_only: false,
+        placed_ms: 0,
+        role: quantick_trading::OrderRole::Entry,
+        oco: None,
+        reduce_only: false,
+    };
+    account.handle_events(vec![VenueEvent::Cancelled {
+        order,
+        reason: quantick_trading::CancelReason::BracketReplaced,
+    }]);
+    let toast = account.take_toast().unwrap_or_default();
+    assert!(toast.starts_with("DEMO cancelled #9"), "{toast}");
+}

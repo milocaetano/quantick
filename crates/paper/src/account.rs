@@ -931,14 +931,17 @@ impl PaperAccount {
                     order,
                     reason: quantick_trading::CancelReason::PriceTouched,
                 } => {
-                    self.set_toast(format!("SIM cancelled {}: target traded first", order.id));
+                    self.set_toast(format!(
+                        "{word} cancelled {}: target traded first",
+                        order.id
+                    ));
                 }
                 VenueEvent::Cancelled {
                     order,
                     reason: quantick_trading::CancelReason::AccountOccupied,
                 } => {
                     self.set_toast(format!(
-                        "SIM stood down {}: account busy at its price",
+                        "{word} stood down {}: account busy at its price",
                         order.id
                     ));
                 }
@@ -950,14 +953,14 @@ impl PaperAccount {
                     order,
                     reason: quantick_trading::CancelReason::OcoFilled,
                 } => {
-                    self.set_toast(format!("SIM cancelled {}: its pair filled", order.id));
+                    self.set_toast(format!("{word} cancelled {}: its pair filled", order.id));
                 }
                 VenueEvent::Cancelled {
                     order,
                     reason: quantick_trading::CancelReason::PositionClosed,
                 } => {
                     self.set_toast(format!(
-                        "SIM cancelled {}: the position it protected is closed",
+                        "{word} cancelled {}: the position it protected is closed",
                         order.id
                     ));
                 }
@@ -965,7 +968,10 @@ impl PaperAccount {
                     order,
                     reason: quantick_trading::CancelReason::BracketReplaced,
                 } => {
-                    self.set_toast(format!("SIM cancelled {}: protection replaced", order.id));
+                    self.set_toast(format!(
+                        "{word} cancelled {}: protection replaced",
+                        order.id
+                    ));
                 }
                 // The broker expired or cancelled it at the terminal.
                 VenueEvent::Cancelled {

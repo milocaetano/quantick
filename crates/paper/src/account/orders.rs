@@ -76,7 +76,8 @@ impl PaperAccount {
     /// counted.
     pub fn reverse_position(&mut self, bracket: Bracket) {
         if let Err(refusal) = self.try_reverse_position(bracket) {
-            self.set_toast(format!("SIM: {}", refusal.sentence()));
+            let word = self.route_kind().word();
+            self.set_toast(format!("{word}: {}", refusal.sentence()));
         }
     }
 
@@ -122,7 +123,8 @@ impl PaperAccount {
                 // the toast; a named caller gets the same sentence as an
                 // error, because `control::trade` asks `risk_refusal_for`
                 // first.
-                self.set_toast(format!("SIM: {}", refusal.sentence()));
+                let word = self.route_kind().word();
+                self.set_toast(format!("{word}: {}", refusal.sentence()));
                 Vec::new()
             }
         }
