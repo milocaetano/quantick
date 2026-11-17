@@ -472,5 +472,20 @@ def test_a_request_reached_at_or_past_its_expiry_is_refused_and_never_executed()
     check("a watch trades nothing and never expires", watch.get("watching") == "WDOZ26", watch)
 
 
+def test_exits_reach_the_terminal_without_symbol_information():
+    broker = FakeBroker()
+    broker.info = None
+    broker.positions = [position(volume=2.0)]
+    broker.orders = [ns(ticket=601, symbol=SYMBOL, type=2, type_time=0, time_expiration=0)]
+    s = session(broker)
+    cancel = s.answer({"type": "cancel", "id": "c-9", "order": 601})
+    close = s.answer({"type": "close", "id": "x-9", "position": 77, "volume": "1", "deviation": 10, "magic": MAGIC})
+    sltp = s.answer({"type": "sltp", "id": "s-9", "symbol": SYMBOL, "position": 77, "sl": "124800", "tp": None, "magic": MAGIC})
+    check("cancel, close and sltp reached the terminal", [r["action"] for r in broker.sent] == [8, 1, 6], broker.sent)
+    check("each answered by the terminal", [r["retcode"] for r in (cancel, close, sltp)] == [10009] * 3, (cancel, close, sltp))
+    modify = s.answer({"type": "modify", "id": "m-9", "order": 601, "price": "124850", "sl": None, "tp": None})
+    check("a modify, which carries a price, is still refused", len(broker.sent) == 3 and "symbol information" in str(modify.get("error")), modify)
+
+
 if __name__ == "__main__":
     sys.exit(run_tests(dict(globals())))

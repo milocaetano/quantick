@@ -97,6 +97,9 @@ STATE_HEARTBEAT_S = 2.0
 #: The request types this channel answers.
 REQUEST_TYPES = ("watch", "submit", "cancel", "modify", "sltp", "close")
 
+#: The requests that place or move an order at a price of their own.
+PRICED_REQUEST_TYPES = ("submit", "modify")
+
 # Terminal enumerations, by documented value. Read from the package when it has
 # them so a renumbering would follow the terminal, but never required: the
 # suites run on machines with no terminal at all.
@@ -284,9 +287,11 @@ class ExecSession(TransportMixin):
                     log("EXEC_SYMBOL_SELECT_FAILED", symbol=symbol, mt5_error=str(self.terminal.last_error()))
             return {"type": "reply", "id": request["id"], "retcode": None, "watching": symbol}
         symbol = request.get("symbol") if isinstance(request.get("symbol"), str) else self.symbol
-        if self.digits(symbol) is None:
-            # Every price in the reply and the state is written in the
-            # symbol's digits; guessing them would misprice what is shown.
+        if kind in PRICED_REQUEST_TYPES and self.digits(symbol) is None:
+            # A price typed for the symbol is in its digits; sent without
+            # knowing them, it could be one the trader never meant. A cancel,
+            # a close or a stop change is always let through: an exit must
+            # never wait on symbol information.
             raise RequestError(
                 f"the terminal has no symbol information for {symbol or 'the watched symbol'}: "
                 "refusing rather than guessing its price digits"
