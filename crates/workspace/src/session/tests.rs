@@ -309,3 +309,17 @@ fn a_panes_strip_layout_reads_a_copy_as_its_origin() {
     assert_eq!(session.strip_layout_of(Some(other)), other);
     assert_eq!(session.strip_layout_of(None), session.book().active_id());
 }
+
+#[test]
+fn a_finished_delete_answers_where_its_panes_went() {
+    let mut session = LayoutSession::new(LayoutBook::default());
+    let second = session.create(Some("second")).unwrap();
+    let third = session.create(Some("third")).unwrap();
+    assert_eq!(session.finish_delete(second), Ok(LayoutId(1)), "its left");
+    assert_eq!(
+        session.finish_delete(LayoutId(1)),
+        Ok(third),
+        "the first's right"
+    );
+    assert_eq!(session.finish_delete(third), Err(LayoutError::Last));
+}

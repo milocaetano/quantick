@@ -150,10 +150,7 @@ impl DrawingControllerAccess<'_> {
         let store = host.drawings();
         let selected = store.selected();
         store
-            .items()
-            .iter()
-            .enumerate()
-            .filter(|(index, _)| store.in_layout(*index))
+            .shown()
             .map(|(index, drawing)| {
                 crate::surfaces::drawing_chrome::ManagerRow::of(
                     index,

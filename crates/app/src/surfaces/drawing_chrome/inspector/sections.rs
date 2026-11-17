@@ -43,12 +43,7 @@ pub(super) fn body(
     actions.delete |= intent.delete;
 
     ObjectNotes::of(edited).show(ui);
-    actions.merge(
-        ScopeToggle {
-            edited: &mut *edited,
-        }
-        .show(ui),
-    );
+    actions.merge(ScopeToggle(&mut *edited).show(ui));
     if chrome.shared.delete_confirm && locked {
         actions.merge(DeleteConfirm.show(ui));
     }
@@ -138,15 +133,13 @@ impl ObjectNotes {
 /// trader's. Nobody hunting for "also show this on the other chart" opens a
 /// tab called Coordinates, and that is not even the tab the panel opens on.
 /// Reported as unfindable, and it was.
-struct ScopeToggle<'a> {
-    edited: &'a mut Drawing,
-}
+struct ScopeToggle<'a>(&'a mut Drawing);
 
 impl ScopeToggle<'_> {
     /// Reports a changed scope as an edit, and the "All windows" switch.
     fn show(self, ui: &mut egui::Ui) -> InspectorActions {
         let palette = theme::get(ui.ctx());
-        let edited = self.edited;
+        let edited = self.0;
         let shareable = edited.shareable();
         let mut shared = edited.all_timeframes();
         let mut actions = InspectorActions::default();
@@ -156,11 +149,7 @@ impl ScopeToggle<'_> {
             egui::Checkbox::new(&mut shared, "Show on all timeframes"),
         );
         if sharing.changed() {
-            edited.set_scope(if shared {
-                drawings::DrawingScope::AllCharts
-            } else {
-                drawings::DrawingScope::ThisChart
-            });
+            edited.set_all_timeframes(shared);
             actions.edited = true;
         }
         // A disabled control with no reason reads as a bug.
@@ -177,10 +166,9 @@ impl ScopeToggle<'_> {
                     .color(palette.text_support()),
             );
         }
-        let all_timeframes = edited.all_timeframes();
         let mut everywhere = edited.in_all_windows();
         let windows = ui.add_enabled(
-            all_timeframes,
+            edited.all_timeframes(),
             egui::Checkbox::new(&mut everywhere, "All windows"),
         );
         actions.toggle_all_windows = windows.changed();

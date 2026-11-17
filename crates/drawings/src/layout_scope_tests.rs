@@ -487,3 +487,31 @@ fn a_deleted_layouts_marks_follow_its_charts_to_the_next_layout() {
     other.persist(&mut settings);
     assert_eq!(settings, before);
 }
+
+#[test]
+fn the_shown_list_is_the_marks_in_layout_with_their_indexes() {
+    let mut drawings = Drawings::default();
+    drawings.set_layout(Some(LEVELS));
+    level_here(&mut drawings, 1.0, 80.0);
+    level_on_all_timeframes(&mut drawings, 2.0, 90.0);
+    drawings.set_layout(Some(FLOWS));
+    level_here(&mut drawings, 3.0, 100.0);
+    let shown: Vec<usize> = drawings.shown().map(|(index, _)| index).collect();
+    let in_layout = (0..3).filter(|&index| drawings.in_layout(index));
+    assert_eq!(shown, in_layout.collect::<Vec<_>>());
+    assert_eq!(shown, [0, 2], "the other layout's mark is not listed");
+    assert_eq!(drawings.shown_count(), 2);
+}
+
+#[test]
+fn the_all_timeframes_switch_picks_the_scope_and_pins_it() {
+    let mut drawings = Drawings::default();
+    level_here(&mut drawings, 1.0, 80.0);
+    let mark = &mut drawings.items_mut()[0];
+    mark.set_all_timeframes(true);
+    assert_eq!(mark.scope, DrawingScope::AllCharts);
+    assert!(mark.all_timeframes());
+    mark.set_all_timeframes(false);
+    assert_eq!(mark.scope, DrawingScope::ThisChart);
+    assert!(!mark.legacy_unpinned, "a pick pins it");
+}

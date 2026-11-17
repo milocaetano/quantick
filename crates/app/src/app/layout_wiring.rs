@@ -40,7 +40,7 @@
 
 use crate::state::BarConfiguration;
 use crate::surfaces::drawing_chrome::DrawingChromeExt as _;
-use quantick_drawings::{PaneMarks, PaneSync};
+use quantick_drawings::{PaneMarks, PaneSync, retarget_layout};
 use quantick_workspace::market_settings::{MarketSettings, PaneWrite};
 use quantick_workspace::session::{LayoutEffect, PaneFacts, Selection};
 use std::time::Instant;
@@ -108,11 +108,7 @@ impl<'a> LayoutRead<'a> {
     pub(crate) fn drawing_gesture_on(&self, feed: &str, from: &str, to: &str) -> bool {
         self.tabs.iter_with_ids().any(|(_, tab)| {
             tab.panes().any(|(pane, _)| {
-                let source = pane.layout.drawings_source.as_ref();
-                pane.drawings.in_gesture()
-                    && source.is_some_and(|(venue, symbol)| {
-                        venue == feed && (symbol == from || symbol == to)
-                    })
+                pane.drawings.in_gesture() && pane.layout.holds_marks_of(feed, [from, to])
             })
         })
     }
@@ -464,8 +460,7 @@ impl LayoutAdapter<'_> {
         if !selection.changed() {
             return Ok(false);
         }
-        // Onto the tab's copy now, so an edit before the next frame is the tab's,
-        // and its marks shown for the layout it shows now.
+        // Onto the tab's copy now, so an edit before the next frame is the tab's.
         self.own_indicator_copies();
         self.follow_quiet_recuts();
         let from = selection.from();
@@ -549,8 +544,8 @@ impl LayoutAdapter<'_> {
         Ok(changed)
     }
 
-    /// Delete a layout. Every pane showing it moves to its left neighbour
-    /// first, so no pane is ever left on a layout that no longer exists.
+    /// Delete a layout. Every pane showing it, marks too, moves to its left
+    /// neighbour first, so none is left on a layout that no longer exists.
     pub(crate) fn delete_layout(&mut self, id: LayoutId) -> Result<(), LayoutError> {
         // Include unseeded panes named by an opening request without materializing them.
         for (tab, side) in self.layout_pane_targets() {
@@ -560,7 +555,6 @@ impl LayoutAdapter<'_> {
             .tabs
             .iter()
             .flat_map(|tab| tab.panes().map(|(pane, _)| (pane.id, facts_of(pane))));
-        let to = self.store.session().delete_successor(id)?;
         let selections = self.store.session().plan_delete(id, facts)?;
         for selection in selections {
             let (tab, side) = self
@@ -568,11 +562,10 @@ impl LayoutAdapter<'_> {
                 .ok_or(LayoutError::Unknown)?;
             self.switch_pane_layout(tab, side, selection.to())?;
         }
-        self.store.session_mut().finish_delete(id)?;
-        // Its marks follow its panes, so none is left on a layout nothing shows.
+        let to = self.store.session_mut().finish_delete(id)?;
         let panes = self.tabs.iter_mut().flat_map(|tab| tab.panes_mut());
         let settings = self.store.market_mut().settings_mut();
-        if quantick_drawings::retarget_layout(settings, id, to, panes.map(marks_of)) {
+        if retarget_layout(settings, id, to, panes.map(marks_of)) {
             self.mark_market_dirty();
         }
         self.mark_layouts_dirty();
@@ -967,14 +960,11 @@ impl LayoutAdapter<'_> {
         }
     }
 
-    /// Each frame before a write: `quantick_drawings::PaneMarks::follow_store`,
-    /// and each pane's marks told the strip layout it shows.
+    /// Each frame before a write: `quantick_drawings::PaneMarks::follow_store`.
     fn follow_quiet_recuts(&mut self) {
         let (store, session) = (self.store.market(), self.store.session());
         for pane in self.tabs.iter_mut().flat_map(|tab| tab.panes_mut()) {
-            let layout = session.strip_layout_of(pane.layout_id());
-            pane.drawings.set_layout(Some(layout));
-            marks_of(pane).follow_store(store);
+            marks_of(pane).follow_store(store, session);
         }
     }
 

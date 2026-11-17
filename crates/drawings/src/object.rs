@@ -134,6 +134,15 @@ impl<T> Drawing<T> {
         self.legacy_unpinned = false;
     }
 
+    /// The "Show on all timeframes" switch, as a pick of [`Self::set_scope`].
+    pub fn set_all_timeframes(&mut self, on: bool) {
+        self.set_scope(if on {
+            DrawingScope::AllCharts
+        } else {
+            DrawingScope::ThisChart
+        });
+    }
+
     /// Whether the other panes of this tab paint it this frame.
     #[must_use]
     pub fn shared(&self) -> bool {

@@ -19,6 +19,20 @@ impl SelectionToggles {
         self.locked |= other.locked;
         self.all_windows |= other.all_windows;
     }
+
+    /// The store intents the flips ask for, in the order the host applies them.
+    pub fn intents(self) -> impl Iterator<Item = quantick_drawings::DrawingIntent> {
+        use quantick_drawings::DrawingIntent::{
+            ToggleAllWindowsSelected, ToggleHideSelected, ToggleLockSelected,
+        };
+        let asks = [
+            (self.hidden, ToggleHideSelected),
+            (self.locked, ToggleLockSelected),
+            (self.all_windows, ToggleAllWindowsSelected),
+        ];
+        asks.into_iter()
+            .filter_map(|(asked, intent)| asked.then_some(intent))
+    }
 }
 
 /// What the drawing chrome asked the host to do.

@@ -181,11 +181,7 @@ impl DrawingRecipient for Drawings {
     }
     fn scope_selected(&mut self, shared: bool) {
         if let Some(drawing) = self.selected_mut() {
-            drawing.set_scope(if shared {
-                drawings::DrawingScope::AllCharts
-            } else {
-                drawings::DrawingScope::ThisChart
-            });
+            drawing.set_all_timeframes(shared);
         }
     }
     fn selected(&self) -> Option<usize> {

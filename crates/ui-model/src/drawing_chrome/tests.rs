@@ -96,3 +96,32 @@ fn migration_preserves_state_and_effects() {
         DrawingChromeAsk::default()
     );
 }
+
+#[test]
+fn the_selection_toggles_ask_the_store_in_order() {
+    use quantick_drawings::DrawingIntent;
+    let names = |toggles: SelectionToggles| -> Vec<String> {
+        toggles
+            .intents()
+            .map(|intent| format!("{intent:?}"))
+            .collect()
+    };
+    assert!(names(SelectionToggles::default()).is_empty());
+    let all = SelectionToggles {
+        hidden: true,
+        locked: true,
+        all_windows: true,
+    };
+    let expected = [
+        DrawingIntent::ToggleHideSelected,
+        DrawingIntent::ToggleLockSelected,
+        DrawingIntent::ToggleAllWindowsSelected,
+    ];
+    let expected: Vec<String> = expected.iter().map(|i| format!("{i:?}")).collect();
+    assert_eq!(names(all), expected);
+    let locked = SelectionToggles {
+        locked: true,
+        ..SelectionToggles::default()
+    };
+    assert_eq!(names(locked), ["ToggleLockSelected"]);
+}

@@ -101,6 +101,12 @@ impl<Bars> PaneLayout<Bars> {
     pub fn drawings_dirty(&self, revision: u64) -> bool {
         self.drawings_key.is_some() && revision != self.saved_revision
     }
+    /// Whether the held drawings were resolved from `feed` at one of `symbols`.
+    #[must_use]
+    pub fn holds_marks_of(&self, feed: &str, symbols: [&str; 2]) -> bool {
+        let source = self.drawings_source.as_ref();
+        source.is_some_and(|(venue, symbol)| venue == feed && symbols.contains(&symbol.as_str()))
+    }
 }
 
 #[cfg(test)]
@@ -116,6 +122,17 @@ mod tests {
         assert_eq!(pane.layout_id(), None);
         assert!(!pane.seeded());
         assert!(!pane.drawings_dirty(3));
+    }
+
+    #[test]
+    fn a_pane_holds_the_marks_of_its_feed_at_either_symbol() {
+        let mut pane = PaneLayout::<()>::default();
+        assert!(!pane.holds_marks_of("f", ["a", "b"]), "nothing held");
+        pane.drawings_source = Some(("f".to_owned(), "b".to_owned()));
+        assert!(pane.holds_marks_of("f", ["a", "b"]));
+        assert!(pane.holds_marks_of("f", ["b", "c"]));
+        assert!(!pane.holds_marks_of("f", ["a", "c"]), "another symbol");
+        assert!(!pane.holds_marks_of("g", ["a", "b"]), "another feed");
     }
 
     #[test]

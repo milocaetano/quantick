@@ -1078,8 +1078,9 @@ impl LayoutSession {
         Ok(selections)
     }
     /// Delete strip layout `id` once no pane shows it, and the copies of it
-    /// the tabs own with it.
-    pub fn finish_delete(&mut self, id: LayoutId) -> Result<(), LayoutError> {
+    /// the tabs own with it. Answers its [`Self::delete_successor`], the
+    /// layout its panes moved to.
+    pub fn finish_delete(&mut self, id: LayoutId) -> Result<LayoutId, LayoutError> {
         let book = &self.book;
         if self.panes.values().any(|state| {
             state
@@ -1089,6 +1090,7 @@ impl LayoutSession {
         }) {
             return Err(LayoutError::Unknown);
         }
+        let to = self.delete_successor(id)?;
         self.book.delete(id)?;
         let copies: Vec<LayoutId> = self
             .owner
@@ -1101,7 +1103,7 @@ impl LayoutSession {
             self.owner.remove(&copy);
             self.kept.retain(|_, kept| *kept != copy);
         }
-        Ok(())
+        Ok(to)
     }
 }
 

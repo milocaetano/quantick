@@ -42,12 +42,17 @@ impl<T: Clone + PartialEq> Drawings<T> {
             .is_some_and(|drawing| drawing.shows_in(self.layout))
     }
 
+    /// The objects this chart shows, each with its index: what its lists read.
+    pub fn shown(&self) -> impl Iterator<Item = (usize, &Drawing<T>)> {
+        let layout = self.layout;
+        let items = self.items.iter().enumerate();
+        items.filter(move |(_, drawing)| drawing.shows_in(layout))
+    }
+
     /// How many objects this chart shows: what its list and its counts read.
     #[must_use]
     pub fn shown_count(&self) -> usize {
-        let layout = self.layout;
-        let shown = self.items.iter().filter(|drawing| drawing.shows_in(layout));
-        shown.count()
+        self.shown().count()
     }
 
     /// Turn the object at `index`'s "All windows" on or off as one undo step;
