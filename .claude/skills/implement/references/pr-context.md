@@ -14,7 +14,7 @@ Fit these fields into the repository template without duplication:
 ## Acceptance
 - [ ] <observable result>
 ## Evidence
-Tests/review/CI: <revision and concise result or durable link>.
+Tests/review/CI/Size: <revision, results or links; Size vs plan, why if over>.
 ```
 
 A branch adding a file under `crates/guards/ui-free-baseline.d/` starts its PR title with `[ui-free +N]`.
