@@ -78,6 +78,9 @@ class FakeBroker:
         self.selected: list[str] = []
         self.info = ns(digits=0)
         self.deal_ranges: list[tuple[int, int]] = []
+        # Off by default: most suites stamp deals at times no real window
+        # would hold. On, a read returns only what its range covers.
+        self.honour_ranges = False
 
     def order_send(self, request):
         self.sent.append(dict(request))
@@ -107,7 +110,9 @@ class FakeBroker:
 
     def history_deals_get(self, date_from, date_to):
         self.deal_ranges.append((int(date_from), int(date_to)))
-        return list(self.deals)
+        if not self.honour_ranges:
+            return list(self.deals)
+        return [d for d in self.deals if int(date_from) <= int(d.time_msc) // 1000 <= int(date_to)]
 
     def history_orders_get(self, ticket=None):
         found = self.history_orders.get(ticket)
@@ -501,6 +506,30 @@ def test_an_order_history_still_calls_placed_is_followed_until_it_ends():
     ended = s.build_state()["closed_orders"]
     check("its ending is reported once history has one", ended == [{"ticket": 601, "state": "canceled"}], ended)
     check("and only once", s.build_state()["closed_orders"] == [], "repeat")
+
+
+def test_a_deal_recorded_late_with_an_older_time_is_sent_exactly_once():
+    broker = FakeBroker()
+    broker.honour_ranges = True
+    now_s = int(time.time())
+
+    def deal(ticket, symbol, at_s):
+        return ns(ticket=ticket, order=900, position_id=77, symbol=symbol, type=1, entry=1, reason=3, volume=1.0, price=125100.0, magic=MAGIC, time_msc=at_s * 1000)
+
+    broker.deals = [deal(901, SYMBOL, now_s - 3_600), deal(902, "WDOZ26", now_s - 60)]
+    s = session(broker)
+    tickets = lambda: [d["ticket"] for d in s.build_state()["deals"]]  # noqa: E731
+    check("the watched symbol's deal", tickets() == [901], broker.deal_ranges)
+    # Another symbol's newer deal never moves the watched symbol's window.
+    broker.deals.append(deal(903, SYMBOL, now_s - 1_800))
+    check("a late deal after the last one seen arrives", tickets() == [903], broker.deal_ranges)
+    # Written so late it is older than the last deal seen: the next full
+    # sweep of the window finds it.
+    broker.deals.append(deal(904, SYMBOL, now_s - 7_200))
+    s.deals_swept_at -= exe.DEAL_SWEEP_S
+    check("the sweep sends it", tickets() == [904], broker.deal_ranges)
+    s.deals_swept_at -= exe.DEAL_SWEEP_S
+    check("and never twice", tickets() == [], broker.deal_ranges)
 
 
 if __name__ == "__main__":

@@ -698,7 +698,10 @@ every reply, and at least every two seconds.
 - `deals` — trade deals on the symbol not yet pushed on this connection
   (`entry` `in`/`out`/`inout`/`out_by`; `reason` `client`, `expert`, `sl`,
   `tp`, ...). A new connection pushes the recent history again; quantick dedups
-  by ticket, and the first state of a session is history, not news.
+  by ticket, and the first state of a session is history, not news. A deal the
+  terminal writes late, stamped older than the newest one already pushed, is
+  pushed when the bridge next reads the whole history window (every ten
+  seconds), once.
 - `closed_orders` — orders that left the working list, once the terminal's
   history says how: `canceled`, `expired`, `rejected`, `partial`, `filled`,
   or `unknown` when no record of how it ended appeared in time (a record

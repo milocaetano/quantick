@@ -80,10 +80,15 @@ MAX_COMMENT_CHARS = 31
 #: on both sides rather than exact; quantick ignores deals it has already seen.
 DEAL_WINDOW_S = 2 * 24 * 60 * 60
 
-#: After the first read, history is read from this long before the newest deal
-#: already seen, not the whole window again every pass: a deal the terminal
-#: writes a moment late is still inside it.
+#: Between sweeps, history is read from this long before the newest deal of
+#: the watched symbol already seen, not the whole window again every pass: a
+#: deal the terminal writes a moment late is still inside it.
 DEAL_OVERLAP_S = 5 * 60
+
+#: Seconds between two reads of the whole window. A deal written later than
+#: the overlap, stamped older than the newest one seen, is found by the next
+#: sweep; deals already sent are never sent again, so it arrives once.
+DEAL_SWEEP_S = 10.0
 
 #: Passes a vanished order may wait for a history record of how it ended before
 #: it is reported with state "unknown". The terminal writes history a moment
@@ -192,9 +197,10 @@ class ExecSession(TransportMixin):
         self.known_orders: set[int] = set()
         self.sent_orders: set[int] = set()
         self.unresolved: dict[int, int] = {}
-        # Server time of the newest deal seen; history is read from just
-        # before it once one has been seen.
+        # Server time of the watched symbol's newest deal seen; between
+        # sweeps of the whole window, history is read from just before it.
         self.newest_deal_s: int | None = None
+        self.deals_swept_at: float | None = None
         self.last_state_body: str | None = None
         self.last_state_at = 0.0
         self.digits_by_symbol: dict[str, int] = {}
@@ -286,6 +292,7 @@ class ExecSession(TransportMixin):
                 self.sent_orders.clear()
                 self.unresolved.clear()
                 self.newest_deal_s = None
+                self.deals_swept_at = None
                 self.last_state_body = None
                 if not self.terminal.symbol_select(symbol, True):
                     log("EXEC_SYMBOL_SELECT_FAILED", symbol=symbol, mt5_error=str(self.terminal.last_error()))
@@ -513,16 +520,23 @@ class ExecSession(TransportMixin):
     def new_deals(self) -> list[dict]:
         now = int(time.time())
         start = now - DEAL_WINDOW_S
-        if self.newest_deal_s is not None:
+        sweep = self.deals_swept_at is None or time.monotonic() - self.deals_swept_at >= DEAL_SWEEP_S
+        if sweep:
+            self.deals_swept_at = time.monotonic()
+        elif self.newest_deal_s is not None:
             start = max(start, self.newest_deal_s - DEAL_OVERLAP_S)
         deals = self.terminal.history_deals_get(start, now + DEAL_WINDOW_S) or ()
         lines = []
         for d in deals:
+            if d.symbol != self.symbol:
+                # Another symbol's deal says nothing about where this one's
+                # history is complete.
+                continue
             dealt_s = int(d.time_msc) // 1000
             if self.newest_deal_s is None or dealt_s > self.newest_deal_s:
                 self.newest_deal_s = dealt_s
             ticket = int(d.ticket)
-            if d.symbol != self.symbol or ticket in self.sent_deals or int(d.type) not in (0, 1):
+            if ticket in self.sent_deals or int(d.type) not in (0, 1):
                 continue
             self.sent_deals.add(ticket)
             lines.append(
