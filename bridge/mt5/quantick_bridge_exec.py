@@ -308,8 +308,28 @@ class ExecSession(TransportMixin):
                 "refusing rather than guessing its price digits"
             )
         trade_request = getattr(self, f"build_{kind}")(request)
+        self.snap_to_tick(trade_request, symbol)
         refuse_if_expired(request)
         return self.send_order(request["id"], trade_request)
+
+    def snap_to_tick(self, trade: dict, symbol: str | None) -> None:
+        """Put every price the request carries on the symbol's tick grid.
+
+        A price dragged on the chart is wherever the pointer was (172140.82);
+        B3 refuses a stop or a target off its grid as "Invalid stops" (10016),
+        so the nearest tick is what the trader meant. Unknown symbol
+        information leaves the prices as they are: an exit never waits on it.
+        """
+        name = symbol or self.symbol
+        info = self.terminal.symbol_info(name) if name else None
+        tick = float(getattr(info, "trade_tick_size", 0.0) or 0.0) if info is not None else 0.0
+        if tick <= 0.0:
+            return
+        digits = int(getattr(info, "digits", 0) or 0)
+        for key in ("price", "sl", "tp"):
+            value = trade.get(key)
+            if isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0.0:
+                trade[key] = round(round(float(value) / tick) * tick, digits)
 
     def send_order(self, request_id: str, trade_request: dict) -> dict:
         result = self.terminal.order_send(trade_request)

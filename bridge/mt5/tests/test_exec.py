@@ -492,6 +492,37 @@ def test_exits_reach_the_terminal_without_symbol_information():
     check("a modify, which carries a price, is still refused", len(broker.sent) == 3 and "symbol information" in str(modify.get("error")), modify)
 
 
+def test_stops_targets_and_prices_are_snapped_to_the_symbol_tick():
+    broker = FakeBroker()
+    broker.info = ns(digits=0, trade_tick_size=5.0)
+    broker.orders = [ns(ticket=601, symbol=SYMBOL, type=2, type_time=0, time_expiration=0)]
+    s = session(broker)
+    s.answer({"type": "sltp", "id": "s-snap", "symbol": SYMBOL, "position": 77, "sl": "172140.82", "tp": "172207.6", "magic": MAGIC})
+    sltp = broker.sent[-1]
+    check("a dragged stop lands on the nearest tick", sltp["sl"] == 172140.0, sltp)
+    check("a dragged target lands on the nearest tick", sltp["tp"] == 172210.0, sltp)
+    s.answer(submit("limit", price="124902.4", sl="124801", tp="125298"))
+    limit = broker.sent[-1]
+    check("a limit price lands on the grid", limit["price"] == 124900.0, limit)
+    check("its protections too", (limit["sl"], limit["tp"]) == (124800.0, 125300.0), limit)
+    s.answer({"type": "modify", "id": "m-snap", "order": 601, "price": "124853", "sl": None, "tp": None})
+    modify = broker.sent[-1]
+    check("a modified price lands on the grid and no stop stays 0.0", (modify["price"], modify["sl"], modify["tp"]) == (124855.0, 0.0, 0.0), modify)
+
+
+def test_prices_are_untouched_when_the_tick_size_is_unknown():
+    broker = FakeBroker()
+    broker.info = ns(digits=0)
+    s = session(broker)
+    s.answer({"type": "sltp", "id": "s-raw", "symbol": SYMBOL, "position": 77, "sl": "172140.82", "tp": "172207.6", "magic": MAGIC})
+    sltp = broker.sent[-1]
+    check("no tick size: the prices go as asked", (sltp["sl"], sltp["tp"]) == (172140.82, 172207.6), sltp)
+    broker.info = None
+    s.answer({"type": "sltp", "id": "s-none", "symbol": SYMBOL, "position": 77, "sl": "172140.82", "tp": None, "magic": MAGIC})
+    sltp = broker.sent[-1]
+    check("no symbol information: the stop still goes, as asked", (sltp["sl"], sltp["tp"]) == (172140.82, 0.0), sltp)
+
+
 def test_an_order_history_still_calls_placed_is_followed_until_it_ends():
     broker = FakeBroker()
     broker.orders = [ns(ticket=601, symbol=SYMBOL, type=2, volume_current=1.0, price_open=124900.0, sl=0.0, tp=0.0, magic=MAGIC, time_setup_msc=1, type_time=1)]

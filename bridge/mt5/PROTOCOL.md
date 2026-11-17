@@ -640,6 +640,16 @@ Stops and targets are always the terminal's native SL/TP. A `close` for a
 position that is not open is refused by the bridge without calling
 `order_send`: on a netting account that deal would open a new position.
 
+**Every price is put on the tick grid before `order_send`.** Each positive
+`price`, `sl` and `tp` of the built request is moved to the nearest multiple
+of the symbol's `trade_tick_size`, then rounded to its `digits`: a stop
+dragged on the chart arrives wherever the pointer was (`172140.82`), and B3
+refuses an off-grid stop or target as `10016` "Invalid stops" — on WINZ26
+(tick 5, digits 0) `172140.82` goes as `172140` and `172207.6` as `172210`.
+`0.0` (no stop, no target) stays `0.0`. A symbol whose information or tick
+size is unknown has its prices sent as they came: an exit never waits on
+symbol information.
+
 ### reply (bridge → quantick)
 
 ```json
