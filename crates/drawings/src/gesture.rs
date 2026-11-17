@@ -21,6 +21,7 @@
 //! the outcome it is handed.
 
 mod band;
+mod band_label;
 mod placing;
 mod pointer;
 mod projection;
@@ -33,6 +34,7 @@ pub use band::{
     ABSENT_BAND_REFUSAL, Band, Bands, COLLAPSED_BAND_REFUSAL, MAX_BANDS, asked_band, band_at,
     band_of, band_refusal, drawing_in_band, magnet_value_of, pane_key,
 };
+pub use band_label::{BandLabel, label_for};
 pub use placing::{
     PlacementCompletion, PlacementDefaults, PlacementFrame, PlacementOptions, PlacementOutcome,
     placement_surface,

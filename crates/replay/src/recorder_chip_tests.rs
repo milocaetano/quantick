@@ -1,4 +1,8 @@
+//! The chart-corner chip: the three recording states, the uncounted prints,
+//! and the panes that have nothing to say.
+
 use super::*;
+use quantick_engine::BarKind;
 use std::path::PathBuf;
 
 fn view(state: RecState) -> RecordingView {
