@@ -2173,7 +2173,10 @@ fn a_mark_shows_on_a_pane_of_another_layout_only_with_all_windows_on() {
 
     app.active_tab_mut().pane_mut(time).drawings.select(Some(0));
     let ask = crate::surfaces::drawing_chrome::DrawingChromeAsk {
-        toggle_selected_all_windows: true,
+        toggle_selected: quantick_ui_model::drawing_chrome::SelectionToggles {
+            all_windows: true,
+            ..Default::default()
+        },
         ..Default::default()
     };
     app.resolve_drawing_response(ask, std::time::Instant::now());

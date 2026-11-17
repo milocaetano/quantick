@@ -16,7 +16,7 @@ pub mod scenario;
 #[path = "drawing_chrome/types.rs"]
 mod types;
 pub use actions::{ActionInput, apply as apply_actions};
-pub use effects::DrawingChromeAsk;
+pub use effects::{DrawingChromeAsk, SelectionToggles};
 pub use inline::InlineEditor;
 pub use presets::{PresetWrite, RecordingPresetHost};
 pub use types::{DrawingEdit, InspectorActions, InspectorTab, SavedDefault};

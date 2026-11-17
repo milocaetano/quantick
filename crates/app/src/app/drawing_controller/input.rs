@@ -303,13 +303,13 @@ impl DrawingControllerAccess<'_> {
             }
             host.record(edit.tab, edit.side, edit.index, edit.before);
         }
-        if ask.toggle_selected_hidden {
+        if ask.toggle_selected.hidden {
             host.update(DrawingIntent::ToggleHideSelected);
         }
-        if ask.toggle_selected_locked {
+        if ask.toggle_selected.locked {
             host.update(DrawingIntent::ToggleLockSelected);
         }
-        if ask.toggle_selected_all_windows {
+        if ask.toggle_selected.all_windows {
             host.update(DrawingIntent::ToggleAllWindowsSelected);
         }
         if ask.request_delete {

@@ -39,8 +39,8 @@ fn migration_preserves_state_and_effects() {
             gesture_settled: true,
         }),
     );
-    assert!(effects.toggle_selected_locked);
-    assert!(effects.toggle_selected_all_windows);
+    assert!(effects.toggle_selected.locked);
+    assert!(effects.toggle_selected.all_windows);
     assert!(!state.core.shared.pinned);
     assert!(state.inspector.pin_touched);
     assert!(state.inspector.settle_frame);
