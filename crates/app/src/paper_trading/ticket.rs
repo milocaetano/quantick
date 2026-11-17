@@ -155,6 +155,7 @@ impl PaperTrading {
             profit_offset: parse_offset(&self.paper.desk.ticket.profit_offset_text)
                 .ok()
                 .flatten(),
+            actions: self.paper.position_actions(),
         };
         match card.show(ui) {
             None => {}

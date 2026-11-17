@@ -51,8 +51,8 @@ pub use gesture::{
 pub use ruler::Ruler;
 pub use ticket::Ticket;
 pub use trade_bar::{
-    EntryTexts, NO_MARKET_YET, TRADE_CLOSE_WIDTH_PX, TRADE_ENTRY_WIDTH_PX, TRADE_GAP_PX,
-    TRADE_REVERSE_LABEL, TRADE_REVERSE_WIDTH_PX, TradeBar, W_TRADE,
+    EntryTexts, NO_MARKET_YET, PositionActions, TRADE_CLOSE_WIDTH_PX, TRADE_ENTRY_WIDTH_PX,
+    TRADE_GAP_PX, TRADE_REVERSE_LABEL, TRADE_REVERSE_WIDTH_PX, TradeBar, W_TRADE,
 };
 
 /// Whether the strategy editor is up, what it has open and whether it holds

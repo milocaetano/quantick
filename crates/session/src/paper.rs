@@ -159,6 +159,13 @@ impl<A: BorrowMut<PaperAccount>> TabPaper<A> {
         self.desk.trade_bar(self.core(), reverse_key)
     }
 
+    /// What the open position's buttons may do now: one answer for the
+    /// toolbar, the Trading panel and the chart HUD.
+    #[must_use]
+    pub fn position_actions(&self) -> quantick_paper::desk::PositionActions {
+        self.desk.position_actions(self.core())
+    }
+
     /// Whether a chart gesture is in the hand — a line being dragged, a leg
     /// being pulled — so the host keeps it with the pane that started it.
     #[must_use]

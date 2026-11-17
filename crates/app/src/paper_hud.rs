@@ -145,6 +145,7 @@ pub fn draw(
                                 .color(palette.text_support()),
                         );
                     }
+                    let allowed = paper.position_actions();
                     ui.horizontal(|ui| {
                         let quiet = |label: &str| {
                             egui::Button::new(
@@ -157,7 +158,7 @@ pub fn draw(
                             .rounding(egui::Rounding::same(3.0))
                         };
                         if ui
-                            .add(quiet("× Close"))
+                            .add_enabled(allowed.exits, quiet("× Close"))
                             .on_hover_text(format!(
                                 "exit the {word} {qty} at the next print (market)"
                             ))
@@ -166,11 +167,17 @@ pub fn draw(
                             paper.send(TradeCommand::Close);
                         }
                         if ui
-                            .add(quiet(&format!("{} Reverse", icons::ARROWS_LEFT_RIGHT)))
+                            .add_enabled(
+                                allowed.reverse_block.is_none(),
+                                quiet(&format!("{} Reverse", icons::ARROWS_LEFT_RIGHT)),
+                            )
                             .on_hover_text(format!(
                                 "close the {word} {qty} and open {opposite} {qty} \
                                  at the next print"
                             ))
+                            .on_disabled_hover_text(
+                                allowed.reverse_block.as_deref().unwrap_or_default(),
+                            )
                             .clicked()
                         {
                             paper.send(TradeCommand::Reverse);

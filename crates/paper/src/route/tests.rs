@@ -1325,3 +1325,43 @@ fn a_disarm_toast_names_the_route_that_was_disarmed() {
         Some("DEMO: this source does not route orders - disarmed, orders now go to Simulated")
     );
 }
+
+/// Reverse opens the other side, so a parked broker venue holds it as it
+/// holds an entry; Close, Close 50% and Flatten only take exposure off and
+/// stay pressable. The toolbar, the Trading panel and the chart HUD paint
+/// this one answer.
+#[test]
+fn a_parked_broker_holds_reverse_and_never_the_exits() {
+    let ticket = crate::desk::Desk::default();
+    let (_desk, mut tabs) = parked();
+    let account = tabs.active();
+    let actions = ticket.position_actions(account);
+    assert_eq!(
+        actions.reverse_block.as_deref(),
+        Some(crate::account::PARKED_ENTRY_BLOCK)
+    );
+    assert!(actions.exits, "the trader may still take exposure off");
+    assert_eq!(
+        ticket.trade_bar(account, "Shift+R").blocked,
+        actions.reverse_block,
+        "the toolbar reads the same answer"
+    );
+    let closed = account
+        .venue_mut()
+        .close(CloseAmount::Partial(Decimal::ONE));
+    assert!(
+        !closed
+            .iter()
+            .any(|event| matches!(event, VenueEvent::Rejected(_))),
+        "a parked venue still answers a close: {closed:?}"
+    );
+
+    let (_desk, mut tabs, _script) = armed(TradeMode::Demo);
+    go_long(tabs.active());
+    let actions = ticket.position_actions(tabs.active());
+    assert_eq!(actions.reverse_block, None, "armed, Reverse is open");
+    assert!(actions.exits);
+
+    let flat = Tabs::new();
+    assert!(!ticket.position_actions(&flat.accounts[&1]).exits);
+}

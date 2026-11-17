@@ -89,7 +89,51 @@ impl TradeBar {
     }
 }
 
+/// What the open position's buttons may do now: the one answer the
+/// toolbar, the Trading panel and the chart HUD paint.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PositionActions {
+    /// Why Reverse is off, when it is. It opens the other side, so it is an
+    /// entry and is held by whatever holds one ([`TradeBar::blocked`]): a
+    /// parked broker venue, no market yet, the risk lock.
+    pub reverse_block: Option<String>,
+    /// Close, Close 50% and Flatten: they only take exposure off, so nothing
+    /// that holds an entry holds them - a parked broker venue still answers
+    /// the trader's hand. `false` only while flat.
+    pub exits: bool,
+}
+
+/// Why a press that opens a position - an entry, or Reverse - is refused
+/// now, if it is: the broker's block first, then no market, then the risk
+/// lock in its own sentence.
+fn opening_block(
+    account: &PaperAccount,
+    locked: bool,
+    sentence: impl FnOnce() -> String,
+) -> Option<String> {
+    if let Some(block) = account.entry_block() {
+        Some(block.to_owned())
+    } else if !account.ready() {
+        Some(NO_MARKET_YET.to_owned())
+    } else if locked {
+        Some(format!("the risk lock is on - {}", sentence()))
+    } else {
+        None
+    }
+}
+
 impl Desk {
+    /// What the open position's buttons may do now. See [`PositionActions`].
+    #[must_use]
+    pub fn position_actions(&self, account: &PaperAccount) -> PositionActions {
+        let exits = account.venue().position().is_some();
+        let (state, locked) = self.risk_report(account);
+        PositionActions {
+            reverse_block: opening_block(account, locked, || state.sentence()),
+            exits,
+        }
+    }
+
     /// The TRADE group's words, from one risk read. `reverse_key` is the
     /// reverse shortcut as the host spells it (`Shift+R`), named once where
     /// the key is bound.
@@ -99,15 +143,7 @@ impl Desk {
         let quantity = state
             .derived_quantity()
             .or_else(|| self.ticket.quantity_preview());
-        let blocked = if let Some(block) = account.entry_block() {
-            Some(block.to_owned())
-        } else if !account.ready() {
-            Some(NO_MARKET_YET.to_owned())
-        } else if locked {
-            Some(format!("the risk lock is on - {}", state.sentence()))
-        } else {
-            None
-        };
+        let blocked = opening_block(account, locked, || state.sentence());
         let position = account.venue().position();
         let texts = |side: Side| {
             let face = entry_face(side, quantity);
