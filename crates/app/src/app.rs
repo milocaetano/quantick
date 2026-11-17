@@ -328,7 +328,6 @@ impl QuantickApp {
         // window's own copy of the span, which the trader then edits.
         let reach_span_minutes = config.history.reach_span_minutes;
         let paper_state = crate::paper_state::load(&state_path);
-        let cmd_trading = crate::paper_trading::CmdTradingSettings::from_state(&paper_state);
         let (trades_dir, consolidated) = crate::paper_home::startup_home(
             config.paper.trades_dir.as_deref(),
             paper_state.trades_dir.as_deref(),
@@ -343,50 +342,8 @@ impl QuantickApp {
             feed,
             trades_dir.clone(),
         );
-        tab.paper.set_cmd_trading(cmd_trading);
-        // The named ladders the trader built last session, and the one the
-        // ticket was set to. A selection naming a strategy the file no
-        // longer carries selects nothing, which `set_order_strategies`
-        // enforces rather than each caller remembering to.
-        tab.paper.account_mut().set_order_strategies(
-            paper_state.order_strategies.clone().unwrap_or_default(),
-            paper_state.selected_order_strategy.as_deref(),
-        );
-        // A step this build cannot parse is dropped rather than defaulted:
-        // the instrument then follows its derived default, which is a real
-        // answer, where a zero would be a silently broken wheel.
-        tab.paper.set_ruler_steps(
-            paper_state
-                .ruler_steps
-                .iter()
-                .filter_map(|(symbol, step)| step.parse().ok().map(|value| (symbol.clone(), value)))
-                .collect(),
-        );
-        // The risk per trade, and the money it is measured in. A trader who
-        // never set any of this gets the mode off and an empty book, which
-        // leaves every screen exactly as it was.
-        //
-        // Skipped when a launch hook set the risk for this run: an
-        // environment variable is an explicit request for one run and
-        // outranks the stored settings. Restoring them here left the hook's
-        // whole point - the derived size, the sentence, the lock -
-        // unreachable from a capture.
-        if !tab.paper.account().risk_from_hook() {
-            tab.paper
-                .account_mut()
-                .set_risk_settings(crate::risk_sizing::settings_from_sidecar(
-                    paper_state.risk_per_trade_basis.as_deref(),
-                    paper_state.risk_per_trade_amount.as_deref(),
-                    paper_state.risk_per_trade_currency.as_deref(),
-                    paper_state.risk_per_trade_percent.as_deref(),
-                    paper_state.risk_per_trade_lock,
-                ));
-            tab.paper
-                .account_mut()
-                .set_capital(crate::risk_sizing::capital_from_records(
-                    &paper_state.paper_capital,
-                ));
-        }
+        // The ticket settings the trader left, unless a launch hook outranks them.
+        tab.paper.restore_settings(&paper_state);
         crate::paper_state::restore_money(tab.paper.account_mut(), &paper_state);
         let mut runtime =
             workspace_runtime::WorkspaceRuntime::new(tab, trades_dir, reach_span_minutes, &config);

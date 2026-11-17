@@ -961,6 +961,8 @@ mod market_tests;
 #[cfg(test)]
 mod native_tests;
 #[cfg(test)]
+mod paper_settings_tests;
+#[cfg(test)]
 mod paper_tests;
 #[cfg(test)]
 mod series_tests;

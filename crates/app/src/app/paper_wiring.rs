@@ -14,24 +14,13 @@ use std::path::PathBuf;
 use quantick_paper::report::session_edit::{
     JournalEdit, JournalEditOutcome, JournalScope, SessionEditError, apply_journal_edit, edit_toast,
 };
+use quantick_session::paper::SharedSettings;
 
 use super::arrangement_host::ArrangementHost;
 use crate::paper_trading::PaperTrading;
 use crate::workspace_store::WorkspaceStore;
 
-/// One change the ticket, the dock or a capability made to a setting that
-/// every tab shares.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum PaperSettingsChange {
-    /// The cmd-trading modifiers and entry kind.
-    CmdTrading,
-    /// The risk per trade, the declared capital, the instrument money and
-    /// the figure P&L readouts lead with.
-    RiskSettings,
-    /// The named exit strategies, the ticket's selection and the wheel's
-    /// per-instrument step.
-    OrderStrategies,
-}
+pub(crate) use quantick_session::paper::SharedChange as PaperSettingsChange;
 
 /// The paper settings' two ports: every tab's simulator, and the store that
 /// knows where trades go and whether a folder dialog is open.
@@ -115,94 +104,13 @@ impl PaperSettingsAdapter<'_> {
     /// call whether a click or a capability changed it, so a named call
     /// leaves the durable trace a click does.
     pub(crate) fn persist(&mut self, change: PaperSettingsChange) {
-        match change {
-            PaperSettingsChange::CmdTrading => self.persist_cmd_trading(),
-            PaperSettingsChange::RiskSettings => self.persist_risk_settings(),
-            PaperSettingsChange::OrderStrategies => self.persist_order_strategies(),
-        }
-    }
-
-    fn persist_cmd_trading(&mut self) {
-        let settings = self.active().cmd_trading();
+        let shared = SharedSettings::of(&**self.active(), change);
         for tab in self.tabs.iter_mut() {
-            tab.paper.set_cmd_trading(settings);
+            shared.apply(&mut *tab.paper);
         }
         let path = crate::paper_state::default_path();
         let mut state = crate::paper_state::load(&path);
-        state.cmd_trading_enabled = Some(settings.enabled);
-        state.cmd_buy_modifier = Some(settings.buy.as_str().to_owned());
-        state.cmd_entry_kind = Some(settings.kind.as_str().to_owned());
-        state.cmd_sell_modifier = Some(settings.sell.as_str().to_owned());
-        crate::paper_state::save(&path, &state);
-    }
-
-    /// Persist the risk per trade, the declared capital and the instrument
-    /// money, and fan all three out.
-    ///
-    /// App-wide, like the ticket's other settings: a ceiling a trader sets
-    /// in one tab is one they mean everywhere, and what a point of WIN is
-    /// worth does not change because a second tab is looking at it.
-    fn persist_risk_settings(&mut self) {
-        let account = self.active().account();
-        let risk = account.risk_settings().clone();
-        let capital = account.capital().clone();
-        let book = account.instrument_money().clone();
-        let pnl = account.pnl_settings().clone();
-        for tab in self.tabs.iter_mut() {
-            tab.paper.account_mut().set_risk_settings(risk.clone());
-            tab.paper.account_mut().set_capital(capital.clone());
-            tab.paper.account_mut().set_instrument_money(book.clone());
-            tab.paper.account_mut().set_pnl_settings(pnl.clone());
-        }
-        let path = crate::paper_state::default_path();
-        let mut state = crate::paper_state::load(&path);
-        state.risk_per_trade_basis = Some(risk.basis.token().to_owned());
-        state.risk_per_trade_amount = Some(risk.amount.normalize().to_string());
-        state.risk_per_trade_percent = Some(risk.percent.normalize().to_string());
-        state.risk_per_trade_lock = Some(risk.lock);
-        state.paper_capital = crate::risk_sizing::records_from_capital(&capital);
-        state.instrument_money = crate::risk_sizing::records_from_book(&book);
-        state.pnl_primary = pnl.chosen.map(|primary| primary.token().to_owned());
-        crate::paper_state::save(&path, &state);
-    }
-
-    /// Persist the named exit strategies and the ticket's selection, and fan
-    /// them out - app-wide like cmd trading, because a ladder a trader built
-    /// in one tab is a ladder they mean everywhere.
-    fn persist_order_strategies(&mut self) {
-        // The wheel's per-instrument step rides with the strategies: both
-        // are ticket settings the trader configures once, and both are
-        // app-wide rather than per tab.
-        let steps: std::collections::BTreeMap<String, String> = self
-            .active()
-            .ruler_steps()
-            .iter()
-            .map(|(symbol, step)| (symbol.clone(), step.normalize().to_string()))
-            .collect();
-        let strategies = self.active().account().order_strategies().to_vec();
-        let selected = self
-            .active()
-            .account()
-            .selected_order_strategy()
-            .map(|strategy| strategy.name.clone());
-        for tab in self.tabs.iter_mut() {
-            tab.paper
-                .account_mut()
-                .set_order_strategies(strategies.clone(), selected.as_deref());
-            tab.paper.set_ruler_steps(
-                steps
-                    .iter()
-                    .filter_map(|(symbol, step)| {
-                        step.parse().ok().map(|value| (symbol.clone(), value))
-                    })
-                    .collect(),
-            );
-        }
-        let path = crate::paper_state::default_path();
-        let mut state = crate::paper_state::load(&path);
-        state.order_strategies = Some(strategies);
-        state.selected_order_strategy = selected;
-        state.ruler_steps = steps;
+        shared.record(&mut state);
         crate::paper_state::save(&path, &state);
     }
 }
