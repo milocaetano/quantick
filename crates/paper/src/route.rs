@@ -9,8 +9,9 @@
 //! - **The simulator is where every run starts.** A broker route is never
 //!   remembered: [`AccountRoute::new`] is the restart.
 //! - **DEMO is one action, REAL is a held gesture.** A REAL account arms only
-//!   after its row is held for [`HOLD_TO_ARM_MS`]; releasing earlier cancels.
-//!   No named call can stand in for the hold.
+//!   after its row is held for [`HOLD_TO_ARM_MS`]; releasing earlier cancels,
+//!   and so does a frame whose painted row did not report the press still
+//!   held. No named call can stand in for the hold.
 //! - **An agent never arms.** The control plane may take the account back to
 //!   the simulator - leaving the broker's exposure where it is, unless the
 //!   config allows agent orders; arming DEMO or REAL from it is refused with
@@ -469,6 +470,11 @@ impl AccountRoute {
         self.disarmed = None;
         self.route = Route::Real;
         RouteChange::ToBroker(Route::Real)
+    }
+
+    /// The press is gone without a release the window saw: nothing arms.
+    pub fn hold_cancel(&mut self) {
+        self.hold_started_ms = None;
     }
 
     /// The press ends. Released before the hold completes, nothing arms.

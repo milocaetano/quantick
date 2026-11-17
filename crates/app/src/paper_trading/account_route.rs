@@ -174,6 +174,9 @@ fn draw_row(
     match row.gesture {
         RowGesture::Click(route) if response.clicked() => Some(RoutePress::Click(route)),
         RowGesture::Hold if held && row.progress.is_none() => Some(RoutePress::HoldStart),
+        // Said every frame the row is painted and pressed: a hold whose row
+        // stops being painted ends rather than arming unseen.
+        RowGesture::Hold if held => Some(RoutePress::HoldStill),
         RowGesture::Hold if !held && row.progress.is_some() => Some(RoutePress::HoldRelease),
         _ => None,
     }

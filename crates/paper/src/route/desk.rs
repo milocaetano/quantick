@@ -37,6 +37,10 @@ pub enum RoutePress {
     Click(Route),
     /// The REAL row is pressed.
     HoldStart,
+    /// The REAL row was painted this frame and is still pressed. A frame
+    /// without it ends the hold: a row no longer painted (the panel
+    /// collapsed, the tab switched) cannot report a release either.
+    HoldStill,
     /// The REAL row is let go.
     HoldRelease,
     /// The choice asked for when leaving with exposure; `None` stays.
@@ -66,6 +70,8 @@ pub struct BrokerDesk {
     pub sheet_open: bool,
     /// A disarm or refusal the trader has not been told about yet.
     toast: Option<String>,
+    /// The held row reported itself still pressed since the last frame.
+    hold_seen: bool,
 }
 
 impl BrokerDesk {
@@ -124,9 +130,14 @@ impl BrokerDesk {
     /// to the facts, and put the venue where the route wants it.
     pub fn frame(&mut self, port: &mut dyn AccountsPort, source: SourceFacts, now_ms: i64) {
         let before = self.route.last_disarm();
-        // A held REAL row arms the frame its hold completes, released or not.
+        // A held REAL row arms the frame its hold completes, as long as the
+        // row reported itself still pressed since the last frame.
         if self.route.hold_progress(now_ms).is_some() {
-            self.hold(port, source, now_ms, false);
+            if std::mem::take(&mut self.hold_seen) {
+                self.hold(port, source, now_ms, false);
+            } else {
+                self.route.hold_cancel();
+            }
         }
         for notice in self.poll(port, now_ms) {
             let change = self.route.on_notice(&notice, now_ms);
@@ -174,7 +185,9 @@ impl BrokerDesk {
         now_ms: i64,
     ) -> Result<(), Refusal> {
         let facts = self.facts(port, source);
-        self.route.hold_start(now_ms, &facts)
+        self.route.hold_start(now_ms, &facts)?;
+        self.hold_seen = true;
+        Ok(())
     }
 
     /// The REAL row is still held (`released` false) or let go.
@@ -220,6 +233,10 @@ impl BrokerDesk {
                 .request(port, source, (route, Actor::Trader, None))
                 .map(|()| self.sheet_open = self.route.leaving()),
             RoutePress::HoldStart => self.hold_start(port, source, now_ms),
+            RoutePress::HoldStill => {
+                self.hold_seen = self.route.hold_progress(now_ms).is_some();
+                Ok(())
+            }
             RoutePress::HoldRelease => {
                 self.hold(port, source, now_ms, true);
                 Ok(())

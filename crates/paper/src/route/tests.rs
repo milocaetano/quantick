@@ -1130,3 +1130,38 @@ fn an_agent_disarms_only_by_leaving_at_the_broker_unless_allowed() {
         assert_eq!(session.read(&host).1, Route::Sim);
     }
 }
+
+#[test]
+fn a_hold_whose_row_stopped_being_painted_never_arms() {
+    let (venue, _script) = broker(TradeMode::Real);
+    let mut desk = BrokerDesk::new();
+    let mut tabs = Tabs::new();
+    desk.install(venue);
+    desk.press(&mut tabs, LIVE, RoutePress::OpenList, 0);
+    desk.press(&mut tabs, LIVE, RoutePress::HoldStart, 0);
+    desk.frame(&mut tabs, LIVE, 16);
+    desk.press(&mut tabs, LIVE, RoutePress::HoldStill, 32);
+    desk.frame(&mut tabs, LIVE, 32);
+    // The panel collapses mid-hold: no row is painted, so no report and no
+    // release ever comes.
+    desk.frame(&mut tabs, LIVE, 48);
+    assert_eq!(desk.route().hold_progress(48), None, "the hold ended");
+    desk.frame(&mut tabs, LIVE, 2 * HOLD_TO_ARM_MS);
+    assert_eq!(desk.route().route(), Route::Sim);
+}
+
+#[test]
+fn a_hold_reported_every_frame_arms_when_it_completes() {
+    let (venue, _script) = broker(TradeMode::Real);
+    let mut desk = BrokerDesk::new();
+    let mut tabs = Tabs::new();
+    desk.install(venue);
+    desk.press(&mut tabs, LIVE, RoutePress::HoldStart, 0);
+    let mut now = 0;
+    while now < HOLD_TO_ARM_MS {
+        now += 16;
+        desk.press(&mut tabs, LIVE, RoutePress::HoldStill, now);
+        desk.frame(&mut tabs, LIVE, now);
+    }
+    assert_eq!(desk.route().route(), Route::Real);
+}
