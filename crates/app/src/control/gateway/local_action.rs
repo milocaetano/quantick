@@ -105,13 +105,12 @@ impl ControlAccess {
                 )
             })?;
         let descriptor = &action.descriptor;
-        let traced = action.traced(origin.is_trace_replay())? && origin.may_be_traced();
+        let hook = matches!(origin, ActionOrigin::LaunchHook(_));
+        let traced = action.traced(origin.is_trace_replay())? && !hook;
         let actor = match &origin {
             // A remote caller's actor is what the connection proved at the
             // handshake, so an agent cannot sign an action as the trader.
-            ActionOrigin::Remote(actor) => (**actor).clone(),
-            #[cfg(any(feature = "control-harness", feature = "scenario-harness", test))]
-            ActionOrigin::LaunchHook(actor) => (**actor).clone(),
+            ActionOrigin::Remote(actor) | ActionOrigin::LaunchHook(actor) => (**actor).clone(),
             ActionOrigin::Human => self.local_actor(actor_kind, None),
             ActionOrigin::TraceReplay(_) => self.local_actor(
                 actor_kind,
@@ -208,7 +207,7 @@ impl ControlAccess {
         // leave an agent's object carrying no author at all.
         self.replayed_author = match &origin {
             ActionOrigin::TraceReplay(recorded) => Some((**recorded).clone()),
-            _ => None,
+            ActionOrigin::Human | ActionOrigin::Remote(_) | ActionOrigin::LaunchHook(_) => None,
         };
         let outcome = (action.handler)(app, self, &actor, &input).and_then(|result| {
             action

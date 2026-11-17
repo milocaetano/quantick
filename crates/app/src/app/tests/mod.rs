@@ -477,9 +477,7 @@ impl AgentCall for QuantickApp {
         capability_id: &str,
         input: serde_json::Value,
     ) -> Result<serde_json::Value, quantick_control::error::ControlError> {
-        self.agent_action(capability_id, input, |actor| {
-            crate::control::ActionOrigin::Remote(Box::new(actor))
-        })
+        self.agent_action(capability_id, input, crate::control::ActionOrigin::Remote)
     }
 }
 

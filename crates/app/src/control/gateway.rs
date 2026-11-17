@@ -130,9 +130,8 @@ pub(crate) enum ActionOrigin {
     /// would not be the session it claims to reproduce.
     TraceReplay(Box<RecordedActor>),
     Remote(Box<ActorContext>),
-    /// A launch hook acting as an agent: one launch's request, which no
-    /// replay's control trace records, or every later run would replay it.
-    #[cfg(any(feature = "control-harness", feature = "scenario-harness", test))]
+    /// A launch hook acting as an agent, which no replay's trace records.
+    #[cfg_attr(not(any(feature = "scenario-harness", test)), allow(dead_code))]
     LaunchHook(Box<ActorContext>),
 }
 
@@ -148,23 +147,12 @@ impl ActionOrigin {
         match self {
             Self::Human => ActorKind::HumanUi,
             Self::TraceReplay(_) => ActorKind::Automation,
-            Self::Remote(actor) => actor.actor_kind,
-            #[cfg(any(feature = "control-harness", feature = "scenario-harness", test))]
-            Self::LaunchHook(actor) => actor.actor_kind,
+            Self::Remote(actor) | Self::LaunchHook(actor) => actor.actor_kind,
         }
     }
 
     fn is_trace_replay(&self) -> bool {
         matches!(self, Self::TraceReplay(_))
-    }
-
-    /// Whether a replaying tab's control trace may record this action.
-    fn may_be_traced(&self) -> bool {
-        match self {
-            #[cfg(any(feature = "control-harness", feature = "scenario-harness", test))]
-            Self::LaunchHook(_) => false,
-            _ => true,
-        }
     }
 }
 

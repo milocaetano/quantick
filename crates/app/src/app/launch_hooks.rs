@@ -45,6 +45,8 @@ use crate::toolrail::ToolRailExt as _;
 #[cfg(any(feature = "scenario-harness", test))]
 use crate::{orderflow_panel::open_on, ui_state::PanelSection};
 #[cfg(any(feature = "scenario-harness", test))]
+use quantick_control_schema::{desk, launch_calls, layout};
+#[cfg(any(feature = "scenario-harness", test))]
 use quantick_feed::history_reach;
 
 #[cfg(any(feature = "scenario-harness", test))]
@@ -97,7 +99,7 @@ pub(super) fn apply_launch_phase(
         layout(app, env);
         replay(app, env);
         dock_and_report(app, env);
-        calls::on_flow_pane(app, env, "QUANTICK_PRICE_RANGE");
+        calls::on_flow_pane(app, env, "QUANTICK_PRICE_RANGE", launch_calls::price_range);
         workspace(app, env);
     }
     // An env var is not a user edit: what the autostart hooks switched on
@@ -123,20 +125,22 @@ mod calls {
 
     fn run<W: GatewayPort + ?Sized>(window: &mut W, call: Option<LaunchCall>) {
         if let Some((id, input)) = call {
-            window.run_hook_action(id, input);
+            window.run_hook_action(id, input, crate::control::ActionOrigin::LaunchHook);
         }
     }
 
     /// A hook addressed to the active tab's flow pane, the pane it always set.
-    pub(super) fn on_flow_pane<W>(window: &mut W, env: &Env, hook: &str)
+    pub(super) fn on_flow_pane<W>(window: &mut W, env: &Env, hook: &str, read: launch::PaneCall)
     where
         W: GatewayPort + TabsPort + ?Sized,
     {
         let tabs = window.tab_reads().tabs();
         let pane = tabs.get(tabs.active_index()).map(|tab| tab.flow_pane.id);
         let (tab, pane) = (tabs.active_id(), pane.unwrap_or_default());
-        let value = env.var(hook).unwrap_or_default();
-        run(window, launch::on_pane(hook, &value, tab, pane));
+        run(
+            window,
+            env.var(hook).and_then(|value| read(&value, tab, pane)),
+        );
     }
 
     pub(super) fn layout_tab<W: GatewayPort + LayoutPort + ?Sized>(window: &mut W, env: &Env) {
@@ -147,10 +151,14 @@ mod calls {
         }
     }
 
-    pub(super) fn switches<W: GatewayPort + ?Sized>(window: &mut W, env: &Env, hooks: &[&str]) {
-        for hook in hooks {
-            run(window, launch::switch(hook, env.var(hook).as_deref()));
-        }
+    /// A `1` switch for a call that takes no input.
+    pub(super) fn when_one<W: GatewayPort + ?Sized>(
+        window: &mut W,
+        env: &Env,
+        hook: &str,
+        id: &'static str,
+    ) {
+        run(window, launch::when_one(env.var(hook).as_deref(), id));
     }
 }
 
@@ -273,7 +281,7 @@ fn tape(app: &mut QuantickApp, env: &ScenarioInputs) {
             pane.price_view.set_inverted(true);
         }
     }
-    calls::on_flow_pane(app, env, "QUANTICK_TAPE");
+    calls::on_flow_pane(app, env, "QUANTICK_TAPE", launch_calls::tape);
     // The tape's own layer switches. The two panes are configured apart and
     // the tape's menu is a right-click a scripted run cannot perform, so the
     // state behind it needs a door of its own — the state, not a second
@@ -807,18 +815,26 @@ fn workspace(app: &mut QuantickApp, env: &ScenarioInputs) {
             ),
         }
     }
-    calls::switches(
+    calls::when_one(
         app,
         env,
-        &["QUANTICK_PANE_COLLAPSED", "QUANTICK_FLOW_PANE_COLLAPSED"],
+        "QUANTICK_PANE_COLLAPSED",
+        layout::COLLAPSE_CAPABILITY_ID,
     );
+    let flow = layout::FLOW_COLLAPSE_CAPABILITY_ID;
+    calls::when_one(app, env, "QUANTICK_FLOW_PANE_COLLAPSED", flow);
     let tab = app.active_tab_mut();
     let upper = env.var("QUANTICK_CONTEXT_UPPER_COLLAPSED").as_deref() == Some("1");
     let lower = env.var("QUANTICK_CONTEXT_LOWER_COLLAPSED").as_deref() == Some("1");
     if tab.canvas.layout == CanvasLayout::TimeTimeAndFlow && (upper ^ lower) {
         tab.canvas.fold_context_pane(upper);
     }
-    calls::switches(app, env, &["QUANTICK_WORKSPACE_SAVE"]);
+    calls::when_one(
+        app,
+        env,
+        "QUANTICK_WORKSPACE_SAVE",
+        desk::DESK_SAVE_CAPABILITY_ID,
+    );
     // A chart's ⋯ menu open, or one of its rows pressed, as a click does.
     let menu = env.var("QUANTICK_PANE_MENU");
     if let Some((slot, row)) = menu

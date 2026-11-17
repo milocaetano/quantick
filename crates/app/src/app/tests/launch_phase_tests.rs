@@ -114,8 +114,9 @@ fn the_workspace_save_hook_writes_the_desk_through_its_call() {
 }
 
 /// A launch hook's call is one launch's environment: a replaying tab's
-/// control trace records the trader's hand, never the hook, or every later
-/// run of the recording would replay what one launch asked for.
+/// control trace never records it, or every later run of the recording would
+/// replay what one launch asked for. A frame-time hook (annotate, notify)
+/// acts as a connected agent does, and its call stays traced.
 #[test]
 fn a_launch_hooks_call_never_lands_in_a_replays_control_trace() {
     use quantick_feed::replay::test_support::detached_link;
@@ -132,14 +133,18 @@ fn a_launch_hooks_call_never_lands_in_a_replays_control_trace() {
     let capability = quantick_control_schema::price_axis::PRICE_AXIS_CAPABILITY_ID;
     let traced = || std::fs::read_to_string(&sidecar).unwrap_or_default();
 
-    app.run_hook_action(capability, input.clone());
+    let launch = crate::control::ActionOrigin::LaunchHook;
+    app.run_hook_action(capability, input.clone(), launch);
     let pane = &app.active_tab().flow_pane;
     assert_eq!(pane.price_view.manual_range(), Some((90.0, 110.0)));
     assert!(!traced().contains(capability), "{}", traced());
 
-    let human = crate::control::ActionOrigin::Human;
-    app.control_action(capability, 1, human, input).unwrap();
-    assert!(traced().contains(capability), "the hand's call is traced");
+    let frame_hook = crate::control::ActionOrigin::Remote;
+    app.run_hook_action(capability, input, frame_hook);
+    assert!(
+        traced().contains(capability),
+        "a frame-time hook's call is traced"
+    );
 }
 
 #[test]

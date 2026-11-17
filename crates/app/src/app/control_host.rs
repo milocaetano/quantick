@@ -271,7 +271,7 @@ pub(crate) trait GatewayPort {
         &mut self,
         capability_id: &str,
         input: serde_json::Value,
-        origin: fn(quantick_control::wire::ActorContext) -> crate::control::ActionOrigin,
+        origin: fn(Box<quantick_control::wire::ActorContext>) -> crate::control::ActionOrigin,
     ) -> Result<serde_json::Value, quantick_control::error::ControlError> {
         let Some(mut access) = self.gateway_slot().take() else {
             return Err(quantick_control::error::ControlError::invalid_request(
@@ -286,25 +286,29 @@ pub(crate) trait GatewayPort {
                 "this window has no control identity to act with",
             ));
         };
-        let outcome =
-            access.invoke_local_action(self.as_window(), capability_id, 1, input, origin(actor));
+        let origin = origin(Box::new(actor));
+        let outcome = access.invoke_local_action(self.as_window(), capability_id, 1, input, origin);
         *self.gateway_slot() = Some(access);
         outcome
     }
 
-    /// A launch hook's action, as an agent and outside every replay's trace,
-    /// its failure reported where a scripted run sees it: nothing else would.
+    /// A hook's action as an agent, `origin` saying which kind of hook, its
+    /// failure reported where a scripted run sees it: nothing else would.
     #[cfg(any(feature = "control-harness", feature = "scenario-harness", test))]
-    fn run_hook_action(&mut self, capability_id: &str, input: serde_json::Value) {
-        let hook = |actor| crate::control::ActionOrigin::LaunchHook(Box::new(actor));
-        if let Err(error) = self.agent_action(capability_id, input, hook) {
+    fn run_hook_action(
+        &mut self,
+        capability_id: &str,
+        input: serde_json::Value,
+        origin: fn(Box<quantick_control::wire::ActorContext>) -> crate::control::ActionOrigin,
+    ) {
+        if let Err(error) = self.agent_action(capability_id, input, origin) {
             tracing::warn!(
                 target: "quantick::control",
                 event_code = "CONTROL_HOOK_ACTION_FAILED",
                 capability = capability_id,
                 error_code = %error.code,
                 error = %error.message,
-                "a launch hook could not run its action"
+                "a hook could not run its action"
             );
         }
     }

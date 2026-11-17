@@ -40,27 +40,9 @@ fn a_layout_tab_switches_to_a_known_name_and_creates_an_unknown_one() {
 
 #[test]
 fn a_switch_runs_its_call_only_on_one() {
-    for (hook, id) in [
-        ("QUANTICK_PANE_COLLAPSED", layout::COLLAPSE_CAPABILITY_ID),
-        (
-            "QUANTICK_FLOW_PANE_COLLAPSED",
-            layout::FLOW_COLLAPSE_CAPABILITY_ID,
-        ),
-        ("QUANTICK_WORKSPACE_SAVE", desk::DESK_SAVE_CAPABILITY_ID),
-    ] {
-        assert_eq!(switch(hook, Some("1")), Some((id, json!({}))));
-        assert_eq!(switch(hook, Some("0")), None);
-        assert_eq!(switch(hook, None), None);
-    }
-    assert_eq!(switch("QUANTICK_TOAST", Some("1")), None);
-}
-
-#[test]
-fn a_pane_hook_is_read_by_its_name_and_an_unknown_one_is_no_call() {
-    assert_eq!(
-        on_pane("QUANTICK_PRICE_RANGE", "1:2", 1, 2),
-        price_range("1:2", 1, 2)
-    );
-    assert_eq!(on_pane("QUANTICK_TAPE", "on", 1, 2), tape("on", 1, 2));
-    assert_eq!(on_pane("QUANTICK_TAPE_WINDOW", "on", 1, 2), None);
+    let id = layout::COLLAPSE_CAPABILITY_ID;
+    assert_eq!(when_one(Some("1"), id), Some((id, json!({}))));
+    assert_eq!(when_one(Some("0"), id), None);
+    assert_eq!(when_one(Some("true"), id), None);
+    assert_eq!(when_one(None, id), None);
 }

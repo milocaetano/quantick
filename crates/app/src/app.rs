@@ -262,6 +262,7 @@ impl QuantickApp {
     /// these local actions do not pass through configured remote-grant admission.
     #[cfg(any(feature = "control-harness", test))]
     pub(super) fn apply_control_annotate_hooks(&mut self) {
+        let remote = crate::control::ActionOrigin::Remote; // traced, as an agent's call is
         if self.control.scenarios.has_annotation() {
             let pane = self.active_tab().drawing_pane();
             let slot = pane.slots().saturating_sub(1);
@@ -273,12 +274,12 @@ impl QuantickApp {
                 _ => None,
             };
             if let Some(input) = self.control.scenarios.annotation(anchor) {
-                self.run_hook_action("annotate.label.create", input);
+                self.run_hook_action("annotate.label.create", input, remote);
             }
         }
         match self.control.scenarios.notification() {
             Some(control_host::NotificationStep::Ready { capability, input }) => {
-                self.run_hook_action(capability, input)
+                self.run_hook_action(capability, input, remote)
             }
             Some(control_host::NotificationStep::Refused { channel }) => tracing::warn!(
                 target: "quantick::control",
