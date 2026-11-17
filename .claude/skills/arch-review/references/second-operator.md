@@ -1,6 +1,6 @@
 # Dimension 7 — the second operator
 
-Read before writing an agent-surface finding. `CLAUDE.md`'s *Operable without a hand* points here.
+Read before writing an agent-surface finding. It grades `CLAUDE.md`'s *Operable without a hand*.
 
 quantick is going to grow an embedded assistant: something the trader talks to
 mid-session — *read this chart, build me a strategy from that region, put a
