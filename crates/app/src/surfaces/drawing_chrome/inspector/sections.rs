@@ -12,8 +12,7 @@ use super::super::{
     PRICE_DRAG_STEPS, RecordingPresetHost, SavedDefault,
 };
 use crate::drawings::{
-    self, DRAWING_TOOLS, Drawing, DrawingTool, MAX_DRAWING_FILL_ALPHA, MAX_DRAWING_WIDTH_PX,
-    MIN_DRAWING_WIDTH_PX,
+    self, Drawing, DrawingTool, MAX_DRAWING_FILL_ALPHA, MAX_DRAWING_WIDTH_PX, MIN_DRAWING_WIDTH_PX,
 };
 use crate::theme;
 
@@ -277,9 +276,7 @@ impl StyleTab<'_, '_> {
                 .on_hover_text(saved.hint(&name))
                 .clicked()
             {
-                for other in DRAWING_TOOLS {
-                    drawings::save_default_style(presets, surface, other, style);
-                }
+                drawings::save_style_on_every_tool(presets, surface, style);
                 actions.saved_default = Some(saved);
             }
             let saved = SavedDefault::Forgotten(ground);

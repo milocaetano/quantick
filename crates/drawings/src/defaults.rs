@@ -117,17 +117,18 @@ pub fn save_tool_default<T: ToolCatalog>(
     host.set_default_config(tool_id, ground, drawing.payload.export_preset());
 }
 
-/// Remember only the colour, width and fill new objects of `tool` open with on
-/// `surface`'s ground — the named call behind "colour on all tools", which
-/// carries the one property every tool shares.
-pub fn save_default_style<T: ToolCatalog>(
+/// Remember only the colour, width and fill every new drawing opens with on
+/// `surface`'s ground, whatever its tool — the named call behind "colour on
+/// all tools", which carries the one property every tool shares.
+pub fn save_style_on_every_tool(
     host: &mut dyn PresetHost,
     surface: ChartSurface,
-    tool: T,
     style: DrawingStyle,
 ) {
     let (_, ground) = opening_on(host, surface);
-    host.set_default_style(tool.id(), ground, Some(style));
+    for tool in crate::DRAWING_TOOLS {
+        host.set_default_style(tool.id(), ground, Some(style));
+    }
 }
 
 /// The ground whose saved defaults a new object on `surface` reads and writes.

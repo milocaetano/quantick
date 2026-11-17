@@ -173,3 +173,22 @@ fn going_back_to_the_built_in_look_forgets_the_default() {
         "nothing stored and nothing to store"
     );
 }
+
+/// "Colour on all tools" writes one look for every tool, on the saving
+/// pane's ground alone.
+#[test]
+fn a_colour_for_every_tool_reaches_every_tool_on_one_ground() {
+    let mut host = CountingHost::default();
+    let style = restyled(tool("trend-line"));
+    super::save_style_on_every_tool(&mut host, ChartSurface::Paper, style);
+    for each in DRAWING_TOOLS {
+        assert_eq!(
+            host.default_style(each.id(), Ground::Light),
+            Some(style),
+            "{}",
+            each.id()
+        );
+        assert_eq!(host.default_style(each.id(), Ground::Dark), None);
+    }
+    assert_eq!(host.style_writes, DRAWING_TOOLS.len());
+}
