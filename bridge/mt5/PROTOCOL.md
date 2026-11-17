@@ -651,10 +651,22 @@ The bridge remembers every reply by request id for as long as its process
 lives (bounded, oldest forgotten first). A request whose id was already
 answered gets the remembered reply again, `"cached":true`, and **never reaches
 `order_send` a second time** — a refusal is remembered too, never retried
-behind the trader's back. Quantick resends an unanswered request, same id and
-same line, only to the same `instance`; a bridge with a new instance has no
-memory, so quantick resends nothing and treats those requests' outcome as
-unknown until the next `state` shows it.
+behind the trader's back. Quantick resends an unanswered request only to the
+same `instance`, same id and same line plus `"replay_only":true`: it asks for
+the remembered answer, never for an execution.
+
+```json
+{"type":"submit","id":"a1b2-2","symbol":"WINZ26","side":"buy","kind":"market","volume":"2","sl":"124800","tp":null,"magic":7710001,"deviation":10,"comment":"a1b2-2","replay_only":true}
+{"type":"reply","id":"a1b2-2","retcode":null,"unknown":true,"error":"never received: not executed","cached":false}
+```
+
+A `replay_only` request whose id this process never answered was never
+received, so it is not executed — a late fill could land after the trader
+stood down — and the answer is `"unknown":true` (remembered like any other,
+so the id can never execute later). Quantick reports that request's outcome
+as unknown. A bridge with a new instance has no memory, so quantick resends
+nothing and treats those requests' outcome as unknown until the next `state`
+shows it.
 
 ### state (bridge → quantick)
 

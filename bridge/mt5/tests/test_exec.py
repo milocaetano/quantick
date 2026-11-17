@@ -246,6 +246,29 @@ def test_a_repeated_request_id_is_answered_from_memory_and_never_resent():
     check("marked as remembered", again["cached"] is True, again)
 
 
+def test_a_replay_only_request_the_bridge_never_answered_is_not_executed():
+    broker = FakeBroker()
+    cache = exe.ReplyCache()
+    replay = dict(submit("market"), replay_only=True)
+    reply = session(broker, cache).answer(replay)
+    check("the terminal was not asked", broker.sent == [], broker.sent)
+    check("the answer says unknown", reply["unknown"] is True and reply["retcode"] is None, reply)
+    check("with the reason", "not executed" in reply["error"], reply)
+    # The same id, sent again as a normal request, stays unexecuted.
+    again = session(broker, cache).answer(submit("market"))
+    check("still never executed", broker.sent == [] and again["unknown"] is True, again)
+
+
+def test_a_replay_only_request_gets_the_remembered_answer():
+    broker = FakeBroker()
+    cache = exe.ReplyCache()
+    first = session(broker, cache).answer(submit("market"))
+    again = session(broker, cache).answer(dict(submit("market"), replay_only=True))
+    check("order_send ran once", len(broker.sent) == 1, broker.sent)
+    check("the remembered answer", (again["retcode"], again["order"]) == (first["retcode"], first["order"]), again)
+    check("not unknown", "unknown" not in again, again)
+
+
 def test_a_refusal_is_remembered_too():
     broker = FakeBroker()
     broker.result = ns(retcode=10019, comment="No money", order=0, deal=0, volume=0.0, price=0.0)

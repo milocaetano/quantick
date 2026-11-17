@@ -53,6 +53,10 @@ pub struct Reply {
     pub order: u64,
     #[serde(default)]
     pub deal: u64,
+    /// The answer to a `replay_only` resend the bridge never answered
+    /// before: it did not execute it, and will not.
+    #[serde(default)]
+    pub unknown: bool,
 }
 
 /// One pushed snapshot of the watched symbol.
@@ -203,6 +207,20 @@ pub enum Request {
         position: u64,
         volume: Decimal,
     },
+}
+
+/// `line` asked again after a dropped link, for its remembered answer only:
+/// a bridge that never received it answers `unknown` and executes nothing.
+#[must_use]
+pub fn replay_only(line: &str) -> String {
+    match serde_json::from_str::<Value>(line) {
+        Ok(Value::Object(mut fields)) => {
+            fields.insert("replay_only".into(), Value::Bool(true));
+            Value::Object(fields).to_string()
+        }
+        // Never a line this side wrote; sent as it is, it could execute.
+        _ => String::new(),
+    }
 }
 
 impl Request {
@@ -379,6 +397,18 @@ mod tests {
                 volume: Decimal::ONE,
             }
             .encode("a1b2-7", stamp),
+            replay_only(
+                &Request::Submit {
+                    symbol: symbol(),
+                    side: Side::Buy,
+                    kind: "market",
+                    volume: Decimal::from(2),
+                    price: None,
+                    sl: Some(Decimal::from(124_800)),
+                    tp: None,
+                }
+                .encode("a1b2-2", stamp),
+            ),
         ];
         let mut requests = Vec::new();
         for line in lines {
@@ -395,6 +425,26 @@ mod tests {
             .map(|line| serde_json::from_str(line).expect("json"))
             .collect();
         assert_eq!(requests, encoded);
+    }
+
+    #[test]
+    fn a_replay_only_line_is_the_line_plus_the_flag() {
+        let line = Request::Cancel { order: 601 }.encode(
+            "a1b2-4",
+            Stamp {
+                magic: 1,
+                deviation_points: 1,
+            },
+        );
+        let replay: Value = serde_json::from_str(&replay_only(&line)).expect("json");
+        assert_eq!(replay["replay_only"], true);
+        assert_eq!(replay["id"], "a1b2-4");
+        assert_eq!(replay["order"], 601);
+        let unknown = r#"{"type":"reply","id":"a1b2-4","retcode":null,"unknown":true,"error":"never received: not executed","cached":false}"#;
+        let Some(Inbound::Reply(reply)) = decode(unknown) else {
+            panic!("a reply");
+        };
+        assert!(reply.unknown);
     }
 
     #[test]

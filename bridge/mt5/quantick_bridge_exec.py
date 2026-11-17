@@ -22,7 +22,8 @@ Three promises shape this file:
 - **A request id is answered once.** Every reply is remembered by the request's
   id, and a request whose id was already answered — quantick resending after a
   dropped link — gets the remembered reply again. It never reaches
-  ``order_send`` a second time. The memory lives as long as this process; the
+  ``order_send`` a second time, and a resend (``replay_only``) this process
+  never answered is reported ``unknown`` rather than executed late. The memory lives as long as this process; the
   ``instance`` in the hello tells quantick when a restart has emptied it.
 - **Nothing is decided here.** The terminal's return code and comment travel
   verbatim; which ones mean success, and what is the trader's and what is
@@ -217,6 +218,22 @@ class ExecSession(TransportMixin):
             remembered["cached"] = True
             log("EXEC_REQUEST_REPEATED", id=request_id, action="answer_from_memory")
             return remembered
+        if request.get("replay_only") is True:
+            # Quantick asks again about a request whose answer it lost. This
+            # process never answered it, so it never executed it: executing it
+            # now could fill after the trader stood down. Remembered, so the
+            # id can never run later either.
+            reply = {
+                "type": "reply",
+                "id": request_id,
+                "retcode": None,
+                "unknown": True,
+                "error": "never received: not executed",
+                "cached": False,
+            }
+            self.cache.put(request_id, reply)
+            log("EXEC_REPLAY_UNANSWERED", id=request_id, action="report_not_executed")
+            return reply
         try:
             reply = self.execute(request)
         except RequestError as error:

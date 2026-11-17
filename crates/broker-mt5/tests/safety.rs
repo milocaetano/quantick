@@ -43,12 +43,20 @@ fn a_request_resent_after_a_dropped_link_carries_the_same_id_and_is_applied_once
     );
 
     // The same bridge process dials back: it remembers its replies, so the
-    // unanswered request is resent under its own id, never a new one.
+    // unanswered request is asked about again under its own id, never a new
+    // one, and only for the answer: a bridge that never received it must not
+    // execute it now.
     bridge.connect("bridge-1");
     venue.poll();
     let resent = bridge.take_sent();
     assert_eq!(only(&resent, "submit")["id"], first["id"]);
-    assert_eq!(only(&resent, "submit"), first, "the very same line");
+    let mut asked = only(&resent, "submit");
+    assert_eq!(
+        asked["replay_only"], true,
+        "an answer, never a new execution"
+    );
+    asked.as_object_mut().unwrap().remove("replay_only");
+    assert_eq!(asked, first, "otherwise the very same line");
 
     // The bridge answers from memory — and a duplicate answer changes nothing.
     let answer = reply(
@@ -65,6 +73,38 @@ fn a_request_resent_after_a_dropped_link_carries_the_same_id_and_is_applied_once
         vec![VenueNotice::Acknowledged { id, venue_ref: 501 }],
         "acknowledged once"
     );
+}
+
+#[test]
+fn a_request_the_bridge_never_received_is_reported_unknown_not_executed() {
+    let (mut venue, bridge) = connected();
+    let id = match venue
+        .submit(OrderIntent::market(Side::Buy, dec(1)))
+        .as_slice()
+    {
+        [VenueEvent::Placed(order)] => order.id,
+        other => panic!("{other:?}"),
+    };
+    // Lost on the way: the link dropped before the bridge read it.
+    bridge.take_sent();
+    bridge.disconnect();
+    venue.poll();
+    bridge.connect("bridge-1");
+    venue.poll();
+    let asked = only(&bridge.take_sent(), "submit");
+    assert_eq!(asked["replay_only"], true);
+
+    // The bridge has no answer for it, so it says so and executes nothing.
+    bridge.push(&serde_json::json!({
+        "type": "reply", "id": asked["id"], "retcode": null, "unknown": true,
+        "error": "never received: not executed", "cached": false,
+    }));
+    let events = venue.poll();
+    assert_eq!(
+        notices(&events),
+        vec![VenueNotice::OutcomeUnknown { id: Some(id) }]
+    );
+    assert_eq!(venue.in_flight(), 0, "no longer waiting for a fill");
 }
 
 #[test]

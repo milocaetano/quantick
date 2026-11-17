@@ -57,10 +57,16 @@ impl BrokerCore {
         let same_bridge = self.instance.as_deref() == Some(instance.as_str());
         if same_bridge {
             // The bridge still remembers every reply it gave, so a request
-            // whose reply was lost is answered from that memory, never
-            // executed twice. Same id, same line.
-            self.outbox
-                .extend(self.requests.values().map(|request| request.line.clone()));
+            // whose reply was lost is asked about again, same id, for that
+            // answer only: one the bridge never received comes back
+            // `unknown` instead of executing now, after the trader may have
+            // stood down.
+            self.outbox.extend(
+                self.requests
+                    .values()
+                    .map(|request| wire::replay_only(&request.line))
+                    .filter(|line| !line.is_empty()),
+            );
         } else {
             self.abandon_unanswered(&mut events);
         }
@@ -83,25 +89,31 @@ impl BrokerCore {
     /// reported as of unknown outcome; the next state shows what happened.
     fn abandon_unanswered(&mut self, events: &mut Vec<VenueEvent>) {
         for (_, request) in std::mem::take(&mut self.requests) {
-            let id = match request.pending {
-                Pending::Watch => continue,
-                Pending::Submit(id) => {
-                    self.remove_own(id);
-                    Some(id)
-                }
-                Pending::Cancel { id, .. } => Some(id),
-                Pending::Modify { id, .. } => {
-                    self.changing.remove(&id);
-                    Some(id)
-                }
-                Pending::PositionStops { .. } => {
-                    self.stops_pending = false;
-                    None
-                }
-                Pending::Close { .. } => None,
-            };
-            events.push(VenueEvent::Notice(VenueNotice::OutcomeUnknown { id }));
+            self.abandon(request.pending, events);
         }
+    }
+
+    /// Stop waiting for one request whose outcome this side cannot know.
+    fn abandon(&mut self, pending: Pending, events: &mut Vec<VenueEvent>) {
+        let id = match pending {
+            Pending::Watch => return,
+            Pending::Submit(id) => {
+                self.remove_own(id);
+                self.cancel_on_ack.remove(&id);
+                Some(id)
+            }
+            Pending::Cancel { id, .. } => Some(id),
+            Pending::Modify { id, .. } => {
+                self.changing.remove(&id);
+                Some(id)
+            }
+            Pending::PositionStops { .. } => {
+                self.stops_pending = false;
+                None
+            }
+            Pending::Close { .. } => None,
+        };
+        events.push(VenueEvent::Notice(VenueNotice::OutcomeUnknown { id }));
     }
 
     /// Take an own order out of the working list or the in-flight entries.
@@ -129,6 +141,11 @@ impl BrokerCore {
         let Some(request) = self.requests.remove(&number) else {
             return Vec::new();
         };
+        if reply.unknown {
+            let mut events = Vec::new();
+            self.abandon(request.pending, &mut events);
+            return events;
+        }
         let refusal = RejectReason::Venue {
             code: reply.retcode,
             message: VenueText::new(
