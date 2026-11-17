@@ -21,7 +21,7 @@
 //!   link lost, the terminal logged into another account or refused, broker
 //!   routes switched off, or a chart whose source cannot route orders.
 
-use quantick_trading::{TradeMode, VenueNotice};
+use quantick_trading::{AccountFacts, TradeMode, VenueNotice};
 
 mod desk;
 mod scene;
@@ -103,6 +103,32 @@ impl Route {
     }
 }
 
+/// Which account a terminal is logged into: its login and a fingerprint of
+/// its server. Two REAL accounts share a route word; they never share this.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct AccountKey {
+    pub login: u64,
+    server: u64,
+}
+
+impl AccountKey {
+    /// The key of `facts`. The server is folded with FNV-1a: fixed, so the
+    /// same account always has the same key.
+    #[must_use]
+    pub fn of(facts: &AccountFacts) -> Self {
+        let server = facts
+            .server
+            .bytes()
+            .fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| {
+                (hash ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3)
+            });
+        Self {
+            login: facts.login,
+            server,
+        }
+    }
+}
+
 /// Who asks for a route change.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Actor {
@@ -122,6 +148,9 @@ pub struct RouteFacts {
     pub source_routes: bool,
     /// The broker route the terminal's account allows, once it has said.
     pub account: Option<Route>,
+    /// Which account that is: a route armed on one never stays armed on
+    /// another, of the same kind or not.
+    pub account_key: Option<AccountKey>,
     /// The link to the broker is up.
     pub link_up: bool,
     /// A position or working orders sit at the broker.
@@ -249,6 +278,8 @@ pub struct AccountRoute {
     route: Route,
     /// When the press on a REAL row began, while it is held.
     hold_started_ms: Option<i64>,
+    /// The account the press began on, or the armed route is armed on.
+    account_key: Option<AccountKey>,
     /// The last time the route went back on its own, and why.
     disarmed: Option<(Disarm, i64)>,
     /// A trader asked to leave with exposure and has not chosen how.
@@ -371,6 +402,7 @@ impl AccountRoute {
         self.leaving = false;
         self.disarmed = None;
         self.route = Route::Demo;
+        self.account_key = facts.account_key;
         Ok(RouteChange::ToBroker(Route::Demo))
     }
 
@@ -404,6 +436,7 @@ impl AccountRoute {
         Self::availability(facts, Route::Real)?;
         if self.route != Route::Real {
             self.hold_started_ms = Some(now_ms);
+            self.account_key = facts.account_key;
         }
         Ok(())
     }
@@ -414,7 +447,9 @@ impl AccountRoute {
         let Some(started) = self.hold_started_ms else {
             return RouteChange::None;
         };
-        if Self::availability(facts, Route::Real).is_err() {
+        if Self::availability(facts, Route::Real).is_err() || facts.account_key != self.account_key
+        {
+            // Pressed on one account, never armed on another.
             self.hold_started_ms = None;
             return RouteChange::None;
         }
@@ -446,7 +481,9 @@ impl AccountRoute {
             return RouteChange::None;
         }
         let reason = match Self::availability(facts, self.route) {
-            Ok(()) => return RouteChange::None,
+            Ok(()) if facts.account_key == self.account_key => return RouteChange::None,
+            // The same kind of account, but not the one that was armed.
+            Ok(()) => Disarm::AccountChanged,
             Err(Refusal::BrokerOff) => Disarm::BrokerOff,
             Err(Refusal::SourceCannotRoute) => Disarm::SourceCannotRoute,
             Err(Refusal::LinkDown | Refusal::NoAccount) => Disarm::LinkLost,

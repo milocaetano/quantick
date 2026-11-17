@@ -41,6 +41,33 @@ pub(crate) struct Venues {
 pub(crate) struct Guarded {
     venue: Box<dyn BrokerVenue>,
     routed: bool,
+    /// What the route must hear about the link and the account, from
+    /// whichever call drained it - a print drains the venue too - until
+    /// [`PaperAccount::poll_broker`] hands it over.
+    for_route: Vec<VenueNotice>,
+}
+
+/// Notices kept for the route at most; the route reads them every frame.
+const ROUTE_NOTICE_CAP: usize = 16;
+
+impl Guarded {
+    /// Keep the notices the route acts on, and pass `events` through.
+    fn keep(&mut self, events: Vec<VenueEvent>) -> Vec<VenueEvent> {
+        for event in &events {
+            if let VenueEvent::Notice(
+                notice @ (VenueNotice::LinkLost
+                | VenueNotice::AccountChanged
+                | VenueNotice::AccountRefused(_)),
+            ) = event
+            {
+                if self.for_route.len() == ROUTE_NOTICE_CAP {
+                    self.for_route.remove(0);
+                }
+                self.for_route.push(notice.clone());
+            }
+        }
+        events
+    }
 }
 
 /// Why an entry is refused while the broker venue is parked with exposure.
@@ -99,31 +126,38 @@ impl TradingVenue for Guarded {
                 PARKED_ENTRY_BLOCK,
             ))];
         }
-        self.venue.submit(intent)
+        let events = self.venue.submit(intent);
+        self.keep(events)
     }
 
     fn amend_price(&mut self, id: OrderId, price: Decimal) -> Vec<VenueEvent> {
-        self.venue.amend_price(id, price)
+        let events = self.venue.amend_price(id, price);
+        self.keep(events)
     }
 
     fn amend_bracket(&mut self, target: BracketTarget, bracket: Bracket) -> Vec<VenueEvent> {
-        self.venue.amend_bracket(target, bracket)
+        let events = self.venue.amend_bracket(target, bracket);
+        self.keep(events)
     }
 
     fn cancel(&mut self, id: OrderId) -> Vec<VenueEvent> {
-        self.venue.cancel(id)
+        let events = self.venue.cancel(id);
+        self.keep(events)
     }
 
     fn close(&mut self, amount: CloseAmount) -> Vec<VenueEvent> {
-        self.venue.close(amount)
+        let events = self.venue.close(amount);
+        self.keep(events)
     }
 
     fn flatten(&mut self) -> Vec<VenueEvent> {
-        self.venue.flatten()
+        let events = self.venue.flatten();
+        self.keep(events)
     }
 
     fn on_trade(&mut self, trade: &Trade) -> Vec<VenueEvent> {
-        self.venue.on_trade(trade)
+        let events = self.venue.on_trade(trade);
+        self.keep(events)
     }
 
     fn seed(&mut self, trade: &Trade) {
@@ -131,7 +165,8 @@ impl TradingVenue for Guarded {
     }
 
     fn reset(&mut self) -> Vec<VenueEvent> {
-        self.venue.reset()
+        let events = self.venue.reset();
+        self.keep(events)
     }
 
     fn mark_price(&self) -> Option<Decimal> {
@@ -187,6 +222,7 @@ impl PaperAccount {
         self.venue.broker = Some(Guarded {
             venue,
             routed: true,
+            for_route: Vec::new(),
         });
         self.handle_events(events);
     }
@@ -349,12 +385,15 @@ impl PaperAccount {
     /// notices for the route to read.
     pub fn poll_broker(&mut self, now_ms: i64) -> Vec<VenueNotice> {
         let shown = self.broker_shown();
-        let Some(broker) = self.venue_broker_mut() else {
+        let Some(guarded) = self.venue.broker.as_mut() else {
             return Vec::new();
         };
+        // What another drain took off first, in the order it was said.
+        let mut notices = std::mem::take(&mut guarded.for_route);
+        let broker = guarded.venue.as_mut();
         let mut events = broker.poll();
         events.extend(broker.tick(now_ms));
-        let notices = notices_of(&events);
+        notices.extend(notices_of(&events));
         if shown {
             self.handle_events(events);
         } else {

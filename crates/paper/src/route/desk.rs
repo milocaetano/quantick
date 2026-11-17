@@ -10,7 +10,7 @@
 
 use quantick_trading::{BrokerVenue, LinkState, VenueNotice};
 
-use super::{AccountRoute, Actor, Leave, Refusal, Route, RouteChange, RouteFacts};
+use super::{AccountKey, AccountRoute, Actor, Leave, Refusal, Route, RouteChange, RouteFacts};
 use crate::PaperAccount;
 
 /// The host's tabs, as the desk reaches them: which one is active, and each
@@ -107,13 +107,14 @@ impl BrokerDesk {
     #[must_use]
     pub fn facts(&self, port: &dyn AccountsPort, source: SourceFacts) -> RouteFacts {
         let venue = self.venue(port);
+        let account = venue
+            .and_then(BrokerVenue::account)
+            .filter(|facts| facts.margin_mode.nets());
         RouteFacts {
             broker_enabled: source.broker_enabled,
             source_routes: source.source_routes,
-            account: venue
-                .and_then(BrokerVenue::account)
-                .filter(|facts| facts.margin_mode.nets())
-                .map(|facts| Route::of_mode(facts.trade_mode)),
+            account: account.map(|facts| Route::of_mode(facts.trade_mode)),
+            account_key: account.map(AccountKey::of),
             link_up: venue.is_some_and(|venue| venue.link_state() == LinkState::Up),
             exposure: venue.is_some_and(|venue| !venue.is_idle()),
         }

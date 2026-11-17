@@ -25,6 +25,7 @@ fn armed_facts(account: Route) -> RouteFacts {
         broker_enabled: true,
         source_routes: true,
         account: Some(account),
+        account_key: None,
         link_up: true,
         exposure: false,
     }
@@ -221,6 +222,8 @@ struct Script {
     /// Every time the desk handed the venue, and what it says then.
     ticked: Vec<i64>,
     on_tick: Vec<VenueEvent>,
+    /// The terminal logged into another account of the same kind.
+    login: Option<u64>,
 }
 
 /// A simulator wearing a broker's reads.
@@ -250,7 +253,10 @@ impl TradingVenue for FakeBroker {
         self.sim.flatten()
     }
     fn on_trade(&mut self, trade: &Trade) -> Vec<VenueEvent> {
-        self.sim.on_trade(trade)
+        // As the MetaTrader venue does: a print drains what the broker said.
+        let mut events = self.sim.on_trade(trade);
+        events.append(&mut self.script.borrow_mut().said);
+        events
     }
     fn seed(&mut self, trade: &Trade) {
         self.sim.seed(trade);
@@ -290,6 +296,9 @@ impl BrokerVenue for FakeBroker {
     }
     fn tick(&mut self, now_ms: i64) -> Vec<VenueEvent> {
         let mut script = self.script.borrow_mut();
+        if let Some(login) = script.login {
+            self.facts.login = login;
+        }
         script.ticked.push(now_ms);
         std::mem::take(&mut script.on_tick)
     }
@@ -976,4 +985,49 @@ fn the_desk_hands_the_frame_time_to_the_broker_wherever_it_sits() {
     assert_eq!(script.borrow().ticked.last(), Some(&9_000));
     assert_eq!(desk.route().route(), Route::Sim);
     assert_eq!(desk.route().last_disarm(), Some((Disarm::LinkLost, 9_000)));
+}
+
+#[test]
+fn a_notice_a_print_drained_still_reaches_the_route() {
+    let (mut desk, mut tabs, script) = armed(TradeMode::Real);
+    tabs.active().seed(&print(0, 100));
+    // The terminal changed account; the print drains the venue first, as the
+    // MetaTrader venue's on_trade does, and only the toast saw it.
+    let changed = VenueEvent::Notice(VenueNotice::AccountChanged);
+    script.borrow_mut().said.push(changed);
+    tabs.active().on_trade(&print(1, 100));
+    desk.frame(&mut tabs, LIVE, 4_000);
+    assert_eq!(desk.route().route(), Route::Sim);
+    assert_eq!(
+        desk.route().last_disarm(),
+        Some((Disarm::AccountChanged, 4_000))
+    );
+}
+
+#[test]
+fn another_login_of_the_same_kind_disarms_without_a_notice() {
+    let (mut desk, mut tabs, script) = armed(TradeMode::Real);
+    desk.frame(&mut tabs, LIVE, 1_000);
+    assert_eq!(desk.route().route(), Route::Real);
+    // REAL A to REAL B, and no notice said so: the facts still differ.
+    script.borrow_mut().login = Some(51_999_999);
+    desk.frame(&mut tabs, LIVE, 2_000);
+    assert_eq!(desk.route().route(), Route::Sim);
+    assert_eq!(
+        desk.route().last_disarm(),
+        Some((Disarm::AccountChanged, 2_000))
+    );
+}
+
+#[test]
+fn a_hold_begun_on_one_account_never_arms_another() {
+    let (venue, script) = broker(TradeMode::Real);
+    let mut desk = BrokerDesk::new();
+    let mut tabs = Tabs::new();
+    desk.install(venue);
+    desk.hold_start(&tabs, LIVE, 0).expect("REAL is available");
+    script.borrow_mut().login = Some(51_999_999);
+    desk.frame(&mut tabs, LIVE, 10);
+    desk.hold(&mut tabs, LIVE, HOLD_TO_ARM_MS, false);
+    assert_eq!(desk.route().route(), Route::Sim);
 }

@@ -26,6 +26,7 @@ impl RouteWindow {
                 broker_enabled: true,
                 source_routes: true,
                 account: Some(Route::Demo),
+                account_key: None,
                 link_up: true,
                 exposure: false,
             },
