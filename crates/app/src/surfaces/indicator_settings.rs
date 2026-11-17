@@ -160,7 +160,6 @@ pub(crate) fn effects(effects: Effects) -> SurfaceResponse {
             .then_some(HostEffect::IndicatorSettings(effects))
             .into_iter()
             .collect(),
-        ..Default::default()
     }
 }
 

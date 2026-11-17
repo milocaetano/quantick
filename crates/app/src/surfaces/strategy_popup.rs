@@ -30,11 +30,10 @@ fn form<'a>(session: &'a Session<'_>) -> &'a presets::StoredPreset {
     &session.state().popup().expect("painted open dialog").form
 }
 pub(crate) fn effects(effects: Effects) -> SurfaceResponse {
-    SurfaceResponse {
-        arm_strategy: effects.arm,
-        test_alert: effects.test_alert,
-        ..Default::default()
-    }
+    SurfaceResponse::effect_if(
+        effects.arm.is_some() || effects.test_alert.is_some(),
+        super::HostEffect::StrategyPopup(effects),
+    )
 }
 impl super::View<Model> for View {
     fn id(&self) -> &'static str {

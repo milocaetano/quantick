@@ -206,7 +206,6 @@ pub(crate) fn effects(effects: Effects) -> SurfaceResponse {
     );
     SurfaceResponse {
         model_effects: vec![HostEffect::ReplayBrowser(effects)],
-        ..Default::default()
     }
 }
 /// Consume the completed payload once. Successful loading precedes transport input.

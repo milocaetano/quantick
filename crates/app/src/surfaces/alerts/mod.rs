@@ -75,11 +75,10 @@ impl super::View<Model> for View {
 }
 
 pub(crate) fn effects(effects: Effects) -> SurfaceResponse {
-    SurfaceResponse {
-        alerts: effects.request,
-        test_alert: effects.preview,
-        ..SurfaceResponse::default()
-    }
+    SurfaceResponse::effect_if(
+        effects != Effects::default(),
+        super::HostEffect::Alerts(effects),
+    )
 }
 
 /// The editor window over the chart, while a draft is open.

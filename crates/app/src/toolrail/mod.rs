@@ -829,7 +829,6 @@ pub(crate) fn effects(
         } else {
             vec![quantick_ui_model::HostEffect::ToolRail(effects)]
         },
-        ..Default::default()
     }
 }
 impl crate::surfaces::View<Model> for View {

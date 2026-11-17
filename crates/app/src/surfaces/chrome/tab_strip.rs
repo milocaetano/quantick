@@ -39,6 +39,5 @@ pub(crate) fn effects(effects: Effects) -> SurfaceResponse {
     }
     SurfaceResponse {
         model_effects: vec![HostEffect::ChromeTabStrip(effects)],
-        ..Default::default()
     }
 }

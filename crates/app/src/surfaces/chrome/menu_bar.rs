@@ -239,7 +239,6 @@ pub(crate) fn scrolled(height: f32, ui: &mut egui::Ui, add: impl FnOnce(&mut egu
 pub(crate) fn effects(effects: Effects) -> crate::surfaces::SurfaceResponse {
     crate::surfaces::SurfaceResponse {
         model_effects: vec![quantick_ui_model::HostEffect::ChromeMenuBar(effects)],
-        ..Default::default()
     }
 }
 

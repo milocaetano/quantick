@@ -177,7 +177,7 @@ fn painted_side_submit_and_cancel_emit_model_intents() {
     let arm_center = text_center(&painted, "Arm");
     assert!(arm_center.y < 768.0, "footer remains reachable on a laptop");
     let response = click(&mut surface, &ctx, arm_center);
-    assert_eq!(response.arm_strategy.unwrap().form.side, "sell");
+    assert_eq!(response.late().arm_strategy.unwrap().form.side, "sell");
     assert!(surface.model_state.is_open(), "host has not settled yet");
     let (painted, _) = frame(&mut surface, &ctx, vec![]);
     let response = click(&mut surface, &ctx, text_center(&painted, "Cancel"));
@@ -247,7 +247,7 @@ fn painted_sound_test_routes_the_current_cue_without_closing() {
         );
     }
     assert_eq!(
-        response.test_alert,
+        response.late().test_alert,
         Some(crate::audio::Cue::new(
             AlertSound::default(),
             Some(presets::DEFAULT_ALARM_PLAY_SECS)

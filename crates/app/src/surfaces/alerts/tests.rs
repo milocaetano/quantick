@@ -113,7 +113,7 @@ mod confirmation {
             draft.revision = Some(3);
             draft.spec.id = AlertId(7);
         });
-        assert!(click(&mut surface, &ctx, "Delete").alerts.is_none());
+        assert!(click(&mut surface, &ctx, "Delete").late().alerts.is_none());
         assert!(draft(&surface).confirming_delete);
         let (_, response) = frame(
             &mut surface,
@@ -126,15 +126,15 @@ mod confirmation {
                 modifiers: egui::Modifiers::NONE,
             }],
         );
-        assert!(response.alerts.is_none());
+        assert!(response.late().alerts.is_none());
         assert!(!draft(&surface).confirming_delete);
-        assert!(click(&mut surface, &ctx, "Delete").alerts.is_none());
-        assert!(click(&mut surface, &ctx, "Keep alert").alerts.is_none());
+        assert!(click(&mut surface, &ctx, "Delete").late().alerts.is_none());
+        assert!(click(&mut surface, &ctx, "Keep alert").late().alerts.is_none());
         assert!(!draft(&surface).confirming_delete);
-        assert!(click(&mut surface, &ctx, "Delete").alerts.is_none());
+        assert!(click(&mut surface, &ctx, "Delete").late().alerts.is_none());
         let response = click(&mut surface, &ctx, "Confirm delete");
         assert_eq!(
-            response.alerts.unwrap().command,
+            response.late().alerts.unwrap().command,
             Some(AlertCommand::Delete {
                 id: AlertId(7),
                 expected_revision: 3
@@ -200,11 +200,11 @@ fn alert_target_controls_keep_operators_compatible() {
         });
         assert!(
             confirmation::click(&mut surface, &ctx, "Value")
-                .alerts
+                .late().alerts
                 .is_none()
         );
         let request = confirmation::click(&mut surface, &ctx, "Region fixture")
-            .alerts
+            .late().alerts
             .unwrap();
         assert_eq!(request.resolve, Some(selector));
         surface.settle_target(Ok(target.clone()));
@@ -213,12 +213,12 @@ fn alert_target_controls_keep_operators_compatible() {
         assert_eq!(condition.operator, expected);
         assert!(
             confirmation::click(&mut surface, &ctx, "Region fixture")
-                .alerts
+                .late().alerts
                 .is_none()
         );
         assert!(
             confirmation::click(&mut surface, &ctx, "Value")
-                .alerts
+                .late().alerts
                 .is_none()
         );
         let condition = &draft(&surface).spec.conditions[0];
@@ -261,7 +261,7 @@ fn alert_storage_error_never_renders_an_empty_manager() {
         let output = ctx.run(egui::RawInput::default(), |ctx| {
             assert!(
                 draw_manager_panel(&mut surface, ctx, &book, env.alert_error, None)
-                    .alerts
+                    .late().alerts
                     .is_none()
             );
         });
@@ -316,7 +316,7 @@ fn alert_surface_harness() {
                     ..Default::default()
                 },
                 |ctx| {
-                    assert!(surface.draw(ctx, &env).alerts.is_none());
+                    assert!(surface.draw(ctx, &env).late().alerts.is_none());
                 },
             );
             assert!(!output.shapes.is_empty());
