@@ -359,3 +359,39 @@ fn update_candles_refuses_a_changed_theme_owned_value_and_names_the_marker() {
         "an echo of the shown style is no edit"
     );
 }
+
+/// The call journals what the owner answered and maps its refusals.
+#[test]
+fn the_call_journals_the_owners_answer_and_types_its_refusals() {
+    use crate::test_support::{FakeAccess, FakeWindow};
+    let (mut window, actor) = (FakeWindow::new(Vec::new()), FakeWindow::assistant());
+    let mut access = FakeAccess::with_budget(0);
+    let input = json!({"action": "close"});
+    let refused = set(&mut window, &mut access, &actor, &input).unwrap_err();
+    assert_eq!(refused.code.as_str(), codes::INVALID_REQUEST);
+    window.chart_settings = Err(PresetError::NotWritten("disk full".to_owned()));
+    let unwritten = set(&mut window, &mut access, &actor, &input).unwrap_err();
+    assert_eq!(unwritten.code.as_str(), codes::CAPABILITY_UNAVAILABLE);
+    assert!(unwritten.retryable);
+    assert_eq!(
+        unwritten.context.details,
+        Some(json!({"reason": "presets_not_written"}))
+    );
+    assert!(access.events.is_empty());
+    let result = ChartSettingsResult {
+        open: false,
+        tab: ChartSettingsTab::default(),
+        target: None,
+        effective_style: None,
+        candle_preset: None,
+        built_in_presets: Vec::new(),
+        custom_presets: Vec::new(),
+        changed: true,
+    };
+    window.chart_settings = Ok(result.clone());
+    let answer = set(&mut window, &mut access, &actor, &input).unwrap();
+    assert_eq!(answer, serde_json::to_value(&result).unwrap());
+    assert_eq!(access.events[0].kind.as_str(), CHART_SETTINGS_EVENT_KIND);
+    assert_eq!(access.events[0].payload, json!({"chart_settings": answer}));
+    assert_eq!(window.settings_asked.len(), 3);
+}

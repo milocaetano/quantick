@@ -2,11 +2,16 @@
 //! window can say — where its last frame laid a pane out, which tab and side
 //! it sits on, and what its feed provides.
 
+use quantick_control::{error::ControlError, wire::WireU64};
+use quantick_control_handlers::axis_pane::AxisPane;
 pub(crate) use quantick_control_handlers::chart::chart_window_prevalidated;
 use quantick_control_handlers::chart::{
     ChartPaneEntry, ChartPaneSource, ChartPort, MissingPane, PaneFraming,
 };
+use quantick_control_handlers::chart_layer::LayerRead;
 pub(crate) use quantick_control_schema::chart::*;
+use quantick_control_schema::chart_settings::{ChartSettingsInput, ChartSettingsResult};
+use quantick_stores::candle_presets::PresetError;
 
 use quantick_engine::Bar;
 
@@ -44,6 +49,40 @@ impl ChartPort for dyn ControlPort {
 
     fn price_tag_progress(&self, tab_id: u64) -> bool {
         self.layout_state().bar_progress_on(tab_id)
+    }
+
+    fn axis_pane(
+        &mut self,
+        tab_id: WireU64,
+        pane_id: WireU64,
+    ) -> Result<&mut dyn AxisPane, ControlError> {
+        Ok(super::price_axis::pane(self, tab_id, pane_id)?)
+    }
+
+    fn apply_chart_settings(
+        &mut self,
+        input: ChartSettingsInput,
+    ) -> Result<ChartSettingsResult, PresetError> {
+        self.layer_wiring().chart_settings(input)
+    }
+
+    fn chart_layer(
+        &self,
+        tab_id: WireU64,
+        pane_id: WireU64,
+        layer_id: &str,
+    ) -> Result<LayerRead, ControlError> {
+        super::layers::chart_layer(self, tab_id, pane_id, layer_id)
+    }
+
+    fn switch_chart_layer(
+        &mut self,
+        tab_id: WireU64,
+        pane_id: WireU64,
+        layer_id: &str,
+        visible: bool,
+    ) -> Result<(), ControlError> {
+        super::layers::switch_chart_layer(self, tab_id, pane_id, layer_id, visible)
     }
 
     fn visit_chart_pane(

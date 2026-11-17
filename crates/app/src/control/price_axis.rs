@@ -1,18 +1,17 @@
-//! Named price and tape framing over the same pane state as their gestures.
-use super::actions::ActionRegistry;
-use super::{gateway::ControlAccess, layout};
+//! The addressed pane, resolved for the calls that act on it, and the pane
+//! and its native tape as `quantick_control_handlers::axis_pane` acts on
+//! them: the same pane state the axis gestures change.
+use super::layout;
 use crate::app::{TabsMutPort, TabsPort};
+use crate::orderflow_view::OrderflowView;
 use crate::pane::ChartPane;
-use quantick_control::wire::{ActorContext, WireU64};
-use quantick_control::{error::ControlError, registry::RegistryError};
-use quantick_control_schema::price_axis::{PriceAxisInput, PriceAxisResult, descriptor};
-use quantick_control_schema::tape_view::{TapeViewInput, TapeViewResult};
-use serde_json::Value;
-
-pub(crate) fn register(registry: &mut ActionRegistry) -> Result<(), RegistryError> {
-    registry.register(descriptor(), set)?;
-    registry.register(quantick_control_schema::tape_view::descriptor(), set_tape)
-}
+use quantick_control::{error::ControlError, wire::WireU64};
+use quantick_control_handlers::axis_pane::{AxisPane, NativeTape};
+use quantick_control_schema::chart::ViewportSnapshot;
+use quantick_control_schema::tape_view::TapeViewSnapshot;
+use quantick_drawings::{DrawingTool, Drawings};
+use quantick_orderflow::LaneWindow;
+use quantick_orderflow::tape_view::TapeEnd;
 
 pub(super) fn invalid(error: impl ToString) -> ControlError {
     ControlError::invalid_request(error.to_string())
@@ -33,60 +32,52 @@ pub(super) fn pane<P: TabsPort + TabsMutPort + ?Sized>(
         .ok_or_else(|| invalid("the call names an unknown pane on the requested tab"))
 }
 
-fn set<P: TabsPort + TabsMutPort + ?Sized>(
-    app: &mut P,
-    _access: &mut ControlAccess,
-    _actor: &ActorContext,
-    value: &Value,
-) -> Result<Value, ControlError> {
-    let input: PriceAxisInput = serde_json::from_value(value.clone()).map_err(invalid)?;
-    let range = input.mode.range()?;
-    let pane = pane(app, input.tab_id, input.pane_id)?;
-    pane.sync_price_axis_mode();
-    match range {
-        Some((low, high)) => {
-            pane.price_view.set_manual_range(low, high);
+impl AxisPane for ChartPane {
+    fn frame_prices(&mut self, range: Option<(f64, f64)>) {
+        self.sync_price_axis_mode();
+        match range {
+            Some((low, high)) => {
+                self.price_view.set_manual_range(low, high);
+            }
+            None => self.price_view.reset(),
         }
-        None => pane.price_view.reset(),
     }
-    let viewport = super::chart::viewport_snapshot(pane);
-    let (tab_id, pane_id) = (input.tab_id, input.pane_id);
-    serde_json::to_value(PriceAxisResult {
-        tab_id,
-        pane_id,
-        viewport,
-    })
-    .map_err(invalid)
+    fn reset_time_strip(&mut self, tape: bool) -> bool {
+        self.reset_time_axis(tape)
+    }
+    fn show_live_overview(&mut self) -> bool {
+        self.model.live_overview()
+    }
+    fn centre_live(&mut self, zoom_in: bool) -> bool {
+        self.live_centre(zoom_in)
+    }
+    fn framing(&self) -> ViewportSnapshot {
+        super::chart::viewport_snapshot(self)
+    }
+    fn native_tape(&mut self) -> Option<&mut dyn NativeTape> {
+        let tape = self.orderflow.as_mut();
+        Some(tape.filter(|tape| tape.cached_config().native_tape())?)
+    }
+    fn marks(&mut self) -> &mut Drawings<DrawingTool> {
+        &mut self.drawings
+    }
+    fn marks_bars(&self) -> String {
+        let bars = self
+            .layout
+            .drawings_spec
+            .unwrap_or(*self.series.state.spec());
+        bars.to_config_string()
+    }
 }
 
-/// The window first, so a past end is clamped against the window it shows.
-fn set_tape<P: TabsPort + TabsMutPort + ?Sized>(
-    app: &mut P,
-    _access: &mut ControlAccess,
-    _actor: &ActorContext,
-    value: &Value,
-) -> Result<Value, ControlError> {
-    let input: TapeViewInput = serde_json::from_value(value.clone()).map_err(invalid)?;
-    let (end, window) = input.request()?;
-    let tape = pane(app, input.tab_id, input.pane_id)?.orderflow.as_mut();
-    let tape = tape
-        .filter(|tape| tape.cached_config().native_tape())
-        .ok_or_else(|| invalid("the pane draws no native tape"))?;
-    // Filed, the selector's path; else the wheel's, which leaves the asset alone.
-    if let Some(window) = window {
-        tape.move_live_lane_window(window, input.file);
+impl NativeTape for OrderflowView {
+    fn move_tape_window(&mut self, window: LaneWindow, file: bool) {
+        self.move_live_lane_window(window, file);
     }
-    if let Some(end) = end {
-        tape.set_tape_end(end);
+    fn move_tape_end(&mut self, end: TapeEnd) {
+        self.set_tape_end(end);
     }
-    let tape = tape
-        .tape_view_snapshot()
-        .ok_or_else(|| invalid("no native tape"))?;
-    let (tab_id, pane_id) = (input.tab_id, input.pane_id);
-    serde_json::to_value(TapeViewResult {
-        tab_id,
-        pane_id,
-        tape,
-    })
-    .map_err(invalid)
+    fn tape_frame(&self) -> Option<TapeViewSnapshot> {
+        self.tape_view_snapshot()
+    }
 }

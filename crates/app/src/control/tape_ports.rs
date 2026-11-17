@@ -1,7 +1,8 @@
 //! The order-flow pane facts the bubble and tape rules read, and keeping what
 //! they admit: bubble size, the tape fold, the view and the opening-burst scale.
 use super::price_axis::{invalid, pane};
-use crate::{app::control_host::ControlPort, orderflow_view::OrderflowView};
+use crate::app::{TabsMutPort, TabsPort, control_host::ControlPort};
+use crate::orderflow_view::OrderflowView;
 use quantick_control::{error::ControlError, wire::WireU64};
 use quantick_control_handlers::bubble_scale::{BubbleScalePane, BubbleScalePort};
 use quantick_control_handlers::tape_view_set::TapeViewPort;
@@ -12,7 +13,11 @@ use quantick_control_schema::{bubble_scale::BubbleScaleTarget, opening_scale::Op
 use quantick_orderflow::HeatmapConfig;
 const NO_VIEW: &str = "the requested pane has no order-flow view";
 /// The addressed pane's order-flow view.
-fn tape(port: &mut dyn ControlPort, tab: u64, id: u64) -> Result<&mut OrderflowView, ControlError> {
+fn tape<P: TabsPort + TabsMutPort + ?Sized>(
+    port: &mut P,
+    tab: u64,
+    id: u64,
+) -> Result<&mut OrderflowView, ControlError> {
     let pane = pane(port, WireU64::new(tab), WireU64::new(id))?;
     pane.orderflow.as_mut().ok_or_else(|| invalid(NO_VIEW))
 }

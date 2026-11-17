@@ -1,10 +1,22 @@
-//! Chart settings decisions shared by the desktop and other adapters.
+//! Chart settings decisions shared by the desktop and other adapters, and
+//! `chart.settings.set`, which reaches the same owner the double click, the
+//! toolbar and the menus reach ([`crate::chart::ChartPort::apply_chart_settings`]).
 use quantick_chart::pane_style::{StyleEditor, StyleSurface, StyleTarget};
 use quantick_chart::style::{CandlePreset, ChartStyle};
-use quantick_control::wire::WireU64;
+use quantick_control::error::{ControlError, codes};
+use quantick_control::wire::{ActorContext, WireU64};
+use quantick_control::{id::ErrorCode, registry::RegistryError};
+use quantick_control_host::journal::NewEvent;
+use quantick_control_schema::chart::MODULE_ID;
 use quantick_control_schema::chart_settings::{
-    ChartSettingsInput, ChartSettingsResult, ChartSettingsTab, ChartSettingsTarget, style_wire,
+    CHART_SETTINGS_EVENT_KIND, ChartSettingsInput, ChartSettingsResult, ChartSettingsTab,
+    ChartSettingsTarget, descriptor, style_wire,
 };
+use serde_json::{Value, json};
+
+use crate::JournalAccess;
+use crate::chart::ChartPort;
+use crate::dock::ActionDock;
 use quantick_stores::candle_presets::PresetError;
 use quantick_stores::candle_settings::CandleSettings;
 use quantick_stores::chart_style::StyleFile;
@@ -167,6 +179,49 @@ pub fn apply(
         style: if changed { look } else { None },
         preset,
     })
+}
+
+/// Dock `chart.settings.set`.
+///
+/// # Errors
+/// A capability already docked.
+pub fn register<D: ActionDock<H, A>, H: ChartPort + ?Sized, A: JournalAccess>(
+    registry: &mut D,
+) -> Result<(), RegistryError> {
+    registry.register(descriptor(), set)
+}
+
+fn set<H: ChartPort + ?Sized, A: JournalAccess>(
+    host: &mut H,
+    access: &mut A,
+    actor: &ActorContext,
+    input: &Value,
+) -> Result<Value, ControlError> {
+    let invalid = |error: serde_json::Error| ControlError::invalid_request(error.to_string());
+    let input: ChartSettingsInput = serde_json::from_value(input.clone()).map_err(invalid)?;
+    let result = host.apply_chart_settings(input).map_err(preset_error)?;
+    let payload = json!({ "chart_settings": result });
+    access.record_event(NewEvent::by(
+        MODULE_ID,
+        CHART_SETTINGS_EVENT_KIND,
+        actor,
+        payload,
+    ));
+    serde_json::to_value(result).map_err(invalid)
+}
+
+/// A refusal is the caller's to fix; a failed write is the disk's, nothing
+/// changed, and the same call may succeed later.
+fn preset_error(error: PresetError) -> ControlError {
+    match error {
+        PresetError::Refused(reason) => ControlError::invalid_request(reason),
+        PresetError::NotWritten(_) => {
+            let code = ErrorCode::new(codes::CAPABILITY_UNAVAILABLE).expect("static error code");
+            let mut refused = ControlError::new(code, error.message(), true);
+            refused.context.details = Some(json!({ "reason": "presets_not_written" }));
+            refused
+        }
+    }
 }
 
 #[cfg(test)]

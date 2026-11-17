@@ -25,9 +25,13 @@ use quantick_sources::history_run::{Cancelled, Press, RunStatus};
 use rust_decimal::Decimal;
 
 use crate::JournalAccess;
+use crate::analysis::{AnalysisPaneEntry, AnalysisPort};
 use crate::attention::MarkPort;
+use crate::axis_pane::{AxisPane, NativeTape};
 use crate::bubble_pane::{AssetSave, BubbleLook, BubblePane, PaneBubblesPort, TickSpherePane};
 use crate::chart::{ChartPaneEntry, ChartPaneSource, ChartPort, MissingPane, PaneFraming};
+use crate::chart_layer::{LayerBlocked, LayerRead};
+use crate::deal_recorder::DealRecorder;
 use crate::history::HistoryPort;
 use crate::notify::{AttentionPort, NotifyAccess};
 use crate::recovery::{FeedRecoveryPort, RecoveredFeed};
@@ -35,9 +39,17 @@ use crate::tabs::TabDirectory;
 use crate::trade::{TradeDesk, TradePort};
 use quantick_control::error::ControlError;
 use quantick_control_schema::bubble_preset::{ListInput, ListResult};
+use quantick_control_schema::chart_settings::{ChartSettingsInput, ChartSettingsResult};
+use quantick_control_schema::layers::LayerSnapshot;
 use quantick_control_schema::orderflow::BubblesStateSnapshot;
+use quantick_control_schema::tape_view::TapeViewSnapshot;
+use quantick_drawings::{DrawingTool, Drawings};
+use quantick_orderflow::LaneWindow;
+use quantick_orderflow::tape_view::TapeEnd;
 use quantick_orderflow::{HeatmapConfig, TickTuning};
+use quantick_replay::recorder::{DealRecordingError, RecordingView};
 use quantick_stores::bubble_asset_store::SaveSwitch;
+use quantick_stores::candle_presets::PresetError;
 
 /// One pane of a fake tab: a real chart model, an optional venue prefix, and
 /// the framing a frame would have laid out.
@@ -52,6 +64,27 @@ pub(crate) struct FakePane {
     pub sphere_facts: TickSpherePane,
     /// The pane's order-flow view, which serves its bubble calls.
     pub bubbles: Option<FakeBubbles>,
+    /// Every price framing asked of the pane, `None` a fit.
+    pub framed: Vec<Option<(f64, f64)>>,
+    /// Every time strip act the pane took, by name.
+    pub time_acts: Vec<&'static str>,
+    /// The pane can show its live bars (overview, centre).
+    pub shows_live: bool,
+    /// The pane's native tape, when it draws one.
+    pub tape: Option<FakeTape>,
+    pub drawings: Drawings<DrawingTool>,
+    /// The bar rule the pane's marks are cut to.
+    pub bars: String,
+    /// The registered layers, as the pane's menu reads them.
+    pub layers: Vec<(LayerSnapshot, Option<LayerBlocked>)>,
+}
+
+/// A fake native tape: what it was last moved to, and the frame it reports.
+#[derive(Default)]
+pub(crate) struct FakeTape {
+    pub window: Option<(LaneWindow, bool)>,
+    pub end: Option<TapeEnd>,
+    pub frame: Option<TapeViewSnapshot>,
 }
 
 /// A fake order-flow view's bubble look: what it last wore and its asset.
@@ -83,7 +116,65 @@ impl FakePane {
             record_starts_inside: false,
             sphere_facts: TickSpherePane::new(false, false),
             bubbles: None,
+            framed: Vec::new(),
+            time_acts: Vec::new(),
+            shows_live: true,
+            tape: None,
+            drawings: Drawings::default(),
+            bars: format!("{ticks}t"),
+            layers: Vec::new(),
         }
+    }
+}
+
+impl AxisPane for FakePane {
+    fn frame_prices(&mut self, range: Option<(f64, f64)>) {
+        self.framed.push(range);
+    }
+    fn reset_time_strip(&mut self, tape: bool) -> bool {
+        if tape && self.tape.is_none() {
+            return false;
+        }
+        self.time_acts
+            .push(if tape { "tape_opening" } else { "opening" });
+        true
+    }
+    fn show_live_overview(&mut self) -> bool {
+        if self.shows_live {
+            self.time_acts.push("overview");
+        }
+        self.shows_live
+    }
+    fn centre_live(&mut self, zoom_in: bool) -> bool {
+        if self.shows_live {
+            self.time_acts
+                .push(if zoom_in { "centre_zoom_in" } else { "centre" });
+        }
+        self.shows_live
+    }
+    fn framing(&self) -> ViewportSnapshot {
+        fake_viewport(self)
+    }
+    fn native_tape(&mut self) -> Option<&mut dyn NativeTape> {
+        Some(self.tape.as_mut()?)
+    }
+    fn marks(&mut self) -> &mut Drawings<DrawingTool> {
+        &mut self.drawings
+    }
+    fn marks_bars(&self) -> String {
+        self.bars.clone()
+    }
+}
+
+impl NativeTape for FakeTape {
+    fn move_tape_window(&mut self, window: LaneWindow, file: bool) {
+        self.window = Some((window, file));
+    }
+    fn move_tape_end(&mut self, end: TapeEnd) {
+        self.end = Some(end);
+    }
+    fn tape_frame(&self) -> Option<TapeViewSnapshot> {
+        self.frame.clone()
     }
 }
 
@@ -184,20 +275,7 @@ impl ChartPaneSource for FakePaneRead<'_> {
         self.pane.visible_slots
     }
     fn viewport(&self) -> ViewportSnapshot {
-        let (start, end) = self.pane.visible_slots.unwrap_or((0, 0));
-        ViewportSnapshot {
-            geometry_available: self.pane.visible_slots.is_some(),
-            visible_start_slot: WireU64::new(start as u64),
-            visible_end_slot_exclusive: WireU64::new(end as u64),
-            pixels_per_bar: CanonicalDecimal::new("8").expect("canonical"),
-            right_edge_bar: CanonicalDecimal::new("0").expect("canonical"),
-            follows_live: true,
-            price_auto_fit: true,
-            price_axis_inverted: false,
-            price_range: None,
-            chart_width_px: None,
-            tape: None,
-        }
+        fake_viewport(self.pane)
     }
     fn history_paging(&self) -> bool {
         self.tab.history_paging
@@ -212,6 +290,24 @@ impl ChartPaneSource for FakePaneRead<'_> {
             engine_side: "exchange_aggressor".to_owned(),
             venue_aggressor_split: false,
         }
+    }
+}
+
+/// A fake pane's framing: the slots a test laid out, the rest fixed.
+fn fake_viewport(pane: &FakePane) -> ViewportSnapshot {
+    let (start, end) = pane.visible_slots.unwrap_or((0, 0));
+    ViewportSnapshot {
+        geometry_available: pane.visible_slots.is_some(),
+        visible_start_slot: WireU64::new(start as u64),
+        visible_end_slot_exclusive: WireU64::new(end as u64),
+        pixels_per_bar: CanonicalDecimal::new("8").expect("canonical"),
+        right_edge_bar: CanonicalDecimal::new("0").expect("canonical"),
+        follows_live: true,
+        price_auto_fit: true,
+        price_axis_inverted: false,
+        price_range: None,
+        chart_width_px: None,
+        tape: pane.tape.as_ref().and_then(|tape| tape.frame.clone()),
     }
 }
 
@@ -233,6 +329,14 @@ pub(crate) struct FakeTab {
     pub history: RunStatus,
     pub main_reach: HistoryReach,
     pub panes: Vec<FakePane>,
+    /// The tab plays a recorded session.
+    pub replaying: bool,
+    /// The deal recorder's view; `None` on a feed with no counter.
+    pub recording: Option<RecordingView>,
+    /// What the recorder refuses to start or load with, when it refuses.
+    pub recorder_refusal: Option<DealRecordingError>,
+    /// Every recorder act the tab took, by name.
+    pub recorder_acts: Vec<String>,
 }
 
 impl FakeTab {
@@ -249,7 +353,20 @@ impl FakeTab {
             history: RunStatus::Idle,
             main_reach: HistoryReach::Hours(1),
             panes: Vec::new(),
+            replaying: false,
+            recording: None,
+            recorder_refusal: None,
+            recorder_acts: Vec::new(),
         }
+    }
+
+    /// The recorder's act `act`, unless it refuses.
+    fn record_act(&mut self, act: String) -> Result<(), DealRecordingError> {
+        if let Some(refusal) = self.recorder_refusal.clone() {
+            return Err(refusal);
+        }
+        self.recorder_acts.push(act);
+        Ok(())
     }
 
     /// A press judged the way the session judges one: refused while a run
@@ -313,6 +430,15 @@ pub(crate) struct FakeWindow {
     pub speaker_refusal: Option<String>,
     /// The main-click default the last taken press set.
     pub default_reach: Option<HistoryReach>,
+    /// The tool rail's magnet.
+    pub rail_magnet: bool,
+    /// What the chart settings owner answers, and every input it was given.
+    pub chart_settings: Result<ChartSettingsResult, PresetError>,
+    pub settings_asked: Vec<ChartSettingsInput>,
+    /// Every layer switch asked: pane, layer and visibility.
+    pub layer_switches: Vec<(u64, String, bool)>,
+    /// The record-by-default setting, once a call kept one.
+    pub record_by_default: Option<bool>,
 }
 
 impl FakeWindow {
@@ -324,7 +450,24 @@ impl FakeWindow {
             toasts: Vec::new(),
             speaker_refusal: None,
             default_reach: None,
+            rail_magnet: false,
+            chart_settings: Err(PresetError::Refused("the fake keeps no chart settings")),
+            settings_asked: Vec::new(),
+            layer_switches: Vec::new(),
+            record_by_default: None,
         }
+    }
+
+    /// The pane `pane_id` on the tab `tab_id`.
+    fn pane_mut(
+        &mut self,
+        tab_id: WireU64,
+        pane_id: WireU64,
+    ) -> Result<&mut FakePane, ControlError> {
+        let tab = self.tabs.iter_mut().find(|tab| tab.id == tab_id.get());
+        let tab = tab.ok_or_else(|| ControlError::invalid_request("no open tab has that id"))?;
+        let pane = tab.panes.iter_mut().find(|pane| pane.id == pane_id.get());
+        pane.ok_or_else(|| ControlError::invalid_request("the call names an unknown pane"))
     }
 
     /// The actor every fake call is made as.
@@ -372,10 +515,7 @@ impl PaneBubblesPort for FakeWindow {
         tab_id: WireU64,
         pane_id: WireU64,
     ) -> Result<&mut dyn BubblePane<()>, ControlError> {
-        let tab = self.tabs.iter_mut().find(|tab| tab.id == tab_id.get());
-        let tab = tab.ok_or_else(|| ControlError::invalid_request("no open tab has that id"))?;
-        let pane = tab.panes.iter_mut().find(|pane| pane.id == pane_id.get());
-        Ok(pane.ok_or_else(|| ControlError::invalid_request("the call names an unknown pane"))?)
+        Ok(self.pane_mut(tab_id, pane_id)?)
     }
 }
 
@@ -388,6 +528,44 @@ impl FeedRecoveryPort for FakeWindow {
             respawned: tab.respawns,
         })
     }
+    fn deal_recorder(&mut self, index: usize) -> Option<&mut dyn DealRecorder> {
+        Some(self.tabs.get_mut(index)?)
+    }
+    fn record_deals_by_default(&mut self, on: bool) {
+        self.record_by_default = Some(on);
+    }
+}
+
+impl DealRecorder for FakeTab {
+    fn replaying(&self) -> bool {
+        self.replaying
+    }
+    fn recorded_symbol(&self) -> &str {
+        &self.symbol
+    }
+    fn recorder_view(&self) -> Option<RecordingView> {
+        self.recording.clone()
+    }
+    fn load_recorded_day(&mut self, index: usize) -> Result<(), DealRecordingError> {
+        self.record_act(format!("load {index}"))
+    }
+    fn start_recording(&mut self) -> Result<(), DealRecordingError> {
+        self.record_act("start".to_owned())
+    }
+    fn stop_recording(&mut self) {
+        self.recorder_acts.push("stop".to_owned());
+    }
+}
+
+/// The fake window's panes carry no analysis: it serves the rail's magnet.
+impl AnalysisPort for FakeWindow {
+    fn drawing_magnet(&self) -> bool {
+        self.rail_magnet
+    }
+    fn switch_rail_magnet(&mut self, on: bool) -> bool {
+        std::mem::replace(&mut self.rail_magnet, on) != on
+    }
+    fn visit_analysis_tabs(&self, _visit: &mut dyn FnMut(u64, &[AnalysisPaneEntry<'_>])) {}
 }
 
 impl HistoryPort for FakeWindow {
@@ -459,6 +637,58 @@ impl MarkPort for FakeWindow {
 impl ChartPort for FakeWindow {
     fn price_tag_progress(&self, _tab_id: u64) -> bool {
         true
+    }
+    fn axis_pane(
+        &mut self,
+        tab_id: WireU64,
+        pane_id: WireU64,
+    ) -> Result<&mut dyn AxisPane, ControlError> {
+        Ok(self.pane_mut(tab_id, pane_id)?)
+    }
+    fn apply_chart_settings(
+        &mut self,
+        input: ChartSettingsInput,
+    ) -> Result<ChartSettingsResult, PresetError> {
+        self.settings_asked.push(input);
+        self.chart_settings.clone()
+    }
+    fn chart_layer(
+        &self,
+        tab_id: WireU64,
+        pane_id: WireU64,
+        layer_id: &str,
+    ) -> Result<LayerRead, ControlError> {
+        let tab = self.tabs.iter().find(|tab| tab.id == tab_id.get());
+        let tab = tab.ok_or_else(|| ControlError::invalid_request("no open tab has that id"))?;
+        let pane = tab.panes.iter().find(|pane| pane.id == pane_id.get());
+        let pane = pane.ok_or_else(|| ControlError::invalid_request("unknown pane"))?;
+        let (layer, blocked) = pane
+            .layers
+            .iter()
+            .find(|(layer, _)| layer.id == layer_id)
+            .ok_or_else(|| ControlError::invalid_request("unknown layer"))?;
+        Ok(LayerRead {
+            layer: layer.clone(),
+            blocked: *blocked,
+        })
+    }
+    fn switch_chart_layer(
+        &mut self,
+        tab_id: WireU64,
+        pane_id: WireU64,
+        layer_id: &str,
+        visible: bool,
+    ) -> Result<(), ControlError> {
+        let pane = self.pane_mut(tab_id, pane_id)?;
+        let layer = pane
+            .layers
+            .iter_mut()
+            .find(|(layer, _)| layer.id == layer_id);
+        let (layer, _) = layer.ok_or_else(|| ControlError::invalid_request("unknown layer"))?;
+        layer.requested = visible;
+        self.layer_switches
+            .push((pane_id.get(), layer_id.to_owned(), visible));
+        Ok(())
     }
     fn visit_chart_panes(&self, visit: &mut dyn FnMut(ChartPaneEntry<'_>, PaneFraming)) {
         for (index, tab) in self.tabs.iter().enumerate() {

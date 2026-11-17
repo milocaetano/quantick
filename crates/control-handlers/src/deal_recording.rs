@@ -2,8 +2,9 @@
 //! reports it, and the refusals its act answers with.
 //!
 //! The view is the same [`RecordingView`] every chrome surface draws, so the
-//! words here are the chrome's words. The act itself, which reaches a tab's
-//! recorder, stays with the window; what it says back is decided here.
+//! words here are the chrome's words. `feed.deal_recording.set` reaches the
+//! tab's recorder through [`FeedRecoveryPort::deal_recorder`], the owner the
+//! REC button acts on; what it refuses and says back is decided here.
 //!
 //! Rate class: a human or an agent asking about, or flipping, the recorder.
 //! Never per trade.
@@ -11,10 +12,72 @@
 use quantick_control::{
     error::{ControlError, codes},
     id::ErrorCode,
-    wire::WireU64,
+    registry::RegistryError,
+    wire::{ActorContext, WireU64},
 };
-use quantick_control_schema::deal_recording::{DealRecordingSnapshot, RecordedDaySnapshot};
+use quantick_control_schema::deal_recording::{
+    DealRecordingInput, DealRecordingResult, DealRecordingSnapshot, RecordedDaySnapshot, descriptor,
+};
 use quantick_replay::recorder::{DealRecordingError, RecState, RecordingView};
+
+use serde_json::Value;
+
+use crate::dock::ActionDock;
+use crate::recovery::FeedRecoveryPort;
+use crate::tabs::{tab_closed, tab_index};
+
+/// Dock `feed.deal_recording.set`.
+///
+/// # Errors
+/// A capability already docked.
+pub fn register<D: ActionDock<H, A>, H: FeedRecoveryPort + ?Sized, A>(
+    registry: &mut D,
+) -> Result<(), RegistryError> {
+    registry.register(descriptor(), set)
+}
+
+fn set<H: FeedRecoveryPort + ?Sized, A>(
+    host: &mut H,
+    _access: &mut A,
+    _actor: &ActorContext,
+    input: &Value,
+) -> Result<Value, ControlError> {
+    let input: DealRecordingInput = serde_json::from_value(input.clone())
+        .map_err(|error| ControlError::invalid_request(error.to_string()))?;
+    let index = tab_index(host, input.tab_id)?;
+    let tab_id = host.tab_id_at(index);
+    let tab = host.deal_recorder(index).ok_or_else(tab_closed)?;
+    if tab.replaying() {
+        return Err(replaying(tab_id));
+    }
+    // Resolve every data-dependent refusal before changing the durable
+    // default. A call is atomic with respect to that setting: bad day, replay,
+    // or unsupported start leaves the workspace untouched.
+    if let Some(day) = &input.load_day {
+        let view = tab.recorder_view();
+        let day = recorded_day(view.as_ref(), day, tab.recorded_symbol())?;
+        tab.load_recorded_day(day).map_err(recording_error)?;
+    }
+    match input.enabled {
+        Some(true) => tab.start_recording().map_err(recording_error)?,
+        Some(false) => tab.stop_recording(),
+        None => {}
+    }
+    if let Some(on) = input.record_by_default {
+        host.record_deals_by_default(on);
+    }
+    let tab = host.deal_recorder(index).ok_or_else(tab_closed)?;
+    let result = DealRecordingResult {
+        tab_id: WireU64::new(tab_id),
+        symbol: tab.recorded_symbol().to_owned(),
+        recording: tab.recorder_view().as_ref().map(snapshot),
+    };
+    serde_json::to_value(result).map_err(|error| {
+        ControlError::invalid_request(format!(
+            "the deal recording result could not be encoded: {error}"
+        ))
+    })
+}
 
 /// The view, on the wire.
 pub fn snapshot(view: &RecordingView) -> DealRecordingSnapshot {
