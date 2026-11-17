@@ -266,14 +266,18 @@ fn a_pane_the_layout_opened_or_closed_changes_the_tab_without_an_event_when_empt
     );
 }
 
-/// The journal diffs what a pane shows, the rows `analysis.drawings` lists: a
-/// mark it holds for merges and its layout does not show is no event, and
-/// one its layout comes to show is created there.
+/// The journal reports what happened to a mark a pane shows, never which
+/// marks its layout shows: one it only holds for merges is no event, a
+/// switch of layout neither creates nor removes one, and a mark it reported
+/// is reported gone when it is really deleted, shown there or not.
 #[test]
 fn the_journal_sees_only_the_marks_a_panes_layout_shows() {
     use quantick_drawings::{ChartPoint, DRAWING_TOOLS, DrawingBand, DrawingScope};
     use quantick_drawings::{DrawingStyle, NewDrawing};
     use quantick_workspace::layout_document::LayoutId;
+    let kinds = |events: Vec<(String, Value)>| -> Vec<String> {
+        events.into_iter().map(|(kind, _)| kind).collect()
+    };
     let mut source = Source::new(vec![Tab::new(1, "WIN")]);
     let drawings = &mut source.tabs[0].panes[0].drawings;
     drawings.set_layout(Some(LayoutId(1)));
@@ -300,16 +304,25 @@ fn the_journal_sees_only_the_marks_a_panes_layout_shows() {
         "not shown: no event"
     );
 
-    source.tabs[0].panes[0]
-        .drawings
-        .set_layout(Some(LayoutId(2)));
+    let pane = &mut source.tabs[0].panes[0];
+    pane.drawings.set_layout(Some(LayoutId(2)));
+    assert!(
+        frame(&mut baseline, &source).is_empty(),
+        "shown by a switch: not created"
+    );
+    source.tabs[0].panes[0].drawings.set_locked_at(0, true);
     let events = frame(&mut baseline, &source);
-    let kinds: Vec<&str> = events.iter().map(|(kind, _)| kind.as_str()).collect();
-    assert_eq!(kinds, ["analysis.drawing.created"], "shown: created here");
-    source.tabs[0].panes[0]
-        .drawings
-        .set_layout(Some(LayoutId(1)));
+    assert_eq!(kinds(events), ["analysis.drawing.edited"], "edited here");
+    let pane = &mut source.tabs[0].panes[0];
+    pane.drawings.set_layout(Some(LayoutId(1)));
+    assert!(
+        frame(&mut baseline, &source).is_empty(),
+        "hidden by a switch: not removed"
+    );
+
+    let drawings = &mut source.tabs[0].panes[0].drawings;
+    let id = drawings.items()[0].id;
+    assert!(drawings.remove_by_id(id));
     let events = frame(&mut baseline, &source);
-    let kinds: Vec<&str> = events.iter().map(|(kind, _)| kind.as_str()).collect();
-    assert_eq!(kinds, ["analysis.drawing.removed"], "gone from it");
+    assert_eq!(kinds(events), ["analysis.drawing.removed"], "really gone");
 }

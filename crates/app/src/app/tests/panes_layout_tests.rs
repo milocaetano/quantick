@@ -2185,8 +2185,8 @@ fn a_mark_shows_on_a_pane_of_another_layout_only_with_all_windows_on() {
 }
 
 /// Deleting the layout a pane shows moves the pane and its marks together,
-/// so the mark selected there stays selected: the delete reaches the marks'
-/// store before the pane switches.
+/// so the mark selected there stays selected: the marks follow once the
+/// layout is gone, and take back the selection the switch let go of.
 #[test]
 fn deleting_a_panes_layout_keeps_the_mark_it_has_selected() {
     let ctx = egui::Context::default();

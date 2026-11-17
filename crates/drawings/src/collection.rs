@@ -137,6 +137,7 @@ impl<T: Clone + PartialEq> Drawings<T> {
     /// Select the object at `index`, or nothing. A mark this chart's layout
     /// does not show is not this chart's to select: the call selects nothing.
     pub fn select(&mut self, selected: Option<usize>) {
+        self.let_go = None;
         self.selection.set(
             selected
                 .filter(|&index| self.in_layout(index))
@@ -298,15 +299,13 @@ impl<T: Clone + PartialEq> Drawings<T> {
     /// confirmation, and a lock protects against a stray click, not against
     /// an explicit clear-everything — `Ctrl+Z` brings the whole set back.
     /// A mark another layout owns is not this chart's to clear: it stays,
-    /// unseen here.
+    /// unseen here or lent to it through "All windows" ([`Self::owns`]).
     pub fn delete_all(&mut self) -> usize {
-        let count = self.shown_count();
-        if count == 0 {
+        if self.owned_count() == 0 {
             return 0;
         }
         let before = self.snapshot();
-        let (layout, live) = (self.layout, &self.live_layouts);
-        self.items.retain(|drawing| !drawing.shows_in(layout, live));
+        let count = self.remove_owned();
         self.selection.set(None);
         self.record(before);
         count
@@ -490,15 +489,15 @@ impl<T: Clone + PartialEq> Drawings<T> {
     /// lock-all toggle). An empty collection is not "all locked".
     #[must_use]
     pub fn all_locked(&self) -> bool {
-        let mut shown = self.shown().peekable();
-        shown.peek().is_some() && shown.all(|(_, item)| item.locked)
+        let mut owned = self.items.iter().filter(|item| self.owns(item)).peekable();
+        owned.peek().is_some() && owned.all(|item| item.locked)
     }
 
-    /// Reversible bulk protection: locks (or unlocks) every drawing as one
-    /// undo entry. Never deletes anything.
+    /// Reversible bulk protection: locks (or unlocks) every drawing this
+    /// chart owns ([`Self::owns`]) as one undo entry. Never deletes anything.
     pub fn set_all_locked(&mut self, locked: bool) {
         let before = self.snapshot();
-        for item in self.shown_mut() {
+        for item in self.owned_mut() {
             item.locked = locked;
         }
         self.record(before);

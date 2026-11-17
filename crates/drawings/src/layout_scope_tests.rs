@@ -352,10 +352,73 @@ fn all_windows_is_never_on_for_a_mark_kept_to_its_chart() {
     let mut drawings = Drawings::default();
     drawings.set_layout(Some(LEVELS));
     level_here(&mut drawings, 2.0, 90.0);
-    assert!(drawings.set_all_windows_at(0, true), "the pick is kept");
+    assert!(!drawings.set_all_windows_at(0, true), "refused");
+    assert!(!drawings.items()[0].all_windows);
+    drawings.select(Some(0));
+    crate::update(
+        &mut drawings,
+        crate::DrawingIntent::ToggleAllWindowsSelected,
+    );
+    assert!(!drawings.items()[0].all_windows, "the toggle too");
+    let scope = DrawingScope::ThisChart;
+    assert!(!drawings.pick_where_shown(0, scope, Some(true)));
+    assert!(!drawings.in_all_windows(0), "it shows on no other chart");
+    assert_eq!(drawings.undo_depth(), 1, "only the placement");
+}
+
+/// A mark another layout lends this chart through "All windows" is that
+/// layout's: clearing or locking this chart leaves it as its owner left it.
+#[test]
+fn clearing_or_locking_a_chart_spares_a_mark_lent_by_another_layout() {
+    let mut settings = MarketSettings::default();
+    let mut owner = Chart::open(&settings, LEVELS, context("time:5m"), "time:5m");
+    level_on_all_timeframes(&mut owner.drawings, 2.0, 90.0);
+    assert!(owner.drawings.set_all_windows_at(0, true));
+    owner.persist(&mut settings);
+
+    let mut other = Chart::open(&settings, FLOWS, flow("BTCUSDT"), "tick:100");
+    level_here(&mut other.drawings, 3.0, 80.0);
+    assert_eq!(other.drawings.shown_count(), 2, "the lent mark shows");
+    assert_eq!(other.drawings.owned_count(), 1, "but is not its own");
+    other.drawings.set_all_locked(true);
+    assert!(other.drawings.all_locked());
+    let lent = |chart: &Chart| {
+        let mut items = chart.drawings.items().iter();
+        items.find(|d| d.layout == Some(LEVELS)).cloned()
+    };
+    assert!(!lent(&other).unwrap().locked, "not locked");
+    assert_eq!(other.drawings.delete_all(), 1, "only its own");
+    assert!(lent(&other).is_some(), "not cleared");
+    other.persist(&mut settings);
+    owner.refresh(&settings);
+    assert_eq!(owner.shown(), [90.0]);
+    assert!(owner.drawings.in_all_windows(0), "still in all windows");
+}
+
+/// A store never named a layout remembers only the new marks it still
+/// holds: the ones deleted and gone from the history are let go.
+#[test]
+fn the_marks_waiting_for_a_layout_are_only_the_ones_held() {
+    let mut drawings = Drawings::default();
+    for _ in 0..3 {
+        level_on_all_timeframes(&mut drawings, 2.0, 90.0);
+    }
+    assert_eq!(drawings.unclaimed.len(), 3);
+    drop(drawings.take_all());
+    level_here(&mut drawings, 2.0, 90.0);
+    assert_eq!(
+        drawings.unclaimed,
+        [drawings.items()[0].id],
+        "the gone let go"
+    );
+
+    for _ in 0..3 * crate::UNDO_HISTORY_LIMIT {
+        level_here(&mut drawings, 2.0, 90.0);
+        assert!(drawings.delete_all() > 0);
+    }
     assert!(
-        !drawings.in_all_windows(0),
-        "but it shows on no other chart"
+        drawings.unclaimed.len() <= crate::UNDO_HISTORY_LIMIT,
+        "bounded"
     );
 }
 
@@ -669,4 +732,28 @@ fn a_deleted_layouts_chart_keeps_its_selection_through_the_move() {
     assert_eq!(drawings.layout(), Some(LEVELS));
     assert_eq!(drawings.items()[0].layout, Some(LEVELS));
     assert_eq!(drawings.selected(), Some(0), "the selection held");
+}
+
+/// The chart switches first and its marks follow once the layout is gone:
+/// the selection the switch let go of comes back with them, and only that.
+#[test]
+fn a_chart_switched_off_a_deleted_layout_takes_its_selection_back() {
+    let mut drawings = Drawings::default();
+    drawings.set_live_layouts([LEVELS, FLOWS]);
+    drawings.set_layout(Some(FLOWS));
+    level_on_all_timeframes(&mut drawings, 2.0, 90.0);
+    drawings.select(Some(0));
+    drawings.set_layout(Some(LEVELS));
+    assert_eq!(drawings.selected(), None, "the switch let go");
+    drawings.set_live_layouts([LEVELS]);
+    drawings.retarget_layout(FLOWS, LEVELS);
+    assert_eq!(drawings.items()[0].layout, Some(LEVELS));
+    assert_eq!(drawings.selected(), Some(0), "taken back");
+
+    drawings.set_live_layouts([LEVELS, FLOWS]);
+    drawings.set_layout(Some(FLOWS));
+    drawings.select(None);
+    drawings.retarget_layout(LEVELS, FLOWS);
+    assert_eq!(drawings.items()[0].layout, Some(FLOWS));
+    assert_eq!(drawings.selected(), None, "a pick made since stands");
 }

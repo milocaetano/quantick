@@ -60,6 +60,9 @@ pub struct Drawings<T> {
     /// New marks made before the host named [`Self::layout`]: the first
     /// layout named claims them, so none is saved as from before layouts.
     pub(crate) unclaimed: Vec<crate::DrawingId>,
+    /// The selection the last switch of layout let go of: a delete of the
+    /// layout it was on moves the mark after its charts, and takes it back.
+    pub(crate) let_go: Option<crate::DrawingId>,
 }
 
 // By hand: a derive would ask the tool handle for a `Default` it has no
@@ -79,6 +82,7 @@ impl<T> Default for Drawings<T> {
             layout: None,
             live_layouts: Vec::new(),
             unclaimed: Vec::new(),
+            let_go: None,
         }
     }
 }

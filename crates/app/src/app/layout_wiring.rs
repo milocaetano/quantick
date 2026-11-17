@@ -460,7 +460,10 @@ impl LayoutAdapter<'_> {
         }
         // Onto the tab's copy now, so an edit before the next frame is the tab's.
         self.own_indicator_copies();
-        self.follow_quiet_recuts();
+        let (store, held) = (&self.store, self.tabs.by_id_mut(tab));
+        if let Some(pane) = held.and_then(|held| held.pane_at_mut(side.index())) {
+            marks_of(pane).follow_store(store.market(), store.session());
+        }
         let from = selection.from();
         tracing::info!(
             target: "quantick::app",
@@ -542,8 +545,8 @@ impl LayoutAdapter<'_> {
         Ok(changed)
     }
 
-    /// Delete a layout. Every pane showing it, marks too, moves to its left
-    /// neighbour first, so none is left on a layout that no longer exists.
+    /// Delete a layout. Every pane showing it moves to its left neighbour
+    /// first, its marks only once it is gone: a refusal midway moves none.
     pub(crate) fn delete_layout(&mut self, id: LayoutId) -> Result<(), LayoutError> {
         // Include unseeded panes named by an opening request without materializing them.
         for (tab, side) in self.layout_pane_targets() {
@@ -554,19 +557,18 @@ impl LayoutAdapter<'_> {
             .iter()
             .flat_map(|tab| tab.panes().map(|(pane, _)| (pane.id, facts_of(pane))));
         let selections = self.store.session().plan_delete(id, facts)?;
-        let to = self.store.session().delete_successor(id)?;
-        let panes = self.tabs.iter_mut().flat_map(|tab| tab.panes_mut());
-        let settings = self.store.market_mut().settings_mut();
-        if retarget_layout(settings, id, to, panes.map(marks_of)) {
-            self.mark_market_dirty();
-        }
         for selection in selections {
             let (tab, side) = self
                 .pane_address(selection.pane())
                 .ok_or(LayoutError::Unknown)?;
             self.switch_pane_layout(tab, side, selection.to())?;
         }
-        self.store.session_mut().finish_delete(id)?;
+        let to = self.store.session_mut().finish_delete(id)?;
+        let panes = self.tabs.iter_mut().flat_map(|tab| tab.panes_mut());
+        let settings = self.store.market_mut().settings_mut();
+        if retarget_layout(settings, id, to, panes.map(marks_of)) {
+            self.mark_market_dirty();
+        }
         self.mark_layouts_dirty();
         Ok(())
     }

@@ -20,13 +20,16 @@ mod layout_scope_tests;
 impl<T: Clone + PartialEq> Drawings<T> {
     /// Name the strip layout this store's chart shows. Cheap when nothing
     /// moved, so the host names it every frame; a mark that stops showing
-    /// lets go of its selection here, and the new marks made before any
-    /// layout was named become this one's.
+    /// lets go of its selection here ([`Self::retarget_layout`] may take it
+    /// back), and the new marks made before any layout was named become this
+    /// one's.
     pub fn set_layout(&mut self, layout: Option<LayoutId>) {
         if self.layout != layout {
             self.layout = layout;
             self.claim_unclaimed();
+            let held = self.selected_id();
             self.settle_selection();
+            self.let_go = held.filter(|_| self.selected_id().is_none());
         }
     }
 
@@ -53,6 +56,42 @@ impl<T: Clone + PartialEq> Drawings<T> {
     #[must_use]
     pub fn shows(&self, drawing: &Drawing<T>) -> bool {
         drawing.shows_in(self.layout, &self.live_layouts)
+    }
+
+    /// Whether this chart shows `drawing` as its own: shown, and not lent by
+    /// another layout the book holds through its "All windows". What a bulk
+    /// edit made here (clear, lock all) reaches; a lent mark stays as its
+    /// own layout left it. A store that names no layout owns all it shows.
+    #[must_use]
+    pub fn owns(&self, drawing: &Drawing<T>) -> bool {
+        owned_in(drawing, self.layout, &self.live_layouts)
+    }
+
+    /// How many objects this chart owns ([`Self::owns`]): what a clear of it
+    /// removes, and its confirmation counts.
+    #[must_use]
+    pub fn owned_count(&self) -> usize {
+        self.items
+            .iter()
+            .filter(|drawing| self.owns(drawing))
+            .count()
+    }
+
+    /// The objects this chart owns ([`Self::owns`]), for a bulk edit.
+    pub(crate) fn owned_mut(&mut self) -> impl Iterator<Item = &mut Drawing<T>> {
+        let (layout, live) = (self.layout, &self.live_layouts);
+        let items = self.items.iter_mut();
+        items.filter(move |drawing| owned_in(drawing, layout, live))
+    }
+
+    /// Remove every object this chart owns ([`Self::owns`]); answers how many
+    /// went.
+    pub(crate) fn remove_owned(&mut self) -> usize {
+        let (layout, live) = (self.layout, &self.live_layouts);
+        let before = self.items.len();
+        self.items
+            .retain(|drawing| !owned_in(drawing, layout, live));
+        before - self.items.len()
     }
 
     /// [`Self::shows`] for the object at `index`.
@@ -136,9 +175,11 @@ impl<T: Clone + PartialEq> Drawings<T> {
     /// step: its scope, and its "All windows" when named. Answers whether it
     /// moved. "All windows" moves only when what shows would, or to clear a
     /// pick left on a mark kept to its chart: a mark every chart already
-    /// shows stays as it is when asked on. Turned off, a mark with no
-    /// [`Drawing::home`] becomes this layout's; turned off on a layout that
-    /// is not its own, the mark leaves this chart, and its selection with it.
+    /// shows stays as it is when asked on, and one kept to its chart is
+    /// never turned on: "All windows" is for a mark on all timeframes.
+    /// Turned off, a mark with no [`Drawing::home`] becomes this layout's;
+    /// turned off on a layout that is not its own, the mark leaves this
+    /// chart, and its selection with it.
     pub fn pick_where_shown(
         &mut self,
         index: usize,
@@ -154,6 +195,7 @@ impl<T: Clone + PartialEq> Drawings<T> {
             after.set_scope(scope);
         }
         let windows = all_windows
+            .filter(|&on| !on || after.scope == DrawingScope::AllCharts)
             .filter(|&on| after.in_all_windows(live) != on || (after.all_windows && !on));
         if let Some(on) = windows {
             after.all_windows = on;
@@ -187,9 +229,16 @@ impl<T: Clone + PartialEq> Drawings<T> {
     /// The layout a new mark made on this chart belongs to: the one it shows.
     /// Made before the host named one, the mark is remembered, and the first
     /// layout named claims it ([`Self::set_layout`]): a new mark is never
-    /// saved as one from before layouts were recorded.
+    /// saved as one from before layouts were recorded. The ones remembered
+    /// that the store no longer holds, the history included, are let go, so
+    /// a store never named a layout remembers no more than it holds.
     pub(crate) fn new_mark_layout(&mut self, id: DrawingId) -> Option<LayoutId> {
         if self.layout.is_none() {
+            if !self.unclaimed.is_empty() {
+                let held: std::collections::BTreeSet<DrawingId> =
+                    self.every_mark().map(|drawing| drawing.id).collect();
+                self.unclaimed.retain(|id| held.contains(id));
+            }
             self.unclaimed.push(id);
         }
         self.layout
@@ -212,8 +261,12 @@ impl<T: Clone + PartialEq> Drawings<T> {
     /// Strip layout `from` was deleted and its charts moved to `to`: every
     /// mark this store holds that belonged to it, in the history too, belongs
     /// to `to` now, and so does this chart if it showed `from`. Marks and
-    /// chart move together, so a selection on one of them holds.
+    /// chart move together, so a selection on one of them holds, and one the
+    /// chart's switch to `to` let go of comes back.
     pub fn retarget_layout(&mut self, from: LayoutId, to: LayoutId) {
+        let moved = |drawing: &Drawing<T>| drawing.layout == Some(from);
+        let back = self.let_go.take();
+        let back = back.filter(|&id| self.index_of(id).is_some_and(|i| moved(&self.items[i])));
         if self.layout == Some(from) {
             self.layout = Some(to);
         }
@@ -223,6 +276,10 @@ impl<T: Clone + PartialEq> Drawings<T> {
             }
         }
         self.settle_selection();
+        if self.selected_id().is_none() {
+            self.selection
+                .set(back.filter(|&id| self.shown_index_of(id).is_some()));
+        }
     }
 
     /// Let go of a selection this chart no longer shows: a mark that left it
@@ -236,6 +293,14 @@ impl<T: Clone + PartialEq> Drawings<T> {
 
     /// Every mark the store holds: the history, an open gesture's baseline
     /// and the open draft included.
+    fn every_mark(&self) -> impl Iterator<Item = &Drawing<T>> {
+        let steps = self.undo.iter().chain(self.redo.iter());
+        let steps = steps.chain(self.gesture_baseline.iter());
+        let held = steps.flat_map(|entry| entry.items.iter());
+        self.items.iter().chain(held).chain(self.draft.iter())
+    }
+
+    /// [`Self::every_mark`], to edit.
     fn every_mark_mut(&mut self) -> impl Iterator<Item = &mut Drawing<T>> {
         let steps = self.undo.iter_mut().chain(self.redo.iter_mut());
         let steps = steps.chain(self.gesture_baseline.iter_mut());
@@ -243,6 +308,14 @@ impl<T: Clone + PartialEq> Drawings<T> {
         let held = held.chain(self.draft.iter_mut());
         self.items.iter_mut().chain(held)
     }
+}
+
+/// [`Drawings::owns`] for a chart showing `layout`, the book holding `live`.
+fn owned_in<T>(drawing: &Drawing<T>, layout: Option<LayoutId>, live: &[LayoutId]) -> bool {
+    let lent = layout.is_some()
+        && drawing.all_timeframes()
+        && drawing.home(live).is_some_and(|home| Some(home) != layout);
+    !lent && drawing.shows_in(layout, live)
 }
 
 /// Strip layout `from` was deleted and its charts moved to `to`: its marks

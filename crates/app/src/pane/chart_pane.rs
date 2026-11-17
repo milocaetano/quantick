@@ -944,7 +944,7 @@ impl ChartPane {
         // button only, so it shares no gesture with the pan, the zoom or the
         // drawing tools — a pan that ends anywhere never opens it.
         chart.context_menu(|ui| self.draw_layer_menu(ui, chrome));
-        let count = self.drawings.shown_count();
+        let count = self.drawings.owned_count();
         let clear = self.context_menu.draw_clear_objects_confirm(
             &mut self.model,
             &chart.ctx,
