@@ -1,15 +1,91 @@
 //! The OHLC magnet's two calls: the rail's (`annotate.magnet.set`) and one
 //! drawing's own (`annotate.drawing_magnet.set`), decided here beside
-//! `drawing_scope`. The app only finds the switch or the pane and journals.
+//! `drawing_scope`, whose call docks with them. The window only lends the
+//! rail's switch ([`AnalysisPort`]) or the addressed pane
+//! ([`ChartPort::addressed_pane`]).
 
+use quantick_control::annotation::ANNOTATE_MODULE_ID;
 use quantick_control::error::ControlError;
-use quantick_control::wire::WireU64;
+use quantick_control::registry::RegistryError;
+use quantick_control::wire::{ActorContext, WireU64};
+use quantick_control_host::journal::NewEvent;
 pub use quantick_control_schema::drawing_magnet::*;
 use quantick_drawings::{DrawingId, DrawingTool, Drawings};
 use serde_json::Value;
 
-fn invalid(error: serde_json::Error) -> ControlError {
-    ControlError::invalid_request(error.to_string())
+use crate::JournalAccess;
+use crate::analysis::AnalysisPort;
+use crate::chart::ChartPort;
+use crate::dock::ActionDock;
+use crate::drawing_scope;
+use crate::invalid;
+
+/// Dock the magnet's two calls and `annotate.drawing_scope.set`: the rail's
+/// switch, one drawing's own, the switch its context bar flips, and where
+/// that drawing shows.
+///
+/// # Errors
+/// A capability already docked.
+pub fn register<D, H, A>(registry: &mut D) -> Result<(), RegistryError>
+where
+    D: ActionDock<H, A>,
+    H: AnalysisPort + ChartPort + ?Sized,
+    A: JournalAccess,
+{
+    registry.register(rail_descriptor(), rail)?;
+    registry.register(object_descriptor(), object)?;
+    registry.register(drawing_scope::descriptor(), scope)
+}
+
+/// Record a call's result under `ANNOTATE_MODULE_ID`.
+fn journal<'a, A: JournalAccess>(
+    access: &'a mut A,
+    actor: &'a ActorContext,
+) -> impl FnOnce(&'static str, Value) -> WireU64 + 'a {
+    |kind, value| access.record_event(NewEvent::by(ANNOTATE_MODULE_ID, kind, actor, value))
+}
+
+fn rail<H: AnalysisPort + ?Sized, A: JournalAccess>(
+    host: &mut H,
+    access: &mut A,
+    actor: &ActorContext,
+    input: &Value,
+) -> Result<Value, ControlError> {
+    set_rail(
+        input,
+        |on| host.switch_rail_magnet(on),
+        journal(access, actor),
+    )
+}
+
+fn object<H: ChartPort + ?Sized, A: JournalAccess>(
+    host: &mut H,
+    access: &mut A,
+    actor: &ActorContext,
+    input: &Value,
+) -> Result<Value, ControlError> {
+    set_object(
+        input,
+        move |tab, pane| Ok(host.addressed_pane(tab, pane)?.marks()),
+        journal(access, actor),
+    )
+}
+
+fn scope<H: ChartPort + ?Sized, A: JournalAccess>(
+    host: &mut H,
+    access: &mut A,
+    actor: &ActorContext,
+    input: &Value,
+) -> Result<Value, ControlError> {
+    drawing_scope::call(
+        input,
+        move |tab, pane| {
+            let pane = host.addressed_pane(tab, pane)?;
+            let bars = pane.marks_bars().to_config_string();
+            Ok((pane.marks(), bars))
+        },
+        journal(access, actor),
+    )
 }
 
 /// The rail's call: `set` flips the rail magnet and answers whether it moved,
@@ -55,3 +131,7 @@ pub fn set_object<'a, J>(
     );
     serde_json::to_value(result).map_err(invalid)
 }
+
+#[cfg(test)]
+#[path = "drawing_magnet_tests.rs"]
+mod tests;

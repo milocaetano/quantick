@@ -7,94 +7,39 @@
 //! `feed.reconnect`, under the same cockpit permission: recording writes a
 //! file the trader asked for and nothing the chart holds is touched, so it
 //! is neither destructive nor risky, and it can be undone by the same call.
-//! What the act says back, the view on the wire and every refusal, is
-//! [`quantick_control_handlers::deal_recording`]'s.
+//! The call, the view on the wire and every refusal are
+//! [`quantick_control_handlers::deal_recording`]'s; here is the tab's
+//! recorder as that call acts on it.
 
-pub(crate) use quantick_control_schema::deal_recording::*;
-
-use crate::app::{RecordingPort, TabsMutPort, TabsPort};
-use quantick_control::{
-    error::ControlError,
-    registry::RegistryError,
-    wire::{ActorContext, WireU64},
-};
-
-use serde_json::Value;
+use quantick_control_handlers::deal_recorder::DealRecorder;
+pub(crate) use quantick_control_handlers::deal_recording::snapshot;
+use quantick_replay::recorder::{DealRecordingError, RecordingView};
 
 use crate::deal_recording::DealRecordingAction;
+use crate::tab::Tab;
 
-use super::{actions::ActionRegistry, gateway::ControlAccess};
-pub(crate) use quantick_control_handlers::deal_recording::snapshot;
-use quantick_control_handlers::deal_recording::{recorded_day, recording_error, replaying};
-use quantick_control_handlers::{TabDirectory, tab_index};
-
-pub(crate) fn register(registry: &mut ActionRegistry) -> Result<(), RegistryError> {
-    registry.register(descriptor(), set)
-}
-
-fn set<P: TabDirectory + TabsPort + TabsMutPort + RecordingPort + ?Sized>(
-    app: &mut P,
-    _access: &mut ControlAccess,
-    _actor: &ActorContext,
-    input: &Value,
-) -> Result<Value, ControlError> {
-    let input: DealRecordingInput = serde_json::from_value(input.clone())
-        .map_err(|error| ControlError::invalid_request(error.to_string()))?;
-    let index = tab_index(app, input.tab_id)?;
-    let tab_id = app.tab_reads().tabs().id_at(index);
-    let (tab, _config) = app
-        .tabs_mut()
-        .tab_with_config(index)
-        .ok_or_else(|| ControlError::invalid_request("the tab closed while the call ran"))?;
-    if tab.link.replay.is_some() {
-        return Err(replaying(tab_id));
+impl DealRecorder for Tab {
+    fn replaying(&self) -> bool {
+        self.link.replay.is_some()
     }
-    // Resolve every data-dependent refusal before changing the durable
-    // default. A call is atomic with respect to that setting: bad day, replay,
-    // or unsupported start leaves the workspace untouched.
-    let day_index = match &input.load_day {
-        Some(day) => Some(recorded_day(
-            tab.deal_recording_view().as_ref(),
-            day,
-            &tab.symbol,
-        )?),
-        None => None,
-    };
-    let _ = tab;
-    let (tab, _config) = app
-        .tabs_mut()
-        .tab_with_config(index)
-        .ok_or_else(|| ControlError::invalid_request("the tab closed while the call ran"))?;
-    if let Some(index) = day_index {
-        let loaded = tab.deal_recorder.load_day_checked(index);
-        tab.retain_deal_samples(&loaded.map_err(recording_error)?);
+    fn recorded_symbol(&self) -> &str {
+        &self.symbol
     }
-    if let Some(enabled) = input.enabled {
-        if enabled {
-            let resumed = tab
-                .deal_recorder
-                .start_checked(crate::metrics::wall_clock_ms());
-            tab.retain_deal_samples(&resumed.map_err(recording_error)?);
-        } else {
-            tab.apply_deal_recording(DealRecordingAction::Stop);
-        }
+    fn recorder_view(&self) -> Option<RecordingView> {
+        self.deal_recording_view()
     }
-    let _ = tab;
-    if let Some(on) = input.record_by_default {
-        app.set_deal_recording_default(on);
+    fn load_recorded_day(&mut self, index: usize) -> Result<(), DealRecordingError> {
+        let loaded = self.deal_recorder.load_day_checked(index)?;
+        self.retain_deal_samples(&loaded);
+        Ok(())
     }
-    let (tab, _config) = app
-        .tabs_mut()
-        .tab_with_config(index)
-        .ok_or_else(|| ControlError::invalid_request("the tab closed while the call ran"))?;
-    let result = DealRecordingResult {
-        tab_id: WireU64::new(tab_id),
-        symbol: tab.symbol.clone(),
-        recording: tab.deal_recording_view().as_ref().map(snapshot),
-    };
-    serde_json::to_value(result).map_err(|error| {
-        ControlError::invalid_request(format!(
-            "the deal recording result could not be encoded: {error}"
-        ))
-    })
+    fn start_recording(&mut self) -> Result<(), DealRecordingError> {
+        let now = crate::metrics::wall_clock_ms();
+        let resumed = self.deal_recorder.start_checked(now)?;
+        self.retain_deal_samples(&resumed);
+        Ok(())
+    }
+    fn stop_recording(&mut self) {
+        self.apply_deal_recording(DealRecordingAction::Stop);
+    }
 }

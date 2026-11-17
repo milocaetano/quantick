@@ -42,7 +42,6 @@ impl super::View<Model> for View {
 pub(crate) fn effects(effect: Effects) -> super::SurfaceResponse {
     super::SurfaceResponse {
         model_effects: vec![super::HostEffect::Home(effect)],
-        ..Default::default()
     }
 }
 

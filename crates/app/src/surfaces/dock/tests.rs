@@ -128,8 +128,7 @@ mod cases {
                 &mut ViewContext { ctx, ui: None },
                 Some(&mut env),
             )
-            .paper_panel
-            .map(|paper| *paper)
+            .paper_panel()
             .unwrap_or_default()
     }
 
@@ -239,7 +238,7 @@ mod cases {
         );
         assert!(!registry.replay_browser.browser_is_open());
         let (response, _) = click_panel(&mut registry, &mut paper, &ctx, browser);
-        assert!(response.paper_panel.unwrap().open_replay_browser);
+        assert!(response.paper_panel().unwrap().open_replay_browser);
         assert!(
             !registry.replay_browser.browser_is_open(),
             "host execution waits for the full pass"
@@ -356,8 +355,7 @@ mod cases {
                             &mut ViewContext { ctx, ui: None },
                             Some(&mut env),
                         )
-                        .paper_panel
-                        .map(|paper| *paper)
+                        .paper_panel()
                         .unwrap_or_default();
                 });
                 (output, effects.open_alerts)
@@ -455,8 +453,7 @@ mod cases {
             );
             assert_eq!(
                 response
-                    .paper_panel
-                    .map(|paper| *paper)
+                    .paper_panel()
                     .unwrap_or_default()
                     .risk_settings_changed,
                 expected
@@ -564,7 +561,7 @@ fn paper_report_composition_preserves_account_lifetime_and_tail_registration() {
             Some(&mut env),
         );
         assert_eq!(
-            response.paper_panel.unwrap().navigate_to_trade,
+            response.paper_panel().unwrap().navigate_to_trade,
             Some((-20_000, -10_000))
         );
     });

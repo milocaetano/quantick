@@ -90,28 +90,11 @@ impl super::View<Model> for View {
         session.update(Intent::Tick(now));
     }
 }
-pub(crate) fn effects(mut effects: Effects) -> SurfaceResponse {
-    SurfaceResponse {
-        style: effects.style.take(),
-        log_style_change: effects
-            .log
-            .take()
-            .map(|applied_preset| super::StyleLogRequest { applied_preset }),
-        footprint: effects.footprint.take().map(|change| match change {
-            quantick_ui_model::chart_settings::FootprintChange::Applied(config) => {
-                super::FootprintChange::Applied(config)
-            }
-            quantick_ui_model::chart_settings::FootprintChange::ResetToDefault => {
-                super::FootprintChange::ResetToDefault
-            }
-        }),
-        model_effects: if effects.persistence.is_empty() {
-            vec![]
-        } else {
-            vec![quantick_ui_model::HostEffect::ChartSettings(effects)]
-        },
-        ..Default::default()
-    }
+pub(crate) fn effects(effects: Effects) -> SurfaceResponse {
+    SurfaceResponse::effect_if(
+        effects != Effects::default(),
+        quantick_ui_model::HostEffect::ChartSettings(effects),
+    )
 }
 #[cfg(any(feature = "scenario-harness", test))]
 crate::hooks::declare_hooks!["QUANTICK_STYLE_PANEL", "QUANTICK_FOOTPRINT_PANEL"];

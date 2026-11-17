@@ -1,86 +1,19 @@
 //! The drawing rail's OHLC magnet, shared by the rail button and automation,
-//! and each drawing's own, shared by its context bar and automation.
+//! and each drawing's own, shared by its context bar and automation: the
+//! hand's two paths onto the calls `quantick_control_handlers::drawing_magnet`
+//! docks.
 
 pub(crate) use quantick_control_schema::drawing_magnet::*;
 
-use crate::app::{GatewayPort, TabsMutPort, TabsPort, ToolRailPort};
+use crate::app::{GatewayPort, TabsPort, ToolRailPort};
 
 use crate::drawings::DrawingId;
 
-use quantick_control::{
-    error::ControlError,
-    registry::RegistryError,
-    wire::{ActorContext, WireU64},
-};
+use quantick_control::wire::WireU64;
 
 use quantick_control::annotation::ANNOTATE_MODULE_ID;
-use quantick_control_handlers::{drawing_magnet as magnet, drawing_scope as scope};
-use serde_json::Value;
 
-use super::{actions::ActionRegistry, gateway::ControlAccess, journal::NewEvent};
-
-/// Dock the magnet's two calls and `annotate.drawing_scope.set`, each decided
-/// in `quantick_control_handlers`: the rail's switch and one drawing's own,
-/// the switch its context bar flips, and where that drawing shows.
-pub(crate) fn register(registry: &mut ActionRegistry) -> Result<(), RegistryError> {
-    registry.register(rail_descriptor(), set)?;
-    registry.register(object_descriptor(), set_object)?;
-    registry.register(scope::descriptor(), set_scope)
-}
-
-/// Record a call's result under `ANNOTATE_MODULE_ID`.
-fn journal<'a>(
-    access: &'a mut ControlAccess,
-    actor: &'a ActorContext,
-) -> impl FnOnce(&'static str, Value) -> WireU64 + 'a {
-    |kind, value| access.append_event(NewEvent::by(ANNOTATE_MODULE_ID, kind, actor, value))
-}
-
-fn set<P: ToolRailPort + ?Sized>(
-    app: &mut P,
-    access: &mut ControlAccess,
-    actor: &ActorContext,
-    input: &Value,
-) -> Result<Value, ControlError> {
-    magnet::set_rail(
-        input,
-        |on| app.set_drawing_magnet(on),
-        journal(access, actor),
-    )
-}
-
-fn set_object<P: TabsPort + TabsMutPort + ?Sized>(
-    app: &mut P,
-    access: &mut ControlAccess,
-    actor: &ActorContext,
-    input: &Value,
-) -> Result<Value, ControlError> {
-    magnet::set_object(
-        input,
-        move |tab, pane| Ok(&mut super::price_axis::pane(app, tab, pane)?.drawings),
-        journal(access, actor),
-    )
-}
-
-fn set_scope<P: TabsPort + TabsMutPort + ?Sized>(
-    app: &mut P,
-    access: &mut ControlAccess,
-    actor: &ActorContext,
-    input: &Value,
-) -> Result<Value, ControlError> {
-    scope::call(
-        input,
-        move |tab, pane| {
-            let pane = super::price_axis::pane(app, tab, pane)?;
-            let bars = pane
-                .layout
-                .drawings_spec
-                .unwrap_or(*pane.series.state.spec());
-            Ok((&mut pane.drawings, bars.to_config_string()))
-        },
-        journal(access, actor),
-    )
-}
+use super::journal::NewEvent;
 
 /// A hand's flip of the rail's magnet is `annotate.magnet.set`, so it
 /// journals alike. Without control access it lands directly.
@@ -123,5 +56,12 @@ where
     let Some(actor) = access.hand_actor() else {
         return;
     };
-    journal(access, &actor)(OBJECT_MAGNET_EVENT_KIND, input.event_payload(true));
+    let payload = input.event_payload(true);
+    let event = NewEvent::by(
+        ANNOTATE_MODULE_ID,
+        OBJECT_MAGNET_EVENT_KIND,
+        &actor,
+        payload,
+    );
+    access.append_event(event);
 }

@@ -1,6 +1,6 @@
 //! The forming bar's progress on the price tag: the pane a call names says
 //! which market, and the market settings keep the switch.
-use super::price_axis::{invalid, pane};
+use super::addressed_pane::{invalid, pane};
 use crate::app::control_host::ControlPort;
 use quantick_control::{error::ControlError, wire::WireU64};
 use quantick_control_handlers::price_tag_progress::PriceTagProgressPort;

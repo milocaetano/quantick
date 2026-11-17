@@ -168,7 +168,7 @@ fn script_library_extension_contract() {
         &egui::Context::default(),
         &SurfaceEnv::quiet(Instant::now()),
     );
-    for action in response.script_editor_actions {
+    for action in response.late().script_editor_actions {
         (registered.handler)(
             &mut editor,
             &mut (),

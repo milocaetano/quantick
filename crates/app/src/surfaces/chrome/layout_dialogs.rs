@@ -12,7 +12,6 @@ impl crate::surfaces::View<Model> for View {
 pub(crate) fn effects(effect: Effects) -> crate::surfaces::SurfaceResponse {
     crate::surfaces::SurfaceResponse {
         model_effects: vec![quantick_ui_model::HostEffect::LayoutDialogs(effect)],
-        ..Default::default()
     }
 }
 impl LayoutDialogsView {
