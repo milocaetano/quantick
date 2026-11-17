@@ -33,7 +33,7 @@ impl Window {
 
 struct Panes<'a>(&'a mut Vec<String>);
 
-impl WidgetHost for Panes<'_> {
+impl WidgetOwner for Panes<'_> {
     fn widget(&mut self, id: &str, open: Option<bool>) -> Result<WidgetRead, String> {
         self.0.push(format!("{id} {open:?}"));
         Err("recorded".to_owned())
@@ -66,8 +66,8 @@ impl ChromeOwners for Window {
         };
         self.lends.then(|| HomeTab::new(&mut self.surface, shown))
     }
-    fn widgets(&mut self) -> Option<Box<dyn WidgetHost + '_>> {
-        let panes: Box<dyn WidgetHost + '_> = Box::new(Panes(&mut self.asked));
+    fn widgets(&mut self) -> Option<Box<dyn WidgetOwner + '_>> {
+        let panes: Box<dyn WidgetOwner + '_> = Box::new(Panes(&mut self.asked));
         self.lends.then_some(panes)
     }
     fn listed_markets(&self) -> MarketSnapshot {

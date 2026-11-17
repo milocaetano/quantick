@@ -19,7 +19,7 @@ pub trait ChromeOwners {
         None
     }
     /// The widget panes and the tab they paint for.
-    fn widgets(&mut self) -> Option<Box<dyn WidgetHost + '_>> {
+    fn widgets(&mut self) -> Option<Box<dyn WidgetOwner + '_>> {
         None
     }
     /// What "Open a market" lists now: the config's markets and the open tabs.
@@ -63,7 +63,7 @@ impl<'a> HomeTab<'a> {
 }
 
 /// The widget panes' owner, which the window lends the three capabilities.
-pub trait WidgetHost {
+pub trait WidgetOwner {
     /// Open or close the pane `id` names when `open` says so, then what it
     /// paints for the active tab; or why not.
     fn widget(&mut self, id: &str, open: Option<bool>) -> Result<WidgetRead, String>;
@@ -73,9 +73,11 @@ pub trait WidgetHost {
 pub trait MarketTabs {
     /// Bring the tab at this zero-based place forward, off Home.
     fn focus_tab(&mut self, index: usize);
-    /// See [`crate::market_palette::MarketPaletteHost::open_tab`].
+    /// Open a tab on the choice's market, on `bar` (none: the one any new
+    /// tab takes), joining the choice's workspace ([`OpenChoice::arrival`]),
+    /// and answer its id; a background choice keeps the tab on screen.
     fn open_tab(&mut self, choice: &OpenChoice, bar: Option<BarConfiguration>) -> TabOpening;
-    /// See [`crate::market_palette::MarketPaletteHost::set_flow_bar`].
+    /// Put tab `tab`'s flow pane on `bar`, as its bars menu does.
     fn set_flow_bar(&mut self, tab: u64, bar: BarConfiguration) -> Result<(), String>;
 }
 

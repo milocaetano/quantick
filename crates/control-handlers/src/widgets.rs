@@ -12,7 +12,6 @@ use std::borrow::Cow;
 use std::collections::BTreeMap;
 
 use crate::chrome_owners::ChromeOwners;
-pub use crate::chrome_owners::WidgetHost;
 use quantick_chart::widgets::big_trades::{BigTradesLayout, NotionalUnit, big_trades_view};
 use quantick_chart::widgets::depth::{
     DEPTH_RESTING_BAR_SHARE, DEPTH_VOLUME_BAR_SHARE, depth_rows_per_side, depth_view,
@@ -371,7 +370,7 @@ pub fn read(state: WidgetState, market: String, scene: &WidgetScene) -> WidgetRe
     }
 }
 
-/// [`WidgetHost::widget`] on the panes the window lends.
+/// [`crate::chrome_owners::WidgetOwner::widget`] on the panes the window lends.
 ///
 /// # Errors
 /// Why not, or a window that lends no panes.

@@ -26,11 +26,10 @@ use crate::surfaces::drawing_chrome::DrawingChromeExt as _;
 use crate::surfaces::replay_browser::ReplayBrowserExt as _;
 use crate::toolrail::ToolRailExt as _;
 use eframe::egui;
-use quantick_control_handlers::chrome_owners::{ChromeOwners, HomeTab};
+use quantick_control_handlers::chrome_owners::{ChromeOwners, HomeTab, WidgetOwner};
 use quantick_control_handlers::drawing_magnet::RailMagnetPort;
 use quantick_control_handlers::indicator_host::{IndicatorControlHost, IndicatorOwner};
 use quantick_control_handlers::market_palette::MarketTabs;
-use quantick_control_handlers::widgets::WidgetHost;
 use quantick_control_handlers::workspace_book::cell_menu::CellRow;
 use quantick_session::workspace_menu::WorkspaceMenuState;
 use quantick_stores::symbol_catalog::SymbolCatalog;
@@ -764,7 +763,7 @@ impl ChromeOwners for QuantickApp {
         let shown = super::home_wiring::market_shown(&self.runtime.tabs);
         Some(HomeTab::new(&mut self.chrome.title_bar.surface, shown))
     }
-    fn widgets(&mut self) -> Option<Box<dyn WidgetHost + '_>> {
+    fn widgets(&mut self) -> Option<Box<dyn WidgetOwner + '_>> {
         let (surfaces, tabs) = (&mut self.surfaces.widgets, &mut self.runtime.tabs);
         let reads = (&self.config, self.runtime.tz);
         Some(Box::new(crate::widget_surfaces::WidgetDesk {
