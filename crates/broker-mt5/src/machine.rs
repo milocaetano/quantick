@@ -196,9 +196,13 @@ pub struct BrokerCore {
     stops_pending: bool,
     requests: BTreeMap<u64, Unanswered>,
     outbox: Vec<String>,
-    /// Close orders the terminal accepted, whose deal has not arrived yet,
-    /// by ticket, with the quantity each takes off.
+    /// Close orders the terminal accepted that are still taking quantity
+    /// off, by ticket, with what each has left to fill. A close sent with
+    /// return filling can fill in parts while its remainder keeps working.
     closing: BTreeMap<u64, Decimal>,
+    /// Every close order the terminal accepted: a deal of one of these is
+    /// the close's, whenever it arrives.
+    close_tickets: BTreeSet<u64>,
     deals: DealCursor,
     ledger: Ledger,
     malformed_lines: usize,
@@ -295,6 +299,7 @@ impl BrokerCore {
             requests: BTreeMap::new(),
             outbox: Vec::new(),
             closing: BTreeMap::new(),
+            close_tickets: BTreeSet::new(),
             deals: DealCursor::default(),
             ledger: Ledger::default(),
             malformed_lines: 0,
@@ -617,6 +622,7 @@ impl BrokerCore {
         self.cancel_on_ack.clear();
         self.stops_pending = false;
         self.closing.clear();
+        self.close_tickets.clear();
         self.deals = DealCursor::default();
         self.has_state = false;
     }

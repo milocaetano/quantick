@@ -225,6 +225,7 @@ impl BrokerCore {
             Pending::Close { volume } if ok => {
                 if reply.order != 0 {
                     self.closing.insert(reply.order, volume);
+                    self.close_tickets.insert(reply.order);
                 }
             }
             Pending::Cancel { .. } | Pending::Close { .. } => {
@@ -424,18 +425,27 @@ impl BrokerCore {
 
     fn apply_closed_orders(&mut self, lines: &[ClosedOrderLine], events: &mut Vec<VenueEvent>) {
         for line in lines {
-            // A filled order is answered by its deal, which removes it.
-            if matches!(line.state.as_str(), "filled" | "started" | "placed") {
-                continue;
+            match line.state.as_str() {
+                "started" | "placed" => continue,
+                // A filled order is answered by its deals; a close is done
+                // taking anything off, whatever its deals still say.
+                "filled" => {
+                    self.closing.remove(&line.ticket);
+                    continue;
+                }
+                _ => {}
             }
-            if self.closing.remove(&line.ticket).is_some() {
-                // A close the broker accepted and then dropped unfilled: the
-                // position is still open, and the trader has to know.
+            if let Some(unfilled) = self.closing.remove(&line.ticket) {
+                // A close the broker accepted and then dropped, in whole or
+                // in part: that much of the position is still open, and the
+                // trader has to know.
                 events.push(VenueEvent::Rejected(RejectReason::Venue {
                     code: None,
                     message: VenueText::new(&format!(
-                        "close order {} ended {} without filling",
-                        line.ticket, line.state
+                        "close order {} ended {} with {} unfilled",
+                        line.ticket,
+                        line.state,
+                        unfilled.normalize()
                     )),
                 }));
                 continue;
@@ -461,7 +471,15 @@ impl BrokerCore {
         ) else {
             return;
         };
-        let is_close = self.closing.remove(&deal.order).is_some();
+        let is_close = self.close_tickets.contains(&deal.order);
+        if let Some(left) = self.closing.get_mut(&deal.order) {
+            // Only what this deal filled stops closing: the rest of a
+            // partly filled close still works at the exchange.
+            *left = left.saturating_sub(quantity);
+            if *left <= Decimal::ZERO {
+                self.closing.remove(&deal.order);
+            }
+        }
         let mut order = self.ids.order(deal.order);
         if order.is_none() && !is_close && deal.magic == self.config.magic {
             order = self.claim_unticketed_entry(side, deal.order);

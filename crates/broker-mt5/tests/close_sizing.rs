@@ -5,7 +5,10 @@
 mod support;
 
 use quantick_broker_mt5::machine::CLOSE_PENDING;
-use quantick_trading::{CloseAmount, RejectReason, TradingVenue, VenueEvent};
+use quantick_engine::Side;
+use quantick_trading::{
+    CloseAmount, FillRole, OrderIntent, RejectReason, TradingVenue, VenueEvent,
+};
 use serde_json::Value;
 use support::{MAGIC, Snapshot, connected, dec, order, position, reply};
 
@@ -133,4 +136,120 @@ fn a_filled_close_leaves_the_rest_closable() {
     assert!(venue.close(CloseAmount::All).is_empty());
     let rest = closes(&bridge.take_sent());
     assert_eq!(rest[0]["volume"], "2", "the two still open, once");
+}
+
+/// A close sent with ORDER_FILLING_RETURN can fill in parts: its first deal
+/// takes one contract off and the rest keeps working at the exchange. What
+/// still works is still closing, and the order's later deals are still the
+/// close's, never an entry's.
+#[test]
+fn a_partly_filled_close_keeps_its_remainder_closing_until_it_fills() {
+    let (mut venue, bridge) = holding(3);
+    venue.close(CloseAmount::All);
+    let close = closes(&bridge.take_sent()).remove(0);
+    assert_eq!(close["volume"], "3");
+    bridge.push(&reply(
+        close["id"].as_str().unwrap(),
+        10009,
+        "Request executed",
+        900,
+    ));
+    bridge.push(
+        &Snapshot::new()
+            .position(position(77, "buy", 2, 125_000, MAGIC))
+            .deal(support::deal(
+                950, 900, 77, "sell", "out", "expert", 1, 125_100,
+            ))
+            .line(),
+    );
+    venue.poll();
+    assert_eq!(
+        venue.close(CloseAmount::All),
+        blocked(CLOSE_PENDING),
+        "two open, and the close's remainder of two still works"
+    );
+    assert!(closes(&bridge.take_sent()).is_empty(), "no second close");
+
+    // A sell entry the broker answered without a ticket is in flight when
+    // the close's remainder fills: the deal is the close's, not the entry's.
+    let entry = OrderIntent::market(Side::Sell, dec(1));
+    let Some(VenueEvent::Placed(placed)) = venue.submit(entry).into_iter().next() else {
+        panic!("the entry is placed");
+    };
+    let submit = support::only(&bridge.take_sent(), "submit");
+    bridge.push(&reply(
+        submit["id"].as_str().unwrap(),
+        10009,
+        "Request executed",
+        0,
+    ));
+    bridge.push(
+        &Snapshot::new()
+            .deal(support::deal(
+                951, 900, 77, "sell", "out", "expert", 2, 125_105,
+            ))
+            .line(),
+    );
+    let events = venue.poll();
+    let roles: Vec<FillRole> = events
+        .iter()
+        .filter_map(|event| match event {
+            VenueEvent::Filled(fill) => Some(fill.role),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(roles, vec![FillRole::Close], "{events:?}");
+    let mut in_flight = Vec::new();
+    venue.in_flight_entries(&mut in_flight);
+    assert_eq!(
+        in_flight,
+        vec![placed.id],
+        "the entry still waits for its own fill"
+    );
+    assert_eq!(
+        venue.in_flight(),
+        1,
+        "the close is done; only the entry is in flight"
+    );
+}
+
+/// A close that filled in part and then ended unfilled frees what it never
+/// took off, and says how much that was.
+#[test]
+fn a_partly_filled_close_that_ends_frees_its_remainder() {
+    let (mut venue, bridge) = holding(3);
+    venue.close(CloseAmount::All);
+    let close = closes(&bridge.take_sent()).remove(0);
+    bridge.push(&reply(
+        close["id"].as_str().unwrap(),
+        10009,
+        "Request executed",
+        900,
+    ));
+    bridge.push(
+        &Snapshot::new()
+            .position(position(77, "buy", 2, 125_000, MAGIC))
+            .deal(support::deal(
+                950, 900, 77, "sell", "out", "expert", 1, 125_100,
+            ))
+            .line(),
+    );
+    venue.poll();
+    bridge.push(
+        &Snapshot::new()
+            .position(position(77, "buy", 2, 125_000, MAGIC))
+            .closed(900, "canceled")
+            .line(),
+    );
+    let events = venue.poll();
+    assert!(
+        events.iter().any(|event| matches!(
+            event,
+            VenueEvent::Rejected(RejectReason::Venue { message, .. })
+                if message.to_string() == "close order 900 ended canceled with 2 unfilled"
+        )),
+        "{events:?}"
+    );
+    assert!(venue.close(CloseAmount::All).is_empty());
+    assert_eq!(closes(&bridge.take_sent())[0]["volume"], "2");
 }
