@@ -89,7 +89,7 @@ pub struct StatusModel {
     /// off`, `RECORDED · day` — or none where the feed has no counter.
     pub deal_recording: Option<DealCell>,
     /// What the recorder has to say about the flow pane, beside that cell.
-    pub deal_chip: Option<crate::deal_recording_ui::DealChip>,
+    pub deal_chip: Option<crate::deal_recording::DealChip>,
     /// Data-honesty label such as `side: inferred (tick rule)`, when the
     /// aggressor side is not venue truth.
     ///

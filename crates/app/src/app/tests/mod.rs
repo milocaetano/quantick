@@ -461,6 +461,26 @@ fn test_app() -> (
     test_app_with_launch(AppLaunch::default())
 }
 
+/// An agent's call from inside the window, attributed as a remote
+/// assistant's: the hooks' own door, minus their untraced origin.
+trait AgentCall {
+    fn run_agent_action(
+        &mut self,
+        capability_id: &str,
+        input: serde_json::Value,
+    ) -> Result<serde_json::Value, quantick_control::error::ControlError>;
+}
+
+impl AgentCall for QuantickApp {
+    fn run_agent_action(
+        &mut self,
+        capability_id: &str,
+        input: serde_json::Value,
+    ) -> Result<serde_json::Value, quantick_control::error::ControlError> {
+        self.agent_action(capability_id, input, crate::control::ActionOrigin::Remote)
+    }
+}
+
 fn test_app_with_launch(
     launch: AppLaunch,
 ) -> (
