@@ -25,12 +25,11 @@ mod native_indicator;
 mod price_tag_progress;
 // Moved to `quantick-control-host`; named here so `super::journal` resolves.
 use quantick_control_host::journal;
-mod layers;
+mod flow_tabs;
 pub(crate) mod layout;
 mod notify;
 mod pane_bubbles;
 mod ports;
-mod tape_ports;
 pub(crate) use interaction::drawing_band_name;
 #[cfg(test)]
 pub(crate) use interaction::flow_cell_snapshot;
@@ -140,12 +139,12 @@ pub(crate) fn standard_registry() -> Result<ProjectionRegistry, ProjectionRegist
     quantick_control_handlers::market_windows::register_scope(&mut registry)?;
     feed::register(&mut registry)?;
     quantick_control_handlers::chart::register(&mut registry)?;
-    health::register(&mut registry)?;
+    quantick_control_handlers::health::register(&mut registry)?;
     quantick_control_handlers::analysis::register(&mut registry)?;
     interaction::register(&mut registry)?;
     quantick_control_handlers::orderflow::register(&mut registry)?;
     quantick_control_handlers::session::register(&mut registry)?;
     scene::register(&mut registry)?;
-    layers::register(&mut registry)?;
+    quantick_control_handlers::layers::register_scope(&mut registry)?;
     Ok(registry)
 }

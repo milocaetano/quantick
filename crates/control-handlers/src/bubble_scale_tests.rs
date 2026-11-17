@@ -2,6 +2,7 @@
 //! rule decides before anything is set, and a refused call edits nothing.
 
 use super::*;
+use quantick_control::wire::WireU64;
 use serde_json::json;
 
 const T: bool = true;
@@ -139,17 +140,11 @@ impl Pane {
 }
 
 impl BubbleScalePort for Pane {
-    fn bubble_scale_pane(
-        &mut self,
-        _tab_id: u64,
-        _pane_id: u64,
-    ) -> Result<BubbleScalePane, ControlError> {
+    fn bubble_scale_pane(&self) -> Result<BubbleScalePane, ControlError> {
         self.facts.clone()
     }
     fn set_bubble_scale(
         &mut self,
-        _tab_id: u64,
-        _pane_id: u64,
         target: BubbleScaleTarget,
         scale: f32,
     ) -> Result<(bool, f32), ControlError> {
@@ -162,9 +157,10 @@ impl BubbleScalePort for Pane {
 }
 
 fn call(pane: &mut Pane, target: &str, scale: Value) -> Result<Value, ControlError> {
-    let actor = crate::test_support::FakeWindow::assistant();
     let input = json!({"tab_id": "1", "pane_id": "2", "target": target, "scale": scale});
-    set(pane, &mut (), &actor, &input)
+    let input: BubbleScaleInput = serde_json::from_value(input).map_err(invalid)?;
+    let scale = input.validated_scale()?;
+    answer(pane, input, scale)
 }
 
 #[test]
@@ -227,5 +223,40 @@ fn size_set_asks_the_rule_and_the_range_before_the_pane_sets_anything() {
         call(&mut pane, "tape", json!("3")).unwrap()["changed"],
         true,
         "Tape alone still sizes its bubbles"
+    );
+}
+
+/// A window holding one pane, counting how often a call resolved it.
+struct Window {
+    pane: Pane,
+    lookups: usize,
+}
+
+impl PaneTapePort for Window {
+    type Pane = Pane;
+    fn pane_tape(&mut self, _: WireU64, _: WireU64) -> Result<&mut Pane, ControlError> {
+        self.lookups += 1;
+        Ok(&mut self.pane)
+    }
+}
+
+/// The registered handler checks the range before it resolves the pane, so an
+/// out-of-range scale is refused whichever pane it names.
+#[test]
+fn the_range_is_checked_before_the_window_resolves_the_pane() {
+    let actor = crate::test_support::FakeWindow::assistant();
+    let mut window = Window {
+        pane: Pane::with(BubbleScalePane::default()),
+        lookups: 0,
+    };
+    let input =
+        |scale: &str| json!({"tab_id": "1", "pane_id": "2", "target": "tape", "scale": scale});
+    assert!(set(&mut window, &mut (), &actor, &input("9")).is_err());
+    assert_eq!(window.lookups, 0, "the range refused before any lookup");
+    assert!(set(&mut window, &mut (), &actor, &input("2")).is_err());
+    assert_eq!(
+        (window.lookups, window.pane.sets),
+        (1, 0),
+        "the rule refused after it"
     );
 }

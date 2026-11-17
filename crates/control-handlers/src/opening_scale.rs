@@ -3,46 +3,51 @@
 //! an order-flow view — lives here; the port reads that fact and keeps the
 //! preference.
 use crate::dock::ActionDock;
+use crate::tape_pane::PaneTapePort;
 use quantick_control::{error::ControlError, registry::RegistryError, wire::ActorContext};
 use quantick_control_schema::opening_scale::{OpeningScaleInput, OpeningScaleTarget, descriptor};
 use serde_json::Value;
 
-/// The opening-scale capability's narrow port.
+/// The opening-scale capability's narrow port on the pane.
 pub trait OpeningScalePort {
-    /// Whether the addressed pane draws tick FLOW bubbles; refuses a pane
-    /// without an order-flow view.
-    fn tick_flow_active(&mut self, tab_id: u64, pane_id: u64) -> Result<bool, ControlError>;
+    /// Whether the pane draws tick FLOW bubbles; refuses a pane without an
+    /// order-flow view.
+    fn tick_flow_active(&self) -> Result<bool, ControlError>;
     /// Keep `ignore` as `target`'s preference; answers whether it changed.
     fn set_opening_scale(
         &mut self,
-        tab_id: u64,
-        pane_id: u64,
         target: OpeningScaleTarget,
         ignore: bool,
     ) -> Result<bool, ControlError>;
 }
 
-pub fn register<D: ActionDock<H, A>, H: OpeningScalePort + ?Sized, A>(
+pub fn register<D: ActionDock<H, A>, H: PaneTapePort<Pane: OpeningScalePort> + ?Sized, A>(
     registry: &mut D,
 ) -> Result<(), RegistryError> {
     registry.register(descriptor(), set)
 }
 
-fn set<H: OpeningScalePort + ?Sized, A>(
+fn set<H: PaneTapePort<Pane: OpeningScalePort> + ?Sized, A>(
     host: &mut H,
     _access: &mut A,
     _actor: &ActorContext,
     input: &Value,
 ) -> Result<Value, ControlError> {
     let input: OpeningScaleInput = serde_json::from_value(input.clone()).map_err(invalid)?;
-    let (tab, pane) = (input.tab_id.get(), input.pane_id.get());
-    if input.target == OpeningScaleTarget::Candle && !host.tick_flow_active(tab, pane)? {
+    answer(host.pane_tape(input.tab_id, input.pane_id)?, input)
+}
+
+fn answer<P: OpeningScalePort + ?Sized>(
+    pane: &mut P,
+    input: OpeningScaleInput,
+) -> Result<Value, ControlError> {
+    if input.target == OpeningScaleTarget::Candle && !pane.tick_flow_active()? {
         return Err(invalid(
             "regional opening scale requires active tick FLOW bubbles",
         ));
     }
     let ignore = input.ignore_opening_burst_in_scale;
-    let changed = host.set_opening_scale(tab, pane, input.target, ignore)?;
+    let changed = pane.set_opening_scale(input.target, ignore)?;
     serde_json::to_value(input.result(changed)).map_err(invalid)
 }
 
@@ -63,13 +68,11 @@ mod tests {
     }
 
     impl OpeningScalePort for Pane {
-        fn tick_flow_active(&mut self, _tab: u64, _pane: u64) -> Result<bool, ControlError> {
+        fn tick_flow_active(&self) -> Result<bool, ControlError> {
             Ok(self.flow)
         }
         fn set_opening_scale(
             &mut self,
-            _tab: u64,
-            _pane: u64,
             target: OpeningScaleTarget,
             ignore: bool,
         ) -> Result<bool, ControlError> {
@@ -82,10 +85,9 @@ mod tests {
     }
 
     fn call(pane: &mut Pane, target: &str, ignore: bool) -> Result<Value, ControlError> {
-        let actor = crate::test_support::FakeWindow::assistant();
         let input = json!({"tab_id": "1", "pane_id": "0", "target": target,
             "ignore_opening_burst_in_scale": ignore});
-        set(pane, &mut (), &actor, &input)
+        answer(pane, serde_json::from_value(input).map_err(invalid)?)
     }
 
     /// The candle target is refused before anything is kept unless tick FLOW
