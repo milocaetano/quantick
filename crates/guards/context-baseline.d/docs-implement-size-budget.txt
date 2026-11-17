@@ -1,5 +1,5 @@
-# +149: each goal carries a measured Size (guards --report, app delta <=0) that
+# +169: each goal carries a measured Size (guards --report, app delta <=0) that
 # the PR evidence and the reviewer check, plus the owner-type, wire-DTO,
 # comment and tests-in-the-owner-crate rules. Paid for in part by cutting
 # rules CLAUDE.md, the size guard and the done clause already state.
-.claude/skills/implement/ +149
+.claude/skills/implement/ +169
