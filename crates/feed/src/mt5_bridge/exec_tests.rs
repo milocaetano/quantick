@@ -1,4 +1,4 @@
-use super::{ExecBridge, Mt5Connector};
+use super::{ExecBridge, Mt5Connector, relay_lines};
 use quantick_sources::config::MetaTraderBrokerSettings;
 use quantick_trading::BrokerConnector;
 
@@ -55,4 +55,32 @@ fn a_missing_script_launches_nothing() {
         "no/such/quantick_bridge_exec.py".to_owned(),
     ];
     assert!(ExecBridge::launch(&command, 1, "WINZ26").is_none());
+}
+
+/// Every line the bridge prints reaches the log once and verbatim, blank
+/// ones aside; one too long to hold is named rather than kept, and the line
+/// after it is read whole.
+#[test]
+fn every_line_the_bridge_prints_is_relayed() {
+    let long = "x".repeat(quantick_feed_mt5::MAX_LINE_BYTES + 10);
+    let answered = r#"{"event_code":"EXEC_REQUEST_ANSWERED","request":"sltp","retcode":10016}"#;
+    let printed = format!(
+        "{answered}\n\n  \r\n{long}\nTraceback (most recent call last):\r\nthe last line, unterminated"
+    );
+    let mut said = Vec::new();
+    relay_lines(std::io::Cursor::new(printed.into_bytes()), |line| {
+        said.push(line.to_owned());
+    });
+    assert_eq!(
+        said,
+        [
+            answered.to_owned(),
+            format!(
+                "a line over {} bytes was skipped",
+                quantick_feed_mt5::MAX_LINE_BYTES
+            ),
+            "Traceback (most recent call last):".to_owned(),
+            "the last line, unterminated".to_owned(),
+        ]
+    );
 }

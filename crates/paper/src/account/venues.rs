@@ -397,9 +397,11 @@ impl PaperAccount {
         if shown {
             self.handle_events(events);
         } else {
-            // Parked: its closes still belong in the broker's journal, and
-            // nothing it says may reach the simulator's bot buffer.
+            // Parked: its closes still belong in the broker's journal, its
+            // refusals and notices in the log, and nothing it says may reach
+            // the simulator's bot buffer.
             for event in events {
+                super::broker_log::log_broker_event(&event, "parked", &self.symbol);
                 if let VenueEvent::Closed(trade) = event {
                     self.journal_broker(&trade);
                 }

@@ -40,7 +40,7 @@ pub mod fake;
 pub use broker::{AccountFacts, BrokerConnector, BrokerVenue, LinkState, MarginMode, TradeMode};
 pub use events::{
     CancelReason, ExitReason, Fill, FillRole, RejectReason, VENUE_TEXT_BYTES, VenueEvent,
-    VenueNotice, VenueText,
+    VenueNotice, VenueRequest, VenueText,
 };
 pub use intent::{BracketTarget, CloseAmount, OrderIntent};
 pub use money::{

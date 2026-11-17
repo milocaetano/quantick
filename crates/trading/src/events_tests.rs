@@ -5,6 +5,7 @@ fn a_venue_refusal_keeps_the_brokers_words_and_stays_copy() {
     let reason = RejectReason::Venue {
         code: Some(10016),
         message: VenueText::new("Invalid stops"),
+        request: Some(VenueRequest::Stops),
     };
     let copied = reason;
     assert_eq!(copied, reason);
@@ -12,6 +13,7 @@ fn a_venue_refusal_keeps_the_brokers_words_and_stays_copy() {
         reason.to_string(),
         "the broker refused: Invalid stops (code 10016)"
     );
+    assert_eq!(VenueRequest::Stops.as_str(), "stops");
 }
 
 #[test]

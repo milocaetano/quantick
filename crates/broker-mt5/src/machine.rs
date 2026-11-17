@@ -23,7 +23,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use quantick_engine::{Side, Trade};
 use quantick_trading::{
     Bracket, BracketTarget, CancelReason, CloseAmount, ClosedTrade, EntryKind, Order, OrderId,
-    OrderIntent, OrderRole, Position, RejectReason, VenueEvent, VenueNotice,
+    OrderIntent, OrderRole, Position, RejectReason, VenueEvent, VenueNotice, VenueRequest,
 };
 use rust_decimal::Decimal;
 
@@ -159,6 +159,20 @@ enum Pending {
     Close {
         volume: Decimal,
     },
+}
+
+impl Pending {
+    /// The kind a refusal of this request names; a watch is no order.
+    fn request(&self) -> Option<VenueRequest> {
+        match self {
+            Self::Watch => None,
+            Self::Submit(_) => Some(VenueRequest::Submit),
+            Self::Cancel { .. } => Some(VenueRequest::Cancel),
+            Self::Modify { .. } => Some(VenueRequest::Modify),
+            Self::PositionStops { .. } => Some(VenueRequest::Stops),
+            Self::Close { .. } => Some(VenueRequest::Close),
+        }
+    }
 }
 
 /// A request sent and not yet answered, and the line to resend it with.

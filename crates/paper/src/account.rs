@@ -26,6 +26,7 @@ use crate::report::sessions::JournaledTrade;
 use crate::risk_sizing::{Capital, InstrumentBook, RiskHook, RiskSettings};
 use quantick_civil::civil_utc;
 
+mod broker_log;
 mod capture_orders;
 mod journal;
 mod orders;
@@ -833,6 +834,9 @@ impl PaperAccount {
         let word = self.route_kind().word();
         let broker = self.broker_shown();
         for event in events {
+            if broker {
+                broker_log::log_broker_event(&event, word, &self.symbol);
+            }
             match event {
                 VenueEvent::Rejected(reason) => self.set_toast(format!("{word}: {reason}")),
                 VenueEvent::BracketDropped { reason } => {

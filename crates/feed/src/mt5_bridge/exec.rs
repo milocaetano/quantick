@@ -13,14 +13,16 @@
 //! listens on the configured loopback port, launches the bridge and builds
 //! the MetaTrader venue over the socket.
 
+use std::io::{BufRead as _, BufReader, Read};
 use std::process::{Child, Command, Stdio};
 
 use quantick_broker_mt5::{BrokerConfig, Mt5Venue, TcpBridgeLink};
+use quantick_feed_mt5::MAX_LINE_BYTES;
 use quantick_sources::config::MetaTraderBrokerSettings;
 use quantick_trading::{BrokerConnector, BrokerVenue};
 use tracing::{info, warn};
 
-use super::{default_search_roots, interpreter_candidates, resolve_script};
+use super::{default_search_roots, interpreter_candidates, log_bridge_line, resolve_script};
 
 /// The MetaTrader route's connector: `[broker.metatrader]`, and the bridge
 /// it launched, ended with it.
@@ -147,11 +149,16 @@ impl ExecBridge {
                 .arg("--symbol")
                 .arg(symbol)
                 .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
+                // Read rather than discarded: the bridge logs every answer
+                // the terminal gave (a refusal's retcode, its comment, the
+                // request it answered), and a traceback says why it died.
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
                 .spawn();
             match spawned {
-                Ok(child) => {
+                Ok(mut child) => {
+                    relay_output(child.stdout.take(), symbol);
+                    relay_output(child.stderr.take(), symbol);
                     info!(
                         target: "quantick::app",
                         schema_version = 1_u8,
@@ -186,6 +193,67 @@ impl ExecBridge {
     #[must_use]
     pub fn id(&self) -> u32 {
         self.child.id()
+    }
+}
+
+/// Read `source`, one of the bridge's output pipes, on a thread of its own
+/// until it closes, logging every line. A pipe nobody reads fills and stalls
+/// the bridge; one that cannot be read is dropped, and the bridge's next
+/// write fails it - a stopped bridge the venue reads as a lost link.
+fn relay_output(source: Option<impl Read + Send + 'static>, symbol: &str) {
+    let Some(source) = source else {
+        return;
+    };
+    let symbol = symbol.to_owned();
+    let spawned = std::thread::Builder::new()
+        .name("mt5-exec-bridge-output".to_owned())
+        .spawn(move || {
+            relay_lines(source, |line| {
+                log_bridge_line("MT5_EXEC_BRIDGE_SAID", &symbol, line);
+            });
+        });
+    if let Err(error) = spawned {
+        warn!(
+            target: "quantick::app",
+            schema_version = 1_u8,
+            event_code = "MT5_EXEC_BRIDGE_OUTPUT_UNREAD",
+            %error,
+            action = "bridge_output_dropped",
+            "could not start reading the execution bridge's output"
+        );
+    }
+}
+
+/// Hand `said` every non-blank line `source` prints until it closes, trimmed.
+/// A line over [`MAX_LINE_BYTES`] is named rather than held, so a runaway
+/// bridge cannot grow memory without limit.
+pub(super) fn relay_lines(source: impl Read, mut said: impl FnMut(&str)) {
+    let mut reader = BufReader::new(source);
+    let limit = MAX_LINE_BYTES as u64 + 1;
+    let mut buffer = Vec::new();
+    // Inside a line already reported as too long, until its newline.
+    let mut skipping = false;
+    loop {
+        buffer.clear();
+        match (&mut reader).take(limit).read_until(b'\n', &mut buffer) {
+            Ok(0) | Err(_) => return,
+            Ok(_) => {}
+        }
+        let ended = buffer.last() == Some(&b'\n');
+        if skipping {
+            skipping = !ended;
+            continue;
+        }
+        if !ended && buffer.len() as u64 >= limit {
+            skipping = true;
+            said(&format!("a line over {MAX_LINE_BYTES} bytes was skipped"));
+            continue;
+        }
+        let text = String::from_utf8_lossy(&buffer);
+        let line = text.trim();
+        if !line.is_empty() {
+            said(line);
+        }
     }
 }
 

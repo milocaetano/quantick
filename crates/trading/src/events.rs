@@ -179,6 +179,35 @@ impl std::fmt::Debug for VenueText {
     }
 }
 
+/// Which kind of request a venue refused, when its refusal answers one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VenueRequest {
+    /// A new order.
+    Submit,
+    /// A working order's removal.
+    Cancel,
+    /// A working order's new price or protections.
+    Modify,
+    /// The open position's stop and target.
+    Stops,
+    /// A deal taking the position off.
+    Close,
+}
+
+impl VenueRequest {
+    /// The kind in one word, for a log line.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Submit => "submit",
+            Self::Cancel => "cancel",
+            Self::Modify => "modify",
+            Self::Stops => "stops",
+            Self::Close => "close",
+        }
+    }
+}
+
 /// Why a command was refused. Messages are written for a beginner: they say
 /// what was wrong *and* what to do instead.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -207,10 +236,12 @@ pub enum RejectReason {
     /// The venue itself refused: `code` is its numeric answer (a broker
     /// return code), `message` its own comment, reproduced verbatim. No
     /// code means the venue's own gateway refused before asking the venue,
-    /// and the message is that gateway's.
+    /// and the message is that gateway's. `request` names what was
+    /// refused, when the venue knows.
     Venue {
         code: Option<i64>,
         message: VenueText,
+        request: Option<VenueRequest>,
     },
     /// The venue adapter will not carry the command to the venue at all:
     /// the link is down, the account cannot be traded here, or the command
@@ -300,10 +331,12 @@ impl std::fmt::Display for RejectReason {
             Self::Venue {
                 code: Some(code),
                 message,
+                ..
             } => write!(f, "the broker refused: {message} (code {code})"),
             Self::Venue {
                 code: None,
                 message,
+                ..
             } => write!(f, "the broker bridge refused: {message}"),
             Self::Blocked(sentence) => f.write_str(sentence),
         }

@@ -4,7 +4,8 @@
 use quantick_engine::Side;
 use quantick_trading::{
     Bracket, CancelReason, ClosedTrade, EntryKind, ExitReason, Fill, FillRole, Order, OrderId,
-    OrderRole, Position, RejectReason, VenueEvent, VenueNotice, VenueText, signed_points,
+    OrderRole, Position, RejectReason, VenueEvent, VenueNotice, VenueRequest, VenueText,
+    signed_points,
 };
 use rust_decimal::Decimal;
 
@@ -167,6 +168,7 @@ impl BrokerCore {
                     .or(reply.error.as_deref())
                     .unwrap_or_default(),
             ),
+            request: request.pending.request(),
         };
         let ok = accepted(reply.retcode);
         let mut events = Vec::new();
@@ -448,6 +450,7 @@ impl BrokerCore {
                         line.state,
                         unfilled.normalize()
                     )),
+                    request: Some(VenueRequest::Close),
                 }));
                 continue;
             }

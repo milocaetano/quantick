@@ -8,7 +8,7 @@ use quantick_engine::Side;
 use quantick_trading::fake::print_at;
 use quantick_trading::{
     Bracket, BracketTarget, CancelReason, CloseAmount, ExitReason, FillRole, OrderIntent,
-    RejectReason, TradingVenue, VenueEvent, VenueNotice, VenueText,
+    RejectReason, TradingVenue, VenueEvent, VenueNotice, VenueRequest, VenueText,
 };
 use support::{
     MAGIC, Snapshot, connected, deal, dec, notices, only, order, position, reply, with_stops,
@@ -222,6 +222,7 @@ fn a_refused_stop_move_goes_back_and_says_why_in_the_brokers_words() {
             VenueEvent::Rejected(RejectReason::Venue {
                 code: Some(10016),
                 message: VenueText::new("Invalid stops"),
+                request: Some(VenueRequest::Stops),
             }),
             VenueEvent::BracketSet {
                 stop_loss: None,
@@ -454,7 +455,8 @@ fn a_broker_refusal_removes_the_order_and_carries_its_words() {
         events,
         vec![VenueEvent::Rejected(RejectReason::Venue {
             code: Some(10019),
-            message: VenueText::new("No money")
+            message: VenueText::new("No money"),
+            request: Some(VenueRequest::Submit),
         })]
     );
     assert!(venue.is_idle(), "nothing in flight, nothing working");
@@ -591,7 +593,11 @@ fn a_close_the_broker_drops_unfilled_is_reported_and_stops_being_in_flight() {
     assert!(
         matches!(
             &events[..],
-            [VenueEvent::Rejected(RejectReason::Venue { code: None, .. })]
+            [VenueEvent::Rejected(RejectReason::Venue {
+                code: None,
+                request: Some(VenueRequest::Close),
+                ..
+            })]
         ),
         "{events:?}"
     );
