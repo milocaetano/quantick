@@ -21,7 +21,7 @@ use crate::toolrail::{ToolRail, ToolRailExt as _};
 use super::super::super::arrangement_host::ArrangementHost;
 use super::super::{
     Alerts, AlertsPort, ChromeDrawn, ChromePort, ChromeReads, HealthPort, HealthReads,
-    RecordingPort, ScriptSlot, ScriptsPort, TabReads, TabsMut, TabsMutPort, TabsPort, ToolRailPort,
+    RecordingPort, TabReads, TabsMut, TabsMutPort, TabsPort, ToolRailPort,
 };
 
 /// The feed and symbol the fake's one tab shows.
@@ -44,8 +44,6 @@ pub(crate) struct FakeWindow {
     /// The popup and the acknowledgement toast, read back by the test.
     pub(crate) surfaces: crate::surfaces::Surfaces,
     audio: super::super::super::replay_and_history::AlertState,
-    /// Every script attached: name, source, attached by an operator.
-    pub(crate) attached: Vec<(String, String, bool)>,
     /// The deal-recording default last set.
     pub(crate) record_deals: Option<bool>,
 }
@@ -123,7 +121,6 @@ impl FakeWindow {
                 alerts: Box::new(FakeSpeaker),
                 alert_failure: None,
             },
-            attached: Vec::new(),
             record_deals: None,
         }
     }
@@ -209,22 +206,6 @@ struct FakeSpeaker;
 impl crate::audio::AlertSink for FakeSpeaker {
     fn play(&mut self, _cues: &[crate::audio::Cue]) -> Result<(), &'static str> {
         Ok(())
-    }
-}
-
-impl ScriptsPort for FakeWindow {
-    fn attach_script(&mut self, name: String, source: String, by_operator: bool) -> ScriptSlot {
-        self.attached.push((name, source, by_operator));
-        let slot = self.attached.len() as u64 - 1;
-        (
-            1,
-            crate::pane::PaneSide::Flow,
-            crate::indicator_worker::SlotId(slot),
-        )
-    }
-
-    fn detach_operator_script(&mut self, slot: u64) -> Result<bool, ()> {
-        Ok((slot as usize) < self.attached.len())
     }
 }
 

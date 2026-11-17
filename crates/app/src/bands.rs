@@ -27,7 +27,9 @@ use crate::indicators::IndicatorViews;
 use crate::plot_area::PlotAreas;
 #[cfg(test)]
 pub use quantick_drawings::gesture::magnet_value_of;
-pub use quantick_drawings::gesture::{Band, Bands, band_at, band_of, drawing_in_band, pane_key};
+pub use quantick_drawings::gesture::{
+    Band, BandLabel, Bands, band_at, band_of, drawing_in_band, label_for, pane_key,
+};
 
 /// What the price band is called where a band has to name itself.
 pub const PRICE_BAND_LABEL: &str = "price";
@@ -168,55 +170,6 @@ pub fn paint_off_band_caret(
     ));
 }
 
-/// How the chrome names the band an object lives on.
-pub enum BandLabel {
-    /// The candles. Says nothing anywhere: it is where drawings have always
-    /// been, and a chip on every existing object would be noise.
-    Price,
-    /// A time-only object, which crosses every band.
-    AllBands,
-    /// One indicator pane, by the name that pane shows.
-    Indicator(Arc<str>),
-    /// Its pane exists but is not painting right now — collapsed, hidden or
-    /// errored. The object is where it was put; the reason it is invisible is
-    /// the second field, said in the trader's own words.
-    Unpainted(Arc<str>, &'static str),
-    /// The indicator it annotates is not on this chart right now. The object
-    /// is kept, not deleted, and re-adopted when that indicator comes back.
-    Parked(Arc<str>),
-}
-
-impl BandLabel {
-    /// The short word the manager and the inspector print, if any.
-    #[must_use]
-    pub fn chip(&self) -> Option<String> {
-        match self {
-            BandLabel::Price => None,
-            BandLabel::AllBands => Some("all bands".to_owned()),
-            BandLabel::Indicator(label) => Some(label.to_string()),
-            BandLabel::Unpainted(label, _) => Some(format!("{label} - not painted")),
-            // Named by kind, because the instance is gone: `native.cvd` reads
-            // as "cvd", a script as its file name.
-            BandLabel::Parked(kind) => Some(format!(
-                "not on chart - {}",
-                kind.rsplit('.').next().unwrap_or(kind)
-            )),
-        }
-    }
-
-    /// Why the object is not on screen, when that is the case.
-    #[must_use]
-    pub fn hint(&self) -> Option<&'static str> {
-        match self {
-            BandLabel::Parked(_) => Some(
-                "The indicator this was drawn on is not on the chart. Add it back and the                  object returns at the same value.",
-            ),
-            BandLabel::Unpainted(_, reason) => Some(reason),
-            _ => None,
-        }
-    }
-}
-
 /// Inputs for the band's current carve; cached bands remain a separate read.
 pub(crate) struct BandGeometry<'a> {
     pub auto_range: Option<(f64, f64)>,
@@ -252,45 +205,6 @@ pub(crate) fn drawing_area(chart: egui::Rect, candles_right: Option<f32>) -> egu
         .unwrap_or(chart.right())
         .clamp(chart.left(), chart.right());
     egui::Rect::from_min_max(chart.min, egui::pos2(right, chart.bottom()))
-}
-pub(crate) fn label_for(
-    indicators: &IndicatorViews,
-    drawing: &crate::drawings::Drawing,
-) -> BandLabel {
-    match &drawing.band {
-        DrawingBand::Price => BandLabel::Price,
-        DrawingBand::AllBands => BandLabel::AllBands,
-        DrawingBand::Indicator(key) => indicators
-            .all()
-            .iter()
-            .filter(|view| !view.descriptor.overlay)
-            .find(|view| &pane_key(view) == key)
-            .map_or_else(
-                || BandLabel::Parked(std::sync::Arc::clone(&key.kind)),
-                |view| {
-                    // A band drawing can stop painting for four different
-                    // reasons, and only one of them is "the indicator is
-                    // gone". A mark that vanishes unexplained is what
-                    // teaches a trader to stop trusting the tool, so each
-                    // reason says its own name.
-                    match () {
-                        () if view.error.is_some() => BandLabel::Unpainted(
-                            view.label_shared(),
-                            "this indicator is in error, so its pane and everything drawn on                                  it are not being painted",
-                        ),
-                        () if view.hidden => BandLabel::Unpainted(
-                            view.label_shared(),
-                            "this indicator is hidden - show it again and the object comes                                  back with it",
-                        ),
-                        () if view.sizing == crate::indicators::PaneSizing::Collapsed => BandLabel::Unpainted(
-                            view.label_shared(),
-                            "this pane is collapsed - open it with the chevron and the object                                  is there",
-                        ),
-                        () => BandLabel::Indicator(view.label_shared()),
-                    }
-                },
-            ),
-    }
 }
 #[cfg(any(feature = "drawing-harness", test))]
 pub(crate) fn samples_at(indicators: &IndicatorViews, slot: usize) -> Vec<(DrawingBand, f64)> {

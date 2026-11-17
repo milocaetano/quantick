@@ -988,7 +988,95 @@ fn switch_away(edit: impl Fn(u64, &mut WorkspaceRecipe)) -> SetOutcome {
         edit(tab, &mut copy);
         book.observe(tab, &copy).unwrap();
     }
-    book.set(1, "Swing").unwrap()
+    let asked = book.switch_drops(1, "Swing").unwrap();
+    let set = book.set(1, "Swing").unwrap();
+    assert_eq!(asked, set.dropped_edits, "asking first reads as the switch");
+    set
+}
+
+/// A switch drops the layout, never the drawings, which are the market's:
+/// the changes it names leave them out, where a close names them.
+#[test]
+fn a_switch_names_the_layout_changes_alone() {
+    let mut book = two_tabs_on_scalp();
+    book.observe(1, &recipe(DeclaredLayout::Time)).unwrap();
+    book.note_drawings(1, vec![flow_key()], 2);
+    let close = book.unsaved_edits(1).expect("held").changes;
+    let switch = book.layout_changes(1);
+    assert_eq!(
+        close.len(),
+        switch.len() + 1,
+        "{close:?} against {switch:?}"
+    );
+    assert!(close.starts_with(&switch) && !switch.is_empty());
+    assert!(book.layout_changes(2).is_empty(), "a clean tab");
+}
+
+/// A recipe saved before readings were cut keeps panes for charts its canvas
+/// does not show. Read and written back it is unchanged; landed, edited and
+/// saved it writes them back as stored; and the tab on it reads clean, after
+/// a switch too.
+#[test]
+fn a_stored_recipe_keeps_its_off_screen_panes_through_a_save() {
+    let stored = "version = 1
+[recipes.Pair]
+layout = \"time+flow\"
+        [[recipes.Pair.context_panes]]
+bars = \"time:1m\"
+        [[recipes.Pair.context_panes]]
+bars = \"renko:20\"
+";
+    let mut book = parse_book(stored).unwrap();
+    let pair = book.recipe("Pair").unwrap().clone();
+    assert_eq!(pair.context_panes.len(), 2, "read as stored");
+    let written = toml::to_string_pretty(&book).unwrap();
+    let reread = parse_book(&written).unwrap();
+    assert_eq!(reread.recipe("Pair"), Some(&pair), "written back unchanged");
+
+    book.set_autosave(false);
+    book.open_tab(1);
+    book.set(1, "Pair").unwrap();
+    // The tab reads the one chart its canvas shows.
+    let mut live = pair.clone();
+    live.context_panes.truncate(1);
+    book.observe(1, &live).unwrap();
+    assert_eq!(state(&book, 1), ("Pair".to_owned(), false), "clean");
+    live.split_fraction = Some(0.3);
+    book.observe(1, &live).unwrap();
+    assert!(book.tab_state(1).unwrap().modified);
+    book.save_to(1).unwrap();
+    let saved = book.recipe("Pair").unwrap();
+    assert_eq!(saved.context_panes, pair.context_panes, "as stored");
+    assert_eq!(saved.split_fraction, Some(0.3));
+
+    book.set(1, DEFAULT_WORKSPACE).unwrap();
+    book.set(1, "Pair").unwrap();
+    book.observe(1, &live).unwrap();
+    assert_eq!(
+        state(&book, 1),
+        ("Pair".to_owned(), false),
+        "after a switch"
+    );
+}
+
+/// Asking before a switch moves nothing: a repeat drops nothing, an unknown
+/// workspace is refused, and the tab keeps its copy until the switch.
+#[test]
+fn asking_whether_a_switch_drops_edits_moves_nothing() {
+    let mut book = two_tabs_on_scalp();
+    book.observe(1, &recipe(DeclaredLayout::Time)).unwrap();
+    assert_eq!(book.switch_drops(1, "Default"), Ok(true));
+    assert_eq!(book.switch_drops(1, "Scalp"), Ok(false), "a repeat");
+    assert_eq!(book.switch_drops(2, "Default"), Ok(false), "a clean tab");
+    assert_eq!(
+        book.switch_drops(1, "Gone"),
+        Err(WorkspaceRefusal::UnknownWorkspace("Gone".to_owned()))
+    );
+    assert_eq!(
+        book.switch_drops(9, "Default"),
+        Err(WorkspaceRefusal::UnknownTab(9))
+    );
+    assert_eq!(state(&book, 1), ("Scalp".to_owned(), true), "still held");
 }
 
 /// A footprint style is the tab's: a switch away drops it and says so, even

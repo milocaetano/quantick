@@ -58,6 +58,8 @@ use crate::tabs::TabDirectory;
 pub mod cell_menu;
 pub mod colour_popover;
 pub mod manage;
+pub mod switch;
+pub use switch::{menu_prompt, prompt_answer};
 
 fn unavailable() -> ControlError {
     ControlError::invalid_request("the workspaces are unavailable")
@@ -223,10 +225,12 @@ pub fn apply_row_command<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
         WorkspaceCommand::Colour(intent) => {
             return colour_popover::act(host, &mut to, menu, tab, intent);
         }
-        WorkspaceCommand::Set(name) => set_journaled(host, &mut to, tab, &name).map(|set| {
-            set.changed
-                .then(|| text::switched_toast(symbol, &name, set.dropped_edits))
-        }),
+        WorkspaceCommand::Set(name) => {
+            switch::row(host, &mut to, &mut menu.switch, (tab, symbol), &name)
+        }
+        WorkspaceCommand::AnswerSwitch(answer) => {
+            switch::answer(host, &mut to, &mut menu.switch, answer)
+        }
         WorkspaceCommand::SaveTo => save_to_journaled(host, &mut to, tab).map(|saved| {
             saved.changed.then(|| {
                 text::saved_toast(&saved.workspace, &host.tab_symbols(&saved.tabs_changed))
@@ -1083,9 +1087,14 @@ fn set<H: WorkspaceBookHost + TabDirectory + ?Sized, A: NotifyAccess>(
     actor: &ActorContext,
     value: &Value,
 ) -> Result<Value, ControlError> {
-    let TabWorkspaceSetInput { tab_id, name } = input(value)?;
+    let TabWorkspaceSetInput {
+        tab_id,
+        name,
+        edits,
+    } = input(value)?;
     let tab = tab_on_book(app, tab_id)?;
-    let outcome = set_journaled(app, &mut Some((access, actor)), tab, &name)?;
+    let to = &mut Some((access, actor));
+    let outcome = switch::by_call(app, to, tab, &name, edits)?;
     answer(&TabWorkspaceSetResult {
         tab_id: WireU64::new(tab),
         workspace: name,

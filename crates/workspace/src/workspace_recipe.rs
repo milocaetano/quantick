@@ -15,7 +15,7 @@
 //! [`crate::layout_document::LayoutBook`], so an edit on a shared id would
 //! reach every tab holding it, and a workspace's whole promise is that nothing
 //! reaches another tab until Save to.
-use crate::canvas::{CanvasState, PaneKind, PaneTree, preset};
+use crate::canvas::{CanvasState, PaneKind, PaneTree, Seats, preset, shown_seats};
 use crate::indicator_document::SavedIndicator;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -291,6 +291,42 @@ impl WorkspaceRecipe {
         })
     }
 
+    /// A tab's reading cut to what its canvas shows: the context panes of
+    /// the built charts `state` seats by `seats`, in [`shown_seats`] order. A
+    /// tab keeps the charts an earlier layout built, or a removal took off
+    /// screen; their panes are no part of it, so a tab switched onto a
+    /// workspace showing fewer charts reads as that workspace.
+    #[must_use]
+    pub fn cut_to_canvas(mut self, state: &CanvasState, seats: &Seats) -> Self {
+        let panes = std::mem::take(&mut self.context_panes);
+        let shown = shown_seats(state, seats).into_iter();
+        self.context_panes = shown.filter_map(|seat| panes.get(seat).cloned()).collect();
+        self
+    }
+
+    /// How many time charts this recipe's canvas shows.
+    fn shown_charts(&self) -> usize {
+        let panes = self.canvas_state().panes();
+        panes
+            .iter()
+            .filter(|(_, kind, _)| *kind == PaneKind::Time)
+            .count()
+    }
+
+    /// A reading, cut to its canvas, with the panes `stored` keeps for
+    /// charts past that canvas put back as stored. A save before readings
+    /// were cut kept panes of charts it built off screen: no tab shows them,
+    /// so they are no edit, and they are never lost by a later save. A
+    /// reading short of its canvas (a chart still to be built) takes none.
+    #[must_use]
+    pub fn with_unshown_of(mut self, stored: &Self) -> Self {
+        let held = self.context_panes.len();
+        if held == self.shown_charts() {
+            (self.context_panes).extend(stored.context_panes.iter().skip(held).cloned());
+        }
+        self
+    }
+
     /// What the pane at `index` keeps, by its place: 0 is the flow pane, then
     /// the context panes top to bottom. A pane past the recipe keeps nothing.
     #[must_use]
@@ -407,10 +443,22 @@ impl WorkspaceRecipe {
     }
 
     /// `copy` read against this recipe: a bar rule this recipe does not name
-    /// is the tab's own, never an edit, so it is left out.
+    /// is the tab's own, never an edit, so it is left out; a pane this recipe
+    /// keeps for a chart past the copy's canvas is no edit either (see
+    /// [`Self::with_unshown_of`]); and a context size
+    /// or fold past the end of either list reads as automatic and open, which
+    /// is what a missing entry means, so padding is no edit.
     #[must_use]
     pub fn masked(&self, copy: &Self) -> Self {
-        let mut read = copy.clone();
+        let mut read = copy.clone().with_unshown_of(self);
+        fit_open(&mut read.context_heights, &self.context_heights, |share| {
+            *share == 0.0
+        });
+        fit_open(
+            &mut read.context_panes_collapsed,
+            &self.context_panes_collapsed,
+            |folded| !*folded,
+        );
         if self.flow_bars.is_none() {
             read.flow_bars = None;
         }
@@ -525,5 +573,17 @@ impl WorkspaceRecipe {
             note("timeframe".to_owned());
         }
         words
+    }
+}
+
+/// `read` as long as `mine` where the entries one has past the other read as
+/// `open`: a list padded with automatic, open entries, or cut short of them,
+/// says the same.
+fn fit_open<T: Clone>(read: &mut Vec<T>, mine: &[T], open: impl Fn(&T) -> bool) {
+    let held = read.len();
+    if held > mine.len() && read[mine.len()..].iter().all(&open) {
+        read.truncate(mine.len());
+    } else if held < mine.len() && mine[held..].iter().all(&open) {
+        read.extend_from_slice(&mine[held..]);
     }
 }
