@@ -606,3 +606,9 @@ must finish green on the final committed correction, followed by canonical
 `check` on that exact-head run's complete artifact. This is the one final-CI
 repair, retry count 1; the metadata correction does not reset that count or
 authorize a blind retry. Raw artifacts remain outside Git.
+
+PR #1077 (2026-11-17, trader-authorized) swaps the third row: the MT5 account
+commands grew `control-handlers` to 13,905 production lines, past `workspace`
+at 13,781. Run 44122706326 at 5ea3569cb measured its loops at 1.834, 1.844,
+1.863, 1.857 and 1.830 seconds, so the unchanged policy gives 2.329 seconds.
+App and orderflow keep their ceilings; no ceiling is raised.
