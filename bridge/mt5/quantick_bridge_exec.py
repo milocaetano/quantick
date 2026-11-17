@@ -85,9 +85,10 @@ DEAL_WINDOW_S = 2 * 24 * 60 * 60
 #: writes a moment late is still inside it.
 DEAL_OVERLAP_S = 5 * 60
 
-#: Passes a vanished order may wait for its history record before it is
-#: reported with state "unknown". The terminal writes history a moment after it
-#: drops the order from the working list; this bounds how long that may take.
+#: Passes a vanished order may wait for a history record of how it ended before
+#: it is reported with state "unknown". The terminal writes history a moment
+#: after it drops the order from the working list; this bounds how long that
+#: may take.
 MAX_UNRESOLVED_PASSES = 200
 
 #: Seconds between two state pushes when nothing changed, so quantick can tell
@@ -138,6 +139,9 @@ ORDER_STATES = {
     5: "rejected",
     6: "expired",
 }
+#: The history states that say how an order ended. Any other - started,
+#: placed, or a request still in progress - is no verdict yet.
+FINAL_ORDER_STATES = frozenset(("canceled", "partial", "filled", "rejected", "expired"))
 
 
 def const(terminal, name: str, fallback: int) -> int:
@@ -539,7 +543,11 @@ class ExecSession(TransportMixin):
         return lines
 
     def closed_orders(self, working: set[int]) -> list[dict]:
-        """How each order that left the working list ended, once history says."""
+        """How each order that left the working list ended, once history says.
+
+        A history record that is not yet an ending (`started`, `placed`) is
+        waited on like a missing one: quantick reads only endings, so
+        reporting it would stop the order being followed for good."""
         for ticket in (self.known_orders | self.sent_orders) - working:
             self.unresolved.setdefault(ticket, 0)
         self.sent_orders.clear()
@@ -551,13 +559,12 @@ class ExecSession(TransportMixin):
                 self.unresolved.pop(ticket)
                 continue
             history = self.terminal.history_orders_get(ticket=ticket)
-            if history:
-                state = ORDER_STATES.get(int(history[0].state), "unknown")
-            elif self.unresolved[ticket] >= MAX_UNRESOLVED_PASSES:
+            state = ORDER_STATES.get(int(history[0].state), "unknown") if history else None
+            if state not in FINAL_ORDER_STATES:
+                if self.unresolved[ticket] < MAX_UNRESOLVED_PASSES:
+                    self.unresolved[ticket] += 1
+                    continue
                 state = "unknown"
-            else:
-                self.unresolved[ticket] += 1
-                continue
             resolved.append({"ticket": ticket, "state": state})
         for line in resolved:
             self.unresolved.pop(line["ticket"], None)

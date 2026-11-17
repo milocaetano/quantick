@@ -487,5 +487,21 @@ def test_exits_reach_the_terminal_without_symbol_information():
     check("a modify, which carries a price, is still refused", len(broker.sent) == 3 and "symbol information" in str(modify.get("error")), modify)
 
 
+def test_an_order_history_still_calls_placed_is_followed_until_it_ends():
+    broker = FakeBroker()
+    broker.orders = [ns(ticket=601, symbol=SYMBOL, type=2, volume_current=1.0, price_open=124900.0, sl=0.0, tp=0.0, magic=MAGIC, time_setup_msc=1, type_time=1)]
+    s = session(broker)
+    s.build_state()
+    broker.orders = []
+    for state in (0, 1):
+        broker.history_orders[601] = ns(state=state)
+        pending = s.build_state()["closed_orders"]
+        check(f"history state {state} is no ending", pending == [], pending)
+    broker.history_orders[601] = ns(state=2)
+    ended = s.build_state()["closed_orders"]
+    check("its ending is reported once history has one", ended == [{"ticket": 601, "state": "canceled"}], ended)
+    check("and only once", s.build_state()["closed_orders"] == [], "repeat")
+
+
 if __name__ == "__main__":
     sys.exit(run_tests(dict(globals())))

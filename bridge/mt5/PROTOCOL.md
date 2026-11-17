@@ -701,8 +701,9 @@ every reply, and at least every two seconds.
   by ticket, and the first state of a session is history, not news.
 - `closed_orders` — orders that left the working list, once the terminal's
   history says how: `canceled`, `expired`, `rejected`, `partial`, `filled`,
-  or `unknown` when no record appeared in time. A filled order is answered by
-  its deal.
+  or `unknown` when no record of how it ended appeared in time (a record
+  still `started` or `placed` is waited on, never reported). A filled order is
+  answered by its deal.
 
 Deal and position times are the server's wall clock as the terminal stores
 them; quantick stamps fills with the venue time of the last print it saw
