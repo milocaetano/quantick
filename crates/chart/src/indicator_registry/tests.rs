@@ -501,3 +501,34 @@ fn restored_registration_rejects_foreign_and_duplicate_targets_and_keeps_layout_
         Ok(Some(operator))
     );
 }
+
+#[test]
+fn script_slots_and_watchers_are_found_by_name_and_library_index() {
+    let mut registry = IndicatorRegistry::new(WorkspaceId(0));
+    let at = |slot| TabSlot {
+        workspace: WorkspaceId(0),
+        pane: 0,
+        tab: 1,
+        side: PaneSide::Time(0),
+        slot: SlotId(slot),
+    };
+    let script = |name: &str| SavedKind::Script { name: name.into() };
+    registry.register_restored(at(1), script("zigzag.pine"));
+    registry.register_restored(at(2), SavedKind::native("zigzag.pine"));
+    registry.register_restored(at(3), script("vwap.pine"));
+    registry.register_restored(at(4), script("zigzag.pine"));
+    let seen = SystemTime::UNIX_EPOCH;
+    registry.watch_script(at(1), 5, seen);
+    registry.watch_script(at(3), 6, seen);
+    registry.watch_script(at(4), 5, seen);
+
+    let zigzag: Vec<_> = registry.script_slots("zigzag.pine").collect();
+    assert_eq!(
+        zigzag,
+        [at(1), at(4)],
+        "a native with the same id is no script"
+    );
+    assert_eq!(registry.script_slots("gone.pine").count(), 0);
+    let watching: Vec<_> = registry.watching(5).collect();
+    assert_eq!(watching, [at(1), at(4)]);
+}

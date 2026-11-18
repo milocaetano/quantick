@@ -183,6 +183,16 @@ impl IndicatorRegistry {
     pub fn script_files(&self) -> &[(TabSlot, usize, SystemTime)] {
         &self.script_files
     }
+    /// The slots showing the library script `name`, in registration order.
+    pub fn script_slots<'a>(&'a self, name: &'a str) -> impl Iterator<Item = TabSlot> + 'a {
+        let kinds = self.slot_kinds.iter();
+        kinds.filter_map(move |(owner, kind)| kind.is_script(name).then_some(*owner))
+    }
+    /// The slots watching library entry `index` for hot reload.
+    pub fn watching(&self, index: usize) -> impl Iterator<Item = TabSlot> + '_ {
+        let files = self.script_files.iter();
+        files.filter_map(move |(owner, watched, _)| (*watched == index).then_some(*owner))
+    }
     pub fn pending_hidden(&self) -> &[TabSlot] {
         &self.pending_hidden
     }

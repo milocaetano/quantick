@@ -202,6 +202,57 @@ impl ScriptLibrary {
             ScriptOrigin::File(path) => persistence::read_source(path),
         })
     }
+
+    /// The index of the entry named `name`, the key every by-name caller uses.
+    pub fn index_of(&self, name: &str) -> Option<usize> {
+        self.entries.iter().position(|entry| entry.name == name)
+    }
+
+    /// What a saved entry naming `name` loads.
+    pub fn load(&self, name: &str) -> LoadedScript {
+        let loaded = self.index_of(name).and_then(|index| self.load_at(index));
+        loaded.unwrap_or_else(|| LoadedScript::Missing {
+            message: format!("{name} is not in the script library"),
+        })
+    }
+
+    /// What the entry at `index` loads, as a menu add picks it; `None` when
+    /// the library has no entry there.
+    pub fn load_at(&self, index: usize) -> Option<LoadedScript> {
+        Some(match self.read(index)? {
+            Ok(text) => LoadedScript::Read { index, text },
+            Err(message) => LoadedScript::Unreadable { index, message },
+        })
+    }
+}
+
+/// [`ScriptLibrary::load`]: each case carries the message its error slot
+/// shows, and the library index the hot-reload watch keys on when it has one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LoadedScript {
+    Read {
+        index: usize,
+        text: String,
+    },
+    /// Listed, but its file could not be read.
+    Unreadable {
+        index: usize,
+        message: String,
+    },
+    /// The library no longer has it.
+    Missing {
+        message: String,
+    },
+}
+
+impl LoadedScript {
+    /// The library index, for every case that has one.
+    pub fn index(&self) -> Option<usize> {
+        match self {
+            Self::Read { index, .. } | Self::Unreadable { index, .. } => Some(*index),
+            Self::Missing { .. } => None,
+        }
+    }
 }
 
 impl ScriptLibraryPort for ScriptLibrary {
@@ -211,9 +262,7 @@ impl ScriptLibraryPort for ScriptLibrary {
 
     fn read(&self, id: &str) -> Result<ScriptDocument, String> {
         let index = self
-            .entries
-            .iter()
-            .position(|entry| entry.name == id)
+            .index_of(id)
             .ok_or_else(|| format!("unknown script: {id}"))?;
         let entry = &self.entries[index];
         Ok(ScriptDocument {
@@ -234,169 +283,5 @@ impl ScriptLibraryPort for ScriptLibrary {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn embedded(name: &str) -> &'static str {
-        EMBEDDED_SCRIPTS
-            .iter()
-            .find(|(n, _)| *n == name)
-            .unwrap_or_else(|| panic!("{name} is embedded"))
-            .1
-    }
-
-    /// The copilot ships twice: embedded here and as the pine crate's
-    /// semantics fixture (`copilot_semantics.rs` proves the marker logic
-    /// against the corpus copy). If the copies drift, the semantics test
-    /// silently proves a script the app no longer embeds — so pin them.
-    #[test]
-    fn the_embedded_copilot_matches_its_semantics_fixture() {
-        assert_eq!(
-            embedded("copilot.pine"),
-            include_str!("../../pine/tests/corpus/ok/copilot.pine"),
-            "sync crates/pine/tests/corpus/ok/copilot.pine with crates/app/scripts/copilot.pine"
-        );
-    }
-
-    /// Same pin, same reason: `force_bar_semantics.rs` proves the three
-    /// classifications against the corpus copy, and a drift would leave it
-    /// proving a script nobody ships.
-    #[test]
-    fn the_embedded_force_bar_matches_its_semantics_fixture() {
-        assert_eq!(
-            embedded("force_bar.pine"),
-            include_str!("../../pine/tests/corpus/ok/force_bar.pine"),
-            "sync crates/pine/tests/corpus/ok/force_bar.pine with crates/app/scripts/force_bar.pine"
-        );
-    }
-
-    /// Same pin, same reason: `exhaustion_reversal_semantics.rs` proves the
-    /// force-bar / give-back pairs against the corpus copy, and a drift would
-    /// leave a suite of passing tests describing a script nobody ships.
-    #[test]
-    fn the_embedded_exhaustion_reversal_matches_its_semantics_fixture() {
-        assert_eq!(
-            embedded("exhaustion_reversal.pine"),
-            include_str!("../../pine/tests/corpus/ok/exhaustion_reversal.pine"),
-            "sync crates/pine/tests/corpus/ok/exhaustion_reversal.pine with \
-             crates/app/scripts/exhaustion_reversal.pine"
-        );
-    }
-
-    /// A private scratch folder that removes itself when the test ends.
-    fn scratch(tag: &str) -> crate::scratch::ScratchDir {
-        crate::scratch::ScratchDir::new(tag)
-    }
-
-    #[test]
-    fn a_pine_file_joins_the_menu_in_a_deterministic_order() {
-        let dir = scratch("order");
-        std::fs::write(
-            dir.join("zeta.pine"),
-            "//@version=5
-plot(close)
-",
-        )
-        .unwrap();
-        std::fs::write(
-            dir.join("alpha.pine"),
-            "//@version=5
-plot(open)
-",
-        )
-        .unwrap();
-        // Not a script: neither belongs in the menu.
-        std::fs::write(dir.join("notes.txt"), "hello").unwrap();
-        std::fs::create_dir_all(dir.join("folder.pine")).unwrap();
-
-        let library = ScriptLibrary::scan_dir(&dir);
-        let names: Vec<&str> = library.entries().iter().map(|e| e.name.as_str()).collect();
-        let files: Vec<&&str> = names
-            .iter()
-            .filter(|n| **n == "alpha.pine" || **n == "zeta.pine")
-            .collect();
-        assert_eq!(
-            files,
-            vec![&"alpha.pine", &"zeta.pine"],
-            "sorted, {names:?}"
-        );
-        assert!(!names.contains(&"notes.txt"), "only .pine files: {names:?}");
-        assert!(
-            !names.contains(&"folder.pine"),
-            "a directory named like a script is not a script: {names:?}"
-        );
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn a_user_file_cannot_shadow_the_embedded_script_of_the_same_name() {
-        let dir = scratch("shadow");
-        let (embedded_name, _) = EMBEDDED_SCRIPTS[0];
-        std::fs::write(
-            dir.join(embedded_name),
-            "//@version=5
-plot(high)
-",
-        )
-        .unwrap();
-
-        let library = ScriptLibrary::scan_dir(&dir);
-        let matching: Vec<&ScriptEntry> = library
-            .entries()
-            .iter()
-            .filter(|e| e.name == embedded_name)
-            .collect();
-        assert_eq!(matching.len(), 1, "never two rows with the same label");
-        assert!(
-            matches!(matching[0].origin, ScriptOrigin::Embedded(_)),
-            "built-in identities remain immutable"
-        );
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn an_unreadable_directory_degrades_to_embedded_only() {
-        // A folder that is not there: inside this thread's scratch directory,
-        // so nothing has to create it and nothing is left behind.
-        let missing = crate::scratch::thread_dir("script-library").join("missing");
-        let library = ScriptLibrary::scan_dir(&missing);
-        assert_eq!(
-            library.entries().len(),
-            EMBEDDED_SCRIPTS.len(),
-            "the feature survives a folder that is not there"
-        );
-    }
-
-    #[test]
-    fn a_file_that_disappears_reports_an_error_rather_than_nothing() {
-        let dir = scratch("vanish");
-        let path = dir.join("gone.pine");
-        std::fs::write(
-            &path,
-            "//@version=5
-plot(close)
-",
-        )
-        .unwrap();
-        let library = ScriptLibrary::scan_dir(&dir);
-        let index = library
-            .entries()
-            .iter()
-            .position(|e| e.name == "gone.pine")
-            .expect("the file was scanned");
-        std::fs::remove_file(&path).unwrap();
-        assert!(
-            matches!(library.read(index), Some(Err(_))),
-            "a file that no longer reads is an error, not a silent skip"
-        );
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn embedded_names_are_unique() {
-        let mut names: Vec<&str> = EMBEDDED_SCRIPTS.iter().map(|(n, _)| *n).collect();
-        names.sort_unstable();
-        names.dedup();
-        assert_eq!(names.len(), EMBEDDED_SCRIPTS.len());
-    }
-}
+#[path = "script_library_tests.rs"]
+mod tests;

@@ -121,14 +121,7 @@ impl IndicatorSource {
                     }
                     _ => quantick_pine::ScriptIndicator::new(compiled, text.clone()),
                 })),
-                Err(errors) => Err(errors
-                    .iter()
-                    .map(|e| e.render(name, text))
-                    .collect::<Vec<_>>()
-                    .join(
-                        "
-",
-                    )),
+                Err(errors) => Err(quantick_pine::render_errors(&errors, name, text)),
             },
         }
     }
@@ -147,8 +140,14 @@ impl IndicatorSource {
     pub fn kind_id(&self) -> String {
         match self {
             IndicatorSource::Native { id, .. } => id.clone(),
-            IndicatorSource::Script { name, .. } => format!("script.{name}"),
+            IndicatorSource::Script { name, .. } => Self::script_kind_id(name),
         }
+    }
+
+    /// [`Self::kind_id`] of the library script `name`, for a slot that must
+    /// carry a script's identity without its source (an unreadable file).
+    pub fn script_kind_id(name: &str) -> String {
+        format!("script.{name}")
     }
 
     /// The display title used when the source cannot load (a healthy

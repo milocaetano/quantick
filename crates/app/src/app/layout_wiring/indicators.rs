@@ -6,12 +6,13 @@
 use super::LayoutAdapter;
 use super::TabSlot;
 use crate::indicator_style::StyleOverride;
-use crate::indicator_worker::{IndicatorCommand, IndicatorEvent, IndicatorSource, SlotId};
+use crate::indicator_worker::{IndicatorCommand, IndicatorSource, SlotId};
 use crate::indicators::IndicatorView;
 use crate::indicators::state_file::{SavedIndicator, SavedInput, SavedKind, SavedPlotStyle};
 use crate::indicators::state_file::{SavedInputExt, SavedPlotStyleExt};
 use crate::layouts::LayoutId;
 use crate::pane::PaneSide;
+use quantick_stores::script_library::LoadedScript;
 use quantick_workspace::indicator_mirror::{self as mirror, LayoutEdit, MirrorAction, SavedInputs};
 
 mod guide;
@@ -39,11 +40,7 @@ pub(in crate::app) fn saved_inputs(
         .position(|slot| *slot == owner.slot)?;
     let layout = store.session().resolve_layout(pane.layout_id());
     let entry = store.book().get(layout)?.indicators.get(index)?;
-    // Match restore: an unreadable set uses declared defaults as a whole.
-    match mirror::saved_inputs(&entry.inputs, SavedInput::to_value) {
-        SavedInputs::Bind(values) => Some(values),
-        SavedInputs::Defaults | SavedInputs::Dropped { .. } => Some(Vec::new()),
-    }
+    Some(mirror::saved_inputs(&entry.inputs, SavedInput::to_value).into_values())
 }
 
 impl LayoutAdapter<'_> {
@@ -112,21 +109,36 @@ impl LayoutAdapter<'_> {
                 values: Vec::new(),
             },
             SavedKind::Script { name } => {
-                let index = self
-                    .indicators
-                    .script_library
-                    .entries()
-                    .iter()
-                    .position(|candidate| candidate.name == *name);
-                // A script the library no longer has still takes a slot — an
-                // error slot saying so. The layout addresses its panes by
-                // entry index, and a pane with one slot fewer than its layout
-                // has entries would have every edit after the gap land one
-                // entry off; and a row that says "not in the library" is the
-                // honest picture of a set the trader cannot see whole.
-                let read = match index {
-                    Some(index) => self.indicators.script_library.read(index),
-                    None => {
+                // A script the library lacks or cannot read still takes a
+                // slot, an error slot saying so: the layout addresses its
+                // panes by entry index, so a missing slot would land every
+                // later edit one entry off.
+                let loaded = self.indicators.script_library.load(name);
+                let index = loaded.index();
+                let file_info =
+                    index.and_then(|index| self.indicators.script_library.file_info(index));
+                let added = match loaded {
+                    LoadedScript::Read { text, .. } => {
+                        let pane = self.pane_mut_at(tab, side)?;
+                        let source = IndicatorSource::Script {
+                            name: name.clone(),
+                            text,
+                        };
+                        Ok(pane.add_indicator(source))
+                    }
+                    LoadedScript::Unreadable { message, .. } => {
+                        tracing::warn!(
+                            target: "quantick::app",
+                            schema_version = 1_u8,
+                            event_code = "INDICATOR_SCRIPT_UNREADABLE",
+                            script = %name,
+                            error = %message,
+                            action = "error_slot_shown",
+                            "cannot read an indicator script"
+                        );
+                        Err(message)
+                    }
+                    LoadedScript::Missing { message } => {
                         tracing::warn!(
                             target: "quantick::app",
                             schema_version = 1_u8,
@@ -135,61 +147,16 @@ impl LayoutAdapter<'_> {
                             action = "error_slot_shown",
                             "the layout references a script the library no longer has"
                         );
-                        Some(Err(format!("{name} is not in the script library")))
+                        Err(message)
                     }
                 };
-                let file_info =
-                    index.and_then(|index| self.indicators.script_library.file_info(index));
-                let slot = match read {
-                    Some(Ok(text)) => {
+                let slot = match added {
+                    Ok(slot) => slot,
+                    Err(message) => {
                         let pane = self.pane_mut_at(tab, side)?;
-                        pane.add_indicator(IndicatorSource::Script {
-                            name: name.clone(),
-                            text,
-                        })
+                        let title = quantick_stores::script_library::script_title(name);
+                        pane.indicators.show_unloaded_script(name, title, message)
                     }
-                    Some(Err(message)) => {
-                        if index.is_some() {
-                            tracing::warn!(
-                                target: "quantick::app",
-                                schema_version = 1_u8,
-                                event_code = "INDICATOR_SCRIPT_UNREADABLE",
-                                script = %name,
-                                error = %message,
-                                action = "error_slot_shown",
-                                "cannot read an indicator script"
-                            );
-                        }
-                        // The same error slot the menu's own add builds, so a
-                        // script the trader fixes and reloads keeps its place.
-                        let pane = self.pane_mut_at(tab, side)?;
-                        let slot = pane.indicators.allocate_slot(format!("script.{name}"));
-                        pane.indicators.apply(IndicatorEvent::Rebuilt {
-                            slot,
-                            descriptor: quantick_indicators::IndicatorDescriptor {
-                                title: quantick_stores::script_library::script_title(name),
-                                short_title: None,
-                                overlay: false,
-                                plots: Vec::new(),
-                                fills: Vec::new(),
-                                inputs: Vec::new(),
-                            },
-                            columns: Vec::new(),
-                            bar_paint: Vec::new(),
-                            rows: 0,
-                            inputs: Vec::new(),
-                            stale: None,
-                        });
-                        pane.indicators.apply(IndicatorEvent::Error {
-                            slot,
-                            error: quantick_indicators::EvalError {
-                                bar_index: 0,
-                                message,
-                            },
-                        });
-                        slot
-                    }
-                    None => return None,
                 };
                 let owner = self
                     .slot_at(tab, side, slot)

@@ -9,7 +9,9 @@ mod session;
 mod source;
 pub use batch::{Applying, Publishing};
 pub use lane::{LaneDiagnostics, MAX_LANE_RUNGS};
-pub use protocol::{IndicatorCommand, IndicatorEvent, LaneSample, SlotId, fold_parked};
+pub use protocol::{
+    IndicatorCommand, IndicatorEvent, LaneSample, SlotId, fold_parked, unloaded_script_events,
+};
 pub use session::IndicatorSession;
 pub use source::IndicatorSource;
 

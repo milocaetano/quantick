@@ -439,8 +439,7 @@ fn layout<D: OwnersDesk + GatewayPort + TabsPort>(desk: &mut D, env: &ScenarioIn
     if let Some(names) = env.var("QUANTICK_INDICATOR_SCRIPTS_AUTOSTART") {
         for name in values::names(&names) {
             let runtime = desk.owners().runtime;
-            let library = runtime.indicators.script_library.entries();
-            if !library.iter().any(|entry| entry.name == name) {
+            if runtime.indicators.script_library.index_of(name).is_none() {
                 tracing::warn!(
                     target: "quantick::app",
                     schema_version = 1_u8,

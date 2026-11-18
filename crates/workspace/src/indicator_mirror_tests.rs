@@ -218,3 +218,36 @@ fn saved_set_materialises_as_before() {
         "every entry added in order, an unreadable input set falling back whole"
     );
 }
+
+#[test]
+fn a_reload_binds_a_whole_saved_set_or_the_declared_defaults() {
+    let read = |input: &SavedInput| match input {
+        SavedInput::Source(name) if name != "close" => None,
+        other => Some(other.clone()),
+    };
+    let whole = vec![SavedInput::Int(9), SavedInput::Source("close".into())];
+    assert_eq!(saved_inputs(&whole, read).into_values(), whole);
+    let partial = vec![SavedInput::Int(9), SavedInput::Source("nowhere".into())];
+    assert_eq!(
+        saved_inputs(&partial, read).into_values(),
+        Vec::<SavedInput>::new(),
+        "half a set would shift every later input, so none binds"
+    );
+    assert_eq!(
+        saved_inputs(&[], read).into_values(),
+        Vec::<SavedInput>::new()
+    );
+}
+
+#[test]
+fn a_script_entry_is_matched_by_its_library_name_alone() {
+    let script = SavedKind::Script {
+        name: "zigzag.pine".into(),
+    };
+    assert!(script.is_script("zigzag.pine"));
+    assert!(
+        !script.is_script("zigzag"),
+        "the stored name, extension included"
+    );
+    assert!(!SavedKind::native("zigzag.pine").is_script("zigzag.pine"));
+}
