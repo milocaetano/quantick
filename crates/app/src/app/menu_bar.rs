@@ -384,8 +384,8 @@ pub(super) fn apply_menu_command_on(app: &mut QuantickApp, ctx: &egui::Context, 
     }
     match ask {
         MenuCommand::Call(call) => {
-            if let Some(note) = call.run(app as &mut ControlWindow) {
-                toast::note(&mut app.surfaces.toast, note, Instant::now());
+            if let Err(error) = call.run(app as &mut ControlWindow) {
+                toast::note(&mut app.surfaces.toast, error.to_string(), Instant::now());
             }
         }
         MenuCommand::Workspace(command) => app.workspace_calls().apply_workspace_command(command),

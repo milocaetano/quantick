@@ -15,6 +15,7 @@ use quantick_control_schema::{settings_sections::SettingsSection, window_menu::H
 use quantick_session::{paper::TradeCommand, workspace_menu::WorkspaceCommand};
 
 use crate::app::{ChromePort, GatewayPort, LayersPort, TabsPort};
+use crate::layouts::LayoutError;
 use crate::{canvas_layout::LayoutPreset, chart_layers::ChartLayer, dock::DockTab};
 use crate::{layout_strip::StripAction, toolrail::ToolboxDock, ui_state::PanelSection};
 
@@ -105,8 +106,8 @@ impl MenuCommand {
 
 impl MenuCall {
     /// Carry the command out through the port its named call's handler
-    /// takes. A refusal the trader should read comes back as a note.
-    pub(in crate::app) fn run<W>(self, window: &mut W) -> Option<String>
+    /// takes. A refusal the trader should read comes back as the error.
+    pub(in crate::app) fn run<W>(self, window: &mut W) -> Result<(), LayoutError>
     where
         W: TabsPort
             + ChromePort
@@ -139,7 +140,7 @@ impl MenuCall {
             }
             Self::SwitchLayoutIndex(index) => {
                 let switched = window.workspace_calls().layout().switch_layout_index(index);
-                return switched.err().map(|error| error.to_string());
+                return switched.map(|_| ());
             }
             Self::Strip(action) => window.workspace_calls().layout().apply_strip_action(action),
             Self::MoveContextChart { from, to } => {
@@ -156,7 +157,7 @@ impl MenuCall {
                     .and_then(|mut seat| seat.open(Some(section)));
             }
         }
-        None
+        Ok(())
     }
 }
 
