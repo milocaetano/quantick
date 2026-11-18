@@ -8,9 +8,11 @@ use quantick_session::{HistoryAct, HistoryOutcome, SessionSnapshot};
 use quantick_sources::recovery::Recovery;
 use quantick_stores::config::AppConfig;
 use quantick_stores::market_list::{
-    CatalogMarket, OpenMarket, SwitchChoice, Venue, VenueKind, roll_toast, switch_toast,
+    OpenMarket, SwitchChoice, Venue, VenueKind, roll_toast, switch_toast,
 };
 use quantick_stores::workspaces::WorkspaceBook;
+
+const UNAVAILABLE_MESSAGE: &str = "markets cannot be opened here";
 
 /// Binance with BTCUSDT from the config and PEPEUSDT the trader added; tab 5
 /// shows BTCUSDT at tick 50 on Default.
@@ -39,13 +41,6 @@ struct Host {
 
 impl Host {
     fn new() -> Self {
-        let market = |symbol: &str, user_added| CatalogMarket {
-            feed_id: "binance".to_owned(),
-            symbol: symbol.to_owned(),
-            asset: symbol.to_owned(),
-            aliases: Vec::new(),
-            user_added,
-        };
         let snapshot = MarketSnapshot {
             venues: vec![Venue {
                 feed_id: "binance".to_owned(),
@@ -55,7 +50,6 @@ impl Host {
                 bar: Some("tick:50".to_owned()),
                 bridged: false,
             }],
-            markets: vec![market("BTCUSDT", false), market("PEPEUSDT", true)],
             open: vec![OpenMarket {
                 tab_id: 5,
                 position: 1,
@@ -787,17 +781,20 @@ fn calls_without_palette_owners_keep_their_refusals_and_focus_noop() {
     };
     assert_eq!(
         open(&mut host, &choice("PEPEUSDT")).unwrap_err(),
-        UNAVAILABLE
+        UNAVAILABLE_MESSAGE
     );
     assert_eq!(
         remove(&mut host, "binance", "PEPEUSDT"),
-        Err(UNAVAILABLE.to_owned())
+        Err(UNAVAILABLE_MESSAGE.to_owned())
     );
     assert_eq!(
         settle(&mut host, PaletteIntent::Add(choice("PEPEUSDT"))),
-        Err(UNAVAILABLE.to_owned())
+        Err(UNAVAILABLE_MESSAGE.to_owned())
     );
-    assert_eq!(show(&mut host, "", false).unwrap_err().message, UNAVAILABLE);
+    assert_eq!(
+        show(&mut host, "", false).unwrap_err().message,
+        UNAVAILABLE_MESSAGE
+    );
     assert_eq!(
         open(&mut host, &choice("BTCUSDT")).unwrap().focused,
         Some(1)
@@ -811,7 +808,7 @@ fn calls_without_palette_owners_keep_their_refusals_and_focus_noop() {
     };
     assert_eq!(
         crate::market_switch::switch(&mut host, &switch),
-        Err(UNAVAILABLE.to_owned())
+        Err(UNAVAILABLE_MESSAGE.to_owned())
     );
     assert!(host.flow_bars.is_empty());
 }
@@ -826,6 +823,6 @@ fn default_palette_owners_lend_nothing_and_refuse_showing() {
     assert!(host.market_catalog().is_none());
     assert_eq!(
         host.show_market_palette("", None).unwrap_err().message,
-        UNAVAILABLE
+        UNAVAILABLE_MESSAGE
     );
 }
