@@ -68,12 +68,30 @@ pub enum TradeCommand {
 pub struct TradeOutcome {
     /// What the venue answered, in order; empty when nothing reached it.
     pub events: Vec<VenueEvent>,
-    /// The sentence that refused the command before it reached the venue —
-    /// the same words the trader's toast carries.
-    pub refusal: Option<String>,
-    /// Set when the refusal was the feed being out of sync: a caller may
-    /// retry once it catches up, and nothing was sent.
-    pub gate: Option<Desync>,
+    /// Why the command never reached the venue, if it did not.
+    pub refusal: Option<TradeRefusal>,
+}
+
+/// Why a [`TradeCommand`] was refused before it reached the venue.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TradeRefusal {
+    /// The ticket's, the risk's or the venue's complaint, in the words the
+    /// trader's toast carries.
+    Ticket(String),
+    /// New entries pause while the chart is out of sync with its feed:
+    /// nothing was sent, so a retry is safe once it catches up.
+    Paused(Desync),
+}
+
+impl TradeRefusal {
+    /// The refusal in the toast's words, without the route's.
+    #[must_use]
+    pub fn sentence(&self) -> String {
+        match self {
+            Self::Ticket(sentence) => sentence.clone(),
+            Self::Paused(gate) => gate.sentence(),
+        }
+    }
 }
 
 impl TradeOutcome {
@@ -86,7 +104,7 @@ impl TradeOutcome {
 
     fn refused(sentence: String) -> Self {
         Self {
-            refusal: Some(sentence),
+            refusal: Some(TradeRefusal::Ticket(sentence)),
             ..Self::default()
         }
     }
@@ -96,10 +114,10 @@ impl<A: BorrowMut<PaperAccount>> TabPaper<A> {
     /// Run one trade command: the bracket choice, the risk refusal, the
     /// ruler clear and the venue's answer, the same for every caller.
     pub fn execute(&mut self, command: TradeCommand) -> TradeOutcome {
-        if let Some(sentence) = self.entry_paused(&command) {
+        if let Some(gate) = self.entry_paused(&command) {
             return TradeOutcome {
-                gate: self.gate.clone(),
-                ..TradeOutcome::refused(sentence)
+                refusal: Some(TradeRefusal::Paused(gate)),
+                ..TradeOutcome::default()
             };
         }
         match command {

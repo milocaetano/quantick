@@ -54,10 +54,10 @@ impl<A: BorrowMut<PaperAccount>> TabPaper<A> {
         self.desk.carry_out(self.account.borrow_mut(), command)
     }
 
-    /// The pause's refusal for `command`, toasted, when it would open or
+    /// The pause that refuses `command`, toasted, when it would open or
     /// grow exposure: a market press at the size the ticket would send, a
     /// placement as stated, and every reversal.
-    pub(super) fn entry_paused(&mut self, command: &TradeCommand) -> Option<String> {
+    pub(super) fn entry_paused(&mut self, command: &TradeCommand) -> Option<Desync> {
         self.gate.as_ref()?;
         let grows = match command {
             TradeCommand::Market { side } => self.grows(*side, self.ticket_quantity(), None),
@@ -134,11 +134,11 @@ impl<A: BorrowMut<PaperAccount>> TabPaper<A> {
     }
 
     /// While entries are paused: post the cause as the toast, in the route's
-    /// word, and answer with it.
-    fn refusal(&mut self) -> Option<String> {
-        let sentence = self.gate.as_ref()?.sentence();
+    /// word, and answer with the pause.
+    fn refusal(&mut self) -> Option<Desync> {
+        let gate = self.gate.clone()?;
         let word = self.core().route_kind().word();
-        self.show_toast(format!("{word}: {sentence}"));
-        Some(sentence)
+        self.show_toast(format!("{word}: {}", gate.sentence()));
+        Some(gate)
     }
 }

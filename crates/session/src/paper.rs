@@ -37,7 +37,7 @@ mod gate;
 #[path = "paper_settings.rs"]
 mod settings;
 
-pub use command::{NOTHING_TO_REVERSE, TradeCommand, TradeOutcome};
+pub use command::{NOTHING_TO_REVERSE, TradeCommand, TradeOutcome, TradeRefusal};
 pub use settings::{SharedChange, SharedSettings};
 
 /// What a rebuilt timeline says when it flattened a position.

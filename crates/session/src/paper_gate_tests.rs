@@ -13,7 +13,7 @@ use quantick_sources::sync::{Desync, LinkState, STRATEGY_ENTRY_PAUSED, SyncLimit
 use quantick_strategy::runner::StrategyPort;
 use rust_decimal::Decimal;
 
-use crate::paper::{TabPaper, TradeCommand};
+use crate::paper::{TabPaper, TradeCommand, TradeRefusal};
 
 fn print(agg_id: u64, price: i64) -> Trade {
     Trade {
@@ -62,8 +62,13 @@ fn exposed(paper: &mut TabPaper) -> OrderId {
 fn refused(paper: &mut TabPaper, command: TradeCommand) -> String {
     let outcome = paper.execute(command.clone());
     assert!(outcome.events.is_empty(), "{command:?} reached the venue");
-    assert_eq!(outcome.gate, Some(late()), "a caller can tell why");
     let refusal = outcome.refusal.expect("an entry is refused");
+    assert_eq!(
+        refusal,
+        TradeRefusal::Paused(late()),
+        "a caller can tell why"
+    );
+    let refusal = refusal.sentence();
     let toast = paper.account.peek_toast().cloned().unwrap_or_default();
     assert!(toast.ends_with(&refusal), "toasted as refused: {toast}");
     refusal

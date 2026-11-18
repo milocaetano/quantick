@@ -43,7 +43,7 @@ use quantick_control::{error::ControlError, registry::RegistryError, wire::Actor
 use quantick_control_host::journal::NewEvent;
 use quantick_engine::Side;
 use quantick_paper::{PaperAccount, format::PositionSummary, risk_sizing::RiskState};
-use quantick_session::paper::{TradeCommand, TradeOutcome};
+use quantick_session::paper::{TradeCommand, TradeOutcome, TradeRefusal};
 use quantick_sim::{Bracket, EntryKind, Order, OrderId, OrderIntent, VenueEvent};
 use rust_decimal::Decimal;
 use serde_json::{Value, json};
@@ -271,9 +271,9 @@ fn run<P: TradePort + ?Sized, A: JournalAccess>(
         .ok_or_else(no_chart_open)?
         .execute(command);
     if let Some(refusal) = outcome.refusal {
-        return Err(match outcome.gate {
-            Some(gate) => paused_error(&gate, refusal),
-            None => ControlError::invalid_request(refusal),
+        return Err(match refusal {
+            TradeRefusal::Paused(gate) => paused_error(&gate),
+            TradeRefusal::Ticket(sentence) => ControlError::invalid_request(sentence),
         });
     }
     let result = answer(app, &outcome.events);
@@ -284,9 +284,9 @@ fn run<P: TradePort + ?Sized, A: JournalAccess>(
 /// An entry refused while the chart is out of sync with its feed. Nothing
 /// was sent, so the same call is safe to retry once it catches up; the
 /// details name the reading, as the `health` scope's `trade_gate` does.
-fn paused_error(gate: &quantick_sources::sync::Desync, sentence: String) -> ControlError {
+fn paused_error(gate: &quantick_sources::sync::Desync) -> ControlError {
     let code = quantick_control::error::codes::CAPABILITY_UNAVAILABLE;
-    let mut error = quantick_control_host::admission::known_error(code, sentence, true);
+    let mut error = quantick_control_host::admission::known_error(code, gate.sentence(), true);
     error.context.details = Some(json!({
         "trade_gate": gate.reading.word(),
         "link": gate.link.word(),
