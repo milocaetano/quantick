@@ -145,6 +145,17 @@ impl WorkspaceRuntime {
     pub(super) fn bound_mut(&mut self, view: &WorkspaceView) -> &mut Self {
         self.resolve_mut(view).expect("bound workspace")
     }
+    pub(super) fn widget_desk<'a>(
+        &'a mut self,
+        surfaces: &'a mut crate::widget_surfaces::WidgetSurfaces,
+        config: &'a crate::config::AppConfig,
+    ) -> crate::widget_surfaces::WidgetDesk<'a> {
+        crate::widget_surfaces::WidgetDesk {
+            surfaces,
+            tabs: &mut self.tabs,
+            reads: (config, self.tz),
+        }
+    }
     pub(super) fn active_tab(&self) -> &crate::tab::Tab {
         &self.tabs[self.tabs.active_index()]
     }

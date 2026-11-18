@@ -91,6 +91,7 @@ impl FrameCalls for QuantickApp {
 
 impl super::workspace_calls::WorkspaceCalls<'_> {
     fn drain_sources(&mut self) {
+        // A reading arriving during the drain needs its market recorder already installed.
         super::deal_recording_wiring::ensure(self.runtime, self.chrome, self.config);
         self.health.trades_since_summary += self.runtime.drain_tabs(self.config);
     }

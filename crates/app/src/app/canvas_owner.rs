@@ -48,13 +48,10 @@ impl CanvasOwner for WindowOwners<'_> {
     }
     fn show_widget(&mut self, id: &'static str) -> Result<(), String> {
         use quantick_control_handlers::widgets::WidgetOwner;
-        crate::widget_surfaces::WidgetDesk {
-            surfaces: &mut self.surfaces.widgets,
-            tabs: &mut self.runtime.tabs,
-            reads: (self.config, self.runtime.tz),
-        }
-        .widget(id, Some(true))
-        .map(|_| ())
+        self.runtime
+            .widget_desk(&mut self.surfaces.widgets, self.config)
+            .widget(id, Some(true))
+            .map(|_| ())
     }
     fn act(
         &mut self,

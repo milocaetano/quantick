@@ -198,7 +198,8 @@ impl WorkspaceBookStore {
     ) -> (String, bool, quantick_workspace::canvas::LayoutMarks) {
         let (workspace, unsaved) = self.tab_row(tab);
         let saved = self
-            .saved_recipe(tab)
+            .book
+            .recipe(&workspace)
             .map(quantick_workspace::canvas_layout::recipe_canvas);
         (
             workspace,

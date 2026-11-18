@@ -201,10 +201,17 @@ impl crate::Model for Model {
 mod tests;
 
 /// Present the market operation's outcome without closing on a no-op or refusal.
-pub fn apply_palette_intent(outcome: Result<Option<String>, String>, mut update: impl FnMut(Intent), mut notify: impl FnMut(String)) {
+pub fn apply_palette_intent(
+    outcome: Result<Option<String>, String>,
+    mut update: impl FnMut(Intent),
+    mut notify: impl FnMut(String),
+) {
     match outcome {
         Ok(None) => {}
-        Ok(Some(note)) => { update(Intent::Close); notify(note); }
+        Ok(Some(note)) => {
+            update(Intent::Close);
+            notify(note);
+        }
         Err(reason) => update(Intent::Refuse(reason)),
     }
 }
