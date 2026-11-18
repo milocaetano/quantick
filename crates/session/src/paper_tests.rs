@@ -169,6 +169,45 @@ fn a_quiet_timeline_reset_says_nothing() {
     assert!(paper.account.peek_toast().is_none());
 }
 
+/// A saved flatten is never silent and outranks the sweep; an unsaved one
+/// leaves the could-not-save warning standing.
+#[test]
+fn a_saved_flatten_says_so_and_an_unsaved_one_leaves_the_warning() {
+    use super::paper::{RESET_POSITION_TOAST, reset_toast};
+    use quantick_paper::account::TimelineReset;
+    let reset = |had_position, all_saved| TimelineReset {
+        had_position,
+        had_orders: true,
+        all_saved,
+    };
+    assert_eq!(reset_toast(reset(true, true)), Some(RESET_POSITION_TOAST));
+    assert_eq!(reset_toast(reset(true, false)), None);
+    assert_eq!(reset_toast(reset(false, false)), None);
+}
+
+/// The steppers walk the instrument's own size step: a hard-coded 1 moved
+/// a crypto size by a hundred thousand steps.
+#[test]
+fn the_quantity_steppers_walk_the_instruments_own_size_step() {
+    let mut paper = flat();
+    paper.set_symbol("BTCUSDT");
+    let money = quantick_sim::InstrumentMoney {
+        point_value: Decimal::ONE,
+        size_step: Decimal::new(1, 5),
+        min_size: Decimal::new(1, 5),
+        max_size: None,
+        currency: quantick_sim::Currency::new("USDT").expect("USDT"),
+        source: quantick_sim::MoneySource::Declared,
+    };
+    let book = [("BTCUSDT".to_owned(), money)].into_iter().collect();
+    paper.account.set_instrument_money(book);
+    paper.desk.ticket.qty_text = "0.00002".to_owned();
+    paper.step_quantity(Decimal::ONE);
+    assert_eq!(paper.desk.ticket.qty_text, "0.00003");
+    paper.step_quantity(-Decimal::ONE);
+    assert_eq!(paper.desk.ticket.qty_text, "0.00002");
+}
+
 #[test]
 fn the_strategy_port_reaches_the_account() {
     let mut paper = flat();
