@@ -40,7 +40,7 @@ impl TabDirectory for FakeHost {
     }
 }
 
-impl WorkspaceBookHost for FakeHost {
+impl WorkspaceOwner for FakeHost {
     fn workspace_book(&mut self) -> Option<&mut WorkspaceBook> {
         Some(&mut self.book)
     }
@@ -1522,7 +1522,7 @@ mod switch_tests;
 /// A window whose door lends no workspaces.
 struct Bare;
 
-impl WorkspaceDoor for Bare {}
+impl WorkspaceBookHost for Bare {}
 
 /// Every registered call reaches the book through the window's door, so a
 /// window that lends none answers unavailable to each of them.

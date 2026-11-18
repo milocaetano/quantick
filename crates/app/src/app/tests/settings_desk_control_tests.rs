@@ -309,7 +309,6 @@ fn settings_set_moves_the_rows_owners_and_the_summary_agrees() {
 /// rows only through the window's own settle.
 #[test]
 fn the_desk_door_settles_the_record_row_and_the_window_the_agent_rows() {
-    use crate::app::GatewayPort as _;
     use crate::app::chrome::settings::settle;
     use quantick_control_handlers::desk::DeskHost as _;
     use quantick_control_handlers::settings::SettingsAct;
@@ -317,14 +316,11 @@ fn the_desk_door_settles_the_record_row_and_the_window_the_agent_rows() {
     let (mut app, _evt, _cmd, _book) = test_app();
     let ctx = egui::Context::default();
     run_frame(&mut app, &ctx);
-    let record = !app.as_window().desk().unwrap().readings().record_deals;
+    let record = !app.desk().unwrap().readings().record_deals;
     let act = SettingsAct::RecordDeals(record);
-    app.as_window().desk().unwrap().settle(act).unwrap();
+    app.desk().unwrap().settle(act).unwrap();
     assert_eq!(app.chrome.record_deals, Some(record));
-    assert_eq!(
-        app.as_window().desk().unwrap().readings().record_deals,
-        record
-    );
+    assert_eq!(app.desk().unwrap().readings().record_deals, record);
     app.control.control_access = None;
     settle(&mut workspace_calls!(app), &ctx, Action::OpenAgentAccess);
     assert!(

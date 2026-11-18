@@ -83,11 +83,11 @@ impl Host {
     }
 }
 
-/// The host's book, lent through [`crate::workspace_book::WorkspaceDoor`] on its
+/// The host's book, lent through [`crate::workspace_book::WorkspaceBookHost`] on its
 /// one market tab.
 struct LentBook<'a>(&'a mut WorkspaceBook);
 
-impl crate::workspace_book::WorkspaceBookHost for LentBook<'_> {
+impl crate::workspace_book::WorkspaceOwner for LentBook<'_> {
     fn workspace_book(&mut self) -> Option<&mut WorkspaceBook> {
         Some(self.0)
     }
@@ -161,7 +161,7 @@ impl crate::TabDirectory for Host {
     }
 }
 
-impl crate::workspace_book::WorkspaceDoor for Host {
+impl crate::workspace_book::WorkspaceBookHost for Host {
     fn workspaces(&mut self) -> Option<Box<dyn crate::workspace_book::WorkspaceOwner + '_>> {
         let lent: Box<dyn crate::workspace_book::WorkspaceOwner + '_> =
             Box::new(LentBook(&mut self.book));

@@ -7,7 +7,7 @@ use crate::contract_roll::{self, ContractRollPort};
 use crate::feed_source::{check_source, set_source};
 use crate::market_palette::MarketPaletteHost;
 use crate::workspace_book::switch::ask_unjournaled;
-use crate::workspace_book::{WorkspaceDoor, WorkspaceOwner, set_tab_workspace, unavailable};
+use crate::workspace_book::{WorkspaceBookHost, WorkspaceOwner, set_tab_workspace, unavailable};
 use quantick_control::wire::WireU64;
 use quantick_engine::bar_registry::{BUILTIN_BARS, BarConfiguration};
 use quantick_engine::bar_selection::BarInputAvailability;
@@ -17,8 +17,8 @@ use quantick_stores::market_list::{
 
 /// What a switch host can do: the window's switch, its roll, its palette and
 /// the door to its workspace book.
-pub trait SwitchHost: ContractRollPort + MarketPaletteHost + WorkspaceDoor {}
-impl<H: ContractRollPort + MarketPaletteHost + WorkspaceDoor + ?Sized> SwitchHost for H {}
+pub trait SwitchHost: ContractRollPort + MarketPaletteHost + WorkspaceBookHost {}
+impl<H: ContractRollPort + MarketPaletteHost + WorkspaceBookHost + ?Sized> SwitchHost for H {}
 
 const TAB_GONE: &str = "The tab being switched has closed";
 
@@ -67,8 +67,11 @@ pub fn switch<H: SwitchHost + ?Sized>(
         app.edit_catalog(&choice.feed_id, &choice.symbol, true)?;
     }
     set_source(app, tab, &choice.feed_id, &choice.symbol).map_err(|error| error.message)?;
-    if let Some(name) = &choice.workspace {
-        let mut book = app.workspaces().ok_or_else(|| unavailable().message)?;
+    // The door lent the book before anything moved: none of this can refuse
+    // for want of it, which would leave the tab half switched.
+    if let Some(name) = &choice.workspace
+        && let Some(mut book) = app.workspaces()
+    {
         set_tab_workspace(&mut *book, choice.tab_id, name).map_err(|error| error.message)?;
     }
     if let Some(bar) = bar {

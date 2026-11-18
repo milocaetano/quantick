@@ -51,12 +51,19 @@ macro_rules! arrangement_adapter {
 }
 
 /// The desk, Settings, REC and workspace owner over `$app`'s own fields: the
-/// `DeskHost` and `WorkspaceDoor` doors' answer, and what the window's own
-/// Settings draw and workspace rows act through.
+/// `DeskHost` and `WorkspaceBookHost` doors' answer, and what the window's own
+/// Settings draw and workspace rows act through. `bound` first checks the
+/// window shows its workspace, as the desk and Settings always have.
 macro_rules! workspace_calls {
+    (bound $app:expr) => {
+        workspace_calls!($app, $app.runtime.bound_mut(&$app.presentation.binding))
+    };
     ($app:expr) => {
+        workspace_calls!($app, &mut $app.runtime)
+    };
+    ($app:expr, $runtime:expr) => {
         $crate::app::workspace_calls::WorkspaceCalls {
-            runtime: $app.runtime.bound_mut(&$app.presentation.binding),
+            runtime: $runtime,
             presentation: &$app.presentation,
             chrome: &mut $app.chrome,
             pane_ids: &mut $app.pane_ids,

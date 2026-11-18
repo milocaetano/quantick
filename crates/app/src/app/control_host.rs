@@ -31,7 +31,7 @@ use quantick_control_handlers::home_tab::{HomeTab, HomeTabHost};
 use quantick_control_handlers::indicator_host::{IndicatorControlHost, IndicatorOwner};
 use quantick_control_handlers::market_palette::{MarketPaletteOwners, MarketTabs, PaletteShowing};
 use quantick_control_handlers::widgets::{WidgetHost, WidgetOwner};
-use quantick_control_handlers::workspace_book::cell_menu::CellRow;
+use quantick_control_handlers::workspace_book::{WorkspaceOwner, cell_menu::CellRow};
 use quantick_stores::symbol_catalog::SymbolCatalog;
 use quantick_ui_model::market_palette::Intent;
 use quantick_workspace::market_list::{self as list, SwitchTarget};
@@ -122,6 +122,8 @@ pub(crate) trait ChromePort:
     + quantick_control_handlers::home_tab::HomeTabHost
     + quantick_control_handlers::market_palette::MarketPaletteOwners
     + quantick_control_handlers::widgets::WidgetHost
+    + quantick_control_handlers::desk::DeskHost
+    + quantick_control_handlers::workspace_book::WorkspaceBookHost
     + quantick_control_handlers::canvas::CanvasHost
 {
     fn chrome_reads(&self) -> ChromeReads<'_>;
@@ -736,6 +738,12 @@ pub(super) fn close_widget(app: &mut QuantickApp, id: &str) {
     }
 }
 
+impl quantick_control_handlers::desk::DeskHost for QuantickApp {
+    fn desk(&mut self) -> Option<Box<dyn quantick_control_handlers::desk::DeskOwner + '_>> {
+        Some(Box::new(workspace_calls!(bound self)))
+    }
+}
+
 impl HomeTabHost for QuantickApp {
     fn home_tab(&mut self) -> Option<HomeTab<'_>> {
         let shown = super::home_wiring::market_shown(&self.runtime.tabs);
@@ -772,6 +780,12 @@ impl MarketPaletteOwners for QuantickApp {
         let palette = &mut self.surfaces.market_palette;
         palette.update(Intent::open(query, target));
         Ok(())
+    }
+}
+
+impl quantick_control_handlers::workspace_book::WorkspaceBookHost for QuantickApp {
+    fn workspaces(&mut self) -> Option<Box<dyn WorkspaceOwner + '_>> {
+        Some(Box::new(workspace_calls!(self)))
     }
 }
 
@@ -841,7 +855,7 @@ impl GatewayPort for QuantickApp {
         self
     }
     fn workspace(&self) -> &WorkspaceRuntime {
-        self.runtime.bound(&self.presentation.binding)
+        &self.runtime
     }
     fn workspace_calls(&mut self) -> WorkspaceCalls<'_> {
         workspace_calls!(self)

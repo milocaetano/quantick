@@ -1,12 +1,12 @@
 //! The desk, Settings, REC, workspace book and the layout, paper and route
 //! owners over the window fields they span, built by `workspace_calls!` and
-//! lent to the control plane through the `DeskHost` and `WorkspaceDoor` doors.
+//! lent to the control plane through the `DeskHost` and `WorkspaceBookHost` doors.
 
 use std::time::Instant;
 
 use eframe::egui;
 use quantick_control_handlers::desk::{DeskAct, DeskOwner};
-use quantick_control_handlers::workspace_book::{self as ops, WorkspaceBookHost};
+use quantick_control_handlers::workspace_book::{self as ops, WorkspaceOwner};
 use quantick_session::workspace_menu::{WorkspaceCommand, WorkspaceMenuState};
 use quantick_stores::{market_settings::MarketSettingsStore, workspaces::WorkspaceBookStore};
 use quantick_workspace::book_upkeep;
@@ -39,7 +39,7 @@ impl<'a> WorkspaceCalls<'a> {
 
     pub(crate) fn layout(&mut self) -> LayoutAdapter<'_> {
         IndicatorWiring {
-            runtime: self.runtime,
+            runtime: self.runtime.bound_mut(&self.presentation.binding),
             surfaces: self.surfaces,
             #[cfg(any(feature = "scenario-harness", test))]
             harness: &mut self.chrome.harness,
@@ -135,7 +135,7 @@ impl DeskOwner for WorkspaceCalls<'_> {
     }
 }
 
-impl WorkspaceBookHost for WorkspaceCalls<'_> {
+impl WorkspaceOwner for WorkspaceCalls<'_> {
     fn workspace_store(&mut self) -> Option<&mut WorkspaceBookStore> {
         Some(&mut self.runtime.workspace.book)
     }
