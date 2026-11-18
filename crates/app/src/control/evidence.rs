@@ -69,7 +69,7 @@ pub(crate) use quantick_control_host::evidence::{EvidenceChunkPage, EvidenceStor
 /// later chunk read can recheck it against a grant that may since have
 /// changed.
 pub(crate) fn capture_prevalidated(
-    context: UiReadContext<'_>,
+    context: &mut UiReadContext<'_>,
     input: &EvidenceCaptureInput,
     source_scopes: BTreeSet<PermissionId>,
 ) -> Result<EvidenceCapture, ControlError> {

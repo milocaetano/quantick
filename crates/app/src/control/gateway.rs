@@ -471,8 +471,13 @@ impl ControlAccess {
         let actions = Arc::new(standard_actions().expect("built-in action registry must be valid"));
         let evidence = EvidenceStore::new();
         let contract = Arc::new(
-            ObserverContract::new(&projections, Arc::clone(&actions), evidence.clone())
-                .expect("built-in observer capability registry must be valid"),
+            ObserverContract::new(
+                &projections,
+                Arc::clone(&actions),
+                evidence.clone(),
+                crate::control::system::BUILD,
+            )
+            .expect("built-in observer capability registry must be valid"),
         );
         let (journal, journal_ticks) = EventJournal::new();
         let (identity, initialization_error) = match ProcessIdentity::generate() {
@@ -647,7 +652,7 @@ impl ControlAccess {
             .as_ref()
             .expect("the instance identity was read above")
             .session();
-        let result = request.prepared.dispatch.execute_ui(UiReadContext {
+        let result = request.prepared.dispatch.execute_ui(&mut UiReadContext {
             projections: &mut self.projections,
             journal: &self.journal,
             app,

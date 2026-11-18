@@ -21,6 +21,9 @@ use serde::{Deserialize, Serialize};
 
 /// Bumped on breaking layout changes; unknown versions are ignored.
 /// Adding an optional field is not breaking — absent keys stay `None`.
+pub const STATE_FILE: &str = "paper-state.toml";
+pub const INSTRUMENTS_FILE: &str = "instruments.toml";
+
 pub const FORMAT_VERSION: u32 = 1;
 
 /// Everything the sidecar remembers. Every field is optional: `None`

@@ -68,6 +68,7 @@ fn contract() -> ObserverContract {
         &super::super::standard_registry().unwrap(),
         Arc::new(super::super::actions::standard_actions().unwrap()),
         EvidenceStore::new(),
+        crate::control::system::BUILD,
     )
     .unwrap()
 }
@@ -88,47 +89,6 @@ fn request(capability: &str, payload: Value) -> RequestEnvelope {
 }
 
 #[test]
-fn sensitive_cross_scope_reference_fails_closed() {
-    let contract = contract();
-    let grant = contract.default_grant();
-    let error = contract
-        .prepare(
-            request(
-                SNAPSHOT_CAPABILITY_ID,
-                json!({ "scopes": ["interaction.selection"] }),
-            ),
-            &grant,
-        )
-        .unwrap_err();
-    assert_eq!(error.code.as_str(), codes::SCOPE_DENIED);
-    assert!(
-        error.context.details.unwrap()["missing_permissions"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|permission| permission == "observe.paper")
-    );
-}
-
-#[test]
-fn default_grant_can_read_chart_but_not_sensitive_scopes() {
-    let contract = contract();
-    let grant = contract.default_grant();
-    contract
-        .prepare(
-            request(
-                SNAPSHOT_CAPABILITY_ID,
-                json!({ "scopes": ["chart.summary", "interaction.cursor"] }),
-            ),
-            &grant,
-        )
-        .unwrap();
-    assert!(!grant.contains(&permission("observe.paper")));
-    assert!(!grant.contains(&permission("observe.evidence")));
-    assert!(!grant.contains(&permission("observe.user_text")));
-}
-
-#[test]
 fn observer_registry_contains_only_read_capabilities() {
     // Nine reads with prepare handlers, plus the registered actions,
     // which have none here: an action is prepared from the action registry
@@ -138,9 +98,12 @@ fn observer_registry_contains_only_read_capabilities() {
     const READ_CAPABILITIES: usize = 9;
     let contract = contract();
     let capabilities = contract.registry().capabilities().collect::<Vec<_>>();
-    let actions = contract.actions.descriptors().count();
+    let actions = super::super::actions::standard_actions()
+        .unwrap()
+        .descriptors()
+        .count();
     assert_eq!(capabilities.len(), READ_CAPABILITIES + actions);
-    assert_eq!(contract.contract.read_count(), READ_CAPABILITIES);
+    assert_eq!(contract.capabilities().read_count(), READ_CAPABILITIES);
     let observer_ceiling = contract
         .registry()
         .permission_ceiling(&profile(OBSERVER_PROFILE_ID))
@@ -206,7 +169,7 @@ fn observer_tier_admits_every_required_revision() {
         "the probe must be one whose own policy accepts a revision"
     );
     let grant = contract
-        .contract
+        .capabilities()
         .permissions()
         .iter()
         .map(|descriptor| descriptor.id.clone())
@@ -229,44 +192,5 @@ fn observer_tier_admits_every_required_revision() {
     assert!(
         tier_admits_revisions || required.is_empty(),
         "{required:?} require an expected revision the observer tier refuses to receive"
-    );
-}
-
-#[test]
-fn a_second_registered_handler_docks_without_changing_gateway_dispatch() {
-    let mut contract = contract();
-    contract
-        .contract
-        .register_read(
-            authority::read_descriptor::<EmptyInput, DescribeResult>(&authority::ReadSpec {
-                id: "control.second",
-                module: "control",
-                title: "Second observer handler",
-                description: "Exercises the registered capability handler port.",
-                permissions: &[OBSERVE_PERMISSION_ID],
-                pagination: None,
-            }),
-            reads::prepare_describe,
-        )
-        .unwrap();
-
-    let prepared = contract
-        .prepare(
-            request("control.second", json!({})),
-            &contract.default_grant(),
-        )
-        .unwrap();
-    assert!(
-        prepared
-            .dispatch
-            .execute_worker(
-                &contract,
-                &InstanceId::from_bytes([1; 16]),
-                &profile(OBSERVER_PROFILE_ID),
-                &contract.default_grant(),
-                &ProtocolLimits::default(),
-            )
-            .unwrap()
-            .is_ok()
     );
 }

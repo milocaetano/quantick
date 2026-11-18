@@ -23,6 +23,7 @@ pub(crate) fn capability_catalog() -> Value {
         &projections,
         std::sync::Arc::new(actions),
         super::evidence::EvidenceStore::new(),
+        crate::control::system::BUILD,
     )
     .expect("observer contract is valid");
     let default_scopes = contract.default_grant();

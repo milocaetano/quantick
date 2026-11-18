@@ -16,6 +16,7 @@ pub(super) fn contract() -> ObserverContract {
         &crate::control::standard_registry().unwrap(),
         Arc::new(crate::control::actions::standard_actions().unwrap()),
         EvidenceStore::new(),
+        crate::control::system::BUILD,
     )
     .unwrap()
 }

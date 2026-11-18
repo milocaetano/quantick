@@ -8,6 +8,7 @@ pub mod manage_workspaces;
 pub mod paper_report;
 #[cfg(test)]
 mod scratch;
+pub mod store_home;
 pub mod workspace_menu;
 
 /// A deterministic transition over cached presentation state.

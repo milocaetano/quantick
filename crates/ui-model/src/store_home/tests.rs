@@ -11,7 +11,7 @@ fn an_explicit_environment_ask_beats_the_home() {
     });
     assert_eq!(asked, Some("D:/somewhere/else.toml".into()));
     assert_eq!(capture_override("unknown.toml", |_| Some("x".into())), None);
-    let catalog = capture_override(crate::paper_state::INSTRUMENTS_FILE, |env| {
+    let catalog = capture_override(quantick_paper::state::INSTRUMENTS_FILE, |env| {
         (env == "QUANTICK_INSTRUMENTS").then(|| "D:/scratch/instruments.toml".into())
     });
     assert_eq!(
@@ -25,8 +25,9 @@ fn an_explicit_environment_ask_beats_the_home() {
 /// by one and the rescue copies by the other.
 #[test]
 fn every_store_is_named_once() {
-    let mut keys: Vec<_> = COCKPIT_STORES.iter().map(|store| store.key).collect();
-    let mut files: Vec<_> = COCKPIT_STORES.iter().map(|store| store.file).collect();
+    let stores = cockpit_stores([PathBuf::new; 16]);
+    let mut keys: Vec<_> = stores.iter().map(|store| store.key).collect();
+    let mut files: Vec<_> = stores.iter().map(|store| store.file).collect();
     let (before_keys, before_files) = (keys.len(), files.len());
     keys.sort_unstable();
     keys.dedup();

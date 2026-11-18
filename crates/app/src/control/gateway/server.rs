@@ -999,11 +999,12 @@ fn dispatch_prepared(
         return;
     }
     if let Some(result) = prepared.dispatch.execute_worker(
-        &authority.contract,
+        &*authority.contract,
         &authority.identity.instance_id,
         &handshake.effective_profile,
         &handshake.effective_scopes,
         &handshake.effective_limits,
+        metrics::wall_clock_ms(),
     ) {
         let response = serialize_worker_result(&authority.contract, &prepared.envelope, result);
         if let Some(ticket) = ticket.as_ref() {

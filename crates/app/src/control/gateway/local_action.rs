@@ -331,7 +331,7 @@ impl ControlAccess {
                         );
                     }
                 }
-                let execution = prepared.dispatch.execute_ui(UiReadContext {
+                let execution = prepared.dispatch.execute_ui(&mut UiReadContext {
                     projections: &mut self.projections,
                     journal: &self.journal,
                     app,

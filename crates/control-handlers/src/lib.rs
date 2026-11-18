@@ -56,6 +56,7 @@ pub mod market_tab;
 pub mod market_windows;
 pub mod native_window;
 pub mod notify;
+pub mod observer;
 pub mod opening_scale;
 pub mod orderflow;
 pub mod orderflow_settings;
