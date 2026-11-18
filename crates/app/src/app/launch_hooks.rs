@@ -51,7 +51,6 @@ use quantick_feed::history_reach;
 
 #[cfg(any(feature = "scenario-harness", test))]
 use super::AUTOSTART_NATIVES;
-use super::LayoutPort;
 use super::QuantickApp;
 
 /// Run the launch phase over a constructed app, in the order this module
@@ -119,7 +118,7 @@ pub(super) fn apply_launch_phase(
 /// `quantick_control_schema::launch_calls`, which reads each value.
 #[cfg(any(feature = "scenario-harness", test))]
 mod calls {
-    use super::super::{GatewayPort, LayoutPort, TabsPort};
+    use super::super::{GatewayPort, TabsPort};
     use crate::hooks::ScenarioInputs as Env;
     use quantick_control_schema::launch_calls::{self as launch, LaunchCall};
 
@@ -143,10 +142,11 @@ mod calls {
         );
     }
 
-    pub(super) fn layout_tab<W: GatewayPort + LayoutPort + ?Sized>(window: &mut W, env: &Env) {
+    pub(super) fn layout_tab<W: GatewayPort + ?Sized>(window: &mut W, env: &Env) {
         let name = env.var("QUANTICK_LAYOUT_TAB");
         if let Some(name) = name.and_then(|name| crate::layouts::clean_name(&name)) {
-            let known = window.layout_state().layouts().by_name(&name).is_some();
+            let known = window.workspace().layout_state().layouts().by_name(&name);
+            let known = known.is_some();
             run(window, Some(launch::layout_tab(&name, known)));
         }
     }
@@ -444,14 +444,14 @@ fn layout(app: &mut QuantickApp, env: &ScenarioInputs) {
         .var("QUANTICK_LAYOUT_RENAME")
         .is_some_and(|value| value == "1")
     {
-        let active = app.layout_state().focused_pane_layout();
+        let active = app.runtime.layout_state().focused_pane_layout();
         app.layout_adapter().begin_layout_rename(active);
     }
     if env
         .var("QUANTICK_LAYOUT_DELETE")
         .is_some_and(|value| value == "1")
     {
-        let active = app.layout_state().focused_pane_layout();
+        let active = app.runtime.layout_state().focused_pane_layout();
         app.layout_adapter()
             .apply_strip_action(crate::layout_strip::StripAction::Delete(active));
     }

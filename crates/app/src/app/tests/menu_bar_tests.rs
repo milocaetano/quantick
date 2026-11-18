@@ -155,7 +155,12 @@ fn a_switch_row_flips_the_setting_it_names() {
     let ctx = egui::Context::default();
     run_frame(&mut app, &ctx);
     let before = app.health.show_perf;
-    crate::app::chrome::settings::open(&mut app, ctx.viewport_id(), SettingsSection::Display);
+    crate::app::chrome::settings::open(
+        &mut app.chrome.window_menu,
+        &mut app.surfaces,
+        ctx.viewport_id(),
+        SettingsSection::Display,
+    );
     run_frame(&mut app, &ctx);
     let output = run_frame(&mut app, &ctx);
     let row = painted_text_center(&output, "Perf readings").unwrap();
@@ -518,7 +523,12 @@ fn local_agent_menu_opens_registered_panel_in_the_same_frame() {
     let (mut app, _evt, _cmd, _book) = test_app();
     let ctx = egui::Context::default();
     app.control.control_access = Some(crate::control::ControlAccess::new());
-    crate::app::chrome::settings::open(&mut app, ctx.viewport_id(), SettingsSection::AgentAccess);
+    crate::app::chrome::settings::open(
+        &mut app.chrome.window_menu,
+        &mut app.surfaces,
+        ctx.viewport_id(),
+        SettingsSection::AgentAccess,
+    );
     run_frame(&mut app, &ctx);
     let output = run_frame(&mut app, &ctx);
     fn button_center(shape: &egui::Shape) -> Option<egui::Pos2> {

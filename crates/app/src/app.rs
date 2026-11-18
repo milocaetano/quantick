@@ -33,12 +33,11 @@ mod chart_settings_wiring;
 mod chrome;
 pub(crate) mod control_host;
 pub(crate) use control_host::{
-    AlertsPort, ChromePort, ControlWindow, GatewayPort, HealthPort, LayersPort, LayoutPort,
-    PaperPort, TabsMutPort, TabsPort,
+    AlertsPort, ChromePort, ControlWindow, GatewayPort, HealthPort, LayersPort, TabsMutPort,
+    TabsPort,
 };
 pub(crate) mod deal_recording_wiring;
 mod demo_hooks;
-mod desk_wiring;
 pub(crate) mod drawing_controller;
 
 mod frame;
@@ -164,6 +163,7 @@ macro_rules! arrangement_adapter {
         }
     }};
 }
+mod workspace_calls;
 
 impl QuantickApp {
     pub(crate) fn workspace_bundle_adapter(
@@ -183,6 +183,10 @@ impl QuantickApp {
     }
     pub(crate) fn arrangement_adapter(&mut self) -> arrangement_adapter::ArrangementAdapter<'_> {
         arrangement_adapter!(self)
+    }
+    /// The pane-layout owners, for the window's own callers.
+    fn layout_adapter(&mut self) -> layout_wiring::LayoutAdapter<'_> {
+        self.indicator_wiring().into_layout()
     }
     fn indicator_wiring(&mut self) -> indicator_wiring::IndicatorWiring<'_> {
         indicator_wiring::IndicatorWiring {

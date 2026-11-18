@@ -9,12 +9,13 @@ use crate::control::ControlAccess;
 
 /// Bring Settings up on `section`, on this window.
 pub(in crate::app) fn open(
-    app: &mut QuantickApp,
+    menu: &mut crate::app::menu_bar::WindowMenuState,
+    surfaces: &mut crate::surfaces::Surfaces,
     viewport: egui::ViewportId,
     section: SettingsSection,
 ) {
-    app.chrome.window_menu.windows_viewport = Some(viewport);
-    app.surfaces.settings_window.update(Intent::Open(section));
+    menu.windows_viewport = Some(viewport);
+    surfaces.settings_window.update(Intent::Open(section));
 }
 
 /// Draw Settings while it is up, on the window that owns it.

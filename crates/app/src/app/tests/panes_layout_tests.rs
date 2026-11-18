@@ -2220,7 +2220,7 @@ fn two_panes_show_two_layouts_side_by_side() {
     let (mut app, _commands) = split_app(&ctx, 200);
     app.apply_toolbar_action(ToolbarAction::AddNative("native.ema"));
     settle_indicators(&mut app);
-    let first = app.layout_state().layouts().active_id();
+    let first = app.runtime.layout_state().layouts().active_id();
     assert_eq!(pane_set(&app, PaneSide::Flow).len(), 1);
 
     // Focus the time pane and give it a layout of its own.
@@ -2230,9 +2230,10 @@ fn two_panes_show_two_layouts_side_by_side() {
         .layout_adapter()
         .create_layout(Some("levels"))
         .expect("second");
-    assert_eq!(app.layout_state().focused_pane_layout(), second);
+    assert_eq!(app.runtime.layout_state().focused_pane_layout(), second);
     assert_eq!(
-        app.layout_state()
+        app.runtime
+            .layout_state()
             .pane_layout(app.runtime.tabs.active_id(), PaneSide::Flow),
         first,
         "the flow pane kept its layout"
@@ -2290,7 +2291,9 @@ fn two_panes_show_two_layouts_side_by_side() {
     run_frame(&mut app, &ctx);
     let opened = app.runtime.tabs.active_id();
     assert_eq!(
-        app.layout_state().pane_layout(opened, PaneSide::Flow),
+        app.runtime
+            .layout_state()
+            .pane_layout(opened, PaneSide::Flow),
         second
     );
     assert_eq!(app.active_tab().flow_pane.layout.label, "levels");
@@ -2348,7 +2351,7 @@ fn every_visible_pane_keeps_its_own_layout_strip_when_focus_moves() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = split_app(&ctx, 200);
     let tab = app.runtime.tabs.active_id();
-    let first = app.layout_state().pane_layout(tab, PaneSide::Flow);
+    let first = app.runtime.layout_state().pane_layout(tab, PaneSide::Flow);
 
     let time_point = pane_point(&app, PaneSide::Time(0));
     click_chart(&mut app, &ctx, time_point);
@@ -2396,9 +2399,14 @@ fn every_visible_pane_keeps_its_own_layout_strip_when_focus_moves() {
     click_chart(&mut app, &ctx, flow_point);
     run_frame(&mut app, &ctx);
     assert_eq!(app.active_tab().focused_side(), PaneSide::Flow);
-    assert_eq!(app.layout_state().pane_layout(tab, PaneSide::Flow), first);
     assert_eq!(
-        app.layout_state().pane_layout(tab, PaneSide::Time(0)),
+        app.runtime.layout_state().pane_layout(tab, PaneSide::Flow),
+        first
+    );
+    assert_eq!(
+        app.runtime
+            .layout_state()
+            .pane_layout(tab, PaneSide::Time(0)),
         second
     );
     assert_eq!(
@@ -2420,13 +2428,16 @@ fn pane_local_strip_actions_target_the_footer_that_raised_them() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = split_app(&ctx, 200);
     let tab = app.runtime.tabs.active_id();
-    let first = app.layout_state().layouts().active_id();
+    let first = app.runtime.layout_state().layouts().active_id();
     app.active_tab_mut().focus = PaneSide::Flow;
     let second = app
         .layout_adapter()
         .create_layout(Some("levels"))
         .expect("second layout");
-    assert_eq!(app.layout_state().pane_layout(tab, PaneSide::Flow), second);
+    assert_eq!(
+        app.runtime.layout_state().pane_layout(tab, PaneSide::Flow),
+        second
+    );
 
     app.layout_adapter().apply_strip_action_at(
         tab,
@@ -2435,11 +2446,13 @@ fn pane_local_strip_actions_target_the_footer_that_raised_them() {
     );
     assert_eq!(app.active_tab().focused_side(), PaneSide::Time(0));
     assert_eq!(
-        app.layout_state().pane_layout(tab, PaneSide::Time(0)),
+        app.runtime
+            .layout_state()
+            .pane_layout(tab, PaneSide::Time(0)),
         first
     );
     assert_eq!(
-        app.layout_state().pane_layout(tab, PaneSide::Flow),
+        app.runtime.layout_state().pane_layout(tab, PaneSide::Flow),
         second,
         "the neighboring pane is untouched"
     );
@@ -2449,14 +2462,19 @@ fn pane_local_strip_actions_target_the_footer_that_raised_them() {
         PaneSide::Time(0),
         crate::layout_strip::StripAction::Create,
     );
-    let third = app.layout_state().layouts().active_id();
+    let third = app.runtime.layout_state().layouts().active_id();
     assert_ne!(third, first);
     assert_ne!(third, second);
     assert_eq!(
-        app.layout_state().pane_layout(tab, PaneSide::Time(0)),
+        app.runtime
+            .layout_state()
+            .pane_layout(tab, PaneSide::Time(0)),
         third
     );
-    assert_eq!(app.layout_state().pane_layout(tab, PaneSide::Flow), second);
+    assert_eq!(
+        app.runtime.layout_state().pane_layout(tab, PaneSide::Flow),
+        second
+    );
 
     app.layout_adapter().apply_strip_action_at(
         tab,
@@ -2479,7 +2497,8 @@ fn pane_local_strip_actions_target_the_footer_that_raised_them() {
         crate::layout_strip::StripAction::CommitRename(second, "shared".to_owned()),
     );
     assert_eq!(
-        app.layout_state()
+        app.runtime
+            .layout_state()
             .layouts()
             .get(second)
             .expect("shared layout")
@@ -2494,7 +2513,7 @@ fn pane_local_strip_actions_target_the_footer_that_raised_them() {
 fn per_pane_layouts_are_recorded_and_restored() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = split_app(&ctx, 200);
-    let first = app.layout_state().layouts().active_id();
+    let first = app.runtime.layout_state().layouts().active_id();
     let point = pane_point(&app, PaneSide::Time(0));
     click_chart(&mut app, &ctx, point);
     let second = app
@@ -2509,7 +2528,7 @@ fn per_pane_layouts_are_recorded_and_restored() {
     // The desk names the tab's own copies, so its edits come back as its own.
     let flow = crate::layouts::LayoutId(tabs[0].flow_layout.expect("named"));
     let context = crate::layouts::LayoutId(tabs[0].context_layouts[0]);
-    let book = app.layout_state().layouts();
+    let book = app.runtime.layout_state().layouts();
     assert_eq!(book.strip_layout(flow), first);
     assert_eq!(book.strip_layout(context), second);
 
@@ -2524,7 +2543,7 @@ fn per_pane_layouts_are_recorded_and_restored() {
         .active_tab_mut()
         .pane_mut(PaneSide::Time(0))
         .request_opening_layout(Some(context));
-    let editing = again.layout_state().layouts().active_id();
+    let editing = again.runtime.layout_state().layouts().active_id();
     again.layout_adapter().begin_layout_rename(editing);
     again
         .layout_adapter()
@@ -2547,6 +2566,7 @@ fn per_pane_layouts_are_recorded_and_restored() {
     settle_indicators(&mut again);
     assert_eq!(
         again
+            .runtime
             .layout_state()
             .pane_layout(again.runtime.tabs.active_id(), PaneSide::Time(0)),
         second
@@ -2625,7 +2645,7 @@ fn layouts_come_back_after_a_restart() {
         .pane_mut(PaneSide::Time(0))
         .request_opening_layout(Some(copy));
     again.layout_adapter().reload_layouts(&["market_settings"]);
-    assert_eq!(again.layout_state().layouts().active().name, "open");
+    assert_eq!(again.runtime.layout_state().layouts().active().name, "open");
     settle_indicators(&mut again);
     assert_eq!(
         again
@@ -2649,7 +2669,7 @@ fn an_edit_on_layout_1_survives_a_switch_to_layout_2_and_a_restart() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = split_app(&ctx, 200);
     let tab = app.runtime.tabs.active_id();
-    let first = app.layout_state().layouts().active_id();
+    let first = app.runtime.layout_state().layouts().active_id();
     app.apply_toolbar_action(ToolbarAction::AddNative("native.ema"));
     settle_indicators(&mut app);
     let second = app
@@ -2758,7 +2778,7 @@ fn deleting_a_layout_moves_the_panes_on_its_copies_and_the_dialog_counts_them() 
     let ctx = egui::Context::default();
     let (mut app, _commands) = split_app(&ctx, 200);
     let tab = app.runtime.tabs.active_id();
-    let first = app.layout_state().pane_layout(tab, PaneSide::Flow);
+    let first = app.runtime.layout_state().pane_layout(tab, PaneSide::Flow);
     let point = pane_point(&app, PaneSide::Time(0));
     click_chart(&mut app, &ctx, point);
     let second = app
@@ -2768,15 +2788,20 @@ fn deleting_a_layout_moves_the_panes_on_its_copies_and_the_dialog_counts_them() 
     run_frame(&mut app, &ctx);
     let held = |app: &QuantickApp, side| app.active_tab().pane(side).layout_id();
     let copy = held(&app, PaneSide::Time(0)).expect("a layout");
-    assert!(app.layout_state().layouts().is_private(copy), "a copy");
+    assert!(
+        app.runtime.layout_state().layouts().is_private(copy),
+        "a copy"
+    );
     assert_eq!(app.layout_adapter().panes_on_count(second), 1, "counted");
 
     app.layout_adapter()
         .apply_strip_action(crate::layout_strip::StripAction::Delete(second));
     app.layout_adapter().confirm_layout_delete();
-    assert_eq!(app.layout_state().layouts().layouts().len(), 1);
+    assert_eq!(app.runtime.layout_state().layouts().layouts().len(), 1);
     assert_eq!(
-        app.layout_state().pane_layout(tab, PaneSide::Time(0)),
+        app.runtime
+            .layout_state()
+            .pane_layout(tab, PaneSide::Time(0)),
         first,
         "moved to the neighbour"
     );
@@ -2785,7 +2810,10 @@ fn deleting_a_layout_moves_the_panes_on_its_copies_and_the_dialog_counts_them() 
         held(&app, PaneSide::Flow),
         "onto its tab's copy of it"
     );
-    assert!(app.layout_state().layouts().get(copy).is_none(), "dropped");
+    assert!(
+        app.runtime.layout_state().layouts().get(copy).is_none(),
+        "dropped"
+    );
 }
 
 /// Going back to Single hides the context chart; it must not throw away
@@ -3503,8 +3531,15 @@ fn the_status_bar_follows_the_active_tab() {
 fn layout_rename_text_and_finish_keys_reach_the_same_owner() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = split_app(&ctx, 200);
-    let id = app.layout_state().layouts().active_id();
-    let original = app.layout_state().layouts().get(id).unwrap().name.clone();
+    let id = app.runtime.layout_state().layouts().active_id();
+    let original = app
+        .runtime
+        .layout_state()
+        .layouts()
+        .get(id)
+        .unwrap()
+        .name
+        .clone();
     let edited = format!("{original}Edited footer");
     for cancel in [true, false] {
         app.active_tab_mut().focus = PaneSide::Flow;
@@ -3539,7 +3574,7 @@ fn layout_rename_text_and_finish_keys_reach_the_same_owner() {
             "finish restores the original footer address"
         );
         assert_eq!(
-            &app.layout_state().layouts().get(id).unwrap().name,
+            &app.runtime.layout_state().layouts().get(id).unwrap().name,
             if cancel { &original } else { &edited }
         );
         assert!(!ctx.input(|input| input.key_pressed(egui::Key::Escape)));
@@ -3577,7 +3612,7 @@ fn layout_delete_prompt_preserves_keyboard_choice_precedence() {
             .is_none()
     );
     assert!(
-        app.layout_state().layouts().get(id).is_some(),
+        app.runtime.layout_state().layouts().get(id).is_some(),
         "Escape wins Enter"
     );
     assert!(!ctx.input(|input| input.key_pressed(egui::Key::Escape)));
@@ -3615,7 +3650,7 @@ fn layout_delete_prompt_preserves_keyboard_choice_precedence() {
         ],
     );
     assert!(
-        app.layout_state().layouts().get(id).is_none(),
+        app.runtime.layout_state().layouts().get(id).is_none(),
         "Enter wins pointer Cancel"
     );
     assert!(

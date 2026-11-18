@@ -2,7 +2,7 @@
 
 pub(crate) use quantick_control_schema::workspace::*;
 
-use crate::app::{ChromePort, HealthPort, LayoutPort, TabsPort};
+use crate::app::{ChromePort, GatewayPort, HealthPort, TabsPort};
 use quantick_control::{
     id::{ModuleId, SnapshotScopeId},
     registry::ModuleDescriptor,
@@ -37,20 +37,20 @@ pub(crate) fn register(registry: &mut ProjectionRegistry) -> Result<(), Projecti
     )
 }
 
-fn revision<P: TabsPort + ChromePort + HealthPort + LayoutPort + ?Sized>(
+fn revision<P: TabsPort + ChromePort + HealthPort + GatewayPort + ?Sized>(
     app: &P,
 ) -> WorkspaceSnapshot {
     snapshot(app)
 }
 
-fn project<P: TabsPort + ChromePort + HealthPort + LayoutPort + ?Sized>(
+fn project<P: TabsPort + ChromePort + HealthPort + GatewayPort + ?Sized>(
     app: &P,
     _context: CaptureContext,
 ) -> WorkspaceSnapshot {
     snapshot(app)
 }
 
-fn snapshot<P: TabsPort + ChromePort + HealthPort + LayoutPort + ?Sized>(
+fn snapshot<P: TabsPort + ChromePort + HealthPort + GatewayPort + ?Sized>(
     app: &P,
 ) -> WorkspaceSnapshot {
     let active_index = app.tab_reads().active_tab_index();
@@ -60,6 +60,10 @@ fn snapshot<P: TabsPort + ChromePort + HealthPort + LayoutPort + ?Sized>(
     let (save_on_exit, performance_readings_visible, progressive_venue_history) =
         app.health_reads().workspace_flags();
     let (history_reach, venue_lead_in) = app.health_reads().history_settings();
+    let (book, layouts) = (
+        &app.workspace().workspace.book,
+        app.workspace().layout_state(),
+    );
     let history_reach_running = tabs
         .get(active_index)
         .is_some_and(|tab| tab.session.history_reach_running());
@@ -74,9 +78,9 @@ fn snapshot<P: TabsPort + ChromePort + HealthPort + LayoutPort + ?Sized>(
         timezone_offset_minutes: timezone.minutes(),
         timezone_label: timezone.label(),
         layouts: super::layout::layout_tabs(app),
-        workspaces: app.workspace_colours(),
+        workspaces: quantick_control_handlers::workspace_book::colour_rows(book.book()),
         save_on_exit,
-        auto_save: app.workspace_autosave(),
+        auto_save: book.autosave(),
         performance_readings_visible,
         progressive_venue_history,
         // The frozen v1 field keeps its own vocabulary; the target itself
@@ -103,16 +107,14 @@ fn snapshot<P: TabsPort + ChromePort + HealthPort + LayoutPort + ?Sized>(
                         pane_id: WireU64::new(pane.id),
                         side: crate::control::pane_side_dto(side),
                         pane_index: wire_usize(side.index()),
-                        layout_id: WireU64::new(
-                            app.layout_state().pane_layout(tabs.id_at(index), side).0,
-                        ),
+                        layout_id: WireU64::new(layouts.pane_layout(tabs.id_at(index), side).0),
                         visible: active && drawn.shows(side),
                         collapsed: tab.canvas.pane_collapsed(side),
                         focused: active && focused == side,
                     })
                     .collect();
                 let location = windows.tab_location(WireU64::new(tabs.id_at(index)));
-                let (workspace, modified) = app.tab_workspace_row(tabs.id_at(index));
+                let (workspace, modified) = book.tab_row(tabs.id_at(index));
                 WorkspaceTab {
                     window_id: location.0,
                     window_index: location.1,
@@ -136,7 +138,7 @@ fn snapshot<P: TabsPort + ChromePort + HealthPort + LayoutPort + ?Sized>(
                     venue: app.tab_reads().config().feed_name(&tab.feed_id).to_string(),
                     workspace,
                     modified,
-                    workspace_colour: app.tab_workspace_colour(tabs.id_at(index)),
+                    workspace_colour: book.book().tab_colour(tabs.id_at(index)).map(Into::into),
                     canvas: Some(quantick_control_handlers::canvas::view(
                         &tab.canvas.state,
                         crate::app::canvas_wiring::drawn(&tab.canvas),

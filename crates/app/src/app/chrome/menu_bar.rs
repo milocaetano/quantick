@@ -1,6 +1,6 @@
 //! Adapt domain snapshots and execute registered window-menu effects.
 use crate::app::{
-    LayoutPort, QuantickApp,
+    QuantickApp,
     menu_bar::{MenuCommand, MenuDoor},
 };
 use eframe::egui;
@@ -91,7 +91,7 @@ fn snapshot(app: &QuantickApp, ctx: &egui::Context) -> Snapshot {
             selected_rows.push(id);
         }
     }
-    let layout = app.layout_state();
+    let layout = app.runtime.layout_state();
     Snapshot {
         open: app.chrome.window_menu.is_open_on(ctx.viewport_id()),
         door: app.chrome.window_menu.door(),

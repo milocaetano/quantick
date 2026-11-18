@@ -64,10 +64,13 @@ impl quantick_control_handlers::contract_roll::ContractRollPort for dyn ControlP
         tab.is_some_and(|tab| !tab.paper.is_flat())
     }
     fn drawing_gesture_on(&self, feed_id: &str, from: &str, to: &str) -> bool {
-        self.layout_state().drawing_gesture_on(feed_id, from, to)
+        self.workspace()
+            .layout_state()
+            .drawing_gesture_on(feed_id, from, to)
     }
     fn carry_market_drawings(&mut self, feed_id: &str, from: &str, to: &str) -> usize {
-        self.layout_adapter()
+        self.workspace_calls()
+            .layout()
             .carry_market_drawings(feed_id, from, to)
     }
 }
@@ -97,6 +100,9 @@ impl TabDirectory for dyn ControlPort {
     }
     fn tab_id_at(&self, index: usize) -> u64 {
         self.tab_reads().tabs().id_at(index)
+    }
+    fn workspaces(&mut self) -> Option<Box<dyn quantick_control_handlers::WorkspaceHost + '_>> {
+        Some(Box::new(self.workspace_calls()))
     }
 }
 
@@ -141,13 +147,13 @@ impl HistoryPort for dyn ControlPort {
 
 impl JournalSessionsPort for dyn ControlPort {
     fn journal_scope(&mut self) -> JournalScope {
-        self.paper_settings().journal_scope()
+        self.workspace_calls().into_paper().journal_scope()
     }
     fn journal_timezone(&mut self) -> crate::timezone::TzOffset {
         self.chrome_reads().timezone()
     }
     fn edit_journal(&mut self, edit: &JournalEdit) -> Result<JournalEditOutcome, SessionEditError> {
-        self.paper_settings().apply_journal_edit(edit)
+        self.workspace_calls().into_paper().apply_journal_edit(edit)
     }
     fn ledger_view(&mut self, change: &LedgerViewChange) -> Option<(LedgerView, bool)> {
         let paper = self.tabs_mut().active_paper_mut()?;
@@ -160,7 +166,8 @@ impl PnlDisplayPort for dyn ControlPort {
         Some(self.tabs_mut().active_paper_mut()?.account_mut())
     }
     fn persist_pnl_display(&mut self) {
-        self.paper_settings()
+        self.workspace_calls()
+            .into_paper()
             .persist(crate::app::paper_wiring::PaperSettingsChange::RiskSettings);
     }
 }
@@ -223,15 +230,17 @@ impl TradePort for dyn ControlPort {
             .map(|paper| paper as &mut dyn TradeDesk)
     }
     fn persist_order_strategies(&mut self) {
-        self.paper_settings()
+        self.workspace_calls()
+            .into_paper()
             .persist(PaperSettingsChange::OrderStrategies);
     }
     fn persist_risk_settings(&mut self) {
-        self.paper_settings()
+        self.workspace_calls()
+            .into_paper()
             .persist(PaperSettingsChange::RiskSettings);
     }
     fn route_call(&mut self) -> Option<quantick_paper::route::RouteCall<'_>> {
-        Some(self.broker_route())
+        Some(self.workspace_calls().into_route())
     }
 }
 

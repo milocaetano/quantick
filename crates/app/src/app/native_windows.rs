@@ -1,5 +1,5 @@
 //! Native viewport adapters over one retained workspace and headless membership.
-use super::{ArrangementHost, QuantickApp, title_bar::TitleBarState};
+use super::{ArrangementHost, GatewayPort as _, QuantickApp, title_bar::TitleBarState};
 use eframe::egui;
 use quantick_session::{close_queue::*, workspace_menu::WorkspaceCommand};
 use quantick_workspace::arrangement::{
@@ -196,7 +196,7 @@ pub(super) fn paint(app: &mut QuantickApp, ctx: &egui::Context, window: WindowId
         if app.runtime.tabs.windows().windows().len() == 1 && !app.presentation.native.final_exit {
             let tabs = app.runtime.tabs.iter_with_ids().map(|(id, _)| id).collect();
             let exit = WorkspaceCommand::Close(CloseScope::App, tabs);
-            super::tab_workspaces::apply_workspace_command(app, exit);
+            app.workspace_calls().apply_workspace_command(exit);
             let close = &mut app.chrome.window_menu.tab_workspace.close;
             if !app.presentation.native.exit_when_settled(close, ctx) {
                 ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);

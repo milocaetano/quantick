@@ -21,10 +21,12 @@ fn human_script_operations_mirror_two_panes_and_save_once() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = split_app(&ctx, 40);
     let tab = app.runtime.tabs.active_id();
-    let layout = app.layout_state().pane_layout(tab, PaneSide::Flow);
+    let layout = app.runtime.layout_state().pane_layout(tab, PaneSide::Flow);
     assert_eq!(
         layout,
-        app.layout_state().pane_layout(tab, PaneSide::Time(0))
+        app.runtime
+            .layout_state()
+            .pane_layout(tab, PaneSide::Time(0))
     );
     app.runtime.workspace.layouts_mut().take_flush();
     let index = app
@@ -83,7 +85,7 @@ fn operator_script_operations_preserve_human_mirrors_and_saved_content() {
     let (mut app, _commands) = split_app(&ctx, 40);
     app.apply_toolbar_action(ToolbarAction::AddScriptIndicator(0));
     settle_indicators(&mut app);
-    let saved = app.layout_state().layouts().clone();
+    let saved = app.runtime.layout_state().layouts().clone();
     let human_targets = app.runtime.indicators.registry.slot_kinds().to_vec();
     app.runtime.workspace.layouts_mut().take_flush();
     let attached = app
@@ -97,7 +99,7 @@ fn operator_script_operations_preserve_human_mirrors_and_saved_content() {
     settle_indicators(&mut app);
     assert_one_indicator_save(&mut app);
     assert_eq!(
-        *app.layout_state().layouts(),
+        *app.runtime.layout_state().layouts(),
         saved,
         "operator source never enters saved layouts"
     );
@@ -116,7 +118,7 @@ fn operator_script_operations_preserve_human_mirrors_and_saved_content() {
     settle_indicators(&mut app);
     assert_one_indicator_save(&mut app);
     assert_eq!(app.runtime.indicators.registry.slot_kinds(), human_targets);
-    assert_eq!(*app.layout_state().layouts(), saved);
+    assert_eq!(*app.runtime.layout_state().layouts(), saved);
     let refused = app
         .run_agent_action(
             "indicator.script.detach",
@@ -134,7 +136,7 @@ fn operator_script_operations_preserve_human_mirrors_and_saved_content() {
         LayoutSave::Wait
     );
     assert_eq!(app.runtime.indicators.registry.slot_kinds(), human_targets);
-    assert_eq!(*app.layout_state().layouts(), saved);
+    assert_eq!(*app.runtime.layout_state().layouts(), saved);
 }
 
 #[test]
@@ -143,7 +145,7 @@ fn invalid_control_script_leaves_both_panes_layout_and_save_intent_unchanged() {
     let (mut app, _commands) = split_app(&ctx, 40);
     app.apply_toolbar_action(ToolbarAction::AddScriptIndicator(0));
     settle_indicators(&mut app);
-    let before = app.layout_state().layouts().clone();
+    let before = app.runtime.layout_state().layouts().clone();
     let slots = app.runtime.indicators.registry.slot_kinds().to_vec();
     let owners = app.runtime.indicators.registry.operator_slots().clone();
     app.runtime.workspace.layouts_mut().take_flush();
@@ -166,7 +168,7 @@ fn invalid_control_script_leaves_both_panes_layout_and_save_intent_unchanged() {
             quantick_control::error::codes::INVALID_REQUEST
         );
         settle_indicators(&mut app);
-        assert_eq!(*app.layout_state().layouts(), before);
+        assert_eq!(*app.runtime.layout_state().layouts(), before);
         assert_eq!(app.runtime.indicators.registry.slot_kinds(), slots);
         assert_eq!(*app.runtime.indicators.registry.operator_slots(), owners);
         assert_eq!(
@@ -231,10 +233,12 @@ fn native_toolbar_operations_mirror_two_panes_and_save_once() {
         let ctx = egui::Context::default();
         let (mut app, _commands) = split_app(&ctx, 40);
         let tab = app.runtime.tabs.active_id();
-        let layout = app.layout_state().pane_layout(tab, PaneSide::Flow);
+        let layout = app.runtime.layout_state().pane_layout(tab, PaneSide::Flow);
         assert_eq!(
             layout,
-            app.layout_state().pane_layout(tab, PaneSide::Time(0))
+            app.runtime
+                .layout_state()
+                .pane_layout(tab, PaneSide::Time(0))
         );
         app.runtime.workspace.layouts_mut().take_flush();
         app.apply_toolbar_action(ToolbarAction::AddNative(id));
@@ -278,8 +282,10 @@ fn canvas_menu_hide_mirrors_two_panes_and_records_the_layout_entry() {
     let (mut app, _commands) = split_app(&ctx, 40);
     let tab = app.runtime.tabs.active_id();
     assert_eq!(
-        app.layout_state().pane_layout(tab, PaneSide::Flow),
-        app.layout_state().pane_layout(tab, PaneSide::Time(0))
+        app.runtime.layout_state().pane_layout(tab, PaneSide::Flow),
+        app.runtime
+            .layout_state()
+            .pane_layout(tab, PaneSide::Time(0))
     );
     app.apply_toolbar_action(ToolbarAction::AddNative("native.ema"));
     settle_indicators(&mut app);
