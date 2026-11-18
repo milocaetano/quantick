@@ -70,7 +70,7 @@ pub fn layout_tab(name: &str, known: bool) -> LaunchCall {
 /// no call.
 #[must_use]
 pub fn when_one(value: Option<&str>, capability: &'static str) -> Option<LaunchCall> {
-    (value == Some("1")).then(|| (capability, json!({})))
+    crate::launch_values::one(value).then(|| (capability, json!({})))
 }
 
 #[cfg(test)]

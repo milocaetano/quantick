@@ -3,7 +3,7 @@
 //!
 //! Not a method on the app: the composition root captures every launch input
 //! in `main` and hands them to the constructor, which calls
-//! [`apply_launch_phase`] once over its [`HarnessDesk`]. Each applier borrows
+//! [`apply_launch_phase`] once over its [`OwnersDesk`]. Each applier borrows
 //! the owners it stages from that desk and calls their own methods, or runs
 //! a registered call; the value grammar lives in
 //! `quantick_control_schema::launch_values`. Two production steps live here
@@ -57,12 +57,13 @@ use quantick_feed::history_reach;
 
 #[cfg(any(feature = "scenario-harness", test))]
 use super::AUTOSTART_NATIVES;
-use super::harness_desk::HarnessDesk;
+use super::owners_desk::OwnersDesk;
+use super::{GatewayPort, TabsPort};
 
 /// Run the launch phase over a constructed app, in the order this module
 /// fixes. Called once, from `new_with_workspace`, after the saved workspace
 /// is restored.
-pub(super) fn apply_launch_phase<D: HarnessDesk>(
+pub(super) fn apply_launch_phase<D: OwnersDesk + GatewayPort + TabsPort>(
     desk: &mut D,
     #[cfg(any(feature = "scenario-harness", test))] env: &ScenarioInputs,
     #[cfg(any(feature = "control-harness", test))]
@@ -103,7 +104,7 @@ pub(super) fn apply_launch_phase<D: HarnessDesk>(
     indicator(desk, env);
     // Put the active layout on the first tab's panes before any autostart
     // hook: the file is what the user actually had open.
-    desk.owners().layouts().seed_new_panes();
+    desk.layouts().seed_new_panes();
     #[cfg(any(feature = "scenario-harness", test))]
     {
         layout(desk, env);
@@ -176,7 +177,7 @@ mod calls {
 
 /// The order book and the live strip: the two the map opens with.
 #[cfg(any(feature = "scenario-harness", test))]
-fn book_and_strip<D: HarnessDesk>(desk: &mut D, env: &ScenarioInputs) {
+fn book_and_strip<D: OwnersDesk>(desk: &mut D, env: &ScenarioInputs) {
     let tab = desk.owners().runtime.active_tab_mut();
     // Dev/ops can open the map without a click.
     if values::one(env.var("QUANTICK_BOOK_AUTOSTART").as_deref()) {
@@ -195,7 +196,7 @@ fn book_and_strip<D: HarnessDesk>(desk: &mut D, env: &ScenarioInputs) {
 
 /// How far back a launch reaches, and how it gets there.
 #[cfg(any(feature = "scenario-harness", test))]
-fn history<D: HarnessDesk>(desk: &mut D, env: &ScenarioInputs) {
+fn history<D: OwnersDesk>(desk: &mut D, env: &ScenarioInputs) {
     let history = &mut desk.owners().runtime.history;
     if let Some(raw) = env.var("QUANTICK_HISTORY_REACH_SPAN_MINUTES") {
         // Read before `QUANTICK_HISTORY_REACH`: it is what that hook's legacy
@@ -262,7 +263,7 @@ fn history<D: HarnessDesk>(desk: &mut D, env: &ScenarioInputs) {
 /// The tape and everything drawn on it: the drawing chrome's own five, the
 /// aggression layer, the lanes, the window, the footprint and the budgets.
 #[cfg(any(feature = "scenario-harness", test))]
-fn tape<D: HarnessDesk>(desk: &mut D, env: &ScenarioInputs) {
+fn tape<D: OwnersDesk + GatewayPort + TabsPort>(desk: &mut D, env: &ScenarioInputs) {
     let owners = desk.owners();
     let tab = owners.runtime.active_tab_mut();
     // Same convenience for the aggression layer (bubbles + the live
@@ -320,12 +321,6 @@ fn tape<D: HarnessDesk>(desk: &mut D, env: &ScenarioInputs) {
     if owners.chrome.harness.footprint() {
         tab.flow_pane.presentation.footprint.visible = true;
     }
-    // The zoom, scriptable: the footprint's detail levels are functions
-    // of candle width, and a validation run cannot drag a scroll wheel.
-    // Same clamp as the gesture (see Viewport::set_px_per_bar).
-    if let Some(px) = owners.chrome.harness.candle_width() {
-        tab.flow_pane.model.viewport.open_at_px_per_bar(px);
-    }
     // Every style by its own id, resolved through the same registry the
     // panel's selector and the TOML read. A style reachable by click but
     // not by name is a style the second operator cannot pick, and one
@@ -343,6 +338,18 @@ fn tape<D: HarnessDesk>(desk: &mut D, env: &ScenarioInputs) {
                 "QUANTICK_FOOTPRINT_STYLE names no known style; keeping the current one",
             ),
         }
+    }
+    // The zoom, scriptable: the footprint's detail levels are functions
+    // of candle width, and a validation run cannot drag a scroll wheel.
+    // Same clamp as the gesture (see Viewport::set_px_per_bar).
+    if let Some(px) = owners.chrome.harness.candle_width() {
+        owners
+            .runtime
+            .active_tab_mut()
+            .flow_pane
+            .model
+            .viewport
+            .open_at_px_per_bar(px);
     }
     // The bubble budget, scriptable. The fold is the one bubble state a
     // capture cannot otherwise reach: it needs a tape dense enough to
@@ -377,7 +384,7 @@ fn tape<D: HarnessDesk>(desk: &mut D, env: &ScenarioInputs) {
 
 /// The indicators a launch opens with, and whether their legend is folded.
 #[cfg(any(feature = "scenario-harness", test))]
-fn indicator<D: HarnessDesk>(desk: &mut D, env: &ScenarioInputs) {
+fn indicator<D: OwnersDesk>(desk: &mut D, env: &ScenarioInputs) {
     let tab = desk.owners().runtime.active_tab_mut();
     // Same convenience for indicators: open with the two M1 natives on
     // (EMA overlay + CVD pane), through the same code path the toolbar
@@ -404,30 +411,30 @@ fn indicator<D: HarnessDesk>(desk: &mut D, env: &ScenarioInputs) {
 /// The layout strip and the pane layouts. Runs after `seed_new_panes` -- see
 /// the module's order rule.
 #[cfg(any(feature = "scenario-harness", test))]
-fn layout<D: HarnessDesk>(desk: &mut D, env: &ScenarioInputs) {
+fn layout<D: OwnersDesk + GatewayPort + TabsPort>(desk: &mut D, env: &ScenarioInputs) {
     calls::layout_tab(desk, env);
-    let mut owners = desk.owners();
     // One layout per pane, by name, in pane-address order (`flow,top,bottom`):
     // a capture of two charts on two layouts side by side. Names the book
     // lacks are created empty; an empty entry leaves that pane alone.
     if let Some(names) = env.var("QUANTICK_PANE_LAYOUTS") {
-        owners.layouts().apply_pane_layouts_hook(&names);
+        desk.layouts().apply_pane_layouts_hook(&names);
     }
     if values::one(env.var("QUANTICK_LAYOUT_RENAME").as_deref()) {
-        let active = owners.runtime.layout_state().focused_pane_layout();
-        owners.layouts().begin_layout_rename(active);
+        let active = desk.owners().runtime.layout_state().focused_pane_layout();
+        desk.layouts().begin_layout_rename(active);
     }
     if values::one(env.var("QUANTICK_LAYOUT_DELETE").as_deref()) {
-        let active = owners.runtime.layout_state().focused_pane_layout();
+        let active = desk.owners().runtime.layout_state().focused_pane_layout();
         let delete = crate::layout_strip::StripAction::Delete(active);
-        owners.layouts().apply_strip_action(delete);
+        desk.layouts().apply_strip_action(delete);
     }
     // Scripted validation runs can open with library scripts loaded:
     // a comma-separated list of script names, each through the same
     // code path the indicator library takes.
     if let Some(names) = env.var("QUANTICK_INDICATOR_SCRIPTS_AUTOSTART") {
         for name in values::names(&names) {
-            let library = owners.runtime.indicators.script_library.entries();
+            let runtime = desk.owners().runtime;
+            let library = runtime.indicators.script_library.entries();
             if !library.iter().any(|entry| entry.name == name) {
                 tracing::warn!(
                     target: "quantick::app",
@@ -445,15 +452,17 @@ fn layout<D: HarnessDesk>(desk: &mut D, env: &ScenarioInputs) {
             // themselves on the next plain launch — config presence
             // activating something, which the rules forbid. The natives
             // hook above never registers a kind, so it is already inert.
-            let tab = owners.runtime.tabs.active_id();
-            let side = owners.runtime.active_tab().focused_side();
+            let (tab, side) = (
+                runtime.tabs.active_id(),
+                runtime.active_tab().focused_side(),
+            );
             let kind = SavedKind::Script {
                 name: name.to_owned(),
             };
-            let Some(slot) = owners.layouts().add_indicator_at(tab, side, &kind) else {
+            let Some(slot) = desk.layouts().add_indicator_at(tab, side, &kind) else {
                 continue;
             };
-            let runtime = &mut *owners.runtime;
+            let runtime = desk.owners().runtime;
             let pane = runtime.tabs.by_id(tab).expect("launch tab").pane(side).id;
             let workspace = runtime.id();
             let slot = super::TabSlot {
@@ -471,7 +480,7 @@ fn layout<D: HarnessDesk>(desk: &mut D, env: &ScenarioInputs) {
 /// The replay transport. `QUANTICK_REPLAY_DAY_BEFORE` is read first, before
 /// anything loads a session -- see the module's order rule.
 #[cfg(any(feature = "scenario-harness", test))]
-fn replay<D: HarnessDesk>(desk: &mut D, env: &ScenarioInputs) {
+fn replay<D: OwnersDesk>(desk: &mut D, env: &ScenarioInputs) {
     let owners = desk.owners();
     let browser = &mut owners.surfaces.replay_browser;
     // Whether a recording opens with the day before it joined in front.
@@ -581,7 +590,7 @@ fn replay<D: HarnessDesk>(desk: &mut D, env: &ScenarioInputs) {
 /// The dock and the paper report: the named tab, the calendar, the ledger
 /// and the report list.
 #[cfg(any(feature = "scenario-harness", test))]
-fn dock_and_report<D: HarnessDesk>(desk: &mut D, env: &ScenarioInputs) {
+fn dock_and_report<D: OwnersDesk>(desk: &mut D, env: &ScenarioInputs) {
     let owners = desk.owners();
     let tz = owners.runtime.tz;
     let tab = owners.runtime.active_tab_mut();
@@ -673,7 +682,7 @@ fn dock_and_report<D: HarnessDesk>(desk: &mut D, env: &ScenarioInputs) {
 /// The canvas layout, the workspace file, and the toast that says a launch
 /// rescued something.
 #[cfg(any(feature = "scenario-harness", test))]
-fn workspace<D: HarnessDesk>(desk: &mut D, env: &ScenarioInputs) {
+fn workspace<D: OwnersDesk + GatewayPort + TabsPort>(desk: &mut D, env: &ScenarioInputs) {
     let owners = desk.owners();
     let tab_id = owners.runtime.tabs.active_id();
     // The window menu hung from the toolbar's list door, as its click does.
@@ -745,18 +754,18 @@ fn workspace<D: HarnessDesk>(desk: &mut D, env: &ScenarioInputs) {
     // write and really replace the cockpit, so point `QUANTICK_UI_STATE`
     // and its sibling stores at scratchpad files first.
     if let Some(path) = env.var("QUANTICK_WORKSPACE_EXPORT") {
-        desk.workspace_bundle()
+        desk.workspace_file()
             .export_workspace_to(std::path::Path::new(&path));
     }
     if let Some(path) = env.var("QUANTICK_WORKSPACE_IMPORT") {
-        desk.workspace_bundle()
+        desk.workspace_file()
             .import_workspace_from(std::path::Path::new(&path));
     }
 }
 
 /// The toast a launch raises through the simulator's own route.
 #[cfg(any(feature = "scenario-harness", test))]
-fn toast<D: HarnessDesk>(desk: &mut D, env: &ScenarioInputs) {
+fn toast<D: OwnersDesk>(desk: &mut D, env: &ScenarioInputs) {
     // `QUANTICK_TOAST=paper`: a simulator acknowledgement, posted through
     // the panel's own `show_toast`.
     //

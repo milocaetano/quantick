@@ -2,7 +2,7 @@
 //! screenshot needs and no click can reach.
 //!
 //! Not methods on the app: the frame calls each at its phase over its
-//! [`HarnessDesk`], which lends the owners a stager acts on, and each
+//! [`OwnersDesk`], which lends the owners a stager acts on, and each
 //! compiles only with its harness family (or under test) — the whole file
 //! with any of them — so a default build has no demo stage at all. The gated drawing owner captures its requests at
 //! executable startup and chooses geometry and consumption; its adapters
@@ -22,8 +22,6 @@
 use crate::surfaces::drawing_chrome::DrawingChromeExt as _;
 #[cfg(any(feature = "drawing-harness", test))]
 use crate::toolrail::ToolRailExt as _;
-#[cfg(any(feature = "control-harness", test))]
-use eframe::egui;
 
 #[cfg(any(feature = "scenario-harness", test))]
 use crate::drawings;
@@ -32,7 +30,7 @@ use crate::harness::{StrategyDemoMode, VenueHistoryDemo};
 #[cfg(any(feature = "scenario-harness", test))]
 use crate::pane;
 
-use super::harness_desk::HarnessDesk;
+use super::owners_desk::OwnersDesk;
 #[cfg(any(feature = "drawing-harness", feature = "scenario-harness", test))]
 use super::workspace_runtime::WorkspaceRuntime;
 #[cfg(any(feature = "drawing-harness", test))]
@@ -43,6 +41,8 @@ use crate::surfaces::drawing_chrome::demo::{
 };
 #[cfg(any(feature = "drawing-harness", test))]
 use crate::tab::CanvasLayout;
+#[cfg(any(feature = "control-harness", test))]
+use eframe::egui;
 #[cfg(any(feature = "drawing-harness", test))]
 use quantick_ui_model::drawing_chrome::scenario::{
     Effect as ScenarioEffect, Intent as ScenarioIntent,
@@ -63,19 +63,19 @@ use quantick_ui_model::drawing_chrome::scenario::{
 /// [`super::control_host::CONTROL_EVIDENCE_HOOK_FRAMES`] rather than hanging a capture run on a
 /// surface that never presents.
 #[cfg(any(feature = "control-harness", test))]
-pub(super) fn apply_control_evidence_hook<D: HarnessDesk + 'static>(
-    desk: &mut D,
-    ctx: &egui::Context,
-) {
-    let control = desk.owners().control;
-    if !control.scenarios.has_evidence() {
+pub(super) fn apply_control_evidence_hook<D>(desk: &mut D, ctx: &egui::Context)
+where
+    D: OwnersDesk + super::GatewayPort,
+{
+    if !desk.owners().control.scenarios.has_evidence() {
         return;
     }
     // Access is taken *before* the request is, so a frame that finds it
     // borrowed leaves the hook pending rather than dropping it silently.
-    let Some(mut access) = control.control_access.take() else {
+    let Some(mut access) = desk.gateway_slot().take() else {
         return;
     };
+    let control = desk.owners().control;
     let capture = control
         .prepare_evidence(&access)
         .expect("the hook was pending one line above");
@@ -86,7 +86,7 @@ pub(super) fn apply_control_evidence_hook<D: HarnessDesk + 'static>(
             "QUANTICK_CONTROL_EVIDENCE asked for an image without observe.screenshot; capturing without one");
     }
     if capture.wants_screenshot {
-        access.service_screenshot(desk, ctx);
+        access.service_screenshot(desk.as_window(), ctx);
     }
     let control = desk.owners().control;
     let (scopes, wants_screenshot) = match control
@@ -95,7 +95,7 @@ pub(super) fn apply_control_evidence_hook<D: HarnessDesk + 'static>(
     {
         super::control_host::EvidenceStep::Waiting => {
             ctx.request_repaint();
-            control.control_access = Some(access);
+            *desk.gateway_slot() = Some(access);
             return;
         }
         super::control_host::EvidenceStep::Capture {
@@ -114,11 +114,11 @@ pub(super) fn apply_control_evidence_hook<D: HarnessDesk + 'static>(
         }
     };
     let outcome = access.invoke_local_read(
-        desk,
+        desk.as_window(),
         "evidence.capture",
         serde_json::json!({ "scopes": scopes, "screenshot": wants_screenshot }),
     );
-    desk.owners().control.control_access = Some(access);
+    *desk.gateway_slot() = Some(access);
     match outcome {
         Ok(manifest) => tracing::info!(
             target: "quantick::control",
@@ -147,7 +147,7 @@ pub(super) fn apply_control_evidence_hook<D: HarnessDesk + 'static>(
 /// Launch scenarios run the label and notification handlers as a trusted
 /// local agent: traced on a replay, never through remote-grant admission.
 #[cfg(any(feature = "control-harness", test))]
-pub(super) fn apply_control_annotate_hooks<D: HarnessDesk>(desk: &mut D) {
+pub(super) fn apply_control_annotate_hooks<D: OwnersDesk + super::GatewayPort>(desk: &mut D) {
     let remote = crate::control::ActionOrigin::Remote;
     let owners = desk.owners();
     if owners.control.scenarios.has_annotation() {
@@ -187,7 +187,7 @@ pub(super) fn apply_control_annotate_hooks<D: HarnessDesk>(desk: &mut D) {
 /// left open, which is the mid-load frame progressive delivery exists to
 /// produce and the one no capture could otherwise catch.
 #[cfg(any(feature = "scenario-harness", test))]
-pub(super) fn apply_venue_history_demo<D: HarnessDesk>(desk: &mut D) {
+pub(super) fn apply_venue_history_demo<D: OwnersDesk>(desk: &mut D) {
     /// Candles the venue-history scene installs: enough for the seam and
     /// the divider to read, few enough to stay one screenful of context.
     const DEMO_PREFIX_CANDLES: i64 = 90;
@@ -254,7 +254,7 @@ pub(super) fn deliver_synthetic_prefix(
 /// click lands on it and opens the per-drawing menu. Consumed once the
 /// chart has bars enough, like the drawings demo.
 #[cfg(any(feature = "scenario-harness", test))]
-pub(super) fn apply_strategy_demo<D: HarnessDesk>(desk: &mut D) {
+pub(super) fn apply_strategy_demo<D: OwnersDesk>(desk: &mut D) {
     let owners = desk.owners();
     let Some(mode) = owners.chrome.harness.strategy_demo() else {
         return;
@@ -357,7 +357,9 @@ pub(super) fn apply_strategy_demo<D: HarnessDesk>(desk: &mut D) {
         StrategyDemoMode::Armed | StrategyDemoMode::EndedBadge | StrategyDemoMode::PausedBadge => {
             Some("demo BF")
         }
-        _ => None,
+        StrategyDemoMode::Popup | StrategyDemoMode::AlarmPopup | StrategyDemoMode::AlarmSounds => {
+            None
+        }
     };
     if let Some(name) = armed_as {
         let index = owners.runtime.tabs.active_index();
@@ -438,28 +440,10 @@ pub(super) fn apply_strategy_demo<D: HarnessDesk>(desk: &mut D) {
         }
     }
     // This demo places its rectangle, which selects it, which closes a
-    // panel the launch may have asked for. Same door as the others.
-    carry_inspector_across_selection(owners.surfaces);
-}
-
-/// Keep a `QUANTICK_DRAWING_INSPECTOR=1` request alive across a selection
-/// the *app* made, rather than the trader.
-///
-/// The context bar closes the panel on every selection change, which is
-/// right for a trader clicking from one object to the next and wrong for a
-/// demo hook that places objects and selects one on the frame it runs:
-/// the pairing the harness table prescribes then photographs a chart with
-/// no panel on it. Re-requested through `pending_open_settings`, the door
-/// a tool that asks for its own settings on placement already uses, which
-/// is applied *after* the clear rather than before it.
-///
-/// One function rather than the line copied into each hook, because the
-/// omission is silent: the demo that forgets it produces a screenshot that
-/// looks merely uninteresting, and that is how three of these hooks came to
-/// disagree about it.
-#[cfg(any(feature = "scenario-harness", test))]
-fn carry_inspector_across_selection(surfaces: &mut crate::surfaces::Surfaces) {
-    surfaces.drawing_chrome.carry_across_selection();
+    // panel the launch may have asked for: keep a
+    // `QUANTICK_DRAWING_INSPECTOR=1` request alive across it, as every
+    // placing demo does.
+    owners.surfaces.drawing_chrome.carry_across_selection();
 }
 
 /// One deterministic prefix generator, shared with the legacy venue scenario.
@@ -504,7 +488,7 @@ fn close(pane: &ChartPane, slot: usize) -> Option<f64> {
         .and_then(|bar| rust_decimal::prelude::ToPrimitive::to_f64(&bar.close))
 }
 #[cfg(any(feature = "drawing-harness", test))]
-pub(super) fn apply_drawing_demo<D: HarnessDesk>(desk: &mut D) {
+pub(super) fn apply_drawing_demo<D: OwnersDesk>(desk: &mut D) {
     let owners = desk.owners();
     let chrome = &mut owners.surfaces.drawing_chrome;
     if !chrome.demos().gallery_requested() {
@@ -563,7 +547,7 @@ pub(super) fn apply_drawing_demo<D: HarnessDesk>(desk: &mut D) {
     }
 }
 #[cfg(any(feature = "drawing-harness", test))]
-pub(super) fn apply_drawing_draft<D: HarnessDesk>(desk: &mut D) {
+pub(super) fn apply_drawing_draft<D: OwnersDesk>(desk: &mut D) {
     let owners = desk.owners();
     let surfaces = owners.surfaces;
     if surfaces.drawing_chrome.demos().draft_requested().is_none() {
@@ -588,7 +572,7 @@ pub(super) fn apply_drawing_draft<D: HarnessDesk>(desk: &mut D) {
     pane.gestures.parked_hand = Some(plan.hand(chart.expect("model requires chart")));
 }
 #[cfg(any(feature = "drawing-harness", test))]
-pub(super) fn apply_frvp_demo<D: HarnessDesk>(desk: &mut D) {
+pub(super) fn apply_frvp_demo<D: OwnersDesk>(desk: &mut D) {
     let owners = desk.owners();
     let chrome = &mut owners.surfaces.drawing_chrome;
     let Some(request) = chrome.demos().profile_requested() else {
@@ -642,7 +626,7 @@ pub(super) fn apply_frvp_demo<D: HarnessDesk>(desk: &mut D) {
     }
 }
 #[cfg(any(feature = "drawing-harness", test))]
-pub(super) fn apply_avwap_demo<D: HarnessDesk>(desk: &mut D) {
+pub(super) fn apply_avwap_demo<D: OwnersDesk>(desk: &mut D) {
     let owners = desk.owners();
     let chrome = &mut owners.surfaces.drawing_chrome;
     if !chrome.demos().avwap_requested() {

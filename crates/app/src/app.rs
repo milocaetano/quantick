@@ -96,7 +96,8 @@ pub(crate) use control_host::{
 pub(crate) mod deal_recording_wiring;
 mod demo_hooks;
 pub(crate) mod drawing_controller;
-mod harness_desk;
+mod owners_desk;
+use owners_desk::OwnersDesk as _;
 
 mod frame;
 mod frame_tail;
@@ -216,12 +217,7 @@ impl QuantickApp {
         self.indicator_wiring().into_layout()
     }
     fn indicator_wiring(&mut self) -> indicator_wiring::IndicatorWiring<'_> {
-        indicator_wiring::IndicatorWiring {
-            runtime: self.runtime.bound_mut(&self.presentation.binding),
-            surfaces: &mut self.surfaces,
-            #[cfg(any(feature = "scenario-harness", test))]
-            harness: &mut self.chrome.harness,
-        }
+        self.owners().into_wiring()
     }
     pub(crate) fn workspace_save_adapter(
         &mut self,
