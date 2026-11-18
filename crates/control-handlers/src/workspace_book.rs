@@ -44,9 +44,9 @@ use quantick_session::prompt::Prompt;
 use quantick_session::workspace_menu::{NameDialogMode, WorkspaceCommand, WorkspaceMenuState};
 use quantick_stores::market_settings::{self, DrawingKey, MarketSettingsStore};
 use quantick_stores::workspaces::{
-    ColourOutcome, ColourTaken, CreateOutcome, DEFAULT_WORKSPACE, DeleteOutcome, RenameOutcome,
-    SaveOutcome, SetOutcome, UnsavedEdits, Unsynced, WorkspaceBook, WorkspaceBookStore,
-    WorkspaceColour, WorkspaceRecipe, WorkspaceRefusal,
+    ColourOutcome, ColourTaken, CreateOutcome, DeleteOutcome, RenameOutcome, SaveOutcome,
+    SetOutcome, UnsavedEdits, Unsynced, WorkspaceBook, WorkspaceBookStore, WorkspaceColour,
+    WorkspaceRecipe, WorkspaceRefusal,
 };
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -61,7 +61,7 @@ pub mod manage;
 pub mod switch;
 pub use switch::{menu_prompt, prompt_answer};
 
-fn unavailable() -> ControlError {
+pub(crate) fn unavailable() -> ControlError {
     ControlError::invalid_request("the workspaces are unavailable")
 }
 
@@ -111,36 +111,6 @@ pub trait WorkspaceBookHost {
             None => market_settings::commit_all(market),
         }
     }
-    /// The tab's workspace and whether it holds edits, as the snapshot reads it.
-    fn tab_workspace_row(&self, tab: u64) -> (String, bool) {
-        let state = self
-            .workspace_book_ref()
-            .and_then(|book| book.tab_state(tab));
-        state.map_or_else(
-            || (DEFAULT_WORKSPACE.to_owned(), false),
-            |state| (state.workspace.to_owned(), state.modified),
-        )
-    }
-    /// The colour of the tab's workspace, `Default`'s for a tab the book has
-    /// not adopted yet: [`WorkspaceBook::tab_colour`], which the strip and the
-    /// capsule paint too.
-    fn tab_workspace_colour(&self, tab: u64) -> Option<WorkspaceColourDto> {
-        self.workspace_book_ref()?.tab_colour(tab).map(Into::into)
-    }
-    /// Every workspace's colour, `Default` first, as the snapshot reads them.
-    fn workspace_colours(&self) -> Vec<WorkspaceColourRow> {
-        let rows = self.workspace_book_ref().map(WorkspaceBook::list);
-        let row = |row: quantick_stores::workspaces::WorkspaceListing| WorkspaceColourRow {
-            colour: row.colour.into(),
-            name: row.name,
-        };
-        rows.unwrap_or_default().into_iter().map(row).collect()
-    }
-    /// Whether layout edits are written through, as the snapshot reads it.
-    fn workspace_autosave(&self) -> bool {
-        self.workspace_book_ref()
-            .is_none_or(WorkspaceBook::autosave)
-    }
     /// The symbols of these tabs, in the order asked.
     fn tab_symbols(&self, _tabs: &[u64]) -> Vec<String> {
         Vec::new()
@@ -161,6 +131,17 @@ pub trait WorkspaceBookHost {
     fn close_market_tab(&mut self, _tab: u64, _close: bool) -> bool {
         false
     }
+}
+
+/// Every workspace's colour in `book`, `Default` first, as the snapshot reads
+/// them.
+#[must_use]
+pub fn colour_rows(book: &WorkspaceBook) -> Vec<WorkspaceColourRow> {
+    let row = |row: quantick_stores::workspaces::WorkspaceListing| WorkspaceColourRow {
+        colour: row.colour.into(),
+        name: row.name,
+    };
+    book.list().into_iter().map(row).collect()
 }
 
 /// Who journals a change: the call's access and actor, or the trader's hand
@@ -279,30 +260,74 @@ fn submit_name_dialog<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
 }
 
 /// Outside the replay trace: none of these changes a market, and a recorded
-/// call must not rewrite the trader's workspaces when a session re-runs.
+/// call must not rewrite the trader's workspaces when a session re-runs. Each
+/// call reaches the book through [`TabDirectory::workspaces`].
 pub fn register<H, A, D>(registry: &mut D) -> Result<(), RegistryError>
 where
-    H: WorkspaceBookHost + TabDirectory + ?Sized,
+    H: TabDirectory + ?Sized,
     A: NotifyAccess,
     D: ActionDock<H, A>,
 {
-    registry.register_outside_replay(tab_workspace_set_descriptor(), set)?;
-    registry.register_outside_replay(workspace_save_to_descriptor(), save_to)?;
-    registry.register_outside_replay(workspace_save_as_descriptor(), save_as)?;
-    registry.register_outside_replay(workspace_new_descriptor(), new)?;
-    registry.register_outside_replay(workspace_revert_descriptor(), revert)?;
-    registry.register_outside_replay(workspace_autosave_set_descriptor(), autosave_set)?;
-    registry.register_outside_replay(tab_close_descriptor(), close)?;
-    registry.register_outside_replay(workspace_rename_descriptor(), rename)?;
-    registry.register_outside_replay(workspace_delete_descriptor(), delete)?;
-    registry.register_outside_replay(workspace_delete_undo_descriptor(), manage::undo_call)?;
-    registry.register_outside_replay(workspace_dialog_open_descriptor(), manage::dialog_open)?;
-    registry.register_outside_replay(workspace_colour_set_descriptor(), colour_set)?;
-    let palette = workspace_colour_palette_descriptor();
-    registry.register_outside_replay(palette, colour_popover::palette_read)?;
-    let popover = workspace_colour_popover_descriptor();
-    registry.register_outside_replay(popover, colour_popover::popover_call)?;
-    registry.register_outside_replay(workspace_list_descriptor(), list)
+    registry.register_outside_replay(
+        tab_workspace_set_descriptor(),
+        through_workspaces!(set, unavailable),
+    )?;
+    registry.register_outside_replay(
+        workspace_save_to_descriptor(),
+        through_workspaces!(save_to, unavailable),
+    )?;
+    registry.register_outside_replay(
+        workspace_save_as_descriptor(),
+        through_workspaces!(save_as, unavailable),
+    )?;
+    registry.register_outside_replay(
+        workspace_new_descriptor(),
+        through_workspaces!(new, unavailable),
+    )?;
+    registry.register_outside_replay(
+        workspace_revert_descriptor(),
+        through_workspaces!(revert, unavailable),
+    )?;
+    registry.register_outside_replay(
+        workspace_autosave_set_descriptor(),
+        through_workspaces!(autosave_set, unavailable),
+    )?;
+    registry.register_outside_replay(
+        tab_close_descriptor(),
+        through_workspaces!(close, unavailable),
+    )?;
+    registry.register_outside_replay(
+        workspace_rename_descriptor(),
+        through_workspaces!(rename, unavailable),
+    )?;
+    registry.register_outside_replay(
+        workspace_delete_descriptor(),
+        through_workspaces!(delete, unavailable),
+    )?;
+    registry.register_outside_replay(
+        workspace_delete_undo_descriptor(),
+        through_workspaces!(manage::undo_call, unavailable),
+    )?;
+    registry.register_outside_replay(
+        workspace_dialog_open_descriptor(),
+        through_workspaces!(manage::dialog_open, unavailable),
+    )?;
+    registry.register_outside_replay(
+        workspace_colour_set_descriptor(),
+        through_workspaces!(colour_set, unavailable),
+    )?;
+    registry.register_outside_replay(
+        workspace_colour_palette_descriptor(),
+        through_workspaces!(colour_popover::palette_read, unavailable),
+    )?;
+    registry.register_outside_replay(
+        workspace_colour_popover_descriptor(),
+        through_workspaces!(colour_popover::popover_call, unavailable),
+    )?;
+    registry.register_outside_replay(
+        workspace_list_descriptor(),
+        through_workspaces!(list, unavailable),
+    )
 }
 
 fn input<T: serde::de::DeserializeOwned>(value: &Value) -> Result<T, ControlError> {

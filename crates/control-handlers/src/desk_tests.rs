@@ -1,7 +1,7 @@
 //! The desk calls through a fake window: each reaches its act once, a write
 //! that failed journals nothing, and Agent access never opens from a connection.
 
-use quantick_control_schema::desk::READBACKS;
+use quantick_control_schema::desk::{DESK_SAVE_CAPABILITY_ID, READBACKS};
 use serde_json::json;
 
 use super::*;
@@ -186,4 +186,72 @@ fn every_call_has_a_readback() {
             "desk.reopen_on_launch.set",
         ]
     );
+}
+
+/// The fake desk, lent through a window's door.
+struct Lent<'a>(&'a mut FakeHost);
+
+impl DeskHost for Lent<'_> {
+    fn desk(&mut self, act: DeskAct) -> Result<bool, ControlError> {
+        self.0.desk(act)
+    }
+}
+
+impl crate::workspace_book::WorkspaceBookHost for Lent<'_> {}
+
+impl TabDirectory for Lent<'_> {
+    fn active_tab_index(&self) -> usize {
+        0
+    }
+    fn tab_position(&self, _: u64) -> Option<usize> {
+        None
+    }
+    fn tab_id_at(&self, _: usize) -> u64 {
+        0
+    }
+}
+
+/// A window that lends its desk through [`TabDirectory::workspaces`], or not.
+struct Window {
+    host: FakeHost,
+    lends: bool,
+}
+
+impl TabDirectory for Window {
+    fn active_tab_index(&self) -> usize {
+        0
+    }
+    fn tab_position(&self, _: u64) -> Option<usize> {
+        None
+    }
+    fn tab_id_at(&self, _: usize) -> u64 {
+        0
+    }
+    fn workspaces(&mut self) -> Option<Box<dyn crate::WorkspaceHost + '_>> {
+        let lent: Box<dyn crate::WorkspaceHost + '_> = Box::new(Lent(&mut self.host));
+        self.lends.then_some(lent)
+    }
+}
+
+/// A registered call reaches the desk through the window's door; a window that
+/// lends none answers unavailable and acts on nothing.
+#[test]
+fn a_registered_call_reaches_the_desk_through_the_door() {
+    let mut registry = quantick_control_host::actions::ActionRegistry::<Window, FakeAccess>::new();
+    register(&mut registry).unwrap();
+    let save = registry.lookup(DESK_SAVE_CAPABILITY_ID, 1).unwrap().handler;
+    let (mut access, actor) = (FakeAccess::with_budget(0), FakeWindow::assistant());
+    let mut window = Window {
+        host: FakeHost::default(),
+        lends: true,
+    };
+    let answer = save(&mut window, &mut access, &actor, &json!({})).unwrap();
+    assert_eq!(answer["written"], true);
+    assert_eq!(window.host.saves, 1);
+
+    window.lends = false;
+    let refused = save(&mut window, &mut access, &actor, &json!({})).unwrap_err();
+    assert_eq!(refused.message, "the desk is unavailable");
+    assert_eq!(window.host.saves, 1, "nothing reached the desk");
+    assert_eq!(access.events.len(), 1, "nothing journaled");
 }

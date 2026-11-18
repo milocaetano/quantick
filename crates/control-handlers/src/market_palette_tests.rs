@@ -80,12 +80,30 @@ impl Host {
     }
 }
 
-impl WorkspaceBookHost for Host {
+/// The host's book, lent through [`crate::TabDirectory::workspaces`] on its
+/// one market tab.
+struct LentBook<'a>(&'a mut WorkspaceBook);
+
+impl crate::workspace_book::WorkspaceBookHost for LentBook<'_> {
     fn workspace_book(&mut self) -> Option<&mut WorkspaceBook> {
-        Some(&mut self.book)
+        Some(self.0)
     }
     fn persist_workspace_book(&mut self) -> Result<(), String> {
         Ok(())
+    }
+}
+
+impl crate::desk::DeskHost for LentBook<'_> {}
+
+impl crate::TabDirectory for LentBook<'_> {
+    fn active_tab_index(&self) -> usize {
+        0
+    }
+    fn tab_position(&self, tab_id: u64) -> Option<usize> {
+        (tab_id == 5).then_some(0)
+    }
+    fn tab_id_at(&self, _index: usize) -> u64 {
+        5
     }
 }
 
@@ -135,6 +153,9 @@ impl crate::TabDirectory for Host {
     }
     fn tab_id_at(&self, _index: usize) -> u64 {
         5
+    }
+    fn workspaces(&mut self) -> Option<Box<dyn crate::WorkspaceHost + '_>> {
+        Some(Box::new(LentBook(&mut self.book)))
     }
 }
 

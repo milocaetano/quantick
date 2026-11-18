@@ -7,7 +7,7 @@ use crate::contract_roll::{self, ContractRollPort};
 use crate::feed_source::{check_source, set_source};
 use crate::market_palette::MarketPaletteHost;
 use crate::workspace_book::switch::ask_unjournaled;
-use crate::workspace_book::{WorkspaceBookHost, set_tab_workspace};
+use crate::workspace_book::{set_tab_workspace, unavailable};
 use quantick_control::wire::WireU64;
 use quantick_engine::bar_registry::{BUILTIN_BARS, BarConfiguration};
 use quantick_engine::bar_selection::BarInputAvailability;
@@ -15,10 +15,10 @@ use quantick_stores::market_list::{
     RollOffer, SwitchChoice, SwitchTarget, roll_toast, switch_toast,
 };
 
-/// What a switch host can do: the window's switch, its roll, its palette and
-/// its workspace book.
-pub trait SwitchHost: ContractRollPort + MarketPaletteHost + WorkspaceBookHost {}
-impl<H: ContractRollPort + MarketPaletteHost + WorkspaceBookHost + ?Sized> SwitchHost for H {}
+/// What a switch host can do: the window's switch, its roll and its palette;
+/// its workspace book through [`crate::TabDirectory::workspaces`].
+pub trait SwitchHost: ContractRollPort + MarketPaletteHost {}
+impl<H: ContractRollPort + MarketPaletteHost + ?Sized> SwitchHost for H {}
 
 const TAB_GONE: &str = "The tab being switched has closed";
 
@@ -67,7 +67,8 @@ pub fn switch<H: SwitchHost + ?Sized>(
     }
     set_source(app, tab, &choice.feed_id, &choice.symbol).map_err(|error| error.message)?;
     if let Some(name) = &choice.workspace {
-        set_tab_workspace(app, choice.tab_id, name).map_err(|error| error.message)?;
+        let mut book = app.workspaces().ok_or_else(|| unavailable().message)?;
+        set_tab_workspace(&mut *book, choice.tab_id, name).map_err(|error| error.message)?;
     }
     if let Some(bar) = bar {
         app.set_flow_bar(choice.tab_id, bar)?;
@@ -114,10 +115,13 @@ pub fn roll<H: SwitchHost + ?Sized>(
 /// no question, a switch that would still drop them is refused before
 /// anything moves, as `tab.workspace.set` refuses one without `edits`.
 fn keeps_edits<H: SwitchHost + ?Sized>(app: &mut H, tab: u64, name: &str) -> Result<(), String> {
-    if !(app.workspace_book()).is_some_and(|book| book.tab_state(tab).is_some()) {
+    let Some(mut host) = app.workspaces() else {
+        return Ok(());
+    };
+    if !(host.workspace_book()).is_some_and(|book| book.tab_state(tab).is_some()) {
         return Ok(());
     }
-    let asked = ask_unjournaled(app, tab, name).map_err(|error| error.message)?;
+    let asked = ask_unjournaled(&mut *host, tab, name).map_err(|error| error.message)?;
     asked.map_or(Ok(()), |asked| {
         let text = quantick_control_schema::window_menu::switch_keeps_edits;
         Err(text(&asked.workspace, &asked.target))

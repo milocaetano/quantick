@@ -26,6 +26,7 @@ use quantick_control_schema::settings_sections::SettingsSection;
 use serde::Serialize;
 use serde_json::{Value, json};
 
+use crate::TabDirectory;
 use crate::dock::ActionDock;
 use crate::notify::NotifyAccess;
 
@@ -63,18 +64,37 @@ pub trait DeskHost {
 
 /// Outside the replay trace: none of these changes a market, and a recorded
 /// call must not rewrite the trader's desk when a session re-runs.
+/// Each call reaches the desk through [`TabDirectory::workspaces`].
 pub fn register<H, A, D>(registry: &mut D) -> Result<(), RegistryError>
 where
-    H: DeskHost + ?Sized,
+    H: TabDirectory + ?Sized,
     A: NotifyAccess,
     D: ActionDock<H, A>,
 {
-    registry.register_outside_replay(settings_open_descriptor(), open_settings)?;
-    registry.register_outside_replay(desk_save_descriptor(), save)?;
-    registry.register_outside_replay(desk_export_descriptor(), export)?;
-    registry.register_outside_replay(desk_import_descriptor(), import)?;
-    registry.register_outside_replay(desk_forget_descriptor(), forget)?;
-    registry.register_outside_replay(desk_reopen_descriptor(), reopen)
+    registry.register_outside_replay(
+        settings_open_descriptor(),
+        through_workspaces!(open_settings, unavailable),
+    )?;
+    registry.register_outside_replay(
+        desk_save_descriptor(),
+        through_workspaces!(save, unavailable),
+    )?;
+    registry.register_outside_replay(
+        desk_export_descriptor(),
+        through_workspaces!(export, unavailable),
+    )?;
+    registry.register_outside_replay(
+        desk_import_descriptor(),
+        through_workspaces!(import, unavailable),
+    )?;
+    registry.register_outside_replay(
+        desk_forget_descriptor(),
+        through_workspaces!(forget, unavailable),
+    )?;
+    registry.register_outside_replay(
+        desk_reopen_descriptor(),
+        through_workspaces!(reopen, unavailable),
+    )
 }
 
 fn invalid(error: &serde_json::Error) -> ControlError {

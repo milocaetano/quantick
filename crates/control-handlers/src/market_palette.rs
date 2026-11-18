@@ -4,7 +4,6 @@
 //! doors cannot decide differently. The host lends primitives only.
 use crate::dock::ActionDock;
 use crate::notify::NotifyAccess;
-use crate::workspace_book::WorkspaceBookHost;
 use quantick_control::wire::WireU64;
 use quantick_control::{error::ControlError, registry::RegistryError, wire::ActorContext};
 use quantick_control_host::authority::MARKET_MODULE_ID;
@@ -70,7 +69,7 @@ pub struct Opened {
 ///
 /// # Errors
 /// The reason, in the trader's words.
-pub fn open<H: MarketPaletteHost + WorkspaceBookHost + ?Sized>(
+pub fn open<H: MarketPaletteHost + ?Sized>(
     app: &mut H,
     asked: &OpenChoice,
 ) -> Result<Opened, String> {
@@ -188,7 +187,7 @@ pub fn default_bar_size(kind: &str) -> String {
 
 /// Outside the replay trace: a recorded call must not open tabs or edit the
 /// venue lists when a session re-runs.
-pub fn register<H: MarketPaletteHost + WorkspaceBookHost + ?Sized, A: NotifyAccess>(
+pub fn register<H: MarketPaletteHost + ?Sized, A: NotifyAccess>(
     registry: &mut impl ActionDock<H, A>,
 ) -> Result<(), RegistryError> {
     registry.register_outside_replay(market_open_descriptor(), open_call)?;
@@ -205,7 +204,7 @@ fn answer<T: Serialize>(result: &T) -> Result<Value, ControlError> {
     serde_json::to_value(result).map_err(|error| ControlError::invalid_request(error.to_string()))
 }
 
-fn open_call<H: MarketPaletteHost + WorkspaceBookHost + ?Sized, A>(
+fn open_call<H: MarketPaletteHost + ?Sized, A>(
     app: &mut H,
     _: &mut A,
     _: &ActorContext,
