@@ -1824,7 +1824,7 @@ fn wheel_over_the_tape_with_the_bubble_settings_open(preset: &str) {
         assert!(app.active_tab_mut().tape_mut().apply_preset(preset, false));
     }
     run_frame(&mut app, &ctx);
-    crate::orderflow_panel::open_on(app.active_tab_mut(), crate::ui_state::PanelSection::Bubbles);
+    open_bubbles(&mut app);
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
     assert!(app.active_tab().tape().settings_panel.is_open());
@@ -1856,7 +1856,7 @@ fn wheel_over_the_tape_with_the_bubble_settings_open(preset: &str) {
 fn the_wheel_over_the_ordinary_lane_zooms_its_window_not_the_candles() {
     let ctx = egui::Context::default();
     let (mut app, _, _) = split_app(&ctx);
-    crate::orderflow_panel::open_on(app.active_tab_mut(), crate::ui_state::PanelSection::Bubbles);
+    open_bubbles(&mut app);
     assert!(
         app.active_tab_mut()
             .tape_mut()
@@ -1885,4 +1885,11 @@ fn the_wheel_over_the_ordinary_lane_zooms_its_window_not_the_candles() {
         "the wheel over the lane zooms its window"
     );
     assert_eq!(candles_view(&app), before, "and leaves the candles alone");
+}
+
+/// Open the order-flow panel on Bubbles as the window menu's row does.
+fn open_bubbles(app: &mut QuantickApp) {
+    let open =
+        crate::app::menu_bar::MenuCall::OpenOrderFlowPanel(crate::ui_state::PanelSection::Bubbles);
+    _ = open.run(app as &mut crate::app::ControlWindow);
 }

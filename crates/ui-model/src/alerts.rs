@@ -37,6 +37,15 @@ pub struct Request {
     pub resolve: Option<DrawingSelector>,
     pub locate: Option<DurableDrawingRef>,
 }
+impl Request {
+    /// Only bring the panel up: what `alerts.open` and the menu row ask.
+    pub fn opening() -> Self {
+        Self {
+            open: true,
+            ..Self::default()
+        }
+    }
+}
 /// The host request and the sound preview one update can raise.
 #[derive(Debug, Default, PartialEq)]
 pub struct Effects {

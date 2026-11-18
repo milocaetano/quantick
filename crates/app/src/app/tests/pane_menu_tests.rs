@@ -50,7 +50,7 @@ fn saved_tab(id: &str) -> (QuantickApp, egui::Context) {
     let ctx = egui::Context::default();
     frames(&mut app, &ctx, 2);
     app.runtime.workspace.book.book_mut().set_autosave(false);
-    app.apply_layout_preset(preset(id).unwrap());
+    _ = crate::tab::layout::pick(app.active_tab_mut(), preset(id).unwrap());
     frames(&mut app, &ctx, 6);
     let save = vec![key_press_with(egui::Key::S, egui::Modifiers::CTRL)];
     run_sized_frame(&mut app, &ctx, TEST_WINDOW, save);
@@ -140,7 +140,7 @@ fn minimize_strip_and_maximize_restore() {
 fn remove_asks_only_for_saved_panes() {
     let (mut app, ctx) = saved_tab("time+flow");
     let (time, flow) = (slot_of(&app, PaneKind::Time), slot_of(&app, PaneKind::Flow));
-    app.apply_layout_preset(preset("time+time+flow").unwrap());
+    _ = crate::tab::layout::pick(app.active_tab_mut(), preset("time+time+flow").unwrap());
     frames(&mut app, &ctx, 6);
     let added = 2;
     assert_eq!(mode(&app, added), Some(PaneMode::Docked));

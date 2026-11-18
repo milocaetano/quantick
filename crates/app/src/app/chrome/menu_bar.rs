@@ -1,9 +1,10 @@
 //! Adapt domain snapshots and execute registered window-menu effects.
 use crate::app::{
     QuantickApp,
-    menu_bar::{MenuCommand, MenuDoor},
+    menu_bar::{MenuCall, MenuCommand, MenuDoor},
 };
 use eframe::egui;
+use quantick_control_handlers::desk::DeskAct;
 use quantick_control_schema::window_menu::{self as menu, RowId};
 use quantick_ui_model::chrome_menu_bar::{Action, Snapshot, Workspace};
 
@@ -143,19 +144,23 @@ fn settle(action: Action, commands: &mut Vec<MenuCommand>) {
             return;
         }
         Action::Workspace(command) => MenuCommand::Workspace(command),
-        Action::SaveOnExit(on) => MenuCommand::SetSaveOnExit(on),
-        Action::SwitchLayout(id) => MenuCommand::Strip(StripAction::Switch(id)),
-        Action::CreateLayout => MenuCommand::Strip(StripAction::Create),
-        Action::RenameLayout(id) => MenuCommand::Strip(StripAction::BeginRename(id)),
-        Action::DeleteLayout(id) => MenuCommand::Strip(StripAction::Delete(id)),
+        Action::SaveOnExit(on) => MenuCommand::Call(MenuCall::Desk(DeskAct::SetReopen(on))),
+        Action::SwitchLayout(id) => MenuCommand::Call(MenuCall::Strip(StripAction::Switch(id))),
+        Action::CreateLayout => MenuCommand::Call(MenuCall::Strip(StripAction::Create)),
+        Action::RenameLayout(id) => {
+            MenuCommand::Call(MenuCall::Strip(StripAction::BeginRename(id)))
+        }
+        Action::DeleteLayout(id) => MenuCommand::Call(MenuCall::Strip(StripAction::Delete(id))),
         Action::Preset(id) => {
             if let Some(preset) = quantick_workspace::canvas::preset(id) {
-                commands.push(MenuCommand::ApplyLayoutPreset(preset));
+                commands.push(MenuCommand::Call(MenuCall::ApplyLayoutPreset(preset)));
             }
             return;
         }
         Action::ContextCharts => MenuCommand::ToggleContextCharts,
-        Action::MoveChart { from, to } => MenuCommand::MoveContextChart { from, to },
+        Action::MoveChart { from, to } => {
+            MenuCommand::Call(MenuCall::MoveContextChart { from, to })
+        }
         Action::Legend => MenuCommand::ToggleLegend,
         Action::Recent(path) => MenuCommand::OpenRecentDesk(path),
     };
@@ -164,7 +169,7 @@ fn settle(action: Action, commands: &mut Vec<MenuCommand>) {
 fn settle_row(id: RowId, commands: &mut Vec<MenuCommand>) {
     use quantick_control_schema::{settings_sections::SettingsSection, window_menu::HelpPage};
     if let Some(section) = menu::panel_section_of(id) {
-        commands.push(MenuCommand::OpenOrderFlowPanel(section));
+        commands.push(MenuCommand::Call(MenuCall::OpenOrderFlowPanel(section)));
         return;
     }
     let command = match id {
@@ -175,14 +180,14 @@ fn settle_row(id: RowId, commands: &mut Vec<MenuCommand>) {
         RowId::ToolbarTop => MenuCommand::SetToolboxDock(crate::toolrail::ToolboxDock::Top),
         RowId::ToolbarBottom => MenuCommand::SetToolboxDock(crate::toolrail::ToolboxDock::Bottom),
         RowId::ToolbarHidden => MenuCommand::ToggleToolbox,
-        RowId::SaveDesk => MenuCommand::SaveWorkspace("menu"),
+        RowId::SaveDesk => MenuCommand::Call(MenuCall::Desk(DeskAct::Save("menu"))),
         RowId::TogglePanels => MenuCommand::ToggleDock,
-        RowId::Alerts => MenuCommand::OpenAlerts,
+        RowId::Alerts => MenuCommand::Call(MenuCall::OpenAlerts),
         RowId::MarketReplay => MenuCommand::OpenReplayBrowser,
         RowId::CloseReplay => MenuCommand::CloseReplay,
         RowId::Settings => MenuCommand::OpenSettings(SettingsSection::Display),
-        RowId::ExportDesk => MenuCommand::ExportDesk,
-        RowId::ImportDesk => MenuCommand::ImportDesk,
+        RowId::ExportDesk => MenuCommand::Call(MenuCall::Desk(DeskAct::PickExport)),
+        RowId::ImportDesk => MenuCommand::Call(MenuCall::Desk(DeskAct::PickImport)),
         RowId::RevealDesk => MenuCommand::RevealDesk,
         RowId::ResetStartupDesk => MenuCommand::ForgetWorkspace,
         RowId::KeyboardShortcuts => MenuCommand::OpenHelp(HelpPage::KeyboardShortcuts),

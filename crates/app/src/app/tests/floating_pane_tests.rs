@@ -35,7 +35,7 @@ fn saved_tab(id: &str) -> (QuantickApp, egui::Context) {
     let ctx = egui::Context::default();
     frames(&mut app, &ctx, 2);
     app.runtime.workspace.book.book_mut().set_autosave(false);
-    app.apply_layout_preset(preset(id).unwrap());
+    _ = crate::tab::layout::pick(app.active_tab_mut(), preset(id).unwrap());
     frames(&mut app, &ctx, 6);
     save(&mut app, &ctx);
     (app, ctx)
@@ -273,7 +273,7 @@ fn canvas_hooks_add_hold_and_open_the_menu() {
     quantick_feed::hooks::captured::set_on_this_thread(Some(&hooks));
     let (mut app, _evt, _cmd, _book) = test_app();
     let ctx = egui::Context::default();
-    app.apply_layout_preset(preset("time+flow").unwrap());
+    _ = crate::tab::layout::pick(app.active_tab_mut(), preset("time+flow").unwrap());
     frames(&mut app, &ctx, 6);
     quantick_feed::hooks::captured::set_on_this_thread(None);
     let tab = app.active_tab();

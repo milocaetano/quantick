@@ -844,7 +844,7 @@ fn begin_dock_effects(
     }
     let bell = begun.as_ref().is_ok_and(|effects| effects.open_alerts);
     if bell {
-        app.apply_menu_command(super::menu_bar::MenuCommand::OpenAlerts);
+        _ = quantick_control_handlers::alerts::AlertDefinitionsPort::alert_open(app);
     }
     super::alerts_runtime::after_dock(&mut app.runtime, &mut app.surfaces, ctx);
     begun

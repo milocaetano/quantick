@@ -114,7 +114,8 @@ pub(super) fn deliver(
 
 impl quantick_control_handlers::alerts::AlertDefinitionsPort for super::QuantickApp {
     fn alert_open(&mut self) -> Result<(), AlertError> {
-        self.apply_menu_command(super::menu_bar::MenuCommand::OpenAlerts);
+        let open = crate::surfaces::alerts::Request::opening();
+        apply_alert_request(self.indicator_wiring(), open);
         Ok(())
     }
     fn alert_resolve_target(

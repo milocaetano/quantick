@@ -397,7 +397,7 @@ fn the_panel_rows_open_the_order_flow_panel_only_on_a_shown_flow_pane() {
     };
     assert!(crate::orderflow_panel::flow_pane_shown(app.active_tab()));
     let beside = crate::canvas_layout::preset("time+flow").expect("a registered preset");
-    app.apply_layout_preset(beside);
+    _ = crate::tab::layout::pick(app.active_tab_mut(), beside);
     run_frame(&mut app, &ctx);
     assert!(app.active_tab_mut().canvas.fold(true, true));
     click_l2(&mut app);
