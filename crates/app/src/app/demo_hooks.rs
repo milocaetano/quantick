@@ -1,11 +1,12 @@
 //! The harness demo stagers: frame-phase scenarios that stage a state a
 //! screenshot needs and no click can reach.
 //!
-//! Free functions over the app rather than methods on it: the frame calls
-//! each at its phase, and each compiles only with its harness family (or
-//! under test) — the whole file with any of them — so a default build has no
-//! demo stage at all. The gated drawing owner captures its requests at
-//! executable startup and chooses geometry and consumption; its adapters
+//! Not methods on the app: the frame calls each at its phase with only the
+//! owners it stages; the two control hooks, which also run calls, borrow
+//! theirs through [`OwnersDesk`] beside the `GatewayPort` they name. Each
+//! compiles only with its harness family (or under test) — the whole file
+//! with any of them — so a default build has no demo stage at all. The
+//! gated drawing owner captures its requests at executable startup and chooses geometry and consumption; its adapters
 //! below project chosen slot times and invoke normal drawing, canvas and
 //! history operations. The venue-history and strategy scenarios read the
 //! launch-captured [`crate::harness`], and evidence capture is configured by
@@ -22,8 +23,6 @@
 use crate::surfaces::drawing_chrome::DrawingChromeExt as _;
 #[cfg(any(feature = "drawing-harness", test))]
 use crate::toolrail::ToolRailExt as _;
-#[cfg(any(feature = "control-harness", test))]
-use eframe::egui;
 
 #[cfg(any(feature = "scenario-harness", test))]
 use crate::drawings;
@@ -32,7 +31,12 @@ use crate::harness::{StrategyDemoMode, VenueHistoryDemo};
 #[cfg(any(feature = "scenario-harness", test))]
 use crate::pane;
 
-use super::QuantickApp;
+#[cfg(any(feature = "control-harness", test))]
+use super::owners_desk::OwnersDesk;
+#[cfg(any(feature = "drawing-harness", feature = "scenario-harness", test))]
+use super::owners_desk::WindowOwners;
+#[cfg(any(feature = "drawing-harness", feature = "scenario-harness", test))]
+use super::workspace_runtime::WorkspaceRuntime;
 #[cfg(any(feature = "drawing-harness", test))]
 use crate::pane::ChartPane;
 #[cfg(any(feature = "drawing-harness", test))]
@@ -41,6 +45,8 @@ use crate::surfaces::drawing_chrome::demo::{
 };
 #[cfg(any(feature = "drawing-harness", test))]
 use crate::tab::CanvasLayout;
+#[cfg(any(feature = "control-harness", test))]
+use eframe::egui;
 #[cfg(any(feature = "drawing-harness", test))]
 use quantick_ui_model::drawing_chrome::scenario::{
     Effect as ScenarioEffect, Intent as ScenarioIntent,
@@ -61,17 +67,20 @@ use quantick_ui_model::drawing_chrome::scenario::{
 /// [`super::control_host::CONTROL_EVIDENCE_HOOK_FRAMES`] rather than hanging a capture run on a
 /// surface that never presents.
 #[cfg(any(feature = "control-harness", test))]
-pub(super) fn apply_control_evidence_hook(app: &mut QuantickApp, ctx: &egui::Context) {
-    if !app.control.scenarios.has_evidence() {
+pub(super) fn apply_control_evidence_hook<D>(desk: &mut D, ctx: &egui::Context)
+where
+    D: OwnersDesk + super::GatewayPort,
+{
+    if !desk.owners().control.scenarios.has_evidence() {
         return;
     }
     // Access is taken *before* the request is, so a frame that finds it
     // borrowed leaves the hook pending rather than dropping it silently.
-    let Some(mut access) = app.control.control_access.take() else {
+    let Some(mut access) = desk.gateway_slot().take() else {
         return;
     };
-    let capture = app
-        .control
+    let control = desk.owners().control;
+    let capture = control
         .prepare_evidence(&access)
         .expect("the hook was pending one line above");
     if capture.screenshot_not_granted {
@@ -81,16 +90,16 @@ pub(super) fn apply_control_evidence_hook(app: &mut QuantickApp, ctx: &egui::Con
             "QUANTICK_CONTROL_EVIDENCE asked for an image without observe.screenshot; capturing without one");
     }
     if capture.wants_screenshot {
-        access.service_screenshot(app, ctx);
+        access.service_screenshot(desk.as_window(), ctx);
     }
-    let (scopes, wants_screenshot) = match app
-        .control
+    let control = desk.owners().control;
+    let (scopes, wants_screenshot) = match control
         .scenarios
         .finish_evidence(capture, access.has_screenshot())
     {
         super::control_host::EvidenceStep::Waiting => {
             ctx.request_repaint();
-            app.control.control_access = Some(access);
+            *desk.gateway_slot() = Some(access);
             return;
         }
         super::control_host::EvidenceStep::Capture {
@@ -109,11 +118,11 @@ pub(super) fn apply_control_evidence_hook(app: &mut QuantickApp, ctx: &egui::Con
         }
     };
     let outcome = access.invoke_local_read(
-        app,
+        desk.as_window(),
         "evidence.capture",
         serde_json::json!({ "scopes": scopes, "screenshot": wants_screenshot }),
     );
-    app.control.control_access = Some(access);
+    *desk.gateway_slot() = Some(access);
     match outcome {
         Ok(manifest) => tracing::info!(
             target: "quantick::control",
@@ -139,6 +148,84 @@ pub(super) fn apply_control_evidence_hook(app: &mut QuantickApp, ctx: &egui::Con
     }
 }
 
+/// Launch scenarios run the label and notification handlers as a trusted
+/// local agent: traced on a replay, never through remote-grant admission.
+#[cfg(any(feature = "control-harness", test))]
+pub(super) fn apply_control_annotate_hooks<D: OwnersDesk + super::GatewayPort>(desk: &mut D) {
+    let remote = crate::control::ActionOrigin::Remote;
+    let owners = desk.owners();
+    if owners.control.scenarios.has_annotation() {
+        let pane = owners.runtime.active_tab().drawing_pane();
+        let slot = pane.slots().saturating_sub(1);
+        let anchor = match (pane.slot_open_time(slot), pane.closed_bar(slot)) {
+            (Some(time), Some(bar)) => Some(serde_json::json!({
+                "time_unix_ms": time,
+                "price": rust_decimal::prelude::ToPrimitive::to_f64(&bar.close).unwrap_or(1.0).to_string(),
+            })),
+            _ => None,
+        };
+        if let Some(input) = owners.control.scenarios.annotation(anchor) {
+            desk.run_hook_action("annotate.label.create", input, remote);
+        }
+    }
+    match desk.owners().control.scenarios.notification() {
+        Some(super::control_host::NotificationStep::Ready { capability, input }) => {
+            desk.run_hook_action(capability, input, remote);
+        }
+        Some(super::control_host::NotificationStep::Refused { channel }) => tracing::warn!(
+            target: "quantick::control",
+            event_code = "CONTROL_NOTIFY_HOOK_REFUSED",
+            channel = %channel,
+            "QUANTICK_CONTROL_NOTIFY names no notification channel"
+        ),
+        None => {}
+    }
+}
+
+/// Scripted views, the drawing demos and pending history requests, in
+/// the order a launch composes them: the frame lends the owners once, and
+/// each stage takes only the ones it acts on.
+#[cfg(any(feature = "scenario-harness", feature = "drawing-harness", test))]
+pub(super) fn apply_scenario_hooks(owners: WindowOwners<'_>) {
+    #[cfg(any(feature = "scenario-harness", test))]
+    owners
+        .chrome
+        .harness
+        .apply_scripted_view(&mut owners.runtime.tabs);
+    #[cfg(any(feature = "drawing-harness", test))]
+    apply_drawing_demo(owners.runtime, owners.surfaces);
+    #[cfg(any(feature = "scenario-harness", test))]
+    owners
+        .chrome
+        .harness
+        .apply_load_older(&mut owners.runtime.tabs, owners.config);
+    #[cfg(any(feature = "scenario-harness", test))]
+    owners
+        .chrome
+        .harness
+        .apply_load_older_candles(&mut owners.runtime.tabs, owners.config);
+    #[cfg(any(feature = "drawing-harness", test))]
+    apply_drawing_draft(owners.runtime, owners.surfaces);
+    #[cfg(any(feature = "scenario-harness", test))]
+    apply_venue_history_demo(&mut owners.chrome.harness, owners.runtime);
+    #[cfg(any(feature = "drawing-harness", test))]
+    apply_frvp_demo(owners.runtime, owners.surfaces);
+    #[cfg(any(feature = "drawing-harness", test))]
+    apply_avwap_demo(owners.runtime, owners.surfaces);
+    #[cfg(any(feature = "scenario-harness", test))]
+    apply_strategy_demo(
+        owners.runtime,
+        owners.surfaces,
+        &mut owners.chrome.harness,
+        &mut *owners.audio.alerts,
+    );
+    #[cfg(any(feature = "scenario-harness", test))]
+    owners
+        .chrome
+        .harness
+        .apply_replay_restart(&mut owners.runtime.tabs, owners.config);
+}
+
 /// The `QUANTICK_VENUE_HISTORY_DEMO` hook: a venue candle prefix in front
 /// of the bars cut from prints, delivered through the very path a feed's
 /// reply takes, so what is photographed is the real seam and the real
@@ -148,24 +235,26 @@ pub(super) fn apply_control_evidence_hook(app: &mut QuantickApp, ctx: &egui::Con
 /// left open, which is the mid-load frame progressive delivery exists to
 /// produce and the one no capture could otherwise catch.
 #[cfg(any(feature = "scenario-harness", test))]
-pub(super) fn apply_venue_history_demo(app: &mut QuantickApp) {
+pub(super) fn apply_venue_history_demo(
+    harness: &mut crate::harness::Harness,
+    runtime: &mut WorkspaceRuntime,
+) {
     /// Candles the venue-history scene installs: enough for the seam and
     /// the divider to read, few enough to stay one screenful of context.
     const DEMO_PREFIX_CANDLES: i64 = 90;
-    let Some(demo) = app.chrome.harness.venue_history_demo() else {
+    let Some(demo) = harness.venue_history_demo() else {
         return;
     };
-    let tab = app.active_tab_mut();
     // Wait for bars to sit the prefix in front of: a seam needs both sides.
-    if tab.flow_pane.series.state.bars().len() < 12 {
+    if runtime.active_tab().flow_pane.series.state.bars().len() < 12 {
         return;
     }
-    app.chrome.harness.venue_history_demo_staged();
+    harness.venue_history_demo_staged();
     let slice = match demo {
         VenueHistoryDemo::Complete => quantick_feed::OhlcvSlice::Last { complete: true },
         VenueHistoryDemo::Partial => quantick_feed::OhlcvSlice::More,
     };
-    deliver_synthetic_prefix(app, DEMO_PREFIX_CANDLES, slice);
+    deliver_synthetic_prefix(runtime, DEMO_PREFIX_CANDLES, slice);
 }
 
 /// Deliver `candles` synthetic venue candles for the minutes immediately
@@ -182,12 +271,12 @@ pub(super) fn apply_venue_history_demo(app: &mut QuantickApp) {
 /// short one.
 #[cfg(any(feature = "drawing-harness", feature = "scenario-harness", test))]
 pub(super) fn deliver_synthetic_prefix(
-    app: &mut QuantickApp,
+    runtime: &mut WorkspaceRuntime,
     candles: i64,
     slice: quantick_feed::OhlcvSlice,
 ) -> bool {
-    let tab_id = app.runtime.tabs.active_id();
-    let tab = app.active_tab_mut();
+    let tab_id = runtime.tabs.active_id();
+    let tab = runtime.active_tab_mut();
     let Some(first) = tab.flow_pane.series.state.bars().first() else {
         return false;
     };
@@ -206,8 +295,13 @@ pub(super) fn deliver_synthetic_prefix(
 /// click lands on it and opens the per-drawing menu. Consumed once the
 /// chart has bars enough, like the drawings demo.
 #[cfg(any(feature = "scenario-harness", test))]
-pub(super) fn apply_strategy_demo(app: &mut QuantickApp) {
-    let Some(mode) = app.chrome.harness.strategy_demo() else {
+pub(super) fn apply_strategy_demo(
+    runtime: &mut WorkspaceRuntime,
+    surfaces: &mut crate::surfaces::Surfaces,
+    harness: &mut crate::harness::Harness,
+    alerts: &mut dyn quantick_alerts::delivery::AlertSink,
+) {
+    let Some(mode) = harness.strategy_demo() else {
         return;
     };
     /// Fewest bars before the demo stages: enough for the shipped
@@ -224,7 +318,7 @@ pub(super) fn apply_strategy_demo(app: &mut QuantickApp) {
     // forming partial too, whose `closed_bar` is `None` on almost every
     // frame — bailing on it must keep the flag armed for the next
     // frame, or the hook silently stages nothing.
-    let closed = app.active_tab_mut().flow_pane.closed_slots();
+    let closed = runtime.active_tab_mut().flow_pane.closed_slots();
     if closed < DEMO_STRATEGY_MIN_SLOTS {
         return;
     }
@@ -234,11 +328,11 @@ pub(super) fn apply_strategy_demo(app: &mut QuantickApp) {
     else {
         // No rectangle in the registry: staging can never succeed, so
         // the flag is consumed rather than retried forever.
-        app.chrome.harness.strategy_demo_staged();
+        harness.strategy_demo_staged();
         return;
     };
     let drawing_id = {
-        let pane = &mut app.active_tab_mut().flow_pane;
+        let pane = &mut runtime.active_tab_mut().flow_pane;
         let newest = closed - 1;
         let Some(close) = pane
             .closed_bar(newest)
@@ -276,7 +370,7 @@ pub(super) fn apply_strategy_demo(app: &mut QuantickApp) {
         pane.drawings.items()[index].id
     };
     // Staged: the rectangle exists, so the hook is consumed.
-    app.chrome.harness.strategy_demo_staged();
+    harness.strategy_demo_staged();
     let mut form =
         crate::strategy_presets::StoredPreset::starting_point(quantick_engine::Side::Buy);
     // The alarm scenes tick the checkbox the trader would tick, and the
@@ -300,40 +394,38 @@ pub(super) fn apply_strategy_demo(app: &mut QuantickApp) {
         form.alarm_sound = clip.token().to_owned();
         form.alarm_play_secs = Some(crate::strategy_presets::DEFAULT_ALARM_PLAY_SECS);
     }
-    match mode {
-        StrategyDemoMode::Armed => {
-            let _ = app
-                .runtime
-                .tabs
-                .runtime_mut(app.runtime.tabs.active_index())
-                .arm_strategy_instance(
-                    &mut *app.audio.alerts,
-                    pane::PaneSide::Flow,
-                    drawing_id,
-                    &form,
-                    "demo BF".to_owned(),
-                );
+    if mode == StrategyDemoMode::AlarmBadge {
+        form.alarm_only = true;
+    }
+    let armed_as = match mode {
+        StrategyDemoMode::AlarmBadge => Some("demo alarm"),
+        StrategyDemoMode::Armed | StrategyDemoMode::EndedBadge | StrategyDemoMode::PausedBadge => {
+            Some("demo BF")
         }
+        StrategyDemoMode::Popup | StrategyDemoMode::AlarmPopup | StrategyDemoMode::AlarmSounds => {
+            None
+        }
+    };
+    if let Some(name) = armed_as {
+        let index = runtime.tabs.active_index();
+        let _ = runtime.tabs.runtime_mut(index).arm_strategy_instance(
+            alerts,
+            pane::PaneSide::Flow,
+            drawing_id,
+            &form,
+            name.to_owned(),
+        );
+    }
+    match mode {
+        StrategyDemoMode::Armed => {}
         StrategyDemoMode::AlarmBadge => {
-            form.alarm_only = true;
-            let _ = app
-                .runtime
-                .tabs
-                .runtime_mut(app.runtime.tabs.active_index())
-                .arm_strategy_instance(
-                    &mut *app.audio.alerts,
-                    pane::PaneSide::Flow,
-                    drawing_id,
-                    &form,
-                    "demo alarm".to_owned(),
-                );
             // Stand a provisional judgement on the badge. The mark is
             // the surface under test, and the tape reaches it only when
             // a force bar happens to be half-formed — so the scene
             // stages the mark itself rather than waiting for a market
             // that may not oblige before the shutter.
             let (pane, strategies) =
-                (app.active_tab_mut()).pane_with_strategies(pane::PaneSide::Flow);
+                (runtime.active_tab_mut()).pane_with_strategies(pane::PaneSide::Flow);
             if let Some(instance) = strategies.anchors.for_drawing_mut(drawing_id) {
                 instance.mark = quantick_strategy::anchors::AlarmMark::Preview;
             }
@@ -344,18 +436,7 @@ pub(super) fn apply_strategy_demo(app: &mut QuantickApp) {
             pane.drawings.select(None);
         }
         StrategyDemoMode::EndedBadge | StrategyDemoMode::PausedBadge => {
-            let _ = app
-                .runtime
-                .tabs
-                .runtime_mut(app.runtime.tabs.active_index())
-                .arm_strategy_instance(
-                    &mut *app.audio.alerts,
-                    pane::PaneSide::Flow,
-                    drawing_id,
-                    &form,
-                    "demo BF".to_owned(),
-                );
-            let pane = app.active_tab_mut().pane_mut(pane::PaneSide::Flow);
+            let pane = runtime.active_tab_mut().pane_mut(pane::PaneSide::Flow);
             if mode == StrategyDemoMode::EndedBadge {
                 // End the span the way the trader does — by moving the
                 // rectangle — rather than by stamping a state on. The
@@ -383,45 +464,24 @@ pub(super) fn apply_strategy_demo(app: &mut QuantickApp) {
             pane.drawings.select(None);
         }
         StrategyDemoMode::Popup | StrategyDemoMode::AlarmPopup | StrategyDemoMode::AlarmSounds => {
+            let popup = &mut surfaces.strategy_popup;
             if mode == StrategyDemoMode::AlarmSounds {
-                app.surfaces
-                    .strategy_popup
-                    .update(quantick_ui_model::strategy_popup::Intent::StageSoundPicker);
+                popup.update(quantick_ui_model::strategy_popup::Intent::StageSoundPicker);
             }
-            let tab = app.runtime.tabs.active_id();
-            app.surfaces
-                .strategy_popup
-                .update(quantick_ui_model::strategy_popup::Intent::Open {
-                    tab,
-                    side: pane::PaneSide::Flow,
-                    drawing: drawing_id,
-                    form: Box::new(form),
-                });
+            let tab = runtime.tabs.active_id();
+            popup.update(quantick_ui_model::strategy_popup::Intent::Open {
+                tab,
+                side: pane::PaneSide::Flow,
+                drawing: drawing_id,
+                form: Box::new(form),
+            });
         }
     }
     // This demo places its rectangle, which selects it, which closes a
-    // panel the launch may have asked for. Same door as the others.
-    carry_inspector_across_selection(app);
-}
-
-/// Keep a `QUANTICK_DRAWING_INSPECTOR=1` request alive across a selection
-/// the *app* made, rather than the trader.
-///
-/// The context bar closes the panel on every selection change, which is
-/// right for a trader clicking from one object to the next and wrong for a
-/// demo hook that places objects and selects one on the frame it runs:
-/// the pairing the harness table prescribes then photographs a chart with
-/// no panel on it. Re-requested through `pending_open_settings`, the door
-/// a tool that asks for its own settings on placement already uses, which
-/// is applied *after* the clear rather than before it.
-///
-/// One function rather than the line copied into each hook, because the
-/// omission is silent: the demo that forgets it produces a screenshot that
-/// looks merely uninteresting, and that is how three of these hooks came to
-/// disagree about it.
-#[cfg(any(feature = "scenario-harness", test))]
-fn carry_inspector_across_selection(app: &mut QuantickApp) {
-    app.surfaces.drawing_chrome.carry_across_selection();
+    // panel the launch may have asked for: keep a
+    // `QUANTICK_DRAWING_INSPECTOR=1` request alive across it, as every
+    // placing demo does.
+    surfaces.drawing_chrome.carry_across_selection();
 }
 
 /// One deterministic prefix generator, shared with the legacy venue scenario.
@@ -466,60 +526,54 @@ fn close(pane: &ChartPane, slot: usize) -> Option<f64> {
         .and_then(|bar| rust_decimal::prelude::ToPrimitive::to_f64(&bar.close))
 }
 #[cfg(any(feature = "drawing-harness", test))]
-pub(super) fn apply_drawing_demo(app: &mut QuantickApp) {
-    if !app.surfaces.drawing_chrome.demos().gallery_requested() {
+pub(super) fn apply_drawing_demo(
+    runtime: &mut WorkspaceRuntime,
+    surfaces: &mut crate::surfaces::Surfaces,
+) {
+    let chrome = &mut surfaces.drawing_chrome;
+    if !chrome.demos().gallery_requested() {
         return;
     }
-    let slots = app.active_tab().flow_pane.slots();
-    if !app
-        .surfaces
-        .drawing_chrome
-        .demos()
-        .gallery_ready(slots, crate::drawings::DRAWING_TOOLS.len())
-    {
+    let slots = runtime.active_tab().flow_pane.slots();
+    let tools = crate::drawings::DRAWING_TOOLS;
+    if !chrome.demos().gallery_ready(slots, tools.len()) {
         return;
     }
 
-    let pane = &app.active_tab().flow_pane;
+    let pane = &runtime.active_tab().flow_pane;
     let series = facts(pane);
-    let samples = app
-        .surfaces
-        .drawing_chrome
+    let samples = chrome
         .demos()
         .gallery_sample_slot(slots)
         .map_or_else(Vec::new, |slot| {
             crate::bands::samples_at(&pane.indicators, slot)
         });
-    let Some(ScenarioEffect::Gallery(mut plan)) =
-        app.surfaces
-            .drawing_chrome
-            .scenario(ScenarioIntent::GalleryReady {
-                series,
-                tools: crate::drawings::DRAWING_TOOLS.to_vec(),
-                samples,
-            })
-    else {
+    let Some(ScenarioEffect::Gallery(mut plan)) = chrome.scenario(ScenarioIntent::GalleryReady {
+        series,
+        tools: tools.to_vec(),
+        samples,
+    }) else {
         return;
     };
     if plan.shared == Some(true) {
-        app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
+        runtime
+            .active_tab_mut()
+            .set_layout(CanvasLayout::TimeAndFlow);
     }
-    let runtime = app.runtime.bound_mut(&app.presentation.binding);
     let pane = &mut runtime.active_tab_mut().flow_pane;
     plan.project_times(|slot| pane.slot_open_time(slot));
-    let center = plan.apply_main(&mut pane.drawings, |intent| {
-        app.surfaces.drawing_chrome.scenario(intent)
-    });
+    let center = plan.apply_main(&mut pane.drawings, |intent| chrome.scenario(intent));
     if let (Some(center), Some(chart)) = (center, pane.frame.chart_area) {
         pane.model
             .viewport
             .center_on_bar(center, chart.width(), slots);
     }
     plan.apply_bands(&mut pane.drawings);
-    app.surfaces.drawing_chrome.carry_across_selection();
+    chrome.carry_across_selection();
     // Recut follows taking the ready gallery, even if placement made no object.
-    if app.surfaces.drawing_chrome.demos().recut_requested() {
-        let pane = &mut app.active_tab_mut().flow_pane;
+    if chrome.demos().recut_requested() {
+        let tab = runtime.active_tab_mut();
+        let pane = &mut tab.flow_pane;
         let first = pane.slot_open_time(0);
         let base = close(pane, 0);
         demo::apply_recut_marker(&mut pane.drawings, first, base);
@@ -527,85 +581,75 @@ pub(super) fn apply_drawing_demo(app: &mut QuantickApp) {
         let value = demo::demo_recut_count(spec.parameter());
         pane.spec
             .retain(spec.with_parameter("count", value).expect("positive count"));
-        app.active_tab_mut().apply_spec_changes();
-        app.active_tab_mut().apply_spec_changes();
+        tab.apply_spec_changes();
+        tab.apply_spec_changes();
     }
 }
 #[cfg(any(feature = "drawing-harness", test))]
-pub(super) fn apply_drawing_draft(app: &mut QuantickApp) {
-    if app
-        .surfaces
-        .drawing_chrome
-        .demos()
-        .draft_requested()
-        .is_none()
-    {
+pub(super) fn apply_drawing_draft(
+    runtime: &mut WorkspaceRuntime,
+    surfaces: &mut crate::surfaces::Surfaces,
+) {
+    if surfaces.drawing_chrome.demos().draft_requested().is_none() {
         return;
     }
-    let pane = &app.active_tab().flow_pane;
+    let pane = &runtime.active_tab().flow_pane;
     let (chart, facts) = (pane.frame.chart_area, facts(pane));
     let Some(ScenarioEffect::Draft(mut plan)) =
-        app.surfaces
+        surfaces
             .drawing_chrome
             .scenario(ScenarioIntent::DraftReady {
-                tool: app.surfaces.toolrail.tool().drawing_tool(),
+                tool: surfaces.toolrail.tool().drawing_tool(),
                 chart_available: chart.is_some(),
                 series: facts,
             })
     else {
         return;
     };
-    let pane = &mut app.active_tab_mut().flow_pane;
+    let pane = &mut runtime.active_tab_mut().flow_pane;
     plan.project_times(|slot| pane.slot_open_time(slot));
     plan.apply(&mut pane.drawings);
     pane.gestures.parked_hand = Some(plan.hand(chart.expect("model requires chart")));
 }
 #[cfg(any(feature = "drawing-harness", test))]
-pub(super) fn apply_frvp_demo(app: &mut QuantickApp) {
-    let Some(request) = app.surfaces.drawing_chrome.demos().profile_requested() else {
+pub(super) fn apply_frvp_demo(
+    runtime: &mut WorkspaceRuntime,
+    surfaces: &mut crate::surfaces::Surfaces,
+) {
+    let chrome = &mut surfaces.drawing_chrome;
+    let Some(request) = chrome.demos().profile_requested() else {
         return;
     };
     let index = usize::from(request.stress);
     // Optional access proves the target exists; pane_mut's fallback cannot.
-    let slots = app.active_tab().pane_at(index).map(ChartPane::slots);
+    let slots = runtime.active_tab().pane_at(index).map(ChartPane::slots);
     let tool = crate::drawings::DRAWING_TOOLS
         .into_iter()
         .find(|tool| tool.id() == crate::frvp::TOOL_ID);
-    match app
-        .surfaces
-        .drawing_chrome
-        .scenario(ScenarioIntent::PrepareProfile {
-            slots,
-            tool_available: tool.is_some(),
-        }) {
+    match chrome.scenario(ScenarioIntent::PrepareProfile {
+        slots,
+        tool_available: tool.is_some(),
+    }) {
         Some(ScenarioEffect::ProfilePreparation(ProfilePreparation::Ready)) => {}
         Some(ScenarioEffect::ProfilePreparation(ProfilePreparation::Prefix { candles })) => {
-            if !deliver_synthetic_prefix(
-                app,
-                candles,
-                quantick_feed::OhlcvSlice::Last { complete: true },
-            ) {
+            let complete = quantick_feed::OhlcvSlice::Last { complete: true };
+            if !deliver_synthetic_prefix(runtime, candles, complete) {
                 return;
             }
         }
         _ => return,
     }
     // The same actual pane survives delivery. Fresh slots include its prefix.
-    let Some(pane) = app.active_tab_mut().pane_at_mut(index) else {
+    let Some(pane) = runtime.active_tab_mut().pane_at_mut(index) else {
         return;
     };
     let facts = ProfileFacts {
         slots: pane.slots(),
         prefix: pane.series.history_prefix.len(),
     };
-    let Some(ScenarioEffect::Profile(geometry)) = app
-        .surfaces
-        .drawing_chrome
-        .scenario(ScenarioIntent::ProfileReady(facts))
+    let Some(ScenarioEffect::Profile(geometry)) =
+        chrome.scenario(ScenarioIntent::ProfileReady(facts))
     else {
-        return;
-    };
-    let Some(pane) = app.active_tab_mut().pane_at_mut(index) else {
         return;
     };
     let price = close(pane, geometry.close_slot);
@@ -616,19 +660,20 @@ pub(super) fn apply_frvp_demo(app: &mut QuantickApp) {
     plan.project_times(|slot| pane.slot_open_time(slot));
     plan.apply(&mut pane.drawings);
     if plan.carries_inspector() {
-        app.surfaces.drawing_chrome.carry_across_selection();
+        chrome.carry_across_selection();
     }
 }
 #[cfg(any(feature = "drawing-harness", test))]
-pub(super) fn apply_avwap_demo(app: &mut QuantickApp) {
-    if !app.surfaces.drawing_chrome.demos().avwap_requested() {
+pub(super) fn apply_avwap_demo(
+    runtime: &mut WorkspaceRuntime,
+    surfaces: &mut crate::surfaces::Surfaces,
+) {
+    let chrome = &mut surfaces.drawing_chrome;
+    if !chrome.demos().avwap_requested() {
         return;
     }
-    let slots = app.active_tab().flow_pane.slots();
-    let effect = app
-        .surfaces
-        .drawing_chrome
-        .scenario(ScenarioIntent::AvwapReady { slots });
+    let slots = runtime.active_tab().flow_pane.slots();
+    let effect = chrome.scenario(ScenarioIntent::AvwapReady { slots });
     let Some((geometry, tool)) = demo::resolve_avwap(effect, || {
         crate::drawings::DRAWING_TOOLS
             .into_iter()
@@ -636,10 +681,10 @@ pub(super) fn apply_avwap_demo(app: &mut QuantickApp) {
     }) else {
         return;
     };
-    let pane = &mut app.active_tab_mut().flow_pane;
+    let pane = &mut runtime.active_tab_mut().flow_pane;
     let price = close(pane, geometry.slot);
     let mut plan = geometry.plan(tool, price);
     plan.project_times(|slot| pane.slot_open_time(slot));
     plan.apply(&mut pane.drawings);
-    app.surfaces.drawing_chrome.carry_across_selection();
+    chrome.carry_across_selection();
 }
