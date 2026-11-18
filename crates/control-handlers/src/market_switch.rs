@@ -3,6 +3,7 @@
 //! `feed.source.set` and `tab.market.set` take, or rolls it through the act
 //! `feed.contract.roll` runs. The trader's hand journals nothing, as the
 //! window's other source changes do.
+use crate::WorkspaceHost;
 use crate::contract_roll::{self, ContractRollPort};
 use crate::feed_source::{check_source, set_source};
 use crate::market_palette::MarketPaletteHost;
@@ -57,7 +58,8 @@ pub fn switch<H: SwitchHost + ?Sized>(
     let bar = choice.bar.as_deref().map(arrival_bar).transpose()?;
     if let Some(name) = &choice.workspace {
         app.market_snapshot().check_workspace(name)?;
-        keeps_edits(app, choice.tab_id, name)?;
+        let mut book = app.workspaces().ok_or_else(|| unavailable().message)?;
+        keeps_edits(&mut *book, choice.tab_id, name)?;
     }
     let tab = WireU64::new(choice.tab_id);
     let listed = (!choice.add).then_some(choice.symbol.as_str());
@@ -114,14 +116,11 @@ pub fn roll<H: SwitchHost + ?Sized>(
 /// asked (a pending autosave write goes through first); the palette putting
 /// no question, a switch that would still drop them is refused before
 /// anything moves, as `tab.workspace.set` refuses one without `edits`.
-fn keeps_edits<H: SwitchHost + ?Sized>(app: &mut H, tab: u64, name: &str) -> Result<(), String> {
-    let Some(mut host) = app.workspaces() else {
-        return Ok(());
-    };
+fn keeps_edits(host: &mut dyn WorkspaceHost, tab: u64, name: &str) -> Result<(), String> {
     if !(host.workspace_book()).is_some_and(|book| book.tab_state(tab).is_some()) {
         return Ok(());
     }
-    let asked = ask_unjournaled(&mut *host, tab, name).map_err(|error| error.message)?;
+    let asked = ask_unjournaled(host, tab, name).map_err(|error| error.message)?;
     asked.map_or(Ok(()), |asked| {
         let text = quantick_control_schema::window_menu::switch_keeps_edits;
         Err(text(&asked.workspace, &asked.target))

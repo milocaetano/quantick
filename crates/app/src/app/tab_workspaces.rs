@@ -63,9 +63,9 @@ impl TabRecipeHost for WorkspaceCalls<'_> {
     }
     fn recipe_signal(&self, id: u64) -> u64 {
         use std::hash::{Hash, Hasher};
-        let (app, mut hash) = (self, std::hash::DefaultHasher::new());
-        app.runtime.workspace.layouts().revision().hash(&mut hash);
-        if let Some(tab) = app.runtime.tabs.by_id(id) {
+        let (runtime, mut hash) = (&*self.runtime, std::hash::DefaultHasher::new());
+        runtime.workspace.layouts().revision().hash(&mut hash);
+        if let Some(tab) = runtime.tabs.by_id(id) {
             let canvas = (
                 quantick_workspace::canvas::signal(&tab.canvas.state),
                 tab.canvas.folds().0,
@@ -78,8 +78,8 @@ impl TabRecipeHost for WorkspaceCalls<'_> {
             }
             for (pane, _) in tab.panes() {
                 let spec = pane.series.state.spec();
-                let style = pane.footprint_config(&app.runtime.footprint_config).style;
-                (pane.layout_id(), pane.layer_read().mask(&app.runtime.style)).hash(&mut hash);
+                let style = pane.footprint_config(&runtime.footprint_config).style;
+                (pane.layout_id(), pane.layer_read().mask(&runtime.style)).hash(&mut hash);
                 (style.id(), spec.id(), spec.parameter(), spec.choice()).hash(&mut hash);
             }
         }

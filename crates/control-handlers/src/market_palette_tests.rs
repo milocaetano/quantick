@@ -21,6 +21,8 @@ struct Host {
     switches: Vec<(String, String)>,
     flow_bars: Vec<(u64, String)>,
     paper_open: bool,
+    /// Whether the window lends its workspaces; a host without them refuses.
+    lends_workspaces: bool,
 }
 
 impl Host {
@@ -76,6 +78,7 @@ impl Host {
             switches: Vec::new(),
             flow_bars: Vec::new(),
             paper_open: false,
+            lends_workspaces: true,
         }
     }
 }
@@ -155,7 +158,8 @@ impl crate::TabDirectory for Host {
         5
     }
     fn workspaces(&mut self) -> Option<Box<dyn crate::WorkspaceHost + '_>> {
-        Some(Box::new(LentBook(&mut self.book)))
+        let lent: Box<dyn crate::WorkspaceHost + '_> = Box::new(LentBook(&mut self.book));
+        self.lends_workspaces.then_some(lent)
     }
 }
 
@@ -535,6 +539,24 @@ fn a_workspace_pick_that_would_drop_edits_is_refused_before_the_switch() {
     assert!(host.switches.is_empty(), "the tab stays where it was");
     assert_eq!(host.book.tab_state(5).unwrap().workspace, "Default");
     assert_eq!(host.book.tab_copy(5), Some(&edited), "the edit is kept");
+}
+
+/// A window that lends no workspaces refuses a workspace pick before the tab
+/// moves, rather than switching the market and failing on the workspace.
+#[test]
+fn a_workspace_pick_without_workspaces_is_refused_before_the_switch() {
+    let mut host = Host::new();
+    host.book.open_tab(5);
+    host.lends_workspaces = false;
+    let picked = SwitchChoice {
+        workspace: Some("Swing".to_owned()),
+        ..switch_to("PEPEUSDT")
+    };
+    let reason = settle(&mut host, PaletteIntent::Switch(picked)).unwrap_err();
+    assert_eq!(reason, crate::workspace_book::unavailable().message);
+    assert!(host.switches.is_empty(), "the tab stays where it was");
+    assert!(host.catalog.is_empty());
+    assert_eq!(host.book.tab_state(5).unwrap().workspace, "Default");
 }
 
 /// With autosave on, an edit still on its way is written through first, as

@@ -18,6 +18,23 @@ use super::indicator_wiring::IndicatorWiring;
 use super::layout_wiring::LayoutAdapter;
 use super::workspace_runtime::{WindowPresentation, WorkspaceRuntime};
 
+/// The one builder of [`WorkspaceCalls`], over `$owner`'s fields beside `$runtime`.
+macro_rules! workspace_calls {
+    ($owner:expr, $runtime:expr) => {
+        $crate::app::workspace_calls::WorkspaceCalls {
+            runtime: $runtime,
+            presentation: &$owner.presentation,
+            chrome: &mut $owner.chrome,
+            pane_ids: &mut $owner.pane_ids,
+            config: &$owner.config,
+            control: &mut $owner.control,
+            surfaces: &mut $owner.surfaces,
+            health: &mut $owner.health,
+        }
+    };
+}
+pub(super) use workspace_calls;
+
 /// The window's fields the workspace calls reach, borrowed apart.
 pub(crate) struct WorkspaceCalls<'a> {
     pub(super) runtime: &'a mut WorkspaceRuntime,
@@ -31,17 +48,14 @@ pub(crate) struct WorkspaceCalls<'a> {
 }
 
 impl<'a> WorkspaceCalls<'a> {
-    /// The paper-trading settings owner.
     pub(crate) fn into_paper(self) -> super::paper_wiring::PaperSettingsAdapter<'a> {
         self.runtime.paper_settings()
     }
 
-    /// Where orders go, joined with the tabs it routes for.
     pub(crate) fn into_route(self) -> quantick_paper::route::RouteCall<'a> {
         self.runtime.route(self.config)
     }
 
-    /// The pane-layout owners.
     pub(crate) fn layout(&mut self) -> LayoutAdapter<'_> {
         IndicatorWiring {
             runtime: self.runtime,
@@ -189,5 +203,8 @@ impl quantick_control_handlers::TabDirectory for WorkspaceCalls<'_> {
     }
     fn tab_id_at(&self, index: usize) -> u64 {
         self.runtime.tabs.id_at(index)
+    }
+    fn workspaces(&mut self) -> Option<Box<dyn quantick_control_handlers::WorkspaceHost + '_>> {
+        Some(Box::new(workspace_calls!(self, self.runtime)))
     }
 }

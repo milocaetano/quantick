@@ -53,7 +53,7 @@ use quantick_feed::history_reach;
 use super::QuantickApp;
 use super::arrangement_host::ArrangementHost;
 use super::chart_layers_wiring::LayerWiring;
-use super::workspace_calls::WorkspaceCalls;
+use super::workspace_calls::{WorkspaceCalls, workspace_calls};
 use super::workspace_runtime::WorkspaceRuntime;
 use quantick_control_handlers::health::FrameReading;
 
@@ -930,16 +930,7 @@ impl GatewayPort for QuantickApp {
         self.runtime.bound(&self.presentation.binding)
     }
     fn workspace_calls(&mut self) -> WorkspaceCalls<'_> {
-        WorkspaceCalls {
-            runtime: self.runtime.bound_mut(&self.presentation.binding),
-            presentation: &self.presentation,
-            chrome: &mut self.chrome,
-            pane_ids: &mut self.pane_ids,
-            config: &self.config,
-            control: &mut self.control,
-            surfaces: &mut self.surfaces,
-            health: &mut self.health,
-        }
+        workspace_calls!(self, self.runtime.bound_mut(&self.presentation.binding))
     }
 }
 

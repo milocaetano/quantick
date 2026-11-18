@@ -184,7 +184,6 @@ impl QuantickApp {
     pub(crate) fn arrangement_adapter(&mut self) -> arrangement_adapter::ArrangementAdapter<'_> {
         arrangement_adapter!(self)
     }
-    /// The pane-layout owners, for the window's own callers.
     fn layout_adapter(&mut self) -> layout_wiring::LayoutAdapter<'_> {
         self.indicator_wiring().into_layout()
     }

@@ -20,7 +20,7 @@ pub(crate) struct WorkspaceRuntime {
     pub(super) style_revision: u64,
     pub(super) history: quantick_session::HistorySettings,
     pub(super) tz: crate::timezone::TzOffset,
-    pub(crate) workspace: crate::workspace_store::WorkspaceStore,
+    pub(super) workspace: crate::workspace_store::WorkspaceStore,
     /// Where orders go: the simulator or the one broker account.
     pub(super) broker: quantick_paper::route::BrokerSession,
 }
@@ -111,7 +111,10 @@ impl WorkspaceRuntime {
         super::paper_wiring::PaperSettingsAdapter { tabs, workspace }
     }
 
-    /// The pane-layout owners, to read.
+    pub(crate) fn book(&self) -> &quantick_stores::workspaces::WorkspaceBookStore {
+        &self.workspace.book
+    }
+
     pub(crate) fn layout_state(&self) -> super::layout_wiring::LayoutRead<'_> {
         let (tabs, layouts) = (&self.tabs, self.workspace.layouts());
         let (session, market) = (layouts.session(), layouts.market());

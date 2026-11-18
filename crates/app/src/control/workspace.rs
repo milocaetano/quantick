@@ -60,10 +60,7 @@ fn snapshot<P: TabsPort + ChromePort + HealthPort + GatewayPort + ?Sized>(
     let (save_on_exit, performance_readings_visible, progressive_venue_history) =
         app.health_reads().workspace_flags();
     let (history_reach, venue_lead_in) = app.health_reads().history_settings();
-    let (book, layouts) = (
-        &app.workspace().workspace.book,
-        app.workspace().layout_state(),
-    );
+    let (book, layouts) = (app.workspace().book(), app.workspace().layout_state());
     let history_reach_running = tabs
         .get(active_index)
         .is_some_and(|tab| tab.session.history_reach_running());
