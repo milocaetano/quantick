@@ -26,8 +26,8 @@ use super::{
     SETTINGS_SHORTCUT, WINDOW_MENU_SHORTCUT, layout_preset_shortcut, layout_tab_shortcut,
 };
 
-/// One thing a menu entry or a menu shortcut asked for. The variants after
-/// [`Self::OpenSettings`] act on the window: no named call does their job yet.
+/// One thing a menu entry or shortcut asked for. Variants after [`Self::OpenSettings`]
+/// are legacy window arms: a new command is a named call and a [`MenuCall`].
 #[derive(Debug)]
 pub(in crate::app) enum MenuCommand {
     /// What a named call also does, through the door its handler takes.

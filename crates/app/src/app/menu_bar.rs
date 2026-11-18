@@ -371,8 +371,8 @@ pub(super) fn workspace_cell(
     app.chrome.window_menu.cell_rows = drawn.unwrap_or_default();
 }
 
-/// Carry out one command a menu entry or a menu shortcut recorded: one with
-/// a named call through that call's door, the rest on the window that asked.
+/// Carry out one command a menu entry or shortcut recorded: a [`MenuCall`] through
+/// its named call's door. The window arms below are legacy; never add one.
 pub(super) fn apply_menu_command_on(app: &mut QuantickApp, ctx: &egui::Context, ask: MenuCommand) {
     if ask.needs_chart() && app.chrome.title_bar.surface.is_home() {
         return;
