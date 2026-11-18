@@ -26,15 +26,15 @@ use serde_json::{Value, json};
 use super::cell_menu::state_of;
 use super::colour_popover::{act_on, pressed};
 use super::{
-    Journal, WorkspaceBookHost, answer, delete_journaled, input, journal, refused,
-    rename_journaled, unavailable, wires,
+    Journal, WorkspaceOwner, answer, delete_journaled, input, journal, refused, rename_journaled,
+    unavailable, wires,
 };
 use crate::notify::NotifyAccess;
 use crate::tabs::TabDirectory;
 
 /// Carry out a press or key in Manage workspaces; answers what to tell the
 /// trader.
-pub fn act<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
+pub fn act<H: WorkspaceOwner + ?Sized, A: NotifyAccess>(
     host: &mut H,
     to: &mut Journal<'_, A>,
     menu: &mut WorkspaceMenuState,
@@ -104,7 +104,7 @@ pub fn act<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
 
 /// Delete `name` at `now_ms`, journaled as `workspace.delete` is; Manage, when
 /// open, puts the Undo row in its place. Answers the toast.
-fn deleted<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
+fn deleted<H: WorkspaceOwner + ?Sized, A: NotifyAccess>(
     host: &mut H,
     to: &mut Journal<'_, A>,
     menu: &mut WorkspaceMenuState,
@@ -125,7 +125,7 @@ fn deleted<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
 
 /// A delete landed while Manage may be open: its Undo row, with the tabs
 /// that went back to Default, stands for as long as the book takes it back.
-pub(super) fn note_deleted<H: WorkspaceBookHost + ?Sized>(
+pub(super) fn note_deleted<H: WorkspaceOwner + ?Sized>(
     host: &H,
     menu: &mut WorkspaceMenuState,
     name: &str,
@@ -155,7 +155,7 @@ fn undone_note(undone: &UndoOutcome) -> String {
 }
 
 /// Take back the delete of `name`, journaled, redrawing the tabs moved back.
-fn undo_journaled<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
+fn undo_journaled<H: WorkspaceOwner + ?Sized, A: NotifyAccess>(
     host: &mut H,
     to: &mut Journal<'_, A>,
     name: &str,
@@ -174,7 +174,7 @@ fn undo_journaled<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
 
 /// The create dialog just opened on `menu`, once: its suggested name
 /// (`Flow 2`, `Workspace 9`) and the next free colour.
-pub fn fill_create<H: WorkspaceBookHost + ?Sized>(host: &H, menu: &mut WorkspaceMenuState) {
+pub fn fill_create<H: WorkspaceOwner + ?Sized>(host: &H, menu: &mut WorkspaceMenuState) {
     let (Some(book), Some(dialog)) = (host.workspace_book_ref(), menu.dialog.as_mut()) else {
         return;
     };
@@ -201,7 +201,7 @@ pub fn chosen(dialog: &NameDialog) -> Option<WorkspaceColour> {
 /// one is locked and does nothing; Custom opens on the chosen colour and its
 /// Apply chooses the typed one when it is free. Nothing reaches the book
 /// before Save.
-pub fn name_colour<H: WorkspaceBookHost + ?Sized>(
+pub fn name_colour<H: WorkspaceOwner + ?Sized>(
     host: &H,
     menu: &mut WorkspaceMenuState,
     intent: ColourIntent,
@@ -245,7 +245,7 @@ fn tab_of<H: TabDirectory + ?Sized>(app: &H, tab_id: Option<WireU64>) -> Result<
 }
 
 /// `workspace.dialog.open`.
-pub(super) fn dialog_open<H: WorkspaceBookHost + TabDirectory + ?Sized, A: NotifyAccess>(
+pub(super) fn dialog_open<H: WorkspaceOwner + ?Sized, A: NotifyAccess>(
     app: &mut H,
     access: &mut A,
     actor: &ActorContext,
@@ -288,7 +288,7 @@ pub(super) fn dialog_open<H: WorkspaceBookHost + TabDirectory + ?Sized, A: Notif
 }
 
 /// `workspace.delete.undo`, at the time the call was asked.
-pub(super) fn undo_call<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
+pub(super) fn undo_call<H: WorkspaceOwner + ?Sized, A: NotifyAccess>(
     app: &mut H,
     access: &mut A,
     actor: &ActorContext,

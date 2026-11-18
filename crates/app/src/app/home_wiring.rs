@@ -47,8 +47,7 @@ pub(super) fn stand_in_for_toolbar(app: &mut super::QuantickApp) {
     let (tab, config) = app.active_with_config();
     tab.settle_source(config);
     // The dock stage polls these; a picker the menus opened still answers.
-    use super::control_host::PaperPort as _;
-    app.paper_settings().poll_trades_dir_picker();
+    app.runtime.paper_settings().poll_trades_dir_picker();
     app.workspace_bundle_adapter().poll_picker();
 }
 

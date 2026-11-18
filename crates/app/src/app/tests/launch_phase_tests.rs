@@ -95,10 +95,17 @@ fn the_tape_hook_switches_the_lane_through_the_layer_call() {
 
 #[test]
 fn the_layout_tab_hook_switches_to_a_named_layout_or_creates_it() {
-    let existing = test_app().0.layout_state().layouts().active().name.clone();
+    let existing = test_app()
+        .0
+        .runtime
+        .layout_state()
+        .layouts()
+        .active()
+        .name
+        .clone();
     for (name, count) in [(existing.as_str(), 1), ("Scalp", 2)] {
         let app = launched_with(&[("QUANTICK_LAYOUT_TAB", name)]);
-        let layouts = app.layout_state();
+        let layouts = app.runtime.layout_state();
         let focused = layouts.focused_pane_layout();
         assert_eq!(layouts.layouts().get(focused).unwrap().name, name);
         assert_eq!(layouts.layouts().layouts().len(), count, "{name}");

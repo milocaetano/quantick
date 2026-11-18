@@ -22,9 +22,8 @@ use quantick_stores::workspaces::{
 use serde_json::{Value, json};
 
 use super::cell_menu::state_of;
-use super::{Journal, WorkspaceBookHost, answer, colour_journaled, input};
+use super::{Journal, WorkspaceOwner, answer, colour_journaled, input};
 use crate::notify::NotifyAccess;
-use crate::tabs::TabDirectory;
 
 /// Where the picker stands: the field's colour while it holds a valid one
 /// the picker does not already stand on, else the last valid colour.
@@ -74,7 +73,7 @@ pub fn question(model: &Palette, popover: &ColourPopover) -> Option<SwapQuestion
 
 /// Carry out a press in the popover on the menu of `tab`, on the workspace
 /// the tab is on; answers what to tell the trader.
-pub fn act<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
+pub fn act<H: WorkspaceOwner + ?Sized, A: NotifyAccess>(
     host: &mut H,
     to: &mut Journal<'_, A>,
     menu: &mut WorkspaceMenuState,
@@ -89,7 +88,7 @@ pub fn act<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
 /// Carry out a press in `open`, the palette of `workspace` (the menu's
 /// header popover or a Manage row's): a free colour applies at once and
 /// closes it, a held one asks to swap. Answers what to tell the trader.
-pub fn act_on<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
+pub fn act_on<H: WorkspaceOwner + ?Sized, A: NotifyAccess>(
     host: &mut H,
     to: &mut Journal<'_, A>,
     open: &mut Option<ColourPopover>,
@@ -215,7 +214,7 @@ fn closed() -> ControlError {
 }
 
 /// `workspace.colour.palette`.
-pub(super) fn palette_read<H: WorkspaceBookHost + TabDirectory + ?Sized, A>(
+pub(super) fn palette_read<H: WorkspaceOwner + ?Sized, A>(
     app: &mut H,
     _: &mut A,
     _: &ActorContext,
@@ -232,7 +231,7 @@ pub(super) fn palette_read<H: WorkspaceBookHost + TabDirectory + ?Sized, A>(
 
 /// `workspace.colour.popover`: the act on the tab on screen's popover. The
 /// menu's state is put back whatever the act answers.
-pub(super) fn popover_call<H: WorkspaceBookHost + TabDirectory + ?Sized, A: NotifyAccess>(
+pub(super) fn popover_call<H: WorkspaceOwner + ?Sized, A: NotifyAccess>(
     app: &mut H,
     access: &mut A,
     actor: &ActorContext,
@@ -250,7 +249,7 @@ pub(super) fn popover_call<H: WorkspaceBookHost + TabDirectory + ?Sized, A: Noti
 }
 
 /// One act on `menu`, taken out of the window, and the popover after it.
-fn drive<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
+fn drive<H: WorkspaceOwner + ?Sized, A: NotifyAccess>(
     app: &mut H,
     (access, actor, dark): (&mut A, &ActorContext, bool),
     menu: &mut WorkspaceMenuState,

@@ -227,7 +227,7 @@ fn the_indicator_set_restores_from_disk_and_saves_back() {
 
     app.layout_adapter().reload_layouts(&[]);
     assert_eq!(
-        app.layout_state().layouts().active().name,
+        app.runtime.layout_state().layouts().active().name,
         "Layout 1",
         "the old set migrated into the first layout"
     );
@@ -877,7 +877,7 @@ fn every_native_in_the_catalog_adds_and_registers_without_being_named_here() {
 
         app.layout_adapter().apply_pending_indicator_state();
         assert_eq!(
-            app.layout_state().layouts().active().indicators[0].kind,
+            app.runtime.layout_state().layouts().active().indicators[0].kind,
             crate::indicators::state_file::SavedKind::native(entry.id),
             "{} registered how it restores",
             entry.id

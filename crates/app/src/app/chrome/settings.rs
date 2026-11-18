@@ -7,7 +7,7 @@ use quantick_ui_model::settings_window::{Action, AgentNote, Effects, Facts, Inte
 use quantick_ui_model::{HostEffect, Slot};
 
 use crate::app::chart_layers_wiring::LayerWiring;
-use crate::app::{deal_recording_wiring as deals, desk_wiring::DeskAdapter};
+use crate::app::{deal_recording_wiring as deals, workspace_calls::WorkspaceCalls};
 use crate::control::ControlAccess;
 use crate::surfaces::{Adapter, ViewContext, settings_window::View};
 
@@ -23,7 +23,7 @@ pub(in crate::app) fn open(
 }
 
 /// Draw Settings, which is up, on the window that owns it.
-pub(in crate::app) fn draw(desk: &mut DeskAdapter, ctx: &egui::Context) {
+pub(in crate::app) fn draw(desk: &mut WorkspaceCalls, ctx: &egui::Context) {
     let access = desk.control.control_access.as_ref();
     let facts = Box::new(Facts {
         readings: desk.readings(),
@@ -42,7 +42,7 @@ pub(in crate::app) fn draw(desk: &mut DeskAdapter, ctx: &egui::Context) {
 
 /// Carry out what a row asked. The Agent access acts are the window's own: the
 /// desk door a connection holds cannot reach them.
-pub(in crate::app) fn settle(desk: &mut DeskAdapter, ctx: &egui::Context, action: Action) {
+pub(in crate::app) fn settle(desk: &mut WorkspaceCalls, ctx: &egui::Context, action: Action) {
     match (action, desk.control.control_access.as_mut()) {
         (Action::Row(act), _) => {
             if let Err(SettleError::Theme(error)) = desk.settle(act) {
@@ -57,7 +57,7 @@ pub(in crate::app) fn settle(desk: &mut DeskAdapter, ctx: &egui::Context, action
     }
 }
 
-impl SettingsOwner for DeskAdapter<'_> {
+impl SettingsOwner for WorkspaceCalls<'_> {
     fn readings(&self) -> SettingsReadings {
         let tab = self.runtime.tabs.get(self.runtime.tabs.active_index());
         let feed = tab.map_or(self.config.default_feed.as_str(), |tab| &tab.feed_id);

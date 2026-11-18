@@ -51,7 +51,7 @@ impl ChartPort for dyn ControlPort {
     }
 
     fn price_tag_progress(&self, tab_id: u64) -> bool {
-        self.layout_state().bar_progress_on(tab_id)
+        self.workspace().layout_state().bar_progress_on(tab_id)
     }
 
     fn visit_chart_pane(

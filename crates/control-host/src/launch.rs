@@ -1,8 +1,8 @@
 //! The control plane's opt-in launch scenarios: a mark, an annotation, a
 //! notification or an evidence capture a scripted run asks for at boot.
 //!
-//! The application reads the `QUANTICK_CONTROL_*` hooks once, at launch, and
-//! hands the raw values here; what remains is pure state — which scenario is
+//! The application reads the `QUANTICK_CONTROL_*` hooks once, at launch,
+//! through [`ControlLaunch::capture`]; what remains is pure state — which scenario is
 //! still pending, how a request string becomes a capability call, and how
 //! long an evidence capture waits for a screenshot — so it is tested here
 //! without building a window.
@@ -35,6 +35,44 @@ pub struct LaunchRequests {
     pub notification: Option<String>,
     pub evidence: Option<String>,
     pub mark: Option<String>,
+}
+
+/// Control-only launch inputs, captured before the window is built: whether
+/// the access panel opens, the scopes a launch grants, and the scenarios.
+#[derive(Debug, Default)]
+pub struct ControlLaunch {
+    pub panel: bool,
+    pub scopes: Option<String>,
+    pub scenarios: LaunchScenarios,
+}
+
+impl ControlLaunch {
+    /// Read the `QUANTICK_CONTROL_*` hooks through `lookup`: the process
+    /// environment, or a test's. A blank hook is an unset one; a mark of `1`
+    /// asks for a mark with no note.
+    pub fn capture(mut lookup: impl FnMut(&str) -> Option<std::ffi::OsString>) -> Self {
+        let mut value = |name| lookup(name).and_then(|raw| raw.into_string().ok());
+        let panel = value("QUANTICK_CONTROL_PANEL").is_some_and(|raw| raw == "1");
+        let scopes = value("QUANTICK_CONTROL_SCOPES");
+        let access = value("QUANTICK_CONTROL_ACCESS").is_some_and(|raw| raw == "1");
+        let mark = value("QUANTICK_CONTROL_MARK")
+            .filter(|raw| !raw.trim().is_empty())
+            .map(|raw| if raw == "1" { String::new() } else { raw });
+        let evidence = value("QUANTICK_CONTROL_EVIDENCE").filter(|raw| !raw.trim().is_empty());
+        let annotation = value("QUANTICK_CONTROL_ANNOTATE").filter(|raw| !raw.trim().is_empty());
+        let notification = value("QUANTICK_CONTROL_NOTIFY").filter(|raw| !raw.trim().is_empty());
+        Self {
+            panel,
+            scopes,
+            scenarios: LaunchScenarios::new(LaunchRequests {
+                enable_access: access,
+                annotation,
+                notification,
+                evidence,
+                mark,
+            }),
+        }
+    }
 }
 
 /// One evidence capture being prepared: the scopes it reads and whether it
@@ -249,80 +287,5 @@ impl LaunchScenarios {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn scopes(names: &[&str]) -> Vec<String> {
-        names.iter().map(|name| (*name).to_owned()).collect()
-    }
-
-    #[test]
-    fn enable_and_mark_are_consumed_once() {
-        let mut launch = LaunchScenarios::new(LaunchRequests {
-            enable_access: true,
-            mark: Some(" 1 ".to_owned()),
-            ..LaunchRequests::default()
-        });
-        assert!(launch.take_enable());
-        assert!(!launch.take_enable());
-        assert_eq!(launch.take_mark().as_deref(), Some(" 1 "));
-        assert_eq!(launch.take_mark(), None);
-    }
-
-    #[test]
-    fn a_bare_notification_goes_to_the_toast() {
-        let mut launch = LaunchScenarios::default();
-        launch.queue_notification("hello".to_owned());
-        let Some(NotificationStep::Ready { capability, input }) = launch.notification() else {
-            panic!("a bare message must be a toast");
-        };
-        assert_eq!(capability, "notify.toast");
-        assert_eq!(input["message"], "hello");
-    }
-
-    #[test]
-    fn an_explicit_scope_list_never_asks_for_the_readable_scopes() {
-        let mut launch = LaunchScenarios::default();
-        launch.queue_evidence("observe.chart".to_owned());
-        let capture = launch
-            .prepare_evidence(
-                || panic!("an explicit scope list needs no expansion"),
-                false,
-            )
-            .unwrap();
-        assert_eq!(capture.scopes, BTreeSet::from(["observe.chart".to_owned()]));
-        assert!(matches!(
-            launch.finish_evidence(capture, false),
-            EvidenceStep::Capture {
-                screenshot: false,
-                image_timed_out: false,
-                ..
-            }
-        ));
-    }
-
-    #[test]
-    fn an_empty_request_reads_every_readable_scope() {
-        let mut launch = LaunchScenarios::default();
-        launch.queue_evidence(" , ".to_owned());
-        let capture = launch
-            .prepare_evidence(|| scopes(&["observe.chart", "observe.feed"]), true)
-            .unwrap();
-        assert_eq!(capture.scopes.len(), 2);
-    }
-
-    #[test]
-    fn the_evidence_hook_waits_its_budget_and_then_stops() {
-        let mut scenarios = LaunchScenarios::default();
-        for frame in 1..=CONTROL_EVIDENCE_HOOK_FRAMES {
-            assert!(
-                scenarios.evidence_frame_waited(),
-                "frame {frame} is within the budget"
-            );
-        }
-        assert!(
-            !scenarios.evidence_frame_waited(),
-            "the window never delivered a frame to rasterise"
-        );
-    }
-}
+#[path = "launch_tests.rs"]
+mod tests;

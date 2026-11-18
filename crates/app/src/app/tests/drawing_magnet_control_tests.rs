@@ -112,7 +112,7 @@ fn the_magnet_and_scope_calls_reach_the_rail_and_the_addressed_drawing() {
     let (shared, _) = unkeyed_call(&mut app, &mut client, SCOPE_CAPABILITY, wide);
     let shared = success_result(&shared);
     assert_eq!(shared["all_windows"], json!(true));
-    let layout = app.layout_state().focused_pane_layout();
+    let layout = app.runtime.layout_state().focused_pane_layout();
     assert_eq!(
         shared["layout_id"],
         json!(layout.0.to_string()),

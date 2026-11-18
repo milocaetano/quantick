@@ -50,12 +50,20 @@ macro_rules! arrangement_adapter {
     }};
 }
 
-/// The Settings, desk and REC owner over `$app`'s own fields: the `DeskHost`
-/// door's answer, and what the window's own Settings draw acts through.
-macro_rules! desk_adapter {
+/// The desk, Settings, REC and workspace owner over `$app`'s own fields: the
+/// `DeskHost` and `WorkspaceBookHost` doors' answer, and what the window's own
+/// Settings draw and workspace rows act through. `bound` first checks the
+/// window shows its workspace, as the desk and Settings always have.
+macro_rules! workspace_calls {
+    (bound $app:expr) => {
+        workspace_calls!($app, $app.runtime.bound_mut(&$app.presentation.binding))
+    };
     ($app:expr) => {
-        $crate::app::desk_wiring::DeskAdapter {
-            runtime: $app.runtime.bound_mut(&$app.presentation.binding),
+        workspace_calls!($app, &mut $app.runtime)
+    };
+    ($app:expr, $runtime:expr) => {
+        $crate::app::workspace_calls::WorkspaceCalls {
+            runtime: $runtime,
             presentation: &$app.presentation,
             chrome: &mut $app.chrome,
             pane_ids: &mut $app.pane_ids,
@@ -71,6 +79,7 @@ macro_rules! desk_adapter {
 pub(crate) mod alerts_runtime;
 mod arrangement_adapter;
 pub(crate) mod canvas_wiring;
+mod workspace_calls;
 mod workspace_runtime;
 use quantick_workspace::lifetime::WorkspaceId;
 const WORKSPACE_ID: WorkspaceId = WorkspaceId(0);
@@ -81,12 +90,11 @@ mod chart_settings_wiring;
 mod chrome;
 pub(crate) mod control_host;
 pub(crate) use control_host::{
-    AlertsPort, ChromePort, ControlWindow, GatewayPort, HealthPort, LayersPort, LayoutPort,
-    PaperPort, TabsMutPort, TabsPort,
+    AlertsPort, ChromePort, ControlWindow, GatewayPort, HealthPort, LayersPort, TabsMutPort,
+    TabsPort,
 };
 pub(crate) mod deal_recording_wiring;
 mod demo_hooks;
-mod desk_wiring;
 pub(crate) mod drawing_controller;
 
 mod frame;
@@ -202,6 +210,9 @@ impl QuantickApp {
     }
     pub(crate) fn arrangement_adapter(&mut self) -> arrangement_adapter::ArrangementAdapter<'_> {
         arrangement_adapter!(self)
+    }
+    fn layout_adapter(&mut self) -> layout_wiring::LayoutAdapter<'_> {
+        self.indicator_wiring().into_layout()
     }
     fn indicator_wiring(&mut self) -> indicator_wiring::IndicatorWiring<'_> {
         indicator_wiring::IndicatorWiring {

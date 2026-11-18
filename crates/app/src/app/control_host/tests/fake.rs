@@ -3,8 +3,8 @@
 //!
 //! It implements the families a handler can be driven through without the
 //! window — tabs, chrome, health, alerts, scripts and the deal-recording
-//! default — and deliberately not the layout, paper, layer or gateway
-//! families, which hand out the window's own owners. A handler whose
+//! default — and deliberately not the layer or gateway families, which hand
+//! out the window's own owners. A handler whose
 //! signature names only the implemented families runs against it; one that
 //! names more does not compile against it, which is the port's point.
 

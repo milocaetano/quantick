@@ -40,7 +40,7 @@ impl TabDirectory for FakeHost {
     }
 }
 
-impl WorkspaceBookHost for FakeHost {
+impl WorkspaceOwner for FakeHost {
     fn workspace_book(&mut self) -> Option<&mut WorkspaceBook> {
         Some(&mut self.book)
     }
@@ -628,8 +628,12 @@ fn a_custom_colour_reads_alike_on_the_list_the_rows_and_the_tab() {
     let wire = json!({ "custom": "#3A7BD5", "light": "#3A7BD5", "dark": "#3A7BD5" });
     let rows = list(&mut host, &mut access, &actor, &json!({})).unwrap();
     assert_eq!(rows["workspaces"][1]["colour"], wire);
-    assert_eq!(json!(host.tab_workspace_colour(1)), wire);
-    let snapshot = host.workspace_colours();
+    let book = host.workspace_book_ref().unwrap();
+    assert_eq!(
+        json!(book.tab_colour(1).map(WorkspaceColourDto::from)),
+        wire
+    );
+    let snapshot = colour_rows(book);
     assert_eq!(json!(snapshot[1].colour), wire);
     assert_eq!(json!(snapshot[0].colour), SLATE.clone());
 }
@@ -642,7 +646,8 @@ fn a_tab_not_yet_adopted_reads_defaults_colour() {
     let book = host.workspace_book_ref().unwrap();
     assert!(book.tab_state(99).is_none(), "tab 99 is not adopted");
     assert_eq!(book.tab_workspace(99), DEFAULT_WORKSPACE);
-    assert_eq!(json!(host.tab_workspace_colour(99)), SLATE.clone());
+    let colour = book.tab_colour(99).map(WorkspaceColourDto::from);
+    assert_eq!(json!(colour), SLATE.clone());
 }
 
 /// A failed write leaves both colours where they were.
@@ -1513,3 +1518,25 @@ fn colour_set_names_every_owner_when_two_hold_the_colour() {
 
 #[path = "workspace_book/switch_tests.rs"]
 mod switch_tests;
+
+/// A window whose door lends no workspaces.
+struct Bare;
+
+impl WorkspaceBookHost for Bare {}
+
+/// Every registered call reaches the book through the window's door, so a
+/// window that lends none answers unavailable to each of them.
+#[test]
+fn a_window_without_workspaces_answers_every_call_unavailable() {
+    let mut registry = quantick_control_host::actions::ActionRegistry::<Bare, FakeAccess>::new();
+    register(&mut registry).unwrap();
+    let (mut access, actor) = (FakeAccess::with_budget(0), FakeWindow::assistant());
+    let ids: Vec<String> = registry.descriptors().map(|d| d.id.to_string()).collect();
+    assert!(ids.len() > 10, "{ids:?}");
+    for id in ids {
+        let handler = registry.lookup(&id, 1).unwrap().handler;
+        let refused = handler(&mut Bare, &mut access, &actor, &json!({})).unwrap_err();
+        assert_eq!(refused.message, "the workspaces are unavailable", "{id}");
+    }
+    assert!(access.events.is_empty());
+}

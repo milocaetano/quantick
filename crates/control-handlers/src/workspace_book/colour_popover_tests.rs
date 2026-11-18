@@ -13,7 +13,7 @@ use serde_json::{Value, json};
 use super::*;
 use crate::tabs::TabDirectory;
 use crate::test_support::{FakeAccess, FakeWindow};
-use crate::workspace_book::{WorkspaceBookHost, apply_row_command};
+use crate::workspace_book::{WorkspaceOwner, apply_row_command};
 
 struct Host {
     book: WorkspaceBook,
@@ -34,7 +34,7 @@ impl TabDirectory for Host {
     }
 }
 
-impl WorkspaceBookHost for Host {
+impl WorkspaceOwner for Host {
     fn workspace_book(&mut self) -> Option<&mut WorkspaceBook> {
         Some(&mut self.book)
     }

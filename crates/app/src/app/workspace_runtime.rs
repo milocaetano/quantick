@@ -8,7 +8,7 @@ use quantick_workspace::lifetime::{
     WorkspaceView,
 };
 
-pub(super) struct WorkspaceRuntime {
+pub(crate) struct WorkspaceRuntime {
     pub(super) alerts: super::alerts_runtime::Runtime,
     pub(super) chart_theme: quantick_chart::style::ChartThemeSync,
     pub(super) appearance: quantick_stores::appearance::AppearanceStore,
@@ -109,6 +109,29 @@ impl WorkspaceRuntime {
     pub(super) fn paper_settings(&mut self) -> super::paper_wiring::PaperSettingsAdapter<'_> {
         let (tabs, workspace) = (&mut self.tabs, &mut self.workspace);
         super::paper_wiring::PaperSettingsAdapter { tabs, workspace }
+    }
+
+    pub(crate) fn book(&self) -> &quantick_stores::workspaces::WorkspaceBookStore {
+        &self.workspace.book
+    }
+
+    pub(crate) fn layout_state(&self) -> super::layout_wiring::LayoutRead<'_> {
+        let (tabs, layouts) = (&self.tabs, self.workspace.layouts());
+        let (session, market) = (layouts.session(), layouts.market());
+        let active = tabs.active_index();
+        super::layout_wiring::LayoutRead {
+            tabs,
+            active,
+            session,
+            market,
+        }
+    }
+
+    /// Raise the export dialog, suggesting the active chart's name.
+    pub(super) fn open_export(&mut self) {
+        let tab = &self.tabs[self.tabs.active_index()];
+        let (symbol, spec) = (&tab.symbol, tab.flow_pane.series.state.spec());
+        self.workspace.picker_mut().open_export(symbol, spec);
     }
 
     pub(super) fn id(&self) -> WorkspaceId {

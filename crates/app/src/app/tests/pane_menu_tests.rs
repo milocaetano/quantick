@@ -282,8 +282,12 @@ fn remove_pending_follows_tabs_and_prunes_only_closed_owners() {
         .open_tab("binance".to_owned(), "OTHERUSDT".to_owned(), None);
     let second = app.runtime.tabs.active_id();
     frames(&mut app, &ctx, 6);
-    quantick_control_handlers::workspace_book::set_tab_workspace(&mut app, second, &workspace)
-        .unwrap();
+    quantick_control_handlers::workspace_book::set_tab_workspace(
+        &mut app.workspace_calls(),
+        second,
+        &workspace,
+    )
+    .unwrap();
     frames(&mut app, &ctx, 6);
     assert_eq!(slot_of(&app, PaneKind::Time), slot);
     let book = &app.runtime.workspace.book;

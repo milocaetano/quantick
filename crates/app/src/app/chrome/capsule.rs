@@ -10,8 +10,8 @@ use quantick_session::workspace_menu::WorkspaceCommand;
 use quantick_ui_model::canvas_popovers::picked;
 use quantick_workspace::canvas::LayoutMarks;
 
-use crate::app::QuantickApp;
 use crate::app::menu_bar::MenuDoor;
+use crate::app::{GatewayPort as _, QuantickApp};
 use crate::toolbar::capsule::CapsuleRects;
 use crate::toolbar::layout_popover;
 use crate::toolbar::{DrawnControl, ToolbarAction};
@@ -82,7 +82,7 @@ pub(in crate::app) fn settle(
             }
             ToolbarAction::ToggleWorkspaceMenu => workspace_clicked = true,
             ToolbarAction::SaveWorkspace => {
-                crate::app::tab_workspaces::apply_workspace_command(app, WorkspaceCommand::SaveTo);
+                (app.workspace_calls()).apply_workspace_command(WorkspaceCommand::SaveTo);
             }
             action => rest.push(action),
         }
