@@ -78,6 +78,7 @@ macro_rules! workspace_calls {
 
 pub(crate) mod alerts_runtime;
 mod arrangement_adapter;
+mod canvas_owner;
 pub(crate) mod canvas_wiring;
 mod workspace_calls;
 mod workspace_runtime;
@@ -99,6 +100,9 @@ mod owners_desk;
 use owners_desk::OwnersDesk as _;
 
 mod frame;
+mod frame_calls;
+pub(crate) use drawing_controller::DrawingResponsePort;
+use frame_calls::FrameCalls;
 mod frame_tail;
 mod health;
 mod indicator_manager;
