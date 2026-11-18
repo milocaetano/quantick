@@ -8,6 +8,7 @@ publish.workspace = true
 
 [features]
 test-support = []
+scenario-harness = []
 
 [dependencies]
 tracing.workspace = true

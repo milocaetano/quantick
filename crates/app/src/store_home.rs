@@ -1,5 +1,6 @@
 //! Platform and captured environment inputs for the headless cockpit home.
 pub(crate) use quantick_stores::home::*;
+use quantick_ui_model::store_home::{StoreHome, StorePaths, cockpit_stores};
 #[cfg(test)]
 pub(crate) use quantick_workspace::write_refusal::refuse_writes_on_this_thread;
 pub(crate) use quantick_workspace::write_refusal::{
@@ -7,27 +8,25 @@ pub(crate) use quantick_workspace::write_refusal::{
 };
 use std::path::PathBuf;
 
-static HOME: quantick_ui_model::store_home::StoreHome =
-    quantick_ui_model::store_home::StoreHome::new();
-pub(crate) const COCKPIT_STORES: &[CockpitStore] =
-    &quantick_ui_model::store_home::cockpit_stores([
-        crate::app::alerts_runtime::path,
-        crate::theme::store::path,
-        crate::ui_state::default_path,
-        crate::indicators::state_file::default_path,
-        crate::layouts::default_path,
-        crate::layouts::workspaces_path,
-        crate::layouts::market_settings_path,
-        crate::indicators::preset_file::default_path,
-        crate::bubble_presets::assets_path,
-        crate::chart_layers::default_path,
-        crate::drawings::presets::default_path,
-        crate::footprint_config::settings_path,
-        crate::footprint_presets::default_path,
-        crate::candle_presets::default_path,
-        crate::paper_state::default_path,
-        crate::symbols_file::default_path,
-    ]);
+static HOME: StoreHome = StoreHome::new();
+pub(crate) const COCKPIT_STORES: &[CockpitStore] = &cockpit_stores(StorePaths {
+    alerts: crate::app::alerts_runtime::path,
+    appearance: crate::theme::store::path,
+    ui_state: crate::ui_state::default_path,
+    indicators: crate::indicators::state_file::default_path,
+    layouts: crate::layouts::default_path,
+    workspaces: crate::layouts::workspaces_path,
+    market_settings: crate::layouts::market_settings_path,
+    indicator_presets: crate::indicators::preset_file::default_path,
+    bubble_assets: crate::bubble_presets::assets_path,
+    chart_layers: crate::chart_layers::default_path,
+    drawing_presets: crate::drawings::presets::default_path,
+    footprint_settings: crate::footprint_config::settings_path,
+    footprint_presets: crate::footprint_presets::default_path,
+    candle_presets: crate::candle_presets::default_path,
+    paper_state: crate::paper_state::default_path,
+    symbols: crate::symbols_file::default_path,
+});
 
 fn captured(name: &str) -> Option<std::ffi::OsString> {
     #[cfg(any(feature = "scenario-harness", test))]
@@ -53,7 +52,7 @@ pub(crate) fn consolidate_once() -> Option<RescueSummary> {
         crate::paper_home::shelf_dir,
         COCKPIT_STORES,
         captured,
-        crate::launch::operator_paths().theme.is_some(),
+        || crate::launch::operator_paths().theme.is_some(),
     )
 }
 pub(crate) fn rescue_notice() -> Option<String> {

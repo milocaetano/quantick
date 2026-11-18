@@ -63,7 +63,7 @@ use quantick_layers::{DocumentError, LayerDocument};
 const EMBEDDED_DEFAULT: &str = include_str!("../config/chart-layers.toml");
 
 /// The file's name inside the durable cockpit home. See [`crate::store_home`].
-pub(crate) use quantick_layers::{LAYERS_FILE, validate};
+pub(crate) use quantick_layers::LAYERS_FILE;
 
 pub(crate) use quantick_layers::ChartLayer;
 mod session;

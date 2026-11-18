@@ -11,7 +11,16 @@ fn a_price_range_becomes_a_manual_axis_on_the_named_pane() {
 
 #[test]
 fn an_unreadable_or_inverted_price_range_is_no_call() {
-    for value in ["", "100", "a:b", "102:100", "100:100"] {
+    for value in [
+        "",
+        "100",
+        "a:b",
+        "102:100",
+        "100:100",
+        "NaN:110",
+        "90:inf",
+        "90:110:120",
+    ] {
         assert!(price_range(value, 1, 1).is_none(), "{value:?}");
     }
 }

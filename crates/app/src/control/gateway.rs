@@ -27,8 +27,6 @@ use quantick_control::{
 
 use crate::{app::ControlWindow, metrics};
 
-#[cfg(any(feature = "control-harness", test))]
-use super::contract::OBSERVE_PERMISSION_ID;
 use super::{
     actions::{ANNOTATE_PERMISSION_ID, ANNOTATOR_PROFILE_ID, ActionRegistry, standard_actions},
     contract::{ANALYST_PROFILE_ID, COCKPIT_PERMISSION_ID, COCKPIT_PROFILE_ID},
@@ -42,6 +40,8 @@ use super::{
     registry::ProjectionRegistry,
     types::known_error,
 };
+#[cfg(any(feature = "control-harness", test))]
+use quantick_control_host::authority::OBSERVE_PERMISSION_ID;
 
 mod encode_refusal;
 // Moved to `quantick-control-host`; named here so `super::idempotency` resolves.

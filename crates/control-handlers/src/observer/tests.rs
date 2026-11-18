@@ -18,7 +18,7 @@ impl HostClock for Clock {
 
 fn contract() -> ObserverContract<(), ()> {
     let mut projections = ProjectionRegistry::new(Arc::new(Clock));
-    for name in ["chart", "interaction"] {
+    for name in ["chart", "interaction", "health", "scene"] {
         projections
             .register_module(
                 ModuleDescriptor {
@@ -35,7 +35,13 @@ fn contract() -> ObserverContract<(), ()> {
         (
             "interaction.cursor",
             "interaction",
-            &["observe.interaction"][..],
+            &[
+                "observe.attention",
+                "observe.market",
+                "observe.chart",
+                "observe.drawings",
+                "observe.orderflow",
+            ][..],
         ),
         (
             "interaction.selection",

@@ -304,11 +304,12 @@ impl ControlAccess {
             PreparedDispatch::Worker(_) => prepared
                 .dispatch
                 .execute_worker(
-                    &self.contract,
+                    self.contract.as_ref(),
                     &instance_id,
                     &profile,
                     &self.configured_scopes,
                     &ProtocolLimits::default(),
+                    crate::metrics::wall_clock_ms(),
                 )
                 .expect("a worker dispatch always answers on the worker path"),
             PreparedDispatch::Ui(_) => {

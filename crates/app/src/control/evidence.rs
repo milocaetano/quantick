@@ -53,7 +53,7 @@ use super::{contract::UiReadContext, gateway::runtime_id_bytes};
 // Re-exported at the visibility they had: the gateway hands a frame over as
 // `RawScreenshot`, and the contract and the gateway share the store by path.
 
-pub(crate) use quantick_control_host::evidence::{EvidenceChunkPage, EvidenceStore};
+pub(crate) use quantick_control_host::evidence::EvidenceStore;
 
 /// Collect one bundle's ingredients on the application thread.
 ///

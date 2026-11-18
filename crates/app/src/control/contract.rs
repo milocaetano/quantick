@@ -13,8 +13,7 @@ use quantick_control::{
 use quantick_control_handlers::observer::UiReadPort;
 pub(crate) use quantick_control_handlers::observer::{
     ANALYST_PROFILE_ID, COCKPIT_PERMISSION_ID, COCKPIT_PROFILE_ID, DeferredActionResult,
-    DescribeResult, OBSERVE_PERMISSION_ID, OBSERVER_PROFILE_ID, ParkedWait, PreparedDispatch,
-    PreparedRequest, UiReadExecution,
+    OBSERVER_PROFILE_ID, ParkedWait, PreparedDispatch, PreparedRequest, UiReadExecution,
 };
 use quantick_control_host::{
     events::{EventsReadInput, read_page},
@@ -105,9 +104,7 @@ use quantick_control::{
     wire::{ModuleRevision, RequestEnvelope},
 };
 #[cfg(test)]
-use quantick_control_host::authority::{
-    self, EmptyInput, SNAPSHOT_CAPABILITY_ID, module, permission, profile,
-};
+use quantick_control_host::authority::{module, permission, profile};
 #[cfg(test)]
 use serde_json::{Value, json};
 #[cfg(test)]
