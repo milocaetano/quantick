@@ -78,14 +78,14 @@ pub fn canvas_hooks(
 /// A pinned gesture survives later hook observations unchanged.
 pub fn hold_from_hook(
     state: &CanvasState,
-    value: &str,
+    value: impl FnOnce() -> String,
     area: CanvasRect,
     pinned: bool,
 ) -> Option<(quantick_workspace::canvas::FloatGesture, (f32, f32))> {
     if pinned {
         return None;
     }
-    let (held, (x, y)) = super::held_by_hook(state, value)?;
+    let (held, (x, y)) = super::held_by_hook(state, &value())?;
     Some((held, (area.x + x * area.w, area.y + y * area.h)))
 }
 

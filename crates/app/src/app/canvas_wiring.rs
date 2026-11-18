@@ -154,8 +154,4 @@ pub(super) fn add_from_menu(app: &mut QuantickApp, ctx: &egui::Context) {
 }
 
 #[cfg(any(feature = "scenario-harness", test))]
-crate::hooks::declare_hooks![
-    "QUANTICK_ADD_MENU",
-    "QUANTICK_CANVAS_ACTS",
-    "QUANTICK_CANVAS_HOLD"
-];
+crate::hooks::declare_hooks!["QUANTICK_ADD_MENU", "QUANTICK_CANVAS_ACTS"];

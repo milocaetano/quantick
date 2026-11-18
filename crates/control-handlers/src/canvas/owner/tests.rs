@@ -207,7 +207,7 @@ fn nominal_area_and_once_after_paint_hooks_keep_their_boundaries() {
 fn hold_waits_for_a_float_and_never_overwrites_a_pinned_pointer() {
     let mut host = FakeHost::new();
     let area = host.drawn().area;
-    assert!(hold_from_hook(&host.state, "0:0.25,0.5", area, false).is_none());
+    assert!(hold_from_hook(&host.state, || "0:0.25,0.5".into(), area, false).is_none());
     answer(
         &mut host,
         CanvasAct::Float {
@@ -216,8 +216,8 @@ fn hold_waits_for_a_float_and_never_overwrites_a_pinned_pointer() {
         },
     )
     .unwrap();
-    let (_, point) = hold_from_hook(&host.state, "0:0.25,0.5", area, false).unwrap();
+    let (_, point) = hold_from_hook(&host.state, || "0:0.25,0.5".into(), area, false).unwrap();
     assert_eq!(point, (260.0, 320.0));
-    assert!(hold_from_hook(&host.state, "0:0.25,0.5", area, true).is_none());
-    assert!(hold_from_hook(&host.state, "bad", area, false).is_none());
+    assert!(hold_from_hook(&host.state, || panic!("read while pinned"), area, true).is_none());
+    assert!(hold_from_hook(&host.state, || "bad".into(), area, false).is_none());
 }

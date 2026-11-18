@@ -123,10 +123,9 @@ impl TabCanvas {
     }
     #[cfg(any(feature = "scenario-harness", test))]
     pub(crate) fn hold_from_hook(&mut self) {
-        let value = crate::hooks::captured::var("QUANTICK_CANVAS_HOLD").unwrap_or_default();
         let held = quantick_control_handlers::canvas::owner::hold_from_hook(
             &self.state,
-            &value,
+            || crate::hooks::captured::var("QUANTICK_CANVAS_HOLD").unwrap_or_default(),
             crate::floating_panes::model_rect(self.last_canvas),
             self.floats.pinned.is_some(),
         );
@@ -314,3 +313,6 @@ pub(crate) fn pick(tab: &mut super::Tab, preset: &'static LayoutPreset) -> bool 
     }
     before != read(&tab.canvas)
 }
+
+#[cfg(any(feature = "scenario-harness", test))]
+crate::hooks::declare_hooks!["QUANTICK_CANVAS_HOLD"];
