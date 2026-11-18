@@ -1,4 +1,3 @@
-
 use super::*;
 
 fn embedded(name: &str) -> &'static str {
