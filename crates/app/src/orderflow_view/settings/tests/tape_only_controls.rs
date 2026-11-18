@@ -50,7 +50,8 @@ fn bubble_persistence_is_reachable_in_the_real_panel_after_the_l2_section() {
             tab.tape_mut().settings_panel.remember_width(320.0);
             let mut folds = crate::ui_state::AssetFolds::default();
             folds.set("WINV26", crate::ui_state::PanelSection::L2, true);
-            crate::orderflow_panel::open_on(&mut tab, crate::ui_state::PanelSection::Bubbles);
+            assert!(crate::orderflow_panel::flow_pane_shown(&tab));
+            (tab.tape_mut().settings_panel).open_on(Some(crate::ui_state::PanelSection::Bubbles));
             let mut reached = false;
             for frame in 0..30 {
                 let output = ctx.run(

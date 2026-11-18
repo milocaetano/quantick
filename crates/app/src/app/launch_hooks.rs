@@ -29,6 +29,8 @@
 //! it.
 
 #[cfg(any(feature = "scenario-harness", test))]
+use super::{ControlWindow, menu_bar::MenuCall};
+#[cfg(any(feature = "scenario-harness", test))]
 use crate::dock::DockTab;
 #[cfg(any(feature = "scenario-harness", test))]
 use crate::hooks::ScenarioInputs;
@@ -43,7 +45,7 @@ use crate::tab::CanvasLayout;
 #[cfg(any(feature = "drawing-harness", test))]
 use crate::toolrail::ToolRailExt as _;
 #[cfg(any(feature = "scenario-harness", test))]
-use crate::{orderflow_panel::open_on, ui_state::PanelSection};
+use crate::ui_state::PanelSection;
 #[cfg(any(feature = "scenario-harness", test))]
 use quantick_control_schema::{desk, launch_calls, layout};
 #[cfg(any(feature = "scenario-harness", test))]
@@ -664,8 +666,13 @@ fn dock_and_report(app: &mut QuantickApp, env: &ScenarioInputs) {
     // validation run shows a panel without a click.
     if let Some(name) = env.var("QUANTICK_DOCK_TAB") {
         match name.trim() {
-            "l2" => open_on(app.active_tab_mut(), PanelSection::L2),
-            "bubbles" => open_on(app.active_tab_mut(), PanelSection::Bubbles),
+            "l2" => {
+                _ = MenuCall::OpenOrderFlowPanel(PanelSection::L2).run(app as &mut ControlWindow)
+            }
+            "bubbles" => {
+                let open = MenuCall::OpenOrderFlowPanel(PanelSection::Bubbles);
+                _ = open.run(app as &mut ControlWindow);
+            }
             "session" => app.surfaces.dock.open_tab(DockTab::Session),
             "trading" => app.surfaces.dock.open_tab(DockTab::Trading),
             "trades" => app.surfaces.dock.open_tab(DockTab::Trades),
