@@ -359,34 +359,11 @@ struct TrackedSocket {
 #[cfg(test)]
 pub(crate) use quantick_control_host::authority::GRANTABLE_PROFILE_IDS;
 
-/// Whether a permission belongs to the trade tier — see the access
-/// panel's read-scope filter for why it is excluded from every section.
-pub(super) fn is_trade_permission(permission: &PermissionId) -> bool {
-    permission.as_str() == quantick_control_handlers::trade::TRADE_PERMISSION_ID
-        || permission.as_str().starts_with("trade.")
-}
-
-/// Whether a permission belongs to the annotate tier — the `annotate` floor
-/// itself or one of its scopes.
-pub(super) fn is_annotate_permission(permission: &PermissionId) -> bool {
-    permission.as_str() == ANNOTATE_PERMISSION_ID || is_annotate_scope(permission)
-}
-
-/// Any permission of the cockpit tier — the floor or one of its scopes.
-pub(super) fn is_cockpit_permission(permission: &PermissionId) -> bool {
-    permission.as_str() == COCKPIT_PERMISSION_ID || is_cockpit_scope(permission)
-}
-
-/// A scope *of* the cockpit tier, as opposed to the floor they stand on.
-fn is_cockpit_scope(permission: &PermissionId) -> bool {
-    permission.as_str().starts_with(concat!("cockpit", "."))
-}
-
-/// A scope *of* the annotate tier — the ones that actually open a capability,
-/// as opposed to the `annotate` floor they all stand on.
-fn is_annotate_scope(permission: &PermissionId) -> bool {
-    permission.as_str().starts_with(concat!("annotate", "."))
-}
+/// The tier a permission belongs to, answered beside the authority table.
+pub(super) use quantick_control_host::authority::{
+    is_annotate_permission, is_annotate_scope, is_cockpit_permission, is_cockpit_scope,
+    is_trade_permission,
+};
 
 /// Whether a permission belongs to the analyst tier: a private read. The
 /// answer is the published scope table's, read where the table lives.

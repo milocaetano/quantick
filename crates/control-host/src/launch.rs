@@ -1,8 +1,8 @@
 //! The control plane's opt-in launch scenarios: a mark, an annotation, a
 //! notification or an evidence capture a scripted run asks for at boot.
 //!
-//! The application reads the `QUANTICK_CONTROL_*` hooks once, at launch, and
-//! hands the raw values here; what remains is pure state — which scenario is
+//! The application reads the `QUANTICK_CONTROL_*` hooks once, at launch,
+//! through [`ControlLaunch::capture`]; what remains is pure state — which scenario is
 //! still pending, how a request string becomes a capability call, and how
 //! long an evidence capture waits for a screenshot — so it is tested here
 //! without building a window.
@@ -35,6 +35,44 @@ pub struct LaunchRequests {
     pub notification: Option<String>,
     pub evidence: Option<String>,
     pub mark: Option<String>,
+}
+
+/// Control-only launch inputs, captured before the window is built: whether
+/// the access panel opens, the scopes a launch grants, and the scenarios.
+#[derive(Debug, Default)]
+pub struct ControlLaunch {
+    pub panel: bool,
+    pub scopes: Option<String>,
+    pub scenarios: LaunchScenarios,
+}
+
+impl ControlLaunch {
+    /// Read the `QUANTICK_CONTROL_*` hooks through `lookup`: the process
+    /// environment, or a test's. A blank hook is an unset one; a mark of `1`
+    /// asks for a mark with no note.
+    pub fn capture(mut lookup: impl FnMut(&str) -> Option<std::ffi::OsString>) -> Self {
+        let mut value = |name| lookup(name).and_then(|raw| raw.into_string().ok());
+        let panel = value("QUANTICK_CONTROL_PANEL").is_some_and(|raw| raw == "1");
+        let scopes = value("QUANTICK_CONTROL_SCOPES");
+        let access = value("QUANTICK_CONTROL_ACCESS").is_some_and(|raw| raw == "1");
+        let mark = value("QUANTICK_CONTROL_MARK")
+            .filter(|raw| !raw.trim().is_empty())
+            .map(|raw| if raw == "1" { String::new() } else { raw });
+        let evidence = value("QUANTICK_CONTROL_EVIDENCE").filter(|raw| !raw.trim().is_empty());
+        let annotation = value("QUANTICK_CONTROL_ANNOTATE").filter(|raw| !raw.trim().is_empty());
+        let notification = value("QUANTICK_CONTROL_NOTIFY").filter(|raw| !raw.trim().is_empty());
+        Self {
+            panel,
+            scopes,
+            scenarios: LaunchScenarios::new(LaunchRequests {
+                enable_access: access,
+                annotation,
+                notification,
+                evidence,
+                mark,
+            }),
+        }
+    }
 }
 
 /// One evidence capture being prepared: the scopes it reads and whether it
@@ -254,6 +292,34 @@ mod tests {
 
     fn scopes(names: &[&str]) -> Vec<String> {
         names.iter().map(|name| (*name).to_owned()).collect()
+    }
+
+    fn captured(inputs: &[(&str, &str)]) -> ControlLaunch {
+        ControlLaunch::capture(|name| {
+            let found = inputs.iter().find(|(key, _)| *key == name);
+            found.map(|(_, value)| std::ffi::OsString::from(value))
+        })
+    }
+
+    #[test]
+    fn a_capture_reads_the_panel_scopes_and_a_bare_mark() {
+        let mut launch = captured(&[
+            ("QUANTICK_CONTROL_PANEL", "1"),
+            ("QUANTICK_CONTROL_SCOPES", "observe"),
+            ("QUANTICK_CONTROL_ACCESS", "1"),
+            ("QUANTICK_CONTROL_MARK", "1"),
+            ("QUANTICK_CONTROL_NOTIFY", "  "),
+        ]);
+        assert!(launch.panel);
+        assert_eq!(launch.scopes.as_deref(), Some("observe"));
+        assert!(launch.scenarios.take_enable());
+        assert_eq!(launch.scenarios.take_mark().as_deref(), Some(""));
+        assert!(
+            launch.scenarios.notification().is_none(),
+            "a blank hook is unset"
+        );
+        let quiet = captured(&[("QUANTICK_CONTROL_PANEL", "0")]);
+        assert!(!quiet.panel && quiet.scopes.is_none());
     }
 
     #[test]
