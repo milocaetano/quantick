@@ -798,15 +798,6 @@ impl IndicatorControlHost for FakeWindow {
 }
 
 impl MarketTabHost for FakeWindow {
-    fn tab_count(&self) -> usize {
-        self.tabs.len()
-    }
-    fn config(&self) -> &AppConfig {
-        &self.config
-    }
-    fn market_tab(&self, index: usize) -> Option<&dyn MarketTab> {
-        Some(self.tabs.get(index)?)
-    }
     fn market_tab_mut(&mut self, index: usize) -> Option<LentTab<'_>> {
         Some(LentTab {
             tab: self.tabs.get_mut(index)?,

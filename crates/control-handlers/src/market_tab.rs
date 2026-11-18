@@ -7,7 +7,7 @@ use quantick_sources::history_reach::HistoryReach;
 use quantick_sources::recovery::{AutoRoll, Recovery};
 use quantick_stores::config::AppConfig;
 
-use crate::tabs::TabDirectory;
+use crate::tabs::OpenTabs;
 
 /// The pair a tab shows, and whether it plays a recording.
 pub struct FeedSelection {
@@ -61,13 +61,10 @@ pub struct LentTab<'a> {
     pub history_default: &'a mut HistoryReach,
 }
 
-/// The window's market job: resolve the addressed tab and lend the config,
-/// the drawings a roll carries and the History default.
-pub trait MarketTabHost: TabDirectory {
-    fn tab_count(&self) -> usize;
-    fn config(&self) -> &AppConfig;
-    /// The tab at `index`, a position the directory gave.
-    fn market_tab(&self, index: usize) -> Option<&dyn MarketTab>;
+/// The window's market job: its open tabs read as [`OpenTabs`], each lent
+/// for a change with the config and the History default, and the drawings a
+/// roll carries.
+pub trait MarketTabHost: OpenTabs<Tab: MarketTab> {
     /// The tab at `index`, lent for a change.
     fn market_tab_mut(&mut self, index: usize) -> Option<LentTab<'_>>;
     /// A drawing gesture in flight on any pane holding `from`'s or `to`'s marks.
@@ -119,7 +116,7 @@ pub(crate) fn switch_market<H: MarketTabHost + ?Sized>(
 
 /// The pair the tab at `index` shows; `None` when the tab is gone.
 pub(crate) fn market<H: MarketTabHost + ?Sized>(host: &H, index: usize) -> Option<FeedSelection> {
-    host.market_tab(index).map(|tab| tab.market())
+    host.open_tab(index).map(|tab| tab.market())
 }
 
 #[cfg(test)]
