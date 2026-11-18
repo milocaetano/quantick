@@ -41,8 +41,9 @@ pub fn unavailable() -> ControlError {
 pub enum DeskAct {
     /// Bring Settings up on this section.
     OpenSettings(SettingsSection),
-    /// Write the desk as what the app opens on.
-    Save,
+    /// Write the desk as what the app opens on; the reason is what the save
+    /// event records.
+    Save(&'static str),
     /// Forget the saved desk.
     Forget,
     /// Raise the export dialog.
@@ -186,7 +187,7 @@ fn save<H: DeskHost + ?Sized, A: NotifyAccess>(
     let DeskInput {} = input(value)?;
     wrote(
         DESK_SAVED_EVENT_KIND,
-        desk_act(app, DeskAct::Save)?,
+        desk_act(app, DeskAct::Save("control"))?,
         access,
         actor,
     )

@@ -479,7 +479,7 @@ fn the_context_bar_yields_to_the_open_alert_surface() {
         "the selection raised the bar"
     );
 
-    app.apply_menu_command(super::super::menu_bar::MenuCommand::OpenAlerts);
+    _ = quantick_control_handlers::alerts::AlertDefinitionsPort::alert_open(&mut app);
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
     assert!(app.surfaces.alerts.is_open());
@@ -644,7 +644,7 @@ fn alerts_manager_owns_delete_keys_in_its_viewport() {
             let drawing = place_drawing(&mut app, &ctx, "horizontal-line", &[chart]);
             app.surfaces.toolrail.arm(Tool::Pointer);
             app.drawing_pane_mut().drawings.select(Some(drawing));
-            app.apply_menu_command(super::super::menu_bar::MenuCommand::OpenAlerts);
+            _ = quantick_control_handlers::alerts::AlertDefinitionsPort::alert_open(&mut app);
             if hide_strip {
                 app.surfaces.dock.toggle_visible();
             }

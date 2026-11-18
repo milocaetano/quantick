@@ -19,7 +19,7 @@ fn laid_out(id: &str) -> (QuantickApp, egui::Context) {
     let (mut app, _evt, _cmd, _book) = test_app();
     let ctx = egui::Context::default();
     frames(&mut app, &ctx, 2);
-    app.apply_layout_preset(preset(id).unwrap());
+    _ = crate::tab::layout::pick(app.active_tab_mut(), preset(id).unwrap());
     frames(&mut app, &ctx, 6);
     (app, ctx)
 }

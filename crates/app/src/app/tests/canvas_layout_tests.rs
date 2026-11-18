@@ -67,7 +67,7 @@ fn canvas_draws_every_preset_exactly() {
     let ctx = egui::Context::default();
     run_frame(&mut app, &ctx);
     for preset in LAYOUT_PRESETS {
-        app.apply_layout_preset(preset);
+        _ = crate::tab::layout::pick(app.active_tab_mut(), preset);
         for _ in 0..3 {
             run_frame(&mut app, &ctx);
         }
@@ -97,7 +97,7 @@ fn two_charts(ctx: &egui::Context) -> QuantickApp {
     let preset = (LAYOUT_PRESETS.iter())
         .find(|preset| preset.id == "charts-2")
         .expect("the two-chart preset is registered");
-    app.apply_layout_preset(preset);
+    _ = crate::tab::layout::pick(app.active_tab_mut(), preset);
     for _ in 0..3 {
         run_frame(&mut app, ctx);
     }
@@ -252,7 +252,7 @@ fn dragging_a_time_time_flow_seam_to_the_edge_folds_the_flow_to_a_rail() {
     let preset = (LAYOUT_PRESETS.iter())
         .find(|preset| preset.id == "time+time+flow")
         .expect("the 2 TF + Flow preset is registered");
-    app.apply_layout_preset(preset);
+    _ = crate::tab::layout::pick(app.active_tab_mut(), preset);
     for _ in 0..3 {
         run_frame(&mut app, &ctx);
     }
@@ -346,7 +346,7 @@ fn a_column_fold_survives_the_switch_to_the_tree_painter_and_back() {
     let preset = (LAYOUT_PRESETS.iter())
         .find(|preset| preset.id == "time+flow")
         .expect("the 1 TF + Flow preset is registered");
-    app.apply_layout_preset(preset);
+    _ = crate::tab::layout::pick(app.active_tab_mut(), preset);
     for _ in 0..3 {
         run_frame(&mut app, &ctx);
     }
@@ -407,7 +407,10 @@ fn a_maximized_railed_chart_draws_and_restores_to_its_rail() {
     for id in ["time+flow", "charts-3", "charts-2"] {
         let (mut app, _evt, _cmd, _book) = test_app();
         run_frame(&mut app, &ctx);
-        app.apply_layout_preset(crate::canvas_layout::preset(id).expect("registered"));
+        _ = crate::tab::layout::pick(
+            app.active_tab_mut(),
+            crate::canvas_layout::preset(id).expect("registered"),
+        );
         for _ in 0..3 {
             run_frame(&mut app, &ctx);
         }
@@ -463,7 +466,10 @@ fn one_grid_chart_folded_keeps_the_other_legends() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = app_with_history(200);
     run_frame(&mut app, &ctx);
-    app.apply_layout_preset(crate::canvas_layout::preset("grid4+flow").expect("registered"));
+    _ = crate::tab::layout::pick(
+        app.active_tab_mut(),
+        crate::canvas_layout::preset("grid4+flow").expect("registered"),
+    );
     for _ in 0..3 {
         run_frame(&mut app, &ctx);
     }
@@ -528,7 +534,10 @@ fn a_second_fold_on_grid4_flow_keeps_the_first_rail_through_frames() {
     let ctx = egui::Context::default();
     let (mut app, _evt, _cmd, _book) = test_app();
     run_frame(&mut app, &ctx);
-    app.apply_layout_preset(crate::canvas_layout::preset("grid4+flow").expect("registered"));
+    _ = crate::tab::layout::pick(
+        app.active_tab_mut(),
+        crate::canvas_layout::preset("grid4+flow").expect("registered"),
+    );
     for _ in 0..3 {
         run_frame(&mut app, &ctx);
     }
@@ -577,7 +586,7 @@ fn flow_layout(id: &str, ctx: &egui::Context) -> (QuantickApp, u32, CanvasRect) 
     let preset = (LAYOUT_PRESETS.iter())
         .find(|preset| preset.id == id)
         .expect("a registered preset");
-    app.apply_layout_preset(preset);
+    _ = crate::tab::layout::pick(app.active_tab_mut(), preset);
     for _ in 0..3 {
         run_frame(&mut app, ctx);
     }

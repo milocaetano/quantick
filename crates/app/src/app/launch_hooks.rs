@@ -33,6 +33,8 @@
 //! it.
 
 #[cfg(any(feature = "scenario-harness", test))]
+use super::menu_bar::MenuCall;
+#[cfg(any(feature = "scenario-harness", test))]
 use crate::dock::DockTab;
 #[cfg(any(feature = "scenario-harness", test))]
 use crate::hooks::ScenarioInputs;
@@ -47,7 +49,7 @@ use crate::tab::CanvasLayout;
 #[cfg(any(feature = "drawing-harness", test))]
 use crate::toolrail::ToolRailExt as _;
 #[cfg(any(feature = "scenario-harness", test))]
-use crate::{orderflow_panel::open_on, ui_state::PanelSection};
+use crate::ui_state::PanelSection;
 #[cfg(any(feature = "scenario-harness", test))]
 use quantick_control_schema::launch_values as values;
 #[cfg(any(feature = "scenario-harness", test))]
@@ -114,8 +116,8 @@ pub(super) fn apply_launch_phase<D: OwnersDesk + GatewayPort + TabsPort>(
         layout(desk, env);
         let owners = desk.owners();
         replay(owners.surfaces, owners.runtime.active_tab(), env);
-        let owners = desk.owners();
-        dock_and_report(owners.runtime, owners.surfaces, env);
+        dock_tab(desk, env);
+        paper_report(desk.owners().runtime, env);
         calls::on_flow_pane(desk, env, "QUANTICK_PRICE_RANGE", launch_calls::price_range);
         workspace(desk, env);
     }
@@ -589,32 +591,38 @@ fn replay(surfaces: &mut Surfaces, tab: &Tab, env: &ScenarioInputs) {
     }
 }
 
-/// The dock and the paper report: the named tab, the calendar, the ledger
-/// and the report list.
+/// The dock tab a launch opens, by its owner's wire name: an order-flow
+/// section through the menu's own named call, a dock tab on the dock.
 #[cfg(any(feature = "scenario-harness", test))]
-fn dock_and_report(runtime: &mut WorkspaceRuntime, surfaces: &mut Surfaces, env: &ScenarioInputs) {
-    let tz = runtime.tz;
-    let tab = runtime.active_tab_mut();
+fn dock_tab<D: OwnersDesk + GatewayPort>(desk: &mut D, env: &ScenarioInputs) {
     // Same convenience for the dock: open a named tab, so a scripted
     // validation run shows a panel without a click.
-    if let Some(name) = env.var("QUANTICK_DOCK_TAB") {
-        // Read by the owners' own wire names, the words a scene reports.
-        let id = name.trim();
-        let section = PanelSection::ALL.into_iter().find(|at| at.id() == id);
-        let dock_tab = DockTab::ALL.into_iter().find(|at| at.id() == id);
-        match (section, dock_tab) {
-            (Some(section), _) => open_on(tab, section),
-            (None, Some(dock_tab)) => surfaces.dock.open_tab(dock_tab),
-            (None, None) => tracing::warn!(
-                target: "quantick::app",
-                schema_version = 1_u8,
-                event_code = "DOCK_TAB_AUTOSTART_UNKNOWN",
-                tab = %name,
-                action = "dock_left_as_is",
-                "QUANTICK_DOCK_TAB names no dock tab"
-            ),
-        }
+    let Some(name) = env.var("QUANTICK_DOCK_TAB") else {
+        return;
+    };
+    let id = name.trim();
+    let section = PanelSection::ALL.into_iter().find(|at| at.id() == id);
+    let dock_tab = DockTab::ALL.into_iter().find(|at| at.id() == id);
+    match (section, dock_tab) {
+        (Some(section), _) => _ = MenuCall::OpenOrderFlowPanel(section).run(desk.as_window()),
+        (None, Some(dock_tab)) => desk.owners().surfaces.dock.open_tab(dock_tab),
+        (None, None) => tracing::warn!(
+            target: "quantick::app",
+            schema_version = 1_u8,
+            event_code = "DOCK_TAB_AUTOSTART_UNKNOWN",
+            tab = %name,
+            action = "dock_left_as_is",
+            "QUANTICK_DOCK_TAB names no dock tab"
+        ),
     }
+}
+
+/// The paper report: the window, the calendar, the ledger and the report
+/// list.
+#[cfg(any(feature = "scenario-harness", test))]
+fn paper_report(runtime: &mut WorkspaceRuntime, env: &ScenarioInputs) {
+    let tz = runtime.tz;
+    let tab = runtime.active_tab_mut();
     let account = tab.paper.account_mut();
     // And for the performance report window — the Report… button's own
     // path, so a scripted run can show it.

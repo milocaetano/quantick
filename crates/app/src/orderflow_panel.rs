@@ -29,13 +29,6 @@ pub(crate) fn flow_pane_shown(tab: &Tab) -> bool {
     tab.canvas.layout.shows_flow() && !tab.canvas.folds().1
 }
 
-/// Open the tab's panel on `section`.
-pub(crate) fn open_on(tab: &mut Tab, section: PanelSection) {
-    if flow_pane_shown(tab) {
-        tab.tape_mut().settings_panel.open_on(Some(section));
-    }
-}
-
 /// The panel's key: the gear's left click, wherever focus sits.
 pub(crate) fn toggle(tab: &mut Tab) {
     if flow_pane_shown(tab) {

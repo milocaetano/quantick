@@ -1541,7 +1541,10 @@ fn a_v1_layout_answer_the_wire_refuses_says_the_call_may_have_acted() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = app_with_history(4);
     // A collapse needs a context column beside the flow pane to put away.
-    app.apply_layout_preset(crate::canvas_layout::preset("time+flow").expect("registered"));
+    _ = crate::tab::layout::pick(
+        app.active_tab_mut(),
+        crate::canvas_layout::preset("time+flow").expect("registered"),
+    );
     run_frame(&mut app, &ctx);
     let directory = gateway_test_directory("layout-v1-refusal");
     grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.layout");
@@ -2275,7 +2278,10 @@ fn expanding_a_charts_only_layout_reopens_its_rails() {
     for id in [
         "charts-2", "charts-3", "charts-4", "charts-5", "charts-6", "charts-7", "charts-8",
     ] {
-        app.apply_layout_preset(crate::canvas_layout::preset(id).expect("registered"));
+        _ = crate::tab::layout::pick(
+            app.active_tab_mut(),
+            crate::canvas_layout::preset(id).expect("registered"),
+        );
         for _ in 0..3 {
             run_frame(&mut app, &ctx);
         }

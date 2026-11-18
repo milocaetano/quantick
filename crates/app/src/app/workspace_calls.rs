@@ -111,7 +111,7 @@ impl DeskOwner for WorkspaceCalls<'_> {
                 super::chrome::settings::open(menu, settings, viewport, section);
                 true
             }
-            DeskAct::Save => self.save_adapter().save_workspace("control"),
+            DeskAct::Save(reason) => self.save_adapter().save_workspace(reason),
             // A file holding only standing choices has no desk to forget: the
             // call says nothing changed rather than claiming a write.
             DeskAct::Forget => {

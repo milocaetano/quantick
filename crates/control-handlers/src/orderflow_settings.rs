@@ -20,6 +20,22 @@ pub struct PanelSeat<'a> {
     pub lights_offered: bool,
 }
 
+impl PanelSeat<'_> {
+    /// Open the panel, on `section` expanded when one is named: what
+    /// `orderflow.settings.open` and the window menu's panel rows do.
+    pub fn open(&mut self, section: Option<PanelSection>) -> Result<bool, ControlError> {
+        if !self.flow_shown {
+            return Err(ControlError::invalid_request(
+                "the tab is not showing its flow pane, so it has no order-flow panel to open",
+            ));
+        }
+        // Expanded here and not at the next frame, so the answer is already true.
+        let expanded = section.is_some_and(|section| self.folds.set(self.asset, section, true));
+        let opened = self.panel.open_on(section);
+        Ok(opened || expanded)
+    }
+}
+
 /// The tab a call names.
 pub trait OrderflowSettingsPort {
     fn panel_seat(&mut self, tab: u64) -> Result<PanelSeat<'_>, ControlError>;
@@ -41,17 +57,9 @@ fn open<H: OrderflowSettingsPort + ?Sized, A>(
     input: &Value,
 ) -> Result<Value, ControlError> {
     let input: SettingsOpenInput = parse(input)?;
-    let seat = host.panel_seat(input.tab_id.get())?;
-    if !seat.flow_shown {
-        return Err(ControlError::invalid_request(
-            "the tab is not showing its flow pane, so it has no order-flow panel to open",
-        ));
-    }
-    let section = input.section.map(PanelSection::from);
-    // Expanded here and not at the next frame, so the answer is already true.
-    let expanded = section.is_some_and(|section| seat.folds.set(seat.asset, section, true));
-    let opened = seat.panel.open_on(section);
-    answer(input.tab_id, &seat, opened || expanded)
+    let mut seat = host.panel_seat(input.tab_id.get())?;
+    let changed = seat.open(input.section.map(PanelSection::from))?;
+    answer(input.tab_id, &seat, changed)
 }
 
 fn close<H: OrderflowSettingsPort + ?Sized, A>(

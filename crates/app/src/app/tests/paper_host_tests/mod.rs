@@ -1,31 +1,24 @@
-// What the tab's paper decides alone - the reversal, the ticket's refusal,
-// the ruler following the symbol - is tested in `quantick_session::paper_tests`.
-//
-// The `paper_trading.rs` unit tests, moved out of the file so a session
-// opening the ticket to change one control no longer reads 3,651 lines of
-// tests it did not ask for.
-//
-// They stay a child module of `crate::paper_trading` rather than moving to an
-// integration test: a child sees its ancestor's private items, so the move
-// widens no visibility in production code, and the `use super::*` below is
-// the line the module already had inline.
-//
-// The file's second test module, `risk_tests`, sits beside this one in
-// `risk_tests.rs`. It reaches this module's scope through its own
-// `use super::*`, which carries `paper_trading`'s imports down the same
-// way -- the shape `app/tests/` already uses across twelve files.
+// The paper host's window-side tests: what `crate::paper_trading` paints and
+// how it reads the window's input. What the tab's paper decides alone - the
+// reversal, the ticket's refusal, the ruler following the symbol - is tested
+// in `quantick_session::paper_tests`; the desk's rules in `quantick_paper`.
+// They live here, not as a child of `paper_trading`, so `paper_trading.rs`
+// carries no test-only code.
 
 mod layout_tests;
 mod light_plate_tests;
-mod risk_tests;
 
-// The items the split gave owners; `super::*` still carries the ticket
-// itself, the module's constants and the account's vocabulary.
-use super::paint_ctx::{PaintCtx, cmd_preview_layout};
-use super::*;
+use eframe::egui;
+use quantick_engine::{Side, Trade};
+use quantick_paper::desk::PaperControl;
+use quantick_sim::{ClosedTrade, Command, history};
+use rust_decimal::Decimal;
+
+use crate::chart::PriceScale;
+use crate::paper_trading::paint_ctx::{PaintCtx, cmd_preview_layout};
+use crate::paper_trading::*;
 // The desk's vocabulary and geometry, which the tests below arrange and
 // measure against; the rules themselves are tested in `quantick_paper`.
-use crate::paper_report::{load_history, report_from_history};
 use crate::timezone::TzOffset;
 use quantick_paper::desk::PaperDrag;
 use quantick_paper::desk::geometry::{TAG_BUTTON_PX, TAG_GAP_PX};
@@ -39,11 +32,6 @@ fn print(agg_id: u64, price: i64) -> Trade {
         quantity: Decimal::ONE,
         side: Side::Buy,
     }
-}
-
-#[test]
-fn utc_dates_format_from_the_same_civil_math() {
-    assert_eq!(fmt_utc_date(1_773_666_068_000), "2026-03-16");
 }
 
 /// Esc puts the ruler away - but only once the gestures it was already
@@ -642,15 +630,11 @@ fn a_dragged_order_keeps_its_full_statement() {
 /// there.
 #[test]
 fn the_orders_hook_rests_through_the_account_once() {
+    crate::hooks::captured::set_on_this_thread(Some(&[("QUANTICK_PAPER_ORDERS", "1")]));
     let mut paper = PaperTrading::new();
-    let one = quantick_paper::account::CaptureOrders {
-        rungs: 1,
-        bracket: false,
-    };
-    paper.capture_orders = Some(one);
+    crate::hooks::captured::set_on_this_thread(None);
     paper.on_trade(&print(1, 100_000));
-    assert!(paper.capture_orders.is_none(), "placed once, never again");
-    assert_eq!(paper.working_orders().len(), 2);
+    assert_eq!(paper.working_orders().len(), 2, "one rung, both sides");
     paper.on_trade(&print(2, 100_000));
     assert_eq!(paper.working_orders().len(), 2, "a second print adds none");
 }
@@ -732,38 +716,6 @@ fn a_band_too_short_for_a_tag_survives_the_paint_and_the_press() {
     let _ = layer_shapes(&paper, sliver, &scale, Some(pointer));
     let _ = paper.control_at(pointer, sliver, &scale);
     let _ = cmd_preview_layout(sliver, sliver.right(), pointer);
-}
-
-#[test]
-fn a_timeline_reset_journals_the_flatten_and_clears_the_form_state() {
-    let dir = crate::scratch::ScratchDir::new("paper-reset-test");
-    let mut paper = PaperTrading::new();
-    paper.account.redirect_history_dir(dir.path().to_path_buf());
-    paper.set_symbol("RESETX");
-    paper.seed(&print(0, 100));
-    paper.market(Side::Buy);
-    paper.on_trade(&print(1, 100));
-    paper.desk.armed = Some(ArmedPlacement {
-        side: Side::Buy,
-        kind: EntryKind::Limit,
-    });
-    paper.on_timeline_reset();
-    assert!(paper.account.venue().position().is_none());
-    assert!(
-        paper.desk.armed.is_none(),
-        "an armed click dies with the timeline"
-    );
-    assert!(
-        paper.account.peek_toast().is_some(),
-        "the flatten is never silent"
-    );
-    let history = load_history(&dir, Some("RESETX"), &[]);
-    assert_eq!(history.rows.len(), 1);
-    assert_eq!(
-        report_from_history(&history).trades,
-        1,
-        "the reset exit is a real, journaled trade"
-    );
 }
 
 // The stored-pick-vs-configured-base precedence now lives in
@@ -998,43 +950,6 @@ fn a_close_refreshes_an_open_report_by_itself() {
     );
 }
 
-/// C5: a live print reaches the account through the tab's paper, and the
-/// host re-reads the open report when that print closes a journaled trade.
-#[test]
-fn live_print_fills_a_resting_limit_through_tab_paper() {
-    let utc = TzOffset::new(0);
-    let dir = crate::scratch::ScratchDir::new("paper-tab-limit");
-    let mut paper = PaperTrading::new();
-    paper.account.redirect_history_dir(dir.path().to_path_buf());
-    paper.set_symbol("LIMITX");
-    {
-        let (state, env) = paper.report_parts();
-        state.open(&env)
-    };
-    paper.seed(&print(0, 100));
-    let events = paper.account.venue_mut().submit(
-        quantick_sim::OrderIntent::limit(Side::Buy, Decimal::ONE, Decimal::from(95))
-            .with_bracket(Bracket::whole(None, Some(Decimal::from(105)))),
-    );
-    paper.account.handle_events(events);
-    assert_eq!(paper.working_orders().len(), 1, "the limit rests");
-
-    paper.on_trade(&print(1, 95));
-    assert!(
-        !paper.is_flat(),
-        "the print crossed the limit and it filled"
-    );
-
-    paper.on_trade(&print(2, 105));
-    assert_eq!(paper.session_trades().len(), 1, "the target closed it");
-    paper
-        .account
-        .report_state_mut()
-        .ensure_report_view(utc, quantick_paper::pnl::PnlReader::plain());
-    let view = paper.account.report_state().view_rows().expect("re-read");
-    assert_eq!(view.len(), 1, "the open report re-read the journal");
-}
-
 #[test]
 fn default_cmd_trading_does_not_arm_a_sell_with_ctrl() {
     let mut paper = PaperTrading::new();
@@ -1050,7 +965,34 @@ fn default_cmd_trading_does_not_arm_a_sell_with_ctrl() {
     assert!(paper.desk.gesture.cmd_preview.is_none());
 }
 
+/// The account calls the window tests arrange through; spelled
+/// `.account.x()` at each of ~60 call sites, rustfmt wraps them into more
+/// lines than these forwarders cost.
 impl PaperTrading {
+    pub(crate) fn report_state(&self) -> &crate::paper_report::ReportState {
+        self.account().report_state()
+    }
+
+    pub(crate) fn report_state_mut(&mut self) -> &mut crate::paper_report::ReportState {
+        self.account_mut().report_state_mut()
+    }
+
+    pub(crate) fn redirect_history_dir(&mut self, dir: std::path::PathBuf) {
+        self.account_mut().redirect_history_dir(dir);
+    }
+
+    pub(crate) fn apply_sim_command_for_tests(&mut self, command: Command) {
+        self.account_mut().apply_sim_command_for_tests(command);
+    }
+
+    pub(crate) fn close_button_label(&self) -> Option<String> {
+        self.account().close_button_label()
+    }
+
+    pub(crate) fn ready(&self) -> bool {
+        self.account().ready()
+    }
+
     /// Arm the ticket's click as its Buy/Sell button does, for the window
     /// tests that press the chart with a ticket armed.
     pub(crate) fn arm_for_tests(&mut self, side: Side, kind: EntryKind) {

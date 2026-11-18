@@ -75,7 +75,7 @@ impl DeskOwner for Door<'_> {
                 host.section = Some(section);
                 true
             }
-            DeskAct::Save => {
+            DeskAct::Save(_) => {
                 host.saves += 1;
                 !host.write_fails
             }

@@ -707,7 +707,7 @@ impl ChartPane {
         // Tags anchor in the band the input pass tests their ✕ against, so a
         // painted ✕ and its press agree about where it is.
         let candles = crate::bands::drawing_area(chart_rect, self.frame.candles_right);
-        let tag_right = crate::paper_trading::tag_band(candles, chart_rect).right();
+        let tag_right = crate::paper_trading::paint_ctx::tag_band(candles, chart_rect).right();
         // Hover affordances paint only on the pane whose pointer feeds the
         // paper input; the others keep display-only tags. Every pane still
         // paints the lines themselves — an order is a fact about the account,

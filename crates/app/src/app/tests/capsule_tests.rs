@@ -50,7 +50,7 @@ fn layout_change_shows_unsaved_marks_until_ctrl_s() {
     );
     assert!(control(&app, "toolbar.capsule.save").is_none());
 
-    app.apply_layout_preset(preset("charts-4").unwrap());
+    _ = crate::tab::layout::pick(app.active_tab_mut(), preset("charts-4").unwrap());
     // A frame builds each new chart; the tab settles once all four stand.
     frames(&mut app, &ctx, 6);
     let (_, unsaved, layout) = snapshot(&app, &egui::Context::default()).marks();
@@ -107,7 +107,7 @@ fn the_picker_is_its_contents_size_and_hangs_below_its_button() {
     for autosave in [true, false] {
         app.runtime.workspace.book.book_mut().set_autosave(autosave);
         if !autosave {
-            app.apply_layout_preset(preset("charts-2").unwrap());
+            _ = crate::tab::layout::pick(app.active_tab_mut(), preset("charts-2").unwrap());
             frames(&mut app, &ctx, 4);
         }
         for _ in 0..3 {

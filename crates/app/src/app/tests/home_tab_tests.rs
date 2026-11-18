@@ -1009,7 +1009,7 @@ fn a_source_change_behind_home_still_relabels_the_chip_and_leaves_home() {
 
 #[test]
 fn the_menu_seam_refuses_chart_commands_on_home_and_keeps_the_rest() {
-    use super::super::menu_bar::MenuCommand;
+    use super::super::menu_bar::{MenuCall, MenuCommand, apply_menu_command_on};
     use crate::ui_state::PanelSection;
     let (mut app, _, _, _) = test_app();
     let ctx = egui::Context::default();
@@ -1021,11 +1021,22 @@ fn the_menu_seam_refuses_chart_commands_on_home_and_keeps_the_rest() {
     assert_ne!(layout, preset_layout(2));
 
     show_home(&mut app).unwrap();
-    app.apply_menu_command(MenuCommand::ApplyLayoutPreset(preset));
-    app.apply_menu_command(MenuCommand::ToggleLegend);
-    app.apply_menu_command(MenuCommand::ToggleContextCharts);
-    app.apply_menu_command(MenuCommand::PaperMarket(quantick_engine::Side::Buy));
-    app.apply_menu_command(MenuCommand::OpenOrderFlowPanel(PanelSection::L2));
+    apply_menu_command_on(
+        &mut app,
+        &ctx,
+        MenuCommand::Call(MenuCall::ApplyLayoutPreset(preset)),
+    );
+    apply_menu_command_on(&mut app, &ctx, MenuCommand::ToggleLegend);
+    apply_menu_command_on(&mut app, &ctx, MenuCommand::ToggleContextCharts);
+    let buy = quantick_session::paper::TradeCommand::Market {
+        side: quantick_engine::Side::Buy,
+    };
+    apply_menu_command_on(&mut app, &ctx, MenuCommand::Call(MenuCall::Trade(buy)));
+    apply_menu_command_on(
+        &mut app,
+        &ctx,
+        MenuCommand::Call(MenuCall::OpenOrderFlowPanel(PanelSection::L2)),
+    );
     frame(&mut app, &ctx);
     assert!(on_home(&app));
     assert_eq!(app.runtime.tabs.len(), 2);
@@ -1038,15 +1049,19 @@ fn the_menu_seam_refuses_chart_commands_on_home_and_keeps_the_rest() {
 
     // What is not the chart's still works, and the window stays on Home.
     let dock = app.surfaces.dock.visible();
-    app.apply_menu_command(MenuCommand::ToggleDock);
+    apply_menu_command_on(&mut app, &ctx, MenuCommand::ToggleDock);
     assert_ne!(app.surfaces.dock.visible(), dock, "window commands");
-    app.apply_menu_command(MenuCommand::OpenReplayBrowser);
+    apply_menu_command_on(&mut app, &ctx, MenuCommand::OpenReplayBrowser);
     assert!(on_home(&app));
     app.apply_tab_action(TabAction::Activate(0));
     assert!(!on_home(&app), "tab commands");
 
     // The same commands do act on a market.
-    app.apply_menu_command(MenuCommand::ApplyLayoutPreset(preset));
+    apply_menu_command_on(
+        &mut app,
+        &ctx,
+        MenuCommand::Call(MenuCall::ApplyLayoutPreset(preset)),
+    );
     assert_eq!(app.active_tab().canvas.layout, preset_layout(2));
 }
 
