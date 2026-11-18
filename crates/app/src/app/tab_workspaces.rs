@@ -63,7 +63,7 @@ impl TabRecipeHost for WorkspaceCalls<'_> {
     }
     fn recipe_signal(&self, id: u64) -> u64 {
         use std::hash::{Hash, Hasher};
-        let (app, mut hash) = (&*self, std::hash::DefaultHasher::new());
+        let (app, mut hash) = (self, std::hash::DefaultHasher::new());
         app.runtime.workspace.layouts().revision().hash(&mut hash);
         if let Some(tab) = app.runtime.tabs.by_id(id) {
             let canvas = (
