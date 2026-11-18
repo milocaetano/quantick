@@ -12,7 +12,7 @@ pub use quantick_sources::recovery::{AutoRoll, RollOffer, rolled_sentence as unl
 
 use super::{RollRefusal, apply, resolve};
 use crate::JournalAccess;
-use crate::market_tab::{MarketTabHost, market};
+use crate::market_tab::{MarketTab as _, MarketTabHost, market};
 use crate::workspace_book::Journal;
 use quantick_control::wire::WireU64;
 use quantick_control_host::journal::NewEvent;
@@ -57,7 +57,7 @@ pub fn notice_roll<H: MarketTabHost + ?Sized>(
     host: &H,
     index: usize,
 ) -> Option<Result<String, RollRefusal>> {
-    unlisted_roll(host, index, &host.market_tab(index)?.unlisted()?)
+    unlisted_roll(host, index, &host.open_tab(index)?.unlisted()?)
 }
 
 /// Tab `index`'s roll memory; `None` when the tab is gone.
@@ -123,7 +123,7 @@ pub fn roll_from_notice<H: MarketTabHost + ?Sized>(
     index: usize,
     target: &str,
 ) -> Result<(String, Value), String> {
-    let missing = host.market_tab(index).and_then(|tab| tab.unlisted());
+    let missing = host.open_tab(index).and_then(|tab| tab.unlisted());
     let missing = missing.ok_or("The feed no longer reports an unlisted contract")?;
     match unlisted_roll(host, index, &missing) {
         Some(Ok(next)) if next == target => {}
@@ -152,7 +152,7 @@ fn settle_tab<H: MarketTabHost + ?Sized>(
     index: usize,
     settled: &mut Settled,
 ) -> Option<()> {
-    let missing = host.market_tab(index).and_then(|tab| tab.unlisted());
+    let missing = host.open_tab(index).and_then(|tab| tab.unlisted());
     let roll = missing
         .as_deref()
         .and_then(|missing| unlisted_roll(host, index, missing));

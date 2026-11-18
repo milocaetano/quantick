@@ -6,6 +6,8 @@ use quantick_drawings::{
 };
 use quantick_workspace::layout_document::LayoutId;
 
+use crate::test_support::TabsWindow;
+
 const LEVELS: LayoutId = LayoutId(1);
 const FLOWS: LayoutId = LayoutId(2);
 
@@ -125,5 +127,54 @@ fn the_revision_follows_the_listed_rows_and_not_the_held_ones() {
         pane_revision(&pane(shown)),
         listed,
         "and so does the layout it lists for"
+    );
+}
+
+/// One tab: its panes, each with its side.
+struct Tab(Vec<(PaneSideDto, Pane)>);
+
+impl AnalysisTab for Tab {
+    fn analysis_panes(&self) -> Vec<AnalysisPaneEntry<'_>> {
+        self.0
+            .iter()
+            .map(|(side, pane)| AnalysisPaneEntry { side: *side, pane })
+            .collect()
+    }
+}
+
+/// The drawings scope walks the open tabs in screen order under their ids,
+/// each pane with its side, and publishes the magnet the window lends.
+#[test]
+fn the_drawings_scope_reads_each_open_tab_and_the_rails_magnet() {
+    let mut marks = Drawings::default();
+    level(&mut marks, 100.0);
+    let mut window = TabsWindow::new(vec![
+        (
+            4,
+            Tab(vec![
+                (PaneSideDto::Flow, pane(Drawings::default())),
+                (PaneSideDto::Time, pane(marks)),
+            ]),
+        ),
+        (9, Tab(Vec::new())),
+    ]);
+    window.magnet = true;
+
+    let snapshot = drawings_snapshot(&window);
+    assert!(snapshot.magnet);
+    let ids: Vec<u64> = snapshot.tabs.iter().map(|tab| tab.tab_id.get()).collect();
+    assert_eq!(ids, [4, 9]);
+    let panes: Vec<(PaneSideDto, u64)> = snapshot.tabs[0]
+        .panes
+        .iter()
+        .map(|pane| (pane.side, pane.drawing_count.get()))
+        .collect();
+    assert_eq!(panes, [(PaneSideDto::Flow, 0), (PaneSideDto::Time, 1)]);
+
+    let (magnet, keys) = revision(&window);
+    assert!(magnet);
+    assert_eq!(
+        keys.iter().map(|key| key.tab_id).collect::<Vec<_>>(),
+        [4, 9]
     );
 }

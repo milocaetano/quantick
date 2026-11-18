@@ -152,7 +152,7 @@ impl ControlAccess {
         raw: RawScreenshot,
     ) {
         if self.captures.frames.accept(target, source, raw) {
-            app.alerts().show_toast(SCREENSHOT_NOTICE.to_owned());
+            app.attention().show_toast(SCREENSHOT_NOTICE.to_owned());
         }
     }
     fn request_authorized(&self, request: &UiRequest, generation: u64) -> bool {
@@ -454,7 +454,7 @@ impl CaptureService {
                 .frames
                 .accept_generation(target, target, frame.generation, raw)
             {
-                app.alerts().show_toast(SCREENSHOT_NOTICE.to_owned());
+                app.attention().show_toast(SCREENSHOT_NOTICE.to_owned());
             }
         }
     }

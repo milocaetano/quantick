@@ -10,7 +10,11 @@ use quantick_paper::pnl::PnlSettings;
 use serde_json::json;
 
 use super::*;
-use crate::test_support::{FakeAccess, FakeWindow};
+use crate::test_support::{FakeAccess, FakeWindow, NoDesk, PaperDesk};
+use crate::trade::{PaperOwner, TradeDesk};
+use quantick_paper::report::session_edit::{
+    JournalEdit, JournalEditOutcome, JournalScope, SessionEditError,
+};
 
 const CATALOG: &str = r#"
 version = 1
@@ -20,8 +24,9 @@ point_value = "0.20"
 size_step = "1"
 "#;
 
+/// A window whose active tab holds `desk`, and how often it persisted.
 struct FakeDesk {
-    account: Option<PaperAccount>,
+    desk: Option<PaperDesk>,
     persisted: usize,
 }
 
@@ -34,18 +39,33 @@ impl FakeDesk {
             chosen: None,
         });
         Self {
-            account: Some(account),
+            desk: Some(PaperDesk::new(account)),
             persisted: 0,
         }
     }
 }
 
-impl PnlDisplayPort for FakeDesk {
-    fn active_account(&mut self) -> Option<&mut PaperAccount> {
-        self.account.as_mut()
+impl PaperOwner for FakeDesk {
+    fn active_desk(&self) -> Option<&dyn TradeDesk> {
+        self.desk.as_ref().map(|desk| desk as &dyn TradeDesk)
     }
-    fn persist_pnl_display(&mut self) {
+    fn active_desk_mut(&mut self) -> Option<&mut dyn TradeDesk> {
+        self.desk.as_mut().map(|desk| desk as &mut dyn TradeDesk)
+    }
+    /// The P&L mode is a risk setting: the ticket persists it with the
+    /// risk per trade, and so must the call.
+    fn persist(&mut self, change: SharedChange) {
+        assert_eq!(change, SharedChange::RiskSettings);
         self.persisted += 1;
+    }
+    fn journal_scope(&self) -> JournalScope {
+        NoDesk.journal_scope()
+    }
+    fn journal_timezone(&self) -> quantick_civil::TzOffset {
+        NoDesk.journal_timezone()
+    }
+    fn edit_journal(&mut self, edit: &JournalEdit) -> Result<JournalEditOutcome, SessionEditError> {
+        NoDesk.edit_journal(edit)
     }
 }
 
@@ -89,7 +109,7 @@ fn a_set_reaches_the_account_persists_once_and_is_journaled() {
     assert_eq!(desk.persisted, 1);
     assert_eq!(access.events.len(), 1);
     assert_eq!(
-        desk.account.as_ref().map(PaperAccount::pnl_primary),
+        desk.desk.as_ref().map(|desk| desk.account.pnl_primary()),
         Some(PnlPrimary::PointsTimesQty)
     );
 }
@@ -126,7 +146,7 @@ fn an_unknown_mode_and_a_missing_chart_are_refused() {
     );
     assert_eq!(desk.persisted, 0);
     let mut empty = FakeDesk {
-        account: None,
+        desk: None,
         persisted: 0,
     };
     assert!(call(&mut empty, &mut FakeAccess::with_budget(0), json!({})).is_err());
@@ -149,7 +169,7 @@ fn a_repeated_set_is_idempotent() {
     assert_eq!(desk.persisted, 1, "the repeat saves nothing");
     assert_eq!(access.events.len(), 1, "the repeat journals nothing");
     assert_eq!(
-        desk.account.as_ref().map(PaperAccount::pnl_primary),
+        desk.desk.as_ref().map(|desk| desk.account.pnl_primary()),
         Some(PnlPrimary::PointsPerContract)
     );
 }

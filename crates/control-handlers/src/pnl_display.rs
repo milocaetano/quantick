@@ -25,36 +25,34 @@ use serde_json::{Value, json};
 
 use crate::dock::ActionDock;
 use crate::notify::NotifyAccess;
-
-/// The active chart's paper account, and the host's fan-out.
-pub trait PnlDisplayPort {
-    /// The account of the chart the trader is looking at; `None` with no
-    /// chart open.
-    fn active_account(&mut self) -> Option<&mut PaperAccount>;
-    /// Persist the active account's settings and fan them out to every tab.
-    fn persist_pnl_display(&mut self);
-}
+use crate::trade::PaperHost;
+use quantick_session::paper::SharedChange;
 
 /// Dock the capability. A display preference belongs to no tape, so a
 /// replay's control trace never re-runs it.
 pub fn register<D, H, A>(registry: &mut D) -> Result<(), RegistryError>
 where
     D: ActionDock<H, A>,
-    H: PnlDisplayPort + ?Sized,
+    H: PaperHost + ?Sized,
     A: NotifyAccess,
 {
     registry.register_outside_replay(descriptor(), pnl_display)
 }
 
-fn pnl_display<H: PnlDisplayPort + ?Sized, A: NotifyAccess>(
-    app: &mut H,
+fn pnl_display<H: PaperHost + ?Sized, A: NotifyAccess>(
+    host: &mut H,
     access: &mut A,
     actor: &ActorContext,
     value: &Value,
 ) -> Result<Value, ControlError> {
+    let mut owner = host.paper();
+    let paper = &mut *owner;
     let input: SetPnlDisplayInput =
         serde_json::from_value(value.clone()).map_err(|error| invalid_input(&error))?;
-    let account = app.active_account().ok_or_else(no_chart_open)?;
+    let account = paper
+        .active_desk_mut()
+        .ok_or_else(no_chart_open)?
+        .account_mut();
     let Some(mode) = input.primary else {
         return to_value(&describe(account, false));
     };
@@ -64,8 +62,11 @@ fn pnl_display<H: PnlDisplayPort + ?Sized, A: NotifyAccess>(
         return to_value(&describe(account, false));
     }
     account.set_pnl_primary(primary);
-    app.persist_pnl_display();
-    let result = describe(app.active_account().ok_or_else(no_chart_open)?, true);
+    paper.persist(SharedChange::RiskSettings);
+    let result = describe(
+        paper.active_desk().ok_or_else(no_chart_open)?.account(),
+        true,
+    );
     let payload = json!({ "asked": value, "pnl_display": to_value(&result)? });
     access.record_event(NewEvent::by(
         MODULE_ID,

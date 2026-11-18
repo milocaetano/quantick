@@ -5,7 +5,9 @@
 //! about to be looked up under. The next contract is only ever the config's.
 use crate::{
     dock::ActionDock,
-    market_tab::{MarketTabHost, feed_offers, market, next_contract, switch_market},
+    market_tab::{
+        MarketTab as _, MarketTabHost, feed_offers, market, next_contract, switch_market,
+    },
     notify::NotifyAccess,
     tabs::{tab_closed, tab_index},
 };
@@ -132,7 +134,7 @@ fn resolve<H: MarketTabHost + ?Sized>(
     if !feed_offers(host.config(), feed_id, Some(&next)) {
         return Err(RollRefusal::TargetNotOffered);
     }
-    if host.market_tab(index).is_some_and(|tab| tab.paper_open()) {
+    if host.open_tab(index).is_some_and(|tab| tab.paper_open()) {
         return Err(RollRefusal::PaperNotFlat);
     }
     if host.drawing_gesture_on(feed_id, symbol, &next) {
@@ -220,7 +222,7 @@ fn roll<H: MarketTabHost + ?Sized, A: NotifyAccess>(
     // under the caller's name: the attach explains it, and the journal says
     // what asked for it.
     if host
-        .market_tab(index)
+        .open_tab(index)
         .and_then(|tab| tab.unlisted())
         .as_deref()
         == Some(current.symbol.as_str())

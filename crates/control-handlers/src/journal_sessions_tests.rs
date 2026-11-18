@@ -7,15 +7,19 @@ use std::path::PathBuf;
 use serde_json::json;
 
 use super::*;
-use crate::test_support::{FakeAccess, FakeWindow};
+use crate::test_support::{FakeAccess, FakeWindow, PaperDesk};
+use crate::trade::{PaperOwner, TradeDesk};
+use quantick_civil::TzOffset;
+use quantick_paper::report::session_edit::JournalScope;
+use quantick_session::paper::SharedChange;
 
 /// A window whose journal folder does not exist and whose edits answer what
 /// the test set.
 struct FakeJournal {
     edits: Vec<JournalEdit>,
     answer: Result<JournalEditOutcome, SessionEditError>,
-    /// The active tab's ledger; `None` when no tab holds one.
-    view: Option<LedgerView>,
+    /// The active tab's desk and its ledger; `None` when no tab holds one.
+    desk: Option<PaperDesk>,
 }
 
 impl FakeJournal {
@@ -23,29 +27,35 @@ impl FakeJournal {
         Self {
             edits: Vec::new(),
             answer,
-            view: Some(LedgerView::default()),
+            desk: Some(PaperDesk::new(
+                quantick_paper::PaperAccount::with_trades_dir(PathBuf::from(
+                    "no-such-trades-folder",
+                )),
+            )),
         }
     }
 }
 
-impl JournalSessionsPort for FakeJournal {
-    fn journal_scope(&mut self) -> JournalScope {
+impl PaperOwner for FakeJournal {
+    fn active_desk(&self) -> Option<&dyn TradeDesk> {
+        self.desk.as_ref().map(|desk| desk as &dyn TradeDesk)
+    }
+    fn active_desk_mut(&mut self) -> Option<&mut dyn TradeDesk> {
+        self.desk.as_mut().map(|desk| desk as &mut dyn TradeDesk)
+    }
+    fn persist(&mut self, _change: SharedChange) {}
+    fn journal_scope(&self) -> JournalScope {
         JournalScope {
             dir: PathBuf::from("no-such-trades-folder"),
             live: Vec::new(),
         }
     }
-    fn journal_timezone(&mut self) -> TzOffset {
+    fn journal_timezone(&self) -> TzOffset {
         TzOffset::new(0)
     }
     fn edit_journal(&mut self, edit: &JournalEdit) -> Result<JournalEditOutcome, SessionEditError> {
         self.edits.push(edit.clone());
         self.answer.clone()
-    }
-    fn ledger_view(&mut self, change: &LedgerViewChange) -> Option<(LedgerView, bool)> {
-        let view = self.view.as_mut()?;
-        let moved = view.apply(change);
-        Some((view.clone(), moved))
     }
 }
 
@@ -331,7 +341,7 @@ fn the_ledger_view_is_set_and_read_by_name() {
         "clear drops the filter, not the folds"
     );
 
-    window.view = None;
+    window.desk = None;
     let error = call(&mut window, &mut events, json!({ "action": "view" })).expect_err("none");
     assert_eq!(error.context.details.expect("details")["code"], "no_ledger");
     let error = call(
