@@ -212,13 +212,7 @@ impl<A: BorrowMut<PaperAccount>> TabPaper<A> {
 
     /// Feed one live print through the simulator and act on what it did.
     pub fn on_trade(&mut self, trade: &Trade) {
-        // A print reaching the desk is the tape arriving: a pause for its age
-        // is over now, not at the next judgement, so a strategy this print
-        // fires is not refused on the silence it just ended.
-        let stale = quantick_sources::sync::SyncReading::TapeAge;
-        if self.gate.as_ref().is_some_and(|gate| gate.reading == stale) {
-            self.gate = None;
-        }
+        self.tape_arrived();
         self.core_mut().on_trade(trade);
     }
 
@@ -400,11 +394,8 @@ impl<A: BorrowMut<PaperAccount>> TabPaper<A> {
 /// account's own.
 impl<A: BorrowMut<PaperAccount>> quantick_strategy::runner::StrategyPort for TabPaper<A> {
     fn apply(&mut self, command: Command) -> Vec<VenueEvent> {
-        if self.strategy_entry_paused(&command) {
-            let paused = quantick_sources::sync::STRATEGY_ENTRY_PAUSED;
-            return vec![VenueEvent::Rejected(quantick_sim::RejectReason::Blocked(
-                paused,
-            ))];
+        if let Some(refused) = self.strategy_refusal(&command) {
+            return refused;
         }
         self.core_mut().apply_strategy_command(command)
     }

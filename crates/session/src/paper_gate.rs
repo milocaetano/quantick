@@ -16,8 +16,8 @@ use std::borrow::BorrowMut;
 use quantick_engine::Side;
 use quantick_paper::PaperAccount;
 use quantick_paper::desk::ChartCommand;
-use quantick_sim::{Command, OrderId};
-use quantick_sources::sync::Desync;
+use quantick_sim::{Command, OrderId, RejectReason, VenueEvent};
+use quantick_sources::sync::{Desync, STRATEGY_ENTRY_PAUSED, SyncReading};
 use rust_decimal::Decimal;
 
 use super::{TabPaper, TradeCommand};
@@ -78,10 +78,27 @@ impl<A: BorrowMut<PaperAccount>> TabPaper<A> {
         self.grows(side, self.ticket_quantity(), None) && self.refuse()
     }
 
+    /// A print reaching the desk is the tape arriving: a pause for its age
+    /// is over now, not at the next judgement, so a strategy this print
+    /// fires is not refused on the silence it just ended.
+    pub(super) fn tape_arrived(&mut self) {
+        if (self.gate.as_ref()).is_some_and(|gate| gate.reading == SyncReading::TapeAge) {
+            self.gate = None;
+        }
+    }
+
+    /// The venue's answer to an armed strategy's command that waits out a
+    /// pause, or `None` when it may go.
+    pub(super) fn strategy_refusal(&self, command: &Command) -> Option<Vec<VenueEvent>> {
+        let blocked = RejectReason::Blocked(STRATEGY_ENTRY_PAUSED);
+        self.strategy_entry_paused(command)
+            .then(|| vec![VenueEvent::Rejected(blocked)])
+    }
+
     /// Whether an armed strategy's command waits out a pause: an entry that
     /// would grow exposure, or a reprice of one. No toast — a strategy acts
     /// on every print, and its refusal is the venue's answer.
-    pub(super) fn strategy_entry_paused(&self, command: &Command) -> bool {
+    fn strategy_entry_paused(&self, command: &Command) -> bool {
         if self.gate.is_none() {
             return false;
         }
