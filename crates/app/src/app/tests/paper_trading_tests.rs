@@ -1345,9 +1345,9 @@ fn clicking_the_chart_tag_close_cancels_the_order() {
         .candles_right
         .unwrap_or(chart.right());
     let y = price_y(&app, PaneSide::Flow, 100.5);
-    let close = crate::paper_trading::close_button_rect(
+    let close = crate::paper_trading::paint_ctx::close_button_rect(
         tag_right,
-        crate::paper_trading::clamp_tag_center(y, chart.top(), chart.bottom()),
+        crate::paper_trading::paint_ctx::clamp_tag_center(y, chart.top(), chart.bottom()),
     );
     drag_chart(&mut app, &ctx, close.center(), close.center());
     assert!(
@@ -1408,9 +1408,9 @@ fn an_armed_tool_does_not_also_cancel_the_order_under_the_pointer() {
         .candles_right
         .unwrap_or(chart.right());
     let y = price_y(&app, PaneSide::Flow, 100.5);
-    let close = crate::paper_trading::close_button_rect(
+    let close = crate::paper_trading::paint_ctx::close_button_rect(
         tag_right,
-        crate::paper_trading::clamp_tag_center(y, chart.top(), chart.bottom()),
+        crate::paper_trading::paint_ctx::clamp_tag_center(y, chart.top(), chart.bottom()),
     );
     drag_chart(&mut app, &ctx, close.center(), close.center());
 
@@ -1466,9 +1466,9 @@ fn a_right_button_with_no_quick_range_leaves_the_close_live() {
         .candles_right
         .unwrap_or(chart.right());
     let y = price_y(&app, PaneSide::Flow, 100.5);
-    let close = crate::paper_trading::close_button_rect(
+    let close = crate::paper_trading::paint_ctx::close_button_rect(
         tag_right,
-        crate::paper_trading::clamp_tag_center(y, chart.top(), chart.bottom()),
+        crate::paper_trading::paint_ctx::clamp_tag_center(y, chart.top(), chart.bottom()),
     )
     .center();
     let secondary = |pressed| egui::Event::PointerButton {

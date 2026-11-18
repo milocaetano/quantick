@@ -135,6 +135,7 @@ mod orderflow_tests;
 mod pane_focus_click_tests;
 mod pane_menu_tests;
 mod panes_layout_tests;
+mod paper_host_tests;
 mod paper_trading_tests;
 mod profile_grid_tests;
 mod profile_pointer_tests;
