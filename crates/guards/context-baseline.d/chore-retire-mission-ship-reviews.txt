@@ -1,0 +1,6 @@
+# Written by `cargo run -p quantick-guards -- --tighten`: these shrank.
+# The mission, ship, arch-review, delivery-review and campaign skills were
+# retired: docs/campaign/ left the tracked tree for docs/history/campaign/,
+# docs/workflow/delivery-cases.md and validation.md moved to history, and
+# docs/workflow/delivery.md lost its campaign sections.
+!budget -51621

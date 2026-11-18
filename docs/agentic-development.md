@@ -39,31 +39,24 @@ The adapter location and `$name` spelling follow the
 
 | Skill | What it owns |
 | --- | --- |
-| `mission` | The orchestrator. Captures the session objective in English, classifies it, and derives the acceptance criteria — including which of the gates below are part of *done* for this kind of work, so the maintainer never has to list them. It also takes a **tier** — `small` (the default), `medium`, `high`, `max` — which scales all of that to the size of the change, down to how hard the bug pass looks and whether the conformance review runs at all. One session, one mission. |
-| `new-extension` | The build-time twin of the review question below. `arch-review` asks after the fact whether a feature could have been a new file plus one registration line; this skill designs it that way from the start. |
+| `new-extension` | The build-time form of `CLAUDE.md`'s docking rule: it designs a feature as a new file plus one registration line from the start, instead of asking afterwards whether it could have been. |
 | `quantick-score` | The project baseline. It assigns evidence-based scores to sustainable engineering, scalability, agentic development and AI-operated product behavior; unlike `ai-review`, it measures a repository revision rather than a diff. |
 | `outside-score` | The dissenting baseline. It scores architecture, software engineering and agent change cost the way an outside architect would, from measured rows (`tools/outside_score/measure.py`) and without reading `quantick-score` first, then reports where the two rubrics disagree. |
-| `arch-review` | The pre-PR review. Step 0 runs a correctness pass; then it grades *shape* — does the change dock like a module, does it declare its performance impact, do its tests stay out of the shipped binary, is it drivable without a mouse, does it hide anything behind a magic number, is it English throughout. |
-| `delivery-review` | The other pre-PR review, and the one that asks a different question: not *is this well built* but **is this what was asked for**. It grades every ask in the mission's request ledger and every acceptance criterion — DELIVERED, PARTIAL, MISSING or UNPROVEN — from a fresh-context subagent that never sees the implementing session's account of its own work. |
 | `trader-ux-review` | The harness's screenshots, judged by trader personas against order-flow heuristics: does this cost attention, clicks or trust at a moment the market is moving? |
 | `ui-harness` | The contract that makes visual work possible — every user-visible surface reachable from a fresh launch by environment hooks alone, zero clicks — and the autonomous QA pass built on it: it drives every affected surface, **asks the live control plane what the application believes is on screen**, captures a state matrix and reads the images against a defect checklist. It absorbed `visual-qa`. |
-| `issue` | Turns an idea into a well-formed issue with scope, acceptance criteria, labels and board placement — or redirects it to Discussions when there is no concrete deliverable yet. `/issue start <N>` picks one up: reads it, names the branch from its labels, moves the board card, and hands the worktree to `mission`. It absorbed `new-task`. |
-| `ship` | The delivery: the four-check loop, the commit, the push, the PR with `Closes #N`, and CI watched until green. |
-| `implement` | The default path today. It writes a plan of about 200 tokens and a `/goal` line, and does nothing else. The goal then builds, takes one independent review at a level set by risk, gets a test agent for anything user-visible, and delivers a ready PR with green CI. It replaces `mission` and the three pre-PR reviews for ordinary work; see [The lean path](#the-lean-path). |
+| `issue` | Turns an idea into a well-formed issue with scope, acceptance criteria, labels and board placement — or redirects it to Discussions when there is no concrete deliverable yet. `/issue start <N>` picks one up: reads it, names the branch from its labels, moves the board card, and hands the work to `/implement`. It absorbed `new-task`. |
+| `implement` | The default path today. It writes a plan of about 200 tokens and a `/goal` line, and does nothing else. The goal then builds, takes one independent review at a level set by risk, gets a test agent for anything user-visible, and delivers a ready PR with green CI. It replaced `mission`, `ship` and the pre-PR reviews; see [The lean path](#the-lean-path) and [Retired skills](#retired-skills-2026-11-17). |
 | `feature` | `implement` for work too large for one PR. It splits the work into the fewest child goals, cutting only at a crate or port boundary, fixes their shared design up front, and judges the combined result as one PR. |
 
 `ui-harness` deserves the emphasis. It is the same rule as the product's
 fourth design principle — *operable without a hand* — applied to the
-development loop. A campaign is the exception to missions
-([`docs/campaign/workflow.md`](campaign/workflow.md) states when) because every
-intermediate integration branch postpones the review that counts: the one
-against `main`. The control plane exists so an agent can operate the
+development loop. The control plane exists so an agent can operate the
 application; the harness hooks exist so an agent can *test* it. A capability
 reachable only by mouse fails both.
 
 ## The gates
 
-Four things stand between a change and `main`, and none of them is the
+Three things stand between a change and `main`, and none of them is the
 agent's own judgement that it is finished.
 
 **The four-check verification loop.** `cargo fmt --all -- --check`, then
@@ -95,40 +88,25 @@ read the log closely enough to notice the version had moved. Both changes buy
 the same property: a red means the change is wrong, so an agent can trust the
 signal instead of first proving the repository innocent.
 
-**`arch-review` over `git diff origin/main...HEAD`.** Every Blocker and
-Should-fix finding is resolved before the PR opens. A finding deliberately
-deferred is named in the PR body, so the deferral is a decision on the record
-rather than an omission. The range names the remote deliberately: `git fetch`
-moves `origin/main` and leaves the local `main` ref behind, so `main...HEAD` in
-a worktree shows other branches' merged work as though this branch wrote it.
+**One independent code-review over `git diff origin/<target>...HEAD`.** It
+runs at a level the change's risk sets, its valid findings are fixed before the
+PR opens, and a deferred finding is named in the PR body, so the deferral is a
+decision on the record rather than an omission. The range names the remote
+deliberately: `git fetch` moves `origin/main` and leaves the local `main` ref
+behind, so `main...HEAD` in a worktree shows other branches' merged work as
+though this branch wrote it.
 
-**`delivery-review` over the branch as shipped.** `arch-review` takes the
-change as given and grades how well it is made; it never opens the request and
-checks that all of it arrived. That is this gate's only question. It reads the
-mission's goal file — the request quoted verbatim, the ledger of asks derived
-from it, the acceptance criteria — and grades each one, from a subagent that
-receives artifacts rather than the implementing session's story. It passes only
-when nothing is MISSING, PARTIAL or UNPROVEN, and a gap ships only as a
-deferral the trader approved.
-
-This is the one gate a mission can buy its way out of, and only at the `small`
-tier — the one-line fix, where a ledger has nothing to grade and the review
-costs more than the change. The exemption is bounded rather than trusted: it
-lapses the moment the branch grows past a ceiling measured against
-`origin/main`, so the word has to be true of the branch that ships and not
-merely of the one that was planned. The hook never mentions the exemption to a
-branch that did not declare it, which is what keeps the gate from teaching its
-own way around itself.
-
-**The review gates the work actually earns.** `mission` decides which apply:
-a change a trader touches mid-session gets `trader-ux-review`; anything
-visual gets `ui-harness`'s QA pass; a docs-only change gets neither, but never skips the
-English check or the correctness pass. The tier decides how hard the ones that
-do apply look. Local checks now follow the changed inputs under
-[the delivery contract](workflow/delivery.md); full final-head CI and the bug
-pass remain. A cheap review is a real one done briefly, not an absent one.
+**The checks the work actually earns.** `implement`'s rules decide which apply:
+a change a trader touches mid-session gets `trader-ux-review`; anything user-
+visible or agent-facing gets a test agent through `ui-harness` or the control
+plane; a docs-only change gets neither, but never skips the English check or
+the review. Local checks follow the changed inputs under
+[the delivery contract](workflow/delivery.md); full final-head CI remains.
 
 ## Two phases, and why the rounds had to go
+
+This section is history: it describes the review chain of the retired
+`mission` skill, and the rules it produced that `ai-review` still follows.
 
 The chain used to run one loop: review, fix, review again, and a budget of
 three rounds over the whole thing. It did not hold. PR #306 shipped after 28
@@ -203,15 +181,41 @@ them were spent after the PR had opened.
   go to a headless crate outside `crates/app`. The app keeps a field, one-line
   calls and painting. The guards above still decide what merges.
 
-The walls did not move: worktrees, review receipts, the guards and green CI
+The walls did not move: worktrees, the review marker, the guards and green CI
 are still enforced. What went away is the review a change was not risky
 enough to need.
 
+## Retired skills (2026-11-17)
+
+`mission`, `ship`, `arch-review`, `delivery-review` and `campaign` were
+deleted, with the completion verifier (`mission_ship_gate.sh`) and the
+durable-report producer (`review_report.sh`) that only they used.
+
+- **`implement` had already replaced them.** Since #592 ordinary work landed
+  through one plan, one risk-sized code-review, a test agent and green CI, and
+  the trader stopped invoking the old chain. `pr-gate` had stopped asking for
+  the arch, delivery and AI review markers before this change; what remained
+  was a final verifier and a report producer with no caller on the default
+  path.
+- **Unused process still costs.** The four skills were about 70 KB of prose
+  and the scripts and their tests about 1,100 lines that every agent reading
+  `.claude/` had to reason around, and that each hook change had to keep green.
+- **`campaign` went with them.** It ran every child through `mission` and
+  `ship` and the two reviews' markers. `/feature` covers work too large for one
+  PR, under the same `mission-base` record and merge grant.
+- **What they enforced lives on where it decides outcomes.** Docking, *operable
+  without a hand* and the English rule are in `CLAUDE.md`; size, context,
+  language and evidence are guards; the code-review and full CI are the gate.
+  The file names `mission-tier` and `mission-base` stay, read by
+  `implement` and `feature`.
+
+Their records stay as history in [`history/campaign/`](history/campaign/) and in
+git.
+
 ## The hooks that make the gates real
 
-Three of those rules — work in a worktree, run arch-review before the PR, and
-grade the branch against what was asked — were enforceable only by an agent
-remembering them. They are now walls the
+Two of those rules — work in a worktree, and get a code-review before the PR
+— were enforceable only by an agent remembering them. They are now walls the
 harness puts up, in `.claude/hooks/guardrails.sh`.
 
 [`.claude/hooks/README.md`](../.claude/hooks/README.md) owns the details — the
@@ -220,11 +224,9 @@ the overrides and why they fail open — and is not repeated here. What is
 worth pulling out for an outside reader is the one
 design decision that makes the gate honest rather than decorative:
 
-> Each private projection holds **a hash of the change the review covered**,
-> not a timestamp or boolean. Its skill's shared producer first publishes a
-> durable PR report bound to branch, head, base tip and that key. Readiness
-> requires both; a hand-written marker alone is detectable. Architecture,
-> delivery and AI remain three independent reviews.
+> `code-review-ok` holds **a hash of the change the review covered**, not a
+> timestamp or boolean, and a hook writes it from the reviewer's verdict line,
+> never the implementing agent.
 
 Keying on the change rather than the commit is the second version of that
 decision, and it was bought with real pain: the branch that introduced tiers
@@ -235,18 +237,15 @@ lands a branch on top of upstream edits to the very files it changes now stales
 the marker, which is exactly when a second look is worth most.
 
 A marker that only recorded "a review happened" once passed while new commits
-went unreviewed. A durable receipt closes the observed manual-marker gap; it
-still cannot prove the review judgment was *good*. The final mission/ship
-verifier closes the other boundary: an already-ready PR that never crosses a
-gated command still has to prove reports, threads, CI and the literal mission
-completion clauses before an agent may call it done.
+went unreviewed. The key closes that gap; it still cannot prove the review
+judgment was *good*.
 
-## The mission record
+## The goal record
 
-Mission working state stays local in ignored `.claude/GOAL.md`. After delivery,
-the PR keeps the objective, criteria, decisions and validation in its concise
-`quantick-mission-summary:v1` block, with the whole goal folded beneath it.
-Raw mission files and execution evidence do not accumulate in the repository:
+A goal's plan stays outside Git (ignored `.claude/GOAL.md` or a file beside
+the worktrees). After delivery, the PR body keeps the outcome, the measured
+size and the review and CI evidence. Raw goal files and execution evidence do
+not accumulate in the repository:
 the `evidence` guard fails a tracked goal file, evidence folder or `docs/`
 dossier, because prose alone did not hold the rule.
 
@@ -255,7 +254,7 @@ dossier, because prose alone did not hold the rule.
 The agents do not merge their own work; a human reviews and merges. The gates
 catch classes of failure — drift, unreviewed commits, untested surfaces,
 mouse-only capabilities — not all failure. And the process is only as good as
-the acceptance criteria a mission writes down, which is a human judgement at
+the acceptance criteria a plan writes down, which is a human judgement at
 the start of every session.
 
 The lean path is judged on use, not yet on a controlled measurement. The
@@ -309,7 +308,7 @@ belongs here, beside the instruction it is the exception to.
 **The edit loop is not the gate.** `cargo check` appeared nowhere in this
 repository's documentation, so the four-check gate was doubling as the loop
 between edits. An agent with no name for the fast path defaults to the slow
-one, on every edit, for the length of a mission. A one-package `cargo check`
+one, on every edit, for the length of a goal. A one-package `cargo check`
 skips codegen and linking and answers on `quantick-app` in well under a
 minute, where a workspace build takes many.
 
@@ -324,7 +323,7 @@ crossed ceiling reported at the edit that caused it and one reported after the
 code is written.
 
 **The size ratchet exists because the review measures the leaf.**
-`arch-review` dimension 1 asks whether a new capability can dock as a new file
+The docking rule asks whether a new capability can dock as a new file
 plus one registration line, and recent features answered yes honestly. `app.rs`
 still grew from 108 lines to over 36,000 in the five weeks after it was
 created, monotonically, never once shrinking. Nothing asks *where the
@@ -351,21 +350,6 @@ of link for five seconds of work. A ratchet is meant to fire while you work,
 and one that expensive to consult gets consulted late, which is when its
 finding costs most to act on.
 
-**The review budget covers the chain, not each skill.** The old arrangement had
-no total at all: `arch-review`'s step 0 was bounded at two, `delivery-review`
-carried a separate three, the nine-dimension shape pass had none, and since
-answering any of them is a commit — which stales review evidence and reruns
-affected reviews — nothing summed them. Measured before it was written:
-ordinary code branches spend about one round, meta-work on the workflow itself
-averages three, and the worst branch in the last twenty spent eight.
-
-**Model routing is a standard, not a description.** A bug pass finds real
-defects partly by being a strong model, which is the exception that pays for
-routing everything else down. Stated wider than its use, a rule drifts before
-anyone notices, so the count is worth being exact about: `delivery-review`'s
-criteria pass is the only routed call site in the repository today, and the
-`haiku` tier describes no existing dispatch at all.
-
 ## Reasons moved out of the always-loaded files
 
 The instruction diet that halved `CLAUDE.md`, `AGENTS.md` and the skills kept
@@ -380,9 +364,6 @@ plane exists because of *operable without a hand*; the `trader` profile exists
 in the contract so the day fills stop being simulated, nothing about authority
 has to be re-decided in a hurry. The map names `replay::test_support` because a
 published module the map does not mention cannot be told from a leak.
-
-**Why human-friendliness is last in `arch-review`'s order.** It must yield in a
-collision, which it almost never has to: naming and comments compile away.
 
 **Why reviews diff against `origin/main`.** On the branch that added the rule,
 `main...HEAD` credited 26 files from someone else's PR to the branch under
@@ -407,53 +388,6 @@ region, which is why the motion check insists it keeps moving.
 
 **Why `visual-qa` and `new-task` were folded in.** Both overlapped a sibling's
 trigger: `visual-qa` launched and captured the app exactly as `ui-harness`
-taught, and `new-task` duplicated the worktree recipe `CLAUDE.md` and `mission`
-own while sharing the board with `issue`. One skill per trigger means one place
+taught, and `new-task` duplicated the worktree recipe `CLAUDE.md` owns while
+sharing the board with `issue`. One skill per trigger means one place
 a rule can drift.
-
-### Why the mission skill reads the way it does
-
-These reasons were the `mission` skill's own `references/why.md` until the
-change that made the PR the context needed the tracked bytes they were using.
-
-Paraphrasing a request can omit outcomes before implementation begins. Retained
-source spans and a reconciled map make that loss visible. Independent preflight
-for complex work catches it before a late archive repair invalidates reviews.
-Equivalent clauses may share an outcome; operational instructions remain in
-applicable gates and closing steps instead of multiplying product asks.
-
-The tier controls review breadth, not permission or correctness. A small task
-still has a source, evidence and applicable verification. Proportional local
-validation avoids recompiling unchanged runtime inputs for a documentary fix;
-full final-head CI and exact-diff review gates remain integration proof.
-
-Closing steps are separate because a delivery review cannot prove its own
-future verdict or a merge it must unblock. They are still required before final
-delivery. Campaign missions return to their coordinator so this handoff does
-not become another prompt the trader must write.
-
-- **Why `/goal` and this skill are separate.** Claude's built-in `/goal`
-  repeats turns until its evaluator accepts a condition, with no repository
-  knowledge; this skill supplies the condition, so the two never compete.
-- **Why a tier never goes down.** Lowering one mid-mission cannot be told apart
-  from dodging a review that was about to fail.
-- **Why the tier table is a narrower reading, never a different one.** `small`
-  buys less ceremony *on the record*, with a gate that knows it did; a tier
-  lowers what is asked, never what is recorded.
-- **Saying the objective back in the trader's language** is welcome; only the
-  English sentence is written down.
-- **Why `GOAL.md` must be on the branch.** `delivery-review` looks for the
-  checklist in the task worktree, so a goal written into the main checkout
-  reads as absent and the review returns NOT GRADEABLE.
-
-**Why phase two dispatches instead of continuing.** Across this project's five
-largest sessions, 96-99% of the billed tokens fell after `gh pr create`, and
-the context carrying them had grown to 300-550k. Nothing in that tail was
-reading the conversation: every review reads the PR, the branch and `GOAL.md`,
-all of which are durable without it. So phase two names its inputs — the PR
-number, the worktree, the goal path, the tier — and a fresh agent per review,
-per CI watch and per repair round pays for those inputs alone. The one-line
-answer is the load-bearing half: a verdict the main thread can act on without
-opening the report keeps the dispatcher's context flat across a whole review
-round, and wanting more than one line is the signal that a rule went missing
-from this skill rather than a reason to read the artifact.

@@ -1,12 +1,12 @@
 ---
 name: new-extension
-description: Recipe for adding a new capability to quantick as an additive package — a new feed, bar type, indicator, chart layer, panel or crate that docks via a port instead of surgery on existing code. Use when a goal adds a capability, when scaffolding a new module, or when deciding where a new feature should live. Turns arch-review's docking test from a review gate into a build recipe.
+description: Recipe for adding a new capability to quantick as an additive package — a new feed, bar type, indicator, chart layer, panel or crate that docks via a port instead of surgery on existing code. Use when a goal adds a capability, when scaffolding a new module, or when deciding where a new feature should live. Turns CLAUDE.md's docking rule into a build recipe.
 ---
 
 # New extension — ship a package, not a patch
 
-Design so `arch-review`'s docking question — a new file plus one registration
-line? — answers itself.
+Design so `CLAUDE.md`'s docking rule — a new file plus one registration
+line — holds by construction.
 
 ## 1. Pick the docking port
 
@@ -38,8 +38,8 @@ app types; `QuantickApp` only builds.
 reviewable slice, then dock. Never inline now and abstract later. Name the
 second concrete implementation; if you cannot, the abstraction is speculative —
 keep the feature local and small. `ChartLayer` and `DockTab` are closed enums:
-extend them only where they already apply, and read `arch-review` dimension 9
-before adding a second variant of anything new.
+extend them only where they already apply, and justify a second variant of
+anything new in the PR.
 
 ## 2. Obey the frame
 
@@ -80,8 +80,8 @@ never panics.
 - Engine-adjacent work is test-first, golden-tested.
 - A visible surface registers its `QUANTICK_*` hook per `ui-harness` in the
   same commit and passes its QA pass and `trader-ux-review` before the PR.
-- Whatever a trader can *do* meets `arch-review`'s *The second operator* (act,
-  read, discover) — read it there, not from a copy.
+- Whatever a trader can *do* meets `CLAUDE.md`'s *Operable without a hand*
+  (act, read, discover) — read it there, not from a copy.
 
 ## 6. Done
 
@@ -89,4 +89,4 @@ Port named · registration the only edit to existing behaviour · defaults
 preserve today · capabilities not identities · rate class declared and budget
 proven · fake second implementation tested · golden test if determinism is
 touchable · hook if visible · drivable without a mouse · four checks green ·
-`arch-review` clean.
+code-review clean.

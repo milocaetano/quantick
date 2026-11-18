@@ -1,6 +1,6 @@
 //! Ratchet guard for the size of the trunk.
 //!
-//! `arch-review` dimension 1 asks whether a new capability can dock as a new
+//! `CLAUDE.md`'s docking rule asks whether a new capability can dock as a new
 //! file plus one registration line, and recent features answered yes
 //! honestly — `pointer_compass.rs` really is a new file. `app.rs` still grew
 //! from 108 lines to over 36,000 in the five weeks after it was created,

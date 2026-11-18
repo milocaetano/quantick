@@ -1,3 +1,7 @@
+> **Retired 2026-11-17.** The `campaign`, `mission`, `ship`, `arch-review` and
+> `delivery-review` skills were retired; this file is kept as history. Integration
+> work uses `/feature`; single changes use `/implement`.
+
 # Campaign integration branches
 
 Use this mode by default for campaigns with multiple implementation PRs,
@@ -131,7 +135,7 @@ printf '%s\n' "$KEY" > "$GIT_DIR/delivery-review-ok"
 
 AI-review completion is separately required at readiness and merge for every
 tier, even with zero open findings. The canonical
-[AI-review recording procedure](../../.claude/skills/ai-review/SKILL.md#record-completion)
+[AI-review recording procedure](../../../.claude/skills/ai-review/SKILL.md)
 owns the durable PR report and the private branch-bound `ai-review-complete`
 projection. It uses this same shared key; it does not recompute a different
 campaign hash. Changed task branch, diff, campaign ref or base tip invalidates

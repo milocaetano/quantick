@@ -18,15 +18,14 @@ Record applicable workflow/authority obligations once as `G` gates or `C`
 closing steps, with their authoritative source and evidence destination. Do not
 turn each repeated tool instruction, handoff or review reminder into a product
 requirement. An explicitly requested workflow change is itself a product
-outcome for that mission and must have `R/A` coverage.
+outcome for that goal and must have `R/A` coverage.
 
-Before code, reconcile the source against this map. For high/max missions use
-an independent source-first completeness pass: give it the source first, then
-the proposed map. Resolve missing asks and record the reviewed map/source
-revision. This is a bounded read-only preflight, not an extra user approval.
-Lower tiers reconcile inline. Amend the map when source requirements change;
-never freeze away a real omission. Existing missions can establish this map
-from their retained sources without restarting implementation.
+Before code, reconcile the source against this map. For `high` review-level
+goals use an independent source-first completeness pass: give it the source
+first, then the proposed map. Resolve missing asks and record the reviewed
+map/source revision. This is a bounded read-only preflight, not an extra user
+approval. Lower levels reconcile inline. Amend the map when source requirements
+change; never freeze away a real omission.
 
 At delivery, derive outcomes, constraints and gates from the retained source
 before reading the map, then reconcile IDs and evidence. An omission cites its
@@ -53,7 +52,7 @@ and the full current diff. It verifies affected findings, source/map changes,
 evidence validity and new regressions; it explicitly carries forward unaffected
 conclusions and issues a new verdict for the current key. Missing prior report,
 changed base, changed scope or uncertain impact requires the applicable full
-review. A full final campaign review remains mandatory. A follow-up is a real
+review. A follow-up is a real
 review, never a blessing of old evidence over unread change.
 
 Batch compatible corrections before freezing the branch for review. A report
@@ -69,19 +68,19 @@ introduced by repairs, and newly discovered independent findings. Closing an
 old finding and discovering a different one is progress, not a failed repair.
 
 Default limits are three repair attempts per finding and three repair batches
-per mission after the initial review; an existing stricter authorized budget
+per goal after the initial review; an existing stricter authorized budget
 still applies. A batch may fix several findings. Preserve counts across new
 reviewers, commits, sessions and rebases. After two consecutive batches close
 none of the targeted findings, or a limit is exhausted with findings open,
 checkpoint that task and escalate with the concrete patch/evidence. New IDs do
-not reset the mission budget. If the last allowed batch closes everything,
+not reset the goal budget. If the last allowed batch closes everything,
 finish delivery. Scope, authority or safety decisions escalate immediately.
 Progress or exhaustion never waives a finding. Use explicit user decisions or
 standing delegation for bounded retry renewals and retrospective process
 exceptions; record the grant, decision, evidence and preserved counters instead
 of asking again. Without that authority, escalate. A delegated exception cannot
 waive current tests/reviews, product requirements or score criteria, fabricate
-history, or grant main merge. Independent campaign tasks may continue.
+history, or grant main merge.
 
 ### Durable review record
 
@@ -105,7 +104,7 @@ Ordinary discussion replies do not count as attempts. The reader rejects
 conflicting revisions, lost IDs and decreasing counters. Retry a lost write
 using the identical record; readback reconciles it without another increment.
 Store stage timestamps and the input-bound validation/reuse report as linked
-artifacts in `evidence`; campaign checkpoints link this PR record instead of
+artifacts in `evidence`; a resumed goal links this PR record instead of
 reconstructing counts from session memory. Inspect the user grant behind each
 authorization URL; delegated renewals link it. A changed URL alone grants nothing.
 
@@ -120,13 +119,13 @@ signal; ready needs `ci` and `windows` at the exact head
 | --- | --- |
 | Runtime, tests/fixtures, schemas, dependencies, runtime/build configuration, hooks, scripts, generated inputs, or uncertain impact | Applicable targeted regression checks and the full ordered fmt/clippy/build/test loop before commit. |
 | Only prose, skill instructions or instruction-budget metadata, with no executable/runtime-config/contract/test-input changes | Repository guards, diff hygiene, changed relative links and skill validation when applicable. Workflow/authority/validation changes additionally require the shared hook suite and independent behavioral exercises. |
-| Only an evidence/mission-record correction after successful code verification | Inspect the entire delta and referenced artifacts; run guards, diff hygiene and affected links/record checks. Reuse runtime evidence only under the proof below. |
+| Only an evidence/goal-record correction after successful code verification | Inspect the entire delta and referenced artifacts; run guards, diff hygiene and affected links/record checks. Reuse runtime evidence only under the proof below. |
 
 A Markdown extension alone proves nothing: a changed contract, test-used
 snippet, fixture, generated input or build-consumed document uses the first row.
 Instruction changes with operational consequences use the second row's
-behavioral proof, never the evidence-only row. Tier or line count alone never
-requires rerunning runtime checks on a verified prose delta; tier review
+behavioral proof, never the evidence-only row. Review level or line count
+alone never requires rerunning runtime checks on a verified prose delta; review
 obligations stand.
 
 For evidence reuse record: successful command outputs and their source tree,
@@ -142,36 +141,16 @@ reuse: current review keys, independent verdicts and final-head CI are still due
 
 ## Finish work before starting more
 
-Campaign coordinators first reconcile active PRs and merge authorized ones
-whose gates pass; next unblock bounded repairs and reviews; then start new
-ready implementation within the granted concurrency. Reviews/CI waiting do
-not reserve an idle implementation slot, but pending repair work does. Do not
-start new work that competes for the build host needed to finish a ready PR.
-Never bypass a gate or merge authority to reduce queue length.
+A `/feature` coordinator first reconciles active PRs and merges authorized ones
+whose gates pass; next unblocks bounded repairs and reviews; then starts new
+ready implementation within the granted concurrency. Do not start new work that
+competes for the build host needed to finish a ready PR. Never bypass a gate or
+merge authority to reduce queue length.
 
-Record stage transitions (implementation, local validation, review, repair,
-CI, ready-to-merge, integrated) with timestamps and head. Summarize queue age,
-repair batches and reasons for revalidation at milestones; separate overlapping
-durations and offline/human waits. Use the campaign state's compact operation
-journal before mutations and full checkpoints at recovery boundaries; do not
-publish a full snapshot for an unchanged status or every individual mutation.
-After integration reassess the campaign target and schedule remaining verified
-gaps. Exhausting the original backlog below target requires replanning, not a
-claim of completion. Child completion returns control to the coordinator,
-never a new user-pasted goal per mission.
-
-## Adopt changes in an existing campaign
-
-Do not apply an unmerged workflow proposal to another writer's branch. After
-the user integrates it into main, adopt it through the campaign's normal
-reviewed synchronization PR and record the source revision/checkpoint. Keep
-original requests, findings, counters and failed evidence. Reconcile existing
-escalations under the adopted rules; a raw-count false stall may resume only
-within remaining recorded authority and budgets. An exhausted budget or a real
-user decision remains blocked. Adoption does not grant a deferral or reset work.
+## Repair history honestly
 
 A missing link to an existing historical artifact is repairable traceability.
-A historical action that never happened is not: a later mission record cannot
+A historical action that never happened is not: a later goal record cannot
 prove pre-edit planning. Preserve the observed chronology, recover original
 artifacts when available, and use the recorded process-exception delegation or
 request a decision for unmet historical obligations. Never manufacture proof.

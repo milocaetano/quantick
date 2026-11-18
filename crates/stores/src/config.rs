@@ -295,7 +295,7 @@ impl PaperSettings {
 /// about every venue: a market with a real lunch break wants a longer gap
 /// before a pause reads as a close, and a trader comparing an opening range
 /// may want more of yesterday than three hours. Both are the kind of value
-/// `arch-review` puts in a config file rather than a `const`: a `const` still
+/// this repository puts in a config file rather than a `const`: a `const` still
 /// costs a rebuild, and a rebuild is the one thing the trader cannot do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(default)]

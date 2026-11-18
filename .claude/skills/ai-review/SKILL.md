@@ -3,14 +3,11 @@ name: ai-review
 description: Review a diff the way an AI engineer would - modularity, decoupling, MCP and agent readiness, agent testability and legibility, extensibility, scalability. Use when the user types /ai-review. Posts each finding to a PR as its own resolvable thread; never edits or builds.
 ---
 
-Campaign children override the main-based examples via the
-[integration contract](../../../docs/campaign/integration.md), including review keys.
-
 # AI engineer review
 
 Target: `git diff origin/main...HEAD`, or the path, branch or PR given. Read
-the code, not its description. Never edit or build; write only PR findings, the
-report and the private completion record.
+the code, not its description. Never edit or build; write only PR findings and the
+report.
 
 Answer six questions. Each gets one verdict and `file:line` evidence, PASS
 included. FAIL: the diff breaks the rule. WEAK: it holds today but the next
@@ -76,26 +73,3 @@ acceptance the trader records on it**; a WEAK whose breaking variant you cannot
 name is a PASS. When to stop follows [the delivery
 contract](../../../docs/workflow/delivery.md); an open thread id is a finding's
 durable identity.
-
-## Record completion
-
-Readiness and merge need `ai-review-complete` at every tier; a completed review
-with published findings may record it, and open threads still block. No PR:
-print the report, record nothing. Capture the clean worktree, branch, HEAD,
-base ref/tip, review key and PR identity before reviewing, and again after all
-six questions and publications; any change or unreadable value voids the
-review. Write the report, every identity field included, to `REPORT_PATH` with
-a last line exactly `AI-REVIEW: COMPLETE`, then from the clean worktree:
-
-```sh
-cd "$WT" &&
-  sh .claude/hooks/review_report.sh publish ai-review "$PR" "$REPORT_PATH"
-```
-
-The producer repeats the identity checks, reads the report back, and only
-then records `ai-review-complete` as `<branch> <shared-review-key>`; a manual,
-copied or stale record has no receipt and fails readiness. A branch/diff or
-campaign ref/tip change needs a current review; a same-branch reword keeps the
-key. Completion is separate from finding disposition: readiness and
-mission/ship completion still need `ai_review_threads.sh list` to return no
-open thread.
