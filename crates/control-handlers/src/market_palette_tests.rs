@@ -1,5 +1,12 @@
 use super::*;
+use crate::contract_roll::AutoRoll;
+use crate::market_tab::FeedSelection;
+use crate::market_tab::RecoveredFeed;
+use crate::market_tab::{LentTab, MarketTab, MarketTabHost};
 use crate::test_support::{FakeAccess, FakeWindow};
+use quantick_session::{HistoryAct, HistoryOutcome, SessionSnapshot};
+use quantick_sources::recovery::Recovery;
+use quantick_stores::config::AppConfig;
 use quantick_stores::market_list::{
     CatalogMarket, OpenMarket, SwitchChoice, Venue, VenueKind, roll_toast, switch_toast,
 };
@@ -16,11 +23,13 @@ struct Host {
     arrivals: Vec<(u64, Option<String>)>,
     catalog: Vec<(String, bool)>,
     palette: Option<(String, bool)>,
-    /// What tab 5 shows, and every switch, flow bar and paper state asked of it.
-    market: (String, String),
-    switches: Vec<(String, String)>,
+    /// Tab 5: what it shows, and every switch and paper state asked of it.
+    tab: PaletteTab,
+    /// The feed offers what the palette lists; the config rolls BTCUSDT on
+    /// to PEPEUSDT.
+    config: quantick_stores::config::AppConfig,
     flow_bars: Vec<(u64, String)>,
-    paper_open: bool,
+    default: quantick_sources::history_reach::HistoryReach,
     /// Whether the window lends its workspaces; a host without them refuses.
     lends_workspaces: bool,
 }
@@ -74,10 +83,18 @@ impl Host {
             arrivals: Vec::new(),
             catalog: Vec::new(),
             palette: None,
-            market: ("binance".to_owned(), "BTCUSDT".to_owned()),
-            switches: Vec::new(),
+            tab: PaletteTab {
+                market: ("binance".to_owned(), "BTCUSDT".to_owned()),
+                switches: Vec::new(),
+                paper_open: false,
+            },
+            config: crate::test_support::fake_config(&[(
+                "binance",
+                &["BTCUSDT", "PEPEUSDT"],
+                &[("BTCUSDT", "PEPEUSDT")],
+            )]),
             flow_bars: Vec::new(),
-            paper_open: false,
+            default: crate::test_support::FAKE_DEFAULT_REACH,
             lends_workspaces: true,
         }
     }
@@ -169,53 +186,64 @@ impl crate::workspace_book::WorkspaceBookHost for Host {
     }
 }
 
-/// The feed offers what the palette lists; the config rolls BTCUSDT on to
-/// PEPEUSDT.
-impl crate::feed_source::FeedSourcePort for Host {
-    fn feed_choices(&self) -> Vec<quantick_control_schema::feed_source::FeedSourceChoice> {
-        let symbols = self
-            .snapshot
-            .markets
-            .iter()
-            .map(|market| market.symbol.clone());
-        vec![quantick_control_schema::feed_source::FeedSourceChoice {
-            feed_id: "binance".to_owned(),
-            display_name: "Binance".to_owned(),
-            symbols: symbols.collect(),
-            contract_rolls: [("BTCUSDT".to_owned(), "PEPEUSDT".to_owned())].into(),
-        }]
-    }
-    fn feed_selection(&self, _index: usize) -> Option<crate::feed_source::FeedSelection> {
-        Some(crate::feed_source::FeedSelection {
+/// The market tab 5 shows, and every switch and paper state asked of it.
+struct PaletteTab {
+    market: (String, String),
+    switches: Vec<(String, String)>,
+    paper_open: bool,
+}
+
+impl MarketTab for PaletteTab {
+    fn market(&self) -> FeedSelection {
+        FeedSelection {
             feed_id: self.market.0.clone(),
             symbol: self.market.1.clone(),
             replay: false,
-        })
+        }
     }
-    fn select_feed(
-        &mut self,
-        index: usize,
-        feed_id: &str,
-        symbol: &str,
-    ) -> Option<crate::feed_source::FeedSelection> {
+    fn switch_market(&mut self, _config: &AppConfig, feed_id: &str, symbol: &str) {
         self.market = (feed_id.to_owned(), symbol.to_owned());
         self.switches.push(self.market.clone());
-        self.feed_selection(index)
+    }
+    fn paper_open(&self) -> bool {
+        self.paper_open
+    }
+    fn unlisted(&self) -> Option<String> {
+        None
+    }
+    fn roll_memory(&mut self) -> &mut AutoRoll {
+        unreachable!("the palette never reads the roll memory")
+    }
+    fn recover(&mut self, _config: &AppConfig, _recovery: Recovery) -> RecoveredFeed {
+        unreachable!("the palette never recovers the feed")
+    }
+    fn pages_history(&self, _config: &AppConfig) -> bool {
+        false
+    }
+    fn history(&mut self, _config: &AppConfig, _act: HistoryAct) -> HistoryOutcome {
+        unreachable!("the palette never presses History")
+    }
+    fn session(&self) -> SessionSnapshot {
+        unreachable!("the palette never presses History")
     }
 }
 
-impl crate::contract_roll::ContractRollPort for Host {
-    fn next_contract(&self, _feed_id: &str, symbol: &str) -> Option<String> {
-        (symbol == "BTCUSDT").then(|| "PEPEUSDT".to_owned())
+impl MarketTabHost for Host {
+    fn tab_count(&self) -> usize {
+        1
     }
-    fn feed_offers(&self, _feed_id: &str, symbol: &str) -> bool {
-        self.snapshot
-            .markets
-            .iter()
-            .any(|market| market.symbol == symbol)
+    fn config(&self) -> &AppConfig {
+        &self.config
     }
-    fn paper_not_flat(&self, _index: usize) -> bool {
-        self.paper_open
+    fn market_tab(&self, _index: usize) -> Option<&dyn MarketTab> {
+        Some(&self.tab)
+    }
+    fn market_tab_mut(&mut self, _index: usize) -> Option<LentTab<'_>> {
+        Some(LentTab {
+            tab: &mut self.tab,
+            config: &self.config,
+            history_default: &mut self.default,
+        })
     }
     fn drawing_gesture_on(&self, _feed_id: &str, _from: &str, _to: &str) -> bool {
         false
@@ -505,7 +533,7 @@ fn the_palette_switches_the_tab_through_the_source_switch() {
     let toast = settle(&mut host, PaletteIntent::Switch(switch_to("PEPEUSDT"))).unwrap();
     assert_eq!(toast.as_deref(), Some(switch_toast("PEPEUSDT").as_str()));
     assert_eq!(
-        host.switches,
+        host.tab.switches,
         [("binance".to_owned(), "PEPEUSDT".to_owned())]
     );
     assert!(host.flow_bars.is_empty(), "the tab keeps its bar");
@@ -538,7 +566,7 @@ fn the_palette_switches_the_tab_through_the_source_switch() {
     ] {
         assert!(settle(&mut host, PaletteIntent::Switch(refused)).is_err());
     }
-    assert_eq!(host.switches.len(), 2, "no refusal switched");
+    assert_eq!(host.tab.switches.len(), 2, "no refusal switched");
     assert!(host.catalog.is_empty());
 }
 
@@ -561,7 +589,7 @@ fn a_workspace_pick_that_would_drop_edits_is_refused_before_the_switch() {
     let reason = settle(&mut host, PaletteIntent::Switch(picked)).unwrap_err();
     let expected = quantick_control_schema::window_menu::switch_keeps_edits("Default", "Swing");
     assert_eq!(reason, expected);
-    assert!(host.switches.is_empty(), "the tab stays where it was");
+    assert!(host.tab.switches.is_empty(), "the tab stays where it was");
     assert_eq!(host.book.tab_state(5).unwrap().workspace, "Default");
     assert_eq!(host.book.tab_copy(5), Some(&edited), "the edit is kept");
 }
@@ -579,7 +607,7 @@ fn a_workspace_pick_without_workspaces_is_refused_before_the_switch() {
     };
     let reason = settle(&mut host, PaletteIntent::Switch(picked)).unwrap_err();
     assert_eq!(reason, crate::workspace_book::unavailable().message);
-    assert!(host.switches.is_empty(), "the tab stays where it was");
+    assert!(host.tab.switches.is_empty(), "the tab stays where it was");
     assert!(host.catalog.is_empty());
     assert_eq!(host.book.tab_state(5).unwrap().workspace, "Default");
 }
@@ -624,7 +652,7 @@ fn a_bar_the_new_market_refuses_is_refused_before_the_switch() {
     };
     let reason = settle(&mut host, PaletteIntent::Switch(refused)).unwrap_err();
     assert!(reason.starts_with("Bars trades:2000: "), "{reason}");
-    assert!(host.switches.is_empty(), "the tab stays where it was");
+    assert!(host.tab.switches.is_empty(), "the tab stays where it was");
     assert!(host.flow_bars.is_empty());
     assert_eq!(host.book.tab_state(5).unwrap().workspace, "Default");
 }
@@ -659,7 +687,7 @@ fn a_refused_add_and_switch_adds_nothing() {
         assert!(settle(&mut host, PaletteIntent::Switch(add)).is_err());
     }
     assert!(host.catalog.is_empty(), "nothing was added");
-    assert!(host.switches.is_empty());
+    assert!(host.tab.switches.is_empty());
 }
 
 #[test]
@@ -670,10 +698,10 @@ fn an_add_and_switch_adds_first_and_a_refused_add_switches_nothing() {
         ..switch_to(symbol)
     };
     assert!(settle(&mut host, PaletteIntent::Switch(add("NOPE"))).is_err());
-    assert!(host.switches.is_empty());
+    assert!(host.tab.switches.is_empty());
     settle(&mut host, PaletteIntent::Switch(add("PEPEUSDT"))).unwrap();
     assert_eq!(host.catalog, [("PEPEUSDT".to_owned(), true)]);
-    assert_eq!(host.switches.len(), 1);
+    assert_eq!(host.tab.switches.len(), 1);
 }
 
 /// The roll row runs the roll's own rule and act: refused with a position
@@ -685,14 +713,14 @@ fn the_palette_rolls_through_the_roll_rule() {
         tab_id: 5,
         from_symbol: "BTCUSDT".to_owned(),
     };
-    host.paper_open = true;
+    host.tab.paper_open = true;
     let refused = settle(&mut host, roll()).unwrap_err();
     assert!(refused.contains("paper position"), "{refused}");
-    assert!(host.switches.is_empty());
-    host.paper_open = false;
+    assert!(host.tab.switches.is_empty());
+    host.tab.paper_open = false;
     let toast = settle(&mut host, roll()).unwrap();
     assert_eq!(toast.as_deref(), Some(roll_toast("PEPEUSDT").as_str()));
-    assert_eq!(host.market.1, "PEPEUSDT");
+    assert_eq!(host.tab.market.1, "PEPEUSDT");
     let stale = settle(&mut host, roll()).unwrap_err();
     assert!(stale.contains("no longer shows BTCUSDT"), "{stale}");
 }

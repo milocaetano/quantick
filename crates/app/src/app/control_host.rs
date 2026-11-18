@@ -30,6 +30,7 @@ use quantick_control_handlers::drawing_magnet::RailMagnetPort;
 use quantick_control_handlers::home_tab::{HomeTab, HomeTabHost};
 use quantick_control_handlers::indicator_host::{IndicatorControlHost, IndicatorOwner};
 use quantick_control_handlers::market_palette::{MarketPaletteOwners, MarketTabs, PaletteShowing};
+use quantick_control_handlers::market_tab;
 use quantick_control_handlers::widgets::{WidgetHost, WidgetOwner};
 use quantick_control_handlers::workspace_book::{WorkspaceOwner, cell_menu::CellRow};
 use quantick_stores::symbol_catalog::SymbolCatalog;
@@ -99,15 +100,10 @@ pub(crate) trait TabsPort {
     fn tab_reads(&self) -> TabReads<'_>;
 }
 
-impl quantick_control_handlers::TabDirectory for TabReads<'_> {
-    fn active_tab_index(&self) -> usize {
-        self.tabs.active_index()
-    }
-    fn tab_position(&self, id: u64) -> Option<usize> {
-        self.tabs().position(id)
-    }
-    fn tab_id_at(&self, index: usize) -> u64 {
-        self.tabs().id_at(index)
+/// The window's tab directory, which every tab-scoped family resolves by.
+impl quantick_control_handlers::TabsHost for dyn ControlPort {
+    fn tab_list(&self) -> &dyn quantick_control_handlers::TabDirectory {
+        self.tab_reads().tabs()
     }
 }
 
@@ -365,21 +361,20 @@ impl<'a> TabsMut<'a> {
     }
 
     /// Press History on one tab: the one press the toolbar and
-    /// `feed.history.load` both make. The tab loads the target, and a press
-    /// that [`quantick_session::sets_window_default`] makes it the window's
-    /// main-click default — what `workspace.summary` reads and the saved
-    /// workspace keeps.
-    pub(crate) fn press_history(
-        self,
-        index: usize,
-        reach: history_reach::HistoryReach,
-    ) -> Option<(&'a mut Tab, quantick_feed::history_run::Press)> {
-        let tab = self.tabs.get_mut(index)?;
-        let press = tab.load_history(self.config, reach);
-        if quantick_session::sets_window_default(press) {
-            *self.default_reach = reach;
+    /// `feed.history.load` both make ([`market_tab::run_history`]).
+    pub(crate) fn press_history(self, index: usize, reach: history_reach::HistoryReach) {
+        if let Some(lent) = self.lend_tab(index) {
+            market_tab::run_history(lent, quantick_session::HistoryAct::Press(reach));
         }
-        Some((tab, press))
+    }
+
+    /// One tab beside the feed table and History default a call lends it.
+    pub(crate) fn lend_tab(self, index: usize) -> Option<market_tab::LentTab<'a>> {
+        Some(market_tab::LentTab {
+            tab: self.tabs.get_mut(index)?,
+            config: self.config,
+            history_default: self.default_reach,
+        })
     }
 
     /// Fetch one more span of older venue candles on the active tab.
@@ -402,14 +397,6 @@ impl<'a> TabsMut<'a> {
     /// The mutable twin of [`TabReads::tab_at`].
     pub(crate) fn tab_at_mut(self, index: usize) -> Option<&'a mut Tab> {
         self.tabs.get_mut(index)
-    }
-
-    /// One tab beside the configuration it reads, by position — a capability
-    /// names the tab it acts on, and respawning a feed needs the feed table
-    /// the same way a click in the corner does.
-    pub(crate) fn tab_with_config(self, index: usize) -> Option<(&'a mut Tab, &'a AppConfig)> {
-        let config = self.config;
-        self.tabs.get_mut(index).map(|tab| (tab, config))
     }
 
     /// The trading host of the tab on screen — where the `trade.*` actions
