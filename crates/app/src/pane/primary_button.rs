@@ -174,7 +174,7 @@ impl PaperArbitration<'_> {
         // band refuse a pan with no explanation at all.
         // The layer and chrome gates live inside `hover_cursor` itself, next
         // to the frame's other decisions, so a caller cannot forget them.
-        let tags = crate::paper_trading::tag_band(drawing_area, aim_area);
+        let tags = crate::paper_trading::paint_ctx::tag_band(drawing_area, aim_area);
         if chrome.paper_takes_input
             && !tool_armed
             && let Some(position) = pointer_position.filter(|position| aim_area.contains(*position))

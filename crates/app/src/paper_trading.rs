@@ -53,8 +53,6 @@ pub(crate) mod paint_ctx;
 mod strategies;
 mod ticket;
 
-pub(crate) use paint_ctx::tag_band;
-
 /// `=<rungs>` rests entry orders around the mark as soon as the tape has
 /// one, so the in-plot order tag can be photographed at all. The scripted
 /// demo's own order is 220 prints away and sits 0.4 % out — far enough to
@@ -195,7 +193,7 @@ pub struct PaperTrading {
     /// (`QUANTICK_PAPER_ORDERS`, `QUANTICK_PAPER_ORDER_BRACKET`); `None`
     /// once they rest.
     #[cfg_attr(not(any(feature = "scenario-harness", test)), allow(dead_code))]
-    pub(crate) capture_orders: Option<quantick_paper::account::CaptureOrders>,
+    capture_orders: Option<quantick_paper::account::CaptureOrders>,
     /// The tab's desk and account, and the decisions that join them
     /// (`quantick_session::paper`). The account is held with the report and
     /// the export threads beside it; everything the ticket, the dock and the

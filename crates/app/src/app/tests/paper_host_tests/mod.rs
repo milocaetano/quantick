@@ -2,8 +2,8 @@
 // how it reads the window's input. What the tab's paper decides alone - the
 // reversal, the ticket's refusal, the ruler following the symbol - is tested
 // in `quantick_session::paper_tests`; the desk's rules in `quantick_paper`.
-// They live here, not as a child of `paper_trading`, so that module carries
-// no test-only code.
+// They live here, not as a child of `paper_trading`, so `paper_trading.rs`
+// carries no test-only code.
 
 mod layout_tests;
 mod light_plate_tests;
@@ -632,15 +632,11 @@ fn a_dragged_order_keeps_its_full_statement() {
 /// there.
 #[test]
 fn the_orders_hook_rests_through_the_account_once() {
+    crate::hooks::captured::set_on_this_thread(Some(&[("QUANTICK_PAPER_ORDERS", "1")]));
     let mut paper = PaperTrading::new();
-    let one = quantick_paper::account::CaptureOrders {
-        rungs: 1,
-        bracket: false,
-    };
-    paper.capture_orders = Some(one);
+    crate::hooks::captured::set_on_this_thread(None);
     paper.on_trade(&print(1, 100_000));
-    assert!(paper.capture_orders.is_none(), "placed once, never again");
-    assert_eq!(paper.working_orders().len(), 2);
+    assert_eq!(paper.working_orders().len(), 2, "one rung, both sides");
     paper.on_trade(&print(2, 100_000));
     assert_eq!(paper.working_orders().len(), 2, "a second print adds none");
 }
@@ -1040,8 +1036,9 @@ fn default_cmd_trading_does_not_arm_a_sell_with_ctrl() {
     assert!(paper.desk.gesture.cmd_preview.is_none());
 }
 
-/// Short names for the account reads and writes the window tests arrange
-/// through, so a call site stays one line.
+/// The account calls the window tests arrange through; spelled
+/// `.account.x()` at each of ~60 call sites, rustfmt wraps them into more
+/// lines than these forwarders cost.
 impl PaperTrading {
     pub(crate) fn report_state(&self) -> &crate::paper_report::ReportState {
         self.account().report_state()
