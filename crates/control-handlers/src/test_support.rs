@@ -19,9 +19,7 @@ use quantick_control_schema::interaction::CursorSnapshot;
 use quantick_control_schema::notify::AgentPopup;
 use quantick_engine::bar_registry::{BUILTIN_BARS, BarConfiguration};
 use quantick_engine::{Bar, BarSpec, Side, Trade};
-use quantick_session::{
-    HistoryAct, HistoryOutcome, HistoryReply, SessionSnapshot, sets_window_default,
-};
+use quantick_session::{HistoryAct, HistoryOutcome, HistoryReply, SessionSnapshot};
 use quantick_sources::history_reach::{HistoryReach, ReachProgress};
 use quantick_sources::history_run::{Cancelled, Press, RunStatus};
 use rust_decimal::Decimal;
@@ -36,22 +34,25 @@ use crate::bubble_pane::{AssetSave, BubbleLook, BubblePane, PaneBubblesPort, Tic
 use crate::chart::{ChartPaneEntry, ChartPaneSource, ChartPort, MissingPane, PaneFraming};
 use crate::chart_layer::{LayerBlocked, LayerRead};
 use crate::chart_settings::ChartStylePort;
+use crate::contract_roll::AutoRoll;
 use crate::deal_recorder::{DealRecorder, DealRecordingPort};
 use crate::drawing_magnet::RailMagnetPort;
-use crate::history::HistoryPort;
 use crate::indicator_host::{
     AttachedScript, IndicatorControlHost, IndicatorGuidePort, IndicatorOwner, IndicatorPickerPort,
     IndicatorRefusal, NativePort, ScriptEditorPort, ScriptsPort,
 };
+use crate::market_tab::FeedSelection;
+use crate::market_tab::RecoveredFeed;
+use crate::market_tab::{FeedTable, LentTab, MarketTab, MarketTabHost};
 use crate::notify::{AttentionPort, NotifyAccess};
 use crate::pane_marks::PaneMarks;
-use crate::recovery::{FeedRecoveryPort, RecoveredFeed};
 use crate::settings::{SettingsAct, SettingsOwner, SettingsReadings, SettleError};
 use crate::tabs::TabDirectory;
 use crate::trade::{TradeDesk, TradePort};
 use quantick_control::error::ControlError;
 use quantick_control_schema::bubble_preset::{ListInput, ListResult};
 use quantick_control_schema::chart_settings::{ChartSettingsInput, ChartSettingsResult};
+use quantick_control_schema::feed_source::FeedSourceChoice;
 use quantick_control_schema::indicator_picker::{PickerInput, PickerResult};
 use quantick_control_schema::layers::LayerSnapshot;
 use quantick_control_schema::native_indicator as wire;
@@ -381,6 +382,7 @@ pub(crate) struct FakeTab {
     pub recorder_refusal: Option<DealRecordingError>,
     /// Every recorder act the tab took, by name.
     pub recorder_acts: Vec<String>,
+    pub auto_roll: AutoRoll,
 }
 
 impl FakeTab {
@@ -401,6 +403,7 @@ impl FakeTab {
             recording: None,
             recorder_refusal: None,
             recorder_acts: Vec::new(),
+            auto_roll: AutoRoll::default(),
         }
     }
 
@@ -464,6 +467,68 @@ impl FakeTab {
     }
 }
 
+/// The main-click default a fake window opens with.
+pub(crate) const FAKE_DEFAULT_REACH: HistoryReach = HistoryReach::Sessions(9);
+
+/// A feed table over plain choices, answering as the config does: a feed
+/// offers its symbols and names the contract after one in its rolls.
+pub(crate) struct FakeFeeds(pub Vec<FeedSourceChoice>);
+
+impl FeedTable for FakeFeeds {
+    fn source_choices(&self) -> Vec<FeedSourceChoice> {
+        self.0.clone()
+    }
+    fn next_contract(&self, feed_id: &str, symbol: &str) -> Option<String> {
+        let feed = self.0.iter().find(|feed| feed.feed_id == feed_id)?;
+        feed.contract_rolls.get(symbol).cloned()
+    }
+    fn feed_offers(&self, feed_id: &str, symbol: &str) -> bool {
+        self.0.iter().any(|feed| {
+            feed.feed_id == feed_id && feed.symbols.iter().any(|offered| offered == symbol)
+        })
+    }
+}
+
+/// The fake tab's market acts over its plain fields.
+impl MarketTab<FakeFeeds> for FakeTab {
+    fn market(&self) -> FeedSelection {
+        FeedSelection {
+            feed_id: self.feed_id.clone(),
+            symbol: self.symbol.clone(),
+            replay: self.replaying,
+        }
+    }
+    fn switch_market(&mut self, _config: &FakeFeeds, feed_id: &str, symbol: &str) {
+        (self.feed_id, self.symbol) = (feed_id.to_owned(), symbol.to_owned());
+    }
+    fn paper_open(&self) -> bool {
+        false
+    }
+    fn unlisted(&self) -> Option<String> {
+        None
+    }
+    fn roll_memory(&mut self) -> &mut AutoRoll {
+        &mut self.auto_roll
+    }
+    fn recover(&mut self, _config: &FakeFeeds, keep_timeline: bool) -> RecoveredFeed {
+        self.recoveries.push(keep_timeline);
+        RecoveredFeed {
+            symbol: self.symbol.clone(),
+            respawned: self.respawns,
+        }
+    }
+    fn pages_history(&self, _config: &FakeFeeds) -> bool {
+        self.history_paging
+    }
+    fn history(&mut self, _config: &FakeFeeds, act: HistoryAct) -> HistoryReply {
+        let outcome = match act {
+            HistoryAct::Press(reach) => HistoryOutcome::Pressed(self.press(reach)),
+            HistoryAct::Cancel => HistoryOutcome::Cancelled(self.cancel()),
+        };
+        (outcome, self.snapshot(outcome))
+    }
+}
+
 /// The fake window: tabs in screen order, the one on screen, and what each
 /// attention lane received.
 pub(crate) struct FakeWindow {
@@ -473,7 +538,9 @@ pub(crate) struct FakeWindow {
     pub toasts: Vec<String>,
     pub speaker_refusal: Option<String>,
     /// The main-click default the last taken press set.
-    pub default_reach: Option<HistoryReach>,
+    pub default_reach: HistoryReach,
+    /// The feed table the window lends its tabs.
+    pub feeds: FakeFeeds,
     /// The tool rail's magnet.
     pub rail_magnet: bool,
     /// What the chart settings owner answers, and every input it was given.
@@ -628,7 +695,8 @@ impl FakeWindow {
             popups: Vec::new(),
             toasts: Vec::new(),
             speaker_refusal: None,
-            default_reach: None,
+            default_reach: FAKE_DEFAULT_REACH,
+            feeds: FakeFeeds(Vec::new()),
             rail_magnet: false,
             chart_settings: Err(PresetError::Refused("the fake keeps no chart settings")),
             settings_asked: Vec::new(),
@@ -707,14 +775,29 @@ impl IndicatorControlHost for FakeWindow {
     }
 }
 
-impl FeedRecoveryPort for FakeWindow {
-    fn recover_feed(&mut self, index: usize, keep_timeline: bool) -> Option<RecoveredFeed> {
-        let tab = self.tabs.get_mut(index)?;
-        tab.recoveries.push(keep_timeline);
-        Some(RecoveredFeed {
-            symbol: tab.symbol.clone(),
-            respawned: tab.respawns,
+impl MarketTabHost for FakeWindow {
+    type Config = FakeFeeds;
+    fn tab_count(&self) -> usize {
+        self.tabs.len()
+    }
+    fn feed_table(&self) -> &FakeFeeds {
+        &self.feeds
+    }
+    fn market_tab(&self, index: usize) -> Option<&dyn MarketTab<FakeFeeds>> {
+        Some(self.tabs.get(index)?)
+    }
+    fn market_tab_mut(&mut self, index: usize) -> Option<LentTab<'_, FakeFeeds>> {
+        Some(LentTab {
+            tab: self.tabs.get_mut(index)?,
+            config: &self.feeds,
+            history_default: &mut self.default_reach,
         })
+    }
+    fn drawing_gesture_on(&self, _feed_id: &str, _from: &str, _to: &str) -> bool {
+        false
+    }
+    fn carry_market_drawings(&mut self, _feed_id: &str, _from: &str, _to: &str) -> usize {
+        0
     }
 }
 
@@ -793,28 +876,6 @@ impl AnalysisPort for FakeWindow {
 impl RailMagnetPort for FakeWindow {
     fn switch_rail_magnet(&mut self, on: bool) -> bool {
         std::mem::replace(&mut self.rail_magnet, on) != on
-    }
-}
-
-impl HistoryPort for FakeWindow {
-    fn history_paging(&self, index: usize) -> Option<bool> {
-        self.tabs.get(index).map(|tab| tab.history_paging)
-    }
-    /// The press and cancel over plain fields; a taken press moves the
-    /// default as `TabsMut::press_history` does.
-    fn dispatch_history(&mut self, index: usize, act: HistoryAct) -> Option<HistoryReply> {
-        let tab = self.tabs.get_mut(index)?;
-        let outcome = match act {
-            HistoryAct::Press(reach) => {
-                let press = tab.press(reach);
-                if sets_window_default(press) {
-                    self.default_reach = Some(reach);
-                }
-                HistoryOutcome::Pressed(press)
-            }
-            HistoryAct::Cancel => HistoryOutcome::Cancelled(tab.cancel()),
-        };
-        Some((outcome, tab.snapshot(outcome)))
     }
 }
 

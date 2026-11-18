@@ -1,14 +1,84 @@
 use super::*;
-use crate::test_support::{FakeAccess, FakeWindow};
+use crate::TabDirectory;
+use crate::contract_roll::AutoRoll;
+use crate::market_tab::RecoveredFeed;
+use crate::market_tab::{LentTab, MarketTab, MarketTabHost};
+use crate::test_support::{FAKE_DEFAULT_REACH, FakeAccess, FakeFeeds, FakeWindow};
 use quantick_control::registry::RevisionPolicy;
 use quantick_control_host::{actions::ActionRegistry, journal::EventActor};
+use quantick_control_schema::feed_source::FeedSourceChoice;
+use quantick_session::{HistoryAct, HistoryReply};
+use quantick_sources::history_reach::HistoryReach;
 use serde_json::json;
 
-struct Window {
+/// The one tab: its pair, and how many switches it took.
+struct Market {
     feed: String,
     symbol: String,
     replay: bool,
     switches: usize,
+}
+impl MarketTab<FakeFeeds> for Market {
+    fn market(&self) -> FeedSelection {
+        FeedSelection {
+            feed_id: self.feed.clone(),
+            symbol: self.symbol.clone(),
+            replay: self.replay,
+        }
+    }
+    fn switch_market(&mut self, _config: &FakeFeeds, feed_id: &str, symbol: &str) {
+        self.switches += 1;
+        self.feed = feed_id.into();
+        self.symbol = symbol.into();
+    }
+    fn paper_open(&self) -> bool {
+        false
+    }
+    fn unlisted(&self) -> Option<String> {
+        None
+    }
+    fn roll_memory(&mut self) -> &mut AutoRoll {
+        unreachable!("a source switch never reads the roll memory")
+    }
+    fn recover(&mut self, _config: &FakeFeeds, _keep_timeline: bool) -> RecoveredFeed {
+        unreachable!("a source switch never recovers the feed")
+    }
+    fn pages_history(&self, _config: &FakeFeeds) -> bool {
+        false
+    }
+    fn history(&mut self, _config: &FakeFeeds, _act: HistoryAct) -> HistoryReply {
+        unreachable!("a source switch never presses History")
+    }
+}
+
+/// A window of one tab, id 7, over a spot and a futures feed.
+struct Window {
+    tab: Market,
+    feeds: FakeFeeds,
+    default: HistoryReach,
+}
+impl Window {
+    fn on(feed: &str, symbol: &str) -> Self {
+        let feed_of = |id: &str, name: &str, symbol: &str| FeedSourceChoice {
+            feed_id: id.into(),
+            display_name: name.into(),
+            symbols: vec![symbol.into()],
+            contract_rolls: Default::default(),
+        };
+        Self {
+            tab: Market {
+                feed: feed.into(),
+                symbol: symbol.into(),
+                replay: false,
+                switches: 0,
+            },
+            feeds: FakeFeeds(vec![
+                feed_of("spot", "Spot", "BTCUSDT"),
+                feed_of("futures", "Futures", "BTCUSDT.p"),
+            ]),
+            default: FAKE_DEFAULT_REACH,
+        }
+    }
 }
 impl TabDirectory for Window {
     fn active_tab_index(&self) -> usize {
@@ -21,35 +91,29 @@ impl TabDirectory for Window {
         7
     }
 }
-impl FeedSourcePort for Window {
-    fn feed_choices(&self) -> Vec<FeedSourceChoice> {
-        vec![
-            FeedSourceChoice {
-                feed_id: "spot".into(),
-                display_name: "Spot".into(),
-                symbols: vec!["BTCUSDT".into()],
-                contract_rolls: Default::default(),
-            },
-            FeedSourceChoice {
-                feed_id: "futures".into(),
-                display_name: "Futures".into(),
-                symbols: vec!["BTCUSDT.p".into()],
-                contract_rolls: Default::default(),
-            },
-        ]
+impl MarketTabHost for Window {
+    type Config = FakeFeeds;
+    fn tab_count(&self) -> usize {
+        1
     }
-    fn feed_selection(&self, _index: usize) -> Option<FeedSelection> {
-        Some(FeedSelection {
-            feed_id: self.feed.clone(),
-            symbol: self.symbol.clone(),
-            replay: self.replay,
+    fn feed_table(&self) -> &FakeFeeds {
+        &self.feeds
+    }
+    fn market_tab(&self, _index: usize) -> Option<&dyn MarketTab<FakeFeeds>> {
+        Some(&self.tab)
+    }
+    fn market_tab_mut(&mut self, _index: usize) -> Option<LentTab<'_, FakeFeeds>> {
+        Some(LentTab {
+            tab: &mut self.tab,
+            config: &self.feeds,
+            history_default: &mut self.default,
         })
     }
-    fn select_feed(&mut self, index: usize, feed_id: &str, symbol: &str) -> Option<FeedSelection> {
-        self.switches += 1;
-        self.feed = feed_id.into();
-        self.symbol = symbol.into();
-        self.feed_selection(index)
+    fn drawing_gesture_on(&self, _feed_id: &str, _from: &str, _to: &str) -> bool {
+        false
+    }
+    fn carry_market_drawings(&mut self, _feed_id: &str, _from: &str, _to: &str) -> usize {
+        0
     }
 }
 fn call(window: &mut Window, input: Value) -> Result<Value, ControlError> {
@@ -62,12 +126,7 @@ fn call(window: &mut Window, input: Value) -> Result<Value, ControlError> {
 }
 #[test]
 fn source_selection_validates_before_mutation_and_retries_without_another_switch() {
-    let mut window = Window {
-        feed: "spot".into(),
-        symbol: "BTCUSDT".into(),
-        replay: false,
-        switches: 0,
-    };
+    let mut window = Window::on("spot", "BTCUSDT");
     for invalid in [
         json!({"tab_id":"8","feed_id":"futures","symbol":"BTCUSDT.p"}),
         json!({"tab_id":"7","feed_id":"futures","symbol":"BTCUSDT"}),
@@ -75,23 +134,23 @@ fn source_selection_validates_before_mutation_and_retries_without_another_switch
         json!({"tab_id":"7","feed_id":"futures","symbol":"BTCUSDT.p","extra":true}),
     ] {
         assert!(call(&mut window, invalid).is_err());
-        assert_eq!(window.switches, 0);
-        assert_eq!(window.symbol, "BTCUSDT");
+        assert_eq!(window.tab.switches, 0);
+        assert_eq!(window.tab.symbol, "BTCUSDT");
     }
     let input = json!({"tab_id":"7","feed_id":"futures","symbol":"BTCUSDT.p"});
-    window.replay = true;
+    window.tab.replay = true;
     assert!(
         call(&mut window, input.clone())
             .unwrap_err()
             .message
             .contains("recorded session")
     );
-    assert_eq!(window.switches, 0);
-    window.replay = false;
+    assert_eq!(window.tab.switches, 0);
+    window.tab.replay = false;
     assert_eq!(call(&mut window, input.clone()).unwrap()["changed"], true);
     assert_eq!(call(&mut window, input).unwrap()["timeline_kept"], true);
-    assert_eq!(window.switches, 1);
-    assert_eq!(window.symbol, "BTCUSDT.p");
+    assert_eq!(window.tab.switches, 1);
+    assert_eq!(window.tab.symbol, "BTCUSDT.p");
 }
 
 /// Both acts that throw a timeline away say so in the descriptor a client
@@ -164,17 +223,12 @@ fn source_selection_and_reload_declare_their_rebuild_without_a_revision_promise(
 #[test]
 fn a_changed_source_journals_who_switched_it_from_what_to_what() {
     for actor in [FakeWindow::trader(), FakeWindow::assistant()] {
-        let mut window = Window {
-            feed: "spot".into(),
-            symbol: "BTCUSDT".into(),
-            replay: false,
-            switches: 0,
-        };
+        let mut window = Window::on("spot", "BTCUSDT");
         let mut access = FakeAccess::with_budget(0);
         let input = json!({"tab_id":"7","feed_id":"futures","symbol":"BTCUSDT.p"});
         let result = select(&mut window, &mut access, &actor, &input).expect("the switch answers");
         select(&mut window, &mut access, &actor, &input).expect("the repeat answers");
-        assert_eq!(window.switches, 1);
+        assert_eq!(window.tab.switches, 1);
         assert_eq!(access.events.len(), 1, "one switch, one record");
         let event = &access.events[0];
         assert_eq!(event.module_id.as_str(), "feed");
@@ -198,12 +252,7 @@ fn a_changed_source_journals_who_switched_it_from_what_to_what() {
 /// same checks, one switch, the same journal row, and a repeat moves nothing.
 #[test]
 fn tab_market_set_is_the_source_switch_under_market_names() {
-    let mut window = Window {
-        feed: "spot".into(),
-        symbol: "BTCUSDT".into(),
-        replay: false,
-        switches: 0,
-    };
+    let mut window = Window::on("spot", "BTCUSDT");
     let mut access = FakeAccess::with_budget(0);
     let actor = FakeWindow::assistant();
     let mut set =
@@ -215,7 +264,7 @@ fn tab_market_set_is_the_source_switch_under_market_names() {
     ] {
         assert!(set(&mut window, invalid).is_err());
     }
-    assert_eq!(window.switches, 0, "a refusal switches nothing");
+    assert_eq!(window.tab.switches, 0, "a refusal switches nothing");
     let input = json!({"tab":"7","feed":"futures","symbol":"BTCUSDT.p"});
     let switched = set(&mut window, input.clone()).expect("the switch answers");
     assert_eq!(
@@ -231,7 +280,7 @@ fn tab_market_set_is_the_source_switch_under_market_names() {
     );
     let repeat = set(&mut window, input).expect("the repeat answers");
     assert_eq!(repeat["changed"], false);
-    assert_eq!(window.switches, 1);
+    assert_eq!(window.tab.switches, 1);
     assert_eq!(access.events.len(), 1, "one switch, one record");
     assert_eq!(access.events[0].kind.as_str(), "feed.source.changed");
     let mut registry = ActionRegistry::<Window, FakeAccess>::new();

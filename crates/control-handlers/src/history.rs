@@ -1,7 +1,7 @@
 //! `feed.history.load` and `feed.history.cancel`: the History button's press
 //! and its cancel, as the tab session's own acts. The handler picks the
-//! [`HistoryAct`] and judges its outcome; the window routes the act to the
-//! tab through the toolbar's own press and cancel ([`HistoryPort`]).
+//! [`HistoryAct`] and judges its outcome; the act runs on the tab through
+//! the toolbar's own press and cancel ([`run_history`]).
 
 use quantick_control::{
     error::ControlError,
@@ -18,26 +18,24 @@ use quantick_sources::history_run::{Cancelled, Press, RunStatus};
 use serde_json::{Value, json};
 
 use crate::dock::ActionDock;
-use crate::tabs::{TabDirectory, tab_closed, tab_index};
+use crate::market_tab::{MarketTabHost, run_history};
+use crate::tabs::{tab_closed, tab_index};
 
-/// The window's routing of the History button's acts to one tab.
-pub trait HistoryPort: TabDirectory {
-    /// Whether the feed of the tab at `index` can page older trades; `None`
-    /// when that tab is gone.
-    fn history_paging(&self, index: usize) -> Option<bool>;
-    /// Make the toolbar's own press or cancel on the tab at `index` — a
-    /// taken press moves the window's main-click default
-    /// ([`quantick_session::sets_window_default`]) — and answer with what
-    /// this act did and the session as it then stands; `None` when the tab
-    /// is gone.
-    fn dispatch_history(&mut self, index: usize, act: HistoryAct) -> Option<HistoryReply>;
+/// The toolbar's own press or cancel on the tab at `index`; `None` when the
+/// tab is gone.
+fn dispatch<H: MarketTabHost + ?Sized>(
+    app: &mut H,
+    index: usize,
+    act: HistoryAct,
+) -> Option<HistoryReply> {
+    Some(run_history(app.market_tab_mut(index)?, act))
 }
 
 /// Dock the press and its cancel.
 pub fn register<D, H, A>(registry: &mut D) -> Result<(), RegistryError>
 where
     D: ActionDock<H, A>,
-    H: HistoryPort + ?Sized,
+    H: MarketTabHost + ?Sized,
 {
     registry.register(load_descriptor(), load)?;
     registry.register(cancel_descriptor(), cancel)
@@ -55,7 +53,7 @@ fn refused(message: String, sent: &str, next_step: &str) -> ControlError {
     error
 }
 
-fn load<H: HistoryPort + ?Sized, A>(
+fn load<H: MarketTabHost + ?Sized, A>(
     app: &mut H,
     _access: &mut A,
     _actor: &ActorContext,
@@ -72,16 +70,16 @@ fn load<H: HistoryPort + ?Sized, A>(
     })?;
     let index = tab_index(app, input.tab_id)?;
     let tab_id = app.tab_id_at(index);
-    if !app.history_paging(index).ok_or_else(tab_closed)? {
+    let tab = app.market_tab(index).ok_or_else(tab_closed)?;
+    if !tab.pages_history(app.feed_table()) {
         return Err(refused(
             "this tab's feed cannot page older trades".to_owned(),
             &input.reach,
             "read feed.status capabilities.history_paging and history_boundary (venue_retention: the venue keeps nothing older); venue candles load with the History menu's + older candles",
         ));
     }
-    let (outcome, session) = app
-        .dispatch_history(index, HistoryAct::Press(reach))
-        .ok_or_else(tab_closed)?;
+    let (outcome, session) =
+        dispatch(app, index, HistoryAct::Press(reach)).ok_or_else(tab_closed)?;
     let press = match outcome {
         HistoryOutcome::Pressed(Press::Start) if matches!(session.run, RunStatus::Idle) => {
             "finished"
@@ -102,7 +100,7 @@ fn load<H: HistoryPort + ?Sized, A>(
     serde_json::to_value(result).map_err(|error| ControlError::invalid_request(error.to_string()))
 }
 
-fn cancel<H: HistoryPort + ?Sized, A>(
+fn cancel<H: MarketTabHost + ?Sized, A>(
     app: &mut H,
     _access: &mut A,
     _actor: &ActorContext,
@@ -112,9 +110,7 @@ fn cancel<H: HistoryPort + ?Sized, A>(
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
     let index = tab_index(app, input.tab_id)?;
     let tab_id = app.tab_id_at(index);
-    let (outcome, session) = app
-        .dispatch_history(index, HistoryAct::Cancel)
-        .ok_or_else(tab_closed)?;
+    let (outcome, session) = dispatch(app, index, HistoryAct::Cancel).ok_or_else(tab_closed)?;
     let cancelled = match outcome {
         HistoryOutcome::Cancelled(Cancelled::Run(_)) => "run",
         HistoryOutcome::Cancelled(Cancelled::Queued(_)) => "queued",

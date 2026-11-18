@@ -6,8 +6,8 @@
 //! and disarms its strategies, so the switch is journaled with who made it and
 //! the pair it left: an assistant's switch never reads as the trader's own.
 use crate::{
-    TabDirectory,
     dock::ActionDock,
+    market_tab::{FeedSelection, FeedTable as _, MarketTabHost, market, switch_market},
     notify::NotifyAccess,
     tabs::{tab_closed, tab_index},
 };
@@ -16,23 +16,10 @@ use quantick_control::{error::ControlError, registry::RegistryError, wire::Actor
 use quantick_control_host::journal::NewEvent;
 use quantick_control_schema::feed::MODULE_ID;
 use quantick_control_schema::feed_source::{
-    FEED_SOURCE_EVENT_KIND, FeedSourceChoice, FeedSourceInput, FeedSourceResult, TabMarketSetInput,
+    FEED_SOURCE_EVENT_KIND, FeedSourceInput, FeedSourceResult, TabMarketSetInput,
     TabMarketSetResult, tab_market_descriptor,
 };
 use serde_json::{Value, json};
-
-pub struct FeedSelection {
-    pub feed_id: String,
-    pub symbol: String,
-    pub replay: bool,
-}
-
-pub trait FeedSourcePort: TabDirectory {
-    fn feed_choices(&self) -> Vec<FeedSourceChoice>;
-    fn feed_selection(&self, index: usize) -> Option<FeedSelection>;
-    /// The validated pair, through the window's existing source switch.
-    fn select_feed(&mut self, index: usize, feed_id: &str, symbol: &str) -> Option<FeedSelection>;
-}
 
 /// Dock `feed.source.set` and `tab.market.set`, one switch under two names.
 /// A changed source journals through the access the notify handlers journal
@@ -40,7 +27,7 @@ pub trait FeedSourcePort: TabDirectory {
 pub fn register<D, H, A>(registry: &mut D) -> Result<(), RegistryError>
 where
     D: ActionDock<H, A>,
-    H: FeedSourcePort + ?Sized,
+    H: MarketTabHost + ?Sized,
     A: NotifyAccess,
 {
     registry.register(quantick_control_schema::feed_source::descriptor(), select)?;
@@ -52,7 +39,7 @@ where
 ///
 /// # Errors
 /// An unknown tab, a recording, or a pair the config does not list.
-pub fn set_source<H: FeedSourcePort + ?Sized>(
+pub fn set_source<H: MarketTabHost + ?Sized>(
     host: &mut H,
     tab_id: WireU64,
     feed_id: &str,
@@ -62,8 +49,7 @@ pub fn set_source<H: FeedSourcePort + ?Sized>(
     let changed = current.feed_id != feed_id || current.symbol != symbol;
     let (from_feed_id, from_symbol) = (current.feed_id.clone(), current.symbol.clone());
     let selected = if changed {
-        host.select_feed(index, feed_id, symbol)
-            .ok_or_else(tab_closed)?
+        switch_market(host, index, feed_id, symbol).ok_or_else(tab_closed)?
     } else {
         current
     };
@@ -84,20 +70,20 @@ pub fn set_source<H: FeedSourcePort + ?Sized>(
 ///
 /// # Errors
 /// An unknown tab, a recording, or a pair the config does not list.
-pub fn check_source<H: FeedSourcePort + ?Sized>(
+pub fn check_source<H: MarketTabHost + ?Sized>(
     host: &H,
     tab_id: WireU64,
     feed_id: &str,
     symbol: Option<&str>,
 ) -> Result<(usize, FeedSelection), ControlError> {
     let index = tab_index(host, Some(tab_id))?;
-    let current = host.feed_selection(index).ok_or_else(tab_closed)?;
+    let current = market(host, index).ok_or_else(tab_closed)?;
     if current.replay {
         return Err(ControlError::invalid_request(
             "Close the recorded session before selecting a live source",
         ));
     }
-    let valid = host.feed_choices().iter().any(|feed| {
+    let valid = host.feed_table().source_choices().iter().any(|feed| {
         feed.feed_id == feed_id
             && symbol.is_none_or(|symbol| feed.symbols.iter().any(|offered| offered == symbol))
     });
@@ -131,7 +117,7 @@ fn answer<T: serde::Serialize>(result: &T) -> Result<Value, ControlError> {
     serde_json::to_value(result).map_err(|error| ControlError::invalid_request(error.to_string()))
 }
 
-fn select<H: FeedSourcePort + ?Sized, A: NotifyAccess>(
+fn select<H: MarketTabHost + ?Sized, A: NotifyAccess>(
     host: &mut H,
     access: &mut A,
     actor: &ActorContext,
@@ -144,7 +130,7 @@ fn select<H: FeedSourcePort + ?Sized, A: NotifyAccess>(
     answer(&result)
 }
 
-fn set_market<H: FeedSourcePort + ?Sized, A: NotifyAccess>(
+fn set_market<H: MarketTabHost + ?Sized, A: NotifyAccess>(
     host: &mut H,
     access: &mut A,
     actor: &ActorContext,

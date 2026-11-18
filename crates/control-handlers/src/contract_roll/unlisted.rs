@@ -10,8 +10,9 @@
 //! same event kind.
 pub use quantick_sources::recovery::{AutoRoll, RollOffer, rolled_sentence as unlisted_toast};
 
-use super::{ContractRollPort, RollRefusal, apply, resolve};
+use super::{RollRefusal, apply, resolve};
 use crate::JournalAccess;
+use crate::market_tab::{MarketTabHost, market};
 use crate::workspace_book::Journal;
 use quantick_control::wire::WireU64;
 use quantick_control_host::journal::NewEvent;
@@ -27,27 +28,16 @@ pub const AUTOMATIC_TRIGGER: &str = "workspace_restore";
 /// feed reports unlisted: the notice's roll, asked for by a caller.
 pub const CAPABILITY_TRIGGER: &str = "capability";
 
-/// What tab `index` needs from the window to roll off an unlisted contract.
-pub trait UnlistedContractPort: ContractRollPort {
-    /// How many tabs are open.
-    fn tab_count(&self) -> usize;
-    /// The contract tab `index`'s feed reported it does not list, as the
-    /// feed's structured report names it.
-    fn unlisted_contract(&self, index: usize) -> Option<String>;
-    /// Tab `index`'s roll memory: armed, decided, pressed and on offer.
-    fn auto_roll_mut(&mut self, index: usize) -> Option<&mut AutoRoll>;
-}
-
 /// The roll tab `index` can make off `missing`: the configured next contract,
 /// or why it cannot roll right now. `None` when nothing changes from a plain
 /// notice — the tab shows another contract, is a recording, or has no
 /// offered successor.
-pub fn unlisted_roll<H: ContractRollPort + ?Sized>(
+pub fn unlisted_roll<H: MarketTabHost + ?Sized>(
     host: &H,
     index: usize,
     missing: &str,
 ) -> Option<Result<String, RollRefusal>> {
-    let current = host.feed_selection(index)?;
+    let current = market(host, index)?;
     if current.symbol != missing {
         return None;
     }
@@ -63,11 +53,21 @@ pub fn unlisted_roll<H: ContractRollPort + ?Sized>(
 }
 
 /// The roll the notice of tab `index` offers, read from its own report.
-pub fn notice_roll<H: UnlistedContractPort + ?Sized>(
+pub fn notice_roll<H: MarketTabHost + ?Sized>(
     host: &H,
     index: usize,
 ) -> Option<Result<String, RollRefusal>> {
-    unlisted_roll(host, index, &host.unlisted_contract(index)?)
+    unlisted_roll(host, index, &unlisted(host, index)?)
+}
+
+/// The contract tab `index`'s feed reports unlisted.
+fn unlisted<H: MarketTabHost + ?Sized>(host: &H, index: usize) -> Option<String> {
+    host.market_tab(index)?.unlisted()
+}
+
+/// Tab `index`'s roll memory; `None` when the tab is gone.
+fn roll_memory<H: MarketTabHost + ?Sized>(host: &mut H, index: usize) -> Option<&mut AutoRoll> {
+    Some(host.market_tab_mut(index)?.tab.roll_memory())
 }
 
 /// What a restored tab says, once, when its roll has to wait.
@@ -123,14 +123,12 @@ impl Settled {
 /// # Errors
 /// The refusal, a notice that no longer offers `target`, or a switch that did
 /// not land.
-pub fn roll_from_notice<H: UnlistedContractPort + ?Sized>(
+pub fn roll_from_notice<H: MarketTabHost + ?Sized>(
     host: &mut H,
     index: usize,
     target: &str,
 ) -> Result<(String, Value), String> {
-    let missing = host
-        .unlisted_contract(index)
-        .ok_or("The feed no longer reports an unlisted contract")?;
+    let missing = unlisted(host, index).ok_or("The feed no longer reports an unlisted contract")?;
     match unlisted_roll(host, index, &missing) {
         Some(Ok(next)) if next == target => {}
         Some(Err(refusal)) => return Err(refusal.reason().to_owned()),
@@ -145,7 +143,7 @@ pub fn roll_from_notice<H: UnlistedContractPort + ?Sized>(
 /// then roll every tab armed for the contract its feed reports unlisted onto
 /// the configured next one. A refused automatic roll decides nothing: it runs
 /// on the settle after its refusal clears, and says the refusal once.
-pub fn settle_auto_rolls<H: UnlistedContractPort + ?Sized>(host: &mut H) -> Settled {
+pub fn settle_auto_rolls<H: MarketTabHost + ?Sized>(host: &mut H) -> Settled {
     let mut settled = Settled::default();
     for index in 0..host.tab_count() {
         settle_tab(host, index, &mut settled);
@@ -153,12 +151,12 @@ pub fn settle_auto_rolls<H: UnlistedContractPort + ?Sized>(host: &mut H) -> Sett
     settled
 }
 
-fn settle_tab<H: UnlistedContractPort + ?Sized>(
+fn settle_tab<H: MarketTabHost + ?Sized>(
     host: &mut H,
     index: usize,
     settled: &mut Settled,
 ) -> Option<()> {
-    let missing = host.unlisted_contract(index);
+    let missing = unlisted(host, index);
     let roll = missing
         .as_deref()
         .and_then(|missing| unlisted_roll(host, index, missing));
@@ -169,8 +167,8 @@ fn settle_tab<H: UnlistedContractPort + ?Sized>(
             from,
             to: to.map_err(RollRefusal::reason),
         });
-    host.auto_roll_mut(index)?.set_offer(offer);
-    if let Some(target) = host.auto_roll_mut(index)?.take_press() {
+    roll_memory(host, index)?.set_offer(offer);
+    if let Some(target) = roll_memory(host, index)?.take_press() {
         match roll_from_notice(host, index, &target) {
             Ok((note, payload)) => {
                 settled.notes.push(note);
@@ -181,7 +179,7 @@ fn settle_tab<H: UnlistedContractPort + ?Sized>(
         return Some(());
     }
     let missing = missing?;
-    if !host.auto_roll_mut(index)?.armed_for(&missing) {
+    if !roll_memory(host, index)?.armed_for(&missing) {
         return None;
     }
     match roll? {
@@ -192,12 +190,12 @@ fn settle_tab<H: UnlistedContractPort + ?Sized>(
             }
             // Said once: the licence ends, and the roll stays on offer.
             None => {
-                host.auto_roll_mut(index)?.disarm();
+                roll_memory(host, index)?.disarm();
                 settled.notes.push(switch_failed_toast(&next));
             }
         },
         Err(refusal) => {
-            if host.auto_roll_mut(index)?.refusal_is_news(refusal.reason()) {
+            if roll_memory(host, index)?.refusal_is_news(refusal.reason()) {
                 settled
                     .notes
                     .push(waiting_toast(&missing, refusal.reason()));
@@ -213,7 +211,7 @@ fn settle_tab<H: UnlistedContractPort + ?Sized>(
 /// roll memory is as it was: nothing decided, no licence moved, the offer
 /// kept. The caller resolved `to` first, so the feed offers it and the carry
 /// [`apply`] makes before the switch runs only where the switch can land.
-pub(super) fn roll_off<H: UnlistedContractPort + ?Sized>(
+pub(super) fn roll_off<H: MarketTabHost + ?Sized>(
     host: &mut H,
     index: usize,
     from: &str,
@@ -222,13 +220,12 @@ pub(super) fn roll_off<H: UnlistedContractPort + ?Sized>(
 ) -> Option<Value> {
     // The attach inside the switch reads the roll, so it is staged first and
     // put back when the switch does not land.
-    let before = host.auto_roll_mut(index)?.clone();
-    host.auto_roll_mut(index)?
-        .rolling(from, to, trigger == AUTOMATIC_TRIGGER);
+    let before = roll_memory(host, index)?.clone();
+    roll_memory(host, index)?.rolling(from, to, trigger == AUTOMATIC_TRIGGER);
     let carried = apply(host, index, to);
-    let selected = host.feed_selection(index).filter(|now| now.symbol == to);
+    let selected = market(host, index).filter(|now| now.symbol == to);
     let (Some(carried), Some(selected)) = (carried, selected) else {
-        *host.auto_roll_mut(index)? = before;
+        *roll_memory(host, index)? = before;
         return None;
     };
     let result = ContractRollResult {

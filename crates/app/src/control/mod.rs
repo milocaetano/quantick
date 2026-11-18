@@ -23,6 +23,7 @@ pub(crate) mod inventory;
 use quantick_control_host::journal;
 mod flow_tabs;
 pub(crate) mod layout;
+mod market_tabs;
 mod notify;
 mod pane_bubbles;
 mod ports;
