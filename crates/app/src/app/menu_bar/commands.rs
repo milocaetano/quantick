@@ -151,9 +151,9 @@ impl MenuCall {
             Self::Trade(command) => _ = window.active_desk_mut().map(|desk| desk.execute(command)),
             Self::OpenOrderFlowPanel(section) => {
                 let tab = window.tab_reads().tabs().active_id();
-                if let Some(seat) = window.panel_seat(tab).ok().filter(|seat| seat.flow_shown) {
-                    seat.panel.open_on(Some(section));
-                }
+                _ = window
+                    .panel_seat(tab)
+                    .and_then(|mut seat| seat.open(Some(section)));
             }
         }
         None
