@@ -3,11 +3,15 @@
 //!
 //! Not a method on the app: the composition root captures every launch input
 //! in `main` and hands them to the constructor, which calls
-//! [`apply_launch_phase`] once. Two production steps live here because the
-//! scenarios are ordered around them — `seed_new_panes` and recording the
-//! layers the launch staged. Every applier that reads a `QUANTICK_*` compiles
-//! only with its harness family (or under test), from inputs the root
-//! captured ([`ScenarioInputs`]); a default build runs the two steps alone.
+//! [`apply_launch_phase`] once over its [`HarnessDesk`]. Each applier borrows
+//! the owners it stages from that desk and calls their own methods, or runs
+//! a registered call; the value grammar lives in
+//! `quantick_control_schema::launch_values`. Two production steps live here
+//! because the scenarios are ordered around them — `seed_new_panes` and
+//! recording the layers the launch staged. Every applier that reads a
+//! `QUANTICK_*` compiles only with its harness family (or under test), from
+//! inputs the root captured ([`ScenarioInputs`]); a default build runs the
+//! two steps alone.
 //!
 //! **The order is the contract.** These are not independent switches applied
 //! in any convenient sequence -- several are read at one point precisely
@@ -45,73 +49,81 @@ use crate::toolrail::ToolRailExt as _;
 #[cfg(any(feature = "scenario-harness", test))]
 use crate::{orderflow_panel::open_on, ui_state::PanelSection};
 #[cfg(any(feature = "scenario-harness", test))]
+use quantick_control_schema::launch_values::{self as values, DockHook};
+#[cfg(any(feature = "scenario-harness", test))]
 use quantick_control_schema::{desk, launch_calls, layout};
 #[cfg(any(feature = "scenario-harness", test))]
 use quantick_feed::history_reach;
 
 #[cfg(any(feature = "scenario-harness", test))]
 use super::AUTOSTART_NATIVES;
-use super::QuantickApp;
+use super::harness_desk::HarnessDesk;
 
 /// Run the launch phase over a constructed app, in the order this module
 /// fixes. Called once, from `new_with_workspace`, after the saved workspace
 /// is restored.
-pub(super) fn apply_launch_phase(
-    app: &mut QuantickApp,
+pub(super) fn apply_launch_phase<D: HarnessDesk>(
+    desk: &mut D,
     #[cfg(any(feature = "scenario-harness", test))] env: &ScenarioInputs,
     #[cfg(any(feature = "control-harness", test))]
     control_launch: super::control_host::ControlLaunch,
     #[cfg(any(feature = "drawing-harness", test))] rail_launch: crate::toolrail::ToolRailLaunch,
 ) {
     #[cfg(any(feature = "scenario-harness", test))]
-    book_and_strip(app, env);
+    book_and_strip(desk, env);
     #[cfg(any(feature = "control-harness", test))]
-    app.control
-        .apply_launch(control_launch, &mut app.surfaces.access_panel);
-    #[cfg(any(feature = "drawing-harness", test))]
-    if app
-        .surfaces
-        .toolrail
-        .apply_launch(rail_launch)
-        .favorites_staged
     {
-        app.runtime.workspace.session_mut().stage_favorites();
+        let owners = desk.owners();
+        (owners.control).apply_launch(control_launch, &mut owners.surfaces.access_panel);
+    }
+    #[cfg(any(feature = "drawing-harness", test))]
+    {
+        let owners = desk.owners();
+        if owners
+            .surfaces
+            .toolrail
+            .apply_launch(rail_launch)
+            .favorites_staged
+        {
+            owners.runtime.workspace.session_mut().stage_favorites();
+        }
     }
     #[cfg(any(feature = "scenario-harness", test))]
-    history(app, env);
+    history(desk, env);
     // Captured drawing scenarios apply here rather than on the first
     // drawn frame: the demo appliers run earlier in that frame and ask
     // whether the inspector is open, so a hook another hook depends on has
     // to be in place before any of them. They live with the fields they
     // set — see `surfaces::drawing_chrome::apply_launch_hooks`.
     #[cfg(any(feature = "quick-range-harness", feature = "drawing-harness", test))]
-    crate::surfaces::drawing_chrome::apply_launch_hooks(&mut app.surfaces.drawing_chrome);
+    crate::surfaces::drawing_chrome::apply_launch_hooks(&mut desk.owners().surfaces.drawing_chrome);
     #[cfg(any(feature = "scenario-harness", test))]
-    tape(app, env);
+    tape(desk, env);
     #[cfg(any(feature = "scenario-harness", test))]
-    indicator(app, env);
+    indicator(desk, env);
     // Put the active layout on the first tab's panes before any autostart
     // hook: the file is what the user actually had open.
-    app.layout_adapter().seed_new_panes();
+    desk.owners().layouts().seed_new_panes();
     #[cfg(any(feature = "scenario-harness", test))]
     {
-        layout(app, env);
-        replay(app, env);
-        dock_and_report(app, env);
-        calls::on_flow_pane(app, env, "QUANTICK_PRICE_RANGE", launch_calls::price_range);
-        workspace(app, env);
+        layout(desk, env);
+        replay(desk, env);
+        dock_and_report(desk, env);
+        calls::on_flow_pane(desk, env, "QUANTICK_PRICE_RANGE", launch_calls::price_range);
+        workspace(desk, env);
     }
     // An env var is not a user edit: what the autostart hooks switched on
     // must not be written back as though the user had asked for it every
     // launch from now on. Same rule the indicator state follows.
-    let staged_layers = app
+    let runtime = desk.owners().runtime;
+    let staged_layers = runtime
         .active_tab()
         .flow_pane
         .layer_read()
-        .mask(&app.runtime.style);
-    app.runtime.workspace.layers_mut().record(staged_layers);
+        .mask(&runtime.style);
+    runtime.workspace.layers_mut().record(staged_layers);
     #[cfg(any(feature = "scenario-harness", test))]
-    toast(app, env);
+    toast(desk, env);
 }
 
 /// The hooks with a registered action, run as an agent would through
@@ -164,21 +176,16 @@ mod calls {
 
 /// The order book and the live strip: the two the map opens with.
 #[cfg(any(feature = "scenario-harness", test))]
-fn book_and_strip(app: &mut QuantickApp, env: &ScenarioInputs) {
+fn book_and_strip<D: HarnessDesk>(desk: &mut D, env: &ScenarioInputs) {
+    let tab = desk.owners().runtime.active_tab_mut();
     // Dev/ops can open the map without a click.
-    if env
-        .var("QUANTICK_BOOK_AUTOSTART")
-        .is_some_and(|value| value == "1")
-    {
-        app.active_tab_mut().tape_mut().set_depth_visible(true);
+    if values::one(env.var("QUANTICK_BOOK_AUTOSTART").as_deref()) {
+        tab.tape_mut().set_depth_visible(true);
     }
     // Same convenience for the live strip; its pixels stay
     // capability-gated either way (see live_strip_width).
-    if env
-        .var("QUANTICK_LIVE_STRIP_AUTOSTART")
-        .is_some_and(|value| value == "1")
-    {
-        app.active_tab_mut().flow_pane.set_layer_visible(
+    if values::one(env.var("QUANTICK_LIVE_STRIP_AUTOSTART").as_deref()) {
+        tab.flow_pane.set_layer_visible(
             crate::chart_layers::ChartLayer::LiveStrip,
             true,
             &mut Default::default(),
@@ -188,12 +195,13 @@ fn book_and_strip(app: &mut QuantickApp, env: &ScenarioInputs) {
 
 /// How far back a launch reaches, and how it gets there.
 #[cfg(any(feature = "scenario-harness", test))]
-fn history(app: &mut QuantickApp, env: &ScenarioInputs) {
+fn history<D: HarnessDesk>(desk: &mut D, env: &ScenarioInputs) {
+    let history = &mut desk.owners().runtime.history;
     if let Some(raw) = env.var("QUANTICK_HISTORY_REACH_SPAN_MINUTES") {
         // Read before `QUANTICK_HISTORY_REACH`: it is what that hook's legacy
         // `span` token means, as it is in a saved workspace.
         match raw.trim().parse::<u32>() {
-            Ok(minutes) => app.runtime.history.set_span_minutes(minutes),
+            Ok(minutes) => history.set_span_minutes(minutes),
             Err(_) => tracing::warn!(
                 target: "quantick::app",
                 schema_version = 1_u8,
@@ -209,9 +217,9 @@ fn history(app: &mut QuantickApp, env: &ScenarioInputs) {
     // validation run must be able to pin what it photographs. An unknown
     // token is refused out loud with the grammar, never silently defaulted.
     if let Some(token) = env.var("QUANTICK_HISTORY_REACH") {
-        let span = app.runtime.history.history_reach_span_minutes;
+        let span = history.history_reach_span_minutes;
         match history_reach::HistoryReach::from_legacy_span(&token, span) {
-            Some(reach) => app.runtime.history.history_reach = reach,
+            Some(reach) => history.history_reach = reach,
             None => tracing::warn!(
                 target: "quantick::app",
                 schema_version = 1_u8,
@@ -229,42 +237,39 @@ fn history(app: &mut QuantickApp, env: &ScenarioInputs) {
         // or `on` would silently turn the lead-in *off* and overwrite what
         // the workspace saved, and a capture run would photograph the off
         // state while reporting it as on.
-        match value.trim() {
-            "1" => app.runtime.history.venue_lead_in = true,
-            "0" => app.runtime.history.venue_lead_in = false,
-            other => tracing::warn!(
+        match values::binary(&value) {
+            Some(on) => history.venue_lead_in = on,
+            None => tracing::warn!(
                 target: "quantick::app",
                 schema_version = 1_u8,
                 event_code = "VENUE_LEAD_IN_HOOK_UNKNOWN",
-                value = %other,
+                value = %value.trim(),
                 action = "keep_current_setting",
                 "QUANTICK_VENUE_LEAD_IN takes 1 or 0"
             ),
         }
     }
-    if let Some(value) = env.var("QUANTICK_PROGRESSIVE_HISTORY") {
-        match value.trim() {
-            "1" => app.runtime.history.progressive_history = true,
-            "0" => app.runtime.history.progressive_history = false,
-            // Nonsense is refused rather than guessed: a typo leaves the
-            // trader's own setting alone instead of silently flipping it.
-            _ => {}
-        }
+    // Nonsense is refused rather than guessed: a typo leaves the trader's own
+    // setting alone instead of silently flipping it.
+    if let Some(on) = env
+        .var("QUANTICK_PROGRESSIVE_HISTORY")
+        .and_then(|v| values::binary(&v))
+    {
+        history.progressive_history = on;
     }
 }
 
 /// The tape and everything drawn on it: the drawing chrome's own five, the
 /// aggression layer, the lanes, the window, the footprint and the budgets.
 #[cfg(any(feature = "scenario-harness", test))]
-fn tape(app: &mut QuantickApp, env: &ScenarioInputs) {
+fn tape<D: HarnessDesk>(desk: &mut D, env: &ScenarioInputs) {
+    let owners = desk.owners();
+    let tab = owners.runtime.active_tab_mut();
     // Same convenience for the aggression layer (bubbles + the live
     // column's footprint), held for the run like the window: never filed.
-    if env
-        .var("QUANTICK_BUBBLES_AUTOSTART")
-        .is_some_and(|value| value == "1")
-    {
-        let tape = app.active_tab_mut().tape_mut();
-        tape.hold_for_run(|held| held.bubbles = Some(true));
+    if values::one(env.var("QUANTICK_BUBBLES_AUTOSTART").as_deref()) {
+        tab.tape_mut()
+            .hold_for_run(|held| held.bubbles = Some(true));
     }
     // The chart upside down, through the very setter the axis menu's
     // checkbox calls. The inverted frame is otherwise only reachable by
@@ -272,45 +277,30 @@ fn tape(app: &mut QuantickApp, env: &ScenarioInputs) {
     // split layout: the hook exists so one capture audits every
     // price-mapped surface at once, and a half-inverted frame would
     // silently audit the time pane the right way up.
-    if env
-        .var("QUANTICK_INVERTED")
-        .is_some_and(|value| value.trim() == "1")
-    {
-        let tab = app.active_tab_mut();
+    if values::one(env.var("QUANTICK_INVERTED").as_deref().map(str::trim)) {
         for pane in tab.panes_mut() {
             pane.price_view.set_inverted(true);
         }
     }
-    calls::on_flow_pane(app, env, "QUANTICK_TAPE", launch_calls::tape);
+    calls::on_flow_pane(desk, env, "QUANTICK_TAPE", launch_calls::tape);
+    let owners = desk.owners();
+    let tab = owners.runtime.active_tab_mut();
     // The tape's own layer switches. The two panes are configured apart and
     // the tape's menu is a right-click a scripted run cannot perform, so the
     // state behind it needs a door of its own — the state, not a second
     // way of drawing it: each entry calls the very setter the menu's
     // checkbox calls. Unlisted layers stay as they were, which is what
-    // keeps this hook from being a second opinion about the whole tape.
+    // keeps this hook from being a second opinion about the whole tape. A
+    // typo leaves the tape alone rather than guessing at a layer: a capture
+    // of the wrong state is worse than a capture of the default one.
     if let Some(value) = env.var("QUANTICK_TAPE_LAYERS") {
-        let wanted: Vec<&str> = value
-            .split(',')
-            .map(str::trim)
-            .filter(|entry| !entry.is_empty())
-            .collect();
-        let tape = app.active_tab_mut().tape_mut();
-        if wanted.contains(&"none") {
-            tape.set_lane_depth_visible(false);
-            tape.set_lane_bubbles_enabled(false);
-        } else {
-            for entry in wanted {
-                match entry {
-                    "heatmap" => tape.set_lane_depth_visible(true),
-                    "bubbles" => tape.set_lane_bubbles_enabled(true),
-                    "no-heatmap" => tape.set_lane_depth_visible(false),
-                    "no-bubbles" => tape.set_lane_bubbles_enabled(false),
-                    // A typo leaves the tape alone rather than guessing at
-                    // a layer: a capture of the wrong state is worse than
-                    // a capture of the default one.
-                    _ => {}
-                }
-            }
+        let layers = values::lane_layers(&value);
+        let tape = tab.tape_mut();
+        if let Some(on) = layers.depth {
+            tape.set_lane_depth_visible(on);
+        }
+        if let Some(on) = layers.bubbles {
+            tape.set_lane_bubbles_enabled(on);
         }
     }
     // How much market time the tape shows: `auto` follows the bars, a
@@ -321,18 +311,20 @@ fn tape(app: &mut QuantickApp, env: &ScenarioInputs) {
     if let Some(value) = env.var("QUANTICK_TAPE_WINDOW")
         && let Some(window) = quantick_orderflow::LaneWindow::parse(&value)
     {
-        let tape = app.active_tab_mut().tape_mut();
-        tape.hold_for_run(|held| held.window = Some(window));
+        tab.tape_mut()
+            .hold_for_run(|held| held.window = Some(window));
     }
     // Same convenience for the candle footprint — the same field the
     // pane's layer menu writes, so a validation run sees exactly what a
     // click would show.
-    if app.chrome.harness.footprint() {
-        app.active_tab_mut()
-            .flow_pane
-            .presentation
-            .footprint
-            .visible = true;
+    if owners.chrome.harness.footprint() {
+        tab.flow_pane.presentation.footprint.visible = true;
+    }
+    // The zoom, scriptable: the footprint's detail levels are functions
+    // of candle width, and a validation run cannot drag a scroll wheel.
+    // Same clamp as the gesture (see Viewport::set_px_per_bar).
+    if let Some(px) = owners.chrome.harness.candle_width() {
+        tab.flow_pane.model.viewport.open_at_px_per_bar(px);
     }
     // Every style by its own id, resolved through the same registry the
     // panel's selector and the TOML read. A style reachable by click but
@@ -340,7 +332,7 @@ fn tape(app: &mut QuantickApp, env: &ScenarioInputs) {
     // more list to keep in step by hand.
     if let Some(value) = env.var("QUANTICK_FOOTPRINT_STYLE") {
         match crate::footprint_config::FootprintStyle::from_id(value.trim()) {
-            Some(style) => app.runtime.footprint_config.style = style,
+            Some(style) => owners.runtime.footprint_config.style = style,
             // Named and unknown is a typo in a validation script, and a
             // silent fallback to the default would have it photograph the
             // wrong style and call it a pass.
@@ -352,16 +344,6 @@ fn tape(app: &mut QuantickApp, env: &ScenarioInputs) {
             ),
         }
     }
-    // The zoom, scriptable: the footprint's detail levels are functions
-    // of candle width, and a validation run cannot drag a scroll wheel.
-    // Same clamp as the gesture (see Viewport::set_px_per_bar).
-    if let Some(px) = app.chrome.harness.candle_width() {
-        app.active_tab_mut()
-            .flow_pane
-            .model
-            .viewport
-            .open_at_px_per_bar(px);
-    }
     // The bubble budget, scriptable. The fold is the one bubble state a
     // capture cannot otherwise reach: it needs a tape dense enough to
     // exhaust a budget of seven hundred, which is a market condition and
@@ -369,11 +351,11 @@ fn tape(app: &mut QuantickApp, env: &ScenarioInputs) {
     // the frame always spends, through the same field the projection
     // reads, so what a screenshot shows is what a busy session shows —
     // folded marks wearing their ring and their count.
-    if let Some(value) = env.var("QUANTICK_BUBBLE_BUDGET")
-        && let Ok(budget) = value.trim().parse::<usize>()
-        && budget > 0
+    if let Some(budget) = env
+        .var("QUANTICK_BUBBLE_BUDGET")
+        .and_then(|v| values::positive(&v))
     {
-        for tab in app.runtime.tabs.iter_mut() {
+        for tab in owners.runtime.tabs.iter_mut() {
             tab.tape_mut().set_primitive_budget(budget);
         }
     }
@@ -385,11 +367,9 @@ fn tape(app: &mut QuantickApp, env: &ScenarioInputs) {
     // eight seconds in and lets the book run. Nothing is forged: the
     // prints are withheld through the feed's own call, and the axis then
     // reports the age it actually observes.
-    if let Some(value) = env.var("QUANTICK_TAPE_STARVE_AFTER_MS")
-        && let Ok(after_ms) = value.trim().parse::<i64>()
-        && after_ms >= 0
-    {
-        for tab in app.runtime.tabs.iter_mut() {
+    let starve = env.var("QUANTICK_TAPE_STARVE_AFTER_MS");
+    if let Some(after_ms) = starve.and_then(|v| values::non_negative_ms(&v)) {
+        for tab in owners.runtime.tabs.iter_mut() {
             tab.tape_mut().set_starve_tape_after_ms(after_ms);
         }
     }
@@ -397,17 +377,14 @@ fn tape(app: &mut QuantickApp, env: &ScenarioInputs) {
 
 /// The indicators a launch opens with, and whether their legend is folded.
 #[cfg(any(feature = "scenario-harness", test))]
-fn indicator(app: &mut QuantickApp, env: &ScenarioInputs) {
+fn indicator<D: HarnessDesk>(desk: &mut D, env: &ScenarioInputs) {
+    let tab = desk.owners().runtime.active_tab_mut();
     // Same convenience for indicators: open with the two M1 natives on
     // (EMA overlay + CVD pane), through the same code path the toolbar
     // menu takes, so a scripted validation run needs no clicks.
-    if env
-        .var("QUANTICK_INDICATORS_AUTOSTART")
-        .is_some_and(|value| value == "1")
-    {
-        let pane = &mut app.active_tab_mut().flow_pane;
+    if values::one(env.var("QUANTICK_INDICATORS_AUTOSTART").as_deref()) {
         for id in AUTOSTART_NATIVES {
-            pane.add_indicator(IndicatorSource::Native {
+            tab.flow_pane.add_indicator(IndicatorSource::Native {
                 id: (*id).to_owned(),
                 values: Vec::new(),
             });
@@ -418,105 +395,75 @@ fn indicator(app: &mut QuantickApp, env: &ScenarioInputs) {
     // harness can reach is a surface no visual QA covers. Goes through
     // `IndicatorState::set_legend_collapsed`, the same call the chevron and the
     // menu entry make — never a field poked from the side.
-    if env
-        .var("QUANTICK_LEGEND_COLLAPSED")
-        .is_some_and(|value| value == "1")
-    {
-        super::indicator_manager::IndicatorState::set_legend_collapsed(
-            app.focused_pane_mut(),
-            true,
-        );
+    if values::one(env.var("QUANTICK_LEGEND_COLLAPSED").as_deref()) {
+        let pane = tab.focused_pane_mut();
+        super::indicator_manager::IndicatorState::set_legend_collapsed(pane, true);
     }
 }
 
 /// The layout strip and the pane layouts. Runs after `seed_new_panes` -- see
 /// the module's order rule.
 #[cfg(any(feature = "scenario-harness", test))]
-fn layout(app: &mut QuantickApp, env: &ScenarioInputs) {
-    calls::layout_tab(app, env);
+fn layout<D: HarnessDesk>(desk: &mut D, env: &ScenarioInputs) {
+    calls::layout_tab(desk, env);
+    let mut owners = desk.owners();
     // One layout per pane, by name, in pane-address order (`flow,top,bottom`):
     // a capture of two charts on two layouts side by side. Names the book
     // lacks are created empty; an empty entry leaves that pane alone.
     if let Some(names) = env.var("QUANTICK_PANE_LAYOUTS") {
-        app.layout_adapter().apply_pane_layouts_hook(&names);
+        owners.layouts().apply_pane_layouts_hook(&names);
     }
-    if env
-        .var("QUANTICK_LAYOUT_RENAME")
-        .is_some_and(|value| value == "1")
-    {
-        let active = app.runtime.layout_state().focused_pane_layout();
-        app.layout_adapter().begin_layout_rename(active);
+    if values::one(env.var("QUANTICK_LAYOUT_RENAME").as_deref()) {
+        let active = owners.runtime.layout_state().focused_pane_layout();
+        owners.layouts().begin_layout_rename(active);
     }
-    if env
-        .var("QUANTICK_LAYOUT_DELETE")
-        .is_some_and(|value| value == "1")
-    {
-        let active = app.runtime.layout_state().focused_pane_layout();
-        app.layout_adapter()
-            .apply_strip_action(crate::layout_strip::StripAction::Delete(active));
+    if values::one(env.var("QUANTICK_LAYOUT_DELETE").as_deref()) {
+        let active = owners.runtime.layout_state().focused_pane_layout();
+        let delete = crate::layout_strip::StripAction::Delete(active);
+        owners.layouts().apply_strip_action(delete);
     }
     // Scripted validation runs can open with library scripts loaded:
     // a comma-separated list of script names, each through the same
     // code path the indicator library takes.
     if let Some(names) = env.var("QUANTICK_INDICATOR_SCRIPTS_AUTOSTART") {
-        for name in names.split(',').map(str::trim).filter(|n| !n.is_empty()) {
-            match app
-                .runtime
-                .indicators
-                .script_library
-                .entries()
-                .iter()
-                .position(|entry| entry.name == name)
-            {
-                Some(_) => {
-                    // Straight onto the focused pane, with no mirror: an
-                    // env var is not a user edit. Without this, a scripted
-                    // validation run appended its own scripts to the
-                    // layout and they opened by themselves on the next
-                    // plain launch — config presence activating
-                    // something, which the rules forbid. The natives hook
-                    // above never registers a kind, so it is already inert.
-                    let (tab, side) = {
-                        let tab_id = app.runtime.tabs.active_id();
-                        let tab = app.active_tab();
-                        (tab_id, tab.focused_side())
-                    };
-                    let slot = app.layout_adapter().add_indicator_at(
-                        tab,
-                        side,
-                        &SavedKind::Script {
-                            name: name.to_owned(),
-                        },
-                    );
-                    if let Some(slot) = slot {
-                        let pane = app
-                            .runtime
-                            .tabs
-                            .by_id(tab)
-                            .expect("launch tab")
-                            .pane(side)
-                            .id;
-                        app.runtime
-                            .indicators
-                            .registry
-                            .exclude_from_layout(super::TabSlot {
-                                workspace: app.runtime.id(),
-                                pane,
-                                tab,
-                                side,
-                                slot,
-                            });
-                    }
-                }
-                None => tracing::warn!(
+        for name in values::names(&names) {
+            let library = owners.runtime.indicators.script_library.entries();
+            if !library.iter().any(|entry| entry.name == name) {
+                tracing::warn!(
                     target: "quantick::app",
                     schema_version = 1_u8,
                     event_code = "INDICATOR_SCRIPT_UNKNOWN",
                     script = %name,
                     action = "autostart_entry_skipped",
                     "autostart names a script the library does not have"
-                ),
+                );
+                continue;
             }
+            // Straight onto the focused pane, with no mirror: an env var is
+            // not a user edit. Without this, a scripted validation run
+            // appended its own scripts to the layout and they opened by
+            // themselves on the next plain launch — config presence
+            // activating something, which the rules forbid. The natives
+            // hook above never registers a kind, so it is already inert.
+            let tab = owners.runtime.tabs.active_id();
+            let side = owners.runtime.active_tab().focused_side();
+            let kind = SavedKind::Script {
+                name: name.to_owned(),
+            };
+            let Some(slot) = owners.layouts().add_indicator_at(tab, side, &kind) else {
+                continue;
+            };
+            let runtime = &mut *owners.runtime;
+            let pane = runtime.tabs.by_id(tab).expect("launch tab").pane(side).id;
+            let workspace = runtime.id();
+            let slot = super::TabSlot {
+                workspace,
+                pane,
+                tab,
+                side,
+                slot,
+            };
+            runtime.indicators.registry.exclude_from_layout(slot);
         }
     }
 }
@@ -524,7 +471,9 @@ fn layout(app: &mut QuantickApp, env: &ScenarioInputs) {
 /// The replay transport. `QUANTICK_REPLAY_DAY_BEFORE` is read first, before
 /// anything loads a session -- see the module's order rule.
 #[cfg(any(feature = "scenario-harness", test))]
-fn replay(app: &mut QuantickApp, env: &ScenarioInputs) {
+fn replay<D: HarnessDesk>(desk: &mut D, env: &ScenarioInputs) {
+    let owners = desk.owners();
+    let browser = &mut owners.surfaces.replay_browser;
     // Whether a recording opens with the day before it joined in front.
     // Read before anything loads a session, because that is the frame the
     // setting is consulted on. Staged rather than chosen: a validation run
@@ -536,14 +485,9 @@ fn replay(app: &mut QuantickApp, env: &ScenarioInputs) {
         // typo that quietly meant "off" would photograph a single-day
         // chart under a run that believed it had staged a join, which is
         // the one state this hook exists to reach.
-        let staged = match value.trim() {
-            "1" | "true" | "on" => Some(true),
-            "0" | "false" | "off" => Some(false),
-            _ => None,
-        };
-        match staged {
+        match values::flag(&value) {
             Some(enabled) => {
-                app.surfaces.replay_browser.stage_day_before(enabled);
+                browser.stage_day_before(enabled);
                 tracing::info!(
                     target: "quantick::app",
                     schema_version = 1_u8,
@@ -570,33 +514,14 @@ fn replay(app: &mut QuantickApp, env: &ScenarioInputs) {
     // `1` loads and plays, as it always has. `paused` loads and waits,
     // which is what a person now gets when they open a recording, and a
     // state no other hook can reach.
-    let autostart_play = match env
-        .var("QUANTICK_REPLAY_AUTOSTART")
-        .unwrap_or_default()
-        .trim()
-    {
-        "1" => Some(true),
-        "paused" => Some(false),
-        _ => None,
-    };
-    if let Some(play) = autostart_play {
-        let speed = env
-            .var("QUANTICK_REPLAY_SPEED")
-            .and_then(|value| value.trim().parse::<f32>().ok())
-            .filter(|speed| *speed > 0.0)
-            .unwrap_or(1.0);
+    if let Some(play) = values::replay_autostart(env.var("QUANTICK_REPLAY_AUTOSTART").as_deref()) {
+        let speed = values::replay_speed(env.var("QUANTICK_REPLAY_SPEED").as_deref());
         // Which recording, when the folder holds more than one. The
         // scan lists them oldest first, so without this a folder of days
         // always opens the one that can have nothing joined in front of
         // it — the single state this hook family exists to avoid.
-        let day = env
-            .var("QUANTICK_REPLAY_SESSION")
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty());
-        let started = app
-            .surfaces
-            .replay_browser
-            .autostart(speed, day.as_deref(), play);
+        let day = values::non_blank(env.var("QUANTICK_REPLAY_SESSION").as_deref());
+        let started = browser.autostart(speed, day.as_deref(), play);
         tracing::info!(
             target: "quantick::app",
             schema_version = 1_u8,
@@ -605,10 +530,10 @@ fn replay(app: &mut QuantickApp, env: &ScenarioInputs) {
             // once a stored pick can supply it, reading the hook back
             // would report an empty folder for a run that scanned a full
             // one — a log that lies about the input it acted on.
-            folder = app.surfaces.replay_browser.folder_in_use(),
+            folder = browser.folder_in_use(),
             speed,
             day = day.as_deref().unwrap_or("(first)"),
-            day_before = app.surfaces.replay_browser.day_before(),
+            day_before = browser.day_before(),
             play,
             started,
             action = if started { "load_first_session" } else { "open_browser" },
@@ -620,16 +545,13 @@ fn replay(app: &mut QuantickApp, env: &ScenarioInputs) {
     // that shows what a trader already has is the one half no capture can
     // reach — and "I could not find my recordings" is a report about that
     // window, not about the list inside it.
-    if env
-        .var("QUANTICK_REPLAY_BROWSER")
-        .is_some_and(|value| value == "1")
-    {
-        app.surfaces.replay_browser.open_browser();
+    if values::one(env.var("QUANTICK_REPLAY_BROWSER").as_deref()) {
+        browser.open_browser();
         tracing::info!(
             target: "quantick::app",
             schema_version = 1_u8,
             event_code = "REPLAY_BROWSER_AUTOSTART",
-            folder = app.surfaces.replay_browser.folder_in_use(),
+            folder = browser.folder_in_use(),
             "opened the session browser"
         );
     }
@@ -642,15 +564,15 @@ fn replay(app: &mut QuantickApp, env: &ScenarioInputs) {
     // would photograph a screen no person ever sees.
     if let Some(value) = env.var(crate::replay_view::GET_DATA_ENV) {
         let symbol = match value.trim() {
-            "1" | "" => Some(app.active_tab().symbol.clone()),
-            symbol => Some(symbol.to_string()),
+            "1" | "" => owners.runtime.active_tab().symbol.clone(),
+            symbol => symbol.to_string(),
         };
-        app.surfaces.replay_browser.open_get_data(symbol.as_deref());
+        browser.open_get_data(Some(&symbol));
         tracing::info!(
             target: "quantick::app",
             schema_version = 1_u8,
             event_code = "REPLAY_GET_DATA_AUTOSTART",
-            symbol = symbol.as_deref().unwrap_or(""),
+            symbol = symbol.as_str(),
             "opened the replay download tab"
         );
     }
@@ -659,17 +581,21 @@ fn replay(app: &mut QuantickApp, env: &ScenarioInputs) {
 /// The dock and the paper report: the named tab, the calendar, the ledger
 /// and the report list.
 #[cfg(any(feature = "scenario-harness", test))]
-fn dock_and_report(app: &mut QuantickApp, env: &ScenarioInputs) {
+fn dock_and_report<D: HarnessDesk>(desk: &mut D, env: &ScenarioInputs) {
+    let owners = desk.owners();
+    let tz = owners.runtime.tz;
+    let tab = owners.runtime.active_tab_mut();
     // Same convenience for the dock: open a named tab, so a scripted
     // validation run shows a panel without a click.
     if let Some(name) = env.var("QUANTICK_DOCK_TAB") {
-        match name.trim() {
-            "l2" => open_on(app.active_tab_mut(), PanelSection::L2),
-            "bubbles" => open_on(app.active_tab_mut(), PanelSection::Bubbles),
-            "session" => app.surfaces.dock.open_tab(DockTab::Session),
-            "trading" => app.surfaces.dock.open_tab(DockTab::Trading),
-            "trades" => app.surfaces.dock.open_tab(DockTab::Trades),
-            _ => tracing::warn!(
+        let dock = &mut owners.surfaces.dock;
+        match values::dock_tab(&name) {
+            Some(DockHook::L2) => open_on(tab, PanelSection::L2),
+            Some(DockHook::Bubbles) => open_on(tab, PanelSection::Bubbles),
+            Some(DockHook::Session) => dock.open_tab(DockTab::Session),
+            Some(DockHook::Trading) => dock.open_tab(DockTab::Trading),
+            Some(DockHook::Trades) => dock.open_tab(DockTab::Trades),
+            None => tracing::warn!(
                 target: "quantick::app",
                 schema_version = 1_u8,
                 event_code = "DOCK_TAB_AUTOSTART_UNKNOWN",
@@ -679,30 +605,20 @@ fn dock_and_report(app: &mut QuantickApp, env: &ScenarioInputs) {
             ),
         }
     }
+    let account = tab.paper.account_mut();
     // And for the performance report window — the Report… button's own
     // path, so a scripted run can show it.
-    if env
-        .var("QUANTICK_PAPER_REPORT_AUTOSTART")
-        .is_some_and(|value| value == "1")
-    {
-        app.active_tab_mut().paper.account_mut().autostart_report();
+    if values::one(env.var("QUANTICK_PAPER_REPORT_AUTOSTART").as_deref()) {
+        account.autostart_report();
     }
     if let Some(value) = env.var("QUANTICK_PAPER_REPORT_SCROLL") {
-        app.active_tab_mut()
-            .paper
-            .account_mut()
-            .report
-            .arm_scroll_probe(&value);
+        account.report.arm_scroll_probe(&value);
     }
     // The calendar the report grew: reachable open, on a chosen day or
     // a chosen span, with no clicks at all.
     if let Some(spec) = env.var("QUANTICK_PAPER_CALENDAR") {
         match crate::paper_calendar::parse_selection(&spec) {
-            Some(selection) => app
-                .active_tab_mut()
-                .paper
-                .account_mut()
-                .autostart_calendar(selection),
+            Some(selection) => account.autostart_calendar(selection),
             None => tracing::warn!(
                 target: "quantick::app",
                 schema_version = 1_u8,
@@ -715,18 +631,8 @@ fn dock_and_report(app: &mut QuantickApp, env: &ScenarioInputs) {
     }
     // Which instrument's saved history the ledger lists.
     if let Some(spec) = env.var("QUANTICK_LEDGER_SCOPE") {
-        let scope = match spec.trim() {
-            "chart" => Some(crate::paper_trading::LedgerScope::Chart),
-            "all" => Some(crate::paper_trading::LedgerScope::All),
-            "" => None,
-            symbol => Some(crate::paper_trading::LedgerScope::Symbol(symbol.to_owned())),
-        };
-        match scope {
-            Some(scope) => app
-                .active_tab_mut()
-                .paper
-                .account_mut()
-                .set_ledger_scope(scope),
+        match crate::paper_trading::LedgerScope::from_hook(&spec) {
+            Some(scope) => account.set_ledger_scope(scope),
             None => tracing::warn!(
                 target: "quantick::app",
                 schema_version = 1_u8,
@@ -740,14 +646,9 @@ fn dock_and_report(app: &mut QuantickApp, env: &ScenarioInputs) {
     // And the ledger past its first page of saved history — a state
     // only a click on "show older" otherwise reaches.
     if let Some(text) = env.var("QUANTICK_LEDGER_PAGES") {
-        match text.trim().parse::<usize>() {
-            Ok(pages) if pages >= 1 => {
-                app.active_tab_mut()
-                    .paper
-                    .account_mut()
-                    .autostart_ledger_pages(pages);
-            }
-            _ => tracing::warn!(
+        match values::positive(&text) {
+            Some(pages) => account.autostart_ledger_pages(pages),
+            None => tracing::warn!(
                 target: "quantick::app",
                 schema_version = 1_u8,
                 event_code = "LEDGER_PAGES_AUTOSTART_UNKNOWN",
@@ -759,44 +660,38 @@ fn dock_and_report(app: &mut QuantickApp, env: &ScenarioInputs) {
     }
     // Every day folded shut — the one-line-per-day read, which is
     // otherwise a click on each header.
-    if env
-        .var("QUANTICK_LEDGER_FOLD")
-        .is_some_and(|value| value == "1")
-    {
-        let tz = app.runtime.tz;
-        app.active_tab_mut()
-            .paper
-            .account_mut()
-            .autostart_folded_days(tz);
+    if values::one(env.var("QUANTICK_LEDGER_FOLD").as_deref()) {
+        account.autostart_folded_days(tz);
     }
     // The report's trade list is open by default, so the hook is how a
     // capture reaches it collapsed.
     if let Some(value) = env.var("QUANTICK_PAPER_REPORT_LIST") {
-        app.active_tab_mut()
-            .paper
-            .account_mut()
-            .set_report_list_open(value.trim() != "0");
+        account.set_report_list_open(value.trim() != "0");
     }
 }
 
 /// The canvas layout, the workspace file, and the toast that says a launch
 /// rescued something.
 #[cfg(any(feature = "scenario-harness", test))]
-fn workspace(app: &mut QuantickApp, env: &ScenarioInputs) {
+fn workspace<D: HarnessDesk>(desk: &mut D, env: &ScenarioInputs) {
+    let owners = desk.owners();
+    let tab_id = owners.runtime.tabs.active_id();
     // The window menu hung from the toolbar's list door, as its click does.
-    if let Some(value) = env.var("QUANTICK_WORKSPACE_MENU") {
-        let tab = app.runtime.tabs.active_id();
-        if !app.chrome.window_menu.tab_workspace.stage(tab, &value) {
-            tracing::warn!(target: "quantick::app", value = %value, "QUANTICK_WORKSPACE_MENU names no workspace surface");
-        }
+    if let Some(value) = env.var("QUANTICK_WORKSPACE_MENU")
+        && !owners
+            .chrome
+            .window_menu
+            .tab_workspace
+            .stage(tab_id, &value)
+    {
+        tracing::warn!(target: "quantick::app", value = %value, "QUANTICK_WORKSPACE_MENU names no workspace surface");
     }
     // Open on a named canvas layout, through the same path the View menu
     // takes. An env var is an explicit request for this run, so it wins
     // over a feed's declared `default_layout`.
     if let Some(name) = env.var("QUANTICK_LAYOUT") {
-        let layout = crate::tab::layout::named(&name);
-        match layout {
-            Some(layout) => app.active_tab_mut().set_layout(layout),
+        match crate::tab::layout::named(&name) {
+            Some(layout) => owners.runtime.active_tab_mut().set_layout(layout),
             None => tracing::warn!(
                 target: "quantick::app",
                 schema_version = 1_u8,
@@ -815,26 +710,20 @@ fn workspace(app: &mut QuantickApp, env: &ScenarioInputs) {
             ),
         }
     }
-    calls::when_one(
-        app,
-        env,
-        "QUANTICK_PANE_COLLAPSED",
-        layout::COLLAPSE_CAPABILITY_ID,
-    );
+    let collapse = layout::COLLAPSE_CAPABILITY_ID;
+    calls::when_one(desk, env, "QUANTICK_PANE_COLLAPSED", collapse);
     let flow = layout::FLOW_COLLAPSE_CAPABILITY_ID;
-    calls::when_one(app, env, "QUANTICK_FLOW_PANE_COLLAPSED", flow);
-    let tab = app.active_tab_mut();
-    let upper = env.var("QUANTICK_CONTEXT_UPPER_COLLAPSED").as_deref() == Some("1");
-    let lower = env.var("QUANTICK_CONTEXT_LOWER_COLLAPSED").as_deref() == Some("1");
-    if tab.canvas.layout == CanvasLayout::TimeTimeAndFlow && (upper ^ lower) {
+    calls::when_one(desk, env, "QUANTICK_FLOW_PANE_COLLAPSED", flow);
+    let tab = desk.owners().runtime.active_tab_mut();
+    let upper = env.var("QUANTICK_CONTEXT_UPPER_COLLAPSED");
+    let lower = env.var("QUANTICK_CONTEXT_LOWER_COLLAPSED");
+    if tab.canvas.layout == CanvasLayout::TimeTimeAndFlow
+        && let Some(upper) = values::context_fold(upper.as_deref(), lower.as_deref())
+    {
         tab.canvas.fold_context_pane(upper);
     }
-    calls::when_one(
-        app,
-        env,
-        "QUANTICK_WORKSPACE_SAVE",
-        desk::DESK_SAVE_CAPABILITY_ID,
-    );
+    let save = desk::DESK_SAVE_CAPABILITY_ID;
+    calls::when_one(desk, env, "QUANTICK_WORKSPACE_SAVE", save);
     // A chart's ⋯ menu open, or one of its rows pressed, as a click does.
     let menu = env.var("QUANTICK_PANE_MENU");
     if let Some((slot, row)) = menu
@@ -845,9 +734,9 @@ fn workspace(app: &mut QuantickApp, env: &ScenarioInputs) {
         let intent = row.map_or(Intent::SetMenuOpen(Some(slot)), |row| {
             Intent::Pick(slot, row)
         });
-        app.surfaces
-            .remove_chart
-            .update_scoped(app.runtime.tabs.active_id(), intent);
+        let owners = desk.owners();
+        let tab_id = owners.runtime.tabs.active_id();
+        owners.surfaces.remove_chart.update_scoped(tab_id, intent);
     }
     // The three file entries, reachable with no click for the same reason
     // (`.claude/skills/ui-harness`). Each runs the menu entry's own code
@@ -856,18 +745,18 @@ fn workspace(app: &mut QuantickApp, env: &ScenarioInputs) {
     // write and really replace the cockpit, so point `QUANTICK_UI_STATE`
     // and its sibling stores at scratchpad files first.
     if let Some(path) = env.var("QUANTICK_WORKSPACE_EXPORT") {
-        app.workspace_bundle_adapter()
+        desk.workspace_bundle()
             .export_workspace_to(std::path::Path::new(&path));
     }
     if let Some(path) = env.var("QUANTICK_WORKSPACE_IMPORT") {
-        app.workspace_bundle_adapter()
+        desk.workspace_bundle()
             .import_workspace_from(std::path::Path::new(&path));
     }
 }
 
 /// The toast a launch raises through the simulator's own route.
 #[cfg(any(feature = "scenario-harness", test))]
-fn toast(app: &mut QuantickApp, env: &ScenarioInputs) {
+fn toast<D: HarnessDesk>(desk: &mut D, env: &ScenarioInputs) {
     // `QUANTICK_TOAST=paper`: a simulator acknowledgement, posted through
     // the panel's own `show_toast`.
     //
@@ -879,15 +768,10 @@ fn toast(app: &mut QuantickApp, env: &ScenarioInputs) {
     // shutter lands inside the window: the demo trades within the first
     // second and the message is gone eight seconds later, so a capture
     // run photographs an empty lane and cannot tell that from a defect.
-    if env
-        .var("QUANTICK_TOAST")
-        .is_some_and(|value| value == "paper")
-    {
-        app.runtime
-            .tabs
-            .runtime_mut(0)
-            .paper
-            .show_toast("SIM: stop filled at 169 790 — flat.".to_owned());
+    if env.var("QUANTICK_TOAST").as_deref() == Some("paper") {
+        let tabs = &mut desk.owners().runtime.tabs;
+        let toast = "SIM: stop filled at 169 790 — flat.".to_owned();
+        tabs.runtime_mut(0).paper.show_toast(toast);
     }
 }
 

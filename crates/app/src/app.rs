@@ -96,6 +96,7 @@ pub(crate) use control_host::{
 pub(crate) mod deal_recording_wiring;
 mod demo_hooks;
 pub(crate) mod drawing_controller;
+mod harness_desk;
 
 mod frame;
 mod frame_tail;
@@ -276,39 +277,6 @@ impl QuantickApp {
     #[cfg(test)]
     pub(super) fn drawing_pane_mut(&mut self) -> &mut ChartPane {
         self.active_tab_mut().drawing_pane_mut()
-    }
-
-    /// Launch scenarios run the label and notification handlers as a trusted
-    /// local agent: traced on a replay, never through remote-grant admission.
-    #[cfg(any(feature = "control-harness", test))]
-    pub(super) fn apply_control_annotate_hooks(&mut self) {
-        let remote = crate::control::ActionOrigin::Remote;
-        if self.control.scenarios.has_annotation() {
-            let pane = self.active_tab().drawing_pane();
-            let slot = pane.slots().saturating_sub(1);
-            let anchor = match (pane.slot_open_time(slot), pane.closed_bar(slot)) {
-                (Some(time), Some(bar)) => Some(serde_json::json!({
-                    "time_unix_ms": time,
-                    "price": rust_decimal::prelude::ToPrimitive::to_f64(&bar.close).unwrap_or(1.0).to_string(),
-                })),
-                _ => None,
-            };
-            if let Some(input) = self.control.scenarios.annotation(anchor) {
-                self.run_hook_action("annotate.label.create", input, remote);
-            }
-        }
-        match self.control.scenarios.notification() {
-            Some(control_host::NotificationStep::Ready { capability, input }) => {
-                self.run_hook_action(capability, input, remote)
-            }
-            Some(control_host::NotificationStep::Refused { channel }) => tracing::warn!(
-                target: "quantick::control",
-                event_code = "CONTROL_NOTIFY_HOOK_REFUSED",
-                channel = %channel,
-                "QUANTICK_CONTROL_NOTIFY names no notification channel"
-            ),
-            None => {}
-        }
     }
 
     /// The same, restoring `workspace` over the configured defaults.

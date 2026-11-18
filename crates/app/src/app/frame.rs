@@ -339,7 +339,7 @@ impl QuantickApp {
             #[cfg(any(feature = "control-harness", test))]
             FrameStage::TakeMark => self.take_scenario_mark(),
             #[cfg(any(feature = "control-harness", test))]
-            FrameStage::AnnotateHooks => self.apply_control_annotate_hooks(),
+            FrameStage::AnnotateHooks => super::demo_hooks::apply_control_annotate_hooks(self),
             #[cfg(any(feature = "control-harness", test))]
             FrameStage::EvidenceHook => super::demo_hooks::apply_control_evidence_hook(self, ctx),
             FrameStage::GatewayService => {

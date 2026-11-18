@@ -477,6 +477,18 @@ pub enum LedgerScope {
 }
 
 impl LedgerScope {
+    /// A scripted launch's scope: `chart`, `all`, or a symbol folder name;
+    /// blank names none.
+    #[must_use]
+    pub fn from_hook(value: &str) -> Option<Self> {
+        match value.trim() {
+            "chart" => Some(Self::Chart),
+            "all" => Some(Self::All),
+            "" => None,
+            symbol => Some(Self::Symbol(symbol.to_owned())),
+        }
+    }
+
     /// The symbol folder to read, or `None` for the whole folder.
     #[must_use]
     pub fn folder<'a>(&'a self, chart: &'a str) -> Option<&'a str> {
@@ -530,6 +542,16 @@ mod tests {
     use crate::report::readout::LedgerTotals;
     use quantick_engine::Side;
     use quantick_sim::ExitReason;
+
+    #[test]
+    fn a_hook_scope_reads_chart_all_or_a_symbol_and_blank_is_none() {
+        assert_eq!(LedgerScope::from_hook(" chart "), Some(LedgerScope::Chart));
+        assert_eq!(LedgerScope::from_hook("all"), Some(LedgerScope::All));
+        let symbol = LedgerScope::Symbol("WINZ25".to_owned());
+        assert_eq!(LedgerScope::from_hook("WINZ25"), Some(symbol));
+        assert_eq!(LedgerScope::from_hook("  "), None);
+    }
+
     fn trade_at(closed_ms: i64, pnl: i64) -> ClosedTrade {
         ClosedTrade {
             side: Side::Buy,
