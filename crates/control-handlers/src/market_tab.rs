@@ -1,9 +1,8 @@
 //! The tab-scoped feed and market calls' one port: the window resolves the
-//! addressed tab and lends its feed table, its drawings and its History
-//! default; the tab answers the rest, and the feed table answers what the
-//! config names.
-use quantick_control_schema::feed_source::{FeedSourceChoice, choices};
-use quantick_session::{HistoryAct, HistoryOutcome, HistoryReply, sets_window_default};
+//! addressed tab and lends its config, its drawings and its History default;
+//! the tab answers the rest, and the config answers which pairs and rolls
+//! exist.
+use quantick_session::{HistoryAct, HistoryOutcome, SessionSnapshot, sets_window_default};
 use quantick_sources::history_reach::HistoryReach;
 use quantick_sources::recovery::AutoRoll;
 use quantick_stores::config::AppConfig;
@@ -28,37 +27,14 @@ pub struct RecoveredFeed {
     pub respawned: bool,
 }
 
-/// What the config says about feeds: the pairs a tab may switch to and the
-/// contract that follows another.
-pub trait FeedTable {
-    fn source_choices(&self) -> Vec<FeedSourceChoice>;
-    /// The contract the feed's config names after `symbol`.
-    fn next_contract(&self, feed_id: &str, symbol: &str) -> Option<String>;
-    /// Whether feed `feed_id` lists `symbol`.
-    fn feed_offers(&self, feed_id: &str, symbol: &str) -> bool;
-}
-
-impl FeedTable for AppConfig {
-    fn source_choices(&self) -> Vec<FeedSourceChoice> {
-        choices(self)
-    }
-    fn next_contract(&self, feed_id: &str, symbol: &str) -> Option<String> {
-        self.feed(feed_id)?.next_contract(symbol).map(str::to_owned)
-    }
-    fn feed_offers(&self, feed_id: &str, symbol: &str) -> bool {
-        self.feed(feed_id)
-            .is_some_and(|feed| feed.symbols.iter().any(|offered| offered == symbol))
-    }
-}
-
-/// One tab, as its feed and market calls read and change it, given the
-/// window's feed table `C`. Its names differ from the tab's own methods, so
-/// an implementation that forwards to one cannot fall back on itself.
-pub trait MarketTab<C> {
+/// One tab, as its feed and market calls read and change it. Its names
+/// differ from the tab's own methods, so an implementation that forwards to
+/// one cannot fall back on itself.
+pub trait MarketTab {
     /// The pair the tab shows, and whether it plays a recording.
     fn market(&self) -> FeedSelection;
     /// Put the tab on the validated pair, through its own source switch.
-    fn switch_market(&mut self, config: &C, feed_id: &str, symbol: &str);
+    fn switch_market(&mut self, config: &AppConfig, feed_id: &str, symbol: &str);
     /// A paper position or a working order on the tab.
     fn paper_open(&self) -> bool;
     /// The contract the tab's feed reported it does not list, as the feed's
@@ -68,50 +44,64 @@ pub trait MarketTab<C> {
     fn roll_memory(&mut self) -> &mut AutoRoll;
     /// Reconnect (`keep_timeline`) or reload the tab's feed, as the buttons
     /// in the chart's offline corner do.
-    fn recover(&mut self, config: &C, keep_timeline: bool) -> RecoveredFeed;
+    fn recover(&mut self, config: &AppConfig, keep_timeline: bool) -> RecoveredFeed;
     /// Whether the tab's feed can page older trades.
-    fn pages_history(&self, config: &C) -> bool;
-    /// The History button's press or cancel on the tab, and the session as
-    /// it then stands.
-    fn history(&mut self, config: &C, act: HistoryAct) -> HistoryReply;
+    fn pages_history(&self, config: &AppConfig) -> bool;
+    /// The History button's press or cancel on the tab.
+    fn history(&mut self, config: &AppConfig, act: HistoryAct) -> HistoryOutcome;
+    /// The tab's session as it stands.
+    fn session(&self) -> SessionSnapshot;
 }
 
 /// The tab a mutating call reaches, beside what the window lends it.
-pub struct LentTab<'a, C> {
-    pub tab: &'a mut dyn MarketTab<C>,
-    pub config: &'a C,
+pub struct LentTab<'a> {
+    pub tab: &'a mut dyn MarketTab,
+    pub config: &'a AppConfig,
     /// The window's main-click History reach.
     pub history_default: &'a mut HistoryReach,
 }
 
-/// The window's market job: resolve the addressed tab and lend the feed
-/// table, the drawings a roll carries and the History default.
+/// The window's market job: resolve the addressed tab and lend the config,
+/// the drawings a roll carries and the History default.
 pub trait MarketTabHost: TabDirectory {
-    type Config: FeedTable;
-    /// How many tabs are open.
     fn tab_count(&self) -> usize;
-    fn feed_table(&self) -> &Self::Config;
+    fn config(&self) -> &AppConfig;
     /// The tab at `index`, a position the directory gave.
-    fn market_tab(&self, index: usize) -> Option<&dyn MarketTab<Self::Config>>;
+    fn market_tab(&self, index: usize) -> Option<&dyn MarketTab>;
     /// The tab at `index`, lent for a change.
-    fn market_tab_mut(&mut self, index: usize) -> Option<LentTab<'_, Self::Config>>;
+    fn market_tab_mut(&mut self, index: usize) -> Option<LentTab<'_>>;
     /// A drawing gesture in flight on any pane holding `from`'s or `to`'s marks.
     fn drawing_gesture_on(&self, feed_id: &str, from: &str, to: &str) -> bool;
     /// Copy the drawings on `from` to `to`; how many objects were added.
     fn carry_market_drawings(&mut self, feed_id: &str, from: &str, to: &str) -> usize;
 }
 
-/// The History button's act on a lent tab, the toolbar's and the call's
-/// both: a taken press moves the window's main-click default
-/// ([`sets_window_default`]).
-pub fn run_history<C>(lent: LentTab<'_, C>, act: HistoryAct) -> HistoryReply {
-    let reply = lent.tab.history(lent.config, act);
-    if let (HistoryAct::Press(reach), HistoryOutcome::Pressed(press)) = (act, reply.0)
+/// A History act on a lent tab, the one the toolbar's press and
+/// `feed.history.*` make: a taken press moves the window's main-click
+/// default ([`sets_window_default`]).
+pub fn run_history(lent: LentTab<'_>, act: HistoryAct) -> HistoryOutcome {
+    let outcome = lent.tab.history(lent.config, act);
+    if let (HistoryAct::Press(reach), HistoryOutcome::Pressed(press)) = (act, outcome)
         && sets_window_default(press)
     {
         *lent.history_default = reach;
     }
-    reply
+    outcome
+}
+
+/// The contract feed `feed_id`'s config names after `symbol`.
+pub(crate) fn next_contract(config: &AppConfig, feed_id: &str, symbol: &str) -> Option<String> {
+    config
+        .feed(feed_id)?
+        .next_contract(symbol)
+        .map(str::to_owned)
+}
+
+/// Whether feed `feed_id` is configured and lists `symbol` (`None`: any).
+pub(crate) fn feed_offers(config: &AppConfig, feed_id: &str, symbol: Option<&str>) -> bool {
+    config.feed(feed_id).is_some_and(|feed| {
+        symbol.is_none_or(|symbol| feed.symbols.iter().any(|offered| offered == symbol))
+    })
 }
 
 /// Put the tab at `index` on the pair and answer where it landed; `None`

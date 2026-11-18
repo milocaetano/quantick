@@ -5,7 +5,7 @@
 //! about to be looked up under. The next contract is only ever the config's.
 use crate::{
     dock::ActionDock,
-    market_tab::{FeedTable as _, MarketTabHost, market, switch_market},
+    market_tab::{MarketTabHost, feed_offers, market, next_contract, switch_market},
     notify::NotifyAccess,
     tabs::{tab_closed, tab_index},
 };
@@ -128,11 +128,8 @@ fn resolve<H: MarketTabHost + ?Sized>(
     if replay {
         return Err(RollRefusal::Replay);
     }
-    let table = host.feed_table();
-    let next = table
-        .next_contract(feed_id, symbol)
-        .ok_or(RollRefusal::NotConfigured)?;
-    if !table.feed_offers(feed_id, &next) {
+    let next = next_contract(host.config(), feed_id, symbol).ok_or(RollRefusal::NotConfigured)?;
+    if !feed_offers(host.config(), feed_id, Some(&next)) {
         return Err(RollRefusal::TargetNotOffered);
     }
     if host.market_tab(index).is_some_and(|tab| tab.paper_open()) {
@@ -161,7 +158,7 @@ pub fn offer<H: MarketTabHost + ?Sized>(host: &H) -> Option<(String, Option<&'st
     if current.replay {
         return None;
     }
-    let next = (host.feed_table()).next_contract(&current.feed_id, &current.symbol)?;
+    let next = next_contract(host.config(), &current.feed_id, &current.symbol)?;
     let refusal = resolve(host, index, &current.feed_id, &current.symbol, false)
         .err()
         .map(RollRefusal::reason);
@@ -195,9 +192,7 @@ fn roll<H: MarketTabHost + ?Sized, A: NotifyAccess>(
         // A dropped answer's retry finds the tab on the target already, and so
         // does a call after a hand switch. The copy adds nothing to the first
         // and gives the second its marks.
-        if (host.feed_table())
-            .next_contract(&current.feed_id, &input.from_symbol)
-            .as_ref()
+        if next_contract(host.config(), &current.feed_id, &input.from_symbol).as_ref()
             != Some(&current.symbol)
         {
             return Err(crate::bubble_scale::refused_precondition(

@@ -2,10 +2,10 @@ use super::*;
 use crate::contract_roll::AutoRoll;
 use crate::market_tab::FeedSelection;
 use crate::market_tab::RecoveredFeed;
-use crate::market_tab::{FeedTable, LentTab, MarketTab, MarketTabHost};
+use crate::market_tab::{LentTab, MarketTab, MarketTabHost};
 use crate::test_support::{FakeAccess, FakeWindow};
-use quantick_control_schema::feed_source::FeedSourceChoice;
-use quantick_session::{HistoryAct, HistoryReply};
+use quantick_session::{HistoryAct, HistoryOutcome, SessionSnapshot};
+use quantick_stores::config::AppConfig;
 use quantick_stores::market_list::{
     CatalogMarket, OpenMarket, SwitchChoice, Venue, VenueKind, roll_toast, switch_toast,
 };
@@ -24,6 +24,9 @@ struct Host {
     palette: Option<(String, bool)>,
     /// Tab 5: what it shows, and every switch and paper state asked of it.
     tab: PaletteTab,
+    /// The feed offers what the palette lists; the config rolls BTCUSDT on
+    /// to PEPEUSDT.
+    config: quantick_stores::config::AppConfig,
     flow_bars: Vec<(u64, String)>,
     default: quantick_sources::history_reach::HistoryReach,
     /// Whether the window lends its workspaces; a host without them refuses.
@@ -84,6 +87,11 @@ impl Host {
                 switches: Vec::new(),
                 paper_open: false,
             },
+            config: crate::test_support::fake_config(&[(
+                "binance",
+                &["BTCUSDT", "PEPEUSDT"],
+                &[("BTCUSDT", "PEPEUSDT")],
+            )]),
             flow_bars: Vec::new(),
             default: crate::test_support::FAKE_DEFAULT_REACH,
             lends_workspaces: true,
@@ -184,27 +192,7 @@ struct PaletteTab {
     paper_open: bool,
 }
 
-/// The feed offers what the palette lists; the config rolls BTCUSDT on to
-/// PEPEUSDT.
-impl FeedTable for MarketSnapshot {
-    fn source_choices(&self) -> Vec<FeedSourceChoice> {
-        let symbols = self.markets.iter().map(|market| market.symbol.clone());
-        vec![FeedSourceChoice {
-            feed_id: "binance".to_owned(),
-            display_name: "Binance".to_owned(),
-            symbols: symbols.collect(),
-            contract_rolls: [("BTCUSDT".to_owned(), "PEPEUSDT".to_owned())].into(),
-        }]
-    }
-    fn next_contract(&self, _feed_id: &str, symbol: &str) -> Option<String> {
-        (symbol == "BTCUSDT").then(|| "PEPEUSDT".to_owned())
-    }
-    fn feed_offers(&self, _feed_id: &str, symbol: &str) -> bool {
-        self.markets.iter().any(|market| market.symbol == symbol)
-    }
-}
-
-impl MarketTab<MarketSnapshot> for PaletteTab {
+impl MarketTab for PaletteTab {
     fn market(&self) -> FeedSelection {
         FeedSelection {
             feed_id: self.market.0.clone(),
@@ -212,7 +200,7 @@ impl MarketTab<MarketSnapshot> for PaletteTab {
             replay: false,
         }
     }
-    fn switch_market(&mut self, _config: &MarketSnapshot, feed_id: &str, symbol: &str) {
+    fn switch_market(&mut self, _config: &AppConfig, feed_id: &str, symbol: &str) {
         self.market = (feed_id.to_owned(), symbol.to_owned());
         self.switches.push(self.market.clone());
     }
@@ -225,32 +213,34 @@ impl MarketTab<MarketSnapshot> for PaletteTab {
     fn roll_memory(&mut self) -> &mut AutoRoll {
         unreachable!("the palette never reads the roll memory")
     }
-    fn recover(&mut self, _config: &MarketSnapshot, _keep_timeline: bool) -> RecoveredFeed {
+    fn recover(&mut self, _config: &AppConfig, _keep_timeline: bool) -> RecoveredFeed {
         unreachable!("the palette never recovers the feed")
     }
-    fn pages_history(&self, _config: &MarketSnapshot) -> bool {
+    fn pages_history(&self, _config: &AppConfig) -> bool {
         false
     }
-    fn history(&mut self, _config: &MarketSnapshot, _act: HistoryAct) -> HistoryReply {
+    fn history(&mut self, _config: &AppConfig, _act: HistoryAct) -> HistoryOutcome {
+        unreachable!("the palette never presses History")
+    }
+    fn session(&self) -> SessionSnapshot {
         unreachable!("the palette never presses History")
     }
 }
 
 impl MarketTabHost for Host {
-    type Config = MarketSnapshot;
     fn tab_count(&self) -> usize {
         1
     }
-    fn feed_table(&self) -> &MarketSnapshot {
-        &self.snapshot
+    fn config(&self) -> &AppConfig {
+        &self.config
     }
-    fn market_tab(&self, _index: usize) -> Option<&dyn MarketTab<MarketSnapshot>> {
+    fn market_tab(&self, _index: usize) -> Option<&dyn MarketTab> {
         Some(&self.tab)
     }
-    fn market_tab_mut(&mut self, _index: usize) -> Option<LentTab<'_, MarketSnapshot>> {
+    fn market_tab_mut(&mut self, _index: usize) -> Option<LentTab<'_>> {
         Some(LentTab {
             tab: &mut self.tab,
-            config: &self.snapshot,
+            config: &self.config,
             history_default: &mut self.default,
         })
     }

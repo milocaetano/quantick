@@ -3,12 +3,12 @@ use crate::TabDirectory;
 use crate::contract_roll::AutoRoll;
 use crate::market_tab::RecoveredFeed;
 use crate::market_tab::{LentTab, MarketTab, MarketTabHost};
-use crate::test_support::{FAKE_DEFAULT_REACH, FakeAccess, FakeFeeds, FakeWindow};
+use crate::test_support::{FAKE_DEFAULT_REACH, FakeAccess, FakeWindow, fake_config};
 use quantick_control::registry::RevisionPolicy;
 use quantick_control_host::{actions::ActionRegistry, journal::EventActor};
-use quantick_control_schema::feed_source::FeedSourceChoice;
-use quantick_session::{HistoryAct, HistoryReply};
+use quantick_session::{HistoryAct, HistoryOutcome, SessionSnapshot};
 use quantick_sources::history_reach::HistoryReach;
+use quantick_stores::config::AppConfig;
 use serde_json::json;
 
 /// The one tab: its pair, and how many switches it took.
@@ -18,7 +18,7 @@ struct Market {
     replay: bool,
     switches: usize,
 }
-impl MarketTab<FakeFeeds> for Market {
+impl MarketTab for Market {
     fn market(&self) -> FeedSelection {
         FeedSelection {
             feed_id: self.feed.clone(),
@@ -26,7 +26,7 @@ impl MarketTab<FakeFeeds> for Market {
             replay: self.replay,
         }
     }
-    fn switch_market(&mut self, _config: &FakeFeeds, feed_id: &str, symbol: &str) {
+    fn switch_market(&mut self, _config: &AppConfig, feed_id: &str, symbol: &str) {
         self.switches += 1;
         self.feed = feed_id.into();
         self.symbol = symbol.into();
@@ -40,13 +40,16 @@ impl MarketTab<FakeFeeds> for Market {
     fn roll_memory(&mut self) -> &mut AutoRoll {
         unreachable!("a source switch never reads the roll memory")
     }
-    fn recover(&mut self, _config: &FakeFeeds, _keep_timeline: bool) -> RecoveredFeed {
+    fn recover(&mut self, _config: &AppConfig, _keep_timeline: bool) -> RecoveredFeed {
         unreachable!("a source switch never recovers the feed")
     }
-    fn pages_history(&self, _config: &FakeFeeds) -> bool {
+    fn pages_history(&self, _config: &AppConfig) -> bool {
         false
     }
-    fn history(&mut self, _config: &FakeFeeds, _act: HistoryAct) -> HistoryReply {
+    fn history(&mut self, _config: &AppConfig, _act: HistoryAct) -> HistoryOutcome {
+        unreachable!("a source switch never presses History")
+    }
+    fn session(&self) -> SessionSnapshot {
         unreachable!("a source switch never presses History")
     }
 }
@@ -54,17 +57,11 @@ impl MarketTab<FakeFeeds> for Market {
 /// A window of one tab, id 7, over a spot and a futures feed.
 struct Window {
     tab: Market,
-    feeds: FakeFeeds,
+    config: AppConfig,
     default: HistoryReach,
 }
 impl Window {
     fn on(feed: &str, symbol: &str) -> Self {
-        let feed_of = |id: &str, name: &str, symbol: &str| FeedSourceChoice {
-            feed_id: id.into(),
-            display_name: name.into(),
-            symbols: vec![symbol.into()],
-            contract_rolls: Default::default(),
-        };
         Self {
             tab: Market {
                 feed: feed.into(),
@@ -72,9 +69,9 @@ impl Window {
                 replay: false,
                 switches: 0,
             },
-            feeds: FakeFeeds(vec![
-                feed_of("spot", "Spot", "BTCUSDT"),
-                feed_of("futures", "Futures", "BTCUSDT.p"),
+            config: fake_config(&[
+                ("spot", &["BTCUSDT"], &[]),
+                ("futures", &["BTCUSDT.p"], &[]),
             ]),
             default: FAKE_DEFAULT_REACH,
         }
@@ -92,20 +89,19 @@ impl TabDirectory for Window {
     }
 }
 impl MarketTabHost for Window {
-    type Config = FakeFeeds;
     fn tab_count(&self) -> usize {
         1
     }
-    fn feed_table(&self) -> &FakeFeeds {
-        &self.feeds
+    fn config(&self) -> &AppConfig {
+        &self.config
     }
-    fn market_tab(&self, _index: usize) -> Option<&dyn MarketTab<FakeFeeds>> {
+    fn market_tab(&self, _index: usize) -> Option<&dyn MarketTab> {
         Some(&self.tab)
     }
-    fn market_tab_mut(&mut self, _index: usize) -> Option<LentTab<'_, FakeFeeds>> {
+    fn market_tab_mut(&mut self, _index: usize) -> Option<LentTab<'_>> {
         Some(LentTab {
             tab: &mut self.tab,
-            config: &self.feeds,
+            config: &self.config,
             history_default: &mut self.default,
         })
     }

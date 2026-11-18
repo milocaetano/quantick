@@ -3,9 +3,9 @@ use super::Tab;
 use crate::config::AppConfig;
 use quantick_control_handlers::contract_roll::AutoRoll;
 use quantick_control_handlers::market_tab::{FeedSelection, MarketTab, RecoveredFeed};
-use quantick_session::{HistoryAct, HistoryOutcome, HistoryReply};
+use quantick_session::{HistoryAct, HistoryOutcome, SessionSnapshot};
 
-impl MarketTab<AppConfig> for Tab {
+impl MarketTab for Tab {
     fn market(&self) -> FeedSelection {
         FeedSelection {
             feed_id: self.active.0.clone(),
@@ -40,11 +40,13 @@ impl MarketTab<AppConfig> for Tab {
     fn pages_history(&self, config: &AppConfig) -> bool {
         self.capabilities(config).history_paging
     }
-    fn history(&mut self, config: &AppConfig, act: HistoryAct) -> HistoryReply {
-        let outcome = match act {
+    fn history(&mut self, config: &AppConfig, act: HistoryAct) -> HistoryOutcome {
+        match act {
             HistoryAct::Press(reach) => HistoryOutcome::Pressed(self.load_history(config, reach)),
             HistoryAct::Cancel => HistoryOutcome::Cancelled(self.cancel_history()),
-        };
-        (outcome, self.session.snapshot())
+        }
+    }
+    fn session(&self) -> SessionSnapshot {
+        self.session.snapshot()
     }
 }

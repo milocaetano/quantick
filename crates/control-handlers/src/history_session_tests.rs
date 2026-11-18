@@ -7,10 +7,11 @@ use std::time::Instant;
 use quantick_engine::trade_tape::TradeTape;
 use quantick_engine::{Side, Trade};
 use quantick_session::{
-    Act, Effect, HistoryAct, HistoryOutcome, HistoryReply, Msg, TabSession, TabView,
+    Act, Effect, HistoryAct, HistoryOutcome, Msg, SessionSnapshot, TabSession, TabView,
 };
 use quantick_sources::config::FeedCapabilities;
 use quantick_sources::history_reach::{HistoryReach, Outage, ReachBounds};
+use quantick_stores::config::AppConfig;
 use rust_decimal::Decimal;
 use serde_json::json;
 
@@ -20,7 +21,7 @@ use crate::market_tab::FeedSelection;
 use crate::market_tab::RecoveredFeed;
 use crate::market_tab::{LentTab, MarketTab, MarketTabHost};
 use crate::tabs::TabDirectory;
-use crate::test_support::{FAKE_DEFAULT_REACH, FakeAccess, FakeFeeds, FakeWindow};
+use crate::test_support::{FAKE_DEFAULT_REACH, FakeAccess, FakeWindow, fake_config};
 
 const MINUTE: i64 = 60 * 1_000;
 const HOUR: i64 = 60 * MINUTE;
@@ -103,7 +104,7 @@ struct Live {
     now: Instant,
 }
 
-impl MarketTab<FakeFeeds> for Live {
+impl MarketTab for Live {
     fn market(&self) -> FeedSelection {
         FeedSelection {
             feed_id: "fake".to_owned(),
@@ -111,7 +112,7 @@ impl MarketTab<FakeFeeds> for Live {
             replay: false,
         }
     }
-    fn switch_market(&mut self, _config: &FakeFeeds, _feed_id: &str, _symbol: &str) {}
+    fn switch_market(&mut self, _config: &AppConfig, _feed_id: &str, _symbol: &str) {}
     fn paper_open(&self) -> bool {
         false
     }
@@ -121,23 +122,25 @@ impl MarketTab<FakeFeeds> for Live {
     fn roll_memory(&mut self) -> &mut AutoRoll {
         unreachable!("History calls never read the roll memory")
     }
-    fn recover(&mut self, _config: &FakeFeeds, _keep_timeline: bool) -> RecoveredFeed {
+    fn recover(&mut self, _config: &AppConfig, _keep_timeline: bool) -> RecoveredFeed {
         unreachable!("History calls never recover the feed")
     }
-    fn pages_history(&self, _config: &FakeFeeds) -> bool {
+    fn pages_history(&self, _config: &AppConfig) -> bool {
         capabilities().history_paging
     }
-    fn history(&mut self, _config: &FakeFeeds, act: HistoryAct) -> HistoryReply {
+    fn history(&mut self, _config: &AppConfig, act: HistoryAct) -> HistoryOutcome {
         run(&mut self.session, &self.tape, act.act(), self.now);
-        let outcome = match act {
+        match act {
             HistoryAct::Press(_) => {
                 HistoryOutcome::Pressed(self.session.last_press().unwrap_or(Press::AlreadyRunning))
             }
             HistoryAct::Cancel => {
                 HistoryOutcome::Cancelled(self.session.last_cancel().unwrap_or(Cancelled::Nothing))
             }
-        };
-        (outcome, self.session.snapshot())
+        }
+    }
+    fn session(&self) -> SessionSnapshot {
+        self.session.snapshot()
     }
 }
 
@@ -145,7 +148,7 @@ impl MarketTab<FakeFeeds> for Live {
 struct SessionTab {
     live: Live,
     window_default: HistoryReach,
-    feeds: FakeFeeds,
+    config: AppConfig,
 }
 
 impl SessionTab {
@@ -157,7 +160,7 @@ impl SessionTab {
                 now,
             },
             window_default: FAKE_DEFAULT_REACH,
-            feeds: FakeFeeds(Vec::new()),
+            config: fake_config(&[]),
         }
     }
 }
@@ -175,20 +178,19 @@ impl TabDirectory for SessionTab {
 }
 
 impl MarketTabHost for SessionTab {
-    type Config = FakeFeeds;
     fn tab_count(&self) -> usize {
         1
     }
-    fn feed_table(&self) -> &FakeFeeds {
-        &self.feeds
+    fn config(&self) -> &AppConfig {
+        &self.config
     }
-    fn market_tab(&self, index: usize) -> Option<&dyn MarketTab<FakeFeeds>> {
-        (index == 0).then_some(&self.live as &dyn MarketTab<FakeFeeds>)
+    fn market_tab(&self, index: usize) -> Option<&dyn MarketTab> {
+        (index == 0).then_some(&self.live as &dyn MarketTab)
     }
-    fn market_tab_mut(&mut self, index: usize) -> Option<LentTab<'_, FakeFeeds>> {
+    fn market_tab_mut(&mut self, index: usize) -> Option<LentTab<'_>> {
         (index == 0).then_some(LentTab {
             tab: &mut self.live,
-            config: &self.feeds,
+            config: &self.config,
             history_default: &mut self.window_default,
         })
     }

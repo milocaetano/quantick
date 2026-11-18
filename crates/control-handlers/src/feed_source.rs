@@ -7,7 +7,7 @@
 //! the pair it left: an assistant's switch never reads as the trader's own.
 use crate::{
     dock::ActionDock,
-    market_tab::{FeedSelection, FeedTable as _, MarketTabHost, market, switch_market},
+    market_tab::{FeedSelection, MarketTabHost, feed_offers, market, switch_market},
     notify::NotifyAccess,
     tabs::{tab_closed, tab_index},
 };
@@ -83,11 +83,7 @@ pub fn check_source<H: MarketTabHost + ?Sized>(
             "Close the recorded session before selecting a live source",
         ));
     }
-    let valid = host.feed_table().source_choices().iter().any(|feed| {
-        feed.feed_id == feed_id
-            && symbol.is_none_or(|symbol| feed.symbols.iter().any(|offered| offered == symbol))
-    });
-    if !valid {
+    if !feed_offers(host.config(), feed_id, symbol) {
         return Err(ControlError::invalid_request(
             "Select a configured feed_id and symbol pair from feed.status.sources",
         ));

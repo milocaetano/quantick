@@ -1,37 +1,30 @@
 use super::*;
-use serde_json::json;
+use crate::test_support::fake_config;
 
-/// A config of one futures feed offering two contracts, rolling the first
-/// onto the second and the second onto one it does not offer.
+/// One futures feed offering two contracts, rolling the first onto the
+/// second and the second onto one it does not offer.
 fn config() -> AppConfig {
-    serde_json::from_value(json!({
-        "default_feed": "b3",
-        "default_symbol": "WINZ26",
-        "feeds": [{
-            "id": "b3",
-            "name": "B3",
-            "provider": "metatrader",
-            "symbols": ["WINZ26", "WING27"],
-            "contract_rolls": { "WINZ26": "WING27", "WING27": "WINJ27" },
-        }],
-    }))
-    .expect("a valid config")
+    fake_config(&[(
+        "b3",
+        &["WINZ26", "WING27"],
+        &[("WINZ26", "WING27"), ("WING27", "WINJ27")],
+    )])
 }
 
 #[test]
-fn the_config_names_the_next_contract_of_a_listed_feed_only() {
+fn the_config_names_the_next_contract_of_a_configured_feed_only() {
     let config = config();
     assert_eq!(
-        config.next_contract("b3", "WINZ26").as_deref(),
+        next_contract(&config, "b3", "WINZ26").as_deref(),
         Some("WING27")
     );
     assert_eq!(
-        config.next_contract("b3", "WINJ27"),
+        next_contract(&config, "b3", "WINJ27"),
         None,
         "no roll is named"
     );
     assert_eq!(
-        config.next_contract("binance", "WINZ26"),
+        next_contract(&config, "binance", "WINZ26"),
         None,
         "no such feed"
     );
@@ -40,19 +33,17 @@ fn the_config_names_the_next_contract_of_a_listed_feed_only() {
 #[test]
 fn a_feed_offers_only_the_symbols_its_config_lists() {
     let config = config();
-    assert!(config.feed_offers("b3", "WING27"));
+    assert!(feed_offers(&config, "b3", Some("WING27")));
     assert!(
-        !config.feed_offers("b3", "WINJ27"),
+        !feed_offers(&config, "b3", Some("WINJ27")),
         "a named roll is not an offer"
     );
-    assert!(!config.feed_offers("binance", "WINZ26"));
-}
-
-#[test]
-fn the_choices_are_the_configured_feeds_with_their_rolls() {
-    let choices = config().source_choices();
-    assert_eq!(choices.len(), 1);
-    assert_eq!(choices[0].feed_id, "b3");
-    assert_eq!(choices[0].symbols, ["WINZ26", "WING27"]);
-    assert_eq!(choices[0].contract_rolls["WINZ26"], "WING27");
+    assert!(
+        feed_offers(&config, "b3", None),
+        "any symbol of a configured feed"
+    );
+    assert!(
+        !feed_offers(&config, "binance", None),
+        "an unconfigured feed offers nothing"
+    );
 }

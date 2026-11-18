@@ -100,9 +100,10 @@ pub(crate) trait TabsPort {
     fn tab_reads(&self) -> TabReads<'_>;
 }
 
-impl quantick_control_handlers::TabsHost for TabReads<'_> {
+/// The window's tab directory, which every tab-scoped family resolves by.
+impl quantick_control_handlers::TabsHost for dyn ControlPort {
     fn tab_list(&self) -> &dyn quantick_control_handlers::TabDirectory {
-        self.tabs
+        self.tab_reads().tabs()
     }
 }
 
@@ -368,7 +369,7 @@ impl<'a> TabsMut<'a> {
     }
 
     /// One tab beside the feed table and History default a call lends it.
-    pub(crate) fn lend_tab(self, index: usize) -> Option<market_tab::LentTab<'a, AppConfig>> {
+    pub(crate) fn lend_tab(self, index: usize) -> Option<market_tab::LentTab<'a>> {
         Some(market_tab::LentTab {
             tab: self.tabs.get_mut(index)?,
             config: self.config,

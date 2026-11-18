@@ -19,7 +19,7 @@ use quantick_control_schema::interaction::CursorSnapshot;
 use quantick_control_schema::notify::AgentPopup;
 use quantick_engine::bar_registry::{BUILTIN_BARS, BarConfiguration};
 use quantick_engine::{Bar, BarSpec, Side, Trade};
-use quantick_session::{HistoryAct, HistoryOutcome, HistoryReply, SessionSnapshot};
+use quantick_session::{HistoryAct, HistoryOutcome, SessionSnapshot};
 use quantick_sources::history_reach::{HistoryReach, ReachProgress};
 use quantick_sources::history_run::{Cancelled, Press, RunStatus};
 use rust_decimal::Decimal;
@@ -43,7 +43,7 @@ use crate::indicator_host::{
 };
 use crate::market_tab::FeedSelection;
 use crate::market_tab::RecoveredFeed;
-use crate::market_tab::{FeedTable, LentTab, MarketTab, MarketTabHost};
+use crate::market_tab::{LentTab, MarketTab, MarketTabHost};
 use crate::notify::{AttentionPort, NotifyAccess};
 use crate::pane_marks::PaneMarks;
 use crate::settings::{SettingsAct, SettingsOwner, SettingsReadings, SettleError};
@@ -52,7 +52,6 @@ use crate::trade::{TradeDesk, TradePort};
 use quantick_control::error::ControlError;
 use quantick_control_schema::bubble_preset::{ListInput, ListResult};
 use quantick_control_schema::chart_settings::{ChartSettingsInput, ChartSettingsResult};
-use quantick_control_schema::feed_source::FeedSourceChoice;
 use quantick_control_schema::indicator_picker::{PickerInput, PickerResult};
 use quantick_control_schema::layers::LayerSnapshot;
 use quantick_control_schema::native_indicator as wire;
@@ -68,6 +67,7 @@ use quantick_orderflow::{HeatmapConfig, TickTuning};
 use quantick_replay::recorder::{DealRecordingError, RecordingView};
 use quantick_stores::bubble_asset_store::SaveSwitch;
 use quantick_stores::candle_presets::PresetError;
+use quantick_stores::config::AppConfig;
 use quantick_stores::indicator_state::SavedIndicator;
 
 /// One pane of a fake tab: a real chart model, an optional venue prefix, and
@@ -383,6 +383,8 @@ pub(crate) struct FakeTab {
     /// Every recorder act the tab took, by name.
     pub recorder_acts: Vec<String>,
     pub auto_roll: AutoRoll,
+    /// What the last History act on the tab did.
+    pub last_history: Option<HistoryOutcome>,
 }
 
 impl FakeTab {
@@ -404,6 +406,7 @@ impl FakeTab {
             recorder_refusal: None,
             recorder_acts: Vec::new(),
             auto_roll: AutoRoll::default(),
+            last_history: None,
         }
     }
 
@@ -447,10 +450,11 @@ impl FakeTab {
         cancelled
     }
 
-    fn snapshot(&self, outcome: HistoryOutcome) -> SessionSnapshot {
+    fn snapshot(&self, outcome: Option<HistoryOutcome>) -> SessionSnapshot {
         let (last_press, last_cancel) = match outcome {
-            HistoryOutcome::Pressed(press) => (Some(press), None),
-            HistoryOutcome::Cancelled(cancelled) => (None, Some(cancelled)),
+            Some(HistoryOutcome::Pressed(press)) => (Some(press), None),
+            Some(HistoryOutcome::Cancelled(cancelled)) => (None, Some(cancelled)),
+            None => (None, None),
         };
         SessionSnapshot {
             run: self.history,
@@ -470,27 +474,32 @@ impl FakeTab {
 /// The main-click default a fake window opens with.
 pub(crate) const FAKE_DEFAULT_REACH: HistoryReach = HistoryReach::Sessions(9);
 
-/// A feed table over plain choices, answering as the config does: a feed
-/// offers its symbols and names the contract after one in its rolls.
-pub(crate) struct FakeFeeds(pub Vec<FeedSourceChoice>);
+/// One fake feed: its id, the symbols it offers and the contract each of
+/// those rolls onto.
+pub(crate) type FakeFeed<'a> = (&'a str, &'a [&'a str], &'a [(&'a str, &'a str)]);
 
-impl FeedTable for FakeFeeds {
-    fn source_choices(&self) -> Vec<FeedSourceChoice> {
-        self.0.clone()
-    }
-    fn next_contract(&self, feed_id: &str, symbol: &str) -> Option<String> {
-        let feed = self.0.iter().find(|feed| feed.feed_id == feed_id)?;
-        feed.contract_rolls.get(symbol).cloned()
-    }
-    fn feed_offers(&self, feed_id: &str, symbol: &str) -> bool {
-        self.0.iter().any(|feed| {
-            feed.feed_id == feed_id && feed.symbols.iter().any(|offered| offered == symbol)
+/// A config over `feeds`.
+pub(crate) fn fake_config(feeds: &[FakeFeed<'_>]) -> AppConfig {
+    let feeds: Vec<serde_json::Value> = feeds
+        .iter()
+        .map(|(id, symbols, rolls)| {
+            let rolls: std::collections::BTreeMap<_, _> = rolls.iter().copied().collect();
+            serde_json::json!({
+                "id": id,
+                "name": id,
+                "provider": "binance",
+                "symbols": symbols,
+                "contract_rolls": rolls,
+            })
         })
-    }
+        .collect();
+    let config =
+        serde_json::json!({ "default_feed": "fake", "default_symbol": "FAKE", "feeds": feeds });
+    serde_json::from_value(config).expect("a valid config")
 }
 
 /// The fake tab's market acts over its plain fields.
-impl MarketTab<FakeFeeds> for FakeTab {
+impl MarketTab for FakeTab {
     fn market(&self) -> FeedSelection {
         FeedSelection {
             feed_id: self.feed_id.clone(),
@@ -498,7 +507,7 @@ impl MarketTab<FakeFeeds> for FakeTab {
             replay: self.replaying,
         }
     }
-    fn switch_market(&mut self, _config: &FakeFeeds, feed_id: &str, symbol: &str) {
+    fn switch_market(&mut self, _config: &AppConfig, feed_id: &str, symbol: &str) {
         (self.feed_id, self.symbol) = (feed_id.to_owned(), symbol.to_owned());
     }
     fn paper_open(&self) -> bool {
@@ -510,22 +519,26 @@ impl MarketTab<FakeFeeds> for FakeTab {
     fn roll_memory(&mut self) -> &mut AutoRoll {
         &mut self.auto_roll
     }
-    fn recover(&mut self, _config: &FakeFeeds, keep_timeline: bool) -> RecoveredFeed {
+    fn recover(&mut self, _config: &AppConfig, keep_timeline: bool) -> RecoveredFeed {
         self.recoveries.push(keep_timeline);
         RecoveredFeed {
             symbol: self.symbol.clone(),
             respawned: self.respawns,
         }
     }
-    fn pages_history(&self, _config: &FakeFeeds) -> bool {
+    fn pages_history(&self, _config: &AppConfig) -> bool {
         self.history_paging
     }
-    fn history(&mut self, _config: &FakeFeeds, act: HistoryAct) -> HistoryReply {
+    fn history(&mut self, _config: &AppConfig, act: HistoryAct) -> HistoryOutcome {
         let outcome = match act {
             HistoryAct::Press(reach) => HistoryOutcome::Pressed(self.press(reach)),
             HistoryAct::Cancel => HistoryOutcome::Cancelled(self.cancel()),
         };
-        (outcome, self.snapshot(outcome))
+        self.last_history = Some(outcome);
+        outcome
+    }
+    fn session(&self) -> SessionSnapshot {
+        self.snapshot(self.last_history)
     }
 }
 
@@ -539,8 +552,8 @@ pub(crate) struct FakeWindow {
     pub speaker_refusal: Option<String>,
     /// The main-click default the last taken press set.
     pub default_reach: HistoryReach,
-    /// The feed table the window lends its tabs.
-    pub feeds: FakeFeeds,
+    /// The config the window lends its tabs.
+    pub config: AppConfig,
     /// The tool rail's magnet.
     pub rail_magnet: bool,
     /// What the chart settings owner answers, and every input it was given.
@@ -696,7 +709,7 @@ impl FakeWindow {
             toasts: Vec::new(),
             speaker_refusal: None,
             default_reach: FAKE_DEFAULT_REACH,
-            feeds: FakeFeeds(Vec::new()),
+            config: fake_config(&[]),
             rail_magnet: false,
             chart_settings: Err(PresetError::Refused("the fake keeps no chart settings")),
             settings_asked: Vec::new(),
@@ -776,20 +789,19 @@ impl IndicatorControlHost for FakeWindow {
 }
 
 impl MarketTabHost for FakeWindow {
-    type Config = FakeFeeds;
     fn tab_count(&self) -> usize {
         self.tabs.len()
     }
-    fn feed_table(&self) -> &FakeFeeds {
-        &self.feeds
+    fn config(&self) -> &AppConfig {
+        &self.config
     }
-    fn market_tab(&self, index: usize) -> Option<&dyn MarketTab<FakeFeeds>> {
+    fn market_tab(&self, index: usize) -> Option<&dyn MarketTab> {
         Some(self.tabs.get(index)?)
     }
-    fn market_tab_mut(&mut self, index: usize) -> Option<LentTab<'_, FakeFeeds>> {
+    fn market_tab_mut(&mut self, index: usize) -> Option<LentTab<'_>> {
         Some(LentTab {
             tab: self.tabs.get_mut(index)?,
-            config: &self.feeds,
+            config: &self.config,
             history_default: &mut self.default_reach,
         })
     }

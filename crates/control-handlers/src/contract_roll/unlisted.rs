@@ -57,12 +57,7 @@ pub fn notice_roll<H: MarketTabHost + ?Sized>(
     host: &H,
     index: usize,
 ) -> Option<Result<String, RollRefusal>> {
-    unlisted_roll(host, index, &unlisted(host, index)?)
-}
-
-/// The contract tab `index`'s feed reports unlisted.
-fn unlisted<H: MarketTabHost + ?Sized>(host: &H, index: usize) -> Option<String> {
-    host.market_tab(index)?.unlisted()
+    unlisted_roll(host, index, &host.market_tab(index)?.unlisted()?)
 }
 
 /// Tab `index`'s roll memory; `None` when the tab is gone.
@@ -128,7 +123,8 @@ pub fn roll_from_notice<H: MarketTabHost + ?Sized>(
     index: usize,
     target: &str,
 ) -> Result<(String, Value), String> {
-    let missing = unlisted(host, index).ok_or("The feed no longer reports an unlisted contract")?;
+    let missing = host.market_tab(index).and_then(|tab| tab.unlisted());
+    let missing = missing.ok_or("The feed no longer reports an unlisted contract")?;
     match unlisted_roll(host, index, &missing) {
         Some(Ok(next)) if next == target => {}
         Some(Err(refusal)) => return Err(refusal.reason().to_owned()),
@@ -156,7 +152,7 @@ fn settle_tab<H: MarketTabHost + ?Sized>(
     index: usize,
     settled: &mut Settled,
 ) -> Option<()> {
-    let missing = unlisted(host, index);
+    let missing = host.market_tab(index).and_then(|tab| tab.unlisted());
     let roll = missing
         .as_deref()
         .and_then(|missing| unlisted_roll(host, index, missing));

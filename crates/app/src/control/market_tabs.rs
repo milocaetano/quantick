@@ -1,30 +1,21 @@
 //! The window's part in the feed and market calls: resolve the addressed tab
-//! and lend the feed table, the layout's drawings and the History default.
-use quantick_control_handlers::TabDirectory;
-use quantick_control_handlers::TabsHost;
+//! and lend the config, the layout's drawings and the History default.
 use quantick_control_handlers::market_tab::{LentTab, MarketTab, MarketTabHost};
 
 use crate::app::control_host::ControlPort;
 use crate::config::AppConfig;
 
-impl TabsHost for dyn ControlPort {
-    fn tab_list(&self) -> &dyn TabDirectory {
-        self.tab_reads().tabs()
-    }
-}
-
 impl MarketTabHost for dyn ControlPort {
-    type Config = AppConfig;
     fn tab_count(&self) -> usize {
         self.tab_reads().tabs().len()
     }
-    fn feed_table(&self) -> &AppConfig {
+    fn config(&self) -> &AppConfig {
         self.tab_reads().config()
     }
-    fn market_tab(&self, index: usize) -> Option<&dyn MarketTab<AppConfig>> {
+    fn market_tab(&self, index: usize) -> Option<&dyn MarketTab> {
         Some(self.tab_reads().tab_at(index)?)
     }
-    fn market_tab_mut(&mut self, index: usize) -> Option<LentTab<'_, AppConfig>> {
+    fn market_tab_mut(&mut self, index: usize) -> Option<LentTab<'_>> {
         self.tabs_mut().lend_tab(index)
     }
     fn drawing_gesture_on(&self, feed_id: &str, from: &str, to: &str) -> bool {

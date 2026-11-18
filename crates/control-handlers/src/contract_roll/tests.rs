@@ -1,14 +1,12 @@
-use std::collections::BTreeMap;
-
 use super::*;
 use crate::TabDirectory;
 use crate::market_tab::FeedSelection;
 use crate::market_tab::RecoveredFeed;
-use crate::market_tab::{FeedTable, LentTab, MarketTab, MarketTabHost};
-use crate::test_support::{FAKE_DEFAULT_REACH, FakeAccess, FakeWindow};
-use quantick_control_schema::feed_source::FeedSourceChoice;
-use quantick_session::{HistoryAct, HistoryReply};
+use crate::market_tab::{LentTab, MarketTab, MarketTabHost};
+use crate::test_support::{FAKE_DEFAULT_REACH, FakeAccess, FakeWindow, fake_config};
+use quantick_session::{HistoryAct, HistoryOutcome, SessionSnapshot};
 use quantick_sources::history_reach::HistoryReach;
+use quantick_stores::config::AppConfig;
 
 /// The one tab and what its feed does on a switch.
 struct Contract {
@@ -27,15 +25,10 @@ struct Contract {
     stuck: bool,
 }
 
-/// The venue's feed table: what it offers, and its two rolls.
-struct Feeds {
-    offered: Vec<String>,
-}
-
 /// A window of one tab, id 7.
 struct Window {
     tab: Contract,
-    feeds: Feeds,
+    config: AppConfig,
     gesture: bool,
     carries: Vec<(String, String, String)>,
     default: HistoryReach,
@@ -54,9 +47,11 @@ impl Window {
                 explained: None,
                 stuck: false,
             },
-            feeds: Feeds {
-                offered: vec!["AAAZ26".into(), "AAAG27".into(), "AAAJ27".into()],
-            },
+            config: fake_config(&[(
+                "venue",
+                &["AAAZ26", "AAAG27", "AAAJ27"],
+                &[("AAAZ26", "AAAG27"), ("AAAG27", "AAAJ27")],
+            )]),
             gesture: false,
             carries: Vec::new(),
             default: FAKE_DEFAULT_REACH,
@@ -74,26 +69,7 @@ impl TabDirectory for Window {
         7
     }
 }
-impl FeedTable for Feeds {
-    fn source_choices(&self) -> Vec<FeedSourceChoice> {
-        vec![FeedSourceChoice {
-            feed_id: "venue".into(),
-            display_name: "Venue".into(),
-            symbols: self.offered.clone(),
-            contract_rolls: BTreeMap::from([
-                ("AAAZ26".to_owned(), "AAAG27".to_owned()),
-                ("AAAG27".to_owned(), "AAAJ27".to_owned()),
-            ]),
-        }]
-    }
-    fn next_contract(&self, _feed_id: &str, symbol: &str) -> Option<String> {
-        self.source_choices()[0].contract_rolls.get(symbol).cloned()
-    }
-    fn feed_offers(&self, _feed_id: &str, symbol: &str) -> bool {
-        self.offered.iter().any(|offered| offered == symbol)
-    }
-}
-impl MarketTab<Feeds> for Contract {
+impl MarketTab for Contract {
     fn market(&self) -> FeedSelection {
         FeedSelection {
             feed_id: "venue".into(),
@@ -101,7 +77,7 @@ impl MarketTab<Feeds> for Contract {
             replay: self.replay,
         }
     }
-    fn switch_market(&mut self, _config: &Feeds, _feed_id: &str, symbol: &str) {
+    fn switch_market(&mut self, _config: &AppConfig, _feed_id: &str, symbol: &str) {
         self.switches += 1;
         if self.stuck {
             return;
@@ -125,31 +101,33 @@ impl MarketTab<Feeds> for Contract {
     fn roll_memory(&mut self) -> &mut AutoRoll {
         &mut self.auto
     }
-    fn recover(&mut self, _config: &Feeds, _keep_timeline: bool) -> RecoveredFeed {
+    fn recover(&mut self, _config: &AppConfig, _keep_timeline: bool) -> RecoveredFeed {
         unreachable!("a roll never recovers the feed")
     }
-    fn pages_history(&self, _config: &Feeds) -> bool {
+    fn pages_history(&self, _config: &AppConfig) -> bool {
         false
     }
-    fn history(&mut self, _config: &Feeds, _act: HistoryAct) -> HistoryReply {
+    fn history(&mut self, _config: &AppConfig, _act: HistoryAct) -> HistoryOutcome {
+        unreachable!("a roll never presses History")
+    }
+    fn session(&self) -> SessionSnapshot {
         unreachable!("a roll never presses History")
     }
 }
 impl MarketTabHost for Window {
-    type Config = Feeds;
     fn tab_count(&self) -> usize {
         1
     }
-    fn feed_table(&self) -> &Feeds {
-        &self.feeds
+    fn config(&self) -> &AppConfig {
+        &self.config
     }
-    fn market_tab(&self, _index: usize) -> Option<&dyn MarketTab<Feeds>> {
+    fn market_tab(&self, _index: usize) -> Option<&dyn MarketTab> {
         Some(&self.tab)
     }
-    fn market_tab_mut(&mut self, _index: usize) -> Option<LentTab<'_, Feeds>> {
+    fn market_tab_mut(&mut self, _index: usize) -> Option<LentTab<'_>> {
         Some(LentTab {
             tab: &mut self.tab,
-            config: &self.feeds,
+            config: &self.config,
             history_default: &mut self.default,
         })
     }
@@ -233,7 +211,9 @@ fn every_refusal_names_its_precondition_and_touches_nothing() {
     );
     refused(&mut Window::on("AAAJ27"), "OTHER", FROM_SYMBOL_PRECONDITION);
     let mut window = Window::on("AAAZ26");
-    window.feeds.offered.retain(|symbol| symbol != "AAAG27");
+    window.config.feeds[0]
+        .symbols
+        .retain(|symbol| symbol != "AAAG27");
     refused(&mut window, "AAAZ26", TARGET_OFFERED_PRECONDITION);
     let mut window = Window::on("AAAZ26");
     window.tab.paper_open = true;
@@ -353,7 +333,9 @@ fn no_usable_successor_leaves_the_notice_as_it_was() {
     assert_eq!(notice_roll(&unlisted_on("AAAJ27", &[]), 0), None);
     // The successor is not offered on this feed.
     let mut window = unlisted_on("AAAZ26", &[]);
-    window.feeds.offered.retain(|symbol| symbol != "AAAG27");
+    window.config.feeds[0]
+        .symbols
+        .retain(|symbol| symbol != "AAAG27");
     assert_eq!(notice_roll(&window, 0), None);
     assert!(settle_auto_rolls(&mut window).is_empty());
     assert_eq!(window.tab.auto.offer(), None, "nothing is offered either");

@@ -1,7 +1,7 @@
 //! `feed.history.load` and `feed.history.cancel`: the History button's press
 //! and its cancel, as the tab session's own acts. The handler picks the
 //! [`HistoryAct`] and judges its outcome; the act runs on the tab through
-//! the toolbar's own press and cancel ([`run_history`]).
+//! [`run_history`], the toolbar press's own path, and the tab's own cancel.
 
 use quantick_control::{
     error::ControlError,
@@ -21,14 +21,15 @@ use crate::dock::ActionDock;
 use crate::market_tab::{MarketTabHost, run_history};
 use crate::tabs::{tab_closed, tab_index};
 
-/// The toolbar's own press or cancel on the tab at `index`; `None` when the
-/// tab is gone.
+/// The History act on the tab at `index`, and its session as it then stands;
+/// `None` when the tab is gone.
 fn dispatch<H: MarketTabHost + ?Sized>(
     app: &mut H,
     index: usize,
     act: HistoryAct,
 ) -> Option<HistoryReply> {
-    Some(run_history(app.market_tab_mut(index)?, act))
+    let outcome = run_history(app.market_tab_mut(index)?, act);
+    Some((outcome, app.market_tab(index)?.session()))
 }
 
 /// Dock the press and its cancel.
@@ -71,7 +72,7 @@ fn load<H: MarketTabHost + ?Sized, A>(
     let index = tab_index(app, input.tab_id)?;
     let tab_id = app.tab_id_at(index);
     let tab = app.market_tab(index).ok_or_else(tab_closed)?;
-    if !tab.pages_history(app.feed_table()) {
+    if !tab.pages_history(app.config()) {
         return Err(refused(
             "this tab's feed cannot page older trades".to_owned(),
             &input.reach,
