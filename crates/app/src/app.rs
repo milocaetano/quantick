@@ -90,8 +90,7 @@ mod chart_settings_wiring;
 mod chrome;
 pub(crate) mod control_host;
 pub(crate) use control_host::{
-    AlertsPort, ChromePort, ControlWindow, GatewayPort, HealthPort, LayersPort, TabsMutPort,
-    TabsPort,
+    ChromePort, ControlWindow, GatewayPort, HealthPort, LayersPort, TabsMutPort, TabsPort,
 };
 pub(crate) mod deal_recording_wiring;
 mod demo_hooks;

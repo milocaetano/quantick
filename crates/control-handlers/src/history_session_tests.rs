@@ -178,16 +178,22 @@ impl TabDirectory for SessionTab {
     }
 }
 
-impl MarketTabHost for SessionTab {
+impl crate::OpenTabs for SessionTab {
+    type Tab = Live;
     fn tab_count(&self) -> usize {
         1
+    }
+    fn open_tab(&self, index: usize) -> Option<&Live> {
+        (index == 0).then_some(&self.live)
     }
     fn config(&self) -> &AppConfig {
         &self.config
     }
-    fn market_tab(&self, index: usize) -> Option<&dyn MarketTab> {
-        (index == 0).then_some(&self.live as &dyn MarketTab)
+    fn rail_magnet(&self) -> bool {
+        false
     }
+}
+impl MarketTabHost for SessionTab {
     fn market_tab_mut(&mut self, index: usize) -> Option<LentTab<'_>> {
         (index == 0).then_some(LentTab {
             tab: &mut self.live,

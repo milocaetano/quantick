@@ -5,7 +5,7 @@ use crate::{
     indicator_worker::{IndicatorCommand, IndicatorSource},
     surfaces::Surfaces,
 };
-use quantick_control_handlers::indicator_host::IndicatorRefusal;
+use quantick_control_handlers::indicator_host::{IndicatorRefusal, NumericInputGate, ScriptView};
 use quantick_control_schema::script_editor::{
     NumericValue, capture_numeric_inputs, update_numeric_input,
 };
@@ -15,12 +15,12 @@ use std::time::Instant;
 
 fn attached_target(wiring: &IndicatorWiring<'_>, id: &str) -> Option<super::TabSlot> {
     let runtime = &*wiring.runtime;
-    runtime.indicators.registry.slot_kinds().iter().find_map(|(owner, kind)| {
-        (owner.workspace == runtime.id() && owner.tab == runtime.tabs.active_id()
-            && owner.side == runtime.active_tab().focused_side()
-            && matches!(kind, quantick_workspace::indicator_document::SavedKind::Script { name } if name == id))
-            .then_some(*owner)
-    })
+    let (tab, side) = (
+        runtime.tabs.active_id(),
+        runtime.active_tab().focused_side(),
+    );
+    let mut owners = runtime.indicators.registry.script_slots(id);
+    owners.find(|owner| owner.workspace == runtime.id() && owner.tab == tab && owner.side == side)
 }
 
 pub(super) fn set_numeric_input(
@@ -30,38 +30,26 @@ pub(super) fn set_numeric_input(
     value: NumericValue,
 ) -> Result<(), IndicatorRefusal> {
     let editor = wiring.surfaces.script_editor.model_state.editor();
-    if !editor
-        .document
-        .as_ref()
-        .is_some_and(|document| document.id == id)
-    {
-        return Err(IndicatorRefusal::ScriptNotOpen);
+    let target = attached_target(wiring, id);
+    let pane = wiring.runtime.active_tab().focused_pane();
+    let view = target.map_or(ScriptView::NotAttached, |target| {
+        let mut views = pane.indicators.all().iter();
+        match views.find(|view| view.slot == target.slot) {
+            None => ScriptView::NotLoaded,
+            Some(view) => ScriptView::Loaded {
+                stale: view.stale.is_some(),
+                inputs_ready: editor.inputs_ready(&view.descriptor.inputs),
+                view: (target, view),
+            },
+        }
+    });
+    let (target, view) = NumericInputGate {
+        script_open: (editor.document.as_ref()).is_some_and(|document| document.id == id),
+        settings_open: (wiring.surfaces.indicator_settings.model_state.dialog()).is_some(),
+        diagnostics: editor.diagnostics.is_some(),
+        view,
     }
-    if wiring
-        .surfaces
-        .indicator_settings
-        .model_state
-        .dialog()
-        .is_some()
-    {
-        return Err(IndicatorRefusal::SettingsOpen);
-    }
-    let target = attached_target(wiring, id).ok_or(IndicatorRefusal::NotAttached)?;
-    let view = wiring
-        .runtime
-        .active_tab()
-        .focused_pane()
-        .indicators
-        .all()
-        .iter()
-        .find(|view| view.slot == target.slot)
-        .ok_or(IndicatorRefusal::NotLoaded)?;
-    if view.stale.is_some() || editor.diagnostics.is_some() {
-        return Err(IndicatorRefusal::SourceErrors);
-    }
-    if !editor.inputs_ready(&view.descriptor.inputs) {
-        return Err(IndicatorRefusal::NotValidated);
-    }
+    .admit()?;
     let saved = super::layout_wiring::saved_inputs(
         &wiring.runtime.tabs,
         &wiring.runtime.indicators,
@@ -87,22 +75,12 @@ pub(super) fn add_to_chart(
     let runtime = &*wiring.runtime;
     ScriptLibraryPort::read(&runtime.indicators.script_library, id)
         .map_err(IndicatorRefusal::Rejected)?;
-    let index = runtime
-        .indicators
-        .script_library
-        .entries()
-        .iter()
-        .position(|entry| entry.name == id)
+    let index = (runtime.indicators.script_library)
+        .index_of(id)
         .ok_or(IndicatorRefusal::UnknownLibraryScript)?;
-    let tab = runtime.tabs.active_id();
-    let side = runtime.active_tab().focused_side();
-    if runtime.indicators.registry.slot_kinds().iter().any(|(owner, kind)| {
-        owner.workspace == runtime.id() && owner.tab == tab && owner.side == side
-            && matches!(kind, quantick_workspace::indicator_document::SavedKind::Script { name } if name == id)
-    }) {
-        return Ok(());
+    if attached_target(wiring, id).is_none() {
+        wiring.add_library_script_at(index);
     }
-    wiring.add_library_script_at(index);
     Ok(())
 }
 
@@ -122,12 +100,23 @@ pub(super) fn inspect(
     );
     if let Some(document) = &result.document {
         let pane = tabs[tabs.active_index()].focused_pane();
-        if let Some((owner, _)) = indicators.registry.slot_kinds().iter().find(|(owner, kind)| {
-            owner.workspace == tabs.owner() && owner.tab == tabs.active_id() && owner.pane == pane.id
-            && matches!(kind, quantick_workspace::indicator_document::SavedKind::Script { name } if name == &document.id)
-        }) && let Some(view) = pane.indicators.all().iter().find(|view| view.slot == owner.slot)
-          && surfaces.script_editor.model_state.editor().inputs_ready(&view.descriptor.inputs)
-          && let Some(saved) = super::layout_wiring::saved_inputs(tabs, indicators, store, *owner) {
+        let mut owners = indicators.registry.script_slots(&document.id);
+        if let Some(owner) = owners.find(|owner| {
+            owner.workspace == tabs.owner()
+                && owner.tab == tabs.active_id()
+                && owner.pane == pane.id
+        }) && let Some(view) = pane
+            .indicators
+            .all()
+            .iter()
+            .find(|view| view.slot == owner.slot)
+            && surfaces
+                .script_editor
+                .model_state
+                .editor()
+                .inputs_ready(&view.descriptor.inputs)
+            && let Some(saved) = super::layout_wiring::saved_inputs(tabs, indicators, store, owner)
+        {
             result.numeric_inputs = capture_numeric_inputs(&view.descriptor.inputs, &saved);
         }
     }
@@ -245,21 +234,9 @@ fn execute(
                     .name("quantick-script-validator".into())
                     .spawn(move || {
                         let (inputs, error) =
-                            match quantick_pine::compile(&document.source, &document.title) {
-                                Ok(compiled) => (compiled.inputs, None),
-                                Err(errors) => (
-                                    Vec::new(),
-                                    Some(
-                                        errors
-                                            .iter()
-                                            .take(8)
-                                            .map(|error| {
-                                                error.render(&document.title, &document.source)
-                                            })
-                                            .collect::<Vec<_>>()
-                                            .join("\n"),
-                                    ),
-                                ),
+                            match quantick_pine::validate(&document.source, &document.title) {
+                                Ok(inputs) => (inputs, None),
+                                Err(error) => (Vec::new(), Some(error)),
                             };
                         let _ = sender.send((revision, document, error, inputs));
                     }) {
@@ -285,20 +262,10 @@ fn execute(
 fn observe_saved(indicators: &mut IndicatorState, document: &ScriptDocument) {
     // Manual and idle saves share the watcher suppression: only a current
     // validation completion may publish an editor edit.
-    if let Some(index) = indicators
-        .script_library
-        .entries()
-        .iter()
-        .position(|e| e.name == document.id)
+    if let Some(index) = indicators.script_library.index_of(&document.id)
         && let Some((_, modified)) = indicators.script_library.file_info(index)
     {
-        let owners: Vec<_> = indicators
-            .registry
-            .script_files()
-            .iter()
-            .filter(|(_, watched, _)| *watched == index)
-            .map(|(owner, ..)| *owner)
-            .collect();
+        let owners: Vec<_> = indicators.registry.watching(index).collect();
         for owner in owners {
             indicators.registry.observe_script(owner, modified);
         }
@@ -311,12 +278,8 @@ fn reload(
     store: &crate::workspace_store::LayoutStore,
     document: &ScriptDocument,
 ) {
-    for (owner, kind) in indicators.registry.slot_kinds() {
-        if !matches!(kind, quantick_workspace::indicator_document::SavedKind::Script { name } if name == &document.id)
-        {
-            continue;
-        }
-        let saved = super::layout_wiring::saved_inputs(tabs, indicators, store, *owner);
+    for owner in indicators.registry.script_slots(&document.id) {
+        let saved = super::layout_wiring::saved_inputs(tabs, indicators, store, owner);
         if owner.workspace == tabs.owner()
             && let Some(tab) = tabs.by_id_mut(owner.tab)
             && let Some(pane) = tab.pane_at_mut(owner.side.index())

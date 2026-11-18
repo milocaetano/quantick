@@ -67,7 +67,7 @@ pub(crate) trait ControlPort:
     + TabsMutPort
     + ChromePort
     + HealthPort
-    + AlertsPort
+    + quantick_control_handlers::notify::AttentionHost
     + quantick_control_handlers::alerts::AlertDefinitionsPort
     + LayersPort
     + IndicatorControlHost
@@ -82,7 +82,7 @@ impl<T> ControlPort for T where
         + TabsMutPort
         + ChromePort
         + HealthPort
-        + AlertsPort
+        + quantick_control_handlers::notify::AttentionHost
         + quantick_control_handlers::alerts::AlertDefinitionsPort
         + LayersPort
         + IndicatorControlHost
@@ -129,11 +129,6 @@ pub(crate) trait ChromePort:
 /// and the session flags an operator reads back after setting them.
 pub(crate) trait HealthPort {
     fn health_reads(&self) -> HealthReads<'_>;
-}
-
-/// The three lanes the assistant answers on.
-pub(crate) trait AlertsPort {
-    fn alerts(&mut self) -> Alerts<'_>;
 }
 
 /// The chart-layer owner.
@@ -302,14 +297,6 @@ impl<'a> TabReads<'a> {
         self.tabs.get(index)
     }
 
-    /// The read side of [`TabsMut::active_paper_mut`], resolved the same
-    /// way so a call and its read-back can never name different tabs.
-    pub(crate) fn active_paper(self) -> Option<&'a crate::paper_trading::PaperTrading> {
-        self.tabs
-            .get(self.tabs.active_index())
-            .map(|tab| &tab.paper)
-    }
-
     pub(crate) fn tabs(self) -> &'a ArrangementHost {
         self.tabs
     }
@@ -397,22 +384,6 @@ impl<'a> TabsMut<'a> {
     /// The mutable twin of [`TabReads::tab_at`].
     pub(crate) fn tab_at_mut(self, index: usize) -> Option<&'a mut Tab> {
         self.tabs.get_mut(index)
-    }
-
-    /// The trading host of the tab on screen — where the `trade.*` actions
-    /// land. The active tab and not an addressed one: an order belongs to
-    /// the symbol the trader is looking at, and a call that could quietly
-    /// trade a chart nobody has open is a call nobody should be able to
-    /// make.
-    pub(crate) fn active_paper_mut(self) -> Option<&'a mut crate::paper_trading::PaperTrading> {
-        // Fallible, because the rest of the control code does not trust the
-        // invariant either: the annotate tier's target resolution guards an empty tab
-        // list and clamps the index, and two more sites clamp it. A
-        // `trade.*` call must answer "this window has no chart open" rather
-        // than panic the whole trading application, and it must resolve the
-        // *same* tab its own read-back resolves.
-        let active = self.tabs.active_index();
-        self.tabs.get_mut(active).map(|tab| &mut tab.paper)
     }
 
     /// One pane, by tab position and side — the mutable half of
@@ -651,11 +622,13 @@ impl<'a> Alerts<'a> {
     ) -> Self {
         Self { surfaces, audio }
     }
+}
 
+impl quantick_control_handlers::notify::Attention for Alerts<'_> {
     /// Open the assistant's popup. One at a time: a second message replaces
     /// the first rather than stacking windows over a chart someone is
     /// trading, and the trader dismisses it.
-    pub(crate) fn show_popup(self, popup: crate::control::AgentPopup) {
+    fn show_popup(&mut self, popup: crate::control::AgentPopup) {
         self.surfaces
             .update(crate::surfaces::HostIntent::AgentPopup(Box::new(
                 quantick_ui_model::agent_popup::Intent::Show(popup),
@@ -665,7 +638,7 @@ impl<'a> Alerts<'a> {
     /// Post one line to the window's own acknowledgement lane — the same
     /// channel a delete or a workspace save uses, with no Undo: there is
     /// nothing to take back from having been told something.
-    pub(crate) fn show_toast(self, message: String) {
+    fn show_toast(&mut self, message: String) {
         crate::surfaces::toast::note(&mut self.surfaces.toast, message, std::time::Instant::now());
     }
 
@@ -676,7 +649,7 @@ impl<'a> Alerts<'a> {
     /// Straight to the sink, not through the alarms' once-per-run report:
     /// every refused call answers with its reason, and the trader's alarm
     /// failure state is not the assistant's to set or clear.
-    pub(crate) fn sound_alert(self) -> Option<String> {
+    fn sound_alert(&mut self) -> Option<String> {
         self.audio
             .alerts
             .play(&[crate::audio::Cue::default()])
@@ -810,9 +783,9 @@ impl HealthPort for QuantickApp {
     }
 }
 
-impl AlertsPort for QuantickApp {
-    fn alerts(&mut self) -> Alerts<'_> {
-        Alerts::new(&mut self.surfaces, &mut self.audio)
+impl quantick_control_handlers::notify::AttentionHost for QuantickApp {
+    fn attention(&mut self) -> Box<dyn quantick_control_handlers::notify::Attention + '_> {
+        Box::new(Alerts::new(&mut self.surfaces, &mut self.audio))
     }
 }
 

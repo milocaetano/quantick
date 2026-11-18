@@ -135,6 +135,17 @@ pub enum SavedInputs<V> {
     Dropped { saved: usize, readable: usize },
 }
 
+impl<V> SavedInputs<V> {
+    /// The values a reload binds: the saved set when every value was read,
+    /// else none, which means the declared defaults as a whole.
+    pub fn into_values(self) -> Vec<V> {
+        match self {
+            Self::Bind(values) => values,
+            Self::Defaults | Self::Dropped { .. } => Vec::new(),
+        }
+    }
+}
+
 /// What a fresh pane does to show one saved entry, in the order it does it:
 /// add the kind, bind the inputs, then queue the hide, the mouse guide and the
 /// style until the first rebuild gives them a view.

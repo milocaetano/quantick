@@ -5,7 +5,7 @@ use serde_json::json;
 use quantick_session::paper::TabPaper;
 
 use super::*;
-use crate::test_support::{FakeAccess, FakeWindow};
+use crate::test_support::{FakeAccess, FakeWindow, NoDesk, PaperDesk};
 
 fn docked() -> ActionRegistry<FakeWindow, FakeAccess> {
     let mut registry = ActionRegistry::new();
@@ -118,86 +118,32 @@ fn a_trade_without_a_chart_open_is_refused_before_it_journals() {
     );
 }
 
-/// One paper desk, as the window's adapter hands the active tab's over: the
-/// tab's own paper (an account and the desk's ruler and ticket around it),
-/// and every outcome a control call ran through it, for a parity test to
-/// hold against the tab's own surfaces.
-struct PaperDesk {
-    paper: TabPaper,
-    outcomes: Vec<TradeOutcome>,
-}
-
-impl PaperDesk {
-    fn new(account: PaperAccount) -> Self {
-        Self {
-            paper: TabPaper::new(account),
-            outcomes: Vec::new(),
-        }
-    }
-}
-
-impl std::ops::Deref for PaperDesk {
-    type Target = TabPaper;
-    fn deref(&self) -> &TabPaper {
-        &self.paper
-    }
-}
-
-impl std::ops::DerefMut for PaperDesk {
-    fn deref_mut(&mut self) -> &mut TabPaper {
-        &mut self.paper
-    }
-}
-
-impl TradeDesk for PaperDesk {
-    fn account(&self) -> &PaperAccount {
-        &self.account
-    }
-    fn account_mut(&mut self) -> &mut PaperAccount {
-        &mut self.paper.account
-    }
-    fn ruler_ticks(&self) -> u32 {
-        self.desk.ruler.notches
-    }
-    fn set_ruler_ticks(&mut self, ticks: u32) {
-        self.paper.desk.ruler.set_ticks(ticks);
-    }
-    fn execute(&mut self, command: TradeCommand) -> TradeOutcome {
-        let outcome = self.paper.execute(command);
-        self.outcomes.push(outcome.clone());
-        outcome
-    }
-    fn mark_price(&self) -> Option<Decimal> {
-        self.account.mark_price()
-    }
-    fn working_orders(&self) -> &[Order] {
-        self.account.working_orders()
-    }
-    fn risk_report(&self) -> (RiskState, bool) {
-        self.desk.risk_report(&self.account)
-    }
-    fn position_summary(&self) -> Option<PositionSummary> {
-        self.account.position_summary()
-    }
-    fn selected_trade_index(&self) -> Option<usize> {
-        None
-    }
-}
-
-/// A window whose active tab holds `desk`.
+/// A window whose active tab holds `desk`, and every shared setting a call
+/// asked it to persist.
 struct DeskWindow {
     desk: PaperDesk,
+    persisted: Vec<SharedChange>,
 }
 
-impl TradePort for DeskWindow {
+impl PaperOwner for DeskWindow {
     fn active_desk(&self) -> Option<&dyn TradeDesk> {
         Some(&self.desk)
     }
     fn active_desk_mut(&mut self) -> Option<&mut dyn TradeDesk> {
         Some(&mut self.desk)
     }
-    fn persist_order_strategies(&mut self) {}
-    fn persist_risk_settings(&mut self) {}
+    fn persist(&mut self, change: SharedChange) {
+        self.persisted.push(change);
+    }
+    fn journal_scope(&self) -> JournalScope {
+        NoDesk.journal_scope()
+    }
+    fn journal_timezone(&self) -> quantick_civil::TzOffset {
+        NoDesk.journal_timezone()
+    }
+    fn edit_journal(&mut self, edit: &JournalEdit) -> Result<JournalEditOutcome, SessionEditError> {
+        NoDesk.edit_journal(edit)
+    }
 }
 
 /// A desk marked at 100. Nothing here closes a position, so nothing is
@@ -216,6 +162,7 @@ fn desk_window() -> DeskWindow {
     });
     DeskWindow {
         desk: PaperDesk::new(account),
+        persisted: Vec::new(),
     }
 }
 
@@ -355,6 +302,7 @@ fn locked_win_window() -> DeskWindow {
     });
     DeskWindow {
         desk: PaperDesk::new(account),
+        persisted: Vec::new(),
     }
 }
 
@@ -652,4 +600,34 @@ fn a_paused_desk_refuses_a_named_entry_as_retryable_and_still_flattens() {
     let flattened = flatten_position(&mut window, &mut access, &trader, &json!({}))
         .expect("an exit is never paused");
     assert_eq!(flattened["accepted"], true, "{flattened}");
+}
+
+/// A ticket edit persists the one shared setting it changed — the exit
+/// strategies or the risk settings — and the ruler and an order persist
+/// nothing.
+#[test]
+fn a_ticket_edit_persists_the_setting_it_changed_and_an_order_nothing() {
+    let mut window = desk_window();
+    let mut access = FakeAccess::with_budget(0);
+    let trader = FakeWindow::trader();
+    select_strategy(&mut window, &mut access, &trader, &json!({})).expect("selected");
+    set_risk(
+        &mut window,
+        &mut access,
+        &trader,
+        &json!({ "basis": "off" }),
+    )
+    .expect("risk");
+    set_ruler(&mut window, &mut access, &trader, &json!({ "ticks": 4 })).expect("ruler");
+    place_order(
+        &mut window,
+        &mut access,
+        &trader,
+        &json!({ "side": "buy", "kind": "market", "quantity": "1" }),
+    )
+    .expect("placed");
+    assert_eq!(
+        window.persisted,
+        [SharedChange::OrderStrategies, SharedChange::RiskSettings]
+    );
 }

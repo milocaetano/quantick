@@ -20,8 +20,8 @@ use crate::toolrail::{ToolRail, ToolRailExt as _};
 
 use super::super::super::arrangement_host::ArrangementHost;
 use super::super::{
-    Alerts, AlertsPort, ChromeDrawn, ChromePort, ChromeReads, HealthPort, HealthReads, TabReads,
-    TabsMut, TabsMutPort, TabsPort,
+    Alerts, ChromeDrawn, ChromePort, ChromeReads, HealthPort, HealthReads, TabReads, TabsMut,
+    TabsMutPort, TabsPort,
 };
 
 /// The feed and symbol the fake's one tab shows.
@@ -191,9 +191,9 @@ impl HealthPort for FakeWindow {
     }
 }
 
-impl AlertsPort for FakeWindow {
-    fn alerts(&mut self) -> Alerts<'_> {
-        Alerts::new(&mut self.surfaces, &mut self.audio)
+impl quantick_control_handlers::notify::AttentionHost for FakeWindow {
+    fn attention(&mut self) -> Box<dyn quantick_control_handlers::notify::Attention + '_> {
+        Box::new(Alerts::new(&mut self.surfaces, &mut self.audio))
     }
 }
 

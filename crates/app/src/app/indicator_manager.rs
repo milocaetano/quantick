@@ -13,7 +13,7 @@ use eframe::egui;
 use crate::indicator_legend;
 #[cfg(any(feature = "scenario-harness", test))]
 use crate::indicator_panel;
-use crate::indicator_worker::{IndicatorCommand, IndicatorEvent, IndicatorWorker, SlotId};
+use crate::indicator_worker::{IndicatorCommand, IndicatorWorker, SlotId};
 use crate::indicators::IndicatorView;
 use crate::indicators::library::ScriptLibrary;
 use crate::indicators::preset_file;
@@ -21,6 +21,7 @@ use crate::pane::ChartPane;
 use crate::pane::PaneSide;
 use crate::surfaces::indicator_settings::IndicatorSettingsSurface;
 use quantick_chart::indicator_registry::{IndicatorAttachment, IndicatorHost, IndicatorRegistry};
+use quantick_stores::script_library::LoadedScript;
 use quantick_ui_model::indicator_settings::{Intent as SettingsIntent, State as SettingsState};
 
 use super::TabSlot;
@@ -363,8 +364,8 @@ impl IndicatorState {
     ) -> Option<(SlotId, LibraryAttachment)> {
         let entry = self.script_library.entries().get(index)?;
         let name = entry.name.clone();
-        match self.script_library.read(index) {
-            Some(Ok(text)) => {
+        match self.script_library.load_at(index)? {
+            LoadedScript::Read { text, .. } => {
                 let attached = self.attach_script(pane, target, name, text, false);
                 let slot = attached.target.slot;
                 let watch = Some((attached.target, index));
@@ -376,7 +377,7 @@ impl IndicatorState {
                     },
                 ))
             }
-            Some(Err(message)) => {
+            LoadedScript::Unreadable { message, .. } => {
                 tracing::warn!(
                     target: "quantick::app",
                     schema_version = 1_u8,
@@ -386,38 +387,10 @@ impl IndicatorState {
                     action = "error_slot_shown",
                     "cannot read an indicator script"
                 );
-                // A click that produces nothing at all is the failure this
-                // function's own doc comment rules out. The compile half of
-                // that promise runs worker-side; the read half never leaves
-                // the UI thread, so the error slot is built here, from the
-                // same two events the worker would have sent.
-                // The same kind string the healthy path derives from its
-                // source, so an error slot the trader fixes and reloads keeps
-                // whatever they had drawn on its pane.
-                let slot = pane.indicators.allocate_slot(format!("script.{name}"));
-                pane.indicators.apply(IndicatorEvent::Rebuilt {
-                    slot,
-                    descriptor: quantick_indicators::IndicatorDescriptor {
-                        title: quantick_stores::script_library::script_title(&name),
-                        short_title: None,
-                        overlay: false,
-                        plots: Vec::new(),
-                        fills: Vec::new(),
-                        inputs: Vec::new(),
-                    },
-                    columns: Vec::new(),
-                    bar_paint: Vec::new(),
-                    rows: 0,
-                    inputs: Vec::new(),
-                    stale: None,
-                });
-                pane.indicators.apply(IndicatorEvent::Error {
-                    slot,
-                    error: quantick_indicators::EvalError {
-                        bar_index: 0,
-                        message,
-                    },
-                });
+                // A click never produces nothing: the read failed on the UI
+                // thread, so the error slot is built here.
+                let title = quantick_stores::script_library::script_title(&name);
+                let slot = pane.indicators.show_unloaded_script(&name, title, message);
                 Some((
                     slot,
                     LibraryAttachment {
@@ -426,7 +399,7 @@ impl IndicatorState {
                     },
                 ))
             }
-            None => None,
+            LoadedScript::Missing { .. } => None,
         }
     }
 }

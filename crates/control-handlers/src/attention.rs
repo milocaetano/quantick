@@ -9,9 +9,9 @@
 //! remote observer clients: its permissions are not in the observer ceiling,
 //! so a remote invocation is refused before dispatch.
 //!
-//! The one thing the mark reads of the window is what is under the pointer,
-//! through [`MarkPort`]; the resolved target, the note and the journal line
-//! are decided here.
+//! The one thing the mark reads is what is under the pointer on the tab the
+//! trader is looking at, through [`MarkTab`]; the resolved target, the note
+//! and the journal line are decided here.
 
 pub use quantick_control_schema::attention::*;
 
@@ -30,12 +30,13 @@ use quantick_control::{
 };
 use quantick_control_host::journal::{EventActor, NewEvent};
 use quantick_control_schema::interaction::CursorSnapshot;
+use quantick_stores::config::AppConfig;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::JournalAccess;
 use crate::dock::ActionDock;
+use crate::{JournalAccess, OpenTabs};
 
 /// The annotate tier's identifiers this action docks into (contract §7).
 pub use quantick_control_host::authority::{
@@ -44,11 +45,21 @@ pub use quantick_control_host::authority::{
     UI_BOUNDED_COST_ID,
 };
 
-/// The window as a mark reads it: what is under the pointer now.
-pub trait MarkPort {
+/// One open tab as a mark reads it: what is under the pointer now. The
+/// window lends its tabs through [`OpenTabs`].
+pub trait MarkTab {
     /// The fully resolved cursor target — pane, bar, price, flow cell,
-    /// drawing — at this instant.
-    fn cursor_snapshot(&self) -> CursorSnapshot;
+    /// drawing — at this instant, on the tab with `tab_id`.
+    fn cursor_snapshot(&self, tab_id: u64, config: &AppConfig) -> CursorSnapshot;
+}
+
+/// What is under the pointer on the tab the trader is looking at.
+fn active_cursor<P: OpenTabs<Tab: MarkTab> + ?Sized>(
+    app: &P,
+) -> Result<CursorSnapshot, ControlError> {
+    let index = app.active_tab_index();
+    let tab = app.open_tab(index).ok_or_else(crate::tabs::tab_closed)?;
+    Ok(tab.cursor_snapshot(app.tab_id_at(index), app.config()))
 }
 
 /// What a mark takes: an optional note the human typed, and optionally the
@@ -171,7 +182,7 @@ pub fn mark_descriptor() -> CapabilityDescriptor {
 
 /// A mark's resolver: what is under the pointer *now* becomes part of the
 /// input, so the trace line and a replay of it name the same bar.
-fn resolve_mark<P: MarkPort + ?Sized>(
+fn resolve_mark<P: OpenTabs<Tab: MarkTab> + ?Sized>(
     app: &P,
     _actor: &ActorContext,
     input: Value,
@@ -180,7 +191,7 @@ fn resolve_mark<P: MarkPort + ?Sized>(
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
     let (target, target_source) = match input.target {
         Some(target) => (target, MarkTargetSource::Supplied),
-        None => (app.cursor_snapshot(), MarkTargetSource::Pointer),
+        None => (active_cursor(app)?, MarkTargetSource::Pointer),
     };
     serde_json::to_value(MarkCanonicalInput {
         note: input.note,
@@ -249,7 +260,7 @@ pub fn create_mark<P: ?Sized, A: JournalAccess>(
 pub fn register<D, H, A>(registry: &mut D) -> Result<(), RegistryError>
 where
     D: ActionDock<H, A>,
-    H: MarkPort + ?Sized,
+    H: OpenTabs<Tab: MarkTab> + ?Sized,
     A: JournalAccess,
 {
     registry.register_resolved(

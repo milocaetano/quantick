@@ -16,7 +16,7 @@
 use super::drawing_controller::{DrawingAccess, DrawingReadAccess, QUICK_RANGE_REFUSED};
 #[cfg(any(feature = "scenario-harness", feature = "drawing-harness", test))]
 use super::owners_desk::OwnersDesk as _;
-use super::{AlertsPort, GatewayPort, LayersPort};
+use super::{GatewayPort, LayersPort};
 use crate::surfaces::drawing_chrome::DrawingChromeExt as _;
 use crate::surfaces::replay_browser::ReplayBrowserExt as _;
 use crate::surfaces::toast;
@@ -26,6 +26,7 @@ use quantick_chart_interaction::frame_plan::StageScope;
 use quantick_chart_interaction::frame_tail_plan::{FrameTailPlan, FrameTailStage};
 use quantick_chart_interaction::quick_range::conversion_plan::PlacementOutcome;
 use quantick_control_handlers::market_palette::MarketPaletteHost;
+use quantick_control_handlers::notify::AttentionHost as _;
 use quantick_feed::stall::Stall;
 use quantick_ui_model::market_palette::Intent as PaletteUiIntent;
 use quantick_ui_model::strategy_popup::Intent::SettleArm;
@@ -536,7 +537,7 @@ impl QuantickApp {
         if let Some(cue) = late.test_alert
             && let Some(note) = self.audio.play(&[cue])
         {
-            self.alerts().show_toast(note);
+            self.attention().show_toast(note);
         }
         if let Some(request) = late.arm_strategy {
             let outcome = self

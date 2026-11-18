@@ -1,69 +1,14 @@
-//! The window's adapter onto the tab-scoped and attention ports of
-//! `quantick_control_handlers`: each act is the one the window's own button
-//! makes, on the window as the gateway holds it.
+//! The app's owners answering `quantick_control_handlers`' owner traits: the
+//! tab's paper desk, a chart pane's analysis, and the control access's
+//! journal.
 
-use crate::toolrail::ToolRailExt as _;
-use quantick_control_handlers::{
-    JournalAccess,
-    analysis::{AnalysisPane, AnalysisPaneEntry, AnalysisPort},
-    attention::MarkPort,
-    journal_sessions::JournalSessionsPort,
-    notify::AttentionPort,
-    pnl_display::PnlDisplayPort,
-    session::{ReplayRead, SessionPort, SessionTab},
-    trade::{TradeDesk, TradePort},
-};
-use quantick_control_schema::notify::AgentPopup;
+use quantick_control_handlers::{JournalAccess, analysis::AnalysisPane, trade::TradeDesk};
 use quantick_paper::report::ledger_state::{LedgerView, LedgerViewChange};
-use quantick_paper::report::session_edit::{
-    JournalEdit, JournalEditOutcome, JournalScope, SessionEditError,
-};
 use quantick_session::paper::{TradeCommand, TradeOutcome};
 
-use crate::app::control_host::ControlPort;
-use crate::app::paper_wiring::PaperSettingsChange;
 use crate::control::ControlAccess;
+use crate::pane::ChartPane;
 use crate::paper_trading::PaperTrading;
-use crate::{control::pane_side_dto, pane::ChartPane, tab::Tab};
-
-impl JournalSessionsPort for dyn ControlPort {
-    fn journal_scope(&mut self) -> JournalScope {
-        self.workspace_calls().into_paper().journal_scope()
-    }
-    fn journal_timezone(&mut self) -> crate::timezone::TzOffset {
-        self.chrome_reads().timezone()
-    }
-    fn edit_journal(&mut self, edit: &JournalEdit) -> Result<JournalEditOutcome, SessionEditError> {
-        self.workspace_calls().into_paper().apply_journal_edit(edit)
-    }
-    fn ledger_view(&mut self, change: &LedgerViewChange) -> Option<(LedgerView, bool)> {
-        let paper = self.tabs_mut().active_paper_mut()?;
-        Some((**paper).account_mut().report_parts().0.ledger_view(change))
-    }
-}
-
-impl PnlDisplayPort for dyn ControlPort {
-    fn active_account(&mut self) -> Option<&mut quantick_paper::PaperAccount> {
-        Some(self.tabs_mut().active_paper_mut()?.account_mut())
-    }
-    fn persist_pnl_display(&mut self) {
-        self.workspace_calls()
-            .into_paper()
-            .persist(crate::app::paper_wiring::PaperSettingsChange::RiskSettings);
-    }
-}
-
-impl AttentionPort for dyn ControlPort {
-    fn show_popup(&mut self, popup: AgentPopup) {
-        self.alerts().show_popup(popup);
-    }
-    fn show_toast(&mut self, message: String) {
-        self.alerts().show_toast(message);
-    }
-    fn sound_alert(&mut self) -> Option<String> {
-        self.alerts().sound_alert()
-    }
-}
 
 // `**self` is the tab's paper (`quantick_session::paper`), never this trait.
 impl TradeDesk for PaperTrading {
@@ -97,31 +42,8 @@ impl TradeDesk for PaperTrading {
     fn selected_trade_index(&self) -> Option<usize> {
         (**self).account().selected_trade_index()
     }
-}
-
-impl TradePort for dyn ControlPort {
-    fn active_desk(&self) -> Option<&dyn TradeDesk> {
-        self.tab_reads()
-            .active_paper()
-            .map(|paper| paper as &dyn TradeDesk)
-    }
-    fn active_desk_mut(&mut self) -> Option<&mut dyn TradeDesk> {
-        self.tabs_mut()
-            .active_paper_mut()
-            .map(|paper| paper as &mut dyn TradeDesk)
-    }
-    fn persist_order_strategies(&mut self) {
-        self.workspace_calls()
-            .into_paper()
-            .persist(PaperSettingsChange::OrderStrategies);
-    }
-    fn persist_risk_settings(&mut self) {
-        self.workspace_calls()
-            .into_paper()
-            .persist(PaperSettingsChange::RiskSettings);
-    }
-    fn route_call(&mut self) -> Option<quantick_paper::route::RouteCall<'_>> {
-        Some(self.workspace_calls().into_route())
+    fn ledger_view(&mut self, change: &LedgerViewChange) -> (LedgerView, bool) {
+        (**self).account_mut().report_parts().0.ledger_view(change)
     }
 }
 
@@ -137,30 +59,6 @@ impl AnalysisPane for ChartPane {
     }
 }
 
-impl AnalysisPort for dyn ControlPort {
-    fn drawing_magnet(&self) -> bool {
-        self.chrome_reads().tool_rail().magnet()
-    }
-    fn visit_analysis_tabs(&self, visit: &mut dyn FnMut(u64, &[AnalysisPaneEntry<'_>])) {
-        for (tab_id, tab) in self.tab_reads().tabs().iter_with_ids() {
-            let panes: Vec<AnalysisPaneEntry<'_>> = tab
-                .panes()
-                .map(|(pane, side)| AnalysisPaneEntry {
-                    side: pane_side_dto(side),
-                    pane,
-                })
-                .collect();
-            visit(tab_id, &panes);
-        }
-    }
-}
-
-impl MarkPort for dyn ControlPort {
-    fn cursor_snapshot(&self) -> quantick_control_schema::interaction::CursorSnapshot {
-        crate::control::interaction::cursor_snapshot(self)
-    }
-}
-
 impl JournalAccess for ControlAccess {
     fn record_event(
         &mut self,
@@ -170,79 +68,5 @@ impl JournalAccess for ControlAccess {
     }
     fn now_unix_ms(&self) -> i64 {
         crate::metrics::wall_clock_ms()
-    }
-}
-
-/// One linked recording, lent for the read.
-struct ReplayLinkRead<'a>(&'a quantick_feed::replay::ReplayLink);
-
-impl ReplayRead for ReplayLinkRead<'_> {
-    fn session(&self) -> &quantick_replay::Session {
-        &self.0.session
-    }
-    fn playing(&self) -> bool {
-        self.0.status.is_playing()
-    }
-    fn finished(&self) -> bool {
-        self.0.status.is_finished()
-    }
-    fn position_ms(&self) -> i64 {
-        self.0.status.position_ms()
-    }
-    fn start_ms(&self) -> i64 {
-        self.0.status.start_ms()
-    }
-    fn end_ms(&self) -> i64 {
-        self.0.status.end_ms()
-    }
-    fn elapsed_ms(&self) -> i64 {
-        self.0.status.elapsed_ms()
-    }
-    fn progress(&self) -> f32 {
-        self.0.status.progress()
-    }
-    fn speed(&self) -> f32 {
-        self.0.status.speed()
-    }
-    fn rewinds(&self) -> u64 {
-        self.0.status.rewinds()
-    }
-    fn day_prints(&self) -> (usize, usize) {
-        self.0.day_prints()
-    }
-    fn trace_file_name(&self) -> String {
-        quantick_control_schema::session::file_name(&super::trace::ReplayTraceFile::path_for(
-            &self.0.session.path,
-        ))
-    }
-}
-
-/// One open tab, lent for the session scopes' read.
-struct SessionTabRead<'a> {
-    tab: &'a Tab,
-    replay: Option<ReplayLinkRead<'a>>,
-}
-
-impl SessionTab for SessionTabRead<'_> {
-    fn symbol(&self) -> &str {
-        &self.tab.symbol
-    }
-    fn desk(&self) -> &dyn TradeDesk {
-        &self.tab.paper
-    }
-    fn replay(&self) -> Option<&dyn ReplayRead> {
-        self.replay.as_ref().map(|link| link as &dyn ReplayRead)
-    }
-}
-
-impl SessionPort for dyn ControlPort {
-    fn visit_session_tabs(&self, visit: &mut dyn FnMut(u64, &dyn SessionTab)) {
-        for (tab_id, tab) in self.tab_reads().tabs().iter_with_ids() {
-            let read = SessionTabRead {
-                tab,
-                replay: tab.link.replay.as_ref().map(ReplayLinkRead),
-            };
-            visit(tab_id, &read);
-        }
     }
 }

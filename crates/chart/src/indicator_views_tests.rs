@@ -474,3 +474,17 @@ fn an_ordinal_is_the_lowest_one_no_live_view_of_the_kind_holds() {
     let other = add(&mut views, "script.zigzag.pine");
     assert_eq!(ordinal(&views, other), 0, "each kind counts its own");
 }
+
+#[test]
+fn an_unloaded_script_takes_a_titled_error_slot_of_its_script_kind() {
+    let mut views = IndicatorViews::new();
+    let slot = views.show_unloaded_script("zigzag.pine", "zigzag".into(), "gone".into());
+    let view = views.all().iter().find(|view| view.slot == slot);
+    let view = view.expect("the failed add still takes its slot");
+    assert_eq!(&*view.kind, "script.zigzag.pine");
+    assert_eq!(view.descriptor.title, "zigzag");
+    assert_eq!(
+        view.error.as_ref().map(|error| error.message.as_str()),
+        Some("gone")
+    );
+}

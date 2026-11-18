@@ -18,7 +18,7 @@ use quantick_sources::history_run::{Cancelled, Press, RunStatus};
 use serde_json::{Value, json};
 
 use crate::dock::ActionDock;
-use crate::market_tab::{MarketTabHost, run_history};
+use crate::market_tab::{MarketTab as _, MarketTabHost, run_history};
 use crate::tabs::{tab_closed, tab_index};
 
 /// The History act on the tab at `index`, and its session as it then stands;
@@ -29,7 +29,7 @@ fn dispatch<H: MarketTabHost + ?Sized>(
     act: HistoryAct,
 ) -> Option<HistoryReply> {
     let outcome = run_history(app.market_tab_mut(index)?, act);
-    Some((outcome, app.market_tab(index)?.session()))
+    Some((outcome, app.open_tab(index)?.session()))
 }
 
 /// Dock the press and its cancel.
@@ -71,7 +71,7 @@ fn load<H: MarketTabHost + ?Sized, A>(
     })?;
     let index = tab_index(app, input.tab_id)?;
     let tab_id = app.tab_id_at(index);
-    let tab = app.market_tab(index).ok_or_else(tab_closed)?;
+    let tab = app.open_tab(index).ok_or_else(tab_closed)?;
     if !tab.pages_history(app.config()) {
         return Err(refused(
             "this tab's feed cannot page older trades".to_owned(),

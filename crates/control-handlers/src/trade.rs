@@ -29,21 +29,26 @@
 //! `quantick_trading::TradingVenue`, these actions reach it unchanged, and
 //! the permission that guards them is already carved out.
 //!
-//! The family reaches the desk through [`TradePort`]: the active tab's paper
-//! desk as [`TradeDesk`] — the account, the ruler and the one `execute` the
-//! tab's own buttons trade through — and the two persistence calls a ticket
-//! edit makes. The trade rules (armed bracket, risk lock, ruler) are the
-//! tab's, in `quantick_session::paper`; what is here is parsing, refusals
-//! and the journal.
+//! The family reaches the desk through the window's [`PaperOwner`], lent by
+//! [`PaperHost`]: the active tab's paper desk as [`TradeDesk`] — the account,
+//! the ruler and the one `execute` the tab's own buttons trade through — and
+//! the persistence a ticket edit makes. The trade rules (armed bracket, risk
+//! lock, ruler) are the tab's, in `quantick_session::paper`; what is here is
+//! parsing, refusals and the journal.
 
 pub use quantick_control_host::authority::CAPABILITY_VERSION;
 pub use quantick_control_schema::trade::*;
 
+use quantick_civil::TzOffset;
 use quantick_control::{error::ControlError, registry::RegistryError, wire::ActorContext};
 use quantick_control_host::journal::NewEvent;
 use quantick_engine::Side;
+use quantick_paper::report::ledger_state::{LedgerView, LedgerViewChange};
+use quantick_paper::report::session_edit::{
+    JournalEdit, JournalEditOutcome, JournalScope, SessionEditError,
+};
 use quantick_paper::{PaperAccount, format::PositionSummary, risk_sizing::RiskState};
-use quantick_session::paper::{TradeCommand, TradeOutcome, TradeRefusal};
+use quantick_session::paper::{SharedChange, TradeCommand, TradeOutcome, TradeRefusal};
 use quantick_sim::{Bracket, EntryKind, Order, OrderId, OrderIntent, VenueEvent};
 use rust_decimal::Decimal;
 use serde_json::{Value, json};
@@ -78,20 +83,29 @@ pub trait TradeDesk {
     fn position_summary(&self) -> Option<PositionSummary>;
     /// Which closed-trade row the trader selected in the ledger.
     fn selected_trade_index(&self) -> Option<usize>;
+    /// Apply `change` to the desk's Trades ledger — an empty one only reads —
+    /// and answer what it shows and whether that moved.
+    fn ledger_view(&mut self, change: &LedgerViewChange) -> (LedgerView, bool);
 }
 
-/// The window as the trade family reaches it: the active tab's desk, and
-/// the settings store a ticket edit persists into.
-pub trait TradePort {
+/// The workspace's paper trading as the trade, P&L and journal calls reach
+/// it: the active tab's desk, the settings a ticket edit persists, the route
+/// orders take, and the trades journal every tab writes into.
+pub trait PaperOwner {
     /// The active tab's desk, `None` when no chart is open.
     fn active_desk(&self) -> Option<&dyn TradeDesk>;
     /// The active tab's desk, to act on.
     fn active_desk_mut(&mut self) -> Option<&mut dyn TradeDesk>;
-    /// Persist the named exit strategies and the ticket's selection.
-    fn persist_order_strategies(&mut self);
-    /// Persist the risk per trade, the declared capital and the instrument
-    /// money.
-    fn persist_risk_settings(&mut self);
+    /// Persist the active desk's copy of one shared setting and fan it out
+    /// to every tab.
+    fn persist(&mut self, change: SharedChange);
+    /// The trades folder and every file a tab is still journaling to.
+    fn journal_scope(&self) -> JournalScope;
+    /// The display timezone the ledger stamps civil days and labels with.
+    fn journal_timezone(&self) -> TzOffset;
+    /// Apply one edit exactly as the ledger's gesture does, and have every
+    /// open ledger and report re-read the folder.
+    fn edit_journal(&mut self, edit: &JournalEdit) -> Result<JournalEditOutcome, SessionEditError>;
     /// Where orders go: the route session joined with the tabs it routes
     /// for, `None` where the host keeps no route. The three calls below are
     /// answered through it.
@@ -128,8 +142,13 @@ pub trait TradePort {
     }
 }
 
+/// The window lends its [`PaperOwner`] for one call.
+pub trait PaperHost {
+    fn paper(&mut self) -> Box<dyn PaperOwner + '_>;
+}
+
 /// Turn the venue's answer into the result, whatever the call was.
-fn answer<P: TradePort + ?Sized>(app: &P, events: &[VenueEvent]) -> TradeResult {
+fn answer(paper: &dyn PaperOwner, events: &[VenueEvent]) -> TradeResult {
     let rejected_because = events.iter().find_map(|event| match event {
         VenueEvent::Rejected(reason) => Some(reason.to_string()),
         _ => None,
@@ -139,7 +158,7 @@ fn answer<P: TradePort + ?Sized>(app: &P, events: &[VenueEvent]) -> TradeResult 
         VenueEvent::Cancelled { order, .. } => Some(order.id.0),
         _ => None,
     });
-    let desk = app.active_desk();
+    let desk = paper.active_desk();
     TradeResult {
         selected_strategy: desk
             .and_then(|desk| desk.account().selected_order_strategy())
@@ -197,12 +216,14 @@ fn journal<A: JournalAccess>(
     access.record_event(NewEvent::by(TRADE_MODULE_ID, kind, actor, payload));
 }
 
-fn place_order<P: TradePort + ?Sized, A: JournalAccess>(
-    app: &mut P,
+fn place_order<H: PaperHost + ?Sized, A: JournalAccess>(
+    host: &mut H,
     access: &mut A,
     actor: &ActorContext,
     input: &Value,
 ) -> Result<Value, ControlError> {
+    let mut owner = host.paper();
+    let paper = &mut *owner;
     let asked = input.clone();
     let input: PlaceInput = serde_json::from_value(input.clone())
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
@@ -248,13 +269,13 @@ fn place_order<P: TradePort + ?Sized, A: JournalAccess>(
     let command = TradeCommand::Place {
         intent: Box::new(intent.with_bracket(named)),
     };
-    run(app, access, actor, command, PLACE_EVENT_KIND, asked)
+    run(paper, access, actor, command, PLACE_EVENT_KIND, asked)
 }
 
 /// Run `command` on the active desk, refuse what the tab refused, and
 /// journal what the venue answered under `kind`.
-fn run<P: TradePort + ?Sized, A: JournalAccess>(
-    app: &mut P,
+fn run<A: JournalAccess>(
+    paper: &mut dyn PaperOwner,
     access: &mut A,
     actor: &ActorContext,
     command: TradeCommand,
@@ -263,10 +284,10 @@ fn run<P: TradePort + ?Sized, A: JournalAccess>(
 ) -> Result<Value, ControlError> {
     // A broker order from anyone but the trader's hand is the config's to
     // allow; refused before it reaches the desk, and journaled as asked.
-    if let Some(refusal) = app.broker_write_block(crate::trade_account::actor_of(actor)) {
+    if let Some(refusal) = paper.broker_write_block(crate::trade_account::actor_of(actor)) {
         return Err(crate::trade_account::refusal_error(refusal));
     }
-    let outcome = app
+    let outcome = paper
         .active_desk_mut()
         .ok_or_else(no_chart_open)?
         .execute(command);
@@ -276,7 +297,7 @@ fn run<P: TradePort + ?Sized, A: JournalAccess>(
             TradeRefusal::Ticket(sentence) => ControlError::invalid_request(sentence),
         });
     }
-    let result = answer(app, &outcome.events);
+    let result = answer(paper, &outcome.events);
     journal(access, actor, kind, &result, asked);
     to_value(result)
 }
@@ -300,12 +321,14 @@ fn paused_error(gate: &quantick_sources::sync::Desync) -> ControlError {
     error
 }
 
-fn bracket_order<P: TradePort + ?Sized, A: JournalAccess>(
-    app: &mut P,
+fn bracket_order<H: PaperHost + ?Sized, A: JournalAccess>(
+    host: &mut H,
     access: &mut A,
     actor: &ActorContext,
     input: &Value,
 ) -> Result<Value, ControlError> {
+    let mut owner = host.paper();
+    let paper = &mut *owner;
     let asked = input.clone();
     let input: BracketInput = serde_json::from_value(input.clone())
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
@@ -325,36 +348,40 @@ fn bracket_order<P: TradePort + ?Sized, A: JournalAccess>(
         id: OrderId(input.order_id),
         bracket: Box::new(bracket),
     };
-    run(app, access, actor, command, BRACKET_EVENT_KIND, asked)
+    run(paper, access, actor, command, BRACKET_EVENT_KIND, asked)
 }
 
-fn cancel_order<P: TradePort + ?Sized, A: JournalAccess>(
-    app: &mut P,
+fn cancel_order<H: PaperHost + ?Sized, A: JournalAccess>(
+    host: &mut H,
     access: &mut A,
     actor: &ActorContext,
     input: &Value,
 ) -> Result<Value, ControlError> {
+    let mut owner = host.paper();
+    let paper = &mut *owner;
     let asked = input.clone();
     let input: CancelInput = serde_json::from_value(input.clone())
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
     let command = TradeCommand::Cancel {
         id: OrderId(input.order_id),
     };
-    run(app, access, actor, command, CANCEL_EVENT_KIND, asked)
+    run(paper, access, actor, command, CANCEL_EVENT_KIND, asked)
 }
 
 /// Close the position and cancel every working order in one call.
-fn flatten_position<P: TradePort + ?Sized, A: JournalAccess>(
-    app: &mut P,
+fn flatten_position<H: PaperHost + ?Sized, A: JournalAccess>(
+    host: &mut H,
     access: &mut A,
     actor: &ActorContext,
     input: &Value,
 ) -> Result<Value, ControlError> {
+    let mut owner = host.paper();
+    let paper = &mut *owner;
     let _: PositionInput = serde_json::from_value(input.clone())
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
     let asked = input.clone();
     run(
-        app,
+        paper,
         access,
         actor,
         TradeCommand::Flatten,
@@ -365,17 +392,19 @@ fn flatten_position<P: TradePort + ?Sized, A: JournalAccess>(
 
 /// Flip the open position in one call; refused while flat, by the tab,
 /// because a reversal of nothing is a caller working from a stale read.
-fn reverse_position<P: TradePort + ?Sized, A: JournalAccess>(
-    app: &mut P,
+fn reverse_position<H: PaperHost + ?Sized, A: JournalAccess>(
+    host: &mut H,
     access: &mut A,
     actor: &ActorContext,
     input: &Value,
 ) -> Result<Value, ControlError> {
+    let mut owner = host.paper();
+    let paper = &mut *owner;
     let _: PositionInput = serde_json::from_value(input.clone())
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
     let asked = input.clone();
     run(
-        app,
+        paper,
         access,
         actor,
         TradeCommand::Reverse,
@@ -384,16 +413,18 @@ fn reverse_position<P: TradePort + ?Sized, A: JournalAccess>(
     )
 }
 
-fn select_strategy<P: TradePort + ?Sized, A: JournalAccess>(
-    app: &mut P,
+fn select_strategy<H: PaperHost + ?Sized, A: JournalAccess>(
+    host: &mut H,
     access: &mut A,
     actor: &ActorContext,
     input: &Value,
 ) -> Result<Value, ControlError> {
+    let mut owner = host.paper();
+    let paper = &mut *owner;
     let asked = input.clone();
     let input: SelectStrategyInput = serde_json::from_value(input.clone())
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
-    let desk = app.active_desk_mut().ok_or_else(no_chart_open)?;
+    let desk = paper.active_desk_mut().ok_or_else(no_chart_open)?;
     let strategies = desk.account().order_strategies().to_vec();
     if let Some(name) = input.name.as_deref()
         && !strategies.iter().any(|strategy| strategy.name == name)
@@ -404,62 +435,70 @@ fn select_strategy<P: TradePort + ?Sized, A: JournalAccess>(
     }
     desk.account_mut()
         .set_order_strategies(strategies, input.name.as_deref());
-    app.persist_order_strategies();
-    let result = answer(app, &[]);
+    paper.persist(SharedChange::OrderStrategies);
+    let result = answer(paper, &[]);
     journal(access, actor, TICKET_EVENT_KIND, &result, asked);
     to_value(result)
 }
 
-fn set_ruler<P: TradePort + ?Sized, A: JournalAccess>(
-    app: &mut P,
+fn set_ruler<H: PaperHost + ?Sized, A: JournalAccess>(
+    host: &mut H,
     access: &mut A,
     actor: &ActorContext,
     input: &Value,
 ) -> Result<Value, ControlError> {
+    let mut owner = host.paper();
+    let paper = &mut *owner;
     let asked = input.clone();
     let input: SetRulerInput = serde_json::from_value(input.clone())
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
-    app.active_desk_mut()
+    paper
+        .active_desk_mut()
         .ok_or_else(no_chart_open)?
         .set_ruler_ticks(input.ticks);
-    let result = answer(app, &[]);
+    let result = answer(paper, &[]);
     journal(access, actor, TICKET_EVENT_KIND, &result, asked);
     to_value(result)
 }
 
-fn set_risk<P: TradePort + ?Sized, A: JournalAccess>(
-    app: &mut P,
+fn set_risk<H: PaperHost + ?Sized, A: JournalAccess>(
+    host: &mut H,
     access: &mut A,
     actor: &ActorContext,
     input: &Value,
 ) -> Result<Value, ControlError> {
+    let mut owner = host.paper();
+    let paper = &mut *owner;
     let asked = input.clone();
     let input: SetRiskInput = serde_json::from_value(input.clone())
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
     let edit = crate::ticket_money::risk_edit(&input)?;
-    app.active_desk_mut()
+    paper
+        .active_desk_mut()
         .ok_or_else(no_chart_open)?
         .account_mut()
         .apply_risk_edit(edit);
-    app.persist_risk_settings();
-    let result = answer(app, &[]);
+    paper.persist(SharedChange::RiskSettings);
+    let result = answer(paper, &[]);
     journal(access, actor, TICKET_EVENT_KIND, &result, asked);
     to_value(result)
 }
 
-fn set_instrument_money<P: TradePort + ?Sized, A: JournalAccess>(
-    app: &mut P,
+fn set_instrument_money<H: PaperHost + ?Sized, A: JournalAccess>(
+    host: &mut H,
     access: &mut A,
     actor: &ActorContext,
     input: &Value,
 ) -> Result<Value, ControlError> {
+    let mut owner = host.paper();
+    let paper = &mut *owner;
     let asked = input.clone();
     let input: SetInstrumentMoneyInput = serde_json::from_value(input.clone())
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
-    let desk = app.active_desk_mut().ok_or_else(no_chart_open)?;
+    let desk = paper.active_desk_mut().ok_or_else(no_chart_open)?;
     crate::ticket_money::declare_money(desk.account_mut(), &input)?;
-    app.persist_risk_settings();
-    let result = answer(app, &[]);
+    paper.persist(SharedChange::RiskSettings);
+    let result = answer(paper, &[]);
     journal(access, actor, TICKET_EVENT_KIND, &result, asked);
     to_value(result)
 }
@@ -469,7 +508,7 @@ fn set_instrument_money<P: TradePort + ?Sized, A: JournalAccess>(
 pub fn register<D, H, A>(registry: &mut D) -> Result<(), RegistryError>
 where
     D: ActionDock<H, A>,
-    H: TradePort + ?Sized,
+    H: PaperHost + ?Sized,
     A: JournalAccess,
 {
     registry.register(select_strategy_descriptor(), select_strategy::<H, A>)?;

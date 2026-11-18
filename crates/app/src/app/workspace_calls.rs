@@ -29,14 +29,6 @@ pub(crate) struct WorkspaceCalls<'a> {
 }
 
 impl<'a> WorkspaceCalls<'a> {
-    pub(crate) fn into_paper(self) -> super::paper_wiring::PaperSettingsAdapter<'a> {
-        self.runtime.paper_settings()
-    }
-
-    pub(crate) fn into_route(self) -> quantick_paper::route::RouteCall<'a> {
-        self.runtime.route(self.config)
-    }
-
     pub(crate) fn layout(&mut self) -> LayoutAdapter<'_> {
         IndicatorWiring {
             runtime: self.runtime.bound_mut(&self.presentation.binding),

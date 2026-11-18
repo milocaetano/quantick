@@ -306,6 +306,46 @@ pub fn recent_label(path: &Path) -> String {
         .unwrap_or_else(|| path.to_string_lossy().into_owned())
 }
 
+/// The status line after an export: where the file went, how many settings
+/// groups it holds, and `left_out`, what the bundle still does not carry.
+pub fn exported_note(path: &Path, stores: usize, left_out: &str) -> String {
+    format!(
+        "Workspace exported to {} — {stores} settings groups{left_out}",
+        path.display()
+    )
+}
+
+/// The status line after an import: the file by its menu name, and how many
+/// settings groups it restored.
+pub fn imported_note(path: &Path, stores: usize) -> String {
+    format!(
+        "Workspace \"{}\" opened — {stores} settings groups restored",
+        recent_label(path)
+    )
+}
+
+pub fn not_exported_note(error: &str) -> String {
+    format!("Workspace not exported — {error}")
+}
+
+pub fn not_opened_note(error: &str) -> String {
+    format!("Workspace not opened — {error}")
+}
+
+/// The status line after the file chooser closed without an answer.
+pub const PICKER_LOST_NOTE: &str = "The file chooser could not open — see the log. Try again.";
+
+/// The answer to "where does this thing save my setup?": the cockpit home,
+/// or where it falls back to on a system with no documents folder.
+pub fn cockpit_home_note(home: Option<&Path>) -> String {
+    match home {
+        Some(home) => format!("Cockpit saved in {}", home.display()),
+        None => "This system reports no documents folder — quantick keeps the cockpit beside \
+                 wherever it was launched from"
+            .to_owned(),
+    }
+}
+
 /// A file name for `name` that a file system will accept, keeping the
 /// trader's own words wherever it can.
 ///
@@ -331,27 +371,5 @@ pub fn file_name_for(name: &str) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use quantick_workspace::write_refusal::{WritesRefused, refuse_writes_on_this_thread};
-
-    /// DS7: a saves-off session exporting a workspace leaves no trace on
-    /// disk, not even the folder it would have written into.
-    #[test]
-    fn a_refused_export_creates_no_folder() {
-        let scratch = crate::scratch::ScratchDir::new("refused-export");
-        let folder = scratch.path().join("exports");
-        let bundle = Bundle {
-            version: FORMAT_VERSION,
-            name: "refused".to_owned(),
-            sections: Default::default(),
-        };
-        refuse_writes_on_this_thread(Some(WritesRefused {
-            hooks: vec!["QUANTICK_UI_STATE".to_owned()],
-        }));
-        let refused = write(&folder.join("cockpit.qws"), &bundle);
-        refuse_writes_on_this_thread(None);
-        assert!(refused.is_err(), "a refused session writes nothing");
-        assert!(!folder.exists(), "and creates no folder either");
-    }
-}
+#[path = "bundle_tests.rs"]
+mod tests;
