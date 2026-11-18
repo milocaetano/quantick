@@ -29,7 +29,8 @@ pub(crate) fn flow_pane_shown(tab: &Tab) -> bool {
     tab.canvas.layout.shows_flow() && !tab.canvas.folds().1
 }
 
-/// Open the tab's panel on `section`.
+/// Open the tab's panel on `section`: what a scenario and a test ask.
+#[cfg(any(feature = "scenario-harness", test))]
 pub(crate) fn open_on(tab: &mut Tab, section: PanelSection) {
     if flow_pane_shown(tab) {
         tab.tape_mut().settings_panel.open_on(Some(section));

@@ -51,13 +51,16 @@ fn layer(app: &mut QuantickApp) -> String {
     )
 }
 
+/// One case: the menu command, its call, the call's input, the reading.
+type Case = (fn() -> MenuCall, &'static str, Value, Reading);
+
 /// Each mapped command next to its call: the click on one window, the call
 /// on a twin, the same reading on both, and a reading that moved.
 #[test]
 fn a_menu_call_and_its_named_call_leave_the_same_window() {
     let preset = &crate::canvas_layout::LAYOUT_PRESETS[2];
     let section = crate::ui_state::PanelSection::L2;
-    let cases: [(fn() -> MenuCall, &str, Value, Reading); 9] = [
+    let cases: [Case; 9] = [
         (|| MenuCall::OpenAlerts, "alerts.open", json!({}), alerts),
         (
             || MenuCall::ApplyLayoutPreset(&crate::canvas_layout::LAYOUT_PRESETS[2]),
