@@ -1,6 +1,6 @@
 //! Ratchet guard for the size of the trunk.
 //!
-//! `arch-review` dimension 1 asks whether a new capability can dock as a new
+//! `CLAUDE.md`'s docking rule asks whether a new capability can dock as a new
 //! file plus one registration line, and recent features answered yes
 //! honestly — `pointer_compass.rs` really is a new file. `app.rs` still grew
 //! from 108 lines to over 36,000 in the five weeks after it was created,
@@ -21,7 +21,7 @@
 //! # What is measured, and what is deliberately not
 //!
 //! **Production lines only** — everything before a file's test module. Two
-//! thirds of `app.rs` is `#[cfg(test)]`, and dimension 4 asks for exactly
+//! thirds of `app.rs` is `#[cfg(test)]`, and the review asks for exactly
 //! that. A guard counting total lines would fire on a well-tested change and
 //! teach the author to write fewer tests, which is worse than the disease.
 //! Test code may grow without limit, and files under `tests/` are not tracked

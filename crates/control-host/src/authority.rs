@@ -323,6 +323,39 @@ pub fn is_private_read(permission: &PermissionId) -> bool {
         .any(|(id, _, sensitive)| *sensitive && *id == permission.as_str())
 }
 
+/// Whether a permission belongs to the trade tier — see the access
+/// panel's read-scope filter for why it is excluded from every section.
+#[must_use]
+pub fn is_trade_permission(permission: &PermissionId) -> bool {
+    permission.as_str() == TRADE_PERMISSION_ID || permission.as_str().starts_with("trade.")
+}
+
+/// Whether a permission belongs to the annotate tier — the `annotate` floor
+/// itself or one of its scopes.
+#[must_use]
+pub fn is_annotate_permission(permission: &PermissionId) -> bool {
+    permission.as_str() == ANNOTATE_PERMISSION_ID || is_annotate_scope(permission)
+}
+
+/// Any permission of the cockpit tier — the floor or one of its scopes.
+#[must_use]
+pub fn is_cockpit_permission(permission: &PermissionId) -> bool {
+    permission.as_str() == COCKPIT_PERMISSION_ID || is_cockpit_scope(permission)
+}
+
+/// A scope *of* the cockpit tier, as opposed to the floor they stand on.
+#[must_use]
+pub fn is_cockpit_scope(permission: &PermissionId) -> bool {
+    permission.as_str().starts_with(concat!("cockpit", "."))
+}
+
+/// A scope *of* the annotate tier — the ones that actually open a capability,
+/// as opposed to the `annotate` floor they all stand on.
+#[must_use]
+pub fn is_annotate_scope(permission: &PermissionId) -> bool {
+    permission.as_str().starts_with(concat!("annotate", "."))
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct EmptyInput {}

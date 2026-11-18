@@ -60,10 +60,10 @@ MAIN_BRANCH="main"
 # skill ran over the change and before any PR, draft included, is opened.
 IMPLEMENT_MARKER="code-review-ok"
 
-# What ceremony a branch declared, written by the `mission` or `implement`
-# skill into the per-branch git dir as `<branch> <tier>` and never
-# committed. A declaration naming another branch is no declaration, so a
-# reused worktree cannot inherit one. Only `implement` changes the gate.
+# What ceremony a branch declared, written by the `implement` skill into the
+# per-branch git dir as `<branch> implement` and never committed. The name
+# predates the retired `mission` skill. A declaration naming another branch
+# is no declaration, so a reused worktree cannot inherit one.
 TIER_FILE_NAME="mission-tier"
 # How long the read-cost advisory may delay a command before it is dropped.
 # The calculator is fast on an ordinary branch - a third of a second - but it
@@ -74,12 +74,7 @@ TIER_FILE_NAME="mission-tier"
 # determine in time. The budget is the whole advisory's, not each
 # interpreter's: see `read_cost_advisory`.
 READ_COST_ADVISORY_SECONDS=10
-# Every tier `mission` may declare, in the order they cost. A file holding
-# anything else is treated as no declaration at all: an unrecognised word must
-# never be the difference between a graded branch and an ungraded one.
-TIERS="small medium high max"
-# Not a mission tier: the `implement` skill's goal declares it in the same file,
-# and it replaces the mission's reviews with a single code-review.
+# The one tier the file may hold. Anything else is no declaration at all.
 IMPLEMENT_TIER="implement"
 
 mode="${1:-}"
@@ -196,7 +191,7 @@ effective_dir() {
 # The command with its single leading `cd <dir> &&` removed, trimmed at both
 # ends. Everything else is left exactly as written.
 #
-# The campaign statements below are pinned by string equality, and the function
+# The integration merge and ready statements below are pinned by string equality, and the function
 # above says why every agent command carries that prefix: the payload's `cwd`
 # is the session's and resets between calls, so the bare form the pin asks for
 # would be judged against the main checkout and denied as a merge to main. The
@@ -228,7 +223,7 @@ marker_path() {
 }
 
 # The tier declared for worktree `$1`, or nothing when none is declared or the
-# declaration is not one of `$TIERS`. The file's contents never leave this
+# declaration is not `$IMPLEMENT_TIER`. The file's contents never leave this
 # function: an unrecognised tier is reported as no tier at all, so a corrupt or
 # hostile file can neither reach `deny`'s JSON nor widen anything.
 declared_tier() {
@@ -272,21 +267,8 @@ declared_tier() {
     # A declaration belongs to one branch.
     [ "$tier_for" = "$tier_branch" ] || return 1
 
-    # Validated against every tier, though both callers currently compare only
-    # against `small`, so returning `medium` and returning nothing behave
-    # identically today. That is deliberate and worth stating, because the loop
-    # looks inert: this function answers "what did the mission declare", not
-    # "is this branch exempt", and `TIERS` is the single place the vocabulary
-    # lives — the suite and the mission skill are both checked against it. A
-    # second exempt tier should not have to reintroduce validation that was
-    # deleted for looking unused.
-    for tier_known in $TIERS $IMPLEMENT_TIER; do
-        if [ "$tier" = "$tier_known" ]; then
-            printf '%s' "$tier"
-            return 0
-        fi
-    done
-    return 1
+    [ "$tier" = "$IMPLEMENT_TIER" ] || return 1
+    printf '%s' "$tier"
 }
 
 # The identity of what a review covered: a hash of this branch's own diff
@@ -309,7 +291,7 @@ declared_tier() {
 review_base() {
     base_record=$(marker_path "$1" mission-base) || return 1
     if [ -e "$base_record" ]; then
-        sh "$(dirname "$0")/campaign_context.sh" base "$1"
+        sh "$(dirname "$0")/mission_base.sh" base "$1"
     else
         printf 'origin/%s\n' "$MAIN_BRANCH"
     fi
@@ -318,7 +300,7 @@ review_base() {
 review_key() {
     key_record=$(marker_path "$1" mission-base) || return 1
     if [ -e "$key_record" ]; then
-        sh "$(dirname "$0")/campaign_context.sh" key "$1"
+        sh "$(dirname "$0")/mission_base.sh" key "$1"
         return $?
     fi
     # The preconditions are checked first, and the diff is then piped *raw*.
@@ -336,8 +318,6 @@ review_key() {
 # being shipped. `$4` states the rule in CLAUDE.md's own words, `$5` says how
 # to satisfy it, and the recording line is derived from the marker name — so
 # the instruction and the file the gate reads cannot drift apart.
-# Optional `$6` requires a branch-bound, single-line `<branch> <key>` record;
-# the existing key validation/comparison below remains the sole comparator.
 #
 # The marker is meant to hold a sha and nothing enforces that: a mistyped
 # redirect, an editor appending a line, a half-written file. Its contents are
@@ -351,7 +331,6 @@ require_marker() {
     require_name=$3
     require_rule=$4
     require_how=$5
-    require_branch=${6:-}
 
     require_file=$(marker_path "$require_dir" "$require_name") || exit 0
     # `git -C "$require_dir"`, never `git -C .`. The remedy is pasted into a
@@ -363,15 +342,11 @@ require_marker() {
     # must not be the one place that drops it.
     require_record="git -C \\\"$require_dir\\\" diff origin/$MAIN_BRANCH...HEAD | git hash-object --stdin > \\\"$require_file\\\""
     if [ -e "$(marker_path "$require_dir" mission-base)" ]; then
-        require_record="sh .claude/hooks/campaign_context.sh key \\\"$require_dir\\\" > \\\"$require_file\\\""
+        require_record="sh .claude/hooks/mission_base.sh key \\\"$require_dir\\\" > \\\"$require_file\\\""
     fi
     if [ "$require_name" = "$IMPLEMENT_MARKER" ]; then
         # Claude Code's classifier denies the agent this write; the hook does it.
         require_record="end the review with \`REVIEW-VERDICT: pass $require_dir <HEAD>\` and the review-verdict hook records it. Codex only: $require_record"
-    fi
-    if [ -n "$require_branch" ]; then
-        # Do not offer a bare restamp as the remedy for a review that never ran.
-        require_record="Follow the ai-review skill's completion procedure after publishing its PR report and checking review identity stability."
     fi
 
     if [ ! -f "$require_file" ]; then
@@ -385,18 +360,6 @@ require_marker() {
     require_reviewed=$(head -n 1 "$require_file" 2>/dev/null |
         tr -d '\r' |
         sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
-    if [ -n "$require_branch" ]; then
-        # Read the entire record: head alone would ignore an appended second
-        # record. Branch text never reaches the denial's JSON interpolation.
-        require_reviewed=$(cat "$require_file" 2>/dev/null)
-        if [ "$(wc -l < "$require_file" | tr -d ' ')" != 1 ]; then
-            require_reviewed=""
-        fi
-        case "$require_reviewed" in
-            "$require_branch "*) require_reviewed=${require_reviewed#"$require_branch "} ;;
-            *) require_reviewed="" ;;
-        esac
-    fi
     case "$require_reviewed" in
         '' | *[!0-9a-fA-F]*) require_reviewed="(not a commit id)" ;;
         *)
@@ -648,9 +611,7 @@ pr_gate() {
     fi
 
     # Phase one ends at a draft PR, and a draft ships nothing: it cannot be
-    # merged, and `gh pr ready` below is where the reviews are wanted. Gating
-    # it would order the chain backwards — the reviews would have to run before
-    # `ai-review` could post its findings onto a PR that does not exist yet.
+    # merged, and `gh pr ready` below is where the review is wanted.
     #
     # `--draft=false` is spelled out rather than left to the match. It is the
     # one spelling that contains the flag and means the opposite of it, and a
@@ -658,15 +619,15 @@ pr_gate() {
     dir=$(effective_dir "$command" "$(normalize_path "$(json_string_field cwd)")")
     [ -d "$dir" ] || exit 0
 
-    # An `implement` branch trades the mission's reviews for one code-review,
-    # owed before any PR opens, draft included. Green CI and the user's own
-    # merge are what protect `main` past it. Against `main`, or a feat/* or
-    # feature/* branch recorded with no parent issue; a campaign or /feature
-    # base keeps its own authorization and identity checks in the full gate.
+    # An `implement` branch owes its one code-review before any PR opens,
+    # draft included. Green CI and the user's own merge are what protect
+    # `main` past it. Against `main`, or a feat/* or feature/* branch recorded
+    # with no parent issue; a /feature child keeps its own authorization and
+    # identity checks in the full gate.
     implement_base=$(review_base "$dir" 2>/dev/null) || implement_base=
     if [ "$(declared_tier "$dir")" = "$IMPLEMENT_TIER" ] &&
         { [ "$implement_base" = "origin/$MAIN_BRANCH" ] ||
-            sh "$(dirname "$0")/campaign_context.sh" implement-target "$dir" >/dev/null 2>&1; }; then
+            sh "$(dirname "$0")/mission_base.sh" implement-target "$dir" >/dev/null 2>&1; }; then
         implement_target=${implement_base#origin/}
         # `gh pr create` defaults to `main`, which would carry the target's
         # whole stack into a PR nobody meant to open. Read from the unquoted
@@ -714,7 +675,7 @@ pr_gate() {
         # covered only the diff against the target.
         if [ "$gate_action" = ready ] && [ "$implement_target" != "$MAIN_BRANCH" ]; then
             implement_pr=$(pr_number "$(gh_statement "$command" "gh pr ready")")
-            sh "$(dirname "$0")/campaign_context.sh" check-pr "$dir" "$implement_pr" ready >/dev/null 2>&1 ||
+            sh "$(dirname "$0")/mission_base.sh" check-pr "$dir" "$implement_pr" ready >/dev/null 2>&1 ||
                 deny "\"Name one PR number whose base is $implement_target and whose head is this reviewed branch, after a fetch.\""
         fi
         pass_pr_gate "$dir"
@@ -727,10 +688,10 @@ pr_gate() {
         fi
     fi
 
-    gate_base=$(review_base "$dir") || deny '"Campaign review base is invalid or unavailable; reconcile the branch-bound mission-base record."'
+    gate_base=$(review_base "$dir") || deny '"Review base is invalid or unavailable; reconcile the branch-bound mission-base record (campaign/* bases are retired: retarget to main, feat/* or feature/*)."'
     key=$(review_key "$dir")
     if [ -z "$key" ]; then
-        [ "$gate_base" = "origin/$MAIN_BRANCH" ] || deny '"Campaign review identity cannot be computed; no fallback approval is available."'
+        [ "$gate_base" = "origin/$MAIN_BRANCH" ] || deny '"Review identity against the base cannot be computed; no fallback approval is available."'
         # The branch's own change cannot be identified - no origin/<main>, an
         # unrelated history. Fall back to the commit, which is what this gate
         # keyed on before diffs. That is strictly stricter than failing open,
@@ -741,9 +702,8 @@ pr_gate() {
     [ -n "$key" ] || exit 0
 
     # Every branch owes what an implement branch owes: the code-review at this
-    # exact change. The arch-review, delivery-review and ai-review markers are
-    # retired; full CI and the merge rules below still apply. A /feature child
-    # integrates under its persisted grant; campaign/* keeps its identity check.
+    # exact change; full CI and the merge rules below still apply. A /feature
+    # child integrates under its persisted grant.
     require_marker "$dir" "$key" "$IMPLEMENT_MARKER" \
         "no branch ships without a code-review" \
         "Run the code-review skill over \`git diff $gate_base...HEAD\` and fix its valid findings"
@@ -752,8 +712,8 @@ pr_gate() {
     [ -n "$gate_pr" ] || deny '"Name the PR number explicitly."'
 
     # Draft pushes run only the fast job, so readiness is where full CI is
-    # owed: every FULL_CI_CHECKS verdict at the exact reviewed HEAD. The
-    # sibling script is the one definition the final verifier reads too.
+    # owed: every FULL_CI_CHECKS verdict at the exact reviewed HEAD, read
+    # from the sibling script that owns the list.
     full_ci_script="$(dirname "$0")/full_ci.sh"
     [ -f "$full_ci_script" ] ||
         ask '"Full CI at the exact head cannot be verified because full_ci.sh is not beside the gate; the fast draft job is not readiness evidence."'
@@ -773,20 +733,20 @@ pr_gate() {
         # shortcuts.
         gate_merge=$(gh_statement "$command" "gh pr merge" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
         gate_whole=$(bare_statement "$command")
-        [ "$gate_merge" = "$gate_whole" ] || deny '"Run one campaign merge command from the task worktree; compound commands cannot share an authorization check."'
+        [ "$gate_merge" = "$gate_whole" ] || deny '"Run one merge command from the task worktree; compound commands cannot share an authorization check."'
         gate_head=$(git -C "$dir" rev-parse HEAD)
         case "$gate_merge" in
             "gh pr merge $gate_pr --merge --match-head-commit $gate_head"|"gh pr merge $gate_pr --squash --match-head-commit $gate_head") ;;
-            *) deny '"Campaign merges require an explicit PR, --merge or --squash, and --match-head-commit with the reviewed HEAD; no auto-merge, admin override or alternate repository."' ;;
+            *) deny '"Agent merges require an explicit PR, --merge or --squash, and --match-head-commit with the reviewed HEAD; no auto-merge, admin override or alternate repository."' ;;
         esac
     fi
     if [ "$gate_base" != "origin/$MAIN_BRANCH" ]; then
         if [ "$gate_action" = ready ]; then
             gate_ready=$(bare_statement "$command")
-            [ "$gate_ready" = "gh pr ready $gate_pr" ] || deny '"Run one explicit campaign ready command in the task worktree, without repository overrides or compound commands."'
+            [ "$gate_ready" = "gh pr ready $gate_pr" ] || deny '"Run one explicit ready command in the task worktree, without repository overrides or compound commands."'
         fi
-        if ! sh "$(dirname "$0")/campaign_context.sh" check-pr "$dir" "$gate_pr" "$gate_action" >/dev/null 2>&1; then
-            deny '"Campaign PR identity, authorization or CI could not be verified. Reconcile its exact base/head, persisted merge grant and green checks before continuing."'
+        if ! sh "$(dirname "$0")/mission_base.sh" check-pr "$dir" "$gate_pr" "$gate_action" >/dev/null 2>&1; then
+            deny '"PR identity, authorization or CI could not be verified. Reconcile its exact base/head, persisted merge grant and green checks before continuing."'
         fi
     fi
 

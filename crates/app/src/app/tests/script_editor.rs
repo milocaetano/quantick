@@ -97,9 +97,11 @@ fn values(app: &QuantickApp) -> Vec<Vec<f64>> {
 }
 fn saved_flow_indicators(app: &QuantickApp) -> Vec<crate::indicators::state_file::SavedIndicator> {
     let layout = app
+        .runtime
         .layout_state()
         .pane_layout(app.runtime.tabs.active_id(), PaneSide::Flow);
-    app.layout_state()
+    app.runtime
+        .layout_state()
         .layouts()
         .get(layout)
         .unwrap()
@@ -707,7 +709,7 @@ fn script_editor_survives_workspace_layout_frame_stages() {
     let tab = app.runtime.tabs.active_id();
     let pane = app.active_tab().flow_pane.id;
     let slot = app.active_tab().flow_pane.indicators.all()[0].slot;
-    let layout = app.layout_state().pane_layout(tab, PaneSide::Flow);
+    let layout = app.runtime.layout_state().pane_layout(tab, PaneSide::Flow);
     let output = run_sized_frame(&mut app, &ctx, TEST_WINDOW, vec![key_press(egui::Key::F10)]);
     assert!(!app.chrome.window_menu.open, "editor owns menu shortcuts");
     assert!(painted_text_center(&output, "Editable copy · Saves automatically").is_some());
@@ -739,7 +741,10 @@ fn script_editor_survives_workspace_layout_frame_stages() {
     settle_indicators(&mut app);
     assert_eq!(app.runtime.tabs.active_id(), tab);
     assert_eq!(app.active_tab().flow_pane.id, pane);
-    assert_eq!(app.layout_state().pane_layout(tab, PaneSide::Flow), layout);
+    assert_eq!(
+        app.runtime.layout_state().pane_layout(tab, PaneSide::Flow),
+        layout
+    );
     let view = &app.active_tab().flow_pane.indicators.all()[0];
     assert_eq!(view.slot, slot);
     assert_eq!(view.label(), "Frame reload");

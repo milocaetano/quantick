@@ -1,6 +1,6 @@
 //! Adapt domain snapshots and execute registered window-menu effects.
 use crate::app::{
-    LayoutPort, QuantickApp,
+    QuantickApp,
     menu_bar::{MenuCall, MenuCommand, MenuDoor},
 };
 use eframe::egui;
@@ -92,7 +92,7 @@ fn snapshot(app: &QuantickApp, ctx: &egui::Context) -> Snapshot {
             selected_rows.push(id);
         }
     }
-    let layout = app.layout_state();
+    let layout = app.runtime.layout_state();
     Snapshot {
         open: app.chrome.window_menu.is_open_on(ctx.viewport_id()),
         door: app.chrome.window_menu.door(),
@@ -144,19 +144,23 @@ fn settle(action: Action, commands: &mut Vec<MenuCommand>) {
             return;
         }
         Action::Workspace(command) => MenuCommand::Workspace(command),
-        Action::SaveOnExit(on) => MenuCall::Desk(DeskAct::SetReopen(on)).into(),
-        Action::SwitchLayout(id) => MenuCall::Strip(StripAction::Switch(id)).into(),
-        Action::CreateLayout => MenuCall::Strip(StripAction::Create).into(),
-        Action::RenameLayout(id) => MenuCall::Strip(StripAction::BeginRename(id)).into(),
-        Action::DeleteLayout(id) => MenuCall::Strip(StripAction::Delete(id)).into(),
+        Action::SaveOnExit(on) => MenuCommand::Call(MenuCall::Desk(DeskAct::SetReopen(on))),
+        Action::SwitchLayout(id) => MenuCommand::Call(MenuCall::Strip(StripAction::Switch(id))),
+        Action::CreateLayout => MenuCommand::Call(MenuCall::Strip(StripAction::Create)),
+        Action::RenameLayout(id) => {
+            MenuCommand::Call(MenuCall::Strip(StripAction::BeginRename(id)))
+        }
+        Action::DeleteLayout(id) => MenuCommand::Call(MenuCall::Strip(StripAction::Delete(id))),
         Action::Preset(id) => {
             if let Some(preset) = quantick_workspace::canvas::preset(id) {
-                commands.push(MenuCall::ApplyLayoutPreset(preset).into());
+                commands.push(MenuCommand::Call(MenuCall::ApplyLayoutPreset(preset)));
             }
             return;
         }
         Action::ContextCharts => MenuCommand::ToggleContextCharts,
-        Action::MoveChart { from, to } => MenuCall::MoveContextChart { from, to }.into(),
+        Action::MoveChart { from, to } => {
+            MenuCommand::Call(MenuCall::MoveContextChart { from, to })
+        }
         Action::Legend => MenuCommand::ToggleLegend,
         Action::Recent(path) => MenuCommand::OpenRecentDesk(path),
     };
@@ -165,7 +169,7 @@ fn settle(action: Action, commands: &mut Vec<MenuCommand>) {
 fn settle_row(id: RowId, commands: &mut Vec<MenuCommand>) {
     use quantick_control_schema::{settings_sections::SettingsSection, window_menu::HelpPage};
     if let Some(section) = menu::panel_section_of(id) {
-        commands.push(MenuCall::OpenOrderFlowPanel(section).into());
+        commands.push(MenuCommand::Call(MenuCall::OpenOrderFlowPanel(section)));
         return;
     }
     let command = match id {
@@ -176,14 +180,14 @@ fn settle_row(id: RowId, commands: &mut Vec<MenuCommand>) {
         RowId::ToolbarTop => MenuCommand::SetToolboxDock(crate::toolrail::ToolboxDock::Top),
         RowId::ToolbarBottom => MenuCommand::SetToolboxDock(crate::toolrail::ToolboxDock::Bottom),
         RowId::ToolbarHidden => MenuCommand::ToggleToolbox,
-        RowId::SaveDesk => MenuCall::Desk(DeskAct::Save("menu")).into(),
+        RowId::SaveDesk => MenuCommand::Call(MenuCall::Desk(DeskAct::Save("menu"))),
         RowId::TogglePanels => MenuCommand::ToggleDock,
-        RowId::Alerts => MenuCall::OpenAlerts.into(),
+        RowId::Alerts => MenuCommand::Call(MenuCall::OpenAlerts),
         RowId::MarketReplay => MenuCommand::OpenReplayBrowser,
         RowId::CloseReplay => MenuCommand::CloseReplay,
         RowId::Settings => MenuCommand::OpenSettings(SettingsSection::Display),
-        RowId::ExportDesk => MenuCall::Desk(DeskAct::PickExport).into(),
-        RowId::ImportDesk => MenuCall::Desk(DeskAct::PickImport).into(),
+        RowId::ExportDesk => MenuCommand::Call(MenuCall::Desk(DeskAct::PickExport)),
+        RowId::ImportDesk => MenuCommand::Call(MenuCall::Desk(DeskAct::PickImport)),
         RowId::RevealDesk => MenuCommand::RevealDesk,
         RowId::ResetStartupDesk => MenuCommand::ForgetWorkspace,
         RowId::KeyboardShortcuts => MenuCommand::OpenHelp(HelpPage::KeyboardShortcuts),

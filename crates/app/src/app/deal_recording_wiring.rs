@@ -7,7 +7,7 @@ use crate::deal_recording::{self, DealRecorder};
 
 use super::ArrangementHost;
 use super::chrome::ChromeState;
-use super::desk_wiring::DeskAdapter;
+use super::workspace_calls::WorkspaceCalls;
 use super::workspace_runtime::WorkspaceRuntime;
 
 fn recorder_for(
@@ -53,7 +53,7 @@ pub(crate) fn set_default(saved: &mut Option<bool>, tabs: &mut ArrangementHost, 
 }
 
 /// `feed.deal_recording.set` reaches each tab's own recorder.
-impl DealRecordingPort for DeskAdapter<'_> {
+impl DealRecordingPort for WorkspaceCalls<'_> {
     fn deal_recorder(
         &mut self,
         index: usize,

@@ -5569,7 +5569,7 @@ fn a_retry_that_races_its_own_first_call_is_refused_rather_than_acted_on() {
             .unwrap()
             .select(None)
             .unwrap();
-    let before = app.layout_state().layouts().layouts().len();
+    let before = app.runtime.layout_state().layouts().layouts().len();
     let key = || IdempotencyKey::new("layout-key-1".to_owned()).unwrap();
 
     let first = client
@@ -5617,7 +5617,7 @@ fn a_retry_that_races_its_own_first_call_is_refused_rather_than_acted_on() {
         quantick_control::wire::ResponseOutcome::Success { .. }
     ));
     assert_eq!(
-        app.layout_state().layouts().layouts().len(),
+        app.runtime.layout_state().layouts().layouts().len(),
         before + 1,
         "the race created one layout, not two"
     );
@@ -5661,7 +5661,7 @@ fn a_keyed_call_that_expired_before_the_application_saw_it_leaves_its_key_free()
             .unwrap()
             .select(None)
             .unwrap();
-    let before = app.layout_state().layouts().layouts().len();
+    let before = app.runtime.layout_state().layouts().layouts().len();
     let key = || IdempotencyKey::new("layout-key-1".to_owned()).unwrap();
 
     // Sent and then left alone: no frame runs, so the deadline passes while the
@@ -5692,7 +5692,7 @@ fn a_keyed_call_that_expired_before_the_application_saw_it_leaves_its_key_free()
     // `started` is ever set.
     run_frame(&mut app, &ctx);
     assert_eq!(
-        app.layout_state().layouts().layouts().len(),
+        app.runtime.layout_state().layouts().layouts().len(),
         before,
         "a call refused on its deadline created nothing"
     );
@@ -5757,7 +5757,7 @@ fn a_keyed_call_that_expired_before_the_application_saw_it_leaves_its_key_free()
         answered.outcome
     );
     assert_eq!(
-        app.layout_state().layouts().layouts().len(),
+        app.runtime.layout_state().layouts().layouts().len(),
         before + 1,
         "exactly one layout, made by the retry"
     );

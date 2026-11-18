@@ -7,7 +7,7 @@ disable-model-invocation: true
 Use the request and existing answers. Write plans and `/goal` instructions in English; preserve exact paths and identifiers. Ask questions in the user's language.
 
 # Plan only
-Allow targeted reads, essential questions and one plan MD. Do not change code/config/Git, create worktrees, run tests/agents/reviews, open PRs or execute `/goal`. This path prepares PRs against `main`, `feat/*` or `feature/*`. For another target, stop without a plan or `/goal` line; direct campaign work to `docs/campaign/integration.md`.
+Allow targeted reads, essential questions and one plan MD. Do not change code/config/Git, create worktrees, run tests/agents/reviews, open PRs or execute `/goal`. This path prepares PRs against `main`, `feat/*` or `feature/*`. For another target, stop without a plan or `/goal` line.
 
 # Minimal context
 Aim for <=200 tokens per plan; never pad. Exceed only for essential contracts, safety or acceptance. Include only implementation/validation facts: no history, copied code/logs, explanations, repetition, empty sections or permanent rules.

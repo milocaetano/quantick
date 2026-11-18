@@ -19,7 +19,7 @@ pub(super) struct IndicatorWiring<'a> {
 
 impl<'a> IndicatorWiring<'a> {
     /// The layout ports these fields hold: the one place a [`LayoutAdapter`]
-    /// is built, for the edits below and for [`super::LayoutPort`].
+    /// is built, for the edits below and for the workspace calls.
     pub(super) fn into_layout(self) -> LayoutAdapter<'a> {
         self.into_alerts().0.layout
     }

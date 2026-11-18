@@ -1,3 +1,7 @@
+> **Retired 2026-11-17.** The `campaign`, `mission`, `ship`, `arch-review` and
+> `delivery-review` skills were retired; this file is kept as history. Integration
+> work uses `/feature`; single changes use `/implement`.
+
 # Campaign coordinator
 
 `campaign` turns a broad objective into bounded, reviewable tasks and keeps
@@ -72,7 +76,7 @@ it advances while the host can execute. Use a host continuation/wait facility
 only when available and authorized; otherwise checkpoint before the host stops
 and report the precise resume command. Do not promise unattended waking.
 
-[The delivery contract](../workflow/delivery.md) owns finish-first scheduling,
+[The delivery contract](../../workflow/delivery.md) owns finish-first scheduling,
 stage timing, source reconciliation and bounded review repair. Child completion
 returns control here; do not request a user-pasted goal per mission. Keep any
 existing host goal at campaign scope and do not replace it with a child goal.
@@ -110,7 +114,7 @@ For each cycle:
 
 ## Routing
 
-Roles, mapped per host by [Codex compatibility](../../.agents/references/codex-compatibility.md):
+Roles, mapped per host by [Codex compatibility](../../../.agents/references/codex-compatibility.md):
 *strongest* (`fable`), *implementation* (`opus`), *checklist* (`sonnet`),
 *retrieval* (`haiku`). The coordinator runs at *strongest*.
 

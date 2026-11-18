@@ -31,14 +31,11 @@ use quantick_control_handlers::home_tab::{HomeTab, HomeTabHost};
 use quantick_control_handlers::indicator_host::{IndicatorControlHost, IndicatorOwner};
 use quantick_control_handlers::market_palette::{MarketPaletteOwners, MarketTabs, PaletteShowing};
 use quantick_control_handlers::widgets::{WidgetHost, WidgetOwner};
-use quantick_control_handlers::workspace_book::cell_menu::CellRow;
-use quantick_session::workspace_menu::WorkspaceMenuState;
+use quantick_control_handlers::workspace_book::{WorkspaceOwner, cell_menu::CellRow};
 use quantick_stores::symbol_catalog::SymbolCatalog;
-use quantick_stores::{market_settings::MarketSettingsStore, workspaces::WorkspaceBookStore};
 use quantick_ui_model::market_palette::Intent;
 use quantick_workspace::market_list::{self as list, SwitchTarget};
 
-use super::tab_workspaces::BookTabs;
 use crate::config::AppConfig;
 use crate::drawings::{self, DrawingTool, NewDrawing};
 use crate::pane::{ChartPane, PaneSide};
@@ -53,8 +50,8 @@ use quantick_feed::history_reach;
 use super::QuantickApp;
 use super::arrangement_host::ArrangementHost;
 use super::chart_layers_wiring::LayerWiring;
-use super::layout_wiring::{LayoutAdapter, LayoutRead};
-use super::paper_wiring::PaperSettingsAdapter;
+use super::workspace_calls::WorkspaceCalls;
+use super::workspace_runtime::WorkspaceRuntime;
 use quantick_control_handlers::health::FrameReading;
 
 /// The window as the gateway holds it: every family at once, `'static`
@@ -71,8 +68,6 @@ pub(crate) trait ControlPort:
     + HealthPort
     + AlertsPort
     + quantick_control_handlers::alerts::AlertDefinitionsPort
-    + LayoutPort
-    + PaperPort
     + LayersPort
     + IndicatorControlHost
     + RailMagnetPort
@@ -88,8 +83,6 @@ impl<T> ControlPort for T where
         + HealthPort
         + AlertsPort
         + quantick_control_handlers::alerts::AlertDefinitionsPort
-        + LayoutPort
-        + PaperPort
         + LayersPort
         + IndicatorControlHost
         + RailMagnetPort
@@ -147,19 +140,6 @@ pub(crate) trait AlertsPort {
     fn alerts(&mut self) -> Alerts<'_>;
 }
 
-/// The pane-layout owners.
-pub(crate) trait LayoutPort {
-    fn layout_state(&self) -> super::layout_wiring::LayoutRead<'_>;
-    fn layout_adapter(&mut self) -> super::layout_wiring::LayoutAdapter<'_>;
-}
-
-/// The paper-trading settings owner.
-pub(crate) trait PaperPort {
-    fn paper_settings(&mut self) -> super::paper_wiring::PaperSettingsAdapter<'_>;
-    /// Where orders go, joined with the tabs it routes for.
-    fn broker_route(&mut self) -> quantick_paper::route::RouteCall<'_>;
-}
-
 /// The chart-layer owner.
 pub(crate) trait LayersPort {
     fn layer_wiring(&mut self) -> super::chart_layers_wiring::LayerWiring<'_>;
@@ -173,6 +153,10 @@ pub(crate) trait GatewayPort {
     fn gateway_slot(&mut self) -> &mut Option<crate::control::ControlAccess>;
     /// This window as the object the gateway dispatches over.
     fn as_window(&mut self) -> &mut ControlWindow;
+    /// The workspace this window shows, to read: its layouts and its book.
+    fn workspace(&self) -> &WorkspaceRuntime;
+    /// The desk, book, layout, paper and route owners, lent for one act.
+    fn workspace_calls(&mut self) -> WorkspaceCalls<'_>;
 
     /// Invoke one registered control action from inside the application,
     /// attributed to the human at this window (or to automation when a
@@ -756,7 +740,7 @@ pub(super) fn close_widget(app: &mut QuantickApp, id: &str) {
 
 impl quantick_control_handlers::desk::DeskHost for QuantickApp {
     fn desk(&mut self) -> Option<Box<dyn quantick_control_handlers::desk::DeskOwner + '_>> {
-        Some(Box::new(desk_adapter!(self)))
+        Some(Box::new(workspace_calls!(bound self)))
     }
 }
 
@@ -800,36 +784,8 @@ impl MarketPaletteOwners for QuantickApp {
 }
 
 impl quantick_control_handlers::workspace_book::WorkspaceBookHost for QuantickApp {
-    fn workspace_store(&mut self) -> Option<&mut WorkspaceBookStore> {
-        Some(&mut self.runtime.workspace.book)
-    }
-    fn workspace_store_ref(&self) -> Option<&WorkspaceBookStore> {
-        Some(&self.runtime.workspace.book)
-    }
-    fn workspace_market(&mut self) -> Option<&mut MarketSettingsStore> {
-        Some(self.runtime.workspace.layouts_mut().market_mut())
-    }
-    fn show_tab_recipe(&mut self, tab: u64, recipe: &quantick_stores::workspaces::WorkspaceRecipe) {
-        quantick_workspace::book_upkeep::show_recipe(&mut BookTabs(self), tab, recipe);
-    }
-    fn persist_workspace_autosave(&mut self, on: bool) -> Result<(), String> {
-        self.workspace_save_adapter().write_auto_save(on)
-    }
-    fn close_market_tab(&mut self, tab: u64, close: bool) -> bool {
-        let index = self.runtime.tabs.position(tab);
-        // Without asking; with `close` false it only answers whether it would.
-        let Some(index) = index else { return false };
-        if !close {
-            return self.runtime.tabs.plan_close(index).is_ok();
-        }
-        super::tab_workspaces::close_tab_at(self, index)
-    }
-    fn workspace_menu(&mut self) -> Option<(&mut WorkspaceMenuState, bool)> {
-        let dark = TabsPort::appearance(self).dark;
-        Some((&mut self.chrome.window_menu.tab_workspace, dark))
-    }
-    fn tab_symbols(&self, tabs: &[u64]) -> Vec<String> {
-        super::tab_workspaces::symbols_of(&self.runtime.tabs, tabs)
+    fn workspaces(&mut self) -> Option<Box<dyn WorkspaceOwner + '_>> {
+        Some(Box::new(workspace_calls!(self)))
     }
 }
 
@@ -872,31 +828,6 @@ impl AlertsPort for QuantickApp {
     }
 }
 
-impl LayoutPort for QuantickApp {
-    fn layout_state(&self) -> LayoutRead<'_> {
-        let session = self.runtime.workspace.layouts().session();
-        LayoutRead {
-            tabs: &self.runtime.tabs,
-            active: self.runtime.tabs.active_index(),
-            session,
-            market: self.runtime.workspace.layouts().market(),
-        }
-    }
-
-    fn layout_adapter(&mut self) -> LayoutAdapter<'_> {
-        self.indicator_wiring().into_layout()
-    }
-}
-
-impl PaperPort for QuantickApp {
-    fn paper_settings(&mut self) -> PaperSettingsAdapter<'_> {
-        self.runtime.paper_settings()
-    }
-    fn broker_route(&mut self) -> quantick_paper::route::RouteCall<'_> {
-        self.runtime.route(&self.config)
-    }
-}
-
 impl LayersPort for QuantickApp {
     fn layer_wiring(&mut self) -> LayerWiring<'_> {
         let chart_settings = &mut self.surfaces.chart_settings.model_state;
@@ -923,8 +854,16 @@ impl GatewayPort for QuantickApp {
     fn as_window(&mut self) -> &mut ControlWindow {
         self
     }
+    fn workspace(&self) -> &WorkspaceRuntime {
+        &self.runtime
+    }
+    fn workspace_calls(&mut self) -> WorkspaceCalls<'_> {
+        workspace_calls!(self)
+    }
 }
 
+#[cfg(any(feature = "control-harness", test))]
+pub(crate) use quantick_control_host::launch::ControlLaunch;
 #[cfg(any(feature = "control-harness", test))]
 pub(super) use quantick_control_host::launch::{
     CONTROL_EVIDENCE_HOOK_FRAMES, EvidenceStep, LaunchScenarios, NotificationStep,
@@ -947,42 +886,6 @@ pub(crate) fn control_quick_range(
         .drawing_chrome
         .quick_range_read()
         .control(app.runtime.tabs.id_at(app.runtime.tabs.active_index()))
-}
-
-/// Control-only launch inputs, captured before owner construction.
-#[cfg(any(feature = "control-harness", test))]
-#[derive(Default)]
-pub(crate) struct ControlLaunch {
-    panel: bool,
-    scopes: Option<String>,
-    scenarios: LaunchScenarios,
-}
-
-#[cfg(any(feature = "control-harness", test))]
-impl ControlLaunch {
-    pub(crate) fn capture(mut lookup: impl FnMut(&str) -> Option<std::ffi::OsString>) -> Self {
-        let mut value = |name| lookup(name).and_then(|raw| raw.into_string().ok());
-        let panel = value("QUANTICK_CONTROL_PANEL").is_some_and(|raw| raw == "1");
-        let scopes = value("QUANTICK_CONTROL_SCOPES");
-        let access = value("QUANTICK_CONTROL_ACCESS").is_some_and(|raw| raw == "1");
-        let mark = value("QUANTICK_CONTROL_MARK")
-            .filter(|raw| !raw.trim().is_empty())
-            .map(|raw| if raw == "1" { String::new() } else { raw });
-        let evidence = value("QUANTICK_CONTROL_EVIDENCE").filter(|raw| !raw.trim().is_empty());
-        let annotation = value("QUANTICK_CONTROL_ANNOTATE").filter(|raw| !raw.trim().is_empty());
-        let notification = value("QUANTICK_CONTROL_NOTIFY").filter(|raw| !raw.trim().is_empty());
-        Self {
-            panel,
-            scopes,
-            scenarios: LaunchScenarios::new(quantick_control_host::launch::LaunchRequests {
-                enable_access: access,
-                annotation,
-                notification,
-                evidence,
-                mark,
-            }),
-        }
-    }
 }
 
 #[cfg(any(feature = "control-harness", test))]

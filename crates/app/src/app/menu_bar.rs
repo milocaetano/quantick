@@ -6,6 +6,7 @@
 //! because the window menu is their only production reader — the paper
 //! shortcuts are re-exported to `super` for the tests that name them.
 
+use super::GatewayPort;
 use super::arrangement_adapter::StripAsk;
 use crate::orderflow_panel as panel;
 use crate::surfaces::MarketPaletteSurface;
@@ -20,7 +21,7 @@ use quantick_ui_model::market_palette::Intent as PaletteIntent;
 use std::time::Instant;
 
 use super::indicator_manager::IndicatorState;
-use super::{ControlWindow, QuantickApp, tab_workspaces::apply_workspace_command};
+use super::{ControlWindow, QuantickApp};
 pub(super) use commands::{MenuCall, MenuCommand};
 pub(in crate::app) use menus::{MenuDoor, WindowMenuState};
 use quantick_control_handlers::desk::DeskAct;
@@ -235,7 +236,7 @@ impl QuantickApp {
         if let TabAction::Close(index) = action {
             let tab = (index < self.runtime.tabs.len()).then(|| self.runtime.tabs.id_at(index));
             let close = WorkspaceCommand::Close(CloseScope::Tabs, Vec::from_iter(tab));
-            return super::tab_workspaces::apply_workspace_command(self, close);
+            return self.workspace_calls().apply_workspace_command(close);
         }
         let asked = self.arrangement_adapter().apply_tab_action(action);
         settle_strip(&mut self.surfaces.market_palette, self.runtime.tz, asked);
@@ -286,7 +287,7 @@ impl QuantickApp {
         let focused = self.runtime.tabs.windows().focused();
         let menu = &self.chrome.window_menu.tab_workspace;
         if let Some(answer) = super::native_windows::prompt_answer(focused, menu, ctx) {
-            apply_workspace_command(self, answer);
+            self.workspace_calls().apply_workspace_command(answer);
             let queue = &mut self.chrome.window_menu.tab_workspace.close;
             self.presentation.native.exit_when_settled(queue, ctx);
         }
@@ -377,15 +378,18 @@ pub(super) fn apply_menu_command_on(app: &mut QuantickApp, ctx: &egui::Context, 
         return;
     }
     let viewport = ctx.viewport_id();
+    // Settings and Help open on the window that asked.
+    if matches!(ask, MenuCommand::OpenSettings(_) | MenuCommand::OpenHelp(_)) {
+        app.chrome.window_menu.windows_viewport = Some(viewport);
+    }
     match ask {
         MenuCommand::Call(call) => {
             if let Some(note) = call.run(app as &mut ControlWindow) {
                 toast::note(&mut app.surfaces.toast, note, Instant::now());
             }
         }
-        MenuCommand::Workspace(command) => apply_workspace_command(app, command),
+        MenuCommand::Workspace(command) => app.workspace_calls().apply_workspace_command(command),
         MenuCommand::OpenSettings(section) => {
-            app.chrome.window_menu.windows_viewport = Some(viewport);
             _ = MenuCall::Desk(DeskAct::OpenSettings(section)).run(app as &mut ControlWindow);
         }
         MenuCommand::OpenReplayBrowser => app.surfaces.replay_browser.open_browser(),
@@ -404,7 +408,7 @@ pub(super) fn apply_menu_command_on(app: &mut QuantickApp, ctx: &egui::Context, 
         }
         MenuCommand::ForgetWorkspace => _ = app.workspace_save_adapter().forget_workspace(),
         MenuCommand::OpenRecentDesk(path) => {
-            app.workspace_bundle_adapter().import_workspace_from(&path);
+            app.workspace_bundle_adapter().import_workspace_from(&path)
         }
         MenuCommand::RevealDesk => app.workspace_bundle_adapter().reveal_cockpit_home(),
         MenuCommand::SetToolboxDock(dock) => app.surfaces.toolrail.set_dock(dock),
@@ -412,9 +416,6 @@ pub(super) fn apply_menu_command_on(app: &mut QuantickApp, ctx: &egui::Context, 
         MenuCommand::OpenDockTab(tab) => app.surfaces.dock.open_tab(tab),
         MenuCommand::OpenReplayFormatHelp => app.surfaces.replay_browser.open_format_help(),
         MenuCommand::ToggleWindowMenu => app.chrome.window_menu.toggle(viewport, true),
-        MenuCommand::OpenHelp(page) => {
-            app.chrome.window_menu.windows_viewport = Some(viewport);
-            app.chrome.window_menu.help = Some(page);
-        }
+        MenuCommand::OpenHelp(page) => app.chrome.window_menu.help = Some(page),
     }
 }

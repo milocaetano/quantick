@@ -85,7 +85,7 @@ Parallel workers save wall-clock time, not tokens; the child count drives cost.
     time, from its worktree:
     `cd <worktree> && gh pr merge <PR> --merge --match-head-commit <SHA>`.
     The hooks require the worker's base record, the grant, green CI and its
-    `code-review-ok` at that head; no mission review.
+    `code-review-ok` at that head.
     Read back the merge, mark the row `merged` and close the child issue.
 11. A failed criterion or check earns one repair dispatch per child, across
     resumes. Brief it with only the failed `C<n>`, the evidence and the HEAD;
@@ -116,7 +116,7 @@ never done.
    `code-review-ok` as execute.md step 5 does. A FAIL earns one repair child;
    then the parent is `blocked`.
 3. **PR.** On PASS, open the PR non-draft from that worktree (a draft skips
-   CI and `gh pr ready` re-runs it), body `Campaign-parent: <parent URL>` and
+   CI and `gh pr ready` re-runs it), body `Parent: <parent URL>` and
    the verdict. Record PR and head in the coordinator section; a resume
    reuses them.
 4. **Watch.** One background `gh pr checks <PR> --watch --interval 60`; stop

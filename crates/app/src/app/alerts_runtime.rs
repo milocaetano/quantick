@@ -114,10 +114,7 @@ pub(super) fn deliver(
 
 impl quantick_control_handlers::alerts::AlertDefinitionsPort for super::QuantickApp {
     fn alert_open(&mut self) -> Result<(), AlertError> {
-        let open = crate::surfaces::alerts::Request {
-            open: true,
-            ..Default::default()
-        };
+        let open = crate::surfaces::alerts::Request::opening();
         apply_alert_request(self.indicator_wiring(), open);
         Ok(())
     }
@@ -125,7 +122,6 @@ impl quantick_control_handlers::alerts::AlertDefinitionsPort for super::Quantick
         &mut self,
         selector: DrawingSelector,
     ) -> Result<DurableDrawingRef, TargetResolveError> {
-        use super::LayoutPort;
         self.layout_adapter().resolve_alert_target(selector)
     }
     fn alert_runtime(&mut self) -> &mut quantick_stores::alerts::AlertRuntime {

@@ -15,7 +15,8 @@ use quantick_control::{
 use quantick_control_host::authority::{
     ANALYST_PROFILE_ID, ANNOTATOR_PROFILE_ID, COCKPIT_PROFILE_ID, GRANTABLE_PROFILE_IDS,
     OBSERVE_EFFECT_ID, OBSERVE_PERMISSION_ID, OBSERVER_PROFILE_ID, OBSERVER_SCOPE_IDS,
-    TRADER_PROFILE_ID, effects, permissions, profiles,
+    TRADER_PROFILE_ID, effects, is_annotate_permission, is_cockpit_permission, is_trade_permission,
+    permissions, profiles,
 };
 
 /// The registry the application builds its authority from: the published
@@ -166,4 +167,38 @@ fn the_analyst_tier_is_grantable_and_the_trade_tier_is_not() {
         !GRANTABLE_PROFILE_IDS.contains(&TRADER_PROFILE_ID),
         "nothing hands out the tier that can trade"
     );
+}
+
+/// Every published permission falls in at most one write tier, each tier is
+/// its floor and the scopes beneath it, and a look-alike name is in none.
+#[test]
+fn each_write_tier_is_its_floor_and_its_scopes() {
+    let id = |raw: &str| PermissionId::new(raw).expect("a valid permission id");
+    for (raw, tiers) in [
+        ("trade", [true, false, false]),
+        ("trade.order", [true, false, false]),
+        ("annotate", [false, true, false]),
+        ("annotate.chart", [false, true, false]),
+        ("cockpit", [false, false, true]),
+        ("cockpit.layout", [false, false, true]),
+        ("observe.chart", [false, false, false]),
+        ("traders", [false, false, false]),
+    ] {
+        let permission = id(raw);
+        let read = [
+            is_trade_permission(&permission),
+            is_annotate_permission(&permission),
+            is_cockpit_permission(&permission),
+        ];
+        assert_eq!(read, tiers, "{raw}");
+    }
+    for descriptor in permissions() {
+        let id = &descriptor.id;
+        let tiers = [
+            is_trade_permission(id),
+            is_annotate_permission(id),
+            is_cockpit_permission(id),
+        ];
+        assert!(tiers.iter().filter(|tier| **tier).count() <= 1, "{id:?}");
+    }
 }

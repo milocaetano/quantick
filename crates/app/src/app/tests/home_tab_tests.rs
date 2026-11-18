@@ -1021,17 +1021,21 @@ fn the_menu_seam_refuses_chart_commands_on_home_and_keeps_the_rest() {
     assert_ne!(layout, preset_layout(2));
 
     show_home(&mut app).unwrap();
-    apply_menu_command_on(&mut app, &ctx, MenuCall::ApplyLayoutPreset(preset).into());
+    apply_menu_command_on(
+        &mut app,
+        &ctx,
+        MenuCommand::Call(MenuCall::ApplyLayoutPreset(preset)),
+    );
     apply_menu_command_on(&mut app, &ctx, MenuCommand::ToggleLegend);
     apply_menu_command_on(&mut app, &ctx, MenuCommand::ToggleContextCharts);
     let buy = quantick_session::paper::TradeCommand::Market {
         side: quantick_engine::Side::Buy,
     };
-    apply_menu_command_on(&mut app, &ctx, MenuCall::Trade(buy).into());
+    apply_menu_command_on(&mut app, &ctx, MenuCommand::Call(MenuCall::Trade(buy)));
     apply_menu_command_on(
         &mut app,
         &ctx,
-        MenuCall::OpenOrderFlowPanel(PanelSection::L2).into(),
+        MenuCommand::Call(MenuCall::OpenOrderFlowPanel(PanelSection::L2)),
     );
     frame(&mut app, &ctx);
     assert!(on_home(&app));
@@ -1053,7 +1057,11 @@ fn the_menu_seam_refuses_chart_commands_on_home_and_keeps_the_rest() {
     assert!(!on_home(&app), "tab commands");
 
     // The same commands do act on a market.
-    apply_menu_command_on(&mut app, &ctx, MenuCall::ApplyLayoutPreset(preset).into());
+    apply_menu_command_on(
+        &mut app,
+        &ctx,
+        MenuCommand::Call(MenuCall::ApplyLayoutPreset(preset)),
+    );
     assert_eq!(app.active_tab().canvas.layout, preset_layout(2));
 }
 

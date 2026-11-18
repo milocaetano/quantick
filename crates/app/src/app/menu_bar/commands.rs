@@ -14,7 +14,7 @@ use quantick_control_handlers::{
 use quantick_control_schema::{settings_sections::SettingsSection, window_menu::HelpPage};
 use quantick_session::{paper::TradeCommand, workspace_menu::WorkspaceCommand};
 
-use crate::app::{ChromePort, GatewayPort, LayersPort, LayoutPort, TabsPort};
+use crate::app::{ChromePort, GatewayPort, LayersPort, TabsPort};
 use crate::{canvas_layout::LayoutPreset, chart_layers::ChartLayer, dock::DockTab};
 use crate::{layout_strip::StripAction, toolrail::ToolboxDock, ui_state::PanelSection};
 
@@ -80,12 +80,6 @@ pub(in crate::app) enum MenuCall {
     OpenOrderFlowPanel(PanelSection),
 }
 
-impl From<MenuCall> for MenuCommand {
-    fn from(call: MenuCall) -> Self {
-        Self::Call(call)
-    }
-}
-
 impl MenuCommand {
     /// Whether this changes or trades the chart on screen, so means nothing
     /// while Home hides it. Tabs, replay browsing and the window's own chrome
@@ -117,7 +111,6 @@ impl MenuCall {
         W: TabsPort
             + ChromePort
             + LayersPort
-            + LayoutPort
             + LayoutHost
             + GatewayPort
             + AlertDefinitionsPort
@@ -141,15 +134,14 @@ impl MenuCall {
                 }
             }
             Self::ApplyLayoutPreset(preset) => {
-                if let Some(tab) = window.layout_tab(window.active_tab_index()) {
-                    tab.pick_preset(preset);
-                }
+                let index = window.active_tab_index();
+                _ = window.layout_tab(index).map(|tab| tab.pick_preset(preset));
             }
             Self::SwitchLayoutIndex(index) => {
-                let switched = window.layout_adapter().switch_layout_index(index);
+                let switched = window.workspace_calls().layout().switch_layout_index(index);
                 return switched.err().map(|error| error.to_string());
             }
-            Self::Strip(action) => window.layout_adapter().apply_strip_action(action),
+            Self::Strip(action) => window.workspace_calls().layout().apply_strip_action(action),
             Self::MoveContextChart { from, to } => {
                 let tab = window.tab_reads().tabs().active_id();
                 window.move_context_pane(tab, from, to);
@@ -208,7 +200,7 @@ pub(super) fn read_shortcuts(
             if let Some(shortcut) = crate::chart_layers::shortcuts::binding(layer)
                 && pressed(&shortcut)
             {
-                commands.push(MenuCall::ToggleLayer(layer).into());
+                commands.push(MenuCommand::Call(MenuCall::ToggleLayer(layer)));
             }
         }
     }
@@ -223,7 +215,7 @@ pub(super) fn read_shortcuts(
             break;
         };
         if chart_on_screen && pressed(&shortcut) {
-            commands.push(MenuCall::ApplyLayoutPreset(preset).into());
+            commands.push(MenuCommand::Call(MenuCall::ApplyLayoutPreset(preset)));
         }
     }
     // Layout tabs by number: `Alt+1..9`, beside `Ctrl+Shift+1..9` for the
@@ -236,17 +228,17 @@ pub(super) fn read_shortcuts(
             break;
         };
         if chart_on_screen && !typing && pressed(&shortcut) {
-            commands.push(MenuCall::SwitchLayoutIndex(index).into());
+            commands.push(MenuCommand::Call(MenuCall::SwitchLayoutIndex(index)));
         }
     }
     if chart_on_screen && pressed(&LEGEND_SHORTCUT) {
         commands.push(MenuCommand::ToggleLegend);
     }
     if pressed(&crate::control::MARK_SHORTCUT) {
-        commands.push(MenuCall::TakeMark.into());
+        commands.push(MenuCommand::Call(MenuCall::TakeMark));
     }
     if pressed(&SAVE_WORKSPACE_SHORTCUT) {
-        commands.push(MenuCall::Desk(DeskAct::Save("shortcut")).into());
+        commands.push(MenuCommand::Call(MenuCall::Desk(DeskAct::Save("shortcut"))));
     }
     // After the desk's Ctrl+Shift+S: a logical match ignores an extra Shift.
     if chart_on_screen && pressed(&SAVE_TO_WORKSPACE_SHORTCUT) {
@@ -265,7 +257,7 @@ pub(super) fn read_shortcuts(
             (PAPER_CANCEL_SHORTCUT, TradeCommand::CancelAll),
         ] {
             if pressed(&shortcut) {
-                commands.push(MenuCall::Trade(command).into());
+                commands.push(MenuCommand::Call(MenuCall::Trade(command)));
             }
         }
     }

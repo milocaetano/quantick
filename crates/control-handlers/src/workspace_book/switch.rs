@@ -22,8 +22,8 @@ use quantick_stores::workspaces::SetOutcome;
 use serde_json::json;
 
 use super::{
-    Journal, WorkspaceBookHost, book, close_prompt, flush, refused, save_to_journaled,
-    set_journaled, text,
+    Journal, WorkspaceOwner, book, close_prompt, flush, refused, save_to_journaled, set_journaled,
+    text,
 };
 use crate::notify::NotifyAccess;
 
@@ -33,7 +33,7 @@ use crate::notify::NotifyAccess;
 ///
 /// # Errors
 /// No such tab or workspace, no book, or the autosave write failed.
-pub fn ask<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
+pub fn ask<H: WorkspaceOwner + ?Sized, A: NotifyAccess>(
     app: &mut H,
     to: &mut Journal<'_, A>,
     tab: u64,
@@ -65,7 +65,7 @@ pub fn ask<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
 ///
 /// # Errors
 /// As [`ask`].
-pub(crate) fn ask_unjournaled<H: WorkspaceBookHost + ?Sized>(
+pub(crate) fn ask_unjournaled<H: WorkspaceOwner + ?Sized>(
     app: &mut H,
     tab: u64,
     name: &str,
@@ -87,7 +87,7 @@ impl NotifyAccess for Unjournaled {
 
 /// A row's switch: asked when it would drop edits, else carried out. Answers
 /// the toast.
-pub(super) fn row<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
+pub(super) fn row<H: WorkspaceOwner + ?Sized, A: NotifyAccess>(
     app: &mut H,
     to: &mut Journal<'_, A>,
     prompt: &mut SwitchPrompt,
@@ -109,7 +109,7 @@ pub(super) fn row<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
 /// question gone stale (its tab closed or moved off the workspace it named,
 /// or its target deleted or renamed) carries out nothing and says so: a Save
 /// never writes a workspace it did not name, nor one a switch cannot follow.
-pub(super) fn answer<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
+pub(super) fn answer<H: WorkspaceOwner + ?Sized, A: NotifyAccess>(
     app: &mut H,
     to: &mut Journal<'_, A>,
     prompt: &mut SwitchPrompt,
@@ -142,7 +142,7 @@ pub(super) fn answer<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
 /// Edits the switch would drop and no `edits`: `workspace.unsaved_edits`,
 /// nothing changed. Otherwise as [`ask`], or the switch was refused or its
 /// write failed.
-pub fn by_call<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
+pub fn by_call<H: WorkspaceOwner + ?Sized, A: NotifyAccess>(
     app: &mut H,
     to: &mut Journal<'_, A>,
     tab: u64,

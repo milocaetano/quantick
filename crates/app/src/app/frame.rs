@@ -14,7 +14,7 @@
 //! child modules, which never see the window.
 
 use super::drawing_controller::{DrawingAccess, DrawingReadAccess, QUICK_RANGE_REFUSED};
-use super::{AlertsPort, GatewayPort, LayersPort, LayoutPort, PaperPort};
+use super::{AlertsPort, GatewayPort, LayersPort};
 use crate::surfaces::drawing_chrome::DrawingChromeExt as _;
 use crate::surfaces::replay_browser::ReplayBrowserExt as _;
 use crate::surfaces::toast;
@@ -158,7 +158,7 @@ fn apply_feed_switch(app: &mut QuantickApp) {
     let port = app as &mut dyn super::control_host::ControlPort;
     let settled = quantick_control_handlers::contract_roll::settle_auto_rolls(port);
     if !settled.is_empty() {
-        super::tab_workspaces::as_hand(app, |_, journal| settled.journal(journal));
+        (app.workspace_calls()).as_hand(|_, journal| settled.journal(journal));
     }
     let (tab, config) = app.active_with_config();
     let changed =
@@ -180,7 +180,7 @@ fn apply_layout_switches(app: &mut QuantickApp) {
     // frame is seeded this frame and a tab that changed symbol swaps its
     // drawings before anything paints them.
     app.layout_adapter().maintain_layouts();
-    super::tab_workspaces::maintain(app);
+    app.workspace_calls().maintain();
 }
 
 /// Home's page where the chart would be, with the canvas's answers seeded
@@ -653,7 +653,8 @@ impl QuantickApp {
         #[cfg(test)]
         paper_panel_steps::record("strategy-editor");
         if self.active_tab_mut().paper.draw_strategy_editor(ctx) {
-            self.paper_settings()
+            self.runtime
+                .paper_settings()
                 .persist(super::paper_wiring::PaperSettingsChange::OrderStrategies);
         }
         #[cfg(test)]
@@ -666,7 +667,7 @@ impl QuantickApp {
         );
         #[cfg(test)]
         paper_panel_steps::record("trades-picker-poll");
-        self.paper_settings().poll_trades_dir_picker();
+        self.runtime.paper_settings().poll_trades_dir_picker();
         #[cfg(test)]
         paper_panel_steps::record("bundle-picker-poll");
         self.workspace_bundle_adapter().poll_picker();
@@ -682,7 +683,7 @@ impl QuantickApp {
         // The layer menu offers what this source can produce, and the
         // footprint legend carries the side-honesty label: both resolved once
         // here rather than per pane, per entry, inside the canvas.
-        let bar_progress = self.layout_state().bar_progress_on(popup_tab);
+        let bar_progress = self.runtime.layout_state().bar_progress_on(popup_tab);
         // Told before the canvas paints, not after: the object holding the
         // words the editor is showing must stand down on the *same* frame,
         // or the note flashes its placeholder under the field for one.

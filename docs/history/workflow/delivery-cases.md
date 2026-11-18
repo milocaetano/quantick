@@ -1,3 +1,6 @@
+> **History.** Evidence from the retired `mission`/`campaign` workflow (retired
+> 2026-11-17); kept as a record, not as current rules.
+
 # Delivery decision exercises
 
 These are supplied histories for instruction evaluation, not executable Rust

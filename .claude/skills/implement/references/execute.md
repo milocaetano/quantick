@@ -1,5 +1,5 @@
 # Goal: validated PR
-Read this file and the plan. Keep only relevant requirements, code and evidence in context. Follow repo permissions, hooks, `CLAUDE.md` and `CONTRIBUTING.md`; this path replaces `/mission`, `arch-review`, `ai-review` and `delivery-review`.
+Read this file and the plan. Keep only relevant requirements, code and evidence in context. Follow repo permissions, hooks, `CLAUDE.md` and `CONTRIBUTING.md`.
 
 **Level:** the higher of the plan's `Review:` and this floor: `high` for hooks, guards, auth, orders/trading, concurrency, public contracts or >600 changed lines; `low` for non-behavioral docs/config/tests or a local <=150-line change with no contract change; otherwise `medium`. Estimate it before building; raise it when risk or the diff crosses a floor, then do any step it now requires. Record it and why.
 

@@ -1,10 +1,7 @@
 ---
 name: issue
-description: File or start a GitHub issue. `/issue <idea>` turns an idea into a well-formed issue with context, scope, acceptance criteria, labels, milestone and board placement; `/issue start <N>` picks one up — reads it, names the branch, moves the board card to In Progress, and hands over to mission. Use when the user types /issue or /new-task, or asks to create, file, start or pick up an issue.
+description: File or start a GitHub issue. `/issue <idea>` turns an idea into a well-formed issue with context, scope, acceptance criteria, labels, milestone and board placement; `/issue start <N>` picks one up — reads it, names the branch, moves the board card to In Progress, and hands over to /implement. Use when the user types /issue or /new-task, or asks to create, file, start or pick up an issue.
 ---
-
-Campaign children override the main-based examples via the
-[integration contract](../../../docs/campaign/integration.md), including review keys.
 
 # Issues
 
@@ -46,8 +43,8 @@ No number: list open issues in the milestone (`gh issue list --milestone
    and acceptance criteria back — they are the work checklist.
 2. Branch `<prefix>/<short-kebab-slug-from-title>`, prefix from labels: `bug`
    or `type:fix` → `fix/`, `type:docs` → `docs/`, else `feat/`.
-3. `mission` step 6 cuts or reuses the worktree (never a second one for the
-   same issue) and arms the guards.
+3. Cut or reuse the worktree per `CLAUDE.md` (never a second one for the
+   same issue), arm the guards, then prepare the work with `/implement`.
 4. Move the card to In Progress; report branch, worktree, card and the
    criteria as a checklist. For `area:engine`: test-first — fixture trades and
    expected bars before the implementation.

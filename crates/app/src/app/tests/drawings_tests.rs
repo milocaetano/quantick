@@ -4660,7 +4660,7 @@ fn drawings_stay_with_their_market_when_the_layout_changes() {
     );
     run_frame(&mut app, &ctx);
 
-    let first = app.layout_state().layouts().active_id();
+    let first = app.runtime.layout_state().layouts().active_id();
     let second = app
         .layout_adapter()
         .create_layout(None)
@@ -4743,9 +4743,9 @@ fn a_drawing_keeps_its_id_across_a_layout_round_trip() {
     place_level(&mut app, PaneSide::Time(0), 100.0);
     let id = app.active_tab().pane(PaneSide::Time(0)).drawings.items()[0].id;
     run_frame(&mut app, &ctx);
-    let first = app.layout_state().layouts().active_id();
+    let first = app.runtime.layout_state().layouts().active_id();
     let second = app.layout_adapter().create_layout(None).expect("second");
-    assert_eq!(app.layout_state().layouts().active_id(), second);
+    assert_eq!(app.runtime.layout_state().layouts().active_id(), second);
     app.layout_adapter().switch_layout(first).expect("back");
     let items = app.active_tab().pane(PaneSide::Time(0)).drawings.items();
     assert_eq!(items.len(), 1);
@@ -4815,9 +4815,9 @@ fn moving_a_context_chart_moves_its_drawings_and_slots_with_it() {
     );
 
     // A switch away and back finds the level on the same chart.
-    let first = app.layout_state().layouts().active_id();
+    let first = app.runtime.layout_state().layouts().active_id();
     let second = app.layout_adapter().create_layout(None).expect("second");
-    assert_eq!(app.layout_state().layouts().active_id(), second);
+    assert_eq!(app.runtime.layout_state().layouts().active_id(), second);
     app.layout_adapter().switch_layout(first).expect("back");
     assert_eq!(drawings_on(&app, PaneSide::Time(1)), vec![100.0]);
     assert!(drawings_on(&app, PaneSide::Time(0)).is_empty());

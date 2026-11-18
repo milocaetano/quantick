@@ -1,7 +1,7 @@
 //! The first action — a human mark: "look at this" turned into a referent a
 //! client can quote back.
 //!
-//! Plan §2.2 and `arch-review`'s second operator: a capability a trader does
+//! Plan §2.2 and `CLAUDE.md`'s *Operable without a hand*: a capability a trader does
 //! exists as a named call with an actor in its signature, not only inside a
 //! click handler. The UI hotkey, the `QUANTICK_CONTROL_MARK` hook, a
 //! deterministic test and an authorized agent all arrive at the same handler

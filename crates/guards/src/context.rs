@@ -6,9 +6,9 @@
 //! looked at — and unlike the code, nothing has ever rationed them.
 //!
 //! The result was measurable. By the time this guard was written,
-//! `arch-review`'s skill had reached 48 KB and `mission`'s 33 KB, so a
-//! `/mission → /arch-review → /delivery-review → /ship` cycle spent about
-//! 28,000 tokens on instructions before starting work. `CLAUDE.md` had gone
+//! the architecture-review skill had reached 48 KB and the mission skill
+//! 33 KB (both since retired for `implement`), so one review cycle spent
+//! about 28,000 tokens on instructions before starting work. `CLAUDE.md` had gone
 //! the same way and was cut by two thirds in one branch. Both were the same
 //! failure the [`size`](crate::size) guard exists for, in a different file
 //! extension: something valuable grows a paragraph at a time, every paragraph
@@ -33,7 +33,7 @@
 //! it, which keeps the split dodge closed inside the skill — and ratcheted
 //! against its own ceiling. The budget sums only what every session pays
 //! regardless of which skill runs: the root instructions, `.agents/references/`
-//! and the `docs/campaign/` and `docs/workflow/` contracts. A new skill is then
+//! and the `docs/workflow/` contracts. A new skill is then
 //! a new signed ceiling when it is large, and no charge on the others.
 //!
 //! # Why bytes rather than lines
@@ -50,10 +50,10 @@
 //! Exactly the files a session loads: `CLAUDE.md`, `AGENTS.md` (which
 //! `CLAUDE.md` delegates the crate map to, so a cut that moves weight there
 //! must still be paid for), and every `.md` under the Claude and Codex
-//! instruction trees, plus the normative `docs/campaign/` and `docs/workflow/`
-//! contracts. `docs/workflow/evidence/` holds mission records and is excluded.
+//! instruction trees, plus the normative `docs/workflow/` contracts.
+//! `docs/workflow/evidence/` holds goal records and is excluded.
 //! Goal files are not in scope — a `GOAL.md` is a record
-//! of one mission, read deliberately and never at start-up. Rationing it would
+//! of one goal, read deliberately and never at start-up. Rationing it would
 //! push authors to write down less of what they were asked for.
 
 use std::fs;
@@ -110,12 +110,7 @@ pub const BUDGET_HEADROOM: usize = 2_000;
 /// rationed as a skill — and, worse, an entry recorded for such a file would
 /// never be found by [`measure`], which walks the real directory, so the
 /// guard would report its own scan as a stale entry.
-const INSTRUCTION_DIRS: [&str; 4] = [
-    ".claude/skills/",
-    ".agents/",
-    "docs/campaign/",
-    "docs/workflow/",
-];
+const INSTRUCTION_DIRS: [&str; 3] = [".claude/skills/", ".agents/", "docs/workflow/"];
 
 /// The context files that are not skills, relative to the workspace root.
 const ROOT_FILES: [&str; 2] = ["CLAUDE.md", "AGENTS.md"];
@@ -616,18 +611,18 @@ mod tests {
     fn the_files_a_session_loads_are_the_files_in_scope() {
         assert!(tracked("CLAUDE.md"));
         assert!(tracked("AGENTS.md"));
-        assert!(tracked(".claude/skills/mission/SKILL.md"));
+        assert!(tracked(".claude/skills/implement/SKILL.md"));
         assert!(tracked(
             ".claude/skills/ui-harness/references/hook-registry.md"
         ));
-        assert!(tracked(".agents/skills/mission/SKILL.md"));
+        assert!(tracked(".agents/skills/implement/SKILL.md"));
         assert!(tracked(".agents/references/codex-compatibility.md"));
     }
 
     #[test]
-    fn relocated_contracts_still_spend_budget_but_mission_evidence_does_not() {
+    fn relocated_contracts_still_spend_budget_but_goal_evidence_does_not() {
         let root = scratch("contract-scope", 12_000, 10_000, 22_000);
-        for path in ["docs/campaign/integration.md", "docs/workflow/delivery.md"] {
+        for path in ["docs/workflow/validation.md", "docs/workflow/delivery.md"] {
             fs::write(root.join(path), "x".repeat(1_500)).unwrap();
             assert!(tracked(path));
         }
@@ -642,7 +637,7 @@ mod tests {
         assert!(!tracked("docs/workflow/evidence/nested/review.md"));
         assert!(tracked("docs/workflow/evidence-notes/rules.md"));
         assert!(!tracked("docs/workflow-old/delivery.md"));
-        assert!(!tracked("docs/campaign-old/integration.md"));
+        assert!(!tracked("docs/history/campaign/integration.md"));
         assert!(
             check(&root)
                 .iter()
@@ -653,7 +648,7 @@ mod tests {
     }
 
     #[test]
-    fn a_goal_file_is_a_record_of_one_mission_and_is_not_rationed() {
+    fn a_goal_file_is_a_record_of_one_goal_and_is_not_rationed() {
         assert!(!tracked(".claude/GOAL.md"));
         assert!(!tracked(".claude/GOAL-archive-mission-tiers.md"));
     }
@@ -664,7 +659,7 @@ mod tests {
         // the walk would never reach reports as a stale entry for ever.
         assert!(!tracked(".claude/skills-old/notes.md"));
         assert!(!tracked(".claude/skillsets.md"));
-        assert!(!tracked(".agents-old/skills/mission/SKILL.md"));
+        assert!(!tracked(".agents-old/skills/implement/SKILL.md"));
     }
 
     #[test]
@@ -737,7 +732,7 @@ mod tests {
         };
         assert!(found.seen(".claude/skills/ui-harness/SKILL.md"));
         assert!(found.seen(".claude/skills/ui-harness/references/hook-registry.md"));
-        assert!(!found.seen(".claude/skills/mission/SKILL.md"));
+        assert!(!found.seen(".claude/skills/implement/SKILL.md"));
     }
 
     #[test]
@@ -763,9 +758,9 @@ mod tests {
         let root = scratch("split-bypass", 12_000, 10_000, 22_000);
         assert!(check(&root).is_empty(), "the scratch tree starts clean");
 
-        let one = root.join("docs/campaign/one.md");
+        let one = root.join("docs/workflow/one.md");
         fs::write(&one, "x".repeat(2_000)).expect("scratch contract is writable");
-        fs::write(root.join("docs/campaign/one-detail.md"), "x".repeat(9_000))
+        fs::write(root.join("docs/workflow/one-detail.md"), "x".repeat(9_000))
             .expect("scratch contract is writable");
         // The entry is tightened, and the budget is lowered to the sum of the
         // ceilings the way a budget of permissions alone would have it —
@@ -775,7 +770,7 @@ mod tests {
         fs::write(
             root.join(BASELINE_FILE),
             baseline
-                .replace("docs/campaign/one.md 12000", "docs/campaign/one.md 2000")
+                .replace("docs/workflow/one.md 12000", "docs/workflow/one.md 2000")
                 .replace("!budget 22000", "!budget 12000"),
         )
         .expect("scratch baseline is writable");
@@ -845,7 +840,7 @@ mod tests {
         // Grown in a file with no ceiling, so only the budget can answer —
         // a file over its own entry is the per-file ratchet's business, and
         // that one has no headroom by design.
-        let note = root.join("docs/campaign/note.md");
+        let note = root.join("docs/workflow/note.md");
         fs::write(&note, "x".repeat(300)).expect("scratch contract is writable");
         assert!(
             check(&root).is_empty(),
@@ -861,16 +856,16 @@ mod tests {
     #[test]
     fn a_skill_directory_is_one_unit_on_both_hosts() {
         assert_eq!(
-            skill_unit(".claude/skills/mission/SKILL.md").as_deref(),
-            Some(".claude/skills/mission/")
+            skill_unit(".claude/skills/implement/SKILL.md").as_deref(),
+            Some(".claude/skills/implement/")
         );
         assert_eq!(
-            skill_unit(".agents/skills/mission/references/why.md").as_deref(),
-            Some(".agents/skills/mission/")
+            skill_unit(".agents/skills/implement/references/execute.md").as_deref(),
+            Some(".agents/skills/implement/")
         );
         assert_eq!(
-            skill_unit(".claude/skills/mission/").as_deref(),
-            Some(".claude/skills/mission/")
+            skill_unit(".claude/skills/implement/").as_deref(),
+            Some(".claude/skills/implement/")
         );
         assert_eq!(
             skill_unit(".agents/references/codex-compatibility.md"),
@@ -966,20 +961,19 @@ mod tests {
         fs::create_dir_all(root.join("crates/guards")).expect("scratch dirs are creatable");
         fs::create_dir_all(root.join(".claude/skills")).expect("scratch dirs are creatable");
         fs::create_dir_all(root.join(".agents/skills")).expect("scratch dirs are creatable");
-        fs::create_dir_all(root.join("docs/campaign")).expect("scratch dirs are creatable");
         fs::create_dir_all(root.join("docs/workflow")).expect("scratch dirs are creatable");
         fs::write(
             root.join(BASELINE_FILE),
             format!(
                 "!budget {budget}\n\
-                 docs/campaign/one.md {first}\n\
+                 docs/workflow/one.md {first}\n\
                  docs/workflow/two.md {second}\n"
             ),
         )
         .expect("scratch baseline is writable");
         // Each file sits exactly at its ceiling, so the only finding a test
         // can see is the budget's.
-        fs::write(root.join("docs/campaign/one.md"), "x".repeat(first))
+        fs::write(root.join("docs/workflow/one.md"), "x".repeat(first))
             .expect("scratch contract is writable");
         fs::write(root.join("docs/workflow/two.md"), "x".repeat(second))
             .expect("scratch contract is writable");

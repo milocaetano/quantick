@@ -2,7 +2,7 @@
 //! both reach the owner through the port the call's handler takes.
 use super::*;
 
-use super::super::menu_bar::{MenuCall, apply_menu_command_on};
+use super::super::menu_bar::{MenuCall, MenuCommand, apply_menu_command_on};
 use crate::control::ActionOrigin;
 use quantick_control_handlers::desk::DeskAct;
 use quantick_session::paper::TradeCommand;
@@ -16,7 +16,7 @@ fn layout(app: &mut QuantickApp) -> String {
 }
 
 fn strip(app: &mut QuantickApp) -> String {
-    format!("{:?}", app.layout_state().layouts().layouts().len())
+    format!("{:?}", app.runtime.layout_state().layouts().layouts().len())
 }
 
 fn context_order(app: &mut QuantickApp) -> String {
@@ -137,7 +137,7 @@ fn a_menu_call_and_its_named_call_leave_the_same_window() {
             run_frame(app, &ctx);
         }
         let before = read(&mut clicked);
-        apply_menu_command_on(&mut clicked, &ctx, call().into());
+        apply_menu_command_on(&mut clicked, &ctx, MenuCommand::Call(call()));
         if input.get("tab_id").is_some() {
             input["tab_id"] = json!(called.runtime.tabs.active_id().to_string());
         }

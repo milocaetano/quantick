@@ -3,7 +3,7 @@
 //! window's own strip, divider, rail, menu or header makes.
 
 use crate::app::control_host::ControlPort;
-use crate::app::{LayoutPort, TabsPort};
+use crate::app::{GatewayPort, TabsPort};
 use crate::pane::PaneSide;
 use crate::tab::Tab;
 pub(crate) use quantick_control_schema::layout::*;
@@ -15,8 +15,8 @@ use quantick_workspace::canvas_layout::LayoutPreset;
 use quantick_workspace::layout_document::{LayoutBook, LayoutError, LayoutId};
 
 /// The strip as `observe.workspace` reports it: the focused pane's layout lit.
-pub(crate) fn layout_tabs<P: LayoutPort + ?Sized>(app: &P) -> Vec<LayoutTabSnapshot> {
-    let state = app.layout_state();
+pub(crate) fn layout_tabs<P: GatewayPort + ?Sized>(app: &P) -> Vec<LayoutTabSnapshot> {
+    let state = app.workspace().layout_state();
     let active = state.focused_pane_layout();
     quantick_control_handlers::layout::layout_tabs(state.layouts(), active, |id| {
         state.shown_count(id)
@@ -33,13 +33,13 @@ pub(crate) fn tab_index<P: TabsPort + ?Sized>(
 
 impl LayoutHost for dyn ControlPort {
     fn layout_book(&self) -> &LayoutBook {
-        self.layout_state().layouts()
+        self.workspace().layout_state().layouts()
     }
     fn focused_pane_layout(&self) -> LayoutId {
-        self.layout_state().focused_pane_layout()
+        self.workspace().layout_state().focused_pane_layout()
     }
     fn shown_count(&self, layout: LayoutId) -> usize {
-        self.layout_state().shown_count(layout)
+        self.workspace().layout_state().shown_count(layout)
     }
     fn switch_pane_layout(
         &mut self,
@@ -47,17 +47,20 @@ impl LayoutHost for dyn ControlPort {
         side: PaneSide,
         layout: LayoutId,
     ) -> Result<bool, LayoutError> {
-        self.layout_adapter()
+        self.workspace_calls()
+            .layout()
             .switch_pane_layout(tab_id, side, layout)
     }
     fn create_layout(&mut self, name: Option<&str>) -> Result<LayoutId, LayoutError> {
-        self.layout_adapter().create_layout(name)
+        self.workspace_calls().layout().create_layout(name)
     }
     fn rename_layout(&mut self, layout: LayoutId, name: &str) -> Result<bool, LayoutError> {
-        self.layout_adapter().rename_layout(layout, name)
+        self.workspace_calls().layout().rename_layout(layout, name)
     }
     fn move_context_pane(&mut self, tab_id: u64, from: usize, to: usize) -> bool {
-        self.layout_adapter().move_context_pane_at(tab_id, from, to)
+        self.workspace_calls()
+            .layout()
+            .move_context_pane_at(tab_id, from, to)
     }
     fn layout_tab(&mut self, index: usize) -> Option<&mut dyn LayoutTab> {
         Some(self.tabs_mut().tab_at_mut(index)?)

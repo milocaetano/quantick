@@ -44,9 +44,9 @@ use quantick_session::prompt::Prompt;
 use quantick_session::workspace_menu::{NameDialogMode, WorkspaceCommand, WorkspaceMenuState};
 use quantick_stores::market_settings::{self, DrawingKey, MarketSettingsStore};
 use quantick_stores::workspaces::{
-    ColourOutcome, ColourTaken, CreateOutcome, DEFAULT_WORKSPACE, DeleteOutcome, RenameOutcome,
-    SaveOutcome, SetOutcome, UnsavedEdits, Unsynced, WorkspaceBook, WorkspaceBookStore,
-    WorkspaceColour, WorkspaceRecipe, WorkspaceRefusal,
+    ColourOutcome, ColourTaken, CreateOutcome, DeleteOutcome, RenameOutcome, SaveOutcome,
+    SetOutcome, UnsavedEdits, Unsynced, WorkspaceBook, WorkspaceBookStore, WorkspaceColour,
+    WorkspaceRecipe, WorkspaceRefusal,
 };
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -61,13 +61,13 @@ pub mod manage;
 pub mod switch;
 pub use switch::{menu_prompt, prompt_answer};
 
-fn unavailable() -> ControlError {
+pub(crate) fn unavailable() -> ControlError {
     ControlError::invalid_request("the workspaces are unavailable")
 }
 
-/// What the window lends these calls. The defaults answer for a host without a
-/// book.
-pub trait WorkspaceBookHost {
+/// The workspace book and the tabs its calls address: what the window lends
+/// these calls. The defaults answer for a host without a book.
+pub trait WorkspaceOwner: TabDirectory {
     /// The book and its file, which the three defaults below reach.
     fn workspace_store(&mut self) -> Option<&mut WorkspaceBookStore> {
         None
@@ -111,36 +111,6 @@ pub trait WorkspaceBookHost {
             None => market_settings::commit_all(market),
         }
     }
-    /// The tab's workspace and whether it holds edits, as the snapshot reads it.
-    fn tab_workspace_row(&self, tab: u64) -> (String, bool) {
-        let state = self
-            .workspace_book_ref()
-            .and_then(|book| book.tab_state(tab));
-        state.map_or_else(
-            || (DEFAULT_WORKSPACE.to_owned(), false),
-            |state| (state.workspace.to_owned(), state.modified),
-        )
-    }
-    /// The colour of the tab's workspace, `Default`'s for a tab the book has
-    /// not adopted yet: [`WorkspaceBook::tab_colour`], which the strip and the
-    /// capsule paint too.
-    fn tab_workspace_colour(&self, tab: u64) -> Option<WorkspaceColourDto> {
-        self.workspace_book_ref()?.tab_colour(tab).map(Into::into)
-    }
-    /// Every workspace's colour, `Default` first, as the snapshot reads them.
-    fn workspace_colours(&self) -> Vec<WorkspaceColourRow> {
-        let rows = self.workspace_book_ref().map(WorkspaceBook::list);
-        let row = |row: quantick_stores::workspaces::WorkspaceListing| WorkspaceColourRow {
-            colour: row.colour.into(),
-            name: row.name,
-        };
-        rows.unwrap_or_default().into_iter().map(row).collect()
-    }
-    /// Whether layout edits are written through, as the snapshot reads it.
-    fn workspace_autosave(&self) -> bool {
-        self.workspace_book_ref()
-            .is_none_or(WorkspaceBook::autosave)
-    }
     /// The symbols of these tabs, in the order asked.
     fn tab_symbols(&self, _tabs: &[u64]) -> Vec<String> {
         Vec::new()
@@ -163,6 +133,25 @@ pub trait WorkspaceBookHost {
     }
 }
 
+/// The door to the window's [`WorkspaceOwner`].
+pub trait WorkspaceBookHost {
+    /// The owner, borrowed for one call; `None` for a host without workspaces.
+    fn workspaces(&mut self) -> Option<Box<dyn WorkspaceOwner + '_>> {
+        None
+    }
+}
+
+/// Every workspace's colour in `book`, `Default` first, as the snapshot reads
+/// them.
+#[must_use]
+pub fn colour_rows(book: &WorkspaceBook) -> Vec<WorkspaceColourRow> {
+    let row = |row: quantick_stores::workspaces::WorkspaceListing| WorkspaceColourRow {
+        colour: row.colour.into(),
+        name: row.name,
+    };
+    book.list().into_iter().map(row).collect()
+}
+
 /// Who journals a change: the call's access and actor, or the trader's hand
 /// at the window. `None` where the window has no control identity; the change
 /// still lands, and nothing is journaled.
@@ -171,7 +160,7 @@ pub type Journal<'a, A> = Option<(&'a mut A, &'a ActorContext)>;
 /// Carry out what a workspace row asked for, through the same steps the
 /// control call takes, so a row leaves the call's journal row. Answers what
 /// to tell the trader, naming the tabs.
-pub fn apply_row_command<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
+pub fn apply_row_command<H: WorkspaceOwner + ?Sized, A: NotifyAccess>(
     host: &mut H,
     mut to: Journal<'_, A>,
     menu: &mut WorkspaceMenuState,
@@ -245,7 +234,7 @@ pub fn apply_row_command<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
 
 /// Enter on the name dialog: done and closed, or refused with the reason
 /// under the field and the name still there.
-fn submit_name_dialog<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
+fn submit_name_dialog<H: WorkspaceOwner + ?Sized, A: NotifyAccess>(
     host: &mut H,
     to: &mut Journal<'_, A>,
     menu: &mut WorkspaceMenuState,
@@ -278,31 +267,62 @@ fn submit_name_dialog<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
     }
 }
 
+/// A registered entry point for `handler` that reaches the host's
+/// [`WorkspaceOwner`] through [`WorkspaceBookHost::workspaces`]; a host that lends
+/// none answers unavailable.
+macro_rules! through_workspaces {
+    ($handler:path) => {
+        |app, access, actor, value| match app.workspaces() {
+            Some(mut host) => $handler(&mut *host, access, actor, value),
+            None => Err(unavailable()),
+        }
+    };
+}
+
 /// Outside the replay trace: none of these changes a market, and a recorded
-/// call must not rewrite the trader's workspaces when a session re-runs.
+/// call must not rewrite the trader's workspaces when a session re-runs. Each
+/// call reaches the book through [`WorkspaceBookHost::workspaces`].
 pub fn register<H, A, D>(registry: &mut D) -> Result<(), RegistryError>
 where
-    H: WorkspaceBookHost + TabDirectory + ?Sized,
+    H: WorkspaceBookHost + ?Sized,
     A: NotifyAccess,
     D: ActionDock<H, A>,
 {
-    registry.register_outside_replay(tab_workspace_set_descriptor(), set)?;
-    registry.register_outside_replay(workspace_save_to_descriptor(), save_to)?;
-    registry.register_outside_replay(workspace_save_as_descriptor(), save_as)?;
-    registry.register_outside_replay(workspace_new_descriptor(), new)?;
-    registry.register_outside_replay(workspace_revert_descriptor(), revert)?;
-    registry.register_outside_replay(workspace_autosave_set_descriptor(), autosave_set)?;
-    registry.register_outside_replay(tab_close_descriptor(), close)?;
-    registry.register_outside_replay(workspace_rename_descriptor(), rename)?;
-    registry.register_outside_replay(workspace_delete_descriptor(), delete)?;
-    registry.register_outside_replay(workspace_delete_undo_descriptor(), manage::undo_call)?;
-    registry.register_outside_replay(workspace_dialog_open_descriptor(), manage::dialog_open)?;
-    registry.register_outside_replay(workspace_colour_set_descriptor(), colour_set)?;
-    let palette = workspace_colour_palette_descriptor();
-    registry.register_outside_replay(palette, colour_popover::palette_read)?;
-    let popover = workspace_colour_popover_descriptor();
-    registry.register_outside_replay(popover, colour_popover::popover_call)?;
-    registry.register_outside_replay(workspace_list_descriptor(), list)
+    registry.register_outside_replay(tab_workspace_set_descriptor(), through_workspaces!(set))?;
+    registry
+        .register_outside_replay(workspace_save_to_descriptor(), through_workspaces!(save_to))?;
+    registry
+        .register_outside_replay(workspace_save_as_descriptor(), through_workspaces!(save_as))?;
+    registry.register_outside_replay(workspace_new_descriptor(), through_workspaces!(new))?;
+    registry.register_outside_replay(workspace_revert_descriptor(), through_workspaces!(revert))?;
+    registry.register_outside_replay(
+        workspace_autosave_set_descriptor(),
+        through_workspaces!(autosave_set),
+    )?;
+    registry.register_outside_replay(tab_close_descriptor(), through_workspaces!(close))?;
+    registry.register_outside_replay(workspace_rename_descriptor(), through_workspaces!(rename))?;
+    registry.register_outside_replay(workspace_delete_descriptor(), through_workspaces!(delete))?;
+    registry.register_outside_replay(
+        workspace_delete_undo_descriptor(),
+        through_workspaces!(manage::undo_call),
+    )?;
+    registry.register_outside_replay(
+        workspace_dialog_open_descriptor(),
+        through_workspaces!(manage::dialog_open),
+    )?;
+    registry.register_outside_replay(
+        workspace_colour_set_descriptor(),
+        through_workspaces!(colour_set),
+    )?;
+    registry.register_outside_replay(
+        workspace_colour_palette_descriptor(),
+        through_workspaces!(colour_popover::palette_read),
+    )?;
+    registry.register_outside_replay(
+        workspace_colour_popover_descriptor(),
+        through_workspaces!(colour_popover::popover_call),
+    )?;
+    registry.register_outside_replay(workspace_list_descriptor(), through_workspaces!(list))
 }
 
 fn input<T: serde::de::DeserializeOwned>(value: &Value) -> Result<T, ControlError> {
@@ -362,7 +382,7 @@ fn wires(tabs: &[u64]) -> Vec<WireU64> {
     tabs.iter().copied().map(WireU64::new).collect()
 }
 
-fn book<H: WorkspaceBookHost + ?Sized>(app: &mut H) -> Result<&mut WorkspaceBook, ControlError> {
+fn book<H: WorkspaceOwner + ?Sized>(app: &mut H) -> Result<&mut WorkspaceBook, ControlError> {
     app.workspace_book().ok_or_else(unavailable)
 }
 
@@ -370,7 +390,7 @@ fn book<H: WorkspaceBookHost + ?Sized>(app: &mut H) -> Result<&mut WorkspaceBook
 /// `workspace.unknown_tab`. A tab the book has not adopted yet is
 /// refused before anything changes: its panes are still being built, and a
 /// workspace put on it now would be undone when the desk's word lands.
-fn tab_on_book<H: WorkspaceBookHost + TabDirectory + ?Sized>(
+fn tab_on_book<H: WorkspaceOwner + ?Sized>(
     app: &mut H,
     tab_id: Option<WireU64>,
 ) -> Result<u64, ControlError> {
@@ -405,7 +425,7 @@ fn written<H, T>(
     changed: impl FnOnce(&T) -> bool,
 ) -> Result<T, ControlError>
 where
-    H: WorkspaceBookHost + ?Sized,
+    H: WorkspaceOwner + ?Sized,
 {
     let held = book(app)?;
     let before = held.clone();
@@ -420,7 +440,7 @@ where
 }
 
 /// Redraw each tab on the arrangement the book now holds for it.
-fn show<H: WorkspaceBookHost + ?Sized>(app: &mut H, tabs: &[u64]) -> Result<(), ControlError> {
+fn show<H: WorkspaceOwner + ?Sized>(app: &mut H, tabs: &[u64]) -> Result<(), ControlError> {
     for tab in tabs {
         let copy = book(app)?.tab_copy(*tab).cloned();
         if let Some(copy) = copy {
@@ -436,7 +456,7 @@ fn show<H: WorkspaceBookHost + ?Sized>(app: &mut H, tabs: &[u64]) -> Result<(), 
 ///
 /// # Errors
 /// No such tab or workspace, or no book.
-pub fn set_tab_workspace<H: WorkspaceBookHost + ?Sized>(
+pub fn set_tab_workspace<H: WorkspaceOwner + ?Sized>(
     app: &mut H,
     tab: u64,
     name: &str,
@@ -459,7 +479,7 @@ pub fn set_tab_workspace<H: WorkspaceBookHost + ?Sized>(
 ///
 /// # Errors
 /// No such tab, no book, or a write failed and the book was restored.
-pub fn save_tab_to<H: WorkspaceBookHost + ?Sized>(
+pub fn save_tab_to<H: WorkspaceOwner + ?Sized>(
     app: &mut H,
     tab: u64,
 ) -> Result<SaveOutcome, ControlError> {
@@ -487,7 +507,7 @@ pub fn save_tab_to<H: WorkspaceBookHost + ?Sized>(
 ///
 /// # Errors
 /// The market file was not written.
-fn commit_market_whole<H: WorkspaceBookHost + ?Sized>(
+fn commit_market_whole<H: WorkspaceOwner + ?Sized>(
     app: &mut H,
     tab: u64,
     before: WorkspaceBook,
@@ -511,7 +531,7 @@ fn commit_market_whole<H: WorkspaceBookHost + ?Sized>(
 
 /// A save of `tab` did not reach the disk: with autosave on it reads modified
 /// until one does.
-fn note_failed<H: WorkspaceBookHost + ?Sized>(app: &mut H, tab: u64) {
+fn note_failed<H: WorkspaceOwner + ?Sized>(app: &mut H, tab: u64) {
     if let Some(book) = app.workspace_book().filter(|book| book.autosave()) {
         book.note_write_failed(tab);
     }
@@ -524,10 +544,7 @@ fn note_failed<H: WorkspaceBookHost + ?Sized>(app: &mut H, tab: u64) {
 ///
 /// # Errors
 /// The market file was not written; every held set stays counted.
-fn commit_market<H: WorkspaceBookHost + ?Sized>(
-    app: &mut H,
-    tab: u64,
-) -> Result<bool, ControlError> {
+fn commit_market<H: WorkspaceOwner + ?Sized>(app: &mut H, tab: u64) -> Result<bool, ControlError> {
     if !app
         .workspace_market()
         .is_some_and(|market| market.is_held())
@@ -543,7 +560,7 @@ fn commit_market<H: WorkspaceBookHost + ?Sized>(
 }
 
 /// The book counts again what each tab's sets hold back, as the store reads.
-fn recount_held<H: WorkspaceBookHost + ?Sized>(app: &mut H) {
+fn recount_held<H: WorkspaceOwner + ?Sized>(app: &mut H) {
     let sets = app.workspace_book().map(|book| book.drawing_sets());
     let (Some(sets), Some(market)) = (sets, app.workspace_market()) else {
         return;
@@ -560,7 +577,7 @@ fn recount_held<H: WorkspaceBookHost + ?Sized>(app: &mut H) {
 
 /// Close without saving: the closed tab's held drawings go back to the file's
 /// version, unless another open tab still shows that set.
-fn discard_market<H: WorkspaceBookHost + ?Sized>(app: &mut H, closed: &[DrawingKey], tab: u64) {
+fn discard_market<H: WorkspaceOwner + ?Sized>(app: &mut H, closed: &[DrawingKey], tab: u64) {
     let open = book(app)
         .map(|book| book.drawing_keys_except(tab))
         .unwrap_or_default();
@@ -574,7 +591,7 @@ fn discard_market<H: WorkspaceBookHost + ?Sized>(app: &mut H, closed: &[DrawingK
 ///
 /// # Errors
 /// The name is refused, no such tab, no book, or a write failed.
-pub fn save_tab_as<H: WorkspaceBookHost + ?Sized>(
+pub fn save_tab_as<H: WorkspaceOwner + ?Sized>(
     app: &mut H,
     tab: u64,
     (name, colour): (&str, Option<WorkspaceColour>),
@@ -599,7 +616,7 @@ pub fn save_tab_as<H: WorkspaceBookHost + ?Sized>(
 ///
 /// # Errors
 /// The name is refused, no such tab, no book, or the write failed.
-pub fn new_tab_workspace<H: WorkspaceBookHost + ?Sized>(
+pub fn new_tab_workspace<H: WorkspaceOwner + ?Sized>(
     app: &mut H,
     tab: u64,
     (name, colour): (&str, Option<WorkspaceColour>),
@@ -614,7 +631,7 @@ pub fn new_tab_workspace<H: WorkspaceBookHost + ?Sized>(
 /// it: a switch or a close never drops what autosave was about to save. Only
 /// the copy autosave would write ([`WorkspaceBook::flushes`]): an outvoted or
 /// failed copy is held edits, so a close asks and a switch drops it.
-fn flush<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
+fn flush<H: WorkspaceOwner + ?Sized, A: NotifyAccess>(
     app: &mut H,
     to: &mut Journal<'_, A>,
     tab: u64,
@@ -630,7 +647,7 @@ fn flush<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
 /// journaled as the hand that edited. Answers the toasts: one only where
 /// other tabs follow, or why a write failed, once: a failed tab reads
 /// modified and the frame retries it each quiet second.
-pub fn write_through<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
+pub fn write_through<H: WorkspaceOwner + ?Sized, A: NotifyAccess>(
     app: &mut H,
     mut to: Journal<'_, A>,
     tabs: &[u64],
@@ -651,7 +668,7 @@ fn failed_write(error: &ControlError) -> bool {
     code_of(error) == Some(&json!(WRITE_FAILED_CODE))
 }
 
-fn saved_notes<H: WorkspaceBookHost + ?Sized>(app: &H, saved: &[SaveOutcome]) -> Option<String> {
+fn saved_notes<H: WorkspaceOwner + ?Sized>(app: &H, saved: &[SaveOutcome]) -> Option<String> {
     let notes: Vec<String> = saved
         .iter()
         .filter_map(|one| {
@@ -682,7 +699,7 @@ pub struct AutosaveOutcome {
 ///
 /// # Errors
 /// No book, or the desk write failed: then nothing changed.
-pub fn set_autosave<H: WorkspaceBookHost + ?Sized>(
+pub fn set_autosave<H: WorkspaceOwner + ?Sized>(
     app: &mut H,
     on: bool,
     active: u64,
@@ -726,7 +743,7 @@ pub fn set_autosave<H: WorkspaceBookHost + ?Sized>(
 ///
 /// # Errors
 /// Edits held and no decision, no book, a failed save, or the last tab.
-pub fn close_tab<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
+pub fn close_tab<H: WorkspaceOwner + ?Sized, A: NotifyAccess>(
     app: &mut H,
     to: &mut Journal<'_, A>,
     tab: u64,
@@ -780,10 +797,7 @@ fn unsaved(asked: &CloseQuestion) -> ControlError {
 /// autosave on, unless its copy is one autosave did not write). `tab.close`
 /// refuses with this same question, so the call and the window's prompt
 /// cannot disagree on when to ask.
-pub fn close_question<H: WorkspaceBookHost + ?Sized>(
-    app: &mut H,
-    tab: u64,
-) -> Option<CloseQuestion> {
+pub fn close_question<H: WorkspaceOwner + ?Sized>(app: &mut H, tab: u64) -> Option<CloseQuestion> {
     let UnsavedEdits {
         workspace,
         followers,
@@ -825,7 +839,7 @@ pub fn close_prompt(queue: &CloseQueue) -> Option<Prompt> {
 /// close and answers why; the window's last tab staying open is no news, and
 /// it asks nothing first: the close would refuse it, so no answer, Save
 /// included, would be carried out.
-fn run_close<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
+fn run_close<H: WorkspaceOwner + ?Sized, A: NotifyAccess>(
     app: &mut H,
     to: &mut Journal<'_, A>,
     queue: &mut CloseQueue,
@@ -857,7 +871,7 @@ fn run_close<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
 /// its edits written into its workspace or let go, and a pending autosave
 /// written. Let go means the recipe copy too, so the desk keeps no edits
 /// the trader dropped and the next launch opens the tab on its workspace.
-fn settle_in_place<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
+fn settle_in_place<H: WorkspaceOwner + ?Sized, A: NotifyAccess>(
     app: &mut H,
     to: &mut Journal<'_, A>,
     tab: u64,
@@ -886,7 +900,7 @@ fn settle_in_place<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
 ///
 /// # Errors
 /// The name is refused, no book, or the write failed.
-pub fn rename_workspace<H: WorkspaceBookHost + ?Sized>(
+pub fn rename_workspace<H: WorkspaceOwner + ?Sized>(
     app: &mut H,
     name: &str,
     to: &str,
@@ -899,7 +913,7 @@ pub fn rename_workspace<H: WorkspaceBookHost + ?Sized>(
 ///
 /// # Errors
 /// `Default`, no workspace has the name, no book, or the write failed.
-pub fn delete_workspace<H: WorkspaceBookHost + ?Sized>(
+pub fn delete_workspace<H: WorkspaceOwner + ?Sized>(
     app: &mut H,
     name: &str,
     now_ms: Option<i64>,
@@ -924,7 +938,7 @@ fn journal<A: NotifyAccess>(to: &mut Journal<'_, A>, kind: &'static str, payload
 // The change and its journal row, once each: the call and the window's rows
 // both land here, so a hand on the menu journals what a script would.
 
-fn set_journaled<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
+fn set_journaled<H: WorkspaceOwner + ?Sized, A: NotifyAccess>(
     app: &mut H,
     to: &mut Journal<'_, A>,
     tab: u64,
@@ -940,7 +954,7 @@ fn set_journaled<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
     Ok(outcome)
 }
 
-fn save_to_journaled<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
+fn save_to_journaled<H: WorkspaceOwner + ?Sized, A: NotifyAccess>(
     app: &mut H,
     to: &mut Journal<'_, A>,
     tab: u64,
@@ -954,7 +968,7 @@ fn save_to_journaled<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
     Ok(outcome)
 }
 
-fn save_as_journaled<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
+fn save_as_journaled<H: WorkspaceOwner + ?Sized, A: NotifyAccess>(
     app: &mut H,
     to: &mut Journal<'_, A>,
     tab: u64,
@@ -968,7 +982,7 @@ fn save_as_journaled<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
     Ok(outcome)
 }
 
-fn new_journaled<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
+fn new_journaled<H: WorkspaceOwner + ?Sized, A: NotifyAccess>(
     app: &mut H,
     to: &mut Journal<'_, A>,
     tab: u64,
@@ -985,7 +999,7 @@ fn new_journaled<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
 /// The setting and every save that landed are journaled, a failed save
 /// included: the answer is then that save's error, its details naming the
 /// setting as it now stands and the workspaces saved, as the journal does.
-fn autosave_journaled<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
+fn autosave_journaled<H: WorkspaceOwner + ?Sized, A: NotifyAccess>(
     app: &mut H,
     to: &mut Journal<'_, A>,
     on: bool,
@@ -1020,7 +1034,7 @@ fn autosave_journaled<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
     }
 }
 
-fn rename_journaled<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
+fn rename_journaled<H: WorkspaceOwner + ?Sized, A: NotifyAccess>(
     app: &mut H,
     to: &mut Journal<'_, A>,
     name: &str,
@@ -1040,7 +1054,7 @@ fn rename_journaled<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
 /// # Errors
 /// No workspace has the name, the colour is held and `swap` is false, no
 /// book, or the write failed.
-pub fn set_workspace_colour<H: WorkspaceBookHost + ?Sized>(
+pub fn set_workspace_colour<H: WorkspaceOwner + ?Sized>(
     app: &mut H,
     name: &str,
     colour: WorkspaceColour,
@@ -1050,7 +1064,7 @@ pub fn set_workspace_colour<H: WorkspaceBookHost + ?Sized>(
     written(app, set, |set| set.changed)
 }
 
-fn colour_journaled<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
+fn colour_journaled<H: WorkspaceOwner + ?Sized, A: NotifyAccess>(
     app: &mut H,
     to: &mut Journal<'_, A>,
     name: &str,
@@ -1066,7 +1080,7 @@ fn colour_journaled<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
     Ok(outcome)
 }
 
-fn delete_journaled<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
+fn delete_journaled<H: WorkspaceOwner + ?Sized, A: NotifyAccess>(
     app: &mut H,
     to: &mut Journal<'_, A>,
     name: &str,
@@ -1081,7 +1095,7 @@ fn delete_journaled<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
     Ok(outcome)
 }
 
-fn set<H: WorkspaceBookHost + TabDirectory + ?Sized, A: NotifyAccess>(
+fn set<H: WorkspaceOwner + ?Sized, A: NotifyAccess>(
     app: &mut H,
     access: &mut A,
     actor: &ActorContext,
@@ -1103,7 +1117,7 @@ fn set<H: WorkspaceBookHost + TabDirectory + ?Sized, A: NotifyAccess>(
     })
 }
 
-fn save_to<H: WorkspaceBookHost + TabDirectory + ?Sized, A: NotifyAccess>(
+fn save_to<H: WorkspaceOwner + ?Sized, A: NotifyAccess>(
     app: &mut H,
     access: &mut A,
     actor: &ActorContext,
@@ -1119,7 +1133,7 @@ fn save_to<H: WorkspaceBookHost + TabDirectory + ?Sized, A: NotifyAccess>(
     })
 }
 
-fn save_as<H: WorkspaceBookHost + TabDirectory + ?Sized, A: NotifyAccess>(
+fn save_as<H: WorkspaceOwner + ?Sized, A: NotifyAccess>(
     app: &mut H,
     access: &mut A,
     actor: &ActorContext,
@@ -1140,7 +1154,7 @@ fn save_as<H: WorkspaceBookHost + TabDirectory + ?Sized, A: NotifyAccess>(
     })
 }
 
-fn new<H: WorkspaceBookHost + TabDirectory + ?Sized, A: NotifyAccess>(
+fn new<H: WorkspaceOwner + ?Sized, A: NotifyAccess>(
     app: &mut H,
     access: &mut A,
     actor: &ActorContext,
@@ -1169,7 +1183,7 @@ fn colour_word(word: Option<&str>) -> Result<Option<WorkspaceColour>, ControlErr
 }
 
 /// Revert is gone; the refusal names the calls that keep edits instead.
-fn revert<H: WorkspaceBookHost + ?Sized, A>(
+fn revert<H: WorkspaceOwner + ?Sized, A>(
     _: &mut H,
     _: &mut A,
     _: &ActorContext,
@@ -1187,7 +1201,7 @@ fn save_result(saved: SaveOutcome) -> WorkspaceSaveResult {
     }
 }
 
-fn autosave_set<H: WorkspaceBookHost + TabDirectory + ?Sized, A: NotifyAccess>(
+fn autosave_set<H: WorkspaceOwner + ?Sized, A: NotifyAccess>(
     app: &mut H,
     access: &mut A,
     actor: &ActorContext,
@@ -1203,7 +1217,7 @@ fn autosave_set<H: WorkspaceBookHost + TabDirectory + ?Sized, A: NotifyAccess>(
     })
 }
 
-fn close<H: WorkspaceBookHost + TabDirectory + ?Sized, A: NotifyAccess>(
+fn close<H: WorkspaceOwner + ?Sized, A: NotifyAccess>(
     app: &mut H,
     access: &mut A,
     actor: &ActorContext,
@@ -1218,7 +1232,7 @@ fn close<H: WorkspaceBookHost + TabDirectory + ?Sized, A: NotifyAccess>(
     })
 }
 
-fn rename<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
+fn rename<H: WorkspaceOwner + ?Sized, A: NotifyAccess>(
     app: &mut H,
     access: &mut A,
     actor: &ActorContext,
@@ -1230,7 +1244,7 @@ fn rename<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
     answer(&WorkspaceRenameResult { workspace, changed })
 }
 
-fn delete<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
+fn delete<H: WorkspaceOwner + ?Sized, A: NotifyAccess>(
     app: &mut H,
     access: &mut A,
     actor: &ActorContext,
@@ -1253,7 +1267,7 @@ fn delete<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
     })
 }
 
-fn colour_set<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
+fn colour_set<H: WorkspaceOwner + ?Sized, A: NotifyAccess>(
     app: &mut H,
     access: &mut A,
     actor: &ActorContext,
@@ -1275,7 +1289,7 @@ fn colour_set<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
     })
 }
 
-fn list<H: WorkspaceBookHost + ?Sized, A>(
+fn list<H: WorkspaceOwner + ?Sized, A>(
     app: &mut H,
     _: &mut A,
     _: &ActorContext,
