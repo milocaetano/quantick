@@ -3,9 +3,9 @@
 //!
 //! Not a method on the app: the composition root captures every launch input
 //! in `main` and hands them to the constructor, which calls
-//! [`apply_launch_phase`] once over its [`OwnersDesk`]. Each applier borrows
-//! the owners it stages from that desk and calls their own methods, or runs
-//! a registered call; the value grammar lives in
+//! [`apply_launch_phase`] once over its [`OwnersDesk`]. Each applier takes
+//! only the owners it stages and calls their own methods; the few that also
+//! run a registered call borrow through the desk beside the ports they name; the value grammar lives in
 //! `quantick_control_schema::launch_values`. Two production steps live here
 //! because the scenarios are ordered around them — `seed_new_panes` and
 //! recording the layers the launch staged. Every applier that reads a
@@ -58,7 +58,11 @@ use quantick_feed::history_reach;
 #[cfg(any(feature = "scenario-harness", test))]
 use super::AUTOSTART_NATIVES;
 use super::owners_desk::OwnersDesk;
+#[cfg(any(feature = "scenario-harness", test))]
+use super::workspace_runtime::WorkspaceRuntime;
 use super::{GatewayPort, TabsPort};
+#[cfg(any(feature = "scenario-harness", test))]
+use crate::{surfaces::Surfaces, tab::Tab};
 
 /// Run the launch phase over a constructed app, in the order this module
 /// fixes. Called once, from `new_with_workspace`, after the saved workspace
@@ -71,7 +75,7 @@ pub(super) fn apply_launch_phase<D: OwnersDesk + GatewayPort + TabsPort>(
     #[cfg(any(feature = "drawing-harness", test))] rail_launch: crate::toolrail::ToolRailLaunch,
 ) {
     #[cfg(any(feature = "scenario-harness", test))]
-    book_and_strip(desk, env);
+    book_and_strip(desk.owners().runtime.active_tab_mut(), env);
     #[cfg(any(feature = "control-harness", test))]
     {
         let owners = desk.owners();
@@ -90,7 +94,7 @@ pub(super) fn apply_launch_phase<D: OwnersDesk + GatewayPort + TabsPort>(
         }
     }
     #[cfg(any(feature = "scenario-harness", test))]
-    history(desk, env);
+    history(&mut desk.owners().runtime.history, env);
     // Captured drawing scenarios apply here rather than on the first
     // drawn frame: the demo appliers run earlier in that frame and ask
     // whether the inspector is open, so a hook another hook depends on has
@@ -101,15 +105,17 @@ pub(super) fn apply_launch_phase<D: OwnersDesk + GatewayPort + TabsPort>(
     #[cfg(any(feature = "scenario-harness", test))]
     tape(desk, env);
     #[cfg(any(feature = "scenario-harness", test))]
-    indicator(desk, env);
+    indicator(desk.owners().runtime.active_tab_mut(), env);
     // Put the active layout on the first tab's panes before any autostart
     // hook: the file is what the user actually had open.
     desk.layouts().seed_new_panes();
     #[cfg(any(feature = "scenario-harness", test))]
     {
         layout(desk, env);
-        replay(desk, env);
-        dock_and_report(desk, env);
+        let owners = desk.owners();
+        replay(owners.surfaces, owners.runtime.active_tab(), env);
+        let owners = desk.owners();
+        dock_and_report(owners.runtime, owners.surfaces, env);
         calls::on_flow_pane(desk, env, "QUANTICK_PRICE_RANGE", launch_calls::price_range);
         workspace(desk, env);
     }
@@ -124,7 +130,7 @@ pub(super) fn apply_launch_phase<D: OwnersDesk + GatewayPort + TabsPort>(
         .mask(&runtime.style);
     runtime.workspace.layers_mut().record(staged_layers);
     #[cfg(any(feature = "scenario-harness", test))]
-    toast(desk, env);
+    toast(desk.owners().runtime, env);
 }
 
 /// The hooks with a registered action, run as an agent would through
@@ -177,8 +183,7 @@ mod calls {
 
 /// The order book and the live strip: the two the map opens with.
 #[cfg(any(feature = "scenario-harness", test))]
-fn book_and_strip<D: OwnersDesk>(desk: &mut D, env: &ScenarioInputs) {
-    let tab = desk.owners().runtime.active_tab_mut();
+fn book_and_strip(tab: &mut Tab, env: &ScenarioInputs) {
     // Dev/ops can open the map without a click.
     if values::one(env.var("QUANTICK_BOOK_AUTOSTART").as_deref()) {
         tab.tape_mut().set_depth_visible(true);
@@ -196,8 +201,7 @@ fn book_and_strip<D: OwnersDesk>(desk: &mut D, env: &ScenarioInputs) {
 
 /// How far back a launch reaches, and how it gets there.
 #[cfg(any(feature = "scenario-harness", test))]
-fn history<D: OwnersDesk>(desk: &mut D, env: &ScenarioInputs) {
-    let history = &mut desk.owners().runtime.history;
+fn history(history: &mut quantick_session::HistorySettings, env: &ScenarioInputs) {
     if let Some(raw) = env.var("QUANTICK_HISTORY_REACH_SPAN_MINUTES") {
         // Read before `QUANTICK_HISTORY_REACH`: it is what that hook's legacy
         // `span` token means, as it is in a saved workspace.
@@ -384,8 +388,7 @@ fn tape<D: OwnersDesk + GatewayPort + TabsPort>(desk: &mut D, env: &ScenarioInpu
 
 /// The indicators a launch opens with, and whether their legend is folded.
 #[cfg(any(feature = "scenario-harness", test))]
-fn indicator<D: OwnersDesk>(desk: &mut D, env: &ScenarioInputs) {
-    let tab = desk.owners().runtime.active_tab_mut();
+fn indicator(tab: &mut Tab, env: &ScenarioInputs) {
     // Same convenience for indicators: open with the two M1 natives on
     // (EMA overlay + CVD pane), through the same code path the toolbar
     // menu takes, so a scripted validation run needs no clicks.
@@ -480,9 +483,8 @@ fn layout<D: OwnersDesk + GatewayPort + TabsPort>(desk: &mut D, env: &ScenarioIn
 /// The replay transport. `QUANTICK_REPLAY_DAY_BEFORE` is read first, before
 /// anything loads a session -- see the module's order rule.
 #[cfg(any(feature = "scenario-harness", test))]
-fn replay<D: OwnersDesk>(desk: &mut D, env: &ScenarioInputs) {
-    let owners = desk.owners();
-    let browser = &mut owners.surfaces.replay_browser;
+fn replay(surfaces: &mut Surfaces, tab: &Tab, env: &ScenarioInputs) {
+    let browser = &mut surfaces.replay_browser;
     // Whether a recording opens with the day before it joined in front.
     // Read before anything loads a session, because that is the frame the
     // setting is consulted on. Staged rather than chosen: a validation run
@@ -573,7 +575,7 @@ fn replay<D: OwnersDesk>(desk: &mut D, env: &ScenarioInputs) {
     // would photograph a screen no person ever sees.
     if let Some(value) = env.var(crate::replay_view::GET_DATA_ENV) {
         let symbol = match value.trim() {
-            "1" | "" => owners.runtime.active_tab().symbol.clone(),
+            "1" | "" => tab.symbol.clone(),
             symbol => symbol.to_string(),
         };
         browser.open_get_data(Some(&symbol));
@@ -590,10 +592,9 @@ fn replay<D: OwnersDesk>(desk: &mut D, env: &ScenarioInputs) {
 /// The dock and the paper report: the named tab, the calendar, the ledger
 /// and the report list.
 #[cfg(any(feature = "scenario-harness", test))]
-fn dock_and_report<D: OwnersDesk>(desk: &mut D, env: &ScenarioInputs) {
-    let owners = desk.owners();
-    let tz = owners.runtime.tz;
-    let tab = owners.runtime.active_tab_mut();
+fn dock_and_report(runtime: &mut WorkspaceRuntime, surfaces: &mut Surfaces, env: &ScenarioInputs) {
+    let tz = runtime.tz;
+    let tab = runtime.active_tab_mut();
     // Same convenience for the dock: open a named tab, so a scripted
     // validation run shows a panel without a click.
     if let Some(name) = env.var("QUANTICK_DOCK_TAB") {
@@ -603,7 +604,7 @@ fn dock_and_report<D: OwnersDesk>(desk: &mut D, env: &ScenarioInputs) {
         let dock_tab = DockTab::ALL.into_iter().find(|at| at.id() == id);
         match (section, dock_tab) {
             (Some(section), _) => open_on(tab, section),
-            (None, Some(dock_tab)) => owners.surfaces.dock.open_tab(dock_tab),
+            (None, Some(dock_tab)) => surfaces.dock.open_tab(dock_tab),
             (None, None) => tracing::warn!(
                 target: "quantick::app",
                 schema_version = 1_u8,
@@ -765,7 +766,7 @@ fn workspace<D: OwnersDesk + GatewayPort + TabsPort>(desk: &mut D, env: &Scenari
 
 /// The toast a launch raises through the simulator's own route.
 #[cfg(any(feature = "scenario-harness", test))]
-fn toast<D: OwnersDesk>(desk: &mut D, env: &ScenarioInputs) {
+fn toast(runtime: &mut WorkspaceRuntime, env: &ScenarioInputs) {
     // `QUANTICK_TOAST=paper`: a simulator acknowledgement, posted through
     // the panel's own `show_toast`.
     //
@@ -778,7 +779,7 @@ fn toast<D: OwnersDesk>(desk: &mut D, env: &ScenarioInputs) {
     // second and the message is gone eight seconds later, so a capture
     // run photographs an empty lane and cannot tell that from a defect.
     if env.var("QUANTICK_TOAST").as_deref() == Some("paper") {
-        let tabs = &mut desk.owners().runtime.tabs;
+        let tabs = &mut runtime.tabs;
         let toast = "SIM: stop filled at 169 790 — flat.".to_owned();
         tabs.runtime_mut(0).paper.show_toast(toast);
     }

@@ -1,11 +1,12 @@
 //! The harness demo stagers: frame-phase scenarios that stage a state a
 //! screenshot needs and no click can reach.
 //!
-//! Not methods on the app: the frame calls each at its phase over its
-//! [`OwnersDesk`], which lends the owners a stager acts on, and each
+//! Not methods on the app: the frame calls each at its phase with only the
+//! owners it stages; the two control hooks, which also run calls, borrow
+//! theirs through [`OwnersDesk`] beside the `GatewayPort` they name. Each
 //! compiles only with its harness family (or under test) — the whole file
-//! with any of them — so a default build has no demo stage at all. The gated drawing owner captures its requests at
-//! executable startup and chooses geometry and consumption; its adapters
+//! with any of them — so a default build has no demo stage at all. The
+//! gated drawing owner captures its requests at executable startup and chooses geometry and consumption; its adapters
 //! below project chosen slot times and invoke normal drawing, canvas and
 //! history operations. The venue-history and strategy scenarios read the
 //! launch-captured [`crate::harness`], and evidence capture is configured by
@@ -30,7 +31,10 @@ use crate::harness::{StrategyDemoMode, VenueHistoryDemo};
 #[cfg(any(feature = "scenario-harness", test))]
 use crate::pane;
 
+#[cfg(any(feature = "control-harness", test))]
 use super::owners_desk::OwnersDesk;
+#[cfg(any(feature = "drawing-harness", feature = "scenario-harness", test))]
+use super::owners_desk::WindowOwners;
 #[cfg(any(feature = "drawing-harness", feature = "scenario-harness", test))]
 use super::workspace_runtime::WorkspaceRuntime;
 #[cfg(any(feature = "drawing-harness", test))]
@@ -178,6 +182,50 @@ pub(super) fn apply_control_annotate_hooks<D: OwnersDesk + super::GatewayPort>(d
     }
 }
 
+/// Scripted views, the drawing demos and pending history requests, in
+/// the order a launch composes them: the frame lends the owners once, and
+/// each stage takes only the ones it acts on.
+#[cfg(any(feature = "scenario-harness", feature = "drawing-harness", test))]
+pub(super) fn apply_scenario_hooks(owners: WindowOwners<'_>) {
+    #[cfg(any(feature = "scenario-harness", test))]
+    owners
+        .chrome
+        .harness
+        .apply_scripted_view(&mut owners.runtime.tabs);
+    #[cfg(any(feature = "drawing-harness", test))]
+    apply_drawing_demo(owners.runtime, owners.surfaces);
+    #[cfg(any(feature = "scenario-harness", test))]
+    owners
+        .chrome
+        .harness
+        .apply_load_older(&mut owners.runtime.tabs, owners.config);
+    #[cfg(any(feature = "scenario-harness", test))]
+    owners
+        .chrome
+        .harness
+        .apply_load_older_candles(&mut owners.runtime.tabs, owners.config);
+    #[cfg(any(feature = "drawing-harness", test))]
+    apply_drawing_draft(owners.runtime, owners.surfaces);
+    #[cfg(any(feature = "scenario-harness", test))]
+    apply_venue_history_demo(&mut owners.chrome.harness, owners.runtime);
+    #[cfg(any(feature = "drawing-harness", test))]
+    apply_frvp_demo(owners.runtime, owners.surfaces);
+    #[cfg(any(feature = "drawing-harness", test))]
+    apply_avwap_demo(owners.runtime, owners.surfaces);
+    #[cfg(any(feature = "scenario-harness", test))]
+    apply_strategy_demo(
+        owners.runtime,
+        owners.surfaces,
+        &mut owners.chrome.harness,
+        &mut *owners.audio.alerts,
+    );
+    #[cfg(any(feature = "scenario-harness", test))]
+    owners
+        .chrome
+        .harness
+        .apply_replay_restart(&mut owners.runtime.tabs, owners.config);
+}
+
 /// The `QUANTICK_VENUE_HISTORY_DEMO` hook: a venue candle prefix in front
 /// of the bars cut from prints, delivered through the very path a feed's
 /// reply takes, so what is photographed is the real seam and the real
@@ -187,33 +235,26 @@ pub(super) fn apply_control_annotate_hooks<D: OwnersDesk + super::GatewayPort>(d
 /// left open, which is the mid-load frame progressive delivery exists to
 /// produce and the one no capture could otherwise catch.
 #[cfg(any(feature = "scenario-harness", test))]
-pub(super) fn apply_venue_history_demo<D: OwnersDesk>(desk: &mut D) {
+pub(super) fn apply_venue_history_demo(
+    harness: &mut crate::harness::Harness,
+    runtime: &mut WorkspaceRuntime,
+) {
     /// Candles the venue-history scene installs: enough for the seam and
     /// the divider to read, few enough to stay one screenful of context.
     const DEMO_PREFIX_CANDLES: i64 = 90;
-    let owners = desk.owners();
-    let Some(demo) = owners.chrome.harness.venue_history_demo() else {
+    let Some(demo) = harness.venue_history_demo() else {
         return;
     };
     // Wait for bars to sit the prefix in front of: a seam needs both sides.
-    if owners
-        .runtime
-        .active_tab()
-        .flow_pane
-        .series
-        .state
-        .bars()
-        .len()
-        < 12
-    {
+    if runtime.active_tab().flow_pane.series.state.bars().len() < 12 {
         return;
     }
-    owners.chrome.harness.venue_history_demo_staged();
+    harness.venue_history_demo_staged();
     let slice = match demo {
         VenueHistoryDemo::Complete => quantick_feed::OhlcvSlice::Last { complete: true },
         VenueHistoryDemo::Partial => quantick_feed::OhlcvSlice::More,
     };
-    deliver_synthetic_prefix(owners.runtime, DEMO_PREFIX_CANDLES, slice);
+    deliver_synthetic_prefix(runtime, DEMO_PREFIX_CANDLES, slice);
 }
 
 /// Deliver `candles` synthetic venue candles for the minutes immediately
@@ -254,9 +295,13 @@ pub(super) fn deliver_synthetic_prefix(
 /// click lands on it and opens the per-drawing menu. Consumed once the
 /// chart has bars enough, like the drawings demo.
 #[cfg(any(feature = "scenario-harness", test))]
-pub(super) fn apply_strategy_demo<D: OwnersDesk>(desk: &mut D) {
-    let owners = desk.owners();
-    let Some(mode) = owners.chrome.harness.strategy_demo() else {
+pub(super) fn apply_strategy_demo(
+    runtime: &mut WorkspaceRuntime,
+    surfaces: &mut crate::surfaces::Surfaces,
+    harness: &mut crate::harness::Harness,
+    alerts: &mut dyn quantick_alerts::delivery::AlertSink,
+) {
+    let Some(mode) = harness.strategy_demo() else {
         return;
     };
     /// Fewest bars before the demo stages: enough for the shipped
@@ -273,7 +318,7 @@ pub(super) fn apply_strategy_demo<D: OwnersDesk>(desk: &mut D) {
     // forming partial too, whose `closed_bar` is `None` on almost every
     // frame — bailing on it must keep the flag armed for the next
     // frame, or the hook silently stages nothing.
-    let closed = owners.runtime.active_tab_mut().flow_pane.closed_slots();
+    let closed = runtime.active_tab_mut().flow_pane.closed_slots();
     if closed < DEMO_STRATEGY_MIN_SLOTS {
         return;
     }
@@ -283,11 +328,11 @@ pub(super) fn apply_strategy_demo<D: OwnersDesk>(desk: &mut D) {
     else {
         // No rectangle in the registry: staging can never succeed, so
         // the flag is consumed rather than retried forever.
-        owners.chrome.harness.strategy_demo_staged();
+        harness.strategy_demo_staged();
         return;
     };
     let drawing_id = {
-        let pane = &mut owners.runtime.active_tab_mut().flow_pane;
+        let pane = &mut runtime.active_tab_mut().flow_pane;
         let newest = closed - 1;
         let Some(close) = pane
             .closed_bar(newest)
@@ -325,7 +370,7 @@ pub(super) fn apply_strategy_demo<D: OwnersDesk>(desk: &mut D) {
         pane.drawings.items()[index].id
     };
     // Staged: the rectangle exists, so the hook is consumed.
-    owners.chrome.harness.strategy_demo_staged();
+    harness.strategy_demo_staged();
     let mut form =
         crate::strategy_presets::StoredPreset::starting_point(quantick_engine::Side::Buy);
     // The alarm scenes tick the checkbox the trader would tick, and the
@@ -362,18 +407,14 @@ pub(super) fn apply_strategy_demo<D: OwnersDesk>(desk: &mut D) {
         }
     };
     if let Some(name) = armed_as {
-        let index = owners.runtime.tabs.active_index();
-        let _ = owners
-            .runtime
-            .tabs
-            .runtime_mut(index)
-            .arm_strategy_instance(
-                &mut *owners.audio.alerts,
-                pane::PaneSide::Flow,
-                drawing_id,
-                &form,
-                name.to_owned(),
-            );
+        let index = runtime.tabs.active_index();
+        let _ = runtime.tabs.runtime_mut(index).arm_strategy_instance(
+            alerts,
+            pane::PaneSide::Flow,
+            drawing_id,
+            &form,
+            name.to_owned(),
+        );
     }
     match mode {
         StrategyDemoMode::Armed => {}
@@ -384,7 +425,7 @@ pub(super) fn apply_strategy_demo<D: OwnersDesk>(desk: &mut D) {
             // stages the mark itself rather than waiting for a market
             // that may not oblige before the shutter.
             let (pane, strategies) =
-                (owners.runtime.active_tab_mut()).pane_with_strategies(pane::PaneSide::Flow);
+                (runtime.active_tab_mut()).pane_with_strategies(pane::PaneSide::Flow);
             if let Some(instance) = strategies.anchors.for_drawing_mut(drawing_id) {
                 instance.mark = quantick_strategy::anchors::AlarmMark::Preview;
             }
@@ -395,10 +436,7 @@ pub(super) fn apply_strategy_demo<D: OwnersDesk>(desk: &mut D) {
             pane.drawings.select(None);
         }
         StrategyDemoMode::EndedBadge | StrategyDemoMode::PausedBadge => {
-            let pane = owners
-                .runtime
-                .active_tab_mut()
-                .pane_mut(pane::PaneSide::Flow);
+            let pane = runtime.active_tab_mut().pane_mut(pane::PaneSide::Flow);
             if mode == StrategyDemoMode::EndedBadge {
                 // End the span the way the trader does — by moving the
                 // rectangle — rather than by stamping a state on. The
@@ -426,11 +464,11 @@ pub(super) fn apply_strategy_demo<D: OwnersDesk>(desk: &mut D) {
             pane.drawings.select(None);
         }
         StrategyDemoMode::Popup | StrategyDemoMode::AlarmPopup | StrategyDemoMode::AlarmSounds => {
-            let popup = &mut owners.surfaces.strategy_popup;
+            let popup = &mut surfaces.strategy_popup;
             if mode == StrategyDemoMode::AlarmSounds {
                 popup.update(quantick_ui_model::strategy_popup::Intent::StageSoundPicker);
             }
-            let tab = owners.runtime.tabs.active_id();
+            let tab = runtime.tabs.active_id();
             popup.update(quantick_ui_model::strategy_popup::Intent::Open {
                 tab,
                 side: pane::PaneSide::Flow,
@@ -443,7 +481,7 @@ pub(super) fn apply_strategy_demo<D: OwnersDesk>(desk: &mut D) {
     // panel the launch may have asked for: keep a
     // `QUANTICK_DRAWING_INSPECTOR=1` request alive across it, as every
     // placing demo does.
-    owners.surfaces.drawing_chrome.carry_across_selection();
+    surfaces.drawing_chrome.carry_across_selection();
 }
 
 /// One deterministic prefix generator, shared with the legacy venue scenario.
@@ -488,19 +526,21 @@ fn close(pane: &ChartPane, slot: usize) -> Option<f64> {
         .and_then(|bar| rust_decimal::prelude::ToPrimitive::to_f64(&bar.close))
 }
 #[cfg(any(feature = "drawing-harness", test))]
-pub(super) fn apply_drawing_demo<D: OwnersDesk>(desk: &mut D) {
-    let owners = desk.owners();
-    let chrome = &mut owners.surfaces.drawing_chrome;
+pub(super) fn apply_drawing_demo(
+    runtime: &mut WorkspaceRuntime,
+    surfaces: &mut crate::surfaces::Surfaces,
+) {
+    let chrome = &mut surfaces.drawing_chrome;
     if !chrome.demos().gallery_requested() {
         return;
     }
-    let slots = owners.runtime.active_tab().flow_pane.slots();
+    let slots = runtime.active_tab().flow_pane.slots();
     let tools = crate::drawings::DRAWING_TOOLS;
     if !chrome.demos().gallery_ready(slots, tools.len()) {
         return;
     }
 
-    let pane = &owners.runtime.active_tab().flow_pane;
+    let pane = &runtime.active_tab().flow_pane;
     let series = facts(pane);
     let samples = chrome
         .demos()
@@ -516,12 +556,11 @@ pub(super) fn apply_drawing_demo<D: OwnersDesk>(desk: &mut D) {
         return;
     };
     if plan.shared == Some(true) {
-        owners
-            .runtime
+        runtime
             .active_tab_mut()
             .set_layout(CanvasLayout::TimeAndFlow);
     }
-    let pane = &mut owners.runtime.active_tab_mut().flow_pane;
+    let pane = &mut runtime.active_tab_mut().flow_pane;
     plan.project_times(|slot| pane.slot_open_time(slot));
     let center = plan.apply_main(&mut pane.drawings, |intent| chrome.scenario(intent));
     if let (Some(center), Some(chart)) = (center, pane.frame.chart_area) {
@@ -533,7 +572,7 @@ pub(super) fn apply_drawing_demo<D: OwnersDesk>(desk: &mut D) {
     chrome.carry_across_selection();
     // Recut follows taking the ready gallery, even if placement made no object.
     if chrome.demos().recut_requested() {
-        let tab = owners.runtime.active_tab_mut();
+        let tab = runtime.active_tab_mut();
         let pane = &mut tab.flow_pane;
         let first = pane.slot_open_time(0);
         let base = close(pane, 0);
@@ -547,13 +586,14 @@ pub(super) fn apply_drawing_demo<D: OwnersDesk>(desk: &mut D) {
     }
 }
 #[cfg(any(feature = "drawing-harness", test))]
-pub(super) fn apply_drawing_draft<D: OwnersDesk>(desk: &mut D) {
-    let owners = desk.owners();
-    let surfaces = owners.surfaces;
+pub(super) fn apply_drawing_draft(
+    runtime: &mut WorkspaceRuntime,
+    surfaces: &mut crate::surfaces::Surfaces,
+) {
     if surfaces.drawing_chrome.demos().draft_requested().is_none() {
         return;
     }
-    let pane = &owners.runtime.active_tab().flow_pane;
+    let pane = &runtime.active_tab().flow_pane;
     let (chart, facts) = (pane.frame.chart_area, facts(pane));
     let Some(ScenarioEffect::Draft(mut plan)) =
         surfaces
@@ -566,25 +606,23 @@ pub(super) fn apply_drawing_draft<D: OwnersDesk>(desk: &mut D) {
     else {
         return;
     };
-    let pane = &mut owners.runtime.active_tab_mut().flow_pane;
+    let pane = &mut runtime.active_tab_mut().flow_pane;
     plan.project_times(|slot| pane.slot_open_time(slot));
     plan.apply(&mut pane.drawings);
     pane.gestures.parked_hand = Some(plan.hand(chart.expect("model requires chart")));
 }
 #[cfg(any(feature = "drawing-harness", test))]
-pub(super) fn apply_frvp_demo<D: OwnersDesk>(desk: &mut D) {
-    let owners = desk.owners();
-    let chrome = &mut owners.surfaces.drawing_chrome;
+pub(super) fn apply_frvp_demo(
+    runtime: &mut WorkspaceRuntime,
+    surfaces: &mut crate::surfaces::Surfaces,
+) {
+    let chrome = &mut surfaces.drawing_chrome;
     let Some(request) = chrome.demos().profile_requested() else {
         return;
     };
     let index = usize::from(request.stress);
     // Optional access proves the target exists; pane_mut's fallback cannot.
-    let slots = owners
-        .runtime
-        .active_tab()
-        .pane_at(index)
-        .map(ChartPane::slots);
+    let slots = runtime.active_tab().pane_at(index).map(ChartPane::slots);
     let tool = crate::drawings::DRAWING_TOOLS
         .into_iter()
         .find(|tool| tool.id() == crate::frvp::TOOL_ID);
@@ -595,14 +633,14 @@ pub(super) fn apply_frvp_demo<D: OwnersDesk>(desk: &mut D) {
         Some(ScenarioEffect::ProfilePreparation(ProfilePreparation::Ready)) => {}
         Some(ScenarioEffect::ProfilePreparation(ProfilePreparation::Prefix { candles })) => {
             let complete = quantick_feed::OhlcvSlice::Last { complete: true };
-            if !deliver_synthetic_prefix(owners.runtime, candles, complete) {
+            if !deliver_synthetic_prefix(runtime, candles, complete) {
                 return;
             }
         }
         _ => return,
     }
     // The same actual pane survives delivery. Fresh slots include its prefix.
-    let Some(pane) = owners.runtime.active_tab_mut().pane_at_mut(index) else {
+    let Some(pane) = runtime.active_tab_mut().pane_at_mut(index) else {
         return;
     };
     let facts = ProfileFacts {
@@ -626,13 +664,15 @@ pub(super) fn apply_frvp_demo<D: OwnersDesk>(desk: &mut D) {
     }
 }
 #[cfg(any(feature = "drawing-harness", test))]
-pub(super) fn apply_avwap_demo<D: OwnersDesk>(desk: &mut D) {
-    let owners = desk.owners();
-    let chrome = &mut owners.surfaces.drawing_chrome;
+pub(super) fn apply_avwap_demo(
+    runtime: &mut WorkspaceRuntime,
+    surfaces: &mut crate::surfaces::Surfaces,
+) {
+    let chrome = &mut surfaces.drawing_chrome;
     if !chrome.demos().avwap_requested() {
         return;
     }
-    let slots = owners.runtime.active_tab().flow_pane.slots();
+    let slots = runtime.active_tab().flow_pane.slots();
     let effect = chrome.scenario(ScenarioIntent::AvwapReady { slots });
     let Some((geometry, tool)) = demo::resolve_avwap(effect, || {
         crate::drawings::DRAWING_TOOLS
@@ -641,7 +681,7 @@ pub(super) fn apply_avwap_demo<D: OwnersDesk>(desk: &mut D) {
     }) else {
         return;
     };
-    let pane = &mut owners.runtime.active_tab_mut().flow_pane;
+    let pane = &mut runtime.active_tab_mut().flow_pane;
     let price = close(pane, geometry.slot);
     let mut plan = geometry.plan(tool, price);
     plan.project_times(|slot| pane.slot_open_time(slot));

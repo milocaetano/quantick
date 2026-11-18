@@ -100,7 +100,10 @@ fn stress_without_a_flow_anchor_retries_then_uses_the_real_delivery_path() {
         &mut app.active_tab_mut().flow_pane.series.state,
         crate::state::ChartState::new(crate::state::BarSpec::Tick(1)),
     );
-    crate::app::demo_hooks::apply_frvp_demo(&mut app);
+    {
+        let o = crate::app::owners_desk::OwnersDesk::owners(&mut app);
+        crate::app::demo_hooks::apply_frvp_demo(o.runtime, o.surfaces)
+    };
     assert!(
         app.surfaces
             .drawing_chrome
@@ -117,7 +120,10 @@ fn stress_without_a_flow_anchor_retries_then_uses_the_real_delivery_path() {
             .is_empty()
     );
     app.active_tab_mut().flow_pane.series.state = flow;
-    crate::app::demo_hooks::apply_frvp_demo(&mut app);
+    {
+        let o = crate::app::owners_desk::OwnersDesk::owners(&mut app);
+        crate::app::demo_hooks::apply_frvp_demo(o.runtime, o.surfaces)
+    };
     assert!(
         app.surfaces
             .drawing_chrome
@@ -173,7 +179,10 @@ fn nine_hook_case(case: &str, env: Env) {
                 app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
                 app.active_tab_mut().canvas.fold(false, true);
             }
-            crate::app::demo_hooks::apply_drawing_demo(&mut app);
+            {
+                let o = crate::app::owners_desk::OwnersDesk::owners(&mut app);
+                crate::app::demo_hooks::apply_drawing_demo(o.runtime, o.surfaces)
+            };
             assert!(!app.surfaces.drawing_chrome.demos().gallery_requested());
             let pane = &app.active_tab().flow_pane;
             assert!(pane.drawings.items().len() >= drawings::DRAWING_TOOLS.len());
@@ -218,7 +227,10 @@ fn nine_hook_case(case: &str, env: Env) {
                         .id(),
                     "horizontal-line"
                 );
-                crate::app::demo_hooks::apply_frvp_demo(&mut app);
+                {
+                    let o = crate::app::owners_desk::OwnersDesk::owners(&mut app);
+                    crate::app::demo_hooks::apply_frvp_demo(o.runtime, o.surfaces)
+                };
                 assert!(
                     app.surfaces
                         .drawing_chrome
@@ -258,11 +270,17 @@ fn nine_hook_case(case: &str, env: Env) {
                 );
             }
             let before = app.active_tab().flow_pane.drawings.items().len();
-            crate::app::demo_hooks::apply_drawing_demo(&mut app);
+            {
+                let o = crate::app::owners_desk::OwnersDesk::owners(&mut app);
+                crate::app::demo_hooks::apply_drawing_demo(o.runtime, o.surfaces)
+            };
             assert_eq!(app.active_tab().flow_pane.drawings.items().len(), before);
         }
         "draft" | "draft-zero" => {
-            crate::app::demo_hooks::apply_drawing_draft(&mut app);
+            {
+                let o = crate::app::owners_desk::OwnersDesk::owners(&mut app);
+                crate::app::demo_hooks::apply_drawing_draft(o.runtime, o.surfaces)
+            };
             assert!(
                 app.surfaces
                     .drawing_chrome
@@ -282,7 +300,10 @@ fn nine_hook_case(case: &str, env: Env) {
                     .find(|tool| tool.id() == id)
                     .unwrap(),
             ));
-            crate::app::demo_hooks::apply_drawing_draft(&mut app);
+            {
+                let o = crate::app::owners_desk::OwnersDesk::owners(&mut app);
+                crate::app::demo_hooks::apply_drawing_draft(o.runtime, o.surfaces)
+            };
             assert!(
                 app.surfaces
                     .drawing_chrome
@@ -312,7 +333,10 @@ fn nine_hook_case(case: &str, env: Env) {
             }
         }
         "profile" | "compare" | "compare-wait" => {
-            crate::app::demo_hooks::apply_frvp_demo(&mut app);
+            {
+                let o = crate::app::owners_desk::OwnersDesk::owners(&mut app);
+                crate::app::demo_hooks::apply_frvp_demo(o.runtime, o.surfaces)
+            };
             if case == "compare-wait" {
                 assert!(
                     app.surfaces
@@ -351,7 +375,10 @@ fn nine_hook_case(case: &str, env: Env) {
             assert_eq!(pane.drawings.selected(), Some(ranges.len() - 1));
         }
         "avwap" => {
-            crate::app::demo_hooks::apply_avwap_demo(&mut app);
+            {
+                let o = crate::app::owners_desk::OwnersDesk::owners(&mut app);
+                crate::app::demo_hooks::apply_avwap_demo(o.runtime, o.surfaces)
+            };
             assert!(!app.surfaces.drawing_chrome.demos().avwap_requested());
             let pane = &app.active_tab().flow_pane;
             assert_eq!(pane.drawings.items().len(), 1);
@@ -371,9 +398,18 @@ fn nine_hook_case(case: &str, env: Env) {
             );
         }
         "wait" => {
-            crate::app::demo_hooks::apply_drawing_demo(&mut app);
-            crate::app::demo_hooks::apply_frvp_demo(&mut app);
-            crate::app::demo_hooks::apply_avwap_demo(&mut app);
+            {
+                let o = crate::app::owners_desk::OwnersDesk::owners(&mut app);
+                crate::app::demo_hooks::apply_drawing_demo(o.runtime, o.surfaces)
+            };
+            {
+                let o = crate::app::owners_desk::OwnersDesk::owners(&mut app);
+                crate::app::demo_hooks::apply_frvp_demo(o.runtime, o.surfaces)
+            };
+            {
+                let o = crate::app::owners_desk::OwnersDesk::owners(&mut app);
+                crate::app::demo_hooks::apply_avwap_demo(o.runtime, o.surfaces)
+            };
             assert!(app.surfaces.drawing_chrome.demos().gallery_requested());
             assert!(
                 app.surfaces
@@ -406,7 +442,10 @@ fn nine_hook_case(case: &str, env: Env) {
                 app.surfaces.drawing_chrome.demos().recut_requested(),
                 "recut is read independently"
             );
-            crate::app::demo_hooks::apply_drawing_demo(&mut app);
+            {
+                let o = crate::app::owners_desk::OwnersDesk::owners(&mut app);
+                crate::app::demo_hooks::apply_drawing_demo(o.runtime, o.surfaces)
+            };
             assert_eq!(
                 app.active_tab()
                     .flow_pane
@@ -428,7 +467,10 @@ fn nine_hook_case(case: &str, env: Env) {
                 tab.apply_pending_layout(tab_id, config, style, pane_ids);
             }
             assert!(app.active_tab().time_pane().unwrap().slots() >= 12);
-            crate::app::demo_hooks::apply_frvp_demo(&mut app);
+            {
+                let o = crate::app::owners_desk::OwnersDesk::owners(&mut app);
+                crate::app::demo_hooks::apply_frvp_demo(o.runtime, o.surfaces)
+            };
             assert!(
                 app.surfaces
                     .drawing_chrome

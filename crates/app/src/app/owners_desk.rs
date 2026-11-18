@@ -35,6 +35,8 @@ pub(crate) struct WindowOwners<'a> {
     pub(super) control: &'a mut super::control_host::ControlState,
     #[cfg(any(feature = "scenario-harness", test))]
     pub(super) audio: &'a mut super::replay_and_history::AlertState,
+    #[cfg(any(feature = "scenario-harness", test))]
+    pub(super) config: &'a crate::config::AppConfig,
 }
 
 impl<'a> WindowOwners<'a> {
@@ -60,6 +62,8 @@ impl OwnersDesk for QuantickApp {
             control: &mut self.control,
             #[cfg(any(feature = "scenario-harness", test))]
             audio: &mut self.audio,
+            #[cfg(any(feature = "scenario-harness", test))]
+            config: &self.config,
         }
     }
     #[cfg(any(feature = "scenario-harness", test))]
