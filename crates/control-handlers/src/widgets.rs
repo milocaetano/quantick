@@ -11,7 +11,6 @@
 use std::borrow::Cow;
 use std::collections::BTreeMap;
 
-use crate::chrome_owners::ChromeOwners;
 use quantick_chart::widgets::big_trades::{BigTradesLayout, NotionalUnit, big_trades_view};
 use quantick_chart::widgets::depth::{
     DEPTH_RESTING_BAR_SHARE, DEPTH_VOLUME_BAR_SHARE, depth_rows_per_side, depth_view,
@@ -370,11 +369,26 @@ pub fn read(state: WidgetState, market: String, scene: &WidgetScene) -> WidgetRe
     }
 }
 
-/// [`crate::chrome_owners::WidgetOwner::widget`] on the panes the window lends.
+/// What the window lends the three capabilities.
+pub trait WidgetHost {
+    /// The owner, borrowed for one call; `None` for a host without panes.
+    fn widgets(&mut self) -> Option<Box<dyn WidgetOwner + '_>> {
+        None
+    }
+}
+
+/// The widget panes' owner: the panes beside the tab they paint for.
+pub trait WidgetOwner {
+    /// Open or close the pane `id` names when `open` says so, then what it
+    /// paints for the active tab; or why not.
+    fn widget(&mut self, id: &str, open: Option<bool>) -> Result<WidgetRead, String>;
+}
+
+/// [`WidgetOwner::widget`] on the panes the window lends.
 ///
 /// # Errors
 /// Why not, or a window that lends no panes.
-pub fn widget<H: ChromeOwners + ?Sized>(
+pub fn widget<H: WidgetHost + ?Sized>(
     app: &mut H,
     id: &str,
     open: Option<bool>,
@@ -397,7 +411,7 @@ pub fn find<'a>(registry: &'a [WidgetSpec], id: &str) -> Result<&'a WidgetSpec, 
 pub fn register<D, H, A>(registry: &mut D) -> Result<(), RegistryError>
 where
     D: ActionDock<H, A>,
-    H: ChromeOwners + ?Sized,
+    H: WidgetHost + ?Sized,
     A: NotifyAccess,
 {
     registry.register_outside_replay(open_descriptor(), open)?;
@@ -405,7 +419,7 @@ where
     registry.register(read_widget_descriptor(), read_action)
 }
 
-fn open<H: ChromeOwners + ?Sized, A: NotifyAccess>(
+fn open<H: WidgetHost + ?Sized, A: NotifyAccess>(
     app: &mut H,
     access: &mut A,
     actor: &ActorContext,
@@ -414,7 +428,7 @@ fn open<H: ChromeOwners + ?Sized, A: NotifyAccess>(
     toggle(app, access, actor, input, true)
 }
 
-fn close<H: ChromeOwners + ?Sized, A: NotifyAccess>(
+fn close<H: WidgetHost + ?Sized, A: NotifyAccess>(
     app: &mut H,
     access: &mut A,
     actor: &ActorContext,
@@ -423,7 +437,7 @@ fn close<H: ChromeOwners + ?Sized, A: NotifyAccess>(
     toggle(app, access, actor, input, false)
 }
 
-fn toggle<H: ChromeOwners + ?Sized, A: NotifyAccess>(
+fn toggle<H: WidgetHost + ?Sized, A: NotifyAccess>(
     app: &mut H,
     access: &mut A,
     actor: &ActorContext,
@@ -444,7 +458,7 @@ fn toggle<H: ChromeOwners + ?Sized, A: NotifyAccess>(
     serde_json::to_value(state).map_err(|error| ControlError::invalid_request(error.to_string()))
 }
 
-fn read_action<H: ChromeOwners + ?Sized, A>(
+fn read_action<H: WidgetHost + ?Sized, A>(
     app: &mut H,
     _: &mut A,
     _: &ActorContext,

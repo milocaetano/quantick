@@ -651,3 +651,97 @@ fn the_palette_rolls_through_the_roll_rule() {
     let stale = settle(&mut host, roll()).unwrap_err();
     assert!(stale.contains("no longer shows BTCUSDT"), "{stale}");
 }
+
+/// A window that lends recording tabs and shows the palette when `lends`
+/// says so.
+struct Lender {
+    lends: bool,
+    moves: Vec<String>,
+    palette: Option<(String, bool)>,
+}
+
+struct Tabs<'a>(&'a mut Vec<String>);
+
+impl MarketTabs for Tabs<'_> {
+    fn focus_tab(&mut self, index: usize) {
+        self.0.push(format!("focus {index}"));
+    }
+    fn open_tab(&mut self, choice: &OpenChoice, bar: Option<BarConfiguration>) -> TabOpening {
+        let bar = bar.map(|bar| bar.to_config_string());
+        self.0.push(format!("open {} {bar:?}", choice.symbol));
+        Ok(9)
+    }
+    fn set_flow_bar(&mut self, tab: u64, bar: BarConfiguration) -> Result<(), String> {
+        self.0.push(format!("bar {tab} {}", bar.to_config_string()));
+        Ok(())
+    }
+}
+
+impl MarketPaletteOwners for Lender {
+    fn listed_markets(&self) -> MarketSnapshot {
+        MarketSnapshot {
+            starter_feed: "binance".to_owned(),
+            ..MarketSnapshot::default()
+        }
+    }
+    fn market_tabs(&mut self) -> Option<Box<dyn MarketTabs + '_>> {
+        let tabs: Box<dyn MarketTabs + '_> = Box::new(Tabs(&mut self.moves));
+        self.lends.then_some(tabs)
+    }
+    fn show_market_palette(&mut self, query: &str, target: Option<SwitchTarget>) -> bool {
+        self.palette = Some((query.to_owned(), target.is_some()));
+        self.lends
+    }
+}
+
+fn lent_choice(symbol: &str) -> OpenChoice {
+    OpenChoice {
+        feed_id: "binance".to_owned(),
+        symbol: symbol.to_owned(),
+        bar: String::new(),
+        context_bars: Vec::new(),
+        inherit_bar: true,
+        workspace: "Default".to_owned(),
+        background: false,
+    }
+}
+
+#[test]
+fn the_primitives_reach_the_lent_owners() {
+    let mut window = Lender {
+        lends: true,
+        moves: Vec::new(),
+        palette: None,
+    };
+    assert_eq!(window.market_snapshot().starter_feed, "binance");
+    window.focus_tab(2);
+    assert_eq!(window.open_tab(&lent_choice("ETHUSDT"), None), Ok(9));
+    let bar = BUILTIN_BARS.parse("tick:50").unwrap();
+    window.set_flow_bar(5, bar).unwrap();
+    assert_eq!(
+        window.moves,
+        ["focus 2", "open ETHUSDT None", "bar 5 tick:50"]
+    );
+    window.open_market_palette("> ", None).unwrap();
+    assert_eq!(window.palette, Some(("> ".to_owned(), false)));
+}
+
+#[test]
+fn a_window_that_lends_nothing_refuses_each_primitive() {
+    let mut window = Lender {
+        lends: false,
+        moves: Vec::new(),
+        palette: None,
+    };
+    let unavailable = "markets cannot be opened here";
+    let open = window.open_tab(&lent_choice("X"), None);
+    assert_eq!(open.unwrap_err(), unavailable);
+    let edit = window.edit_catalog("binance", "X", true);
+    assert_eq!(edit.unwrap_err(), unavailable);
+    let bar = BUILTIN_BARS.parse("tick:50").unwrap();
+    assert_eq!(window.set_flow_bar(5, bar).unwrap_err(), unavailable);
+    let palette = window.open_market_palette("", None).unwrap_err();
+    assert_eq!(palette.message, unavailable);
+    window.focus_tab(0);
+    assert!(window.moves.is_empty());
+}

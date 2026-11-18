@@ -2,7 +2,7 @@
 //! palette's Enter and Delete and the three calls go through [`open`],
 //! [`remove`] and [`settle`] here, over the headless market list, so the two
 //! doors cannot decide differently. The host lends primitives only.
-use crate::chrome_owners::ChromeOwners;
+use quantick_stores::symbol_catalog::SymbolCatalog;
 use crate::dock::ActionDock;
 use crate::notify::NotifyAccess;
 use crate::workspace_book::WorkspaceBookHost;
@@ -26,7 +26,42 @@ use serde_json::Value;
 
 const UNAVAILABLE: &str = "markets cannot be opened here";
 
-pub use crate::chrome_owners::{MarketTabs, TabOpening};
+/// The new tab's id, or why it did not open.
+pub type TabOpening = Result<u64, String>;
+
+/// What the window lends the palette: the owners each primitive acts on,
+/// borrowed for one call. Each default lends nothing, which every call
+/// answers as unavailable.
+pub trait MarketPaletteOwners {
+    /// What "Open a market" lists now: the config's markets and the open tabs.
+    fn listed_markets(&self) -> MarketSnapshot {
+        MarketSnapshot::default()
+    }
+    /// The open tabs, as an open, a focus or a bar change moves them.
+    fn market_tabs(&mut self) -> Option<Box<dyn MarketTabs + '_>> {
+        None
+    }
+    /// Each feed's symbol list, which an add or a removal edits.
+    fn market_catalog(&mut self) -> Option<SymbolCatalog<'_>> {
+        None
+    }
+    /// Show the palette on `query`, switching `target`'s tab when there is one.
+    fn show_market_palette(&mut self, _query: &str, _target: Option<SwitchTarget>) -> bool {
+        false
+    }
+}
+
+/// The open tabs as the palette moves them, lent for one call.
+pub trait MarketTabs {
+    /// Bring the tab at this zero-based place forward, off Home.
+    fn focus_tab(&mut self, index: usize);
+    /// Open a tab on the choice's market, on `bar` (none: the one any new
+    /// tab takes), joining the choice's workspace ([`OpenChoice::arrival`]),
+    /// and answer its id; a background choice keeps the tab on screen.
+    fn open_tab(&mut self, choice: &OpenChoice, bar: Option<BarConfiguration>) -> TabOpening;
+    /// Put tab `tab`'s flow pane on `bar`, as its bars menu does.
+    fn set_flow_bar(&mut self, tab: u64, bar: BarConfiguration) -> Result<(), String>;
+}
 
 pub trait MarketPaletteHost {
     /// What "Open a market" lists now.
@@ -59,8 +94,8 @@ pub trait MarketPaletteHost {
     }
 }
 
-/// The window's palette primitives are the owners it lends.
-impl<T: ChromeOwners + ?Sized> MarketPaletteHost for T {
+/// The window's palette primitives are the owners it lends ([`MarketPaletteOwners`]).
+impl<T: MarketPaletteOwners + ?Sized> MarketPaletteHost for T {
     fn market_snapshot(&self) -> MarketSnapshot {
         self.listed_markets()
     }

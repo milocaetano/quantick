@@ -282,3 +282,40 @@ fn a_hook_list_opens_only_the_panes_the_registry_knows() {
     deck.open_listed(&REGISTRY, " big_trades ,tape,,depth");
     assert_eq!(deck.open_ids(), ["big_trades", "depth"]);
 }
+
+/// A window that lends recording panes when `lends` says so.
+struct Window {
+    lends: bool,
+    asked: Vec<String>,
+}
+
+struct Panes<'a>(&'a mut Vec<String>);
+
+impl WidgetOwner for Panes<'_> {
+    fn widget(&mut self, id: &str, open: Option<bool>) -> Result<WidgetRead, String> {
+        self.0.push(format!("{id} {open:?}"));
+        Err("recorded".to_owned())
+    }
+}
+
+impl WidgetHost for Window {
+    fn widgets(&mut self) -> Option<Box<dyn WidgetOwner + '_>> {
+        let panes: Box<dyn WidgetOwner + '_> = Box::new(Panes(&mut self.asked));
+        self.lends.then_some(panes)
+    }
+}
+
+#[test]
+fn a_widget_call_reaches_the_lent_panes_and_a_window_without_them_refuses() {
+    let mut window = Window {
+        lends: true,
+        asked: Vec::new(),
+    };
+    let reached = widget(&mut window, "tape", Some(true)).unwrap_err();
+    assert_eq!(reached, "recorded");
+    assert_eq!(window.asked, ["tape Some(true)"]);
+    window.lends = false;
+    let refused = widget(&mut window, "tape", None).unwrap_err();
+    assert_eq!(refused, "widget panes are unavailable here");
+    assert_eq!(window.asked.len(), 1);
+}

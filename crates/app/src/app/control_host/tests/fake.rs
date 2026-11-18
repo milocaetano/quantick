@@ -163,7 +163,9 @@ impl TabsMutPort for FakeWindow {
 }
 
 impl quantick_control_handlers::native_window::NativeWindowHost for FakeWindow {}
-impl quantick_control_handlers::chrome_owners::ChromeOwners for FakeWindow {}
+impl quantick_control_handlers::home_tab::HomeTabHost for FakeWindow {}
+impl quantick_control_handlers::market_palette::MarketPaletteOwners for FakeWindow {}
+impl quantick_control_handlers::widgets::WidgetHost for FakeWindow {}
 impl quantick_control_handlers::desk::DeskHost for FakeWindow {}
 impl quantick_control_handlers::workspace_book::WorkspaceBookHost for FakeWindow {}
 impl quantick_control_handlers::canvas::CanvasHost for FakeWindow {}

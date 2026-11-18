@@ -1,20 +1,50 @@
-//! The Home tab through its owner, which the window lends ([`ChromeOwners`]).
-use crate::chrome_owners::{ChromeOwners, HomeTab};
+//! The Home tab through its owner, which the window lends ([`HomeTabHost`]).
 use crate::dock::ActionDock;
 use quantick_control::{error::ControlError, registry::RegistryError, wire::ActorContext};
 use quantick_control_schema::home_tab::{
     HomeLeaveInput, HomeLeaveResult, HomeShowInput, HomeShowResult, descriptor, leave_descriptor,
 };
 use quantick_control_schema::scene::ActiveSurfaceDto;
+use quantick_workspace::arrangement::strip::{MarketShown, StripSurface};
 use serde_json::Value;
 
 const NO_HOME: &str = "the Home tab is unavailable";
+
+/// What the window lends the Home calls.
+pub trait HomeTabHost {
+    /// The owner, borrowed for one call; `None` for a host without a strip.
+    fn home_tab(&mut self) -> Option<HomeTab<'_>> {
+        None
+    }
+}
+
+/// Home's owner for one call: the strip's surface and the market on screen,
+/// which Home holds while it hides it.
+pub struct HomeTab<'a> {
+    surface: &'a mut StripSurface,
+    shown: MarketShown<'a>,
+}
+
+impl<'a> HomeTab<'a> {
+    #[must_use]
+    pub fn new(surface: &'a mut StripSurface, shown: MarketShown<'a>) -> Self {
+        Self { surface, shown }
+    }
+    /// Bring Home over the market on screen.
+    pub fn show(self) {
+        self.surface.show_home(self.shown);
+    }
+    /// Put the market Home hid back on screen.
+    pub fn leave(self) {
+        self.surface.show_market();
+    }
+}
 
 /// Bring Home over the market on screen.
 ///
 /// # Errors
 /// A window that lends no Home.
-pub fn show_home<H: ChromeOwners + ?Sized>(app: &mut H) -> Result<(), ControlError> {
+pub fn show_home<H: HomeTabHost + ?Sized>(app: &mut H) -> Result<(), ControlError> {
     lent(app).map(HomeTab::show)
 }
 
@@ -22,24 +52,24 @@ pub fn show_home<H: ChromeOwners + ?Sized>(app: &mut H) -> Result<(), ControlErr
 ///
 /// # Errors
 /// A window that lends no Home.
-pub fn leave_home<H: ChromeOwners + ?Sized>(app: &mut H) -> Result<(), ControlError> {
+pub fn leave_home<H: HomeTabHost + ?Sized>(app: &mut H) -> Result<(), ControlError> {
     lent(app).map(HomeTab::leave)
 }
 
-fn lent<H: ChromeOwners + ?Sized>(app: &mut H) -> Result<HomeTab<'_>, ControlError> {
+fn lent<H: HomeTabHost + ?Sized>(app: &mut H) -> Result<HomeTab<'_>, ControlError> {
     (app.home_tab()).ok_or_else(|| ControlError::invalid_request(NO_HOME))
 }
 
 /// Outside the replay trace: Home works during a replay because it changes no
 /// market, and a recorded call must not bring Home up when a session re-runs.
-pub fn register<H: ChromeOwners + ?Sized, A>(
+pub fn register<H: HomeTabHost + ?Sized, A>(
     registry: &mut impl ActionDock<H, A>,
 ) -> Result<(), RegistryError> {
     registry.register_outside_replay(descriptor(), show)?;
     registry.register_outside_replay(leave_descriptor(), leave)
 }
 
-fn show<H: ChromeOwners + ?Sized, A>(
+fn show<H: HomeTabHost + ?Sized, A>(
     app: &mut H,
     _: &mut A,
     _: &ActorContext,
@@ -54,7 +84,7 @@ fn show<H: ChromeOwners + ?Sized, A>(
     .map_err(invalid)
 }
 
-fn leave<H: ChromeOwners + ?Sized, A>(
+fn leave<H: HomeTabHost + ?Sized, A>(
     app: &mut H,
     _: &mut A,
     _: &ActorContext,
@@ -68,3 +98,7 @@ fn leave<H: ChromeOwners + ?Sized, A>(
     })
     .map_err(invalid)
 }
+
+#[cfg(test)]
+#[path = "home_tab_tests.rs"]
+mod tests;

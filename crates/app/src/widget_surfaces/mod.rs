@@ -161,7 +161,7 @@ pub(crate) struct WidgetDesk<'a> {
     pub(crate) reads: (&'a AppConfig, TzOffset),
 }
 
-impl quantick_control_handlers::chrome_owners::WidgetOwner for WidgetDesk<'_> {
+impl quantick_control_handlers::widgets::WidgetOwner for WidgetDesk<'_> {
     fn widget(&mut self, id: &str, open: Option<bool>) -> Result<WidgetRead, String> {
         let spec = handlers::find(&WIDGET_SURFACES, id)?;
         let surfaces = &mut *self.surfaces;
