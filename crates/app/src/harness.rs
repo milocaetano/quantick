@@ -14,7 +14,7 @@
 //! `std::env::var` call somewhere in the eight hundred lines of boot that
 //! follow it. Twenty-three of the trunk's ninety-eight fields were that
 //! wiring, sitting in the same struct as the state the chart does trade on, so
-//! every module that touched the trunk saw them. `arch-review` dimension 9 is
+//! every module that touched the trunk saw them. `CLAUDE.md`'s docking rule is
 //! the review half of that story and `crates/guards/src/size.rs` the
 //! mechanical half; this module is the place the wiring goes instead.
 //!

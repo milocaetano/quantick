@@ -631,7 +631,7 @@ Rules that make the budgets real:
   100k synthetic bars) and `crates/pine/benches/interp.rs` (the starter-pack
   scripts over the same bars), plain `harness = false` like
   `engine/benches/hot_path.rs`. Bench numbers go in PR descriptions
-  (`arch-review` skill will ask for them).
+  (the code-review will ask for them).
 
 If — and only if — the interpreter bench misses budget: first constant-fold
 the AST harder, then consider a flat bytecode pass. Do not build the VM

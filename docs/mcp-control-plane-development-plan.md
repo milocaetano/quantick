@@ -1489,7 +1489,7 @@ The MVP is complete when:
   capability inventory, transport ADR, and observer threat model.
 - [`CLAUDE.md`](../CLAUDE.md): Architecture, determinism, dependency direction,
   and the "operable without a hand" rule.
-- [Local architecture review](../.claude/skills/arch-review/SKILL.md): The
+- Local architecture review (the `arch-review` skill, since retired): The
   second-operator contract, including Act, Read, Discover, authorship, and
   authority.
 - [New extension guide](../.claude/skills/new-extension/SKILL.md): Docking

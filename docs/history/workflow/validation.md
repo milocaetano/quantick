@@ -1,3 +1,6 @@
+> **History.** Evidence from the retired `mission`/`campaign` workflow (retired
+> 2026-11-17); kept as a record, not as current rules.
+
 # Initial workflow throughput validation
 
 Issue: [#344](https://github.com/milocaetano/quantick/issues/344).

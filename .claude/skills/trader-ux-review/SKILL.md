@@ -60,4 +60,4 @@ diverge), then findings by severity — flow, persona, evidence (capture or
 `file:line`), concrete fix. Close with one line per persona: can Rafa trade
 through it, can Marina keep her workspace, can Duda figure it out alone? A
 clean review says so briefly. Blockers and Should-fixes are resolved or
-explicitly deferred in the PR body, like `arch-review`'s.
+explicitly deferred in the PR body.

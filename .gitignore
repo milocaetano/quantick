@@ -32,7 +32,7 @@ footprint-settings.toml
 footprint-presets.toml
 indicator-presets.toml
 
-# Local mission state and execution evidence never belong in Git.
+# Local goal state and execution evidence never belong in Git.
 .claude/GOAL*.md
 .claude/goal-archive-rescued/
 .claude/evidence/

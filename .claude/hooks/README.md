@@ -22,20 +22,21 @@ its `/hooks` screen, as required by the
 | `guard-watch` | `PostToolUse` | `Edit`, `Write`, `apply_patch` | Cannot block, and is not meant to. Runs the already-built `quantick-guards` binary over each file just written and reports what the repository guards found. Silent when nothing was found, when the binary has not been built, or when the file is outside a repository. |
 | `review-verdict` | `PostToolUse`, `SubagentStop` | `SubagentHandback` | Cannot block. Records `code-review-ok` from a review subagent's `REVIEW-VERDICT` line; see the `implement` tier. Claude Code only. |
 
-## Why `guard-watch` never blocks and never builds
+## Non-main bases: `mission-base`
 
-Campaign children use the branch-bound `mission-base` record and shared
-`campaign_context.sh` commands documented in
-[`docs/campaign/integration.md`](../../docs/campaign/integration.md).
-That contract overrides the main-only review examples below for those tasks.
-The campaign key binds target ref/tip as well as diff. Invalid context fails
-closed; ready verifies the PR base/head, and merge additionally requires a
-persisted grant, current base, passing CI and the explicit head-pinned command.
-Main merges, auto-merge and queue shortcuts are reserved for the user.
-`campaign_context_test.sh` exercises these boundaries with
-real git fixtures and fake GitHub responses through both client payloads; the
-main guardrail suite invokes it in CI. Existing command-detection limitations
-still apply; GitHub branch protections are the security boundary.
+A task that targets a `feat/*` or `feature/*` branch records
+`<branch> origin/<target> <parent issue|none> <grant|none>` in its git dir's
+`mission-base` (the name predates the retired `mission` skill), read by
+`mission_base.sh`. A `/feature` child names its parent issue and merge grant;
+its key binds the target ref and tip as well as the diff. Invalid records fail
+closed; ready verifies the PR base/head, and merge additionally requires the
+persisted grant, current base, passing CI and the explicit head-pinned
+command. Main merges, auto-merge and queue shortcuts are reserved for the
+user. `mission_base_test.sh` exercises these boundaries with real git fixtures
+and fake GitHub responses through both client payloads; the main guardrail
+suite invokes it in CI. GitHub branch protections are the security boundary.
+
+## Why `guard-watch` never blocks and never builds
 
 The other three modes are gates. This one is a courier.
 
@@ -81,20 +82,16 @@ Leaving draft is where work leaves the branch: a non-draft `gh pr create`,
 `gh pr ready` and `gh pr merge` each want a current `code-review-ok`, the
 exact-diff key recorded from the code-review skill's verdict (see the
 `implement` tier for how it is written). Ready and merge must name the PR
-number - full CI and the campaign checks are read for one PR, never a guessed
-one - and want full CI green at the exact HEAD (see *Full CI at the exact
-head*). A merge to `main` stays the user's; a campaign or `/feature` base keeps
-its identity, grant and CI check.
-
-The arch-review, delivery-review and ai-review skills do not gate a PR. Their
-durable reports and the open ai-review threads are read only by the final
-completion command (*Final mission and ship completion*), which counts threads
-through `ai_review_threads.sh`, the script the reviewer posts them with, and
-treats a list it could not take (exit 2) as unknown, never as zero.
+number - full CI and the integration checks are read for one PR, never a
+guessed one - and want full CI green at the exact HEAD (see *Full CI at the
+exact head*). A merge to `main` stays the user's; a `/feature` base keeps its
+identity, grant and CI check. No other review gates a PR: the `mission`,
+`ship`, `arch-review` and `delivery-review` skills, and the completion command
+that read their reports, are retired.
 
 ### The one prefix the pinned forms allow
 
-A campaign merge and a campaign `gh pr ready` are pinned by string equality —
+An integration merge and its `gh pr ready` are pinned by string equality —
 the explicit PR number, `--merge` or `--squash`, `--match-head-commit` with the
 reviewed HEAD, and nothing else — so that no second statement can ride on the
 first's authorization. That pin wanted the command bare, and the agent shell
@@ -210,31 +207,15 @@ never pushed, which is a known answer: not green.
 `pr-gate` calls it for `gh pr ready` and `gh pr merge`, after the code-review
 marker, against the reviewed local HEAD. The denial names the way
 through: `gh pr edit <pr> --add-label full-ci`, wait for the full jobs, retry.
-`mission_ship_gate.sh` calls it again beside its all-checks rule, twice like
-that rule, so completion cannot pass on the fast job alone. That rule and the
-campaign merge check now accept `skipping` as well as `pass`: the draft-only
-`fast` job is skipped on every ready head, and without the named
+The integration merge check accepts `skipping` as well as `pass`: the
+draft-only `fast` job is skipped on every ready head, and without the named
 `FULL_CI_CHECKS` requirement beside it that tolerance would be a hole.
 
-Nothing in GitHub's ruleset requires a status check today, so these two gates
-are where full CI is enforced for agents, and a human merge still sees the
-checks on the PR.
+Nothing in GitHub's ruleset requires a status check today, so this gate is
+where full CI is enforced for agents, and a human merge still sees the checks
+on the PR.
 
-## Publishing the review reports
-
-Each review skill writes its verdict to a scratch report and calls the one
-producer from the clean reviewed worktree:
-
-```sh
-cd "$WT" && sh .claude/hooks/review_report.sh publish arch-review "$PR" "$REPORT_PATH"
-cd "$WT" && sh .claude/hooks/review_report.sh publish delivery-review "$PR" "$REPORT_PATH"
-cd "$WT" && sh .claude/hooks/review_report.sh publish ai-review "$PR" "$REPORT_PATH"
-```
-
-The producer publishes an identity-prefixed PR comment, reads it back, and only
-then records its private projection. Final completion requires the matching
-durable receipt; a manually written file therefore fails. Receipt lookup is
-bounded to the latest 100 PR comments and fails closed when absent.
+## The review marker
 
 The `code-review-ok` marker lives in the worktree's own git dir, so it is
 per-branch and never committed. Storing a hash of the change rather than a
@@ -242,34 +223,6 @@ timestamp is what makes the gate honest: edit a tracked file after a review and
 that hash no longer matches, so the gate denies and names both values. A marker
 that only said "a review happened" would pass while the newest work went
 unreviewed.
-
-## Final mission and ship completion
-
-`pr-gate` protects commands, not an agent's final sentence. A PR made
-non-draft in another session never crosses `gh pr ready` again. Both canonical
-workflows therefore finish with the same explicit command:
-
-```sh
-sh .claude/hooks/mission_ship_gate.sh mission <pr>
-sh .claude/hooks/mission_ship_gate.sh ship <pr>
-```
-
-The caller names only its audit role; both modes execute the same policy. The
-command synthesizes the normal readiness check, then independently requires an
-open non-draft PR matching the clean worktree's branch/head/base, a mergeable
-GitHub state, at least one registered CI check with every one that ran
-passing, full CI green at the exact head, current durable reports, and an
-empty literal thread list. It first
-requires one concise mission-summary block for mission and synchronization
-PRs. The PR kind comes from facts the PR identity then verifies, never a caller
-flag. A consolidated `campaign/*` or `feature/*` PR into main has no single
-goal: its body names `Campaign-parent: <issue URL>` in the same repository,
-whose charter must carry `<!-- quantick-campaign:v1 -->` (or
-`<!-- quantick-feature:v1 -->`) and the branch as a whole ref name. Every
-other check applies to all three. It then writes report URLs and the review key into the
-PR body, reads the canonical `What done means` block, publishes each clause with its
-evidence, reads that report back, and only then prints
-`MISSION-COMPLETION:PASS`. Green CI or `MERGEABLE` alone cannot reach it.
 
 **Why the change and not the commit.** Keying on `rev-parse HEAD` meant a
 rebase, an amend or a reword stale a review that was still perfectly valid, and
@@ -316,17 +269,8 @@ not detected: a pipe (`cat body.md | gh pr create --body-file -`), a newline,
 an `env`/`time`/`sudo` wrapper, a `VAR=value` prefix, `bash -c '…'`, a brace
 group, an absolute path.
 
-`ship` is *not* one of them, and the distinction matters. Its step 3 spells
-`gh pr create --draft --body-file -` **with a heredoc**, and step 6 spells
-`gh pr ready`; both begin their segment, so both reach the matcher. Step 3 is
-then exempted for being a draft, and step 6 is the one that faces the markers.
-That was measured rather than assumed — an earlier draft of this paragraph
-named `ship` as the pipe example, which would have told an auditor that the
-repo's own standard flow evades the gate.
-
-Both halves are load-bearing, so they move when `ship` does. Renumbering it
-once left this paragraph naming a step that had stopped prescribing any
-spelling, and reporting a draft creation as though it were the gated command.
+A heredoc body (`gh pr create --body-file - <<'EOF'`) is *not* one of them:
+the command begins its segment, so it reaches the matcher.
 
 That is a real gap and it is deliberately left as it was rather than deepened
 here. Closing it by parsing harder was tried, over eight review rounds, and did
@@ -429,33 +373,25 @@ query. The rules it protects are also written in `CLAUDE.md`.
 
 ## Declaring a tier
 
-`mission` and `implement` declare a tier for a branch by writing **the branch's
-own name and the tier** into `mission-tier`, beside the marker in the worktree's
-git dir - so it is per-branch, never committed, and discovered exactly the way
-the marker is:
+`implement` declares its tier for a branch by writing **the branch's own name
+and `implement`** into `mission-tier` (the name predates the retired `mission`
+skill and its `small`..`max` tiers), beside the marker in the worktree's git
+dir - so it is per-branch, never committed, and discovered exactly the way the
+marker is:
 
 ```sh
-WT=/path/to/worktree
-TIER=medium                     # small | medium | high | max | implement
-cd "$WT" &&
-  printf '%s %s\n' "$(git rev-parse --abbrev-ref HEAD)" "$TIER" \
-    > "$(git rev-parse --absolute-git-dir)/mission-tier"
+cd "$WT" && echo "$(git branch --show-current) implement" > "$(git rev-parse --absolute-git-dir)/mission-tier"
 ```
 
 The file holds **`<branch> <tier>`**, and the branch half is load-bearing: a
 bare tier word would outlive its goal, and a worktree reused for a second branch
 would inherit a tier it never declared - measured on the first version of this
 file. A declaration naming another branch, a detached head, a one-field file and
-an unrecognised word all declare nothing.
-
-Only `implement` changes what `pr-gate` requires. The mission tiers `small`,
-`medium`, `high` and `max` face the gate an undeclared branch faces.
+any word but `implement` all declare nothing.
 
 ## The `implement` tier
 
-The `implement` skill's goal writes `<branch> implement` into the same
-`mission-tier` file. It is not a mission tier and is kept out of `TIERS`, so the
-mission loops never see it. A branch that declares it owes `code-review-ok`, the
+A branch that declares `implement` owes `code-review-ok`, the
 exact-diff key, before **any** PR, draft included, and again at ready and merge. The agent never
 writes it; Claude Code's auto-mode classifier denies that write.
 The `review-verdict` mode does, from the review subagent's report (a background
@@ -468,7 +404,7 @@ and records it with the command pr-gate prints. Against `main` or a plain
 target no full-CI check is asked for; a merge to `main` stays the user's alone. The trade
 is deliberate: the tier exists to make a goal cheap in tokens, and what protects
 `main` past the review is CI on the PR and the user's own merge. Into a
-`campaign/*` or `feature/*` base with a parent issue, the general gate applies:
+`feature/*` base with a parent issue (a `/feature` child), the general gate applies:
 the same marker, full CI at the exact head and, for a merge, the persisted
 grant. A plain
 `/implement` PR into a `feat/*` or `feature/*` branch records
@@ -518,9 +454,7 @@ Three properties, and it is worth being exact about them because an
 overstatement here is a false sense of cover:
 
 - Every marker `guardrails.sh` defines is named by this file.
-- Each review skill publishes through the shared report producer, so
-  `/arch-review`, `/delivery-review` and `/ai-review` record their own reports
-  instead of leaving them to a caller. That asymmetry was a real bug here.
+- `implement`'s rules and this file name the tier file the gate reads.
 - Every marker name the prose tells an agent to **write** is one the script
   reads. This is anchored on the recording command's shape rather than on the
   marker names, because the first version grepped for the current names to

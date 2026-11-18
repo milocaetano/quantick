@@ -121,7 +121,6 @@ impl quantick_control_handlers::alerts::AlertDefinitionsPort for super::Quantick
         &mut self,
         selector: DrawingSelector,
     ) -> Result<DurableDrawingRef, TargetResolveError> {
-        use super::LayoutPort;
         self.layout_adapter().resolve_alert_target(selector)
     }
     fn alert_runtime(&mut self) -> &mut quantick_stores::alerts::AlertRuntime {

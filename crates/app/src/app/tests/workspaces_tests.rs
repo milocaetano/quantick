@@ -71,7 +71,7 @@ fn a_cockpit_exported_from_the_app_comes_back_when_it_is_opened() {
     app.workspace_save_adapter().save_workspace("test");
     assert!(!app.added_symbols.contains("binance", "WINQ26"));
 
-    let editing = app.layout_state().layouts().active_id();
+    let editing = app.runtime.layout_state().layouts().active_id();
     app.layout_adapter().begin_layout_rename(editing);
     app.layout_adapter()
         .apply_strip_action(crate::layout_strip::StripAction::Delete(editing));
@@ -1029,9 +1029,10 @@ fn picking_a_replay_folder_does_not_switch_autosave_back_on() {
 fn renaming_a_layout_renames_it_on_every_pane_that_shows_it() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = split_app(&ctx, 200);
-    let first = app.layout_state().layouts().active_id();
+    let first = app.runtime.layout_state().layouts().active_id();
     assert_eq!(
-        app.layout_state()
+        app.runtime
+            .layout_state()
             .pane_layout(app.runtime.tabs.active_id(), PaneSide::Time(0)),
         first,
         "both panes open on the one layout there is"
@@ -1073,6 +1074,7 @@ fn renaming_a_layout_renames_it_on_every_pane_that_shows_it() {
 
     // The strip both panes read lists both layouts, under the new names.
     let names: Vec<&str> = app
+        .runtime
         .layout_state()
         .layouts()
         .layouts()

@@ -127,8 +127,11 @@ fn the_footprint_entry_points_open_the_footprint_tab() {
     );
     // Settings → Appearance… flips the same window to the Candles tab.
     let appearance = quantick_control_handlers::settings::SettingsAct::OpenAppearance;
-    quantick_control_handlers::settings::SettingsOwner::settle(&mut desk_adapter!(app), appearance)
-        .unwrap();
+    quantick_control_handlers::settings::SettingsOwner::settle(
+        &mut workspace_calls!(app),
+        appearance,
+    )
+    .unwrap();
     assert!(
         app.surfaces
             .chart_settings

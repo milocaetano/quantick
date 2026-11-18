@@ -1543,7 +1543,7 @@ pub(super) fn pane_set(
         .pane(side)
         .layout_id()
         .expect("a seeded pane");
-    let layouts = app.layout_state().layouts();
+    let layouts = app.runtime.layout_state().layouts();
     &layouts.get(own).expect("the tab's copy").indicators
 }
 

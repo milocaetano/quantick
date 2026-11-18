@@ -21,6 +21,8 @@ struct Host {
     switches: Vec<(String, String)>,
     flow_bars: Vec<(u64, String)>,
     paper_open: bool,
+    /// Whether the window lends its workspaces; a host without them refuses.
+    lends_workspaces: bool,
 }
 
 impl Host {
@@ -76,16 +78,33 @@ impl Host {
             switches: Vec::new(),
             flow_bars: Vec::new(),
             paper_open: false,
+            lends_workspaces: true,
         }
     }
 }
 
-impl WorkspaceBookHost for Host {
+/// The host's book, lent through [`crate::workspace_book::WorkspaceBookHost`] on its
+/// one market tab.
+struct LentBook<'a>(&'a mut WorkspaceBook);
+
+impl crate::workspace_book::WorkspaceOwner for LentBook<'_> {
     fn workspace_book(&mut self) -> Option<&mut WorkspaceBook> {
-        Some(&mut self.book)
+        Some(self.0)
     }
     fn persist_workspace_book(&mut self) -> Result<(), String> {
         Ok(())
+    }
+}
+
+impl crate::TabDirectory for LentBook<'_> {
+    fn active_tab_index(&self) -> usize {
+        0
+    }
+    fn tab_position(&self, tab_id: u64) -> Option<usize> {
+        (tab_id == 5).then_some(0)
+    }
+    fn tab_id_at(&self, _index: usize) -> u64 {
+        5
     }
 }
 
@@ -139,6 +158,14 @@ impl crate::TabDirectory for Host {
     }
     fn tab_id_at(&self, _index: usize) -> u64 {
         5
+    }
+}
+
+impl crate::workspace_book::WorkspaceBookHost for Host {
+    fn workspaces(&mut self) -> Option<Box<dyn crate::workspace_book::WorkspaceOwner + '_>> {
+        let lent: Box<dyn crate::workspace_book::WorkspaceOwner + '_> =
+            Box::new(LentBook(&mut self.book));
+        self.lends_workspaces.then_some(lent)
     }
 }
 
@@ -537,6 +564,24 @@ fn a_workspace_pick_that_would_drop_edits_is_refused_before_the_switch() {
     assert!(host.switches.is_empty(), "the tab stays where it was");
     assert_eq!(host.book.tab_state(5).unwrap().workspace, "Default");
     assert_eq!(host.book.tab_copy(5), Some(&edited), "the edit is kept");
+}
+
+/// A window that lends no workspaces refuses a workspace pick before the tab
+/// moves, rather than switching the market and failing on the workspace.
+#[test]
+fn a_workspace_pick_without_workspaces_is_refused_before_the_switch() {
+    let mut host = Host::new();
+    host.book.open_tab(5);
+    host.lends_workspaces = false;
+    let picked = SwitchChoice {
+        workspace: Some("Swing".to_owned()),
+        ..switch_to("PEPEUSDT")
+    };
+    let reason = settle(&mut host, PaletteIntent::Switch(picked)).unwrap_err();
+    assert_eq!(reason, crate::workspace_book::unavailable().message);
+    assert!(host.switches.is_empty(), "the tab stays where it was");
+    assert!(host.catalog.is_empty());
+    assert_eq!(host.book.tab_state(5).unwrap().workspace, "Default");
 }
 
 /// With autosave on, an edit still on its way is written through first, as

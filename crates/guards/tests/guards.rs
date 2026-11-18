@@ -130,10 +130,10 @@ fn app_ui_free_code_stays_within_its_ceiling() {
     assert_clean(TESTED[11]);
 }
 
-/// Execution evidence and mission files stay out of Git: a tracked archive,
+/// Execution evidence and goal files stay out of Git: a tracked archive,
 /// capture or run dossier is 31 MB of history nobody reads again.
 #[test]
-fn no_execution_evidence_or_mission_file_is_carried_by_git() {
+fn no_execution_evidence_or_goal_file_is_carried_by_git() {
     assert_clean(TESTED[12]);
 }
 

@@ -7,7 +7,7 @@
 //! shortcuts are re-exported to `super` for the tests that name them.
 
 use super::arrangement_adapter::StripAsk;
-use super::{GatewayPort, LayersPort, LayoutPort};
+use super::{GatewayPort, LayersPort};
 use crate::orderflow_panel as panel;
 use crate::surfaces::MarketPaletteSurface;
 use crate::surfaces::replay_browser::ReplayBrowserExt as _;
@@ -235,7 +235,7 @@ impl QuantickApp {
         if let TabAction::Close(index) = action {
             let tab = (index < self.runtime.tabs.len()).then(|| self.runtime.tabs.id_at(index));
             let close = WorkspaceCommand::Close(CloseScope::Tabs, Vec::from_iter(tab));
-            return super::tab_workspaces::apply_workspace_command(self, close);
+            return self.workspace_calls().apply_workspace_command(close);
         }
         let asked = self.arrangement_adapter().apply_tab_action(action);
         settle_strip(&mut self.surfaces.market_palette, self.runtime.tz, asked);
@@ -286,7 +286,7 @@ impl QuantickApp {
         let focused = self.runtime.tabs.windows().focused();
         let menu = &self.chrome.window_menu.tab_workspace;
         if let Some(answer) = super::native_windows::prompt_answer(focused, menu, ctx) {
-            super::tab_workspaces::apply_workspace_command(self, answer);
+            self.workspace_calls().apply_workspace_command(answer);
             let queue = &mut self.chrome.window_menu.tab_workspace.close;
             self.presentation.native.exit_when_settled(queue, ctx);
         }
@@ -352,19 +352,19 @@ impl QuantickApp {
                 self.workspace_save_adapter().save_workspace(reason);
             }
             MenuCommand::Workspace(command) => {
-                super::tab_workspaces::apply_workspace_command(self, command);
+                self.workspace_calls().apply_workspace_command(command);
             }
             MenuCommand::ForgetWorkspace => {
                 self.workspace_save_adapter().forget_workspace();
             }
-            MenuCommand::ExportDesk => super::desk_wiring::open_export(&mut self.runtime),
+            MenuCommand::ExportDesk => self.runtime.open_export(),
             MenuCommand::ImportDesk => self.runtime.workspace.picker_mut().open_import(),
             MenuCommand::OpenRecentDesk(path) => {
                 self.workspace_bundle_adapter().import_workspace_from(&path);
             }
             MenuCommand::RevealDesk => self.workspace_bundle_adapter().reveal_cockpit_home(),
             MenuCommand::SetSaveOnExit(save_on_exit) => {
-                super::desk_wiring::write_reopen(self.workspace_save_adapter(), save_on_exit);
+                self.workspace_save_adapter().write_reopen(save_on_exit);
             }
             MenuCommand::PaperMarket(side) => self.trade(TradeCommand::Market { side }),
             MenuCommand::PaperReverse => self.trade(TradeCommand::Reverse),

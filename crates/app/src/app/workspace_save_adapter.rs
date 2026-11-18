@@ -171,6 +171,17 @@ impl WorkspaceSaveAdapter<'_> {
         self.session.note_write(WritePurpose::Favorites, written);
         written
     }
+    /// Change the reopen choice and write only it; `true` once it reached the
+    /// disk. A failed write takes the choice back, so a retry writes again.
+    pub(super) fn write_reopen(mut self, reopen: bool) -> bool {
+        let before = self.session.save_on_exit();
+        self.session.set_save_on_exit(reopen);
+        let written = self.write_standing_choices();
+        if !written {
+            self.session.set_save_on_exit(before);
+        }
+        written
+    }
     /// Change one standing choice in the workspace file, leaving everything
     /// else in it exactly as it was. `true` when the change reached the disk.
     ///

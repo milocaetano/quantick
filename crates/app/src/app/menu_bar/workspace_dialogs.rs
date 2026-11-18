@@ -9,7 +9,7 @@ use quantick_ui_model::manage_workspaces as marks;
 
 use super::MenuCommand;
 use super::workspace_rows::{Drawn, Pen, sheet};
-use crate::app::QuantickApp;
+use crate::app::{GatewayPort as _, QuantickApp};
 
 type Measure<'a> = &'a dyn Fn(&str, f32) -> f32;
 
@@ -23,7 +23,7 @@ pub(super) fn dialogs(
     let (tab, mut drawn) = (app.runtime.tabs.active_id(), Vec::new());
     let mut menu = std::mem::take(&mut app.chrome.window_menu.tab_workspace);
     menu.follow_staged(tab, !app.chrome.title_bar.surface.is_home());
-    fill_create(app, &mut menu);
+    fill_create(&app.workspace_calls(), &mut menu);
     let theme = crate::theme::get(ctx);
     let ink = |t: Option<_>| t.map_or(egui::Color32::TRANSPARENT, |t| *theme.get(t));
     let dark = theme.resolved.dark;

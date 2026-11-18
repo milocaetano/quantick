@@ -322,12 +322,12 @@ fn the_desk_door_settles_the_record_row_and_the_window_the_agent_rows() {
     assert_eq!(app.chrome.record_deals, Some(record));
     assert_eq!(app.desk().unwrap().readings().record_deals, record);
     app.control.control_access = None;
-    settle(&mut desk_adapter!(app), &ctx, Action::OpenAgentAccess);
+    settle(&mut workspace_calls!(app), &ctx, Action::OpenAgentAccess);
     assert!(
         !app.surfaces.access_panel.model_state.open,
         "no gateway, no panel"
     );
     app.control.control_access = Some(crate::control::ControlAccess::new());
-    settle(&mut desk_adapter!(app), &ctx, Action::OpenAgentAccess);
+    settle(&mut workspace_calls!(app), &ctx, Action::OpenAgentAccess);
     assert!(app.surfaces.access_panel.model_state.open);
 }

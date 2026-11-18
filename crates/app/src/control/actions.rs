@@ -1,7 +1,7 @@
 //! The action registry port: named, attributed calls that change session
 //! state, and the one list of the families this build docks into it.
 //!
-//! Plan §2.2 and `arch-review`'s second operator: a capability a trader does
+//! Plan §2.2 and `CLAUDE.md`'s *Operable without a hand*: a capability a trader does
 //! exists as a named call with an actor in its signature, not only inside a
 //! click handler. The UI hotkey, the `QUANTICK_CONTROL_MARK` hook, a
 //! deterministic test and an authorized agent all arrive at the same handler

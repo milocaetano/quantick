@@ -53,8 +53,7 @@ fn reload(app: &mut QuantickApp, ctx: &egui::Context) {
     let book = &app.runtime.workspace.book;
     let saved = book.book().recipe(&book.tab_row(id).0).cloned();
     let recipe = saved.expect("the tab's workspace is saved");
-    let mut host = crate::app::tab_workspaces::BookTabs(app);
-    quantick_workspace::book_upkeep::show_recipe(&mut host, id, &recipe);
+    quantick_workspace::book_upkeep::show_recipe(&mut app.workspace_calls(), id, &recipe);
     frames(app, ctx, 6);
 }
 

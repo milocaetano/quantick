@@ -1,12 +1,12 @@
 #!/bin/sh
-# Hermetic campaign boundary tests. No real GitHub mutation or credentials.
+# Hermetic mission-base boundary tests. No real GitHub mutation or credentials.
 set -eu
 script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
-helper="$script_dir/campaign_context.sh"
+helper="$script_dir/mission_base.sh"
 temp_parent=$(CDPATH='' cd -- "${TMPDIR:-/tmp}" && pwd)
-fixture=$(mktemp -d "$temp_parent/quantick-campaign.XXXXXX")
+fixture=$(mktemp -d "$temp_parent/quantick-mission-base.XXXXXX")
 cleanup() {
-    case "$fixture" in "$temp_parent"/quantick-campaign.*)
+    case "$fixture" in "$temp_parent"/quantick-mission-base.*)
         [ -f "$fixture/fixture-owner" ] && rm -rf "$fixture" ;;
     esac
 }
@@ -22,7 +22,7 @@ git -C "$fixture/repo" add data
 git -C "$fixture/repo" commit -qm baseline
 base=$(git -C "$fixture/repo" rev-parse HEAD)
 git -C "$fixture/repo" update-ref refs/remotes/origin/main "$base"
-git -C "$fixture/repo" update-ref refs/remotes/origin/campaign/test "$base"
+git -C "$fixture/repo" update-ref refs/remotes/origin/feature/test "$base"
 git -C "$fixture/repo" checkout -qb feat/child
 printf 'child\n' >> "$fixture/repo/data"
 git -C "$fixture/repo" commit -qam child
@@ -30,7 +30,7 @@ head=$(git -C "$fixture/repo" rev-parse HEAD)
 git_dir=$(git -C "$fixture/repo" rev-parse --absolute-git-dir)
 cp "$script_dir/guardrails.sh" "$helper" "$fixture/hooks/"
 # Full CI at the exact head is pr-gate's own requirement, covered by
-# guardrails_test.sh; here it is green so the campaign boundaries are isolated.
+# guardrails_test.sh; here it is green so the mission-base boundaries are isolated.
 cat > "$fixture/hooks/full_ci.sh" <<'STUB'
 #!/bin/sh
 exit 0
@@ -48,7 +48,7 @@ PATH="$fixture/bin:$PATH"
 export PATH
 passed=0
 context() {
-    printf 'feat/child origin/campaign/test https://github.com/owner/repo/issues/1 %s\n' "$1" > "$git_dir/mission-base"
+    printf 'feat/child origin/feature/test https://github.com/owner/repo/issues/1 %s\n' "$1" > "$git_dir/mission-base"
 }
 identity() {
     printf '%s feat/child %s OPEN false false %s CLEAN\n' "$1" "$2" "$3" > "$fixture/bin/identity"
@@ -72,7 +72,7 @@ gate() {
     esac || return 1
     if [ -n "${4:-}" ]; then printf '%s' "$output" | grep -qF -- "$4"; fi
 }
-# The one review every branch owes, recorded at the current campaign key.
+# The one review every branch owes, recorded at the current /feature child key.
 stamp() {
     sh "$helper" key "$fixture/repo" > "$git_dir/code-review-ok"
 }
@@ -80,19 +80,19 @@ stamp() {
 allow 'default base remains main' test "$(sh "$helper" base "$fixture/repo")" = origin/main
 reject 'main merge is always human' sh "$helper" check-pr "$fixture/repo" 42 merge
 context none
-identity campaign/test "$head" "$base"
+identity feature/test "$head" "$base"
 printf 'pass\npass\n' > "$fixture/bin/checks"
-allow 'campaign ready does not require merge authority' sh "$helper" check-pr "$fixture/repo" 42 ready
-reject 'missing campaign merge grant' sh "$helper" check-pr "$fixture/repo" 42 merge
+allow 'feature child ready does not require merge authority' sh "$helper" check-pr "$fixture/repo" 42 ready
+reject 'missing feature merge grant' sh "$helper" check-pr "$fixture/repo" 42 merge
 context https://github.com/owner/repo/issues/1#issuecomment-2
-allow 'authorized campaign merge with green CI' sh "$helper" check-pr "$fixture/repo" 42 merge
+allow 'authorized feature child merge with green CI' sh "$helper" check-pr "$fixture/repo" 42 merge
 identity main "$head" "$base"
-reject 'retargeted PR cannot borrow campaign authorization' sh "$helper" check-pr "$fixture/repo" 42 merge
-identity campaign/test "$base" "$base"
+reject 'retargeted PR cannot borrow feature authorization' sh "$helper" check-pr "$fixture/repo" 42 merge
+identity feature/test "$base" "$base"
 reject 'another head cannot borrow review' sh "$helper" check-pr "$fixture/repo" 42 merge
-identity campaign/test "$head" "$head"
+identity feature/test "$head" "$head"
 reject 'remote base advance requires refresh' sh "$helper" check-pr "$fixture/repo" 42 merge
-identity campaign/test "$head" "$base"
+identity feature/test "$head" "$base"
 printf 'pending\n' > "$fixture/bin/checks"
 reject 'pending CI blocks merge' sh "$helper" check-pr "$fixture/repo" 42 merge
 : > "$fixture/bin/checks"
@@ -104,15 +104,15 @@ printf 'pass\nskipping\n' > "$fixture/bin/checks"
 allow 'a skipped fast job does not block merge' sh "$helper" check-pr "$fixture/repo" 42 merge
 printf 'pass\n' > "$fixture/bin/checks"
 old_key=$(sh "$helper" key "$fixture/repo")
-old_diff=$(git -C "$fixture/repo" diff origin/campaign/test...HEAD)
+old_diff=$(git -C "$fixture/repo" diff origin/feature/test...HEAD)
 base_tree=$(git -C "$fixture/repo" rev-parse "$base^{tree}")
 advanced=$(printf 'independent base advance\n' | git -C "$fixture/repo" commit-tree "$base_tree" -p "$base")
-git -C "$fixture/repo" update-ref refs/remotes/origin/campaign/test "$advanced"
+git -C "$fixture/repo" update-ref refs/remotes/origin/feature/test "$advanced"
 new_key=$(sh "$helper" key "$fixture/repo")
-allow 'fixture advances base without changing task diff' test "$old_diff" = "$(git -C "$fixture/repo" diff origin/campaign/test...HEAD)"
-allow 'campaign advancement stales key' test "$old_key" != "$new_key"
-git -C "$fixture/repo" update-ref refs/remotes/origin/campaign/test "$base"
-printf 'feat/other origin/campaign/test https://github.com/owner/repo/issues/1 none\n' > "$git_dir/mission-base"
+allow 'fixture advances base without changing task diff' test "$old_diff" = "$(git -C "$fixture/repo" diff origin/feature/test...HEAD)"
+allow 'feature base advancement stales key' test "$old_key" != "$new_key"
+git -C "$fixture/repo" update-ref refs/remotes/origin/feature/test "$base"
+printf 'feat/other origin/feature/test https://github.com/owner/repo/issues/1 none\n' > "$git_dir/mission-base"
 reject 'context from another branch cannot be reused' sh "$helper" base "$fixture/repo"
 context https://github.com/owner/repo/issues/1#issuecomment-2
 stamp
@@ -121,29 +121,29 @@ stamp
 for client in Bash exec_command; do
     rm "$git_dir/code-review-ok"
     for action in ready merge; do
-        allow "$client campaign $action denies a missing code-review" gate "$client" "gh pr $action 42" deny code-review-ok
+        allow "$client feature child $action denies a missing code-review" gate "$client" "gh pr $action 42" deny code-review-ok
     done
-    # The campaign key binds the target tip: the same diff reviewed against an
+    # The /feature child key binds the target tip: the same diff reviewed against an
     # older tip is stale.
     printf '%s\n' "$old_key" > "$git_dir/code-review-ok"
-    git -C "$fixture/repo" update-ref refs/remotes/origin/campaign/test "$advanced"
-    identity campaign/test "$head" "$advanced"
+    git -C "$fixture/repo" update-ref refs/remotes/origin/feature/test "$advanced"
+    identity feature/test "$head" "$advanced"
     allow "$client base tip stales the code-review" gate "$client" 'gh pr ready 42' deny code-review-ok
-    allow "$client base tip also blocks campaign merge" gate "$client" "gh pr merge 42 --merge --match-head-commit $head" deny code-review-ok
-    git -C "$fixture/repo" update-ref refs/remotes/origin/campaign/test "$base"
-    identity campaign/test "$head" "$base"
+    allow "$client base tip also blocks the feature merge" gate "$client" "gh pr merge 42 --merge --match-head-commit $head" deny code-review-ok
+    git -C "$fixture/repo" update-ref refs/remotes/origin/feature/test "$base"
+    identity feature/test "$head" "$base"
     stamp
-    git -C "$fixture/repo" update-ref refs/remotes/origin/campaign/other "$base"
-    printf 'feat/child origin/campaign/other https://github.com/owner/repo/issues/1 https://github.com/owner/repo/issues/1#issuecomment-2\n' > "$git_dir/mission-base"
-    identity campaign/other "$head" "$base"
+    git -C "$fixture/repo" update-ref refs/remotes/origin/feature/other "$base"
+    printf 'feat/child origin/feature/other https://github.com/owner/repo/issues/1 https://github.com/owner/repo/issues/1#issuecomment-2\n' > "$git_dir/mission-base"
+    identity feature/other "$head" "$base"
     allow "$client equivalent base ref stales the code-review" gate "$client" 'gh pr ready 42' deny code-review-ok
-    allow "$client changed target also blocks campaign merge" gate "$client" "gh pr merge 42 --merge --match-head-commit $head" deny code-review-ok
+    allow "$client changed target also blocks the feature merge" gate "$client" "gh pr merge 42 --merge --match-head-commit $head" deny code-review-ok
     context https://github.com/owner/repo/issues/1#issuecomment-2
-    identity campaign/test "$head" "$base"
+    identity feature/test "$head" "$base"
     stamp
-    allow "$client campaign merge" gate "$client" "gh pr merge 42 --merge --match-head-commit $head" allow
+    allow "$client feature child merge" gate "$client" "gh pr merge 42 --merge --match-head-commit $head" allow
     context none
-    allow "$client a current code-review cannot supply campaign merge authority" gate "$client" "gh pr merge 42 --merge --match-head-commit $head" deny 'authorization or CI'
+    allow "$client a current code-review cannot supply feature merge authority" gate "$client" "gh pr merge 42 --merge --match-head-commit $head" deny 'authorization or CI'
     context https://github.com/owner/repo/issues/1#issuecomment-2
     printf 'pending\n' > "$fixture/bin/checks"
     allow "$client a current code-review cannot replace green CI" gate "$client" "gh pr merge 42 --merge --match-head-commit $head" deny 'authorization or CI'
@@ -154,14 +154,14 @@ for client in Bash exec_command; do
     allow "$client compound merges denied" gate "$client" "gh pr merge 42 --merge --match-head-commit $head && gh pr merge 99 --merge" deny
     allow "$client retarget before merge denied" gate "$client" "gh pr edit 42 --base main && gh pr merge 42 --merge --match-head-commit $head" deny
     allow "$client ready cannot borrow another repository" gate "$client" 'gh pr ready 42 --repo other/repo' deny
-    allow "$client campaign ready accepts exact target" gate "$client" 'gh pr ready 42' allow
+    allow "$client feature child ready accepts exact target" gate "$client" 'gh pr ready 42' allow
     # The agent's Bash tool resets its working directory between calls, so the
     # pinned statement reaches the task worktree only behind a single
     # `cd <dir> &&`. One prefix is accepted; anything beside the statement is
     # not, because a second statement would share the first's authorization.
-    allow "$client cd-prefixed campaign merge" \
+    allow "$client cd-prefixed feature merge" \
         gate "$client" "cd $fixture/repo && gh pr merge 42 --merge --match-head-commit $head" allow
-    allow "$client cd-prefixed campaign ready" \
+    allow "$client cd-prefixed feature ready" \
         gate "$client" "cd $fixture/repo && gh pr ready 42" allow
     allow "$client cd-prefixed merge cannot carry a second statement" \
         gate "$client" "cd $fixture/repo && gh pr merge 42 --merge --match-head-commit $head && echo x" deny
@@ -182,25 +182,13 @@ for client in Bash exec_command; do
     context https://github.com/owner/repo/issues/1#issuecomment-2
     stamp
 done
-# A /feature integration branch is the same contract under feature/.
-git -C "$fixture/repo" update-ref refs/remotes/origin/feature/test "$base"
-printf 'feat/child origin/feature/test https://github.com/owner/repo/issues/1 https://github.com/owner/repo/issues/1#issuecomment-2\n' > "$git_dir/mission-base"
-identity feature/test "$head" "$base"
 allow 'a feature branch is an integration base' test "$(sh "$helper" base "$fixture/repo")" = origin/feature/test
-allow 'authorized feature merge with green CI' sh "$helper" check-pr "$fixture/repo" 42 merge
 # Every branch owes the same code-review, so an implement worker's record is
-# what a feature or campaign child owes, beside green CI and the grant.
+# what a /feature child owes, beside green CI and the grant.
 printf 'feat/child implement\n' > "$git_dir/mission-tier"
 stamp
-allow 'implement evidence merges into a feature branch' \
+allow 'implement evidence merges into a feature branch under its grant' \
     gate Bash "gh pr merge 42 --merge --match-head-commit $head" allow
-context https://github.com/owner/repo/issues/1#issuecomment-2
-identity campaign/test "$head" "$base"
-stamp
-allow 'implement evidence merges into a campaign branch under its grant' \
-    gate Bash "gh pr merge 42 --merge --match-head-commit $head" allow
-printf 'feat/child origin/feature/test https://github.com/owner/repo/issues/1 https://github.com/owner/repo/issues/1#issuecomment-2\n' > "$git_dir/mission-base"
-identity feature/test "$head" "$base"
 rm "$git_dir/mission-tier"
 stamp
 allow 'an untiered feature child merges on the code-review' gate Bash "gh pr merge 42 --merge --match-head-commit $head" allow
@@ -259,8 +247,12 @@ printf 'feat/child origin/feat/test https://github.com/owner/repo/issues/1 none\
 reject 'a feat base takes no parent' sh "$helper" base "$fixture/repo"
 printf 'feat/child origin/feature/test none https://github.com/owner/repo/issues/1#issuecomment-2\n' > "$git_dir/mission-base"
 reject 'no parent cannot carry a grant' sh "$helper" base "$fixture/repo"
-printf 'feat/child origin/campaign/test none none\n' > "$git_dir/mission-base"
-reject 'a campaign base still needs its parent' sh "$helper" base "$fixture/repo"
+# The ref exists, so only the retirement can refuse it, and it says so.
+git -C "$fixture/repo" update-ref refs/remotes/origin/campaign/test "$base"
+printf 'feat/child origin/campaign/test https://github.com/owner/repo/issues/1 none\n' > "$git_dir/mission-base"
+reject 'a retired campaign base is refused' sh "$helper" base "$fixture/repo"
+cp "$fixture/output" "$fixture/refusal"
+allow 'the refusal names the retirement' grep -q 'campaign/\* bases were retired' "$fixture/refusal"
 printf 'feat/child origin/feature/test https://github.com/owner/repo/issues/1 none\n' > "$git_dir/mission-base"
 reject 'a feature child is not a plain implement target' sh "$helper" implement-target "$fixture/repo"
-printf '%s campaign context tests passed\n' "$passed"
+printf '%s mission-base tests passed\n' "$passed"
