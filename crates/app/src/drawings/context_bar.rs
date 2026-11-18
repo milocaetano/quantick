@@ -24,7 +24,7 @@ use crate::drawings::StyleColor32;
 use eframe::egui;
 use egui_phosphor::regular as icons;
 pub use quantick_drawings::context_bar::{Capabilities, Slot, slots};
-use quantick_ui_model::drawing_chrome::bar_dismissal::{BarDismissal, BarTarget, PressOn};
+use quantick_ui_model::drawing_chrome::bar_dismissal::{BarDismissal, BarTarget, Press};
 
 use super::action_bar::ActionBarIntent;
 use super::{DrawingStyle, GlyphSize, MAX_DRAWING_FILL_ALPHA};
@@ -355,7 +355,7 @@ impl ContextBar {
         &mut self,
         target: Option<BarTarget>,
         focused: bool,
-        press: Option<(f64, PressOn)>,
+        press: Option<Press>,
     ) -> bool {
         if self.dismissal.step(target, focused, press) {
             self.open = Popover::None;

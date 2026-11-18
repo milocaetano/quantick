@@ -41,7 +41,20 @@ impl PressOn {
 
 /// The bar a dismissal belongs to: tab, pane and the selected object's id.
 /// A different target is a new bar, never a dismissed one.
-pub type BarTarget = (u64, u64, u64);
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BarTarget {
+    pub tab_id: u64,
+    pub pane_id: u64,
+    pub drawing_id: u64,
+}
+
+/// A press the bar decides on: when it began and where.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Press {
+    /// Start time, so a held press is decided once.
+    pub started: f64,
+    pub on: PressOn,
+}
 
 /// The dismissal state, stepped every frame.
 #[derive(Debug, Default)]
@@ -59,28 +72,23 @@ impl BarDismissal {
     /// window focus, and the press in flight with its start time. Losing
     /// focus is a click in another window, Quantick's or not. Answers whether
     /// this step dismissed the bar.
-    pub fn step(
-        &mut self,
-        target: Option<BarTarget>,
-        focused: bool,
-        press: Option<(f64, PressOn)>,
-    ) -> bool {
+    pub fn step(&mut self, target: Option<BarTarget>, focused: bool, press: Option<Press>) -> bool {
         if self.target != target {
             self.target = target;
             self.dismissed = false;
         }
         let lost = self.focused == Some(true) && !focused;
         self.focused = Some(focused);
-        let press = press.filter(|(started, _)| self.last_press != Some(*started));
-        if let Some((started, _)) = press {
-            self.last_press = Some(started);
+        let press = press.filter(|press| self.last_press != Some(press.started));
+        if let Some(press) = press {
+            self.last_press = Some(press.started);
         }
         if target.is_none() {
             return false;
         }
         let was = self.dismissed;
         self.dismissed |= lost;
-        match press.map(|(_, on)| on) {
+        match press.map(|press| press.on) {
             Some(PressOn::SelectedDrawing) => self.dismissed = false,
             Some(PressOn::Elsewhere) => self.dismissed = true,
             Some(PressOn::Bar) | None => {}

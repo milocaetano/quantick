@@ -10,7 +10,7 @@ use eframe::egui;
 
 use super::{Chrome, DrawingChromeAsk, DrawingEnv, InspectorActions, clamp_into_chart};
 use crate::drawings::{self, DrawingAuthor};
-use quantick_ui_model::drawing_chrome::bar_dismissal::PressOn;
+use quantick_ui_model::drawing_chrome::bar_dismissal::{BarTarget, Press, PressOn};
 
 /// The bar's own state: the widget's, plus the rectangle a test reads back.
 #[derive(Default)]
@@ -101,8 +101,9 @@ pub(crate) fn draw(
     chrome.emit(super::Intent::SelectionChanged { changed });
     let input = GestureInput::read(ctx);
     // Decided once per press, before the dismissal drops the rect it reads.
-    let on_bar = chrome.view.bar.bar.owns_press(input.origin, chrome.view.bar.bar.last_rect(), input.layer)
-        || input.layer.is_some_and(|layer| layer.id == alert_area(env.pane_id));
+    let bar = &mut chrome.view.bar.bar;
+    let on_bar = bar.owns_press(input.origin, bar.last_rect(), input.layer)
+        || (input.layer).is_some_and(|layer| layer.id == alert_area(env.pane_id));
     // Dismissed by a press elsewhere or a lost focus, until the object is
     // pressed again or another is selected.
     let dismissed = input.dismisses(&mut chrome.view.bar.bar, env, on_bar);
@@ -371,9 +372,9 @@ impl GestureInput {
                     .zip(input.pointer.press_start_time())
                     .or_else(|| {
                         input.events.iter().find_map(|event| match event {
-                            egui::Event::PointerButton { pos, pressed: true, .. } => {
-                                Some((*pos, input.time))
-                            }
+                            egui::Event::PointerButton {
+                                pos, pressed: true, ..
+                            } => Some((*pos, input.time)),
                             _ => None,
                         })
                     }),
@@ -402,13 +403,25 @@ impl GestureInput {
         env: &DrawingEnv<'_>,
         on_bar: bool,
     ) -> bool {
-        let target = (env.selected.as_ref()).map(|selected| (env.tab, env.pane_id, selected.drawing.id.0));
-        let press = self.origin.zip(env.selected_index()).map(|((origin, started), selected)| {
-            let in_bounds = self.layer.is_some_and(|layer| layer.order == egui::Order::Background)
-                && env.chart_area.is_some_and(|chart| chart.contains(origin))
-                && env.selected_bbox.is_some_and(|bbox| bbox.contains(origin));
-            (started, PressOn::classify(on_bar, env.press_pick, selected, in_bounds))
+        let target = (env.selected.as_ref()).map(|selected| BarTarget {
+            tab_id: env.tab,
+            pane_id: env.pane_id,
+            drawing_id: selected.drawing.id.0,
         });
+        let press = self
+            .origin
+            .zip(env.selected_index())
+            .map(|((origin, started), selected)| {
+                let in_bounds = self
+                    .layer
+                    .is_some_and(|layer| layer.order == egui::Order::Background)
+                    && env.chart_area.is_some_and(|chart| chart.contains(origin))
+                    && env.selected_bbox.is_some_and(|bbox| bbox.contains(origin));
+                Press {
+                    started,
+                    on: PressOn::classify(on_bar, env.press_pick, selected, in_bounds),
+                }
+            });
         bar.step_dismissal(target, self.focused, press)
     }
 
