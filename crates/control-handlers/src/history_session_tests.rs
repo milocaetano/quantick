@@ -7,17 +7,22 @@ use std::time::Instant;
 use quantick_engine::trade_tape::TradeTape;
 use quantick_engine::{Side, Trade};
 use quantick_session::{
-    Act, Effect, HistoryAct, HistoryOutcome, HistoryReply, Msg, TabSession, TabView,
-    sets_window_default,
+    Act, Effect, HistoryAct, HistoryOutcome, Msg, SessionSnapshot, TabSession, TabView,
 };
 use quantick_sources::config::FeedCapabilities;
 use quantick_sources::history_reach::{HistoryReach, Outage, ReachBounds};
+use quantick_sources::recovery::Recovery;
+use quantick_stores::config::AppConfig;
 use rust_decimal::Decimal;
 use serde_json::json;
 
 use super::*;
+use crate::contract_roll::AutoRoll;
+use crate::market_tab::FeedSelection;
+use crate::market_tab::RecoveredFeed;
+use crate::market_tab::{LentTab, MarketTab, MarketTabHost};
 use crate::tabs::TabDirectory;
-use crate::test_support::{FakeAccess, FakeWindow};
+use crate::test_support::{FAKE_DEFAULT_REACH, FakeAccess, FakeWindow, fake_config};
 
 const MINUTE: i64 = 60 * 1_000;
 const HOUR: i64 = 60 * MINUTE;
@@ -91,15 +96,74 @@ fn run(session: &mut TabSession, tape: &TradeTape, act: Act<'_>, now: Instant) {
     }
 }
 
-/// One tab whose History port is a real session: the second adapter after
-/// the window's own, told the time once, reading each act's outcome and
-/// moving the default the way the window's `Tab::load_history`,
-/// `Tab::cancel_history` and `TabsMut::press_history` do.
-struct SessionTab {
+/// One tab whose History acts run on a real session, told the time once,
+/// reading each act's outcome the way `Tab::load_history` and
+/// `Tab::cancel_history` do; the window around it lends the default.
+struct Live {
     session: TabSession,
     tape: TradeTape,
     now: Instant,
-    window_default: Option<HistoryReach>,
+}
+
+impl MarketTab for Live {
+    fn market(&self) -> FeedSelection {
+        FeedSelection {
+            feed_id: "fake".to_owned(),
+            symbol: "FAKE".to_owned(),
+            replay: false,
+        }
+    }
+    fn switch_market(&mut self, _config: &AppConfig, _feed_id: &str, _symbol: &str) {}
+    fn paper_open(&self) -> bool {
+        false
+    }
+    fn unlisted(&self) -> Option<String> {
+        None
+    }
+    fn roll_memory(&mut self) -> &mut AutoRoll {
+        unreachable!("History calls never read the roll memory")
+    }
+    fn recover(&mut self, _config: &AppConfig, _recovery: Recovery) -> RecoveredFeed {
+        unreachable!("History calls never recover the feed")
+    }
+    fn pages_history(&self, _config: &AppConfig) -> bool {
+        capabilities().history_paging
+    }
+    fn history(&mut self, _config: &AppConfig, act: HistoryAct) -> HistoryOutcome {
+        run(&mut self.session, &self.tape, act.act(), self.now);
+        match act {
+            HistoryAct::Press(_) => {
+                HistoryOutcome::Pressed(self.session.last_press().unwrap_or(Press::AlreadyRunning))
+            }
+            HistoryAct::Cancel => {
+                HistoryOutcome::Cancelled(self.session.last_cancel().unwrap_or(Cancelled::Nothing))
+            }
+        }
+    }
+    fn session(&self) -> SessionSnapshot {
+        self.session.snapshot()
+    }
+}
+
+/// The one-tab window around [`Live`].
+struct SessionTab {
+    live: Live,
+    window_default: HistoryReach,
+    config: AppConfig,
+}
+
+impl SessionTab {
+    fn new(now: Instant) -> Self {
+        Self {
+            live: Live {
+                session: TabSession::new(),
+                tape: tape(),
+                now,
+            },
+            window_default: FAKE_DEFAULT_REACH,
+            config: fake_config(&[]),
+        }
+    }
 }
 
 impl TabDirectory for SessionTab {
@@ -114,28 +178,28 @@ impl TabDirectory for SessionTab {
     }
 }
 
-impl HistoryPort for SessionTab {
-    fn history_paging(&self, index: usize) -> Option<bool> {
-        (index == 0).then_some(capabilities().history_paging)
+impl MarketTabHost for SessionTab {
+    fn tab_count(&self) -> usize {
+        1
     }
-    fn dispatch_history(&mut self, index: usize, act: HistoryAct) -> Option<HistoryReply> {
-        if index != 0 {
-            return None;
-        }
-        run(&mut self.session, &self.tape, act.act(), self.now);
-        let outcome = match act {
-            HistoryAct::Press(reach) => {
-                let press = self.session.last_press().unwrap_or(Press::AlreadyRunning);
-                if sets_window_default(press) {
-                    self.window_default = Some(reach);
-                }
-                HistoryOutcome::Pressed(press)
-            }
-            HistoryAct::Cancel => {
-                HistoryOutcome::Cancelled(self.session.last_cancel().unwrap_or(Cancelled::Nothing))
-            }
-        };
-        Some((outcome, self.session.snapshot()))
+    fn config(&self) -> &AppConfig {
+        &self.config
+    }
+    fn market_tab(&self, index: usize) -> Option<&dyn MarketTab> {
+        (index == 0).then_some(&self.live as &dyn MarketTab)
+    }
+    fn market_tab_mut(&mut self, index: usize) -> Option<LentTab<'_>> {
+        (index == 0).then_some(LentTab {
+            tab: &mut self.live,
+            config: &self.config,
+            history_default: &mut self.window_default,
+        })
+    }
+    fn drawing_gesture_on(&self, _feed_id: &str, _from: &str, _to: &str) -> bool {
+        false
+    }
+    fn carry_market_drawings(&mut self, _feed_id: &str, _from: &str, _to: &str) -> usize {
+        0
     }
 }
 
@@ -163,17 +227,17 @@ fn press_page_and_cancel_through_the_handlers_match_the_session_bus() {
     let now = Instant::now();
     let page = older_page();
 
-    let mut tab = SessionTab {
-        session: TabSession::new(),
-        tape: tape(),
-        now,
-        window_default: None,
-    };
+    let mut tab = SessionTab::new(now);
     let pressed = call(load, &mut tab, json!({ "reach": YESTERDAY.token() }));
     assert_eq!(pressed["press"], "started");
     assert_eq!(pressed["status"]["state"], "loading");
-    assert_eq!(tab.window_default, Some(YESTERDAY));
-    run(&mut tab.session, &tab.tape, Act::HistoryPage(&page), now);
+    assert_eq!(tab.window_default, YESTERDAY);
+    run(
+        &mut tab.live.session,
+        &tab.live.tape,
+        Act::HistoryPage(&page),
+        now,
+    );
     let cancelled = call(cancel, &mut tab, json!({}));
     assert_eq!(cancelled["cancelled"], "run");
     assert_eq!(cancelled["status"]["state"], "idle");
@@ -184,22 +248,17 @@ fn press_page_and_cancel_through_the_handlers_match_the_session_bus() {
     run(&mut direct, &direct_tape, Act::HistoryPage(&page), now);
     run(&mut direct, &direct_tape, Act::CancelHistory, now);
 
-    assert_eq!(tab.session.snapshot(), direct.snapshot());
-    assert_eq!(tab.session.drain_events(), direct.drain_events());
+    assert_eq!(tab.live.session.snapshot(), direct.snapshot());
+    assert_eq!(tab.live.session.drain_events(), direct.drain_events());
 }
 
 #[test]
 fn a_press_refused_while_a_run_pages_leaves_the_window_default_alone() {
-    let mut tab = SessionTab {
-        session: TabSession::new(),
-        tape: tape(),
-        now: Instant::now(),
-        window_default: None,
-    };
+    let mut tab = SessionTab::new(Instant::now());
     call(load, &mut tab, json!({ "reach": YESTERDAY.token() }));
-    tab.window_default = None;
+    tab.window_default = FAKE_DEFAULT_REACH;
     let again = call(load, &mut tab, json!({ "reach": "hours:1" }));
     assert_eq!(again["press"], "already_running");
     assert_eq!(again["status"]["main_reach"], YESTERDAY.token());
-    assert_eq!(tab.window_default, None);
+    assert_eq!(tab.window_default, FAKE_DEFAULT_REACH);
 }

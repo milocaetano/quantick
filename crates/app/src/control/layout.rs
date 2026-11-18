@@ -28,7 +28,7 @@ pub(crate) fn tab_index<P: TabsPort + ?Sized>(
     app: &P,
     target: TabTarget,
 ) -> Result<usize, ControlError> {
-    quantick_control_handlers::tab_index(&app.tab_reads(), target.tab_id)
+    quantick_control_handlers::tab_index(app.tab_reads().tabs(), target.tab_id)
 }
 
 impl LayoutHost for dyn ControlPort {

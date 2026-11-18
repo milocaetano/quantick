@@ -3,9 +3,10 @@
 //! `feed.source.set` and `tab.market.set` take, or rolls it through the act
 //! `feed.contract.roll` runs. The trader's hand journals nothing, as the
 //! window's other source changes do.
-use crate::contract_roll::{self, ContractRollPort};
+use crate::contract_roll;
 use crate::feed_source::{check_source, set_source};
 use crate::market_palette::MarketPaletteHost;
+use crate::market_tab::{MarketTabHost, market};
 use crate::workspace_book::switch::ask_unjournaled;
 use crate::workspace_book::{WorkspaceBookHost, WorkspaceOwner, set_tab_workspace, unavailable};
 use quantick_control::wire::WireU64;
@@ -17,8 +18,8 @@ use quantick_stores::market_list::{
 
 /// What a switch host can do: the window's switch, its roll, its palette and
 /// the door to its workspace book.
-pub trait SwitchHost: ContractRollPort + MarketPaletteHost + WorkspaceBookHost {}
-impl<H: ContractRollPort + MarketPaletteHost + WorkspaceBookHost + ?Sized> SwitchHost for H {}
+pub trait SwitchHost: MarketTabHost + MarketPaletteHost + WorkspaceBookHost {}
+impl<H: MarketTabHost + MarketPaletteHost + WorkspaceBookHost + ?Sized> SwitchHost for H {}
 
 const TAB_GONE: &str = "The tab being switched has closed";
 
@@ -103,7 +104,7 @@ pub fn roll<H: SwitchHost + ?Sized>(
 ) -> Result<String, String> {
     let index =
         crate::tabs::tab_index(app, Some(WireU64::new(tab_id))).map_err(|error| error.message)?;
-    let current = app.feed_selection(index).ok_or(TAB_GONE)?;
+    let current = market(&*app, index).ok_or(TAB_GONE)?;
     if current.symbol != from_symbol {
         return Err(format!("The tab no longer shows {from_symbol}"));
     }
