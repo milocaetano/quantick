@@ -338,6 +338,26 @@ impl Tab {
         rects
     }
 
+    /// Tell the tab's paper whether new entries wait, before anything trades
+    /// this frame: the link's judgement now, on the chart's last word about
+    /// the transport.
+    pub(crate) fn judge_trade_gate(&mut self, config: &crate::config::AppConfig, now_ms: i64) {
+        use quantick_chart::connection_state::Link;
+        use quantick_feed::{FeedConnectionState, sync::LinkState};
+        // The chart's latch for offline; its attempt only until the feed says
+        // it connected, which can land after the chart last looked.
+        let link = match self.connection.state().link {
+            Link::Offline => LinkState::Offline,
+            Link::Attempting if self.link.feed_connection != FeedConnectionState::Connected => {
+                LinkState::Attempting
+            }
+            _ => LinkState::Up,
+        };
+        let limits = config.sync_limits(&self.feed_id);
+        let gate = self.link.sync_at(&self.symbol, link, limits, now_ms);
+        self.paper.set_trade_gate(gate);
+    }
+
     /// Tell this tab's connection state what the frame found.
     pub(crate) fn observe_connection(
         &mut self,
@@ -345,8 +365,7 @@ impl Tab {
         now_ms: i64,
         stall: Option<&quantick_feed::stall::Stall>,
     ) {
-        use quantick_chart::connection_state::{ConnectionFacts, Link, Transport, Verdict};
-        use quantick_feed::sync::{LinkState, SyncFacts};
+        use quantick_chart::connection_state::{ConnectionFacts, Transport, Verdict};
         use quantick_feed::{FeedConnectionState, FeedNotice};
         let report = crate::feed_notice::report(&self.link.notice, stall)
             .filter(crate::feed_notice::Report::is_offline);
@@ -389,18 +408,6 @@ impl Tab {
         };
         self.connection.observe(&facts, &self.loading);
         let feed = self.connection.state();
-        let sync = SyncFacts {
-            symbol: &self.symbol,
-            link: match feed.link {
-                Link::Attempting => LinkState::Attempting,
-                Link::Offline => LinkState::Offline,
-                _ => LinkState::Up,
-            },
-            book_last_event_ms: self.tape().last_event_ms(),
-            limits: config.sync_limits(&self.feed_id),
-        };
-        let gate = self.link.sync_at(sync, now_ms);
-        self.paper.set_trade_gate(gate);
         self.tape_mut().observe_market(feed);
         let spoken = self.connection.spoken_link(now_ms);
         let (view, state) = (

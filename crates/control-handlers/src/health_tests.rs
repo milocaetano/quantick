@@ -191,7 +191,7 @@ fn a_paused_tab_reports_its_cause_and_the_revision_moves_on_its_edges_only() {
         (gate.tape_age_ms, gate.max_tape_age_ms, gate.max_latency_ms),
         (Some(6_000), 5_000, 500)
     );
-    assert!(gate.sentence.contains("6.0 s old"), "{}", gate.sentence);
+    assert!(gate.sentence.contains("for 6.0 s"), "{}", gate.sentence);
     let entered = revision(&window);
     assert!(entered != open, "the pause began");
     window.tabs[0].gate = Some(paused(7_500));

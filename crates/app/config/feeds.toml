@@ -99,13 +99,15 @@ default_symbol = "BTCUSDT"
 #                   beside the symbol starts and stops it by hand either way,
 #                   and the trader's choice under Tools overrides this default.
 #   sync          — optional: how far behind this feed the chart may fall
-#                   before new entries pause (exits never do), as
-#                   { max_latency_ms = 500, max_tape_age_ms = 5000 } - those
+#                   before new entries pause (an order that only reduces the
+#                   position never does), as { max_latency_ms = 500,
+#                   max_tape_age_ms = 5000, max_connecting_ms = 0 } - those
 #                   are the defaults. Latency is the provider's measured
 #                   arrival split (a clock difference never pauses); tape age
-#                   is wall clock minus the newest trade or book event. A
-#                   link that is connecting or offline pauses too; a replay
-#                   never does.
+#                   is wall clock minus when the newest trade or book event
+#                   arrived; max_connecting_ms is how long a connect or
+#                   reconnect may run first. An offline link always pauses;
+#                   a replay never does.
 [[feeds]]
 id = "binance"
 name = "Binance"

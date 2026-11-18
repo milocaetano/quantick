@@ -50,7 +50,6 @@ fn every_hand_journaled_action_writes_its_pinned_event() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = app_with_history(20);
     run_frame(&mut app, &ctx);
-    connect_tabs(&mut app);
     let tab_id = app.runtime.tabs.active_id().to_string();
     let pane_id = app.active_tab().flow_pane.id.to_string();
     let anchor = {

@@ -2281,6 +2281,7 @@ mod tests {
         let limits = |max_latency_ms, max_tape_age_ms| quantick_sources::sync::SyncLimits {
             max_latency_ms,
             max_tape_age_ms,
+            max_connecting_ms: 0,
         };
         let absent = load("").expect("no sync table");
         assert_eq!(absent.sync_limits("f"), limits(500, 5_000));

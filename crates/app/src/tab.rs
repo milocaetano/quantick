@@ -29,7 +29,7 @@ use crate::metrics;
 use crate::pane::{ChartPane, PaneIndex, PaneSide, SharedPick};
 use crate::paper_trading::PaperTrading;
 use crate::state::BarConfiguration;
-use quantick_feed::{FeedHandle, FeedLatency, FeedLink};
+use quantick_feed::{FeedHandle, FeedLink};
 use std::path::PathBuf;
 
 pub(crate) mod alerts;
@@ -405,17 +405,6 @@ impl Tab {
         // enable and disable themselves from this one value.
         *self.link.feed_capabilities.borrow()
     }
-
-    /// Where this feed's delay is being spent, as far as the provider can tell.
-    ///
-    /// `None` while replaying: a recording's prints are as old as the day they
-    /// were captured and the playback clock decides when they appear, so there
-    /// is no delay here for any hop to own — the same reason
-    /// [`trade_arrival_ms`](FeedLink::trade_arrival_ms) reports nothing there.
-    #[must_use]
-    pub fn feed_latency(&self) -> Option<FeedLatency> {
-        self.link.latency_split()
-    }
 }
 
 #[cfg(test)]
@@ -456,7 +445,7 @@ impl Tab {
 
     /// Publish a latency reading as the attached feed would, for a test that
     /// needs the tab to have read one.
-    pub fn publish_latency_for_test(&mut self, split: Option<FeedLatency>) {
+    pub fn publish_latency_for_test(&mut self, split: Option<quantick_feed::FeedLatency>) {
         let (tx, rx) = tokio::sync::watch::channel(split);
         self.link.feed_latency = rx;
         // The sender is dropped on purpose: a `watch` receiver keeps serving

@@ -39,7 +39,7 @@ impl HealthTab for Tab {
         self.link.trade_arrival_ms()
     }
     fn latency_split(&self) -> Option<FeedLatency> {
-        self.feed_latency()
+        self.link.latency_split()
     }
     fn intake_lag(&self) -> Option<IntakeLagSnapshot> {
         self.link.intake_lag.summary().map(Into::into)

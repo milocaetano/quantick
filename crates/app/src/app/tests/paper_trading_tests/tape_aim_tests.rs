@@ -35,9 +35,6 @@ fn tape_app(ctx: &egui::Context, mode: TapeMode) -> QuantickApp {
     };
     app.active_tab_mut()
         .ingest_live_trade_at(&live, live.timestamp_ms);
-    // These proofs are about where a press lands over a feed that never
-    // connects, and a connect would move the tape; the pause is not theirs.
-    quantick_feed::sync::waive_on_this_thread();
     run_frame(&mut app, ctx);
     run_frame(&mut app, ctx);
     let mark = app.active_tab().paper.mark_price();

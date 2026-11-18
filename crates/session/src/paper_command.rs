@@ -9,15 +9,13 @@
 //!
 //! The one decision made before any of that: while the host says the chart
 //! is out of sync with its feed ([`TabPaper::set_trade_gate`]), a command
-//! that opens exposure is refused with the cause, on every route. One that
-//! closes, cancels or amends never is — a trader caught by a frozen feed
-//! must still be able to get out.
+//! that would open or grow exposure is refused with the cause, on every
+//! route; one that only reduces it never is (`paper_gate.rs`).
 
 use std::borrow::BorrowMut;
 
 use quantick_engine::Side;
 use quantick_paper::PaperAccount;
-use quantick_paper::desk::ChartCommand;
 use quantick_sim::{Bracket, OrderId, OrderIntent, VenueEvent};
 use quantick_sources::sync::Desync;
 
@@ -64,17 +62,6 @@ pub enum TradeCommand {
     Flatten,
 }
 
-impl TradeCommand {
-    /// Whether it may open exposure, so a feed out of sync pauses it.
-    #[must_use]
-    pub const fn opens(&self) -> bool {
-        matches!(
-            self,
-            Self::Market { .. } | Self::Place { .. } | Self::Reverse
-        )
-    }
-}
-
 /// What one [`TradeCommand`] did.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 #[must_use]
@@ -109,9 +96,7 @@ impl<A: BorrowMut<PaperAccount>> TabPaper<A> {
     /// Run one trade command: the bracket choice, the risk refusal, the
     /// ruler clear and the venue's answer, the same for every caller.
     pub fn execute(&mut self, command: TradeCommand) -> TradeOutcome {
-        if command.opens()
-            && let Some(sentence) = self.gate_refusal()
-        {
+        if let Some(sentence) = self.entry_paused(&command) {
             return TradeOutcome {
                 gate: self.gate.clone(),
                 ..TradeOutcome::refused(sentence)
@@ -201,44 +186,6 @@ impl<A: BorrowMut<PaperAccount>> TabPaper<A> {
                 TradeOutcome::refused(sentence)
             }
         }
-    }
-
-    /// Pause new entries for `gate`, or resume them with `None`: the host's
-    /// judgement of its feed, told on every observation.
-    pub fn set_trade_gate(&mut self, gate: Option<Desync>) {
-        self.gate = gate;
-    }
-
-    /// Why new entries are paused now, if they are.
-    #[must_use]
-    pub fn trade_gate(&self) -> Option<&Desync> {
-        self.gate.as_ref()
-    }
-
-    /// While entries are paused: post the cause as the toast, in the route's
-    /// word, and answer with it.
-    pub(super) fn gate_refusal(&mut self) -> Option<String> {
-        let sentence = self.gate.as_ref()?.sentence();
-        let word = self.core().route_kind().word();
-        self.show_toast(format!("{word}: {sentence}"));
-        Some(sentence)
-    }
-
-    /// Carry out what a chart press asked for, through the desk; a placement
-    /// is an entry, and waits out a pause as one.
-    ///
-    /// # Errors
-    ///
-    /// The ticket's complaint when a placement's offsets do not parse.
-    pub fn carry_out(&mut self, command: ChartCommand) -> Result<(), String> {
-        let places = matches!(
-            command,
-            ChartCommand::PlaceResting { .. } | ChartCommand::PlaceArmed { .. }
-        );
-        if places && self.gate_refusal().is_some() {
-            return Ok(());
-        }
-        self.desk.carry_out(self.account.borrow_mut(), command)
     }
 
     /// A refusal the account already posted as the toast, answered with the

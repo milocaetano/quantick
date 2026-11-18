@@ -69,6 +69,8 @@ impl CanvasAnswers {
             chip_rect: status.word_rect,
             notice_action: if status.reconnect {
                 app.active_tab().link.quick_action()
+            } else if status.gate_reconnect {
+                feed_notice::NoticeAction::Reconnect
             } else {
                 feed_notice::NoticeAction::None
             },

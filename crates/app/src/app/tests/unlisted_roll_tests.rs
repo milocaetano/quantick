@@ -185,7 +185,6 @@ fn a_refused_roll_keeps_reconnect_and_says_why() {
         .paper
         .redirect_history_dir(scratch.path().to_path_buf());
     run_frame(&mut app, &ctx);
-    connect_tabs(&mut app);
     app.apply_toolbar_action(ToolbarAction::PaperBuy);
     assert!(!app.active_tab().paper.is_flat(), "a position is open");
     let output = popup_over(&mut app, &ctx, unlisted("TESTUSDT"));

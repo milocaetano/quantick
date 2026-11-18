@@ -5,7 +5,8 @@
 //! nothing new for longer than the tape-age limit — the chart is showing a
 //! market that has moved on, and an order sent from it is sent blind. So the
 //! tab's paper desk pauses new entries while this judgement holds, on the
-//! simulator and on a broker route alike; exits never pause.
+//! simulator and on a broker route alike; what only reduces a position
+//! never pauses.
 //!
 //! Beside [`crate::stall`], and like it a pure function told everything: the
 //! caller reads the clock and the chart's link, the decision reads neither.
@@ -27,9 +28,12 @@ pub struct SyncInput<'a> {
     /// behind of, so never paused.
     pub replaying: bool,
     pub link: LinkState,
+    /// How long the transport has been in its current state.
+    pub link_for_ms: i64,
     /// The provider's latency split, when it cuts one.
     pub latency: Option<FeedLatency>,
-    /// Wall clock minus the newest event on the tape; `None` before any.
+    /// Wall clock minus when the newest print or book event arrived here, by
+    /// the local clock; `None` before any.
     pub tape_age_ms: Option<i64>,
     pub notice: &'a FeedNotice,
     pub limits: SyncLimits,
@@ -45,7 +49,12 @@ pub fn assess(input: &SyncInput<'_>) -> Option<Desync> {
     }
     let limits = input.limits;
     let latency_ms = input.latency.as_ref().and_then(FeedLatency::measured_ms);
-    let reading = if input.link != LinkState::Up {
+    let link_down = match input.link {
+        LinkState::Up => false,
+        LinkState::Attempting => input.link_for_ms >= limits.max_connecting_ms,
+        LinkState::Offline => true,
+    };
+    let reading = if link_down {
         SyncReading::Link
     } else if latency_ms.is_some_and(|ms| ms >= limits.max_latency_ms) {
         SyncReading::Latency
@@ -75,38 +84,6 @@ fn headline(notice: &FeedNotice) -> Option<&str> {
         | FeedNotice::Attention { headline, .. } => Some(headline),
         FeedNotice::Connected | FeedNotice::Clear => None,
     }
-}
-
-/// What a link gathers for [`crate::FeedLink::sync_at`] beyond its own state.
-#[derive(Debug, Clone, Copy)]
-pub struct SyncFacts<'a> {
-    /// The tab's symbol, for the log.
-    pub symbol: &'a str,
-    pub link: LinkState,
-    /// The book's newest event, as [`crate::FeedLink::tape_age_at`] reads it.
-    pub book_last_event_ms: Option<i64>,
-    pub limits: SyncLimits,
-}
-
-#[cfg(any(test, feature = "harness"))]
-thread_local! {
-    static WAIVED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-}
-
-/// Test support: entries never pause on links observed on this thread,
-/// for a fixture whose fake feed never connects and whose layout a connect
-/// would move. Only in `harness` builds, and nothing but a test calls it.
-#[cfg(any(test, feature = "harness"))]
-pub fn waive_on_this_thread() {
-    WAIVED.set(true);
-}
-
-/// Whether [`waive_on_this_thread`] was called here.
-pub(crate) fn waived() -> bool {
-    #[cfg(any(test, feature = "harness"))]
-    return WAIVED.get();
-    #[cfg(not(any(test, feature = "harness")))]
-    false
 }
 
 /// When entries paused, so leaving can say for how long.
@@ -202,6 +179,7 @@ mod tests {
         SyncInput {
             replaying: false,
             link: LinkState::Up,
+            link_for_ms: 0,
             latency: Some(split(120)),
             tape_age_ms: Some(300),
             notice,
@@ -240,6 +218,7 @@ mod tests {
         let limits = SyncLimits {
             max_latency_ms: 2_000,
             max_tape_age_ms: 60_000,
+            max_connecting_ms: 3_000,
         };
         let loose = SyncInput {
             latency: Some(split(1_999)),
@@ -267,6 +246,30 @@ mod tests {
             assert_eq!(desync.latency_hop, Some("MT5"));
             assert_eq!(desync.tape_age_ms, Some(9_000));
             assert_eq!(desync.notice.as_deref(), Some("MetaTrader 5 disconnected"));
+        }
+    }
+
+    /// A connect may run for the feed's `max_connecting_ms` before entries
+    /// pause; an offline link pauses whatever the limit.
+    #[test]
+    fn a_connect_pauses_once_its_limit_runs_out() {
+        let clear = FeedNotice::Clear;
+        let limits = SyncLimits {
+            max_connecting_ms: 2_000,
+            ..SyncLimits::default()
+        };
+        for (link, link_for_ms, expected) in [
+            (LinkState::Attempting, 1_999, None),
+            (LinkState::Attempting, 2_000, Some(SyncReading::Link)),
+            (LinkState::Offline, 0, Some(SyncReading::Link)),
+        ] {
+            let at = SyncInput {
+                link,
+                link_for_ms,
+                limits,
+                ..input(&clear)
+            };
+            assert_eq!(reading(&at), expected, "{link:?} for {link_for_ms}");
         }
     }
 

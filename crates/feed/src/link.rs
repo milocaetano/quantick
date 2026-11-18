@@ -12,7 +12,7 @@ use tokio::sync::{mpsc, watch};
 use crate::config::{FeedCapabilities, ProviderKind};
 use crate::notice_report::{NoticeAction, RollNote};
 use crate::stall::{self, Stall, StallInput};
-use crate::sync::{self as feed_sync, Desync, SyncFacts, SyncInput, SyncWatch};
+use crate::sync::{self as feed_sync, Desync, LinkState, SyncInput, SyncLimits, SyncWatch};
 use crate::{
     DepthEvent, FeedCommand, FeedConnectionState, FeedEvent, FeedGap, FeedHandle, FeedIntegrity,
     FeedLatency, FeedNotice, ReplayLink,
@@ -146,6 +146,10 @@ pub struct FeedLink {
     connected_once: bool,
     /// When new entries paused on this link, kept across attaches.
     sync_watch: SyncWatch,
+    /// Wall clock when the newest live print or book event arrived here: the
+    /// entry pause ages the tape from it, never from a venue stamp a clock
+    /// offset would skew.
+    latest_arrival_ms: Option<i64>,
 }
 
 impl FeedLink {
@@ -181,6 +185,7 @@ impl FeedLink {
             auto_roll: AutoRoll::default(),
             connected_once: false,
             sync_watch: SyncWatch::default(),
+            latest_arrival_ms: None,
         }
     }
 
@@ -364,25 +369,46 @@ impl FeedLink {
 
     /// Whether new entries pause on this link as of `now_ms`: the judgement
     /// is [`crate::sync`]'s; this gathers the link's own readings and logs
-    /// each edge of the pause.
-    pub fn sync_at(&mut self, facts: SyncFacts<'_>, now_ms: i64) -> Option<Desync> {
-        if feed_sync::waived() {
-            return None;
-        }
+    /// each edge of the pause. `symbol` names the tab in the log; `link` is
+    /// the chart's word about the transport.
+    pub fn sync_at(
+        &mut self,
+        symbol: &str,
+        link: LinkState,
+        limits: SyncLimits,
+        now_ms: i64,
+    ) -> Option<Desync> {
         let transport = self.feed_capabilities.borrow().transport;
         let desync = feed_sync::assess(&SyncInput {
             replaying: self.replay.is_some() || !transport,
-            link: facts.link,
+            link,
+            link_for_ms: now_ms.saturating_sub(self.connection_since_ms),
             latency: self.latency_split(),
-            tape_age_ms: self.tape_age_at(facts.book_last_event_ms, now_ms),
+            tape_age_ms: self
+                .latest_arrival_ms
+                .map(|at| now_ms.saturating_sub(at).max(0)),
             notice: &self.notice,
-            limits: facts.limits,
+            limits,
         });
         if let Some(change) = self.sync_watch.step(desync.is_some(), now_ms) {
             let intake = self.intake_lag.summary();
-            feed_sync::log_change(change, desync.as_ref(), facts.symbol, intake);
+            feed_sync::log_change(change, desync.as_ref(), symbol, intake);
         }
         desync
+    }
+
+    /// A book event drained at `received_at_ms`: the tape is still arriving.
+    pub fn observe_book_arrival(&mut self, received_at_ms: i64) {
+        self.note_arrival(received_at_ms);
+    }
+
+    fn note_arrival(&mut self, received_at_ms: i64) {
+        if self.replay.is_none() {
+            let newest = self
+                .latest_arrival_ms
+                .map_or(received_at_ms, |at| at.max(received_at_ms));
+            self.latest_arrival_ms = Some(newest);
+        }
     }
 
     /// Book one live print received at `received_at_ms`, as the window hands
@@ -397,6 +423,7 @@ impl FeedLink {
         self.latest_trade_latency_ms = quantick_engine::feed_lag_ms(received_at_ms, Some(trade_ms));
         self.latest_trade_ms = Some(trade_ms);
         self.live_trades += 1;
+        self.note_arrival(received_at_ms);
         // A recording's drain is not live intake; its sibling figures say so too.
         if self.replay.is_none() {
             self.intake_lag.record(received_at_ms, now_ms);
@@ -497,6 +524,29 @@ mod tests {
             None,
             "a new session, a new window"
         );
+    }
+
+    /// The pause ages the tape from when prints and book events arrived
+    /// here: a venue clock hours off moves nothing, a silent wire does.
+    #[test]
+    fn the_pause_ages_the_tape_by_local_arrival_not_the_venue_stamp() {
+        use crate::sync::{LinkState, SyncLimits, SyncReading};
+        let (mut link, _notices) = link();
+        link.feed_capabilities = crate::fixed_capabilities(FeedCapabilities {
+            transport: true,
+            ..FeedCapabilities::none()
+        });
+        let limits = SyncLimits::default();
+        let at = |link: &mut FeedLink, now| link.sync_at("WINZ26", LinkState::Up, limits, now);
+        assert_eq!(at(&mut link, 1_000_000), None, "nothing has arrived yet");
+        // A venue stamp three hours behind the local clock.
+        link.observe_live_trade_at(1_000_000, 1_000_000 - 10_800_000, 1_000_000);
+        assert_eq!(at(&mut link, 1_004_999), None, "an offset clock is not age");
+        link.observe_book_arrival(1_004_000);
+        assert_eq!(at(&mut link, 1_008_999), None, "the book still arrives");
+        let paused = at(&mut link, 1_009_000).expect("five seconds of silence");
+        assert_eq!(paused.reading, SyncReading::TapeAge);
+        assert_eq!(paused.tape_age_ms, Some(5_000));
     }
 
     fn handle() -> (FeedHandle, mpsc::Sender<FeedNotice>) {

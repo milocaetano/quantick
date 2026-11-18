@@ -765,7 +765,7 @@ fn the_popup_belongs_to_the_tab_whose_chip_opened_it() {
 fn a_tab_reads_the_split_its_provider_publishes_and_nothing_more() {
     let (mut app, _evt_tx, _cmd_rx, _book_tx) = test_app();
     assert_eq!(
-        app.active_tab().feed_latency(),
+        app.active_tab().link.latency_split(),
         None,
         "a feed that has published nothing yet has nothing to report"
     );
@@ -781,12 +781,12 @@ fn a_tab_reads_the_split_its_provider_publishes_and_nothing_more() {
     app.active_tab_mut().publish_latency_for_test(Some(split));
     // The cell the trader reads takes it from there:
     // `quantick_feed::timing`'s tests name the hop.
-    assert_eq!(app.active_tab().feed_latency(), Some(split));
+    assert_eq!(app.active_tab().link.latency_split(), Some(split));
 
     // A provider that cannot cut its own chain leaves the cell exactly as
     // it has always been — never a breakdown of zeros nobody measured.
     app.active_tab_mut().publish_latency_for_test(None);
-    assert_eq!(app.active_tab().feed_latency(), None);
+    assert_eq!(app.active_tab().link.latency_split(), None);
 }
 
 /// The reverse, so the test above cannot pass on a stroke that was always
@@ -982,7 +982,6 @@ fn the_time_panes_own_x_axis_zooms_the_time_pane_and_only_it() {
 fn the_focused_pane_hands_the_pointer_to_the_simulator() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = split_app(&ctx, 200);
-    connect_tabs(&mut app);
     app.apply_toolbar_action(ToolbarAction::PaperBuy);
     let fill = trade(4);
     app.active_tab_mut().ingest_live_trade_at(&fill, 0);

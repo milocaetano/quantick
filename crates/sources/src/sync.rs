@@ -19,8 +19,11 @@ pub const DEFAULT_MAX_TAPE_AGE_MS: i64 = 5_000;
 pub struct SyncLimits {
     /// The provider's measured arrival latency.
     pub max_latency_ms: i64,
-    /// Wall clock minus the newest event on the tape.
+    /// Wall clock minus when the newest print or book event arrived here.
     pub max_tape_age_ms: i64,
+    /// How long the transport may be connecting or reconnecting before
+    /// entries pause; zero pauses at once. An offline link always pauses.
+    pub max_connecting_ms: i64,
 }
 
 impl Default for SyncLimits {
@@ -28,6 +31,7 @@ impl Default for SyncLimits {
         Self {
             max_latency_ms: DEFAULT_MAX_LATENCY_MS,
             max_tape_age_ms: DEFAULT_MAX_TAPE_AGE_MS,
+            max_connecting_ms: 0,
         }
     }
 }
@@ -50,6 +54,12 @@ impl SyncLimits {
                 ));
             }
         }
+        if self.max_connecting_ms < 0 {
+            return Err(format!(
+                "feed '{feed_id}' sets sync.max_connecting_ms to {} - a wait cannot be negative",
+                self.max_connecting_ms
+            ));
+        }
         Ok(())
     }
 }
@@ -66,7 +76,6 @@ pub enum LinkState {
 }
 
 impl LinkState {
-    /// The stable wire word.
     #[must_use]
     pub const fn word(self) -> &'static str {
         match self {
@@ -86,7 +95,6 @@ pub enum SyncReading {
 }
 
 impl SyncReading {
-    /// The stable wire word.
     #[must_use]
     pub const fn word(self) -> &'static str {
         match self {
@@ -143,7 +151,7 @@ impl Desync {
                 )
             }
             SyncReading::TapeAge => format!(
-                "the newest print is {} old (limit {})",
+                "nothing new has arrived for {} (limit {})",
                 spoken(self.tape_age_ms.unwrap_or_default()),
                 spoken(self.limits.max_tape_age_ms)
             ),
@@ -153,12 +161,22 @@ impl Desync {
             .as_deref()
             .map(|notice| format!(" - {notice}"))
             .unwrap_or_default();
+        let way_out = if self.offers_reconnect() {
+            "; Reconnect sits beside the tape"
+        } else {
+            ""
+        };
         format!(
             "new entries paused, the chart is out of sync with the feed: {cause}{notice}. \
-             Exits still work; Reconnect sits beside the tape"
+             Orders that only reduce the position still go{way_out}"
         )
     }
 }
+
+/// Why an armed strategy's entry is refused while entries pause: a fixed
+/// word, as every other strategy refusal is.
+pub const STRATEGY_ENTRY_PAUSED: &str =
+    "new entries paused, the chart is out of sync with the feed";
 
 /// Milliseconds under a second, else seconds to one decimal.
 fn spoken(ms: i64) -> String {
@@ -194,10 +212,14 @@ mod tests {
         );
         let age = desync(SyncReading::TapeAge).sentence();
         assert!(
-            age.contains("the newest print is 7.2 s old (limit 5.0 s)"),
+            age.contains("nothing new has arrived for 7.2 s (limit 5.0 s)"),
             "{age}"
         );
         assert!(desync(SyncReading::Latency).offers_reconnect());
+        assert!(
+            latency.ends_with("Reconnect sits beside the tape"),
+            "{latency}"
+        );
         let offline = Desync {
             link: LinkState::Offline,
             notice: Some("MetaTrader 5 disconnected".to_owned()),
@@ -205,8 +227,12 @@ mod tests {
         };
         let said = offline.sentence();
         assert!(
-            said.contains("the feed is offline - MetaTrader 5 disconnected. Exits still work"),
+            said.contains("the feed is offline - MetaTrader 5 disconnected. Orders that"),
             "{said}"
+        );
+        assert!(
+            !said.contains("Reconnect"),
+            "offline offers its own: {said}"
         );
         assert!(!offline.offers_reconnect(), "offline offers its own");
     }

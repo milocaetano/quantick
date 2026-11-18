@@ -115,7 +115,7 @@ impl HealthCounters {
                     progress: link.status.progress(),
                 }),
             feed_arrival_ms: tab.link.trade_arrival_ms(),
-            feed_latency: tab.feed_latency(),
+            feed_latency: tab.link.latency_split(),
             tape_age_ms: tab.tape_age_at(metrics::wall_clock_ms()),
             deal_recording: statusbar::DealCell::of(tab.deal_recording_view()),
             deal_chip: tab.deal_chip(),

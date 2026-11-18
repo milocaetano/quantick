@@ -1,0 +1,131 @@
+//! New entries wait while the chart is out of sync with its feed.
+//!
+//! The host judges its feed (`quantick_feed::sync`) and tells the tab's
+//! paper before anything can trade in a frame ([`TabPaper::set_trade_gate`]).
+//! While a gate stands, every door an order comes through — a command, a
+//! chart placement or reprice, an armed strategy — is asked one question:
+//! would it open or grow exposure? An order on the other side of the open
+//! position, no larger than it, only reduces it and goes; everything else
+//! is refused whole, never trimmed to its reducing part, and a reversal
+//! always opens the other side. Protective legs, cancels and closes are not
+//! orders that open anything and never wait.
+
+use std::borrow::BorrowMut;
+
+use quantick_engine::Side;
+use quantick_paper::PaperAccount;
+use quantick_paper::desk::ChartCommand;
+use quantick_sim::{Command, OrderId};
+use quantick_sources::sync::Desync;
+use rust_decimal::Decimal;
+
+use super::{TabPaper, TradeCommand};
+
+impl<A: BorrowMut<PaperAccount>> TabPaper<A> {
+    /// Pause new entries for `gate`, or resume them with `None`: the host's
+    /// judgement of its feed.
+    pub fn set_trade_gate(&mut self, gate: Option<Desync>) {
+        self.gate = gate;
+    }
+
+    #[must_use]
+    pub fn trade_gate(&self) -> Option<&Desync> {
+        self.gate.as_ref()
+    }
+
+    /// Carry out what a chart press asked for, through the desk. A placement
+    /// is an entry and a reprice moves one; each waits out a pause unless
+    /// it only reduces the position.
+    ///
+    /// # Errors
+    ///
+    /// The ticket's complaint when a placement's offsets do not parse.
+    pub fn carry_out(&mut self, command: ChartCommand) -> Result<(), String> {
+        let paused = match command {
+            ChartCommand::PlaceResting { side, .. } => self.pauses_ticket_entry(side),
+            ChartCommand::PlaceArmed { armed, .. } => self.pauses_ticket_entry(armed.side),
+            ChartCommand::AmendOrder { id, .. } => self.order_grows(id) && self.refuse(),
+            _ => false,
+        };
+        if paused {
+            return Ok(());
+        }
+        self.desk.carry_out(self.account.borrow_mut(), command)
+    }
+
+    /// The pause's refusal for `command`, toasted, when it would open or
+    /// grow exposure: a market press at the size the ticket would send, a
+    /// placement as stated, and every reversal.
+    pub(super) fn entry_paused(&mut self, command: &TradeCommand) -> Option<String> {
+        self.gate.as_ref()?;
+        let grows = match command {
+            TradeCommand::Market { side } => self.grows(*side, self.ticket_quantity()),
+            TradeCommand::Place { intent } => self.grows(intent.side, Some(intent.quantity)),
+            TradeCommand::Reverse => true,
+            TradeCommand::Amend { .. }
+            | TradeCommand::Cancel { .. }
+            | TradeCommand::CancelAll
+            | TradeCommand::Close
+            | TradeCommand::Flatten => false,
+        };
+        grows.then(|| self.refusal()).flatten()
+    }
+
+    /// Whether a ticket entry on `side` waits out a pause; toasts when it
+    /// does.
+    pub(super) fn pauses_ticket_entry(&mut self, side: Side) -> bool {
+        self.grows(side, self.ticket_quantity()) && self.refuse()
+    }
+
+    /// Whether an armed strategy's command waits out a pause: an entry that
+    /// would grow exposure, or a reprice of one. No toast — a strategy acts
+    /// on every print, and its refusal is the venue's answer.
+    pub(super) fn strategy_entry_paused(&self, command: &Command) -> bool {
+        if self.gate.is_none() {
+            return false;
+        }
+        match command {
+            Command::PlaceMarket { side, quantity, .. }
+            | Command::PlaceLimit { side, quantity, .. }
+            | Command::PlaceStop { side, quantity, .. } => self.grows(*side, Some(*quantity)),
+            Command::ModifyOrder { id, .. } => self.order_grows(*id),
+            _ => false,
+        }
+    }
+
+    /// Whether an order of `quantity` on `side` would open or grow exposure:
+    /// anything but the other side of the open position at no more than its
+    /// size. An unknown size is treated as growing.
+    fn grows(&self, side: Side, quantity: Option<Decimal>) -> bool {
+        let position = self.core().venue().position();
+        !position.is_some_and(|open| {
+            open.side != side && quantity.is_some_and(|quantity| quantity <= open.quantity)
+        })
+    }
+
+    /// Whether the working order `id` would grow exposure if it filled.
+    fn order_grows(&self, id: OrderId) -> bool {
+        let orders = self.core().working_orders();
+        let order = orders.iter().find(|order| order.id == id);
+        self.gate.is_some()
+            && order.is_some_and(|order| self.grows(order.side, Some(order.quantity)))
+    }
+
+    fn ticket_quantity(&self) -> Option<Decimal> {
+        self.desk.entry_quantity(self.core())
+    }
+
+    /// Toast the pause in the route's word; whether one stands.
+    fn refuse(&mut self) -> bool {
+        self.refusal().is_some()
+    }
+
+    /// While entries are paused: post the cause as the toast, in the route's
+    /// word, and answer with it.
+    fn refusal(&mut self) -> Option<String> {
+        let sentence = self.gate.as_ref()?.sentence();
+        let word = self.core().route_kind().word();
+        self.show_toast(format!("{word}: {sentence}"));
+        Some(sentence)
+    }
+}

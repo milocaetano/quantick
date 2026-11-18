@@ -2377,7 +2377,6 @@ fn a_replay_switch_flattens_under_the_session_that_owned_the_position() {
         quantity: rust_decimal::Decimal::ONE,
         side: quantick_engine::Side::Buy,
     };
-    connect_tabs(&mut app);
     {
         let paper = &mut app.active_tab_mut().paper;
         paper.redirect_history_dir(dir.path().to_path_buf());
@@ -2519,7 +2518,6 @@ fn closing_a_tab_flattens_and_journals_its_simulated_position() {
         .unwrap();
     let tab_id = app.runtime.tabs.active_id();
     app.active_tab_mut().drain_feed_with_clock(tab_id, || 0);
-    connect_tabs(&mut app);
     app.apply_toolbar_action(ToolbarAction::PaperBuy);
     ends.events.try_send(FeedEvent::Live(trade(4))).unwrap();
     let tab_id = app.runtime.tabs.active_id();
@@ -2549,7 +2547,6 @@ fn a_trade_action_reaches_the_active_desk_and_the_journal() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = app_with_history(40);
     run_frame(&mut app, &ctx);
-    connect_tabs(&mut app);
     let mark = app
         .active_tab()
         .paper

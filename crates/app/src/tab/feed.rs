@@ -468,6 +468,7 @@ impl Tab {
         policy: HistoryPolicy,
         observer: &mut dyn super::alerts::Observer,
     ) {
+        self.judge_trade_gate(config, metrics::wall_clock_ms());
         super::alerts::observe_alert_lifecycle(self, observer);
         self.drain_frame_with_stages(tab_id, config, policy, TabDrainPlan::stages(), observer);
         super::alerts::observe_alert_lifecycle(self, observer);
@@ -906,6 +907,7 @@ impl Tab {
             match self.link.book_events.try_recv() {
                 Ok(event) => {
                     let received_at_ms = *received_at_ms.get_or_insert_with(&mut wall_clock_ms);
+                    self.link.observe_book_arrival(received_at_ms);
                     self.tape_mut().handle_depth_event_at(event, received_at_ms);
                 }
                 Err(mpsc::error::TryRecvError::Empty) => break,

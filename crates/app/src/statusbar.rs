@@ -212,6 +212,8 @@ pub struct StatusResponse {
     pub word_rect: Option<egui::Rect>,
     /// The one-click control beside the word was pressed.
     pub reconnect: bool,
+    /// The Reconnect beside the tape cell, while entries pause, was pressed.
+    pub gate_reconnect: bool,
 }
 
 /// What the feed-state cell shows this frame.
@@ -288,7 +290,8 @@ pub fn draw(
                 let offered = lead.gate.filter(|gate| gate.offers_reconnect());
                 if let Some(gate) = offered.filter(|_| !lead.open) {
                     let why = |ui: &mut egui::Ui| _ = ui.label(gate.sentence());
-                    response.reconnect |= quick_control(ui, lead, why);
+                    let reconnect = &crate::feed_notice::NoticeAction::Reconnect;
+                    response.gate_reconnect = quick_control(ui, reconnect, why);
                 }
                 ui.separator();
                 response.open_trading_tab = draw_content(ui, model);
@@ -376,7 +379,7 @@ fn draw_lead(ui: &mut egui::Ui, lead: &StatusLead<'_>, response: &mut StatusResp
     }
     if word.reconnect && !lead.open {
         let cost = |ui: &mut egui::Ui| _ = ui.label(lead.action.cost());
-        response.reconnect = quick_control(ui, lead, cost);
+        response.reconnect = quick_control(ui, &lead.action, cost);
     }
 }
 
@@ -384,13 +387,11 @@ fn draw_lead(ui: &mut egui::Ui, lead: &StatusLead<'_>, response: &mut StatusResp
 /// it was pressed.
 fn quick_control(
     ui: &mut egui::Ui,
-    lead: &StatusLead<'_>,
+    action: &crate::feed_notice::NoticeAction,
     hover: impl FnOnce(&mut egui::Ui),
 ) -> bool {
     let colour = theme::get(ui.ctx()).loading_meta();
-    let text = egui::RichText::new(lead.action.label())
-        .small()
-        .color(colour);
+    let text = egui::RichText::new(action.label()).small().color(colour);
     ui.add(egui::Label::new(text).sense(egui::Sense::click()))
         .on_hover_cursor(egui::CursorIcon::PointingHand)
         .on_hover_ui(hover)

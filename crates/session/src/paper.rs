@@ -32,6 +32,8 @@ use rust_decimal::Decimal;
 
 #[path = "paper_command.rs"]
 mod command;
+#[path = "paper_gate.rs"]
+mod gate;
 #[path = "paper_settings.rs"]
 mod settings;
 
@@ -122,7 +124,7 @@ impl<A: BorrowMut<PaperAccount>> TabPaper<A> {
     /// and offsets; answers whether the simulator accepted it, and toasts
     /// the ticket's complaint when an offset does not parse.
     pub fn place_resting(&mut self, side: Side, kind: EntryKind, raw_price: f64) -> bool {
-        if self.gate_refusal().is_some() {
+        if self.pauses_ticket_entry(side) {
             return false;
         }
         let Self { desk, account, .. } = self;
@@ -381,6 +383,12 @@ impl<A: BorrowMut<PaperAccount>> TabPaper<A> {
 /// account's own.
 impl<A: BorrowMut<PaperAccount>> quantick_strategy::runner::StrategyPort for TabPaper<A> {
     fn apply(&mut self, command: Command) -> Vec<VenueEvent> {
+        if self.strategy_entry_paused(&command) {
+            let paused = quantick_sources::sync::STRATEGY_ENTRY_PAUSED;
+            return vec![VenueEvent::Rejected(quantick_sim::RejectReason::Blocked(
+                paused,
+            ))];
+        }
         self.core_mut().apply_strategy_command(command)
     }
 

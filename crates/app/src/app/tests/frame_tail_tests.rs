@@ -129,7 +129,6 @@ fn reload_case(late: bool, failed: bool) -> egui::Rect {
             "tail reset".to_owned(),
         )
         .unwrap();
-    connect_tabs(&mut app);
     {
         let symbol = app.active_tab().symbol.clone();
         let paper = &mut app.active_tab_mut().paper;

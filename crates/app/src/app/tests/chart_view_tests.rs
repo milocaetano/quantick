@@ -485,6 +485,7 @@ fn a_late_feed_pauses_the_toolbar_buy_and_offers_reconnect() {
     let ctx = egui::Context::default();
     notices.blocking_send(FeedNotice::Connected).unwrap();
     run_frame(&mut app, &ctx);
+    run_frame(&mut app, &ctx);
     assert_eq!(app.active_tab().paper.trade_gate(), None, "it keeps up");
     assert!(!app.chrome_reads().feed_reconnect_offered());
 
