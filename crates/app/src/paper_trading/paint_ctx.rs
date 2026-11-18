@@ -27,21 +27,21 @@ use crate::theme;
 
 /// The frame geometry every paper paint helper reads: one struct so a tag,
 /// a chip and a line can never disagree about where the plot ends.
-pub(super) struct PaintCtx<'a> {
-    pub(super) palette: std::sync::Arc<theme::Palette>,
-    pub(super) painter: &'a egui::Painter,
-    pub(super) chart_rect: egui::Rect,
+pub(crate) struct PaintCtx<'a> {
+    pub(crate) palette: std::sync::Arc<theme::Palette>,
+    pub(crate) painter: &'a egui::Painter,
+    pub(crate) chart_rect: egui::Rect,
     /// Right edge of the tag band (`tag_band`: the candles' band, or the
     /// whole plot in tape only) — tags anchor inside it.
-    pub(super) tag_right: f32,
+    pub(crate) tag_right: f32,
     /// Left edge of the price axis — lines run to it, gutter chips sit past
     /// it.
-    pub(super) axis_x: f32,
-    pub(super) scale: &'a PriceScale,
+    pub(crate) axis_x: f32,
+    pub(crate) scale: &'a PriceScale,
     /// The last-price chip's row, which every gutter chip dodges.
-    pub(super) reserved_chip_y: Option<f32>,
+    pub(crate) reserved_chip_y: Option<f32>,
     /// The pointer, `Some` only on the pane that owns paper input.
-    pub(super) pointer: Option<egui::Pos2>,
+    pub(crate) pointer: Option<egui::Pos2>,
 }
 
 impl PaintCtx<'_> {
@@ -234,7 +234,7 @@ impl PaintCtx<'_> {
     /// each has a full-size, fully labelled twin in the chrome. A `ghost`
     /// tag is outlined instead — dark fill, `fill` as its stroke and ink —
     /// for a leg that has not armed yet (see `leg_tag`).
-    pub(super) fn chip_tag(
+    pub(crate) fn chip_tag(
         &self,
         y: f32,
         fill: egui::Color32,
@@ -323,7 +323,7 @@ impl PaintCtx<'_> {
     /// a fact about the account, not an order that will fire. Its ✕ sits at
     /// the right edge on `close_button_rect`'s own geometry, like every
     /// chart close. Returns the tag's rect (the handle-reveal hover zone).
-    pub(super) fn position_tag(
+    pub(crate) fn position_tag(
         &self,
         y: f32,
         side_color: egui::Color32,
@@ -500,7 +500,7 @@ pub(super) fn bracket_handle_rect(tag_right: f32, entry_y: f32, above: bool) -> 
 }
 
 /// The cmd preview's line and label; see `desk::cmd::cmd_preview_layout`.
-pub(super) fn cmd_preview_layout(
+pub(crate) fn cmd_preview_layout(
     band: egui::Rect,
     axis_x: f32,
     pointer: egui::Pos2,

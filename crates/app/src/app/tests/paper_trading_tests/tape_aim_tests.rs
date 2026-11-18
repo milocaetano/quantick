@@ -240,8 +240,8 @@ fn tape_only_cancels_from_the_tag_inside_the_plot() {
         PaneSide::Flow,
         rust_decimal::prelude::ToPrimitive::to_f64(&placed).expect("a price"),
     );
-    let center = crate::paper_trading::clamp_tag_center(y, chart.top(), chart.bottom());
-    let cross = crate::paper_trading::close_button_rect(chart.right(), center).center();
+    let center = crate::paper_trading::paint_ctx::clamp_tag_center(y, chart.top(), chart.bottom());
+    let cross = crate::paper_trading::paint_ctx::close_button_rect(chart.right(), center).center();
     assert!(chart.contains(cross), "the ✕ sits on the plot");
     move_chart_with(&mut app, &ctx, cross, egui::Modifiers::NONE);
     click_chart_with(&mut app, &ctx, cross, egui::Modifiers::NONE);

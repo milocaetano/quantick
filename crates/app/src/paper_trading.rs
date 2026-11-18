@@ -20,8 +20,6 @@
 use std::path::{Path, PathBuf};
 
 use eframe::egui;
-#[cfg(test)]
-use quantick_engine::Side;
 use quantick_engine::Trade;
 #[cfg(any(feature = "scenario-harness", test))]
 use quantick_paper::desk::CmdPreviewForce;
@@ -30,14 +28,6 @@ use quantick_paper::desk::ruler::RULER_MAX_NOTCHES;
 use quantick_session::paper::TabPaper;
 // The words every order surface speaks, decided beside the account.
 use quantick_paper::format::{kind_short, kind_word, side_word_upper};
-#[cfg(test)]
-use quantick_sim::Bracket;
-// The journal's own format, and the command type the sim takes, are named
-// only by the tests that drive one; the writing moved to `paper_account`.
-#[cfg(test)]
-use quantick_sim::{ClosedTrade, Command, history};
-#[cfg(test)]
-use rust_decimal::Decimal;
 
 use crate::chart::PriceScale;
 // One date law for every trade surface - see `paper_calendar`.
@@ -46,12 +36,6 @@ pub(crate) use crate::paper_account::{Leg, side_word};
 pub(crate) use quantick_paper::desk::{
     ArmedPlacement, CmdEntryKind, CmdModifier, CmdTradingSettings,
 };
-// The press-side answer, named by the tests that ask what a pixel holds.
-#[cfg(test)]
-pub(crate) use quantick_paper::desk::PaperControl;
-// The report's anchor date is formatted only under test.
-#[cfg(test)]
-use quantick_civil::civil_utc;
 
 // The report and the ledger moved to `paper_report`; these names did not.
 // The control plane, the dock and the harness hooks all reach them through
@@ -65,14 +49,11 @@ pub(crate) mod account_route;
 mod cmd;
 mod input;
 mod paint;
-mod paint_ctx;
+pub(crate) mod paint_ctx;
 mod strategies;
 mod ticket;
 
 pub(crate) use paint_ctx::tag_band;
-// The tag geometry, named by the tests that press a ✕ where one was painted.
-#[cfg(test)]
-pub(crate) use paint_ctx::{clamp_tag_center, close_button_rect};
 
 /// `=<rungs>` rests entry orders around the mark as soon as the tape has
 /// one, so the in-plot order tag can be photographed at all. The scripted
@@ -214,7 +195,7 @@ pub struct PaperTrading {
     /// (`QUANTICK_PAPER_ORDERS`, `QUANTICK_PAPER_ORDER_BRACKET`); `None`
     /// once they rest.
     #[cfg_attr(not(any(feature = "scenario-harness", test)), allow(dead_code))]
-    capture_orders: Option<quantick_paper::account::CaptureOrders>,
+    pub(crate) capture_orders: Option<quantick_paper::account::CaptureOrders>,
     /// The tab's desk and account, and the decisions that join them
     /// (`quantick_session::paper`). The account is held with the report and
     /// the export threads beside it; everything the ticket, the dock and the
@@ -351,46 +332,6 @@ impl PaperTrading {
     }
 }
 
-#[cfg(test)]
-impl PaperTrading {
-    /// The report's state, as its own surfaces read it. Test-only, like the
-    /// account's own pair: the drawing code reaches the report through
-    /// `report_parts`.
-    pub(crate) fn report_state(&self) -> &crate::paper_report::ReportState {
-        self.account().report_state()
-    }
-
-    /// The report's state, mutably. Test-only, as above.
-    pub(crate) fn report_state_mut(&mut self) -> &mut crate::paper_report::ReportState {
-        self.account_mut().report_state_mut()
-    }
-
-    /// Point the journal at a scratch folder (tests only).
-    pub(crate) fn redirect_history_dir(&mut self, dir: PathBuf) {
-        self.account_mut().redirect_history_dir(dir);
-    }
-
-    /// Run one simulator command straight at the venue (tests only).
-    pub(crate) fn apply_sim_command_for_tests(&mut self, command: Command) {
-        self.account_mut().apply_sim_command_for_tests(command);
-    }
-
-    pub(crate) fn close_button_label(&self) -> Option<String> {
-        self.account().close_button_label()
-    }
-
-    pub(crate) fn ready(&self) -> bool {
-        self.account().ready()
-    }
-}
-
-/// `YYYY-MM-DD` in UTC — the report's anchor date.
-#[cfg(test)]
-fn fmt_utc_date(timestamp_ms: i64) -> String {
-    let (year, month, day, ..) = civil_utc(timestamp_ms);
-    format!("{year:04}-{month:02}-{day:02}")
-}
-
 /// Open `path` in the platform's file manager — created first, so the
 /// reveal never points at nothing on a fresh install.
 pub(crate) fn reveal_folder(path: &Path) {
@@ -435,6 +376,3 @@ crate::hooks::declare_hooks![
     "QUANTICK_PAPER_RULER_TICKS",
     "QUANTICK_PAPER_STRATEGY_EDITOR"
 ];
-
-#[cfg(test)]
-mod tests;

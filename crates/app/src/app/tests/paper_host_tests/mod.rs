@@ -1,28 +1,23 @@
-// What the tab's paper decides alone - the reversal, the ticket's refusal,
-// the ruler following the symbol - is tested in `quantick_session::paper_tests`.
-//
-// The `paper_trading.rs` unit tests, moved out of the file so a session
-// opening the ticket to change one control no longer reads 3,651 lines of
-// tests it did not ask for.
-//
-// They stay a child module of `crate::paper_trading` rather than moving to an
-// integration test: a child sees its ancestor's private items, so the move
-// widens no visibility in production code, and the `use super::*` below is
-// the line the module already had inline.
-//
-// The file's second test module, `risk_tests`, sits beside this one in
-// `risk_tests.rs`. It reaches this module's scope through its own
-// `use super::*`, which carries `paper_trading`'s imports down the same
-// way -- the shape `app/tests/` already uses across twelve files.
+// The paper host's window-side tests: what `crate::paper_trading` paints and
+// how it reads the window's input. What the tab's paper decides alone - the
+// reversal, the ticket's refusal, the ruler following the symbol - is tested
+// in `quantick_session::paper_tests`; the desk's rules in `quantick_paper`.
+// They live here, not as a child of `paper_trading`, so that module carries
+// no test-only code.
 
 mod layout_tests;
 mod light_plate_tests;
 mod risk_tests;
 
-// The items the split gave owners; `super::*` still carries the ticket
-// itself, the module's constants and the account's vocabulary.
-use super::paint_ctx::{PaintCtx, cmd_preview_layout};
-use super::*;
+use eframe::egui;
+use quantick_engine::{Side, Trade};
+use quantick_paper::desk::PaperControl;
+use quantick_sim::{Bracket, ClosedTrade, Command, history};
+use rust_decimal::Decimal;
+
+use crate::chart::PriceScale;
+use crate::paper_trading::paint_ctx::{PaintCtx, cmd_preview_layout};
+use crate::paper_trading::*;
 // The desk's vocabulary and geometry, which the tests below arrange and
 // measure against; the rules themselves are tested in `quantick_paper`.
 use crate::paper_report::{load_history, report_from_history};
@@ -39,11 +34,6 @@ fn print(agg_id: u64, price: i64) -> Trade {
         quantity: Decimal::ONE,
         side: Side::Buy,
     }
-}
-
-#[test]
-fn utc_dates_format_from_the_same_civil_math() {
-    assert_eq!(fmt_utc_date(1_773_666_068_000), "2026-03-16");
 }
 
 /// Esc puts the ruler away - but only once the gestures it was already
@@ -1050,7 +1040,33 @@ fn default_cmd_trading_does_not_arm_a_sell_with_ctrl() {
     assert!(paper.desk.gesture.cmd_preview.is_none());
 }
 
+/// Short names for the account reads and writes the window tests arrange
+/// through, so a call site stays one line.
 impl PaperTrading {
+    pub(crate) fn report_state(&self) -> &crate::paper_report::ReportState {
+        self.account().report_state()
+    }
+
+    pub(crate) fn report_state_mut(&mut self) -> &mut crate::paper_report::ReportState {
+        self.account_mut().report_state_mut()
+    }
+
+    pub(crate) fn redirect_history_dir(&mut self, dir: std::path::PathBuf) {
+        self.account_mut().redirect_history_dir(dir);
+    }
+
+    pub(crate) fn apply_sim_command_for_tests(&mut self, command: Command) {
+        self.account_mut().apply_sim_command_for_tests(command);
+    }
+
+    pub(crate) fn close_button_label(&self) -> Option<String> {
+        self.account().close_button_label()
+    }
+
+    pub(crate) fn ready(&self) -> bool {
+        self.account().ready()
+    }
+
     /// Arm the ticket's click as its Buy/Sell button does, for the window
     /// tests that press the chart with a ticket armed.
     pub(crate) fn arm_for_tests(&mut self, side: Side, kind: EntryKind) {
