@@ -15,8 +15,6 @@ use quantick_control_host::{
     contract::{AdmittedRoute, CapabilityContract, ReadPreparation, ScopeCatalogue},
 };
 use serde_json::Value;
-// The scope-denied error that used it moved to `admission`; the tests below
-// still build their payloads with it through `use super::*`.
 #[cfg(test)]
 use serde_json::json;
 
@@ -38,8 +36,7 @@ use quantick_control_schema::{
 
 mod reads;
 
-// `EventsReadInvocation` is re-exported: the gateway completes a parked wait
-// with it and reaches it by the path it always had.
+/// The bounded read the gateway runs when a parked event wait completes.
 pub use reads::EventsReadInvocation;
 
 #[cfg(test)]

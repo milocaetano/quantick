@@ -356,6 +356,7 @@ impl Scenario<'_> {
         }
         self.paper_report(|op| desk.apply(op));
         self.pane_call(desk, "QUANTICK_PRICE_RANGE", launch_calls::price_range);
+        // Workspace save and export capture the state staged by all preceding hooks.
         self.workspace(desk);
     }
     fn paper_report(&self, mut apply: impl FnMut(Op)) {
