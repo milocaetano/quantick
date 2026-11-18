@@ -138,9 +138,10 @@ pub const LEGACY_EXTENSION_POINTS: usize = 3;
 pub(super) const REACH_HANDLE: usize = LEGACY_EXTENSION_POINTS;
 /// Half the width of the strip at the reach's end that grabs it.
 const REACH_GRAB_PX: f32 = 4.0;
-/// The shortest reach a drag leaves: pulled back over the leg, the levels
-/// keep one bar rather than vanish or flip behind it.
-const MIN_REACH_BARS: f32 = 1.0;
+/// The shortest reach drawn: a leg on one bar, or a reach pulled back over
+/// the leg, keeps its end clear of anchor B's handle rather than vanish
+/// under it or flip behind it.
+const MIN_REACH_PX: f32 = crate::gesture::DRAWING_ANCHOR_RADIUS_PX + 2.0 * REACH_GRAB_PX;
 /// Inline capacity of the per-frame level projection — one slot above the
 /// largest built-in preset (Extended, 11 levels), so no shipped preset ever
 /// touches the heap while painting.
@@ -240,20 +241,28 @@ pub enum Extend {
     Right,
     Both,
     /// Forward from the last anchor over a finite reach the trader drags by
-    /// its end: [`FibPayload::reach_bars`], or the leg's own width until
-    /// they do. A fresh extension opens with it, the targets beside the move
-    /// rather than over the leg it was measured from.
+    /// its end: [`FibPayload::reach_legs`] of the leg's width. A fresh
+    /// extension opens with it, the targets beside the move rather than over
+    /// the leg it was measured from. Only an extension offers it: a
+    /// retracement has no reach to drag.
     Projection,
 }
 
 impl Extend {
-    pub const ALL: [Self; 5] = [
-        Self::Anchors,
-        Self::Projection,
-        Self::Forward,
-        Self::Right,
-        Self::Both,
-    ];
+    /// The spans the Levels tab offers an object of `kind`.
+    #[must_use]
+    pub fn choices(kind: FibKind) -> &'static [Self] {
+        match kind {
+            FibKind::Retracement => &[Self::Anchors, Self::Forward, Self::Right, Self::Both],
+            FibKind::Extension => &[
+                Self::Anchors,
+                Self::Projection,
+                Self::Forward,
+                Self::Right,
+                Self::Both,
+            ],
+        }
+    }
 
     /// The span a fresh object of each kind opens with.
     ///
@@ -287,7 +296,7 @@ impl Extend {
             Self::Forward => "From the last point",
             Self::Right => "Anchors + right",
             Self::Both => "Both sides",
-            Self::Projection => "From the last point, sized",
+            Self::Projection => "Past the leg (drag its end)",
         }
     }
 }
@@ -388,10 +397,11 @@ pub struct FibPayload {
     pub label_mode: LabelMode,
     pub label_position: LabelPosition,
     pub extend: Extend,
-    /// How far a [`Extend::Projection`] runs past its last anchor, in bar
-    /// slots, so it keeps its length through zoom and scroll. `None` until
-    /// the trader drags its end: one leg wide.
-    pub reach_bars: Option<f32>,
+    /// How far a [`Extend::Projection`] runs past its last anchor, in widths
+    /// of its own leg: it scales with zoom, and a saved default means "this
+    /// many legs" on whatever move it is drawn next. `None` until the trader
+    /// drags its end: one leg.
+    pub reach_legs: Option<f32>,
     /// Bumped by the editor so the label cache notices config edits.
     revision: u64,
     cache: RefCell<LabelCache>,
@@ -407,7 +417,7 @@ impl Clone for FibPayload {
             label_mode: self.label_mode,
             label_position: self.label_position,
             extend: self.extend,
-            reach_bars: self.reach_bars,
+            reach_legs: self.reach_legs,
             revision: self.revision,
             // The cache is memoization, not state: a clone (undo snapshot,
             // inspector pre-edit copy) starts cold instead of copying
@@ -427,7 +437,7 @@ impl PartialEq for FibPayload {
             && self.label_mode == other.label_mode
             && self.label_position == other.label_position
             && self.extend == other.extend
-            && self.reach_bars == other.reach_bars
+            && self.reach_legs == other.reach_legs
     }
 }
 
@@ -446,7 +456,7 @@ impl FibPayload {
             label_mode: LabelMode::default(),
             label_position: LabelPosition::default(),
             extend: Extend::for_kind(kind),
-            reach_bars: None,
+            reach_legs: None,
             revision: 0,
             cache: RefCell::new(LabelCache::default()),
         }
@@ -492,7 +502,7 @@ struct FibPresetData {
     extend: Extend,
     /// Absent from anything saved before the reach could be dragged.
     #[serde(default)]
-    reach_bars: Option<f32>,
+    reach_legs: Option<f32>,
 }
 
 impl DrawingPayload for FibPayload {
@@ -520,7 +530,7 @@ impl DrawingPayload for FibPayload {
             label_mode: self.label_mode,
             label_position: self.label_position,
             extend: self.extend,
-            reach_bars: self.reach_bars,
+            reach_legs: self.reach_legs,
         })
         .ok()
     }
@@ -541,9 +551,9 @@ impl DrawingPayload for FibPayload {
         self.label_mode = data.label_mode;
         self.label_position = data.label_position;
         self.extend = data.extend;
-        self.reach_bars = data
-            .reach_bars
-            .filter(|bars| bars.is_finite() && *bars >= MIN_REACH_BARS);
+        self.reach_legs = data
+            .reach_legs
+            .filter(|legs| legs.is_finite() && *legs >= 0.0);
         self.touch();
         true
     }
@@ -669,21 +679,28 @@ fn anchor_prices(payload: &FibPayload, ctxt: &DrawContext<'_>) -> Option<Anchors
     Some(Anchors { a, b, c })
 }
 
+/// The horizontal width of the leg the anchors span.
+fn leg_px(points: &[Px], chart_rect: PxRect) -> f32 {
+    let (left, right) = level_span(points, chart_rect, Extend::Anchors, 0.0);
+    right - left
+}
+
 /// The span `payload`'s levels are drawn over on this pane.
-fn payload_span(
-    payload: &FibPayload,
-    points: &[Px],
-    chart_rect: PxRect,
-    ctxt: &DrawContext<'_>,
-) -> (f32, f32) {
-    let reach = match payload.reach_bars {
-        Some(bars) if ctxt.px_per_bar > 0.0 => bars * ctxt.px_per_bar,
-        _ => {
-            let (left, right) = level_span(points, chart_rect, Extend::Anchors, 0.0);
-            right - left
-        }
-    };
+fn payload_span(payload: &FibPayload, points: &[Px], chart_rect: PxRect) -> (f32, f32) {
+    let reach = (leg_px(points, chart_rect) * payload.reach_legs.unwrap_or(1.0)).max(MIN_REACH_PX);
     level_span(points, chart_rect, payload.extend, reach)
+}
+
+/// The payload whose reach a drag may set: a projection over a leg with a
+/// width to measure the reach in. Hover and drag both ask here, so a cursor
+/// never offers a resize the drag would refuse.
+fn editable_reach<'a>(
+    chart_rect: PxRect,
+    points: &[Px],
+    ctxt: &DrawContext<'a>,
+) -> Option<&'a FibPayload> {
+    let payload = ctxt.payload.as_any().downcast_ref::<FibPayload>()?;
+    (payload.extend == Extend::Projection && leg_px(points, chart_rect) > 0.0).then_some(payload)
 }
 
 /// `reach_px` is how far a [`Extend::Projection`] runs; no other span reads it.
@@ -716,10 +733,7 @@ pub(super) fn reach_hint(
     position: Px,
     ctxt: &DrawContext<'_>,
 ) -> Option<PointerHint> {
-    let payload = ctxt.payload.as_any().downcast_ref::<FibPayload>()?;
-    if payload.extend != Extend::Projection {
-        return None;
-    }
+    let payload = editable_reach(chart_rect, points, ctxt)?;
     let Anchors { a, b, c } = anchor_prices(payload, ctxt)?;
     let log = effective_log(payload, a, b, c);
     let (top, bottom) = payload
@@ -731,7 +745,7 @@ pub(super) fn reach_hint(
         .fold((f32::INFINITY, f32::NEG_INFINITY), |(top, bottom), y| {
             (top.min(y), bottom.max(y))
         });
-    let (_, end) = payload_span(payload, points, chart_rect, ctxt);
+    let (_, end) = payload_span(payload, points, chart_rect);
     let on_end = (position.x - end).abs() <= REACH_GRAB_PX
         && position.y >= top - REACH_GRAB_PX
         && position.y <= bottom + REACH_GRAB_PX;
@@ -740,24 +754,22 @@ pub(super) fn reach_hint(
     })
 }
 
-/// A copy of the payload with its reach ending at `to`, when `handle` is the
-/// reach of a projection on a pane that can say how wide a bar is.
+/// A copy of the payload with its reach ending at `to`, when `handle` is
+/// the reach of an [`editable_reach`] payload.
 pub(super) fn drag_reach(
+    chart_rect: PxRect,
     points: &[Px],
     handle: usize,
     to: Px,
     ctxt: &DrawContext<'_>,
 ) -> Option<Box<dyn DrawingPayload>> {
-    let payload = ctxt.payload.as_any().downcast_ref::<FibPayload>()?;
-    if handle != REACH_HANDLE || payload.extend != Extend::Projection || ctxt.px_per_bar <= 0.0 {
+    if handle != REACH_HANDLE {
         return None;
     }
-    let start = points
-        .iter()
-        .map(|point| point.x)
-        .fold(f32::NEG_INFINITY, f32::max);
+    let payload = editable_reach(chart_rect, points, ctxt)?;
+    let (start, _) = level_span(points, chart_rect, Extend::Forward, 0.0);
     let mut dragged = payload.clone();
-    dragged.reach_bars = Some(((to.x - start) / ctxt.px_per_bar).max(MIN_REACH_BARS));
+    dragged.reach_legs = Some(((to.x - start) / leg_px(points, chart_rect)).max(0.0));
     Some(Box::new(dragged))
 }
 
@@ -783,7 +795,7 @@ pub(super) fn paint(
     };
     let Anchors { a, b, c } = anchors;
     let log = effective_log(payload, a, b, c);
-    let (left, right) = payload_span(payload, points, chart_rect, ctxt);
+    let (left, right) = payload_span(payload, points, chart_rect);
 
     // Project every visible level once — the bands, the lines and the label
     // slots all read this one pass, so they can never drift apart.
@@ -961,7 +973,7 @@ pub(super) fn hit_test(
         return true;
     }
     let log = effective_log(payload, a, b, c);
-    let (left, right) = payload_span(payload, points, chart_rect, ctxt);
+    let (left, right) = payload_span(payload, points, chart_rect);
     position.x >= left - radius_px
         && position.x <= right + radius_px
         && payload

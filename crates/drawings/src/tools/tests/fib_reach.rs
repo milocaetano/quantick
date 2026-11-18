@@ -6,7 +6,6 @@ use super::*;
 
 /// Ten pixels a bar, prices 0..100 over 500 pixels: `y = 500 - 5 * price`.
 const PX_PER_BAR: f32 = 10.0;
-/// The pane the levels are drawn in.
 fn chart() -> PxRect {
     PxRect::from_min_max(Px::ZERO, pos2(1000.0, 500.0))
 }
@@ -101,7 +100,7 @@ fn the_end_of_the_reach_announces_a_sideways_resize() {
 }
 
 #[test]
-fn dragging_the_end_sets_the_reach_in_bars_and_leaves_the_anchors_alone() {
+fn dragging_the_end_sets_the_reach_in_legs_and_leaves_the_anchors_alone() {
     let extension = tool("fib-extension");
     let payload = extension.default_payload();
     let (anchors, scale) = (anchors(), scale());
@@ -127,7 +126,7 @@ fn dragging_the_end_sets_the_reach_in_bars_and_leaves_the_anchors_alone() {
     let dragged = extension
         .drag_payload_handle(chart(), &LEG, handle, pos2(450.0, 10.0), &ctxt)
         .expect("the reach handle edits the payload");
-    assert_eq!(fib(dragged.as_ref()).reach_bars, Some(25.0));
+    assert_eq!(fib(dragged.as_ref()).reach_legs, Some(2.5));
 
     let ctxt = context(dragged.as_ref(), &anchors, &scale);
     let on_target = |x| extension.hit_test(chart(), &LEG, pos2(x, TARGET_Y), RADIUS, &ctxt);
@@ -136,11 +135,25 @@ fn dragging_the_end_sets_the_reach_in_bars_and_leaves_the_anchors_alone() {
         "the levels follow the drag"
     );
 
-    // Pulled back over the leg, the reach keeps one bar rather than flipping.
+    // Pulled back over the leg, the reach stops at nothing rather than
+    // flipping, and its end stays clear of anchor B's handle to grab again.
     let collapsed = extension
         .drag_payload_handle(chart(), &LEG, handle, pos2(50.0, 10.0), &ctxt)
         .expect("still a reach drag");
-    assert_eq!(fib(collapsed.as_ref()).reach_bars, Some(1.0));
+    assert_eq!(fib(collapsed.as_ref()).reach_legs, Some(0.0));
+    let ctxt = context(collapsed.as_ref(), &anchors, &scale);
+    let end = (200..260)
+        .map(|x| x as f32)
+        .find(|&x| {
+            extension
+                .pointer_hint(chart(), &LEG, pos2(x, TARGET_Y), &ctxt)
+                .is_some()
+        })
+        .expect("a collapsed reach keeps an end");
+    assert!(
+        end > LEG[1].x + crate::gesture::DRAWING_ANCHOR_RADIUS_PX,
+        "{end}"
+    );
     assert!(
         extension
             .drag_payload_handle(chart(), &LEG, 0, pos2(450.0, 10.0), &ctxt)
@@ -152,17 +165,17 @@ fn dragging_the_end_sets_the_reach_in_bars_and_leaves_the_anchors_alone() {
 #[test]
 fn the_reach_survives_a_save_and_an_older_save_has_none() {
     let mut dragged = FibPayload::new(FibKind::Extension);
-    dragged.reach_bars = Some(25.0);
+    dragged.reach_legs = Some(2.5);
     let saved = dragged.export_preset().expect("a Fib exports");
     let mut loaded = tool("fib-extension").default_payload();
     assert!(loaded.import_preset(&saved));
-    assert_eq!(fib(loaded.as_ref()).reach_bars, Some(25.0));
+    assert_eq!(fib(loaded.as_ref()).reach_legs, Some(2.5));
 
     let mut older = saved.clone();
-    older.as_table_mut().expect("a table").remove("reach_bars");
+    older.as_table_mut().expect("a table").remove("reach_legs");
     let mut loaded = tool("fib-extension").default_payload();
     assert!(loaded.import_preset(&older));
-    assert_eq!(fib(loaded.as_ref()).reach_bars, None, "the leg's width");
+    assert_eq!(fib(loaded.as_ref()).reach_legs, None, "one leg");
 }
 
 #[test]
@@ -179,4 +192,26 @@ fn an_extension_saved_between_its_anchors_keeps_that_span() {
         None,
         "only a projection's reach is dragged"
     );
+}
+
+#[test]
+fn a_leg_on_one_bar_still_draws_its_targets_but_offers_no_reach_to_drag() {
+    let extension = tool("fib-extension");
+    let payload = extension.default_payload();
+    let (anchors, scale) = (anchors(), scale());
+    let ctxt = context(payload.as_ref(), &anchors, &scale);
+    let vertical = [Px::new(200.0, 200.0), Px::new(200.0, 300.0)];
+    assert!(extension.hit_test(chart(), &vertical, pos2(210.0, TARGET_Y), RADIUS, &ctxt));
+    assert!(
+        (200..260).all(|x| extension
+            .pointer_hint(chart(), &vertical, pos2(x as f32, TARGET_Y), &ctxt)
+            .is_none()),
+        "no width to measure a reach in, so no resize is offered"
+    );
+}
+
+#[test]
+fn only_an_extension_offers_a_projected_reach_on_the_levels_tab() {
+    assert!(!FibExtend::choices(FibKind::Retracement).contains(&FibExtend::Projection));
+    assert!(FibExtend::choices(FibKind::Extension).contains(&FibExtend::Projection));
 }

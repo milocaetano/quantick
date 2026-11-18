@@ -558,8 +558,25 @@ fn move_handle(
             position.x.clamp(band.rect.left(), history_right),
             position.y.clamp(band.rect.top(), band.rect.bottom()),
         );
-        if let Some(point) =
-            projection.drawing_point_at(position, history_right, total, magnet, handle_snap, band)
+        // An extent no anchor holds may run past the candles: only the
+        // band bounds it, and it never becomes a chart point.
+        let reshaped = projection.drag_drawing_payload_handle(
+            drawings,
+            drawing_index,
+            handle,
+            Px::new(position.x.min(band.rect.right()), position.y),
+            band,
+            (history_right, total),
+        );
+        if !reshaped
+            && let Some(point) = projection.drawing_point_at(
+                position,
+                history_right,
+                total,
+                magnet,
+                handle_snap,
+                band,
+            )
         {
             projection.drag_drawing_handle(
                 drawings,

@@ -101,13 +101,13 @@ impl MarkTool for FibExtension {
     }
     fn drag_payload_handle(
         &self,
-        _chart_rect: PxRect,
+        chart_rect: PxRect,
         points: &[Px],
         handle: usize,
         to: Px,
         ctxt: &DrawContext<'_>,
     ) -> Option<Box<dyn DrawingPayload>> {
-        fib::drag_reach(points, handle, to, ctxt)
+        fib::drag_reach(chart_rect, points, handle, to, ctxt)
     }
     fn handle_hint(&self, handle: usize) -> Option<PointerHint> {
         (handle == fib::REACH_HANDLE).then_some(PointerHint::ResizeSide { handle })
