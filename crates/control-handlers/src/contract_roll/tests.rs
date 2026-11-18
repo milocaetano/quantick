@@ -6,6 +6,7 @@ use crate::market_tab::{LentTab, MarketTab, MarketTabHost};
 use crate::test_support::{FAKE_DEFAULT_REACH, FakeAccess, FakeWindow, fake_config};
 use quantick_session::{HistoryAct, HistoryOutcome, SessionSnapshot};
 use quantick_sources::history_reach::HistoryReach;
+use quantick_sources::recovery::Recovery;
 use quantick_stores::config::AppConfig;
 
 /// The one tab and what its feed does on a switch.
@@ -101,7 +102,7 @@ impl MarketTab for Contract {
     fn roll_memory(&mut self) -> &mut AutoRoll {
         &mut self.auto
     }
-    fn recover(&mut self, _config: &AppConfig, _keep_timeline: bool) -> RecoveredFeed {
+    fn recover(&mut self, _config: &AppConfig, _recovery: Recovery) -> RecoveredFeed {
         unreachable!("a roll never recovers the feed")
     }
     fn pages_history(&self, _config: &AppConfig) -> bool {

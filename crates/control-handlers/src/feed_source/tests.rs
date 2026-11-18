@@ -8,6 +8,7 @@ use quantick_control::registry::RevisionPolicy;
 use quantick_control_host::{actions::ActionRegistry, journal::EventActor};
 use quantick_session::{HistoryAct, HistoryOutcome, SessionSnapshot};
 use quantick_sources::history_reach::HistoryReach;
+use quantick_sources::recovery::Recovery;
 use quantick_stores::config::AppConfig;
 use serde_json::json;
 
@@ -40,7 +41,7 @@ impl MarketTab for Market {
     fn roll_memory(&mut self) -> &mut AutoRoll {
         unreachable!("a source switch never reads the roll memory")
     }
-    fn recover(&mut self, _config: &AppConfig, _keep_timeline: bool) -> RecoveredFeed {
+    fn recover(&mut self, _config: &AppConfig, _recovery: Recovery) -> RecoveredFeed {
         unreachable!("a source switch never recovers the feed")
     }
     fn pages_history(&self, _config: &AppConfig) -> bool {

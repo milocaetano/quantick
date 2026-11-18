@@ -22,6 +22,7 @@ use quantick_engine::{Bar, BarSpec, Side, Trade};
 use quantick_session::{HistoryAct, HistoryOutcome, SessionSnapshot};
 use quantick_sources::history_reach::{HistoryReach, ReachProgress};
 use quantick_sources::history_run::{Cancelled, Press, RunStatus};
+use quantick_sources::recovery::Recovery;
 use rust_decimal::Decimal;
 
 use crate::JournalAccess;
@@ -365,7 +366,7 @@ pub(crate) struct FakeTab {
     /// Whether a recovery finds a feed session to respawn.
     pub respawns: bool,
     /// Every recovery asked of the tab, `true` for a reconnect.
-    pub recoveries: Vec<bool>,
+    pub recoveries: Vec<Recovery>,
     pub history_paging: bool,
     /// The chart is still filling, so a press waits.
     pub filling: bool,
@@ -519,8 +520,8 @@ impl MarketTab for FakeTab {
     fn roll_memory(&mut self) -> &mut AutoRoll {
         &mut self.auto_roll
     }
-    fn recover(&mut self, _config: &AppConfig, keep_timeline: bool) -> RecoveredFeed {
-        self.recoveries.push(keep_timeline);
+    fn recover(&mut self, _config: &AppConfig, recovery: Recovery) -> RecoveredFeed {
+        self.recoveries.push(recovery);
         RecoveredFeed {
             symbol: self.symbol.clone(),
             respawned: self.respawns,

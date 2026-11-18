@@ -39,7 +39,7 @@ fn reconnect_without_a_tab_recovers_the_one_on_screen_and_keeps_its_timeline() {
         result,
         json!({ "tab_id": "9", "symbol": "WIN", "respawned": true, "timeline_kept": true })
     );
-    assert_eq!(window.tabs[1].recoveries, [true]);
+    assert_eq!(window.tabs[1].recoveries, [Recovery::Reconnect]);
     assert!(window.tabs[0].recoveries.is_empty());
 }
 
@@ -48,7 +48,7 @@ fn a_reload_that_respawned_reports_the_timeline_thrown_away() {
     let mut window = window();
     let result = call(reload, &mut window, json!({ "tab_id": "7" })).expect("reload answers");
     assert_eq!(result["timeline_kept"], false);
-    assert_eq!(window.tabs[0].recoveries, [false]);
+    assert_eq!(window.tabs[0].recoveries, [Recovery::Reload]);
 }
 
 #[test]

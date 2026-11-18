@@ -85,7 +85,7 @@ fn reconnect<H: MarketTabHost + ?Sized, A>(
     _actor: &ActorContext,
     input: &Value,
 ) -> Result<Value, ControlError> {
-    encode(&recover(app, input, true)?)
+    encode(&recover(app, input, Recovery::Reconnect)?)
 }
 
 /// A reload that respawned threw the tab's timeline away, its paper position
@@ -97,7 +97,7 @@ fn reload<H: MarketTabHost + ?Sized, A: NotifyAccess>(
     actor: &ActorContext,
     input: &Value,
 ) -> Result<Value, ControlError> {
-    let recovered = recover(app, input, false)?;
+    let recovered = recover(app, input, Recovery::Reload)?;
     let result = encode(&recovered)?;
     if recovered.respawned {
         let payload = json!({ "feed_reload": result.clone() });
@@ -117,13 +117,13 @@ fn encode(result: &RecoveryResult) -> Result<Value, ControlError> {
     })
 }
 
-/// The shared body. `keep_timeline` picks which of the tab's two methods runs;
+/// The shared body. `recovery` picks which of the tab's two methods runs;
 /// nothing else differs, so the two capabilities can never drift apart in
 /// anything but the act they name.
 fn recover<H: MarketTabHost + ?Sized>(
     app: &mut H,
     input: &Value,
-    keep_timeline: bool,
+    recovery: Recovery,
 ) -> Result<RecoveryResult, ControlError> {
     let input: RecoveryInput = serde_json::from_value(input.clone())
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
@@ -135,12 +135,12 @@ fn recover<H: MarketTabHost + ?Sized>(
     // but reported from what actually happened, never from what was asked
     // for.
     let lent = app.market_tab_mut(index).ok_or_else(tab_closed)?;
-    let recovered = lent.tab.recover(lent.config, keep_timeline);
+    let recovered = lent.tab.recover(lent.config, recovery);
     Ok(RecoveryResult {
         tab_id: WireU64::new(tab_id),
         symbol: recovered.symbol,
         respawned: recovered.respawned,
-        timeline_kept: keep_timeline || !recovered.respawned,
+        timeline_kept: recovery == Recovery::Reconnect || !recovered.respawned,
     })
 }
 

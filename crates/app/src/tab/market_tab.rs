@@ -3,6 +3,7 @@ use super::Tab;
 use crate::config::AppConfig;
 use quantick_control_handlers::contract_roll::AutoRoll;
 use quantick_control_handlers::market_tab::{FeedSelection, MarketTab, RecoveredFeed};
+use quantick_feed::stall::Recovery;
 use quantick_session::{HistoryAct, HistoryOutcome, SessionSnapshot};
 
 impl MarketTab for Tab {
@@ -26,11 +27,10 @@ impl MarketTab for Tab {
     fn roll_memory(&mut self) -> &mut AutoRoll {
         &mut self.link.auto_roll
     }
-    fn recover(&mut self, config: &AppConfig, keep_timeline: bool) -> RecoveredFeed {
-        let respawned = if keep_timeline {
-            self.reconnect_feed(config)
-        } else {
-            self.reload_feed(config)
+    fn recover(&mut self, config: &AppConfig, recovery: Recovery) -> RecoveredFeed {
+        let respawned = match recovery {
+            Recovery::Reconnect => self.reconnect_feed(config),
+            Recovery::Reload => self.reload_feed(config),
         };
         RecoveredFeed {
             symbol: self.symbol.clone(),

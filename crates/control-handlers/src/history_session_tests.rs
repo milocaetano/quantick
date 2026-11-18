@@ -11,6 +11,7 @@ use quantick_session::{
 };
 use quantick_sources::config::FeedCapabilities;
 use quantick_sources::history_reach::{HistoryReach, Outage, ReachBounds};
+use quantick_sources::recovery::Recovery;
 use quantick_stores::config::AppConfig;
 use rust_decimal::Decimal;
 use serde_json::json;
@@ -122,7 +123,7 @@ impl MarketTab for Live {
     fn roll_memory(&mut self) -> &mut AutoRoll {
         unreachable!("History calls never read the roll memory")
     }
-    fn recover(&mut self, _config: &AppConfig, _keep_timeline: bool) -> RecoveredFeed {
+    fn recover(&mut self, _config: &AppConfig, _recovery: Recovery) -> RecoveredFeed {
         unreachable!("History calls never recover the feed")
     }
     fn pages_history(&self, _config: &AppConfig) -> bool {

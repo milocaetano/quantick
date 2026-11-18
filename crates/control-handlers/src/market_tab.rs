@@ -4,7 +4,7 @@
 //! exist.
 use quantick_session::{HistoryAct, HistoryOutcome, SessionSnapshot, sets_window_default};
 use quantick_sources::history_reach::HistoryReach;
-use quantick_sources::recovery::AutoRoll;
+use quantick_sources::recovery::{AutoRoll, Recovery};
 use quantick_stores::config::AppConfig;
 
 use crate::tabs::TabDirectory;
@@ -42,9 +42,9 @@ pub trait MarketTab {
     fn unlisted(&self) -> Option<String>;
     /// The tab's roll memory: armed, decided, pressed and on offer.
     fn roll_memory(&mut self) -> &mut AutoRoll;
-    /// Reconnect (`keep_timeline`) or reload the tab's feed, as the buttons
-    /// in the chart's offline corner do.
-    fn recover(&mut self, config: &AppConfig, keep_timeline: bool) -> RecoveredFeed;
+    /// Reconnect or reload the tab's feed, as the buttons in the chart's
+    /// offline corner do.
+    fn recover(&mut self, config: &AppConfig, recovery: Recovery) -> RecoveredFeed;
     /// Whether the tab's feed can page older trades.
     fn pages_history(&self, config: &AppConfig) -> bool;
     /// The History button's press or cancel on the tab.

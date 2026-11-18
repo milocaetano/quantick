@@ -5,6 +5,7 @@ use crate::market_tab::RecoveredFeed;
 use crate::market_tab::{LentTab, MarketTab, MarketTabHost};
 use crate::test_support::{FakeAccess, FakeWindow};
 use quantick_session::{HistoryAct, HistoryOutcome, SessionSnapshot};
+use quantick_sources::recovery::Recovery;
 use quantick_stores::config::AppConfig;
 use quantick_stores::market_list::{
     CatalogMarket, OpenMarket, SwitchChoice, Venue, VenueKind, roll_toast, switch_toast,
@@ -213,7 +214,7 @@ impl MarketTab for PaletteTab {
     fn roll_memory(&mut self) -> &mut AutoRoll {
         unreachable!("the palette never reads the roll memory")
     }
-    fn recover(&mut self, _config: &AppConfig, _keep_timeline: bool) -> RecoveredFeed {
+    fn recover(&mut self, _config: &AppConfig, _recovery: Recovery) -> RecoveredFeed {
         unreachable!("the palette never recovers the feed")
     }
     fn pages_history(&self, _config: &AppConfig) -> bool {
