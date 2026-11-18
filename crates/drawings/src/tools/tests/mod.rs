@@ -15,6 +15,7 @@ use quantick_chart::style::PremultipliedRgba;
 
 type Drawings = crate::Drawings<DrawingTool>;
 
+mod fib_reach;
 mod handle_policy;
 
 fn tool(id: &str) -> DrawingTool {

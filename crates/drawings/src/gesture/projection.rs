@@ -686,6 +686,23 @@ impl DrawingProjection<'_> {
         total: usize,
         constrain: Constrain,
     ) {
+        // A handle that sets an extent no anchor holds reshapes the payload.
+        let reshaped = band.scale.as_ref().and_then(|scale| {
+            let drawing = drawings
+                .items()
+                .get(drawing_index)
+                .filter(|drawing| !drawing.locked)?;
+            let projected = self.projected_drawing_points(drawing, history_right, total, scale);
+            let ctxt = self.draw_context(drawing, scale, band, true);
+            let to = self.drawing_screen_point(target, history_right, total, scale);
+            drawing
+                .tool
+                .drag_payload_handle(band.rect, &projected, handle, to, &ctxt)
+        });
+        if let Some(payload) = reshaped {
+            drawings.items_mut()[drawing_index].payload = payload;
+            return;
+        }
         let moved = band.scale.as_ref().and_then(|scale| {
             let drawing = drawings.items().get(drawing_index)?;
             let projected = self.projected_drawing_points(drawing, history_right, total, scale);
