@@ -1,0 +1,8 @@
+# The entry pause while the chart is out of sync with its feed: the
+# judgement and the refusal live in `quantick_feed::sync` and
+# `quantick_session` (paper_gate.rs); what stays here touches app-only state —
+# the tape cell's Reconnect and its press (statusbar, canvas answers), the
+# scene's offered control, the health port's read and the per-frame hand-off
+# from the tab's link to its paper after the drain.
+crates/app +14
+!budget +14

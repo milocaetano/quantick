@@ -146,9 +146,9 @@ pub struct FeedLink {
     connected_once: bool,
     /// When new entries paused on this link, kept across attaches.
     sync_watch: SyncWatch,
-    /// Wall clock when the newest live print or book event arrived here: the
-    /// entry pause ages the tape from it, never from a venue stamp a clock
-    /// offset would skew.
+    /// Wall clock when the newest live print or book event of this session
+    /// arrived here: the entry pause ages the tape from it, never from a
+    /// venue stamp a clock offset would skew.
     latest_arrival_ms: Option<i64>,
 }
 
@@ -216,6 +216,7 @@ impl FeedLink {
         self.replay = handle.replay;
         self.book_channel_closed_reported = false;
         self.intake_lag.clear();
+        self.latest_arrival_ms = None;
     }
 
     /// Forget what this link recorded about the timeline it fed — its gaps,
@@ -369,24 +370,38 @@ impl FeedLink {
 
     /// Whether new entries pause on this link as of `now_ms`: the judgement
     /// is [`crate::sync`]'s; this gathers the link's own readings and logs
-    /// each edge of the pause. `symbol` names the tab in the log; `link` is
-    /// the chart's word about the transport.
+    /// each edge of the pause. `symbol` names the tab in the log; `offline`
+    /// is the chart's latched stall. The transport is attempting while it
+    /// reconnects, or connects with nothing yet arrived this session.
     pub fn sync_at(
         &mut self,
         symbol: &str,
-        link: LinkState,
+        offline: bool,
         limits: SyncLimits,
         now_ms: i64,
     ) -> Option<Desync> {
+        let link = match self.feed_connection {
+            _ if offline => LinkState::Offline,
+            FeedConnectionState::Reconnecting => LinkState::Attempting,
+            FeedConnectionState::Connecting if self.latest_arrival_ms.is_none() => {
+                LinkState::Attempting
+            }
+            _ => LinkState::Up,
+        };
         let transport = self.feed_capabilities.borrow().transport;
         let desync = feed_sync::assess(&SyncInput {
             replaying: self.replay.is_some() || !transport,
             link,
             link_for_ms: now_ms.saturating_sub(self.connection_since_ms),
             latency: self.latency_split(),
-            tape_age_ms: self
-                .latest_arrival_ms
-                .map(|at| now_ms.saturating_sub(at).max(0)),
+            // Before the session's first arrival, silence counts from when
+            // the transport last changed state: a feed that connects and
+            // never streams pauses, as one that stops streaming does.
+            tape_age_ms: Some(
+                now_ms
+                    .saturating_sub(self.latest_arrival_ms.unwrap_or(self.connection_since_ms))
+                    .max(0),
+            ),
             notice: &self.notice,
             limits,
         });
@@ -530,15 +545,13 @@ mod tests {
     /// here: a venue clock hours off moves nothing, a silent wire does.
     #[test]
     fn the_pause_ages_the_tape_by_local_arrival_not_the_venue_stamp() {
-        use crate::sync::{LinkState, SyncLimits, SyncReading};
+        use crate::sync::{SyncLimits, SyncReading};
         let (mut link, _notices) = link();
-        link.feed_capabilities = crate::fixed_capabilities(FeedCapabilities {
-            transport: true,
-            ..FeedCapabilities::none()
-        });
+        streaming(&mut link);
+        link.set_connection(FeedConnectionState::Connected, 999_000);
         let limits = SyncLimits::default();
-        let at = |link: &mut FeedLink, now| link.sync_at("WINZ26", LinkState::Up, limits, now);
-        assert_eq!(at(&mut link, 1_000_000), None, "nothing has arrived yet");
+        let at = |link: &mut FeedLink, now| link.sync_at("WINZ26", false, limits, now);
+        assert_eq!(at(&mut link, 1_000_000), None, "connected a second ago");
         // A venue stamp three hours behind the local clock.
         link.observe_live_trade_at(1_000_000, 1_000_000 - 10_800_000, 1_000_000);
         assert_eq!(at(&mut link, 1_004_999), None, "an offset clock is not age");
@@ -547,6 +560,61 @@ mod tests {
         let paused = at(&mut link, 1_009_000).expect("five seconds of silence");
         assert_eq!(paused.reading, SyncReading::TapeAge);
         assert_eq!(paused.tape_age_ms, Some(5_000));
+    }
+
+    fn streaming(link: &mut FeedLink) {
+        link.feed_capabilities = crate::fixed_capabilities(FeedCapabilities {
+            transport: true,
+            ..FeedCapabilities::none()
+        });
+    }
+
+    /// A new session starts its own silence: the old session's arrivals do
+    /// not keep it fresh, and a connected feed that never streams pauses once
+    /// the tape-age limit has run from when it connected.
+    #[test]
+    fn a_connected_feed_that_never_streams_pauses_after_the_tape_age_limit() {
+        use crate::sync::{SyncLimits, SyncReading};
+        let limits = SyncLimits::default();
+        let (mut link, _notices) = link();
+        streaming(&mut link);
+        link.observe_book_arrival(1_000);
+        link.attach(handle().0, 2_000);
+        streaming(&mut link);
+        link.set_connection(FeedConnectionState::Connected, 3_000);
+        let at = |link: &mut FeedLink, now| link.sync_at("WINZ26", false, limits, now);
+        assert_eq!(
+            at(&mut link, 7_999),
+            None,
+            "the limit runs from the connect"
+        );
+        let paused = at(&mut link, 8_000).expect("connected and silent");
+        assert_eq!(
+            (paused.reading, paused.tape_age_ms),
+            (SyncReading::TapeAge, Some(5_000))
+        );
+        link.observe_book_arrival(8_500);
+        assert_eq!(at(&mut link, 9_000), None, "the first arrival ends it");
+    }
+
+    /// The link's word for the pause: the chart's offline latch, a
+    /// reconnect, or a connect with nothing arrived yet; a feed that streams
+    /// without saying it connected is up.
+    #[test]
+    fn the_pause_reads_the_transport_from_the_feed_and_the_charts_latch() {
+        use crate::sync::{LinkState, SyncLimits};
+        let limits = SyncLimits::default();
+        let (mut link, _notices) = link();
+        streaming(&mut link);
+        let word = |link: &mut FeedLink, offline| {
+            (link.sync_at("WINZ26", offline, limits, 10)).map(|paused| paused.link)
+        };
+        assert_eq!(word(&mut link, false), Some(LinkState::Attempting));
+        link.observe_book_arrival(5);
+        assert_eq!(word(&mut link, false), None, "it streams");
+        assert_eq!(word(&mut link, true), Some(LinkState::Offline));
+        link.set_connection(FeedConnectionState::Reconnecting, 8);
+        assert_eq!(word(&mut link, false), Some(LinkState::Attempting));
     }
 
     fn handle() -> (FeedHandle, mpsc::Sender<FeedNotice>) {

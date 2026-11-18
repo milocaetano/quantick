@@ -109,25 +109,48 @@ fn growing_orders_wait(paper: &mut TabPaper, resting: OrderId) {
     assert_eq!(paper.account.venue().in_flight(), 0, "nothing in flight");
 }
 
-/// Orders that only reduce the long, and every exit, with the gate set.
+fn goes(paper: &mut TabPaper, command: TradeCommand) {
+    let outcome = paper.execute(command.clone());
+    assert_eq!(outcome.refusal, None, "{command:?} was refused");
+    assert!(!outcome.events.is_empty(), "{command:?} reached the venue");
+}
+
+/// Orders that only reduce the long, and every exit, with the gate set. A
+/// reducing order counts against the long while it works or is in flight,
+/// so the second one that would outgrow it waits.
 fn reducing_orders_go(paper: &mut TabPaper, resting: OrderId) {
-    let sell_one = OrderIntent::limit(Side::Sell, Decimal::ONE, Decimal::from(110));
+    let sell_limit = || TradeCommand::Place {
+        intent: Box::new(OrderIntent::limit(
+            Side::Sell,
+            Decimal::ONE,
+            Decimal::from(110),
+        )),
+    };
+    goes(paper, sell_limit());
+    refused(paper, sell_limit());
+    refused(paper, TradeCommand::Market { side: Side::Sell });
+    let mut working = paper.working_orders().iter();
+    let sell = working.rfind(|order| order.side == Side::Sell);
+    let sell = sell.expect("the sell limit works").id;
+    goes(paper, TradeCommand::Cancel { id: sell });
+
+    goes(paper, TradeCommand::Market { side: Side::Sell });
+    refused(paper, TradeCommand::Market { side: Side::Sell });
+    assert_eq!(
+        paper.account.venue().in_flight(),
+        1,
+        "one sell before a fill"
+    );
+
     let protect = Bracket::whole(Some(Decimal::from(80)), None);
-    for command in [
-        TradeCommand::Place {
-            intent: Box::new(sell_one),
-        },
+    goes(
+        paper,
         TradeCommand::Amend {
             id: resting,
             bracket: Box::new(protect),
         },
-        TradeCommand::Cancel { id: resting },
-        TradeCommand::Market { side: Side::Sell },
-    ] {
-        let outcome = paper.execute(command.clone());
-        assert_eq!(outcome.refusal, None, "{command:?} was refused");
-        assert!(!outcome.events.is_empty(), "{command:?} reached the venue");
-    }
+    );
+    goes(paper, TradeCommand::Cancel { id: resting });
     for exit in [
         TradeCommand::CancelAll,
         TradeCommand::Close,
@@ -197,4 +220,23 @@ fn entries_resume_once_the_gate_lifts() {
     let outcome = paper.execute(TradeCommand::Market { side: Side::Buy });
     assert_eq!(outcome.refusal, None);
     assert!(!outcome.events.is_empty(), "the entry reached the venue");
+}
+
+/// A print reaching the desk ends a pause for the tape's age at once, so a
+/// strategy that print fires is not refused on the silence it ended; a
+/// pause for latency waits for the next judgement.
+#[test]
+fn a_print_ends_a_pause_for_the_tapes_age() {
+    let mut paper = sim();
+    paper.seed(&print(0, 100));
+    let stale = Desync {
+        reading: SyncReading::TapeAge,
+        ..late()
+    };
+    paper.set_trade_gate(Some(stale));
+    paper.on_trade(&print(1, 100));
+    assert_eq!(paper.trade_gate(), None);
+    paper.set_trade_gate(Some(late()));
+    paper.on_trade(&print(2, 100));
+    assert_eq!(paper.trade_gate(), Some(&late()), "latency is not age");
 }

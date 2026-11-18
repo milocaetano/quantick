@@ -338,26 +338,6 @@ impl Tab {
         rects
     }
 
-    /// Tell the tab's paper whether new entries wait, before anything trades
-    /// this frame: the link's judgement now, on the chart's last word about
-    /// the transport.
-    pub(crate) fn judge_trade_gate(&mut self, config: &crate::config::AppConfig, now_ms: i64) {
-        use quantick_chart::connection_state::Link;
-        use quantick_feed::{FeedConnectionState, sync::LinkState};
-        // The chart's latch for offline; its attempt only until the feed says
-        // it connected, which can land after the chart last looked.
-        let link = match self.connection.state().link {
-            Link::Offline => LinkState::Offline,
-            Link::Attempting if self.link.feed_connection != FeedConnectionState::Connected => {
-                LinkState::Attempting
-            }
-            _ => LinkState::Up,
-        };
-        let limits = config.sync_limits(&self.feed_id);
-        let gate = self.link.sync_at(&self.symbol, link, limits, now_ms);
-        self.paper.set_trade_gate(gate);
-    }
-
     /// Tell this tab's connection state what the frame found.
     pub(crate) fn observe_connection(
         &mut self,

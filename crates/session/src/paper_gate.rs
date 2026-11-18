@@ -5,9 +5,10 @@
 //! While a gate stands, every door an order comes through — a command, a
 //! chart placement or reprice, an armed strategy — is asked one question:
 //! would it open or grow exposure? An order on the other side of the open
-//! position, no larger than it, only reduces it and goes; everything else
-//! is refused whole, never trimmed to its reducing part, and a reversal
-//! always opens the other side. Protective legs, cancels and closes are not
+//! position goes while the position still covers it after every reducing
+//! order already working or in flight; everything else is refused whole,
+//! never trimmed to its reducing part, and a reversal always opens the
+//! other side. Protective legs, cancels and closes are not
 //! orders that open anything and never wait.
 
 use std::borrow::BorrowMut;
@@ -59,8 +60,8 @@ impl<A: BorrowMut<PaperAccount>> TabPaper<A> {
     pub(super) fn entry_paused(&mut self, command: &TradeCommand) -> Option<String> {
         self.gate.as_ref()?;
         let grows = match command {
-            TradeCommand::Market { side } => self.grows(*side, self.ticket_quantity()),
-            TradeCommand::Place { intent } => self.grows(intent.side, Some(intent.quantity)),
+            TradeCommand::Market { side } => self.grows(*side, self.ticket_quantity(), None),
+            TradeCommand::Place { intent } => self.grows(intent.side, Some(intent.quantity), None),
             TradeCommand::Reverse => true,
             TradeCommand::Amend { .. }
             | TradeCommand::Cancel { .. }
@@ -74,7 +75,7 @@ impl<A: BorrowMut<PaperAccount>> TabPaper<A> {
     /// Whether a ticket entry on `side` waits out a pause; toasts when it
     /// does.
     pub(super) fn pauses_ticket_entry(&mut self, side: Side) -> bool {
-        self.grows(side, self.ticket_quantity()) && self.refuse()
+        self.grows(side, self.ticket_quantity(), None) && self.refuse()
     }
 
     /// Whether an armed strategy's command waits out a pause: an entry that
@@ -87,20 +88,32 @@ impl<A: BorrowMut<PaperAccount>> TabPaper<A> {
         match command {
             Command::PlaceMarket { side, quantity, .. }
             | Command::PlaceLimit { side, quantity, .. }
-            | Command::PlaceStop { side, quantity, .. } => self.grows(*side, Some(*quantity)),
+            | Command::PlaceStop { side, quantity, .. } => self.grows(*side, Some(*quantity), None),
             Command::ModifyOrder { id, .. } => self.order_grows(*id),
             _ => false,
         }
     }
 
     /// Whether an order of `quantity` on `side` would open or grow exposure:
-    /// anything but the other side of the open position at no more than its
-    /// size. An unknown size is treated as growing.
-    fn grows(&self, side: Side, quantity: Option<Decimal>) -> bool {
-        let position = self.core().venue().position();
-        !position.is_some_and(|open| {
-            open.side != side && quantity.is_some_and(|quantity| quantity <= open.quantity)
-        })
+    /// anything but the other side of the open position, at no more than
+    /// what is left of it once every order on that side already working or
+    /// in flight — `except` the one being judged — has filled. An unknown
+    /// size is treated as growing.
+    fn grows(&self, side: Side, quantity: Option<Decimal>, except: Option<OrderId>) -> bool {
+        let venue = self.core().venue();
+        let (Some(open), Some(quantity)) = (venue.position(), quantity) else {
+            return true;
+        };
+        let mut in_flight = Vec::new();
+        venue.in_flight_entries(&mut in_flight);
+        let in_flight = in_flight
+            .into_iter()
+            .filter_map(|id| venue.in_flight_entry(id));
+        let reducing: Decimal = (venue.working_orders().iter().chain(in_flight))
+            .filter(|order| order.side == side && Some(order.id) != except)
+            .map(|order| order.quantity)
+            .sum();
+        open.side == side || quantity + reducing > open.quantity
     }
 
     /// Whether the working order `id` would grow exposure if it filled.
@@ -108,7 +121,7 @@ impl<A: BorrowMut<PaperAccount>> TabPaper<A> {
         let orders = self.core().working_orders();
         let order = orders.iter().find(|order| order.id == id);
         self.gate.is_some()
-            && order.is_some_and(|order| self.grows(order.side, Some(order.quantity)))
+            && order.is_some_and(|order| self.grows(order.side, Some(order.quantity), Some(id)))
     }
 
     fn ticket_quantity(&self) -> Option<Decimal> {

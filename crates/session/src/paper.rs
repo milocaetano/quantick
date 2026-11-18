@@ -212,6 +212,13 @@ impl<A: BorrowMut<PaperAccount>> TabPaper<A> {
 
     /// Feed one live print through the simulator and act on what it did.
     pub fn on_trade(&mut self, trade: &Trade) {
+        // A print reaching the desk is the tape arriving: a pause for its age
+        // is over now, not at the next judgement, so a strategy this print
+        // fires is not refused on the silence it just ended.
+        let stale = quantick_sources::sync::SyncReading::TapeAge;
+        if self.gate.as_ref().is_some_and(|gate| gate.reading == stale) {
+            self.gate = None;
+        }
         self.core_mut().on_trade(trade);
     }
 

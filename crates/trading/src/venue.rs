@@ -103,6 +103,12 @@ pub trait TradingVenue {
     /// nothing.
     fn in_flight_entries(&self, out: &mut Vec<OrderId>);
 
+    /// The in-flight entry `id`, side and size included, while the venue
+    /// still holds it unanswered. The default knows none.
+    fn in_flight_entry(&self, _id: OrderId) -> Option<&Order> {
+        None
+    }
+
     /// Round trips completed this session, oldest first.
     fn closed_trades(&self) -> &[ClosedTrade];
 

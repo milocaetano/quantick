@@ -361,6 +361,10 @@ impl TradingVenue for FakeVenue {
         out.extend(self.queued.iter().map(|order| order.id));
     }
 
+    fn in_flight_entry(&self, id: OrderId) -> Option<&Order> {
+        self.queued.iter().find(|order| order.id == id)
+    }
+
     fn closed_trades(&self) -> &[ClosedTrade] {
         &self.closed
     }

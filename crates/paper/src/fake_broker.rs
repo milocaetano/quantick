@@ -85,6 +85,9 @@ impl TradingVenue for FakeBroker {
     fn in_flight_entries(&self, out: &mut Vec<OrderId>) {
         self.sim.in_flight_entries(out);
     }
+    fn in_flight_entry(&self, id: OrderId) -> Option<&Order> {
+        self.sim.in_flight_entry(id)
+    }
     fn closed_trades(&self) -> &[ClosedTrade] {
         self.sim.closed_trades()
     }
