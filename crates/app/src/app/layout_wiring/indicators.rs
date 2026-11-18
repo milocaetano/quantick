@@ -117,7 +117,7 @@ impl LayoutAdapter<'_> {
                 let index = loaded.index();
                 let file_info =
                     index.and_then(|index| self.indicators.script_library.file_info(index));
-                let message = match loaded {
+                let added = match loaded {
                     LoadedScript::Read { text, .. } => {
                         let pane = self.pane_mut_at(tab, side)?;
                         let source = IndicatorSource::Script {
@@ -150,7 +150,7 @@ impl LayoutAdapter<'_> {
                         Err(message)
                     }
                 };
-                let slot = match message {
+                let slot = match added {
                     Ok(slot) => slot,
                     Err(message) => {
                         let pane = self.pane_mut_at(tab, side)?;
