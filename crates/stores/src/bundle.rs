@@ -324,12 +324,10 @@ pub fn imported_note(path: &Path, stores: usize) -> String {
     )
 }
 
-/// The status line after a refused export.
 pub fn not_exported_note(error: &str) -> String {
     format!("Workspace not exported — {error}")
 }
 
-/// The status line after a refused import: the screen is unchanged.
 pub fn not_opened_note(error: &str) -> String {
     format!("Workspace not opened — {error}")
 }

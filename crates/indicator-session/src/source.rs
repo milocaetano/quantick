@@ -121,14 +121,7 @@ impl IndicatorSource {
                     }
                     _ => quantick_pine::ScriptIndicator::new(compiled, text.clone()),
                 })),
-                Err(errors) => Err(errors
-                    .iter()
-                    .map(|e| e.render(name, text))
-                    .collect::<Vec<_>>()
-                    .join(
-                        "
-",
-                    )),
+                Err(errors) => Err(quantick_pine::render_errors(&errors, name, text)),
             },
         }
     }

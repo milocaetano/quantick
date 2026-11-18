@@ -1,6 +1,6 @@
 use crate::{IndicatorEvent, IndicatorSource, SessionEffects, SlotId};
 use quantick_engine::forming_run::FormingRun;
-use quantick_indicators::{EvalError, IndicatorDescriptor, IndicatorHost, InputValue, InstanceId};
+use quantick_indicators::{EvalError, IndicatorHost, InputValue, InstanceId};
 use std::collections::BTreeMap;
 /// Live host, source bindings and publication history for one consumer.
 /// Runtime, filesystem, UI and persistence state belong to the caller.
@@ -89,29 +89,10 @@ impl IndicatorSession {
                 // The slot still exists UI-side, carrying its load
                 // error: a script that does not compile is shown,
                 // with lines and codes, never silently dropped.
-                effects.event(IndicatorEvent::Rebuilt {
-                    slot,
-                    descriptor: IndicatorDescriptor {
-                        title: source.fallback_title(),
-                        short_title: None,
-                        overlay: false,
-                        plots: Vec::new(),
-                        inputs: Vec::new(),
-                        fills: Vec::new(),
-                    },
-                    columns: Vec::new(),
-                    bar_paint: Vec::new(),
-                    rows: 0,
-                    inputs: Vec::new(),
-                    stale: None,
-                });
-                effects.event(IndicatorEvent::Error {
-                    slot,
-                    error: EvalError {
-                        bar_index: 0,
-                        message,
-                    },
-                });
+                let title = source.fallback_title();
+                for event in crate::unloaded_script_events(slot, title, message) {
+                    effects.event(event);
+                }
                 slots.insert(
                     slot,
                     SlotMirror {

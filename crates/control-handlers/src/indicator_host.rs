@@ -219,17 +219,25 @@ impl IndicatorRefusal {
 /// through control, read off the editor and the focused pane.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NumericInputGate<V> {
-    /// The editor holds this script.
     pub script_open: bool,
-    /// The indicator settings dialog is open.
     pub settings_open: bool,
-    /// The script's view on the focused pane: `None` when it is not
-    /// attached there, `Some(None)` while it has not loaded.
-    pub view: Option<Option<V>>,
-    /// The editor's diagnostics or the view's stale reload carry errors.
-    pub source_errors: bool,
-    /// Validation and the chart reload have both settled.
-    pub inputs_ready: bool,
+    /// The editor's source has diagnostics.
+    pub diagnostics: bool,
+    pub view: ScriptView<V>,
+}
+
+/// The open script's view on the focused pane.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ScriptView<V> {
+    NotAttached,
+    NotLoaded,
+    Loaded {
+        view: V,
+        /// A failed reload left older code running.
+        stale: bool,
+        /// Validation and the chart reload have both settled.
+        inputs_ready: bool,
+    },
 }
 
 impl<V> NumericInputGate<V> {
@@ -246,12 +254,19 @@ impl<V> NumericInputGate<V> {
         if self.settings_open {
             return Err(IndicatorRefusal::SettingsOpen);
         }
-        let view = self.view.ok_or(IndicatorRefusal::NotAttached)?;
-        let view = view.ok_or(IndicatorRefusal::NotLoaded)?;
-        if self.source_errors {
+        let (view, stale, inputs_ready) = match self.view {
+            ScriptView::NotAttached => return Err(IndicatorRefusal::NotAttached),
+            ScriptView::NotLoaded => return Err(IndicatorRefusal::NotLoaded),
+            ScriptView::Loaded {
+                view,
+                stale,
+                inputs_ready,
+            } => (view, stale, inputs_ready),
+        };
+        if stale || self.diagnostics {
             return Err(IndicatorRefusal::SourceErrors);
         }
-        if !self.inputs_ready {
+        if !inputs_ready {
             return Err(IndicatorRefusal::NotValidated);
         }
         Ok(view)

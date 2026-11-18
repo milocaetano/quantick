@@ -24,7 +24,7 @@ pub mod lexer;
 pub mod parser;
 pub mod script;
 
-pub use compile::{CompiledScript, compile, validate};
+pub use compile::{CompiledScript, compile, render_errors, validate};
 pub use error::{ErrorCode, PineError, Span};
 pub use script::ScriptIndicator;
 

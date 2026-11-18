@@ -15,55 +15,54 @@ fn a_lower_layers_refusal_keeps_its_words() {
     assert_eq!(error.message, "limit must be in 1..=64");
 }
 
-fn ready_gate() -> NumericInputGate<u8> {
+fn gate(view: ScriptView<u8>) -> NumericInputGate<u8> {
     NumericInputGate {
         script_open: true,
         settings_open: false,
-        view: Some(Some(7)),
-        source_errors: false,
-        inputs_ready: true,
+        diagnostics: false,
+        view,
+    }
+}
+
+fn loaded(stale: bool, inputs_ready: bool) -> ScriptView<u8> {
+    ScriptView::Loaded {
+        view: 7,
+        stale,
+        inputs_ready,
     }
 }
 
 #[test]
 fn a_ready_numeric_input_gate_admits_its_view() {
-    assert_eq!(ready_gate().admit(), Ok(7));
+    assert_eq!(gate(loaded(false, true)).admit(), Ok(7));
 }
 
 #[test]
 fn a_numeric_input_gate_refuses_with_the_first_reason_that_holds() {
     use IndicatorRefusal as R;
-    let blocked = NumericInputGate {
+    let worst = NumericInputGate {
         script_open: false,
         settings_open: true,
-        view: None,
-        source_errors: true,
-        inputs_ready: false,
+        diagnostics: true,
+        view: ScriptView::<u8>::NotAttached,
     };
-    assert_eq!(blocked.clone().admit(), Err(R::ScriptNotOpen));
-    let blocked = NumericInputGate {
+    assert_eq!(worst.clone().admit(), Err(R::ScriptNotOpen));
+    let open = NumericInputGate {
         script_open: true,
-        ..blocked
+        ..worst
     };
-    assert_eq!(blocked.clone().admit(), Err(R::SettingsOpen));
-    let blocked = NumericInputGate {
-        settings_open: false,
-        ..blocked
+    assert_eq!(open.clone().admit(), Err(R::SettingsOpen));
+    assert_eq!(gate(ScriptView::NotAttached).admit(), Err(R::NotAttached));
+    assert_eq!(gate(ScriptView::NotLoaded).admit(), Err(R::NotLoaded));
+    let diagnosed = NumericInputGate {
+        diagnostics: true,
+        ..gate(loaded(false, false))
     };
-    assert_eq!(blocked.clone().admit(), Err(R::NotAttached));
-    let blocked = NumericInputGate {
-        view: Some(None),
-        ..blocked
-    };
-    assert_eq!(blocked.clone().admit(), Err(R::NotLoaded));
-    let blocked = NumericInputGate {
-        view: Some(Some(7)),
-        ..blocked
-    };
-    assert_eq!(blocked.clone().admit(), Err(R::SourceErrors));
-    let blocked = NumericInputGate {
-        source_errors: false,
-        ..blocked
-    };
-    assert_eq!(blocked.admit(), Err(R::NotValidated));
+    assert_eq!(diagnosed.admit(), Err(R::SourceErrors));
+    assert_eq!(
+        gate(loaded(true, false)).admit(),
+        Err(R::SourceErrors),
+        "a stale reload is a source error too"
+    );
+    assert_eq!(gate(loaded(false, false)).admit(), Err(R::NotValidated));
 }

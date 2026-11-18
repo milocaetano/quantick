@@ -208,24 +208,46 @@ impl ScriptLibrary {
         self.entries.iter().position(|entry| entry.name == name)
     }
 
-    /// What a saved entry naming `name` loads: the library index, when the
-    /// library still has it, and its text or the message its error slot shows.
+    /// What a saved entry naming `name` loads.
     pub fn load(&self, name: &str) -> LoadedScript {
-        let index = self.index_of(name);
-        let text = match index.and_then(|index| self.read(index)) {
-            Some(text) => text,
-            None => Err(format!("{name} is not in the script library")),
+        let Some(index) = self.index_of(name) else {
+            let message = format!("{name} is not in the script library");
+            return LoadedScript::Missing { message };
         };
-        LoadedScript { index, text }
+        match self.read(index).expect("index_of names an entry") {
+            Ok(text) => LoadedScript::Read { index, text },
+            Err(message) => LoadedScript::Unreadable { index, message },
+        }
     }
 }
 
-/// [`ScriptLibrary::load`]: `index` is `None` for a name the library no
-/// longer has, and `text` is then that message.
+/// [`ScriptLibrary::load`]: each case carries the message its error slot
+/// shows, and the library index the hot-reload watch keys on when it has one.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LoadedScript {
-    pub index: Option<usize>,
-    pub text: Result<String, String>,
+pub enum LoadedScript {
+    Read {
+        index: usize,
+        text: String,
+    },
+    /// Listed, but its file could not be read.
+    Unreadable {
+        index: usize,
+        message: String,
+    },
+    /// The library no longer has it.
+    Missing {
+        message: String,
+    },
+}
+
+impl LoadedScript {
+    /// The library index, for every case that has one.
+    pub fn index(&self) -> Option<usize> {
+        match self {
+            Self::Read { index, .. } | Self::Unreadable { index, .. } => Some(*index),
+            Self::Missing { .. } => None,
+        }
+    }
 }
 
 impl ScriptLibraryPort for ScriptLibrary {
@@ -430,25 +452,22 @@ plot(close)
         let (name, source) = EMBEDDED_SCRIPTS[0];
         let index = library.index_of(name).expect("embedded entries are listed");
         assert_eq!(library.entries()[index].name, name);
+        let text = source.to_owned();
+        assert_eq!(library.load(name), LoadedScript::Read { index, text });
+        let missing = library.load("nowhere.pine");
+        assert_eq!(missing.index(), None);
         assert_eq!(
-            library.load(name),
-            LoadedScript {
-                index: Some(index),
-                text: Ok(source.to_owned())
-            }
-        );
-        assert_eq!(
-            library.load("nowhere.pine"),
-            LoadedScript {
-                index: None,
-                text: Err("nowhere.pine is not in the script library".into())
+            missing,
+            LoadedScript::Missing {
+                message: "nowhere.pine is not in the script library".into()
             },
             "a name the library lacks still loads, as the message its error slot shows"
         );
         // Listed at scan time, deleted since: the index stays, the read fails.
         std::fs::remove_file(dir.join("gone.pine")).unwrap();
         let gone = library.load("gone.pine");
-        assert_eq!(gone.index, library.index_of("gone.pine"));
-        assert!(gone.index.is_some() && gone.text.is_err(), "{gone:?}");
+        assert!(matches!(gone, LoadedScript::Unreadable { .. }), "{gone:?}");
+        assert_eq!(gone.index(), library.index_of("gone.pine"));
+        assert!(gone.index().is_some());
     }
 }

@@ -99,17 +99,25 @@ pub fn compile(source: &str, fallback_title: &str) -> Result<CompiledScript, Vec
 pub const VALIDATION_ERROR_LIMIT: usize = 8;
 
 /// Check `source` without running it, as the script editor does after an
-/// edit: its declared inputs, or the first [`VALIDATION_ERROR_LIMIT`] errors
-/// rendered against `title`, one per line.
-pub fn validate(source: &str, title: &str) -> (Vec<InputSpec>, Option<String>) {
-    match compile(source, title) {
-        Ok(compiled) => (compiled.inputs, None),
-        Err(errors) => {
-            let rendered = errors.iter().take(VALIDATION_ERROR_LIMIT);
-            let rendered = rendered.map(|error| error.render(title, source));
-            (Vec::new(), Some(rendered.collect::<Vec<_>>().join("\n")))
-        }
-    }
+/// edit: its declared inputs.
+///
+/// # Errors
+///
+/// The first [`VALIDATION_ERROR_LIMIT`] compile errors, rendered by
+/// [`render_errors`].
+pub fn validate(source: &str, title: &str) -> Result<Vec<InputSpec>, String> {
+    let errors = match compile(source, title) {
+        Ok(compiled) => return Ok(compiled.inputs),
+        Err(errors) => errors,
+    };
+    let shown = &errors[..errors.len().min(VALIDATION_ERROR_LIMIT)];
+    Err(render_errors(shown, title, source))
+}
+
+/// `errors` rendered against `file`, one after another on their own lines.
+pub fn render_errors(errors: &[PineError], file: &str, source: &str) -> String {
+    let rendered = errors.iter().map(|error| error.render(file, source));
+    rendered.collect::<Vec<_>>().join("\n")
 }
 
 /// What a queued pass-1 call turns into once names resolve.

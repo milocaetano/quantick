@@ -462,14 +462,7 @@ fn layout(app: &mut QuantickApp, env: &ScenarioInputs) {
     // code path the indicator library takes.
     if let Some(names) = env.var("QUANTICK_INDICATOR_SCRIPTS_AUTOSTART") {
         for name in names.split(',').map(str::trim).filter(|n| !n.is_empty()) {
-            match app
-                .runtime
-                .indicators
-                .script_library
-                .entries()
-                .iter()
-                .position(|entry| entry.name == name)
-            {
+            match app.runtime.indicators.script_library.index_of(name) {
                 Some(_) => {
                     // Straight onto the focused pane, with no mirror: an
                     // env var is not a user edit. Without this, a scripted

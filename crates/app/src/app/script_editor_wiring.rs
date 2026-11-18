@@ -5,7 +5,7 @@ use crate::{
     indicator_worker::{IndicatorCommand, IndicatorSource},
     surfaces::Surfaces,
 };
-use quantick_control_handlers::indicator_host::{IndicatorRefusal, NumericInputGate};
+use quantick_control_handlers::indicator_host::{IndicatorRefusal, NumericInputGate, ScriptView};
 use quantick_control_schema::script_editor::{
     NumericValue, capture_numeric_inputs, update_numeric_input,
 };
@@ -32,18 +32,22 @@ pub(super) fn set_numeric_input(
     let editor = wiring.surfaces.script_editor.model_state.editor();
     let target = attached_target(wiring, id);
     let pane = wiring.runtime.active_tab().focused_pane();
-    let view = target.map(|target| {
+    let view = target.map_or(ScriptView::NotAttached, |target| {
         let mut views = pane.indicators.all().iter();
-        (views.find(|view| view.slot == target.slot)).map(|view| (target, view))
+        match views.find(|view| view.slot == target.slot) {
+            None => ScriptView::NotLoaded,
+            Some(view) => ScriptView::Loaded {
+                stale: view.stale.is_some(),
+                inputs_ready: editor.inputs_ready(&view.descriptor.inputs),
+                view: (target, view),
+            },
+        }
     });
-    let loaded = view.flatten().map(|(_, view)| view);
     let (target, view) = NumericInputGate {
         script_open: (editor.document.as_ref()).is_some_and(|document| document.id == id),
         settings_open: (wiring.surfaces.indicator_settings.model_state.dialog()).is_some(),
+        diagnostics: editor.diagnostics.is_some(),
         view,
-        source_errors: loaded.is_some_and(|view| view.stale.is_some())
-            || editor.diagnostics.is_some(),
-        inputs_ready: loaded.is_some_and(|view| editor.inputs_ready(&view.descriptor.inputs)),
     }
     .admit()?;
     let saved = super::layout_wiring::saved_inputs(
@@ -230,7 +234,10 @@ fn execute(
                     .name("quantick-script-validator".into())
                     .spawn(move || {
                         let (inputs, error) =
-                            quantick_pine::validate(&document.source, &document.title);
+                            match quantick_pine::validate(&document.source, &document.title) {
+                                Ok(inputs) => (inputs, None),
+                                Err(error) => (Vec::new(), Some(error)),
+                            };
                         let _ = sender.send((revision, document, error, inputs));
                     }) {
                     Ok(_) => {
