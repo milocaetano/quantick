@@ -1,10 +1,6 @@
 //! Registered addressed indicator editor; the borrowed host retains IO and style authority.
 use super::{Adapter, BorrowedSurfaceEnv, HostEffect, SurfaceResponse, ViewContext};
-use crate::indicators::state_file::{SavedInput, SavedInputExt};
-use quantick_indicators::InputSpec;
-use quantick_ui_model::indicator_settings::{
-    DEFAULT_PRESET, Effects, Intent, LocalOperation, Model,
-};
+use quantick_ui_model::indicator_settings::{Effects, Intent, Model, PresetEditor};
 use quantick_ui_model::{Slot, UpdateSession};
 
 pub(crate) type IndicatorSettingsSurface = Adapter<Model, View>;
@@ -59,98 +55,20 @@ impl super::View<Model> for View {
             &mut view.style,
             names.as_deref(),
         );
-        dispatch(
-            session,
-            env.target,
-            env.kind,
-            &view.descriptor.inputs,
-            env.presets,
-            env.presets_path,
-            intent,
-        );
+        PresetEditor {
+            target: env.target,
+            kind: env.kind,
+            specs: &view.descriptor.inputs,
+            presets: env.presets,
+            path: env.presets_path,
+        }
+        .dispatch(session, intent, |name, saved, declared, kept| {
+            tracing::warn!(target: "quantick::app", schema_version = 1_u8,
+                event_code = "INDICATOR_PRESET_REBOUND", preset = %name, saved, declared, kept,
+                action = "bound_by_position",
+                "some of this preset's values no longer bind; those inputs took their defaults");
+        });
         SurfaceResponse::default()
-    }
-}
-
-/// Install IO only after the native frame has selected its winning outcome.
-pub(crate) fn dispatch(
-    session: &mut UpdateSession<'_, Model>,
-    target: Option<quantick_chart::indicator_registry::TabSlot>,
-    kind: Option<&quantick_workspace::indicator_document::SavedKind>,
-    specs: &[InputSpec],
-    presets: &mut crate::indicators::preset_file::PresetStore,
-    path: &std::path::Path,
-    intent: Intent,
-) {
-    session.with_local_effects(
-        &mut |mut effects| {
-            let receipt = effects
-                .local_operation
-                .take()
-                .and_then(|operation| execute(target, kind, specs, presets, path, operation));
-            (effects, receipt)
-        },
-        |session| session.update(intent),
-    );
-}
-
-fn execute(
-    current: Option<quantick_chart::indicator_registry::TabSlot>,
-    kind: Option<&quantick_workspace::indicator_document::SavedKind>,
-    specs: &[InputSpec],
-    presets: &mut crate::indicators::preset_file::PresetStore,
-    path: &std::path::Path,
-    operation: LocalOperation,
-) -> Option<Intent> {
-    let target = match &operation {
-        LocalOperation::Load { target, .. }
-        | LocalOperation::Save { target, .. }
-        | LocalOperation::Delete { target, .. } => *target,
-    };
-    if current != Some(target) {
-        return None;
-    }
-    match operation {
-        LocalOperation::Load { name, .. } => {
-            // Keep unreadable cells in place so later values cannot drift left.
-            let saved: Vec<_> = match &name {
-                None => Vec::new(),
-                Some(name) => presets
-                    .get(kind?, name)?
-                    .iter()
-                    .map(SavedInput::to_value)
-                    .collect(),
-            };
-            let bound = quantick_indicators::bind_by_position(specs, &saved);
-            if bound.kept < saved.len() {
-                tracing::warn!(target: "quantick::app", schema_version = 1_u8,
-                    event_code = "INDICATOR_PRESET_REBOUND",
-                    preset = %name.as_deref().unwrap_or(DEFAULT_PRESET), saved = saved.len(),
-                    declared = specs.len(), kept = bound.kept, action = "bound_by_position",
-                    "some of this preset's values no longer bind; those inputs took their defaults");
-            }
-            Some(Intent::PresetLoaded {
-                target,
-                values: bound.values,
-                label: name.unwrap_or_else(|| DEFAULT_PRESET.to_owned()),
-            })
-        }
-        LocalOperation::Save { name, values, .. } => {
-            let kind = kind?;
-            let inputs = values.iter().map(SavedInput::from_value).collect();
-            if !presets.insert(kind, &name, inputs) {
-                return None;
-            }
-            presets.save(path);
-            Some(Intent::PresetSaved { target, name })
-        }
-        LocalOperation::Delete { name, .. } => {
-            if !presets.remove(kind?, &name) {
-                return None;
-            }
-            presets.save(path);
-            Some(Intent::PresetDeleted { target, name })
-        }
     }
 }
 
@@ -162,7 +80,3 @@ pub(crate) fn effects(effects: Effects) -> SurfaceResponse {
             .collect(),
     }
 }
-
-#[cfg(test)]
-#[path = "indicator_settings/tests.rs"]
-mod tests;

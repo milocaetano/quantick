@@ -19,12 +19,10 @@ use quantick_ui_model::chrome_toolbar::Capsule as CapsuleState;
 
 /// The active tab's workspace, whether it holds edits, and its layout marks.
 pub(in crate::app) fn layout_of(app: &QuantickApp) -> (String, bool, LayoutMarks) {
-    let book = &app.runtime.workspace.book;
-    let (workspace, unsaved) = book.tab_row(app.runtime.tabs.active_id());
-    let recipe = book.book().recipe(&workspace);
-    let saved = recipe.map(quantick_workspace::canvas_layout::recipe_canvas);
-    let marks = LayoutMarks::of(&app.active_tab().canvas.state, saved.as_ref(), unsaved);
-    (workspace, unsaved, marks)
+    app.runtime
+        .workspace
+        .book
+        .canvas_layout(app.runtime.tabs.active_id(), &app.active_tab().canvas.state)
 }
 
 pub(in crate::app) fn snapshot(app: &QuantickApp, ctx: &egui::Context) -> CapsuleState {
@@ -61,7 +59,7 @@ pub(in crate::app) fn settle(
     app.chrome.window_menu.toolbar_door = door;
     #[cfg(any(feature = "scenario-harness", test))]
     if app.chrome.harness.take_window_menu_toolbar() {
-        crate::app::canvas_wiring::open_window_menu(&mut app.chrome.window_menu);
+        app.chrome.window_menu.open_from_toolbar();
     }
     let mut workspace_clicked = false;
     let mut rest = Vec::new();

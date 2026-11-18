@@ -2377,7 +2377,7 @@ fn an_addition_the_config_would_reject_is_refused_and_not_written() {
         background: false,
     };
     let add = quantick_workspace::market_list::PaletteIntent::Add(choice);
-    super::super::frame::apply_palette_intent(&mut app, add);
+    app.apply_palette_intent(add);
     let palette = (app.surfaces.market_palette.model_state.open.as_mut())
         .expect("the palette stays open on a refusal");
     assert!(

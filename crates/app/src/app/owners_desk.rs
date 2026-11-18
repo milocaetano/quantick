@@ -29,13 +29,11 @@ pub(crate) trait OwnersDesk {
 pub(crate) struct WindowOwners<'a> {
     pub(super) runtime: &'a mut WorkspaceRuntime,
     pub(super) surfaces: &'a mut crate::surfaces::Surfaces,
-    #[cfg(any(feature = "scenario-harness", test))]
     pub(super) chrome: &'a mut super::chrome::ChromeState,
     #[cfg(any(feature = "control-harness", test))]
     pub(super) control: &'a mut super::control_host::ControlState,
-    #[cfg(any(feature = "scenario-harness", test))]
+    pub(super) drawings: &'a mut super::drawing_controller::DrawingController,
     pub(super) audio: &'a mut super::replay_and_history::AlertState,
-    #[cfg(any(feature = "scenario-harness", test))]
     pub(super) config: &'a crate::config::AppConfig,
 }
 
@@ -56,13 +54,11 @@ impl OwnersDesk for QuantickApp {
         WindowOwners {
             runtime: self.runtime.bound_mut(&self.presentation.binding),
             surfaces: &mut self.surfaces,
-            #[cfg(any(feature = "scenario-harness", test))]
             chrome: &mut self.chrome,
             #[cfg(any(feature = "control-harness", test))]
             control: &mut self.control,
-            #[cfg(any(feature = "scenario-harness", test))]
+            drawings: &mut self.drawings,
             audio: &mut self.audio,
-            #[cfg(any(feature = "scenario-harness", test))]
             config: &self.config,
         }
     }

@@ -2,6 +2,7 @@
 //! Time, snapshots and completion results arrive as intents; no clock is read.
 mod catalog;
 pub mod colour_palette;
+pub mod frame_settlement;
 pub mod late_effects;
 #[cfg(any(feature = "scenario-harness", test))]
 pub mod launch_scenario;

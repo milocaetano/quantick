@@ -3,6 +3,7 @@
 //! The handler parses and validates each call into one [`CanvasAct`]; the host
 //! applies it to the active tab's canvas (the model in
 //! `quantick_workspace::canvas`) and answers the canvas as it stands after.
+pub mod owner;
 use crate::dock::ActionDock;
 use quantick_control::{error::ControlError, registry::RegistryError, wire::ActorContext};
 use quantick_control_host::wire::canonical_f32;
@@ -116,19 +117,22 @@ fn unavailable() -> ControlError {
 
 /// What the window lends the canvas capabilities.
 pub trait CanvasHost {
+    fn canvas_owner(&mut self) -> Option<Box<dyn owner::CanvasOwner + '_>> {
+        None
+    }
     /// Open the window menu at the toolbar's list door; answers whether it is up.
     fn open_window_menu(&mut self) -> Result<bool, ControlError> {
-        Err(unavailable())
+        Ok(owner::lend(self)?.open_window_menu())
     }
 
     /// The active tab's layout picker, as the toolbar draws it.
     fn layout_picker(&mut self) -> Result<LayoutPickerResult, ControlError> {
-        Err(unavailable())
+        Ok(owner::lend(self)?.picker_read())
     }
 
     /// Apply `act` to the active tab's canvas and answer the canvas after.
-    fn act_on_canvas(&mut self, _act: CanvasAct) -> Result<CanvasResult, ControlError> {
-        Err(unavailable())
+    fn act_on_canvas(&mut self, act: CanvasAct) -> Result<CanvasResult, ControlError> {
+        owner::answer(&mut *owner::lend(self)?, act)
     }
 }
 

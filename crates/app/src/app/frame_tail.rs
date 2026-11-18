@@ -1,5 +1,6 @@
 //! Execute the fixed end-of-frame plan against its actual feature owners.
 use super::arrangement_host::ArrangementHost;
+use super::paper_wiring::panel_effects::{begin_paper_panel_effects, finish_paper_panel_effects};
 use crate::{
     config::AppConfig,
     feed_notice,
@@ -31,18 +32,8 @@ pub(super) struct FrameTailInput<'a> {
     pub chip_rect: Option<egui::Rect>,
 }
 impl FrameTailOwners<'_> {
-    /// A single stage lends the actual owners only until its response returns.
-    pub fn execute_stage(
-        self,
-        input: &FrameTailInput<'_>,
-        spawn: &mut LiveFeedSpawn<'_>,
-        stage: FrameTailStage,
-    ) -> SurfaceResponse {
-        self.execute_settling(input, spawn, stage, settle_active_paper_panel)
-    }
-
     fn execute_settling(
-        self,
+        &mut self,
         input: &FrameTailInput<'_>,
         spawn: &mut LiveFeedSpawn<'_>,
         stage: FrameTailStage,
@@ -109,20 +100,14 @@ impl FrameTailOwners<'_> {
 impl FrameTailOwners<'_> {
     /// Legacy owner-level tests settle all accounts; full app tests use run_frame_tail.
     pub fn execute(
-        self,
+        mut self,
         input: FrameTailInput<'_>,
         spawn: &mut LiveFeedSpawn<'_>,
         stages: impl IntoIterator<Item = FrameTailStage>,
     ) -> Vec<SurfaceResponse> {
         let mut responses = Vec::new();
         for stage in stages {
-            let response = FrameTailOwners {
-                tabs: self.tabs,
-                config: self.config,
-                surfaces: self.surfaces,
-                chip_rect: self.chip_rect,
-            }
-            .execute_settling(&input, spawn, stage, settle_paper_panels);
+            let response = self.execute_settling(&input, spawn, stage, settle_paper_panels);
             if response != SurfaceResponse::default() {
                 responses.push(response);
             }
@@ -212,4 +197,25 @@ fn settle_paper_panels_where(
     if let Some(message) = watched {
         crate::surfaces::toast::note(toast, message, now);
     }
+}
+
+/// Run the fixed tail while lending each stage its owners only until it returns.
+pub(super) fn run(
+    mut owners: FrameTailOwners<'_>,
+    input: &FrameTailInput<'_>,
+    workspace: &mut crate::workspace_store::WorkspaceStore,
+    spawn: &mut crate::tab::LiveFeedSpawn<'_>,
+    stages: impl IntoIterator<Item = FrameTailStage>,
+) -> Vec<crate::surfaces::SurfaceResponse> {
+    let mut unsupported = Vec::new();
+    for stage in stages {
+        let response = owners.execute_settling(input, spawn, stage, settle_active_paper_panel);
+        // Temporary owners/domain borrows have ended before host execution.
+        match begin_paper_panel_effects(owners.tabs, &mut owners.surfaces.replay_browser, response)
+        {
+            Ok(paper) => finish_paper_panel_effects(owners.tabs, owners.config, workspace, paper),
+            Err(response) => unsupported.push(*response),
+        }
+    }
+    unsupported
 }

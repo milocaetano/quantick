@@ -13,31 +13,31 @@
 //! the window's own methods call them; stages over plain owners live in the
 //! child modules, which never see the window.
 
-use super::drawing_controller::{DrawingAccess, DrawingReadAccess, QUICK_RANGE_REFUSED};
+use super::LayersPort;
+use super::drawing_controller::{DrawingAccess, DrawingReadAccess};
 #[cfg(any(feature = "scenario-harness", feature = "drawing-harness", test))]
 use super::owners_desk::OwnersDesk as _;
-use super::{GatewayPort, LayersPort};
+#[cfg(test)]
+use super::paper_wiring::panel_effects::paper_panel_steps;
+use super::paper_wiring::panel_effects::{begin_paper_panel_effects, finish_paper_panel_effects};
+use super::{DrawingResponsePort as _, FrameCalls as _};
 use crate::surfaces::drawing_chrome::DrawingChromeExt as _;
 use crate::surfaces::replay_browser::ReplayBrowserExt as _;
-use crate::surfaces::toast;
 use crate::surfaces::{AccessPanelEnv, BorrowedSurfaceEnv, ViewContext};
 use crate::toolrail::ToolRailExt as _;
 use quantick_chart_interaction::frame_plan::StageScope;
 use quantick_chart_interaction::frame_tail_plan::{FrameTailPlan, FrameTailStage};
-use quantick_chart_interaction::quick_range::conversion_plan::PlacementOutcome;
 use quantick_control_handlers::market_palette::MarketPaletteOwners;
 use quantick_control_handlers::notify::AttentionHost as _;
 use quantick_feed::stall::Stall;
 use quantick_ui_model::market_palette::Intent as PaletteUiIntent;
 use quantick_ui_model::strategy_popup::Intent::SettleArm;
-use quantick_workspace::market_list::PaletteIntent;
 use std::time::{Duration, Instant};
 
 use eframe::egui;
 
 use crate::dock::DockTab;
 use crate::pane;
-use crate::replay_view::ReplayAction;
 use crate::statusbar;
 use crate::tab::CanvasChrome;
 
@@ -55,7 +55,7 @@ quantick_chart_interaction::frame_stages!(
 mod canvas;
 #[cfg(test)]
 pub(super) use panels::settle_rail_effects;
-mod panels;
+pub(super) mod panels;
 mod surfaces;
 
 /// What one stage hands a later one within the same frame. Built on the
@@ -137,55 +137,6 @@ fn handle_market_keys(app: &mut QuantickApp, ctx: &egui::Context, now: Instant) 
 }
 
 /// Do what the palette asked. A refusal stays under its field.
-pub(super) fn apply_palette_intent(app: &mut QuantickApp, intent: PaletteIntent) {
-    let port = app as &mut dyn super::control_host::ControlPort;
-    match quantick_control_handlers::market_palette::settle(port, intent) {
-        Ok(None) => {}
-        Ok(Some(note)) => {
-            app.surfaces.market_palette.update(PaletteUiIntent::Close);
-            toast::note(&mut app.surfaces.toast, note, std::time::Instant::now());
-        }
-        Err(reason) => {
-            app.surfaces
-                .market_palette
-                .update(PaletteUiIntent::Refuse(reason));
-        }
-    }
-}
-
-/// Respawn the shown tab's feed if its feed/symbol selection changed
-/// (resets the chart) and apply its spec; a changed market moves its
-/// layouts along.
-fn apply_feed_switch(app: &mut QuantickApp) {
-    // A pressed Roll, and restored tabs on a contract no longer listed.
-    let port = app as &mut dyn super::control_host::ControlPort;
-    let settled = quantick_control_handlers::contract_roll::settle_auto_rolls(port);
-    if !settled.is_empty() {
-        (app.workspace_calls()).as_hand(|_, journal| settled.journal(journal));
-    }
-    let (tab, config) = app.active_with_config();
-    let changed =
-        tab.link.replay.is_none() && (tab.active.0 != tab.feed_id || tab.active.1 != tab.symbol);
-    tab.maybe_switch_feed(config);
-    app.active_tab_mut().apply_spec_changes();
-    if changed {
-        app.layout_adapter().follow_market_changes();
-    }
-}
-
-/// Settle the deferred layouts, a frame after the click that armed them,
-/// so the frame carrying the change paints its overlay first.
-fn apply_layout_switches(app: &mut QuantickApp) {
-    for (tab_id, tab) in app.runtime.tabs.iter_with_ids_mut() {
-        tab.apply_pending_layout(tab_id, &app.config, &app.runtime.style, &mut app.pane_ids);
-    }
-    // Right after panes appear and markets switch, so a pane built this
-    // frame is seeded this frame and a tab that changed symbol swaps its
-    // drawings before anything paints them.
-    app.layout_adapter().maintain_layouts();
-    app.workspace_calls().maintain();
-}
-
 /// Home's page where the chart would be, with the canvas's answers seeded
 /// for the tail.
 fn draw_home_canvas_stage(app: &mut QuantickApp, ctx: &egui::Context, scratch: &mut FrameScratch) {
@@ -251,42 +202,10 @@ impl QuantickApp {
         super::native_windows::draw(self, ctx, now);
     }
 
-    /// Every tab takes in what its feed sent this frame, on screen or not.
-    ///
-    /// §11: switching tabs never tears a feed down, so a background tab has to
-    /// keep draining — its channels are bounded, and one left full backs its
-    /// feed thread up until the market it is showing is hours behind. The
-    /// indicator workers are fed on the same pass, so a tab brought forward is
-    /// already current rather than rebuilding on the frame it appears.
-    pub(super) fn drain_tabs(&mut self) {
-        // Before the drain: a reading that arrives this frame lands on a
-        // recorder built for the market it belongs to.
-        super::deal_recording_wiring::ensure(&mut self.runtime, &self.chrome, &self.config);
-        let trades = self.runtime.drain_tabs(&self.config);
-        // What the window ingested, across every market it is holding.
-        self.health.trades_since_summary += trades;
-    }
-
     /// The health line, from the counters over the bound workspace.
     pub(super) fn maybe_emit_summary(&mut self, now: Instant, ctx: &egui::Context) {
         let (surface, view) = (self.chrome.surface.as_ref(), &self.presentation.binding);
         (self.health).maybe_emit_summary(now, ctx, self.runtime.bound_mut(view), surface);
-    }
-
-    /// The status bar's facts, read as the line beside them reads them.
-    pub(super) fn status_model(&self) -> statusbar::StatusModel {
-        let runtime = self.runtime.bound(&self.presentation.binding);
-        self.health.status_model(runtime, &self.config)
-    }
-
-    /// The indicator requests of this frame; a guide switch goes through the
-    /// gateway, as the pane menu's own does.
-    pub(super) fn service_indicator_requests(&mut self) {
-        let guides = self.indicator_wiring().service_indicator_requests();
-        let id = crate::control::INDICATOR_GUIDE_CAPABILITY_ID;
-        for input in guides {
-            let _ = self.control_action(id, 1, crate::control::ActionOrigin::Human, input);
-        }
     }
 
     fn run_frame_stage<T: IntoIterator<Item = FrameTailStage>>(
@@ -431,8 +350,8 @@ impl QuantickApp {
                 );
                 self.resolve_drawing_response(ask, now);
             }
-            FrameStage::LayoutSwitches => apply_layout_switches(self),
-            FrameStage::FeedSwitch => apply_feed_switch(self),
+            FrameStage::LayoutSwitches => self.apply_layout_switches(),
+            FrameStage::FeedSwitch => self.apply_feed_switch(),
             FrameStage::MirrorLoadingWaits => {
                 panels::mirror_loading_waits(&self.surfaces.replay_browser, &mut self.runtime.tabs);
             }
@@ -479,14 +398,6 @@ impl QuantickApp {
             && let Some(access) = self.control.control_access.as_mut()
         {
             access.enable(ctx);
-        }
-    }
-
-    #[cfg(any(feature = "control-harness", test))]
-    fn take_scenario_mark(&mut self) {
-        if let Some(note) = self.control.scenarios.take_mark() {
-            let note = (!note.is_empty()).then_some(note);
-            self.take_mark(note);
         }
     }
 
@@ -554,7 +465,7 @@ impl QuantickApp {
             self.surfaces.strategy_popup.update(SettleArm(outcome));
         }
         if let Some(request) = late.market {
-            apply_palette_intent(self, request);
+            self.apply_palette_intent(request);
         }
         if let Some(change) = late.footprint {
             self.layer_wiring().apply_footprint_change(change);
@@ -752,7 +663,7 @@ impl QuantickApp {
             dismissed: answers.dismissed,
             chip_rect: answers.chip_rect,
         };
-        run_frame_tail(
+        super::frame_tail::run(
             super::frame_tail::FrameTailOwners {
                 tabs: &mut self.runtime.tabs,
                 config: &self.config,
@@ -765,33 +676,6 @@ impl QuantickApp {
             stages,
         )
     }
-}
-
-/// Run the fixed tail while lending each stage its owners only until it returns.
-fn run_frame_tail(
-    owners: super::frame_tail::FrameTailOwners<'_>,
-    input: &super::frame_tail::FrameTailInput<'_>,
-    workspace: &mut crate::workspace_store::WorkspaceStore,
-    spawn: &mut crate::tab::LiveFeedSpawn<'_>,
-    stages: impl IntoIterator<Item = FrameTailStage>,
-) -> Vec<crate::surfaces::SurfaceResponse> {
-    let mut unsupported = Vec::new();
-    for stage in stages {
-        let response = super::frame_tail::FrameTailOwners {
-            tabs: owners.tabs,
-            config: owners.config,
-            surfaces: owners.surfaces,
-            chip_rect: owners.chip_rect,
-        }
-        .execute_stage(input, spawn, stage);
-        // Temporary owners/domain borrows have ended before host execution.
-        match begin_paper_panel_effects(owners.tabs, &mut owners.surfaces.replay_browser, response)
-        {
-            Ok(paper) => finish_paper_panel_effects(owners.tabs, owners.config, workspace, paper),
-            Err(response) => unsupported.push(*response),
-        }
-    }
-    unsupported
 }
 
 /// Begin the dock's effects, then draw the alert manager panel: it draws every
@@ -819,74 +703,6 @@ fn begin_dock_effects(
     begun
 }
 
-/// The same recipient surrounds both Dock and tail painting, borrowing only
-/// the account collection and browser that its prefix can affect.
-fn begin_paper_panel_effects(
-    tabs: &mut super::arrangement_host::ArrangementHost,
-    browser: &mut crate::surfaces::replay_browser::ReplayBrowser,
-    response: crate::surfaces::SurfaceResponse,
-) -> Result<crate::surfaces::PaperPanelEffects, Box<crate::surfaces::SurfaceResponse>> {
-    let mut paper = response.into_paper_panel()?;
-    #[cfg(test)]
-    paper_panel_steps::record("journal-fanout");
-    if let Some(edit) = paper.journal_edit.take() {
-        let _ = super::paper_wiring::apply_journal_edit_across(tabs, &edit);
-    }
-    #[cfg(test)]
-    paper_panel_steps::record("replay-browser");
-    if paper.open_replay_browser {
-        browser.open_browser();
-    }
-    Ok(paper)
-}
-
-fn finish_paper_panel_effects(
-    tabs: &mut super::arrangement_host::ArrangementHost,
-    config: &crate::config::AppConfig,
-    workspace: &mut crate::workspace_store::WorkspaceStore,
-    response: crate::surfaces::PaperPanelEffects,
-) {
-    #[cfg(test)]
-    paper_panel_steps::record("close-replay");
-    if response.close_replay {
-        // A click that lost its slot has the trader's next click behind
-        // it; only the one-shot hook cares about the answer.
-        let active = tabs.active_index();
-        let _ = super::replay_and_history::apply_replay_action(
-            tabs.runtime_mut(active),
-            config,
-            ReplayAction::Close,
-        );
-    }
-    #[cfg(test)]
-    paper_panel_steps::record("navigation");
-    if let Some((opened, closed)) = response.navigate_to_trade {
-        let active = tabs.active_index();
-        panels::center_flow_pane_on_trade(tabs.runtime_mut(active), opened, closed);
-    }
-    let mut settings = super::paper_wiring::PaperSettingsAdapter { tabs, workspace };
-    #[cfg(test)]
-    paper_panel_steps::record("trades-picker-open");
-    if response.pick_trades_dir {
-        settings.open_trades_dir_picker();
-    }
-    #[cfg(test)]
-    paper_panel_steps::record("order-settings");
-    if response.order_strategies_changed {
-        settings.persist(super::paper_wiring::PaperSettingsChange::OrderStrategies);
-    }
-    #[cfg(test)]
-    paper_panel_steps::record("command-settings");
-    if response.cmd_trading_changed {
-        settings.persist(super::paper_wiring::PaperSettingsChange::CmdTrading);
-    }
-    #[cfg(test)]
-    paper_panel_steps::record("risk-settings");
-    if response.risk_settings_changed {
-        settings.persist(super::paper_wiring::PaperSettingsChange::RiskSettings);
-    }
-}
-
 #[cfg(test)]
 impl QuantickApp {
     /// Exercise the real tail interpreter and recipient without unrelated frame IO.
@@ -902,24 +718,6 @@ impl QuantickApp {
             &mut |_, _, _, _| panic!("paper tail must not spawn a feed"),
             stages,
         )
-    }
-
-    pub(super) fn settle_paper_response_test(
-        &mut self,
-        response: crate::surfaces::SurfaceResponse,
-    ) -> Result<(), Box<crate::surfaces::SurfaceResponse>> {
-        let paper = begin_paper_panel_effects(
-            &mut self.runtime.tabs,
-            &mut self.surfaces.replay_browser,
-            response,
-        )?;
-        finish_paper_panel_effects(
-            &mut self.runtime.tabs,
-            &self.config,
-            &mut self.runtime.workspace,
-            paper,
-        );
-        Ok(())
     }
 
     fn draw_frame_with_tail(
@@ -954,49 +752,6 @@ impl QuantickApp {
     }
 }
 
-impl QuantickApp {
-    /// The registered capability runs synchronously before the remaining drawing
-    /// response. Invalid input still leaves those ordinary commands to execute.
-    pub(super) fn resolve_drawing_response(
-        &mut self,
-        mut ask: crate::surfaces::drawing_chrome::DrawingChromeAsk,
-        now: Instant,
-    ) {
-        super::alerts_runtime::open_drawing_target(&mut ask, || self.indicator_wiring());
-        let mut drawings = self.drawings.with(&mut self.surfaces.drawing_chrome);
-        if let Some(action) = drawings.begin_registered_action(&mut ask) {
-            let pending = action.pending;
-            let result = self.control_action(
-                action.capability,
-                action.version,
-                crate::control::ActionOrigin::Human,
-                action.input,
-            );
-            let outcome = PlacementOutcome::of(result.is_ok());
-            let mut drawings = self.drawings.with(&mut self.surfaces.drawing_chrome);
-            let explain = drawings.finish_registered_action(pending, outcome);
-            if let Err(error) = result {
-                tracing::warn!(target:"quantick::control",event_code="QUICK_RANGE_ACTION_REFUSED",action=action.action_id,code=%error.code,error=%error.message,"the quick-range drawing could not be placed");
-                if explain {
-                    toast::note(&mut self.surfaces.toast, QUICK_RANGE_REFUSED, now);
-                }
-            }
-        }
-        let mut drawings = self.drawings.with(&mut self.surfaces.drawing_chrome);
-        let effects = drawings.apply_drawing_chrome(
-            ask,
-            &mut DrawingAccess::new(&mut self.runtime.tabs),
-            &mut *self.audio.alerts,
-            now,
-        );
-        crate::control::journal_own_magnet_flip(self, effects.own_magnet);
-        if effects.inspector_moved {
-            self.runtime.workspace.session_mut().inspector_moved();
-        }
-        effects.apply(&mut self.surfaces.toast, &mut self.surfaces.toolrail);
-    }
-}
-
 /// Publish already-validated per-owner defaults before any frame operation creates or paints objects.
 pub(super) fn sync_appearance(
     ctx: Option<&egui::Context>,
@@ -1018,41 +773,5 @@ pub(super) fn sync_appearance(
         .sync(&mut runtime.style, &runtime.appearance)
     {
         runtime.style_revision = runtime.style_revision.saturating_add(1);
-    }
-}
-
-/// Observe actual recipient checkpoints without replacing any host operation.
-/// A checkpoint records reaching a conditional section, not taking its branch.
-#[cfg(test)]
-pub(super) mod paper_panel_steps {
-    use std::cell::RefCell;
-
-    thread_local! {
-        static STEPS: RefCell<Option<Vec<&'static str>>> = const { RefCell::new(None) };
-    }
-
-    pub(super) fn record(step: &'static str) {
-        STEPS.with_borrow_mut(|steps| {
-            if let Some(steps) = steps {
-                steps.push(step);
-            }
-        });
-    }
-
-    pub(crate) fn observe<R>(run: impl FnOnce() -> R) -> (R, Vec<&'static str>) {
-        struct Reset;
-        impl Drop for Reset {
-            fn drop(&mut self) {
-                STEPS.with_borrow_mut(|steps| *steps = None);
-            }
-        }
-        STEPS.with_borrow_mut(|steps| {
-            assert!(steps.is_none(), "paper recipient observation is not nested");
-            *steps = Some(Vec::new());
-        });
-        let _reset = Reset;
-        let result = run();
-        let steps = STEPS.with_borrow_mut(|steps| steps.take().unwrap());
-        (result, steps)
     }
 }

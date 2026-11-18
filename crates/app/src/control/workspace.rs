@@ -138,7 +138,7 @@ fn snapshot<P: TabsPort + ChromePort + HealthPort + GatewayPort + ?Sized>(
                     workspace_colour: book.book().tab_colour(tabs.id_at(index)).map(Into::into),
                     canvas: Some(quantick_control_handlers::canvas::view(
                         &tab.canvas.state,
-                        crate::app::canvas_wiring::drawn(&tab.canvas),
+                        tab.canvas.drawn(),
                     )),
                 }
             })

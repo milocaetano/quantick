@@ -28,6 +28,17 @@ pub(in crate::app) struct WindowMenuState {
 }
 
 impl WindowMenuState {
+    pub(in crate::app) fn open_from_toolbar(&mut self) -> bool {
+        let viewport = egui::ViewportId::ROOT;
+        if !self.opened_from(viewport, MenuDoor::Toolbar) {
+            if self.is_open_on(viewport) {
+                self.toggle(viewport, false);
+            }
+            self.toggle_from(viewport, MenuDoor::Toolbar, true);
+        }
+        self.opened_from(viewport, MenuDoor::Toolbar)
+    }
+
     /// Open or close the menu on this window. Opened from the keyboard, its first
     /// row is ready for the keys; opened by the mouse, no row wears a focus ring.
     pub(in crate::app) fn toggle(&mut self, viewport: egui::ViewportId, by_keyboard: bool) {

@@ -741,7 +741,7 @@ fn check_reads(
             found.push(format!("the scene still bounds folded {id} at {at:?}"));
         }
     }
-    let drawn = crate::app::canvas_wiring::drawn(&tab.canvas);
+    let drawn = tab.canvas.drawn();
     let view = quantick_control_handlers::canvas::view(&tab.canvas.state, drawn);
     let mut read: Vec<PaneSlot> = (view.panes.iter())
         .filter(|pane| pane.railed)

@@ -719,13 +719,10 @@ impl HomeTabHost for QuantickApp {
 
 impl WidgetHost for QuantickApp {
     fn widgets(&mut self) -> Option<Box<dyn WidgetOwner + '_>> {
-        let (surfaces, tabs) = (&mut self.surfaces.widgets, &mut self.runtime.tabs);
-        let reads = (&self.config, self.runtime.tz);
-        Some(Box::new(crate::widget_surfaces::WidgetDesk {
-            surfaces,
-            tabs,
-            reads,
-        }))
+        Some(Box::new(
+            self.runtime
+                .widget_desk(&mut self.surfaces.widgets, &self.config),
+        ))
     }
 }
 

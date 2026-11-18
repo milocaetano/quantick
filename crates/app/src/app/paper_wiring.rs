@@ -9,6 +9,8 @@
 //! the two ports it needs and hands it a message; the adapter never sees the
 //! rest of the app.
 
+pub(super) mod panel_effects;
+
 use std::path::PathBuf;
 
 use quantick_control_handlers::trade::PaperOwner;
