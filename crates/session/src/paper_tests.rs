@@ -68,6 +68,33 @@ fn reverse_flips_a_filled_market_position() {
     );
 }
 
+/// C5: a live print reaches a resting limit through the tab, and its
+/// bracket's target closes it as a journaled trade - the flag the host
+/// reads to re-read an open report.
+#[test]
+fn a_live_print_fills_a_resting_limit_and_its_target_journals_the_close() {
+    let mut paper = flat();
+    paper.seed(&print(0, 100));
+    let events = paper.account.venue_mut().submit(
+        quantick_sim::OrderIntent::limit(Side::Buy, Decimal::ONE, Decimal::from(95))
+            .with_bracket(quantick_sim::Bracket::whole(None, Some(Decimal::from(105)))),
+    );
+    paper.account.handle_events(events);
+    assert_eq!(paper.working_orders().len(), 1, "the limit rests");
+
+    paper.on_trade(&print(1, 95));
+    assert!(
+        !paper.is_flat(),
+        "the print crossed the limit and it filled"
+    );
+    let _ = paper.account.take_journal_changed();
+
+    paper.on_trade(&print(2, 105));
+    assert!(paper.is_flat(), "the target closed it");
+    assert_eq!(paper.session_trades().len(), 1);
+    assert!(paper.account.take_journal_changed(), "through the journal");
+}
+
 #[test]
 fn reversing_a_flat_account_places_nothing() {
     let mut paper = flat();
