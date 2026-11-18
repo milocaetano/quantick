@@ -9,8 +9,6 @@ use quantick_replay::format;
 #[cfg(test)]
 use quantick_ui_model::replay_browser::Intent;
 pub const TRANSPORT_HEIGHT: f32 = 30.0;
-#[cfg(any(feature = "scenario-harness", test))]
-pub const GET_DATA_ENV: &str = "QUANTICK_REPLAY_GET_DATA";
 const TRACK_HEIGHT: f32 = 6.0;
 const HANDLE_RADIUS: f32 = 4.5;
 const HANDLE_RADIUS_HOVERED: f32 = 6.0;

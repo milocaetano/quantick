@@ -3,7 +3,7 @@
 
 use std::path::PathBuf;
 
-pub(crate) use quantick_stores::layouts::{LAYOUTS_FILE, load_or_starter, validate};
+pub(crate) use quantick_stores::layouts::{LAYOUTS_FILE, load_or_starter};
 pub(crate) use quantick_stores::market_settings::MARKET_SETTINGS_FILE;
 pub use quantick_workspace::layout_document::{
     ChartLayout, LayoutBook, LayoutError, LayoutId, MAX_LAYOUT_NAME, MAX_LAYOUTS, SavedOrigin,

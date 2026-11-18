@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod lifecycle {
     use super::super::*;
+    use quantick_ui_model::launch_scenario::Replay as _;
     use crate::surfaces::View as _;
     use quantick_feed::replay_download::{
         DownloadError, DownloadEvent, DownloadJob, DownloadRequest, SessionSource,
@@ -453,11 +454,11 @@ mod lifecycle {
             Some(Some(root.display().to_string()))
         );
         assert_eq!(browser.take_folder_change(), None);
-        browser.open_get_data(Some("WINJ26"));
+        LaunchReplay(browser).open_get_data("WINJ26");
         assert_eq!(browser.model_state.tab, BrowserTab::GetData);
         assert_eq!(browser.view.io.get_data.symbol, "WINJ26");
         assert!(
-            browser.autostart(2.0, Some("2026-03-16"), false),
+            LaunchReplay(browser).autostart(2.0, Some("2026-03-16"), false),
             "two-stage hook scans before selecting"
         );
         assert_eq!(

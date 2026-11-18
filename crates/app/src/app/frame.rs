@@ -27,7 +27,7 @@ use crate::surfaces::{AccessPanelEnv, BorrowedSurfaceEnv, ViewContext};
 use crate::toolrail::ToolRailExt as _;
 use quantick_chart_interaction::frame_plan::StageScope;
 use quantick_chart_interaction::frame_tail_plan::{FrameTailPlan, FrameTailStage};
-use quantick_control_handlers::market_palette::MarketPaletteHost;
+use quantick_control_handlers::market_palette::MarketPaletteOwners;
 use quantick_control_handlers::notify::AttentionHost as _;
 use quantick_feed::stall::Stall;
 use quantick_ui_model::market_palette::Intent as PaletteUiIntent;
@@ -411,7 +411,7 @@ impl QuantickApp {
     fn draw_surface_stage(&mut self, ctx: &egui::Context, now: Instant) {
         let palette = &self.surfaces.market_palette.model_state;
         let markets = (self.surfaces.hooks_pending() || palette.is_open())
-            .then(|| std::sync::Arc::new(MarketPaletteHost::market_snapshot(self)));
+            .then(|| std::sync::Arc::new(MarketPaletteOwners::listed_markets(self)));
         let late = surfaces::draw_surfaces(
             ctx,
             now,

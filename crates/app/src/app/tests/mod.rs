@@ -192,7 +192,7 @@ use crate::surfaces::drawing_chrome::{
 use crate::tab::BOOK_GENERATION_STRIDE;
 use crate::time_header;
 use crate::viewport::Viewport;
-use quantick_control_handlers::market_palette::MarketPaletteHost;
+use quantick_control_handlers::market_palette::MarketPaletteOwners;
 use quantick_feed::{FeedConnectionState, FeedEvent, FeedNotice};
 
 /// The window's test doors: its entry point and its read views.

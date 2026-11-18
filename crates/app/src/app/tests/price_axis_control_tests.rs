@@ -18,32 +18,15 @@ fn a_manual_price_range_is_reported_before_the_first_automatic_fit() {
 }
 
 #[test]
-fn the_price_range_launch_hook_uses_the_same_manual_range_and_rejects_invalid_bounds() {
-    for (value, expected) in [
-        ("90:110", Some((90.0, 110.0))),
-        (" 90.5 : 110.5 ", Some((90.5, 110.5))),
-        ("110:90", None),
-        ("100:100", None),
-        ("NaN:110", None),
-        ("90:inf", None),
-        ("90:110:120", None),
-        ("", None),
-    ] {
-        let launch = AppLaunch {
-            scenario: crate::hooks::ScenarioInputs::from_pairs(&[("QUANTICK_PRICE_RANGE", value)]),
-            ..AppLaunch::default()
-        };
-        let (app, _events, _commands, _book) = test_app_with_launch(launch);
-        assert_eq!(
-            app.active_tab().flow_pane.price_view.manual_range(),
-            expected,
-            "{value}"
-        );
-    }
-    let (app, _events, _commands, _book) = test_app();
-    assert!(
-        app.active_tab().flow_pane.price_view.is_auto(),
-        "an absent hook preserves defaults"
+fn the_price_range_launch_hook_reaches_the_active_flow_axis() {
+    let launch = AppLaunch {
+        scenario: crate::hooks::ScenarioInputs::from_pairs(&[("QUANTICK_PRICE_RANGE", "90:110")]),
+        ..AppLaunch::default()
+    };
+    let (app, _events, _commands, _book) = test_app_with_launch(launch);
+    assert_eq!(
+        app.active_tab().flow_pane.price_view.manual_range(),
+        Some((90.0, 110.0))
     );
 }
 

@@ -2406,7 +2406,12 @@ fn an_addition_the_config_would_reject_is_refused_and_not_written() {
         "and nothing was persisted — the next launch is unharmed"
     );
     // The same symbol on the feed that *does* own it is still fine.
-    assert!(app.symbol_catalog().add("tickmill", "WINQ26").is_ok());
+    assert!(
+        app.market_catalog()
+            .unwrap()
+            .add("tickmill", "WINQ26")
+            .is_ok()
+    );
     let _ = std::fs::remove_file(&path);
 }
 
@@ -2440,7 +2445,7 @@ fn a_market_enters_recent_only_once_its_tab_has_closed() {
     .map(|closed| (closed.symbol.clone(), closed.bar.clone()))
     .collect();
     assert_eq!(closed, [("ETHUSDT".to_owned(), "tick:77".to_owned())]);
-    let snapshot = MarketPaletteHost::market_snapshot(&app);
+    let snapshot = MarketPaletteOwners::listed_markets(&app);
     let world = snapshot.world();
     assert_eq!(
         quantick_workspace::market_list::market_bar(&world, "binance", "ETHUSDT").as_deref(),
@@ -2459,7 +2464,7 @@ fn a_market_without_a_bar_opens_on_the_active_tab_bar_the_footer_showed() {
     let active = quantick_engine::bar_registry::BUILTIN_BARS.parse("volume:13");
     app.active_tab_mut().flow_pane.set_spec(active.unwrap());
     type_into_palette(&mut app, &ctx, "ETHUSDT");
-    let snapshot = MarketPaletteHost::market_snapshot(&app);
+    let snapshot = MarketPaletteOwners::listed_markets(&app);
     let listing = quantick_workspace::market_list::list_markets(&snapshot.world(), "ETHUSDT");
     let palette = (app.surfaces.market_palette.model_state.open.as_mut()).expect("open");
     assert_eq!(

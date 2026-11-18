@@ -1028,7 +1028,10 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
             "settings.set" => json!({ "perf_readings": !app.health.show_perf }),
             "catalog.remove" => {
                 let feed = app.active_tab().feed_id.clone();
-                app.symbol_catalog().add(&feed, "RETRYUSDT").unwrap();
+                app.market_catalog()
+                    .unwrap()
+                    .add(&feed, "RETRYUSDT")
+                    .unwrap();
                 json!({ "feed": feed, "symbol": "RETRYUSDT" })
             }
             "orderflow.bubbles.tick.set"

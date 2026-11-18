@@ -161,9 +161,15 @@ impl WorkspaceOwner for WorkspaceCalls<'_> {
     }
 }
 
-impl quantick_control_handlers::TabsHost for WorkspaceCalls<'_> {
-    fn tab_list(&self) -> &dyn quantick_control_handlers::TabDirectory {
-        &self.runtime.tabs
+impl quantick_control_handlers::TabDirectory for WorkspaceCalls<'_> {
+    fn active_tab_index(&self) -> usize {
+        self.runtime.tabs.active_index()
+    }
+    fn tab_position(&self, tab_id: u64) -> Option<usize> {
+        self.runtime.tabs.position(tab_id)
+    }
+    fn tab_id_at(&self, index: usize) -> u64 {
+        self.runtime.tabs.id_at(index)
     }
 }
 

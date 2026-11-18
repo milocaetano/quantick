@@ -56,6 +56,7 @@ pub mod market_tab;
 pub mod market_windows;
 pub mod native_window;
 pub mod notify;
+pub mod observer;
 pub mod opening_scale;
 pub mod orderflow;
 pub mod orderflow_settings;
@@ -82,7 +83,7 @@ pub mod widgets;
 pub mod workspace_book;
 
 pub(crate) use tabs::per_open_tab;
-pub use tabs::{JournalAccess, OpenTabs, TabDirectory, TabsHost, tab_index};
+pub use tabs::{JournalAccess, OpenTabs, TabDirectory, tab_index};
 
 /// A malformed input or an unencodable answer, as every family refuses it.
 pub(crate) fn invalid(error: impl ToString) -> quantick_control::error::ControlError {

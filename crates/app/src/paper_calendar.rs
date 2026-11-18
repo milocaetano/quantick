@@ -43,8 +43,6 @@ pub(crate) fn today(tz: TzOffset) -> CivilDate {
     CivilDate::from_ms(now_ms, tz)
 }
 
-#[cfg(any(feature = "scenario-harness", test))]
-pub(crate) use quantick_paper::report::calendar::parse_selection;
 pub(crate) use quantick_paper::report::calendar::{
     CalendarState, DayIndex, DaySelection, month_name,
 };

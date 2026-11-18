@@ -23,7 +23,7 @@ use quantick_stores::symbol_catalog::SymbolCatalog;
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
 
-const UNAVAILABLE: &str = "markets cannot be opened here";
+pub(super) const UNAVAILABLE: &str = "markets cannot be opened here";
 
 /// The new tab's id, or why it did not open.
 pub type TabOpening = Result<u64, String>;
@@ -72,71 +72,6 @@ pub trait MarketTabs {
     fn set_flow_bar(&mut self, tab: u64, bar: BarConfiguration) -> Result<(), String>;
 }
 
-pub trait MarketPaletteHost {
-    /// What "Open a market" lists now.
-    fn market_snapshot(&self) -> MarketSnapshot {
-        MarketSnapshot::default()
-    }
-    /// Bring the market tab at this zero-based place forward.
-    fn focus_tab(&mut self, _index: usize) {}
-    /// Open a tab on the choice's market, on `bar` (none: the one any new
-    /// tab takes), joining the choice's workspace ([`OpenChoice::arrival`]),
-    /// and answer its id; a background choice keeps the tab on screen.
-    fn open_tab(&mut self, _choice: &OpenChoice, _bar: Option<BarConfiguration>) -> TabOpening {
-        Err(UNAVAILABLE.to_owned())
-    }
-    /// Add a symbol to a feed's list, or with `add` false take it out.
-    fn edit_catalog(&mut self, _feed: &str, _symbol: &str, _add: bool) -> Result<(), String> {
-        Err(UNAVAILABLE.to_owned())
-    }
-    /// Show the palette; with a `target`, in switch mode on that tab.
-    fn open_market_palette(
-        &mut self,
-        _query: &str,
-        _target: Option<SwitchTarget>,
-    ) -> Result<(), ControlError> {
-        Err(ControlError::invalid_request(UNAVAILABLE))
-    }
-    /// Put tab `tab`'s flow pane on `bar`, as its bars menu does.
-    fn set_flow_bar(&mut self, _tab: u64, _bar: BarConfiguration) -> Result<(), String> {
-        Err(UNAVAILABLE.to_owned())
-    }
-}
-
-/// The window's palette primitives are the owners it lends ([`MarketPaletteOwners`]).
-impl<T: MarketPaletteOwners + ?Sized> MarketPaletteHost for T {
-    fn market_snapshot(&self) -> MarketSnapshot {
-        self.listed_markets()
-    }
-    fn focus_tab(&mut self, index: usize) {
-        if let Some(mut tabs) = self.market_tabs() {
-            tabs.focus_tab(index);
-        }
-    }
-    fn open_tab(&mut self, choice: &OpenChoice, bar: Option<BarConfiguration>) -> TabOpening {
-        let mut tabs = self.market_tabs().ok_or(UNAVAILABLE)?;
-        tabs.open_tab(choice, bar)
-    }
-    fn edit_catalog(&mut self, feed: &str, symbol: &str, add: bool) -> Result<(), String> {
-        let mut catalog = self.market_catalog().ok_or(UNAVAILABLE)?;
-        match add {
-            true => catalog.add(feed, symbol),
-            false => catalog.remove(feed, symbol),
-        }
-    }
-    fn open_market_palette(
-        &mut self,
-        query: &str,
-        target: Option<SwitchTarget>,
-    ) -> Result<(), ControlError> {
-        self.show_market_palette(query, target)
-    }
-    fn set_flow_bar(&mut self, tab: u64, bar: BarConfiguration) -> Result<(), String> {
-        let mut tabs = self.market_tabs().ok_or(UNAVAILABLE)?;
-        tabs.set_flow_bar(tab, bar)
-    }
-}
-
 /// Show the palette on `query`; with `switch`, in switch mode on the active
 /// tab, which a recording refuses.
 ///
@@ -149,7 +84,7 @@ pub fn show<H: crate::market_switch::SwitchHost + ?Sized>(
 ) -> Result<(), ControlError> {
     let target = switch.then(|| crate::market_switch::target(app));
     let target = target.transpose().map_err(ControlError::invalid_request)?;
-    app.open_market_palette(query, target)
+    app.show_market_palette(query, target)
 }
 
 /// What an open did: the choice as checked, the tab, and its place when an
@@ -167,12 +102,12 @@ pub struct Opened {
 ///
 /// # Errors
 /// The reason, in the trader's words.
-pub fn open<H: MarketPaletteHost + ?Sized>(
+pub fn open<H: MarketPaletteOwners + ?Sized>(
     app: &mut H,
     asked: &OpenChoice,
 ) -> Result<Opened, String> {
     let named = named_bar(asked)?;
-    let snapshot = app.market_snapshot();
+    let snapshot = app.listed_markets();
     let choice = snapshot.choice(
         (asked.feed_id.as_str(), asked.symbol.as_str()),
         named.map(|spec| spec.to_config_string()),
@@ -181,7 +116,9 @@ pub fn open<H: MarketPaletteHost + ?Sized>(
     )?;
     let (feed, symbol) = (choice.feed_id.as_str(), choice.symbol.as_str());
     if let Some(tab) = focus_target(&snapshot.open, feed, symbol, &choice.bar, &choice.workspace) {
-        app.focus_tab(tab.position - 1);
+        if let Some(mut tabs) = app.market_tabs() {
+            tabs.focus_tab(tab.position - 1);
+        }
         let (tab, focused) = (tab.tab_id, Some(tab.position));
         return Ok(Opened {
             choice,
@@ -189,7 +126,11 @@ pub fn open<H: MarketPaletteHost + ?Sized>(
             focused,
         });
     }
-    let tab = app.open_tab(&choice, named_bar(&choice)?)?;
+    let bar = named_bar(&choice)?;
+    let tab = app
+        .market_tabs()
+        .ok_or(UNAVAILABLE)?
+        .open_tab(&choice, bar)?;
     Ok(Opened {
         choice,
         tab,
@@ -209,16 +150,18 @@ fn named_bar(asked: &OpenChoice) -> Result<Option<BarConfiguration>, String> {
 }
 
 /// Bring tab `tab_id` forward, wherever it sits on the strip now.
-fn focus<H: MarketPaletteHost + ?Sized>(
+fn focus<H: MarketPaletteOwners + ?Sized>(
     app: &mut H,
     tab_id: u64,
     symbol: &str,
 ) -> Result<String, String> {
-    let snapshot = app.market_snapshot();
+    let snapshot = app.listed_markets();
     let tab = (snapshot.open.iter())
         .find(|tab| tab.tab_id == tab_id)
         .ok_or_else(|| format!("The tab showing {symbol} has closed"))?;
-    app.focus_tab(tab.position - 1);
+    if let Some(mut tabs) = app.market_tabs() {
+        tabs.focus_tab(tab.position - 1);
+    }
     Ok(focus_toast(symbol, tab.position))
 }
 
@@ -227,15 +170,17 @@ fn focus<H: MarketPaletteHost + ?Sized>(
 ///
 /// # Errors
 /// The refusal.
-pub fn remove<H: MarketPaletteHost + ?Sized>(
+pub fn remove<H: MarketPaletteOwners + ?Sized>(
     app: &mut H,
     feed: &str,
     symbol: &str,
 ) -> Result<(), String> {
-    if let Some(reason) = removal_refusal(&app.market_snapshot().world(), feed, symbol) {
+    if let Some(reason) = removal_refusal(&app.listed_markets().world(), feed, symbol) {
         return Err(reason);
     }
-    app.edit_catalog(feed, symbol, false)
+    app.market_catalog()
+        .ok_or(UNAVAILABLE)?
+        .remove(feed, symbol)
 }
 
 /// Do what the palette asked: `Some(toast)` when it opened something and
@@ -253,8 +198,10 @@ pub fn settle<H: crate::market_switch::SwitchHost + ?Sized>(
         // refused add adds nothing.
         PaletteIntent::Add(choice) => {
             named_bar(&choice)?;
-            app.market_snapshot().check_workspace(&choice.workspace)?;
-            app.edit_catalog(&choice.feed_id, &choice.symbol, true)?;
+            app.listed_markets().check_workspace(&choice.workspace)?;
+            app.market_catalog()
+                .ok_or(UNAVAILABLE)?
+                .add(&choice.feed_id, &choice.symbol)?;
             choice
         }
         PaletteIntent::Focus { tab_id, symbol } => return focus(app, tab_id, &symbol).map(Some),
@@ -302,7 +249,7 @@ fn answer<T: Serialize>(result: &T) -> Result<Value, ControlError> {
     serde_json::to_value(result).map_err(|error| ControlError::invalid_request(error.to_string()))
 }
 
-fn open_call<H: MarketPaletteHost + ?Sized, A>(
+fn open_call<H: MarketPaletteOwners + ?Sized, A>(
     app: &mut H,
     _: &mut A,
     _: &ActorContext,
@@ -311,7 +258,7 @@ fn open_call<H: MarketPaletteHost + ?Sized, A>(
     let request: MarketOpenInput = input(value)?;
     let market = (request.feed.as_str(), request.symbol.as_str());
     let (bar, workspace) = (request.bar.clone(), request.workspace.clone());
-    let asked = (app.market_snapshot())
+    let asked = (app.listed_markets())
         .choice(market, bar, workspace, request.background)
         .map_err(ControlError::invalid_request)?;
     let Opened {
@@ -348,7 +295,7 @@ fn palette_call<H: crate::market_switch::SwitchHost + ?Sized, A: NotifyAccess>(
     answer(&MarketPaletteOpenResult { query, switch })
 }
 
-fn remove_call<H: MarketPaletteHost + ?Sized, A>(
+fn remove_call<H: MarketPaletteOwners + ?Sized, A>(
     app: &mut H,
     _: &mut A,
     _: &ActorContext,

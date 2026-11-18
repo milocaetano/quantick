@@ -42,8 +42,6 @@ mod types;
 mod workspace;
 
 pub(crate) use actions::{MARK_CAPABILITY_ID, MARK_CAPABILITY_VERSION};
-#[cfg(test)]
-pub(crate) use contract::{DESCRIBE_CAPABILITY_ID, SNAPSHOT_CAPABILITY_ID, TRADER_PROFILE_ID};
 pub(crate) use drawing_magnet::{flip_rail_magnet, journal_own_magnet_flip};
 #[cfg(test)]
 pub(crate) use evidence::{RawScreenshot, ScreenshotPixels};
@@ -52,6 +50,10 @@ pub(crate) use quantick_control::annotation::{
     FIB_CAPABILITY_VERSION, FIB_PROJECTION_CAPABILITY_ID, FIB_RETRACEMENT_CAPABILITY_ID,
     HORIZONTAL_LEVELS_CAPABILITY_ID, PARALLEL_CHANNEL_CAPABILITY_ID, PROFILE_CAPABILITY_ID,
     PROFILE_CAPABILITY_VERSION, RECTANGLE_CAPABILITY_ID, TREND_LINE_CAPABILITY_ID,
+};
+#[cfg(test)]
+pub(crate) use quantick_control_host::authority::{
+    DESCRIBE_CAPABILITY_ID, SNAPSHOT_CAPABILITY_ID, TRADER_PROFILE_ID,
 };
 pub(crate) use quantick_control_schema::indicator_guide::INDICATOR_GUIDE_CAPABILITY_ID;
 #[cfg(test)]

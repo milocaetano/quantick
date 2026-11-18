@@ -1,13 +1,13 @@
 //! The addressed pane, resolved for the calls that act on it: the pane
 //! `quantick_control_handlers::addressed_pane::AddressedPanePort` lends, the
 //! state the axis gestures and the context bar change.
-use super::layout;
 use crate::app::{TabsMutPort, TabsPort};
 use crate::orderflow_view::OrderflowView;
 use crate::pane::ChartPane;
 use quantick_control::{error::ControlError, wire::WireU64};
 use quantick_control_handlers::axis_pane::{AxisPane, NativeTape};
 use quantick_control_handlers::pane_marks::PaneMarks;
+use quantick_control_handlers::tab_index;
 use quantick_control_schema::chart::ViewportSnapshot;
 use quantick_control_schema::tape_view::TapeViewSnapshot;
 use quantick_drawings::{DrawingTool, Drawings};
@@ -24,8 +24,7 @@ pub(super) fn pane<P: TabsPort + TabsMutPort + ?Sized>(
     tab_id: WireU64,
     pane_id: WireU64,
 ) -> Result<&mut ChartPane, ControlError> {
-    let tab_id = Some(tab_id);
-    let index = layout::tab_index(app, layout::TabTarget { tab_id })?;
+    let index = tab_index(app.tab_reads().tabs(), Some(tab_id))?;
     let tab = app.tabs_mut().tab_at_mut(index);
     tab.ok_or_else(|| invalid("the tab closed while the call ran"))?
         .panes_mut()
