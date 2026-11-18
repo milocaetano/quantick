@@ -114,34 +114,6 @@ pub fn non_blank(value: Option<&str>) -> Option<String> {
         .map(str::to_owned)
 }
 
-/// The dock tabs a launch can open by name.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DockHook {
-    /// The flow panel's L2 section.
-    L2,
-    /// The flow panel's bubbles section.
-    Bubbles,
-    /// The session tab.
-    Session,
-    /// The trading tab.
-    Trading,
-    /// The trades tab.
-    Trades,
-}
-
-/// `l2`, `bubbles`, `session`, `trading` or `trades`.
-#[must_use]
-pub fn dock_tab(value: &str) -> Option<DockHook> {
-    match value.trim() {
-        "l2" => Some(DockHook::L2),
-        "bubbles" => Some(DockHook::Bubbles),
-        "session" => Some(DockHook::Session),
-        "trading" => Some(DockHook::Trading),
-        "trades" => Some(DockHook::Trades),
-        _ => None,
-    }
-}
-
 /// The one context pane to fold, `Some(upper)`, when exactly one of the two
 /// is asked for.
 #[must_use]

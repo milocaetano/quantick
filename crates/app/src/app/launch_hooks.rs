@@ -49,7 +49,7 @@ use crate::toolrail::ToolRailExt as _;
 #[cfg(any(feature = "scenario-harness", test))]
 use crate::{orderflow_panel::open_on, ui_state::PanelSection};
 #[cfg(any(feature = "scenario-harness", test))]
-use quantick_control_schema::launch_values::{self as values, DockHook};
+use quantick_control_schema::launch_values as values;
 #[cfg(any(feature = "scenario-harness", test))]
 use quantick_control_schema::{desk, launch_calls, layout};
 #[cfg(any(feature = "scenario-harness", test))]
@@ -597,14 +597,14 @@ fn dock_and_report<D: OwnersDesk>(desk: &mut D, env: &ScenarioInputs) {
     // Same convenience for the dock: open a named tab, so a scripted
     // validation run shows a panel without a click.
     if let Some(name) = env.var("QUANTICK_DOCK_TAB") {
-        let dock = &mut owners.surfaces.dock;
-        match values::dock_tab(&name) {
-            Some(DockHook::L2) => open_on(tab, PanelSection::L2),
-            Some(DockHook::Bubbles) => open_on(tab, PanelSection::Bubbles),
-            Some(DockHook::Session) => dock.open_tab(DockTab::Session),
-            Some(DockHook::Trading) => dock.open_tab(DockTab::Trading),
-            Some(DockHook::Trades) => dock.open_tab(DockTab::Trades),
-            None => tracing::warn!(
+        // Read by the owners' own wire names, the words a scene reports.
+        let id = name.trim();
+        let section = PanelSection::ALL.into_iter().find(|at| at.id() == id);
+        let dock_tab = DockTab::ALL.into_iter().find(|at| at.id() == id);
+        match (section, dock_tab) {
+            (Some(section), _) => open_on(tab, section),
+            (None, Some(dock_tab)) => owners.surfaces.dock.open_tab(dock_tab),
+            (None, None) => tracing::warn!(
                 target: "quantick::app",
                 schema_version = 1_u8,
                 event_code = "DOCK_TAB_AUTOSTART_UNKNOWN",

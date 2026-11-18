@@ -65,13 +65,6 @@ fn replay_autostart_speed_and_session_read_their_grammar() {
 }
 
 #[test]
-fn dock_tabs_read_by_name() {
-    assert_eq!(dock_tab(" trades "), Some(DockHook::Trades));
-    assert_eq!(dock_tab("l2"), Some(DockHook::L2));
-    assert_eq!(dock_tab("journal"), None);
-}
-
-#[test]
 fn a_context_fold_needs_exactly_one_side() {
     assert_eq!(context_fold(Some("1"), None), Some(true));
     assert_eq!(context_fold(None, Some("1")), Some(false));
