@@ -154,7 +154,8 @@ impl LayoutAdapter<'_> {
                     Ok(slot) => slot,
                     Err(message) => {
                         let pane = self.pane_mut_at(tab, side)?;
-                        super::super::indicator_manager::show_unloaded_script(pane, name, message)
+                        let title = quantick_stores::script_library::script_title(name);
+                        pane.indicators.show_unloaded_script(name, title, message)
                     }
                 };
                 let owner = self

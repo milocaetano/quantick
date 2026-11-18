@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use quantick_indicators::{ObjectSnapshot, Rgba8, resolve_bar_paint};
 
-use quantick_indicator_session::{IndicatorEvent, SlotId};
+use quantick_indicator_session::{IndicatorEvent, IndicatorSource, SlotId, unloaded_script_events};
 
 use crate::price_view::PriceView;
 
@@ -37,6 +37,18 @@ impl IndicatorViews {
         let slot = SlotId(self.next_slot);
         self.next_slot += 1;
         self.pending_kinds.insert(slot, Arc::from(kind.as_ref()));
+        slot
+    }
+
+    /// Show the library script `name`, which never reached the worker, as an
+    /// error slot titled `title`. It carries the kind its healthy source
+    /// would, so a script the trader fixes and reloads keeps what was drawn
+    /// on its pane.
+    pub fn show_unloaded_script(&mut self, name: &str, title: String, message: String) -> SlotId {
+        let slot = self.allocate_slot(IndicatorSource::script_kind_id(name));
+        for event in unloaded_script_events(slot, title, message) {
+            self.apply(event);
+        }
         slot
     }
 

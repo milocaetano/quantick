@@ -388,7 +388,8 @@ impl IndicatorState {
                 );
                 // A click never produces nothing: the read failed on the UI
                 // thread, so the error slot is built here.
-                let slot = show_unloaded_script(pane, &name, message);
+                let title = quantick_stores::script_library::script_title(&name);
+                let slot = pane.indicators.show_unloaded_script(&name, title, message);
                 Some((
                     slot,
                     LibraryAttachment {
@@ -400,19 +401,6 @@ impl IndicatorState {
             None => None,
         }
     }
-}
-
-/// Put a script the UI thread could not read on `pane` as an error slot.
-/// It carries the kind its healthy source would, so a script the trader fixes
-/// and reloads keeps what was drawn on its pane.
-pub(super) fn show_unloaded_script(pane: &mut ChartPane, name: &str, message: String) -> SlotId {
-    let kind = crate::indicator_worker::IndicatorSource::script_kind_id(name);
-    let slot = pane.indicators.allocate_slot(kind);
-    let title = quantick_stores::script_library::script_title(name);
-    for event in quantick_indicator_session::unloaded_script_events(slot, title, message) {
-        pane.indicators.apply(event);
-    }
-    slot
 }
 
 #[cfg(test)]
