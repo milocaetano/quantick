@@ -4,10 +4,10 @@
 //! simulator holds while they do. Both read state the application already
 //! maintains; neither recomputes anything inside a capture.
 //!
-//! The window hands each tab over through [`SessionTab`]: its paper desk as
-//! the trade family already reads it, and — while a recording is linked —
-//! the replay as [`ReplayRead`]. Everything the two scopes decide from those
-//! is here.
+//! Each open tab answers [`SessionTab`] itself, lent by the window through
+//! [`OpenTabs`]: its paper desk as the trade family already reads it, and —
+//! while a recording is linked — the replay as [`ReplayRead`]. Everything the
+//! two scopes decide from those is here.
 
 pub use quantick_control_schema::session::*;
 
@@ -25,6 +25,7 @@ use quantick_paper::{format::PositionSummary, risk_sizing::RiskState};
 use quantick_replay::Session;
 use quantick_sim::Order;
 
+use crate::OpenTabs;
 use crate::dock::ProjectionDock;
 use crate::trade::TradeDesk;
 
@@ -55,21 +56,15 @@ pub trait SessionTab {
     fn symbol(&self) -> &str;
     /// The tab's paper desk.
     fn desk(&self) -> &dyn TradeDesk;
-    /// The recording the tab is playing, if any.
-    fn replay(&self) -> Option<&dyn ReplayRead>;
-}
-
-/// The window's tabs as the session scopes walk them.
-pub trait SessionPort {
-    /// Visit every tab in screen order.
-    fn visit_session_tabs(&self, visit: &mut dyn FnMut(u64, &dyn SessionTab));
+    /// The recording the tab is playing, if any, lent for the read.
+    fn replay(&self) -> Option<Box<dyn ReplayRead + '_>>;
 }
 
 /// Dock the session module and its two scopes.
 pub fn register<D, H>(registry: &mut D) -> Result<(), ProjectionRegistryError>
 where
     D: ProjectionDock<H>,
-    H: SessionPort + ?Sized + 'static,
+    H: OpenTabs<Tab: SessionTab> + ?Sized + 'static,
 {
     let module_id = ModuleId::new(MODULE_ID).expect("static module ID is valid");
     registry.register_module(
@@ -100,14 +95,12 @@ where
     )
 }
 
-/// Every tab's rows, built from one walk over the port.
+/// Every tab's rows, in screen order.
 fn per_tab<P, T>(app: &P, mut row: impl FnMut(u64, &dyn SessionTab) -> T) -> Vec<T>
 where
-    P: SessionPort + ?Sized,
+    P: OpenTabs<Tab: SessionTab> + ?Sized,
 {
-    let mut rows = Vec::new();
-    app.visit_session_tabs(&mut |tab_id, tab| rows.push(row(tab_id, tab)));
-    rows
+    crate::per_open_tab(app, |tab_id, tab| row(tab_id, tab))
 }
 
 /// The module's revision key: what the trader changed, not what playback
@@ -119,7 +112,7 @@ where
 /// tracks is a deliberate change: which recording is loaded, whether it is
 /// playing or finished, the speed, a seek, and the shape of the simulated
 /// book — the same reasoning `health.rs` applies to its frame averages.
-fn revision<P: SessionPort + ?Sized>(app: &P) -> Vec<SessionRevisionKey> {
+fn revision<P: OpenTabs<Tab: SessionTab> + ?Sized>(app: &P) -> Vec<SessionRevisionKey> {
     per_tab(app, |tab_id, tab| {
         let desk = tab.desk();
         SessionRevisionKey {
@@ -199,17 +192,23 @@ struct ReplayRevisionKey {
     rewinds: u64,
 }
 
-fn project_replay<P: SessionPort + ?Sized>(app: &P, _context: CaptureContext) -> ReplaySnapshot {
+fn project_replay<P: OpenTabs<Tab: SessionTab> + ?Sized>(
+    app: &P,
+    _context: CaptureContext,
+) -> ReplaySnapshot {
     ReplaySnapshot {
         tabs: per_tab(app, |tab_id, tab| TabReplaySnapshot {
             tab_id: WireU64::new(tab_id),
             replaying: tab.replay().is_some(),
-            session: tab.replay().map(replay_session_snapshot),
+            session: tab.replay().as_deref().map(replay_session_snapshot),
         }),
     }
 }
 
-fn project_paper<P: SessionPort + ?Sized>(app: &P, _context: CaptureContext) -> PaperSnapshot {
+fn project_paper<P: OpenTabs<Tab: SessionTab> + ?Sized>(
+    app: &P,
+    _context: CaptureContext,
+) -> PaperSnapshot {
     PaperSnapshot {
         tabs: per_tab(app, tab_paper_snapshot),
     }
@@ -320,3 +319,7 @@ fn position_snapshot(summary: PositionSummary) -> PaperPositionSnapshot {
         open_points: summary.open_points.map(canonical_decimal),
     }
 }
+
+#[cfg(test)]
+#[path = "session_tests.rs"]
+mod session_tests;

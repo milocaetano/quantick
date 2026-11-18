@@ -44,6 +44,32 @@ impl<R> TabDirectory for quantick_workspace::arrangement::Arrangement<R> {
     }
 }
 
+/// The window's open tabs, each lent as the window's own tab type, beside the
+/// config they read and the drawing rail's magnet: what the session,
+/// analysis and mark scopes walk. Each scope names the trait it reads a tab
+/// through, and the tab implements it.
+pub trait OpenTabs: TabDirectory {
+    /// The window's tab.
+    type Tab;
+    fn tab_count(&self) -> usize;
+    /// The tab at `index`, a position the directory gave.
+    fn open_tab(&self, index: usize) -> Option<&Self::Tab>;
+    fn config(&self) -> &quantick_stores::config::AppConfig;
+    /// Whether the tool rail's magnet is on, as the drawings scope publishes
+    /// it beside the tabs' marks.
+    fn rail_magnet(&self) -> bool;
+}
+
+/// One row per open tab in screen order, from the tab and its stable id.
+pub fn per_open_tab<P, T>(app: &P, mut row: impl FnMut(u64, &P::Tab) -> T) -> Vec<T>
+where
+    P: OpenTabs + ?Sized,
+{
+    (0..app.tab_count())
+        .filter_map(|index| Some(row(app.tab_id_at(index), app.open_tab(index)?)))
+        .collect()
+}
+
 /// Which tab a call named, or the one the trader is looking at.
 pub fn tab_index<P: TabDirectory + ?Sized>(
     app: &P,

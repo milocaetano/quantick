@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use quantick_chart::state::ChartState;
 use quantick_chart::style::ChartStyle;
+use quantick_civil::TzOffset;
 use quantick_control::{
     id::{ConnectionId, PrincipalId, RequestId},
     wire::{ActorContext, ActorKind, CanonicalDecimal, WireU64},
@@ -19,7 +20,14 @@ use quantick_control_schema::interaction::CursorSnapshot;
 use quantick_control_schema::notify::AgentPopup;
 use quantick_engine::bar_registry::{BUILTIN_BARS, BarConfiguration};
 use quantick_engine::{Bar, BarSpec, Side, Trade};
+use quantick_paper::report::ledger_state::{LedgerView, LedgerViewChange};
+use quantick_paper::report::session_edit::{
+    JournalEdit, JournalEditOutcome, JournalScope, SessionEditError,
+};
+use quantick_paper::{PaperAccount, format::PositionSummary, risk_sizing::RiskState};
+use quantick_session::paper::{SharedChange, TabPaper, TradeCommand, TradeOutcome};
 use quantick_session::{HistoryAct, HistoryOutcome, SessionSnapshot};
+use quantick_sim::Order;
 use quantick_sources::history_reach::{HistoryReach, ReachProgress};
 use quantick_sources::history_run::{Cancelled, Press, RunStatus};
 use quantick_sources::recovery::Recovery;
@@ -27,9 +35,9 @@ use rust_decimal::Decimal;
 
 use crate::JournalAccess;
 use crate::addressed_pane::AddressedPanePort;
-use crate::analysis::{AnalysisPaneEntry, AnalysisPort};
+use crate::analysis::{AnalysisPaneEntry, AnalysisTab};
 use crate::annotate::AnnotateAccess;
-use crate::attention::MarkPort;
+use crate::attention::MarkTab;
 use crate::axis_pane::{AxisPane, NativeTape};
 use crate::bubble_pane::{AssetSave, BubbleLook, BubblePane, PaneBubblesPort, TickSpherePane};
 use crate::chart::{ChartPaneEntry, ChartPaneSource, ChartPort, MissingPane, PaneFraming};
@@ -45,11 +53,11 @@ use crate::indicator_host::{
 use crate::market_tab::FeedSelection;
 use crate::market_tab::RecoveredFeed;
 use crate::market_tab::{LentTab, MarketTab, MarketTabHost};
-use crate::notify::{AttentionPort, NotifyAccess};
+use crate::notify::{Attention, AttentionHost, NotifyAccess};
 use crate::pane_marks::PaneMarks;
 use crate::settings::{SettingsAct, SettingsOwner, SettingsReadings, SettleError};
-use crate::tabs::TabDirectory;
-use crate::trade::{TradeDesk, TradePort};
+use crate::tabs::{OpenTabs, TabDirectory};
+use crate::trade::{PaperHost, PaperOwner, TradeDesk};
 use quantick_control::error::ControlError;
 use quantick_control_schema::bubble_preset::{ListInput, ListResult};
 use quantick_control_schema::chart_settings::{ChartSettingsInput, ChartSettingsResult};
@@ -878,12 +886,29 @@ impl DealRecorder for FakeTab {
     }
 }
 
-/// The fake window's panes carry no analysis: it serves the rail's magnet.
-impl AnalysisPort for FakeWindow {
-    fn drawing_magnet(&self) -> bool {
+/// The fake window lends its own tabs, beside the config it lends a market
+/// call and its rail's magnet.
+impl OpenTabs for FakeWindow {
+    type Tab = FakeTab;
+    fn tab_count(&self) -> usize {
+        self.tabs.len()
+    }
+    fn open_tab(&self, index: usize) -> Option<&FakeTab> {
+        self.tabs.get(index)
+    }
+    fn config(&self) -> &AppConfig {
+        &self.config
+    }
+    fn rail_magnet(&self) -> bool {
         self.rail_magnet
     }
-    fn visit_analysis_tabs(&self, _visit: &mut dyn FnMut(u64, &[AnalysisPaneEntry<'_>])) {}
+}
+
+/// A fake tab's panes carry no analysis.
+impl AnalysisTab for FakeTab {
+    fn analysis_panes(&self) -> Vec<AnalysisPaneEntry<'_>> {
+        Vec::new()
+    }
 }
 
 impl RailMagnetPort for FakeWindow {
@@ -892,7 +917,14 @@ impl RailMagnetPort for FakeWindow {
     }
 }
 
-impl AttentionPort for FakeWindow {
+/// The fake window's attention lanes are its own fields, lent for the call.
+impl AttentionHost for FakeWindow {
+    fn attention(&mut self) -> Box<dyn Attention + '_> {
+        Box::new(self)
+    }
+}
+
+impl Attention for &mut FakeWindow {
     fn show_popup(&mut self, popup: AgentPopup) {
         self.popups.push(popup);
     }
@@ -906,28 +938,167 @@ impl AttentionPort for FakeWindow {
 
 /// The fake window keeps no paper desk: every trade action finds no
 /// chart open.
-impl TradePort for FakeWindow {
+impl PaperHost for FakeWindow {
+    fn paper(&mut self) -> Box<dyn PaperOwner + '_> {
+        Box::new(NoDesk)
+    }
+}
+
+/// A paper owner with no chart open and an empty journal it never writes.
+pub(crate) struct NoDesk;
+
+impl PaperOwner for NoDesk {
     fn active_desk(&self) -> Option<&dyn TradeDesk> {
         None
     }
     fn active_desk_mut(&mut self) -> Option<&mut dyn TradeDesk> {
         None
     }
-    fn persist_order_strategies(&mut self) {}
-    fn persist_risk_settings(&mut self) {}
+    fn persist(&mut self, _change: SharedChange) {}
+    fn journal_scope(&self) -> JournalScope {
+        JournalScope {
+            dir: std::path::PathBuf::from("no-such-trades-folder"),
+            live: Vec::new(),
+        }
+    }
+    fn journal_timezone(&self) -> TzOffset {
+        TzOffset::new(0)
+    }
+    fn edit_journal(
+        &mut self,
+        _edit: &JournalEdit,
+    ) -> Result<JournalEditOutcome, SessionEditError> {
+        Err(SessionEditError::Io("the fake keeps no journal".to_owned()))
+    }
 }
 
-/// The fake window has no pointer: a mark resolved against it names the
-/// active tab's first pane and says why the pointer is missing.
-impl MarkPort for FakeWindow {
-    fn cursor_snapshot(&self) -> CursorSnapshot {
-        let tab = self.tabs.get(self.active);
+/// A test's own paper owner is its own door, lent for the one call.
+impl<T: PaperOwner> PaperHost for T {
+    fn paper(&mut self) -> Box<dyn PaperOwner + '_> {
+        Box::new(self)
+    }
+}
+
+impl<T: PaperOwner + ?Sized> PaperOwner for &mut T {
+    fn active_desk(&self) -> Option<&dyn TradeDesk> {
+        (**self).active_desk()
+    }
+    fn active_desk_mut(&mut self) -> Option<&mut dyn TradeDesk> {
+        (**self).active_desk_mut()
+    }
+    fn persist(&mut self, change: SharedChange) {
+        (**self).persist(change);
+    }
+    fn journal_scope(&self) -> JournalScope {
+        (**self).journal_scope()
+    }
+    fn journal_timezone(&self) -> TzOffset {
+        (**self).journal_timezone()
+    }
+    fn edit_journal(&mut self, edit: &JournalEdit) -> Result<JournalEditOutcome, SessionEditError> {
+        (**self).edit_journal(edit)
+    }
+    fn route_call(&mut self) -> Option<quantick_paper::route::RouteCall<'_>> {
+        (**self).route_call()
+    }
+    fn account_route(
+        &mut self,
+    ) -> Option<quantick_control_schema::trade_account::AccountRouteResult> {
+        (**self).account_route()
+    }
+    fn request_route(
+        &mut self,
+        request: quantick_paper::route::RouteRequest,
+    ) -> Result<(), quantick_paper::route::Refusal> {
+        (**self).request_route(request)
+    }
+    fn broker_write_block(
+        &mut self,
+        actor: quantick_paper::route::Actor,
+    ) -> Option<quantick_paper::route::Refusal> {
+        (**self).broker_write_block(actor)
+    }
+}
+
+/// One paper desk, as a window hands the active tab's over: the tab's own
+/// paper (an account and the desk's ruler and ticket around it), the Trades
+/// ledger's view, and every outcome a control call ran through it, for a
+/// parity test to hold against the tab's own surfaces.
+pub(crate) struct PaperDesk {
+    pub paper: TabPaper,
+    pub view: LedgerView,
+    pub outcomes: Vec<TradeOutcome>,
+}
+
+impl PaperDesk {
+    pub fn new(account: PaperAccount) -> Self {
+        Self {
+            paper: TabPaper::new(account),
+            view: LedgerView::default(),
+            outcomes: Vec::new(),
+        }
+    }
+}
+
+impl std::ops::Deref for PaperDesk {
+    type Target = TabPaper;
+    fn deref(&self) -> &TabPaper {
+        &self.paper
+    }
+}
+
+impl std::ops::DerefMut for PaperDesk {
+    fn deref_mut(&mut self) -> &mut TabPaper {
+        &mut self.paper
+    }
+}
+
+impl TradeDesk for PaperDesk {
+    fn account(&self) -> &PaperAccount {
+        &self.account
+    }
+    fn account_mut(&mut self) -> &mut PaperAccount {
+        &mut self.paper.account
+    }
+    fn ruler_ticks(&self) -> u32 {
+        self.desk.ruler.notches
+    }
+    fn set_ruler_ticks(&mut self, ticks: u32) {
+        self.paper.desk.ruler.set_ticks(ticks);
+    }
+    fn execute(&mut self, command: TradeCommand) -> TradeOutcome {
+        let outcome = self.paper.execute(command);
+        self.outcomes.push(outcome.clone());
+        outcome
+    }
+    fn mark_price(&self) -> Option<Decimal> {
+        self.account.mark_price()
+    }
+    fn working_orders(&self) -> &[Order] {
+        self.account.working_orders()
+    }
+    fn risk_report(&self) -> (RiskState, bool) {
+        self.desk.risk_report(&self.account)
+    }
+    fn position_summary(&self) -> Option<PositionSummary> {
+        self.account.position_summary()
+    }
+    fn selected_trade_index(&self) -> Option<usize> {
+        None
+    }
+    fn ledger_view(&mut self, change: &LedgerViewChange) -> (LedgerView, bool) {
+        let moved = self.view.apply(change);
+        (self.view.clone(), moved)
+    }
+}
+
+/// A fake tab has no pointer: a mark resolved against it names the tab and
+/// its first pane and says why the pointer is missing.
+impl MarkTab for FakeTab {
+    fn cursor_snapshot(&self, tab_id: u64, _config: &AppConfig) -> CursorSnapshot {
         CursorSnapshot {
-            active_tab_id: WireU64::new(tab.map_or(0, |tab| tab.id)),
-            focused_pane_id: WireU64::new(
-                tab.and_then(|tab| tab.panes.first())
-                    .map_or(0, |pane| pane.id),
-            ),
+            active_tab_id: WireU64::new(tab_id),
+            focused_pane_id: WireU64::new(self.panes.first().map_or(0, |pane| pane.id)),
             focused_pane_side: PaneSideDto::Flow,
             pointer: None,
             pointer_availability: unavailable("fake_window_has_no_pointer"),

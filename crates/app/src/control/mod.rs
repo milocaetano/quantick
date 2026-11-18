@@ -27,6 +27,7 @@ mod market_tabs;
 mod notify;
 mod pane_bubbles;
 mod ports;
+mod tab_scopes;
 pub(crate) use interaction::drawing_band_name;
 #[cfg(test)]
 pub(crate) use interaction::flow_cell_snapshot;

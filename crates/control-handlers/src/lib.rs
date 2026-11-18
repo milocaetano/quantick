@@ -81,7 +81,7 @@ pub mod trade_account;
 pub mod widgets;
 pub mod workspace_book;
 
-pub use tabs::{JournalAccess, TabDirectory, TabsHost, tab_index};
+pub use tabs::{JournalAccess, OpenTabs, TabDirectory, TabsHost, per_open_tab, tab_index};
 
 /// A malformed input or an unencodable answer, as every family refuses it.
 pub(crate) fn invalid(error: impl ToString) -> quantick_control::error::ControlError {

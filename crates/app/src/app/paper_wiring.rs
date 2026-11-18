@@ -11,6 +11,7 @@
 
 use std::path::PathBuf;
 
+use quantick_control_handlers::trade::PaperOwner;
 use quantick_paper::report::session_edit::{
     JournalEdit, JournalEditOutcome, JournalScope, SessionEditError, apply_journal_edit, edit_toast,
 };
@@ -32,19 +33,6 @@ pub(crate) struct PaperSettingsAdapter<'a> {
 impl PaperSettingsAdapter<'_> {
     fn active(&self) -> &PaperTrading {
         &self.tabs[self.tabs.active_index()].paper
-    }
-
-    /// The trades folder and every file any tab is still journaling to.
-    pub(crate) fn journal_scope(&self) -> JournalScope {
-        journal_scope(self.tabs)
-    }
-
-    /// One session edit, as the ledger's gesture makes it.
-    pub(crate) fn apply_journal_edit(
-        &mut self,
-        edit: &JournalEdit,
-    ) -> Result<JournalEditOutcome, SessionEditError> {
-        apply_journal_edit_across(self.tabs, edit)
     }
 
     /// Ask the operating system for a trades folder, off the UI thread —
@@ -112,6 +100,42 @@ impl PaperSettingsAdapter<'_> {
         let mut state = crate::paper_state::load(&path);
         shared.record(&mut state);
         crate::paper_state::save(&path, &state);
+    }
+}
+
+/// The workspace's paper trading as the trade, P&L and journal calls reach
+/// it: the active tab's desk, the settings fan-out, the route orders take and
+/// the trades journal.
+///
+/// The desk is the active tab's and not an addressed one: an order belongs to
+/// the symbol the trader is looking at. Fallible, though the active index
+/// should always hold a tab: a `trade.*` call answers "no chart open" rather
+/// than panic the trading application, and a call and its read-back resolve
+/// the same tab.
+impl PaperOwner for super::workspace_calls::WorkspaceCalls<'_> {
+    fn active_desk(&self) -> Option<&dyn quantick_control_handlers::trade::TradeDesk> {
+        let tabs = &self.runtime.tabs;
+        Some(&tabs.get(tabs.active_index())?.paper)
+    }
+    fn active_desk_mut(&mut self) -> Option<&mut dyn quantick_control_handlers::trade::TradeDesk> {
+        let tabs = &mut self.runtime.tabs;
+        let active = tabs.active_index();
+        Some(&mut tabs.get_mut(active)?.paper)
+    }
+    fn persist(&mut self, change: PaperSettingsChange) {
+        self.runtime.paper_settings().persist(change);
+    }
+    fn route_call(&mut self) -> Option<quantick_paper::route::RouteCall<'_>> {
+        Some(self.runtime.route(self.config))
+    }
+    fn journal_scope(&self) -> JournalScope {
+        journal_scope(&self.runtime.tabs)
+    }
+    fn journal_timezone(&self) -> crate::timezone::TzOffset {
+        self.runtime.tz
+    }
+    fn edit_journal(&mut self, edit: &JournalEdit) -> Result<JournalEditOutcome, SessionEditError> {
+        apply_journal_edit_across(&mut self.runtime.tabs, edit)
     }
 }
 

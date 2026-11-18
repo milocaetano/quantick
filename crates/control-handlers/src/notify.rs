@@ -39,7 +39,7 @@ use crate::dock::ActionDock;
 
 /// The three lanes the assistant answers on: its popup, the window's
 /// acknowledgement toast, and the attention sound.
-pub trait AttentionPort {
+pub trait Attention {
     /// Open the assistant's popup; a second replaces the first.
     fn show_popup(&mut self, popup: AgentPopup);
     /// Post one line to the window's acknowledgement lane.
@@ -47,6 +47,12 @@ pub trait AttentionPort {
     /// Ask for the platform's attention sound; the reason it could not be
     /// made, if it could not.
     fn sound_alert(&mut self) -> Option<String>;
+}
+
+/// The door to the window's [`Attention`] lanes.
+pub trait AttentionHost {
+    /// The lanes, borrowed for one call.
+    fn attention(&mut self) -> Box<dyn Attention + '_>;
 }
 
 /// What a notification needs of the control access it runs in.
@@ -62,7 +68,7 @@ pub trait NotifyAccess {
 pub fn register<D, H, A>(registry: &mut D) -> Result<(), RegistryError>
 where
     D: ActionDock<H, A>,
-    H: AttentionPort + ?Sized,
+    H: AttentionHost + ?Sized,
     A: NotifyAccess,
 {
     registry.register(
@@ -98,7 +104,7 @@ where
     Ok(())
 }
 
-fn raise_popup<H: AttentionPort + ?Sized, A: NotifyAccess>(
+fn raise_popup<H: AttentionHost + ?Sized, A: NotifyAccess>(
     app: &mut H,
     access: &mut A,
     actor: &ActorContext,
@@ -107,7 +113,7 @@ fn raise_popup<H: AttentionPort + ?Sized, A: NotifyAccess>(
     raise(app, access, actor, input, NotifyChannel::Popup)
 }
 
-fn raise_toast<H: AttentionPort + ?Sized, A: NotifyAccess>(
+fn raise_toast<H: AttentionHost + ?Sized, A: NotifyAccess>(
     app: &mut H,
     access: &mut A,
     actor: &ActorContext,
@@ -116,7 +122,7 @@ fn raise_toast<H: AttentionPort + ?Sized, A: NotifyAccess>(
     raise(app, access, actor, input, NotifyChannel::Toast)
 }
 
-fn sound_alert<H: AttentionPort + ?Sized, A: NotifyAccess>(
+fn sound_alert<H: AttentionHost + ?Sized, A: NotifyAccess>(
     app: &mut H,
     access: &mut A,
     actor: &ActorContext,
@@ -126,7 +132,7 @@ fn sound_alert<H: AttentionPort + ?Sized, A: NotifyAccess>(
 }
 
 /// One notification path: budget first, then the surface, then the journal.
-fn raise<H: AttentionPort + ?Sized, A: NotifyAccess>(
+fn raise<H: AttentionHost + ?Sized, A: NotifyAccess>(
     app: &mut H,
     access: &mut A,
     actor: &ActorContext,
@@ -159,7 +165,7 @@ fn raise<H: AttentionPort + ?Sized, A: NotifyAccess>(
     let displayed_text = format!("{} — {author}", input.message);
     let unavailable_reason = match channel {
         NotifyChannel::Popup => {
-            app.show_popup(AgentPopup {
+            app.attention().show_popup(AgentPopup {
                 title: input
                     .title
                     .clone()
@@ -170,10 +176,10 @@ fn raise<H: AttentionPort + ?Sized, A: NotifyAccess>(
             None
         }
         NotifyChannel::Toast => {
-            app.show_toast(displayed_text.clone());
+            app.attention().show_toast(displayed_text.clone());
             None
         }
-        NotifyChannel::Sound => app.sound_alert(),
+        NotifyChannel::Sound => app.attention().sound_alert(),
     };
 
     let payload = json!({

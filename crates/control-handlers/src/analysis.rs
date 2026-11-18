@@ -28,10 +28,10 @@
 //! drawing half, and now captures this module's enumerating scope alongside
 //! the pointer scopes it already covered.
 //!
-//! The window hands its panes over through [`AnalysisPort`]: each pane's
-//! indicator views and marks, both already headless, with the tab and side
-//! it sits on, and the tool rail's magnet. Everything the two scopes decide
-//! from those is here.
+//! Each open tab hands its panes over through [`AnalysisTab`], and the
+//! window lends its tabs and the tool rail's magnet through [`OpenTabs`]:
+//! each pane's indicator views and marks, both already headless, with the
+//! side it sits on. Everything the two scopes decide from those is here.
 
 pub use quantick_control_schema::analysis::*;
 
@@ -48,6 +48,7 @@ use quantick_control_host::{
 };
 use quantick_drawings::{Drawing, DrawingBand, DrawingTool, Drawings};
 
+use crate::OpenTabs;
 use crate::dock::ProjectionDock;
 
 #[cfg(test)]
@@ -70,12 +71,11 @@ pub struct AnalysisPaneEntry<'a> {
     pub pane: &'a dyn AnalysisPane,
 }
 
-/// The window's tabs and panes as the analysis scopes walk them.
-pub trait AnalysisPort {
-    /// The tool rail's magnet, which the drawings scope publishes.
-    fn drawing_magnet(&self) -> bool;
-    /// Visit every tab in screen order with its panes in the tab's order.
-    fn visit_analysis_tabs(&self, visit: &mut dyn FnMut(u64, &[AnalysisPaneEntry<'_>]));
+/// One open tab as the analysis scopes read it; the window lends its tabs
+/// and the rail's magnet through [`OpenTabs`].
+pub trait AnalysisTab {
+    /// The tab's panes in the tab's order, each with its side.
+    fn analysis_panes(&self) -> Vec<AnalysisPaneEntry<'_>>;
 }
 
 /// Where a drawing shows, as the wire names it: `all_charts` only when every
@@ -105,7 +105,7 @@ pub fn drawing_band_name(band: &DrawingBand) -> &'static str {
 pub fn register<D, H>(registry: &mut D) -> Result<(), ProjectionRegistryError>
 where
     D: ProjectionDock<H>,
-    H: AnalysisPort + ?Sized + 'static,
+    H: OpenTabs<Tab: AnalysisTab> + ?Sized + 'static,
 {
     let module_id = ModuleId::new(MODULE_ID).expect("static module ID is valid");
     registry.register_module(
@@ -142,14 +142,12 @@ where
     )
 }
 
-/// Every tab's rows, built from one walk over the port.
+/// Every tab's rows, in screen order.
 fn per_tab<P, T>(app: &P, mut row: impl FnMut(u64, &[AnalysisPaneEntry<'_>]) -> T) -> Vec<T>
 where
-    P: AnalysisPort + ?Sized,
+    P: OpenTabs<Tab: AnalysisTab> + ?Sized,
 {
-    let mut rows = Vec::new();
-    app.visit_analysis_tabs(&mut |tab_id, panes| rows.push(row(tab_id, panes)));
-    rows
+    crate::per_open_tab(app, |tab_id, tab| row(tab_id, &tab.analysis_panes()))
 }
 
 /// The module's revision key: what the trader placed and how it is
@@ -165,8 +163,8 @@ where
 /// Everything either scope publishes and the readings do not carry belongs
 /// here. A field on the wire that no key covers is a client polling a
 /// revision that never moves while the answer underneath it changed.
-fn revision<P: AnalysisPort + ?Sized>(app: &P) -> (bool, Vec<AnalysisRevisionKey>) {
-    let magnet = app.drawing_magnet();
+fn revision<P: OpenTabs<Tab: AnalysisTab> + ?Sized>(app: &P) -> (bool, Vec<AnalysisRevisionKey>) {
+    let magnet = app.rail_magnet();
     let tabs = per_tab(app, |tab_id, panes| AnalysisRevisionKey {
         tab_id,
         panes: panes
@@ -288,21 +286,21 @@ struct IndicatorAnalysisRevisionKey {
     declaration: String,
 }
 
-fn project_indicators<P: AnalysisPort + ?Sized>(
+fn project_indicators<P: OpenTabs<Tab: AnalysisTab> + ?Sized>(
     app: &P,
     _context: CaptureContext,
 ) -> IndicatorsSnapshot {
     indicators_snapshot(app)
 }
 
-fn project_drawings<P: AnalysisPort + ?Sized>(
+fn project_drawings<P: OpenTabs<Tab: AnalysisTab> + ?Sized>(
     app: &P,
     _context: CaptureContext,
 ) -> DrawingsSnapshot {
     drawings_snapshot(app)
 }
 
-fn indicators_snapshot<P: AnalysisPort + ?Sized>(app: &P) -> IndicatorsSnapshot {
+fn indicators_snapshot<P: OpenTabs<Tab: AnalysisTab> + ?Sized>(app: &P) -> IndicatorsSnapshot {
     IndicatorsSnapshot {
         tabs: per_tab(app, |tab_id, panes| TabIndicatorsSnapshot {
             tab_id: WireU64::new(tab_id),
@@ -380,9 +378,9 @@ fn failure_snapshot(view: &IndicatorView, script: bool) -> Option<IndicatorFailu
     })
 }
 
-fn drawings_snapshot<P: AnalysisPort + ?Sized>(app: &P) -> DrawingsSnapshot {
+fn drawings_snapshot<P: OpenTabs<Tab: AnalysisTab> + ?Sized>(app: &P) -> DrawingsSnapshot {
     DrawingsSnapshot {
-        magnet: app.drawing_magnet(),
+        magnet: app.rail_magnet(),
         tabs: per_tab(app, |tab_id, panes| TabDrawingsSnapshot {
             tab_id: WireU64::new(tab_id),
             panes: panes
