@@ -13,7 +13,7 @@ use super::menu_bar::{
     PREVIOUS_TAB_SHORTCUT,
 };
 
-fn market_shown(tabs: &ArrangementHost) -> MarketShown<'_> {
+pub(super) fn market_shown(tabs: &ArrangementHost) -> MarketShown<'_> {
     let tab = &tabs[tabs.active_index()];
     MarketShown {
         tab_id: tabs.active_id(),

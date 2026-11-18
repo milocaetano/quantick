@@ -26,17 +26,17 @@ use crate::surfaces::drawing_chrome::DrawingChromeExt as _;
 use crate::surfaces::replay_browser::ReplayBrowserExt as _;
 use crate::toolrail::ToolRailExt as _;
 use eframe::egui;
-use quantick_control::error::ControlError;
 use quantick_control_handlers::drawing_magnet::RailMagnetPort;
+use quantick_control_handlers::home_tab::{HomeTab, HomeTabHost};
 use quantick_control_handlers::indicator_host::{IndicatorControlHost, IndicatorOwner};
-use quantick_control_handlers::market_palette::TabOpening;
-use quantick_control_handlers::market_switch;
+use quantick_control_handlers::market_palette::{MarketPaletteOwners, MarketTabs, PaletteShowing};
+use quantick_control_handlers::widgets::{WidgetHost, WidgetOwner};
 use quantick_control_handlers::workspace_book::cell_menu::CellRow;
-use quantick_engine::bar_registry::BarConfiguration as Bars;
 use quantick_session::workspace_menu::WorkspaceMenuState;
+use quantick_stores::symbol_catalog::SymbolCatalog;
 use quantick_stores::{market_settings::MarketSettingsStore, workspaces::WorkspaceBookStore};
 use quantick_ui_model::market_palette::Intent;
-use quantick_workspace::market_list::{self as list, OpenChoice};
+use quantick_workspace::market_list::{self as list, SwitchTarget};
 
 use super::tab_workspaces::BookTabs;
 use crate::config::AppConfig;
@@ -46,7 +46,6 @@ use crate::style::ChartStyle;
 use crate::tab::Tab;
 use crate::timezone::TzOffset;
 use crate::toolrail::ToolRail;
-use quantick_control_schema::widget::WidgetRead;
 use quantick_ui_model::dock::State as Dock;
 
 use quantick_feed::history_reach;
@@ -128,11 +127,11 @@ pub(crate) trait TabsMutPort {
 pub(crate) trait ChromePort:
     quantick_control_handlers::native_window::NativeWindowHost
     + quantick_control_handlers::home_tab::HomeTabHost
-    + quantick_control_handlers::market_palette::MarketPaletteHost
+    + quantick_control_handlers::market_palette::MarketPaletteOwners
+    + quantick_control_handlers::widgets::WidgetHost
     + quantick_control_handlers::desk::DeskHost
     + quantick_control_handlers::workspace_book::WorkspaceBookHost
     + quantick_control_handlers::canvas::CanvasHost
-    + quantick_control_handlers::widgets::WidgetHost
 {
     fn chrome_reads(&self) -> ChromeReads<'_>;
 }
@@ -742,24 +741,6 @@ impl TabsMutPort for QuantickApp {
     }
 }
 
-impl quantick_control_handlers::home_tab::HomeTabHost for QuantickApp {
-    fn show_home_tab(&mut self) -> Result<(), quantick_control::error::ControlError> {
-        super::home_wiring::show_home(&self.runtime.tabs, &mut self.chrome.title_bar.surface);
-        Ok(())
-    }
-
-    fn leave_home_tab(&mut self) -> Result<(), quantick_control::error::ControlError> {
-        self.chrome.title_bar.surface.show_market();
-        Ok(())
-    }
-}
-
-impl quantick_control_handlers::widgets::WidgetHost for QuantickApp {
-    fn widget(&mut self, id: &str, open: Option<bool>) -> Result<WidgetRead, String> {
-        widget_answer(self, id, open)
-    }
-}
-
 /// A pane's close button closes it through `widget.close`, so the journal
 /// hears the trader's close as it hears an agent's; directly without a gateway.
 pub(super) fn close_widget(app: &mut QuantickApp, id: &str) {
@@ -769,18 +750,8 @@ pub(super) fn close_widget(app: &mut QuantickApp, id: &str) {
         .control_action(close, 1, crate::control::ActionOrigin::Human, input)
         .is_err()
     {
-        let _ = widget_answer(app, id, Some(false));
+        let _ = quantick_control_handlers::widgets::widget(app, id, Some(false));
     }
-}
-
-/// The widget panes' one door, outside the window's own impl.
-fn widget_answer(
-    app: &mut QuantickApp,
-    id: &str,
-    open: Option<bool>,
-) -> Result<WidgetRead, String> {
-    let parts = (&mut app.surfaces.widgets, &mut app.runtime.tabs);
-    crate::widget_surfaces::answer(parts, (&app.config, app.runtime.tz), (id, open))
 }
 
 impl quantick_control_handlers::desk::DeskHost for QuantickApp {
@@ -789,79 +760,42 @@ impl quantick_control_handlers::desk::DeskHost for QuantickApp {
     }
 }
 
-impl quantick_control_handlers::market_palette::MarketPaletteHost for QuantickApp {
-    /// What "Open a market" lists: the config's markets and this window's tabs.
-    fn market_snapshot(&self) -> list::MarketSnapshot {
-        let (venues, markets) = self.config.market_catalog(&self.added_symbols);
-        let (tabs, book) = (&self.runtime.tabs, &self.runtime.workspace.book);
-        let open = (tabs.iter().enumerate())
-            .map(|(index, tab)| list::OpenMarket {
-                tab_id: tabs.id_at(index),
-                position: index + 1,
-                feed_id: tab.feed_id.clone(),
-                symbol: tab.symbol.clone(),
-                asset: self.config.market_asset(&tab.feed_id, &tab.symbol),
-                workspace: book.tab_row(tabs.id_at(index)).0,
-                bar: tab.flow_pane.series.bar_config(),
-                context_bars: super::arrangement_adapter::saved_tab_of(tab).context_bars,
-                replay: tab.link.replay.is_some(),
-                streaming: tab.link.latest_trade_ms.is_some(),
-                price: super::menu_bar::last_price(tab),
-                trades_per_s: None,
-            })
-            .collect();
-        list::MarketSnapshot {
-            venues,
-            markets,
-            open,
-            recent: self.surfaces.market_palette.model_state.recent.clone(),
-            starter_feed: self.config.default_feed.clone(),
-            workspaces: book.book().list().into_iter().map(|row| row.name).collect(),
-            inherited_bar: Some(self.active_tab().flow_pane.series.bar_config()),
-        }
+impl HomeTabHost for QuantickApp {
+    fn home_tab(&mut self) -> Option<HomeTab<'_>> {
+        let shown = super::home_wiring::market_shown(&self.runtime.tabs);
+        Some(HomeTab::new(&mut self.chrome.title_bar.surface, shown))
     }
-    /// Bring the tab at `index` forward, off Home.
-    fn focus_tab(&mut self, index: usize) {
-        self.runtime.tabs.select(index);
-        self.chrome.title_bar.surface.show_market();
+}
+
+impl WidgetHost for QuantickApp {
+    fn widgets(&mut self) -> Option<Box<dyn WidgetOwner + '_>> {
+        let (surfaces, tabs) = (&mut self.surfaces.widgets, &mut self.runtime.tabs);
+        let reads = (&self.config, self.runtime.tz);
+        Some(Box::new(crate::widget_surfaces::WidgetDesk {
+            surfaces,
+            tabs,
+            reads,
+        }))
     }
-    /// Open `choice` on `bar` (none: `adopt_tab`'s), its workspace left as the tab's arrival.
-    fn open_tab(&mut self, choice: &OpenChoice, bar: Option<Bars>) -> TabOpening {
-        let shown = self.runtime.tabs.active_index();
-        (self.arrangement_adapter()).open_tab(choice.feed_id.clone(), choice.symbol.clone(), bar);
-        let timeframes = super::saved_context_intervals(&choice.context_bars, None);
-        self.active_tab_mut().canvas.open_context_on(&timeframes);
-        let tab = self.runtime.tabs.active_id();
-        let sync = self.runtime.workspace.book.sync_mut();
-        sync.join(tab, choice.arrival());
-        (choice.background).then(|| self.runtime.tabs.select(shown));
-        Ok(tab)
+}
+
+impl MarketPaletteOwners for QuantickApp {
+    fn listed_markets(&self) -> list::MarketSnapshot {
+        let lists = (&self.config, &self.added_symbols);
+        let recent = &self.surfaces.market_palette.model_state.recent;
+        let book = &self.runtime.workspace.book;
+        super::arrangement_adapter::market_snapshot(&self.runtime.tabs, lists, book, recent)
     }
-    /// Add a symbol to a feed's list, or take one out.
-    fn edit_catalog(&mut self, feed: &str, symbol: &str, add: bool) -> Result<(), String> {
-        let mut catalog = self.symbol_catalog();
-        match add {
-            true => catalog.add(feed, symbol),
-            false => catalog.remove(feed, symbol),
-        }
+    fn market_tabs(&mut self) -> Option<Box<dyn MarketTabs + '_>> {
+        Some(Box::new(self.arrangement_adapter()))
     }
-    /// Show the palette; `switch` puts it in switch mode on the active tab.
-    fn open_market_palette(&mut self, query: &str, switch: bool) -> Result<(), ControlError> {
-        let target = switch.then(|| market_switch::target(self as &dyn ControlPort));
-        let target = target.transpose().map_err(ControlError::invalid_request)?;
-        let intent = Intent::open(query, target);
-        self.surfaces.market_palette.update(intent);
+    fn market_catalog(&mut self) -> Option<SymbolCatalog<'_>> {
+        Some(self.symbol_catalog())
+    }
+    fn show_market_palette(&mut self, query: &str, target: Option<SwitchTarget>) -> PaletteShowing {
+        let palette = &mut self.surfaces.market_palette;
+        palette.update(Intent::open(query, target));
         Ok(())
-    }
-    fn set_flow_bar(&mut self, tab: u64, bar: Bars) -> Result<(), String> {
-        let tab = self
-            .runtime
-            .tabs
-            .by_id_mut(tab)
-            .ok_or("The tab has closed")?;
-        tab.set_pane_bar_spec(0, bar)
-            .map(drop)
-            .map_err(|e| e.to_string())
     }
 }
 

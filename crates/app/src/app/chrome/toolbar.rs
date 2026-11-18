@@ -7,7 +7,7 @@
 //! what a toolbar looks like.
 
 use eframe::egui;
-use quantick_control_handlers::market_palette::MarketPaletteHost as _;
+use quantick_control_handlers::market_palette;
 use quantick_engine::Side;
 use quantick_paper::route::RoutePress;
 use quantick_session::paper::TradeCommand;
@@ -167,7 +167,9 @@ impl QuantickApp {
                 self.tabs_mut().press_history(active, reach);
             }
             ToolbarAction::CancelHistory => _ = self.active_tab_mut().cancel_history(),
-            ToolbarAction::SwitchMarket => _ = self.open_market_palette("", true),
+            ToolbarAction::SwitchMarket => {
+                _ = market_palette::show(self as &mut super::super::ControlWindow, "", true);
+            }
             ToolbarAction::DealRecording(action) => {
                 self.active_tab_mut().apply_deal_recording(action);
             }

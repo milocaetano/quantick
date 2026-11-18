@@ -88,9 +88,7 @@ fn answer(app: &mut QuantickApp, act: CanvasAct) -> Result<CanvasResult, Control
         app.apply_layout_preset(canvas::pick_on(&before, preset_id)?);
         (app.active_tab().canvas.state != before, None)
     } else if let Some(id) = canvas::surface_widget(&act) {
-        let reads = (&app.config, app.runtime.tz);
-        let tabs = (&mut app.surfaces.widgets, &mut app.runtime.tabs);
-        crate::widget_surfaces::answer(tabs, reads, (id, Some(true)))
+        quantick_control_handlers::widgets::widget(app, id, Some(true))
             .map_err(ControlError::invalid_request)?;
         (true, None)
     } else {

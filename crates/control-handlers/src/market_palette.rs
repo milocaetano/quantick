@@ -17,9 +17,10 @@ use quantick_control_schema::market_palette::{
 };
 use quantick_engine::bar_registry::{BUILTIN_BARS, BarConfiguration};
 use quantick_stores::market_list::{
-    MarketSnapshot, OpenChoice, PaletteIntent, focus_target, focus_toast, open_toast,
+    MarketSnapshot, OpenChoice, PaletteIntent, SwitchTarget, focus_target, focus_toast, open_toast,
     removal_refusal,
 };
+use quantick_stores::symbol_catalog::SymbolCatalog;
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
 
@@ -27,6 +28,50 @@ const UNAVAILABLE: &str = "markets cannot be opened here";
 
 /// The new tab's id, or why it did not open.
 pub type TabOpening = Result<u64, String>;
+
+/// The palette on screen, or why it is not.
+pub type PaletteShowing = Result<(), ControlError>;
+
+/// What the window lends the palette: the owners each primitive acts on,
+/// borrowed for one call. Each default lends nothing, which every call
+/// answers as unavailable.
+pub trait MarketPaletteOwners {
+    /// What "Open a market" lists now: the config's markets and the open tabs.
+    fn listed_markets(&self) -> MarketSnapshot {
+        MarketSnapshot::default()
+    }
+    /// The open tabs, as an open, a focus or a bar change moves them.
+    fn market_tabs(&mut self) -> Option<Box<dyn MarketTabs + '_>> {
+        None
+    }
+    /// Each feed's symbol list, which an add or a removal edits.
+    fn market_catalog(&mut self) -> Option<SymbolCatalog<'_>> {
+        None
+    }
+    /// Show the palette on `query`, switching `target`'s tab when there is one.
+    ///
+    /// # Errors
+    /// A window without the palette.
+    fn show_market_palette(
+        &mut self,
+        _query: &str,
+        _target: Option<SwitchTarget>,
+    ) -> PaletteShowing {
+        Err(ControlError::invalid_request(UNAVAILABLE))
+    }
+}
+
+/// The open tabs as the palette moves them, lent for one call.
+pub trait MarketTabs {
+    /// Bring the tab at this zero-based place forward, off Home.
+    fn focus_tab(&mut self, index: usize);
+    /// Open a tab on the choice's market, on `bar` (none: the one any new
+    /// tab takes), joining the choice's workspace ([`OpenChoice::arrival`]),
+    /// and answer its id; a background choice keeps the tab on screen.
+    fn open_tab(&mut self, choice: &OpenChoice, bar: Option<BarConfiguration>) -> TabOpening;
+    /// Put tab `tab`'s flow pane on `bar`, as its bars menu does.
+    fn set_flow_bar(&mut self, tab: u64, bar: BarConfiguration) -> Result<(), String>;
+}
 
 pub trait MarketPaletteHost {
     /// What "Open a market" lists now.
@@ -45,14 +90,67 @@ pub trait MarketPaletteHost {
     fn edit_catalog(&mut self, _feed: &str, _symbol: &str, _add: bool) -> Result<(), String> {
         Err(UNAVAILABLE.to_owned())
     }
-    /// Show the palette; with `switch`, in switch mode on the active tab.
-    fn open_market_palette(&mut self, _query: &str, _switch: bool) -> Result<(), ControlError> {
+    /// Show the palette; with a `target`, in switch mode on that tab.
+    fn open_market_palette(
+        &mut self,
+        _query: &str,
+        _target: Option<SwitchTarget>,
+    ) -> Result<(), ControlError> {
         Err(ControlError::invalid_request(UNAVAILABLE))
     }
     /// Put tab `tab`'s flow pane on `bar`, as its bars menu does.
     fn set_flow_bar(&mut self, _tab: u64, _bar: BarConfiguration) -> Result<(), String> {
         Err(UNAVAILABLE.to_owned())
     }
+}
+
+/// The window's palette primitives are the owners it lends ([`MarketPaletteOwners`]).
+impl<T: MarketPaletteOwners + ?Sized> MarketPaletteHost for T {
+    fn market_snapshot(&self) -> MarketSnapshot {
+        self.listed_markets()
+    }
+    fn focus_tab(&mut self, index: usize) {
+        if let Some(mut tabs) = self.market_tabs() {
+            tabs.focus_tab(index);
+        }
+    }
+    fn open_tab(&mut self, choice: &OpenChoice, bar: Option<BarConfiguration>) -> TabOpening {
+        let mut tabs = self.market_tabs().ok_or(UNAVAILABLE)?;
+        tabs.open_tab(choice, bar)
+    }
+    fn edit_catalog(&mut self, feed: &str, symbol: &str, add: bool) -> Result<(), String> {
+        let mut catalog = self.market_catalog().ok_or(UNAVAILABLE)?;
+        match add {
+            true => catalog.add(feed, symbol),
+            false => catalog.remove(feed, symbol),
+        }
+    }
+    fn open_market_palette(
+        &mut self,
+        query: &str,
+        target: Option<SwitchTarget>,
+    ) -> Result<(), ControlError> {
+        self.show_market_palette(query, target)
+    }
+    fn set_flow_bar(&mut self, tab: u64, bar: BarConfiguration) -> Result<(), String> {
+        let mut tabs = self.market_tabs().ok_or(UNAVAILABLE)?;
+        tabs.set_flow_bar(tab, bar)
+    }
+}
+
+/// Show the palette on `query`; with `switch`, in switch mode on the active
+/// tab, which a recording refuses.
+///
+/// # Errors
+/// The refusal, or a host without a palette.
+pub fn show<H: crate::market_switch::SwitchHost + ?Sized>(
+    app: &mut H,
+    query: &str,
+    switch: bool,
+) -> Result<(), ControlError> {
+    let target = switch.then(|| crate::market_switch::target(app));
+    let target = target.transpose().map_err(ControlError::invalid_request)?;
+    app.open_market_palette(query, target)
 }
 
 /// What an open did: the choice as checked, the tab, and its place when an
@@ -188,7 +286,7 @@ pub fn default_bar_size(kind: &str) -> String {
 
 /// Outside the replay trace: a recorded call must not open tabs or edit the
 /// venue lists when a session re-runs.
-pub fn register<H: MarketPaletteHost + WorkspaceBookHost + ?Sized, A: NotifyAccess>(
+pub fn register<H: crate::market_switch::SwitchHost + ?Sized, A: NotifyAccess>(
     registry: &mut impl ActionDock<H, A>,
 ) -> Result<(), RegistryError> {
     registry.register_outside_replay(market_open_descriptor(), open_call)?;
@@ -233,14 +331,14 @@ fn open_call<H: MarketPaletteHost + WorkspaceBookHost + ?Sized, A>(
     })
 }
 
-fn palette_call<H: MarketPaletteHost + ?Sized, A: NotifyAccess>(
+fn palette_call<H: crate::market_switch::SwitchHost + ?Sized, A: NotifyAccess>(
     app: &mut H,
     access: &mut A,
     actor: &ActorContext,
     value: &Value,
 ) -> Result<Value, ControlError> {
     let MarketPaletteOpenInput { query, switch } = input(value)?;
-    app.open_market_palette(&query, switch)?;
+    show(app, &query, switch)?;
     let payload = serde_json::json!({ "query": query, "switch": switch });
     access.record_event(NewEvent::by(
         MARKET_MODULE_ID,
