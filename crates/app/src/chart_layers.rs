@@ -63,7 +63,7 @@ use quantick_layers::{DocumentError, LayerDocument};
 const EMBEDDED_DEFAULT: &str = include_str!("../config/chart-layers.toml");
 
 /// The file's name inside the durable cockpit home. See [`crate::store_home`].
-pub(crate) const LAYERS_FILE: &str = "chart-layers.toml";
+pub(crate) use quantick_layers::LAYERS_FILE;
 
 pub(crate) use quantick_layers::ChartLayer;
 mod session;
@@ -82,14 +82,6 @@ pub(crate) fn default_path() -> PathBuf {
         return crate::store_home::test_path(LAYERS_FILE);
     }
     crate::store_home::resolve(LAYERS_FILE)
-}
-
-/// Parse a layer-visibility file, reporting why it is not one. The gate a
-/// bundle section goes through — see [`crate::workspace_bundle`].
-pub(crate) fn validate(text: &str) -> Result<(), String> {
-    LayerDocument::parse(text)
-        .map(|_| ())
-        .map_err(|error| error.to_string())
 }
 
 /// Load the stored visibility **over** [`shipped_default`], falling back to the

@@ -4,7 +4,8 @@ use quantick_control::schema::generated_schema;
 use quantick_control_handlers::schema_documents::SchemaDocument;
 use serde_json::{Value, json};
 
-use super::contract::{ChartWindowInput, ObserverContract};
+use super::contract::ObserverContract;
+use quantick_control_schema::chart::ChartWindowInput;
 
 /// The documents below the app, and the one whose type only the app owns.
 pub(crate) fn documents() -> Vec<SchemaDocument> {
@@ -23,6 +24,7 @@ pub(crate) fn capability_catalog() -> Value {
         &projections,
         std::sync::Arc::new(actions),
         super::evidence::EvidenceStore::new(),
+        crate::control::system::BUILD,
     )
     .expect("observer contract is valid");
     let default_scopes = contract.default_grant();

@@ -16,3 +16,12 @@ pub use document::*;
 pub use persistence::*;
 pub use recipe::*;
 pub use state::*;
+
+/// The durable filename of a layer-visibility document.
+pub const LAYERS_FILE: &str = "chart-layers.toml";
+
+pub fn validate(text: &str) -> Result<(), String> {
+    LayerDocument::parse(text)
+        .map(|_| ())
+        .map_err(|error| error.to_string())
+}

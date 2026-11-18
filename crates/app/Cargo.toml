@@ -17,7 +17,7 @@ drawing-harness = ["quantick-drawings/drawing-harness"]
 control-harness = []
 # Launch scenarios, scripted menus and pointers, demo stagers, store isolation
 # for captures, and the feed's fault injection.
-scenario-harness = ["quantick-feed/harness"]
+scenario-harness = ["quantick-feed/harness", "quantick-ui-model/scenario-harness"]
 
 [dependencies]
 quantick-ui-model = { path = "../ui-model" }
@@ -121,7 +121,7 @@ rodio = { workspace = true }
 windows-sys = { workspace = true }
 
 [dev-dependencies]
-quantick-ui-model = { path = "../ui-model", features = ["test-support"] }
+quantick-ui-model = { path = "../ui-model", features = ["test-support", "scenario-harness"] }
 # The gate clock the worker tests park a real worker on, and the ledger
 # schedules; the same fixture the crate proves itself with.
 quantick-backpressure = { path = "../backpressure", features = ["test-support"] }

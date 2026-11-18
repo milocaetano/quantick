@@ -26,22 +26,24 @@ use quantick_control_host::contract::ScopeCatalogue;
 use serde::Deserialize;
 use serde_json::Value;
 
-use super::super::{
-    chart::{ChartWindowPage, chart_window_prevalidated},
-    events::{EventsReadInput, EventsWaitInput, complete_wait_page, read_page},
+use super::{
+    ChartWindowInput, DeferredUiRead, DescribeResult, EmptyInput, ParkedWait, PrepareHandler,
+    PreparedCapability, PreparedDispatch, PreparedUiRead, PreparedWorkerRead, SerializedUiRead,
+    SnapshotReadInput, UiReadExecution, UiReadPort, WorkerReadPort,
+};
+use quantick_control_host::{
+    admission::known_error,
+    events::{EventsReadInput, EventsWaitInput, complete_wait_page},
+    journal::EventPage,
+    projection::{SerializedSnapshotCapture, SnapshotCapture},
+};
+use quantick_control_schema::scene::CONTROLS_SCOPE_ID as SCENE_CONTROLS_SCOPE_ID;
+use quantick_control_schema::{
+    chart::ChartWindowPage,
     evidence::{
         EvidenceCapture, EvidenceCaptureInput, EvidenceChunkPage, EvidenceManifest,
-        EvidenceReadInput, capture_prevalidated, source_scopes,
+        EvidenceReadInput, source_scopes,
     },
-    journal::EventPage,
-    registry::{SerializedSnapshotCapture, SnapshotCapture},
-    scene::CONTROLS_SCOPE_ID as SCENE_CONTROLS_SCOPE_ID,
-    types::known_error,
-};
-use super::{
-    ChartWindowInput, DeferredUiRead, DescribeResult, EmptyInput, ObserverContract, ParkedWait,
-    PrepareHandler, PreparedCapability, PreparedDispatch, PreparedUiRead, PreparedWorkerRead,
-    SerializedUiRead, SnapshotReadInput, UiReadContext, UiReadExecution,
 };
 
 fn serialization_failed(what: &str) -> ControlError {
@@ -57,11 +59,12 @@ struct DescribeInvocation;
 impl PreparedWorkerRead for DescribeInvocation {
     fn execute(
         &self,
-        contract: &ObserverContract,
+        contract: &dyn WorkerReadPort,
         instance_id: &InstanceId,
         effective_profile: &ProfileId,
         effective_scopes: &BTreeSet<PermissionId>,
         effective_limits: &ProtocolLimits,
+        _now_ms: i64,
     ) -> Result<Value, ControlError> {
         serde_json::to_value(contract.describe(
             instance_id.clone(),
@@ -91,14 +94,11 @@ impl PreparedUiRead for SnapshotInvocation {
     fn window_target(&self) -> Option<Option<quantick_control::wire::WireU64>> {
         Some(self.window_id)
     }
-    fn execute(&self, context: UiReadContext<'_>) -> Result<UiReadExecution, ControlError> {
-        context
-            .projections
-            .capture(context.app, context.instance_id, &self.scopes)
-            .map(|mut capture| {
-                capture.window_id = context.window_id;
-                Box::new(capture) as UiReadExecution
-            })
+    fn execute(&self, context: &mut dyn UiReadPort) -> Result<UiReadExecution, ControlError> {
+        context.snapshot(&self.scopes).map(|mut capture| {
+            capture.window_id = context.window_id();
+            Box::new(capture) as UiReadExecution
+        })
     }
 }
 
@@ -124,16 +124,10 @@ struct ChartWindowInvocation {
 }
 
 impl PreparedUiRead for ChartWindowInvocation {
-    fn execute(&self, context: UiReadContext<'_>) -> Result<UiReadExecution, ControlError> {
-        chart_window_prevalidated(
-            context.app,
-            context.instance_id,
-            &self.input.query,
-            &self.canonical_query,
-            self.input.cursor.as_ref(),
-            crate::metrics::wall_clock_ms(),
-        )
-        .map(|page| Box::new(page) as UiReadExecution)
+    fn execute(&self, context: &mut dyn UiReadPort) -> Result<UiReadExecution, ControlError> {
+        context
+            .chart(&self.input, &self.canonical_query)
+            .map(|page| Box::new(page) as UiReadExecution)
     }
 }
 
@@ -155,7 +149,7 @@ impl DeferredUiRead for ChartWindowPage {
 
 /// `events.read`, and the read that completes `events.wait`: a bounded page
 /// of the journal, taken on the application thread like every capture.
-pub(crate) struct EventsReadInvocation {
+pub struct EventsReadInvocation {
     pub input: EventsReadInput,
     pub timed_out: bool,
     /// What the gateway-side resolve learned before a wait parked: the
@@ -165,15 +159,8 @@ pub(crate) struct EventsReadInvocation {
 }
 
 impl PreparedUiRead for EventsReadInvocation {
-    fn execute(&self, context: UiReadContext<'_>) -> Result<UiReadExecution, ControlError> {
-        let page = read_page(
-            context.journal,
-            context.instance_id,
-            self.input.cursor.as_ref(),
-            self.input.start,
-            self.input.limit,
-            self.timed_out,
-        )?;
+    fn execute(&self, context: &mut dyn UiReadPort) -> Result<UiReadExecution, ControlError> {
+        let page = context.events(&self.input, self.timed_out)?;
         Ok(Box::new(complete_wait_page(
             page,
             self.dropped_before.clone(),
@@ -212,8 +199,9 @@ impl PreparedUiRead for EvidenceCaptureInvocation {
     fn window_target(&self) -> Option<Option<quantick_control::wire::WireU64>> {
         Some(self.input.window_id)
     }
-    fn execute(&self, context: UiReadContext<'_>) -> Result<UiReadExecution, ControlError> {
-        capture_prevalidated(context, &self.input, self.source_scopes.clone())
+    fn execute(&self, context: &mut dyn UiReadPort) -> Result<UiReadExecution, ControlError> {
+        context
+            .evidence(&self.input, self.source_scopes.clone())
             .map(|capture| Box::new(capture) as UiReadExecution)
     }
 
@@ -247,19 +235,14 @@ struct EvidenceReadInvocation {
 impl PreparedWorkerRead for EvidenceReadInvocation {
     fn execute(
         &self,
-        contract: &ObserverContract,
+        contract: &dyn WorkerReadPort,
         instance_id: &InstanceId,
         _effective_profile: &ProfileId,
         effective_scopes: &BTreeSet<PermissionId>,
         _effective_limits: &ProtocolLimits,
+        now_ms: i64,
     ) -> Result<Value, ControlError> {
-        let page = contract.evidence.read(
-            &self.input.evidence_id,
-            self.input.cursor.as_ref(),
-            instance_id,
-            effective_scopes,
-            crate::metrics::wall_clock_ms(),
-        )?;
+        let page = contract.evidence_read(&self.input, instance_id, effective_scopes, now_ms)?;
         serde_json::to_value(page).map_err(|_| serialization_failed("an evidence page"))
     }
 }

@@ -143,14 +143,6 @@ use crate::pane::ChartPane;
 /// Id of the tab the window opens with.
 const FIRST_TAB_ID: u64 = 0;
 
-/// The natives `QUANTICK_INDICATORS_AUTOSTART` opens with: the overlay and
-/// the pane, so a scripted run photographs both shapes. Named by catalog id
-/// rather than "all of them", because the hook's contract is a fixed,
-/// deterministic pair — a native added later must not silently change what
-/// every existing capture shows.
-#[cfg(any(feature = "scenario-harness", test))]
-const AUTOSTART_NATIVES: &[&str] = &["native.ema", "native.cvd"];
-
 /// The quantick chart window.
 ///
 /// One workspace: N open markets ([`Tab`]) and the chrome around them. The

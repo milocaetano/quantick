@@ -27,8 +27,6 @@ use quantick_control::{
 
 use crate::{app::ControlWindow, metrics};
 
-#[cfg(any(feature = "control-harness", test))]
-use super::contract::OBSERVE_PERMISSION_ID;
 use super::{
     actions::{ANNOTATE_PERMISSION_ID, ANNOTATOR_PROFILE_ID, ActionRegistry, standard_actions},
     contract::{ANALYST_PROFILE_ID, COCKPIT_PERMISSION_ID, COCKPIT_PROFILE_ID},
@@ -42,6 +40,8 @@ use super::{
     registry::ProjectionRegistry,
     types::known_error,
 };
+#[cfg(any(feature = "control-harness", test))]
+use quantick_control_host::authority::OBSERVE_PERMISSION_ID;
 
 mod encode_refusal;
 // Moved to `quantick-control-host`; named here so `super::idempotency` resolves.
@@ -471,8 +471,13 @@ impl ControlAccess {
         let actions = Arc::new(standard_actions().expect("built-in action registry must be valid"));
         let evidence = EvidenceStore::new();
         let contract = Arc::new(
-            ObserverContract::new(&projections, Arc::clone(&actions), evidence.clone())
-                .expect("built-in observer capability registry must be valid"),
+            ObserverContract::new(
+                &projections,
+                Arc::clone(&actions),
+                evidence.clone(),
+                crate::control::system::BUILD,
+            )
+            .expect("built-in observer capability registry must be valid"),
         );
         let (journal, journal_ticks) = EventJournal::new();
         let (identity, initialization_error) = match ProcessIdentity::generate() {
@@ -647,7 +652,7 @@ impl ControlAccess {
             .as_ref()
             .expect("the instance identity was read above")
             .session();
-        let result = request.prepared.dispatch.execute_ui(UiReadContext {
+        let result = request.prepared.dispatch.execute_ui(&mut UiReadContext {
             projections: &mut self.projections,
             journal: &self.journal,
             app,

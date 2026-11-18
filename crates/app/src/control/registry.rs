@@ -15,9 +15,7 @@ use quantick_control_host::{clock::HostClock, projection};
 
 use crate::{app::ControlWindow, metrics};
 
-pub(crate) use quantick_control_host::projection::{
-    CaptureContext, ProjectionRegistryError, SerializedSnapshotCapture, SnapshotCapture,
-};
+pub(crate) use quantick_control_host::projection::{CaptureContext, ProjectionRegistryError};
 
 /// The projection registry over the running application: the generic
 /// registry with the window's port as its host. Families dock through
