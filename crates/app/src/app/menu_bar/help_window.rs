@@ -24,7 +24,9 @@ pub(super) fn show(app: &mut QuantickApp, ctx: &egui::Context) {
         menu.windows_viewport = Some(egui::ViewportId::ROOT);
     }
     if menu.windows_viewport == Some(ctx.viewport_id()) {
-        super::super::chrome::settings::draw(app, ctx);
+        if app.surfaces.settings_window.model_state.shown().is_some() {
+            super::super::chrome::settings::draw(&mut workspace_calls!(app), ctx);
+        }
         show_help(&mut app.chrome.window_menu, ctx);
     }
 }

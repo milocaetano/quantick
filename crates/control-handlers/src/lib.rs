@@ -17,18 +17,6 @@
 //! Nothing here reads a clock: a handler that stamps an event or a page is
 //! handed the time, or asks its port to stamp it.
 
-/// A registered entry point for `handler` that reaches the host's
-/// [`WorkspaceHost`] through [`TabDirectory::workspaces`]; a host that lends
-/// none answers `refused()`, the family's own unavailable error.
-macro_rules! through_workspaces {
-    ($handler:path, $refused:expr) => {
-        |app, access, actor, value| match app.workspaces() {
-            Some(mut host) => $handler(&mut *host, access, actor, value),
-            None => Err($refused()),
-        }
-    };
-}
-
 pub mod addressed_pane;
 pub mod alerts;
 pub mod analysis;
@@ -80,6 +68,7 @@ pub mod schema_documents;
 pub mod script;
 pub mod semantic;
 pub mod session;
+pub mod settings;
 mod tabs;
 pub mod tape_fold;
 pub mod tape_market_fold;
@@ -92,15 +81,6 @@ pub mod widgets;
 pub mod workspace_book;
 
 pub use tabs::{JournalAccess, TabDirectory, tab_index};
-
-/// What the desk and workspace calls act on: the desk, the workspace book and
-/// the tabs they address, lent together by [`TabDirectory::workspaces`].
-pub trait WorkspaceHost: desk::DeskHost + workspace_book::WorkspaceBookHost + TabDirectory {}
-
-impl<H: desk::DeskHost + workspace_book::WorkspaceBookHost + TabDirectory + ?Sized> WorkspaceHost
-    for H
-{
-}
 
 /// A malformed input or an unencodable answer, as every family refuses it.
 pub(crate) fn invalid(error: impl ToString) -> quantick_control::error::ControlError {

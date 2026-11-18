@@ -3,12 +3,11 @@
 //! `feed.source.set` and `tab.market.set` take, or rolls it through the act
 //! `feed.contract.roll` runs. The trader's hand journals nothing, as the
 //! window's other source changes do.
-use crate::WorkspaceHost;
 use crate::contract_roll::{self, ContractRollPort};
 use crate::feed_source::{check_source, set_source};
 use crate::market_palette::MarketPaletteHost;
 use crate::workspace_book::switch::ask_unjournaled;
-use crate::workspace_book::{set_tab_workspace, unavailable};
+use crate::workspace_book::{WorkspaceDoor, WorkspaceOwner, set_tab_workspace, unavailable};
 use quantick_control::wire::WireU64;
 use quantick_engine::bar_registry::{BUILTIN_BARS, BarConfiguration};
 use quantick_engine::bar_selection::BarInputAvailability;
@@ -16,10 +15,10 @@ use quantick_stores::market_list::{
     RollOffer, SwitchChoice, SwitchTarget, roll_toast, switch_toast,
 };
 
-/// What a switch host can do: the window's switch, its roll and its palette;
-/// its workspace book through [`crate::TabDirectory::workspaces`].
-pub trait SwitchHost: ContractRollPort + MarketPaletteHost {}
-impl<H: ContractRollPort + MarketPaletteHost + ?Sized> SwitchHost for H {}
+/// What a switch host can do: the window's switch, its roll, its palette and
+/// the door to its workspace book.
+pub trait SwitchHost: ContractRollPort + MarketPaletteHost + WorkspaceDoor {}
+impl<H: ContractRollPort + MarketPaletteHost + WorkspaceDoor + ?Sized> SwitchHost for H {}
 
 const TAB_GONE: &str = "The tab being switched has closed";
 
@@ -116,7 +115,7 @@ pub fn roll<H: SwitchHost + ?Sized>(
 /// asked (a pending autosave write goes through first); the palette putting
 /// no question, a switch that would still drop them is refused before
 /// anything moves, as `tab.workspace.set` refuses one without `edits`.
-fn keeps_edits(host: &mut dyn WorkspaceHost, tab: u64, name: &str) -> Result<(), String> {
+fn keeps_edits(host: &mut dyn WorkspaceOwner, tab: u64, name: &str) -> Result<(), String> {
     if !(host.workspace_book()).is_some_and(|book| book.tab_state(tab).is_some()) {
         return Ok(());
     }

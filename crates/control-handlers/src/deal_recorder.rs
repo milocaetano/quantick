@@ -3,15 +3,13 @@
 //! [`DealRecordingPort::deal_recorder`].
 use quantick_replay::recorder::{DealRecordingError, RecordingView};
 
-/// The window's REC control: each tab's recorder and the record-by-default
-/// setting the REC menu keeps.
+/// The window's REC control: each tab's recorder. The record-by-default
+/// setting the REC menu keeps is a Settings row, settled through
+/// [`crate::settings::SettingsOwner`].
 pub trait DealRecordingPort {
     /// The deal recorder of the tab at `index`, the REC control's owner;
     /// `None` when that tab is gone.
     fn deal_recorder(&mut self, index: usize) -> Option<&mut dyn DealRecorder>;
-    /// Whether every market records by default, the setting the REC menu
-    /// keeps.
-    fn record_deals_by_default(&mut self, on: bool);
 }
 
 /// One tab's deal recorder, as the REC control acts on it. Its names differ

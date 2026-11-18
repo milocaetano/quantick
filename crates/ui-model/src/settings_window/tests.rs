@@ -31,7 +31,10 @@ fn settings_opens_on_the_asked_section_moves_between_sections_and_closes() {
 #[test]
 fn each_switch_asks_its_owner_only_when_its_value_changes() {
     let mut state = opened(Facts {
-        show_perf: true,
+        readings: SettingsReadings {
+            show_perf: true,
+            ..SettingsReadings::default()
+        },
         ..Facts::default()
     });
     assert_eq!(
@@ -40,16 +43,19 @@ fn each_switch_asks_its_owner_only_when_its_value_changes() {
         "already on"
     );
     for (row, asked) in [
-        (SettingRow::PerfReadings, Action::PerfReadings(false)),
+        (SettingRow::PerfReadings, SettingsAct::PerfReadings(false)),
         (
             SettingRow::ProgressiveHistory,
-            Action::ProgressiveHistory(true),
+            SettingsAct::ProgressiveHistory(true),
         ),
-        (SettingRow::VenueLeadIn, Action::VenueLeadIn(true)),
-        (SettingRow::RecordDeals, Action::RecordDeals(true)),
+        (SettingRow::VenueLeadIn, SettingsAct::VenueLeadIn(true)),
+        (SettingRow::RecordDeals, SettingsAct::RecordDeals(true)),
     ] {
         let on = !matches!(row, SettingRow::PerfReadings);
-        assert_eq!(action(&mut state, Intent::Flip(row, on)), Some(asked));
+        assert_eq!(
+            action(&mut state, Intent::Flip(row, on)),
+            Some(Action::Row(asked))
+        );
     }
     assert_eq!(
         action(&mut state, Intent::Flip(SettingRow::ManageClients, true)),
@@ -82,7 +88,8 @@ fn the_agent_switch_moves_only_when_its_gateway_lets_it() {
     let mut free = opened(agent(true));
     assert_eq!(
         action(&mut free, Intent::Flip(SettingRow::AgentSwitch, true)),
-        Some(Action::AgentSwitch(true))
+        Some(Action::AgentSwitch(true)),
+        "the window's own act, never a row a connection settles"
     );
 }
 
@@ -91,7 +98,7 @@ fn buttons_timezone_and_theme_ask_their_owners() {
     let mut state = opened(Facts::default());
     assert_eq!(
         action(&mut state, Intent::Press(SettingRow::Appearance)),
-        Some(Action::OpenAppearance)
+        Some(Action::Row(SettingsAct::OpenAppearance))
     );
     assert_eq!(
         action(&mut state, Intent::Press(SettingRow::ManageClients)),
@@ -101,7 +108,7 @@ fn buttons_timezone_and_theme_ask_their_owners() {
         action(&mut state, Intent::Press(SettingRow::Timezone)),
         None
     );
-    let same = state.facts().timezone;
+    let same = state.facts().readings.timezone;
     assert_eq!(action(&mut state, Intent::PickTimezone(same)), None);
     let other = TzOffset::ALL
         .into_iter()
@@ -109,7 +116,7 @@ fn buttons_timezone_and_theme_ask_their_owners() {
         .expect("a second offset");
     assert_eq!(
         action(&mut state, Intent::PickTimezone(other)),
-        Some(Action::Timezone(other))
+        Some(Action::Row(SettingsAct::Timezone(other)))
     );
     let choice = Builtin::ALL[0];
     action(&mut state, Intent::PickTheme(choice));
@@ -119,7 +126,7 @@ fn buttons_timezone_and_theme_ask_their_owners() {
     assert_eq!(state.theme_error(), Some("disk full"));
     assert_eq!(
         action(&mut state, Intent::PickTheme(choice)),
-        Some(Action::Theme(choice))
+        Some(Action::Row(SettingsAct::Theme(choice)))
     );
     assert_eq!(
         state.theme_error(),
@@ -146,8 +153,11 @@ fn buttons_timezone_and_theme_ask_their_owners() {
 fn each_row_draws_the_control_its_facts_describe() {
     let theme = Some(Builtin::ALL[0]);
     let state = opened(Facts {
-        theme,
-        record_deals: true,
+        readings: SettingsReadings {
+            theme,
+            record_deals: true,
+            ..SettingsReadings::default()
+        },
         ..Facts::default()
     });
     assert_eq!(
@@ -166,4 +176,17 @@ fn each_row_draws_the_control_its_facts_describe() {
         }
     );
     assert_eq!(state.control(SettingRow::ManageClients), Control::Button);
+}
+
+#[test]
+fn the_agent_note_shows_a_start_error_over_the_status() {
+    assert_eq!(
+        AgentNote::of(Some("port taken"), Some("Enabled")),
+        Some(AgentNote::Error("port taken".to_owned()))
+    );
+    assert_eq!(
+        AgentNote::of(None, Some("Enabled")),
+        Some(AgentNote::Status("Enabled".to_owned()))
+    );
+    assert_eq!(AgentNote::of(None, None), None);
 }

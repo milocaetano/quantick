@@ -31,7 +31,23 @@ pub(crate) struct LayerWiring<'a> {
     pub(super) chart_settings: &'a mut ChartSettingsSurface,
 }
 
-impl LayerWiring<'_> {
+impl<'a> LayerWiring<'a> {
+    /// The ports over the bound workspace and the chart settings window.
+    pub(super) fn of(
+        runtime: &'a mut super::workspace_runtime::WorkspaceRuntime,
+        chart_settings: &'a mut ChartSettingsSurface,
+    ) -> Self {
+        Self {
+            tabs: &mut runtime.tabs,
+            workspace: &mut runtime.workspace,
+            style: &mut runtime.style,
+            style_revision: &mut runtime.style_revision,
+            footprint_config: &mut runtime.footprint_config,
+            chart_settings,
+            appearance: &runtime.appearance,
+        }
+    }
+
     /// Switch one pane's layer the way its menu does, then apply what the
     /// switch left for the window — the control plane's `layers.*` door.
     pub(crate) fn set_visible(

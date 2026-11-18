@@ -1522,17 +1522,7 @@ mod switch_tests;
 /// A window whose door lends no workspaces.
 struct Bare;
 
-impl TabDirectory for Bare {
-    fn active_tab_index(&self) -> usize {
-        0
-    }
-    fn tab_position(&self, _: u64) -> Option<usize> {
-        None
-    }
-    fn tab_id_at(&self, _: usize) -> u64 {
-        0
-    }
-}
+impl WorkspaceDoor for Bare {}
 
 /// Every registered call reaches the book through the window's door, so a
 /// window that lends none answers unavailable to each of them.

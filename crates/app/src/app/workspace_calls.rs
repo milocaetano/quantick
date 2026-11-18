@@ -1,39 +1,19 @@
-//! The desk, the workspace book and the layout, paper and route owners over
-//! the window fields they span, lent by [`super::GatewayPort::workspace_calls`]
-//! and reached by the control plane through `TabDirectory::workspaces`.
+//! The desk, Settings, REC, workspace book and the layout, paper and route
+//! owners over the window fields they span, built by `workspace_calls!` and
+//! lent to the control plane through the `DeskHost` and `WorkspaceDoor` doors.
 
 use std::time::Instant;
 
 use eframe::egui;
-use quantick_control::error::ControlError;
-use quantick_control_handlers::desk::{DeskAct, DeskHost};
+use quantick_control_handlers::desk::{DeskAct, DeskOwner};
 use quantick_control_handlers::workspace_book::{self as ops, WorkspaceBookHost};
-use quantick_control_schema::settings_sections::SettingsSection;
 use quantick_session::workspace_menu::{WorkspaceCommand, WorkspaceMenuState};
 use quantick_stores::{market_settings::MarketSettingsStore, workspaces::WorkspaceBookStore};
 use quantick_workspace::book_upkeep;
 
-use super::arrangement_adapter;
 use super::indicator_wiring::IndicatorWiring;
 use super::layout_wiring::LayoutAdapter;
 use super::workspace_runtime::{WindowPresentation, WorkspaceRuntime};
-
-/// The one builder of [`WorkspaceCalls`], over `$owner`'s fields beside `$runtime`.
-macro_rules! workspace_calls {
-    ($owner:expr, $runtime:expr) => {
-        $crate::app::workspace_calls::WorkspaceCalls {
-            runtime: $runtime,
-            presentation: &$owner.presentation,
-            chrome: &mut $owner.chrome,
-            pane_ids: &mut $owner.pane_ids,
-            config: &$owner.config,
-            control: &mut $owner.control,
-            surfaces: &mut $owner.surfaces,
-            health: &mut $owner.health,
-        }
-    };
-}
-pub(super) use workspace_calls;
 
 /// The window's fields the workspace calls reach, borrowed apart.
 pub(crate) struct WorkspaceCalls<'a> {
@@ -45,6 +25,7 @@ pub(crate) struct WorkspaceCalls<'a> {
     pub(super) control: &'a mut super::control_host::ControlState,
     pub(super) surfaces: &'a mut crate::surfaces::Surfaces,
     pub(super) health: &'a mut super::health::HealthCounters,
+    pub(super) drawings: &'a mut super::drawing_controller::DrawingController,
 }
 
 impl<'a> WorkspaceCalls<'a> {
@@ -117,23 +98,17 @@ impl<'a> WorkspaceCalls<'a> {
         super::menu_bar::settle_strip(&mut self.surfaces.market_palette, self.runtime.tz, asked);
         closed
     }
-
-    /// The status-bar clock's door: Settings, on Display, on the clicked window.
-    pub(super) fn open_settings_on(&mut self, ctx: &egui::Context) {
-        let (menu, section) = (&mut self.chrome.window_menu, SettingsSection::Display);
-        super::chrome::settings::open(menu, self.surfaces, ctx.viewport_id(), section);
-        ctx.request_repaint();
-    }
 }
 
 /// `settings.open` and the `desk.*` calls land on the same acts as the `⋮` rows.
-impl DeskHost for WorkspaceCalls<'_> {
-    fn desk(&mut self, act: DeskAct) -> Result<bool, ControlError> {
-        Ok(match act {
+impl DeskOwner for WorkspaceCalls<'_> {
+    fn act(&mut self, act: DeskAct) -> bool {
+        match act {
             DeskAct::OpenSettings(section) => {
                 let menu = &mut self.chrome.window_menu;
                 let viewport = menu.windows_viewport.unwrap_or(egui::ViewportId::ROOT);
-                super::chrome::settings::open(menu, self.surfaces, viewport, section);
+                let settings = &mut self.surfaces.settings_window;
+                super::chrome::settings::open(menu, settings, viewport, section);
                 true
             }
             DeskAct::Save => self.save_adapter().save_workspace("control"),
@@ -156,7 +131,7 @@ impl DeskHost for WorkspaceCalls<'_> {
             }
             DeskAct::ReadReopen => self.runtime.workspace.session().save_on_exit(),
             DeskAct::SetReopen(reopen) => self.save_adapter().write_reopen(reopen),
-        })
+        }
     }
 }
 
@@ -203,8 +178,5 @@ impl quantick_control_handlers::TabDirectory for WorkspaceCalls<'_> {
     }
     fn tab_id_at(&self, index: usize) -> u64 {
         self.runtime.tabs.id_at(index)
-    }
-    fn workspaces(&mut self) -> Option<Box<dyn quantick_control_handlers::WorkspaceHost + '_>> {
-        Some(Box::new(workspace_calls!(self, self.runtime)))
     }
 }

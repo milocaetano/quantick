@@ -155,12 +155,12 @@ fn a_switch_row_flips_the_setting_it_names() {
     let ctx = egui::Context::default();
     run_frame(&mut app, &ctx);
     let before = app.health.show_perf;
-    crate::app::chrome::settings::open(
+    let display = SettingsSection::Display;
+    let (menu, settings) = (
         &mut app.chrome.window_menu,
-        &mut app.surfaces,
-        ctx.viewport_id(),
-        SettingsSection::Display,
+        &mut app.surfaces.settings_window,
     );
+    crate::app::chrome::settings::open(menu, settings, ctx.viewport_id(), display);
     run_frame(&mut app, &ctx);
     let output = run_frame(&mut app, &ctx);
     let row = painted_text_center(&output, "Perf readings").unwrap();
@@ -171,44 +171,6 @@ fn a_switch_row_flips_the_setting_it_names() {
     click_sized(&mut app, &ctx, TEST_WINDOW, switch);
     run_frame(&mut app, &ctx);
     assert_eq!(app.health.show_perf, !before);
-}
-
-#[test]
-fn each_settings_action_reaches_its_owner() {
-    use crate::app::chrome::settings::settle;
-    use quantick_ui_model::settings_window::Action;
-    let (mut app, _evt, _cmd, _book) = test_app();
-    let ctx = egui::Context::default();
-    run_frame(&mut app, &ctx);
-    let tz = (crate::timezone::TzOffset::ALL.into_iter())
-        .find(|tz| *tz != app.runtime.tz)
-        .expect("a second offset");
-    settle(&mut app, &ctx, Action::Timezone(tz));
-    assert_eq!(app.runtime.tz, tz);
-    let perf = !app.health.show_perf;
-    settle(&mut app, &ctx, Action::PerfReadings(perf));
-    assert_eq!(app.health.show_perf, perf);
-    let progressive = !app.runtime.history.progressive_history;
-    settle(&mut app, &ctx, Action::ProgressiveHistory(progressive));
-    assert_eq!(app.runtime.history.progressive_history, progressive);
-    let lead_in = !app.runtime.history.venue_lead_in;
-    settle(&mut app, &ctx, Action::VenueLeadIn(lead_in));
-    assert_eq!(app.runtime.history.venue_lead_in, lead_in);
-    let record = !crate::app::deal_recording_wiring::default_for(&app);
-    settle(&mut app, &ctx, Action::RecordDeals(record));
-    assert_eq!(crate::app::deal_recording_wiring::default_for(&app), record);
-    app.control.control_access = None;
-    settle(&mut app, &ctx, Action::OpenAgentAccess);
-    assert!(
-        !app.surfaces.access_panel.model_state.open,
-        "no gateway, no panel"
-    );
-    app.control.control_access = Some(crate::control::ControlAccess::new());
-    settle(&mut app, &ctx, Action::OpenAgentAccess);
-    assert!(app.surfaces.access_panel.model_state.open);
-    settle(&mut app, &ctx, Action::OpenAppearance);
-    let candles = crate::surfaces::ChartSettingsTab::Candles;
-    assert!(app.surfaces.chart_settings.model_state.is_open_on(candles));
 }
 
 #[test]
@@ -523,12 +485,12 @@ fn local_agent_menu_opens_registered_panel_in_the_same_frame() {
     let (mut app, _evt, _cmd, _book) = test_app();
     let ctx = egui::Context::default();
     app.control.control_access = Some(crate::control::ControlAccess::new());
-    crate::app::chrome::settings::open(
+    let agent = SettingsSection::AgentAccess;
+    let (menu, settings) = (
         &mut app.chrome.window_menu,
-        &mut app.surfaces,
-        ctx.viewport_id(),
-        SettingsSection::AgentAccess,
+        &mut app.surfaces.settings_window,
     );
+    crate::app::chrome::settings::open(menu, settings, ctx.viewport_id(), agent);
     run_frame(&mut app, &ctx);
     let output = run_frame(&mut app, &ctx);
     fn button_center(shape: &egui::Shape) -> Option<egui::Pos2> {

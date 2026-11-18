@@ -1,6 +1,6 @@
 //! Home driven by real input: the strip's first tab and its shortcuts.
 use super::*;
-use quantick_control_handlers::home_tab::HomeTabHost as _;
+use quantick_control_handlers::home_tab::show_home;
 
 const WINDOW: egui::Vec2 = egui::vec2(1400.0, 760.0);
 const CTRL_SHIFT: egui::Modifiers = egui::Modifiers::CTRL.plus(egui::Modifiers::SHIFT);
@@ -625,7 +625,7 @@ fn closing_a_market_chip_from_home_stays_on_home() {
     let (mut app, _, _, _) = test_app();
     let ctx = egui::Context::default();
     let _second = two_tabs(&mut app, &ctx);
-    app.show_home_tab().unwrap();
+    show_home(&mut app).unwrap();
     frame(&mut app, &ctx);
     let active = app.runtime.tabs.active_index();
     app.apply_tab_action(TabAction::Close(active));
@@ -639,7 +639,7 @@ fn opening_a_market_or_a_new_route_leaves_home_and_the_picker_opens_from_the_pag
     let (mut app, _, _, _) = test_app();
     let ctx = egui::Context::default();
     frame(&mut app, &ctx);
-    app.show_home_tab().unwrap();
+    show_home(&mut app).unwrap();
     let output = frame(&mut app, &ctx);
     let open = painted_text_center(&output, "Open a market").expect("the page offers a market");
     assert!(painted_text_center(&output, "Market Shelf not built yet").is_some());
@@ -690,7 +690,7 @@ fn home_runs_feeds_stands_chart_keys_down_and_restores_the_same_canvas() {
     let layout = app.active_tab().canvas.layout;
     let live = app.active_tab().link.live_trades;
 
-    app.show_home_tab().unwrap();
+    show_home(&mut app).unwrap();
     for index in 1..=3 {
         events.try_send(FeedEvent::Live(trade(index))).unwrap();
         frame(&mut app, &ctx);
@@ -814,7 +814,7 @@ fn only_the_active_market_shows_its_close_mark_at_rest() {
     };
     frame(&mut app, &ctx);
     assert_eq!(at_rest(&mut app), 1, "the last market, active, shows it");
-    app.show_home_tab().unwrap();
+    show_home(&mut app).unwrap();
     assert_eq!(at_rest(&mut app), 0, "no market is active on Home");
     app.chrome.title_bar.surface.show_market();
 
@@ -932,7 +932,7 @@ fn home_draws_no_toolbar_and_the_canvas_returns_at_its_full_size() {
         .update(quantick_ui_model::canvas_popovers::Intent::SetLayoutOpen(
             true,
         ));
-    app.show_home_tab().unwrap();
+    show_home(&mut app).unwrap();
     for _ in 0..3 {
         let output = frame(&mut app, &ctx);
         assert!(painted_text_center(&output, &buy).is_none(), "on Home");
@@ -969,7 +969,7 @@ fn home_draws_no_dock_so_its_ticket_cannot_trade_the_hidden_market() {
     let output = frame(&mut app, &ctx);
     assert!(painted_text_center(&output, title).is_some(), "on a market");
 
-    app.show_home_tab().unwrap();
+    show_home(&mut app).unwrap();
     for _ in 0..2 {
         let output = frame(&mut app, &ctx);
         assert!(painted_text_center(&output, title).is_none(), "on Home");
@@ -996,7 +996,7 @@ fn a_source_change_behind_home_still_relabels_the_chip_and_leaves_home() {
     let (mut app, _, _, _) = test_app();
     let ctx = egui::Context::default();
     frame(&mut app, &ctx);
-    app.show_home_tab().unwrap();
+    show_home(&mut app).unwrap();
     frame(&mut app, &ctx);
     let before = app.active_tab().chip_label().to_owned();
 
@@ -1020,7 +1020,7 @@ fn the_menu_seam_refuses_chart_commands_on_home_and_keeps_the_rest() {
     let context = app.active_tab().canvas.folds().0;
     assert_ne!(layout, preset_layout(2));
 
-    app.show_home_tab().unwrap();
+    show_home(&mut app).unwrap();
     app.apply_menu_command(MenuCommand::ApplyLayoutPreset(preset));
     app.apply_menu_command(MenuCommand::ToggleLegend);
     app.apply_menu_command(MenuCommand::ToggleContextCharts);

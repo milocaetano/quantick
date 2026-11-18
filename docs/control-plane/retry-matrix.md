@@ -113,11 +113,11 @@ key and lost-reply proofs live in `crates/mcp/tests/fake_gateway.rs`.
 
 | Enforced | Capabilities |
 | --- | --- |
-| deduplicated per connection | 93 |
+| deduplicated per connection | 94 |
 | key refused; not retryable, read back | 17 |
 | key required; deduplicated per connection | 19 |
 | refused before dispatch: no grant reaches it | 11 |
-| **Total** | **140** |
+| **Total** | **141** |
 
 ## Capabilities
 
@@ -236,6 +236,7 @@ key and lost-reply proofs live in `crates/mcp/tests/fake_gateway.rs`.
 | `session.journal.set` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `session.journal.changed` | `payload.journal_session` | an event after the pre-call cursor names the session and the name or tags, or the ledger view, the call asked for | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `session.pnl_display.set` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `session.pnl_display.changed` | `payload.pnl_display.primary` | an event after the pre-call cursor carries the requested mode as `primary` | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `settings.open` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `scene.controls` | `controls[].selected` | the asked section's settings.section control is listed and selected | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
+| `settings.set` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `workspace.summary` | `timezone_offset_minutes, performance_readings_visible, progressive_venue_history, venue_lead_in` | each asked value is the one read | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `tab.close` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `workspace.tab_closed` | `payload.tab_id` | an event after the pre-call cursor names the closed tab | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `tab.market.set` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `feed.status` | `tabs[].active_symbol` | the tab reports the requested active_feed_id and active_symbol; feed_generation advances by one when the market changed and not otherwise | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `tab.workspace.set` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `workspace.tab_set` | `payload.workspace` | an event after the pre-call cursor names the requested workspace | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
@@ -264,4 +265,4 @@ key and lost-reply proofs live in `crates/mcp/tests/fake_gateway.rs`.
 | `workspace.save_as` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `workspace.saved` | `payload.workspace` | an event after the pre-call cursor names the new workspace | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `workspace.save_to` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `workspace.saved` | `payload.workspace` | an event after the pre-call cursor names the tab's workspace | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 
-140 mutable capabilities registered, 140 with a readback.
+141 mutable capabilities registered, 141 with a readback.

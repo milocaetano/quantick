@@ -18,6 +18,7 @@ use crate::readback::{EVERY_OPTIONAL_TEST, Readback, journal, snapshot};
 use crate::settings_sections::SettingsSection;
 
 pub const SETTINGS_OPEN_CAPABILITY_ID: &str = "settings.open";
+pub const SETTINGS_SET_CAPABILITY_ID: &str = "settings.set";
 pub const DESK_SAVE_CAPABILITY_ID: &str = "desk.save";
 pub const DESK_EXPORT_CAPABILITY_ID: &str = "desk.export";
 pub const DESK_IMPORT_CAPABILITY_ID: &str = "desk.import";
@@ -51,6 +52,34 @@ pub struct SettingsOpenInput {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
 pub struct SettingsOpenResult {
     pub section: SettingsSection,
+}
+
+/// Change Settings rows; each field left out stays as it is, and `{}` reads.
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SettingsSetInput {
+    /// Minutes east of UTC, one of the offsets the Timezone row lists.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timezone_offset_minutes: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub perf_readings: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub progressive_history: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub venue_lead_in: Option<bool>,
+}
+
+/// What the Settings rows show after the call.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
+pub struct SettingsResult {
+    pub timezone_offset_minutes: i32,
+    pub timezone_label: String,
+    /// The bundled theme's key, or `custom`.
+    pub theme: String,
+    pub perf_readings: bool,
+    pub progressive_history: bool,
+    pub venue_lead_in: bool,
+    pub record_deals: bool,
 }
 
 /// Takes nothing: the desk is what is on screen.
@@ -119,6 +148,16 @@ pub fn settings_open_descriptor() -> CapabilityDescriptor {
     )
 }
 
+pub fn settings_set_descriptor() -> CapabilityDescriptor {
+    bounded(transient_descriptor::<SettingsSetInput, SettingsResult>(
+        SETTINGS_SET_CAPABILITY_ID,
+        SETTINGS_MODULE_ID,
+        "Change Settings rows",
+        "Sets the timezone, perf readings, progressive venue history and venue candles on charts cut by trades, as their Settings rows do, and answers what every row shows. An offset the Timezone row does not list is refused before anything changes.",
+        "The call names the values it wants, so a repeat leaves the same settings.",
+    ))
+}
+
 pub fn desk_save_descriptor() -> CapabilityDescriptor {
     desk_grant(durable(transient_descriptor::<DeskInput, DeskWriteResult>(
         DESK_SAVE_CAPABILITY_ID,
@@ -179,6 +218,14 @@ pub const READBACKS: &[Readback] = &[
         "the asked section's settings.section control is listed and selected",
         &[EVERY_OPTIONAL_TEST],
     ),
+    snapshot(
+        SETTINGS_SET_CAPABILITY_ID,
+        IdempotencyPolicy::Optional,
+        crate::workspace::SCOPE_ID,
+        "timezone_offset_minutes, performance_readings_visible, progressive_venue_history, venue_lead_in",
+        "each asked value is the one read",
+        &[EVERY_OPTIONAL_TEST],
+    ),
     journal(
         DESK_SAVE_CAPABILITY_ID,
         IdempotencyPolicy::Optional,
@@ -232,6 +279,14 @@ pub fn documents() -> Vec<(&'static str, serde_json::Value)> {
         (
             "settings-open-result-v1.schema.json",
             schema::<SettingsOpenResult>(),
+        ),
+        (
+            "settings-set-input-v1.schema.json",
+            schema::<SettingsSetInput>(),
+        ),
+        (
+            "settings-set-result-v1.schema.json",
+            schema::<SettingsResult>(),
         ),
         ("desk-input-v1.schema.json", schema::<DeskInput>()),
         (

@@ -7,6 +7,7 @@ use quantick_control_handlers::{
     JournalAccess, TabDirectory,
     analysis::{AnalysisPane, AnalysisPaneEntry, AnalysisPort},
     attention::MarkPort,
+    desk::{DeskHost, DeskOwner},
     history::HistoryPort,
     journal_sessions::JournalSessionsPort,
     notify::AttentionPort,
@@ -14,6 +15,7 @@ use quantick_control_handlers::{
     recovery::{FeedRecoveryPort, RecoveredFeed},
     session::{ReplayRead, SessionPort, SessionTab},
     trade::{TradeDesk, TradePort},
+    workspace_book::{WorkspaceDoor, WorkspaceOwner},
 };
 use quantick_control_schema::notify::AgentPopup;
 use quantick_paper::report::ledger_state::{LedgerView, LedgerViewChange};
@@ -101,7 +103,16 @@ impl TabDirectory for dyn ControlPort {
     fn tab_id_at(&self, index: usize) -> u64 {
         self.tab_reads().tabs().id_at(index)
     }
-    fn workspaces(&mut self) -> Option<Box<dyn quantick_control_handlers::WorkspaceHost + '_>> {
+}
+
+impl DeskHost for dyn ControlPort {
+    fn desk(&mut self) -> Option<Box<dyn DeskOwner + '_>> {
+        Some(Box::new(self.workspace_calls()))
+    }
+}
+
+impl WorkspaceDoor for dyn ControlPort {
+    fn workspaces(&mut self) -> Option<Box<dyn WorkspaceOwner + '_>> {
         Some(Box::new(self.workspace_calls()))
     }
 }

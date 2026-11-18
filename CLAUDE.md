@@ -23,29 +23,22 @@ Rule authority. Rationale: `docs/agentic-development.md`; map: `AGENTS.md`; gate
 - **One engine, three consumers** — chart, backtest and bot share the aggregator. Never fork bar-building per consumer.
 - **Data honesty** — inferred or incomplete data is labelled, never silently patched: a depth reduction is an "unattributed L2 reduction", never a cancellation.
 - **Desktop and local** — no web app, mobile or cloud. A real-broker venue stays off until enabled in config.
-- **Operable without a hand** — no capability ships reachable by mouse alone: a named call, a readable result, a registry entry. Gate: `arch-review`'s *The second operator*.
-- **English is the repository's language** — identifiers, comments, doc comments, log/error/panic messages, UI strings, test names, assertion text, `.pine` scripts, config comments, everything under `docs/`, and branch names, commit messages and PR titles and bodies. Sessions with the trader happen in any language; the rule starts where something lands in the repo. Four exemptions, each where the foreign text *is* the data or the name: proper names of real people and products (`López de Prado`; B3's *mini índice* / *mini dólar*); localisation resources and language-detector word lists; a fixture reproducing text a real system emits; a marked, attributed quotation. The code, comment and test name around one stay English. Pre-existing lines are grandfathered — the finding is a line a diff *authors*. This bullet is the rule's single owner: `arch-review` dimension 8 grades it, `crates/guards/src/language.rs` enforces the mechanical half.
+- **Operable without a hand** — no capability ships reachable by mouse alone: a named call, a readable result, a registry entry.
+- **English is the repository's language** — identifiers, comments, doc comments, log/error/panic messages, UI strings, test names, assertion text, `.pine` scripts, config comments, everything under `docs/`, and branch names, commit messages and PR titles and bodies. Sessions with the trader happen in any language; the rule starts where something lands in the repo. Four exemptions, each where the foreign text *is* the data or the name: proper names of real people and products (`López de Prado`; B3's *mini índice* / *mini dólar*); localisation resources and language-detector word lists; a fixture reproducing text a real system emits; a marked, attributed quotation. The code, comment and test name around one stay English. Pre-existing lines are grandfathered — the finding is a line a diff *authors*. This bullet is the rule's single owner: `crates/guards/src/language.rs` enforces the mechanical half.
 
 ## Keeping the trunk small
 
-- **A capability docks as a new file plus one registration line** — not a field, an init, a draw call and a hotkey in `QuantickApp`. No port to dock against? Build one: `.claude/skills/new-extension/SKILL.md`. A moved surface takes its tests with it.
+- **A capability docks as a new file plus one registration line** — not a field, an init, a draw call and a hotkey in `QuantickApp`. No port to dock against? Build one: `.claude/skills/new-extension/SKILL.md`.
+- **Copy the target shape, not the code beside it** — a new state change is one command its headless owner executes (`session/src/paper_command.rs`), sent by MCP (`control-handlers/src/trade.rs`) and by UI in one line (`app/src/app/chrome/toolbar.rs`); `app` keeps fields, calls, input, egui. Legacy: `apply_menu_command`'s app arms, the `control/ports.rs` window traits. Owner tests decide; `app` tests wiring only.
 - **The size ratchet** (`crates/guards/src/size.rs`, production lines) caps a file at 1,500 lines; `size-baseline.txt` holds signed exceptions under a budget, so raising one lowers another in the same change. Never exceed a ceiling or sit over 200 lines below it — `--tighten` writes the new number.
 - **UI-free code in `app` is ratcheted** — `guards/src/ui_free.rs` caps `crates/app` lines that never name `egui`/`eframe`; such code belongs in a headless crate.
-- **Instructions are ratcheted too** — this file, `AGENTS.md`, and Markdown under `.claude/skills/`, `.agents/`, `docs/campaign/` and `docs/workflow/` (not goal files or evidence), in `context-baseline.txt`: over 10,000 bytes a file needs a signed ceiling, and the budget counts every file but skills, each ceilinged as one directory, so only deleting prose buys room. A `SKILL.md` states each rule that decides an outcome once, operatively; detail goes to its `references/`, reasoning to `docs/agentic-development.md`.
+- **Instructions are ratcheted too** — `guards/src/context.rs` caps this file, `AGENTS.md` and Markdown under `.claude/skills/`, `.agents/`, `docs/campaign/` and `docs/workflow/`; only deleting prose buys room. A `SKILL.md` states each deciding rule once; detail goes to `references/`, reasoning to `docs/agentic-development.md`.
 
 ## Workflow
 
 - Engine code is test-first: fixture trades plus expected bars, then implement until green.
 - Task branches `feat/` `fix/` `docs/`; integration branches `campaign/` `feature/`. Conventional commits, imperative.
-- **One goal, one worktree** — cut from updated target (campaign children: the base in [the integration contract](docs/campaign/integration.md)) under `../quantick-worktrees/`, never in the main checkout or a shared writer's tree, and arm the guards:
-
-  ```sh
-  git fetch origin
-  git worktree add -b <prefix>/<slug> ../quantick-worktrees/<prefix>-<slug> origin/main
-  cd ../quantick-worktrees/<prefix>-<slug> && cargo build -p quantick-guards
-  ```
-
-  After the merge, from the main checkout: `git worktree remove ../quantick-worktrees/<prefix>-<slug>` then `git branch -d <prefix>/<slug>`.
+- **One goal, one worktree** — cut from updated target (campaign children: the base in [the integration contract](docs/campaign/integration.md)) under `../quantick-worktrees/`, never in the main checkout or a shared writer's tree: `git fetch origin && git worktree add -b <prefix>/<slug> ../quantick-worktrees/<prefix>-<slug> origin/main`, then `cargo build -p quantick-guards` in it. After the merge, from the main checkout: `git worktree remove ../quantick-worktrees/<prefix>-<slug> && git branch -d <prefix>/<slug>`.
 - **Process belongs to the skill that runs it** — verification, tiers, reviews and the PR flow live in `mission`, `ship` and `implement`; [`CONTRIBUTING.md`](CONTRIBUTING.md) holds the checks.
 - **Only the user merges to `main`.** Agents merge only into an explicitly authorized integration branch under its contract — no auto-merge, merge queue, direct integration push or protection bypass. Hand off a ready PR.
 - **Name the subagent model at the call** — retrieval `haiku`, checklist application `sonnet`, open judgement (bugs, docking, design) the default strong model.

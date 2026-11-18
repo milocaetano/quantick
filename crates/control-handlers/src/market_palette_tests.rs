@@ -83,7 +83,7 @@ impl Host {
     }
 }
 
-/// The host's book, lent through [`crate::TabDirectory::workspaces`] on its
+/// The host's book, lent through [`crate::workspace_book::WorkspaceDoor`] on its
 /// one market tab.
 struct LentBook<'a>(&'a mut WorkspaceBook);
 
@@ -95,8 +95,6 @@ impl crate::workspace_book::WorkspaceBookHost for LentBook<'_> {
         Ok(())
     }
 }
-
-impl crate::desk::DeskHost for LentBook<'_> {}
 
 impl crate::TabDirectory for LentBook<'_> {
     fn active_tab_index(&self) -> usize {
@@ -135,8 +133,12 @@ impl MarketPaletteHost for Host {
         Ok(())
     }
 
-    fn open_market_palette(&mut self, query: &str, switch: bool) -> Result<(), ControlError> {
-        self.palette = Some((query.to_owned(), switch));
+    fn open_market_palette(
+        &mut self,
+        query: &str,
+        target: Option<SwitchTarget>,
+    ) -> Result<(), ControlError> {
+        self.palette = Some((query.to_owned(), target.is_some()));
         Ok(())
     }
 
@@ -157,8 +159,12 @@ impl crate::TabDirectory for Host {
     fn tab_id_at(&self, _index: usize) -> u64 {
         5
     }
-    fn workspaces(&mut self) -> Option<Box<dyn crate::WorkspaceHost + '_>> {
-        let lent: Box<dyn crate::WorkspaceHost + '_> = Box::new(LentBook(&mut self.book));
+}
+
+impl crate::workspace_book::WorkspaceDoor for Host {
+    fn workspaces(&mut self) -> Option<Box<dyn crate::workspace_book::WorkspaceOwner + '_>> {
+        let lent: Box<dyn crate::workspace_book::WorkspaceOwner + '_> =
+            Box::new(LentBook(&mut self.book));
         self.lends_workspaces.then_some(lent)
     }
 }
@@ -351,6 +357,25 @@ fn the_palette_opens_with_its_query() {
     assert_eq!(answer["switch"], true);
     assert_eq!(host.palette, Some((String::new(), true)), "switch mode");
     assert_eq!(access.events[1].payload["switch"], true);
+}
+
+#[test]
+fn switch_mode_on_a_recording_is_refused_before_the_palette_shows() {
+    let mut host = Host::new();
+    host.snapshot.open[0].replay = true;
+    let mut access = FakeAccess::with_budget(0);
+    let value = serde_json::json!({"switch": true});
+    let refused = palette_call(&mut host, &mut access, &FakeWindow::assistant(), &value);
+    let refused = refused.unwrap_err().message;
+    assert_eq!(refused, "A recorded session has no market to switch");
+    assert_eq!(host.palette, None);
+    assert!(access.events.is_empty(), "nothing came up to journal");
+    show(&mut host, "", false).unwrap();
+    assert_eq!(
+        host.palette,
+        Some((String::new(), false)),
+        "plain mode still opens"
+    );
 }
 
 #[test]
@@ -670,4 +695,103 @@ fn the_palette_rolls_through_the_roll_rule() {
     assert_eq!(host.market.1, "PEPEUSDT");
     let stale = settle(&mut host, roll()).unwrap_err();
     assert!(stale.contains("no longer shows BTCUSDT"), "{stale}");
+}
+
+/// A window that lends recording tabs and shows the palette when `lends`
+/// says so.
+struct Lender {
+    lends: bool,
+    moves: Vec<String>,
+    palette: Option<(String, bool)>,
+}
+
+struct Tabs<'a>(&'a mut Vec<String>);
+
+impl MarketTabs for Tabs<'_> {
+    fn focus_tab(&mut self, index: usize) {
+        self.0.push(format!("focus {index}"));
+    }
+    fn open_tab(&mut self, choice: &OpenChoice, bar: Option<BarConfiguration>) -> TabOpening {
+        let bar = bar.map(|bar| bar.to_config_string());
+        self.0.push(format!("open {} {bar:?}", choice.symbol));
+        Ok(9)
+    }
+    fn set_flow_bar(&mut self, tab: u64, bar: BarConfiguration) -> Result<(), String> {
+        self.0.push(format!("bar {tab} {}", bar.to_config_string()));
+        Ok(())
+    }
+}
+
+impl MarketPaletteOwners for Lender {
+    fn listed_markets(&self) -> MarketSnapshot {
+        MarketSnapshot {
+            starter_feed: "binance".to_owned(),
+            ..MarketSnapshot::default()
+        }
+    }
+    fn market_tabs(&mut self) -> Option<Box<dyn MarketTabs + '_>> {
+        let tabs: Box<dyn MarketTabs + '_> = Box::new(Tabs(&mut self.moves));
+        self.lends.then_some(tabs)
+    }
+    fn show_market_palette(&mut self, query: &str, target: Option<SwitchTarget>) -> PaletteShowing {
+        self.palette = Some((query.to_owned(), target.is_some()));
+        match self.lends {
+            true => Ok(()),
+            false => Err(ControlError::invalid_request(
+                "markets cannot be opened here",
+            )),
+        }
+    }
+}
+
+fn lent_choice(symbol: &str) -> OpenChoice {
+    OpenChoice {
+        feed_id: "binance".to_owned(),
+        symbol: symbol.to_owned(),
+        bar: String::new(),
+        context_bars: Vec::new(),
+        inherit_bar: true,
+        workspace: "Default".to_owned(),
+        background: false,
+    }
+}
+
+#[test]
+fn the_primitives_reach_the_lent_owners() {
+    let mut window = Lender {
+        lends: true,
+        moves: Vec::new(),
+        palette: None,
+    };
+    assert_eq!(window.market_snapshot().starter_feed, "binance");
+    window.focus_tab(2);
+    assert_eq!(window.open_tab(&lent_choice("ETHUSDT"), None), Ok(9));
+    let bar = BUILTIN_BARS.parse("tick:50").unwrap();
+    window.set_flow_bar(5, bar).unwrap();
+    assert_eq!(
+        window.moves,
+        ["focus 2", "open ETHUSDT None", "bar 5 tick:50"]
+    );
+    window.open_market_palette("> ", None).unwrap();
+    assert_eq!(window.palette, Some(("> ".to_owned(), false)));
+}
+
+#[test]
+fn a_window_that_lends_nothing_refuses_each_primitive() {
+    let mut window = Lender {
+        lends: false,
+        moves: Vec::new(),
+        palette: None,
+    };
+    let unavailable = "markets cannot be opened here";
+    let open = window.open_tab(&lent_choice("X"), None);
+    assert_eq!(open.unwrap_err(), unavailable);
+    let edit = window.edit_catalog("binance", "X", true);
+    assert_eq!(edit.unwrap_err(), unavailable);
+    let bar = BUILTIN_BARS.parse("tick:50").unwrap();
+    assert_eq!(window.set_flow_bar(5, bar).unwrap_err(), unavailable);
+    let palette = window.open_market_palette("", None).unwrap_err();
+    assert_eq!(palette.message, unavailable);
+    window.focus_tab(0);
+    assert!(window.moves.is_empty());
 }

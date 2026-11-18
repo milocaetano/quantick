@@ -249,10 +249,15 @@ fn a_scope_the_registry_lacks_is_drift() {
 
 /// A field the scope's published schema does not carry is a field no client
 /// can read — renamed, or never there — and the walk has to see through an
-/// array without its `[]` as well as through a name that is simply wrong.
+/// array without its `[]` as well as through a name that is simply wrong, on
+/// every path a field names.
 #[test]
 fn a_field_the_scope_schema_lacks_is_drift() {
-    for field in ["layouts[].title", "tabs.focused_pane"] {
+    for field in [
+        "layouts[].title",
+        "tabs.focused_pane",
+        "active_tab_id, tabs.focused_pane",
+    ] {
         let rows = with_row("layout.tab.rename", |row| row.field = field);
         assert_finds(
             &rows,

@@ -1,45 +1,5 @@
-//! Deal recording — the venue's session deal counter, kept and written down.
-//!
-//! MetaTrader folds several exchange deals into one tick and keeps no count
-//! per tick; the session's running total is the only deal count it has, and
-//! it exists only while the session is on. So a chart that cuts bars every
-//! N deals (the `trades` kind) can be rebuilt for a day only from what
-//! *someone wrote down while it happened*. This module is that someone:
-//! it holds the readings a feed delivers, appends them to one file per
-//! symbol and day, and reads such a file back so the day reopens as the
-//! same chart — after a restart, or a week later.
-//!
-//! Recording belongs to the **asset**, never to the pane. Switching the pane
-//! from `trades` to `tick` changes what is drawn and nothing else; the
-//! recorder keeps writing, and the readings keep being retained by every
-//! pane on the tab, so switching back rebuilds from the whole series.
-//!
-//! Three states a trader has to be able to tell apart, and this module
-//! names them so every surface says the same word:
-//!
-//! - [`RecState::Recording`] — the market is being written down now.
-//! - [`RecState::Recorded`] — what is on screen came from a file; nothing is
-//!   being written.
-//! - no deal count — prints the rule cannot place, before the first reading
-//!   or on a day nobody recorded. Reported as a number, never as a bar.
-//!
-//! # The file
-//!
-//! `<dir>/<SYMBOL>/<YYYY-MM-DD>.deals`, text, append-only:
-//!
-//! ```text
-//! # quantick-deals v1 symbol=WINV26 day=2026-09-03 tz_minutes=-180
-//! 1788436967023 1990
-//! +20 +13
-//! ```
-//!
-//! The first data line is absolute, every later one a delta from the line
-//! before — a poll every 20 ms all day is a million lines, and deltas keep
-//! that at a few megabytes rather than forty. The day is the one the first
-//! reading fell on in the display timezone; a reading that falls on the next
-//! day rotates to the next file. The directory is `QUANTICK_DEALS_DIR`, then
-//! the `[deals] dir` config key, then `deals/` in the cockpit home
-//! (`Documents/Quantick`).
+//! Deal recording, as [`quantick_replay::recorder`] keeps it (the file, the
+//! states, why it belongs to the asset), and where its files go this run.
 
 use std::path::PathBuf;
 

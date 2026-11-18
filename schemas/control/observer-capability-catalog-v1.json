@@ -27591,6 +27591,113 @@
         "status": "available"
       },
       "confirmation_class": "none",
+      "description": "Sets the timezone, perf readings, progressive venue history and venue candles on charts cut by trades, as their Settings rows do, and answers what every row shows. An offset the Timezone row does not list is refused before anything changes.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 512
+      },
+      "id": "settings.set",
+      "idempotency": "optional",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "Change Settings rows; each field left out stays as it is, and `{}` reads.",
+        "properties": {
+          "perf_readings": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "progressive_history": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "timezone_offset_minutes": {
+            "description": "Minutes east of UTC, one of the offsets the Timezone row lists.",
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "venue_lead_in": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          }
+        },
+        "title": "SettingsSetInput",
+        "type": "object"
+      },
+      "module": "settings",
+      "output_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "What the Settings rows show after the call.",
+        "properties": {
+          "perf_readings": {
+            "type": "boolean"
+          },
+          "progressive_history": {
+            "type": "boolean"
+          },
+          "record_deals": {
+            "type": "boolean"
+          },
+          "theme": {
+            "description": "The bundled theme's key, or `custom`.",
+            "type": "string"
+          },
+          "timezone_label": {
+            "type": "string"
+          },
+          "timezone_offset_minutes": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "venue_lead_in": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "timezone_offset_minutes",
+          "timezone_label",
+          "theme",
+          "perf_readings",
+          "progressive_history",
+          "venue_lead_in",
+          "record_deals"
+        ],
+        "title": "SettingsResult",
+        "type": "object"
+      },
+      "persistence": "transient",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "The call names the values it wants, so a repeat leaves the same settings.",
+      "title": "Change Settings rows",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
       "description": "Captures the requested registered scopes coherently on the application thread. Optional window_id pins a live market window; omission pins the focused window at UI admission, before any frame wait.",
       "destructive": false,
       "dry_run_supported": false,

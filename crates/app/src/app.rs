@@ -20,9 +20,59 @@ use eframe::egui;
 
 use crate::canvas_layout::PaneIdAllocator;
 
+// Before the modules: both are expanded inside them.
+/// The arrangement ports over `$app`'s own fields, borrowed one by one so a
+/// caller can lend a sibling field (the replay view) beside them.
+macro_rules! arrangement_adapter {
+    ($app:expr) => {{
+        $app.runtime
+            .resolve(&$app.presentation.binding)
+            .expect("bound workspace");
+        $crate::app::arrangement_adapter::ArrangementAdapter {
+            tabs: &mut $app.runtime.tabs,
+            config: &$app.config,
+            style: &mut $app.runtime.style,
+            pane_ids: &mut $app.pane_ids,
+            workspace: &mut $app.runtime.workspace,
+            indicators: &mut $app.runtime.indicators,
+            #[cfg(any(feature = "scenario-harness", test))]
+            harness: &$app.chrome.harness,
+            toolrail: &mut $app.surfaces.toolrail,
+            tz: &mut $app.runtime.tz,
+            dock: &mut $app.surfaces.dock,
+            show_perf: &mut $app.health.show_perf,
+            record_deals: &mut $app.chrome.record_deals,
+            history: &mut $app.runtime.history,
+            drawing_chrome: &mut $app.surfaces.drawing_chrome,
+            toast: &mut $app.surfaces.toast,
+            surface: &mut $app.chrome.title_bar.surface,
+        }
+    }};
+}
+
+/// The desk, Settings, REC and workspace owner over `$app`'s own fields: the
+/// `DeskHost` and `WorkspaceDoor` doors' answer, and what the window's own
+/// Settings draw and workspace rows act through.
+macro_rules! workspace_calls {
+    ($app:expr) => {
+        $crate::app::workspace_calls::WorkspaceCalls {
+            runtime: $app.runtime.bound_mut(&$app.presentation.binding),
+            presentation: &$app.presentation,
+            chrome: &mut $app.chrome,
+            pane_ids: &mut $app.pane_ids,
+            config: &$app.config,
+            control: &mut $app.control,
+            surfaces: &mut $app.surfaces,
+            health: &mut $app.health,
+            drawings: &mut $app.drawings,
+        }
+    };
+}
+
 pub(crate) mod alerts_runtime;
 mod arrangement_adapter;
 pub(crate) mod canvas_wiring;
+mod workspace_calls;
 mod workspace_runtime;
 use quantick_workspace::lifetime::WorkspaceId;
 const WORKSPACE_ID: WorkspaceId = WorkspaceId(0);
@@ -134,36 +184,6 @@ pub(crate) struct AppLaunch {
     #[cfg(any(feature = "drawing-harness", test))]
     pub drawing_chrome: crate::surfaces::drawing_chrome::DrawingChromeLaunch,
 }
-
-/// The arrangement ports over `$app`'s own fields, borrowed one by one so a
-/// caller can lend a sibling field (the replay view) beside them.
-macro_rules! arrangement_adapter {
-    ($app:expr) => {{
-        $app.runtime
-            .resolve(&$app.presentation.binding)
-            .expect("bound workspace");
-        arrangement_adapter::ArrangementAdapter {
-            tabs: &mut $app.runtime.tabs,
-            config: &$app.config,
-            style: &mut $app.runtime.style,
-            pane_ids: &mut $app.pane_ids,
-            workspace: &mut $app.runtime.workspace,
-            indicators: &mut $app.runtime.indicators,
-            #[cfg(any(feature = "scenario-harness", test))]
-            harness: &$app.chrome.harness,
-            toolrail: &mut $app.surfaces.toolrail,
-            tz: &mut $app.runtime.tz,
-            dock: &mut $app.surfaces.dock,
-            show_perf: &mut $app.health.show_perf,
-            record_deals: &mut $app.chrome.record_deals,
-            history: &mut $app.runtime.history,
-            drawing_chrome: &mut $app.surfaces.drawing_chrome,
-            toast: &mut $app.surfaces.toast,
-            surface: &mut $app.chrome.title_bar.surface,
-        }
-    }};
-}
-mod workspace_calls;
 
 impl QuantickApp {
     pub(crate) fn workspace_bundle_adapter(

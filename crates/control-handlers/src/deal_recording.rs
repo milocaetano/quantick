@@ -3,8 +3,10 @@
 //!
 //! The view is the same [`RecordingView`] every chrome surface draws, so the
 //! words here are the chrome's words. `feed.deal_recording.set` reaches the
-//! tab's recorder through [`DealRecordingPort::deal_recorder`], the owner the
-//! REC button acts on; what it refuses and says back is decided here.
+//! tab's recorder through the desk's
+//! [`DealRecordingPort::deal_recorder`](crate::deal_recorder::DealRecordingPort::deal_recorder),
+//! the owner the REC button acts on; what it refuses and says back is decided
+//! here.
 //!
 //! Rate class: a human or an agent asking about, or flipping, the recorder.
 //! Never per trade.
@@ -22,21 +24,22 @@ use quantick_replay::recorder::{DealRecordingError, RecState, RecordingView};
 
 use serde_json::Value;
 
-use crate::deal_recorder::DealRecordingPort;
+use crate::desk::{DeskHost, unavailable};
 use crate::dock::ActionDock;
+use crate::settings::SettingsAct;
 use crate::tabs::{TabDirectory, tab_closed, tab_index};
 
 /// Dock `feed.deal_recording.set`.
 ///
 /// # Errors
 /// A capability already docked.
-pub fn register<D: ActionDock<H, A>, H: DealRecordingPort + TabDirectory + ?Sized, A>(
+pub fn register<D: ActionDock<H, A>, H: DeskHost + TabDirectory + ?Sized, A>(
     registry: &mut D,
 ) -> Result<(), RegistryError> {
     registry.register(descriptor(), set)
 }
 
-fn set<H: DealRecordingPort + TabDirectory + ?Sized, A>(
+fn set<H: DeskHost + TabDirectory + ?Sized, A>(
     host: &mut H,
     _access: &mut A,
     _actor: &ActorContext,
@@ -46,7 +49,8 @@ fn set<H: DealRecordingPort + TabDirectory + ?Sized, A>(
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
     let index = tab_index(host, input.tab_id)?;
     let tab_id = host.tab_id_at(index);
-    let tab = host.deal_recorder(index).ok_or_else(tab_closed)?;
+    let mut desk = host.desk().ok_or_else(unavailable)?;
+    let tab = desk.deal_recorder(index).ok_or_else(tab_closed)?;
     if tab.replaying() {
         return Err(replaying(tab_id));
     }
@@ -64,9 +68,9 @@ fn set<H: DealRecordingPort + TabDirectory + ?Sized, A>(
         None => {}
     }
     if let Some(on) = input.record_by_default {
-        host.record_deals_by_default(on);
+        desk.settle(SettingsAct::RecordDeals(on))?;
     }
-    let tab = host.deal_recorder(index).ok_or_else(tab_closed)?;
+    let tab = desk.deal_recorder(index).ok_or_else(tab_closed)?;
     let result = DealRecordingResult {
         tab_id: WireU64::new(tab_id),
         symbol: tab.recorded_symbol().to_owned(),

@@ -378,22 +378,13 @@ pub(super) const CHROME: &[UiBehaviour] = &[
         title: "Show fps, frame time and trade count on the status bar",
         reach: "Settings window",
         keys: &[(Source::MenuEntry, "Perf readings")],
-        mapping: excluded!(
-            PendingCapability,
-            "`health.diagnostics.read` reports the same numbers to an operator directly, so \
-             the switch governs the trader's own status bar and nothing else. A capability \
-             would be for parity of the screen, not of the reading. Tracked in issue 401"
-        ),
+        mapping: capability!("settings.set"),
     },
     UiBehaviour {
         id: "view.timezone.set",
         title: "Change the timezone the time axis is labelled in",
         reach: "Settings window, Timezone",
         keys: &[(Source::MenuEntry, "Timezone")],
-        mapping: excluded!(
-            PendingCapability,
-            "no capability sets the display timezone; every control-plane reading is already \
-             absolute, so this is the trader's own axis. Tracked in issue 401"
-        ),
+        mapping: capability!("settings.set"),
     },
 ];

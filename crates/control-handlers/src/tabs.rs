@@ -12,11 +12,6 @@ pub trait TabDirectory {
     fn tab_position(&self, tab_id: u64) -> Option<usize>;
     /// The stable id of the tab at `index`, a position this directory gave.
     fn tab_id_at(&self, index: usize) -> u64;
-    /// The desk and the workspace book these tabs live on, lent for one call;
-    /// `None` for a host without them, whose calls answer unavailable.
-    fn workspaces(&mut self) -> Option<Box<dyn crate::WorkspaceHost + '_>> {
-        None
-    }
 }
 
 /// Which tab a call named, or the one the trader is looking at.

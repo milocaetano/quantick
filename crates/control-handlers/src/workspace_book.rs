@@ -133,6 +133,19 @@ pub trait WorkspaceBookHost {
     }
 }
 
+/// The workspace book and the tabs its calls address.
+pub trait WorkspaceOwner: WorkspaceBookHost + TabDirectory {}
+
+impl<H: WorkspaceBookHost + TabDirectory + ?Sized> WorkspaceOwner for H {}
+
+/// The door to the window's [`WorkspaceOwner`].
+pub trait WorkspaceDoor {
+    /// The owner, borrowed for one call; `None` for a host without workspaces.
+    fn workspaces(&mut self) -> Option<Box<dyn WorkspaceOwner + '_>> {
+        None
+    }
+}
+
 /// Every workspace's colour in `book`, `Default` first, as the snapshot reads
 /// them.
 #[must_use]
@@ -259,75 +272,62 @@ fn submit_name_dialog<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
     }
 }
 
+/// A registered entry point for `handler` that reaches the host's
+/// [`WorkspaceOwner`] through [`WorkspaceDoor::workspaces`]; a host that lends
+/// none answers unavailable.
+macro_rules! through_workspaces {
+    ($handler:path) => {
+        |app, access, actor, value| match app.workspaces() {
+            Some(mut host) => $handler(&mut *host, access, actor, value),
+            None => Err(unavailable()),
+        }
+    };
+}
+
 /// Outside the replay trace: none of these changes a market, and a recorded
 /// call must not rewrite the trader's workspaces when a session re-runs. Each
-/// call reaches the book through [`TabDirectory::workspaces`].
+/// call reaches the book through [`WorkspaceDoor::workspaces`].
 pub fn register<H, A, D>(registry: &mut D) -> Result<(), RegistryError>
 where
-    H: TabDirectory + ?Sized,
+    H: WorkspaceDoor + ?Sized,
     A: NotifyAccess,
     D: ActionDock<H, A>,
 {
-    registry.register_outside_replay(
-        tab_workspace_set_descriptor(),
-        through_workspaces!(set, unavailable),
-    )?;
-    registry.register_outside_replay(
-        workspace_save_to_descriptor(),
-        through_workspaces!(save_to, unavailable),
-    )?;
-    registry.register_outside_replay(
-        workspace_save_as_descriptor(),
-        through_workspaces!(save_as, unavailable),
-    )?;
-    registry.register_outside_replay(
-        workspace_new_descriptor(),
-        through_workspaces!(new, unavailable),
-    )?;
-    registry.register_outside_replay(
-        workspace_revert_descriptor(),
-        through_workspaces!(revert, unavailable),
-    )?;
+    registry.register_outside_replay(tab_workspace_set_descriptor(), through_workspaces!(set))?;
+    registry
+        .register_outside_replay(workspace_save_to_descriptor(), through_workspaces!(save_to))?;
+    registry
+        .register_outside_replay(workspace_save_as_descriptor(), through_workspaces!(save_as))?;
+    registry.register_outside_replay(workspace_new_descriptor(), through_workspaces!(new))?;
+    registry.register_outside_replay(workspace_revert_descriptor(), through_workspaces!(revert))?;
     registry.register_outside_replay(
         workspace_autosave_set_descriptor(),
-        through_workspaces!(autosave_set, unavailable),
+        through_workspaces!(autosave_set),
     )?;
-    registry.register_outside_replay(
-        tab_close_descriptor(),
-        through_workspaces!(close, unavailable),
-    )?;
-    registry.register_outside_replay(
-        workspace_rename_descriptor(),
-        through_workspaces!(rename, unavailable),
-    )?;
-    registry.register_outside_replay(
-        workspace_delete_descriptor(),
-        through_workspaces!(delete, unavailable),
-    )?;
+    registry.register_outside_replay(tab_close_descriptor(), through_workspaces!(close))?;
+    registry.register_outside_replay(workspace_rename_descriptor(), through_workspaces!(rename))?;
+    registry.register_outside_replay(workspace_delete_descriptor(), through_workspaces!(delete))?;
     registry.register_outside_replay(
         workspace_delete_undo_descriptor(),
-        through_workspaces!(manage::undo_call, unavailable),
+        through_workspaces!(manage::undo_call),
     )?;
     registry.register_outside_replay(
         workspace_dialog_open_descriptor(),
-        through_workspaces!(manage::dialog_open, unavailable),
+        through_workspaces!(manage::dialog_open),
     )?;
     registry.register_outside_replay(
         workspace_colour_set_descriptor(),
-        through_workspaces!(colour_set, unavailable),
+        through_workspaces!(colour_set),
     )?;
     registry.register_outside_replay(
         workspace_colour_palette_descriptor(),
-        through_workspaces!(colour_popover::palette_read, unavailable),
+        through_workspaces!(colour_popover::palette_read),
     )?;
     registry.register_outside_replay(
         workspace_colour_popover_descriptor(),
-        through_workspaces!(colour_popover::popover_call, unavailable),
+        through_workspaces!(colour_popover::popover_call),
     )?;
-    registry.register_outside_replay(
-        workspace_list_descriptor(),
-        through_workspaces!(list, unavailable),
-    )
+    registry.register_outside_replay(workspace_list_descriptor(), through_workspaces!(list))
 }
 
 fn input<T: serde::de::DeserializeOwned>(value: &Value) -> Result<T, ControlError> {

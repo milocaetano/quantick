@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "What the Settings rows show after the call.",
+  "properties": {
+    "perf_readings": {
+      "type": "boolean"
+    },
+    "progressive_history": {
+      "type": "boolean"
+    },
+    "record_deals": {
+      "type": "boolean"
+    },
+    "theme": {
+      "description": "The bundled theme's key, or `custom`.",
+      "type": "string"
+    },
+    "timezone_label": {
+      "type": "string"
+    },
+    "timezone_offset_minutes": {
+      "format": "int32",
+      "type": "integer"
+    },
+    "venue_lead_in": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "timezone_offset_minutes",
+    "timezone_label",
+    "theme",
+    "perf_readings",
+    "progressive_history",
+    "venue_lead_in",
+    "record_deals"
+  ],
+  "title": "SettingsResult",
+  "type": "object"
+}

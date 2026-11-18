@@ -267,3 +267,71 @@ fn the_agent_on_pill_is_amber_and_opens_agent_access() {
     }
     disable_test_gateway(&mut app, &ctx);
 }
+
+/// The named call lands on the owners the rows' clicks reach, and what it
+/// answers is what the workspace summary reads back.
+#[test]
+fn settings_set_moves_the_rows_owners_and_the_summary_agrees() {
+    let (mut app, ctx, directory) = granted("settings-set");
+    let mut client = connect(&directory, &options("cockpit", COCKPIT_SCOPES));
+    let (perf, progressive) = (
+        !app.health.show_perf,
+        !app.runtime.history.progressive_history,
+    );
+    let lead_in = !app.runtime.history.venue_lead_in;
+    let input = json!({ "timezone_offset_minutes": 60, "perf_readings": perf,
+        "progressive_history": progressive, "venue_lead_in": lead_in });
+    let (set, _) = unkeyed_call(&mut app, &mut client, "settings.set", input);
+    let answer = success_result(&set);
+    assert_eq!(app.runtime.tz, crate::timezone::TzOffset::new(60));
+    assert_eq!(app.health.show_perf, perf);
+    assert_eq!(app.runtime.history.progressive_history, progressive);
+    assert_eq!(app.runtime.history.venue_lead_in, lead_in);
+    let mut registry = crate::control::standard_registry().unwrap();
+    let scope = observer_scope("workspace.summary");
+    let capture = (registry.capture(&app, &observer_instance(), std::slice::from_ref(&scope)))
+        .unwrap()
+        .into_serialized()
+        .unwrap();
+    let summary = &capture.scopes[&scope].value;
+    for (field, read) in [
+        ("timezone_offset_minutes", "timezone_offset_minutes"),
+        ("perf_readings", "performance_readings_visible"),
+        ("progressive_history", "progressive_venue_history"),
+        ("venue_lead_in", "venue_lead_in"),
+    ] {
+        assert_eq!(answer[field], summary[read], "{field}");
+    }
+    disable_test_gateway(&mut app, &ctx);
+}
+
+/// The record row reaches its owner through the desk door; the Agent access
+/// rows only through the window's own settle.
+#[test]
+fn the_desk_door_settles_the_record_row_and_the_window_the_agent_rows() {
+    use crate::app::GatewayPort as _;
+    use crate::app::chrome::settings::settle;
+    use quantick_control_handlers::desk::DeskHost as _;
+    use quantick_control_handlers::settings::SettingsAct;
+    use quantick_ui_model::settings_window::Action;
+    let (mut app, _evt, _cmd, _book) = test_app();
+    let ctx = egui::Context::default();
+    run_frame(&mut app, &ctx);
+    let record = !app.as_window().desk().unwrap().readings().record_deals;
+    let act = SettingsAct::RecordDeals(record);
+    app.as_window().desk().unwrap().settle(act).unwrap();
+    assert_eq!(app.chrome.record_deals, Some(record));
+    assert_eq!(
+        app.as_window().desk().unwrap().readings().record_deals,
+        record
+    );
+    app.control.control_access = None;
+    settle(&mut workspace_calls!(app), &ctx, Action::OpenAgentAccess);
+    assert!(
+        !app.surfaces.access_panel.model_state.open,
+        "no gateway, no panel"
+    );
+    app.control.control_access = Some(crate::control::ControlAccess::new());
+    settle(&mut workspace_calls!(app), &ctx, Action::OpenAgentAccess);
+    assert!(app.surfaces.access_panel.model_state.open);
+}

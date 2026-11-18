@@ -1,8 +1,8 @@
-//! `settings.open` and the `desk.*` calls, through a headless host port.
+//! `settings.*` and the `desk.*` calls, through a headless host port.
 //!
-//! Every act is the one the window's own menu row makes. A call that wrote
-//! nothing says so and journals nothing: a caller reading `written: false` must
-//! not find an event claiming otherwise.
+//! Every act is the one the window's own menu or Settings row makes. A call
+//! that wrote nothing says so and journals nothing: a caller reading
+//! `written: false` must not find an event claiming otherwise.
 //!
 //! Rate class: a human or an agent acting on the window. Never per trade.
 
@@ -18,19 +18,21 @@ use quantick_control_schema::desk::{
     AGENT_ACCESS_REFUSED_CODE, DESK_EXPORT_CAPABILITY_ID, DESK_FORGOTTEN_EVENT_KIND,
     DESK_IMPORT_CAPABILITY_ID, DESK_PICKER_EVENT_KIND, DESK_REOPEN_EVENT_KIND,
     DESK_SAVED_EVENT_KIND, DeskInput, DeskPickResult, DeskReopenInput, DeskReopenResult,
-    DeskWriteResult, SettingsOpenInput, SettingsOpenResult, desk_export_descriptor,
-    desk_forget_descriptor, desk_import_descriptor, desk_reopen_descriptor, desk_save_descriptor,
-    settings_open_descriptor,
+    DeskWriteResult, SettingsOpenInput, SettingsOpenResult, SettingsResult, SettingsSetInput,
+    desk_export_descriptor, desk_forget_descriptor, desk_import_descriptor, desk_reopen_descriptor,
+    desk_save_descriptor, settings_open_descriptor, settings_set_descriptor,
 };
 use quantick_control_schema::settings_sections::SettingsSection;
 use serde::Serialize;
 use serde_json::{Value, json};
 
-use crate::TabDirectory;
+use crate::deal_recorder::DealRecordingPort;
 use crate::dock::ActionDock;
 use crate::notify::NotifyAccess;
+use crate::settings::{SettingsAct, SettingsOwner, offered_zone};
 
-fn unavailable() -> ControlError {
+/// The refusal of a host without a desk.
+pub fn unavailable() -> ControlError {
     ControlError::invalid_request("the desk is unavailable")
 }
 
@@ -53,48 +55,43 @@ pub enum DeskAct {
     SetReopen(bool),
 }
 
-/// The window's Settings and desk acts. The answer is the act's one fact: a
-/// write reached the disk, a dialog came up (not one already up), or the choice
-/// read. The default answers for a host without them.
+/// The window's Settings rows, its tabs' deal recorders and its desk acts.
+pub trait DeskOwner: SettingsOwner + DealRecordingPort {
+    /// Carry out one desk act. The answer is the act's one fact: a write
+    /// reached the disk, a dialog came up (not one already up), or the choice
+    /// read.
+    fn act(&mut self, act: DeskAct) -> bool;
+}
+
+/// The door to the window's [`DeskOwner`].
 pub trait DeskHost {
-    fn desk(&mut self, _act: DeskAct) -> Result<bool, ControlError> {
-        Err(unavailable())
+    /// The owner, borrowed for one call; `None` for a host without a desk.
+    fn desk(&mut self) -> Option<Box<dyn DeskOwner + '_>> {
+        None
     }
 }
 
-/// Outside the replay trace: none of these changes a market, and a recorded
-/// call must not rewrite the trader's desk when a session re-runs.
-/// Each call reaches the desk through [`TabDirectory::workspaces`].
+fn desk_act<H: DeskHost + ?Sized>(app: &mut H, act: DeskAct) -> Result<bool, ControlError> {
+    Ok(app.desk().ok_or_else(unavailable)?.act(act))
+}
+
+/// Outside the replay trace. The desk acts change no market, and the Settings
+/// rows are the trader's view choices, which a row click also changes outside
+/// the trace: a re-run session keeps the trader's current desk and view rather
+/// than the recorded ones.
 pub fn register<H, A, D>(registry: &mut D) -> Result<(), RegistryError>
 where
-    H: TabDirectory + ?Sized,
+    H: DeskHost + ?Sized,
     A: NotifyAccess,
     D: ActionDock<H, A>,
 {
-    registry.register_outside_replay(
-        settings_open_descriptor(),
-        through_workspaces!(open_settings, unavailable),
-    )?;
-    registry.register_outside_replay(
-        desk_save_descriptor(),
-        through_workspaces!(save, unavailable),
-    )?;
-    registry.register_outside_replay(
-        desk_export_descriptor(),
-        through_workspaces!(export, unavailable),
-    )?;
-    registry.register_outside_replay(
-        desk_import_descriptor(),
-        through_workspaces!(import, unavailable),
-    )?;
-    registry.register_outside_replay(
-        desk_forget_descriptor(),
-        through_workspaces!(forget, unavailable),
-    )?;
-    registry.register_outside_replay(
-        desk_reopen_descriptor(),
-        through_workspaces!(reopen, unavailable),
-    )
+    registry.register_outside_replay(settings_open_descriptor(), open_settings)?;
+    registry.register_outside_replay(settings_set_descriptor(), set_settings)?;
+    registry.register_outside_replay(desk_save_descriptor(), save)?;
+    registry.register_outside_replay(desk_export_descriptor(), export)?;
+    registry.register_outside_replay(desk_import_descriptor(), import)?;
+    registry.register_outside_replay(desk_forget_descriptor(), forget)?;
+    registry.register_outside_replay(desk_reopen_descriptor(), reopen)
 }
 
 fn invalid(error: &serde_json::Error) -> ControlError {
@@ -136,8 +133,36 @@ fn open_settings<H: DeskHost + ?Sized, A>(
     if section == SettingsSection::AgentAccess {
         return Err(agent_access_refused());
     }
-    app.desk(DeskAct::OpenSettings(section))?;
+    desk_act(app, DeskAct::OpenSettings(section))?;
     answer(&SettingsOpenResult { section })
+}
+
+/// Each named row settles as its click does; the timezone is checked first,
+/// so a refused call changes nothing.
+fn set_settings<H: DeskHost + ?Sized, A>(
+    app: &mut H,
+    _: &mut A,
+    _: &ActorContext,
+    value: &Value,
+) -> Result<Value, ControlError> {
+    let asked: SettingsSetInput = input(value)?;
+    let zone = asked
+        .timezone_offset_minutes
+        .map(offered_zone)
+        .transpose()?;
+    let acts = [
+        zone.map(SettingsAct::Timezone),
+        asked.perf_readings.map(SettingsAct::PerfReadings),
+        asked
+            .progressive_history
+            .map(SettingsAct::ProgressiveHistory),
+        asked.venue_lead_in.map(SettingsAct::VenueLeadIn),
+    ];
+    let mut desk = app.desk().ok_or_else(unavailable)?;
+    for act in acts.into_iter().flatten() {
+        desk.settle(act)?;
+    }
+    answer(&SettingsResult::from(desk.readings()))
 }
 
 fn wrote<A: NotifyAccess>(
@@ -161,7 +186,7 @@ fn save<H: DeskHost + ?Sized, A: NotifyAccess>(
     let DeskInput {} = input(value)?;
     wrote(
         DESK_SAVED_EVENT_KIND,
-        app.desk(DeskAct::Save)?,
+        desk_act(app, DeskAct::Save)?,
         access,
         actor,
     )
@@ -176,7 +201,7 @@ fn forget<H: DeskHost + ?Sized, A: NotifyAccess>(
     let DeskInput {} = input(value)?;
     wrote(
         DESK_FORGOTTEN_EVENT_KIND,
-        app.desk(DeskAct::Forget)?,
+        desk_act(app, DeskAct::Forget)?,
         access,
         actor,
     )
@@ -202,7 +227,7 @@ fn export<H: DeskHost + ?Sized, A: NotifyAccess>(
     value: &Value,
 ) -> Result<Value, ControlError> {
     let DeskInput {} = input(value)?;
-    let opened = app.desk(DeskAct::PickExport)?;
+    let opened = desk_act(app, DeskAct::PickExport)?;
     picked(DESK_EXPORT_CAPABILITY_ID, opened, access, actor)
 }
 
@@ -213,7 +238,7 @@ fn import<H: DeskHost + ?Sized, A: NotifyAccess>(
     value: &Value,
 ) -> Result<Value, ControlError> {
     let DeskInput {} = input(value)?;
-    let opened = app.desk(DeskAct::PickImport)?;
+    let opened = desk_act(app, DeskAct::PickImport)?;
     picked(DESK_IMPORT_CAPABILITY_ID, opened, access, actor)
 }
 
@@ -224,14 +249,14 @@ fn reopen<H: DeskHost + ?Sized, A: NotifyAccess>(
     value: &Value,
 ) -> Result<Value, ControlError> {
     let DeskReopenInput { reopen } = input(value)?;
-    if app.desk(DeskAct::ReadReopen)? == reopen {
+    if desk_act(app, DeskAct::ReadReopen)? == reopen {
         return answer(&DeskReopenResult {
             reopen,
             changed: false,
             written: false,
         });
     }
-    let written = app.desk(DeskAct::SetReopen(reopen))?;
+    let written = desk_act(app, DeskAct::SetReopen(reopen))?;
     if written {
         let payload = json!({ "reopen": reopen, "written": true });
         access.record_event(event(DESK_REOPEN_EVENT_KIND, actor, payload));
