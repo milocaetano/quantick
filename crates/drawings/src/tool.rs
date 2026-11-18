@@ -367,6 +367,20 @@ pub trait MarkTool: Sync {
     ) -> Option<Handles> {
         None
     }
+    /// Apply a drag of handle `handle` to `to` as a new payload rather than
+    /// new anchors: a handle that sets an extent no anchor holds, like a Fib
+    /// projection's reach. `None` (the default) leaves the drag to
+    /// [`MarkTool::drag_handle`].
+    fn drag_payload_handle(
+        &self,
+        _chart_rect: PxRect,
+        _points: &[Px],
+        _handle: usize,
+        _to: Px,
+        _ctxt: &DrawContext<'_>,
+    ) -> Option<Box<dyn DrawingPayload>> {
+        None
+    }
     /// The hint a grab on handle `handle` announces when it is narrower than
     /// a free reshape. `None` (the default) is the plain resize cursor.
     fn handle_hint(&self, _handle: usize) -> Option<PointerHint> {
@@ -822,6 +836,20 @@ impl DrawingTool {
     ) -> Option<Handles> {
         self.0
             .drag_handle(chart_rect, points, handle, to, ctxt, constrain)
+    }
+
+    /// See [`MarkTool::drag_payload_handle`].
+    #[must_use]
+    pub fn drag_payload_handle(
+        self,
+        chart_rect: PxRect,
+        points: &[Px],
+        handle: usize,
+        to: Px,
+        ctxt: &DrawContext<'_>,
+    ) -> Option<Box<dyn DrawingPayload>> {
+        self.0
+            .drag_payload_handle(chart_rect, points, handle, to, ctxt)
     }
 
     #[must_use]

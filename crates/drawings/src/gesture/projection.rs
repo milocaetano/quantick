@@ -727,6 +727,29 @@ impl DrawingProjection<'_> {
         }
     }
 
+    /// Apply one frame of a drag on a handle that sets an extent no anchor
+    /// holds, at screen position `to`. Answers whether the tool took it as
+    /// such; `false` leaves the frame to [`Self::drag_drawing_handle`].
+    pub fn drag_drawing_payload_handle(
+        &self,
+        drawings: &mut Marks,
+        drawing_index: usize,
+        handle: usize,
+        to: Px,
+        band: &Band,
+        (history_right, total): (f32, usize),
+    ) -> bool {
+        let reshaped = band.scale.as_ref().and_then(|scale| {
+            let drawing = drawings.items().get(drawing_index)?;
+            let projected = self.projected_drawing_points(drawing, history_right, total, scale);
+            let ctxt = self.draw_context(drawing, scale, band, true);
+            drawing
+                .tool
+                .drag_payload_handle(band.rect, &projected, handle, to, &ctxt)
+        });
+        reshaped.is_some_and(|payload| drawings.set_payload(drawing_index, payload))
+    }
+
     /// The context a tool reads `drawing` through on `band`, for hit-tests
     /// and gestures. `selected` is the caller's: the hit-tests pass a
     /// selection that is not locked, a handle drag passes `true`.

@@ -5,7 +5,8 @@
 //! live in [`super::collection`].
 
 use crate::{
-    ChartPoint, Drawing, DrawingBand, DrawingScope, Drawings, Duplicated, NewDrawing, ToolCatalog,
+    ChartPoint, Drawing, DrawingBand, DrawingPayload, DrawingScope, Drawings, Duplicated,
+    NewDrawing, ToolCatalog,
 };
 // Named only by the test-side placement shorthands below.
 #[cfg(any(test, feature = "test-support"))]
@@ -333,6 +334,19 @@ impl<T: ToolCatalog> Drawings<T> {
             return false;
         };
         *anchor = point;
+        true
+    }
+
+    /// Replace one object's payload — what a handle that sets an extent no
+    /// anchor holds produces. Locked objects stay put.
+    pub fn set_payload(&mut self, drawing_index: usize, payload: Box<dyn DrawingPayload>) -> bool {
+        let Some(drawing) = self.items.get_mut(drawing_index) else {
+            return false;
+        };
+        if drawing.locked {
+            return false;
+        }
+        drawing.payload = payload;
         true
     }
 
