@@ -247,8 +247,12 @@ printf 'feat/child origin/feat/test https://github.com/owner/repo/issues/1 none\
 reject 'a feat base takes no parent' sh "$helper" base "$fixture/repo"
 printf 'feat/child origin/feature/test none https://github.com/owner/repo/issues/1#issuecomment-2\n' > "$git_dir/mission-base"
 reject 'no parent cannot carry a grant' sh "$helper" base "$fixture/repo"
+# The ref exists, so only the retirement can refuse it, and it says so.
+git -C "$fixture/repo" update-ref refs/remotes/origin/campaign/test "$base"
 printf 'feat/child origin/campaign/test https://github.com/owner/repo/issues/1 none\n' > "$git_dir/mission-base"
 reject 'a retired campaign base is refused' sh "$helper" base "$fixture/repo"
+cp "$fixture/output" "$fixture/refusal"
+allow 'the refusal names the retirement' grep -q 'campaign/\* bases were retired' "$fixture/refusal"
 printf 'feat/child origin/feature/test https://github.com/owner/repo/issues/1 none\n' > "$git_dir/mission-base"
 reject 'a feature child is not a plain implement target' sh "$helper" implement-target "$fixture/repo"
 printf '%s mission-base tests passed\n' "$passed"

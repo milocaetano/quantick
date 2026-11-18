@@ -19,7 +19,11 @@ if [ -e "$context_file" ]; then
     [ "$(wc -l < "$context_file" | tr -d ' ')" = 1 ] || fail 'Invalid mission-base record.'
     read -r recorded_branch context_base context_parent context_grant extra < "$context_file"
     [ "$recorded_branch" = "$context_branch" ] && [ -z "$extra" ] || fail 'The mission-base record belongs to another branch or is malformed.'
-    case "$context_base" in origin/feature/?*|origin/feat/?*) ;; *) fail 'The base must be an explicit origin/feature or origin/feat branch.' ;; esac
+    case "$context_base" in
+        origin/feature/?*|origin/feat/?*) ;;
+        origin/campaign/*) fail 'campaign/* bases were retired with the campaign skill; retarget the task to main, feat/* or feature/*.' ;;
+        *) fail 'The base must be an explicit origin/feature or origin/feat branch.' ;;
+    esac
     git check-ref-format "refs/remotes/$context_base" >/dev/null || fail 'Invalid base ref.'
     # A plain /implement PR names no parent and so can hold no merge grant. A
     # feat/* base is only ever that; feature/* is that or a /feature child.

@@ -80,8 +80,8 @@ never panics.
 - Engine-adjacent work is test-first, golden-tested.
 - A visible surface registers its `QUANTICK_*` hook per `ui-harness` in the
   same commit and passes its QA pass and `trader-ux-review` before the PR.
-- Whatever a trader can *do* meets `CLAUDE.md`'s *Operable without a hand*
-  (act, read, discover) — read it there, not from a copy.
+- Whatever a trader can *do* meets `CLAUDE.md`'s *Operable without a hand*:
+  a named call, a readable result, a registry entry.
 
 ## 6. Done
 

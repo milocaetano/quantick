@@ -688,7 +688,7 @@ pr_gate() {
         fi
     fi
 
-    gate_base=$(review_base "$dir") || deny '"Review base is invalid or unavailable; reconcile the branch-bound mission-base record."'
+    gate_base=$(review_base "$dir") || deny '"Review base is invalid or unavailable; reconcile the branch-bound mission-base record (campaign/* bases are retired: retarget to main, feat/* or feature/*)."'
     key=$(review_key "$dir")
     if [ -z "$key" ]; then
         [ "$gate_base" = "origin/$MAIN_BRANCH" ] || deny '"Review identity against the base cannot be computed; no fallback approval is available."'
@@ -712,8 +712,8 @@ pr_gate() {
     [ -n "$gate_pr" ] || deny '"Name the PR number explicitly."'
 
     # Draft pushes run only the fast job, so readiness is where full CI is
-    # owed: every FULL_CI_CHECKS verdict at the exact reviewed HEAD. The
-    # sibling script is the one definition the final verifier reads too.
+    # owed: every FULL_CI_CHECKS verdict at the exact reviewed HEAD, read
+    # from the sibling script that owns the list.
     full_ci_script="$(dirname "$0")/full_ci.sh"
     [ -f "$full_ci_script" ] ||
         ask '"Full CI at the exact head cannot be verified because full_ci.sh is not beside the gate; the fast draft job is not readiness evidence."'
