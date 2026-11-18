@@ -7,8 +7,12 @@ use quantick_paper::route::{AccountRoute, RouteFacts};
 use serde_json::json;
 
 use super::*;
-use crate::test_support::{FakeAccess, FakeWindow};
-use crate::trade::{CAPABILITY_VERSION, TradeDesk};
+use crate::test_support::{FakeAccess, FakeWindow, NoDesk};
+use crate::trade::{CAPABILITY_VERSION, PaperOwner, TradeDesk};
+use quantick_paper::report::session_edit::{
+    JournalEdit, JournalEditOutcome, JournalScope, SessionEditError,
+};
+use quantick_session::paper::SharedChange;
 
 /// A window whose route the calls drive, with a terminal logged into a demo
 /// account and no chart: every rule is the route's, so no desk is needed.
@@ -35,15 +39,23 @@ impl RouteWindow {
     }
 }
 
-impl TradePort for RouteWindow {
+impl PaperOwner for RouteWindow {
     fn active_desk(&self) -> Option<&dyn TradeDesk> {
         None
     }
     fn active_desk_mut(&mut self) -> Option<&mut dyn TradeDesk> {
         None
     }
-    fn persist_order_strategies(&mut self) {}
-    fn persist_risk_settings(&mut self) {}
+    fn persist(&mut self, _change: SharedChange) {}
+    fn journal_scope(&self) -> JournalScope {
+        NoDesk.journal_scope()
+    }
+    fn journal_timezone(&self) -> quantick_civil::TzOffset {
+        NoDesk.journal_timezone()
+    }
+    fn edit_journal(&mut self, edit: &JournalEdit) -> Result<JournalEditOutcome, SessionEditError> {
+        NoDesk.edit_journal(edit)
+    }
     fn account_route(&mut self) -> Option<AccountRouteResult> {
         Some(AccountRouteResult {
             route: self.route.route().id().to_owned(),
@@ -214,15 +226,23 @@ impl quantick_paper::route::RouteHost for NoTabs {
 /// A window that answers only `route_call`: the three calls go through it.
 struct SessionWindow(quantick_paper::route::BrokerSession);
 
-impl TradePort for SessionWindow {
+impl PaperOwner for SessionWindow {
     fn active_desk(&self) -> Option<&dyn TradeDesk> {
         None
     }
     fn active_desk_mut(&mut self) -> Option<&mut dyn TradeDesk> {
         None
     }
-    fn persist_order_strategies(&mut self) {}
-    fn persist_risk_settings(&mut self) {}
+    fn persist(&mut self, _change: SharedChange) {}
+    fn journal_scope(&self) -> JournalScope {
+        NoDesk.journal_scope()
+    }
+    fn journal_timezone(&self) -> quantick_civil::TzOffset {
+        NoDesk.journal_timezone()
+    }
+    fn edit_journal(&mut self, edit: &JournalEdit) -> Result<JournalEditOutcome, SessionEditError> {
+        NoDesk.edit_journal(edit)
+    }
     fn route_call(&mut self) -> Option<quantick_paper::route::RouteCall<'_>> {
         Some(quantick_paper::route::RouteCall::new(
             &mut self.0,

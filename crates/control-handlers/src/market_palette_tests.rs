@@ -228,16 +228,22 @@ impl MarketTab for PaletteTab {
     }
 }
 
-impl MarketTabHost for Host {
+impl crate::OpenTabs for Host {
+    type Tab = PaletteTab;
     fn tab_count(&self) -> usize {
         1
+    }
+    fn open_tab(&self, _index: usize) -> Option<&PaletteTab> {
+        Some(&self.tab)
     }
     fn config(&self) -> &AppConfig {
         &self.config
     }
-    fn market_tab(&self, _index: usize) -> Option<&dyn MarketTab> {
-        Some(&self.tab)
+    fn rail_magnet(&self) -> bool {
+        false
     }
+}
+impl MarketTabHost for Host {
     fn market_tab_mut(&mut self, _index: usize) -> Option<LentTab<'_>> {
         Some(LentTab {
             tab: &mut self.tab,

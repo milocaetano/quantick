@@ -84,34 +84,36 @@ pub(crate) fn register(registry: &mut ProjectionRegistry) -> Result<(), Projecti
 
 fn revision<P: TabsPort + ?Sized>(app: &P) -> InteractionRevision {
     InteractionRevision {
-        cursor: cursor_snapshot(app),
+        cursor: active_cursor(app),
         selection: selection_snapshot(app),
     }
 }
 
 fn project_cursor<P: TabsPort + ?Sized>(app: &P, _context: CaptureContext) -> CursorSnapshot {
-    cursor_snapshot(app)
+    active_cursor(app)
+}
+
+fn active_cursor<P: TabsPort + ?Sized>(app: &P) -> CursorSnapshot {
+    let reads = app.tab_reads();
+    cursor_snapshot(active_tab(app), reads.tabs().active_id(), reads.config())
 }
 
 fn project_selection<P: TabsPort + ?Sized>(app: &P, _context: CaptureContext) -> SelectionSnapshot {
     selection_snapshot(app)
 }
 
-pub(crate) fn cursor_snapshot<P: TabsPort + ?Sized>(app: &P) -> CursorSnapshot {
-    let tab = active_tab(app);
+/// What is under the pointer on `tab`, whose stable id is `tab_id`.
+pub(crate) fn cursor_snapshot(
+    tab: &Tab,
+    tab_id: u64,
+    config: &crate::config::AppConfig,
+) -> CursorSnapshot {
     let focused_side = tab.focused_side();
     let focused_pane = tab.pane(focused_side);
     let pointer = visible_panes(tab).into_iter().find_map(|(pane, side)| {
-        pane.hit_test().control_pointer_hit().map(|hit| {
-            pointer_snapshot(
-                app,
-                app.tab_reads().tabs().active_id(),
-                tab,
-                pane,
-                side,
-                hit,
-            )
-        })
+        pane.hit_test()
+            .control_pointer_hit()
+            .map(|hit| pointer_snapshot(config, tab_id, tab, pane, side, hit))
     });
     let pointer_availability = if pointer.is_some() {
         available()
@@ -119,7 +121,7 @@ pub(crate) fn cursor_snapshot<P: TabsPort + ?Sized>(app: &P) -> CursorSnapshot {
         unavailable("pointer_is_not_over_a_painted_chart")
     };
     CursorSnapshot {
-        active_tab_id: WireU64::new(app.tab_reads().tabs().active_id()),
+        active_tab_id: WireU64::new(tab_id),
         focused_pane_id: WireU64::new(focused_pane.id),
         focused_pane_side: crate::control::pane_side_dto(focused_side),
         pointer,
@@ -128,8 +130,8 @@ pub(crate) fn cursor_snapshot<P: TabsPort + ?Sized>(app: &P) -> CursorSnapshot {
     }
 }
 
-fn pointer_snapshot<P: TabsPort + ?Sized>(
-    app: &P,
+fn pointer_snapshot(
+    config: &crate::config::AppConfig,
     tab_id: u64,
     tab: &Tab,
     pane: &ChartPane,
@@ -142,7 +144,7 @@ fn pointer_snapshot<P: TabsPort + ?Sized>(
         } else {
             BarStateDto::InProgress
         };
-        chart::bar_snapshot(tab, pane, slot, bar, state, app.tab_reads().config())
+        chart::bar_snapshot(tab, pane, slot, bar, state, config)
     });
     let axis_value = hit
         .axis_value

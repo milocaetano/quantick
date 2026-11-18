@@ -89,16 +89,22 @@ impl TabDirectory for Window {
         7
     }
 }
-impl MarketTabHost for Window {
+impl crate::OpenTabs for Window {
+    type Tab = Market;
     fn tab_count(&self) -> usize {
         1
+    }
+    fn open_tab(&self, _index: usize) -> Option<&Market> {
+        Some(&self.tab)
     }
     fn config(&self) -> &AppConfig {
         &self.config
     }
-    fn market_tab(&self, _index: usize) -> Option<&dyn MarketTab> {
-        Some(&self.tab)
+    fn rail_magnet(&self) -> bool {
+        false
     }
+}
+impl MarketTabHost for Window {
     fn market_tab_mut(&mut self, _index: usize) -> Option<LentTab<'_>> {
         Some(LentTab {
             tab: &mut self.tab,

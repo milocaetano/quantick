@@ -100,3 +100,13 @@ fn a_note_past_the_reason_limit_is_refused_before_it_journals() {
     create_mark(&mut window, &mut access, &FakeWindow::trader(), &resolved).expect_err("too long");
     assert!(access.events.is_empty());
 }
+
+/// The pointer is read on the tab the trader is looking at, under that
+/// tab's own id.
+#[test]
+fn a_mark_reads_the_pointer_on_the_active_tab() {
+    let mut window = FakeWindow::new(vec![FakeTab::new(3, "WIN"), FakeTab::new(8, "WDO")]);
+    window.active = 1;
+    let resolved = resolve_mark(&window, &FakeWindow::trader(), json!({})).expect("resolved");
+    assert_eq!(resolved["target"]["active_tab_id"], "8");
+}

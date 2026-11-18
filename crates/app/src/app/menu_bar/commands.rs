@@ -9,7 +9,7 @@
 use eframe::egui;
 use quantick_control_handlers::{
     alerts::AlertDefinitionsPort, desk::DeskAct, layout::LayoutHost,
-    orderflow_settings::OrderflowSettingsPort, trade::TradePort,
+    orderflow_settings::OrderflowSettingsPort, trade::PaperHost,
 };
 use quantick_control_schema::{settings_sections::SettingsSection, window_menu::HelpPage};
 use quantick_session::{paper::TradeCommand, workspace_menu::WorkspaceCommand};
@@ -115,7 +115,7 @@ impl MenuCall {
             + LayoutHost
             + GatewayPort
             + AlertDefinitionsPort
-            + TradePort
+            + PaperHost
             + OrderflowSettingsPort
             + ?Sized,
     {
@@ -149,7 +149,12 @@ impl MenuCall {
             }
             Self::TakeMark => window.take_mark(None),
             Self::Desk(act) => _ = window.desk().map(|mut desk| desk.act(act)),
-            Self::Trade(command) => _ = window.active_desk_mut().map(|desk| desk.execute(command)),
+            Self::Trade(command) => {
+                _ = window
+                    .paper()
+                    .active_desk_mut()
+                    .map(|desk| desk.execute(command));
+            }
             Self::OpenOrderFlowPanel(section) => {
                 let tab = window.tab_reads().tabs().active_id();
                 _ = window

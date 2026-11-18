@@ -22,7 +22,7 @@ use serde_json::{Value, json};
 
 use crate::JournalAccess;
 use crate::dock::ActionDock;
-use crate::trade::TradePort;
+use crate::trade::{PaperHost, PaperOwner};
 
 /// The route's judge of a caller: the trader's own hand, or anything else.
 #[must_use]
@@ -101,8 +101,8 @@ fn leave_of(choice: Option<LeaveChoice>) -> Option<Leave> {
     })
 }
 
-fn current<P: TradePort + ?Sized>(app: &mut P) -> Result<AccountRouteResult, ControlError> {
-    app.account_route().ok_or_else(|| {
+fn current(paper: &mut dyn PaperOwner) -> Result<AccountRouteResult, ControlError> {
+    paper.account_route().ok_or_else(|| {
         known_error(
             codes::CAPABILITY_UNAVAILABLE,
             "this window has no account route",
@@ -116,27 +116,29 @@ fn to_value(result: &AccountRouteResult) -> Result<Value, ControlError> {
         .map_err(|error| ControlError::invalid_request(format!("account route: {error}")))
 }
 
-fn read<P: TradePort + ?Sized, A: JournalAccess>(
-    app: &mut P,
+fn read<H: PaperHost + ?Sized, A: JournalAccess>(
+    host: &mut H,
     _access: &mut A,
     _actor: &ActorContext,
     input: &Value,
 ) -> Result<Value, ControlError> {
+    let mut owner = host.paper();
+    let paper = &mut *owner;
     let _: AccountReadInput = serde_json::from_value(input.clone())
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
-    to_value(&current(app)?)
+    to_value(&current(paper)?)
 }
 
 /// Ask the route for `request`, journal the answer, and reply with the
 /// route now in force.
-fn route_to<P: TradePort + ?Sized, A: JournalAccess>(
-    app: &mut P,
+fn route_to<A: JournalAccess>(
+    paper: &mut dyn PaperOwner,
     access: &mut A,
     actor: &ActorContext,
     request: RouteRequest,
     asked: Value,
 ) -> Result<Value, ControlError> {
-    let answer = app.request_route(request);
+    let answer = paper.request_route(request);
     access.record_event(NewEvent::by(
         TRADE_MODULE_ID,
         ROUTE_EVENT_KIND,
@@ -144,20 +146,22 @@ fn route_to<P: TradePort + ?Sized, A: JournalAccess>(
         json!({
             "asked": asked,
             "accepted": answer.is_ok(),
-            "route": app.account_route().map(|now| now.route),
+            "route": paper.account_route().map(|now| now.route),
             "refused_because": answer.err().map(Refusal::code),
         }),
     ));
     answer.map_err(refusal_error)?;
-    to_value(&current(app)?)
+    to_value(&current(paper)?)
 }
 
-fn select<P: TradePort + ?Sized, A: JournalAccess>(
-    app: &mut P,
+fn select<H: PaperHost + ?Sized, A: JournalAccess>(
+    host: &mut H,
     access: &mut A,
     actor: &ActorContext,
     input: &Value,
 ) -> Result<Value, ControlError> {
+    let mut owner = host.paper();
+    let paper = &mut *owner;
     let asked = input.clone();
     let input: AccountSelectInput = serde_json::from_value(input.clone())
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
@@ -166,20 +170,22 @@ fn select<P: TradePort + ?Sized, A: JournalAccess>(
         actor_of(actor),
         leave_of(input.leave),
     );
-    route_to(app, access, actor, request, asked)
+    route_to(paper, access, actor, request, asked)
 }
 
-fn disarm<P: TradePort + ?Sized, A: JournalAccess>(
-    app: &mut P,
+fn disarm<H: PaperHost + ?Sized, A: JournalAccess>(
+    host: &mut H,
     access: &mut A,
     actor: &ActorContext,
     input: &Value,
 ) -> Result<Value, ControlError> {
+    let mut owner = host.paper();
+    let paper = &mut *owner;
     let asked = input.clone();
     let input: AccountDisarmInput = serde_json::from_value(input.clone())
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
     route_to(
-        app,
+        paper,
         access,
         actor,
         RouteRequest::new(Route::Sim, actor_of(actor), leave_of(input.leave)),
@@ -191,7 +197,7 @@ fn disarm<P: TradePort + ?Sized, A: JournalAccess>(
 pub fn register<D, H, A>(registry: &mut D) -> Result<(), RegistryError>
 where
     D: ActionDock<H, A>,
-    H: TradePort + ?Sized,
+    H: PaperHost + ?Sized,
     A: JournalAccess,
 {
     registry.register(read_route_descriptor(), read::<H, A>)?;

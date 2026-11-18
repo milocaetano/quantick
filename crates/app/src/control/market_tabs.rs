@@ -1,20 +1,10 @@
 //! The window's part in the feed and market calls: resolve the addressed tab
 //! and lend the config, the layout's drawings and the History default.
-use quantick_control_handlers::market_tab::{LentTab, MarketTab, MarketTabHost};
+use quantick_control_handlers::market_tab::{LentTab, MarketTabHost};
 
 use crate::app::control_host::ControlPort;
-use crate::config::AppConfig;
 
 impl MarketTabHost for dyn ControlPort {
-    fn tab_count(&self) -> usize {
-        self.tab_reads().tabs().len()
-    }
-    fn config(&self) -> &AppConfig {
-        self.tab_reads().config()
-    }
-    fn market_tab(&self, index: usize) -> Option<&dyn MarketTab> {
-        Some(self.tab_reads().tab_at(index)?)
-    }
     fn market_tab_mut(&mut self, index: usize) -> Option<LentTab<'_>> {
         self.tabs_mut().lend_tab(index)
     }
