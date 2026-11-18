@@ -1,3 +1,7 @@
+> **Retired 2026-11-17.** The `campaign`, `mission`, `ship`, `arch-review` and
+> `delivery-review` skills were retired; this file is kept as history. Integration
+> work uses `/feature`; single changes use `/implement`.
+
 # Durable state contract v1
 
 GitHub is authoritative. Local files, conversation and host goals are caches.
@@ -189,7 +193,7 @@ denials get no blind retry. Honor rate-limit reset times and checkpoint longer
 waits. Each attempt records error signature, head, evidence, action and result
 in the child; counters persist in checkpoints. A changed hypothesis does not
 erase history. The delivery contract's stricter repair limits still apply.
-Review repairs also follow [the delivery contract](../workflow/delivery.md):
+Review repairs also follow [the delivery contract](../../workflow/delivery.md):
 retain finding IDs and the mission repair-batch counter across checkpoints.
 Record newly discovered findings separately from attempted repairs; do not use
 the raw total-open count as the stall test. Existing failed evidence and

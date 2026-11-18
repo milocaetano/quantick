@@ -1,6 +1,6 @@
-//! Guard that keeps agent execution evidence and mission files out of Git.
+//! Guard that keeps agent execution evidence and goal files out of Git.
 //!
-//! Every mission used to leave its goal file behind as
+//! Every goal used to leave its file behind as
 //! `.claude/GOAL-archive-<slug>.md`, and every capture, log and review
 //! dossier beside it under an evidence folder. By 2026-09-15 those records
 //! were 31 MB of a 56 MB pack: more than half of what every clone downloads,
@@ -10,7 +10,7 @@
 //! PR was still open. Prose did not hold the rule, so this guard does.
 //!
 //! The results a later reader needs stay on the PR and its linked issue:
-//! the mission summary, the review reports and CI. Raw output stays in a
+//! the PR summary, the review findings and CI. Raw output stays in a
 //! temporary directory or a CI artifact.
 //!
 //! # What counts
@@ -18,12 +18,12 @@
 //! A path is refused when Git would carry it: tracked already, or untracked
 //! and not ignored, so the next `git add -A` would commit it. An ignored
 //! local file is working state and passes — `.claude/GOAL.md` is where a
-//! mission lives while it runs.
+//! goal lives while it runs.
 //!
 //! # What this cannot see
 //!
 //! It judges paths, not content. Evidence pasted into a maintained document
-//! under another name passes; that is `arch-review`'s call to make.
+//! under another name passes; that is the code review's call to make.
 
 use std::path::Path;
 use std::process::Command;
@@ -61,13 +61,12 @@ const ALLOWED: &[&str] = &[
 ];
 
 /// What the guard asks for.
-pub const REMEDY: &str = "Execution evidence and mission files do not belong in Git. Remove the \
+pub const REMEDY: &str = "Execution evidence and goal files do not belong in Git. Remove the \
                           path from the index (`git rm --cached <path>`, or `git rm` to drop it), \
                           keep raw output in a temporary directory or a CI artifact, and put the \
-                          result — verdicts, numbers, artifact links — in the PR body. The \
-                          mission's goal goes in the PR body, under its summary block.";
+                          result — verdicts, numbers, artifact links — in the PR body.";
 
-/// Whether a workspace-relative path names evidence or a mission file. The
+/// Whether a workspace-relative path names evidence or a goal file. The
 /// single owner of that question, so the scan and the edit-time hook cannot
 /// disagree about scope.
 pub fn forbidden(relative: &str) -> bool {
@@ -94,7 +93,7 @@ fn git(root: &Path, args: &[&str]) -> Result<(i32, Vec<u8>), String> {
 
 fn finding(relative: &str) -> Finding {
     Finding::new(
-        format!("{relative}: execution evidence or a mission file Git would carry"),
+        format!("{relative}: execution evidence or a goal file Git would carry"),
         REMEDY,
     )
 }
@@ -159,7 +158,7 @@ mod tests {
     use std::fs;
 
     #[test]
-    fn mission_files_and_evidence_folders_are_in_scope() {
+    fn goal_files_and_evidence_folders_are_in_scope() {
         for path in [
             ".claude/GOAL.md",
             ".claude/GOAL-archive-mission-tiers.md",
@@ -176,7 +175,7 @@ mod tests {
     #[test]
     fn maintained_documents_and_product_code_are_not() {
         for path in [
-            ".claude/skills/mission/SKILL.md",
+            ".claude/skills/implement/SKILL.md",
             ".claude/skills/GOAL-notes/SKILL.md",
             "docs/control-plane/screenshot-evidence-proof.md",
             "docs/control-plane/history/pr5c-evidence.md",
@@ -211,8 +210,8 @@ mod tests {
         assert_eq!(
             lines,
             [
-                ".claude/GOAL-archive-old.md: execution evidence or a mission file Git would carry",
-                "docs/quality/run-evidence.md: execution evidence or a mission file Git would carry",
+                ".claude/GOAL-archive-old.md: execution evidence or a goal file Git would carry",
+                "docs/quality/run-evidence.md: execution evidence or a goal file Git would carry",
             ],
         );
         for relative in [

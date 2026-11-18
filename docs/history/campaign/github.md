@@ -1,3 +1,7 @@
+> **Retired 2026-11-17.** The `campaign`, `mission`, `ship`, `arch-review` and
+> `delivery-review` skills were retired; this file is kept as history. Integration
+> work uses `/feature`; single changes use `/implement`.
+
 # GitHub operations
 
 Use installed `gh` help and live API discovery; IDs below are variables, not

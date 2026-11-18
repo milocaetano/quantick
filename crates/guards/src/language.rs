@@ -40,7 +40,7 @@ use crate::Finding;
 /// short: a word that could plausibly turn up inside English prose or an
 /// identifier — `para`, `com`, `no`, `da` — is left out, because a guard that
 /// cries wolf is a guard somebody disables. It catches the common case, not
-/// every case; reading the prose is still dimension 8's job.
+/// every case; reading the prose is still the code-review's job.
 const KEYWORDS: &[&str] = &[
     "não", "nao", "então", "entao", "também", "tambem", "porque", "você", "voce", "isso", "aqui",
     "quando", "arquivo", "pasta", "senha", "usuário", "usuario", "preço", "preco", "tela", "erro",
