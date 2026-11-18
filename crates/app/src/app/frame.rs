@@ -573,6 +573,7 @@ impl QuantickApp {
         let tab = &self.runtime.tabs[self.runtime.tabs.active_index()];
         let lead = statusbar::StatusLead::of(tab, stall, now_ms, open);
         scratch.status = statusbar::draw(ctx, &self.status_model(), self.runtime.tz, &lead);
+        self.chrome.feed_gate_rect = scratch.status.gate_rect;
         if scratch.status.open_display_settings {
             let display = quantick_control_schema::settings_sections::SettingsSection::Display;
             super::menu_bar::apply_menu_command_on(self, ctx, MenuCommand::OpenSettings(display));

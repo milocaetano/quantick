@@ -1,0 +1,5 @@
+# The tape cell's Reconnect rectangle is window chrome the scene reads, kept
+# where the status word's chip rectangle already is: its field's initial
+# value, the store after the status bar draws, and its line in chrome_reads.
+QuantickApp +3
+!budget +3

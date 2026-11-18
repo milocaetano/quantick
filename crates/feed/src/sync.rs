@@ -86,10 +86,17 @@ fn headline(notice: &FeedNotice) -> Option<&str> {
     }
 }
 
-/// When entries paused, so leaving can say for how long.
+/// How long the pause of a feed's first connect may run before the log says
+/// so: every launch starts with one, and the stall judgement's own budget is
+/// where a first connect stops being progress.
+pub const FIRST_CONNECT_QUIET_MS: i64 = crate::stall::FIRST_CONNECT_BUDGET_MS;
+
+/// When entries paused, so leaving can say for how long, and whether the log
+/// has said it paused.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct SyncWatch {
     since_ms: Option<i64>,
+    logged: bool,
 }
 
 /// An edge of the pause.
@@ -100,18 +107,26 @@ pub enum SyncChange {
 }
 
 impl SyncWatch {
-    /// Take this observation; an edge when the pause began or ended.
-    pub fn step(&mut self, paused: bool, now_ms: i64) -> Option<SyncChange> {
+    /// Take this observation; an edge for the log when the pause began or
+    /// ended. A pause on a `first_connect` — a feed that has never been up —
+    /// is said only once it outlasts [`FIRST_CONNECT_QUIET_MS`] or turns into
+    /// another cause, and its end only if its start was said.
+    pub fn step(&mut self, paused: bool, first_connect: bool, now_ms: i64) -> Option<SyncChange> {
         match (self.since_ms, paused) {
             (None, true) => {
                 self.since_ms = Some(now_ms);
-                Some(SyncChange::Entered)
+                self.logged = !first_connect;
+                self.logged.then_some(SyncChange::Entered)
+            }
+            (Some(since), true) if !self.logged => {
+                let outlasted = now_ms.saturating_sub(since) >= FIRST_CONNECT_QUIET_MS;
+                self.logged = !first_connect || outlasted;
+                self.logged.then_some(SyncChange::Entered)
             }
             (Some(since), false) => {
                 self.since_ms = None;
-                Some(SyncChange::Left {
-                    paused_ms: now_ms.saturating_sub(since).max(0),
-                })
+                let paused_ms = now_ms.saturating_sub(since).max(0);
+                std::mem::take(&mut self.logged).then_some(SyncChange::Left { paused_ms })
             }
             _ => None,
         }
@@ -308,13 +323,39 @@ mod tests {
     #[test]
     fn the_watch_reports_each_edge_once_with_the_pause_length() {
         let mut watch = SyncWatch::default();
-        assert_eq!(watch.step(false, 0), None);
-        assert_eq!(watch.step(true, 1_000), Some(SyncChange::Entered));
-        assert_eq!(watch.step(true, 2_000), None, "still paused");
+        assert_eq!(watch.step(false, false, 0), None);
+        assert_eq!(watch.step(true, false, 1_000), Some(SyncChange::Entered));
+        assert_eq!(watch.step(true, false, 2_000), None, "still paused");
         assert_eq!(
-            watch.step(false, 4_500),
+            watch.step(false, false, 4_500),
             Some(SyncChange::Left { paused_ms: 3_500 })
         );
-        assert_eq!(watch.step(false, 5_000), None);
+        assert_eq!(watch.step(false, false, 5_000), None);
+    }
+
+    /// Every launch starts paused on its first connect: the log says nothing
+    /// of one that ends in time, and says one that outlasts the budget or
+    /// turns into another cause.
+    #[test]
+    fn a_first_connect_pause_is_logged_only_once_it_outlasts_the_budget() {
+        let mut watch = SyncWatch::default();
+        assert_eq!(watch.step(true, true, 0), None);
+        assert_eq!(watch.step(false, false, 148), None, "a launch is no news");
+        assert_eq!(watch.step(true, true, 1_000), None);
+        let late = 1_000 + FIRST_CONNECT_QUIET_MS;
+        assert_eq!(watch.step(true, true, late - 1), None);
+        assert_eq!(watch.step(true, true, late), Some(SyncChange::Entered));
+        assert_eq!(
+            watch.step(false, false, late + 5),
+            Some(SyncChange::Left {
+                paused_ms: FIRST_CONNECT_QUIET_MS + 5
+            })
+        );
+        assert_eq!(watch.step(true, true, 90_000), None);
+        assert_eq!(
+            watch.step(true, false, 90_100),
+            Some(SyncChange::Entered),
+            "connected and late is news"
+        );
     }
 }

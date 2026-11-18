@@ -371,8 +371,8 @@ impl FeedLink {
     /// Whether new entries pause on this link as of `now_ms`: the judgement
     /// is [`crate::sync`]'s; this gathers the link's own readings and logs
     /// each edge of the pause. `symbol` names the tab in the log; `offline`
-    /// is the chart's latched stall. The transport is attempting while it
-    /// reconnects, or connects with nothing yet arrived this session.
+    /// is the chart's latched stall. The transport is up only once the feed
+    /// says it connected; a snapshot or backfill on the way does not count.
     pub fn sync_at(
         &mut self,
         symbol: &str,
@@ -382,11 +382,10 @@ impl FeedLink {
     ) -> Option<Desync> {
         let link = match self.feed_connection {
             _ if offline => LinkState::Offline,
-            FeedConnectionState::Reconnecting => LinkState::Attempting,
-            FeedConnectionState::Connecting if self.latest_arrival_ms.is_none() => {
+            FeedConnectionState::Connected => LinkState::Up,
+            FeedConnectionState::Connecting | FeedConnectionState::Reconnecting => {
                 LinkState::Attempting
             }
-            _ => LinkState::Up,
         };
         let transport = self.feed_capabilities.borrow().transport;
         let desync = feed_sync::assess(&SyncInput {
@@ -405,7 +404,11 @@ impl FeedLink {
             notice: &self.notice,
             limits,
         });
-        if let Some(change) = self.sync_watch.step(desync.is_some(), now_ms) {
+        let first_connect = !self.connected_once && link == LinkState::Attempting;
+        if let Some(change) = self
+            .sync_watch
+            .step(desync.is_some(), first_connect, now_ms)
+        {
             let intake = self.intake_lag.summary();
             feed_sync::log_change(change, desync.as_ref(), symbol, intake);
         }
@@ -417,8 +420,11 @@ impl FeedLink {
         self.note_arrival(received_at_ms);
     }
 
+    /// Only the live stream counts, once the transport says it connected: a
+    /// REST snapshot or backfill drained while it connects is history, and
+    /// neither ends a pause nor freshens the tape.
     fn note_arrival(&mut self, received_at_ms: i64) {
-        if self.replay.is_none() {
+        if self.replay.is_none() && self.feed_connection == FeedConnectionState::Connected {
             let newest = self
                 .latest_arrival_ms
                 .map_or(received_at_ms, |at| at.max(received_at_ms));
@@ -578,6 +584,7 @@ mod tests {
         let limits = SyncLimits::default();
         let (mut link, _notices) = link();
         streaming(&mut link);
+        link.set_connection(FeedConnectionState::Connected, 500);
         link.observe_book_arrival(1_000);
         link.attach(handle().0, 2_000);
         streaming(&mut link);
@@ -597,9 +604,9 @@ mod tests {
         assert_eq!(at(&mut link, 9_000), None, "the first arrival ends it");
     }
 
-    /// The link's word for the pause: the chart's offline latch, a
-    /// reconnect, or a connect with nothing arrived yet; a feed that streams
-    /// without saying it connected is up.
+    /// The link's word for the pause: the chart's offline latch, else the
+    /// feed's own connect. A book snapshot drained while it connects is no
+    /// arrival: it neither lifts the pause nor freshens the tape.
     #[test]
     fn the_pause_reads_the_transport_from_the_feed_and_the_charts_latch() {
         use crate::sync::{LinkState, SyncLimits};
@@ -611,7 +618,17 @@ mod tests {
         };
         assert_eq!(word(&mut link, false), Some(LinkState::Attempting));
         link.observe_book_arrival(5);
-        assert_eq!(word(&mut link, false), None, "it streams");
+        assert_eq!(
+            word(&mut link, false),
+            Some(LinkState::Attempting),
+            "a snapshot"
+        );
+        link.set_connection(FeedConnectionState::Connected, 6);
+        assert_eq!(word(&mut link, false), None, "connected, nothing old yet");
+        let age = link
+            .sync_at("WINZ26", false, limits, 5_006)
+            .map(|paused| paused.tape_age_ms);
+        assert_eq!(age, Some(Some(5_000)), "the snapshot never freshened it");
         assert_eq!(word(&mut link, true), Some(LinkState::Offline));
         link.set_connection(FeedConnectionState::Reconnecting, 8);
         assert_eq!(word(&mut link, false), Some(LinkState::Attempting));

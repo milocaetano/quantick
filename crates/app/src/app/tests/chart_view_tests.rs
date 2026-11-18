@@ -501,6 +501,18 @@ fn a_late_feed_pauses_the_toolbar_buy_and_offers_reconnect() {
     let gate = app.active_tab().paper.trade_gate().expect("paused");
     assert_eq!(gate.reading, feed::sync::SyncReading::Latency);
     assert!(app.chrome_reads().feed_reconnect_offered());
+    let painted = app.chrome_reads().feed_gate_rect();
+    assert!(painted.is_some(), "Reconnect stands beside the tape cell");
+    let scene = crate::control::scene_snapshot(&app);
+    let named = quantick_control_schema::scene::FEED_RECONNECT_CONTROL_ID;
+    let reconnect = (scene.controls.iter())
+        .find(|control| control.control_id == named)
+        .expect("the scene names the tape cell's Reconnect");
+    assert_eq!(reconnect.capability_id.as_deref(), Some("feed.reconnect"));
+    assert!(
+        reconnect.bounds.is_some(),
+        "where it was painted: {painted:?}"
+    );
     let toast = app.active_tab_mut().paper.take_toast();
     app.apply_toolbar_action(ToolbarAction::PaperBuy);
     assert!(app.active_tab().paper.is_flat(), "{toast:?}");

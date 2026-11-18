@@ -458,6 +458,8 @@ pub(crate) struct ChromeReads<'a> {
 pub(crate) struct ChromeDrawn {
     /// Where the feed's offline chip was painted, or `None` when it was not.
     pub(crate) feed_chip_rect: Option<egui::Rect>,
+    /// Where the tape cell's Reconnect was painted, or `None`.
+    pub(crate) feed_gate_rect: Option<egui::Rect>,
     /// The tab whose chip opened the feed's recovery popup, if any.
     pub(crate) feed_popup_tab: Option<u64>,
     /// Whether a recording opens with the session day before it joined.
@@ -535,12 +537,18 @@ impl<'a> ChromeReads<'a> {
             .map(|word| word.word)
     }
 
-    /// Whether a one-click Reconnect stands outside the popup: the overlay's or
-    /// the status bar's, whichever is up, or the tape cell's while entries pause.
+    /// Whether a one-click Reconnect stands outside the popup; see
+    /// `quantick_control_handlers::connection::reconnect_offered`.
     pub(crate) fn feed_reconnect_offered(self) -> bool {
         let tab = &self.tabs[self.tabs.active_index()];
-        tab.connection.state().link == quantick_chart::connection_state::Link::Offline
-            || tab.paper.trade_gate().is_some_and(|g| g.offers_reconnect())
+        let link = tab.connection.state().link;
+        quantick_control_handlers::connection::reconnect_offered(link, tab.paper.trade_gate())
+    }
+
+    /// Where the tape cell's Reconnect was painted while entries pause, or
+    /// `None` when it was not.
+    pub(crate) fn feed_gate_rect(self) -> Option<egui::Rect> {
+        self.drawn.feed_gate_rect
     }
 
     /// Whether the recovery popup that chip opens is showing, on the chart
@@ -781,6 +789,7 @@ impl ChromePort for QuantickApp {
     fn chrome_reads(&self) -> ChromeReads<'_> {
         let drawn = ChromeDrawn {
             feed_chip_rect: self.chrome.feed_chip_rect,
+            feed_gate_rect: self.chrome.feed_gate_rect,
             feed_popup_tab: self.surfaces.feed_notice.model_state.open(),
             replay_day_before: self.surfaces.replay_browser.day_before(),
         };

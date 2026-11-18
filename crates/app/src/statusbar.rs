@@ -214,6 +214,8 @@ pub struct StatusResponse {
     pub reconnect: bool,
     /// The Reconnect beside the tape cell, while entries pause, was pressed.
     pub gate_reconnect: bool,
+    /// Where that Reconnect was painted, while it is.
+    pub gate_rect: Option<egui::Rect>,
 }
 
 /// What the feed-state cell shows this frame.
@@ -291,7 +293,9 @@ pub fn draw(
                 if let Some(gate) = offered.filter(|_| !lead.open) {
                     let why = |ui: &mut egui::Ui| _ = ui.label(gate.sentence());
                     let reconnect = &crate::feed_notice::NoticeAction::Reconnect;
-                    response.gate_reconnect = quick_control(ui, reconnect, why);
+                    let pressed = quick_control(ui, reconnect, why);
+                    (response.gate_reconnect, response.gate_rect) =
+                        (pressed.clicked(), Some(pressed.rect));
                 }
                 ui.separator();
                 response.open_trading_tab = draw_content(ui, model);
@@ -379,23 +383,21 @@ fn draw_lead(ui: &mut egui::Ui, lead: &StatusLead<'_>, response: &mut StatusResp
     }
     if word.reconnect && !lead.open {
         let cost = |ui: &mut egui::Ui| _ = ui.label(lead.action.cost());
-        response.reconnect = quick_control(ui, &lead.action, cost);
+        response.reconnect = quick_control(ui, &lead.action, cost).clicked();
     }
 }
 
-/// The one-click act a feed in trouble offers, `hover` saying why; whether
-/// it was pressed.
+/// The one-click act a feed in trouble offers, `hover` saying why.
 fn quick_control(
     ui: &mut egui::Ui,
     action: &crate::feed_notice::NoticeAction,
     hover: impl FnOnce(&mut egui::Ui),
-) -> bool {
+) -> egui::Response {
     let colour = theme::get(ui.ctx()).loading_meta();
     let text = egui::RichText::new(action.label()).small().color(colour);
     ui.add(egui::Label::new(text).sense(egui::Sense::click()))
         .on_hover_cursor(egui::CursorIcon::PointingHand)
         .on_hover_ui(hover)
-        .clicked()
 }
 
 /// Venue, symbol, lag.

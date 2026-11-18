@@ -689,39 +689,48 @@ fn push_feed_status<P: TabsPort + ChromePort + ?Sized>(
     app: &P,
     tab: &Tab,
 ) {
-    let Some(chip) = app.chrome_reads().feed_chip_rect() else {
+    // The tape cell's Reconnect stands alone, with no chip, on a late link.
+    let (chip, gate) = (
+        app.chrome_reads().feed_chip_rect(),
+        app.chrome_reads().feed_gate_rect(),
+    );
+    if chip.is_none() && gate.is_none() {
         return;
-    };
+    }
     let owner = || SceneOwnerSnapshot {
         kind: SceneOwnerKindDto::FeedStatus,
         id: FEED_STATUS_OWNER_ID.to_owned(),
     };
     let popup_open = app.chrome_reads().feed_popup_open();
-    let chip_bounds = rect_bounds(chip);
-    controls.push(SceneControlSnapshot {
-        control_id: FEED_CHIP_CONTROL_ID.to_owned(),
-        // The word the status bar paints, not one assembled here.
-        label: app
-            .chrome_reads()
-            .feed_word()
-            .unwrap_or(crate::feed_notice::OFFLINE_LABEL)
-            .to_owned(),
-        description: None,
-        role: SceneRoleDto::Toggle,
-        owner: owner(),
-        selected: popup_open,
-        availability: available(),
-        bounds_availability: match &chip_bounds {
-            Bounds::Rect(_) => available(),
-            Bounds::NotDrawn => unavailable("the_chip_has_not_been_drawn_yet"),
-            Bounds::NotReportable => unavailable("the_chips_rectangle_is_not_a_reportable_number"),
-        },
-        bounds: chip_bounds.into_snapshot(),
-        // Opening the popup is a gesture, not a call: everything behind it is
-        // reachable directly, so a capability whose only effect is to show a
-        // human something would be a second way to say the same thing.
-        capability_id: None,
-    });
+    if let Some(chip) = chip {
+        let chip_bounds = rect_bounds(chip);
+        controls.push(SceneControlSnapshot {
+            control_id: FEED_CHIP_CONTROL_ID.to_owned(),
+            // The word the status bar paints, not one assembled here.
+            label: app
+                .chrome_reads()
+                .feed_word()
+                .unwrap_or(crate::feed_notice::OFFLINE_LABEL)
+                .to_owned(),
+            description: None,
+            role: SceneRoleDto::Toggle,
+            owner: owner(),
+            selected: popup_open,
+            availability: available(),
+            bounds_availability: match &chip_bounds {
+                Bounds::Rect(_) => available(),
+                Bounds::NotDrawn => unavailable("the_chip_has_not_been_drawn_yet"),
+                Bounds::NotReportable => {
+                    unavailable("the_chips_rectangle_is_not_a_reportable_number")
+                }
+            },
+            bounds: chip_bounds.into_snapshot(),
+            // Opening the popup is a gesture, not a call: everything behind it is
+            // reachable directly, so a capability whose only effect is to show a
+            // human something would be a second way to say the same thing.
+            capability_id: None,
+        });
+    }
     // All inside the popup, in the order it paints them. Outside it, the
     // one-click act standing on screen: the overlay's or the status bar's.
     let stall = tab.stall_at(app.tab_reads().config(), crate::metrics::wall_clock_ms());
@@ -731,6 +740,9 @@ fn push_feed_status<P: TabsPort + ChromePort + ?Sized>(
         popup_open,
         offered: app.chrome_reads().feed_reconnect_offered(),
     };
+    // Only the tape cell's rectangle is recorded outside the popup.
+    let drawn = gate.filter(|_| chip.is_none() && !popup_open);
+    let bounds = drawn.and_then(|rect| rect_bounds(rect).into_snapshot());
     for entry in feed_status_controls(view) {
         let control = entry.control;
         controls.push(SceneControlSnapshot {
@@ -744,8 +756,12 @@ fn push_feed_status<P: TabsPort + ChromePort + ?Sized>(
             // state: neither control is chosen until it is pressed.
             selected: false,
             availability: entry.refused.map_or_else(available, unavailable),
-            bounds: None,
-            bounds_availability: bounds_not_recorded(),
+            bounds: bounds.clone(),
+            bounds_availability: if bounds.is_some() {
+                available()
+            } else {
+                bounds_not_recorded()
+            },
             capability_id: Some(control.capability_id().to_owned()),
         });
     }

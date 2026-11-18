@@ -38,6 +38,9 @@ pub(super) struct ChromeState {
     /// is the one control with no capability behind it, so its rectangle is the
     /// only way an operator reaches it.
     pub(super) feed_chip_rect: Option<egui::Rect>,
+    /// Where the tape cell's Reconnect was drawn while entries pause, for the
+    /// scene, written as part of drawing it.
+    pub(super) feed_gate_rect: Option<egui::Rect>,
 
     /// The toolbar's + and its ADD TO CANVAS menu.
     pub(super) add_menu: crate::add_widget::AddMenu,
