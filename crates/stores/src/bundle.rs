@@ -306,6 +306,48 @@ pub fn recent_label(path: &Path) -> String {
         .unwrap_or_else(|| path.to_string_lossy().into_owned())
 }
 
+/// The status line after an export: where the file went, how many settings
+/// groups it holds, and `left_out`, what the bundle still does not carry.
+pub fn exported_note(path: &Path, stores: usize, left_out: &str) -> String {
+    format!(
+        "Workspace exported to {} — {stores} settings groups{left_out}",
+        path.display()
+    )
+}
+
+/// The status line after an import: the file by its menu name, and how many
+/// settings groups it restored.
+pub fn imported_note(path: &Path, stores: usize) -> String {
+    format!(
+        "Workspace \"{}\" opened — {stores} settings groups restored",
+        recent_label(path)
+    )
+}
+
+/// The status line after a refused export.
+pub fn not_exported_note(error: &str) -> String {
+    format!("Workspace not exported — {error}")
+}
+
+/// The status line after a refused import: the screen is unchanged.
+pub fn not_opened_note(error: &str) -> String {
+    format!("Workspace not opened — {error}")
+}
+
+/// The status line after the file chooser closed without an answer.
+pub const PICKER_LOST_NOTE: &str = "The file chooser could not open — see the log. Try again.";
+
+/// The answer to "where does this thing save my setup?": the cockpit home,
+/// or where it falls back to on a system with no documents folder.
+pub fn cockpit_home_note(home: Option<&Path>) -> String {
+    match home {
+        Some(home) => format!("Cockpit saved in {}", home.display()),
+        None => "This system reports no documents folder — quantick keeps the cockpit beside \
+                 wherever it was launched from"
+            .to_owned(),
+    }
+}
+
 /// A file name for `name` that a file system will accept, keeping the
 /// trader's own words wherever it can.
 ///
@@ -334,6 +376,36 @@ pub fn file_name_for(name: &str) -> String {
 mod tests {
     use super::*;
     use quantick_workspace::write_refusal::{WritesRefused, refuse_writes_on_this_thread};
+
+    #[test]
+    fn the_status_lines_name_the_file_the_count_and_the_reason() {
+        let path = Path::new("cockpits").join(format!("scalp.{BUNDLE_EXTENSION}"));
+        let shown = path.display();
+        assert_eq!(
+            exported_note(&path, 7, " (bubbles left out)"),
+            format!("Workspace exported to {shown} — 7 settings groups (bubbles left out)")
+        );
+        assert_eq!(
+            imported_note(&path, 7),
+            "Workspace \"scalp\" opened — 7 settings groups restored",
+            "an import names the file as the recent menu does"
+        );
+        assert_eq!(
+            not_exported_note("disk full"),
+            "Workspace not exported — disk full"
+        );
+        assert_eq!(
+            not_opened_note("bad file"),
+            "Workspace not opened — bad file"
+        );
+        let home = Path::new("Documents").join("quantick");
+        let shown = home.display();
+        assert_eq!(
+            cockpit_home_note(Some(&home)),
+            format!("Cockpit saved in {shown}")
+        );
+        assert!(cockpit_home_note(None).starts_with("This system reports no documents folder"));
+    }
 
     /// DS7: a saves-off session exporting a workspace leaves no trace on
     /// disk, not even the folder it would have written into.

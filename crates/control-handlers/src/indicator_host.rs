@@ -215,6 +215,49 @@ impl IndicatorRefusal {
     }
 }
 
+/// What decides whether a numeric input of the open script may be set
+/// through control, read off the editor and the focused pane.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NumericInputGate<V> {
+    /// The editor holds this script.
+    pub script_open: bool,
+    /// The indicator settings dialog is open.
+    pub settings_open: bool,
+    /// The script's view on the focused pane: `None` when it is not
+    /// attached there, `Some(None)` while it has not loaded.
+    pub view: Option<Option<V>>,
+    /// The editor's diagnostics or the view's stale reload carry errors.
+    pub source_errors: bool,
+    /// Validation and the chart reload have both settled.
+    pub inputs_ready: bool,
+}
+
+impl<V> NumericInputGate<V> {
+    /// The loaded view, or the first refusal in the order a caller fixes them.
+    ///
+    /// # Errors
+    ///
+    /// The first of [`IndicatorRefusal::ScriptNotOpen`], `SettingsOpen`,
+    /// `NotAttached`, `NotLoaded`, `SourceErrors` and `NotValidated` that holds.
+    pub fn admit(self) -> Result<V, IndicatorRefusal> {
+        if !self.script_open {
+            return Err(IndicatorRefusal::ScriptNotOpen);
+        }
+        if self.settings_open {
+            return Err(IndicatorRefusal::SettingsOpen);
+        }
+        let view = self.view.ok_or(IndicatorRefusal::NotAttached)?;
+        let view = view.ok_or(IndicatorRefusal::NotLoaded)?;
+        if self.source_errors {
+            return Err(IndicatorRefusal::SourceErrors);
+        }
+        if !self.inputs_ready {
+            return Err(IndicatorRefusal::NotValidated);
+        }
+        Ok(view)
+    }
+}
+
 impl std::fmt::Display for IndicatorRefusal {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.reason())

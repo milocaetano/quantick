@@ -45,6 +45,12 @@ impl SavedKind {
     pub fn native(id: &str) -> Self {
         SavedKind::Native { id: id.to_owned() }
     }
+    /// Whether this entry is the library script `name`; a native never is,
+    /// whatever its id.
+    #[must_use]
+    pub fn is_script(&self, name: &str) -> bool {
+        matches!(self, Self::Script { name: own } if own == name)
+    }
 }
 
 /// The catalog ids the two pre-catalog variants meant. Kept here rather than

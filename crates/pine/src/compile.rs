@@ -95,6 +95,23 @@ pub fn compile(source: &str, fallback_title: &str) -> Result<CompiledScript, Vec
     }
 }
 
+/// How many compile errors [`validate`] renders.
+pub const VALIDATION_ERROR_LIMIT: usize = 8;
+
+/// Check `source` without running it, as the script editor does after an
+/// edit: its declared inputs, or the first [`VALIDATION_ERROR_LIMIT`] errors
+/// rendered against `title`, one per line.
+pub fn validate(source: &str, title: &str) -> (Vec<InputSpec>, Option<String>) {
+    match compile(source, title) {
+        Ok(compiled) => (compiled.inputs, None),
+        Err(errors) => {
+            let rendered = errors.iter().take(VALIDATION_ERROR_LIMIT);
+            let rendered = rendered.map(|error| error.render(title, source));
+            (Vec::new(), Some(rendered.collect::<Vec<_>>().join("\n")))
+        }
+    }
+}
+
 /// What a queued pass-1 call turns into once names resolve.
 #[derive(Debug, Clone, Copy)]
 enum PendingPlot {

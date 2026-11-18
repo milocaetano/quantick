@@ -202,6 +202,30 @@ impl ScriptLibrary {
             ScriptOrigin::File(path) => persistence::read_source(path),
         })
     }
+
+    /// The index of the entry named `name`, the key every by-name caller uses.
+    pub fn index_of(&self, name: &str) -> Option<usize> {
+        self.entries.iter().position(|entry| entry.name == name)
+    }
+
+    /// What a saved entry naming `name` loads: the library index, when the
+    /// library still has it, and its text or the message its error slot shows.
+    pub fn load(&self, name: &str) -> LoadedScript {
+        let index = self.index_of(name);
+        let text = match index.and_then(|index| self.read(index)) {
+            Some(text) => text,
+            None => Err(format!("{name} is not in the script library")),
+        };
+        LoadedScript { index, text }
+    }
+}
+
+/// [`ScriptLibrary::load`]: `index` is `None` for a name the library no
+/// longer has, and `text` is then that message.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LoadedScript {
+    pub index: Option<usize>,
+    pub text: Result<String, String>,
 }
 
 impl ScriptLibraryPort for ScriptLibrary {
@@ -211,9 +235,7 @@ impl ScriptLibraryPort for ScriptLibrary {
 
     fn read(&self, id: &str) -> Result<ScriptDocument, String> {
         let index = self
-            .entries
-            .iter()
-            .position(|entry| entry.name == id)
+            .index_of(id)
             .ok_or_else(|| format!("unknown script: {id}"))?;
         let entry = &self.entries[index];
         Ok(ScriptDocument {
@@ -398,5 +420,35 @@ plot(close)
         names.sort_unstable();
         names.dedup();
         assert_eq!(names.len(), EMBEDDED_SCRIPTS.len());
+    }
+
+    #[test]
+    fn a_saved_name_loads_its_index_and_text_or_names_what_is_missing() {
+        let dir = scratch("load");
+        std::fs::write(dir.join("gone.pine"), "plot(close)").unwrap();
+        let library = ScriptLibrary::scan_dir(&dir);
+        let (name, source) = EMBEDDED_SCRIPTS[0];
+        let index = library.index_of(name).expect("embedded entries are listed");
+        assert_eq!(library.entries()[index].name, name);
+        assert_eq!(
+            library.load(name),
+            LoadedScript {
+                index: Some(index),
+                text: Ok(source.to_owned())
+            }
+        );
+        assert_eq!(
+            library.load("nowhere.pine"),
+            LoadedScript {
+                index: None,
+                text: Err("nowhere.pine is not in the script library".into())
+            },
+            "a name the library lacks still loads, as the message its error slot shows"
+        );
+        // Listed at scan time, deleted since: the index stays, the read fails.
+        std::fs::remove_file(dir.join("gone.pine")).unwrap();
+        let gone = library.load("gone.pine");
+        assert_eq!(gone.index, library.index_of("gone.pine"));
+        assert!(gone.index.is_some() && gone.text.is_err(), "{gone:?}");
     }
 }

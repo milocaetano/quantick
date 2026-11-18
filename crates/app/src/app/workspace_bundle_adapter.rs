@@ -9,11 +9,8 @@ pub(super) fn report_picker_lost(toast: &mut crate::surfaces::ToastSurface) {
     tracing::warn!(target: "quantick::app", schema_version = 1_u8,
         event_code = "WORKSPACE_PICKER_LOST", action = "picker_reset",
         "the file dialog closed without an answer");
-    crate::surfaces::toast::note(
-        toast,
-        "The file chooser could not open — see the log. Try again.",
-        std::time::Instant::now(),
-    );
+    let note = crate::workspace_bundle::PICKER_LOST_NOTE;
+    crate::surfaces::toast::note(toast, note, std::time::Instant::now());
 }
 
 pub(crate) struct WorkspaceBundleAdapter<'a> {
@@ -142,11 +139,8 @@ impl WorkspaceBundleAdapter<'_> {
                     action = "workspace_written",
                     "workspace exported"
                 );
-                // Honest about what the bubble settings per asset leave out.
-                self.note_workspace(format!(
-                    "Workspace exported to {} — {stores} settings groups{caveat}",
-                    path.display()
-                ));
+                let note = crate::workspace_bundle::exported_note(path, stores, &caveat);
+                self.note_workspace(note);
             }
             Err(error) => {
                 tracing::warn!(
@@ -158,7 +152,7 @@ impl WorkspaceBundleAdapter<'_> {
                     action = "workspace_not_written",
                     "could not export the workspace"
                 );
-                self.note_workspace(format!("Workspace not exported — {error}"));
+                self.note_workspace(crate::workspace_bundle::not_exported_note(&error));
             }
         }
     }
@@ -203,10 +197,7 @@ impl WorkspaceBundleAdapter<'_> {
                     action = "cockpit_replaced",
                     "workspace imported"
                 );
-                self.note_workspace(format!(
-                    "Workspace \"{}\" opened — {stores} settings groups restored",
-                    crate::workspace_bundle::recent_label(path)
-                ));
+                self.note_workspace(crate::workspace_bundle::imported_note(path, stores));
             }
             Err(error) => {
                 tracing::warn!(
@@ -218,7 +209,7 @@ impl WorkspaceBundleAdapter<'_> {
                     action = "cockpit_unchanged",
                     "workspace refused"
                 );
-                self.note_workspace(format!("Workspace not opened — {error}"));
+                self.note_workspace(crate::workspace_bundle::not_opened_note(&error));
             }
         }
     }
@@ -285,15 +276,9 @@ impl WorkspaceBundleAdapter<'_> {
     /// The answer to "where does this thing save my setup?" — which, before
     /// the durable home, had no single answer at all.
     pub(super) fn reveal_cockpit_home(&mut self) {
-        let Some(home) = crate::store_home::home() else {
-            self.note_workspace(
-                "This system reports no documents folder — quantick keeps the cockpit beside \
-                 wherever it was launched from"
-                    .to_owned(),
-            );
-            return;
-        };
-        self.note_workspace(format!("Cockpit saved in {}", home.display()));
+        let home = crate::store_home::home();
+        self.note_workspace(crate::workspace_bundle::cockpit_home_note(home.as_deref()));
+        let Some(home) = home else { return };
         // The journal panel's opener, not a second copy of the platform
         // table: two of them means the next fix lands on one and misses the
         // other. Best effort — the path is on the status line either way, so

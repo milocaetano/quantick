@@ -13,7 +13,7 @@ use eframe::egui;
 use crate::indicator_legend;
 #[cfg(any(feature = "scenario-harness", test))]
 use crate::indicator_panel;
-use crate::indicator_worker::{IndicatorCommand, IndicatorEvent, IndicatorWorker, SlotId};
+use crate::indicator_worker::{IndicatorCommand, IndicatorWorker, SlotId};
 use crate::indicators::IndicatorView;
 use crate::indicators::library::ScriptLibrary;
 use crate::indicators::preset_file;
@@ -386,38 +386,17 @@ impl IndicatorState {
                     action = "error_slot_shown",
                     "cannot read an indicator script"
                 );
-                // A click that produces nothing at all is the failure this
-                // function's own doc comment rules out. The compile half of
-                // that promise runs worker-side; the read half never leaves
-                // the UI thread, so the error slot is built here, from the
-                // same two events the worker would have sent.
-                // The same kind string the healthy path derives from its
-                // source, so an error slot the trader fixes and reloads keeps
-                // whatever they had drawn on its pane.
-                let slot = pane.indicators.allocate_slot(format!("script.{name}"));
-                pane.indicators.apply(IndicatorEvent::Rebuilt {
-                    slot,
-                    descriptor: quantick_indicators::IndicatorDescriptor {
-                        title: quantick_stores::script_library::script_title(&name),
-                        short_title: None,
-                        overlay: false,
-                        plots: Vec::new(),
-                        fills: Vec::new(),
-                        inputs: Vec::new(),
-                    },
-                    columns: Vec::new(),
-                    bar_paint: Vec::new(),
-                    rows: 0,
-                    inputs: Vec::new(),
-                    stale: None,
-                });
-                pane.indicators.apply(IndicatorEvent::Error {
-                    slot,
-                    error: quantick_indicators::EvalError {
-                        bar_index: 0,
-                        message,
-                    },
-                });
+                // A click never produces nothing: the read failed on the UI
+                // thread, so the error slot is built here.
+                let slot = (pane.indicators).allocate_slot(
+                    crate::indicator_worker::IndicatorSource::script_kind_id(&name),
+                );
+                let title = quantick_stores::script_library::script_title(&name);
+                let events =
+                    quantick_indicator_session::unloaded_script_events(slot, title, message);
+                events
+                    .into_iter()
+                    .for_each(|event| pane.indicators.apply(event));
                 Some((
                     slot,
                     LibraryAttachment {

@@ -204,3 +204,36 @@ pub fn fold_parked(
         (_, newer) => Some(newer),
     }
 }
+
+/// The two events that show a script the worker never received — one the
+/// library no longer has, or a file that could not be read — as the slot the
+/// worker would have built: an empty descriptor under `title`, then `message`
+/// as its error. Built on the UI thread, so a failed add still takes its slot
+/// and the layout's entry indices stay aligned with the pane's slots.
+pub fn unloaded_script_events(slot: SlotId, title: String, message: String) -> [IndicatorEvent; 2] {
+    [
+        IndicatorEvent::Rebuilt {
+            slot,
+            descriptor: IndicatorDescriptor {
+                title,
+                short_title: None,
+                overlay: false,
+                plots: Vec::new(),
+                fills: Vec::new(),
+                inputs: Vec::new(),
+            },
+            columns: Vec::new(),
+            bar_paint: Vec::new(),
+            rows: 0,
+            inputs: Vec::new(),
+            stale: None,
+        },
+        IndicatorEvent::Error {
+            slot,
+            error: EvalError {
+                bar_index: 0,
+                message,
+            },
+        },
+    ]
+}
