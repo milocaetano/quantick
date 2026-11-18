@@ -8,9 +8,6 @@ use quantick_control_handlers::desk::DeskAct;
 use quantick_session::paper::TradeCommand;
 use serde_json::{Value, json};
 
-/// A `null` `tab_id` or `pane_id` in a case's input is filled with the
-/// active tab and its focused pane.
-///
 /// What a case reads back once the click or the call has run.
 type Reading = fn(&mut QuantickApp) -> String;
 
@@ -55,7 +52,9 @@ fn layer(app: &mut QuantickApp) -> String {
 type Case = (fn() -> MenuCall, &'static str, Value, Reading);
 
 /// Each mapped command next to its call: the click on one window, the call
-/// on a twin, the same reading on both, and a reading that moved.
+/// on a twin, the same reading on both, and a reading that moved. A `null`
+/// `tab_id` or `pane_id` in a case's input is filled with the active tab and
+/// its focused pane.
 #[test]
 fn a_menu_call_and_its_named_call_leave_the_same_window() {
     let preset = &crate::canvas_layout::LAYOUT_PRESETS[2];

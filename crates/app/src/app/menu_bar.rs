@@ -19,6 +19,7 @@ use quantick_session::{close_queue::CloseScope, workspace_menu::WorkspaceCommand
 use quantick_ui_model::market_palette::Intent as PaletteIntent;
 use std::time::Instant;
 
+use super::indicator_manager::IndicatorState;
 use super::{ControlWindow, QuantickApp, tab_workspaces::apply_workspace_command};
 pub(super) use commands::{MenuCall, MenuCommand};
 pub(in crate::app) use menus::{MenuDoor, WindowMenuState};
@@ -398,12 +399,10 @@ pub(super) fn apply_menu_command_on(app: &mut QuantickApp, ctx: &egui::Context, 
             canvas.fold(false, !canvas.folds().0 && canvas.column_painted());
         }
         MenuCommand::ToggleLegend => {
-            let collapsed = app.focused_pane().legend_collapsed;
-            super::indicator_manager::IndicatorState::set_legend_collapsed(
-                app.focused_pane_mut(),
-                !collapsed,
-            );
+            let collapsed = !app.focused_pane().legend_collapsed;
+            IndicatorState::set_legend_collapsed(app.focused_pane_mut(), collapsed);
         }
+        MenuCommand::ForgetWorkspace => _ = app.workspace_save_adapter().forget_workspace(),
         MenuCommand::OpenRecentDesk(path) => {
             app.workspace_bundle_adapter().import_workspace_from(&path);
         }

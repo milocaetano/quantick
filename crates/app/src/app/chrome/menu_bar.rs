@@ -185,7 +185,7 @@ fn settle_row(id: RowId, commands: &mut Vec<MenuCommand>) {
         RowId::ExportDesk => MenuCall::Desk(DeskAct::PickExport).into(),
         RowId::ImportDesk => MenuCall::Desk(DeskAct::PickImport).into(),
         RowId::RevealDesk => MenuCommand::RevealDesk,
-        RowId::ResetStartupDesk => MenuCall::Desk(DeskAct::Forget).into(),
+        RowId::ResetStartupDesk => MenuCommand::ForgetWorkspace,
         RowId::KeyboardShortcuts => MenuCommand::OpenHelp(HelpPage::KeyboardShortcuts),
         RowId::ReplayFileFormat => MenuCommand::OpenReplayFormatHelp,
         RowId::AboutWorkspaces => MenuCommand::OpenHelp(HelpPage::AboutWorkspaces),

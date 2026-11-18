@@ -26,7 +26,7 @@ use super::{
 };
 
 /// One thing a menu entry or a menu shortcut asked for. The variants after
-/// [`Self::OpenSettings`] have no named call yet and act on the window.
+/// [`Self::OpenSettings`] act on the window: no named call does their job yet.
 #[derive(Debug)]
 pub(in crate::app) enum MenuCommand {
     /// What a named call also does, through the door its handler takes.
@@ -42,6 +42,8 @@ pub(in crate::app) enum MenuCommand {
     ToggleContextCharts,
     /// Fold the focused pane's indicator legend, or open it back up.
     ToggleLegend,
+    /// `desk.forget`'s owner, without the call's skip of a file with no tabs.
+    ForgetWorkspace,
     OpenRecentDesk(std::path::PathBuf),
     RevealDesk,
     SetToolboxDock(ToolboxDock),
@@ -53,7 +55,7 @@ pub(in crate::app) enum MenuCommand {
     OpenHelp(HelpPage),
 }
 
-/// A menu command a named call also carries out.
+/// A menu command sent through the port the named calls' handlers take.
 #[derive(Debug)]
 pub(in crate::app) enum MenuCall {
     /// `alerts.open`.
