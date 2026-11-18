@@ -5,6 +5,7 @@ use super::*;
 use super::super::menu_bar::{MenuCall, MenuCommand, apply_menu_command_on};
 use crate::control::ActionOrigin;
 use quantick_control_handlers::desk::DeskAct;
+use quantick_control_schema::settings_sections::SettingsSection;
 use quantick_session::paper::TradeCommand;
 use serde_json::{Value, json};
 
@@ -24,8 +25,8 @@ fn context_order(app: &mut QuantickApp) -> String {
     format!("{:?}", panes.collect::<Vec<_>>())
 }
 
-fn picker(app: &mut QuantickApp) -> String {
-    format!("{:?}", app.runtime.workspace.picker_mut().is_open())
+fn settings(app: &mut QuantickApp) -> String {
+    format!("{:?}", app.surfaces.settings_window.model_state.shown())
 }
 
 fn alerts(app: &mut QuantickApp) -> String {
@@ -59,7 +60,7 @@ type Case = (fn() -> MenuCall, &'static str, Value, Reading);
 fn a_menu_call_and_its_named_call_leave_the_same_window() {
     let preset = &crate::canvas_layout::LAYOUT_PRESETS[2];
     let section = crate::ui_state::PanelSection::L2;
-    let cases: [Case; 9] = [
+    let cases: [Case; 8] = [
         (|| MenuCall::OpenAlerts, "alerts.open", json!({}), alerts),
         (
             || MenuCall::ApplyLayoutPreset(&crate::canvas_layout::LAYOUT_PRESETS[2]),
@@ -79,17 +80,12 @@ fn a_menu_call_and_its_named_call_leave_the_same_window() {
             json!({ "from": "1", "to": "0" }),
             context_order,
         ),
+        // The desk door; its pickers would raise a native dialog.
         (
-            || MenuCall::Desk(DeskAct::PickExport),
-            "desk.export",
-            json!({}),
-            picker,
-        ),
-        (
-            || MenuCall::Desk(DeskAct::PickImport),
-            "desk.import",
-            json!({}),
-            picker,
+            || MenuCall::Desk(DeskAct::OpenSettings(SettingsSection::Display)),
+            "settings.open",
+            json!({ "section": SettingsSection::Display }),
+            settings,
         ),
         (
             || MenuCall::OpenOrderFlowPanel(crate::ui_state::PanelSection::L2),
