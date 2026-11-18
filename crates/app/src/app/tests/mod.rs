@@ -105,6 +105,7 @@ mod control_launch_baselines;
 mod control_plane_tests;
 mod control_port_tests;
 mod drag_to_close_matrix_tests;
+mod drawing_bar_dismiss_tests;
 mod drawing_color_popover_tests;
 mod drawing_demo_baselines;
 mod drawing_magnet_tests;

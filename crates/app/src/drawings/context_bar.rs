@@ -24,6 +24,7 @@ use crate::drawings::StyleColor32;
 use eframe::egui;
 use egui_phosphor::regular as icons;
 pub use quantick_drawings::context_bar::{Capabilities, Slot, slots};
+use quantick_ui_model::drawing_chrome::bar_dismissal::{BarDismissal, BarTarget, Press};
 
 use super::action_bar::ActionBarIntent;
 use super::{DrawingStyle, GlyphSize, MAX_DRAWING_FILL_ALPHA};
@@ -245,6 +246,7 @@ pub struct ContextBar {
     /// below is about which of hand and rule wins within a session.
     manual: Option<egui::Pos2>,
     suppression: Suppression,
+    dismissal: BarDismissal,
     last_selection: Option<usize>,
     /// Screen rect of the slot each popover hangs from.
     anchor: Option<egui::Rect>,
@@ -344,6 +346,22 @@ impl ContextBar {
         self.open = Popover::None;
         self.rect = None;
         true
+    }
+
+    /// Step [`BarDismissal`] with this frame, answering whether the bar stands
+    /// dismissed. Dismissing drops the popover and the rect, so a later press
+    /// where the bar was is not read as one on it.
+    pub fn step_dismissal(
+        &mut self,
+        target: Option<BarTarget>,
+        focused: bool,
+        press: Option<Press>,
+    ) -> bool {
+        if self.dismissal.step(target, focused, press) {
+            self.open = Popover::None;
+            self.rect = None;
+        }
+        self.dismissal.dismissed()
     }
 
     #[must_use]

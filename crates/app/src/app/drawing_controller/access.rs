@@ -59,6 +59,7 @@ pub(super) struct ChromeFacts {
     pub candles_right: Option<f32>,
     pub legends: Option<eframe::egui::Rect>,
     pub auto_range: Option<(f64, f64)>,
+    pub press_pick: Option<Option<usize>>,
 }
 impl DrawingReadAccess<'_> {
     pub(super) fn drawings(&self) -> &drawings::Drawings {
@@ -110,6 +111,7 @@ impl DrawingReadAccess<'_> {
                 .chain(pane.frame.indicator_legend)
                 .reduce(|a, b| a.union(b)),
             auto_range: pane.frame.auto_range,
+            press_pick: pane.gestures.press_pick,
         }
     }
 }

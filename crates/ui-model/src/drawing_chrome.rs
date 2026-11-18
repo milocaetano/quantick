@@ -1,6 +1,8 @@
 //! Presentation state for the drawing chrome. Drawing rules remain in quantick-drawings.
 #[path = "drawing_chrome/actions.rs"]
 mod actions;
+#[path = "drawing_chrome/bar_dismissal.rs"]
+pub mod bar_dismissal;
 #[path = "drawing_chrome/effects.rs"]
 mod effects;
 #[path = "drawing_chrome/inline.rs"]

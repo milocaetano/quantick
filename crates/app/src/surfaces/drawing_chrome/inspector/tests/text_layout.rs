@@ -61,6 +61,7 @@ fn inspect_long_text(pinned: bool) {
                     legends: None,
                     auto_range: None,
                     selected_bbox: None,
+                    press_pick: None,
                     selected_band: None,
                     tab: 1,
                     side: PaneSide::Flow,
