@@ -167,7 +167,7 @@ fn laid_out(preset: &'static LayoutPreset, size: egui::Vec2, torn: bool) -> (Qua
     pin_frame_clock(&ctx);
     let (mut app, events, commands, book) = test_app();
     run_frame_sized(&mut app, &ctx, size, Vec::new(), egui::Modifiers::NONE);
-    app.apply_layout_preset(preset);
+    _ = crate::tab::layout::pick(app.active_tab_mut(), preset);
     let root_tab = app.runtime.tabs.active_id();
     let mut rig = Rig {
         ctx,
@@ -178,7 +178,7 @@ fn laid_out(preset: &'static LayoutPreset, size: egui::Vec2, torn: bool) -> (Qua
     };
     if torn {
         rig._feeds.3 = Some(open_second_tab(&mut app, &rig.ctx, "ETHUSDT"));
-        app.apply_layout_preset(preset);
+        _ = crate::tab::layout::pick(app.active_tab_mut(), preset);
         rig.tab = app.runtime.tabs.active_id();
         assert_ne!(rig.tab, root_tab, "the second market is its own tab");
         let (transfer, target) = (TabId(rig.tab), TransferTarget::NewWindow);

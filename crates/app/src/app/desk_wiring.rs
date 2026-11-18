@@ -37,7 +37,7 @@ impl DeskOwner for DeskAdapter<'_> {
                 super::chrome::settings::open(menu, settings, viewport, section);
                 true
             }
-            DeskAct::Save => self.save().save_workspace("control"),
+            DeskAct::Save(reason) => self.save().save_workspace(reason),
             // A file holding only standing choices has no desk to forget: the call
             // says nothing changed rather than claiming a write.
             DeskAct::Forget => {
@@ -45,8 +45,11 @@ impl DeskOwner for DeskAdapter<'_> {
                 !saved.tabs.is_empty() && self.save().forget_workspace()
             }
             DeskAct::PickExport => {
-                let free = !self.runtime.workspace.picker_mut().is_open();
-                open_export(self.runtime);
+                let runtime = &mut *self.runtime;
+                let free = !runtime.workspace.picker_mut().is_open();
+                let tab = &runtime.tabs[runtime.tabs.active_index()];
+                let (symbol, spec) = (&tab.symbol, tab.flow_pane.series.state.spec());
+                runtime.workspace.picker_mut().open_export(symbol, spec);
                 free
             }
             DeskAct::PickImport => {
@@ -56,27 +59,18 @@ impl DeskOwner for DeskAdapter<'_> {
                 free
             }
             DeskAct::ReadReopen => self.runtime.workspace.session().save_on_exit(),
-            DeskAct::SetReopen(reopen) => write_reopen(self.save(), reopen),
+            // Writes only the choice, leaving the saved desk alone; a failed write
+            // takes it back, so memory and the file never disagree.
+            DeskAct::SetReopen(reopen) => {
+                let mut save = self.save();
+                let before = save.session.save_on_exit();
+                save.session.set_save_on_exit(reopen);
+                let written = save.write_standing_choices();
+                if !written {
+                    save.session.set_save_on_exit(before);
+                }
+                written
+            }
         }
     }
-}
-
-/// Raise the export dialog, suggesting the active chart's name.
-pub(super) fn open_export(runtime: &mut WorkspaceRuntime) {
-    let tab = &runtime.tabs[runtime.tabs.active_index()];
-    let (symbol, spec) = (&tab.symbol, tab.flow_pane.series.state.spec());
-    runtime.workspace.picker_mut().open_export(symbol, spec);
-}
-
-/// Change the choice and write only it, leaving the saved desk alone; `true`
-/// once it reached the disk. A failed write takes the choice back, so memory and
-/// the file never disagree and a retry writes again.
-pub(super) fn write_reopen(mut save: WorkspaceSaveAdapter<'_>, reopen: bool) -> bool {
-    let before = save.session.save_on_exit();
-    save.session.set_save_on_exit(reopen);
-    let written = save.write_standing_choices();
-    if !written {
-        save.session.set_save_on_exit(before);
-    }
-    written
 }

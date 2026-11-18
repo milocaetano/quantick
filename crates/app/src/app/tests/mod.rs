@@ -129,6 +129,7 @@ mod live_trade_tests;
 mod market_switch_tests;
 mod market_windows_tests;
 mod menu_bar_tests;
+mod menu_call_tests;
 mod native_resize_tests;
 mod objects_menu_tests;
 mod orderflow_tests;

@@ -1,9 +1,10 @@
 //! Adapt domain snapshots and execute registered window-menu effects.
 use crate::app::{
     LayoutPort, QuantickApp,
-    menu_bar::{MenuCommand, MenuDoor},
+    menu_bar::{MenuCall, MenuCommand, MenuDoor},
 };
 use eframe::egui;
+use quantick_control_handlers::desk::DeskAct;
 use quantick_control_schema::window_menu::{self as menu, RowId};
 use quantick_ui_model::chrome_menu_bar::{Action, Snapshot, Workspace};
 
@@ -143,19 +144,19 @@ fn settle(action: Action, commands: &mut Vec<MenuCommand>) {
             return;
         }
         Action::Workspace(command) => MenuCommand::Workspace(command),
-        Action::SaveOnExit(on) => MenuCommand::SetSaveOnExit(on),
-        Action::SwitchLayout(id) => MenuCommand::Strip(StripAction::Switch(id)),
-        Action::CreateLayout => MenuCommand::Strip(StripAction::Create),
-        Action::RenameLayout(id) => MenuCommand::Strip(StripAction::BeginRename(id)),
-        Action::DeleteLayout(id) => MenuCommand::Strip(StripAction::Delete(id)),
+        Action::SaveOnExit(on) => MenuCall::Desk(DeskAct::SetReopen(on)).into(),
+        Action::SwitchLayout(id) => MenuCall::Strip(StripAction::Switch(id)).into(),
+        Action::CreateLayout => MenuCall::Strip(StripAction::Create).into(),
+        Action::RenameLayout(id) => MenuCall::Strip(StripAction::BeginRename(id)).into(),
+        Action::DeleteLayout(id) => MenuCall::Strip(StripAction::Delete(id)).into(),
         Action::Preset(id) => {
             if let Some(preset) = quantick_workspace::canvas::preset(id) {
-                commands.push(MenuCommand::ApplyLayoutPreset(preset));
+                commands.push(MenuCall::ApplyLayoutPreset(preset).into());
             }
             return;
         }
         Action::ContextCharts => MenuCommand::ToggleContextCharts,
-        Action::MoveChart { from, to } => MenuCommand::MoveContextChart { from, to },
+        Action::MoveChart { from, to } => MenuCall::MoveContextChart { from, to }.into(),
         Action::Legend => MenuCommand::ToggleLegend,
         Action::Recent(path) => MenuCommand::OpenRecentDesk(path),
     };
@@ -164,7 +165,7 @@ fn settle(action: Action, commands: &mut Vec<MenuCommand>) {
 fn settle_row(id: RowId, commands: &mut Vec<MenuCommand>) {
     use quantick_control_schema::{settings_sections::SettingsSection, window_menu::HelpPage};
     if let Some(section) = menu::panel_section_of(id) {
-        commands.push(MenuCommand::OpenOrderFlowPanel(section));
+        commands.push(MenuCall::OpenOrderFlowPanel(section).into());
         return;
     }
     let command = match id {
@@ -175,16 +176,16 @@ fn settle_row(id: RowId, commands: &mut Vec<MenuCommand>) {
         RowId::ToolbarTop => MenuCommand::SetToolboxDock(crate::toolrail::ToolboxDock::Top),
         RowId::ToolbarBottom => MenuCommand::SetToolboxDock(crate::toolrail::ToolboxDock::Bottom),
         RowId::ToolbarHidden => MenuCommand::ToggleToolbox,
-        RowId::SaveDesk => MenuCommand::SaveWorkspace("menu"),
+        RowId::SaveDesk => MenuCall::Desk(DeskAct::Save("menu")).into(),
         RowId::TogglePanels => MenuCommand::ToggleDock,
-        RowId::Alerts => MenuCommand::OpenAlerts,
+        RowId::Alerts => MenuCall::OpenAlerts.into(),
         RowId::MarketReplay => MenuCommand::OpenReplayBrowser,
         RowId::CloseReplay => MenuCommand::CloseReplay,
         RowId::Settings => MenuCommand::OpenSettings(SettingsSection::Display),
-        RowId::ExportDesk => MenuCommand::ExportDesk,
-        RowId::ImportDesk => MenuCommand::ImportDesk,
+        RowId::ExportDesk => MenuCall::Desk(DeskAct::PickExport).into(),
+        RowId::ImportDesk => MenuCall::Desk(DeskAct::PickImport).into(),
         RowId::RevealDesk => MenuCommand::RevealDesk,
-        RowId::ResetStartupDesk => MenuCommand::ForgetWorkspace,
+        RowId::ResetStartupDesk => MenuCall::Desk(DeskAct::Forget).into(),
         RowId::KeyboardShortcuts => MenuCommand::OpenHelp(HelpPage::KeyboardShortcuts),
         RowId::ReplayFileFormat => MenuCommand::OpenReplayFormatHelp,
         RowId::AboutWorkspaces => MenuCommand::OpenHelp(HelpPage::AboutWorkspaces),

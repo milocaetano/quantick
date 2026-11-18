@@ -2,17 +2,21 @@
 //!
 //! The menus and the keyboard are two doors onto one set of commands: each
 //! view records a [`MenuCommand`] instead of reaching into the window, and
-//! [`super::QuantickApp::apply_menu_command`] is the single place a command
-//! is carried out. Commands are applied in the order they were recorded.
+//! [`super::apply_menu_command_on`] carries them out in the order they were
+//! recorded. A [`MenuCall`] goes through the port its named call's handler
+//! takes, so a click and an agent reach the same owner method.
 
 use eframe::egui;
-use quantick_control_schema::settings_sections::SettingsSection;
-use quantick_session::workspace_menu::WorkspaceCommand;
+use quantick_control_handlers::{
+    alerts::AlertDefinitionsPort, desk::DeskAct, layout::LayoutHost,
+    orderflow_settings::OrderflowSettingsPort, trade::TradePort,
+};
+use quantick_control_schema::{settings_sections::SettingsSection, window_menu::HelpPage};
+use quantick_session::{paper::TradeCommand, workspace_menu::WorkspaceCommand};
 
-use crate::canvas_layout::LayoutPreset;
-use crate::dock::DockTab;
-use crate::layout_strip::StripAction;
-use crate::toolrail::ToolboxDock;
+use crate::app::{ChromePort, GatewayPort, LayersPort, LayoutPort, TabsPort};
+use crate::{canvas_layout::LayoutPreset, chart_layers::ChartLayer, dock::DockTab};
+use crate::{layout_strip::StripAction, toolrail::ToolboxDock, ui_state::PanelSection};
 
 use super::{
     COLLAPSE_CONTEXT_SHORTCUT, DOCK_SHORTCUT, LAYOUT_PRESET_KEYS, LEGEND_SHORTCUT,
@@ -21,52 +25,63 @@ use super::{
     SETTINGS_SHORTCUT, WINDOW_MENU_SHORTCUT, layout_preset_shortcut, layout_tab_shortcut,
 };
 
-/// One thing a menu entry or a menu shortcut asked for.
+/// One thing a menu entry or a menu shortcut asked for. The variants after
+/// [`Self::OpenSettings`] have no named call yet and act on the window.
 #[derive(Debug)]
 pub(in crate::app) enum MenuCommand {
+    /// What a named call also does, through the door its handler takes.
+    Call(MenuCall),
+    /// A workspace menu row: `apply_row_command`, as the `workspace.*` calls.
+    Workspace(WorkspaceCommand),
+    /// `settings.open`'s desk act, on the window that asked.
+    OpenSettings(SettingsSection),
     OpenReplayBrowser,
-    OpenAlerts,
     CloseReplay,
     ToggleDock,
-    ToggleLayer(crate::chart_layers::ChartLayer),
     /// Put the context charts away, or bring them back.
     ToggleContextCharts,
-    ApplyLayoutPreset(&'static LayoutPreset),
-    /// Switch to the layout tab at this strip position.
-    SwitchLayoutIndex(usize),
-    Strip(StripAction),
-    /// Move the active tab's context chart at `from` to `to`.
-    MoveContextChart {
-        from: usize,
-        to: usize,
-    },
     /// Fold the focused pane's indicator legend, or open it back up.
     ToggleLegend,
-    TakeMark,
-    /// Save the workspace; the reason is what the save event records.
-    SaveWorkspace(&'static str),
-    /// A row of the workspace menus.
-    Workspace(WorkspaceCommand),
-    ForgetWorkspace,
-    ExportDesk,
-    ImportDesk,
     OpenRecentDesk(std::path::PathBuf),
     RevealDesk,
-    SetSaveOnExit(bool),
-    PaperMarket(quantick_engine::Side),
-    PaperReverse,
-    PaperFlatten,
-    PaperCancelAll,
     SetToolboxDock(ToolboxDock),
     ToggleToolbox,
     OpenDockTab(DockTab),
-    /// Open the order-flow panel on a section.
-    OpenOrderFlowPanel(crate::ui_state::PanelSection),
     OpenReplayFormatHelp,
     /// `F10`: open or close the `⋮` window menu.
     ToggleWindowMenu,
-    OpenSettings(SettingsSection),
-    OpenHelp(quantick_control_schema::window_menu::HelpPage),
+    OpenHelp(HelpPage),
+}
+
+/// A menu command a named call also carries out.
+#[derive(Debug)]
+pub(in crate::app) enum MenuCall {
+    /// `alerts.open`.
+    OpenAlerts,
+    /// `layers.visibility.set`: flip it on the focused pane, unless blocked.
+    ToggleLayer(ChartLayer),
+    /// `layout.preset.apply` on the active tab.
+    ApplyLayoutPreset(&'static LayoutPreset),
+    /// `layout.tab.switch` to the layout at this strip position.
+    SwitchLayoutIndex(usize),
+    /// `layout.tab.switch`, `.create`; rename box and delete have no call yet.
+    Strip(StripAction),
+    /// `layout.pane.move`: the active tab's context chart at `from` to `to`.
+    MoveContextChart { from: usize, to: usize },
+    /// `attention.mark.create`.
+    TakeMark,
+    /// `desk.*`.
+    Desk(DeskAct),
+    /// `trade.*`: the active desk's `TradeDesk::execute`.
+    Trade(TradeCommand),
+    /// `orderflow.settings.open` on the active tab, while its flow pane shows.
+    OpenOrderFlowPanel(PanelSection),
+}
+
+impl From<MenuCall> for MenuCommand {
+    fn from(call: MenuCall) -> Self {
+        Self::Call(call)
+    }
 }
 
 impl MenuCommand {
@@ -77,19 +92,77 @@ impl MenuCommand {
         matches!(
             self,
             Self::CloseReplay
-                | Self::ToggleLayer(_)
                 | Self::ToggleContextCharts
-                | Self::ApplyLayoutPreset(_)
-                | Self::SwitchLayoutIndex(_)
-                | Self::Strip(_)
-                | Self::MoveContextChart { .. }
                 | Self::ToggleLegend
-                | Self::OpenOrderFlowPanel(_)
-                | Self::PaperMarket(_)
-                | Self::PaperReverse
-                | Self::PaperFlatten
-                | Self::PaperCancelAll
+                | Self::Call(
+                    MenuCall::ToggleLayer(_)
+                        | MenuCall::ApplyLayoutPreset(_)
+                        | MenuCall::SwitchLayoutIndex(_)
+                        | MenuCall::Strip(_)
+                        | MenuCall::MoveContextChart { .. }
+                        | MenuCall::OpenOrderFlowPanel(_)
+                        | MenuCall::Trade(_)
+                )
         )
+    }
+}
+
+impl MenuCall {
+    /// Carry the command out through the port its named call's handler
+    /// takes. A refusal the trader should read comes back as a note.
+    pub(in crate::app) fn run<W>(self, window: &mut W) -> Option<String>
+    where
+        W: TabsPort
+            + ChromePort
+            + LayersPort
+            + LayoutPort
+            + LayoutHost
+            + GatewayPort
+            + AlertDefinitionsPort
+            + TradePort
+            + OrderflowSettingsPort
+            + ?Sized,
+    {
+        match self {
+            Self::OpenAlerts => _ = window.alert_open(),
+            Self::ToggleLayer(layer) => {
+                let (reads, style) = (window.tab_reads(), window.chrome_reads().style());
+                let index = reads.active_tab_index();
+                let tab = &reads.tabs()[index];
+                let (pane, side) = (tab.focused_pane(), tab.focused_side());
+                let blocked = pane.layer_blocked(layer, tab.capabilities(reads.config()));
+                let visible = !pane.layer_visible(layer, style);
+                if blocked.is_none() {
+                    window
+                        .layer_wiring()
+                        .set_visible(index, side, layer, visible);
+                }
+            }
+            Self::ApplyLayoutPreset(preset) => {
+                if let Some(tab) = window.layout_tab(window.active_tab_index()) {
+                    tab.pick_preset(preset);
+                }
+            }
+            Self::SwitchLayoutIndex(index) => {
+                let switched = window.layout_adapter().switch_layout_index(index);
+                return switched.err().map(|error| error.to_string());
+            }
+            Self::Strip(action) => window.layout_adapter().apply_strip_action(action),
+            Self::MoveContextChart { from, to } => {
+                let tab = window.tab_reads().tabs().active_id();
+                window.move_context_pane(tab, from, to);
+            }
+            Self::TakeMark => window.take_mark(None),
+            Self::Desk(act) => _ = window.desk().map(|mut desk| desk.act(act)),
+            Self::Trade(command) => _ = window.active_desk_mut().map(|desk| desk.execute(command)),
+            Self::OpenOrderFlowPanel(section) => {
+                let tab = window.tab_reads().tabs().active_id();
+                if let Some(seat) = window.panel_seat(tab).ok().filter(|seat| seat.flow_shown) {
+                    seat.panel.open_on(Some(section));
+                }
+            }
+        }
+        None
     }
 }
 
@@ -133,7 +206,7 @@ pub(super) fn read_shortcuts(
             if let Some(shortcut) = crate::chart_layers::shortcuts::binding(layer)
                 && pressed(&shortcut)
             {
-                commands.push(MenuCommand::ToggleLayer(layer));
+                commands.push(MenuCall::ToggleLayer(layer).into());
             }
         }
     }
@@ -141,14 +214,14 @@ pub(super) fn read_shortcuts(
         commands.push(MenuCommand::ToggleContextCharts);
     }
     // Layout by number, straight off the registry. The same
-    // `apply_layout_preset` the picker and the menu call — three doors,
+    // `tab::layout::pick` the picker and the menu call — three doors,
     // one room.
     for (index, preset) in crate::canvas_layout::LAYOUT_PRESETS.iter().enumerate() {
         let Some(shortcut) = layout_preset_shortcut(index) else {
             break;
         };
         if chart_on_screen && pressed(&shortcut) {
-            commands.push(MenuCommand::ApplyLayoutPreset(preset));
+            commands.push(MenuCall::ApplyLayoutPreset(preset).into());
         }
     }
     // Layout tabs by number: `Alt+1..9`, beside `Ctrl+Shift+1..9` for the
@@ -161,17 +234,17 @@ pub(super) fn read_shortcuts(
             break;
         };
         if chart_on_screen && !typing && pressed(&shortcut) {
-            commands.push(MenuCommand::SwitchLayoutIndex(index));
+            commands.push(MenuCall::SwitchLayoutIndex(index).into());
         }
     }
     if chart_on_screen && pressed(&LEGEND_SHORTCUT) {
         commands.push(MenuCommand::ToggleLegend);
     }
     if pressed(&crate::control::MARK_SHORTCUT) {
-        commands.push(MenuCommand::TakeMark);
+        commands.push(MenuCall::TakeMark.into());
     }
     if pressed(&SAVE_WORKSPACE_SHORTCUT) {
-        commands.push(MenuCommand::SaveWorkspace("shortcut"));
+        commands.push(MenuCall::Desk(DeskAct::Save("shortcut")).into());
     }
     // After the desk's Ctrl+Shift+S: a logical match ignores an extra Shift.
     if chart_on_screen && pressed(&SAVE_TO_WORKSPACE_SHORTCUT) {
@@ -181,21 +254,16 @@ pub(super) fn read_shortcuts(
     // keyboard. Market entries use the ticket's quantity and offsets,
     // exactly like the toolbar buttons they twin.
     if chart_on_screen && !ctx.wants_keyboard_input() {
+        let market = |side| TradeCommand::Market { side };
         for (shortcut, command) in [
-            (
-                PAPER_BUY_SHORTCUT,
-                MenuCommand::PaperMarket(quantick_engine::Side::Buy),
-            ),
-            (
-                PAPER_SELL_SHORTCUT,
-                MenuCommand::PaperMarket(quantick_engine::Side::Sell),
-            ),
-            (PAPER_REVERSE_SHORTCUT, MenuCommand::PaperReverse),
-            (PAPER_FLATTEN_SHORTCUT, MenuCommand::PaperFlatten),
-            (PAPER_CANCEL_SHORTCUT, MenuCommand::PaperCancelAll),
+            (PAPER_BUY_SHORTCUT, market(quantick_engine::Side::Buy)),
+            (PAPER_SELL_SHORTCUT, market(quantick_engine::Side::Sell)),
+            (PAPER_REVERSE_SHORTCUT, TradeCommand::Reverse),
+            (PAPER_FLATTEN_SHORTCUT, TradeCommand::Flatten),
+            (PAPER_CANCEL_SHORTCUT, TradeCommand::CancelAll),
         ] {
             if pressed(&shortcut) {
-                commands.push(command);
+                commands.push(MenuCall::Trade(command).into());
             }
         }
     }
