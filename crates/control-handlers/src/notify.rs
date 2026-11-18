@@ -49,9 +49,8 @@ pub trait Attention {
     fn sound_alert(&mut self) -> Option<String>;
 }
 
-/// The door to the window's [`Attention`] lanes.
+/// The window lends its [`Attention`] lanes for one call.
 pub trait AttentionHost {
-    /// The lanes, borrowed for one call.
     fn attention(&mut self) -> Box<dyn Attention + '_>;
 }
 

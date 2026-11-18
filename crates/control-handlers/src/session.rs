@@ -197,10 +197,13 @@ fn project_replay<P: OpenTabs<Tab: SessionTab> + ?Sized>(
     _context: CaptureContext,
 ) -> ReplaySnapshot {
     ReplaySnapshot {
-        tabs: per_tab(app, |tab_id, tab| TabReplaySnapshot {
-            tab_id: WireU64::new(tab_id),
-            replaying: tab.replay().is_some(),
-            session: tab.replay().as_deref().map(replay_session_snapshot),
+        tabs: per_tab(app, |tab_id, tab| {
+            let replay = tab.replay();
+            TabReplaySnapshot {
+                tab_id: WireU64::new(tab_id),
+                replaying: replay.is_some(),
+                session: replay.as_deref().map(replay_session_snapshot),
+            }
         }),
     }
 }

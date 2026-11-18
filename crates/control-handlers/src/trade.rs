@@ -32,9 +32,9 @@
 //! The family reaches the desk through the window's [`PaperOwner`], lent by
 //! [`PaperHost`]: the active tab's paper desk as [`TradeDesk`] — the account,
 //! the ruler and the one `execute` the tab's own buttons trade through — and
-//! the persistence a ticket edit makes. The trade rules (armed bracket, risk lock, ruler) are the
-//! tab's, in `quantick_session::paper`; what is here is parsing, refusals
-//! and the journal.
+//! the persistence a ticket edit makes. The trade rules (armed bracket, risk
+//! lock, ruler) are the tab's, in `quantick_session::paper`; what is here is
+//! parsing, refusals and the journal.
 
 pub use quantick_control_host::authority::CAPABILITY_VERSION;
 pub use quantick_control_schema::trade::*;
@@ -142,9 +142,8 @@ pub trait PaperOwner {
     }
 }
 
-/// The door to the window's [`PaperOwner`].
+/// The window lends its [`PaperOwner`] for one call.
 pub trait PaperHost {
-    /// The owner, borrowed for one call.
     fn paper(&mut self) -> Box<dyn PaperOwner + '_>;
 }
 

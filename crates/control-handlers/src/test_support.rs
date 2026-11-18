@@ -1302,3 +1302,49 @@ pub(crate) fn trade(id: u64, price: i64) -> Trade {
         side: Side::Buy,
     }
 }
+
+/// A window lending its tabs, by id in screen order, beside the config and
+/// the rail's magnet: the fake host of every scope that walks [`OpenTabs`].
+pub(crate) struct TabsWindow<T> {
+    pub tabs: Vec<(u64, T)>,
+    pub magnet: bool,
+    pub config: AppConfig,
+}
+
+impl<T> TabsWindow<T> {
+    pub fn new(tabs: Vec<(u64, T)>) -> Self {
+        Self {
+            tabs,
+            magnet: false,
+            config: fake_config(&[]),
+        }
+    }
+}
+
+impl<T> TabDirectory for TabsWindow<T> {
+    fn active_tab_index(&self) -> usize {
+        0
+    }
+    fn tab_position(&self, tab_id: u64) -> Option<usize> {
+        self.tabs.iter().position(|(id, _)| *id == tab_id)
+    }
+    fn tab_id_at(&self, index: usize) -> u64 {
+        self.tabs[index].0
+    }
+}
+
+impl<T> OpenTabs for TabsWindow<T> {
+    type Tab = T;
+    fn tab_count(&self) -> usize {
+        self.tabs.len()
+    }
+    fn open_tab(&self, index: usize) -> Option<&T> {
+        self.tabs.get(index).map(|(_, tab)| tab)
+    }
+    fn config(&self) -> &AppConfig {
+        &self.config
+    }
+    fn rail_magnet(&self) -> bool {
+        self.magnet
+    }
+}

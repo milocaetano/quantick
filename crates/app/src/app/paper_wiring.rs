@@ -103,10 +103,6 @@ impl PaperSettingsAdapter<'_> {
     }
 }
 
-/// The workspace's paper trading as the trade, P&L and journal calls reach
-/// it: the active tab's desk, the settings fan-out, the route orders take and
-/// the trades journal.
-///
 /// The desk is the active tab's and not an addressed one: an order belongs to
 /// the symbol the trader is looking at. Fallible, though the active index
 /// should always hold a tab: a `trade.*` call answers "no chart open" rather

@@ -6,6 +6,8 @@ use quantick_drawings::{
 };
 use quantick_workspace::layout_document::LayoutId;
 
+use crate::test_support::TabsWindow;
+
 const LEVELS: LayoutId = LayoutId(1);
 const FLOWS: LayoutId = LayoutId(2);
 
@@ -140,61 +142,23 @@ impl AnalysisTab for Tab {
     }
 }
 
-/// A window lending its tabs, by id in screen order, and the rail's magnet.
-struct Window {
-    tabs: Vec<(u64, Tab)>,
-    magnet: bool,
-    config: quantick_stores::config::AppConfig,
-}
-
-impl crate::TabDirectory for Window {
-    fn active_tab_index(&self) -> usize {
-        0
-    }
-    fn tab_position(&self, tab_id: u64) -> Option<usize> {
-        self.tabs.iter().position(|(id, _)| *id == tab_id)
-    }
-    fn tab_id_at(&self, index: usize) -> u64 {
-        self.tabs[index].0
-    }
-}
-
-impl OpenTabs for Window {
-    type Tab = Tab;
-    fn tab_count(&self) -> usize {
-        self.tabs.len()
-    }
-    fn open_tab(&self, index: usize) -> Option<&Tab> {
-        self.tabs.get(index).map(|(_, tab)| tab)
-    }
-    fn config(&self) -> &quantick_stores::config::AppConfig {
-        &self.config
-    }
-    fn rail_magnet(&self) -> bool {
-        self.magnet
-    }
-}
-
 /// The drawings scope walks the open tabs in screen order under their ids,
 /// each pane with its side, and publishes the magnet the window lends.
 #[test]
 fn the_drawings_scope_reads_each_open_tab_and_the_rails_magnet() {
     let mut marks = Drawings::default();
     level(&mut marks, 100.0);
-    let window = Window {
-        tabs: vec![
-            (
-                4,
-                Tab(vec![
-                    (PaneSideDto::Flow, pane(Drawings::default())),
-                    (PaneSideDto::Time, pane(marks)),
-                ]),
-            ),
-            (9, Tab(Vec::new())),
-        ],
-        magnet: true,
-        config: crate::test_support::fake_config(&[]),
-    };
+    let mut window = TabsWindow::new(vec![
+        (
+            4,
+            Tab(vec![
+                (PaneSideDto::Flow, pane(Drawings::default())),
+                (PaneSideDto::Time, pane(marks)),
+            ]),
+        ),
+        (9, Tab(Vec::new())),
+    ]);
+    window.magnet = true;
 
     let snapshot = drawings_snapshot(&window);
     assert!(snapshot.magnet);

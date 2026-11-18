@@ -49,7 +49,6 @@ impl<R> TabDirectory for quantick_workspace::arrangement::Arrangement<R> {
 /// analysis and mark scopes walk. Each scope names the trait it reads a tab
 /// through, and the tab implements it.
 pub trait OpenTabs: TabDirectory {
-    /// The window's tab.
     type Tab;
     fn tab_count(&self) -> usize;
     /// The tab at `index`, a position the directory gave.
@@ -61,7 +60,7 @@ pub trait OpenTabs: TabDirectory {
 }
 
 /// One row per open tab in screen order, from the tab and its stable id.
-pub fn per_open_tab<P, T>(app: &P, mut row: impl FnMut(u64, &P::Tab) -> T) -> Vec<T>
+pub(crate) fn per_open_tab<P, T>(app: &P, mut row: impl FnMut(u64, &P::Tab) -> T) -> Vec<T>
 where
     P: OpenTabs + ?Sized,
 {
