@@ -189,9 +189,12 @@ fn light_time_grid_reads_and_switches_as_the_theme_paints_it() {
         "switching on what the theme already paints changes nothing"
     );
     disable_test_gateway(&mut app, &ctx);
-    app.apply_menu_command(crate::app::menu_bar::MenuCommand::ToggleLayer(
-        ChartLayer::TimeGrid,
-    ));
+    let toggle = crate::app::menu_bar::MenuCall::ToggleLayer(ChartLayer::TimeGrid);
+    crate::app::menu_bar::apply_menu_command_on(
+        &mut app,
+        &ctx,
+        crate::app::menu_bar::MenuCommand::Call(toggle),
+    );
     run_frame(&mut app, &ctx);
     let pane = app.focused_pane();
     assert!(

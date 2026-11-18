@@ -4,14 +4,12 @@
 
 use crate::toolrail::ToolRailExt as _;
 use quantick_control_handlers::{
-    JournalAccess, TabDirectory,
+    JournalAccess,
     analysis::{AnalysisPane, AnalysisPaneEntry, AnalysisPort},
     attention::MarkPort,
-    history::HistoryPort,
     journal_sessions::JournalSessionsPort,
     notify::AttentionPort,
     pnl_display::PnlDisplayPort,
-    recovery::{FeedRecoveryPort, RecoveredFeed},
     session::{ReplayRead, SessionPort, SessionTab},
     trade::{TradeDesk, TradePort},
 };
@@ -21,126 +19,12 @@ use quantick_paper::report::session_edit::{
     JournalEdit, JournalEditOutcome, JournalScope, SessionEditError,
 };
 use quantick_session::paper::{TradeCommand, TradeOutcome};
-use quantick_session::{HistoryAct, HistoryOutcome, HistoryReply};
 
 use crate::app::control_host::ControlPort;
 use crate::app::paper_wiring::PaperSettingsChange;
 use crate::control::ControlAccess;
 use crate::paper_trading::PaperTrading;
 use crate::{control::pane_side_dto, pane::ChartPane, tab::Tab};
-use quantick_control_handlers::feed_source::{FeedSelection, FeedSourcePort};
-
-impl FeedSourcePort for dyn ControlPort {
-    fn feed_choices(&self) -> Vec<quantick_control_schema::feed_source::FeedSourceChoice> {
-        quantick_control_schema::feed_source::choices(self.tab_reads().config())
-    }
-    fn feed_selection(&self, index: usize) -> Option<FeedSelection> {
-        let tab = self.tab_reads().tab_at(index)?;
-        Some(FeedSelection {
-            feed_id: tab.active.0.clone(),
-            symbol: tab.active.1.clone(),
-            replay: tab.link.replay.is_some(),
-        })
-    }
-    fn select_feed(&mut self, index: usize, feed_id: &str, symbol: &str) -> Option<FeedSelection> {
-        let (tab, config) = self.tabs_mut().tab_with_config(index)?;
-        (tab.feed_id, tab.symbol) = (feed_id.to_owned(), symbol.to_owned());
-        tab.maybe_switch_feed(config);
-        self.feed_selection(index)
-    }
-}
-
-impl quantick_control_handlers::contract_roll::ContractRollPort for dyn ControlPort {
-    fn next_contract(&self, feed_id: &str, symbol: &str) -> Option<String> {
-        let feed = self.tab_reads().config().feed(feed_id)?;
-        feed.next_contract(symbol).map(str::to_owned)
-    }
-    fn feed_offers(&self, feed_id: &str, symbol: &str) -> bool {
-        let feed = self.tab_reads().config().feed(feed_id);
-        feed.is_some_and(|feed| feed.symbols.iter().any(|offered| offered == symbol))
-    }
-    fn paper_not_flat(&self, index: usize) -> bool {
-        let tab = self.tab_reads().tab_at(index);
-        tab.is_some_and(|tab| !tab.paper.is_flat())
-    }
-    fn drawing_gesture_on(&self, feed_id: &str, from: &str, to: &str) -> bool {
-        self.workspace()
-            .layout_state()
-            .drawing_gesture_on(feed_id, from, to)
-    }
-    fn carry_market_drawings(&mut self, feed_id: &str, from: &str, to: &str) -> usize {
-        self.workspace_calls()
-            .layout()
-            .carry_market_drawings(feed_id, from, to)
-    }
-}
-
-impl quantick_control_handlers::contract_roll::UnlistedContractPort for dyn ControlPort {
-    fn tab_count(&self) -> usize {
-        self.tab_reads().tabs().len()
-    }
-    fn unlisted_contract(&self, index: usize) -> Option<String> {
-        let tab = self.tab_reads().tab_at(index)?;
-        tab.link.notice.unlisted_symbol().map(str::to_owned)
-    }
-    fn auto_roll_mut(
-        &mut self,
-        index: usize,
-    ) -> Option<&mut quantick_control_handlers::contract_roll::AutoRoll> {
-        Some(&mut self.tabs_mut().tab_at_mut(index)?.link.auto_roll)
-    }
-}
-
-impl TabDirectory for dyn ControlPort {
-    fn active_tab_index(&self) -> usize {
-        self.tab_reads().active_tab_index()
-    }
-    fn tab_position(&self, tab_id: u64) -> Option<usize> {
-        self.tab_reads().tabs().position(tab_id)
-    }
-    fn tab_id_at(&self, index: usize) -> u64 {
-        self.tab_reads().tabs().id_at(index)
-    }
-}
-
-impl FeedRecoveryPort for dyn ControlPort {
-    fn recover_feed(&mut self, index: usize, keep_timeline: bool) -> Option<RecoveredFeed> {
-        let (tab, config) = self.tabs_mut().tab_with_config(index)?;
-        let respawned = if keep_timeline {
-            tab.reconnect_feed(config)
-        } else {
-            tab.reload_feed(config)
-        };
-        Some(RecoveredFeed {
-            symbol: tab.symbol.clone(),
-            respawned,
-        })
-    }
-}
-
-impl HistoryPort for dyn ControlPort {
-    fn history_paging(&self, index: usize) -> Option<bool> {
-        let reads = self.tab_reads();
-        let tab = reads.tab_at(index)?;
-        Some(tab.capabilities(reads.config()).history_paging)
-    }
-    /// The toolbar's own press and cancel (Escape's too), so the two
-    /// surfaces cannot judge one act two ways.
-    fn dispatch_history(&mut self, index: usize, act: HistoryAct) -> Option<HistoryReply> {
-        let (tab, outcome) = match act {
-            HistoryAct::Press(reach) => {
-                let (tab, press) = self.tabs_mut().press_history(index, reach)?;
-                (tab, HistoryOutcome::Pressed(press))
-            }
-            HistoryAct::Cancel => {
-                let tab = self.tabs_mut().tab_at_mut(index)?;
-                let cancelled = tab.cancel_history();
-                (tab, HistoryOutcome::Cancelled(cancelled))
-            }
-        };
-        Some((outcome, tab.session.snapshot()))
-    }
-}
 
 impl JournalSessionsPort for dyn ControlPort {
     fn journal_scope(&mut self) -> JournalScope {

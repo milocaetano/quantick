@@ -5,7 +5,7 @@
 //! about to be looked up under. The next contract is only ever the config's.
 use crate::{
     dock::ActionDock,
-    feed_source::FeedSourcePort,
+    market_tab::{MarketTabHost, feed_offers, market, next_contract, switch_market},
     notify::NotifyAccess,
     tabs::{tab_closed, tab_index},
 };
@@ -22,22 +22,9 @@ use serde_json::{Value, json};
 mod unlisted;
 pub use unlisted::{
     AUTOMATIC_TRIGGER, AutoRoll, CAPABILITY_TRIGGER, PRESSED_TRIGGER, RollOffer, Settled,
-    UnlistedContractPort, notice_roll, roll_from_notice, settle_auto_rolls, switch_failed_toast,
-    unlisted_roll, unlisted_toast, waiting_toast,
+    notice_roll, roll_from_notice, settle_auto_rolls, switch_failed_toast, unlisted_roll,
+    unlisted_toast, waiting_toast,
 };
-
-/// What a roll needs beyond a source switch.
-pub trait ContractRollPort: FeedSourcePort {
-    /// The contract the feed's config names after `symbol`.
-    fn next_contract(&self, feed_id: &str, symbol: &str) -> Option<String>;
-    fn feed_offers(&self, feed_id: &str, symbol: &str) -> bool;
-    /// A paper position or a working order on the tab.
-    fn paper_not_flat(&self, index: usize) -> bool;
-    /// A drawing gesture in flight on any pane holding `from`'s or `to`'s marks.
-    fn drawing_gesture_on(&self, feed_id: &str, from: &str, to: &str) -> bool;
-    /// Copy the drawings on `from` to `to`; how many objects were added.
-    fn carry_market_drawings(&mut self, feed_id: &str, from: &str, to: &str) -> usize;
-}
 
 /// Why a tab cannot roll right now.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -117,11 +104,11 @@ impl From<RollRefusal> for ControlError {
 }
 
 /// The contract the tab at `index` would roll to, or why it cannot.
-pub fn target<H: ContractRollPort + ?Sized>(
+pub fn target<H: MarketTabHost + ?Sized>(
     host: &H,
     index: usize,
 ) -> Option<Result<String, RollRefusal>> {
-    let current = host.feed_selection(index)?;
+    let current = market(host, index)?;
     Some(resolve(
         host,
         index,
@@ -131,7 +118,7 @@ pub fn target<H: ContractRollPort + ?Sized>(
     ))
 }
 
-fn resolve<H: ContractRollPort + ?Sized>(
+fn resolve<H: MarketTabHost + ?Sized>(
     host: &H,
     index: usize,
     feed_id: &str,
@@ -141,13 +128,11 @@ fn resolve<H: ContractRollPort + ?Sized>(
     if replay {
         return Err(RollRefusal::Replay);
     }
-    let next = host
-        .next_contract(feed_id, symbol)
-        .ok_or(RollRefusal::NotConfigured)?;
-    if !host.feed_offers(feed_id, &next) {
+    let next = next_contract(host.config(), feed_id, symbol).ok_or(RollRefusal::NotConfigured)?;
+    if !feed_offers(host.config(), feed_id, Some(&next)) {
         return Err(RollRefusal::TargetNotOffered);
     }
-    if host.paper_not_flat(index) {
+    if host.market_tab(index).is_some_and(|tab| tab.paper_open()) {
         return Err(RollRefusal::PaperNotFlat);
     }
     if host.drawing_gesture_on(feed_id, symbol, &next) {
@@ -158,26 +143,22 @@ fn resolve<H: ContractRollPort + ?Sized>(
 
 /// Roll the tab at `index` to `next`, which [`target`] answered. How many
 /// drawings the new contract gained, or `None` when the tab is gone.
-pub fn apply<H: ContractRollPort + ?Sized>(
-    host: &mut H,
-    index: usize,
-    next: &str,
-) -> Option<usize> {
-    let current = host.feed_selection(index)?;
+pub fn apply<H: MarketTabHost + ?Sized>(host: &mut H, index: usize, next: &str) -> Option<usize> {
+    let current = market(host, index)?;
     let carried = host.carry_market_drawings(&current.feed_id, &current.symbol, next);
-    host.select_feed(index, &current.feed_id, next)?;
+    switch_market(host, index, &current.feed_id, next)?;
     Some(carried)
 }
 
 /// The roll the switch palette offers the active tab: the configured target,
 /// and why it is greyed when it is. `None` when there is nothing to offer.
-pub fn offer<H: ContractRollPort + ?Sized>(host: &H) -> Option<(String, Option<&'static str>)> {
+pub fn offer<H: MarketTabHost + ?Sized>(host: &H) -> Option<(String, Option<&'static str>)> {
     let index = host.active_tab_index();
-    let current = host.feed_selection(index)?;
+    let current = market(host, index)?;
     if current.replay {
         return None;
     }
-    let next = host.next_contract(&current.feed_id, &current.symbol)?;
+    let next = next_contract(host.config(), &current.feed_id, &current.symbol)?;
     let refusal = resolve(host, index, &current.feed_id, &current.symbol, false)
         .err()
         .map(RollRefusal::reason);
@@ -188,13 +169,13 @@ pub fn offer<H: ContractRollPort + ?Sized>(host: &H) -> Option<(String, Option<&
 pub fn register<D, H, A>(registry: &mut D) -> Result<(), RegistryError>
 where
     D: ActionDock<H, A>,
-    H: UnlistedContractPort + ?Sized,
+    H: MarketTabHost + ?Sized,
     A: NotifyAccess,
 {
     registry.register(quantick_control_schema::contract_roll::descriptor(), roll)
 }
 
-fn roll<H: UnlistedContractPort + ?Sized, A: NotifyAccess>(
+fn roll<H: MarketTabHost + ?Sized, A: NotifyAccess>(
     host: &mut H,
     access: &mut A,
     actor: &ActorContext,
@@ -203,7 +184,7 @@ fn roll<H: UnlistedContractPort + ?Sized, A: NotifyAccess>(
     let input: ContractRollInput = serde_json::from_value(input.clone())
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
     let index = tab_index(host, Some(input.tab_id))?;
-    let current = host.feed_selection(index).ok_or_else(tab_closed)?;
+    let current = market(host, index).ok_or_else(tab_closed)?;
     if current.replay {
         return Err(RollRefusal::Replay.into());
     }
@@ -211,9 +192,7 @@ fn roll<H: UnlistedContractPort + ?Sized, A: NotifyAccess>(
         // A dropped answer's retry finds the tab on the target already, and so
         // does a call after a hand switch. The copy adds nothing to the first
         // and gives the second its marks.
-        if host
-            .next_contract(&current.feed_id, &input.from_symbol)
-            .as_ref()
+        if next_contract(host.config(), &current.feed_id, &input.from_symbol).as_ref()
             != Some(&current.symbol)
         {
             return Err(crate::bubble_scale::refused_precondition(
@@ -240,7 +219,12 @@ fn roll<H: UnlistedContractPort + ?Sized, A: NotifyAccess>(
     // Off a contract the feed reports unlisted, the roll is the notice's Roll
     // under the caller's name: the attach explains it, and the journal says
     // what asked for it.
-    if host.unlisted_contract(index).as_deref() == Some(current.symbol.as_str()) {
+    if host
+        .market_tab(index)
+        .and_then(|tab| tab.unlisted())
+        .as_deref()
+        == Some(current.symbol.as_str())
+    {
         let payload = unlisted::roll_off(host, index, &current.symbol, &next, CAPABILITY_TRIGGER)
             .ok_or_else(|| ControlError::invalid_request(switch_failed_toast(&next)))?;
         let result = payload["contract_roll"].clone();
@@ -248,7 +232,7 @@ fn roll<H: UnlistedContractPort + ?Sized, A: NotifyAccess>(
         return Ok(result);
     }
     let carried = apply(host, index, &next).ok_or_else(tab_closed)?;
-    let selected = host.feed_selection(index).ok_or_else(tab_closed)?;
+    let selected = market(host, index).ok_or_else(tab_closed)?;
     let result = answer(ContractRollResult {
         tab_id: input.tab_id,
         feed_id: selected.feed_id,

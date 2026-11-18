@@ -9,8 +9,6 @@
 use eframe::egui;
 use quantick_paper::desk::{ChartCommand, ChartFrame, CursorHint, HeldKeys, PriceAxis};
 
-#[cfg(test)]
-use super::PaperControl;
 use super::paint_ctx::{bounds, point, pos};
 use super::{ChartInput, PaperTrading};
 use crate::chart::PriceScale;
@@ -148,12 +146,12 @@ impl PaperTrading {
 #[cfg(test)]
 impl PaperTrading {
     /// The overlay control under the pointer; see `Gesture::control_at`.
-    pub(super) fn control_at(
+    pub(crate) fn control_at(
         &self,
         pointer: egui::Pos2,
         chart: egui::Rect,
         scale: &PriceScale,
-    ) -> Option<PaperControl> {
+    ) -> Option<quantick_paper::desk::PaperControl> {
         self.paper.desk.gesture.control_at(
             &self.paper.account,
             point(pointer),

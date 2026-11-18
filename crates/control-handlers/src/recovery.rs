@@ -1,7 +1,7 @@
 //! The cockpit tier's recovery capabilities: getting a stalled feed back.
 //!
 //! Both call the same `Tab` method the button in the chart's offline corner
-//! calls, through [`FeedRecoveryPort`]. That is the point rather than a
+//! calls, through [`crate::market_tab::MarketTab::recover`]. That is the point rather than a
 //! tidiness preference — a capability with its own copy of "start the feed
 //! over" would drift from the one a click takes, and the drift would be an
 //! assistant and a trader disagreeing about what just happened to the
@@ -30,26 +30,9 @@ use quantick_sources::recovery::Recovery;
 use serde_json::{Value, json};
 
 use crate::dock::ActionDock;
+use crate::market_tab::MarketTabHost;
 use crate::notify::NotifyAccess;
-use crate::tabs::{TabDirectory, tab_closed, tab_index};
-
-/// What the window did when asked to recover a tab's feed.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RecoveredFeed {
-    /// The market the tab shows.
-    pub symbol: String,
-    /// Whether a feed session was actually spawned: a recorded session owns
-    /// the chart while it plays, and a feed id that left the feed table has
-    /// nothing to spawn.
-    pub respawned: bool,
-}
-
-/// The window's own recovery acts, the ones its offline-corner buttons call.
-pub trait FeedRecoveryPort: TabDirectory {
-    /// Reconnect (`keep_timeline`) or reload the feed of the tab at `index`;
-    /// `None` when that tab is gone.
-    fn recover_feed(&mut self, index: usize, keep_timeline: bool) -> Option<RecoveredFeed>;
-}
+use crate::tabs::{tab_closed, tab_index};
 
 /// The capability a recovery control calls.
 ///
@@ -70,7 +53,7 @@ pub const fn capability_id(recovery: Recovery) -> &'static str {
 pub fn register<D, H, A>(registry: &mut D) -> Result<(), RegistryError>
 where
     D: ActionDock<H, A>,
-    H: FeedRecoveryPort + ?Sized,
+    H: MarketTabHost + ?Sized,
     A: NotifyAccess,
 {
     registry.register(
@@ -96,25 +79,25 @@ where
     Ok(())
 }
 
-fn reconnect<H: FeedRecoveryPort + ?Sized, A>(
+fn reconnect<H: MarketTabHost + ?Sized, A>(
     app: &mut H,
     _access: &mut A,
     _actor: &ActorContext,
     input: &Value,
 ) -> Result<Value, ControlError> {
-    encode(&recover(app, input, true)?)
+    encode(&recover(app, input, Recovery::Reconnect)?)
 }
 
 /// A reload that respawned threw the tab's timeline away, its paper position
 /// and armed strategies with it, so who did it goes on the record. One with
 /// nothing to respawn changed nothing and records nothing.
-fn reload<H: FeedRecoveryPort + ?Sized, A: NotifyAccess>(
+fn reload<H: MarketTabHost + ?Sized, A: NotifyAccess>(
     app: &mut H,
     access: &mut A,
     actor: &ActorContext,
     input: &Value,
 ) -> Result<Value, ControlError> {
-    let recovered = recover(app, input, false)?;
+    let recovered = recover(app, input, Recovery::Reload)?;
     let result = encode(&recovered)?;
     if recovered.respawned {
         let payload = json!({ "feed_reload": result.clone() });
@@ -134,13 +117,13 @@ fn encode(result: &RecoveryResult) -> Result<Value, ControlError> {
     })
 }
 
-/// The shared body. `keep_timeline` picks which of the tab's two methods runs;
+/// The shared body. `recovery` picks which of the tab's two methods runs;
 /// nothing else differs, so the two capabilities can never drift apart in
 /// anything but the act they name.
-fn recover<H: FeedRecoveryPort + ?Sized>(
+fn recover<H: MarketTabHost + ?Sized>(
     app: &mut H,
     input: &Value,
-    keep_timeline: bool,
+    recovery: Recovery,
 ) -> Result<RecoveryResult, ControlError> {
     let input: RecoveryInput = serde_json::from_value(input.clone())
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
@@ -151,14 +134,13 @@ fn recover<H: FeedRecoveryPort + ?Sized>(
     // and useful answer, and an error would read as "the call is broken" —
     // but reported from what actually happened, never from what was asked
     // for.
-    let recovered = app
-        .recover_feed(index, keep_timeline)
-        .ok_or_else(tab_closed)?;
+    let lent = app.market_tab_mut(index).ok_or_else(tab_closed)?;
+    let recovered = lent.tab.recover(lent.config, recovery);
     Ok(RecoveryResult {
         tab_id: WireU64::new(tab_id),
         symbol: recovered.symbol,
         respawned: recovered.respawned,
-        timeline_kept: keep_timeline || !recovered.respawned,
+        timeline_kept: recovery == Recovery::Reconnect || !recovered.respawned,
     })
 }
 

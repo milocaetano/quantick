@@ -6,8 +6,8 @@
 //! because the window menu is their only production reader — the paper
 //! shortcuts are re-exported to `super` for the tests that name them.
 
+use super::GatewayPort;
 use super::arrangement_adapter::StripAsk;
-use super::{GatewayPort, LayersPort};
 use crate::orderflow_panel as panel;
 use crate::surfaces::MarketPaletteSurface;
 use crate::surfaces::replay_browser::ReplayBrowserExt as _;
@@ -16,14 +16,15 @@ use crate::toolrail::ToolRailExt as _;
 use crate::{chart_layers::shortcuts, tabstrip::TabAction, timezone::TzOffset};
 use eframe::egui;
 use quantick_control_schema::settings_sections::SettingsSection;
-use quantick_session::paper::TradeCommand;
 use quantick_session::{close_queue::CloseScope, workspace_menu::WorkspaceCommand};
 use quantick_ui_model::market_palette::Intent as PaletteIntent;
 use std::time::Instant;
 
-use super::QuantickApp;
-pub(super) use commands::MenuCommand;
+use super::indicator_manager::IndicatorState;
+use super::{ControlWindow, QuantickApp};
+pub(super) use commands::{MenuCall, MenuCommand};
 pub(in crate::app) use menus::{MenuDoor, WindowMenuState};
+use quantick_control_handlers::desk::DeskAct;
 
 mod commands;
 mod help_window;
@@ -279,7 +280,7 @@ impl QuantickApp {
         if std::mem::take(&mut self.chrome.title_bar.agent_clicked) {
             commands.push(MenuCommand::OpenSettings(SettingsSection::AgentAccess));
         }
-        draw_window_menu(self, ctx, &mut commands);
+        super::chrome::menu_bar::draw(self, ctx, &mut commands);
         help_window::show(self, ctx);
         self.chrome.window_menu.dialog_rows = workspace_dialogs::dialogs(self, ctx, &mut commands);
         // The close or switch prompt: an answer settles its tab, an exit's last answer closes the app.
@@ -294,98 +295,6 @@ impl QuantickApp {
             apply_menu_command_on(self, ctx, command);
         }
     }
-
-    /// Carry out one command a menu entry or a menu shortcut recorded.
-    pub(super) fn apply_menu_command(&mut self, command: MenuCommand) {
-        if command.needs_chart() && self.chrome.title_bar.surface.is_home() {
-            return;
-        }
-        match command {
-            MenuCommand::OpenAlerts => super::alerts_runtime::apply_alert_request(
-                self.indicator_wiring(),
-                crate::surfaces::alerts::Request {
-                    open: true,
-                    ..Default::default()
-                },
-            ),
-            MenuCommand::OpenReplayBrowser => self.surfaces.replay_browser.open_browser(),
-            MenuCommand::CloseReplay => {
-                let (tab, config) = self.active_with_config();
-                tab.close_replay(config);
-            }
-            MenuCommand::ToggleDock => self.surfaces.dock.toggle_visible(),
-            MenuCommand::ToggleLayer(layer) => {
-                let pane = self.focused_pane();
-                let capabilities = self.active_tab().capabilities(&self.config);
-                if pane.layer_blocked(layer, capabilities).is_none() {
-                    let visible = !pane.layer_visible(layer, &self.runtime.style);
-                    // The control plane's door, so a grid reaches the pane's style.
-                    let side = self.active_tab().focused_side();
-                    let tab = self.runtime.tabs.active_index();
-                    self.layer_wiring().set_visible(tab, side, layer, visible);
-                }
-            }
-            MenuCommand::ToggleContextCharts => {
-                let canvas = &mut self.active_tab_mut().canvas;
-                canvas.fold(false, !canvas.folds().0 && canvas.column_painted());
-            }
-            MenuCommand::ApplyLayoutPreset(preset) => self.apply_layout_preset(preset),
-            MenuCommand::SwitchLayoutIndex(index) => {
-                if let Err(error) = self.layout_adapter().switch_layout_index(index) {
-                    toast::note(&mut self.surfaces.toast, error.to_string(), Instant::now());
-                }
-            }
-            MenuCommand::Strip(action) => self.layout_adapter().apply_strip_action(action),
-            MenuCommand::MoveContextChart { from, to } => {
-                let tab_id = self.runtime.tabs.active_id();
-                self.layout_adapter().move_context_pane_at(tab_id, from, to);
-            }
-            MenuCommand::ToggleLegend => {
-                let collapsed = self.focused_pane().legend_collapsed;
-                super::indicator_manager::IndicatorState::set_legend_collapsed(
-                    self.focused_pane_mut(),
-                    !collapsed,
-                );
-            }
-            MenuCommand::TakeMark => self.take_mark(None),
-            MenuCommand::SaveWorkspace(reason) => {
-                self.workspace_save_adapter().save_workspace(reason);
-            }
-            MenuCommand::Workspace(command) => {
-                self.workspace_calls().apply_workspace_command(command);
-            }
-            MenuCommand::ForgetWorkspace => {
-                self.workspace_save_adapter().forget_workspace();
-            }
-            MenuCommand::ExportDesk => self.runtime.open_export(),
-            MenuCommand::ImportDesk => self.runtime.workspace.picker_mut().open_import(),
-            MenuCommand::OpenRecentDesk(path) => {
-                self.workspace_bundle_adapter().import_workspace_from(&path);
-            }
-            MenuCommand::RevealDesk => self.workspace_bundle_adapter().reveal_cockpit_home(),
-            MenuCommand::SetSaveOnExit(save_on_exit) => {
-                self.workspace_save_adapter().write_reopen(save_on_exit);
-            }
-            MenuCommand::PaperMarket(side) => self.trade(TradeCommand::Market { side }),
-            MenuCommand::PaperReverse => self.trade(TradeCommand::Reverse),
-            MenuCommand::PaperFlatten => self.trade(TradeCommand::Flatten),
-            MenuCommand::PaperCancelAll => self.trade(TradeCommand::CancelAll),
-            MenuCommand::SetToolboxDock(dock) => self.surfaces.toolrail.set_dock(dock),
-            MenuCommand::ToggleToolbox => self.surfaces.toolrail.toggle_visible(),
-            MenuCommand::OpenDockTab(tab) => self.surfaces.dock.open_tab(tab),
-            MenuCommand::OpenOrderFlowPanel(s) => panel::open_on(self.active_tab_mut(), s),
-            MenuCommand::OpenReplayFormatHelp => self.surfaces.replay_browser.open_format_help(),
-            // Carried out by `apply_menu_command_on`, which knows the window.
-            MenuCommand::ToggleWindowMenu
-            | MenuCommand::OpenSettings(_)
-            | MenuCommand::OpenHelp(_) => {}
-        }
-    }
-}
-
-/// The menu's panes, each handed exactly the state it shows.
-fn draw_window_menu(app: &mut QuantickApp, ctx: &egui::Context, commands: &mut Vec<MenuCommand>) {
-    super::chrome::menu_bar::draw(app, ctx, commands);
 }
 
 pub(in crate::app) fn menu_shortcuts(
@@ -462,19 +371,51 @@ pub(super) fn workspace_cell(
     app.chrome.window_menu.cell_rows = drawn.unwrap_or_default();
 }
 
-/// The commands that need to know which window asked, then all the others.
+/// Carry out one command a menu entry or shortcut recorded: a [`MenuCall`] through
+/// its named call's door. The window arms below are legacy; never add one.
 pub(super) fn apply_menu_command_on(app: &mut QuantickApp, ctx: &egui::Context, ask: MenuCommand) {
+    if ask.needs_chart() && app.chrome.title_bar.surface.is_home() {
+        return;
+    }
     let viewport = ctx.viewport_id();
+    // Settings and Help open on the window that asked.
+    if matches!(ask, MenuCommand::OpenSettings(_) | MenuCommand::OpenHelp(_)) {
+        app.chrome.window_menu.windows_viewport = Some(viewport);
+    }
     match ask {
-        MenuCommand::ToggleWindowMenu => app.chrome.window_menu.toggle(viewport, true),
+        MenuCommand::Call(call) => {
+            if let Err(error) = call.run(app as &mut ControlWindow) {
+                toast::note(&mut app.surfaces.toast, error.to_string(), Instant::now());
+            }
+        }
+        MenuCommand::Workspace(command) => app.workspace_calls().apply_workspace_command(command),
         MenuCommand::OpenSettings(section) => {
-            let settings = &mut app.surfaces.settings_window;
-            super::chrome::settings::open(&mut app.chrome.window_menu, settings, viewport, section);
+            _ = MenuCall::Desk(DeskAct::OpenSettings(section)).run(app as &mut ControlWindow);
         }
-        MenuCommand::OpenHelp(page) => {
-            app.chrome.window_menu.windows_viewport = Some(viewport);
-            app.chrome.window_menu.help = Some(page);
+        MenuCommand::OpenReplayBrowser => app.surfaces.replay_browser.open_browser(),
+        MenuCommand::CloseReplay => {
+            let (tab, config) = app.active_with_config();
+            tab.close_replay(config);
         }
-        ask => app.apply_menu_command(ask),
+        MenuCommand::ToggleDock => app.surfaces.dock.toggle_visible(),
+        MenuCommand::ToggleContextCharts => {
+            let canvas = &mut app.active_tab_mut().canvas;
+            canvas.fold(false, !canvas.folds().0 && canvas.column_painted());
+        }
+        MenuCommand::ToggleLegend => {
+            let collapsed = !app.focused_pane().legend_collapsed;
+            IndicatorState::set_legend_collapsed(app.focused_pane_mut(), collapsed);
+        }
+        MenuCommand::ForgetWorkspace => _ = app.workspace_save_adapter().forget_workspace(),
+        MenuCommand::OpenRecentDesk(path) => {
+            app.workspace_bundle_adapter().import_workspace_from(&path)
+        }
+        MenuCommand::RevealDesk => app.workspace_bundle_adapter().reveal_cockpit_home(),
+        MenuCommand::SetToolboxDock(dock) => app.surfaces.toolrail.set_dock(dock),
+        MenuCommand::ToggleToolbox => app.surfaces.toolrail.toggle_visible(),
+        MenuCommand::OpenDockTab(tab) => app.surfaces.dock.open_tab(tab),
+        MenuCommand::OpenReplayFormatHelp => app.surfaces.replay_browser.open_format_help(),
+        MenuCommand::ToggleWindowMenu => app.chrome.window_menu.toggle(viewport, true),
+        MenuCommand::OpenHelp(page) => app.chrome.window_menu.help = Some(page),
     }
 }

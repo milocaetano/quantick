@@ -23,7 +23,7 @@ use std::collections::BTreeMap;
 
 use quantick_engine::{Side, Trade};
 use quantick_paper::PaperAccount;
-use quantick_paper::account::AccountEnv;
+use quantick_paper::account::{AccountEnv, TimelineReset};
 use quantick_paper::desk::{CmdTradingSettings, Desk, TradeBar};
 use quantick_paper::format::PositionSummary;
 use quantick_paper::risk_sizing::RiskState;
@@ -41,10 +41,25 @@ pub use command::{NOTHING_TO_REVERSE, TradeCommand, TradeOutcome};
 pub use settings::{SharedChange, SharedSettings};
 
 /// What a rebuilt timeline says when it flattened a position.
-const RESET_POSITION_TOAST: &str = "SIM position flattened - the timeline was rebuilt under it.";
+pub(crate) const RESET_POSITION_TOAST: &str =
+    "SIM position flattened - the timeline was rebuilt under it.";
 /// What a rebuilt timeline says when it swept resting orders.
 pub(crate) const RESET_ORDERS_TOAST: &str =
     "SIM orders cancelled - the timeline was rebuilt under them.";
+
+/// What a rebuilt timeline says: the flatten before the sweep, and nothing
+/// while a could-not-save warning waits in the outbox.
+pub(crate) fn reset_toast(reset: TimelineReset) -> Option<&'static str> {
+    if !reset.all_saved {
+        None
+    } else if reset.had_position {
+        Some(RESET_POSITION_TOAST)
+    } else if reset.had_orders {
+        Some(RESET_ORDERS_TOAST)
+    } else {
+        None
+    }
+}
 
 /// One tab's paper trading: the desk and the account it trades on.
 /// See the module docs.
@@ -235,14 +250,9 @@ impl<A: BorrowMut<PaperAccount>> TabPaper<A> {
     pub fn on_timeline_reset(&mut self) {
         let reset = self.core_mut().reset_timeline();
         self.desk.reset_timeline();
-        let toast = if reset.had_position && reset.all_saved {
-            RESET_POSITION_TOAST
-        } else if reset.had_orders && reset.all_saved {
-            RESET_ORDERS_TOAST
-        } else {
-            return;
-        };
-        self.core_mut().set_toast(toast.to_owned());
+        if let Some(toast) = reset_toast(reset) {
+            self.core_mut().set_toast(toast.to_owned());
+        }
     }
 
     /// Follow the tab's symbol: the journal retargets and the ruler moves

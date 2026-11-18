@@ -37,6 +37,7 @@ pub(crate) mod canvas;
 pub(crate) mod context_resize;
 mod feed;
 pub(crate) mod layout;
+mod market_tab;
 mod panes;
 mod strategies;
 

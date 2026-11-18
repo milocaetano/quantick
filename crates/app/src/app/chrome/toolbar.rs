@@ -13,8 +13,8 @@ use quantick_paper::route::RoutePress;
 use quantick_session::paper::TradeCommand;
 
 use crate::app::indicator_manager::IndicatorEdit;
-use crate::canvas_layout::LayoutPreset;
 use crate::indicator_worker::SlotId;
+use crate::tab::layout;
 use crate::toolbar::{self, ToolbarAction};
 
 use crate::app::{QuantickApp, TabsMutPort};
@@ -144,16 +144,6 @@ pub(in crate::app) fn draw(app: &mut QuantickApp, ctx: &egui::Context) {
 }
 
 impl QuantickApp {
-    /// Switch the active tab to `preset`.
-    ///
-    /// **The one path.** The toolbar's picker, the `View → Layout` menu and
-    /// the keyboard all arrive here, so none of them can grow its own idea of
-    /// what applying a layout does. A control-plane capability joins them by
-    /// calling this, never by repeating it.
-    pub(in crate::app) fn apply_layout_preset(&mut self, preset: &'static LayoutPreset) {
-        crate::tab::layout::pick(self.active_tab_mut(), preset);
-    }
-
     /// One trade, sent to the active tab's desk as every surface sends it.
     pub(in crate::app) fn trade(&mut self, command: TradeCommand) {
         self.active_tab_mut().paper.send(command);
@@ -174,7 +164,7 @@ impl QuantickApp {
                 self.active_tab_mut().apply_deal_recording(action);
             }
             ToolbarAction::LoadOlderCandles => self.tabs_mut().load_older_candles(),
-            ToolbarAction::SetLayout(preset) => self.apply_layout_preset(preset),
+            ToolbarAction::SetLayout(preset) => _ = layout::pick(self.active_tab_mut(), preset),
             // Carried out by `chrome::capsule::settle`, which knows the window.
             ToolbarAction::ToggleWindowMenu
             | ToolbarAction::ToggleLayoutPopover

@@ -14,6 +14,8 @@
 //! child modules, which never see the window.
 
 use super::drawing_controller::{DrawingAccess, DrawingReadAccess, QUICK_RANGE_REFUSED};
+#[cfg(any(feature = "scenario-harness", feature = "drawing-harness", test))]
+use super::owners_desk::OwnersDesk as _;
 use super::{AlertsPort, GatewayPort, LayersPort};
 use crate::surfaces::drawing_chrome::DrawingChromeExt as _;
 use crate::surfaces::replay_browser::ReplayBrowserExt as _;
@@ -339,7 +341,7 @@ impl QuantickApp {
             #[cfg(any(feature = "control-harness", test))]
             FrameStage::TakeMark => self.take_scenario_mark(),
             #[cfg(any(feature = "control-harness", test))]
-            FrameStage::AnnotateHooks => self.apply_control_annotate_hooks(),
+            FrameStage::AnnotateHooks => super::demo_hooks::apply_control_annotate_hooks(self),
             #[cfg(any(feature = "control-harness", test))]
             FrameStage::EvidenceHook => super::demo_hooks::apply_control_evidence_hook(self, ctx),
             FrameStage::GatewayService => {
@@ -355,7 +357,7 @@ impl QuantickApp {
                 }
             }
             #[cfg(any(feature = "scenario-harness", feature = "drawing-harness", test))]
-            FrameStage::ScenarioHooks => self.apply_scenario_hooks(),
+            FrameStage::ScenarioHooks => super::demo_hooks::apply_scenario_hooks(self.owners()),
             #[cfg(any(feature = "scenario-harness", test))]
             FrameStage::WindowStartupHook => self.chrome.window_startup.apply(ctx),
             FrameStage::WindowHousekeeping => {
@@ -485,40 +487,6 @@ impl QuantickApp {
             let note = (!note.is_empty()).then_some(note);
             self.take_mark(note);
         }
-    }
-
-    /// Scripted views, the drawing demos and pending history requests, in
-    /// the order a launch composes them.
-    #[cfg(any(feature = "scenario-harness", feature = "drawing-harness", test))]
-    fn apply_scenario_hooks(&mut self) {
-        #[cfg(any(feature = "scenario-harness", test))]
-        self.chrome
-            .harness
-            .apply_scripted_view(&mut self.runtime.tabs);
-        #[cfg(any(feature = "drawing-harness", test))]
-        super::demo_hooks::apply_drawing_demo(self);
-        #[cfg(any(feature = "scenario-harness", test))]
-        self.chrome
-            .harness
-            .apply_load_older(&mut self.runtime.tabs, &self.config);
-        #[cfg(any(feature = "scenario-harness", test))]
-        self.chrome
-            .harness
-            .apply_load_older_candles(&mut self.runtime.tabs, &self.config);
-        #[cfg(any(feature = "drawing-harness", test))]
-        super::demo_hooks::apply_drawing_draft(self);
-        #[cfg(any(feature = "scenario-harness", test))]
-        super::demo_hooks::apply_venue_history_demo(self);
-        #[cfg(any(feature = "drawing-harness", test))]
-        super::demo_hooks::apply_frvp_demo(self);
-        #[cfg(any(feature = "drawing-harness", test))]
-        super::demo_hooks::apply_avwap_demo(self);
-        #[cfg(any(feature = "scenario-harness", test))]
-        super::demo_hooks::apply_strategy_demo(self);
-        #[cfg(any(feature = "scenario-harness", test))]
-        self.chrome
-            .harness
-            .apply_replay_restart(&mut self.runtime.tabs, &self.config);
     }
 
     /// The registered surfaces, then what they asked for. The environment is
@@ -844,7 +812,7 @@ fn begin_dock_effects(
     }
     let bell = begun.as_ref().is_ok_and(|effects| effects.open_alerts);
     if bell {
-        app.apply_menu_command(super::menu_bar::MenuCommand::OpenAlerts);
+        _ = quantick_control_handlers::alerts::AlertDefinitionsPort::alert_open(app);
     }
     super::alerts_runtime::after_dock(&mut app.runtime, &mut app.surfaces, ctx);
     begun

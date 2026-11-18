@@ -508,7 +508,7 @@ impl PaperTrading {
     /// right-click menu cannot offer. The line is what ties the label at
     /// the pointer to the price on the axis, so it spans the whole way
     /// rather than hugging the edge.
-    pub(super) fn draw_cmd_preview(&self, ctx: &PaintCtx<'_>, aimed_here: bool) {
+    pub(crate) fn draw_cmd_preview(&self, ctx: &PaintCtx<'_>, aimed_here: bool) {
         let palette = &ctx.palette;
         if self.paper.desk.gesture.cmd_preview.is_none() {
             return;

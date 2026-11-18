@@ -90,7 +90,7 @@ fn tree_app(ctx: &egui::Context, preset: &str, source: &str) -> QuantickApp {
     let preset = (LAYOUT_PRESETS.iter())
         .find(|listed| listed.id == preset)
         .expect("a registered preset");
-    app.apply_layout_preset(preset);
+    _ = crate::tab::layout::pick(app.active_tab_mut(), preset);
     dress(&mut app, ctx, source);
     run_frame(&mut app, ctx);
     app

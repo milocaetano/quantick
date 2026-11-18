@@ -85,7 +85,7 @@ fn answer(app: &mut QuantickApp, act: CanvasAct) -> Result<CanvasResult, Control
     let act = canvas::placed_pop_out(act, place, origin, |rect| monitor_of(rect, scale));
     let (changed, slot) = if let CanvasAct::PickLayout { preset_id } = &act {
         let before = app.active_tab().canvas.state.clone();
-        app.apply_layout_preset(canvas::pick_on(&before, preset_id)?);
+        crate::tab::layout::pick(app.active_tab_mut(), canvas::pick_on(&before, preset_id)?);
         (app.active_tab().canvas.state != before, None)
     } else if let Some(id) = canvas::surface_widget(&act) {
         quantick_control_handlers::widgets::widget(app, id, Some(true))

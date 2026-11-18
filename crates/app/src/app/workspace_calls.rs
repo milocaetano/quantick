@@ -111,7 +111,7 @@ impl DeskOwner for WorkspaceCalls<'_> {
                 super::chrome::settings::open(menu, settings, viewport, section);
                 true
             }
-            DeskAct::Save => self.save_adapter().save_workspace("control"),
+            DeskAct::Save(reason) => self.save_adapter().save_workspace(reason),
             // A file holding only standing choices has no desk to forget: the
             // call says nothing changed rather than claiming a write.
             DeskAct::Forget => {
@@ -169,14 +169,8 @@ impl WorkspaceOwner for WorkspaceCalls<'_> {
     }
 }
 
-impl quantick_control_handlers::TabDirectory for WorkspaceCalls<'_> {
-    fn active_tab_index(&self) -> usize {
-        self.runtime.tabs.active_index()
-    }
-    fn tab_position(&self, id: u64) -> Option<usize> {
-        self.runtime.tabs.position(id)
-    }
-    fn tab_id_at(&self, index: usize) -> u64 {
-        self.runtime.tabs.id_at(index)
+impl quantick_control_handlers::TabsHost for WorkspaceCalls<'_> {
+    fn tab_list(&self) -> &dyn quantick_control_handlers::TabDirectory {
+        &self.runtime.tabs
     }
 }

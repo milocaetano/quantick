@@ -42,8 +42,8 @@ Read ownership:
 - a floating surface's hook → that surface's module under
   `crates/app/src/surfaces/`, as an `apply_env_hook` the registry calls
   (`size.rs` fails one added to the trunk);
-- stateless setters and control/tab/replay/workspace clusters stay in
-  `app/launch_hooks.rs`; stateful hooks needing only their own parsed value
+- other setters: `app/launch_hooks.rs` over `HarnessDesk`, values read by
+  `launch_values`; stateful hooks needing only their own parsed value
   belong in their owner.
 
 `main` captures declared names once; owners use `crate::hooks::captured::var`,
