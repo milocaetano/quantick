@@ -210,14 +210,19 @@ impl ScriptLibrary {
 
     /// What a saved entry naming `name` loads.
     pub fn load(&self, name: &str) -> LoadedScript {
-        let Some(index) = self.index_of(name) else {
-            let message = format!("{name} is not in the script library");
-            return LoadedScript::Missing { message };
-        };
-        match self.read(index).expect("index_of names an entry") {
+        let loaded = self.index_of(name).and_then(|index| self.load_at(index));
+        loaded.unwrap_or_else(|| LoadedScript::Missing {
+            message: format!("{name} is not in the script library"),
+        })
+    }
+
+    /// What the entry at `index` loads, as a menu add picks it; `None` when
+    /// the library has no entry there.
+    pub fn load_at(&self, index: usize) -> Option<LoadedScript> {
+        Some(match self.read(index)? {
             Ok(text) => LoadedScript::Read { index, text },
             Err(message) => LoadedScript::Unreadable { index, message },
-        }
+        })
     }
 }
 
@@ -454,6 +459,8 @@ plot(close)
         assert_eq!(library.entries()[index].name, name);
         let text = source.to_owned();
         assert_eq!(library.load(name), LoadedScript::Read { index, text });
+        assert_eq!(library.load_at(index), Some(library.load(name)));
+        assert_eq!(library.load_at(library.entries().len()), None);
         let missing = library.load("nowhere.pine");
         assert_eq!(missing.index(), None);
         assert_eq!(

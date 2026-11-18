@@ -21,6 +21,7 @@ use crate::pane::ChartPane;
 use crate::pane::PaneSide;
 use crate::surfaces::indicator_settings::IndicatorSettingsSurface;
 use quantick_chart::indicator_registry::{IndicatorAttachment, IndicatorHost, IndicatorRegistry};
+use quantick_stores::script_library::LoadedScript;
 use quantick_ui_model::indicator_settings::{Intent as SettingsIntent, State as SettingsState};
 
 use super::TabSlot;
@@ -363,8 +364,8 @@ impl IndicatorState {
     ) -> Option<(SlotId, LibraryAttachment)> {
         let entry = self.script_library.entries().get(index)?;
         let name = entry.name.clone();
-        match self.script_library.read(index) {
-            Some(Ok(text)) => {
+        match self.script_library.load_at(index)? {
+            LoadedScript::Read { text, .. } => {
                 let attached = self.attach_script(pane, target, name, text, false);
                 let slot = attached.target.slot;
                 let watch = Some((attached.target, index));
@@ -376,7 +377,7 @@ impl IndicatorState {
                     },
                 ))
             }
-            Some(Err(message)) => {
+            LoadedScript::Unreadable { message, .. } => {
                 tracing::warn!(
                     target: "quantick::app",
                     schema_version = 1_u8,
@@ -398,7 +399,7 @@ impl IndicatorState {
                     },
                 ))
             }
-            None => None,
+            LoadedScript::Missing { .. } => None,
         }
     }
 }
