@@ -83,6 +83,7 @@ fn drawing_env<'a>(
         legends: facts.legends,
         auto_range: facts.auto_range,
         selected_bbox: read.selected_bbox,
+        press_pick: facts.press_pick,
         selected_band: read.selected_band,
         tab: facts.tab,
         side: facts.side,

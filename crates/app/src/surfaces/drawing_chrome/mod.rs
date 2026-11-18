@@ -161,6 +161,9 @@ pub(crate) struct DrawingEnv<'a> {
     /// `painted_bounds`. Projected by the host, which owns the viewport and
     /// the price scale, and only when something is selected.
     pub selected_bbox: Option<egui::Rect>,
+    /// What the pane's Pointer gesture picked for the press in flight:
+    /// `Some(None)` is empty canvas, `None` a press the chart never saw.
+    pub press_pick: Option<Option<usize>>,
     /// Which band the selected object is on, for the inspector's title. `None`
     /// on the price band, where a suffix on every object would be noise.
     pub selected_band: Option<String>,

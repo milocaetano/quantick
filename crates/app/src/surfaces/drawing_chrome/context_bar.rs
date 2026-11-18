@@ -10,6 +10,7 @@ use eframe::egui;
 
 use super::{Chrome, DrawingChromeAsk, DrawingEnv, InspectorActions, clamp_into_chart};
 use crate::drawings::{self, DrawingAuthor};
+use quantick_ui_model::drawing_chrome::bar_dismissal::PressOn;
 
 /// The bar's own state: the widget's, plus the rectangle a test reads back.
 #[derive(Default)]
@@ -117,6 +118,12 @@ pub(crate) fn draw(
             ctx.style().visuals.selection.stroke.color,
         );
     }
+    let input = GestureInput::read(ctx);
+    // Dismissed by a press elsewhere or a lost focus, until the object is
+    // pressed again or another is selected.
+    if input.dismisses(&mut chrome.view.bar.bar, env, index) {
+        return ask;
+    }
     // An armed tool means the trader is drawing, not editing. The bar is
     // opaque to the pointer, so leaving it up would let it eat the click that
     // places the next object — the selection it belongs to is the one they
@@ -129,7 +136,7 @@ pub(crate) fn draw(
     // Suppressed means suppressed: nothing below this line runs, so the bar
     // cannot measure a world the gesture that suppressed it is still moving.
     // That is the rule the drag gestures already learned.
-    if GestureInput::read(ctx).suppresses(&mut chrome.view.bar.bar) {
+    if input.suppresses(&mut chrome.view.bar.bar) {
         return ask;
     }
     let chart_area = if chrome.view.bar.bar.manual_position().is_none() {
@@ -206,8 +213,14 @@ pub(crate) fn draw(
                     )
                     .size()
             }) + egui::vec2(2.0 * style.spacing.button_padding.x, 0.0);
-            let compact =
-                Placement::resolve(&chrome.view.bar.bar, env, chart, bbox, compact_size, inspector);
+            let compact = Placement::resolve(
+                &chrome.view.bar.bar,
+                env,
+                chart,
+                bbox,
+                compact_size,
+                inspector,
+            );
             let compact_rect = egui::Rect::from_min_size(compact.position, compact_size);
             if chart.contains_rect(compact_rect)
                 && inspector.is_none_or(|rect| !rect.intersects(compact_rect))
@@ -333,18 +346,20 @@ struct GestureInput {
     layer: Option<egui::LayerId>,
     zoomed: bool,
     screen: egui::Rect,
+    focused: bool,
 }
 
 impl GestureInput {
     fn read(ctx: &egui::Context) -> Self {
         let now_ms = (ctx.input(|input| input.time) * 1000.0) as u64;
-        let (dragging, origin, zoomed, screen) = ctx.input(|input| {
+        let (dragging, origin, zoomed, screen, focused) = ctx.input(|input| {
             (
                 input.pointer.is_decidedly_dragging(),
                 (input.pointer.press_origin()).zip(input.pointer.press_start_time()),
                 input.raw_scroll_delta.y.abs() > f32::EPSILON
                     || (input.zoom_delta() - 1.0).abs() > f32::EPSILON,
                 input.screen_rect,
+                input.focused,
             )
         });
         Self {
@@ -354,12 +369,30 @@ impl GestureInput {
             layer: origin.and_then(|(origin, _)| ctx.layer_id_at(origin)),
             zoomed,
             screen,
+            focused,
         }
+    }
+
+    /// Step the bar's dismissal with this frame's press and focus, answering
+    /// whether it stands dismissed.
+    fn dismisses(
+        &self,
+        bar: &mut drawings::context_bar::ContextBar,
+        env: &DrawingEnv<'_>,
+        selected: usize,
+    ) -> bool {
+        let press = self.origin.map(|(origin, started)| {
+            let in_bounds = self.layer.is_some_and(|layer| layer.order == egui::Order::Background)
+                && env.selected_bbox.is_some_and(|bbox| bbox.contains(origin));
+            let on_bar = bar.owns_press(self.origin, bar.last_rect(), self.layer);
+            (started, PressOn::classify(on_bar, env.press_pick, selected, in_bounds))
+        });
+        bar.step_dismissal(self.focused, press)
     }
 
     /// Step the bar's suppression state with this frame's input, and answer
     /// whether the bar is suppressed now.
-    fn suppresses(self, bar: &mut drawings::context_bar::ContextBar) -> bool {
+    fn suppresses(&self, bar: &mut drawings::context_bar::ContextBar) -> bool {
         let bar_rect = bar.last_rect();
         // Decided once per press, not against this frame's rect — a grip drag
         // moves the bar, and the moved rect would leave the origin behind and
