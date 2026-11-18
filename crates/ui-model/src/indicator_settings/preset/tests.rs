@@ -1,22 +1,23 @@
 #[cfg(test)]
 mod cases {
+    use super::super::super::{Change, Effects, SettingsOutcome};
     use super::super::*;
-    use quantick_ui_model::indicator_settings::{Change, SettingsOutcome};
+    use crate::Adapter;
 
     #[test]
     fn preset_winner_executes_once_and_close_prevents_store_io() {
         let directory = crate::scratch::ScratchDir::new("indicator-settings-preset");
         let path = directory.path().join("presets.toml");
-        let mut presets = crate::indicators::preset_file::PresetStore::load(&path);
+        let mut presets = PresetStore::load(&path);
         let kind = quantick_workspace::indicator_document::SavedKind::native("native.ema");
         let target = quantick_chart::indicator_registry::TabSlot {
             workspace: quantick_workspace::lifetime::WorkspaceId(1),
             tab: 1,
             pane: 1,
-            side: crate::pane::PaneSide::Flow,
-            slot: crate::indicator_worker::SlotId(2),
+            side: quantick_chart_interaction::pane::PaneSide::Flow,
+            slot: quantick_chart::indicator_views::IndicatorViews::default().allocate_slot("test"),
         };
-        let mut editor = IndicatorSettingsSurface::new(View, effects);
+        let mut editor = Adapter::<Model, (), Effects>::new((), std::convert::identity);
         let open = || Intent::Open {
             target,
             title: "EMA".to_owned(),
@@ -31,17 +32,18 @@ mod cases {
             escape,
         };
         editor.with_updates(
-            |response| assert!(response.model_effects.is_empty()),
+            |response| assert!(response == Effects::default()),
             |_, session| {
-                dispatch(
-                    session,
-                    Some(target),
-                    Some(&kind),
-                    &[],
-                    &mut presets,
-                    &path,
-                    finish(true),
-                );
+                PresetEditor {
+                    target: Some(target),
+                    kind: Some(&kind),
+                    specs: &[],
+                    presets: &mut presets,
+                    path: &path,
+                }
+                .dispatch(session, finish(true), |_, _, _, _| {
+                    panic!("unexpected rebound")
+                });
             },
         );
         assert!(
@@ -53,17 +55,18 @@ mod cases {
         editor.update(open());
         editor.update(Intent::EditPresetName(" mine ".to_owned()));
         editor.with_updates(
-            |response| assert!(response.model_effects.is_empty()),
+            |response| assert!(response == Effects::default()),
             |_, session| {
-                dispatch(
-                    session,
-                    Some(target),
-                    Some(&kind),
-                    &[],
-                    &mut presets,
-                    &path,
-                    finish(false),
-                );
+                PresetEditor {
+                    target: Some(target),
+                    kind: Some(&kind),
+                    specs: &[],
+                    presets: &mut presets,
+                    path: &path,
+                }
+                .dispatch(session, finish(false), |_, _, _, _| {
+                    panic!("unexpected rebound")
+                });
             },
         );
         assert!(path.exists());
@@ -82,32 +85,30 @@ mod cases {
             options: vec![],
         }];
         editor.with_updates(
-            |response| {
-                for effect in response.model_effects {
-                    if let HostEffect::IndicatorSettings(effects) = effect {
-                        assert!(effects.local_operation.is_none());
-                        for change in effects.changes {
-                            assert_eq!(
-                                change,
-                                Change::Inputs {
-                                    target,
-                                    values: vec![quantick_indicators::InputValue::Int(9)],
-                                    commit: false
-                                }
-                            );
-                            requests += 1;
+            |effects| {
+                assert!(effects.local_operation.is_none());
+                for change in effects.changes {
+                    assert_eq!(
+                        change,
+                        Change::Inputs {
+                            target,
+                            values: vec![quantick_indicators::InputValue::Int(9)],
+                            commit: false
                         }
-                    }
+                    );
+                    requests += 1;
                 }
             },
             |_, session| {
-                dispatch(
+                PresetEditor {
+                    target: Some(target),
+                    kind: Some(&kind),
+                    specs: &specs,
+                    presets: &mut presets,
+                    path: &path,
+                }
+                .dispatch(
                     session,
-                    Some(target),
-                    Some(&kind),
-                    &specs,
-                    &mut presets,
-                    &path,
                     Intent::FinishPaint {
                         changed: false,
                         style_changed: false,
@@ -115,6 +116,7 @@ mod cases {
                         window_closed: false,
                         escape: false,
                     },
+                    |_, _, _, _| panic!("unexpected rebound"),
                 );
             },
         );

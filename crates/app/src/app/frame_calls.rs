@@ -2,14 +2,14 @@
 use super::{GatewayPort, QuantickApp, owners_desk::OwnersDesk};
 use quantick_workspace::market_list::PaletteIntent;
 
+type StatusOwners<'a> = (
+    &'a super::health::HealthCounters,
+    &'a super::workspace_runtime::WorkspaceRuntime,
+    &'a crate::config::AppConfig,
+);
+
 pub(super) trait FrameCalls: GatewayPort + OwnersDesk {
-    fn status_owners(
-        &self,
-    ) -> (
-        &super::health::HealthCounters,
-        &super::workspace_runtime::WorkspaceRuntime,
-        &crate::config::AppConfig,
-    );
+    fn status_owners(&self) -> StatusOwners<'_>;
 
     fn status_model(&self) -> crate::statusbar::StatusModel {
         let (health, runtime, config) = self.status_owners();
@@ -80,13 +80,7 @@ pub(super) trait FrameCalls: GatewayPort + OwnersDesk {
 }
 
 impl FrameCalls for QuantickApp {
-    fn status_owners(
-        &self,
-    ) -> (
-        &super::health::HealthCounters,
-        &super::workspace_runtime::WorkspaceRuntime,
-        &crate::config::AppConfig,
-    ) {
+    fn status_owners(&self) -> StatusOwners<'_> {
         (
             &self.health,
             self.runtime.bound(&self.presentation.binding),
@@ -99,35 +93,5 @@ impl super::workspace_calls::WorkspaceCalls<'_> {
     fn drain_sources(&mut self) {
         super::deal_recording_wiring::ensure(self.runtime, self.chrome, self.config);
         self.health.trades_since_summary += self.runtime.drain_tabs(self.config);
-    }
-}
-
-impl quantick_ui_model::frame_settlement::Host for super::workspace_calls::WorkspaceCalls<'_> {
-    fn switch_market(&mut self) -> bool {
-        let tab = self.runtime.active_tab_mut();
-        let changed = tab.link.replay.is_none()
-            && (tab.active.0 != tab.feed_id || tab.active.1 != tab.symbol);
-        tab.maybe_switch_feed(self.config);
-        changed
-    }
-    fn apply_spec(&mut self) {
-        self.runtime
-            .bound_mut(&self.presentation.binding)
-            .active_tab_mut()
-            .apply_spec_changes();
-    }
-    fn follow_market(&mut self) {
-        self.layout().follow_market_changes();
-    }
-    fn pending_layouts(&mut self) {
-        for (id, tab) in self.runtime.tabs.iter_with_ids_mut() {
-            tab.apply_pending_layout(id, self.config, &self.runtime.style, self.pane_ids);
-        }
-    }
-    fn maintain_layouts(&mut self) {
-        self.layout().maintain_layouts();
-    }
-    fn maintain_workspaces(&mut self) {
-        self.maintain();
     }
 }

@@ -2,6 +2,10 @@
 use quantick_chart::indicator_registry::{TabSlot, remap_side};
 use quantick_indicators::{InputSpec, InputValue};
 
+#[path = "indicator_settings/preset.rs"]
+mod preset;
+pub use preset::PresetEditor;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SettingsTab {
     #[default]

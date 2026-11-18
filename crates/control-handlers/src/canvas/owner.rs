@@ -66,13 +66,13 @@ pub fn canvas_area(drawn: CanvasRect) -> CanvasRect {
 pub fn canvas_hooks(
     drawn: bool,
     hooked: &mut bool,
-    add: &str,
-    acts: &str,
+    inputs: impl FnOnce() -> (String, String),
 ) -> (bool, Vec<CanvasAct>) {
     if !drawn || std::mem::replace(hooked, true) {
         return (false, Vec::new());
     }
-    (add == "1", super::hook_acts(acts))
+    let (add, acts) = inputs();
+    (add == "1", super::hook_acts(&acts))
 }
 
 /// A pinned gesture survives later hook observations unchanged.

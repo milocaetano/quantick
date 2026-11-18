@@ -166,3 +166,29 @@ impl quantick_control_handlers::TabsHost for WorkspaceCalls<'_> {
         &self.runtime.tabs
     }
 }
+
+impl quantick_ui_model::frame_settlement::Host for WorkspaceCalls<'_> {
+    fn switch_market(&mut self) -> bool {
+        self.runtime.active_tab_mut().maybe_switch_feed(self.config)
+    }
+    fn apply_spec(&mut self) {
+        self.runtime
+            .bound_mut(&self.presentation.binding)
+            .active_tab_mut()
+            .apply_spec_changes();
+    }
+    fn follow_market(&mut self) {
+        self.layout().follow_market_changes();
+    }
+    fn pending_layouts(&mut self) {
+        for (id, tab) in self.runtime.tabs.iter_with_ids_mut() {
+            tab.apply_pending_layout(id, self.config, &self.runtime.style, self.pane_ids);
+        }
+    }
+    fn maintain_layouts(&mut self) {
+        self.layout().maintain_layouts();
+    }
+    fn maintain_workspaces(&mut self) {
+        self.maintain();
+    }
+}

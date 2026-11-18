@@ -176,7 +176,7 @@ fn pop_out_uses_the_drawn_place_and_desktop_origin() {
         *rect,
         CanvasRect::new(drawn.x + 100.0, drawn.y + 200.0, drawn.w, drawn.h)
     );
-    assert!(matches!(host.state.mode(0), Some(PaneMode::Floating)));
+    assert!(matches!(host.state.mode(0), Some(PaneMode::OsWindow)));
 }
 
 #[test]
@@ -187,11 +187,20 @@ fn nominal_area_and_once_after_paint_hooks_keep_their_boundaries() {
     let area = CanvasRect::new(4.0, 5.0, 600.0, 700.0);
     assert_eq!(canvas_area(area), area);
     let mut hooked = false;
-    assert_eq!(canvas_hooks(false, &mut hooked, "1", ""), (false, vec![]));
+    assert_eq!(
+        canvas_hooks(false, &mut hooked, || panic!("before paint")),
+        (false, vec![])
+    );
     assert!(!hooked);
-    assert_eq!(canvas_hooks(true, &mut hooked, "1", ""), (true, vec![]));
+    assert_eq!(
+        canvas_hooks(true, &mut hooked, || ("1".into(), String::new())),
+        (true, vec![])
+    );
     assert!(hooked);
-    assert_eq!(canvas_hooks(true, &mut hooked, "1", ""), (false, vec![]));
+    assert_eq!(
+        canvas_hooks(true, &mut hooked, || panic!("already consumed")),
+        (false, vec![])
+    );
 }
 
 #[test]

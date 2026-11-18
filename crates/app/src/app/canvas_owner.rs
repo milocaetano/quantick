@@ -5,27 +5,18 @@ use quantick_control_schema::canvas::LayoutPickerResult;
 use quantick_workspace::canvas::{CanvasRect, CanvasState, LayoutPreset};
 use quantick_workspace::canvas_layout::recipe_canvas;
 
-use super::{QuantickApp, chrome::ChromeState, workspace_runtime::WorkspaceRuntime};
-
-struct CanvasAdapter<'a> {
-    runtime: &'a mut WorkspaceRuntime,
-    config: &'a crate::config::AppConfig,
-    surfaces: &'a mut crate::surfaces::Surfaces,
-    chrome: &'a mut ChromeState,
-}
+use super::{
+    QuantickApp,
+    owners_desk::{OwnersDesk, WindowOwners},
+};
 
 impl CanvasHost for QuantickApp {
     fn canvas_owner(&mut self) -> Option<Box<dyn CanvasOwner + '_>> {
-        Some(Box::new(CanvasAdapter {
-            runtime: self.runtime.bound_mut(&self.presentation.binding),
-            config: &self.config,
-            surfaces: &mut self.surfaces,
-            chrome: &mut self.chrome,
-        }))
+        Some(Box::new(self.owners()))
     }
 }
 
-impl CanvasOwner for CanvasAdapter<'_> {
+impl CanvasOwner for WindowOwners<'_> {
     fn state(&self) -> &CanvasState {
         &self.runtime.active_tab().canvas.state
     }

@@ -39,13 +39,15 @@ fn dispatch_preset(
     app.surfaces.indicator_settings.with_updates(
         |response| changes.extend(response.model_effects),
         |_, session| {
-            crate::surfaces::indicator_settings::dispatch(
-                session,
+            quantick_ui_model::indicator_settings::PresetEditor {
                 target,
                 kind,
                 specs,
-                &mut app.runtime.indicators.indicator_presets,
-                app.runtime.workspace.indicator_presets_path(),
+                presets: &mut app.runtime.indicators.indicator_presets,
+                path: app.runtime.workspace.indicator_presets_path(),
+            }
+            .dispatch(
+                session,
                 Intent::FinishPaint {
                     changed: false,
                     style_changed: false,
@@ -53,6 +55,7 @@ fn dispatch_preset(
                     window_closed: false,
                     escape: false,
                 },
+                |_, _, _, _| {},
             )
         },
     );

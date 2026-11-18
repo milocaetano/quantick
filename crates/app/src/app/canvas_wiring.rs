@@ -44,8 +44,12 @@ pub(super) fn settle_canvas(app: &mut QuantickApp, ctx: &egui::Context) {
         let (open, acts) = canvas::owner::canvas_hooks(
             app.active_tab().canvas.last_canvas.width() > 0.0,
             &mut app.chrome.add_menu.hooked,
-            &var("QUANTICK_ADD_MENU").unwrap_or_default(),
-            &var("QUANTICK_CANVAS_ACTS").unwrap_or_default(),
+            || {
+                (
+                    var("QUANTICK_ADD_MENU").unwrap_or_default(),
+                    var("QUANTICK_CANVAS_ACTS").unwrap_or_default(),
+                )
+            },
         );
         if open {
             app.surfaces
