@@ -9,6 +9,7 @@ struct FakeTab {
     loading: LoadingTracker,
     arrival_latency_ms: Option<i64>,
     split: Option<FeedLatency>,
+    gate: Option<Desync>,
     indicators: IndicatorViews,
 }
 
@@ -32,6 +33,9 @@ impl HealthTab for FakeTab {
     }
     fn intake_lag(&self) -> Option<IntakeLagSnapshot> {
         None
+    }
+    fn trade_gate(&self) -> Option<&Desync> {
+        self.gate.as_ref()
     }
     fn visit_panes(&self, visit: &mut dyn FnMut(&mut dyn Iterator<Item = PaneHealthRead<'_>>)) {
         visit(&mut std::iter::once(PaneHealthRead {
@@ -154,4 +158,42 @@ fn the_revision_ignores_frame_cost_and_exact_lag_and_moves_when_the_tape_turns_l
     );
     window.tabs[0].arrival_latency_ms = Some(FakeWindow::HIGH_LAG_MS + 1);
     assert!(revision(&window) != before, "the tape turned late");
+}
+
+fn paused(tape_age_ms: i64) -> Desync {
+    use quantick_sources::sync::{LinkState, SyncLimits, SyncReading};
+    Desync {
+        reading: SyncReading::TapeAge,
+        link: LinkState::Up,
+        latency_ms: None,
+        latency_hop: None,
+        tape_age_ms: Some(tape_age_ms),
+        limits: SyncLimits::default(),
+        notice: None,
+    }
+}
+
+#[test]
+fn a_paused_tab_reports_its_cause_and_the_revision_moves_on_its_edges_only() {
+    let mut window = one_tab(FakeTab::default());
+    assert_eq!(snapshot(&window).tabs[0].trade_gate, None, "entries open");
+    let open = revision(&window);
+    window.tabs[0].gate = Some(paused(6_000));
+    let gate = snapshot(&window).tabs[0]
+        .trade_gate
+        .clone()
+        .expect("a paused tab says why");
+    assert_eq!(
+        (gate.reading.as_str(), gate.link.as_str()),
+        ("tape_age", "up")
+    );
+    assert_eq!(
+        (gate.tape_age_ms, gate.max_tape_age_ms, gate.max_latency_ms),
+        (Some(6_000), 5_000, 500)
+    );
+    assert!(gate.sentence.contains("6.0 s old"), "{}", gate.sentence);
+    let entered = revision(&window);
+    assert!(entered != open, "the pause began");
+    window.tabs[0].gate = Some(paused(7_500));
+    assert!(revision(&window) == entered, "an ageing tape is not news");
 }

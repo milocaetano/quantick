@@ -25,5 +25,9 @@ quantick-strategy = { path = "../strategy" }
 rust_decimal = { workspace = true }
 tracing = { workspace = true }
 
+[dev-dependencies]
+# The broker port the entry-pause tests route a real account through.
+quantick-trading = { path = "../trading" }
+
 [lints]
 workspace = true

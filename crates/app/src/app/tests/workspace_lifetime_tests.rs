@@ -43,6 +43,7 @@ fn workspace_lifetime_native_rebind_retains_the_full_runtime_and_drains_without_
     app.active_tab_mut()
         .paper
         .redirect_history_dir(scratch.join("paper"));
+    connect_tabs(&mut app);
     app.apply_toolbar_action(ToolbarAction::PaperBuy);
     second.events.try_send(FeedEvent::Live(trade(201))).unwrap();
     app.drain_tabs();
@@ -412,6 +413,7 @@ fn workspace_lifetime_explicit_close_journals_once_and_exit_preserves_open_paper
         .try_send(FeedEvent::Backfilled(vec![trade(2)]))
         .unwrap();
     app.drain_tabs();
+    connect_tabs(&mut app);
     app.apply_toolbar_action(ToolbarAction::PaperBuy);
     ends.events.try_send(FeedEvent::Live(trade(4))).unwrap();
     app.drain_tabs();

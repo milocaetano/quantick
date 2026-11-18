@@ -56,6 +56,17 @@ pub struct FeedLatency {
     pub prints: u32,
 }
 
+impl FeedLatency {
+    /// The arrival figure as a measured delay: only when the provider cut it
+    /// into both halves and it is not negative. Otherwise it is a clock
+    /// difference, which the tape cell says as `clock N ms`.
+    #[must_use]
+    pub fn measured_ms(&self) -> Option<i64> {
+        let split = self.source_lag_ms.is_some() && self.transport_lag_ms.is_some();
+        (split && self.arrival_lag_ms >= 0).then_some(self.arrival_lag_ms)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

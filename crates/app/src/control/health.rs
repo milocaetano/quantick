@@ -44,6 +44,9 @@ impl HealthTab for Tab {
     fn intake_lag(&self) -> Option<IntakeLagSnapshot> {
         self.link.intake_lag.summary().map(Into::into)
     }
+    fn trade_gate(&self) -> Option<&quantick_feed::sync::Desync> {
+        self.paper.trade_gate()
+    }
     fn visit_panes(&self, visit: &mut dyn FnMut(&mut dyn Iterator<Item = PaneHealthRead<'_>>)) {
         visit(&mut self.panes().map(|(pane, side)| PaneHealthRead {
             pane_id: pane.id,

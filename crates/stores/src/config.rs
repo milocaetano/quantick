@@ -153,6 +153,11 @@ pub struct FeedConfig {
     /// reads the name's initials ([`AppConfig::feed_code`]).
     #[serde(default)]
     pub short_name: Option<String>,
+    /// How far behind this feed a chart may fall before new entries pause:
+    /// `sync = { max_latency_ms = 500, max_tape_age_ms = 5000 }`, either key
+    /// optional. Absent, those defaults.
+    #[serde(default)]
+    pub sync: quantick_sources::sync::SyncLimits,
 }
 
 /// The most characters a venue code made of a name's initials takes.
@@ -601,6 +606,13 @@ impl AppConfig {
         self.feed(id).map(|f| f.provider)
     }
 
+    /// How far behind feed `id` a chart may fall before new entries pause;
+    /// the defaults for a feed the config does not name.
+    #[must_use]
+    pub fn sync_limits(&self, id: &str) -> quantick_sources::sync::SyncLimits {
+        self.feed(id).map(|f| f.sync).unwrap_or_default()
+    }
+
     /// Whether feed `id` asks its tabs to record the deal counter unasked.
     #[must_use]
     pub fn records_deals(&self, id: &str) -> bool {
@@ -812,6 +824,7 @@ impl AppConfig {
             feed.validate_asset_aliases()?;
             feed.validate_contract_rolls()?;
             feed.validate_widgets()?;
+            feed.sync.validate(&feed.id)?;
             for (symbol, preset) in &feed.symbol_bubble_presets {
                 if !feed
                     .symbols
@@ -2238,6 +2251,48 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// A feed's `sync` limits are read per key over the defaults; a limit
+    /// under a millisecond and a key nobody reads are refused at load.
+    #[test]
+    fn a_feeds_sync_limits_load_over_the_defaults() {
+        let config = |sync: &str| {
+            format!(
+                r#"
+                default_feed = "f"
+                default_symbol = "AAA"
+                [[feeds]]
+                id = "f"
+                name = "F"
+                provider = "metatrader"
+                symbols = ["AAA"]
+                {sync}
+            "#
+            )
+        };
+        let load = |sync: &str| {
+            parse(
+                &config(sync),
+                ConfigSource::Embedded,
+                &AddedSymbols::default(),
+            )
+        };
+        let limits = |max_latency_ms, max_tape_age_ms| quantick_sources::sync::SyncLimits {
+            max_latency_ms,
+            max_tape_age_ms,
+        };
+        let absent = load("").expect("no sync table");
+        assert_eq!(absent.sync_limits("f"), limits(500, 5_000));
+        assert_eq!(absent.sync_limits("unknown"), limits(500, 5_000));
+        let one = load("sync = { max_latency_ms = 250 }").expect("one key");
+        assert_eq!(one.sync_limits("f"), limits(250, 5_000));
+        let zero = load("sync = { max_tape_age_ms = 0 }").expect_err("zero");
+        assert!(zero.to_string().contains("sync.max_tape_age_ms"), "{zero}");
+        assert!(
+            load("sync = { max_lag_ms = 9 }").is_err(),
+            "a typo is refused"
+        );
     }
 
     /// A `default_bars` no control could produce is refused at load, naming

@@ -982,6 +982,7 @@ fn the_time_panes_own_x_axis_zooms_the_time_pane_and_only_it() {
 fn the_focused_pane_hands_the_pointer_to_the_simulator() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = split_app(&ctx, 200);
+    connect_tabs(&mut app);
     app.apply_toolbar_action(ToolbarAction::PaperBuy);
     let fill = trade(4);
     app.active_tab_mut().ingest_live_trade_at(&fill, 0);
@@ -1749,6 +1750,7 @@ fn a_new_tab_takes_the_feeds_declared_defaults_over_inheritance() {
         default_bars: Some("tick:7".to_string()),
         record_deals: false,
         short_name: None,
+        sync: Default::default(),
     });
     let mut app = app_on(config, "binance", "TESTUSDT");
     assert_eq!(app.active_tab().canvas.layout, CanvasLayout::Single);

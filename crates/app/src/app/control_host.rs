@@ -549,10 +549,11 @@ impl<'a> ChromeReads<'a> {
     }
 
     /// Whether a one-click Reconnect stands outside the popup: the overlay's or
-    /// the status bar's, whichever is up.
+    /// the status bar's, whichever is up, or the tape cell's while entries pause.
     pub(crate) fn feed_reconnect_offered(self) -> bool {
         let tab = &self.tabs[self.tabs.active_index()];
         tab.connection.state().link == quantick_chart::connection_state::Link::Offline
+            || tab.paper.trade_gate().is_some_and(|g| g.offers_reconnect())
     }
 
     /// Whether the recovery popup that chip opens is showing, on the chart

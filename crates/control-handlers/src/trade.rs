@@ -271,11 +271,33 @@ fn run<P: TradePort + ?Sized, A: JournalAccess>(
         .ok_or_else(no_chart_open)?
         .execute(command);
     if let Some(refusal) = outcome.refusal {
-        return Err(ControlError::invalid_request(refusal));
+        return Err(match outcome.gate {
+            Some(gate) => paused_error(&gate, refusal),
+            None => ControlError::invalid_request(refusal),
+        });
     }
     let result = answer(app, &outcome.events);
     journal(access, actor, kind, &result, asked);
     to_value(result)
+}
+
+/// An entry refused while the chart is out of sync with its feed. Nothing
+/// was sent, so the same call is safe to retry once it catches up; the
+/// details name the reading, as the `health` scope's `trade_gate` does.
+fn paused_error(gate: &quantick_sources::sync::Desync, sentence: String) -> ControlError {
+    let code = quantick_control::error::codes::CAPABILITY_UNAVAILABLE;
+    let mut error = quantick_control_host::admission::known_error(code, sentence, true);
+    error.context.details = Some(json!({
+        "trade_gate": gate.reading.word(),
+        "link": gate.link.word(),
+        "latency_ms": gate.latency_ms,
+        "tape_age_ms": gate.tape_age_ms,
+    }));
+    error.context.next_steps = vec![format!(
+        "retry once the chart catches up, or call {} first",
+        quantick_control_schema::recovery::RECONNECT_CAPABILITY_ID
+    )];
+    error
 }
 
 fn bracket_order<P: TradePort + ?Sized, A: JournalAccess>(

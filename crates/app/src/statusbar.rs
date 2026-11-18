@@ -228,6 +228,9 @@ pub struct StatusLead<'a> {
     pub action: crate::feed_notice::NoticeAction,
     /// Why the tab shows another contract than it was opened on.
     pub note: Option<String>,
+    /// Why new entries are paused; Reconnect stands beside the tape cell
+    /// when the pause offers it (`Desync::offers_reconnect`).
+    pub gate: Option<&'a quantick_feed::sync::Desync>,
 }
 
 impl<'a> StatusLead<'a> {
@@ -252,6 +255,7 @@ impl<'a> StatusLead<'a> {
                 .rolled
                 .as_ref()
                 .map(quantick_feed::link::Rolled::sentence),
+            gate: tab.paper.trade_gate(),
         }
     }
 }
@@ -281,6 +285,11 @@ pub fn draw(
                 ui.spacing_mut().item_spacing.x = CELL_SPACING_PX;
                 draw_lead(ui, lead, &mut response);
                 draw_provenance(ui, model);
+                let offered = lead.gate.filter(|gate| gate.offers_reconnect());
+                if let Some(gate) = offered.filter(|_| !lead.open) {
+                    let why = |ui: &mut egui::Ui| _ = ui.label(gate.sentence());
+                    response.reconnect |= quick_control(ui, lead, why);
+                }
                 ui.separator();
                 response.open_trading_tab = draw_content(ui, model);
                 response.open_display_settings = draw_machinery(ui, model, tz);
@@ -366,19 +375,26 @@ fn draw_lead(ui: &mut egui::Ui, lead: &StatusLead<'_>, response: &mut StatusResp
         response.word_clicked = cell.clicked();
     }
     if word.reconnect && !lead.open {
-        let reconnect = ui
-            .add(
-                egui::Label::new(
-                    egui::RichText::new(lead.action.label())
-                        .small()
-                        .color(palette.loading_meta()),
-                )
-                .sense(egui::Sense::click()),
-            )
-            .on_hover_cursor(egui::CursorIcon::PointingHand)
-            .on_hover_text(lead.action.cost());
-        response.reconnect = reconnect.clicked();
+        let cost = |ui: &mut egui::Ui| _ = ui.label(lead.action.cost());
+        response.reconnect = quick_control(ui, lead, cost);
     }
+}
+
+/// The one-click act a feed in trouble offers, `hover` saying why; whether
+/// it was pressed.
+fn quick_control(
+    ui: &mut egui::Ui,
+    lead: &StatusLead<'_>,
+    hover: impl FnOnce(&mut egui::Ui),
+) -> bool {
+    let colour = theme::get(ui.ctx()).loading_meta();
+    let text = egui::RichText::new(lead.action.label())
+        .small()
+        .color(colour);
+    ui.add(egui::Label::new(text).sense(egui::Sense::click()))
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_ui(hover)
+        .clicked()
 }
 
 /// Venue, symbol, lag.

@@ -437,6 +437,7 @@ fn a_quick_click_in_each_band_extends_both_sides() {
 #[test]
 fn a_modifier_press_on_a_side_line_still_rests_the_order() {
     let (mut app, ctx, _commands) = drawn_rectangle();
+    connect_tabs(&mut app);
     let (left, _) = drawn_sides(&app);
     click_chart_with(
         &mut app,

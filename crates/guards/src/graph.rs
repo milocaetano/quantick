@@ -200,6 +200,8 @@ pub const ALLOWED: &[(&str, &[&str])] = &[
     // `chart` for the pane series a venue prefix installs into, and
     // `chart-interaction` for the history state and the view effects that
     // install decides, and the live-trade plan a print is carried through.
+    // `trading` (tests only) for a broker venue the desk's entry pause is
+    // proven on: the port its account routes a real account through.
     (
         "session",
         &[
@@ -211,6 +213,7 @@ pub const ALLOWED: &[(&str, &[&str])] = &[
             "sim",
             "sources",
             "strategy",
+            "trading",
         ],
     ),
     // What a source is, below the host that runs one: the provider settings

@@ -430,6 +430,13 @@ fn test_config() -> AppConfig {
             default_bars: None,
             record_deals: false,
             short_name: None,
+            // The fixtures' prints carry made-up timestamps, decades old by
+            // the wall clock: no tape age limit, so only the link and the
+            // latency pause entries here.
+            sync: quantick_feed::sync::SyncLimits {
+                max_tape_age_ms: i64::MAX,
+                ..Default::default()
+            },
         }],
         broker: Default::default(),
         metatrader: Default::default(),
@@ -530,6 +537,17 @@ fn test_app_with_workspace_and_launch(
         launch,
     );
     (app, evt_tx, cmd_rx, book_tx)
+}
+
+/// Every tab's transport connected now, and the pause it was judged under
+/// lifted, for a fixture whose fake feed never says so: the entry pause
+/// (`quantick_feed::sync`) holds new trades while a link is attempting.
+fn connect_tabs(app: &mut QuantickApp) {
+    let now = metrics::wall_clock_ms();
+    for tab in app.runtime.tabs.iter_mut() {
+        tab.link.set_connection(FeedConnectionState::Connected, now);
+        tab.paper.set_trade_gate(None);
+    }
 }
 
 fn test_app_with_notices() -> (
@@ -2010,6 +2028,7 @@ fn two_metatrader_feeds() -> AppConfig {
                 default_bars: None,
                 record_deals: false,
                 short_name: None,
+                sync: Default::default(),
             },
             FeedConfig {
                 id: "b3".to_string(),
@@ -2027,6 +2046,7 @@ fn two_metatrader_feeds() -> AppConfig {
                 default_bars: None,
                 record_deals: false,
                 short_name: None,
+                sync: Default::default(),
             },
         ],
         broker: Default::default(),

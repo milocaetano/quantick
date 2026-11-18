@@ -414,12 +414,7 @@ impl Tab {
     /// [`trade_arrival_ms`](FeedLink::trade_arrival_ms) reports nothing there.
     #[must_use]
     pub fn feed_latency(&self) -> Option<FeedLatency> {
-        if self.link.replay.is_some() {
-            return None;
-        }
-        self.link
-            .forced_latency
-            .or(*self.link.feed_latency.borrow())
+        self.link.latency_split()
     }
 }
 

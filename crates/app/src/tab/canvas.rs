@@ -345,7 +345,8 @@ impl Tab {
         now_ms: i64,
         stall: Option<&quantick_feed::stall::Stall>,
     ) {
-        use quantick_chart::connection_state::{ConnectionFacts, Transport, Verdict};
+        use quantick_chart::connection_state::{ConnectionFacts, Link, Transport, Verdict};
+        use quantick_feed::sync::{LinkState, SyncFacts};
         use quantick_feed::{FeedConnectionState, FeedNotice};
         let report = crate::feed_notice::report(&self.link.notice, stall)
             .filter(crate::feed_notice::Report::is_offline);
@@ -388,6 +389,18 @@ impl Tab {
         };
         self.connection.observe(&facts, &self.loading);
         let feed = self.connection.state();
+        let sync = SyncFacts {
+            symbol: &self.symbol,
+            link: match feed.link {
+                Link::Attempting => LinkState::Attempting,
+                Link::Offline => LinkState::Offline,
+                _ => LinkState::Up,
+            },
+            book_last_event_ms: self.tape().last_event_ms(),
+            limits: config.sync_limits(&self.feed_id),
+        };
+        let gate = self.link.sync_at(sync, now_ms);
+        self.paper.set_trade_gate(gate);
         self.tape_mut().observe_market(feed);
         let spoken = self.connection.spoken_link(now_ms);
         let (view, state) = (

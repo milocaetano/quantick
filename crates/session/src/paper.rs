@@ -53,6 +53,9 @@ pub struct TabPaper<A = PaperAccount> {
     pub desk: Desk,
     /// The money path, as its host holds it.
     pub account: A,
+    /// Why new entries pause, while the chart is out of sync with its feed;
+    /// told by the host every observation (`Self::set_trade_gate`).
+    gate: Option<quantick_sources::sync::Desync>,
 }
 
 impl<A: BorrowMut<PaperAccount>> TabPaper<A> {
@@ -62,6 +65,7 @@ impl<A: BorrowMut<PaperAccount>> TabPaper<A> {
         Self {
             desk: Desk::default(),
             account,
+            gate: None,
         }
     }
 
@@ -118,7 +122,10 @@ impl<A: BorrowMut<PaperAccount>> TabPaper<A> {
     /// and offsets; answers whether the simulator accepted it, and toasts
     /// the ticket's complaint when an offset does not parse.
     pub fn place_resting(&mut self, side: Side, kind: EntryKind, raw_price: f64) -> bool {
-        let Self { desk, account } = self;
+        if self.gate_refusal().is_some() {
+            return false;
+        }
+        let Self { desk, account, .. } = self;
         match desk.place_resting(account.borrow_mut(), side, kind, raw_price) {
             Ok(placed) => placed,
             Err(message) => {
@@ -272,7 +279,7 @@ impl<A: BorrowMut<PaperAccount>> TabPaper<A> {
 
     /// Replace the remembered steps wholesale, as the host restores them.
     pub fn set_ruler_steps(&mut self, steps: BTreeMap<String, Decimal>) {
-        let Self { desk, account } = self;
+        let Self { desk, account, .. } = self;
         desk.ruler
             .set_steps(steps, Borrow::<PaperAccount>::borrow(account).symbol());
     }
@@ -280,7 +287,7 @@ impl<A: BorrowMut<PaperAccount>> TabPaper<A> {
     /// Name this instrument's step, in points; `None` puts it back on the
     /// derived default.
     pub fn set_ruler_step(&mut self, step: Option<Decimal>) {
-        let Self { desk, account } = self;
+        let Self { desk, account, .. } = self;
         desk.ruler
             .set_step(Borrow::<PaperAccount>::borrow(account).symbol(), step);
     }

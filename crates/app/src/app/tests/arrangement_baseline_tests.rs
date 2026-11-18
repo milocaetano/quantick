@@ -128,6 +128,7 @@ fn arrangement_baseline_restore_journals_stale_position_and_drops_its_feed() {
         .unwrap();
     let tab_id = app.runtime.tabs.active_id();
     app.active_tab_mut().drain_feed_with_clock(tab_id, || 0);
+    connect_tabs(&mut app);
     app.apply_toolbar_action(ToolbarAction::PaperBuy);
     ends.events.try_send(FeedEvent::Live(trade(4))).unwrap();
     let tab_id = app.runtime.tabs.active_id();
@@ -191,6 +192,7 @@ fn arrangement_stale_close_does_not_flatten_journal_remove_or_drop() {
         .try_send(FeedEvent::Backfilled(vec![trade(2)]))
         .unwrap();
     app.active_tab_mut().drain_feed_with_clock(tab_id, || 0);
+    connect_tabs(&mut app);
     app.apply_toolbar_action(ToolbarAction::PaperBuy);
     ends.events.try_send(FeedEvent::Live(trade(4))).unwrap();
     app.active_tab_mut().drain_feed_with_clock(tab_id, || 0);

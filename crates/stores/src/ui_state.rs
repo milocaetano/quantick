@@ -997,6 +997,7 @@ mod tests {
                 default_bars: None,
                 record_deals: false,
                 short_name: None,
+                sync: Default::default(),
             }],
             broker: Default::default(),
             metatrader: crate::config::MetaTraderSettings::default(),

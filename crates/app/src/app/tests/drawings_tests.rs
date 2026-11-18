@@ -1581,6 +1581,7 @@ fn the_aim_yields_a_drawings_handle_but_not_its_body() {
     let (mut app, _commands) = app_with_history(200);
     let ctx = egui::Context::default();
     run_frame(&mut app, &ctx);
+    connect_tabs(&mut app);
     arm_drawing_from_toolbox(&mut app, &ctx, "trend-line");
     let start = egui::pos2(600.0, 400.0);
     let end = egui::pos2(800.0, 400.0);

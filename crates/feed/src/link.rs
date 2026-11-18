@@ -12,6 +12,7 @@ use tokio::sync::{mpsc, watch};
 use crate::config::{FeedCapabilities, ProviderKind};
 use crate::notice_report::{NoticeAction, RollNote};
 use crate::stall::{self, Stall, StallInput};
+use crate::sync::{self as feed_sync, Desync, SyncFacts, SyncInput, SyncWatch};
 use crate::{
     DepthEvent, FeedCommand, FeedConnectionState, FeedEvent, FeedGap, FeedHandle, FeedIntegrity,
     FeedLatency, FeedNotice, ReplayLink,
@@ -143,6 +144,8 @@ pub struct FeedLink {
     pub intake_lag: quantick_operability::intake_lag::IntakeLag,
     /// A session of this link has connected at least once.
     connected_once: bool,
+    /// When new entries paused on this link, kept across attaches.
+    sync_watch: SyncWatch,
 }
 
 impl FeedLink {
@@ -177,6 +180,7 @@ impl FeedLink {
             intake_lag: Default::default(),
             auto_roll: AutoRoll::default(),
             connected_once: false,
+            sync_watch: SyncWatch::default(),
         }
     }
 
@@ -358,6 +362,29 @@ impl FeedLink {
         )
     }
 
+    /// Whether new entries pause on this link as of `now_ms`: the judgement
+    /// is [`crate::sync`]'s; this gathers the link's own readings and logs
+    /// each edge of the pause.
+    pub fn sync_at(&mut self, facts: SyncFacts<'_>, now_ms: i64) -> Option<Desync> {
+        if feed_sync::waived() {
+            return None;
+        }
+        let transport = self.feed_capabilities.borrow().transport;
+        let desync = feed_sync::assess(&SyncInput {
+            replaying: self.replay.is_some() || !transport,
+            link: facts.link,
+            latency: self.latency_split(),
+            tape_age_ms: self.tape_age_at(facts.book_last_event_ms, now_ms),
+            notice: &self.notice,
+            limits: facts.limits,
+        });
+        if let Some(change) = self.sync_watch.step(desync.is_some(), now_ms) {
+            let intake = self.intake_lag.summary();
+            feed_sync::log_change(change, desync.as_ref(), facts.symbol, intake);
+        }
+        desync
+    }
+
     /// Book one live print received at `received_at_ms`, as the window hands
     /// it to its owners: the arrival delay, the tape-age stamp, the count and,
     /// off a recording, one intake-lag sample read now — the moment paper
@@ -374,6 +401,18 @@ impl FeedLink {
         if self.replay.is_none() {
             self.intake_lag.record(received_at_ms, now_ms);
         }
+    }
+
+    /// Where this feed's delay is being spent: the hook's forced split, else
+    /// the provider's own. `None` while replaying — a recording's prints are
+    /// as old as the day they were captured — and on a provider that cannot
+    /// cut its chain.
+    #[must_use]
+    pub fn latency_split(&self) -> Option<FeedLatency> {
+        if self.replay.is_some() {
+            return None;
+        }
+        self.forced_latency.or(*self.feed_latency.borrow())
     }
 
     /// Delay observed when the newest live trade reached the UI.

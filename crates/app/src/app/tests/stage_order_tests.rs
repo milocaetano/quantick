@@ -748,6 +748,7 @@ fn the_report_before_the_seek_drains_misses_the_round_trip_it_closed() {
         let ctx = egui::Context::default();
         let dir = crate::scratch::ScratchDir::new("stage-order-seek-report");
         staged_frame(&mut app, &ctx, &FrameStage::ORDER);
+        connect_tabs(&mut app);
         {
             let symbol = app.active_tab().symbol.clone();
             let paper = &mut app.active_tab_mut().paper;

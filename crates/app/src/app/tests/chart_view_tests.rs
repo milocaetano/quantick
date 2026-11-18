@@ -475,6 +475,39 @@ fn the_status_word_and_the_recovery_on_offer_follow_the_stall() {
     }
 }
 
+/// The frame hands the feed's judgement to the tab's paper: a connected feed
+/// keeps up; a late split pauses the toolbar's BUY (refused, toasted) and
+/// offers Reconnect, as the scene names it. The thresholds and the refusal
+/// itself are `quantick_feed::sync`'s and `quantick_session`'s.
+#[test]
+fn a_late_feed_pauses_the_toolbar_buy_and_offers_reconnect() {
+    let (mut app, notices, _channels) = test_app_with_notices();
+    let ctx = egui::Context::default();
+    notices.blocking_send(FeedNotice::Connected).unwrap();
+    run_frame(&mut app, &ctx);
+    assert_eq!(app.active_tab().paper.trade_gate(), None, "it keeps up");
+    assert!(!app.chrome_reads().feed_reconnect_offered());
+
+    app.active_tab_mut().link.forced_latency = Some(feed::FeedLatency {
+        arrival_lag_ms: 900,
+        source_lag_ms: Some(820),
+        source_lag_peak_ms: None,
+        transport_lag_ms: Some(80),
+        hop: Some("MT5"),
+        prints: 4,
+    });
+    run_frame(&mut app, &ctx);
+    let gate = app.active_tab().paper.trade_gate().expect("paused");
+    assert_eq!(gate.reading, feed::sync::SyncReading::Latency);
+    assert!(app.chrome_reads().feed_reconnect_offered());
+    let toast = app.active_tab_mut().paper.take_toast();
+    app.apply_toolbar_action(ToolbarAction::PaperBuy);
+    assert!(app.active_tab().paper.is_flat(), "{toast:?}");
+    assert!(app.active_tab().paper.working_orders().is_empty());
+    let refusal = app.active_tab_mut().paper.take_toast().expect("toasted");
+    assert!(refusal.contains("prints arrive 900 ms late"), "{refusal}");
+}
+
 /// A click on the chart puts the popup away. The rule is a table in
 /// `feed_notice`; this proves the frame feeds it the right answer, which
 /// means measuring the click against the two rectangles that were drawn.

@@ -108,11 +108,11 @@ impl PaperTrading {
         outcome.owned
     }
 
-    /// Carry out what a press asked for — the desk's `carry_out`, through
-    /// the account's own funnel. The host shows the ticket's complaint, and
-    /// re-reads the report if a close reached the journal.
+    /// Carry out what a press asked for — the tab paper's `carry_out`,
+    /// through the account's own funnel. The host shows the ticket's
+    /// complaint, and re-reads the report if a close reached the journal.
     fn apply(&mut self, command: ChartCommand) {
-        if let Err(message) = self.paper.desk.carry_out(&mut self.paper.account, command) {
+        if let Err(message) = self.paper.carry_out(command) {
             self.show_toast(message);
         }
         self.paper.account.follow_journal();

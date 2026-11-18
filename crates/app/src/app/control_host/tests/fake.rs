@@ -93,6 +93,7 @@ impl FakeWindow {
                     default_bars: None,
                     record_deals: false,
                     short_name: None,
+                    sync: Default::default(),
                 }],
                 broker: Default::default(),
                 metatrader: Default::default(),
