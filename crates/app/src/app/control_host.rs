@@ -101,9 +101,15 @@ pub(crate) trait TabsPort {
 }
 
 /// The window's tab directory, which every tab-scoped family resolves by.
-impl quantick_control_handlers::TabsHost for dyn ControlPort {
-    fn tab_list(&self) -> &dyn quantick_control_handlers::TabDirectory {
-        self.tab_reads().tabs()
+impl quantick_control_handlers::TabDirectory for dyn ControlPort {
+    fn active_tab_index(&self) -> usize {
+        self.tab_reads().tabs().active_index()
+    }
+    fn tab_position(&self, tab_id: u64) -> Option<usize> {
+        self.tab_reads().tabs().position(tab_id)
+    }
+    fn tab_id_at(&self, index: usize) -> u64 {
+        self.tab_reads().tabs().id_at(index)
     }
 }
 
@@ -734,7 +740,11 @@ impl MarketPaletteOwners for QuantickApp {
         Some(Box::new(self.arrangement_adapter()))
     }
     fn market_catalog(&mut self) -> Option<SymbolCatalog<'_>> {
-        Some(self.symbol_catalog())
+        Some(SymbolCatalog {
+            config: &mut self.config,
+            added: &mut self.added_symbols,
+            path: self.runtime.workspace.symbols_path(),
+        })
     }
     fn show_market_palette(&mut self, query: &str, target: Option<SwitchTarget>) -> PaletteShowing {
         let palette = &mut self.surfaces.market_palette;

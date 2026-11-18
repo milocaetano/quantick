@@ -3217,7 +3217,8 @@ fn removing_a_symbol_updates_the_file_and_leaves_open_tabs_alone() {
     let path = symbols_scratch("removed");
     let _ = std::fs::remove_file(&path);
     app.runtime.workspace.set_symbols_path(path.clone());
-    app.symbol_catalog()
+    app.market_catalog()
+        .unwrap()
         .add("binance", "WINQ26")
         .expect("the catalog takes a symbol that fits");
     app.arrangement_adapter().adopt_tab(
@@ -3229,7 +3230,10 @@ fn removing_a_symbol_updates_the_file_and_leaves_open_tabs_alone() {
     run_frame(&mut app, &ctx);
     let open_tabs = app.runtime.tabs.len();
 
-    app.symbol_catalog().remove("binance", "WINQ26").unwrap();
+    app.market_catalog()
+        .unwrap()
+        .remove("binance", "WINQ26")
+        .unwrap();
 
     assert!(
         !app.config
