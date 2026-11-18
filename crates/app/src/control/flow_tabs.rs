@@ -1,12 +1,12 @@
 //! The window's order-flow tab jobs: resolve the tab a call or a scope names,
 //! lend what only the window holds — the footprint setup, the theme's lights
 //! and the panel folds — and let the tab's panes and panel answer.
-use super::layout::{TabTarget, tab_index};
 use crate::app::control_host::ControlPort;
 use crate::{orderflow_panel::panel_seat, pane::visit_orderflow_panes};
 use quantick_control::{error::ControlError, wire::WireU64};
 use quantick_control_handlers::orderflow::{OrderflowPaneEntry, OrderflowPort, PanelVisit};
 use quantick_control_handlers::orderflow_settings::{OrderflowSettingsPort, PanelSeat};
+use quantick_control_handlers::tab_index;
 impl OrderflowPort for dyn ControlPort {
     fn visit_orderflow_tabs(&self, visit: &mut dyn FnMut(u64, &[OrderflowPaneEntry<'_>])) {
         let reads = self.tab_reads();
@@ -26,7 +26,7 @@ impl OrderflowPort for dyn ControlPort {
 impl OrderflowSettingsPort for dyn ControlPort {
     fn panel_seat(&mut self, tab: u64) -> Result<PanelSeat<'_>, ControlError> {
         let tab_id = Some(WireU64::new(tab));
-        let index = tab_index(self, TabTarget { tab_id })?;
+        let index = tab_index(self, tab_id)?;
         let lights_offered = self.appearance().has_lit_flow();
         let (tab, folds) = self
             .tabs_mut()

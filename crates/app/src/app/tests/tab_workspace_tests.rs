@@ -1255,11 +1255,11 @@ fn a_new_tab_on_a_market_opens_on_the_timeframe_it_remembers() {
         app.active_tab().feed_id.clone(),
         app.active_tab().symbol.clone(),
     );
-    let snapshot = MarketPaletteHost::market_snapshot(&app);
+    let snapshot = MarketPaletteOwners::listed_markets(&app);
     let choice = snapshot.choice((&market.0, &market.1), None, None, false);
     let choice = choice.expect("the market is listed");
     assert_eq!(choice.context_bars, std::slice::from_ref(&shown));
-    let _ = MarketPaletteHost::open_tab(&mut app, &choice, None);
+    let _ = app.market_tabs().unwrap().open_tab(&choice, None);
     frames(&mut app, 2);
     // The new tab opens on its feed's canvas; its first context chart, when
     // the trader adds one, stands on the market's timeframe.

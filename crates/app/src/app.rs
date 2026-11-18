@@ -224,14 +224,6 @@ impl QuantickApp {
         arrangement_adapter!(self).into_save(&self.surfaces.replay_browser)
     }
 
-    pub(crate) fn symbol_catalog(&mut self) -> quantick_stores::symbol_catalog::SymbolCatalog<'_> {
-        quantick_stores::symbol_catalog::SymbolCatalog {
-            config: &mut self.config,
-            added: &mut self.added_symbols,
-            path: self.runtime.workspace.symbols_path(),
-        }
-    }
-
     /// The active tab beside the config it reads.
     ///
     /// Split here, once, because almost every tab operation needs both and

@@ -21,7 +21,10 @@ struct Host {
     opened: Vec<(String, String, String, bool)>,
     /// The workspace each opened tab is to join, by tab id.
     arrivals: Vec<(u64, Option<String>)>,
-    catalog: Vec<(String, bool)>,
+    added: quantick_stores::symbols_file::AddedSymbols,
+    catalog_path: std::path::PathBuf,
+    _scratch: crate::scratch::ScratchDir,
+    lends_palette: bool,
     palette: Option<(String, bool)>,
     /// Tab 5: what it shows, and every switch and paper state asked of it.
     tab: PaletteTab,
@@ -75,24 +78,33 @@ impl Host {
         book.save_as(1, "Swing").unwrap();
         // Tab 9 is the one an open makes: the book does not hold it yet, as
         // the window's book adopts a tab only once its panes stand.
+        let scratch = crate::scratch::ScratchDir::new("market-palette");
+        let mut added = quantick_stores::symbols_file::AddedSymbols::default();
+        added.add("binance", "PEPEUSDT");
+        let mut config = crate::test_support::fake_config(&[(
+            "binance",
+            &["BTCUSDT", "PEPEUSDT"],
+            &[("BTCUSDT", "PEPEUSDT")],
+        )]);
+        config.default_feed = "binance".to_owned();
+        config.default_symbol = "BTCUSDT".to_owned();
         Self {
             snapshot,
             book,
             focused: Vec::new(),
             opened: Vec::new(),
             arrivals: Vec::new(),
-            catalog: Vec::new(),
+            added,
+            catalog_path: scratch.join("symbols.toml"),
+            _scratch: scratch,
+            lends_palette: true,
             palette: None,
             tab: PaletteTab {
                 market: ("binance".to_owned(), "BTCUSDT".to_owned()),
                 switches: Vec::new(),
                 paper_open: false,
             },
-            config: crate::test_support::fake_config(&[(
-                "binance",
-                &["BTCUSDT", "PEPEUSDT"],
-                &[("BTCUSDT", "PEPEUSDT")],
-            )]),
+            config,
             flow_bars: Vec::new(),
             default: crate::test_support::FAKE_DEFAULT_REACH,
             lends_workspaces: true,
@@ -125,15 +137,36 @@ impl crate::TabDirectory for LentBook<'_> {
     }
 }
 
-impl MarketPaletteHost for Host {
-    fn market_snapshot(&self) -> MarketSnapshot {
-        self.snapshot.clone()
+impl MarketPaletteOwners for Host {
+    fn listed_markets(&self) -> MarketSnapshot {
+        let mut snapshot = self.snapshot.clone();
+        snapshot.markets = self.config.market_catalog(&self.added).1;
+        snapshot
     }
+    fn market_tabs(&mut self) -> Option<Box<dyn MarketTabs + '_>> {
+        self.lends_palette
+            .then(|| Box::new(self) as Box<dyn MarketTabs>)
+    }
+    fn market_catalog(&mut self) -> Option<SymbolCatalog<'_>> {
+        self.lends_palette.then_some(SymbolCatalog {
+            config: &mut self.config,
+            added: &mut self.added,
+            path: &self.catalog_path,
+        })
+    }
+    fn show_market_palette(&mut self, query: &str, target: Option<SwitchTarget>) -> PaletteShowing {
+        if !self.lends_palette {
+            return Err(ControlError::invalid_request(UNAVAILABLE));
+        }
+        self.palette = Some((query.to_owned(), target.is_some()));
+        Ok(())
+    }
+}
 
+impl MarketTabs for &mut Host {
     fn focus_tab(&mut self, index: usize) {
         self.focused.push(index);
     }
-
     fn open_tab(&mut self, choice: &OpenChoice, bar: Option<BarConfiguration>) -> TabOpening {
         let (feed, symbol) = (choice.feed_id.clone(), choice.symbol.clone());
         let bar = bar.map_or_else(|| INHERITED.to_owned(), |bar| bar.to_config_string());
@@ -141,24 +174,6 @@ impl MarketPaletteHost for Host {
         self.arrivals.push((9, choice.arrival()));
         Ok(9)
     }
-
-    fn edit_catalog(&mut self, _feed: &str, symbol: &str, add: bool) -> Result<(), String> {
-        if symbol == "NOPE" {
-            return Err("Binance does not list NOPE".to_owned());
-        }
-        self.catalog.push((symbol.to_owned(), add));
-        Ok(())
-    }
-
-    fn open_market_palette(
-        &mut self,
-        query: &str,
-        target: Option<SwitchTarget>,
-    ) -> Result<(), ControlError> {
-        self.palette = Some((query.to_owned(), target.is_some()));
-        Ok(())
-    }
-
     fn set_flow_bar(&mut self, tab: u64, bar: BarConfiguration) -> Result<(), String> {
         self.flow_bars.push((tab, bar.to_config_string()));
         Ok(())
@@ -259,7 +274,7 @@ impl MarketTabHost for Host {
     }
 }
 
-/// What [`Host::open_tab`] records for an open that names no bar.
+/// What [`MarketTabs::open_tab`] records for an open that names no bar.
 const INHERITED: &str = "inherited";
 
 type Handler = fn(&mut Host, &mut FakeAccess, &ActorContext, &Value) -> Result<Value, ControlError>;
@@ -373,7 +388,18 @@ fn removal_takes_only_what_the_trader_added() {
         serde_json::json!({"feed": "binance", "symbol": "BTCUSDT"}),
     );
     assert!(refused.unwrap_err().message.contains("config file"));
-    assert_eq!(host.catalog, [("PEPEUSDT".to_owned(), false)]);
+    assert!(!host.added.contains("binance", "PEPEUSDT"));
+    assert!(
+        !host
+            .config
+            .feed("binance")
+            .unwrap()
+            .symbols
+            .contains(&"PEPEUSDT".to_owned())
+    );
+    assert!(
+        !quantick_stores::symbols_file::load(&host.catalog_path).contains("binance", "PEPEUSDT")
+    );
 }
 
 #[test]
@@ -425,10 +451,17 @@ fn the_palette_settles_an_add_by_adding_then_opening_and_a_refusal_adds_nothing(
         background: false,
     };
     assert_eq!(
-        settle(&mut host, PaletteIntent::Add(choice("NOPE"))),
-        Err("Binance does not list NOPE".to_owned())
+        settle(&mut host, PaletteIntent::Add(choice("BTCUSDT"))),
+        Err("binance already offers BTCUSDT".to_owned())
     );
-    assert!(host.catalog.is_empty() && host.opened.is_empty());
+    assert!(host.added.for_feed("binance") == ["PEPEUSDT"] && host.opened.is_empty());
+    settle(&mut host, PaletteIntent::Add(choice("SOLUSDT"))).unwrap();
+    assert_eq!(
+        host.opened[0].1, "SOLUSDT",
+        "the open sees the edited catalog"
+    );
+    assert!(host.added.contains("binance", "SOLUSDT"));
+    assert!(quantick_stores::symbols_file::load(&host.catalog_path).contains("binance", "SOLUSDT"));
     let toast = settle(&mut host, PaletteIntent::Open(choice("BTCUSDT"))).unwrap();
     assert_eq!(toast.as_deref(), Some("Focused BTCUSDT \u{b7} tab 1"));
     let removal = PaletteIntent::Remove {
@@ -468,7 +501,7 @@ fn an_add_with_a_bad_bar_or_workspace_adds_nothing() {
         settle(&mut host, PaletteIntent::Add(elsewhere)),
         Err("No workspace is named Nope".to_owned())
     );
-    assert!(host.catalog.is_empty() && host.opened.is_empty());
+    assert!(host.added.for_feed("binance") == ["PEPEUSDT"] && host.opened.is_empty());
 }
 
 /// A replay row's Enter focuses its tab by id and opens nothing; a tab gone
@@ -573,7 +606,7 @@ fn the_palette_switches_the_tab_through_the_source_switch() {
         assert!(settle(&mut host, PaletteIntent::Switch(refused)).is_err());
     }
     assert_eq!(host.tab.switches.len(), 2, "no refusal switched");
-    assert!(host.catalog.is_empty());
+    assert!(host.added.for_feed("binance") == ["PEPEUSDT"]);
 }
 
 /// A workspace picked in the palette never drops a tab's edits unasked: the
@@ -614,7 +647,7 @@ fn a_workspace_pick_without_workspaces_is_refused_before_the_switch() {
     let reason = settle(&mut host, PaletteIntent::Switch(picked)).unwrap_err();
     assert_eq!(reason, crate::workspace_book::unavailable().message);
     assert!(host.tab.switches.is_empty(), "the tab stays where it was");
-    assert!(host.catalog.is_empty());
+    assert!(host.added.for_feed("binance") == ["PEPEUSDT"]);
     assert_eq!(host.book.tab_state(5).unwrap().workspace, "Default");
 }
 
@@ -692,7 +725,10 @@ fn a_refused_add_and_switch_adds_nothing() {
         };
         assert!(settle(&mut host, PaletteIntent::Switch(add)).is_err());
     }
-    assert!(host.catalog.is_empty(), "nothing was added");
+    assert!(
+        host.added.for_feed("binance") == ["PEPEUSDT"],
+        "nothing was added"
+    );
     assert!(host.tab.switches.is_empty());
 }
 
@@ -703,10 +739,18 @@ fn an_add_and_switch_adds_first_and_a_refused_add_switches_nothing() {
         add: true,
         ..switch_to(symbol)
     };
-    assert!(settle(&mut host, PaletteIntent::Switch(add("NOPE"))).is_err());
+    assert!(settle(&mut host, PaletteIntent::Switch(add("BTCUSDT"))).is_err());
     assert!(host.tab.switches.is_empty());
-    settle(&mut host, PaletteIntent::Switch(add("PEPEUSDT"))).unwrap();
-    assert_eq!(host.catalog, [("PEPEUSDT".to_owned(), true)]);
+    settle(&mut host, PaletteIntent::Switch(add("SOLUSDT"))).unwrap();
+    assert!(host.added.contains("binance", "SOLUSDT"));
+    assert!(
+        host.config
+            .feed("binance")
+            .unwrap()
+            .symbols
+            .contains(&"SOLUSDT".to_owned())
+    );
+    assert!(quantick_stores::symbols_file::load(&host.catalog_path).contains("binance", "SOLUSDT"));
     assert_eq!(host.tab.switches.len(), 1);
 }
 
@@ -731,101 +775,57 @@ fn the_palette_rolls_through_the_roll_rule() {
     assert!(stale.contains("no longer shows BTCUSDT"), "{stale}");
 }
 
-/// A window that lends recording tabs and shows the palette when `lends`
-/// says so.
-struct Lender {
-    lends: bool,
-    moves: Vec<String>,
-    palette: Option<(String, bool)>,
-}
-
-struct Tabs<'a>(&'a mut Vec<String>);
-
-impl MarketTabs for Tabs<'_> {
-    fn focus_tab(&mut self, index: usize) {
-        self.0.push(format!("focus {index}"));
-    }
-    fn open_tab(&mut self, choice: &OpenChoice, bar: Option<BarConfiguration>) -> TabOpening {
-        let bar = bar.map(|bar| bar.to_config_string());
-        self.0.push(format!("open {} {bar:?}", choice.symbol));
-        Ok(9)
-    }
-    fn set_flow_bar(&mut self, tab: u64, bar: BarConfiguration) -> Result<(), String> {
-        self.0.push(format!("bar {tab} {}", bar.to_config_string()));
-        Ok(())
-    }
-}
-
-impl MarketPaletteOwners for Lender {
-    fn listed_markets(&self) -> MarketSnapshot {
-        MarketSnapshot {
-            starter_feed: "binance".to_owned(),
-            ..MarketSnapshot::default()
-        }
-    }
-    fn market_tabs(&mut self) -> Option<Box<dyn MarketTabs + '_>> {
-        let tabs: Box<dyn MarketTabs + '_> = Box::new(Tabs(&mut self.moves));
-        self.lends.then_some(tabs)
-    }
-    fn show_market_palette(&mut self, query: &str, target: Option<SwitchTarget>) -> PaletteShowing {
-        self.palette = Some((query.to_owned(), target.is_some()));
-        match self.lends {
-            true => Ok(()),
-            false => Err(ControlError::invalid_request(
-                "markets cannot be opened here",
-            )),
-        }
-    }
-}
-
-fn lent_choice(symbol: &str) -> OpenChoice {
-    OpenChoice {
-        feed_id: "binance".to_owned(),
-        symbol: symbol.to_owned(),
-        bar: String::new(),
-        context_bars: Vec::new(),
-        inherit_bar: true,
-        workspace: "Default".to_owned(),
-        background: false,
-    }
-}
-
 #[test]
-fn the_primitives_reach_the_lent_owners() {
-    let mut window = Lender {
-        lends: true,
-        moves: Vec::new(),
-        palette: None,
+fn calls_without_palette_owners_keep_their_refusals_and_focus_noop() {
+    let mut host = Host::new();
+    host.lends_palette = false;
+    let snapshot = host.listed_markets();
+    let choice = |symbol| {
+        snapshot
+            .choice(("binance", symbol), None, None, false)
+            .unwrap()
     };
-    assert_eq!(window.market_snapshot().starter_feed, "binance");
-    window.focus_tab(2);
-    assert_eq!(window.open_tab(&lent_choice("ETHUSDT"), None), Ok(9));
-    let bar = BUILTIN_BARS.parse("tick:50").unwrap();
-    window.set_flow_bar(5, bar).unwrap();
     assert_eq!(
-        window.moves,
-        ["focus 2", "open ETHUSDT None", "bar 5 tick:50"]
+        open(&mut host, &choice("PEPEUSDT")).unwrap_err(),
+        UNAVAILABLE
     );
-    window.open_market_palette("> ", None).unwrap();
-    assert_eq!(window.palette, Some(("> ".to_owned(), false)));
+    assert_eq!(
+        remove(&mut host, "binance", "PEPEUSDT"),
+        Err(UNAVAILABLE.to_owned())
+    );
+    assert_eq!(
+        settle(&mut host, PaletteIntent::Add(choice("PEPEUSDT"))),
+        Err(UNAVAILABLE.to_owned())
+    );
+    assert_eq!(show(&mut host, "", false).unwrap_err().message, UNAVAILABLE);
+    assert_eq!(
+        open(&mut host, &choice("BTCUSDT")).unwrap().focused,
+        Some(1)
+    );
+    assert!(focus(&mut host, 5, "BTCUSDT").is_ok());
+    assert!(host.opened.is_empty() && host.focused.is_empty());
+    assert!(host.palette.is_none());
+    let switch = SwitchChoice {
+        bar: Some("tick:77".to_owned()),
+        ..switch_to("PEPEUSDT")
+    };
+    assert_eq!(
+        crate::market_switch::switch(&mut host, &switch),
+        Err(UNAVAILABLE.to_owned())
+    );
+    assert!(host.flow_bars.is_empty());
 }
 
 #[test]
-fn a_window_that_lends_nothing_refuses_each_primitive() {
-    let mut window = Lender {
-        lends: false,
-        moves: Vec::new(),
-        palette: None,
-    };
-    let unavailable = "markets cannot be opened here";
-    let open = window.open_tab(&lent_choice("X"), None);
-    assert_eq!(open.unwrap_err(), unavailable);
-    let edit = window.edit_catalog("binance", "X", true);
-    assert_eq!(edit.unwrap_err(), unavailable);
-    let bar = BUILTIN_BARS.parse("tick:50").unwrap();
-    assert_eq!(window.set_flow_bar(5, bar).unwrap_err(), unavailable);
-    let palette = window.open_market_palette("", None).unwrap_err();
-    assert_eq!(palette.message, unavailable);
-    window.focus_tab(0);
-    assert!(window.moves.is_empty());
+fn default_palette_owners_lend_nothing_and_refuse_showing() {
+    struct Unavailable;
+    impl MarketPaletteOwners for Unavailable {}
+    let mut host = Unavailable;
+    assert!(host.listed_markets().markets.is_empty());
+    assert!(host.market_tabs().is_none());
+    assert!(host.market_catalog().is_none());
+    assert_eq!(
+        host.show_market_palette("", None).unwrap_err().message,
+        UNAVAILABLE
+    );
 }

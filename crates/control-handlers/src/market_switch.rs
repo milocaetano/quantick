@@ -5,7 +5,7 @@
 //! window's other source changes do.
 use crate::contract_roll;
 use crate::feed_source::{check_source, set_source};
-use crate::market_palette::MarketPaletteHost;
+use crate::market_palette::{MarketPaletteOwners, UNAVAILABLE};
 use crate::market_tab::{MarketTabHost, market};
 use crate::workspace_book::switch::ask_unjournaled;
 use crate::workspace_book::{WorkspaceBookHost, WorkspaceOwner, set_tab_workspace, unavailable};
@@ -18,8 +18,8 @@ use quantick_stores::market_list::{
 
 /// What a switch host can do: the window's switch, its roll, its palette and
 /// the door to its workspace book.
-pub trait SwitchHost: MarketTabHost + MarketPaletteHost + WorkspaceBookHost {}
-impl<H: MarketTabHost + MarketPaletteHost + WorkspaceBookHost + ?Sized> SwitchHost for H {}
+pub trait SwitchHost: MarketTabHost + MarketPaletteOwners + WorkspaceBookHost {}
+impl<H: MarketTabHost + MarketPaletteOwners + WorkspaceBookHost + ?Sized> SwitchHost for H {}
 
 const TAB_GONE: &str = "The tab being switched has closed";
 
@@ -34,7 +34,7 @@ pub fn target<H: SwitchHost + ?Sized>(app: &H) -> Result<SwitchTarget, String> {
         refusal: refusal.map(str::to_owned),
     });
     let tab = app.tab_id_at(app.active_tab_index());
-    SwitchTarget::of(&app.market_snapshot(), tab, roll)
+    SwitchTarget::of(&app.listed_markets(), tab, roll)
         .ok_or_else(|| "A recorded session has no market to switch".to_owned())
 }
 
@@ -57,7 +57,7 @@ pub fn switch<H: SwitchHost + ?Sized>(
 ) -> Result<String, String> {
     let bar = choice.bar.as_deref().map(arrival_bar).transpose()?;
     if let Some(name) = &choice.workspace {
-        app.market_snapshot().check_workspace(name)?;
+        app.listed_markets().check_workspace(name)?;
         let mut book = app.workspaces().ok_or_else(|| unavailable().message)?;
         keeps_edits(&mut *book, choice.tab_id, name)?;
     }
@@ -65,7 +65,9 @@ pub fn switch<H: SwitchHost + ?Sized>(
     let listed = (!choice.add).then_some(choice.symbol.as_str());
     check_source(&*app, tab, &choice.feed_id, listed).map_err(|error| error.message)?;
     if choice.add {
-        app.edit_catalog(&choice.feed_id, &choice.symbol, true)?;
+        app.market_catalog()
+            .ok_or(UNAVAILABLE)?
+            .add(&choice.feed_id, &choice.symbol)?;
     }
     set_source(app, tab, &choice.feed_id, &choice.symbol).map_err(|error| error.message)?;
     // The door lent the book before anything moved: none of this can refuse
@@ -76,7 +78,9 @@ pub fn switch<H: SwitchHost + ?Sized>(
         set_tab_workspace(&mut *book, choice.tab_id, name).map_err(|error| error.message)?;
     }
     if let Some(bar) = bar {
-        app.set_flow_bar(choice.tab_id, bar)?;
+        app.market_tabs()
+            .ok_or(UNAVAILABLE)?
+            .set_flow_bar(choice.tab_id, bar)?;
     }
     Ok(switch_toast(&choice.symbol))
 }

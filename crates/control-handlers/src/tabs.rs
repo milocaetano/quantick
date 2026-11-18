@@ -14,23 +14,6 @@ pub trait TabDirectory {
     fn tab_id_at(&self, index: usize) -> u64;
 }
 
-/// A window lends its tab list, and the list answers [`TabDirectory`].
-pub trait TabsHost {
-    fn tab_list(&self) -> &dyn TabDirectory;
-}
-
-impl<H: TabsHost + ?Sized> TabDirectory for H {
-    fn active_tab_index(&self) -> usize {
-        self.tab_list().active_tab_index()
-    }
-    fn tab_position(&self, tab_id: u64) -> Option<usize> {
-        self.tab_list().tab_position(tab_id)
-    }
-    fn tab_id_at(&self, index: usize) -> u64 {
-        self.tab_list().tab_id_at(index)
-    }
-}
-
 /// The open tabs in screen order answer for themselves.
 impl<R> TabDirectory for quantick_workspace::arrangement::Arrangement<R> {
     fn active_tab_index(&self) -> usize {
