@@ -552,22 +552,20 @@ fn move_handle(
         ))
     });
     if let Some((band, handle_snap, magnet)) = dragged
-        && let Some(position) = pointer_position
+        && let Some(pointer) = pointer_position
     {
-        let position = Px::new(
-            position.x.clamp(band.rect.left(), history_right),
-            position.y.clamp(band.rect.top(), band.rect.bottom()),
-        );
+        let y = pointer.y.clamp(band.rect.top(), band.rect.bottom());
         // An extent no anchor holds may run past the candles: only the
         // band bounds it, and it never becomes a chart point.
         let reshaped = projection.drag_drawing_payload_handle(
             drawings,
             drawing_index,
             handle,
-            Px::new(position.x.min(band.rect.right()), position.y),
+            Px::new(pointer.x.clamp(band.rect.left(), band.rect.right()), y),
             band,
             (history_right, total),
         );
+        let position = Px::new(pointer.x.clamp(band.rect.left(), history_right), y);
         if !reshaped
             && let Some(point) = projection.drawing_point_at(
                 position,
@@ -1470,6 +1468,64 @@ mod tests {
             assert!((moved.top() - rect.top()).abs() < 0.01, "{moved:?}");
             assert!((moved.bottom() - rect.bottom()).abs() < 0.01, "{moved:?}");
             assert_eq!(extent(&store), (false, false));
+        });
+    }
+
+    /// A Fib projection's reach is no anchor: its end drags past the last
+    /// candle, as far as the band, under the sideways cursor, and the
+    /// anchors stay put. A locked one keeps its reach.
+    #[test]
+    fn a_fib_projection_reach_drags_past_the_candles_and_moves_no_anchor() {
+        with_projection(|projection, bands| {
+            let mut store = Marks::default();
+            let fib = crate::DrawingTool::by_id("fib-extension").unwrap();
+            assert!(!store.place(fib, crate::ChartPoint::at(-30.0, 40.0)));
+            assert!(store.place(fib, crate::ChartPoint::at(-15.0, 50.0)));
+            store.select(Some(0));
+            let anchors = store.items()[0].points.clone();
+            let scale = bands[0].scale.as_ref().unwrap();
+            let points = projection.projected_drawing_points(&store.items()[0], 200.0, 1, scale);
+            let leg = points[1].x - points[0].x;
+            // The 100 % target: 50 + (50 - 40).
+            let y = scale.y(60.0);
+            let mut gestures = PaneGestures::default();
+            let mut pointer = pointer_at(crate::pos2(points[1].x + leg, y), bands);
+            pointer.pressed = true;
+            owner_frame(&mut gestures, &mut store, projection, bands, &pointer);
+            assert!(
+                matches!(gestures.drag, DrawingDrag::Handle { .. }),
+                "{:?}",
+                gestures.drag
+            );
+            pointer.pressed = false;
+            pointer.position = Some(crate::pos2(350.0, y));
+            let drag = owner_frame(&mut gestures, &mut store, projection, bands, &pointer);
+            assert_eq!(drag.cursor, Some(GestureCursor::ResizeHorizontal));
+            pointer.down = false;
+            pointer.released = true;
+            owner_frame(&mut gestures, &mut store, projection, bands, &pointer);
+            let fib_payload = |store: &Marks| {
+                store.items()[0]
+                    .payload
+                    .as_any()
+                    .downcast_ref::<crate::FibPayload>()
+                    .unwrap()
+                    .reach_legs
+            };
+            let reach = fib_payload(&store).expect("the drag set a reach");
+            let expected = (350.0 - points[1].x) / leg;
+            assert!((reach - expected).abs() < 0.01, "{reach} vs {expected}");
+            assert_eq!(store.items()[0].points, anchors, "no anchor moved");
+
+            store.items_mut()[0].locked = true;
+            let fresh = crate::DrawingTool::by_id("fib-extension")
+                .unwrap()
+                .default_payload();
+            assert!(
+                !store.set_payload(0, fresh),
+                "a locked object keeps its reach"
+            );
+            assert_eq!(fib_payload(&store), Some(reach));
         });
     }
 
