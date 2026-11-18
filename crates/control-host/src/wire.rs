@@ -78,6 +78,12 @@ pub fn unavailable(reason: &str) -> AvailabilitySnapshot {
     }
 }
 
+/// A scene control listed with no rectangle: it is on screen, and where is not
+/// recorded.
+pub fn bounds_not_recorded() -> AvailabilitySnapshot {
+    unavailable("bounds_are_not_recorded_for_this_control")
+}
+
 /// Decimal places every screen coordinate on the wire is rounded to.
 ///
 /// One constant, because two scopes are meant to be comparable without either

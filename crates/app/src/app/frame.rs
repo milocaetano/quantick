@@ -573,7 +573,6 @@ impl QuantickApp {
         let tab = &self.runtime.tabs[self.runtime.tabs.active_index()];
         let lead = statusbar::StatusLead::of(tab, stall, now_ms, open);
         scratch.status = statusbar::draw(ctx, &self.status_model(), self.runtime.tz, &lead);
-        self.chrome.feed_gate_rect = scratch.status.gate_rect;
         if scratch.status.open_display_settings {
             let display = quantick_control_schema::settings_sections::SettingsSection::Display;
             super::menu_bar::apply_menu_command_on(self, ctx, MenuCommand::OpenSettings(display));
@@ -750,14 +749,14 @@ impl QuantickApp {
             popup_tab: answers.popup_tab,
             chip_clicked: answers.chip_clicked,
             dismissed: answers.dismissed,
-            chip_rect: answers.chip_rect,
+            drawn: answers.drawn,
         };
         run_frame_tail(
             super::frame_tail::FrameTailOwners {
                 tabs: &mut self.runtime.tabs,
                 config: &self.config,
                 surfaces: &mut self.surfaces,
-                chip_rect: &mut self.chrome.feed_chip_rect,
+                drawn: &mut self.chrome.feed_drawn,
             },
             &input,
             &mut self.runtime.workspace,
@@ -781,7 +780,7 @@ fn run_frame_tail(
             tabs: owners.tabs,
             config: owners.config,
             surfaces: owners.surfaces,
-            chip_rect: owners.chip_rect,
+            drawn: owners.drawn,
         }
         .execute_stage(input, spawn, stage);
         // Temporary owners/domain borrows have ended before host execution.

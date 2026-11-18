@@ -17,7 +17,7 @@ pub(super) struct FrameTailOwners<'a> {
     pub tabs: &'a mut super::arrangement_host::ArrangementHost,
     pub config: &'a AppConfig,
     pub surfaces: &'a mut Surfaces,
-    pub chip_rect: &'a mut Option<egui::Rect>,
+    pub drawn: &'a mut quantick_ui_model::feed_notice::Drawn<egui::Rect>,
 }
 pub(super) struct FrameTailInput<'a> {
     /// Available only for the workspace's currently bound native view.
@@ -28,7 +28,7 @@ pub(super) struct FrameTailInput<'a> {
     pub popup_tab: u64,
     pub chip_clicked: bool,
     pub dismissed: bool,
-    pub chip_rect: Option<egui::Rect>,
+    pub drawn: quantick_ui_model::feed_notice::Drawn<egui::Rect>,
 }
 impl FrameTailOwners<'_> {
     /// A single stage lends the actual owners only until its response returns.
@@ -89,13 +89,13 @@ impl FrameTailOwners<'_> {
                 );
             }
             FrameTailStage::PublishFeedPopup => {
-                *self.chip_rect = input.chip_rect;
+                *self.drawn = input.drawn;
                 self.surfaces
                     .feed_notice
                     .update(quantick_ui_model::feed_notice::Intent::Settle {
                         tab: input.popup_tab,
                         chip_clicked: input.chip_clicked,
-                        offline: input.chip_rect.is_some(),
+                        offline: input.drawn.chip.is_some(),
                         dismissed: input.dismissed,
                         action_taken: input.notice_action != feed_notice::NoticeAction::None,
                     });
@@ -120,7 +120,7 @@ impl FrameTailOwners<'_> {
                 tabs: self.tabs,
                 config: self.config,
                 surfaces: self.surfaces,
-                chip_rect: self.chip_rect,
+                drawn: self.drawn,
             }
             .execute_settling(&input, spawn, stage, settle_paper_panels);
             if response != SurfaceResponse::default() {

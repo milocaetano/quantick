@@ -472,8 +472,7 @@ impl Tab {
         self.drain_frame_with_stages(tab_id, config, policy, TabDrainPlan::stages(), observer);
         super::alerts::observe_alert_lifecycle(self, observer);
         // After the drain took in its prints, before any stage can trade.
-        let offline =
-            self.connection.state().link == quantick_chart::connection_state::Link::Offline;
+        let offline = self.connection.is_offline();
         let (limits, now) = (config.sync_limits(&self.feed_id), metrics::wall_clock_ms());
         let gate = self.link.sync_at(&self.symbol, offline, limits, now);
         self.paper.set_trade_gate(gate);

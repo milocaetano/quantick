@@ -21,6 +21,27 @@ pub enum Intent {
         action_taken: bool,
     },
 }
+/// What the feed status drew outside its popup on the last frame, in the
+/// host's rectangle type: the status word while it is the popup's door, and
+/// the tape cell's Reconnect while entries pause. The scene reads both from
+/// here, so it names what was painted rather than re-deciding it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Drawn<R> {
+    /// The status word, while it is the door: the popup's anchor.
+    pub chip: Option<R>,
+    /// The Reconnect beside the tape cell, while entries pause.
+    pub reconnect: Option<R>,
+}
+
+impl<R> Default for Drawn<R> {
+    fn default() -> Self {
+        Self {
+            chip: None,
+            reconnect: None,
+        }
+    }
+}
+
 pub struct Model;
 impl crate::Model for Model {
     type State = State;

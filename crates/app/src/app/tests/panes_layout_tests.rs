@@ -728,7 +728,8 @@ fn the_popup_belongs_to_the_tab_whose_chip_opened_it() {
     run_frame(&mut app, &ctx);
     let chip = app
         .chrome_reads()
-        .feed_chip_rect()
+        .feed_drawn()
+        .chip
         .expect("the corner is up");
     click_chart(&mut app, &ctx, chip.center());
     assert!(
@@ -739,7 +740,7 @@ fn the_popup_belongs_to_the_tab_whose_chip_opened_it() {
     app.runtime.tabs.select(1);
     run_frame(&mut app, &ctx);
     assert!(
-        app.chrome_reads().feed_chip_rect().is_some(),
+        app.chrome_reads().feed_drawn().chip.is_some(),
         "the second chart is stalled too, so it has its own corner"
     );
     assert!(
@@ -754,7 +755,7 @@ fn the_popup_belongs_to_the_tab_whose_chip_opened_it() {
         "and leaving the chart put it away, the way clicking elsewhere does"
     );
     assert!(
-        app.chrome_reads().feed_chip_rect().is_some(),
+        app.chrome_reads().feed_drawn().chip.is_some(),
         "the corner itself stays: the feed is still stalled"
     );
 }

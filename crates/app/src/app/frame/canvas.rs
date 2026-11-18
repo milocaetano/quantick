@@ -44,10 +44,10 @@ pub(in crate::app) struct CanvasAnswers {
     pub notice_action: feed_notice::NoticeAction,
     pub chip_clicked: bool,
     pub dismissed: bool,
-    /// Where the status word landed while it is the popup's door. A feed that
-    /// recovered while the popup was open closes it, rather than leaving a
-    /// stale explanation over a chart that is fine again.
-    pub chip_rect: Option<egui::Rect>,
+    /// Where the status word, the popup's door, and the tape cell's Reconnect
+    /// landed. A feed that recovered while the popup was open closes it, rather
+    /// than leaving a stale explanation over a chart that is fine again.
+    pub drawn: quantick_ui_model::feed_notice::Drawn<egui::Rect>,
     /// Raised by a placement that wants its note typed, and handed to the
     /// drawing chrome: the flag belongs to the editor that owns the caret,
     /// not to the canvas that asks for it.
@@ -66,13 +66,11 @@ impl CanvasAnswers {
             popup_tab,
             popup_open: app.surfaces.feed_notice.model_state.open() == Some(popup_tab),
             chip_clicked: status.word_clicked,
-            chip_rect: status.word_rect,
-            notice_action: if status.reconnect {
-                app.active_tab().link.quick_action()
-            } else if status.gate_reconnect {
-                feed_notice::NoticeAction::Reconnect
-            } else {
-                feed_notice::NoticeAction::None
+            drawn: status.drawn,
+            notice_action: match (status.reconnect, status.gate_reconnect) {
+                (true, _) => app.active_tab().link.quick_action(),
+                (false, true) => feed_notice::NoticeAction::Reconnect,
+                (false, false) => feed_notice::NoticeAction::None,
             },
             ..Self::default()
         }
@@ -139,7 +137,7 @@ pub(super) fn overlays(
             answers.notice_action = action;
         }
     }
-    if let Some(chip) = answers.chip_rect
+    if let Some(chip) = answers.drawn.chip
         && answers.popup_open
     {
         surface.with_pass(

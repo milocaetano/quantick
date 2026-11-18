@@ -32,6 +32,7 @@ use eframe::egui;
 use egui_phosphor::regular as icons;
 
 use crate::deal_recording::RecState;
+use crate::feed_notice::NoticeAction;
 use crate::metrics;
 use crate::theme;
 use crate::timezone::TzOffset;
@@ -208,14 +209,12 @@ pub struct StatusResponse {
     pub open_display_settings: bool,
     /// The word was clicked: it opens and closes the recovery popup.
     pub word_clicked: bool,
-    /// The word's rect while it is a door, which is the popup's anchor.
-    pub word_rect: Option<egui::Rect>,
+    /// Where the word, while it is a door, and the tape cell's Reconnect were painted.
+    pub drawn: quantick_ui_model::feed_notice::Drawn<egui::Rect>,
     /// The one-click control beside the word was pressed.
     pub reconnect: bool,
     /// The Reconnect beside the tape cell, while entries pause, was pressed.
     pub gate_reconnect: bool,
-    /// Where that Reconnect was painted, while it is.
-    pub gate_rect: Option<egui::Rect>,
 }
 
 /// What the feed-state cell shows this frame.
@@ -229,11 +228,10 @@ pub struct StatusLead<'a> {
     /// The reason, on the word's hover, so reading it takes no click.
     pub report: Option<crate::feed_notice::Report<'a>>,
     /// What the one-click control beside the word asks: the popup's first.
-    pub action: crate::feed_notice::NoticeAction,
+    pub action: NoticeAction,
     /// Why the tab shows another contract than it was opened on.
     pub note: Option<String>,
-    /// Why new entries are paused; Reconnect stands beside the tape cell
-    /// when the pause offers it (`Desync::offers_reconnect`).
+    /// Why entries pause, while the pause offers Reconnect beside the tape cell.
     pub gate: Option<&'a quantick_feed::sync::Desync>,
 }
 
@@ -259,7 +257,7 @@ impl<'a> StatusLead<'a> {
                 .rolled
                 .as_ref()
                 .map(quantick_feed::link::Rolled::sentence),
-            gate: tab.paper.trade_gate(),
+            gate: (tab.paper.trade_gate()).filter(|gate| gate.offers_reconnect()),
         }
     }
 }
@@ -289,13 +287,11 @@ pub fn draw(
                 ui.spacing_mut().item_spacing.x = CELL_SPACING_PX;
                 draw_lead(ui, lead, &mut response);
                 draw_provenance(ui, model);
-                let offered = lead.gate.filter(|gate| gate.offers_reconnect());
-                if let Some(gate) = offered.filter(|_| !lead.open) {
+                if let Some(gate) = lead.gate.filter(|_| !lead.open) {
                     let why = |ui: &mut egui::Ui| _ = ui.label(gate.sentence());
-                    let reconnect = &crate::feed_notice::NoticeAction::Reconnect;
-                    let pressed = quick_control(ui, reconnect, why);
-                    (response.gate_reconnect, response.gate_rect) =
-                        (pressed.clicked(), Some(pressed.rect));
+                    let pressed = quick_control(ui, &NoticeAction::Reconnect, why);
+                    response.gate_reconnect = pressed.clicked();
+                    response.drawn.reconnect = Some(pressed.rect);
                 }
                 ui.separator();
                 response.open_trading_tab = draw_content(ui, model);
@@ -368,7 +364,7 @@ fn draw_lead(ui: &mut egui::Ui, lead: &StatusLead<'_>, response: &mut StatusResp
         palette.loading_meta(),
     );
     if lead.door {
-        response.word_rect = Some(rect);
+        response.drawn.chip = Some(rect);
         let cell = cell
             .on_hover_cursor(egui::CursorIcon::PointingHand)
             .on_hover_ui(|ui| {
@@ -390,7 +386,7 @@ fn draw_lead(ui: &mut egui::Ui, lead: &StatusLead<'_>, response: &mut StatusResp
 /// The one-click act a feed in trouble offers, `hover` saying why.
 fn quick_control(
     ui: &mut egui::Ui,
-    action: &crate::feed_notice::NoticeAction,
+    action: &NoticeAction,
     hover: impl FnOnce(&mut egui::Ui),
 ) -> egui::Response {
     let colour = theme::get(ui.ctx()).loading_meta();

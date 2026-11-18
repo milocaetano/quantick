@@ -29,6 +29,11 @@ fn view<'a>(
         primary,
         popup_open,
         offered: true,
+        chip: Some(FeedChip {
+            word: "offline",
+            bounds: None,
+        }),
+        reconnect_drawn: None,
     }
 }
 
@@ -145,4 +150,79 @@ fn a_refusal_reads_back_from_its_sentence() {
         assert_eq!(RollRefusal::from_reason(refusal.reason()), Some(refusal));
     }
     assert_eq!(RollRefusal::from_reason("no such refusal"), None);
+}
+
+/// The tape cell's Reconnect is reported where it was painted while it stands
+/// alone; beside the status word, or behind an open popup, no rectangle is
+/// recorded for any feed-status control.
+#[test]
+fn the_tape_cell_reconnect_carries_its_rectangle_only_alone() {
+    let point = |value: &str| quantick_control::wire::CanonicalDecimal::new(value).unwrap();
+    let rect = SceneBoundsSnapshot {
+        x_pt: point("10"),
+        y_pt: point("700"),
+        width_pt: point("60"),
+        height_pt: point("14"),
+    };
+    let alone = FeedStatusView {
+        chip: None,
+        reconnect_drawn: Some(&rect),
+        ..view(None, Recovery::Reconnect, false)
+    };
+    let bounds = |view| {
+        feed_status_controls(view)
+            .into_iter()
+            .map(|entry| entry.bounds)
+    };
+    assert_eq!(bounds(alone).collect::<Vec<_>>(), [Some(rect.clone())]);
+    let beside_the_word = FeedStatusView {
+        chip: view(None, Recovery::Reconnect, false).chip,
+        ..alone
+    };
+    assert_eq!(bounds(beside_the_word).collect::<Vec<_>>(), [None]);
+    let popup = FeedStatusView {
+        popup_open: true,
+        ..alone
+    };
+    assert!(bounds(popup).all(|bounds| bounds.is_none()));
+}
+
+/// The scene lists the word first, as a toggle that is selected while its
+/// popup is up and calls nothing, then the controls under the same owner.
+#[test]
+fn the_scene_lists_the_word_then_its_controls_under_one_owner() {
+    let scene = feed_status_scene(view(None, Recovery::Reconnect, true));
+    let listed: Vec<_> = scene.iter().map(|c| c.control_id.as_str()).collect();
+    assert_eq!(
+        listed,
+        [
+            "feed_status.chip",
+            "feed_status.reconnect",
+            "feed_status.reload"
+        ]
+    );
+    let word = &scene[0];
+    assert_eq!((word.label.as_str(), word.selected), ("offline", true));
+    assert_eq!(word.capability_id, None);
+    assert_eq!(
+        word.bounds_availability.reason.as_deref(),
+        Some("the_chips_rectangle_is_not_a_reportable_number")
+    );
+    assert!(
+        scene
+            .iter()
+            .all(|control| control.owner.id == "feed_status")
+    );
+    assert_eq!(
+        scene[1].bounds_availability.reason.as_deref(),
+        Some("bounds_are_not_recorded_for_this_control")
+    );
+    assert!(
+        feed_status_scene(FeedStatusView {
+            chip: None,
+            offered: false,
+            ..view(None, Recovery::Reconnect, false)
+        })
+        .is_empty()
+    );
 }

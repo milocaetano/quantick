@@ -675,7 +675,8 @@ fn a_click_on_the_popup_never_reaches_the_chart() {
     run_frame(&mut app, &ctx);
     let chip = app
         .chrome_reads()
-        .feed_chip_rect()
+        .feed_drawn()
+        .chip
         .expect("the corner is up");
     click_chart(&mut app, &ctx, chip.center());
     assert!(app.chrome_reads().feed_popup_open());
@@ -732,7 +733,8 @@ fn a_recovered_feed_puts_the_popup_away() {
     run_frame(&mut app, &ctx);
     let chip = app
         .chrome_reads()
-        .feed_chip_rect()
+        .feed_drawn()
+        .chip
         .expect("the corner is up");
     click_chart(&mut app, &ctx, chip.center());
     assert!(app.chrome_reads().feed_popup_open());
@@ -740,7 +742,7 @@ fn a_recovered_feed_puts_the_popup_away() {
     app.active_tab_mut().link.forced_stall = None;
     run_frame(&mut app, &ctx);
     assert!(!app.chrome_reads().feed_popup_open());
-    assert!(app.chrome_reads().feed_chip_rect().is_none());
+    assert!(app.chrome_reads().feed_drawn().chip.is_none());
 }
 
 /// The floor lives for one event. Left standing it swallowed the next
