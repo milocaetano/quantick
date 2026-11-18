@@ -688,9 +688,14 @@ impl MarketPaletteOwners for Lender {
         let tabs: Box<dyn MarketTabs + '_> = Box::new(Tabs(&mut self.moves));
         self.lends.then_some(tabs)
     }
-    fn show_market_palette(&mut self, query: &str, target: Option<SwitchTarget>) -> bool {
+    fn show_market_palette(&mut self, query: &str, target: Option<SwitchTarget>) -> PaletteShowing {
         self.palette = Some((query.to_owned(), target.is_some()));
-        self.lends
+        match self.lends {
+            true => Ok(()),
+            false => Err(ControlError::invalid_request(
+                "markets cannot be opened here",
+            )),
+        }
     }
 }
 

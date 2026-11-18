@@ -2,7 +2,6 @@
 //! palette's Enter and Delete and the three calls go through [`open`],
 //! [`remove`] and [`settle`] here, over the headless market list, so the two
 //! doors cannot decide differently. The host lends primitives only.
-use quantick_stores::symbol_catalog::SymbolCatalog;
 use crate::dock::ActionDock;
 use crate::notify::NotifyAccess;
 use crate::workspace_book::WorkspaceBookHost;
@@ -21,6 +20,7 @@ use quantick_stores::market_list::{
     MarketSnapshot, OpenChoice, PaletteIntent, SwitchTarget, focus_target, focus_toast, open_toast,
     removal_refusal,
 };
+use quantick_stores::symbol_catalog::SymbolCatalog;
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
 
@@ -28,6 +28,9 @@ const UNAVAILABLE: &str = "markets cannot be opened here";
 
 /// The new tab's id, or why it did not open.
 pub type TabOpening = Result<u64, String>;
+
+/// The palette on screen, or why it is not.
+pub type PaletteShowing = Result<(), ControlError>;
 
 /// What the window lends the palette: the owners each primitive acts on,
 /// borrowed for one call. Each default lends nothing, which every call
@@ -46,8 +49,15 @@ pub trait MarketPaletteOwners {
         None
     }
     /// Show the palette on `query`, switching `target`'s tab when there is one.
-    fn show_market_palette(&mut self, _query: &str, _target: Option<SwitchTarget>) -> bool {
-        false
+    ///
+    /// # Errors
+    /// A window without the palette.
+    fn show_market_palette(
+        &mut self,
+        _query: &str,
+        _target: Option<SwitchTarget>,
+    ) -> PaletteShowing {
+        Err(ControlError::invalid_request(UNAVAILABLE))
     }
 }
 
@@ -120,10 +130,7 @@ impl<T: MarketPaletteOwners + ?Sized> MarketPaletteHost for T {
         query: &str,
         target: Option<SwitchTarget>,
     ) -> Result<(), ControlError> {
-        match self.show_market_palette(query, target) {
-            true => Ok(()),
-            false => Err(ControlError::invalid_request(UNAVAILABLE)),
-        }
+        self.show_market_palette(query, target)
     }
     fn set_flow_bar(&mut self, tab: u64, bar: BarConfiguration) -> Result<(), String> {
         let mut tabs = self.market_tabs().ok_or(UNAVAILABLE)?;

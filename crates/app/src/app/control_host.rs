@@ -26,10 +26,10 @@ use crate::surfaces::drawing_chrome::DrawingChromeExt as _;
 use crate::surfaces::replay_browser::ReplayBrowserExt as _;
 use crate::toolrail::ToolRailExt as _;
 use eframe::egui;
-use quantick_control_handlers::home_tab::{HomeTab, HomeTabHost};
 use quantick_control_handlers::drawing_magnet::RailMagnetPort;
+use quantick_control_handlers::home_tab::{HomeTab, HomeTabHost};
 use quantick_control_handlers::indicator_host::{IndicatorControlHost, IndicatorOwner};
-use quantick_control_handlers::market_palette::{MarketPaletteOwners, MarketTabs};
+use quantick_control_handlers::market_palette::{MarketPaletteOwners, MarketTabs, PaletteShowing};
 use quantick_control_handlers::widgets::{WidgetHost, WidgetOwner};
 use quantick_control_handlers::workspace_book::cell_menu::CellRow;
 use quantick_session::workspace_menu::WorkspaceMenuState;
@@ -792,10 +792,10 @@ impl MarketPaletteOwners for QuantickApp {
     fn market_catalog(&mut self) -> Option<SymbolCatalog<'_>> {
         Some(self.symbol_catalog())
     }
-    fn show_market_palette(&mut self, query: &str, target: Option<SwitchTarget>) -> bool {
+    fn show_market_palette(&mut self, query: &str, target: Option<SwitchTarget>) -> PaletteShowing {
         let palette = &mut self.surfaces.market_palette;
         palette.update(Intent::open(query, target));
-        true
+        Ok(())
     }
 }
 
