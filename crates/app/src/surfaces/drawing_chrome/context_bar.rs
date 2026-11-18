@@ -99,6 +99,13 @@ pub(crate) fn draw(
     let selection = env.selected_index();
     let changed = chrome.view.bar.bar.note_selection(selection);
     chrome.emit(super::Intent::SelectionChanged { changed });
+    let input = GestureInput::read(ctx);
+    // Decided once per press, before the dismissal drops the rect it reads.
+    let on_bar = chrome.view.bar.bar.owns_press(input.origin, chrome.view.bar.bar.last_rect(), input.layer)
+        || input.layer.is_some_and(|layer| layer.id == alert_area(env.pane_id));
+    // Dismissed by a press elsewhere or a lost focus, until the object is
+    // pressed again or another is selected.
+    let dismissed = input.dismisses(&mut chrome.view.bar.bar, env, on_bar);
     let Some(selected) = env.selected.as_ref() else {
         return ask;
     };
@@ -118,10 +125,9 @@ pub(crate) fn draw(
             ctx.style().visuals.selection.stroke.color,
         );
     }
-    let input = GestureInput::read(ctx);
-    // Dismissed by a press elsewhere or a lost focus, until the object is
-    // pressed again or another is selected.
-    if input.dismisses(&mut chrome.view.bar.bar, env, index) {
+    // Stepped even while dismissed, so a reopened bar sees settled state.
+    let suppressed = input.suppresses(&mut chrome.view.bar.bar, on_bar);
+    if dismissed {
         return ask;
     }
     // An armed tool means the trader is drawing, not editing. The bar is
@@ -136,7 +142,7 @@ pub(crate) fn draw(
     // Suppressed means suppressed: nothing below this line runs, so the bar
     // cannot measure a world the gesture that suppressed it is still moving.
     // That is the rule the drag gestures already learned.
-    if input.suppresses(&mut chrome.view.bar.bar) {
+    if suppressed {
         return ask;
     }
     let chart_area = if chrome.view.bar.bar.manual_position().is_none() {
@@ -298,7 +304,7 @@ fn alert_action(
     drawing_id: u64,
     ask: &mut DrawingChromeAsk,
 ) {
-    egui::Area::new(egui::Id::new(("drawing_alert", env.pane_id)))
+    egui::Area::new(alert_area(env.pane_id))
         .fixed_pos(position)
         .show(ctx, |ui| {
             if env.linked_alerts > 0 {
@@ -326,6 +332,11 @@ fn alert_action(
         });
 }
 
+/// The "Create alert" area below the bar: part of the bar for a press.
+fn alert_area(pane_id: u64) -> egui::Id {
+    egui::Id::new(("drawing_alert", pane_id))
+}
+
 /// The raw input that decides whether the bar stands down this frame.
 ///
 /// Which gestures hide the bar is decided here, once, from the raw input —
@@ -340,7 +351,8 @@ fn alert_action(
 struct GestureInput {
     now_ms: u64,
     dragging: bool,
-    /// Where and when the current press began.
+    /// Where and when the current press began — or a press released in the
+    /// same frame, which leaves egui's press origin empty.
     origin: Option<(egui::Pos2, f64)>,
     /// The layer the press landed on — the chart's own notion of chrome.
     layer: Option<egui::LayerId>,
@@ -355,7 +367,16 @@ impl GestureInput {
         let (dragging, origin, zoomed, screen, focused) = ctx.input(|input| {
             (
                 input.pointer.is_decidedly_dragging(),
-                (input.pointer.press_origin()).zip(input.pointer.press_start_time()),
+                (input.pointer.press_origin())
+                    .zip(input.pointer.press_start_time())
+                    .or_else(|| {
+                        input.events.iter().find_map(|event| match event {
+                            egui::Event::PointerButton { pos, pressed: true, .. } => {
+                                Some((*pos, input.time))
+                            }
+                            _ => None,
+                        })
+                    }),
                 input.raw_scroll_delta.y.abs() > f32::EPSILON
                     || (input.zoom_delta() - 1.0).abs() > f32::EPSILON,
                 input.screen_rect,
@@ -379,26 +400,27 @@ impl GestureInput {
         &self,
         bar: &mut drawings::context_bar::ContextBar,
         env: &DrawingEnv<'_>,
-        selected: usize,
+        on_bar: bool,
     ) -> bool {
-        let press = self.origin.map(|(origin, started)| {
+        let target = (env.selected.as_ref()).map(|selected| (env.tab, env.pane_id, selected.drawing.id.0));
+        let press = self.origin.zip(env.selected_index()).map(|((origin, started), selected)| {
             let in_bounds = self.layer.is_some_and(|layer| layer.order == egui::Order::Background)
+                && env.chart_area.is_some_and(|chart| chart.contains(origin))
                 && env.selected_bbox.is_some_and(|bbox| bbox.contains(origin));
-            let on_bar = bar.owns_press(self.origin, bar.last_rect(), self.layer);
             (started, PressOn::classify(on_bar, env.press_pick, selected, in_bounds))
         });
-        bar.step_dismissal(self.focused, press)
+        bar.step_dismissal(target, self.focused, press)
     }
 
     /// Step the bar's suppression state with this frame's input, and answer
     /// whether the bar is suppressed now.
-    fn suppresses(&self, bar: &mut drawings::context_bar::ContextBar) -> bool {
-        let bar_rect = bar.last_rect();
-        // Decided once per press, not against this frame's rect — a grip drag
-        // moves the bar, and the moved rect would leave the origin behind and
-        // suppress the very gesture moving it.
-        let on_the_bar = bar.owns_press(self.origin, bar_rect, self.layer);
-        if self.dragging && !on_the_bar {
+    ///
+    /// `on_bar` is [`drawings::context_bar::ContextBar::owns_press`], decided
+    /// once per press, not against this frame's rect — a grip drag moves the
+    /// bar, and the moved rect would leave the origin behind and suppress the
+    /// very gesture moving it.
+    fn suppresses(&self, bar: &mut drawings::context_bar::ContextBar, on_bar: bool) -> bool {
+        if self.dragging && !on_bar {
             bar.suppress_gesture();
         } else if !self.dragging {
             bar.release_gesture();

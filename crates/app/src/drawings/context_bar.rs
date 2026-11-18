@@ -24,7 +24,7 @@ use crate::drawings::StyleColor32;
 use eframe::egui;
 use egui_phosphor::regular as icons;
 pub use quantick_drawings::context_bar::{Capabilities, Slot, slots};
-use quantick_ui_model::drawing_chrome::bar_dismissal::{BarDismissal, PressOn};
+use quantick_ui_model::drawing_chrome::bar_dismissal::{BarDismissal, BarTarget, PressOn};
 
 use super::action_bar::ActionBarIntent;
 use super::{DrawingStyle, GlyphSize, MAX_DRAWING_FILL_ALPHA};
@@ -345,17 +345,19 @@ impl ContextBar {
         self.last_selection = selection;
         self.open = Popover::None;
         self.rect = None;
-        self.dismissal.note_selection_changed();
         true
     }
 
-    /// Step [`BarDismissal`] with this frame's focus and press, answering
-    /// whether the bar stands dismissed. Dismissing drops the popover and the
-    /// rect, so a later press where the bar was is not read as one on it.
-    pub fn step_dismissal(&mut self, focused: bool, press: Option<(f64, PressOn)>) -> bool {
-        let lost = self.dismissal.note_focus(focused);
-        let pressed = press.is_some_and(|(started, on)| self.dismissal.note_press(started, on));
-        if lost || pressed {
+    /// Step [`BarDismissal`] with this frame, answering whether the bar stands
+    /// dismissed. Dismissing drops the popover and the rect, so a later press
+    /// where the bar was is not read as one on it.
+    pub fn step_dismissal(
+        &mut self,
+        target: Option<BarTarget>,
+        focused: bool,
+        press: Option<(f64, PressOn)>,
+    ) -> bool {
+        if self.dismissal.step(target, focused, press) {
             self.open = Popover::None;
             self.rect = None;
         }

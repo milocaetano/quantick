@@ -3,8 +3,9 @@
 //! The bar a selection raises closes on any press that is not aimed at it:
 //! the canvas, another pane, a panel, the toolbar, another window. It stays
 //! closed — the object still selected — until the trader presses that object
-//! again or selects another. A temporary suppression (a pan, a zoom) brings
-//! the bar back on its own; a dismissal does not.
+//! again or another bar target comes up (another object, pane or tab). A
+//! temporary suppression (a pan, a zoom) brings the bar back on its own; a
+//! dismissal does not.
 
 /// Where a press began, as the context bar sees it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -38,10 +39,15 @@ impl PressOn {
     }
 }
 
-/// The dismissal state, stepped once per press.
+/// The bar a dismissal belongs to: tab, pane and the selected object's id.
+/// A different target is a new bar, never a dismissed one.
+pub type BarTarget = (u64, u64, u64);
+
+/// The dismissal state, stepped every frame.
 #[derive(Debug, Default)]
 pub struct BarDismissal {
     dismissed: bool,
+    target: Option<BarTarget>,
     /// Start time of the last press decided, so a held press is read once.
     last_press: Option<f64>,
     /// Window focus last frame; `None` before the first report.
@@ -49,35 +55,35 @@ pub struct BarDismissal {
 }
 
 impl BarDismissal {
-    /// A new selection is a new bar.
-    pub fn note_selection_changed(&mut self) {
-        self.dismissed = false;
-    }
-
-    /// Decide the press that started at `started`, once. Answers whether
-    /// this call dismissed the bar.
-    pub fn note_press(&mut self, started: f64, on: PressOn) -> bool {
-        if self.last_press == Some(started) {
-            return false;
+    /// Step one frame: the bar's target (`None` without a selection), the
+    /// window focus, and the press in flight with its start time. Losing
+    /// focus is a click in another window, Quantick's or not. Answers whether
+    /// this step dismissed the bar.
+    pub fn step(
+        &mut self,
+        target: Option<BarTarget>,
+        focused: bool,
+        press: Option<(f64, PressOn)>,
+    ) -> bool {
+        if self.target != target {
+            self.target = target;
+            self.dismissed = false;
         }
-        self.last_press = Some(started);
-        let was = self.dismissed;
-        match on {
-            PressOn::Bar => {}
-            PressOn::SelectedDrawing => self.dismissed = false,
-            PressOn::Elsewhere => self.dismissed = true,
-        }
-        self.dismissed && !was
-    }
-
-    /// The window lost focus: a click in another window, Quantick's or not.
-    /// Answers whether this call dismissed the bar.
-    pub fn note_focus(&mut self, focused: bool) -> bool {
         let lost = self.focused == Some(true) && !focused;
         self.focused = Some(focused);
+        let press = press.filter(|(started, _)| self.last_press != Some(*started));
+        if let Some((started, _)) = press {
+            self.last_press = Some(started);
+        }
+        if target.is_none() {
+            return false;
+        }
         let was = self.dismissed;
-        if lost {
-            self.dismissed = true;
+        self.dismissed |= lost;
+        match press.map(|(_, on)| on) {
+            Some(PressOn::SelectedDrawing) => self.dismissed = false,
+            Some(PressOn::Elsewhere) => self.dismissed = true,
+            Some(PressOn::Bar) | None => {}
         }
         self.dismissed && !was
     }
