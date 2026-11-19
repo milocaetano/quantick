@@ -122,6 +122,60 @@ fn the_equity_walk_is_cut_once_and_both_readers_share_it() {
     assert_eq!((empty.low, empty.high), (0.0, 0.0));
 }
 
+/// The support line names the window it cut and every trade it kept out:
+/// older trades behind the period, others behind picked dates, and those
+/// the source filter or a report scope set aside.
+#[test]
+fn the_scope_line_accounts_for_every_hidden_trade() {
+    let (day, utc) = (86_400_000_i64, TzOffset::new(0));
+    let live = Some(history::SessionSource::Live);
+    let history = LoadedHistory {
+        rows: vec![
+            row("X", live, trade_at(day + 1_000, 1)),
+            row("X", live, trade_at(5 * day + 1_000, 2)),
+            row(
+                "X",
+                Some(history::SessionSource::Replay),
+                trade_at(9 * day, 3),
+            ),
+            row("X", live, trade_at(10 * day + 1_000, 4)),
+        ],
+        files: 1,
+        unreadable_files: 0,
+        problem_rows: 0,
+        sessions: BTreeMap::new(),
+    };
+    let week = ReportView::cut(&history, ReportPeriod::Week, SourceFilter::Real, None, utc);
+    assert_eq!(
+        week.scope_line(),
+        "the last 7 days up to 1970-01-11 (newest saved trade, not the wall clock) \
+         - 1 older saved trade(s) before this window \
+         - 1 trade(s) outside the selected source or report scope"
+    );
+    let picked = DateRange::new(
+        CivilDate::from_ymd(1970, 1, 11),
+        CivilDate::from_ymd(1970, 1, 6),
+    );
+    let range = ReportView::cut(
+        &history,
+        ReportPeriod::Week,
+        SourceFilter::Real,
+        Some(picked),
+        utc,
+    );
+    assert_eq!(
+        range.scope_line(),
+        "1970-01-06 to 1970-01-11 (6 day(s), the dates you picked - the period pills are \
+         standing down) - 1 saved trade(s) outside these dates \
+         - 1 trade(s) outside the selected source or report scope"
+    );
+    let none = ReportView::cut(&history, ReportPeriod::All, SourceFilter::Broker, None, utc);
+    assert_eq!(
+        none.scope_line(),
+        "no saved trades in this scope - 4 trade(s) outside the selected source or report scope"
+    );
+}
+
 /// The expected report, byte for byte. Regenerated only when a
 /// *behaviour* change is intended and argued for.
 const GOLDEN_REPORT: &str = r#"== ALL ==

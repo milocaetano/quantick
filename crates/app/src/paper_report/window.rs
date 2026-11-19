@@ -20,7 +20,7 @@ use super::{
     REPORT_FOOTER_RESERVE_PX, REPORT_GRID_MIN_H_PX, REPORT_MIN_HEIGHT_CALENDAR_PX,
     REPORT_MIN_HEIGHT_PX, REPORT_MIN_WIDTH_PX, ReportEnv, SourceFilter,
 };
-use crate::paper_calendar::{CivilDate, DaySelection, today};
+use crate::paper_calendar::{DaySelection, today};
 use crate::paper_chrome::pill_toggle;
 use crate::theme;
 use crate::timezone::TzOffset;
@@ -162,39 +162,8 @@ impl Paint<'_, '_> {
         ui.label(
             egui::RichText::new("No saved trades for this filter.").color(palette.text_primary()),
         );
-        let scope = self
-            .report_symbol()
-            .as_deref()
-            .unwrap_or("any symbol")
-            .to_owned();
-        let hidden_by_source_or_scope = self
-            .report_view()
-            .as_ref()
-            .map_or(0, |view| view.hidden_by_source_or_scope);
-        let picked = self.calendar().selection.range();
-        let text = if let Some(range) = picked {
-            // The dates are the user's own pick, so the
-            // refusal names them and the way back out.
-            format!(
-                "{scope} closed no trades in {} - pick another day, or clear \
-                 the date filter to go back to the period pills.",
-                range.label(),
-            )
-        } else if hidden_by_source_or_scope > 0 {
-            format!(
-                "{scope} has {hidden_by_source_or_scope} trade(s) outside the selected source or report scope."
-            )
-        } else {
-            format!(
-                "{scope} has no trades in {}. Try \"All\", or another symbol.",
-                self.report_period().phrase(),
-            )
-        };
-        ui.label(egui::RichText::new(text).color(palette.text_support()));
-        let default_symbol = (!env.symbol.is_empty()).then(|| env.symbol.to_owned());
-        if (self.report_period() != ReportPeriod::All
-            || self.report_symbol() != &default_symbol
-            || picked.is_some())
+        ui.label(egui::RichText::new(self.empty_hint()).color(palette.text_support()));
+        if self.filters_narrowed(env.symbol)
             && ui
                 .button("Clear filters")
                 .on_hover_text("back to this symbol, all time, no dates")
@@ -345,49 +314,7 @@ impl Paint<'_, '_> {
             });
         });
         if let Some(view) = self.report_view() {
-            let mut text = match (view.range, view.anchor_ms) {
-                // A picked range names itself in absolute dates: the whole
-                // point of the calendar is a window the trader can state.
-                (Some(range), _) => {
-                    let mut text = format!(
-                        "{} ({} day(s), the dates you picked - the period pills are standing \
-                         down)",
-                        range.label(),
-                        range.days(),
-                    );
-                    if view.hidden_outside > 0 {
-                        text.push_str(&format!(
-                            " - {} saved trade(s) outside these dates",
-                            view.hidden_outside,
-                        ));
-                    }
-                    text
-                }
-                (None, Some(anchor)) => {
-                    let mut text = format!(
-                        "{} up to {} (newest saved trade, not the wall clock)",
-                        view.period.phrase(),
-                        CivilDate::from_ms(anchor, view.tz).iso(),
-                    );
-                    if view.hidden_outside > 0 {
-                        // "Where did my old trades go" gets a literal
-                        // answer: they are saved, before this window.
-                        text.push_str(&format!(
-                            " - {} older saved trade(s) before this window",
-                            view.hidden_outside,
-                        ));
-                    }
-                    text
-                }
-                (None, None) => "no saved trades in this scope".to_owned(),
-            };
-            if view.hidden_by_source_or_scope > 0 {
-                text.push_str(&format!(
-                    " - {} trade(s) outside the selected source or report scope",
-                    view.hidden_by_source_or_scope,
-                ));
-            }
-            ui.label(egui::RichText::new(text).color(palette.text_support()));
+            ui.label(egui::RichText::new(view.scope_line()).color(palette.text_support()));
         }
         reload
     }
