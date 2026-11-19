@@ -2,14 +2,14 @@
 //! calls validate and answer there, and every act below is the one the
 //! window's own strip, divider, rail, menu or header makes.
 
+use crate::app::GatewayPort;
 use crate::app::control_host::ControlPort;
-use crate::app::{GatewayPort, TabsPort};
 use crate::pane::PaneSide;
 use crate::tab::Tab;
 pub(crate) use quantick_control_schema::layout::*;
 
 use quantick_chart::state::{BarConfiguration, SpecSelector};
-use quantick_control::{error::ControlError, wire::ActorKind};
+use quantick_control::wire::ActorKind;
 use quantick_control_handlers::layout::{CanvasReading, LayoutHost, LayoutTab};
 use quantick_workspace::canvas_layout::LayoutPreset;
 use quantick_workspace::layout_document::{LayoutBook, LayoutError, LayoutId};
@@ -21,14 +21,6 @@ pub(crate) fn layout_tabs<P: GatewayPort + ?Sized>(app: &P) -> Vec<LayoutTabSnap
     quantick_control_handlers::layout::layout_tabs(state.layouts(), active, |id| {
         state.shown_count(id)
     })
-}
-
-/// Which tab a call names, as an index into the open strip.
-pub(crate) fn tab_index<P: TabsPort + ?Sized>(
-    app: &P,
-    target: TabTarget,
-) -> Result<usize, ControlError> {
-    quantick_control_handlers::tab_index(app.tab_reads().tabs(), target.tab_id)
 }
 
 impl LayoutHost for dyn ControlPort {

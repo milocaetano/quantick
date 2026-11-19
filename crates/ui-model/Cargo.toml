@@ -8,8 +8,11 @@ publish.workspace = true
 
 [features]
 test-support = []
+scenario-harness = []
 
 [dependencies]
+tracing.workspace = true
+quantick-layers = { path = "../layers" }
 quantick-alerts = { path = "../alerts" }
 quantick-control = { path = "../control" }
 quantick-strategy = { path = "../strategy" }

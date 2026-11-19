@@ -78,6 +78,7 @@ macro_rules! workspace_calls {
 
 pub(crate) mod alerts_runtime;
 mod arrangement_adapter;
+mod canvas_owner;
 pub(crate) mod canvas_wiring;
 mod workspace_calls;
 mod workspace_runtime;
@@ -99,6 +100,9 @@ mod owners_desk;
 use owners_desk::OwnersDesk as _;
 
 mod frame;
+mod frame_calls;
+pub(crate) use drawing_controller::DrawingResponsePort;
+use frame_calls::FrameCalls;
 mod frame_tail;
 mod health;
 mod indicator_manager;
@@ -142,14 +146,6 @@ use crate::pane::ChartPane;
 
 /// Id of the tab the window opens with.
 const FIRST_TAB_ID: u64 = 0;
-
-/// The natives `QUANTICK_INDICATORS_AUTOSTART` opens with: the overlay and
-/// the pane, so a scripted run photographs both shapes. Named by catalog id
-/// rather than "all of them", because the hook's contract is a fixed,
-/// deterministic pair — a native added later must not silently change what
-/// every existing capture shows.
-#[cfg(any(feature = "scenario-harness", test))]
-const AUTOSTART_NATIVES: &[&str] = &["native.ema", "native.cvd"];
 
 /// The quantick chart window.
 ///
@@ -222,14 +218,6 @@ impl QuantickApp {
         &mut self,
     ) -> workspace_save_adapter::WorkspaceSaveAdapter<'_> {
         arrangement_adapter!(self).into_save(&self.surfaces.replay_browser)
-    }
-
-    pub(crate) fn symbol_catalog(&mut self) -> quantick_stores::symbol_catalog::SymbolCatalog<'_> {
-        quantick_stores::symbol_catalog::SymbolCatalog {
-            config: &mut self.config,
-            added: &mut self.added_symbols,
-            path: self.runtime.workspace.symbols_path(),
-        }
     }
 
     /// The active tab beside the config it reads.

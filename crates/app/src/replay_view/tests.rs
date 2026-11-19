@@ -1,5 +1,6 @@
 use super::*;
 use crate::surfaces::replay_browser::{ReplayBrowser, ReplayBrowserExt as _};
+use quantick_ui_model::launch_scenario::Replay as _;
 type ReplayView = ReplayBrowser;
 trait TestBrowser {
     fn select_day(&mut self, day: &str) -> bool;
@@ -269,7 +270,11 @@ fn a_named_day_that_is_not_there_opens_the_list_instead_of_the_wrong_one() {
     let mut view = ReplayView::new_browser(None, None);
     view.model_state.folder = String::new();
     assert!(
-        !view.autostart(1.0, Some("2026-08-28"), true),
+        !crate::surfaces::replay_browser::LaunchReplay(&mut view).autostart(
+            1.0,
+            Some("2026-08-28"),
+            true
+        ),
         "no folder, so no day"
     );
     assert!(
@@ -284,6 +289,6 @@ fn a_named_day_that_is_not_there_opens_the_list_instead_of_the_wrong_one() {
 #[test]
 fn a_stored_pick_is_where_the_browser_opens() {
     let view = ReplayView::new_browser(Some("D:/tape"), None);
-    assert_eq!(view.folder_in_use(), "D:/tape");
+    assert_eq!(view.model_state.folder, "D:/tape");
     assert_eq!(view.stored_pick(), Some("D:/tape"));
 }

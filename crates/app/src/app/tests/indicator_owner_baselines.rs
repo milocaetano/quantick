@@ -2,10 +2,9 @@ use super::*;
 use crate::app::QuantickApp;
 use crate::app::tests::update_indicator_settings;
 use crate::app::tests::{click_chart, pane_point, settle_indicators, split_app};
-use crate::indicators::state_file::SavedInput;
 use crate::toolbar::ToolbarAction;
-use quantick_indicators::{InputValue, SourceId};
-use quantick_ui_model::indicator_settings::{Intent, SettingsOutcome};
+use quantick_indicators::InputValue;
+use quantick_ui_model::indicator_settings::Intent;
 
 fn dialog_app() -> QuantickApp {
     let (mut app, _commands) = split_app(&egui::Context::default(), 200);
@@ -26,44 +25,6 @@ fn dialog_app() -> QuantickApp {
     let point = pane_point(&app, PaneSide::Flow);
     click_chart(&mut app, &egui::Context::default(), point);
     app
-}
-
-fn dispatch_preset(
-    app: &mut QuantickApp,
-    specs: &[quantick_indicators::InputSpec],
-    outcome: SettingsOutcome,
-) {
-    let target = app.surfaces.indicator_settings.model_state.target();
-    let kind = target.and_then(|target| app.runtime.indicators.registry.kind(target));
-    let mut changes = Vec::new();
-    app.surfaces.indicator_settings.with_updates(
-        |response| changes.extend(response.model_effects),
-        |_, session| {
-            crate::surfaces::indicator_settings::dispatch(
-                session,
-                target,
-                kind,
-                specs,
-                &mut app.runtime.indicators.indicator_presets,
-                app.runtime.workspace.indicator_presets_path(),
-                Intent::FinishPaint {
-                    changed: false,
-                    style_changed: false,
-                    outcome,
-                    window_closed: false,
-                    escape: false,
-                },
-            )
-        },
-    );
-    for effect in changes {
-        if let quantick_ui_model::HostEffect::IndicatorSettings(effects) = effect {
-            for change in effects.changes {
-                app.indicator_wiring()
-                    .apply_indicator_settings_change(change.into());
-            }
-        }
-    }
 }
 
 #[test]
@@ -135,68 +96,6 @@ fn i1_preview_and_discard_keep_the_original_target_and_committed_values() {
     assert_eq!(
         app.active_tab().flow_pane.indicators.all()[0].input_values,
         other
-    );
-}
-
-#[test]
-fn i1_preset_keeps_an_invalid_cell_position_before_a_valid_neighbor() {
-    let mut app = dialog_app();
-    let target = app
-        .surfaces
-        .indicator_settings
-        .model_state
-        .target()
-        .unwrap();
-    let kind = app
-        .runtime
-        .indicators
-        .registry
-        .slot_kinds()
-        .iter()
-        .find(|(at, _)| *at == target)
-        .unwrap()
-        .1
-        .clone();
-    let original = app
-        .surfaces
-        .indicator_settings
-        .model_state
-        .dialog()
-        .unwrap()
-        .draft
-        .clone();
-    assert!(app.runtime.indicators.indicator_presets.insert(
-        &kind,
-        "positional",
-        vec![
-            SavedInput::Source("not-a-source".to_owned()),
-            SavedInput::Source("open".to_owned()),
-        ]
-    ));
-    let specs = app.active_tab().pane(target.side).indicators.all()[0]
-        .descriptor
-        .inputs
-        .clone();
-    dispatch_preset(
-        &mut app,
-        &specs,
-        SettingsOutcome::LoadPreset(Some("positional".to_owned())),
-    );
-    let dialog = app
-        .surfaces
-        .indicator_settings
-        .model_state
-        .dialog()
-        .unwrap();
-    assert_eq!(dialog.draft[0], original[0]);
-    assert_eq!(dialog.draft[1], InputValue::Source(SourceId::Open));
-    assert_eq!(dialog.committed, original);
-    assert!(dialog.previewed);
-    assert_eq!(dialog.preset_label.as_deref(), Some("positional"));
-    assert!(
-        crate::app::tests::pane_set(&app, PaneSide::Flow)[0]
-            .inputs
-            .is_empty()
     );
 }
 

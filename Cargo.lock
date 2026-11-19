@@ -3433,6 +3433,7 @@ dependencies = [
  "quantick-drawings",
  "quantick-engine",
  "quantick-indicators",
+ "quantick-layers",
  "quantick-orderflow",
  "quantick-paper",
  "quantick-replay",
@@ -3445,6 +3446,7 @@ dependencies = [
  "quantick-workspace",
  "rust_decimal",
  "toml 0.8.20",
+ "tracing",
 ]
 
 [[package]]

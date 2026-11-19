@@ -127,7 +127,7 @@ pub(super) fn live_recipe(runtime: &Runtime, id: u64) -> Option<WorkspaceRecipe>
     let style = Some(tab.flow_pane.footprint_config(window).style.id().to_owned());
     let layouts = runtime.workspace.layouts().book();
     let recipe = capture_recipe(&saved, layouts, layers, style);
-    let recipe = super::canvas_wiring::with_canvas(recipe, &tab.canvas);
+    let recipe = tab.canvas.with_canvas(recipe);
     Some(recipe.cut_to_canvas(&tab.canvas.state, &tab.canvas.seats))
 }
 
@@ -166,7 +166,7 @@ fn apply_recipe_canvas(runtime: &mut Runtime, id: u64, recipe: &WorkspaceRecipe)
     lay_recipe_canvas(&mut tab.canvas.state, &mut tab.canvas.seats, recipe);
     let mut monitors = quantick_platform::monitors();
     monitors.push(quantick_control_handlers::canvas::PRIMARY_MONITOR.to_owned());
-    let area = super::canvas_wiring::tab_area(&tab.canvas);
+    let area = tab.canvas.area();
     tab.canvas.state.settle_monitors(&monitors, area);
     apply_recipe_switches(runtime, id, recipe);
 }

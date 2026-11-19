@@ -62,6 +62,7 @@ pub(crate) fn standard_contract() -> Result<ObserverContract, String> {
         &projections,
         std::sync::Arc::new(actions),
         super::evidence::EvidenceStore::new(),
+        crate::control::system::BUILD,
     )
     .map_err(|error| format!("observer contract: {error}"))
 }

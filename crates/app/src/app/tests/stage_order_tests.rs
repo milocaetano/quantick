@@ -859,7 +859,7 @@ fn paper_panel_recipient_order_surrounds_editor_and_polls_only_in_dock() {
     );
     assert!(!app.surfaces.replay_browser.browser_is_open());
     ready_pickers(&mut app);
-    let (_, dock_steps) = super::frame::paper_panel_steps::observe(|| {
+    let (_, dock_steps) = super::paper_wiring::panel_effects::paper_panel_steps::observe(|| {
         dock_frame(
             &mut app,
             &ctx,
@@ -900,7 +900,7 @@ fn paper_panel_recipient_order_surrounds_editor_and_polls_only_in_dock() {
         closed: -10_000,
         mixed: false,
     });
-    let (_, tail_steps) = super::frame::paper_panel_steps::observe(|| {
+    let (_, tail_steps) = super::paper_wiring::panel_effects::paper_panel_steps::observe(|| {
         let _ = ctx.run(egui::RawInput::default(), |ctx| {
             assert!(app.run_report_tail_test(ctx, [DrawPaperReport]).is_empty());
         });

@@ -249,14 +249,6 @@ pub(crate) trait ReplayBrowserExt {
     fn take_folder_change(&mut self) -> Option<Option<String>>;
     fn take_day_before_change(&mut self) -> Option<bool>;
     fn bind_pass(&mut self, link: Option<&ReplayLink>, market: &MarketMenu<'_>);
-    #[cfg(any(feature = "scenario-harness", test))]
-    fn stage_day_before(&mut self, enabled: bool);
-    #[cfg(any(feature = "scenario-harness", test))]
-    fn folder_in_use(&self) -> &str;
-    #[cfg(any(feature = "scenario-harness", test))]
-    fn open_get_data(&mut self, symbol: Option<&str>);
-    #[cfg(any(feature = "scenario-harness", test))]
-    fn autostart(&mut self, speed: f32, day: Option<&str>, play: bool) -> bool;
     #[cfg(test)]
     fn browser_is_open(&self) -> bool;
 }
@@ -331,35 +323,20 @@ impl ReplayBrowserExt for ReplayBrowser {
         self.model_state
             .observe_market(market.current, &market.catalogue);
     }
-    #[cfg(any(feature = "scenario-harness", test))]
-    fn stage_day_before(&mut self, enabled: bool) {
-        self.dispatch(Intent::StageDayBefore(enabled));
-    }
-    #[cfg(any(feature = "scenario-harness", test))]
-    fn folder_in_use(&self) -> &str {
-        &self.model_state.folder
-    }
-    #[cfg(any(feature = "scenario-harness", test))]
-    fn open_get_data(&mut self, symbol: Option<&str>) {
-        self.open_browser();
-        self.dispatch(Intent::EnterDownload {
-            symbol: symbol.map(str::to_owned),
-            explicit: true,
-        });
-    }
-    #[cfg(any(feature = "scenario-harness", test))]
-    fn autostart(&mut self, speed: f32, day: Option<&str>, play: bool) -> bool {
-        self.dispatch(Intent::Rescan);
-        self.dispatch(Intent::AutostartSelection {
-            speed,
-            day: day.map(str::to_owned),
-            play,
-        })
-        .load_started
-    }
     #[cfg(test)]
     fn browser_is_open(&self) -> bool {
         self.model_state.browser_open
+    }
+}
+#[cfg(any(feature = "scenario-harness", test))]
+pub(crate) struct LaunchReplay<'a>(pub &'a mut ReplayBrowser);
+#[cfg(any(feature = "scenario-harness", test))]
+impl quantick_ui_model::launch_scenario::Replay for LaunchReplay<'_> {
+    fn state(&self) -> &quantick_ui_model::replay_browser::State {
+        &self.0.model_state
+    }
+    fn dispatch(&mut self, intent: Intent) -> Effects {
+        self.0.dispatch(intent)
     }
 }
 pub(crate) struct BrowserPaint<'a, 'b> {

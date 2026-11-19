@@ -269,16 +269,17 @@ impl Tab {
     }
 
     /// Respawn the feed and reset the chart when the selected feed or symbol
-    /// differs from what is currently streaming. A no-op otherwise.
-    pub fn maybe_switch_feed(&mut self, config: &AppConfig) {
+    /// differs from what is currently streaming. Report a changed selection even
+    /// when a missing provider restores it, so the layout follows the settled tab.
+    pub fn maybe_switch_feed(&mut self, config: &AppConfig) -> bool {
         // A replay owns the chart until it is closed. The selectors are not
         // drawn while it plays, so nothing can diverge here — but a stale
         // selection must not respawn a live feed underneath the recording.
         if self.link.replay.is_some() {
-            return;
+            return false;
         }
         if self.active == (self.feed_id.clone(), self.symbol.clone()) {
-            return;
+            return false;
         }
         let Some(provider) = config.provider_of(&self.feed_id) else {
             tracing::warn!(
@@ -288,7 +289,7 @@ impl Tab {
             );
             // Snap the selection back to what is actually running.
             (self.feed_id, self.symbol) = self.active.clone();
-            return;
+            return true;
         };
         // The recorder follows the feed, not the toggle: a market that can
         // stream depth is recorded from the moment it starts streaming. Kept
@@ -353,6 +354,7 @@ impl Tab {
         self.refresh_chip_label(config);
         self.ensure_book_capture(config);
         self.apply_asset_bubbles_after_switch(config);
+        true
     }
 
     /// Bring the arrived-at asset's own bubble settings on screen, filing the

@@ -1,15 +1,14 @@
-# AGENTS.md — quantick for AI agents
+# AGENTS.md — quantick
 
-[CLAUDE.md](CLAUDE.md): rules; [CONTRIBUTING.md](CONTRIBUTING.md): checks;
-[docs/agentic-development.md](docs/agentic-development.md): rationale;
-[docs/README.md](docs/README.md): index.
+Before implementation or review, read [CLAUDE.md](CLAUDE.md): shared rules
+for Claude and Codex. [Checks](CONTRIBUTING.md); [rationale](docs/agentic-development.md);
+[index](docs/README.md). Codex: read [host mappings](.agents/references/codex-compatibility.md)
+and `.agents/skills/`.
 
-**Driving the running app?** Build `quantick-mcp`, run `quantick-mcp setup
---client claude` (or `codex`), enable **Tools → Local agent access**, and call
-`quantick_describe` first. Tools and authority:
-[crates/mcp/README.md](crates/mcp/README.md); capabilities:
-[capability inventory](docs/control-plane/capability-inventory.md) and
-[capability catalog](schemas/control/observer-capability-catalog-v1.json).
+**App access:** build `quantick-mcp`, run `quantick-mcp setup --client codex`
+(or `claude`), enable **Tools → Local agent access**, call `quantick_describe` first.
+[Authority](crates/mcp/README.md); [inventory](docs/control-plane/capability-inventory.md);
+[catalog](schemas/control/observer-capability-catalog-v1.json).
 
 ## The map
 
@@ -25,7 +24,7 @@
 | `control-handlers` | alerts, chart*, civil, control, control-host, control-schema, drawings, engine, orderflow, paper, replay, session, sim, sources, stores, workspace | Port handlers. |
 | `control-schema` | control, control-host, stores, pine, layers, operability, trading, orderflow, indicators, orderbook, engine | Control-plane schemas over the domain crates. |
 | `stores` | alerts, appearance, chart, drawings, sources, workspace, orderflow, indicators, engine, orderbook (dev) | Cockpit documents; the alert observer cache. |
-| `ui-model` | alerts, appearance, chart*, civil, control, control-handlers, control-schema, drawings, engine, indicators, orderflow, paper, replay, session, sources, stores, strategy, workspace, sim (dev), trading (dev) | UI model contract and catalog. |
+| `ui-model` | alerts, appearance, chart*, civil, control, control-handlers, control-schema, drawings, engine, indicators, layers, orderflow, paper, replay, session, sources, stores, strategy, workspace, sim (dev), trading (dev) | UI contracts and catalog. |
 | `session` | chart*, civil, engine, paper, sim, sources, strategy | A tab's reach-back: candles, history paging. |
 | `drawings` | alerts, anchored-studies, appearance, chart*, engine, indicators, workspace | Chart marks: store, update, scenes. |
 | `alerts` | civil, workspace | Alerts and sounds. |

@@ -1,32 +1,8 @@
-//! The status bar: wrapping 28 px rows answering "how healthy is it?"
-//! (`docs/ux/ui-design-model.md` §8).
-//!
-//! Three sections replace the perf overlay, the floating timezone pill and
-//! the mode text that used to be painted over candles: provenance on the
-//! left (state dot, venue, symbol, lag), content in the middle (honesty
-//! labels), machinery on the right (fps and the timezone picker). What the
-//! forming bar has left lives on its own price tag, not here. A reading
-//! that breaches its threshold turns
-//! the `warn` token; narrow windows wrap cells without hiding their facts.
-//!
-//! The bar's controls share one raised hover. The workspace moved to the
-//! toolbar's capsule; the timezone picker sits at the right end. A
-//! `Reconnect`/`Reload` pair once stood in the provenance section, because
-//! the notice card refused to cover a working
-//! chart, and a terminal that froze mid-session left the trader nothing to
-//! press anywhere in the window. The offline chip in the chart's bottom-right
-//! corner answers that better: it is in one place whatever the chart holds, so
-//! the pair went back out rather than stand as a second way to do the same two
-//! things.
-//!
-//! At the left end stands the window's one word on the feed's global
-//! state, in grey, and it is the recovery popup's door: see
-//! [`quantick_chart::connection_state`] for what it says and [`crate::feed_notice`]
-//! for what it opens.
-//!
-//! The section values are computed by the app and handed in as a plain
-//! [`StatusModel`], so every text and colour decision here stays pure and
-//! unit-testable.
+//! Wrapping 28 px status rows: provenance, data honesty and frame performance
+//! (`docs/ux/ui-design-model.md` §8). Readings over their thresholds use `warn`.
+//! The feed word opens the recovery popup; a desync pause offers Reconnect
+//! beside the tape cell. See [`quantick_chart::connection_state`] and
+//! [`crate::feed_notice`]. Values arrive in a precomputed [`StatusModel`].
 
 use eframe::egui;
 use egui_phosphor::regular as icons;
@@ -153,22 +129,9 @@ impl DealCell {
 /// every frame. A socket that stays open and delivers nothing keeps a healthy
 /// arrival figure forever, so the honest readout is the age of the tape.
 ///
-/// A late tape that knows *where* the time went says so by **replacing** the
-/// word `arrival` with the hop's name: `MT5 4210 ms`. Replacing rather than
-/// appending, because this row has no width budget between its three sections —
-/// a label that grows in the middle overruns the machinery readouts on the
-/// right, which is what the side-note comment in [`draw_content`] has always
-/// warned about, and it was reproduced at 1000 px by an earlier version of this
-/// cell that appended ` · bridge`. Swapped rather than appended, and swapped
-/// for something no wider: `LatencyHop::MAX_LABEL_CHARS` is the width of the
-/// word `arrival` itself, so the cell can only get narrower by knowing more.
-/// Both ends assert it.
-///
-/// Nothing is lost by dropping `arrival`: the word was only ever explained by
-/// the hover, which still explains both readings and now carries the numbers
-/// too. The name appears only once the delay is worth acting on
-/// ([`metrics::HIGH_LAG_MS`]) — a healthy tape does not need to tell anyone
-/// which of its hops was nominally slowest.
+/// Above [`metrics::HIGH_LAG_MS`], the slowest hop replaces `arrival`, for
+/// example `MT5 4210 ms`. `LatencyHop::MAX_LABEL_CHARS` keeps it no wider than
+/// `arrival`; the hover retains the complete breakdown without widening the row.
 #[must_use]
 pub fn tape_text(
     replay: Option<ReplayFigures>,

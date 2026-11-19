@@ -19,6 +19,11 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
+/// The paper-trading settings sidecar in the durable cockpit home.
+pub const STATE_FILE: &str = "paper-state.toml";
+/// The trader's instrument catalog, applied over the shipped catalog.
+pub const INSTRUMENTS_FILE: &str = "instruments.toml";
+
 /// Bumped on breaking layout changes; unknown versions are ignored.
 /// Adding an optional field is not breaking — absent keys stay `None`.
 pub const FORMAT_VERSION: u32 = 1;

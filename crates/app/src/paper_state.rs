@@ -19,13 +19,6 @@ use std::path::PathBuf;
 
 pub(crate) use quantick_paper::state::*;
 
-/// The file's name inside the durable cockpit home. See [`crate::store_home`].
-pub(crate) const STATE_FILE: &str = "paper-state.toml";
-
-/// The trader's instrument catalog inside the cockpit home, laid over the
-/// shipped one (`quantick_paper::instruments`).
-pub(crate) const INSTRUMENTS_FILE: &str = "instruments.toml";
-
 /// The instrument catalog this build ships.
 const INSTRUMENTS: &str = include_str!("../config/instruments.toml");
 

@@ -177,6 +177,7 @@ fn borrowed_domain_rows_reborrow_in_catalog_order() {
         legends: None,
         auto_range: None,
         selected_bbox: None,
+        press_pick: None,
         selected_band: None,
         tab: 0,
         side: crate::pane::PaneSide::Flow,

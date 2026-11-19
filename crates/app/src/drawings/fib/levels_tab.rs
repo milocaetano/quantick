@@ -440,7 +440,7 @@ impl DisplayOptions<'_> {
             egui::ComboBox::from_label("extend")
                 .selected_text(payload.extend.describe())
                 .show_ui(ui, |ui| {
-                    for extend in Extend::ALL {
+                    for &extend in Extend::choices(payload.kind) {
                         edited |= ui
                             .selectable_value(&mut payload.extend, extend, extend.describe())
                             .changed();

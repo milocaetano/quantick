@@ -44,10 +44,7 @@ pub(crate) use quantick_control_handlers::retry_matrix::*;
 pub(crate) use quantick_control_schema::retry_matrix::*;
 // What the sidecar tests reach through `super::*`.
 #[cfg(test)]
-use super::{
-    contract::{ObserverContract, SNAPSHOT_CAPABILITY_ID},
-    workspace,
-};
+use super::{SNAPSHOT_CAPABILITY_ID, contract::ObserverContract, workspace};
 #[cfg(test)]
 use quantick_control::registry::IdempotencyPolicy;
 

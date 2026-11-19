@@ -73,18 +73,9 @@ pub const REGISTRY_PATH: &str = ".claude/skills/ui-harness/references/hook-regis
 /// The authored half the registry is generated from.
 pub const PROSE_PATH: &str = "docs/ui-harness/hook-prose.md";
 
-/// Where the `declare_hooks!` declarations live.
-///
-/// Two trees, not one: the application, and the feed host below it. Four of
-/// the feed adapters read a `QUANTICK_*`, and each declares it beside the read
-/// exactly as an application module does — `quantick-app`'s `OWNERS` table
-/// still names every slice, so the registry stays whole. A tree missing from
-/// this list is a hook the guard cannot see, which is the blind spot this
-/// module exists to close.
-const HOOK_SOURCE_DIRS: &[&str] = &["crates/app/src", "crates/feed/src"];
-
-/// The same two, as the phrase a finding names them by.
-const HOOK_SOURCES: &str = "crates/app/src or crates/feed/src";
+/// Scan the native capture sites, feed hooks and headless consumers of
+/// captured scenario inputs. The application's registry covers all three.
+const HOOK_SOURCE_DIRS: &[&str] = &["crates/app/src", "crates/feed/src", "crates/ui-model/src"];
 
 /// Where the shared not-a-hook table is declared.
 const HOOKS_MODULE: &str = "crates/app/src/hooks.rs";
@@ -476,8 +467,9 @@ fn check_hooks(root: &Path, findings: &mut Vec<Finding>) {
         if !declared.contains_key(name) && !allowed.contains(name) {
             findings.push(Finding::new(
                 format!(
-                    "{PROSE_PATH}: `{name}` is described but no `declare_hooks!` in {HOOK_SOURCES} \
-                     declares it — a capture setting it would reach nothing"
+                    "{PROSE_PATH}: `{name}` is described but no `declare_hooks!` in {} \
+                     declares it — a capture setting it would reach nothing",
+                    HOOK_SOURCE_DIRS.join(", ")
                 ),
                 REMEDY_HOOKS,
             ));
@@ -921,6 +913,20 @@ mod tests {
             literal_hook_names("const SETTINGS_ENV: &str = \"QUANTICK_VIA_CONST\";")
                 .contains("QUANTICK_VIA_CONST")
         );
+    }
+
+    #[test]
+    fn captured_reads_in_a_headless_scenario_are_checked_against_declarations() {
+        let root = crate::scratch_dir::ScratchDir::new("headless-hook");
+        let folder = root.join("crates/ui-model/src");
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(
+            folder.join("scenario.rs"),
+            r#"fn launch() { read("QUANTICK_NEW"); }"#,
+        )
+        .unwrap();
+        assert!(read_hooks(&root).contains_key("QUANTICK_NEW"));
+        assert!(!declared_hooks(&root).contains_key("QUANTICK_NEW"));
     }
 
     /// The bare prefix is what the diagnostic filters on, not a hook.

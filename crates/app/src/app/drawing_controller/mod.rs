@@ -6,10 +6,12 @@ use crate::surfaces::drawing_chrome::DrawingChromeSurface;
 use std::time::Instant;
 mod access;
 mod input;
+mod response;
 mod view;
 pub(crate) use access::{DrawingAccess, DrawingReadAccess};
 #[cfg(test)]
 pub(super) use input::DUPLICATE_OFFSET_BARS;
+pub(crate) use response::DrawingResponsePort;
 
 use crate::toolrail::ToolRailExt as _;
 pub(crate) struct DrawingController {

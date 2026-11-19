@@ -2,12 +2,16 @@
 //! Time, snapshots and completion results arrive as intents; no clock is read.
 mod catalog;
 pub mod colour_palette;
+pub mod frame_settlement;
 pub mod late_effects;
+#[cfg(any(feature = "scenario-harness", test))]
+pub mod launch_scenario;
 pub mod layout_picker;
 pub mod manage_workspaces;
 pub mod paper_report;
 #[cfg(test)]
 mod scratch;
+pub mod store_home;
 pub mod workspace_menu;
 
 /// A deterministic transition over cached presentation state.

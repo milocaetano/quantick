@@ -1,6 +1,15 @@
 # Codex compatibility
 
-The Claude workflow owns outcomes, gates, evidence, markers, authority and
+[CLAUDE.md](../../CLAUDE.md) owns shared architecture rules. Read it before
+implementation or review, including work requested without a skill invocation.
+
+When using a Codex adapter, read its linked canonical `SKILL.md` from the
+active checkout; the adapter is a loader, not a summary. Follow referenced
+files when that workflow calls for them, resolving paths relative to the
+canonical file that names them, never the adapter directory. Keep architecture
+and workflow rules in their canonical owners, not copied into adapters.
+
+The canonical workflow owns outcomes, gates, evidence, markers, authority and
 done. Translate only these host mechanics:
 
 - `/name` and `Skill(name)` mean Codex `$name`.

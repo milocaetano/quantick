@@ -138,7 +138,7 @@ pub(super) fn draw_dock(
 /// The message names the flow chart rather than "the chart": in a split tab
 /// the time pane keeps its own, longer window, so the same round trip can be
 /// off this one and painted on that one.
-pub(super) fn center_flow_pane_on_trade(tab: &mut Tab, opened: i64, closed: i64) {
+pub(in crate::app) fn center_flow_pane_on_trade(tab: &mut Tab, opened: i64, closed: i64) {
     let covered = tab
         .flow_pane
         .covering_slot_at_time(opened)

@@ -4,7 +4,7 @@ use crate::pos2;
 use crate::{MarkScene, Px, PxRect};
 
 use super::fib::{self, FibKind, FibPayload};
-use super::{DrawContext, DrawingPayload, DrawingStyle, MarkTool, ToolShortcut};
+use super::{DrawContext, DrawingPayload, DrawingStyle, MarkTool, PointerHint, ToolShortcut};
 
 pub(super) static TOOL: FibExtension = FibExtension;
 
@@ -99,15 +99,37 @@ impl MarkTool for FibExtension {
     ) -> bool {
         fib::hit_test(chart_rect, points, position, radius_px, ctxt)
     }
+    fn drag_payload_handle(
+        &self,
+        chart_rect: PxRect,
+        points: &[Px],
+        handle: usize,
+        to: Px,
+        ctxt: &DrawContext<'_>,
+    ) -> Option<Box<dyn DrawingPayload>> {
+        fib::drag_reach(chart_rect, points, handle, to, ctxt)
+    }
+    fn handle_hint(&self, handle: usize) -> Option<PointerHint> {
+        (handle == fib::REACH_HANDLE).then_some(PointerHint::ResizeSide { handle })
+    }
+    fn pointer_hint(
+        &self,
+        chart_rect: PxRect,
+        points: &[Px],
+        position: Px,
+        ctxt: &DrawContext<'_>,
+    ) -> Option<PointerHint> {
+        fib::reach_hint(chart_rect, points, position, ctxt)
+    }
 
     #[cfg(test)]
     fn test_geometry(&self) -> (Vec<Px>, Px) {
         (
             vec![pos2(100.0, 100.0), pos2(200.0, 200.0)],
-            // Between the anchors on the 100 % level: a fresh extension's
-            // levels end at its last anchor (see `Extend::for_kind`), so
-            // that is where the object can be grabbed.
-            pos2(150.0, 300.0),
+            // Past the last anchor on the 100 % level: a fresh extension's
+            // levels start there (see `Extend::for_kind`), so that is where
+            // the object can be grabbed.
+            pos2(250.0, 300.0),
         )
     }
 }

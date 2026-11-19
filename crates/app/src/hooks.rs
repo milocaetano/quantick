@@ -153,6 +153,7 @@ const SCENARIO_OWNERS: &[(&str, &[HookSpec])] = &[
         "crates/app/src/app/canvas_wiring.rs",
         crate::app::canvas_wiring::HOOKS,
     ),
+    ("crates/app/src/tab/layout.rs", crate::tab::layout::HOOKS),
     (
         "crates/app/src/footprint_config.rs",
         crate::footprint_config::HOOKS,

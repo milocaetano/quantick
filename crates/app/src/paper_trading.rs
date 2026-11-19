@@ -42,8 +42,6 @@ pub(crate) use quantick_paper::desk::{
 // this module, and a type that changed address because its code did would
 // make every one of those callers pay for a move they did not ask for.
 pub(crate) use crate::paper_report::LedgerAction;
-#[cfg(any(feature = "scenario-harness", test))]
-pub(crate) use crate::paper_report::LedgerScope;
 
 pub(crate) mod account_route;
 mod cmd;

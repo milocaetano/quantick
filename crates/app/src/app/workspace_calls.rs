@@ -161,8 +161,40 @@ impl WorkspaceOwner for WorkspaceCalls<'_> {
     }
 }
 
-impl quantick_control_handlers::TabsHost for WorkspaceCalls<'_> {
-    fn tab_list(&self) -> &dyn quantick_control_handlers::TabDirectory {
-        &self.runtime.tabs
+impl quantick_control_handlers::TabDirectory for WorkspaceCalls<'_> {
+    fn active_tab_index(&self) -> usize {
+        self.runtime.tabs.active_index()
+    }
+    fn tab_position(&self, tab_id: u64) -> Option<usize> {
+        self.runtime.tabs.position(tab_id)
+    }
+    fn tab_id_at(&self, index: usize) -> u64 {
+        self.runtime.tabs.id_at(index)
+    }
+}
+
+impl quantick_ui_model::frame_settlement::Host for WorkspaceCalls<'_> {
+    fn switch_market(&mut self) -> bool {
+        self.runtime.active_tab_mut().maybe_switch_feed(self.config)
+    }
+    fn apply_spec(&mut self) {
+        self.runtime
+            .bound_mut(&self.presentation.binding)
+            .active_tab_mut()
+            .apply_spec_changes();
+    }
+    fn follow_market(&mut self) {
+        self.layout().follow_market_changes();
+    }
+    fn pending_layouts(&mut self) {
+        for (id, tab) in self.runtime.tabs.iter_with_ids_mut() {
+            tab.apply_pending_layout(id, self.config, &self.runtime.style, self.pane_ids);
+        }
+    }
+    fn maintain_layouts(&mut self) {
+        self.layout().maintain_layouts();
+    }
+    fn maintain_workspaces(&mut self) {
+        self.maintain();
     }
 }

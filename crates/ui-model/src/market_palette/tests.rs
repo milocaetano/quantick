@@ -225,3 +225,46 @@ fn changed_snapshot_refreshes_query_recent_and_selection_without_copying() {
     assert_eq!(choice.symbol, "ETHUSDT");
     assert_eq!(choice.bar, "volume:13");
 }
+
+#[test]
+fn operation_feedback_keeps_no_ops_and_refusals_open_and_closes_before_notifying() {
+    use std::cell::RefCell;
+    struct FakeHost {
+        state: State,
+        events: Vec<String>,
+    }
+    let host = RefCell::new(FakeHost {
+        state: opened(),
+        events: Vec::new(),
+    });
+    let apply = |outcome| {
+        apply_palette_intent(
+            outcome,
+            |intent| {
+                let mut host = host.borrow_mut();
+                host.events.push(
+                    match &intent {
+                        Intent::Close => "close",
+                        Intent::Refuse(_) => "refuse",
+                        _ => panic!("feedback intent"),
+                    }
+                    .into(),
+                );
+                Model::update(&mut host.state, intent);
+            },
+            |note| {
+                let mut host = host.borrow_mut();
+                assert!(!host.state.is_open());
+                host.events.push(note);
+            },
+        )
+    };
+    apply(Ok(None));
+    assert!(host.borrow().state.is_open());
+    assert!(host.borrow().events.is_empty());
+    apply(Err("market refused".into()));
+    assert!(host.borrow().state.is_open());
+    assert_eq!(host.borrow().events, ["refuse"]);
+    apply(Ok(Some("market opened".into())));
+    assert_eq!(host.borrow().events, ["refuse", "close", "market opened"]);
+}

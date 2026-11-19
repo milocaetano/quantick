@@ -99,6 +99,42 @@ impl Default for TabCanvas {
 }
 
 impl TabCanvas {
+    pub(crate) fn area(&self) -> quantick_workspace::canvas::CanvasRect {
+        quantick_control_handlers::canvas::owner::canvas_area(crate::floating_panes::model_rect(
+            self.last_canvas,
+        ))
+    }
+    pub(crate) fn drawn(&self) -> quantick_control_handlers::canvas::Drawn {
+        quantick_control_handlers::canvas::Drawn {
+            area: self.area(),
+            columns: self.column_painted(),
+        }
+    }
+    pub(crate) fn with_canvas(
+        &self,
+        mut recipe: quantick_stores::workspaces::WorkspaceRecipe,
+    ) -> quantick_stores::workspaces::WorkspaceRecipe {
+        recipe.canvas = self.state.saved_form(
+            self.layout.preset(),
+            self.split_fraction,
+            self.column_painted(),
+        );
+        recipe
+    }
+    #[cfg(any(feature = "scenario-harness", test))]
+    pub(crate) fn hold_from_hook(&mut self) {
+        let held = quantick_control_handlers::canvas::owner::hold_from_hook(
+            &self.state,
+            || crate::hooks::captured::var("QUANTICK_CANVAS_HOLD").unwrap_or_default(),
+            crate::floating_panes::model_rect(self.last_canvas),
+            self.floats.pinned.is_some(),
+        );
+        if let Some((held, (x, y))) = held {
+            self.floats.held = Some(held);
+            self.floats.pinned = Some(egui::pos2(x, y));
+        }
+    }
+
     /// The canvas half of `Tab::set_layout`. A layout chosen from the picker
     /// shows the panes its thumbnail drew, so the folds open even when the
     /// layout is the one already selected. Returns the focus the switch
@@ -257,14 +293,6 @@ impl TabCanvas {
     }
 }
 
-/// The layout a hook or a config names: a config word first (so
-/// `time+time+flow` stays the stacked column it always was), else a preset id.
-#[cfg(any(feature = "scenario-harness", test))]
-pub(crate) fn named(name: &str) -> Option<CanvasLayout> {
-    let declared = crate::config::DeclaredLayout::parse(name).map(CanvasLayout::from);
-    declared.or_else(|| crate::canvas_layout::preset(name).map(CanvasLayout::from_preset))
-}
-
 /// Lay `tab` out as `preset`, the split where the preset's tree puts it:
 /// the one way every picker, menu and call applies a layout. Answers whether
 /// the canvas changed.
@@ -277,3 +305,6 @@ pub(crate) fn pick(tab: &mut super::Tab, preset: &'static LayoutPreset) -> bool 
     }
     before != read(&tab.canvas)
 }
+
+#[cfg(any(feature = "scenario-harness", test))]
+crate::hooks::declare_hooks!["QUANTICK_CANVAS_HOLD"];

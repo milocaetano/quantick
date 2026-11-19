@@ -177,6 +177,37 @@ impl WorkspaceBookStore {
         )
     }
 
+    /// The workspace this tab belongs to, as last saved.
+    pub fn saved_recipe(&self, tab: u64) -> Option<&WorkspaceRecipe> {
+        self.book.recipe(&self.tab_row(tab).0)
+    }
+
+    /// Live comparison used before the periodic workspace upkeep has run.
+    pub fn unsaved(&self, tab: u64, live: Option<WorkspaceRecipe>) -> bool {
+        let differs = self
+            .saved_recipe(tab)
+            .zip(live)
+            .is_some_and(|(saved, live)| !saved.holds(&live));
+        differs && !self.autosave()
+    }
+
+    pub fn canvas_layout(
+        &self,
+        tab: u64,
+        state: &quantick_workspace::canvas::CanvasState,
+    ) -> (String, bool, quantick_workspace::canvas::LayoutMarks) {
+        let (workspace, unsaved) = self.tab_row(tab);
+        let saved = self
+            .book
+            .recipe(&workspace)
+            .map(quantick_workspace::canvas_layout::recipe_canvas);
+        (
+            workspace,
+            unsaved,
+            quantick_workspace::canvas::LayoutMarks::of(state, saved.as_ref(), unsaved),
+        )
+    }
+
     /// The window's side of the book.
     #[must_use]
     pub fn sync(&self) -> &TabRecipeSync {
@@ -273,6 +304,26 @@ mod tests {
         book.open_tab(1);
         book.save_as(1, "Scalp").unwrap();
         book
+    }
+
+    #[test]
+    fn live_canvas_dirty_state_uses_the_save_and_autosave_policy() {
+        let dir = ScratchDir::new("canvas-dirty-owner");
+        let mut store = WorkspaceBookStore::open_beside(&dir.join("layouts.toml"));
+        store.book_mut().open_tab(7);
+        store.book_mut().save_as(7, "Scalp").unwrap();
+        let saved = store.saved_recipe(7).unwrap().clone();
+        assert_eq!(store.saved_recipe(7), store.book().recipe("Scalp"));
+        store.set_autosave(false);
+        assert!(!store.unsaved(7, None));
+        assert!(!store.unsaved(7, Some(saved.clone())));
+        let mut changed = saved;
+        changed.canvas = Some(quantick_workspace::canvas::CanvasState::from_preset(
+            quantick_workspace::canvas::preset("charts-4").unwrap(),
+        ));
+        assert!(store.unsaved(7, Some(changed.clone())));
+        store.set_autosave(true);
+        assert!(!store.unsaved(7, Some(changed)));
     }
 
     #[test]
