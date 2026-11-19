@@ -1,0 +1,18 @@
+# Eleven trades: three tick(3) bars plus two prints left forming. At a 0.5
+# row width the points of control are checkable by eye:
+#   bar 0: 100.0 holds 1.5, 100.5 holds 2.0          => poc 100.5
+#   bar 1: 101.0 and 101.5 tie at 1.0, 102.0 has 0.5 => poc 101.0 (ties go low)
+#   bar 2: 99.5 holds 4.0, 100.0 holds 1.0           => poc 99.5
+#   forming: 103.0 holds 2.0, 102.5 holds 0.5        => poc 103.0
+agg_id,timestamp_ms,price,quantity,side
+1,1700000000000,100.0,1.0,buy
+2,1700000000100,100.5,2.0,sell
+3,1700000000200,100.0,0.5,buy
+4,1700000000300,101.0,1.0,buy
+5,1700000000400,101.5,1.0,sell
+6,1700000000500,102.0,0.5,buy
+7,1700000000600,99.5,3.0,sell
+8,1700000000700,100.0,1.0,buy
+9,1700000000800,99.5,1.0,buy
+10,1700000000900,103.0,2.0,buy
+11,1700000001000,102.5,0.5,sell
