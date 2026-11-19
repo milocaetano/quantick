@@ -4,38 +4,68 @@
 //! Session-scoped and never persisted: a script alarm is a fact about a bar
 //! that closed while the app watched, and it is raised again only by a bar
 //! that closes again.
-/// What the log records, re-exported so a reader needs no indicator crate.
+use quantick_alerts::SourceContext;
+/// The alarm a [`Raised`] carries, for readers the dependency graph keeps
+/// off the indicator crate (control-handlers).
 pub use quantick_indicators::{FiredAlert, ScriptAlarm};
 use std::collections::VecDeque;
 
 /// How many alarms the log keeps; the oldest goes first.
 pub const SCRIPT_ALARM_CAPACITY: usize = 256;
 
-/// One recorded alarm.
+/// An alarm labelled with the market it was raised on, as the tab read it
+/// when the alarm arrived — before a market switch on the same frame could
+/// relabel it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Raised {
+    /// The live feed, or the recording a replay plays.
+    pub source: SourceContext,
+    pub symbol: String,
+    pub alarm: ScriptAlarm,
+}
+
+/// `alarms`, each labelled with `source` and `symbol`.
+pub fn label(
+    source: &SourceContext,
+    symbol: &str,
+    alarms: impl IntoIterator<Item = ScriptAlarm>,
+) -> impl Iterator<Item = Raised> {
+    let (source, symbol) = (source.clone(), symbol.to_owned());
+    alarms.into_iter().map(move |alarm| Raised {
+        source: source.clone(),
+        symbol: symbol.clone(),
+        alarm,
+    })
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScriptAlarmEntry {
     /// Increasing from 1 for the session; never reused.
     pub sequence: u64,
     /// When the window delivered it, UTC milliseconds.
     pub utc_ms: i64,
-    /// The market of the tab whose chart raised it.
-    pub symbol: String,
-    pub alarm: ScriptAlarm,
+    pub raised: Raised,
 }
 
 impl ScriptAlarmEntry {
-    /// What the toast says.
+    /// What the toast says; a replay's alarm says so.
     #[must_use]
     pub fn notice(&self) -> String {
-        let alert = &self.alarm.alert;
-        if alert.message == alert.title {
-            format!("{} {}: {}", self.symbol, self.alarm.indicator, alert.title)
-        } else {
-            format!(
-                "{} {}: {} — {}",
-                self.symbol, self.alarm.indicator, alert.title, alert.message
-            )
+        let Raised {
+            source,
+            symbol,
+            alarm,
+        } = &self.raised;
+        let alert = &alarm.alert;
+        let mut notice = format!("{symbol} {}: {}", alarm.indicator, alert.title);
+        if alert.message != alert.title {
+            notice.push_str(" — ");
+            notice.push_str(&alert.message);
         }
+        if matches!(source, SourceContext::Replay { .. }) {
+            notice.push_str(" (replay)");
+        }
+        notice
     }
 }
 
@@ -50,17 +80,16 @@ impl ScriptAlarmLog {
     /// entries.
     pub fn record(
         &mut self,
-        alarms: impl IntoIterator<Item = (String, ScriptAlarm)>,
+        alarms: impl IntoIterator<Item = Raised>,
         utc_ms: i64,
     ) -> Vec<ScriptAlarmEntry> {
         let mut recorded = Vec::new();
-        for (symbol, alarm) in alarms {
+        for raised in alarms {
             self.last_sequence += 1;
             let entry = ScriptAlarmEntry {
                 sequence: self.last_sequence,
                 utc_ms,
-                symbol,
-                alarm,
+                raised,
             };
             if self.entries.len() == SCRIPT_ALARM_CAPACITY {
                 self.entries.pop_front();
@@ -85,49 +114,65 @@ impl ScriptAlarmLog {
     pub fn last_sequence(&self) -> u64 {
         self.last_sequence
     }
+
+    /// The sequence of the oldest alarm still kept (0: none kept). A reader
+    /// whose `after` is below this minus one has missed the alarms between.
+    #[must_use]
+    pub fn oldest_sequence(&self) -> u64 {
+        self.entries.front().map_or(0, |entry| entry.sequence)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn alarm(title: &str) -> (String, ScriptAlarm) {
-        let alert = FiredAlert {
-            title: title.to_owned(),
-            message: title.to_owned(),
-        };
-        let alarm = ScriptAlarm {
+    fn alarm(title: &str) -> ScriptAlarm {
+        ScriptAlarm {
             indicator: "Renko POC flip".to_owned(),
             bar_close_ms: 1,
-            alert,
-        };
-        ("WINZ25".to_owned(), alarm)
+            alert: FiredAlert {
+                title: title.to_owned(),
+                message: title.to_owned(),
+            },
+        }
+    }
+
+    fn live() -> SourceContext {
+        SourceContext::Live {
+            feed: "mt5".to_owned(),
+        }
     }
 
     #[test]
     fn sequences_increase_and_the_oldest_leaves_first() {
         let mut log = ScriptAlarmLog::default();
-        let first = log.record([alarm("a"), alarm("b")], 10);
+        let first = log.record(label(&live(), "WINZ25", [alarm("a"), alarm("b")]), 10);
         assert_eq!(first.iter().map(|e| e.sequence).collect::<Vec<_>>(), [1, 2]);
         assert_eq!(first[0].notice(), "WINZ25 Renko POC flip: a");
         let after: Vec<_> = log.after(Some(1)).map(|e| e.sequence).collect();
         assert_eq!(after, [2]);
+        assert_eq!(log.oldest_sequence(), 1);
 
-        log.record((0..SCRIPT_ALARM_CAPACITY).map(|_| alarm("c")), 20);
+        let flood = (0..SCRIPT_ALARM_CAPACITY).map(|_| alarm("c"));
+        log.record(label(&live(), "WINZ25", flood), 20);
         assert_eq!(log.after(None).count(), SCRIPT_ALARM_CAPACITY);
-        assert_eq!(log.after(None).next().map(|e| e.sequence), Some(3));
+        assert_eq!(log.oldest_sequence(), 3);
         assert_eq!(log.last_sequence(), 2 + SCRIPT_ALARM_CAPACITY as u64);
     }
 
     #[test]
-    fn a_message_beside_the_title_is_shown() {
+    fn the_notice_names_the_message_and_a_replay() {
         let mut log = ScriptAlarmLog::default();
-        let (symbol, mut alarm) = alarm("Bull flip");
-        alarm.alert.message = "POC above".to_owned();
-        let entry = log.record([(symbol, alarm)], 0).remove(0);
+        let mut flip = alarm("Bull flip");
+        flip.alert.message = "POC above".to_owned();
+        let replay = SourceContext::Replay {
+            recording: "session.qtr".to_owned(),
+        };
+        let entry = log.record(label(&replay, "WINZ25", [flip]), 0).remove(0);
         assert_eq!(
             entry.notice(),
-            "WINZ25 Renko POC flip: Bull flip — POC above"
+            "WINZ25 Renko POC flip: Bull flip — POC above (replay)"
         );
     }
 }

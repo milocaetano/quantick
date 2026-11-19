@@ -504,9 +504,14 @@ impl Tab {
                     self.paper.account_mut().set_price_tick(tick);
                 }
                 TabDrainStage::ApplyIndicatorResults => {
+                    let mut raised = Vec::new();
                     for pane in self.panes_mut() {
                         pane.apply_indicator_events();
+                        raised.extend(pane.indicators.drain_alarms());
                     }
+                    let (source, symbol) = (self.alert_source(), &self.active.1);
+                    let labelled = quantick_stores::script_alarms::label(&source, symbol, raised);
+                    self.script_alarms.extend(labelled);
                 }
                 TabDrainStage::ReceiveBook => self.drain_book_feed(),
                 TabDrainStage::ReceiveNotices => self.drain_notices(),

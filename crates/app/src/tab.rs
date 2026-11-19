@@ -186,6 +186,8 @@ pub struct Tab {
     /// they raised, walked through each live print; the app plays the
     /// sounds through the [`AlertSink`](crate::audio::AlertSink) port.
     pub market: crate::strategy_anchors::TabMarket,
+    /// Script alarms its charts raised, labelled when they arrived.
+    pub script_alarms: Vec<quantick_stores::script_alarms::Raised>,
     /// `SYMBOL · venue`, as the strip shows it — see [`Self::chip_label`].
     chip_label: String,
     /// Which panes the canvas shows, how they are sized and folded, and what
@@ -206,6 +208,19 @@ pub struct Tab {
 }
 
 impl Tab {
+    /// Where this tab's bars close: its live feed, or the replay it plays.
+    pub(crate) fn alert_source(&self) -> quantick_alerts::SourceContext {
+        use quantick_alerts::SourceContext::{Live, Replay};
+        self.link.replay.as_ref().map_or_else(
+            || Live {
+                feed: self.active.0.clone(),
+            },
+            |replay| Replay {
+                recording: replay.session.path.to_string_lossy().into_owned(),
+            },
+        )
+    }
+
     /// A tab on `feed_id`/`symbol`, already streaming through `feed`, showing
     /// bar `spec`.
     ///
@@ -242,6 +257,7 @@ impl Tab {
             chip_label: String::new(),
             time_panes: SmallVec::new(),
             market: Default::default(),
+            script_alarms: Vec::new(),
             canvas: layout::TabCanvas::default(),
             focus: PaneSide::Flow,
             symbol,

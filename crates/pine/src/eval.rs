@@ -225,18 +225,14 @@ impl<'a> Eval<'a> {
     }
 
     /// An `alertcondition` text argument, named or positional; `None` when
-    /// absent or `na`.
+    /// absent or `na`. The checker typed it as a string at load.
     fn alert_text(
         &mut self,
         args: &[crate::ast::Arg],
-        position: usize,
         name: &str,
     ) -> Result<Option<String>, PineError> {
-        let arg = args
-            .iter()
-            .find(|a| a.name.as_deref() == Some(name))
-            .or_else(|| args.iter().filter(|a| a.name.is_none()).nth(position));
-        let Some(arg) = arg else {
+        let names = crate::builtins::ALERT_ARGS;
+        let Some(arg) = crate::candle_plots::argument(args, names, name) else {
             return Ok(None);
         };
         match self.eval(arg.value)? {
@@ -509,9 +505,6 @@ impl<'a> Eval<'a> {
                 };
                 return Ok(Value::Na);
             }
-            // fill() is fully resolved at load time; at eval it is a no-op.
-            // Accepted-but-inert output calls still evaluate their first
-            // argument (consistency: kernels inside advance every bar).
             // The condition runs on every run, so kernels inside it advance;
             // only a commit run that finds it true raises the alarm — a
             // forming bar may still change its mind.
@@ -521,8 +514,8 @@ impl<'a> Eval<'a> {
                     None => false,
                 };
                 if held && self.is_commit {
-                    let title = self.alert_text(args, 1, "title")?;
-                    let message = self.alert_text(args, 2, "message")?;
+                    let title = self.alert_text(args, "title")?;
+                    let message = self.alert_text(args, "message")?;
                     let title = title.unwrap_or_else(|| DEFAULT_ALERT_TITLE.to_owned());
                     let message = message.unwrap_or_else(|| title.clone());
                     self.alerts
@@ -530,6 +523,9 @@ impl<'a> Eval<'a> {
                 }
                 return Ok(Value::Na);
             }
+            // fill() is fully resolved at load time; at eval it is a no-op.
+            // Accepted-but-inert output calls still evaluate their first
+            // argument (consistency: kernels inside advance every bar).
             Builtin::Fill | Builtin::Bgcolor => {
                 if let Some(arg) = args.first() {
                     let _ = self.eval(arg.value)?;

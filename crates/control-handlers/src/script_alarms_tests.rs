@@ -1,8 +1,9 @@
 use super::*;
 use crate::scratch;
 use crate::test_support::{FakeAccess, FakeWindow};
+use quantick_alerts::SourceContext;
 use quantick_stores::alerts::AlertRuntime;
-use quantick_stores::script_alarms::{FiredAlert, ScriptAlarm as Raised};
+use quantick_stores::script_alarms::{FiredAlert, Raised, ScriptAlarm, label};
 use serde_json::json;
 
 struct Host(AlertRuntime);
@@ -17,8 +18,8 @@ fn host(name: &str) -> Host {
     Host(AlertRuntime::open(path, 0))
 }
 
-fn raised(title: &str) -> (String, Raised) {
-    let alarm = Raised {
+fn raised(title: &str) -> Raised {
+    let alarm = ScriptAlarm {
         indicator: "Renko POC flip".to_owned(),
         bar_close_ms: 42,
         alert: FiredAlert {
@@ -26,7 +27,12 @@ fn raised(title: &str) -> (String, Raised) {
             message: "POC above".to_owned(),
         },
     };
-    ("WINZ25".to_owned(), alarm)
+    let live = SourceContext::Live {
+        feed: "mt5".to_owned(),
+    };
+    label(&live, "WINZ25", [alarm])
+        .next()
+        .expect("one alarm, labelled")
 }
 
 fn read(host: &mut Host, input: Value) -> Result<Value, ControlError> {
@@ -38,17 +44,19 @@ fn history_reads_every_kept_alarm_or_only_newer_ones() {
     let mut host = host("script-alarm-history");
     assert_eq!(
         read(&mut host, json!({})).unwrap(),
-        json!({"alarms": [], "last_sequence": "0"})
+        json!({"alarms": [], "last_sequence": "0", "oldest_sequence": "0"})
     );
     let alarms = [raised("Bull flip"), raised("Bear flip")];
     host.0.script_alarms.record(alarms, 1_000);
     let all = read(&mut host, json!({})).unwrap();
     assert_eq!(all["last_sequence"], "2");
+    assert_eq!(all["oldest_sequence"], "1");
     assert_eq!(
         all["alarms"][0],
         json!({
             "sequence": "1",
             "utc_ms": 1_000,
+            "source": {"Live": {"feed": "mt5"}},
             "symbol": "WINZ25",
             "indicator": "Renko POC flip",
             "title": "Bull flip",

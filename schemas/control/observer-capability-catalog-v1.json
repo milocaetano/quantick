@@ -2533,7 +2533,7 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Reads the alarms indicator scripts raised this session, oldest first: each Pine alertcondition that held on a bar that closed live, once per bar, never on a forming bar or replayed history. Each carries sequence, delivery time, symbol, indicator title, alert title and message, and the bar's close time. The newest 256 are kept, not persisted. Pass after = a previous last_sequence for only newer ones; each is also journaled as alerts.script.fired. Changes nothing.",
+      "description": "Reads the alarms indicator scripts raised this session, oldest first: each Pine alertcondition that held on a bar that closed on the tab's source, once per bar; never on a forming bar, nor for history recomputed on load, backfill, input change or reload. A replay is a source too: its alarms carry source Replay with the recording. Each carries sequence, delivery time, source, symbol, indicator title, alert title and message, and the bar's close time. The newest 256 are kept, not persisted; oldest_sequence shows what was dropped. Pass after = a previous last_sequence for only newer ones; each is also journaled as alerts.script.fired. Changes nothing.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "observe",
@@ -2572,6 +2572,51 @@
       "module": "alerts",
       "output_schema": {
         "$defs": {
+          "AlarmSource": {
+            "description": "The wire shape of [`SourceContext`], as `alerts.*` market sources are.",
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "Live": {
+                    "properties": {
+                      "feed": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "feed"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "Live"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "Replay": {
+                    "properties": {
+                      "recording": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "recording"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "Replay"
+                ],
+                "type": "object"
+              }
+            ]
+          },
           "ScriptAlarm": {
             "properties": {
               "bar_close_ms": {
@@ -2591,8 +2636,12 @@
                 "$ref": "#/$defs/WireU64",
                 "description": "Increasing from 1 for the session; never reused."
               },
+              "source": {
+                "$ref": "#/$defs/AlarmSource",
+                "description": "Where the bar closed: the live feed, or the recording a replay plays."
+              },
               "symbol": {
-                "description": "The market of the tab whose chart raised it.",
+                "description": "The market of the tab whose chart raised it, read when it arrived.",
                 "type": "string"
               },
               "title": {
@@ -2608,6 +2657,7 @@
             "required": [
               "sequence",
               "utc_ms",
+              "source",
               "symbol",
               "indicator",
               "title",
@@ -2633,11 +2683,16 @@
           "last_sequence": {
             "$ref": "#/$defs/WireU64",
             "description": "The newest sequence ever raised (0: none yet). Pass it as `after` to\nread only what comes next."
+          },
+          "oldest_sequence": {
+            "$ref": "#/$defs/WireU64",
+            "description": "The oldest sequence still kept (0: none kept). An `after` below this\nminus one means the alarms between were dropped unread."
           }
         },
         "required": [
           "alarms",
-          "last_sequence"
+          "last_sequence",
+          "oldest_sequence"
         ],
         "title": "History",
         "type": "object"

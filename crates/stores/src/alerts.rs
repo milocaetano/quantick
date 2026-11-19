@@ -1,6 +1,6 @@
 //! Validated workspace alert sidecar and persistence-before-success commands.
 use quantick_alerts::{AlertBook, AlertCommand, AlertSpec, CommandResult};
-pub use quantick_alerts::{AlertDocument, AlertError};
+pub use quantick_alerts::{AlertDocument, AlertError, SourceContext};
 use std::path::PathBuf;
 
 mod cache;

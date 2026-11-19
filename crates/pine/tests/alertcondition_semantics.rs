@@ -176,3 +176,12 @@ fn renko_poc_flip_fires_on_a_colour_flip_the_poc_confirms() {
         vec![(1, "Bull flip".to_owned()), (3, "Bear flip".to_owned())]
     );
 }
+
+#[test]
+fn a_non_string_title_is_refused_at_load() {
+    let source = "//@version=5\nindicator(\"t\")\nalertcondition(close > open, title=close)\n";
+    assert!(
+        compile(source, "t.pine").is_err(),
+        "a numeric title must not load"
+    );
+}

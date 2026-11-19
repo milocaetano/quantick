@@ -238,6 +238,17 @@ impl Checker<'_> {
                 if !self.valid_condition(&first) {
                     self.error(id, "alert requires a condition");
                 }
+                for name in ["title", "message"] {
+                    let arg =
+                        crate::candle_plots::argument(args, crate::builtins::ALERT_ARGS, name);
+                    let typed = arg.and_then(|arg| {
+                        let mut pairs = args.iter().zip(values);
+                        pairs.find(|(candidate, _)| candidate.value == arg.value)
+                    });
+                    if let Some((arg, ty)) = typed {
+                        self.require(arg.value, ty, Base::String, Qualifier::Series);
+                    }
+                }
                 Base::Na
             }
             Barcolor | Bgcolor => {

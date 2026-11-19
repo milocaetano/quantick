@@ -1,5 +1,50 @@
 {
   "$defs": {
+    "AlarmSource": {
+      "description": "The wire shape of [`SourceContext`], as `alerts.*` market sources are.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "Live": {
+              "properties": {
+                "feed": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "feed"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "Live"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "Replay": {
+              "properties": {
+                "recording": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "recording"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "Replay"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "WireU64": {
       "pattern": "^(0|[1-9][0-9]*)$",
       "type": "string"
@@ -24,8 +69,12 @@
       "$ref": "#/$defs/WireU64",
       "description": "Increasing from 1 for the session; never reused."
     },
+    "source": {
+      "$ref": "#/$defs/AlarmSource",
+      "description": "Where the bar closed: the live feed, or the recording a replay plays."
+    },
     "symbol": {
-      "description": "The market of the tab whose chart raised it.",
+      "description": "The market of the tab whose chart raised it, read when it arrived.",
       "type": "string"
     },
     "title": {
@@ -41,6 +90,7 @@
   "required": [
     "sequence",
     "utc_ms",
+    "source",
     "symbol",
     "indicator",
     "title",

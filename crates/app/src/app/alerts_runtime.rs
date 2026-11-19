@@ -48,8 +48,8 @@ pub(crate) fn path() -> std::path::PathBuf {
     crate::store_home::resolve(quantick_stores::alerts::ALERTS_FILE)
 }
 
-/// Frame delivery docking: the script alarms every tab's charts raised are
-/// recorded and sound with the strategy alarms. Answers the script alarms
+/// Frame delivery docking: the script alarms every tab labelled are recorded
+/// and sound with the strategy alarms. Answers the script alarms
 /// delivered this frame, for the journal.
 pub(super) fn deliver(
     owners: &mut super::workspace_runtime::WorkspaceRuntime,
@@ -58,12 +58,7 @@ pub(super) fn deliver(
     popup: &mut Popup,
 ) -> Vec<quantick_stores::script_alarms::ScriptAlarmEntry> {
     let (runtime, tabs) = (&mut owners.alerts, &mut owners.tabs);
-    let raised = tabs.iter_mut().flat_map(|tab| {
-        let symbol = tab.symbol.clone();
-        let panes = tab.panes_mut();
-        let alarms: Vec<_> = panes.flat_map(|p| p.indicators.drain_alarms()).collect();
-        alarms.into_iter().map(move |alarm| (symbol.clone(), alarm))
-    });
+    let raised = tabs.iter_mut().flat_map(|tab| tab.script_alarms.drain(..));
     let scripts = runtime.core.script_alarms.record(raised, wall_clock_ms());
     let script_cues = scripts.iter().map(|_| Cue::default());
     let strategy_cues = tabs.iter_mut().flat_map(|tab| tab.market.drain_alarms());
@@ -77,13 +72,14 @@ type Popup = crate::surfaces::Adapter<
     crate::surfaces::agent_popup::View,
 >;
 
-/// Child implementation: consumes the bounded events and plays `strategy_cues`.
+/// Child implementation: consumes the bounded events and plays `cues` (the
+/// strategy and script alarms) beside the alerts' own.
 pub(super) fn play(
     runtime: &mut Runtime,
     audio: &mut super::replay_and_history::AlertState,
     toast: &mut crate::surfaces::ToastSurface,
     popup: &mut Popup,
-    strategy_cues: impl IntoIterator<Item = Cue>,
+    cues: impl IntoIterator<Item = Cue>,
 ) {
     use quantick_alerts::{DeliveryOutcome, sound::AlertSound};
     // Persist the firing decision before attempting an irreversible notification.
@@ -98,7 +94,7 @@ pub(super) fn play(
             .and_then(AlertSound::from_token)
             .map(|sound| Cue::new(sound, event.spec.notification.sound_seconds))
     });
-    if let Some(message) = audio.play_pending(strategy_cues.into_iter().chain(alert_cues)) {
+    if let Some(message) = audio.play_pending(cues.into_iter().chain(alert_cues)) {
         crate::surfaces::toast::note(toast, message, std::time::Instant::now());
     }
     if events.is_empty() && runtime.core.error.is_none() {
@@ -159,18 +155,11 @@ pub(crate) fn context(
     tab_id: u64,
     display_offset_minutes: i32,
 ) -> crate::surfaces::alerts::Context {
-    use quantick_alerts::{MarketRef, SourceContext};
+    use quantick_alerts::MarketRef;
     use rust_decimal::prelude::ToPrimitive;
     crate::surfaces::alerts::Context {
         market: MarketRef {
-            source: tab.link.replay.as_ref().map_or_else(
-                || SourceContext::Live {
-                    feed: tab.active.0.clone(),
-                },
-                |replay| SourceContext::Replay {
-                    recording: replay.session.path.to_string_lossy().into_owned(),
-                },
-            ),
+            source: tab.alert_source(),
             symbol: tab.active.1.clone(),
             aggregation: pane.series.bar_config(),
         },

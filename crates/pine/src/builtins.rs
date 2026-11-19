@@ -8,6 +8,9 @@
 //! unsupported-construct scan. The dialect reference documents exactly this
 //! registry; a doc-drift test keeps the two in lock-step (M2 PR 8).
 
+/// `alertcondition`'s parameters, in position order.
+pub(crate) const ALERT_ARGS: &[&str] = &["condition", "title", "message"];
+
 /// Every accepted builtin, by dialect name.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Builtin {

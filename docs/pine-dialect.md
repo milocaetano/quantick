@@ -200,8 +200,14 @@ carries the last non-na value).
   overlay drawing over an earlier one. Anything that is not a colour or `na`
   is a `PINE_TYPE` error.
 - `bgcolor(...)` — accepted but inert (warns at load): the canvas behind the
-  bars is not an indicator output. `alertcondition(...)` is accepted and inert
-  (no alerts).
+  bars is not an indicator output.
+- `alertcondition(condition, title?, message?)` — raises an alarm when
+  `condition` holds on a bar that closes on the tab's source (live feed or
+  replay): once per closed bar, never on the forming bar's preview, never for
+  history recomputed on load or reload. `title` and `message` are strings;
+  the title defaults to `Alert` and the message to the title. The alarm
+  sounds and toasts in the app, and agents read it through
+  `alerts.script.history` and the `alerts.script.fired` event.
 - **Draw objects** — `line.new(x1, y1, x2, y2, color?, width?)`,
   `box.new(left, top, right, bottom, border_color?, bgcolor?)`,
   `label.new(x, y, text?, color?, textcolor?, style?)` with styles

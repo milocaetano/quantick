@@ -1,0 +1,7 @@
+# Script alarms are labelled with the tab's source and symbol at its drain
+# stage, before a market switch on the same frame could relabel them, and wait
+# on the tab until the frame plays them. The queue is per-tab state with no
+# headless owner to dock in: TabMarket (crates/session) may not depend on the
+# alerts types that label it.
+app::Tab +1
+!budget +1

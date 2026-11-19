@@ -46,6 +46,7 @@ fn history(log: &ScriptAlarmLog, input: &wire::Input) -> History {
             .map(ScriptAlarm::from)
             .collect(),
         last_sequence: WireU64::new(log.last_sequence()),
+        oldest_sequence: WireU64::new(log.oldest_sequence()),
     }
 }
 
