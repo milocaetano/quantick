@@ -391,8 +391,8 @@ unmodified):
   delta cvd trade_count`**, `hl2 hlc3 ohlc4 hlcc4`, `bar_index`,
   `last_bar_index`, `time`, `time_close`, `barstate.isconfirmed`,
   `barstate.islast`.
-- `alertcondition(...)`: parsed, inert, load warning (keeps community
-  scripts loading).
+- `alertcondition(...)`: raises an alarm on a commit run whose condition
+  holds (see the dialect reference).
 
 Rejected with a specific error code + span (never a silent skip):
 `request.*` (`PINE_NO_SECURITY` — message explains activity-sampled charts
@@ -575,7 +575,7 @@ feed rate (a 50× replay can't melt it).
   source dropdown incl. flow series). Apply → `SetInputs` → recompute with
   progress.
 - Error display: full `PineError` rendering (file:line:col + message + code),
-  plus load warnings (ignored args, inert `alertcondition`).
+  plus load warnings (ignored args, inert `bgcolor`).
 - "Add indicator" browses the script library (§4.5) + native built-ins.
 
 ### 4.5 Script library

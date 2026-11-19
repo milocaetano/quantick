@@ -46,6 +46,8 @@ struct LiveTradeOwners<'a> {
     context: &'a mut [crate::pane::ChartPane],
     observer: &'a mut dyn super::alerts::Observer,
     received_at_ms: i64,
+    /// The tag of the market this print closes bars on.
+    alarm_tag: u64,
 }
 
 /// The effect sink for [`quantick_session::market::TabMarket::execute_live_trade`].
@@ -63,7 +65,8 @@ impl live_trade::LiveTradeOwners for LiveTradeOwners<'_> {
             Some(at) => &mut self.context[at],
         };
         let mut fold = PaneFold::new(pane.id);
-        pane.ingest_live_trade_observed(trade, &mut |_, bar, slot| fold.close(bar, slot));
+        let tag = self.alarm_tag;
+        pane.ingest_live_trade_observed(trade, tag, &mut |_, bar, slot| fold.close(bar, slot));
         fold
     }
     fn observe_alert(&mut self, pane: usize, trade: &Trade, close: Option<&LiveClose>) {
@@ -888,7 +891,9 @@ impl Tab {
         // paper trading works identically on a live feed and a replay — and on
         // a tab the user is not looking at, whose position keeps marking
         // against its own tape.
+        let source = Self::alert_source(&self.link, &self.active);
         let mut owners = LiveTradeOwners {
+            alarm_tag: self.alarm_labels.tag(source, &self.symbol),
             paper: &mut self.paper,
             flow: &mut self.flow_pane,
             context: &mut self.time_panes,
@@ -1195,6 +1200,8 @@ impl Tab {
         };
         self.history_trades += trades.len();
         self.link.latest_trade_ms = Some(last.timestamp_ms);
+        let source = Self::alert_source(&self.link, &self.active);
+        let tag = self.alarm_labels.tag(source, &self.symbol);
         let Self {
             flow_pane,
             time_panes,
@@ -1203,7 +1210,7 @@ impl Tab {
         } = self;
         for pane in std::iter::once(flow_pane).chain(time_panes.iter_mut()) {
             for trade in trades {
-                pane.ingest_live_trade_observed(trade, &mut |pane, bar, slot| {
+                pane.ingest_live_trade_observed(trade, tag, &mut |pane, bar, slot| {
                     if to_strategies {
                         strategies.queue_closed(pane.id, bar, slot);
                     }

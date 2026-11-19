@@ -1,6 +1,6 @@
 //! Validated workspace alert sidecar and persistence-before-success commands.
 use quantick_alerts::{AlertBook, AlertCommand, AlertSpec, CommandResult};
-pub use quantick_alerts::{AlertDocument, AlertError};
+pub use quantick_alerts::{AlertDocument, AlertError, SourceContext};
 use std::path::PathBuf;
 
 mod cache;
@@ -59,6 +59,8 @@ pub struct AlertRuntime {
     pub store: AlertStore,
     pub events: quantick_alerts::BoundedEvents,
     pub error: Option<AlertError>,
+    /// Alarms indicator scripts raised this session; never persisted.
+    pub script_alarms: crate::script_alarms::ScriptAlarmLog,
     checkpoint: Option<AlertDocument>,
 }
 
@@ -92,6 +94,7 @@ impl AlertRuntime {
             store: AlertStore { path },
             events: quantick_alerts::BoundedEvents::new(quantick_alerts::MAX_ALERTS),
             error: None,
+            script_alarms: crate::script_alarms::ScriptAlarmLog::default(),
             checkpoint: None,
         };
         let _ = runtime.reload(utc_ms);

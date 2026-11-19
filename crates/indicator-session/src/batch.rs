@@ -86,8 +86,9 @@ impl<'s> Applying<'s> {
                 self.rebuilt = true;
                 self.cut();
             }
-            IndicatorCommand::BarClosed(bar) => {
+            IndicatorCommand::BarClosed(bar, tag) => {
                 self.session.host.push_closed_bar(&bar);
+                self.session.fire_alerts(tag, bar.bar.close_time, effects);
                 self.cut();
             }
             IndicatorCommand::PartialUpdated {
@@ -216,7 +217,7 @@ mod batch_tests {
         };
         let batch = [
             set(a, 10),
-            IndicatorCommand::BarClosed(bars_and_partial(3, 2).0[0].clone().into()),
+            IndicatorCommand::BarClosed(bars_and_partial(3, 2).0[0].clone().into(), 0),
             set(b, 20),
             set(a, 11),
             set(a, 12),

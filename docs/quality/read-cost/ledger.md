@@ -113,3 +113,4 @@ a bound.
 | 891 | 2026-11-10 | feat/866-floating-panes | feature/workspace-canvas | 45738 | 61 | `crates/app/src/control/gateway/server.rs` (1082) |
 | 978 | 2026-11-12 | feat/workspace-colour | main | 28174 | 31 | `crates/app/src/app/control_host.rs` (853) |
 | 1094 | 2026-11-18 | feat/trading-analysis-ports | main | 29890 | 22 | `crates/app/src/control/gateway/server.rs` (1082) |
+| 1115 | 2026-11-19 | feat/pine-alertcondition-live | main | 50785 | 29 | `crates/control-handlers/src/workspace_book.rs` (1067) |

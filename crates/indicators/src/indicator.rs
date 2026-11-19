@@ -97,6 +97,28 @@ impl std::fmt::Display for EvalError {
 
 impl std::error::Error for EvalError {}
 
+/// One alarm a commit run raised (a script's `alertcondition` that held on
+/// the bar that closed). Preview runs never raise one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FiredAlert {
+    pub title: String,
+    pub message: String,
+}
+
+/// A [`FiredAlert`] as the chart received it: which indicator raised it, on
+/// the bar closing when.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScriptAlarm {
+    /// The consumer's opaque tag for where the bar closed (its market), as
+    /// it handed it with the close.
+    pub tag: u64,
+    /// The indicator's title, as its legend shows it.
+    pub indicator: String,
+    /// Close time of the bar that raised it, exchange milliseconds.
+    pub bar_close_ms: i64,
+    pub alert: FiredAlert,
+}
+
 /// A computation from bars to plot columns, evaluated bar by bar.
 ///
 /// Implementations must be **deterministic**: same bars in, same plots out,
@@ -175,6 +197,12 @@ pub trait Indicator {
     fn rebind(&self, values: &[InputValue]) -> Option<Box<dyn Indicator>> {
         let _ = values;
         None
+    }
+
+    /// The alarms the last commit run raised, taken so each is seen once.
+    /// Empty after a failed commit run. The default raises none.
+    fn take_fired_alerts(&mut self) -> Vec<FiredAlert> {
+        Vec::new()
     }
 }
 

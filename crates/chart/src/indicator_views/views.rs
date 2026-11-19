@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use quantick_indicators::{ObjectSnapshot, Rgba8, resolve_bar_paint};
+use quantick_indicators::{FiredAlert, ObjectSnapshot, Rgba8, ScriptAlarm, resolve_bar_paint};
 
 use quantick_indicator_session::{IndicatorEvent, IndicatorSource, SlotId, unloaded_script_events};
 
@@ -24,6 +24,9 @@ pub struct IndicatorViews {
     /// Slots whose rows a rebuild already answered, so a script that cannot reach
     /// `bars` is not rebuilt once a frame for ever, nor hides a later drift beside it.
     row_drift_answered: std::collections::BTreeSet<SlotId>,
+    /// Alarms the indicators raised on live closes, oldest first, until the
+    /// window drains them (once per frame).
+    alarms: Vec<ScriptAlarm>,
 }
 
 impl IndicatorViews {
@@ -192,7 +195,28 @@ impl IndicatorViews {
                     view.stale = Some(message);
                 }
             }
+            IndicatorEvent::AlertFired {
+                slot,
+                tag,
+                bar_close_ms,
+                title,
+                message,
+            } => {
+                if let Some(view) = self.views.iter().find(|view| view.slot == slot) {
+                    self.alarms.push(ScriptAlarm {
+                        tag,
+                        indicator: view.descriptor.title.clone(),
+                        bar_close_ms,
+                        alert: FiredAlert { title, message },
+                    });
+                }
+            }
         }
+    }
+
+    /// The alarms raised since the last drain, oldest first.
+    pub fn drain_alarms(&mut self) -> std::vec::Drain<'_, ScriptAlarm> {
+        self.alarms.drain(..)
     }
 
     pub fn view_mut(&mut self, slot: SlotId) -> Option<&mut IndicatorView> {

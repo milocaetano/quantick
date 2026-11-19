@@ -19,7 +19,7 @@ fn a_ui_that_stops_reading_pauses_the_worker_and_loses_no_row() {
     });
     let bars: Vec<Bar> = (1..=100).map(|i| Bar::opened_by(&trade(i))).collect();
     for bar in &bars {
-        worker.send(IndicatorCommand::BarClosed(bar.clone().into()));
+        worker.send(IndicatorCommand::BarClosed(bar.clone().into(), 0));
     }
     // Nobody drains: the worker must end up waiting on its output, and say so.
     let deadline = Instant::now() + Duration::from_secs(10);

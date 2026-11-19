@@ -120,14 +120,6 @@ impl Compiler {
                         "bgcolor() is accepted but not drawn (barcolor() paints the candles)",
                     ));
                 }
-                Some(Builtin::AlertCondition) => {
-                    let span = self.span(expr);
-                    self.warnings.push(PineError::new(
-                        ErrorCode::PineUnsupported,
-                        span,
-                        "alertcondition() is accepted but inert (no alerts here)",
-                    ));
-                }
                 _ => {}
             }
         }

@@ -29,8 +29,9 @@ pub struct SlotId(pub u64);
 pub enum IndicatorCommand {
     /// Initial history landed: replay it (equivalent to a rebuild).
     Backfilled(Vec<FootprintBar>),
-    /// One live bar closed.
-    BarClosed(FootprintBar),
+    /// One live bar closed, with the caller's opaque tag for where it
+    /// closed; every alarm the bar raises echoes it.
+    BarClosed(FootprintBar, u64),
     /// Latest forming bar and ordered new trades; only the preview is latest-wins.
     PartialUpdated {
         partial: Option<FootprintBar>,
@@ -131,6 +132,18 @@ pub enum IndicatorEvent {
     /// A hot reload failed to compile; the previous version keeps running
     /// ("stale — edit has errors").
     ReloadFailed { slot: SlotId, message: String },
+    /// A script's `alertcondition` held on a bar that closed live
+    /// ([`IndicatorCommand::BarClosed`]). Never sent for a forming bar, and
+    /// never for history replayed by a backfill, rebuild, add or reload.
+    AlertFired {
+        slot: SlotId,
+        /// The tag the [`IndicatorCommand::BarClosed`] carried.
+        tag: u64,
+        /// Close time of the bar that raised it, exchange milliseconds.
+        bar_close_ms: i64,
+        title: String,
+        message: String,
+    },
 }
 
 /// The superseding rule for commands parked behind a full queue: `newer`

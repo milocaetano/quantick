@@ -7,6 +7,7 @@
 pub fn documents() -> Vec<(&'static str, serde_json::Value)> {
     let mut documents = Vec::new();
     documents.extend(crate::alerts::documents());
+    documents.extend(crate::script_alarms::documents());
     documents.extend(crate::workspace_book::documents());
     documents.extend(crate::workspace_colour::documents());
     documents.extend(crate::workspace_manage::documents());

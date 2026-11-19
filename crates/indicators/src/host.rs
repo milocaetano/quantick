@@ -331,6 +331,17 @@ impl IndicatorHost {
         Ok(())
     }
 
+    /// The alarms instance `id` raised on the bar [`Self::push_closed_bar`]
+    /// just committed, taken so each is seen once. Empty for an unknown or
+    /// failed instance. Read it after a live close only: a replay
+    /// ([`Self::rebuild`], [`Self::add`]) re-runs history that already rang.
+    pub fn take_fired_alerts(&mut self, id: InstanceId) -> Vec<crate::FiredAlert> {
+        match self.instances.iter_mut().find(|i| i.id == id) {
+            Some(instance) if instance.error.is_none() => instance.indicator.take_fired_alerts(),
+            _ => Vec::new(),
+        }
+    }
+
     fn instance(&self, id: InstanceId) -> Option<&Instance> {
         self.instances.iter().find(|i| i.id == id)
     }

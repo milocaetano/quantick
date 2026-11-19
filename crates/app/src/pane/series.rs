@@ -333,7 +333,7 @@ impl ChartPane {
     /// [`Self::ingest_live_trade_observed`], with nobody listening.
     #[cfg(test)]
     pub fn ingest_live_trade(&mut self, trade: &quantick_engine::Trade) {
-        self.ingest_live_trade_observed(trade, &mut |_, _, _| {});
+        self.ingest_live_trade_observed(trade, 0, &mut |_, _, _| {});
     }
 
     /// Take one live trade into the series, the tape and the indicators.
@@ -345,12 +345,16 @@ impl ChartPane {
     /// back into one. Closed bars stay per trade — each is a distinct event
     /// the indicators have to see.
     ///
+    /// `alarm_tag` rides each close to the indicators and back on the
+    /// alarms it raises, naming the market it closed on.
+    ///
     /// `closed_observer` hears each bar the print closed, at its *composed*
     /// slot (venue history prefix + live bars) — the space the drawings'
     /// anchors live in, which is why the tab queues strategy closes from it.
     pub(crate) fn ingest_live_trade_observed(
         &mut self,
         trade: &quantick_engine::Trade,
+        alarm_tag: u64,
         closed_observer: &mut dyn FnMut(&Self, &quantick_engine::Bar, usize),
     ) {
         if let Some(orderflow) = self.orderflow.as_mut() {
@@ -368,7 +372,7 @@ impl ChartPane {
             let closed = self.series_read().footprint_bar(index);
             self.lane.reset();
             self.indicator_worker
-                .send(IndicatorCommand::BarClosed(closed));
+                .send(IndicatorCommand::BarClosed(closed, alarm_tag));
         }
     }
 

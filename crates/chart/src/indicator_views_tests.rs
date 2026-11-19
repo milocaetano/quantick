@@ -488,3 +488,34 @@ fn an_unloaded_script_takes_a_titled_error_slot_of_its_script_kind() {
         Some("gone")
     );
 }
+
+#[test]
+fn a_fired_alert_queues_under_its_indicator_until_drained() {
+    let mut views = IndicatorViews::new();
+    let slot = views.allocate_slot("native.test");
+    views.apply(rebuilt(slot, descriptor(true, 1), vec![vec![1.0]]));
+    let fired = |slot| IndicatorEvent::AlertFired {
+        slot,
+        tag: 3,
+        bar_close_ms: 7,
+        title: "Bull flip".to_owned(),
+        message: "up".to_owned(),
+    };
+    views.apply(fired(slot));
+    views.apply(fired(SlotId(99)));
+    let alarms: Vec<_> = views.drain_alarms().collect();
+    assert_eq!(
+        alarms,
+        vec![quantick_indicators::ScriptAlarm {
+            tag: 3,
+            indicator: "test".to_owned(),
+            bar_close_ms: 7,
+            alert: quantick_indicators::FiredAlert {
+                title: "Bull flip".to_owned(),
+                message: "up".to_owned(),
+            },
+        }],
+        "a slot the chart no longer shows raises nothing"
+    );
+    assert_eq!(views.drain_alarms().count(), 0, "drained once");
+}

@@ -27,7 +27,7 @@ impl Checker<'_> {
             }
             Barcolor | Bgcolor => &["color"],
             Fill => &["plot1", "plot2", "color"],
-            AlertCondition => &["condition", "title", "message"],
+            AlertCondition => crate::builtins::ALERT_ARGS,
             LineNew => &["x1", "y1", "x2", "y2"],
             BoxNew => &["left", "top", "right", "bottom"],
             LabelNew => &["x", "y", "text"],

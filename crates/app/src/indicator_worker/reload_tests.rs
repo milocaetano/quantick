@@ -67,7 +67,7 @@ fn a_broken_reload_keeps_the_last_good_version_and_flags_stale() {
             text: BROKEN.to_owned(),
         },
     });
-    worker.send(IndicatorCommand::BarClosed(bars[0].clone().into()));
+    worker.send(IndicatorCommand::BarClosed(bars[0].clone().into(), 0));
     worker.flush();
     for event in worker.drain_events() {
         views.apply(event);

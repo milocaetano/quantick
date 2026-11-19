@@ -165,7 +165,7 @@ impl Rig {
                 self.lane.reset();
                 let closed = self.state.bars().last().cloned().expect("a bar closed");
                 self.indicators
-                    .send(IndicatorCommand::BarClosed(closed.into()));
+                    .send(IndicatorCommand::BarClosed(closed.into(), 0));
             }
         }
         for _ in 0..depth {

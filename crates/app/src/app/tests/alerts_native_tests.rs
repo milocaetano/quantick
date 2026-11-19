@@ -92,7 +92,7 @@ fn alert_end_to_end() {
         alerts: Box::new(Sounds(sounds.clone())),
         alert_failure: None,
     };
-    super::super::alerts_runtime::deliver(
+    super::super::alerts_runtime::play(
         &mut app.runtime.alerts,
         &mut audio,
         &mut app.surfaces.toast,
@@ -338,7 +338,7 @@ fn alert_shared_sound_batch_and_failure() {
             alert_failure: None,
         };
         let strategy = Cue::new(AlertSound::Question, None);
-        super::super::alerts_runtime::deliver(
+        super::super::alerts_runtime::play(
             &mut app.runtime.alerts,
             &mut audio,
             &mut app.surfaces.toast,

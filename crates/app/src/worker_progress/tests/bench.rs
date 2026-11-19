@@ -160,7 +160,7 @@ fn indicator_fixture(spec: Spec) -> Vec<Vec<IndicatorCommand>> {
                 assert!(i == 20_000 || i == 40_000, "independent dollar close index");
                 assert_indicator_bar(&closed, closed_count * 20_000 + 1, i);
                 closed_count += 1;
-                commands.push(IndicatorCommand::BarClosed(closed.into()));
+                commands.push(IndicatorCommand::BarClosed(closed.into(), 0));
             }
             let partial = builder.partial().cloned();
             let suffix = if partial.is_some() {
@@ -286,7 +286,7 @@ fn measure_indicator(spec: Spec) {
         let burst_start = Instant::now();
         for command in commands {
             let kind = match &command {
-                IndicatorCommand::BarClosed(_) => "bar_closed",
+                IndicatorCommand::BarClosed(..) => "bar_closed",
                 IndicatorCommand::PartialUpdated { .. } => "partial_updated",
                 _ => panic!("unexpected measured indicator command"),
             };

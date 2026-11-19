@@ -240,7 +240,7 @@ fn names_resolve_to_slots_and_functions() {
 }
 
 #[test]
-fn ignored_header_args_and_alertcondition_warn() {
+fn ignored_header_args_warn() {
     let script = compile_ok(
         "//@version=5\n\
          indicator(\"t\", format=format.price, precision=2)\n\
@@ -248,8 +248,8 @@ fn ignored_header_args_and_alertcondition_warn() {
          plot(close)\n",
     );
     assert!(
-        script.warnings.len() >= 3,
-        "format=, precision= and alertcondition each warn: {:?}",
+        script.warnings.len() == 2,
+        "format= and precision= each warn; alertcondition is live: {:?}",
         script.warnings
     );
 }

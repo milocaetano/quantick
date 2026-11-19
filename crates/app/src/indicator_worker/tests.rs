@@ -55,7 +55,7 @@ fn delta_stream_replays_to_identical_columns() {
         bars[..split].iter().cloned().map(Into::into).collect(),
     ));
     for bar in &bars[split..] {
-        worker.send(IndicatorCommand::BarClosed(bar.clone().into()));
+        worker.send(IndicatorCommand::BarClosed(bar.clone().into(), 0));
     }
     worker.send(IndicatorCommand::PartialUpdated {
         partial: partial.clone().map(Into::into),
@@ -166,7 +166,7 @@ fn remove_isolates_the_survivor() {
 
     views.remove(doomed);
     worker.send(IndicatorCommand::Remove(doomed));
-    worker.send(IndicatorCommand::BarClosed(bars[2].clone().into()));
+    worker.send(IndicatorCommand::BarClosed(bars[2].clone().into(), 0));
     worker.flush();
     for event in worker.drain_events() {
         views.apply(event);

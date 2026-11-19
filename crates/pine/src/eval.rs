@@ -34,6 +34,9 @@ mod ir_loops;
 #[path = "ir/runtime.rs"]
 mod ir_runtime;
 use arena::{Arena, FLAGS, GLOBALS, LOCALS, REGISTERS};
+
+/// The title an `alertcondition` without one fires under.
+const DEFAULT_ALERT_TITLE: &str = "Alert";
 #[path = "ir/kernel_state.rs"]
 mod kernel_state;
 mod kernels;
@@ -132,6 +135,8 @@ pub(crate) struct Staged<'a> {
     pub candles: &'a mut [Option<quantick_indicators::CandleSample>],
     /// The paint `barcolor` asked for; `None` = this bar asked for none.
     pub paint: &'a mut Option<Rgba8>,
+    /// The `alertcondition`s that held on a commit run, in call order.
+    pub alerts: &'a mut Vec<quantick_indicators::FiredAlert>,
 }
 
 /// One run of the script over one bar (commit or preview).
@@ -151,6 +156,8 @@ pub(crate) struct Eval<'a> {
     /// The bar paint this run asked for (`barcolor`), staged like the row and
     /// read by the caller after a clean run. `None` = this bar asked for none.
     pub paint: &'a mut Option<Rgba8>,
+    /// The alarms this commit run raised; a preview run never adds one.
+    pub alerts: &'a mut Vec<quantick_indicators::FiredAlert>,
     /// True on commit runs (`barstate.isconfirmed`).
     pub is_commit: bool,
     pub timezone: crate::calendar::CalendarTimezone,
@@ -206,6 +213,7 @@ impl<'a> Eval<'a> {
             row: staged.row,
             candles: staged.candles,
             paint: staged.paint,
+            alerts: staged.alerts,
             is_commit,
             timezone: crate::calendar::CalendarTimezone::default(),
             path: 0,
@@ -213,6 +221,24 @@ impl<'a> Eval<'a> {
             type_context: 0,
             prepared_arguments: false,
             semantic_run: crate::semantics::Run::default(),
+        }
+    }
+
+    /// An `alertcondition` text argument, named or positional; `None` when
+    /// absent or `na`. The checker typed it as a string at load.
+    fn alert_text(
+        &mut self,
+        args: &[crate::ast::Arg],
+        name: &str,
+    ) -> Result<Option<String>, PineError> {
+        let names = crate::builtins::ALERT_ARGS;
+        let Some(arg) = crate::candle_plots::argument(args, names, name) else {
+            return Ok(None);
+        };
+        match self.eval(arg.value)? {
+            Value::Str(text) => Ok(Some(text.as_str().to_owned())),
+            Value::Na | Value::NaString => Ok(None),
+            other => Err(self.type_err(arg.value, "a string", &other)),
         }
     }
 
@@ -479,10 +505,28 @@ impl<'a> Eval<'a> {
                 };
                 return Ok(Value::Na);
             }
+            // The condition runs on every run, so kernels inside it advance;
+            // only a commit run that finds it true raises the alarm — a
+            // forming bar may still change its mind.
+            Builtin::AlertCondition => {
+                let held = match args.first() {
+                    Some(arg) => self.cond(arg.value)?,
+                    None => false,
+                };
+                if held && self.is_commit {
+                    let title = self.alert_text(args, "title")?;
+                    let message = self.alert_text(args, "message")?;
+                    let title = title.unwrap_or_else(|| DEFAULT_ALERT_TITLE.to_owned());
+                    let message = message.unwrap_or_else(|| title.clone());
+                    self.alerts
+                        .push(quantick_indicators::FiredAlert { title, message });
+                }
+                return Ok(Value::Na);
+            }
             // fill() is fully resolved at load time; at eval it is a no-op.
             // Accepted-but-inert output calls still evaluate their first
             // argument (consistency: kernels inside advance every bar).
-            Builtin::Fill | Builtin::Bgcolor | Builtin::AlertCondition => {
+            Builtin::Fill | Builtin::Bgcolor => {
                 if let Some(arg) = args.first() {
                     let _ = self.eval(arg.value)?;
                 }
