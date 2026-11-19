@@ -4,46 +4,84 @@
       "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
       "type": "string"
     },
+    "ReportResult": {
+      "properties": {
+        "action": {
+          "type": "string"
+        },
+        "day": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "net_points": {
+          "$ref": "#/$defs/CanonicalDecimal"
+        },
+        "origin": {
+          "type": "string"
+        },
+        "session": {
+          "type": "string"
+        },
+        "skipped_rows": {
+          "$ref": "#/$defs/WireU64",
+          "description": "Malformed rows skipped in that history."
+        },
+        "title": {
+          "type": "string"
+        },
+        "trade_count": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "unreadable_files": {
+          "$ref": "#/$defs/WireU64",
+          "description": "Files unreadable in the history scanned for this report."
+        }
+      },
+      "required": [
+        "action",
+        "session",
+        "origin",
+        "title",
+        "trade_count",
+        "unreadable_files",
+        "skipped_rows",
+        "net_points"
+      ],
+      "type": "object"
+    },
     "WireU64": {
       "pattern": "^(0|[1-9][0-9]*)$",
       "type": "string"
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "properties": {
-    "action": {
-      "type": "string"
+  "anyOf": [
+    {
+      "$ref": "#/$defs/ReportResult"
     },
-    "day": {
-      "type": [
-        "string",
-        "null"
-      ]
-    },
-    "net_points": {
-      "$ref": "#/$defs/CanonicalDecimal"
-    },
-    "origin": {
-      "type": "string"
-    },
-    "session": {
-      "type": "string"
-    },
-    "title": {
-      "type": "string"
-    },
-    "trade_count": {
-      "$ref": "#/$defs/WireU64"
+    {
+      "properties": {
+        "action": {
+          "type": "string"
+        },
+        "symbol": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "action",
+        "title"
+      ],
+      "type": "object"
     }
-  },
-  "required": [
-    "action",
-    "session",
-    "origin",
-    "title",
-    "trade_count",
-    "net_points"
   ],
-  "title": "ReportResult",
-  "type": "object"
+  "title": "ReportOutput"
 }

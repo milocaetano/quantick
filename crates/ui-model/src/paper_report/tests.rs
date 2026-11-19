@@ -40,22 +40,22 @@ fn scoped_open_replaces_stale_filters_and_reloads_keep_the_exact_session() {
         &mut state,
         Intent::Dates(DaySelection::Anchor(day.offset_days(1))),
     );
-    Model::update(
-        &mut state,
+    let scoped = |rows| {
         Intent::Scoped(Box::new(PreparedReport {
             receipt: ReportReceipt {
                 request: ReportRequest {
-                    session: key,
+                    session: key.clone(),
                     day: None,
                 },
                 title: "Broker · Opening".to_owned(),
                 trades: 1,
                 net_points: Decimal::from(5),
             },
-            history: history_rows(rows.clone()),
+            history: history_rows(rows),
             symbols: vec!["WINZ26".to_owned(), "X".to_owned()],
-        })),
-    );
+        }))
+    };
+    Model::update(&mut state, scoped(rows.clone()));
     state.ensure_report_view(tz, PnlReader::plain());
     assert!(state.report_open());
     assert!(state.report_symbol().is_none());
@@ -70,13 +70,32 @@ fn scoped_open_replaces_stale_filters_and_reloads_keep_the_exact_session() {
         Some(Load::Report(None))
     );
     rows[0].trade.pnl_points = Decimal::from(7);
-    Model::update(&mut state, loaded_report(rows));
+    Model::update(&mut state, loaded_report(rows.clone()));
     state.ensure_report_view(tz, PnlReader::plain());
     assert_eq!(state.snapshot().unwrap().rows.len(), 1);
     assert_eq!(
         state.snapshot().unwrap().report.net_points,
         Decimal::from(7)
     );
+    for reopen in [false, true] {
+        Model::update(&mut state, scoped(rows.clone()));
+        state.ensure_report_view(tz, PnlReader::plain());
+        assert_eq!(state.snapshot().unwrap().rows.len(), 1);
+        let symbol = "WINZ26".to_owned();
+        let intent = if reopen {
+            Model::update(&mut state, Intent::Close);
+            Intent::Open(symbol.clone())
+        } else {
+            Intent::ClearFilters(symbol.clone())
+        };
+        assert_eq!(
+            Model::update(&mut state, intent).load,
+            Some(Load::Report(Some(symbol)))
+        );
+        assert!(state.report_open());
+        assert!(state.report_scope().is_none());
+        assert_eq!(state.report_source(), SourceFilter::Real);
+    }
 }
 
 #[test]

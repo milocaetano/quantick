@@ -9,6 +9,7 @@ mod chrome_probe_view;
 
 /// The actual paper owner and frame facts needed by a paper panel.
 pub(crate) struct PaperPanelEnv<'a> {
+    pub live_journals: &'a [std::path::PathBuf],
     /// Whether the alert manager is up, so the rail's bell reads as pressed.
     pub alerts_open: bool,
     pub paper: &'a mut crate::paper_trading::PaperTrading,

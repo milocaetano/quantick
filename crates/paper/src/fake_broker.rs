@@ -27,6 +27,9 @@ pub struct Script {
     pub on_tick: Vec<VenueEvent>,
     /// The terminal logged into another account of the same kind.
     pub login: Option<u64>,
+    pub trade_mode: Option<TradeMode>,
+    /// A fill print delivered by the broker poll instead of the chart tape.
+    pub poll_print: Option<Trade>,
 }
 
 /// A simulator wearing a broker's reads.
@@ -34,6 +37,18 @@ struct FakeBroker {
     sim: Simulator,
     facts: AccountFacts,
     script: Rc<RefCell<Script>>,
+}
+
+impl FakeBroker {
+    fn fill_print(&mut self, trade: &Trade) -> Vec<VenueEvent> {
+        let mut events = self.sim.on_trade(trade);
+        for event in &mut events {
+            if let VenueEvent::Closed { broker_account, .. } = event {
+                *broker_account = Some(self.facts.trade_mode);
+            }
+        }
+        events
+    }
 }
 
 impl TradingVenue for FakeBroker {
@@ -57,7 +72,7 @@ impl TradingVenue for FakeBroker {
     }
     fn on_trade(&mut self, trade: &Trade) -> Vec<VenueEvent> {
         // As the MetaTrader venue does: a print drains what the broker said.
-        let mut events = self.sim.on_trade(trade);
+        let mut events = self.fill_print(trade);
         events.append(&mut self.script.borrow_mut().said);
         events
     }
@@ -98,12 +113,18 @@ impl TradingVenue for FakeBroker {
 
 impl BrokerVenue for FakeBroker {
     fn poll(&mut self) -> Vec<VenueEvent> {
-        std::mem::take(&mut self.script.borrow_mut().said)
+        let print = self.script.borrow_mut().poll_print.take();
+        let mut events = print.map_or_else(Vec::new, |print| self.fill_print(&print));
+        events.append(&mut self.script.borrow_mut().said);
+        events
     }
     fn tick(&mut self, now_ms: i64) -> Vec<VenueEvent> {
         let mut script = self.script.borrow_mut();
         if let Some(login) = script.login {
             self.facts.login = login;
+        }
+        if let Some(mode) = script.trade_mode {
+            self.facts.trade_mode = mode;
         }
         script.ticked.push(now_ms);
         std::mem::take(&mut script.on_tick)

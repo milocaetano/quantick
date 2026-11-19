@@ -5,7 +5,9 @@ use quantick_control::{
     wire::{ActorContext, WireU64},
 };
 use quantick_control_host::{admission::known_error, journal::NewEvent, wire::canonical_decimal};
-use quantick_control_schema::session_reports::{EVENT_KIND, ReportInput, ReportResult, descriptor};
+use quantick_control_schema::session_reports::{
+    EVENT_KIND, ReportInput, ReportOutput, ReportResult, descriptor,
+};
 use quantick_paper::report::{
     scope::{self, ReportRequest},
     session_edit::SessionEditError,
@@ -32,18 +34,6 @@ fn open<H: PaperHost + ?Sized, A: NotifyAccess>(
 ) -> Result<Value, ControlError> {
     let input: ReportInput = serde_json::from_value(value.clone())
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
-    let (session, day) =
-        match input {
-            ReportInput::Session { session } => (session, None),
-            ReportInput::Day { session, day } => (
-                session,
-                Some(quantick_civil::parse_iso_date(&day).ok_or_else(|| {
-                    ControlError::invalid_request("day must be a valid YYYY-MM-DD")
-                })?),
-            ),
-        };
-    let session = SessionKey::parse(&session)
-        .ok_or_else(|| crate::journal_sessions::refusal(SessionEditError::InvalidKey(session)))?;
     let mut owner = host.paper();
     let tz = owner.journal_timezone();
     let dir = owner.journal_scope().dir;
@@ -56,7 +46,44 @@ fn open<H: PaperHost + ?Sized, A: NotifyAccess>(
         error.context.details = Some(json!({"code": "no_ledger"}));
         error
     })?;
-    let prepared = scope::prepare(&dir, ReportRequest { session, day }, tz)
+    let output = match input {
+        ReportInput::Ordinary {} => {
+            desk.reset_report();
+            let symbol = desk.account().symbol();
+            ReportOutput::Ordinary {
+                action: "ordinary".to_owned(),
+                title: "Sim live, all time".to_owned(),
+                symbol: (!symbol.is_empty()).then(|| symbol.to_owned()),
+            }
+        }
+        ReportInput::Session { session } => scoped(desk, &dir, tz, session, None)?,
+        ReportInput::Day { session, day } => {
+            let day = quantick_civil::parse_iso_date(&day)
+                .ok_or_else(|| ControlError::invalid_request("day must be a valid YYYY-MM-DD"))?;
+            scoped(desk, &dir, tz, session, Some(day))?
+        }
+    };
+    let result = serde_json::to_value(output)
+        .map_err(|error| ControlError::invalid_request(error.to_string()))?;
+    access.record_event(NewEvent::by(
+        quantick_control_schema::session::MODULE_ID,
+        EVENT_KIND,
+        actor,
+        json!({"report": result}),
+    ));
+    Ok(result)
+}
+
+fn scoped(
+    desk: &mut dyn crate::trade::TradeDesk,
+    dir: &std::path::Path,
+    tz: quantick_civil::TzOffset,
+    session: String,
+    day: Option<quantick_civil::CivilDate>,
+) -> Result<ReportOutput, ControlError> {
+    let session = SessionKey::parse(&session)
+        .ok_or_else(|| crate::journal_sessions::refusal(SessionEditError::InvalidKey(session)))?;
+    let prepared = scope::prepare(dir, ReportRequest { session, day }, tz)
         .map_err(crate::journal_sessions::refusal)?;
     let receipt = &prepared.receipt;
     let result = ReportResult {
@@ -71,18 +98,12 @@ fn open<H: PaperHost + ?Sized, A: NotifyAccess>(
         day: day.map(|day| day.iso()),
         title: receipt.title.clone(),
         trade_count: WireU64::new(receipt.trades as u64),
+        unreadable_files: WireU64::new(prepared.history.unreadable_files as u64),
+        skipped_rows: WireU64::new(prepared.history.problem_rows as u64),
         net_points: canonical_decimal(receipt.net_points),
     };
     desk.show_report(prepared);
-    let result = serde_json::to_value(result)
-        .map_err(|error| ControlError::invalid_request(error.to_string()))?;
-    access.record_event(NewEvent::by(
-        quantick_control_schema::session::MODULE_ID,
-        EVENT_KIND,
-        actor,
-        json!({"report": result}),
-    ));
-    Ok(result)
+    Ok(ReportOutput::Scoped(result))
 }
 
 #[cfg(test)]

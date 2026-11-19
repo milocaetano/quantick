@@ -574,9 +574,14 @@ impl PaperTrading {
     }
 
     /// The trades ledger tab. Returns what the ledger asked of the host.
-    pub fn draw_trades_tab(&mut self, ui: &mut egui::Ui, tz: TzOffset) -> Option<LedgerAction> {
+    pub fn draw_trades_tab(
+        &mut self,
+        ui: &mut egui::Ui,
+        tz: TzOffset,
+        live: &[std::path::PathBuf],
+    ) -> Option<LedgerAction> {
         let (report, env) = self.paper.account.report_parts();
-        report.draw_trades_tab(ui, tz, &env)
+        report.draw_trades_tab(ui, tz, &env, live)
     }
 
     /// The performance report window, computed from what is on disk.

@@ -40,8 +40,6 @@ pub(crate) struct Venues {
 /// broker position they no longer see as the route.
 pub(crate) struct Guarded {
     venue: Box<dyn BrokerVenue>,
-    /// The account accepted when armed. Later connection facts cannot relabel fills.
-    execution_mode: TradeMode,
     routed: bool,
     /// What the route must hear about the link and the account, from
     /// whichever call drained it - a print drains the venue too - until
@@ -226,9 +224,6 @@ impl PaperAccount {
             venue.set_symbol(&self.symbol)
         };
         self.venue.broker = Some(Guarded {
-            execution_mode: venue
-                .account()
-                .map_or(TradeMode::Unknown, |facts| facts.trade_mode),
             venue,
             routed: true,
             for_route: Vec::new(),
@@ -393,7 +388,7 @@ impl PaperAccount {
     /// time `now_ms` (a silent link is declared lost there), and return its
     /// notices for the route to read.
     pub fn poll_broker(&mut self, now_ms: i64) -> Vec<VenueNotice> {
-        let shown = self.broker_shown();
+        let route = self.route_kind();
         let Some(guarded) = self.venue.broker.as_mut() else {
             return Vec::new();
         };
@@ -403,16 +398,20 @@ impl PaperAccount {
         let mut events = broker.poll();
         events.extend(broker.tick(now_ms));
         notices.extend(notices_of(&events));
-        if shown {
-            self.handle_events(events);
+        if route.is_broker() {
+            self.handle_events_from(events, route);
         } else {
             // Parked: its closes still belong in the broker's journal, its
             // refusals and notices in the log, and nothing it says may reach
             // the simulator's bot buffer.
             for event in events {
                 super::broker_log::log_broker_event(&event, "parked", &self.symbol);
-                if let VenueEvent::Closed(trade) = event {
-                    self.journal_broker(&trade);
+                if let VenueEvent::Closed {
+                    trade,
+                    broker_account: Some(mode),
+                } = event
+                {
+                    self.journal_broker(&trade, mode);
                     self.outbox.journal_changed = true;
                 }
             }
@@ -447,10 +446,9 @@ impl PaperAccount {
     pub fn execution_source(&self) -> history::SessionSource {
         if self.broker_shown() {
             history::SessionSource::Broker(
-                self.venue
-                    .broker
-                    .as_ref()
-                    .map_or(TradeMode::Unknown, |broker| broker.execution_mode),
+                self.broker()
+                    .and_then(BrokerVenue::account)
+                    .map_or(TradeMode::Unknown, |facts| facts.trade_mode),
             )
         } else {
             self.session_source()
@@ -459,7 +457,7 @@ impl PaperAccount {
 
     /// Append one broker round trip to its own journal. Returns whether the
     /// write landed.
-    pub(super) fn journal_broker(&mut self, trade: &ClosedTrade) -> bool {
+    pub(super) fn journal_broker(&mut self, trade: &ClosedTrade, mode: TradeMode) -> bool {
         if self.symbol.is_empty() {
             return false;
         }
@@ -472,11 +470,6 @@ impl PaperAccount {
         {
             self.broker_journal = BrokerJournal::default();
         }
-        let mode = self
-            .venue
-            .broker
-            .as_ref()
-            .map_or(TradeMode::Unknown, |broker| broker.execution_mode);
         let path = self.broker_journal.path.get_or_insert_with(|| {
             folder.join(format!(
                 "{}.{}",

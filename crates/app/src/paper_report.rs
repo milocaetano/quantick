@@ -122,11 +122,11 @@ impl ReportAdapter {
     fn event(&mut self, intent: Intent, env: &ReportEnv<'_>) {
         self.with(env, |paint| paint.update(intent));
     }
-    pub(crate) fn is_open(&self) -> bool {
-        self.report_open()
-    }
     pub(crate) fn open(&mut self, env: &ReportEnv<'_>) {
         self.event(Intent::Open(env.symbol.to_owned()), env);
+    }
+    pub(crate) fn reset(&mut self, env: &ReportEnv<'_>) {
+        self.event(Intent::ClearFilters(env.symbol.to_owned()), env);
     }
     pub(crate) fn trades_dir_changed(&mut self, env: &ReportEnv<'_>) {
         self.event(Intent::DirectoryChanged, env);
@@ -186,8 +186,9 @@ impl ReportAdapter {
         ui: &mut egui::Ui,
         tz: TzOffset,
         env: &ReportEnv<'_>,
+        live: &[std::path::PathBuf],
     ) -> Option<LedgerAction> {
-        self.with(env, |paint| paint.draw_trades_tab(ui, tz, env))
+        self.with(env, |paint| paint.draw_trades_tab(ui, tz, env, live))
             .1
             .ledger
     }
@@ -227,6 +228,9 @@ impl ReportAdapter {
 }
 #[cfg(test)]
 impl ReportAdapter {
+    pub(crate) fn is_open(&self) -> bool {
+        self.report_open()
+    }
     pub(crate) fn rescope_ledger(&mut self, env: &ReportEnv<'_>) {
         self.event(Intent::Ledger(LedgerIntent::Rescope), env);
     }

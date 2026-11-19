@@ -78,7 +78,15 @@ impl Paint<'_, '_> {
                 self.native.scroll_probe.report(ui);
                 reload = self.draw_report_filters(ui);
                 if let Some(scope) = self.report_scope() {
-                    ui.label(&scope.title);
+                    let reset = ui
+                        .horizontal(|ui| {
+                            ui.label(&scope.title);
+                            ui.button("Back to ordinary report").clicked()
+                        })
+                        .inner;
+                    if reset {
+                        self.update(Intent::ClearFilters(env.symbol.to_owned()));
+                    }
                 }
                 self.draw_report_calendar(ui, tz);
                 // The rows above can retire the view — a picked day, a
@@ -131,7 +139,7 @@ impl Paint<'_, '_> {
                         #[cfg(any(feature = "scenario-harness", test))]
                         self.native.scroll_probe.rows(ui);
                     }
-                    _ => reload |= self.draw_report_empty(ui, env),
+                    _ => self.draw_report_empty(ui, env),
                 }
                 self.draw_report_footer(ui, env);
             });
@@ -147,8 +155,8 @@ impl Paint<'_, '_> {
         self.update(Intent::DrainToast);
     }
 
-    /// Why nothing is listed and the way back; true when history must reload.
-    fn draw_report_empty(&mut self, ui: &mut egui::Ui, env: &ReportEnv<'_>) -> bool {
+    /// Why nothing is listed and the way back.
+    fn draw_report_empty(&mut self, ui: &mut egui::Ui, env: &ReportEnv<'_>) {
         let palette = theme::get(ui.ctx());
         ui.add_space(8.0);
         ui.label(
@@ -177,7 +185,7 @@ impl Paint<'_, '_> {
             // reveal them must be named, not implied.
             format!(
                 "{scope} has {hidden_by_source} trade(s) behind the Source \
-                 filter. Try Source \"Both\".",
+                 filter. Try \"All sources\".",
             )
         } else {
             format!(
@@ -196,9 +204,7 @@ impl Paint<'_, '_> {
                 .clicked()
         {
             self.update(Intent::ClearFilters(env.symbol.to_owned()));
-            return true;
         }
-        false
     }
 
     /// The unreadable-file count, the scope line and the P&L footnote.
@@ -390,7 +396,7 @@ impl Paint<'_, '_> {
                 }
                 (None, None) if view.hidden_by_source > 0 => format!(
                     "no saved trades in this scope - {} trade(s) sit behind the Source \
-                     filter (try Both)",
+                     filter (try All sources)",
                     view.hidden_by_source,
                 ),
                 (None, None) => "no saved trades in this scope".to_owned(),

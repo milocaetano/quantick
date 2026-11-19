@@ -197,7 +197,7 @@
       "description": "A listing: trades the filter kept out."
     },
     "moved_to": {
-      "description": "A delete: where the file went, relative to the trades folder.",
+      "description": "A delete: destination relative to its journal root, prefixed with broker/ for broker sessions.",
       "type": [
         "string",
         "null"

@@ -16,6 +16,7 @@ use quantick_session::paper::SharedChange;
 /// A window whose journal folder does not exist and whose edits answer what
 /// the test set.
 struct FakeJournal {
+    dir: PathBuf,
     edits: Vec<JournalEdit>,
     answer: Result<JournalEditOutcome, SessionEditError>,
     /// The active tab's desk and its ledger; `None` when no tab holds one.
@@ -25,6 +26,7 @@ struct FakeJournal {
 impl FakeJournal {
     fn answering(answer: Result<JournalEditOutcome, SessionEditError>) -> Self {
         Self {
+            dir: PathBuf::from("no-such-trades-folder"),
             edits: Vec::new(),
             answer,
             desk: Some(PaperDesk::new(
@@ -46,7 +48,7 @@ impl PaperOwner for FakeJournal {
     fn persist(&mut self, _change: SharedChange) {}
     fn journal_scope(&self) -> JournalScope {
         JournalScope {
-            dir: PathBuf::from("no-such-trades-folder"),
+            dir: self.dir.clone(),
             live: Vec::new(),
         }
     }
@@ -191,6 +193,30 @@ fn a_delete_is_its_own_capability_and_set_refuses_one() {
             .iter()
             .any(|flag| flag.as_str() == "journal_session_removed")
     );
+}
+
+#[test]
+fn broker_delete_reports_an_origin_relative_destination_in_the_event_and_reply() {
+    let scratch = crate::scratch::ScratchDir::new("broker-delete-readback");
+    let dir = scratch.path().join("paper");
+    let key = session().for_broker();
+    let path = key.path(&dir);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, "# quantick-trades 2\n").unwrap();
+    let scope = JournalScope {
+        dir: dir.clone(),
+        live: vec![],
+    };
+    let edit = JournalEdit::Delete {
+        session: key.clone(),
+    };
+    let outcome = quantick_paper::report::session_edit::apply_journal_edit(&scope, &edit).unwrap();
+    let mut window = FakeJournal::answering(Ok(outcome));
+    window.dir = dir;
+    let mut events = events();
+    let result = delete(&mut window, &mut events, json!({"session": key.as_str()})).unwrap();
+    assert_eq!(result["moved_to"], format!("broker/.deleted/{}", session()));
+    assert_eq!(events.events[0].payload["journal_session"], result);
 }
 
 #[test]

@@ -1052,6 +1052,9 @@ impl std::ops::DerefMut for PaperDesk {
 }
 
 impl TradeDesk for PaperDesk {
+    fn reset_report(&mut self) {
+        self.reports.clear();
+    }
     fn show_report(&mut self, report: quantick_paper::report::scope::PreparedReport) {
         self.reports.push(report.receipt);
     }

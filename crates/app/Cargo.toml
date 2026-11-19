@@ -121,6 +121,7 @@ rodio = { workspace = true }
 windows-sys = { workspace = true }
 
 [dev-dependencies]
+quantick-paper = { path = "../paper", features = ["test-support"] }
 quantick-ui-model = { path = "../ui-model", features = ["test-support", "scenario-harness"] }
 # The gate clock the worker tests park a real worker on, and the ledger
 # schedules; the same fixture the crate proves itself with.

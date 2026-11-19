@@ -44,6 +44,11 @@ fn session_and_day_calls_show_the_report_return_scope_and_journal_readback() {
             quantick_sim::history::HEADER,
             stamp - 1000
         );
+        let text = if key == "broker/WINZ26/a.csv" {
+            text + "torn exit row\n"
+        } else {
+            text
+        };
         std::fs::write(path, text).unwrap();
     }
     let mut host = Host {
@@ -65,6 +70,11 @@ fn session_and_day_calls_show_the_report_return_scope_and_journal_readback() {
     ] {
         let result = open(&mut host, &mut access, &FakeWindow::assistant(), &input).unwrap();
         assert_eq!(result["origin"], "broker");
+        assert_eq!(
+            result["skipped_rows"], "1",
+            "a torn clicked file is disclosed"
+        );
+        assert_eq!(result["unreadable_files"], "0");
         assert_eq!(result["trade_count"], count.to_string());
         assert_eq!(
             host.desk.as_ref().unwrap().reports.last().unwrap().trades,
@@ -78,8 +88,19 @@ fn session_and_day_calls_show_the_report_return_scope_and_journal_readback() {
             "a retry selects the same scope without a journal write"
         );
     }
+    let ordinary = open(
+        &mut host,
+        &mut access,
+        &FakeWindow::assistant(),
+        &json!({"action":"ordinary"}),
+    )
+    .unwrap();
+    assert_eq!(ordinary["action"], "ordinary");
+    assert_eq!(access.events.last().unwrap().payload["report"], ordinary);
+    assert!(host.desk.as_ref().unwrap().reports.is_empty());
     let before = host.desk.as_ref().unwrap().reports.len();
     for input in [
+        json!({"action":"ordinary","day":"2026-11-18"}),
         json!({"action":"session", "session":"../a.csv"}),
         json!({"action":"session", "session":"WINZ26/missing.csv"}),
         json!({"action":"day", "session":"broker/WINZ26/a.csv", "day":"2026-11-19"}),
@@ -99,7 +120,7 @@ fn session_and_day_calls_show_the_report_return_scope_and_journal_readback() {
     assert_eq!(error.context.details.unwrap()["code"], "no_ledger");
     assert_eq!(
         access.events.len(),
-        4,
+        5,
         "refusals do not emit successful opens"
     );
 }

@@ -12,6 +12,7 @@ pub const EVENT_KIND: &str = "session.report.opened";
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ReportInput {
+    Ordinary {},
     Session {
         #[schemars(length(max = 512))]
         session: String,
@@ -32,20 +33,35 @@ pub struct ReportResult {
     pub day: Option<String>,
     pub title: String,
     pub trade_count: quantick_control::wire::WireU64,
+    /// Files unreadable in the history scanned for this report.
+    pub unreadable_files: quantick_control::wire::WireU64,
+    /// Malformed rows skipped in that history.
+    pub skipped_rows: quantick_control::wire::WireU64,
     pub net_points: quantick_control::wire::CanonicalDecimal,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum ReportOutput {
+    Scoped(ReportResult),
+    Ordinary {
+        action: String,
+        title: String,
+        symbol: Option<String>,
+    },
 }
 
 pub fn descriptor() -> CapabilityDescriptor {
     let mut descriptor = crate::recovery::descriptor(
         REPORT_OPEN_CAPABILITY_ID,
         "Open a session or day report",
-        "Open the same performance report as the Trades session context menu. action=session selects only that session; action=day requires YYYY-MM-DD in the display timezone and selects every instrument and session of that origin on the clicked day. The session must hold a trade on that day. Session keys are <symbol>/<file>.csv for the simulator and broker/<symbol>/<file>.csv for real-trades, independent of custom names. Replaces prior symbol, period, source and session filters. Returns the opened scope, trade count and net points; events.read reconciles a lost response through session.report.opened. Refusals: invalid_session, session_not_found, session_unreadable, day_not_in_session, no_ledger. Never places orders or writes history.",
+        "Open the same performance report as the Trades session context menu. action=session selects only that session; action=day requires YYYY-MM-DD in the display timezone and selects every instrument and session of that origin on the clicked day. The session must hold a trade on that day. action=ordinary restores the ordinary Sim live report for the chart symbol over all time; pass no session or day. Session keys are <symbol>/<file>.csv for the simulator and broker/<symbol>/<file>.csv for real-trades, independent of custom names. Replaces prior symbol, period, source and session filters. Returns the opened scope, trade count, net points and counts of unreadable files and skipped rows in the scanned history; events.read reconciles a lost response through session.report.opened. Refusals: invalid_session, session_not_found, session_unreadable, day_not_in_session, no_ledger. Never places orders or writes history.",
         false,
         generated_schema::<ReportInput>(),
     );
     descriptor.module =
         quantick_control::id::ModuleId::new(crate::session::MODULE_ID).expect("static module ID");
-    descriptor.output_schema = generated_schema::<ReportResult>();
+    descriptor.output_schema = generated_schema::<ReportOutput>();
     descriptor.persistence = EffectPersistence::Transient;
     descriptor.stale_input_safety = Some("Repeating a request opens the same scope from current history; deleted sessions are refused before changing the report.".to_owned());
     descriptor.expected_cost.max_response_bytes = Some(4096);
@@ -69,7 +85,7 @@ pub fn documents() -> Vec<(&'static str, serde_json::Value)> {
         ),
         (
             "session-report-result-v1.schema.json",
-            generated_schema::<ReportResult>(),
+            generated_schema::<ReportOutput>(),
         ),
     ]
 }

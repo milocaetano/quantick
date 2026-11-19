@@ -60,6 +60,8 @@ pub struct PaperAccount {
     /// The money path. Reached through `Deref`, so its methods read as this
     /// host's own.
     core: Core,
+    /// A close this host has consumed that the other tabs still need to see.
+    journal_written: bool,
     /// The performance report and the trades ledger - the reading half of
     /// paper trading, which owns its own state (`paper_report`). Its numbers
     /// are cut in `quantick_paper::report`; this is the window around them.
@@ -110,6 +112,7 @@ impl PaperAccount {
         let core = apply_launch_hooks(core);
         Self {
             core,
+            journal_written: false,
             report: crate::paper_report::ReportState::default(),
             export_rx: None,
             import_rx: None,
@@ -177,18 +180,21 @@ impl PaperAccount {
         self.follow_journal();
     }
 
-    /// Re-read the open report after a journaled close.
-    ///
-    /// The report reads from disk and the close just wrote to disk; re-read
-    /// now or the window shows yesterday until the manual refresh - the "my
-    /// trade is missing" report. Guarded rather than always gathered: this
-    /// is the per-trade path, and building a `ReportEnv` for a window nobody
-    /// has open is work a dense tape pays on every single close.
     pub(crate) fn follow_journal(&mut self) {
-        if self.core.take_journal_changed() && self.report.is_open() {
-            let (report, env) = self.report_parts();
-            report.journal_changed(&env);
+        if self.core.take_journal_changed() {
+            self.journal_written = true;
+            self.invalidate_history();
         }
+    }
+
+    pub(crate) fn take_journal_write(&mut self) -> bool {
+        self.follow_journal();
+        std::mem::take(&mut self.journal_written)
+    }
+
+    pub(crate) fn invalidate_history(&mut self) {
+        let (report, env) = self.report_parts();
+        report.journal_changed(&env);
     }
 
     /// Point the journal somewhere new, in-session — the panel's folder

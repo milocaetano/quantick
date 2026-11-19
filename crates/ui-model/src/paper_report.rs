@@ -262,6 +262,16 @@ impl State {
         self.filter.scope.as_ref()
     }
 
+    fn clear_filters(&mut self, symbol: String) {
+        self.filter.scope = None;
+        self.report_days_key = None;
+        self.report_symbol = (!symbol.is_empty()).then_some(symbol);
+        self.report_period = ReportPeriod::All;
+        self.filter.source = SourceFilter::Real;
+        self.calendar.selection = DaySelection::None;
+        self.report_view = None;
+    }
+
     fn install_scoped(&mut self, prepared: PreparedReport) {
         let request = &prepared.receipt.request;
         self.report_open = true;
@@ -495,7 +505,9 @@ impl crate::Model for Model {
             Intent::Scoped(prepared) => state.install_scoped(*prepared),
             Intent::Open(symbol) => {
                 state.report_open = true;
-                if state.report.is_none() && !symbol.is_empty() {
+                if state.filter.scope.is_some() {
+                    state.clear_filters(symbol);
+                } else if state.report.is_none() && !symbol.is_empty() {
                     state.report_symbol = Some(symbol);
                 }
                 return state.report_load();
@@ -606,13 +618,9 @@ impl crate::Model for Model {
             }
             Intent::ListOpen(open) => state.report_list_open = open,
             Intent::ClearFilters(symbol) => {
-                state.filter.scope = None;
-                state.report_days_key = None;
-                state.report_symbol = (!symbol.is_empty()).then_some(symbol);
-                state.report_period = ReportPeriod::All;
-                state.filter.source = SourceFilter::Real;
-                state.calendar.selection = DaySelection::None;
-                state.report_view = None;
+                state.clear_filters(symbol);
+                state.report_open = true;
+                return state.report_load();
             }
             Intent::Import => {
                 return Effects {

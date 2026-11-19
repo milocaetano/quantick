@@ -222,7 +222,7 @@ pub struct JournalSessionsResult {
     /// a delete.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session: Option<JournalSessionSnapshot>,
-    /// A delete: where the file went, relative to the trades folder.
+    /// A delete: destination relative to its journal root, prefixed with broker/ for broker sessions.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub moved_to: Option<String>,
     /// A view call: what the ledger shows after it.

@@ -27465,7 +27465,7 @@
             "description": "A listing: trades the filter kept out."
           },
           "moved_to": {
-            "description": "A delete: where the file went, relative to the trades folder.",
+            "description": "A delete: destination relative to its journal root, prefixed with broker/ for broker sessions.",
             "type": [
               "string",
               "null"
@@ -27989,7 +27989,7 @@
             "description": "A listing: trades the filter kept out."
           },
           "moved_to": {
-            "description": "A delete: where the file went, relative to the trades folder.",
+            "description": "A delete: destination relative to its journal root, prefixed with broker/ for broker sessions.",
             "type": [
               "string",
               "null"
@@ -28225,7 +28225,7 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Open the same performance report as the Trades session context menu. action=session selects only that session; action=day requires YYYY-MM-DD in the display timezone and selects every instrument and session of that origin on the clicked day. The session must hold a trade on that day. Session keys are <symbol>/<file>.csv for the simulator and broker/<symbol>/<file>.csv for real-trades, independent of custom names. Replaces prior symbol, period, source and session filters. Returns the opened scope, trade count and net points; events.read reconciles a lost response through session.report.opened. Refusals: invalid_session, session_not_found, session_unreadable, day_not_in_session, no_ledger. Never places orders or writes history.",
+      "description": "Open the same performance report as the Trades session context menu. action=session selects only that session; action=day requires YYYY-MM-DD in the display timezone and selects every instrument and session of that origin on the clicked day. The session must hold a trade on that day. action=ordinary restores the ordinary Sim live report for the chart symbol over all time; pass no session or day. Session keys are <symbol>/<file>.csv for the simulator and broker/<symbol>/<file>.csv for real-trades, independent of custom names. Replaces prior symbol, period, source and session filters. Returns the opened scope, trade count, net points and counts of unreadable files and skipped rows in the scanned history; events.read reconciles a lost response through session.report.opened. Refusals: invalid_session, session_not_found, session_unreadable, day_not_in_session, no_ledger. Never places orders or writes history.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "cockpit",
@@ -28239,6 +28239,19 @@
       "input_schema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "const": "ordinary",
+                "type": "string"
+              }
+            },
+            "required": [
+              "action"
+            ],
+            "type": "object"
+          },
           {
             "additionalProperties": false,
             "properties": {
@@ -28291,48 +28304,86 @@
             "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
             "type": "string"
           },
+          "ReportResult": {
+            "properties": {
+              "action": {
+                "type": "string"
+              },
+              "day": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "net_points": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "origin": {
+                "type": "string"
+              },
+              "session": {
+                "type": "string"
+              },
+              "skipped_rows": {
+                "$ref": "#/$defs/WireU64",
+                "description": "Malformed rows skipped in that history."
+              },
+              "title": {
+                "type": "string"
+              },
+              "trade_count": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "unreadable_files": {
+                "$ref": "#/$defs/WireU64",
+                "description": "Files unreadable in the history scanned for this report."
+              }
+            },
+            "required": [
+              "action",
+              "session",
+              "origin",
+              "title",
+              "trade_count",
+              "unreadable_files",
+              "skipped_rows",
+              "net_points"
+            ],
+            "type": "object"
+          },
           "WireU64": {
             "pattern": "^(0|[1-9][0-9]*)$",
             "type": "string"
           }
         },
         "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "properties": {
-          "action": {
-            "type": "string"
+        "anyOf": [
+          {
+            "$ref": "#/$defs/ReportResult"
           },
-          "day": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "net_points": {
-            "$ref": "#/$defs/CanonicalDecimal"
-          },
-          "origin": {
-            "type": "string"
-          },
-          "session": {
-            "type": "string"
-          },
-          "title": {
-            "type": "string"
-          },
-          "trade_count": {
-            "$ref": "#/$defs/WireU64"
+          {
+            "properties": {
+              "action": {
+                "type": "string"
+              },
+              "symbol": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "title": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "action",
+              "title"
+            ],
+            "type": "object"
           }
-        },
-        "required": [
-          "action",
-          "session",
-          "origin",
-          "title",
-          "trade_count",
-          "net_points"
         ],
-        "title": "ReportResult",
-        "type": "object"
+        "title": "ReportOutput"
       },
       "persistence": "transient",
       "preconditions": [],

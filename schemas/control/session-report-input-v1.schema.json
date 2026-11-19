@@ -5,6 +5,19 @@
       "additionalProperties": false,
       "properties": {
         "action": {
+          "const": "ordinary",
+          "type": "string"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
           "const": "session",
           "type": "string"
         },

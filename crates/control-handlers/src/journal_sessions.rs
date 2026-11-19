@@ -145,16 +145,23 @@ fn run_edit<A: NotifyAccess>(
     let tz = paper.journal_timezone();
     let live = live_keys(&scope.dir, &scope.live);
     let result = match &outcome {
-        JournalEditOutcome::Deleted { moved_to, .. } => JournalSessionsResult {
-            moved_to: Some(
-                moved_to
-                    .strip_prefix(&scope.dir)
-                    .unwrap_or(moved_to)
-                    .to_string_lossy()
-                    .replace('\\', "/"),
-            ),
-            ..answer("delete", true)
-        },
+        JournalEditOutcome::Deleted { session, moved_to } => {
+            let relative = moved_to
+                .strip_prefix(session.root(&scope.dir))
+                .map_err(|_| {
+                    ControlError::invalid_request(
+                        "deleted session destination is outside its journal",
+                    )
+                })?;
+            let origin = if session.is_broker() { "broker/" } else { "" };
+            JournalSessionsResult {
+                moved_to: Some(format!(
+                    "{origin}{}",
+                    relative.to_string_lossy().replace('\\', "/")
+                )),
+                ..answer("delete", true)
+            }
+        }
         JournalEditOutcome::Renamed { session, .. }
         | JournalEditOutcome::Tagged { session, .. } => {
             let action = match outcome {

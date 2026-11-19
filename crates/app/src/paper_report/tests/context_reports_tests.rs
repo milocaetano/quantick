@@ -62,7 +62,11 @@ fn button(pos: egui::Pos2, button: egui::PointerButton, pressed: bool) -> Vec<eg
 #[test]
 fn right_click_session_menu_emits_exact_session_and_clicked_day_requests() {
     let day = quantick_civil::parse_iso_date("2026-11-18").unwrap();
-    for (label, selected_day) in [("Session report", None), ("Day report", Some(day))] {
+    for (label, selected_day) in [
+        ("Session report", None),
+        ("Day report", Some(day)),
+        ("Delete session…", None),
+    ] {
         let ctx = egui::Context::default();
         let head = SessionHead {
             day,
@@ -108,6 +112,13 @@ fn right_click_session_menu_emits_exact_session_and_clicked_day_requests() {
             &head,
             button(choice, egui::PointerButton::Primary, false),
         );
+        if label == "Delete session…" {
+            assert!(
+                press.is_none(),
+                "an active broker session cannot start a deletion"
+            );
+            continue;
+        }
         assert_eq!(
             press,
             Some(SessionPress::Report(

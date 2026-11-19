@@ -41,6 +41,9 @@ fn broker_history_and_simulator_with_identical_names_never_alias() {
             .source,
         Some(SessionSource::Broker(TradeMode::Unknown))
     );
+    let relative_root = Path::new("paper");
+    let active = key.for_broker().path(relative_root);
+    assert!(sessions::live_keys(relative_root, &[active]).contains(&key.for_broker()));
     let excluded = journals::load(&dir, None, &[key.path(&dir)]);
     assert_eq!(excluded.rows.len(), 1);
     assert_eq!(excluded.rows[0].session, Some(key.for_broker()));
@@ -59,13 +62,16 @@ fn account_receipts_survive_reattachment_reload_and_parked_closes() {
     for (mode, timestamp) in [(TradeMode::Demo, 1000), (TradeMode::Real, 2000)] {
         let (broker, script) = crate::fake_broker::broker(mode);
         account.attach_broker(broker);
-        account.handle_events(vec![VenueEvent::Closed(trade_at(timestamp, 5))]);
+        account.handle_events(vec![VenueEvent::Closed {
+            trade: trade_at(timestamp, 5),
+            broker_account: Some(mode),
+        }]);
         assert!(account.take_journal_changed());
         account.park_broker();
-        script
-            .borrow_mut()
-            .said
-            .push(VenueEvent::Closed(trade_at(timestamp + 1, 5)));
+        script.borrow_mut().said.push(VenueEvent::Closed {
+            trade: trade_at(timestamp + 1, 5),
+            broker_account: Some(mode),
+        });
         account.poll_broker(timestamp + 2);
         assert!(
             account.take_journal_changed(),

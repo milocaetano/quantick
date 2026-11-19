@@ -65,20 +65,16 @@ impl SessionKey {
     /// folder of `dir`.
     #[must_use]
     pub fn of(dir: &Path, path: &Path) -> Option<Self> {
-        let broker = super::journals::broker_dir(dir);
-        let (relative, is_broker) = path
-            .strip_prefix(dir)
-            .map(|path| (path, false))
-            .or_else(|_| path.strip_prefix(&broker).map(|path| (path, true)))
-            .ok()?;
-        let mut parts = relative.components();
-        let folder = parts.next()?.as_os_str().to_str()?;
-        let file = parts.next()?.as_os_str().to_str()?;
-        if parts.next().is_some() {
-            return None;
-        }
-        let key = Self::parse(&format!("{folder}/{file}"))?;
-        Some(if is_broker { key.for_broker() } else { key })
+        let under = |root: &Path| {
+            let mut parts = path.strip_prefix(root).ok()?.components();
+            let folder = parts.next()?.as_os_str().to_str()?;
+            let file = parts.next()?.as_os_str().to_str()?;
+            if parts.next().is_some() {
+                return None;
+            }
+            Self::parse(&format!("{folder}/{file}"))
+        };
+        under(dir).or_else(|| under(&super::journals::broker_dir(dir)).map(|key| key.for_broker()))
     }
 
     #[must_use]
