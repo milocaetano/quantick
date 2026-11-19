@@ -55,12 +55,19 @@ const UP_DOWN: &str = "//@version=5\n\
 fn a_held_condition_fires_once_on_the_commit_run() {
     let mut script = load(UP_DOWN);
     let cvd = [0.0; 2];
-    script.on_close(&brick(0, 10.0, 11.0, None), &mut ctx(0, &cvd)).unwrap();
+    script
+        .on_close(&brick(0, 10.0, 11.0, None), &mut ctx(0, &cvd))
+        .unwrap();
     assert_eq!(script.take_fired_alerts(), vec![alert("up", "went up")]);
-    assert!(script.take_fired_alerts().is_empty(), "taken alarms are gone");
+    assert!(
+        script.take_fired_alerts().is_empty(),
+        "taken alarms are gone"
+    );
 
     // A message left out reads as the title.
-    script.on_close(&brick(1, 11.0, 10.0, None), &mut ctx(1, &cvd)).unwrap();
+    script
+        .on_close(&brick(1, 11.0, 10.0, None), &mut ctx(1, &cvd))
+        .unwrap();
     assert_eq!(script.take_fired_alerts(), vec![alert("down", "down")]);
 }
 
@@ -69,12 +76,21 @@ fn a_preview_never_fires_and_never_drops_a_pending_alarm() {
     let mut script = load(UP_DOWN);
     let cvd = [0.0; 2];
     for _ in 0..3 {
-        script.preview(&brick(0, 10.0, 11.0, None), &mut ctx(0, &cvd)).unwrap();
+        script
+            .preview(&brick(0, 10.0, 11.0, None), &mut ctx(0, &cvd))
+            .unwrap();
     }
-    assert!(script.take_fired_alerts().is_empty(), "a forming bar fires nothing");
+    assert!(
+        script.take_fired_alerts().is_empty(),
+        "a forming bar fires nothing"
+    );
 
-    script.on_close(&brick(0, 10.0, 11.0, None), &mut ctx(0, &cvd)).unwrap();
-    script.preview(&brick(1, 11.0, 12.0, None), &mut ctx(1, &cvd)).unwrap();
+    script
+        .on_close(&brick(0, 10.0, 11.0, None), &mut ctx(0, &cvd))
+        .unwrap();
+    script
+        .preview(&brick(1, 11.0, 12.0, None), &mut ctx(1, &cvd))
+        .unwrap();
     assert_eq!(
         script.take_fired_alerts(),
         vec![alert("up", "went up")],
@@ -86,13 +102,19 @@ fn a_preview_never_fires_and_never_drops_a_pending_alarm() {
 fn each_commit_run_replaces_the_alarms_left_untaken() {
     let mut script = load(UP_DOWN);
     let cvd = [0.0; 3];
-    script.on_close(&brick(0, 10.0, 11.0, None), &mut ctx(0, &cvd)).unwrap();
-    script.on_close(&brick(1, 11.0, 11.0, None), &mut ctx(1, &cvd)).unwrap();
+    script
+        .on_close(&brick(0, 10.0, 11.0, None), &mut ctx(0, &cvd))
+        .unwrap();
+    script
+        .on_close(&brick(1, 11.0, 11.0, None), &mut ctx(1, &cvd))
+        .unwrap();
     assert!(
         script.take_fired_alerts().is_empty(),
         "a replayed bar's alarm does not ride into the next close"
     );
-    script.on_close(&brick(2, 11.0, 12.0, None), &mut ctx(2, &cvd)).unwrap();
+    script
+        .on_close(&brick(2, 11.0, 12.0, None), &mut ctx(2, &cvd))
+        .unwrap();
     script.reset();
     assert!(script.take_fired_alerts().is_empty(), "reset drops them");
 }
@@ -106,7 +128,11 @@ fn a_failed_commit_run_raises_nothing() {
         plot(array.get(a, 3))\n";
     let mut script = load(source);
     let cvd = [0.0];
-    assert!(script.on_close(&brick(0, 10.0, 11.0, None), &mut ctx(0, &cvd)).is_err());
+    assert!(
+        script
+            .on_close(&brick(0, 10.0, 11.0, None), &mut ctx(0, &cvd))
+            .is_err()
+    );
     assert!(script.take_fired_alerts().is_empty());
 }
 

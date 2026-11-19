@@ -105,3 +105,4 @@ pub mod chart_settings;
 pub mod script_editor;
 
 pub mod native_indicator;
+pub mod script_alarms;

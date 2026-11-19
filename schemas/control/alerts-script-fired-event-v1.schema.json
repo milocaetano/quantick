@@ -1,0 +1,52 @@
+{
+  "$defs": {
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "bar_close_ms": {
+      "description": "Close time of the bar that raised it, exchange milliseconds.",
+      "format": "int64",
+      "type": "integer"
+    },
+    "indicator": {
+      "description": "The indicator's title, as its legend shows it.",
+      "type": "string"
+    },
+    "message": {
+      "description": "The `alertcondition` message; the title when the script gave none.",
+      "type": "string"
+    },
+    "sequence": {
+      "$ref": "#/$defs/WireU64",
+      "description": "Increasing from 1 for the session; never reused."
+    },
+    "symbol": {
+      "description": "The market of the tab whose chart raised it.",
+      "type": "string"
+    },
+    "title": {
+      "description": "The `alertcondition` title.",
+      "type": "string"
+    },
+    "utc_ms": {
+      "description": "When the window delivered it, UTC milliseconds.",
+      "format": "int64",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "sequence",
+    "utc_ms",
+    "symbol",
+    "indicator",
+    "title",
+    "message",
+    "bar_close_ms"
+  ],
+  "title": "ScriptAlarm",
+  "type": "object"
+}

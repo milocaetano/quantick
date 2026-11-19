@@ -20,7 +20,7 @@ use super::owners_desk::OwnersDesk as _;
 #[cfg(test)]
 use super::paper_wiring::panel_effects::paper_panel_steps;
 use super::paper_wiring::panel_effects::{begin_paper_panel_effects, finish_paper_panel_effects};
-use super::{DrawingResponsePort as _, FrameCalls as _};
+use super::{DrawingResponsePort as _, FrameCalls as _, GatewayPort as _};
 use crate::surfaces::drawing_chrome::DrawingChromeExt as _;
 use crate::surfaces::replay_browser::ReplayBrowserExt as _;
 use crate::surfaces::{AccessPanelEnv, BorrowedSurfaceEnv, ViewContext};
@@ -29,6 +29,7 @@ use quantick_chart_interaction::frame_plan::StageScope;
 use quantick_chart_interaction::frame_tail_plan::{FrameTailPlan, FrameTailStage};
 use quantick_control_handlers::market_palette::MarketPaletteOwners;
 use quantick_control_handlers::notify::AttentionHost as _;
+use quantick_control_handlers::script_alarms::journal as journal_scripts;
 use quantick_feed::stall::Stall;
 use quantick_ui_model::market_palette::Intent as PaletteUiIntent;
 use quantick_ui_model::strategy_popup::Intent::SettleArm;
@@ -373,16 +374,16 @@ impl QuantickApp {
                 super::frame_tail::clean_up_background_strategies(&mut self.runtime.tabs);
             }
             FrameStage::PlayAlerts => {
-                super::alerts_runtime::deliver(
-                    &mut self.runtime.alerts,
+                let scripts = super::alerts_runtime::deliver(
+                    &mut self.runtime,
                     &mut self.audio,
                     &mut self.surfaces.toast,
                     &mut self.surfaces.agent_popup,
-                    self.runtime
-                        .tabs
-                        .iter_mut()
-                        .flat_map(|tab| tab.market.drain_alarms()),
                 );
+                if !scripts.is_empty() {
+                    self.workspace_calls()
+                        .as_hand(|_, to| journal_scripts(to, &scripts));
+                }
             }
             FrameStage::BackgroundPaperPanels => super::frame_tail::settle_background_paper_panels(
                 &mut self.runtime.tabs,

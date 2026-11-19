@@ -2533,6 +2533,136 @@
         "status": "available"
       },
       "confirmation_class": "none",
+      "description": "Reads the alarms indicator scripts raised this session, oldest first: each Pine alertcondition that held on a bar that closed live, once per bar, never on a forming bar or replayed history. Each carries sequence, delivery time, symbol, indicator title, alert title and message, and the bar's close time. The newest 256 are kept, not persisted. Pass after = a previous last_sequence for only newer ones; each is also journaled as alerts.script.fired. Changes nothing.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "observe",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "alerts.script.history",
+      "idempotency": "forbidden",
+      "input_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "after": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Only alarms with a greater sequence; absent for every kept alarm."
+          }
+        },
+        "title": "Input",
+        "type": "object"
+      },
+      "module": "alerts",
+      "output_schema": {
+        "$defs": {
+          "ScriptAlarm": {
+            "properties": {
+              "bar_close_ms": {
+                "description": "Close time of the bar that raised it, exchange milliseconds.",
+                "format": "int64",
+                "type": "integer"
+              },
+              "indicator": {
+                "description": "The indicator's title, as its legend shows it.",
+                "type": "string"
+              },
+              "message": {
+                "description": "The `alertcondition` message; the title when the script gave none.",
+                "type": "string"
+              },
+              "sequence": {
+                "$ref": "#/$defs/WireU64",
+                "description": "Increasing from 1 for the session; never reused."
+              },
+              "symbol": {
+                "description": "The market of the tab whose chart raised it.",
+                "type": "string"
+              },
+              "title": {
+                "description": "The `alertcondition` title.",
+                "type": "string"
+              },
+              "utc_ms": {
+                "description": "When the window delivered it, UTC milliseconds.",
+                "format": "int64",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "sequence",
+              "utc_ms",
+              "symbol",
+              "indicator",
+              "title",
+              "message",
+              "bar_close_ms"
+            ],
+            "type": "object"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "alarms": {
+            "description": "Oldest first; the session keeps the newest 256.",
+            "items": {
+              "$ref": "#/$defs/ScriptAlarm"
+            },
+            "type": "array"
+          },
+          "last_sequence": {
+            "$ref": "#/$defs/WireU64",
+            "description": "The newest sequence ever raised (0: none yet). Pass it as `after` to\nread only what comes next."
+          }
+        },
+        "required": [
+          "alarms",
+          "last_sequence"
+        ],
+        "title": "History",
+        "type": "object"
+      },
+      "persistence": "none",
+      "preconditions": [],
+      "read_only": true,
+      "required_permissions": [
+        "observe",
+        "observe.indicators",
+        "observe.market",
+        "observe.user_text"
+      ],
+      "reversible": false,
+      "revision_policy": "forbidden",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "title": "Read script alarms",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
       "description": "Persist local alert definitions or a durable drawing binding. Never places orders or sends a notification during this command.",
       "destructive": false,
       "dry_run_supported": false,

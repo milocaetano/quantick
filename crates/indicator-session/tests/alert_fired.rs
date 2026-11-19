@@ -32,7 +32,10 @@ impl Recorder {
                     title,
                     message,
                 } => {
-                    assert_eq!((title.as_str(), message.as_str()), ("closed", "a bar closed"));
+                    assert_eq!(
+                        (title.as_str(), message.as_str()),
+                        ("closed", "a bar closed")
+                    );
                     Some((slot.0, bar_close_ms))
                 }
                 _ => None,
@@ -53,7 +56,10 @@ fn bars() -> (Vec<Bar>, Bar) {
         .collect();
     let mut builder = TickBarBuilder::new(2);
     let bars = golden::replay(&mut builder, &trades);
-    (bars, builder.partial().cloned().expect("one print stays forming"))
+    (
+        bars,
+        builder.partial().cloned().expect("one print stays forming"),
+    )
 }
 
 fn add(slot: u64) -> Command {
@@ -91,14 +97,30 @@ fn only_a_live_close_fires_and_only_once() {
     let mut recorder = Recorder::default();
 
     let backfill = history.iter().cloned().map(Into::into).collect();
-    run(&mut session, vec![add(1), Command::Backfilled(backfill)], &mut recorder);
+    run(
+        &mut session,
+        vec![add(1), Command::Backfilled(backfill)],
+        &mut recorder,
+    );
     run(&mut session, vec![add(2)], &mut recorder);
     run(&mut session, vec![partial(&live[0])], &mut recorder);
-    assert_eq!(recorder.fired(), vec![], "history, add and preview fire nothing");
+    assert_eq!(
+        recorder.fired(),
+        vec![],
+        "history, add and preview fire nothing"
+    );
 
-    run(&mut session, vec![Command::BarClosed(live[0].clone().into())], &mut recorder);
+    run(
+        &mut session,
+        vec![Command::BarClosed(live[0].clone().into())],
+        &mut recorder,
+    );
     let close = live[0].close_time;
-    assert_eq!(recorder.fired(), vec![(1, close), (2, close)], "one per slot");
+    assert_eq!(
+        recorder.fired(),
+        vec![(1, close), (2, close)],
+        "one per slot"
+    );
 
     run(&mut session, vec![partial(&forming)], &mut recorder);
     run(
@@ -121,7 +143,11 @@ fn only_a_live_close_fires_and_only_once() {
         "a preview, a rebind and a rebuild never ring the closed bar again"
     );
 
-    run(&mut session, vec![Command::BarClosed(live[1].clone().into())], &mut recorder);
+    run(
+        &mut session,
+        vec![Command::BarClosed(live[1].clone().into())],
+        &mut recorder,
+    );
     let close = live[1].close_time;
     assert_eq!(recorder.fired(), vec![(1, close), (2, close)]);
 }

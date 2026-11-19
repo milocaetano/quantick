@@ -8,8 +8,8 @@
 //! scripted indicator from a native one.
 
 use quantick_indicators::{
-    Ctx, EvalError, FiredAlert, Indicator, IndicatorBar, IndicatorDescriptor, InputValue, PlotBuffer,
-    PreviewFrame, Rgba8,
+    Ctx, EvalError, FiredAlert, Indicator, IndicatorBar, IndicatorDescriptor, InputValue,
+    PlotBuffer, PreviewFrame, Rgba8,
 };
 
 use crate::compile::CompiledScript;

@@ -268,8 +268,8 @@ mod tests {
         }
         assert_eq!(
             EMBEDDED_SCRIPTS.len(),
-            30,
-            "nine originals plus 21 new assets"
+            31,
+            "nine originals, renko_poc_flip and 21 market assets"
         );
         assert_eq!(script_title("my-indicator.pine"), "my indicator");
     }

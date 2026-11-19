@@ -1,5 +1,6 @@
 //! Native shell adapter for the workspace's headless alert owner.
 use crate::metrics::wall_clock_ms;
+use quantick_alerts::sound::Cue;
 use quantick_alerts::{AlertError, DurableDrawingRef};
 use quantick_control_schema::alerts::{DrawingSelector, TargetResolveError};
 use quantick_ui_model::alerts::requests;
@@ -47,21 +48,44 @@ pub(crate) fn path() -> std::path::PathBuf {
     crate::store_home::resolve(quantick_stores::alerts::ALERTS_FILE)
 }
 
-/// Frame delivery docking; child implementation consumes the bounded events.
+/// Frame delivery docking: the script alarms every tab's charts raised are
+/// recorded and sound with the strategy alarms. Answers the script alarms
+/// delivered this frame, for the journal.
 pub(super) fn deliver(
+    owners: &mut super::workspace_runtime::WorkspaceRuntime,
+    audio: &mut super::replay_and_history::AlertState,
+    toast: &mut crate::surfaces::ToastSurface,
+    popup: &mut Popup,
+) -> Vec<quantick_stores::script_alarms::ScriptAlarmEntry> {
+    let (runtime, tabs) = (&mut owners.alerts, &mut owners.tabs);
+    let raised = tabs.iter_mut().flat_map(|tab| {
+        let symbol = tab.symbol.clone();
+        let panes = tab.panes_mut();
+        let alarms: Vec<_> = panes.flat_map(|p| p.indicators.drain_alarms()).collect();
+        alarms.into_iter().map(move |alarm| (symbol.clone(), alarm))
+    });
+    let scripts = runtime.core.script_alarms.record(raised, wall_clock_ms());
+    let script_cues = scripts.iter().map(|_| Cue::default());
+    let strategy_cues = tabs.iter_mut().flat_map(|tab| tab.market.drain_alarms());
+    let cues = strategy_cues.chain(script_cues);
+    play(runtime, audio, toast, popup, cues);
+    scripts
+}
+
+type Popup = crate::surfaces::Adapter<
+    quantick_ui_model::agent_popup::Model,
+    crate::surfaces::agent_popup::View,
+>;
+
+/// Child implementation: consumes the bounded events and plays `strategy_cues`.
+pub(super) fn play(
     runtime: &mut Runtime,
     audio: &mut super::replay_and_history::AlertState,
     toast: &mut crate::surfaces::ToastSurface,
-    popup: &mut crate::surfaces::Adapter<
-        quantick_ui_model::agent_popup::Model,
-        crate::surfaces::agent_popup::View,
-    >,
-    strategy_cues: impl IntoIterator<Item = quantick_alerts::sound::Cue>,
+    popup: &mut Popup,
+    strategy_cues: impl IntoIterator<Item = Cue>,
 ) {
-    use quantick_alerts::{
-        DeliveryOutcome,
-        sound::{AlertSound, Cue},
-    };
+    use quantick_alerts::{DeliveryOutcome, sound::AlertSound};
     // Persist the firing decision before attempting an irreversible notification.
     let persisted = runtime.core.events.is_empty() || runtime.core.flush().is_ok();
     let events: Vec<_> = runtime.core.events.drain().collect();

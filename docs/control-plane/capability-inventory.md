@@ -35,6 +35,7 @@ capability that cannot change application state.
 | `alerts.read` | 1 | `alerts` | yes | `observe` |
 | `alerts.rearm` | 1 | `alerts` | no | `cockpit` |
 | `alerts.resume` | 1 | `alerts` | no | `cockpit` |
+| `alerts.script.history` | 1 | `alerts` | yes | `observe`, `observe.indicators`, `observe.market`, `observe.user_text` |
 | `alerts.target.resolve` | 1 | `alerts` | no | `cockpit` |
 | `alerts.validate` | 1 | `alerts` | yes | `observe` |
 | `annotate.arrow.create` | 1 | `annotate` | no | `annotate`, `annotate.chart` |
@@ -198,4 +199,4 @@ capability that cannot change application state.
 | `workspace.save_as` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
 | `workspace.save_to` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
 
-173 capabilities registered.
+174 capabilities registered.

@@ -105,6 +105,17 @@ pub struct FiredAlert {
     pub message: String,
 }
 
+/// A [`FiredAlert`] as the chart received it: which indicator raised it, on
+/// the bar closing when.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScriptAlarm {
+    /// The indicator's title, as its legend shows it.
+    pub indicator: String,
+    /// Close time of the bar that raised it, exchange milliseconds.
+    pub bar_close_ms: i64,
+    pub alert: FiredAlert,
+}
+
 /// A computation from bars to plot columns, evaluated bar by bar.
 ///
 /// Implementations must be **deterministic**: same bars in, same plots out,
