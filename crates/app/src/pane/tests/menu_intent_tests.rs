@@ -136,15 +136,7 @@ fn arm_strategy(pane: &mut ChartPane, drawing: DrawingId) {
         cue: crate::audio::Cue::default(),
         mark: crate::strategy_anchors::AlarmMark::Quiet,
     };
-    with_strategies(|strategies| {
-        assert!(
-            strategies
-                .pane_mut(pane.id)
-                .anchors
-                .arm(instance)
-                .is_empty()
-        );
-    });
+    with_strategies(|strategies| strategies.pane_mut(pane.id).anchors.arm(instance));
 }
 
 fn strategy_state(pane: &ChartPane, drawing: DrawingId) -> Option<quantick_strategy::ArmedState> {

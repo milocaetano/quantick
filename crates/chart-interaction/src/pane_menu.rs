@@ -326,15 +326,14 @@ fn drawing_entries(fact: &DrawingMenuFact) -> Vec<Entry> {
                     } else { "this drawing belongs to another market or lost its series \u{2014} redraw the region here first".into() }))),
                 StrategyPhase::Fired => {},
             }
-            out.push(button("Remove strategy", MenuIntent::StrategyRemove(id), "detach the bot from this drawing; an open operation keeps its position and bracket", "Remove strategy"));
-        } else {
-            out.push(button(
-                "Add strategy\u{2026}",
-                MenuIntent::StrategyAdd(id),
-                "arm a strategy on this region: it fires on the trigger bar, in paper trading",
-                "Add strategy",
-            ));
+            out.push(button("Remove strategy", MenuIntent::StrategyRemove(id), "detach every bot from this drawing; an open operation keeps its position and bracket", "Remove strategy"));
         }
+        out.push(button(
+            "Add strategy\u{2026}",
+            MenuIntent::StrategyAdd(id),
+            "arm a strategy on this region: it fires on the trigger bar, in paper trading, beside any already armed here",
+            "Add strategy",
+        ));
     }
     let lock = if fact.drawing.locked {
         "Unlock"

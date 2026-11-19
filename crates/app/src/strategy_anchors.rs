@@ -5,7 +5,7 @@ use crate::drawings::DrawingId;
 
 #[cfg(test)]
 pub use quantick_strategy::anchors::AlarmMark;
-pub use quantick_strategy::anchors::badge_text;
+pub use quantick_strategy::anchors::stacked_badge_text;
 
 /// One armed strategy riding one drawing.
 pub type AnchoredInstance = quantick_strategy::anchors::AnchoredInstance<DrawingId>;

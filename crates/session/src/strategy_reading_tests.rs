@@ -9,8 +9,8 @@ use crate::strategies_tests::{DrawingId, instance};
 fn a_pane_reads_its_instances_in_arming_order_with_their_state() {
     let mut strategies = TabStrategies::default();
     let pane = strategies.pane_mut(7);
-    let _ = pane.anchors.arm(instance(DrawingId(1)));
-    let _ = pane.anchors.arm(instance(DrawingId(2)));
+    pane.anchors.arm(instance(DrawingId(1)));
+    pane.anchors.arm(instance(DrawingId(2)));
     let _ = pane.anchors.instances[1]
         .armed
         .disarm(DisarmReason::MarketChanged);

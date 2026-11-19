@@ -43,12 +43,12 @@ pub fn drawing_region(
 pub(crate) use quantick_drawings::alert_geometry::region_can_fire;
 
 pub(super) fn badge_text_for(
-    instance: &crate::strategy_anchors::AnchoredInstance,
+    (instance, riders): (&crate::strategy_anchors::AnchoredInstance, usize),
     drawing: &Drawing,
     all_hidden: bool,
     closed_slots: usize,
 ) -> String {
-    let mut text = crate::strategy_anchors::badge_text(instance);
+    let mut text = crate::strategy_anchors::stacked_badge_text(instance, riders);
     // The region's own state first, and *instead of* the kernel's
     // reason rather than beside it. A paused or expired region makes
     // `PaneStrategies::region` refuse, which the kernel records as "region
@@ -97,7 +97,7 @@ pub(super) fn badge_text_for(
 }
 pub(super) fn paint_strategy_badge(
     painter: &egui::Painter,
-    instance: &crate::strategy_anchors::AnchoredInstance,
+    (instance, riders): (&crate::strategy_anchors::AnchoredInstance, usize),
     drawing: &Drawing,
     points: &[egui::Pos2],
     all_hidden: bool,
@@ -128,7 +128,7 @@ pub(super) fn paint_strategy_badge(
     const BADGE_CORNER_PX: f32 = 3.0;
     /// Ground opacity: readable over candles, still a whisper.
     const BADGE_GROUND_ALPHA: f32 = 0.85;
-    let text = badge_text_for(instance, drawing, all_hidden, closed_slots);
+    let text = badge_text_for((instance, riders), drawing, all_hidden, closed_slots);
     let position = anchor + egui::vec2(BADGE_PAD_X_PX - 1.0, -BADGE_LIFT_PX);
     // A whisper of ground behind the label so it stays readable over
     // candles; galley first, box after, text last.
@@ -163,7 +163,7 @@ pub(crate) fn strategy_badge_text(
         return String::new();
     };
     badge_text_for(
-        instance,
+        (instance, anchors.on_drawing(id).count()),
         &drawings.items()[index],
         drawings.all_hidden(),
         closed_slots,

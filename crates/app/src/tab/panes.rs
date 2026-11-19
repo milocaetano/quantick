@@ -591,18 +591,13 @@ impl Tab {
     ) -> Result<(), String> {
         let (pane, strategies) = self.pane_with_strategies(side);
         let (pane, closed) = (&*pane, pane.series_read().closed_slots());
-        let (replaced_cleanup, cue) = strategies.arm(
+        let cue = strategies.arm(
             drawing,
             form,
             preset_label,
             || quantick_drawings::alert_geometry::check_arm(&pane.drawings, drawing, closed),
             |depth| pane.series_read().warmup_bars(depth),
         )?;
-        for command in replaced_cleanup {
-            // Arming over an instance with a pending entry sweeps that
-            // entry — a resting order must never outlive its bot.
-            let _ = self.paper.account_mut().apply_strategy_command(command);
-        }
         self.paper.account_mut().set_bot_listening(true);
         // Only now, past every gate: the sink opens its device at arm time
         // so the first signal does not pay for it on the tape's path, but a

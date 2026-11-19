@@ -302,21 +302,18 @@ impl DrawingAccess<'_> {
             }
         }
     }
-    pub(super) fn watching_strategy(
+    pub(super) fn watching_strategies(
         &self,
         source: drawings::DrawingId,
-    ) -> Option<(crate::strategy_presets::StoredPreset, String)> {
-        use quantick_strategy::ArmedState;
+    ) -> Vec<(crate::strategy_presets::StoredPreset, String)> {
         let tab = &self.tabs[self.tabs.active_index()];
-        (tab.market.strategies.anchors(tab.drawing_pane().id))?
-            .for_drawing(source)
-            .filter(|instance| {
-                matches!(
-                    instance.armed.state(),
-                    ArmedState::Armed | ArmedState::Fired { .. } | ArmedState::InPosition
-                )
-            })
-            .map(|instance| (instance.spec.clone(), instance.preset.clone()))
+        let anchors = tab.market.strategies.anchors(tab.drawing_pane().id);
+        (anchors
+            .into_iter()
+            .flat_map(|anchors| anchors.on_drawing(source)))
+        .filter(|instance| instance.watching())
+        .map(|instance| (instance.spec.clone(), instance.preset.clone()))
+        .collect()
     }
     #[cfg(any(feature = "drawing-harness", test))]
     pub(super) fn text_note_point(

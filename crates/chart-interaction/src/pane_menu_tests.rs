@@ -123,6 +123,47 @@ fn descriptors_pin_empty_sections_utf8_and_captured_tape_order() {
         )
     );
 }
+/// A region already carrying a bot still offers another: instances stack.
+#[test]
+fn a_region_with_a_strategy_still_offers_another() {
+    let mut facts = facts();
+    facts.drawing = Some(DrawingMenuFact {
+        drawing: DrawingFact {
+            id: DrawingId(7),
+            name: "region".into(),
+            locked: false,
+        },
+        label: "rectangle".into(),
+        hidden: false,
+        strategy_region: true,
+        strategy: Some(StrategyFact {
+            status: "armed".into(),
+            phase: StrategyPhase::Watching,
+            footed: true,
+            span_alive: true,
+        }),
+    });
+    let entries = describe(&Model::default(), &facts);
+    let labels: Vec<_> = entries[..6].iter().map(|e| e.label.as_str()).collect();
+    assert_eq!(
+        labels,
+        [
+            "rectangle",
+            "name this object",
+            "armed",
+            "Disarm",
+            "Remove strategy",
+            "Add strategy\u{2026}"
+        ]
+    );
+    assert!(matches!(
+        entries[5].kind,
+        Kind::Button {
+            event: Event::Choice(MenuIntent::StrategyAdd(DrawingId(7))),
+            ..
+        }
+    ));
+}
 #[test]
 fn locked_drawing_and_objects_keep_verbs_stable_ids_and_chip_order() {
     let mut facts = facts();

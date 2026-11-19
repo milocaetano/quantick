@@ -2243,7 +2243,7 @@ fn a_paused_regions_badge_says_the_specific_thing_and_not_the_general_one() {
     // Nothing was armed here before, so there is no replaced instance
     // whose resting order would need sweeping.
     let mut anchors = crate::strategy_anchors::StrategyAnchors::default();
-    assert!(anchors.arm(instance).is_empty());
+    anchors.arm(instance);
 
     let badge = strategy_badge_text(&anchors, &pane.drawings, id, pane.closed_slots());
     assert!(
@@ -2365,7 +2365,7 @@ fn the_badge_names_the_rulers_own_refusal_and_not_only_an_older_bars() {
     );
 
     let mut anchors = crate::strategy_anchors::StrategyAnchors::default();
-    assert!(anchors.arm(instance).is_empty());
+    anchors.arm(instance);
     let badge = strategy_badge_text(&anchors, &pane.drawings, id, pane.closed_slots());
 
     let ruler = badge
@@ -2448,7 +2448,7 @@ fn g6_badge_pane() -> (ChartPane, crate::strategy_anchors::StrategyAnchors) {
         mark: crate::strategy_anchors::AlarmMark::Quiet,
     };
     let mut anchors = crate::strategy_anchors::StrategyAnchors::default();
-    assert!(anchors.arm(instance).is_empty());
+    anchors.arm(instance);
     (pane, anchors)
 }
 fn g6_badge_band(top: f32) -> bands::Band {
