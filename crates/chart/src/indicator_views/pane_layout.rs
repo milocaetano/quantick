@@ -1,5 +1,5 @@
 //! Font-aware pane height allocation, independent of window geometry.
-use super::{MAX_PANES, PaneSizing};
+use super::{MAX_PANES, MIN_PANE_HEIGHT_PX, PaneSizing};
 pub const MIN_CHART_HEIGHT_PX: f32 = 120.0;
 pub fn pane_heights(band_height: f32, sizing: &[PaneSizing], strip_height: f32) -> Vec<f32> {
     let count = sizing.len().min(MAX_PANES);
@@ -25,9 +25,11 @@ pub fn pane_heights(band_height: f32, sizing: &[PaneSizing], strip_height: f32) 
             if matches!(sizing, PaneSizing::Collapsed) {
                 continue;
             }
-            let desired = sizing.desired(band_height).max(strip_height);
+            // A saved drag height may no longer fit after a horizontal split.
+            // Use the readable room now without changing the requested sizing.
+            let desired = sizing.desired(band_height).min(budget + strip_height);
             let extra = desired - strip_height;
-            if extra <= budget {
+            if desired >= MIN_PANE_HEIGHT_PX && extra > 0.0 {
                 budget -= extra;
                 heights[index] = desired;
             }
@@ -63,6 +65,28 @@ mod value_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn a_requested_height_shrinks_to_readable_room_and_recovers_on_resize() {
+        let sizing = [PaneSizing::Manual(300.0), PaneSizing::Collapsed];
+        for (height, expected) in [
+            (600.0, 300.0),
+            (300.0, 160.0),
+            (240.0, 100.0),
+            (239.0, 20.0),
+            (600.0, 300.0),
+        ] {
+            assert_eq!(pane_heights(height, &sizing, 20.0), [expected, 20.0]);
+        }
+    }
+
+    #[test]
+    fn a_partial_manual_height_keeps_priority_over_automatic_panes() {
+        assert_eq!(
+            pane_heights(300.0, &[PaneSizing::Auto, PaneSizing::Manual(300.0)], 20.0),
+            [20.0, 160.0]
+        );
+    }
+
     #[test]
     fn enlarged_strips_keep_explicit_priority_and_collapsed_floor() {
         for strip in [24.0, 48.0] {
