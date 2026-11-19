@@ -372,7 +372,7 @@ impl ChartPane {
             self.series.state.set_footprint_group(base);
         }
         if self.series.state.series_revision() != footprints_from {
-            self.send_indicator_rebuild(); // ladders refolded: stale `poc`
+            self.replay_indicators(); // ladders refolded: stale `poc`
         }
         if footprint_on {
             let now = painter.ctx().input(|i| i.time);

@@ -92,10 +92,13 @@ by every indicator), `trade_count`, `poc`.
 
 `poc` is the bar's footprint point of control: the lower edge of the row that
 traded the most volume, at the chart's footprint row width, ties going to the
-lower row. The forming bar's `poc` moves with its prints on preview runs. A
-bar with no captured footprint reads `na` — footprints off, venue history
-candles, backtests, and the rungs of the live lane — and nothing estimates
-one from the bar's OHLC.
+lower row. A bar too wide for the ladder's level cap is captured at a coarser
+row (the width doubles until it fits), and its `poc` is that row's edge. The
+forming bar's `poc` moves with its prints on preview runs. The value exists
+only where the chart captures ladders — the footprint layer, a range profile
+or candle aggression on — so a bar with no captured footprint reads `na`:
+footprints off, venue history candles, backtests, and the rungs of the live
+lane. Nothing estimates one from the bar's OHLC.
 
 ## History `[n]`
 

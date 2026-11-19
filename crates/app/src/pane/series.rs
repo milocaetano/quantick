@@ -63,6 +63,12 @@ impl ChartPane {
         if let Some(owner) = self.orderflow.as_mut() {
             owner.reset_flow_executions();
         }
+        self.replay_indicators();
+    }
+
+    /// Replay the bars into the indicators and nothing else: what a refold
+    /// of the footprint ladders needs, whose bars did not change.
+    pub(crate) fn replay_indicators(&mut self) {
         self.lane.reset();
         self.indicator_worker.send(IndicatorCommand::Rebuild(
             self.series_read().closed_footprint_bars(),

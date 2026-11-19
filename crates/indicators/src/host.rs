@@ -11,8 +11,8 @@
 //! app-side. A backtester or bot drives this same type directly: push bars,
 //! read committed plot columns. That symmetry is the point.
 //!
-//! The host retains the projected bar history (`IndicatorBar` is 10 machine
-//! words; 100k bars ≈ 8 MB). That is what lets [`add`](IndicatorHost::add)
+//! The host retains the projected bar history (`IndicatorBar` is 11 machine
+//! words; 100k bars ≈ 8.8 MB). That is what lets [`add`](IndicatorHost::add)
 //! and [`replace`](IndicatorHost::replace) catch a newcomer up over the full
 //! history without asking the caller to re-supply bars — an input change is
 //! "construct with new inputs, replace, host replays", so a running script

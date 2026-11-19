@@ -431,6 +431,13 @@ impl Compiler {
             self.builtin_call(id, builtin, args, ctx);
             return;
         }
+        // The script's own function wins over a builtin of the same name, as
+        // its variables already do: a builtin added later (`poc`) must not
+        // break a script that named its helper first.
+        if let Some(function @ Resolution::Function(_)) = self.lookup_name(&name, scope, ctx) {
+            self.resolve_user_call(id, callee, &name, function, ctx);
+            return;
+        }
         if let Some(builtin) = Builtin::lookup(&name) {
             self.resolutions[callee.index()] = Resolution::Builtin(builtin);
             self.builtin_call(id, builtin, args, ctx);
