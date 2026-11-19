@@ -10,12 +10,19 @@ use quantick_paper::report::ledger_state::{
     LedgerCut, LedgerEdit, LedgerState, LedgerViewChange, LiveCloses, SessionPress,
 };
 use quantick_paper::report::readout::LedgerTotals;
+use quantick_paper::report::scope::{PreparedReport, ReportReceipt, ReportRequest};
 use quantick_paper::report::session_edit::JournalEdit;
 use quantick_paper::report::sessions::{SessionKey, TradeRef};
 use quantick_paper::report::snapshot::ReportSnapshot;
 use quantick_paper::report::{LoadedHistory, ReportPeriod, ReportView, SourceFilter, parse_period};
 
 type ReportDaysKey = (u64, SourceFilter, TzOffset);
+pub mod io;
+
+struct ReportFilter {
+    source: SourceFilter,
+    scope: Option<ReportReceipt>,
+}
 
 /// Cached presentation can be read by a host, but changes enter as intents.
 ///
@@ -24,7 +31,7 @@ type ReportDaysKey = (u64, SourceFilter, TzOffset);
 /// use quantick_ui_model::paper_report::State;
 /// use quantick_paper::report::SourceFilter;
 /// let mut state = State::default();
-/// state.report_source = SourceFilter::Replay;
+/// state.filter.source = SourceFilter::Replay;
 /// ```
 /// Projection caches cannot be installed by a caller.
 /// ```compile_fail,E0616
@@ -39,12 +46,12 @@ type ReportDaysKey = (u64, SourceFilter, TzOffset);
 /// state.sessions().cut = None;
 /// ```
 pub struct State {
+    filter: ReportFilter,
     revision: u64,
     toast: Option<String>,
     report_open: bool,
     report_symbol: Option<String>,
     report_period: ReportPeriod,
-    report_source: SourceFilter,
     report_custom_text: String,
     report_symbols: Vec<String>,
     report: Option<LoadedHistory>,
@@ -72,12 +79,15 @@ pub struct State {
 impl Default for State {
     fn default() -> Self {
         Self {
+            filter: ReportFilter {
+                source: SourceFilter::Real,
+                scope: None,
+            },
             revision: 0,
             toast: None,
             report_open: false,
             report_symbol: None,
             report_period: ReportPeriod::All,
-            report_source: SourceFilter::Real,
             report_custom_text: String::new(),
             report_symbols: Vec::new(),
             report: None,
@@ -114,6 +124,7 @@ pub enum LedgerAction {
 }
 #[derive(Debug, PartialEq, Eq)]
 pub enum Load {
+    Scoped(ReportRequest, TzOffset),
     Report(Option<String>),
     Ledger(LedgerScope),
 }
@@ -167,6 +178,7 @@ impl LoadedLedger {
 }
 
 pub enum Intent {
+    Scoped(Box<PreparedReport>),
     Open(String),
     Close,
     ReloadReport,
@@ -246,6 +258,28 @@ pub struct DayFolds {
     days: BTreeSet<i64>,
 }
 impl State {
+    pub fn report_scope(&self) -> Option<&ReportReceipt> {
+        self.filter.scope.as_ref()
+    }
+
+    fn install_scoped(&mut self, prepared: PreparedReport) {
+        let request = &prepared.receipt.request;
+        self.report_open = true;
+        self.report_symbol = None;
+        self.report_period = ReportPeriod::All;
+        self.filter.source = request.source();
+        self.report_custom_text.clear();
+        self.calendar = CalendarState::default();
+        if let Some(day) = request.day {
+            self.calendar.selection = DaySelection::Anchor(day);
+            self.calendar.month = Some(day.month_start());
+        }
+        self.filter.scope = Some(prepared.receipt);
+        self.report = Some(prepared.history);
+        self.report_symbols = prepared.symbols;
+        self.report_generation = self.report_generation.wrapping_add(1);
+        self.report_view = None;
+    }
     pub fn report_open(&self) -> bool {
         self.report_open
     }
@@ -256,7 +290,7 @@ impl State {
         self.report_period
     }
     pub fn report_source(&self) -> SourceFilter {
-        self.report_source
+        self.filter.source
     }
     pub fn report_custom_text(&self) -> &str {
         &self.report_custom_text
@@ -328,7 +362,7 @@ impl State {
         let range = self.calendar.selection.range();
         if self.report_view.as_ref().is_some_and(|view| {
             view.period == self.report_period
-                && view.source == self.report_source
+                && view.source == self.filter.source
                 && view.range == range
                 && view.tz == tz
                 && view.worded_by(pnl)
@@ -342,14 +376,20 @@ impl State {
                 days: Some((DayIndex::default(), None)),
             });
         };
-        let key = (self.report_generation, self.report_source, tz);
+        let key = (self.report_generation, self.filter.source, tz);
         let days = (self.report_days_key != Some(key)).then(|| {
             (
                 DayIndex::build(
                     history
                         .rows
                         .iter()
-                        .filter(|row| self.report_source.admits(row.source))
+                        .filter(|row| self.filter.source.admits(row.source))
+                        .filter(|row| {
+                            self.filter
+                                .scope
+                                .as_ref()
+                                .is_none_or(|scope| scope.request.admits(row, tz))
+                        })
                         .map(|row| &row.trade),
                     tz,
                 ),
@@ -359,8 +399,15 @@ impl State {
         Some(ReportProjection {
             revision: self.revision,
             view: Some(Box::new(
-                ReportView::cut(history, self.report_period, self.report_source, range, tz)
-                    .with_pnl(pnl),
+                ReportView::cut_scoped(
+                    history,
+                    self.report_period,
+                    self.filter.source,
+                    range,
+                    tz,
+                    self.filter.scope.as_ref().map(|scope| &scope.request),
+                )
+                .with_pnl(pnl),
             )),
             days,
         })
@@ -445,6 +492,7 @@ impl crate::Model for Model {
         let revision = state.revision;
         state.revision = state.revision.wrapping_add(1);
         match intent {
+            Intent::Scoped(prepared) => state.install_scoped(*prepared),
             Intent::Open(symbol) => {
                 state.report_open = true;
                 if state.report.is_none() && !symbol.is_empty() {
@@ -453,7 +501,13 @@ impl crate::Model for Model {
                 return state.report_load();
             }
             Intent::Close => state.report_open = false,
-            Intent::ReloadReport | Intent::JournalChanged => return state.report_load(),
+            Intent::ReloadReport => return state.report_load(),
+            Intent::JournalChanged => {
+                state.history_cache = None;
+                if state.report_open {
+                    return state.report_load();
+                }
+            }
             Intent::DirectoryChanged | Intent::HistoryImported => {
                 let directory = matches!(intent, Intent::DirectoryChanged);
                 state.history_cache = None;
@@ -518,7 +572,7 @@ impl crate::Model for Model {
             Intent::InstallReport(_) | Intent::InstallLedger(_) => {}
             Intent::Symbol(symbol) => state.report_symbol = symbol,
             Intent::Source(source) => {
-                state.report_source = source;
+                state.filter.source = source;
                 state.report_view = None;
             }
             Intent::Period(period) => {
@@ -552,9 +606,11 @@ impl crate::Model for Model {
             }
             Intent::ListOpen(open) => state.report_list_open = open,
             Intent::ClearFilters(symbol) => {
+                state.filter.scope = None;
+                state.report_days_key = None;
                 state.report_symbol = (!symbol.is_empty()).then_some(symbol);
                 state.report_period = ReportPeriod::All;
-                state.report_source = SourceFilter::Real;
+                state.filter.source = SourceFilter::Real;
                 state.calendar.selection = DaySelection::None;
                 state.report_view = None;
             }
@@ -629,13 +685,22 @@ fn update_ledger(state: &mut State, intent: LedgerIntent, revision: u64) -> Effe
                 );
             }
         }
+        LedgerIntent::Session(SessionPress::Report(request)) => {
+            effects.load = Some(Load::Scoped(request, state.ledger_tz));
+        }
         LedgerIntent::Session(press) => {
             effects.ledger = state
                 .sessions
                 .apply(press, state.history_cache.as_ref())
                 .map(LedgerAction::Edit);
         }
-        LedgerIntent::Rows(input) => effects.ledger = apply_rows(state, *input),
+        LedgerIntent::Rows(mut input) => {
+            if let Some(SessionPress::Report(request)) = input.session.as_ref() {
+                effects.load = Some(Load::Scoped(request.clone(), state.ledger_tz));
+                input.session = None;
+            }
+            effects.ledger = apply_rows(state, *input);
+        }
         LedgerIntent::TagTarget(target) => match target {
             None => state.sessions.tag_text = None,
             Some((session, trade, tags)) => {

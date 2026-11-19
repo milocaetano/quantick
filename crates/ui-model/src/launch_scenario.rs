@@ -362,6 +362,12 @@ impl Scenario<'_> {
     fn paper_report(&self, mut apply: impl FnMut(Op)) {
         if values::one(self.var("QUANTICK_PAPER_REPORT_AUTOSTART").as_deref()) {
             apply(Op::Report);
+        } else if let Some(call) = self
+            .var("QUANTICK_PAPER_REPORT_AUTOSTART")
+            .as_deref()
+            .and_then(launch_calls::session_report)
+        {
+            apply(Op::Call(call));
         }
         if let Some(value) = self.var("QUANTICK_PAPER_REPORT_SCROLL") {
             apply(Op::ReportScroll(value));

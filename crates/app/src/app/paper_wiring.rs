@@ -141,7 +141,7 @@ impl PaperOwner for super::workspace_calls::WorkspaceCalls<'_> {
 fn journal_scope(tabs: &ArrangementHost) -> JournalScope {
     let live = tabs
         .iter()
-        .flat_map(|tab| tab.paper.account().session_journal_paths());
+        .flat_map(|tab| tab.paper.account().journal_paths());
     JournalScope {
         dir: tabs[tabs.active_index()]
             .paper

@@ -76,7 +76,7 @@ fn report_text(ctx: &egui::Context, output: &egui::FullOutput) -> Vec<String> {
     for shape in &output.shapes {
         collect(&shape.shape, area, shape.clip_rect, &mut found);
     }
-    assert!(found.iter().any(|text| text == "Simulated performance"));
+    assert!(found.iter().any(|text| text == "Trading performance"));
     found
 }
 

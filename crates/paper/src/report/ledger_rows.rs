@@ -261,6 +261,7 @@ pub struct GroupView<'s> {
 
 /// A session's row as the list paints it.
 pub struct SessionHead {
+    pub day: CivilDate,
     pub key: SessionKey,
     /// What the row writes, and what the search, the delete confirm and the
     /// control plane call it: its label, `Live · 12:16–13:56`, from its
@@ -327,6 +328,7 @@ pub fn push_groups<'a>(
                         |label| label.text.clone(),
                     );
                     rows.push(LedgerRow::SessionHead(SessionHead {
+                        day: day.day,
                         key: key.clone(),
                         title,
                         source: first.meta.source,

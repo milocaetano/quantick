@@ -9,6 +9,9 @@ use rust_decimal::Decimal;
 
 use super::*;
 
+#[path = "broker_tests.rs"]
+mod broker;
+
 /// A closed trade that netted `pnl` points, closing at `closed_ms`.
 fn trade_at(closed_ms: i64, pnl: i64) -> ClosedTrade {
     ClosedTrade {

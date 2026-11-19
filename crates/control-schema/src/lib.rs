@@ -55,6 +55,7 @@ pub mod scene;
 pub mod script;
 pub mod script_alarms;
 pub mod session;
+pub mod session_reports;
 pub mod settings_sections;
 pub mod tape_fold;
 pub mod tape_market_fold;

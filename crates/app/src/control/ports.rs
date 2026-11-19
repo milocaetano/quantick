@@ -12,6 +12,14 @@ use crate::paper_trading::PaperTrading;
 
 // `**self` is the tab's paper (`quantick_session::paper`), never this trait.
 impl TradeDesk for PaperTrading {
+    fn show_report(&mut self, report: quantick_paper::report::scope::PreparedReport) {
+        (**self)
+            .account_mut()
+            .report
+            .update(quantick_ui_model::paper_report::Intent::Scoped(Box::new(
+                report,
+            )));
+    }
     fn account(&self) -> &quantick_paper::PaperAccount {
         (**self).account()
     }

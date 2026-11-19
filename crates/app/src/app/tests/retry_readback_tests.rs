@@ -958,6 +958,7 @@ fn replay_plan() -> Vec<(&'static str, u32, Value, Readback)> {
         ("canvas.pane.pop_out", 1, Value::Null, Readback::Moves),
         ("canvas.pane.return", 1, Value::Null, Readback::Moves),
         ("canvas.pane.remove", 1, Value::Null, Readback::Moves),
+        ("session.report.open", 1, Value::Null, Readback::Moves),
         ("alerts.open", 1, json!({}), Readback::Moves),
         // Last of all: it closes the active tab, edits or not.
         ("tab.close", 1, json!({ "save": false }), Readback::Moves),
@@ -1019,6 +1020,20 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
         let mut client = connect(&directory, &cockpit);
         let row = retry_matrix::readback(capability).expect("the matrix has a row");
         let payload = match capability {
+            "session.report.open" => {
+                let dir = directory.join("report-history");
+                std::fs::create_dir_all(dir.join("RETRY")).unwrap();
+                std::fs::write(
+                    dir.join("RETRY/report.csv"),
+                    quantick_sim::history::write_header(
+                        "RETRY",
+                        quantick_sim::history::SessionSource::Live,
+                    ),
+                )
+                .unwrap();
+                app.active_tab_mut().paper.redirect_history_dir(dir);
+                json!({ "action": "session", "session": "RETRY/report.csv" })
+            }
             "market.open" => json!({
                 "feed": app.active_tab().feed_id,
                 "symbol": app.active_tab().symbol,

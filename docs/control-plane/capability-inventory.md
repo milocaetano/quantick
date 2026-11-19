@@ -164,6 +164,7 @@ capability that cannot change application state.
 | `session.journal.delete` | 1 | `session` | no | `cockpit`, `cockpit.journal.delete` |
 | `session.journal.set` | 1 | `session` | no | `cockpit` |
 | `session.pnl_display.set` | 1 | `session` | no | `cockpit` |
+| `session.report.open` | 1 | `session` | no | `cockpit` |
 | `settings.open` | 1 | `settings` | no | `cockpit`, `cockpit.layout` |
 | `settings.set` | 1 | `settings` | no | `cockpit`, `cockpit.layout` |
 | `snapshot.read` | 1 | `snapshot` | yes | `observe` |
@@ -199,4 +200,4 @@ capability that cannot change application state.
 | `workspace.save_as` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
 | `workspace.save_to` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
 
-174 capabilities registered.
+175 capabilities registered.

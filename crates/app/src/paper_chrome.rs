@@ -42,7 +42,6 @@ pub(crate) use quantick_paper::format::{
     PositionSummary, fmt_decimal, fmt_duration_ms, fmt_exact, fmt_points, fmt_signed_points,
     has_signed_figure, position_word, signed_figure,
 };
-pub(crate) use quantick_paper::report::list_symbol_folders;
 
 /// Uppercase section caption — the ledger's group labels and column header.
 pub(crate) fn caption(palette: &crate::theme::Palette, text: &str) -> egui::RichText {

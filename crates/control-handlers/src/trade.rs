@@ -62,6 +62,8 @@ pub use quantick_control_host::authority::{TRADE_MODULE_ID, TRADE_PERMISSION_ID}
 /// orders rest in, the ruler that shapes one order, and the bracket the
 /// ticket has armed.
 pub trait TradeDesk {
+    /// Install a validated report through the same model transition as the context menu.
+    fn show_report(&mut self, report: quantick_paper::report::scope::PreparedReport);
     /// The simulated account.
     fn account(&self) -> &PaperAccount;
     /// The simulated account, to place into.

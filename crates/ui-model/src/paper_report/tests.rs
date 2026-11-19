@@ -13,6 +13,107 @@ use quantick_trading::{ClosedTrade, ExitReason};
 use rust_decimal::Decimal;
 
 #[test]
+fn scoped_open_replaces_stale_filters_and_reloads_keep_the_exact_session() {
+    let tz = TzOffset::new(-180);
+    let day = quantick_civil::parse_iso_date("2026-11-18").unwrap();
+    let key = SessionKey::parse("broker/WINZ26/20261118-124104.csv").unwrap();
+    let mut rows = vec![
+        row(
+            "WINZ26",
+            Some(history::SessionSource::Broker(
+                quantick_trading::TradeMode::Demo,
+            )),
+            trade_at(day.start_ms(tz) + 1, 5),
+        ),
+        row(
+            "X",
+            Some(history::SessionSource::Replay),
+            trade_at(day.start_ms(tz) + 2, 100),
+        ),
+    ];
+    rows[0].session = Some(key.clone());
+    rows[1].session = Some(SessionKey::parse("X/other.csv").unwrap());
+    let mut state = State::default();
+    Model::update(&mut state, Intent::Symbol(Some("X".to_owned())));
+    Model::update(&mut state, Intent::Source(SourceFilter::Replay));
+    Model::update(
+        &mut state,
+        Intent::Dates(DaySelection::Anchor(day.offset_days(1))),
+    );
+    Model::update(
+        &mut state,
+        Intent::Scoped(Box::new(PreparedReport {
+            receipt: ReportReceipt {
+                request: ReportRequest {
+                    session: key,
+                    day: None,
+                },
+                title: "Broker · Opening".to_owned(),
+                trades: 1,
+                net_points: Decimal::from(5),
+            },
+            history: history_rows(rows.clone()),
+            symbols: vec!["WINZ26".to_owned(), "X".to_owned()],
+        })),
+    );
+    state.ensure_report_view(tz, PnlReader::plain());
+    assert!(state.report_open());
+    assert!(state.report_symbol().is_none());
+    assert_eq!(state.calendar().selection, DaySelection::None);
+    assert_eq!(state.snapshot().unwrap().rows.len(), 1);
+    assert_eq!(
+        state.snapshot().unwrap().report.net_points,
+        Decimal::from(5)
+    );
+    assert_eq!(
+        Model::update(&mut state, Intent::JournalChanged).load,
+        Some(Load::Report(None))
+    );
+    rows[0].trade.pnl_points = Decimal::from(7);
+    Model::update(&mut state, loaded_report(rows));
+    state.ensure_report_view(tz, PnlReader::plain());
+    assert_eq!(state.snapshot().unwrap().rows.len(), 1);
+    assert_eq!(
+        state.snapshot().unwrap().report.net_points,
+        Decimal::from(7)
+    );
+}
+
+#[test]
+fn both_ledger_gesture_paths_request_the_same_scoped_load_and_closes_refresh_the_ledger() {
+    let request = ReportRequest {
+        session: SessionKey::parse("WINZ26/a.csv").unwrap(),
+        day: Some(quantick_civil::parse_iso_date("2026-11-18").unwrap()),
+    };
+    let tz = TzOffset::new(-180);
+    let mut state = State::default();
+    Model::update(&mut state, Intent::Ledger(LedgerIntent::Timezone(tz)));
+    for intent in [
+        LedgerIntent::Session(SessionPress::Report(request.clone())),
+        LedgerIntent::Rows(Box::new(RowInput {
+            session: Some(SessionPress::Report(request.clone())),
+            ..Default::default()
+        })),
+    ] {
+        assert_eq!(
+            Model::update(&mut state, Intent::Ledger(intent)).load,
+            Some(Load::Scoped(request.clone(), tz))
+        );
+    }
+    Model::update(&mut state, loaded_ledger(vec![]));
+    assert!(
+        Model::update(&mut state, Intent::JournalChanged)
+            .load
+            .is_none(),
+        "a closed report does no IO"
+    );
+    assert_eq!(
+        Model::update(&mut state, Intent::Ledger(LedgerIntent::EnsureLoaded)).load,
+        Some(Load::Ledger(LedgerScope::Chart))
+    );
+}
+
+#[test]
 fn delivered_effects_keep_import_and_latest_present_outputs_after_local_loads() {
     let mut output = Effects::default();
     output.append_delivered(Effects {
@@ -120,7 +221,7 @@ fn the_report_opens_on_real_and_keeps_replay_out_until_asked() {
     let day = 86_400_000_i64;
     let mut paper = ReportFixture::new();
     assert_eq!(
-        paper.report_state().report_source,
+        paper.report_state().report_source(),
         SourceFilter::Real,
         "practice runs never inflate the real track record unasked"
     );
@@ -159,7 +260,10 @@ fn the_report_opens_on_real_and_keeps_replay_out_until_asked() {
     );
     assert_eq!(view.report.net_points, Decimal::from(8));
 
-    paper.report_state_mut().report_source = SourceFilter::Replay;
+    Model::update(
+        paper.report_state_mut(),
+        Intent::Source(SourceFilter::Replay),
+    );
     paper
         .report_state_mut()
         .ensure_report_view(utc, PnlReader::plain());
@@ -168,7 +272,7 @@ fn the_report_opens_on_real_and_keeps_replay_out_until_asked() {
     assert_eq!(view.report.net_points, Decimal::from(100));
     assert_eq!(view.hidden_by_source, 2);
 
-    paper.report_state_mut().report_source = SourceFilter::All;
+    Model::update(paper.report_state_mut(), Intent::Source(SourceFilter::All));
     paper
         .report_state_mut()
         .ensure_report_view(utc, PnlReader::plain());
@@ -476,7 +580,7 @@ fn the_day_index_follows_the_source_filter_and_the_timezone() {
             .is_none()
     );
 
-    paper.report_state_mut().report_source = SourceFilter::All;
+    Model::update(paper.report_state_mut(), Intent::Source(SourceFilter::All));
     paper
         .report_state_mut()
         .ensure_report_view(tz, PnlReader::plain());

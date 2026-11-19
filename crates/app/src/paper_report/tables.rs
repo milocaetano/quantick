@@ -371,6 +371,9 @@ fn trade_cells(
         ),
         (view.equity.text(index), points_color(palette, equity)),
         match row.source {
+            Some(source @ history::SessionSource::Broker(_)) => {
+                (format!("Broker {}", source.account_label()), palette.warn())
+            }
             Some(history::SessionSource::Live) => ("live".to_owned(), palette.text_faint()),
             Some(history::SessionSource::Replay) => ("replay".to_owned(), palette.warn()),
             // Unrecorded is not "live": a file from before

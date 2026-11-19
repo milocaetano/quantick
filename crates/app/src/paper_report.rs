@@ -6,9 +6,10 @@ use eframe::egui;
 use quantick_paper::pnl::PnlReader;
 use quantick_paper::report::layout::*;
 use quantick_paper::report::readout::LedgerTotals;
-use quantick_ui_model::paper_report::{
-    Effects, Intent, LedgerIntent, Load, LoadedLedger, LoadedReport, Model, State,
-};
+#[cfg(test)]
+use quantick_ui_model::paper_report::LoadedReport;
+use quantick_ui_model::paper_report::io::local_effects;
+use quantick_ui_model::paper_report::{Effects, Intent, LedgerIntent, Model, State};
 use quantick_ui_model::{Adapter, UpdateSession};
 
 mod curve;
@@ -98,28 +99,6 @@ impl Paint<'_, '_> {
     }
 }
 
-/// The existing IO, completed synchronously before UpdateSession returns.
-fn local_effects(mut effects: Effects, env: &ReportEnv<'_>) -> (Effects, Option<Intent>) {
-    let receipt = effects.load.take().map(|load| match load {
-        Load::Report(symbol) => Intent::LoadedReport(LoadedReport {
-            history: quantick_paper::report::load_history(env.dir, symbol.as_deref(), &[]),
-            symbols: crate::paper_chrome::list_symbol_folders(env.dir),
-        }),
-        Load::Ledger(scope) => {
-            let history = quantick_paper::report::load_history(
-                env.dir,
-                scope.folder(env.symbol),
-                env.session_journal_paths,
-            );
-            Intent::LoadedLedger(LoadedLedger::new(
-                history,
-                crate::paper_chrome::list_symbol_folders(env.dir),
-                env.pnl,
-            ))
-        }
-    });
-    (effects, receipt)
-}
 impl ReportAdapter {
     fn with<R>(
         &mut self,

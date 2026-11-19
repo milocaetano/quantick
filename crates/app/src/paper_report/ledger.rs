@@ -31,7 +31,7 @@ use quantick_appearance::panel_chrome::FOOTER;
 use quantick_appearance::paper::{CARD_GAP_PX, ledger_frame};
 
 impl Paint<'_, '_> {
-    /// The Trades dock tab: the ledger of closed simulated trades — the
+    /// The Trades dock tab: broker and simulator round trips — the
     /// open position pinned on top, this session under it, the saved
     /// history under that, each day split by session where it holds
     /// several, and a totals strip that never scrolls away.
@@ -302,7 +302,7 @@ impl Paint<'_, '_> {
             Some(symbol) if !symbol.is_empty() => {
                 format!("No trades for {symbol}.")
             }
-            _ => "No simulated trades yet.".to_owned(),
+            _ => "No trades in this view yet.".to_owned(),
         };
         ui.label(egui::RichText::new(headline).color(palette.text_primary()));
         ui.label(

@@ -1021,6 +1021,7 @@ impl<T: PaperOwner + ?Sized> PaperOwner for &mut T {
 /// ledger's view, and every outcome a control call ran through it, for a
 /// parity test to hold against the tab's own surfaces.
 pub(crate) struct PaperDesk {
+    pub reports: Vec<quantick_paper::report::scope::ReportReceipt>,
     pub paper: TabPaper,
     pub view: LedgerView,
     pub outcomes: Vec<TradeOutcome>,
@@ -1029,6 +1030,7 @@ pub(crate) struct PaperDesk {
 impl PaperDesk {
     pub fn new(account: PaperAccount) -> Self {
         Self {
+            reports: Vec::new(),
             paper: TabPaper::new(account),
             view: LedgerView::default(),
             outcomes: Vec::new(),
@@ -1050,6 +1052,9 @@ impl std::ops::DerefMut for PaperDesk {
 }
 
 impl TradeDesk for PaperDesk {
+    fn show_report(&mut self, report: quantick_paper::report::scope::PreparedReport) {
+        self.reports.push(report.receipt);
+    }
     fn account(&self) -> &PaperAccount {
         &self.account
     }

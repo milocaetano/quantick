@@ -206,9 +206,8 @@ impl PaperAccount {
     /// trade, for the chart to emphasize; `None` while nothing is selected.
     #[must_use]
     pub(crate) fn selected_trade_index(&self) -> Option<usize> {
-        self.report
-            .selected_trade()
-            .filter(|index| *index < self.core.session_trades().len())
+        self.core
+            .ledger_chart_selection(self.report.selected_trade())
     }
 }
 

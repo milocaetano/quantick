@@ -210,6 +210,11 @@ fn broker_closes_go_to_their_own_journal() {
     go_long(account);
     account.close_position();
     account.on_trade(&print(2, 103));
+    assert_eq!(
+        account.ledger_chart_selection(Some(0)),
+        None,
+        "a simulator ledger index cannot select a broker tape mark"
+    );
     let real = account.broker_trades_dir().join("WINZ26");
     assert!(
         std::fs::read_dir(&real).is_ok_and(|mut files| files.next().is_some()),

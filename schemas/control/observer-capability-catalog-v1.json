@@ -27384,6 +27384,16 @@
             "description": "The ledger's source pills.",
             "oneOf": [
               {
+                "const": "broker",
+                "description": "Trades sent to a broker, including DEMO and REAL accounts.",
+                "type": "string"
+              },
+              {
+                "const": "simulator",
+                "description": "All simulator trades, on live and replay feeds.",
+                "type": "string"
+              },
+              {
                 "const": "real",
                 "description": "Live sessions, and files from before a source was recorded.",
                 "type": "string"
@@ -27532,7 +27542,7 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "The Trades ledger's session acts that remove nothing. A session is one journal file under the trades folder, named `<symbol folder>/<file>.csv`; three replays of one tape are three sessions. `list` returns the sessions holding a trade the ledger's filter keeps (source pills, a civil date span, and a search where `#tag` tokens must all be on the trade and other words must appear in the session's name or default label), newest first and bounded, and changes nothing. `rename` and `tag` append a line to the session's own file (the last line wins, the trade columns never change), the live session included. `view` sets the active tab's ledger filter and folds sessions shut or open, and answers what the ledger then shows; with no field it only reads. Deleting a session is `session.journal.delete`. Refusals carry `details.code`: invalid_session, session_not_found, trade_not_found, invalid_tag, session_unreadable, writes_refused, write_failed, no_ledger. Every edit and view change journals `session.journal.changed`, and every open ledger and report re-reads the folder after an edit.",
+      "description": "The Trades ledger's session acts that remove nothing. A session is one journal file under the trades folder, named `<symbol folder>/<file>.csv` for simulator history or `broker/<symbol folder>/<file>.csv` for the sibling real-trades folder; three replays of one tape are three sessions. `list` returns the sessions holding a trade the ledger's filter keeps (source pills, a civil date span, and a search where `#tag` tokens must all be on the trade and other words must appear in the session's name or default label), newest first and bounded, and changes nothing. `rename` and `tag` append a line to the session's own file (the last line wins, the trade columns never change), the live session included. `view` sets the active tab's ledger filter and folds sessions shut or open, and answers what the ledger then shows; with no field it only reads. Deleting a session is `session.journal.delete`. Open an exact session or origin-specific civil-day report with `session.report.open`. Source filters broker and simulator separate execution origins; real retains its legacy meaning of simulator-on-live-feed, replay selects simulator replays, and both includes all origins. Refusals carry `details.code`: invalid_session, session_not_found, trade_not_found, invalid_tag, session_unreadable, writes_refused, write_failed, no_ledger. Every edit and view change journals `session.journal.changed`, and every open ledger and report re-reads the folder after an edit.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "cockpit",
@@ -27565,6 +27575,16 @@
           "JournalSourceFilter": {
             "description": "The ledger's source pills.",
             "oneOf": [
+              {
+                "const": "broker",
+                "description": "Trades sent to a broker, including DEMO and REAL accounts.",
+                "type": "string"
+              },
+              {
+                "const": "simulator",
+                "description": "All simulator trades, on live and replay feeds.",
+                "type": "string"
+              },
               {
                 "const": "real",
                 "description": "Live sessions, and files from before a source was recorded.",
@@ -27888,6 +27908,16 @@
             "description": "The ledger's source pills.",
             "oneOf": [
               {
+                "const": "broker",
+                "description": "Trades sent to a broker, including DEMO and REAL accounts.",
+                "type": "string"
+              },
+              {
+                "const": "simulator",
+                "description": "All simulator trades, on live and replay feeds.",
+                "type": "string"
+              },
+              {
                 "const": "real",
                 "description": "Live sessions, and files from before a source was recorded.",
                 "type": "string"
@@ -28188,6 +28218,134 @@
       "risk_reducing": false,
       "stale_input_safety": "The call names the mode it wants rather than cycling it; repeating it leaves the same display and answers it. It changes no order, position or stored trade.",
       "title": "Read or set the P&L display",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Open the same performance report as the Trades session context menu. action=session selects only that session; action=day requires YYYY-MM-DD in the display timezone and selects every instrument and session of that origin on the clicked day. The session must hold a trade on that day. Session keys are <symbol>/<file>.csv for the simulator and broker/<symbol>/<file>.csv for real-trades, independent of custom names. Replaces prior symbol, period, source and session filters. Returns the opened scope, trade count and net points; events.read reconciles a lost response through session.report.opened. Refusals: invalid_session, session_not_found, session_unreadable, day_not_in_session, no_ledger. Never places orders or writes history.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 4096
+      },
+      "id": "session.report.open",
+      "idempotency": "optional",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "const": "session",
+                "type": "string"
+              },
+              "session": {
+                "maxLength": 512,
+                "type": "string"
+              }
+            },
+            "required": [
+              "action",
+              "session"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "const": "day",
+                "type": "string"
+              },
+              "day": {
+                "maxLength": 10,
+                "minLength": 10,
+                "type": "string"
+              },
+              "session": {
+                "maxLength": 512,
+                "type": "string"
+              }
+            },
+            "required": [
+              "action",
+              "session",
+              "day"
+            ],
+            "type": "object"
+          }
+        ],
+        "title": "ReportInput"
+      },
+      "module": "session",
+      "output_schema": {
+        "$defs": {
+          "CanonicalDecimal": {
+            "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+            "type": "string"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "day": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "net_points": {
+            "$ref": "#/$defs/CanonicalDecimal"
+          },
+          "origin": {
+            "type": "string"
+          },
+          "session": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "trade_count": {
+            "$ref": "#/$defs/WireU64"
+          }
+        },
+        "required": [
+          "action",
+          "session",
+          "origin",
+          "title",
+          "trade_count",
+          "net_points"
+        ],
+        "title": "ReportResult",
+        "type": "object"
+      },
+      "persistence": "transient",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "Repeating a request opens the same scope from current history; deleted sessions are refused before changing the report.",
+      "title": "Open a session or day report",
       "version": 1
     },
     {

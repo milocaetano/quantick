@@ -233,7 +233,10 @@ impl Paint<'_, '_> {
 pub(super) fn draw_session_head(ui: &mut egui::Ui, head: &SessionHead) -> Option<SessionPress> {
     let palette = theme::get(ui.ctx());
     let look = ledger_row(palette.resolved.dark, RowKind::Session);
-    let glyph = source_glyph(&palette, head.source, &look);
+    let glyph = match head.source {
+        Some(SessionSource::Broker(_)) => Some(("Broker", palette.warn())),
+        _ => source_glyph(&palette, head.source, &look),
+    };
     let (stem, span) = title_span(&head.title);
     let figures = (head.count, head.net.1.as_str());
     let response = draw_header(
@@ -249,12 +252,24 @@ pub(super) fn draw_session_head(ui: &mut egui::Ui, head: &SessionHead) -> Option
         press = Some(SessionPress::Fold(head.key.clone(), !head.folded));
     }
     let response = response.on_hover_text(format!(
-        "{} · {} trade(s) - click to {}, right-click to rename or delete; F2 renames, Del deletes",
+        "{} · {} trade(s) - click to {}, right-click for reports, rename or delete; F2 renames, Del deletes",
         head.key,
         head.count,
         if head.folded { "open it" } else { "fold it" }
     ));
     response.context_menu(|ui| {
+        for (label, day) in [("Session report", None), ("Day report", Some(head.day))] {
+            if ui.button(label).clicked() {
+                press = Some(SessionPress::Report(
+                    quantick_paper::report::scope::ReportRequest {
+                        session: head.key.clone(),
+                        day,
+                    },
+                ));
+                ui.close_menu();
+            }
+        }
+        ui.separator();
         if let Some(menu) = session_menu(ui, &head.key, &head.title, head.count, head.live) {
             press = Some(menu);
         }
@@ -415,14 +430,15 @@ pub(super) fn draw_hidden_live(ui: &mut egui::Ui, hidden: usize) {
     }
 }
 
-/// Replay wears a play glyph - Dark's amber, or the row's own mark ink -
-/// live none, unrecorded a `?` in the row's secondary ink.
+/// Broker rows name the execution account; replay wears a play glyph,
+/// simulated live rows none, and unrecorded rows a `?`.
 pub(super) fn source_glyph(
     palette: &crate::theme::Palette,
     source: Option<SessionSource>,
     look: &RowLook,
 ) -> Option<(&'static str, egui::Color32)> {
     match source {
+        Some(source @ SessionSource::Broker(_)) => Some((source.account_label(), palette.warn())),
         Some(SessionSource::Replay) => Some((
             icons::PLAY,
             look.mark.map_or(palette.amber(), |mark| *palette.get(mark)),

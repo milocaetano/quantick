@@ -50,7 +50,7 @@ impl Paint<'_, '_> {
             - frame.inner_margin.sum().y)
             .max(0.0);
         let id = egui::Id::new("Simulated performance");
-        crate::popup::centred(egui::Window::new("Simulated performance"), id, ctx)
+        crate::popup::centred(egui::Window::new("Trading performance"), id, ctx)
             .open(&mut open)
             .collapsible(false)
             .resizable(true)
@@ -77,6 +77,9 @@ impl Paint<'_, '_> {
                 #[cfg(any(feature = "scenario-harness", test))]
                 self.native.scroll_probe.report(ui);
                 reload = self.draw_report_filters(ui);
+                if let Some(scope) = self.report_scope() {
+                    ui.label(&scope.title);
+                }
                 self.draw_report_calendar(ui, tz);
                 // The rows above can retire the view — a picked day, a
                 // pill, a cleared range. Re-cutting it here rather than

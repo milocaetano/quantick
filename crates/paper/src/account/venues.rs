@@ -8,13 +8,13 @@
 //! second word for it.
 
 use std::ops::{Deref, DerefMut};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use quantick_engine::Trade;
 use quantick_sim::history;
 use quantick_trading::{
     Bracket, BracketTarget, BrokerVenue, CloseAmount, ClosedTrade, Order, OrderId, OrderIntent,
-    Position, RejectReason, TradingVenue, VenueEvent, VenueNotice,
+    Position, RejectReason, TradeMode, TradingVenue, VenueEvent, VenueNotice,
 };
 use rust_decimal::Decimal;
 
@@ -24,7 +24,7 @@ use crate::route::Route;
 
 /// The folder broker round trips are journaled under, beside the paper one:
 /// a practice fill and a broker fill never share a file.
-pub const BROKER_TRADES_FOLDER: &str = "real-trades";
+pub use crate::report::journals::BROKER_TRADES_FOLDER;
 
 /// The simulator, and a broker venue when one is attached.
 pub(crate) struct Venues {
@@ -40,6 +40,8 @@ pub(crate) struct Venues {
 /// broker position they no longer see as the route.
 pub(crate) struct Guarded {
     venue: Box<dyn BrokerVenue>,
+    /// The account accepted when armed. Later connection facts cannot relabel fills.
+    execution_mode: TradeMode,
     routed: bool,
     /// What the route must hear about the link and the account, from
     /// whichever call drained it - a print drains the venue too - until
@@ -224,6 +226,9 @@ impl PaperAccount {
             venue.set_symbol(&self.symbol)
         };
         self.venue.broker = Some(Guarded {
+            execution_mode: venue
+                .account()
+                .map_or(TradeMode::Unknown, |facts| facts.trade_mode),
             venue,
             routed: true,
             for_route: Vec::new(),
@@ -408,6 +413,7 @@ impl PaperAccount {
                 super::broker_log::log_broker_event(&event, "parked", &self.symbol);
                 if let VenueEvent::Closed(trade) = event {
                     self.journal_broker(&trade);
+                    self.outbox.journal_changed = true;
                 }
             }
         }
@@ -418,7 +424,37 @@ impl PaperAccount {
     /// trades folder.
     #[must_use]
     pub fn broker_trades_dir(&self) -> PathBuf {
-        broker_dir_beside(&self.dir)
+        crate::report::journals::broker_dir(&self.dir)
+    }
+
+    pub fn journal_paths(&self) -> impl Iterator<Item = &PathBuf> {
+        self.session_journal_paths()
+            .iter()
+            .chain(self.broker_journal.path.iter())
+    }
+
+    /// The in-memory ledger tail is always the simulator's. Broker rows are read
+    /// from their journal so switching routes cannot relabel or duplicate them.
+    pub fn simulator_trades(&self) -> &[ClosedTrade] {
+        self.venue.sim.closed_trades()
+    }
+
+    /// Ledger tail indices name simulator trades, never the broker's separate tape marks.
+    pub fn ledger_chart_selection(&self, index: Option<usize>) -> Option<usize> {
+        index.filter(|index| !self.broker_shown() && *index < self.simulator_trades().len())
+    }
+
+    pub fn execution_source(&self) -> history::SessionSource {
+        if self.broker_shown() {
+            history::SessionSource::Broker(
+                self.venue
+                    .broker
+                    .as_ref()
+                    .map_or(TradeMode::Unknown, |broker| broker.execution_mode),
+            )
+        } else {
+            self.session_source()
+        }
     }
 
     /// Append one broker round trip to its own journal. Returns whether the
@@ -428,6 +464,19 @@ impl PaperAccount {
             return false;
         }
         let folder = self.broker_trades_dir().join(sanitize_symbol(&self.symbol));
+        if self
+            .broker_journal
+            .path
+            .as_ref()
+            .is_some_and(|path| path.parent() != Some(folder.as_path()))
+        {
+            self.broker_journal = BrokerJournal::default();
+        }
+        let mode = self
+            .venue
+            .broker
+            .as_ref()
+            .map_or(TradeMode::Unknown, |broker| broker.execution_mode);
         let path = self.broker_journal.path.get_or_insert_with(|| {
             folder.join(format!(
                 "{}.{}",
@@ -439,9 +488,10 @@ impl PaperAccount {
         if !path.exists() {
             text.push_str(&history::write_header(
                 &self.symbol,
-                history::SessionSource::Live,
+                history::SessionSource::Broker(TradeMode::Unknown),
             ));
         }
+        text.push_str(history::write_account(mode));
         text.push_str(&history::write_trade(trade));
         let written = std::fs::create_dir_all(&folder).and_then(|()| {
             use std::io::Write;
@@ -467,17 +517,6 @@ impl PaperAccount {
         }
         written.is_ok()
     }
-}
-
-/// `real-trades` beside `paper`: the parent's, or inside it at a root.
-fn broker_dir_beside(paper: &Path) -> PathBuf {
-    paper
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .map_or_else(
-            || paper.join(BROKER_TRADES_FOLDER),
-            |parent| parent.join(BROKER_TRADES_FOLDER),
-        )
 }
 
 fn notices_of(events: &[VenueEvent]) -> Vec<VenueNotice> {

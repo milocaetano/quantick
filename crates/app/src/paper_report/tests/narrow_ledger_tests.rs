@@ -115,6 +115,42 @@ fn has(texts: &[(String, egui::Rect)], wanted: &str) -> bool {
     texts.iter().any(|(text, _)| text.contains(wanted))
 }
 
+#[test]
+fn broker_account_badges_stay_visible_without_overlapping_prices_or_pnl() {
+    let trade = short_four();
+    for mode in ["demo", "real", "unknown"] {
+        let text = format!(
+            "{}# account={mode}\n{}",
+            quantick_sim::history::write_header("WINZ26", SessionSource::parse("broker").unwrap()),
+            quantick_sim::history::write_trade(&trade)
+        );
+        let source = quantick_sim::history::parse(&text).unwrap().sources[0];
+        let meta = TradeMeta {
+            session: None,
+            trade_ref: TradeRef::default(),
+            source,
+            tags: &[],
+            pnl: PnlReader::plain().of("WINZ26"),
+        };
+        for width in [NARROW_PX, WIDE_PX] {
+            let texts = painted_text(width, |ui| {
+                draw_ledger_row(
+                    ui,
+                    &trade,
+                    meta,
+                    ("WINZ26", "WDOZ26"),
+                    false,
+                    false,
+                    TzOffset::new(0),
+                );
+            });
+            assert!(has(&texts, &mode.to_uppercase()), "{texts:?}");
+            assert!(has(&texts, "211980.5 → 211855"), "{texts:?}");
+            assert_apart(&texts, width);
+        }
+    }
+}
+
 /// A WINZ26 trade's row on a WDOZ26 chart, so it names its market.
 fn trade_row(width: f32, trade: &ClosedTrade) -> Vec<(String, egui::Rect)> {
     let tags = ["breakout".to_owned(), "absorption-at-vwap".to_owned()];
@@ -273,6 +309,7 @@ fn trade_rows_and_session_headers_never_wrap_at_the_docked_widths() {
         assert!(texts.iter().any(|(text, ..)| text.starts_with("SHORT 6")));
 
         let head = SessionHead {
+            day: quantick_civil::CivilDate::from_day_number(0),
             key: SessionKey::parse("WINZ26/2026-11-09-replay.csv").unwrap(),
             title: "Replay · rerun 2 · 09:04–12:02".to_owned(),
             source: Some(SessionSource::Replay),
@@ -413,6 +450,7 @@ fn a_trade_row_shows_its_whole_prices_and_instrument_at_the_docked_widths() {
 #[test]
 fn a_session_row_at_the_docked_width_keeps_its_span_and_count() {
     let head = SessionHead {
+        day: quantick_civil::CivilDate::from_day_number(0),
         key: SessionKey::parse("WINZ26/2026-10-21-replay.csv").unwrap(),
         title: "morning replay of the opening drive · 10:50–10:58".to_owned(),
         source: Some(SessionSource::Replay),
