@@ -3,8 +3,9 @@
 //! One shipped implementation — the force bar — and a port so the next
 //! ruler (the operational document's BEI, an imbalance-efficiency bar) can
 //! dock without the state machine changing shape. The port is deliberately
-//! bar-shaped: triggers judge **closed bars only**, because a signal that
-//! repaints mid-bar is a signal the trader cannot audit afterwards.
+//! closed-bar-shaped: triggers judge one bar against the **closed** bars
+//! before it ([`TriggerContext`]), because a signal that repaints mid-bar
+//! is a signal the trader cannot audit afterwards.
 
 use quantick_engine::{Bar, Side};
 use rust_decimal::Decimal;
@@ -34,12 +35,26 @@ pub struct Signal {
     pub projection: Decimal,
 }
 
+/// What a trigger judges: one bar, and the closed bars of the same series
+/// that preceded it.
+#[derive(Debug, Clone, Copy)]
+pub struct TriggerContext<'a> {
+    /// The bar under judgement — closed for [`Trigger::on_closed_bar`],
+    /// still forming for [`Trigger::preview`].
+    pub bar: &'a Bar,
+    /// The closed bars before `bar`, oldest first, never `bar` itself and
+    /// never a forming bar. At most [`Trigger::history_bars`] long, and
+    /// shorter until that many have closed since the arm or the last
+    /// [`Trigger::reset`].
+    pub history: &'a [Bar],
+}
+
 /// The port. Feed **every** closed bar of the series in order, whether or
 /// not the instance is armed — rulers keep running averages that must stay
 /// warm across disarmed stretches.
 pub trait Trigger {
-    /// Judge one closed bar. `Some` means "this bar fires".
-    fn on_closed_bar(&mut self, bar: &Bar) -> Option<Signal>;
+    /// Judge one closed bar, `cx.bar`. `Some` means "this bar fires".
+    fn on_closed_bar(&mut self, cx: &TriggerContext<'_>) -> Option<Signal>;
 
     /// Judge a bar the series has **not** closed — the one still forming —
     /// without advancing any running state.
@@ -56,9 +71,17 @@ pub trait Trigger {
     /// `&self` is the guarantee: a ruler cannot be corrupted by a bar that
     /// has not finished. A ruler with no honest provisional reading keeps
     /// the default `None`, and its consumer falls back to closed bars.
-    fn preview(&self, bar: &Bar) -> Option<Signal> {
-        let _ = bar;
+    fn preview(&self, cx: &TriggerContext<'_>) -> Option<Signal> {
+        let _ = cx;
         None
+    }
+
+    /// How many closed bars before the judged one this ruler reads from
+    /// [`TriggerContext::history`] — the bound the consumer keeps. A ruler
+    /// that folds each bar into its own running state needs none, and the
+    /// default keeps nothing.
+    fn history_bars(&self) -> usize {
+        0
     }
 
     /// One human-readable line for badges and tooltips: why the trigger is
@@ -149,14 +172,14 @@ impl ForceTrigger {
 }
 
 impl Trigger for ForceTrigger {
-    fn on_closed_bar(&mut self, bar: &Bar) -> Option<Signal> {
-        let verdict = self.window.classify(bar);
-        let signal = signal_from(&verdict, bar);
+    fn on_closed_bar(&mut self, cx: &TriggerContext<'_>) -> Option<Signal> {
+        let verdict = self.window.classify(cx.bar);
+        let signal = signal_from(&verdict, cx.bar);
         self.last = Some(verdict);
         signal
     }
 
-    fn preview(&self, bar: &Bar) -> Option<Signal> {
+    fn preview(&self, cx: &TriggerContext<'_>) -> Option<Signal> {
         // `weigh` is `classify` without the fold, and `signal_from` is the
         // same mapping the closed-bar path uses. The provisional answer is
         // therefore the answer this bar would get if it closed right now —
@@ -164,7 +187,7 @@ impl Trigger for ForceTrigger {
         // behalf. The `last` verdict is deliberately not touched: the badge
         // narrates closed bars, and a forming bar overwriting it would make
         // the ruler's own status flicker with the tape.
-        signal_from(&self.window.weigh(bar), bar)
+        signal_from(&self.window.weigh(cx.bar), cx.bar)
     }
 
     fn reset(&mut self) {
@@ -248,6 +271,39 @@ fn round_ratio(ratio: Decimal) -> Decimal {
     ratio.round_dp(2)
 }
 
+/// The consumer's side of [`TriggerContext::history`]: the last closed
+/// bars, oldest first, kept to the trigger's [`Trigger::history_bars`].
+#[derive(Debug, Default)]
+pub(crate) struct ClosedBars {
+    bars: Vec<Bar>,
+}
+
+impl ClosedBars {
+    /// The context for judging `bar` against the bars recorded so far.
+    pub(crate) fn context<'a>(&'a self, bar: &'a Bar) -> TriggerContext<'a> {
+        TriggerContext {
+            bar,
+            history: &self.bars,
+        }
+    }
+
+    /// Append a bar that has just been judged closed, keeping the newest
+    /// `bound`. A bound of zero keeps nothing.
+    pub(crate) fn record(&mut self, bar: &Bar, bound: usize) {
+        if bound == 0 {
+            self.bars.clear();
+            return;
+        }
+        self.bars.push(bar.clone());
+        let excess = self.bars.len().saturating_sub(bound);
+        self.bars.drain(..excess);
+    }
+
+    pub(crate) fn clear(&mut self) {
+        self.bars.clear();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -289,6 +345,37 @@ mod tests {
         }
     }
 
+    /// Judge `bar` with no history: the force ruler reads none.
+    fn judge(trigger: &mut ForceTrigger, bar: &Bar) -> Option<Signal> {
+        trigger.on_closed_bar(&TriggerContext { bar, history: &[] })
+    }
+
+    #[test]
+    fn closed_bars_keep_the_newest_bound_oldest_first() {
+        let mut closed = ClosedBars::default();
+        let (a, b, c) = (bar("1", "2"), bar("2", "3"), bar("3", "4"));
+        closed.record(&a, 2);
+        closed.record(&b, 2);
+        closed.record(&c, 2);
+        let judged = bar("4", "5");
+        let cx = closed.context(&judged);
+        assert_eq!(cx.history, [b, c.clone()]);
+        assert_eq!(cx.bar, &judged);
+        closed.record(&c, 0);
+        assert!(
+            closed.context(&judged).history.is_empty(),
+            "bound 0 keeps nothing"
+        );
+    }
+
+    #[test]
+    fn force_trigger_reads_no_history() {
+        assert_eq!(
+            ForceTrigger::new(ForceParams::default_band()).history_bars(),
+            0
+        );
+    }
+
     #[test]
     fn fires_only_on_force_and_reports_the_bars_facts() {
         let mut trigger = ForceTrigger::new(ForceParams {
@@ -297,11 +384,10 @@ mod tests {
             max_factor: dec("2.5"),
             min_range: Decimal::ZERO,
         });
-        assert_eq!(trigger.on_closed_bar(&bar("100", "101")), None);
-        assert_eq!(trigger.on_closed_bar(&bar("101", "102")), None);
-        let signal = trigger
-            .on_closed_bar(&bar("102", "106"))
-            .expect("body 4 over average 2 is force");
+        assert_eq!(judge(&mut trigger, &bar("100", "101")), None);
+        assert_eq!(judge(&mut trigger, &bar("101", "102")), None);
+        let signal =
+            judge(&mut trigger, &bar("102", "106")).expect("body 4 over average 2 is force");
         assert_eq!(signal.side, Side::Buy);
         assert_eq!(signal.reference, dec("106"));
         // Range: high 107, low 101.
@@ -318,9 +404,9 @@ mod tests {
             min_range: Decimal::ZERO,
         });
         assert_eq!(trigger.status(), "waiting for bars 0/2");
-        trigger.on_closed_bar(&bar("100", "101"));
+        judge(&mut trigger, &bar("100", "101"));
         assert_eq!(trigger.status(), "warmup 1/2");
-        trigger.on_closed_bar(&bar("100", "101"));
+        judge(&mut trigger, &bar("100", "101"));
         assert_eq!(trigger.status(), "quiet 1×");
     }
 
@@ -340,9 +426,9 @@ mod tests {
             max_factor: dec("2.5"),
             min_range: dec("1000"),
         });
-        trigger.on_closed_bar(&bar("100", "110"));
-        trigger.on_closed_bar(&bar("110", "120"));
-        trigger.on_closed_bar(&bar("120", "140"));
+        judge(&mut trigger, &bar("100", "110"));
+        judge(&mut trigger, &bar("110", "120"));
+        judge(&mut trigger, &bar("120", "140"));
         assert_eq!(
             trigger.status(),
             "1.50× in band · candle 22 under floor",
@@ -361,9 +447,9 @@ mod tests {
         // or the assertion cannot fail for the regression it names: a range
         // of 0.022 rounds to 0.02 and reads fine, which is why an earlier
         // version of this test proved nothing.
-        trigger.on_closed_bar(&tight("0.1000", "0.1010", "0.1011", "0.0999"));
-        trigger.on_closed_bar(&tight("0.1010", "0.1020", "0.1021", "0.1009"));
-        trigger.on_closed_bar(&tight("0.1020", "0.1040", "0.1041", "0.1019"));
+        judge(&mut trigger, &tight("0.1000", "0.1010", "0.1011", "0.0999"));
+        judge(&mut trigger, &tight("0.1010", "0.1020", "0.1021", "0.1009"));
+        judge(&mut trigger, &tight("0.1020", "0.1040", "0.1041", "0.1019"));
         assert_eq!(
             trigger.status(),
             "1.50× in band · candle 0.0022 under floor",
