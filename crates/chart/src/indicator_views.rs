@@ -19,7 +19,9 @@ pub use bottom_scale::BottomScale;
 pub use column_hit::{COLUMNS_WIDTH_FRAC, ColumnPick};
 mod pane_layout;
 mod pane_sizing;
+mod pane_values;
 pub use pane_layout::{MIN_CHART_HEIGHT_PX, format_value, pane_heights};
+pub use pane_values::{last_value, pane_auto_range};
 mod view;
 mod views;
 

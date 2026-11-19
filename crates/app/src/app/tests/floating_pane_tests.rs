@@ -79,6 +79,62 @@ fn grip(app: &QuantickApp, slot: u32) -> egui::Pos2 {
     egui::pos2(rect.x + rect.w / 2.0, rect.y + 17.0)
 }
 
+#[test]
+fn a_manually_sized_indicator_stays_visible_after_adding_a_horizontal_chart() {
+    let (mut app, _commands) = app_with_history(200);
+    let ctx = egui::Context::default();
+    let indicator = add_pane_indicator(&mut app, "cvd", (0..200).map(f64::from).collect());
+    frames(&mut app, &ctx, 2);
+    let edge = pane_slots(&app)[0].rect.center_top();
+    drag_sized(
+        &mut app,
+        &ctx,
+        TEST_WINDOW,
+        edge,
+        edge - egui::vec2(0.0, 150.0),
+    );
+    frames(&mut app, &ctx, 2);
+    let requested = app
+        .active_tab()
+        .flow_pane
+        .indicators
+        .all()
+        .iter()
+        .find(|view| view.slot == indicator)
+        .unwrap()
+        .sizing;
+    assert!(matches!(
+        requested,
+        crate::indicators::PaneSizing::Manual(_)
+    ));
+
+    let added = add_chart(&mut app, &ctx);
+    let canvas = app.active_tab().canvas.last_canvas;
+    let from = grip(&app, added);
+    let bottom = egui::pos2(canvas.center().x, canvas.bottom() - 8.0);
+    drag_sized(&mut app, &ctx, TEST_WINDOW, from, bottom);
+    frames(&mut app, &ctx, 4);
+    assert_eq!(
+        app.active_tab().canvas.state.mode(added),
+        Some(PaneMode::Docked)
+    );
+    assert_eq!(
+        app.active_tab()
+            .flow_pane
+            .indicators
+            .all()
+            .iter()
+            .find(|view| view.slot == indicator)
+            .unwrap()
+            .sizing,
+        requested
+    );
+    assert!(
+        !pane_slots(&app)[0].collapsed,
+        "the existing indicator keeps its curve after the + and dock gestures"
+    );
+}
+
 /// C16: the + menu lists the registry; picking "Timeframe chart" opens a
 /// floating chart centred over the canvas, drawn on its own layer.
 #[test]
