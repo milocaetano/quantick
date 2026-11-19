@@ -66,7 +66,7 @@ fn placing_over_the_traders_draft_is_refused_and_leaves_it_alone() {
 }
 
 #[test]
-fn deleting_a_named_mark_says_its_name_and_an_unnamed_one_its_tool() {
+fn deleting_a_mark_says_its_name_the_traders_or_the_generated_one() {
     let mut store = lines(2);
     store.rename_at(0, "congestion 108k");
     store.select(Some(0));
@@ -84,7 +84,7 @@ fn deleting_a_named_mark_says_its_name_and_an_unnamed_one_its_tool() {
         update(&mut store, DrawingIntent::DeleteSelected { force: false }),
         [DrawingEffect::Deleted {
             id,
-            label: line().name().to_owned()
+            label: "line-2".to_owned()
         }]
     );
     assert!(store.items().is_empty());
@@ -242,6 +242,21 @@ fn a_placement_lands_stamped_and_selected_and_says_its_label() {
     assert_eq!(
         placed.tool.inline_text(placed.payload.as_ref()),
         Some("watch the bid")
+    );
+}
+
+#[test]
+fn a_placement_that_names_nothing_says_its_generated_name() {
+    let mut store = lines(1);
+    let effects = update(&mut store, DrawingIntent::Place(level(105.0)));
+    let placed = &store.items()[1];
+    assert_eq!(placed.name.as_deref(), Some("line-2"));
+    assert_eq!(
+        effects,
+        [DrawingEffect::Placed {
+            id: placed.id,
+            label: "line-2".to_owned()
+        }]
     );
 }
 

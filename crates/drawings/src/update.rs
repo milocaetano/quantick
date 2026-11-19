@@ -254,7 +254,10 @@ fn place(
     let drawing = store.selected_mut().ok_or(PlacementFailure::Unreadable)?;
     drawing.points.extend(legacy_tail);
     drawing.author = author;
-    drawing.name = name;
+    // A placement that names nothing keeps the name the store gave it.
+    if name.is_some() {
+        drawing.name = name;
+    }
     if let Some(text) = text
         && drawing.tool.holds_text()
     {

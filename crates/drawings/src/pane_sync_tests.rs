@@ -198,7 +198,11 @@ fn refreshing_the_shared_marks_keeps_this_charts_history_and_selection() {
     assert_eq!(pane.drawings.selected_id(), Some(mine), "selection kept");
     assert_eq!(pane.drawings.undo_depth(), depth, "history kept");
     assert!(pane.drawings.undo(), "the rename on this chart undoes");
-    assert_eq!(pane.drawings.items()[1].name, None);
+    assert_eq!(
+        pane.drawings.items()[1].name.as_deref(),
+        Some("line-2"),
+        "back to the name it was placed with, above the market's line-1"
+    );
     assert_eq!(
         prices(&pane.drawings),
         [105.0, 50.0],

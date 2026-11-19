@@ -11588,6 +11588,448 @@
         "status": "available"
       },
       "confirmation_class": "none",
+      "description": "Reads one exact pane as a single document: feed, symbol and bar type with its parameter; indicators (up to 64) with kind, id, hidden and loaded state and their committed input values; drawings (up to 256) with id, name, tool kind, anchor prices, and selected, locked and hidden flags; strategies armed on its drawings (up to 64) with the drawing they ride, preset, side, quantity, execution, rearm, state and badge. Every drawing carries a name: the trader's, or one generated per kind on placement and on load (zone-1, line-2), stable across save and load. Each list reports its total. Script inputs list values in declaration order without names. Changes nothing.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "observe",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "chart.context.read",
+      "idempotency": "forbidden",
+      "input_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "pane_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          }
+        },
+        "required": [
+          "tab_id",
+          "pane_id"
+        ],
+        "title": "Input",
+        "type": "object"
+      },
+      "module": "chart",
+      "output_schema": {
+        "$defs": {
+          "BarSpecDto": {
+            "properties": {
+              "imbalance_unit": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "kind": {
+                "type": "string"
+              },
+              "parameter": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "parameter_unit": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "parameter",
+              "parameter_unit"
+            ],
+            "type": "object"
+          },
+          "CanonicalDecimal": {
+            "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+            "type": "string"
+          },
+          "Drawing": {
+            "description": "One drawn object.",
+            "properties": {
+              "hidden": {
+                "type": "boolean"
+              },
+              "id": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "kind": {
+                "description": "The drawing tool id (`rectangle`, `trend-line`).",
+                "type": "string"
+              },
+              "locked": {
+                "type": "boolean"
+              },
+              "name": {
+                "description": "The trader's name for it, or the one generated when it was placed\n(`zone-1`, `line-2`).",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "prices": {
+                "description": "Each anchor's price, in anchor order.",
+                "items": {
+                  "$ref": "#/$defs/CanonicalDecimal"
+                },
+                "type": "array"
+              },
+              "selected": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "id",
+              "kind",
+              "prices",
+              "selected",
+              "locked",
+              "hidden"
+            ],
+            "type": "object"
+          },
+          "Indicator": {
+            "description": "One indicator slot and its committed inputs.",
+            "properties": {
+              "hidden": {
+                "type": "boolean"
+              },
+              "id": {
+                "description": "The native catalog id (`native.ema`) or the script's library name.",
+                "type": "string"
+              },
+              "inputs": {
+                "description": "In declaration order.",
+                "items": {
+                  "$ref": "#/$defs/IndicatorInput"
+                },
+                "type": "array"
+              },
+              "kind": {
+                "$ref": "#/$defs/IndicatorKind"
+              },
+              "loaded": {
+                "description": "Whether the pane runs it without an error.",
+                "type": "boolean"
+              },
+              "slot_id": {
+                "$ref": "#/$defs/WireU64"
+              }
+            },
+            "required": [
+              "slot_id",
+              "kind",
+              "id",
+              "hidden",
+              "loaded",
+              "inputs"
+            ],
+            "type": "object"
+          },
+          "IndicatorInput": {
+            "description": "One input value. A script's saved inputs carry no names, so `name` is\nabsent for them; their order is the script's declaration order.",
+            "properties": {
+              "name": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "value": {
+                "$ref": "#/$defs/Value"
+              }
+            },
+            "required": [
+              "value"
+            ],
+            "type": "object"
+          },
+          "IndicatorKind": {
+            "enum": [
+              "native",
+              "script"
+            ],
+            "type": "string"
+          },
+          "Strategy": {
+            "description": "One strategy armed on a drawing.",
+            "properties": {
+              "badge": {
+                "description": "The badge the chart prints beside the drawing.",
+                "type": "string"
+              },
+              "disarm_reason": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "drawing_id": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "drawing_name": {
+                "description": "The name of the drawing it rides; absent when that drawing is gone.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "execution": {
+                "description": "`paper` places orders; `alarm_only` only watches.",
+                "type": "string"
+              },
+              "preset": {
+                "type": "string"
+              },
+              "quantity": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "rearm": {
+                "description": "`one_shot` or `auto`.",
+                "type": "string"
+              },
+              "side": {
+                "description": "`buy` or `sell`.",
+                "type": "string"
+              },
+              "state": {
+                "description": "`armed`, `fired`, `retest_resting`, `in_position`, `done` or `disarmed`.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "drawing_id",
+              "preset",
+              "side",
+              "quantity",
+              "execution",
+              "rearm",
+              "state",
+              "badge"
+            ],
+            "type": "object"
+          },
+          "Value": {
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "type": {
+                    "const": "int",
+                    "type": "string"
+                  },
+                  "value": {
+                    "format": "int64",
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "type",
+                  "value"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "type": {
+                    "const": "float",
+                    "type": "string"
+                  },
+                  "value": {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  }
+                },
+                "required": [
+                  "type",
+                  "value"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "type": {
+                    "const": "bool",
+                    "type": "string"
+                  },
+                  "value": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "type",
+                  "value"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "type": {
+                    "const": "color",
+                    "type": "string"
+                  },
+                  "value": {
+                    "items": {
+                      "format": "uint8",
+                      "maximum": 255,
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "maxItems": 4,
+                    "minItems": 4,
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "type",
+                  "value"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "type": {
+                    "const": "str",
+                    "type": "string"
+                  },
+                  "value": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type",
+                  "value"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "type": {
+                    "const": "source",
+                    "type": "string"
+                  },
+                  "value": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type",
+                  "value"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "One chart pane's context.",
+        "properties": {
+          "bar_spec": {
+            "$ref": "#/$defs/BarSpecDto",
+            "description": "The bar type and its parameter."
+          },
+          "drawings": {
+            "description": "The first [`MAX_DRAWINGS`], back to front.",
+            "items": {
+              "$ref": "#/$defs/Drawing"
+            },
+            "type": "array"
+          },
+          "drawings_total": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "feed_id": {
+            "type": "string"
+          },
+          "indicators": {
+            "description": "The first [`MAX_INDICATORS`], in the pane's order.",
+            "items": {
+              "$ref": "#/$defs/Indicator"
+            },
+            "type": "array"
+          },
+          "indicators_total": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "pane_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "strategies": {
+            "description": "The first [`MAX_STRATEGIES`], in arming order.",
+            "items": {
+              "$ref": "#/$defs/Strategy"
+            },
+            "type": "array"
+          },
+          "strategies_total": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "symbol": {
+            "type": "string"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          }
+        },
+        "required": [
+          "tab_id",
+          "pane_id",
+          "feed_id",
+          "symbol",
+          "bar_spec",
+          "indicators",
+          "indicators_total",
+          "drawings",
+          "drawings_total",
+          "strategies",
+          "strategies_total"
+        ],
+        "title": "Document",
+        "type": "object"
+      },
+      "persistence": "none",
+      "preconditions": [],
+      "read_only": true,
+      "required_permissions": [
+        "observe",
+        "observe.chart",
+        "observe.drawings",
+        "observe.indicators",
+        "observe.market",
+        "observe.paper",
+        "observe.user_text"
+      ],
+      "reversible": false,
+      "revision_policy": "forbidden",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "title": "Read one chart's context",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
       "description": "Sets an explicit manual price range or resumes the pane's own automatic fit. Applies to the chart or independent tape without changing its time window or other panes.",
       "destructive": false,
       "dry_run_supported": false,

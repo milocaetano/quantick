@@ -1,6 +1,6 @@
-//! The window's part in the session, analysis, mark and paper calls: it
-//! lends its open tabs, the config, the rail's magnet and the workspace's
-//! paper owner; each tab answers the read scopes itself.
+//! The window's part in the session, analysis, mark, paper and chart-context
+//! calls: it lends its open tabs, the config, the rail's magnet and the
+//! workspace's paper owner; each tab answers the read scopes itself.
 use quantick_control_handlers::OpenTabs;
 use quantick_control_handlers::analysis::{AnalysisPaneEntry, AnalysisTab};
 use quantick_control_handlers::attention::MarkTab;
@@ -62,6 +62,15 @@ impl AnalysisTab for Tab {
 impl MarkTab for Tab {
     fn cursor_snapshot(&self, tab_id: u64, config: &AppConfig) -> CursorSnapshot {
         super::interaction::cursor_snapshot(self, tab_id, config)
+    }
+}
+
+impl quantick_control_handlers::chart_context::ArmedTab for Tab {
+    fn armed_on(
+        &self,
+        pane_id: u64,
+    ) -> Vec<quantick_session::strategy_reading::ArmedReading<crate::drawings::DrawingId>> {
+        self.market.strategies.readings(pane_id)
     }
 }
 

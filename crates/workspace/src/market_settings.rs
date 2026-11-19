@@ -15,6 +15,7 @@ use crate::layout_document::{LayoutBook, LegacyDrawings, SavedDrawing, SavedOrig
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
+mod names;
 pub mod pane_marks;
 pub use pane_marks::PaneWrite;
 
@@ -440,6 +441,7 @@ impl MarketSettings {
                 }
             }
         }
+        self.name_unnamed_drawings();
         report
     }
 
@@ -551,14 +553,17 @@ impl std::fmt::Display for SettingsError {
 }
 impl std::error::Error for SettingsError {}
 
+/// Read a market settings file, naming every mark it brought without a name.
+///
 /// # Errors
 /// Returns why the text is not a market settings file this build reads.
 pub fn parse_settings(text: &str) -> Result<MarketSettings, SettingsError> {
-    let settings: MarketSettings =
+    let mut settings: MarketSettings =
         toml::from_str(text).map_err(|error| SettingsError::Malformed(error.to_string()))?;
     if settings.version != FORMAT_VERSION {
         return Err(SettingsError::Version(settings.version));
     }
+    settings.name_unnamed_drawings();
     Ok(settings)
 }
 

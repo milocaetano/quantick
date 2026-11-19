@@ -478,9 +478,9 @@ fn keyboard_delete_offers_an_undo_toast_and_ctrl_z_restores() {
     run_frame_with_events(&mut app, &ctx, vec![key_press(egui::Key::Delete)]);
     assert!(app.active_tab().flow_pane.drawings.items().is_empty());
     let texts = painted_text(&run_frame(&mut app, &ctx));
-    // The toast names the tool: on a crowded chart "Drawing deleted"
+    // The toast names the mark: on a crowded chart "Drawing deleted"
     // leaves the trader unable to tell whether they want the undo.
-    for label in ["Horizontal line deleted.", "Undo"] {
+    for label in ["line-1 deleted.", "Undo"] {
         assert!(
             texts.iter().any(|text| text.contains(label)),
             "the toast must offer {label:?}; painted: {texts:?}"
@@ -704,8 +704,8 @@ fn native_clipboard_events_paste_the_copied_drawing_not_the_current_selection() 
         original.points[0].bar + DUPLICATE_OFFSET_BARS
     );
     assert!(!pasted.locked, "a pasted drawing is editable");
-    assert_eq!(
-        pasted.name, None,
+    assert_ne!(
+        pasted.name, original.name,
         "a pasted drawing has no ambiguous copied name"
     );
     assert_eq!(

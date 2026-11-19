@@ -3,9 +3,9 @@
 //! Keyboard paste and the older Duplicate action share the normalization in
 //! this module, so a chart never grows two subtly different kinds of copy.
 
-use crate::{Drawing, DrawingId, DrawingScope, Drawings};
+use crate::{Drawing, DrawingId, DrawingScope, Drawings, ToolCatalog};
 
-impl<T: Clone + PartialEq> Drawings<T> {
+impl<T: ToolCatalog> Drawings<T> {
     /// Paste a drawing snapshot as one undo entry and return its fresh id.
     ///
     /// The snapshot need not come from this store. That lets one window-level
@@ -16,11 +16,11 @@ impl<T: Clone + PartialEq> Drawings<T> {
         let before = self.snapshot();
         let mut copy = drawing.clone();
         // A copy is a new object: its own identity, and never the original's
-        // name, because two objects answering to one trader-authored name
-        // would make every reference ambiguous.
+        // name, because two objects answering to one name would make every
+        // reference ambiguous. It takes the next generated one.
         copy.id = self.alloc_id();
         copy.durable_identity = None;
-        copy.name = None;
+        copy.name = Some(self.take_name(copy.tool));
         for point in &mut copy.points {
             point.bar += offset_bars;
             // Keeping the source's market instants would snap the offset copy

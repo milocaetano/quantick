@@ -67,6 +67,20 @@ fn known(tool: &str) -> bool {
     tool != "a-tool-from-the-future"
 }
 
+/// `text` without the `name` lines a load or a merge generates: what a file
+/// that predates generated names compares against.
+pub(super) fn without_names(text: &str) -> String {
+    let lines = text.lines().filter(|line| !line.starts_with("name = "));
+    lines
+        .map(|line| {
+            format!(
+                "{line}
+"
+            )
+        })
+        .collect()
+}
+
 fn absorbed() -> MarketSettings {
     let mut settings = MarketSettings::default();
     settings.absorb(&mut parse(LEGACY).unwrap(), asset);
@@ -78,7 +92,13 @@ fn a_market_spread_over_layouts_and_contracts_merges_into_the_golden_file() {
     let mut book = parse(LEGACY).unwrap();
     let mut settings = MarketSettings::default();
     let report = settings.absorb(&mut book, asset);
-    assert_eq!(to_text(&settings).unwrap(), MERGED);
+    let text = to_text(&settings).unwrap();
+    assert_eq!(
+        without_names(&text),
+        MERGED,
+        "the golden file, every mark named"
+    );
+    assert_eq!(text.matches("name = ").count(), 8);
     assert_eq!(report.moved, 8);
     assert_eq!(report.already_held, 0);
 }

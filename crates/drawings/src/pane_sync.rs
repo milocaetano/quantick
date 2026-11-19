@@ -180,6 +180,7 @@ pub fn adopt_pane(
     bars: &str,
 ) {
     drawings.reserve_ids(settings.max_drawing_id(&key.market));
+    drawings.reserve_names(&settings.name_floors(&key.market));
     drawings.adopt(crate::pane_marks(settings, key, bars));
     *base = shared_base(drawings);
 }
@@ -195,6 +196,7 @@ pub fn refresh_shared(
     _bars: &str,
 ) {
     drawings.reserve_ids(settings.max_drawing_id(&key.market));
+    drawings.reserve_names(&settings.name_floors(&key.market));
     let shared = crate::saved::live(&settings.shared_drawings(&key.market), key);
     drawings.replace_shared(shared);
     *base = shared_base(drawings);
@@ -217,6 +219,7 @@ pub fn persist_pane(
         *base = shared_base(drawings);
     }
     drawings.reserve_ids(settings.max_drawing_id(&key.market));
+    drawings.reserve_names(&settings.name_floors(&key.market));
     write
 }
 

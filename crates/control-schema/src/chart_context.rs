@@ -1,0 +1,188 @@
+//! `chart.context.read`: one chart pane as a document an agent can reason
+//! over — its market and bar rule, the indicators on it with their inputs,
+//! its drawings by name, and the strategies armed on them. Each list is
+//! capped; its total says how many there were.
+use crate::native_indicator::Value;
+use quantick_control::registry::CapabilityDescriptor;
+use quantick_control::wire::{CanonicalDecimal, WireU64};
+use quantick_control_host::authority::{ReadSpec, read_descriptor};
+use quantick_control_host::wire::BarSpecDto;
+use quantick_stores::indicator_state::{SavedIndicator, SavedInputExt, SavedKind};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+
+pub const CONTEXT_CAPABILITY_ID: &str = "chart.context.read";
+/// The most indicators one document lists.
+pub const MAX_INDICATORS: usize = 64;
+/// The most drawings one document lists.
+pub const MAX_DRAWINGS: usize = 256;
+/// The most armed strategies one document lists.
+pub const MAX_STRATEGIES: usize = 64;
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Input {
+    pub tab_id: WireU64,
+    pub pane_id: WireU64,
+}
+
+/// One chart pane's context.
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+pub struct Document {
+    pub tab_id: WireU64,
+    pub pane_id: WireU64,
+    pub feed_id: String,
+    pub symbol: String,
+    /// The bar type and its parameter.
+    pub bar_spec: BarSpecDto,
+    /// The first [`MAX_INDICATORS`], in the pane's order.
+    pub indicators: Vec<Indicator>,
+    pub indicators_total: WireU64,
+    /// The first [`MAX_DRAWINGS`], back to front.
+    pub drawings: Vec<Drawing>,
+    pub drawings_total: WireU64,
+    /// The first [`MAX_STRATEGIES`], in arming order.
+    pub strategies: Vec<Strategy>,
+    pub strategies_total: WireU64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum IndicatorKind {
+    Native,
+    Script,
+}
+
+/// One indicator slot and its committed inputs.
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+pub struct Indicator {
+    pub slot_id: WireU64,
+    pub kind: IndicatorKind,
+    /// The native catalog id (`native.ema`) or the script's library name.
+    pub id: String,
+    pub hidden: bool,
+    /// Whether the pane runs it without an error.
+    pub loaded: bool,
+    /// In declaration order.
+    pub inputs: Vec<IndicatorInput>,
+}
+
+/// One input value. A script's saved inputs carry no names, so `name` is
+/// absent for them; their order is the script's declaration order.
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+pub struct IndicatorInput {
+    pub name: Option<String>,
+    pub value: Value,
+}
+
+/// One drawn object.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
+pub struct Drawing {
+    pub id: WireU64,
+    /// The trader's name for it, or the one generated when it was placed
+    /// (`zone-1`, `line-2`).
+    pub name: Option<String>,
+    /// The drawing tool id (`rectangle`, `trend-line`).
+    pub kind: String,
+    /// Each anchor's price, in anchor order.
+    pub prices: Vec<CanonicalDecimal>,
+    pub selected: bool,
+    pub locked: bool,
+    pub hidden: bool,
+}
+
+/// One strategy armed on a drawing.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
+pub struct Strategy {
+    pub drawing_id: WireU64,
+    /// The name of the drawing it rides; absent when that drawing is gone.
+    pub drawing_name: Option<String>,
+    pub preset: String,
+    /// `buy` or `sell`.
+    pub side: String,
+    pub quantity: CanonicalDecimal,
+    /// `paper` places orders; `alarm_only` only watches.
+    pub execution: String,
+    /// `one_shot` or `auto`.
+    pub rearm: String,
+    /// `armed`, `fired`, `retest_resting`, `in_position`, `done` or `disarmed`.
+    pub state: String,
+    pub disarm_reason: Option<String>,
+    /// The badge the chart prints beside the drawing.
+    pub badge: String,
+}
+
+pub fn descriptor() -> CapabilityDescriptor {
+    read_descriptor::<Input, Document>(&ReadSpec {
+        id: CONTEXT_CAPABILITY_ID,
+        module: "chart",
+        title: "Read one chart's context",
+        description: "Reads one exact pane as a single document: feed, symbol and bar type with its parameter; indicators (up to 64) with kind, id, hidden and loaded state and their committed input values; drawings (up to 256) with id, name, tool kind, anchor prices, and selected, locked and hidden flags; strategies armed on its drawings (up to 64) with the drawing they ride, preset, side, quantity, execution, rearm, state and badge. Every drawing carries a name: the trader's, or one generated per kind on placement and on load (zone-1, line-2), stable across save and load. Each list reports its total. Script inputs list values in declaration order without names. Changes nothing.",
+        permissions: &[
+            "observe",
+            "observe.market",
+            "observe.chart",
+            "observe.indicators",
+            "observe.drawings",
+            "observe.paper",
+            "observe.user_text",
+        ],
+        pagination: None,
+    })
+}
+
+pub fn documents() -> Vec<(&'static str, serde_json::Value)> {
+    use quantick_control::schema::generated_schema as s;
+    vec![
+        ("chart-context-read-input-v1.schema.json", s::<Input>()),
+        ("chart-context-read-result-v1.schema.json", s::<Document>()),
+    ]
+}
+
+/// The first [`MAX_INDICATORS`] of the pane's saved slots, each with whether
+/// it runs; natives name their inputs from the catalog.
+pub fn indicators(saved: Vec<(u64, SavedIndicator, bool)>) -> Vec<Indicator> {
+    saved
+        .into_iter()
+        .take(MAX_INDICATORS)
+        .map(|(slot, entry, loaded)| indicator(slot, entry, loaded))
+        .collect()
+}
+
+fn indicator(slot: u64, entry: SavedIndicator, loaded: bool) -> Indicator {
+    let (kind, id) = match entry.kind {
+        SavedKind::Native { id } => (IndicatorKind::Native, id),
+        SavedKind::Script { name } => (IndicatorKind::Script, name),
+    };
+    let saved = |i: usize| entry.inputs.get(i).and_then(SavedInputExt::to_value);
+    let native = (kind == IndicatorKind::Native)
+        .then(|| quantick_indicators::native::native(&id))
+        .flatten();
+    let inputs = match native {
+        Some(native) => (native.default_inputs().iter().enumerate())
+            .map(|(i, spec)| IndicatorInput {
+                name: Some(spec.name().to_owned()),
+                value: Value::from_input(&saved(i).unwrap_or_else(|| spec.default_value())),
+            })
+            .collect(),
+        None => (0..entry.inputs.len())
+            .filter_map(saved)
+            .map(|value| IndicatorInput {
+                name: None,
+                value: Value::from_input(&value),
+            })
+            .collect(),
+    };
+    Indicator {
+        slot_id: WireU64::new(slot),
+        kind,
+        id,
+        hidden: entry.hidden,
+        loaded,
+        inputs,
+    }
+}
+
+#[cfg(test)]
+#[path = "chart_context_tests.rs"]
+mod tests;

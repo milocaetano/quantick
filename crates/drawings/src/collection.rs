@@ -44,6 +44,8 @@ impl<T: Clone + PartialEq> Drawings<T> {
         self.undo.clear();
         self.redo.clear();
         self.gesture_baseline = None;
+        // Names are per market, and what comes next may be another market.
+        self.name_floors.clear();
         std::mem::take(&mut self.items)
     }
 
@@ -114,19 +116,6 @@ impl<T: Clone + PartialEq> Drawings<T> {
     #[must_use]
     pub fn index_of(&self, id: DrawingId) -> Option<usize> {
         self.items.iter().position(|item| item.id == id)
-    }
-
-    /// Rename the object at `index` as one undo step. Whitespace-only input
-    /// clears the name back to the derived label.
-    pub fn rename_at(&mut self, index: usize, name: &str) {
-        if index >= self.items.len() {
-            return;
-        }
-        let trimmed = name.trim();
-        let name = (!trimmed.is_empty()).then(|| trimmed.to_owned());
-        let before = self.snapshot();
-        self.items[index].name = name;
-        self.record(before);
     }
 
     #[must_use]

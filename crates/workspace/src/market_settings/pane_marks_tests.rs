@@ -284,6 +284,7 @@ fn a_store_with_both_kinds_reads_back_as_written() {
         &[],
         known,
     );
+    settings.name_unnamed_drawings();
     let text = to_text(&settings).unwrap();
     assert!(text.contains("role = \"all-timeframes\""));
     assert!(text.contains("bars = \"time:15m\""));
@@ -295,9 +296,10 @@ fn a_store_with_both_kinds_reads_back_as_written() {
 }
 
 #[test]
-fn an_old_file_loads_and_writes_back_unchanged() {
+fn an_old_file_loads_and_writes_back_unchanged_but_for_the_names_it_lacked() {
     let settings = parse_settings(MERGED).unwrap();
-    assert_eq!(to_text(&settings).unwrap(), MERGED);
+    let text = to_text(&settings).unwrap();
+    assert_eq!(super::tests::without_names(&text), MERGED);
     assert!(
         !MERGED.contains("bars = "),
         "the fixture predates pinning, or this proves nothing"

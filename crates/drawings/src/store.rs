@@ -63,6 +63,10 @@ pub struct Drawings<T> {
     /// The selection the last switch of layout let go of: a delete of the
     /// layout it was on moves the mark after its charts, and takes it back.
     pub(crate) let_go: Option<crate::DrawingId>,
+    /// The highest generated name number per prefix this store has handed
+    /// out or been told its market uses: never lowered while the store holds
+    /// one market, so a deleted mark's name is not reborn on the next one.
+    pub(crate) name_floors: quantick_workspace::drawing_names::NameFloors,
 }
 
 // By hand: a derive would ask the tool handle for a `Default` it has no
@@ -83,6 +87,7 @@ impl<T> Default for Drawings<T> {
             live_layouts: Vec::new(),
             unclaimed: Vec::new(),
             let_go: None,
+            name_floors: quantick_workspace::drawing_names::NameFloors::new(),
         }
     }
 }
