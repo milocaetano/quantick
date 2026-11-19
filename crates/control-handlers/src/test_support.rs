@@ -107,6 +107,8 @@ pub(crate) struct FakePane {
     pub bars: BarConfiguration,
     /// The registered layers, as the pane's menu reads them.
     pub layers: Vec<(LayerSnapshot, Option<LayerBlocked>)>,
+    /// The strategies its tab has armed on its drawings.
+    pub armed: Vec<quantick_session::strategy_reading::ArmedReading<quantick_drawings::DrawingId>>,
 }
 
 /// A fake native tape: what it was last moved to, and the frame it reports.
@@ -155,6 +157,7 @@ impl FakePane {
                 .parse(&format!("tick:{ticks}"))
                 .expect("a tick rule"),
             layers: Vec::new(),
+            armed: Vec::new(),
         }
     }
 }
@@ -1097,6 +1100,16 @@ impl MarkTab for FakeTab {
             pointer_availability: unavailable("fake_window_has_no_pointer"),
             semantic_scene: unavailable("fake_window_has_no_pointer"),
         }
+    }
+}
+
+impl crate::chart_context::ArmedTab for FakeTab {
+    fn armed_on(
+        &self,
+        pane_id: u64,
+    ) -> Vec<quantick_session::strategy_reading::ArmedReading<quantick_drawings::DrawingId>> {
+        let pane = self.panes.iter().find(|pane| pane.id == pane_id);
+        pane.map_or_else(Vec::new, |pane| pane.armed.clone())
     }
 }
 

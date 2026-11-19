@@ -16,6 +16,7 @@ pub mod bubble_scale;
 pub mod canvas;
 pub mod catalog;
 pub mod chart;
+pub mod chart_context;
 pub mod chart_settings;
 pub mod contract_roll;
 pub mod deal_recording;

@@ -246,7 +246,7 @@ fn a_closing_menu_commits_the_rename_in_flight_and_only_a_changed_one() {
     let (mut pane, id) = pane_with_rectangle();
 
     pane.model.menu.drawing = Some(id);
-    pane.model.menu.rename = String::new();
+    pane.model.menu.rename = "zone-1".to_owned();
     assert!(
         pane.context_menu
             .close(&mut pane.model, &pane.drawings)
@@ -366,7 +366,7 @@ fn an_unchanged_rename_blur_records_nothing() {
     let ctx = egui::Context::default();
     let (mut pane, id) = pane_with_rectangle();
     pane.model.menu.drawing = Some(id);
-    pane.model.menu.rename = String::new();
+    pane.model.menu.rename = "zone-1".to_owned();
     // Focus the field, then click away from it: the blur of an untouched
     // name asks for no rename, so no undo step is recorded.
     let _ = click_entry(&mut pane, &ctx, "Rename");

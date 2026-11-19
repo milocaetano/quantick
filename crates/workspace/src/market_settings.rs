@@ -15,6 +15,7 @@ use crate::layout_document::{LayoutBook, LegacyDrawings, SavedDrawing, SavedOrig
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
+mod names;
 pub mod pane_marks;
 pub use pane_marks::PaneWrite;
 
@@ -191,6 +192,11 @@ pub struct MarketSettings {
     /// a hand-edited file out of order or with a market twice reads the same.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     bar_progress_off: BTreeSet<MarketKey>,
+    /// Per market, the highest generated drawing name number each prefix
+    /// ever reached: never lowered, so a deleted mark's name is not handed
+    /// out again after a restart. See [`names`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    name_floors: Vec<names::MarketNameFloors>,
 }
 
 impl Default for MarketSettings {
@@ -199,6 +205,7 @@ impl Default for MarketSettings {
             version: FORMAT_VERSION,
             drawings: Vec::new(),
             bar_progress_off: BTreeSet::new(),
+            name_floors: Vec::new(),
         }
     }
 }
@@ -440,6 +447,7 @@ impl MarketSettings {
                 }
             }
         }
+        self.name_unnamed_drawings();
         report
     }
 
@@ -551,14 +559,17 @@ impl std::fmt::Display for SettingsError {
 }
 impl std::error::Error for SettingsError {}
 
+/// Read a market settings file, naming every mark it brought without a name.
+///
 /// # Errors
 /// Returns why the text is not a market settings file this build reads.
 pub fn parse_settings(text: &str) -> Result<MarketSettings, SettingsError> {
-    let settings: MarketSettings =
+    let mut settings: MarketSettings =
         toml::from_str(text).map_err(|error| SettingsError::Malformed(error.to_string()))?;
     if settings.version != FORMAT_VERSION {
         return Err(SettingsError::Version(settings.version));
     }
+    settings.name_unnamed_drawings();
     Ok(settings)
 }
 

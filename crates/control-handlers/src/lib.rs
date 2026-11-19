@@ -29,6 +29,7 @@ pub mod bubble_save;
 pub mod bubble_scale;
 pub mod canvas;
 pub mod chart;
+pub mod chart_context;
 pub mod chart_layer;
 pub mod connection;
 pub mod contract_roll;

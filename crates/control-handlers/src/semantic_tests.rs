@@ -326,3 +326,42 @@ fn the_journal_sees_only_the_marks_a_panes_layout_shows() {
     let events = frame(&mut baseline, &source);
     assert_eq!(kinds(events), ["analysis.drawing.removed"], "really gone");
 }
+
+#[test]
+fn every_rename_records_an_edit_and_says_only_whether_the_name_was_typed() {
+    use quantick_drawings::{ChartPoint, DRAWING_TOOLS, DrawingBand, DrawingStyle, NewDrawing};
+    let mut source = Source::new(vec![Tab::new(1, "WIN")]);
+    let drawings = &mut source.tabs[0].panes[0].drawings;
+    let tool = DRAWING_TOOLS
+        .into_iter()
+        .find(|tool| tool.id() == "horizontal-line")
+        .unwrap();
+    let point = ChartPoint::at_time(3.0, 100.0, Some(NOW));
+    assert!(
+        drawings.place_with(tool, &DrawingBand::Price, point, |tool| NewDrawing {
+            style: DrawingStyle::default(),
+            payload: tool.default_payload(),
+        })
+    );
+    let mut baseline = SemanticBaseline::capture(&source);
+    let typed = |events: &[(String, Value)]| events[0].1["user_label_present"].clone();
+
+    source.tabs[0].panes[0].drawings.rename_at(0, "absorption");
+    let events = frame(&mut baseline, &source);
+    assert_eq!(events[0].0, "analysis.drawing.edited");
+    assert_eq!(typed(&events), json!(true));
+    assert!(
+        !events[0].1.to_string().contains("absorption"),
+        "never the text"
+    );
+
+    source.tabs[0].panes[0]
+        .drawings
+        .rename_at(0, "absorption 2");
+    let events = frame(&mut baseline, &source);
+    assert_eq!(
+        events.len(),
+        1,
+        "a typed name to another typed name is an edit"
+    );
+}

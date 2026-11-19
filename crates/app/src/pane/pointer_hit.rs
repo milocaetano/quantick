@@ -190,8 +190,8 @@ impl PaneHitTest<'_> {
             Some(ControlDrawingHit {
                 id: drawing.id,
                 tool_id: drawing.tool.id(),
-                label: format!("{} {}", drawing.tool.name(), index + 1),
-                user_label_present: drawing.name.is_some(),
+                label: drawing.public_label(index),
+                user_label_present: drawing.has_typed_name(),
                 handle_index,
                 selected: self.drawings.selected_id() == Some(drawing.id),
                 locked: drawing.locked,

@@ -225,7 +225,7 @@ fn drawing_revision(drawings: &Drawings<DrawingTool>, index: usize) -> DrawingRe
             drawing.locked,
             drawing.own_magnet(),
             drawing.hidden,
-            drawing.name.is_some(),
+            drawing.has_typed_name(),
             drawing.author.is_some(),
             drawing.foreign_market,
             drawing.off_series,
@@ -233,6 +233,7 @@ fn drawing_revision(drawings: &Drawings<DrawingTool>, index: usize) -> DrawingRe
             drawings.in_all_windows(index),
         ],
         layout: drawing.layout.map(|layout| layout.0),
+        name: drawing.name.clone(),
     }
 }
 
@@ -272,6 +273,8 @@ struct DrawingRevisionKey {
     flags: [bool; 9],
     /// The layout it belongs to.
     layout: Option<u64>,
+    /// Compared whole, so every rename moves the revision.
+    name: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -435,7 +438,7 @@ fn drawing_snapshot(drawings: &Drawings<DrawingTool>, index: usize) -> DrawingSn
             pane: wire_usize(origin.pane),
         }),
         anchor_count: wire_usize(drawing.points.len()),
-        user_label_present: drawing.name.is_some(),
+        user_label_present: drawing.has_typed_name(),
         author: drawing.author.as_ref().map(|author| DrawingAuthorSnapshot {
             actor_kind: author.actor_kind.clone(),
             client_name: author.client_name.clone(),

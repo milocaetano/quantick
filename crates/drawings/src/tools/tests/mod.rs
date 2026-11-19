@@ -732,7 +732,7 @@ fn an_undone_delete_restores_the_object_under_its_old_id() {
 }
 
 #[test]
-fn a_duplicate_is_a_new_object_with_no_name() {
+fn a_duplicate_is_a_new_object_with_a_name_of_its_own() {
     let mut drawings = Drawings::default();
     drawings.place(tool("horizontal-line"), ChartPoint::at(1.0, 100.0));
     drawings.rename_at(0, "congestão 108k");
@@ -743,18 +743,18 @@ fn a_duplicate_is_a_new_object_with_no_name() {
     };
     assert_ne!(original.id, copy.id);
     assert_eq!(original.name.as_deref(), Some("congestão 108k"));
-    assert_eq!(copy.name, None);
+    assert_eq!(copy.name.as_deref(), Some("line-2"));
 }
 
 #[test]
-fn rename_is_one_undo_step_and_whitespace_clears_it() {
+fn rename_is_one_undo_step_and_whitespace_gives_a_generated_name() {
     let mut drawings = Drawings::default();
     let line = tool("horizontal-line");
     drawings.place(line, ChartPoint::at(1.0, 100.0));
     assert_eq!(
         drawings.items()[0].display_label(0),
-        format!("{} 1", line.name()),
-        "no name falls back to the derived label"
+        "line-1",
+        "a placed mark is named"
     );
 
     drawings.rename_at(0, "  zona de venda  ");
@@ -762,12 +762,16 @@ fn rename_is_one_undo_step_and_whitespace_clears_it() {
     assert_eq!(drawings.items()[0].display_label(0), "zona de venda");
 
     drawings.rename_at(0, "   ");
-    assert_eq!(drawings.items()[0].name, None, "whitespace clears the name");
+    assert_eq!(
+        drawings.items()[0].name.as_deref(),
+        Some("line-2"),
+        "whitespace takes the next generated name"
+    );
 
     drawings.undo();
     assert_eq!(drawings.items()[0].name.as_deref(), Some("zona de venda"));
     drawings.undo();
-    assert_eq!(drawings.items()[0].name, None);
+    assert_eq!(drawings.items()[0].name.as_deref(), Some("line-1"));
 }
 
 #[test]

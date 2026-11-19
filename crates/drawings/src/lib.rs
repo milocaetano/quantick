@@ -36,6 +36,7 @@ mod context;
 mod defaults;
 mod family;
 mod geometry;
+mod naming;
 mod object;
 mod payload;
 mod placement;

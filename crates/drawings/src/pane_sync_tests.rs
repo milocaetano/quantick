@@ -198,7 +198,11 @@ fn refreshing_the_shared_marks_keeps_this_charts_history_and_selection() {
     assert_eq!(pane.drawings.selected_id(), Some(mine), "selection kept");
     assert_eq!(pane.drawings.undo_depth(), depth, "history kept");
     assert!(pane.drawings.undo(), "the rename on this chart undoes");
-    assert_eq!(pane.drawings.items()[1].name, None);
+    assert_eq!(
+        pane.drawings.items()[1].name.as_deref(),
+        Some("line-2"),
+        "back to the name it was placed with, above the market's line-1"
+    );
     assert_eq!(
         prices(&pane.drawings),
         [105.0, 50.0],
@@ -518,4 +522,61 @@ fn putting_a_chart_away_forgets_a_blocked_recut() {
 
     chart.marks().put_away(store.settings_mut());
     assert!(chart.layout.recut_checked.is_none());
+}
+
+/// Two charts of one market never hand out the same name: a chart follows
+/// the store's names before it names its next mark.
+#[test]
+fn two_charts_of_one_market_name_their_marks_apart() {
+    let mut store = market_store();
+    let session = LayoutSession::new(LayoutBook::default());
+    let mut flow_chart = Chart::open(store.settings(), flow(), 1);
+    let mut context_chart = Chart::open(store.settings(), context(), 5);
+    level_at(&mut flow_chart.drawings, 1.0, 100.0);
+    flow_chart.drawings.items_mut()[0].set_scope(DrawingScope::ThisChart);
+    flow_chart.marks().persist(store.settings_mut());
+
+    context_chart.marks().follow_store(&store, &session);
+    level_at(&mut context_chart.drawings, 2.0, 200.0);
+    let name = |chart: &Chart| chart.drawings.items()[0].name.clone();
+    assert_eq!(name(&flow_chart).as_deref(), Some("line-1"));
+    assert_eq!(name(&context_chart).as_deref(), Some("line-2"));
+}
+
+/// A deleted mark's name is not handed out again: not after a write, not
+/// after the file is read back, not on a fresh chart of the market.
+#[test]
+fn a_deleted_name_is_not_reused_after_a_save_and_a_reload() {
+    let mut settings = MarketSettings::default();
+    let mut pane = Pane::open(&settings, flow(), "tick:100");
+    for bar in 0..5 {
+        let at = |offset: f32| {
+            let time = Some(T0 + i64::from(bar) * 60_000 + offset as i64);
+            ChartPoint::at_time(bar as f32 + offset, 100.0 + offset as f64, time)
+        };
+        assert!(!pane.drawings.place(tool("rectangle"), at(0.0)));
+        assert!(pane.drawings.place(tool("rectangle"), at(0.5)));
+    }
+    let last = pane.drawings.items()[4].id;
+    assert_eq!(pane.drawings.items()[4].name.as_deref(), Some("zone-5"));
+    assert!(pane.drawings.remove_by_id(last));
+    pane.persist(&mut settings);
+
+    let text = quantick_workspace::market_settings::to_text(&settings).unwrap();
+    let reloaded = quantick_workspace::market_settings::parse_settings(&text).unwrap();
+    let mut fresh = Pane::open(&reloaded, flow(), "tick:100");
+    assert!(
+        !fresh
+            .drawings
+            .place(tool("rectangle"), ChartPoint::at(8.0, 90.0))
+    );
+    assert!(
+        fresh
+            .drawings
+            .place(tool("rectangle"), ChartPoint::at(9.0, 95.0))
+    );
+    let names: Vec<_> = (fresh.drawings.items().iter())
+        .map(|mark| mark.name.clone().unwrap())
+        .collect();
+    assert_eq!(names, ["zone-1", "zone-2", "zone-3", "zone-4", "zone-6"]);
 }

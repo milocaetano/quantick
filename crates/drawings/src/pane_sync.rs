@@ -180,6 +180,7 @@ pub fn adopt_pane(
     bars: &str,
 ) {
     drawings.reserve_ids(settings.max_drawing_id(&key.market));
+    drawings.reserve_names(&key.market, &settings.name_floors(&key.market));
     drawings.adopt(crate::pane_marks(settings, key, bars));
     *base = shared_base(drawings);
 }
@@ -195,6 +196,7 @@ pub fn refresh_shared(
     _bars: &str,
 ) {
     drawings.reserve_ids(settings.max_drawing_id(&key.market));
+    drawings.reserve_names(&key.market, &settings.name_floors(&key.market));
     let shared = crate::saved::live(&settings.shared_drawings(&key.market), key);
     drawings.replace_shared(shared);
     *base = shared_base(drawings);
@@ -211,12 +213,14 @@ pub fn persist_pane(
     bars: &str,
 ) -> PaneWrite {
     let write = crate::store_marks(settings, key, bars, drawings.items(), base);
+    keep_name_floors(drawings, settings, key);
     if write.merged {
         refresh_shared(drawings, base, settings, key, bars);
     } else {
         *base = shared_base(drawings);
     }
     drawings.reserve_ids(settings.max_drawing_id(&key.market));
+    drawings.reserve_names(&key.market, &settings.name_floors(&key.market));
     write
 }
 
@@ -263,8 +267,21 @@ pub fn put_away_pane(
     key: &DrawingKey,
     bars: &str,
 ) -> PaneWrite {
+    keep_name_floors(drawings, settings, key);
     let marks = drawings.take_all();
     crate::store_marks(settings, key, bars, &marks, &std::mem::take(base))
+}
+
+/// Write the names the pane handed out into the market's high-water, so a
+/// deleted mark's name is not reused after a restart.
+fn keep_name_floors(
+    drawings: &Drawings<DrawingTool>,
+    settings: &mut MarketSettings,
+    key: &DrawingKey,
+) {
+    if let Some(floors) = drawings.name_floors_of(&key.market) {
+        settings.raise_name_floors(&key.market, floors);
+    }
 }
 
 /// One pane's side of the store: its marks, its layout bookkeeping, the bars
@@ -369,6 +386,8 @@ impl<B: Copy + PartialEq> PaneMarks<'_, B> {
         if let Some(key) = &self.layout.drawings_key {
             self.drawings
                 .reserve_ids(settings.max_drawing_id(&key.market));
+            self.drawings
+                .reserve_names(&key.market, &settings.name_floors(&key.market));
         }
         let rule = self.rule;
         self.layout

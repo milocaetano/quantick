@@ -76,6 +76,7 @@ impl<T: ToolCatalog> Drawings<T> {
         if tool.required_points() > 0 && draft.points.len() == tool.required_points() {
             let before = self.snapshot();
             let placed = self.draft.take().expect("draft has points");
+            let placed = self.named(placed);
             self.items.push(truthful_scope(placed));
             self.select(Some(self.items.len() - 1));
             // Drawing while hide-all is engaged releases it (audit M8): the
@@ -109,6 +110,7 @@ impl<T: ToolCatalog> Drawings<T> {
             return false;
         }
         let before = self.snapshot();
+        let draft = self.named(draft);
         self.items.push(truthful_scope(draft));
         self.select(Some(self.items.len() - 1));
         // Same rule as a clicked placement: drawing releases hide-all, and

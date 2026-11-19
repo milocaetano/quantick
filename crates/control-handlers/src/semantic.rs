@@ -162,9 +162,9 @@ struct DrawingKey {
     locked: bool,
     magnet: bool,
     hidden: bool,
-    /// Whether the trader gave it a name — never the name, which is their own
-    /// text and does not belong in the journal any more than on the wire.
-    named: bool,
+    /// Its name, compared so every rename registers. Kept in memory only:
+    /// the journal says whether the name was typed, never the text.
+    name: Option<String>,
     /// `(actor kind, client name)` when something other than the trader's hand
     /// placed it.
     author: Option<(String, String)>,
@@ -183,7 +183,7 @@ impl DrawingKey {
             && self.locked == drawing.locked
             && self.magnet == drawing.own_magnet()
             && self.hidden == drawing.hidden
-            && self.named == drawing.name.is_some()
+            && self.name == drawing.name
             && match (&self.author, &drawing.author) {
                 (None, None) => true,
                 (Some((kind, name)), Some(author)) => {
@@ -208,7 +208,7 @@ impl DrawingKey {
             locked: drawing.locked,
             magnet: drawing.own_magnet(),
             hidden: drawing.hidden,
-            named: drawing.name.is_some(),
+            name: drawing.name.clone(),
             author: drawing
                 .author
                 .as_ref()
@@ -583,7 +583,7 @@ fn record_analysis_changes<J: SemanticJournal + ?Sized>(
                         "hidden": drawing.hidden,
                         // Presence, never the text: the journal is held to
                         // the same rule as the wire.
-                        "user_label_present": drawing.name.is_some(),
+                        "user_label_present": drawing.has_typed_name(),
                         "author": author_payload(drawing),
                     }),
                     now,

@@ -8,6 +8,7 @@ pub mod canvas_layout;
 pub mod context_opening;
 pub mod dock;
 pub mod drawing_identity;
+pub mod drawing_names;
 pub mod indicator_document;
 pub mod indicator_mirror;
 #[cfg(test)]
