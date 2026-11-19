@@ -651,7 +651,7 @@ impl WorkspaceBook {
     }
 
     /// The indicator sets `shown` names become the tab's copy's, pane by
-    /// pane; nothing else of it moves. See `book_upkeep::prepare_save`.
+    /// pane; nothing else of it moves. See `book_upkeep::take_shown_sets`.
     pub fn take_sets(&mut self, tab: u64, shown: &WorkspaceRecipe) {
         let Some(state) = self.tabs.get_mut(&tab) else {
             return;
@@ -984,12 +984,16 @@ impl WorkspaceBook {
             .is_none_or(|base| !base.holds(&state.copy))
     }
 
-    fn needs_save(&self, state: &TabWorkspace) -> bool {
-        self.is_modified(state)
-            || (state.workspace != DEFAULT_WORKSPACE
+    /// An explicit save can record a named workspace's inherited intervals
+    /// even when the tab has no edits for autosave or the close prompt.
+    #[must_use]
+    pub fn captures_inherited_bars(&self, tab: u64) -> bool {
+        self.tabs.get(&tab).is_some_and(|state| {
+            state.workspace != DEFAULT_WORKSPACE
                 && self
                     .baseline(state)
-                    .is_some_and(|base| !base.same_bars(&state.copy)))
+                    .is_some_and(|base| base.inherits_bars_from(&state.copy))
+        })
     }
 
     /// Why `name` cannot be deleted, or `None` when it can: what greys the
@@ -1003,8 +1007,8 @@ impl WorkspaceBook {
             .then(|| WorkspaceRefusal::UnknownWorkspace(name.to_owned()))
     }
 
-    /// A tab's panes stand, showing `live`. On the factory `Default`, a clean
-    /// tab takes that as its copy and its baseline; a tab with edits keeps them.
+    /// Once the panes stand, remember inherited intervals for an explicit save.
+    /// A clean tab on the factory `Default` takes its market as its baseline.
     pub fn settle_tab(&mut self, tab: u64, live: &WorkspaceRecipe) {
         let Some(state) = self.tabs.get(&tab) else {
             return;
@@ -1013,12 +1017,15 @@ impl WorkspaceBook {
             .recipes
             .get(&state.workspace)
             .is_some_and(WorkspaceRecipe::is_factory);
-        if factory
-            && !self.is_modified(state)
-            && let Some(state) = self.tabs.get_mut(&tab)
-        {
+        let opens_on_market = factory && !self.is_modified(state);
+        let Some(state) = self.tabs.get_mut(&tab) else {
+            return;
+        };
+        if opens_on_market {
             state.copy = live.clone();
             state.opened = Some(live.without_bars());
+        } else {
+            state.copy.take_inherited_bars(live);
         }
     }
 
@@ -1201,7 +1208,7 @@ impl WorkspaceBook {
     /// No such tab.
     pub fn save_to_preview(&self, tab: u64) -> Result<Vec<u64>, WorkspaceRefusal> {
         let saver = self.state(tab)?;
-        if !self.needs_save(saver) {
+        if !self.is_modified(saver) && !self.captures_inherited_bars(tab) {
             return Ok(Vec::new());
         }
         Ok(self
@@ -1223,7 +1230,7 @@ impl WorkspaceBook {
         let tabs_changed = self.save_to_preview(tab)?;
         let saver = self.state(tab)?;
         let workspace = saver.workspace.clone();
-        if !self.needs_save(saver) {
+        if !self.is_modified(saver) && !self.captures_inherited_bars(tab) {
             return Ok(SaveOutcome {
                 workspace,
                 changed: false,

@@ -21,22 +21,32 @@ fn saving_a_legacy_workspace_captures_each_shown_timeframe() {
         let mut book = WorkspaceBook::default();
         book.set_autosave(false);
         book.open_tab(7);
-        book.observe(7, &live.without_bars()).unwrap();
+        let mut legacy = live.without_bars();
+        legacy.context_panes.pop();
+        book.observe(7, &legacy).unwrap();
         book.save_as(7, "Legacy").unwrap();
-        let mut sync = TabRecipeSync::default();
-        sync.settle(7, live.clone());
+        book.open_tab(9);
+        book.set(9, "Legacy").unwrap();
+        book.settle_tab(
+            9,
+            &WorkspaceRecipe {
+                flow_bars: Some("tick:500".to_owned()),
+                ..live.clone()
+            },
+        );
+        book.settle_tab(7, &live);
         assert!(!book.differs(7), "inherited intervals are no edit");
-        prepare_save(&mut book, &sync, 7);
+        assert!(book.captures_inherited_bars(7));
+        assert_eq!(book.save_to_preview(7).unwrap(), [9]);
         let name = if save_as { "Saved" } else { "Legacy" };
         let saved = if save_as {
             book.save_as(7, name)
         } else {
             book.save_to(7)
         };
-        assert!(
-            saved.unwrap().changed,
-            "the explicit save captures the bars"
-        );
+        let saved = saved.unwrap();
+        assert!(saved.changed, "the explicit save captures the bars");
+        assert_eq!(saved.tabs_changed, if save_as { vec![] } else { vec![9] });
         let mut reopened = crate::workspace_book::parse_book(&toml::to_string(&book).unwrap())
             .expect("the saved book reloads");
         reopened.open_tab(8);
@@ -50,7 +60,7 @@ fn saving_a_legacy_workspace_captures_each_shown_timeframe() {
             [(0, "time:60000"), (1, "time:300000"), (2, "time:3600000")],
             "every saved interval overrides a new tab's market defaults"
         );
-        prepare_save(&mut book, &sync, 7);
+        assert!(!book.captures_inherited_bars(7));
         assert!(!book.save_to(7).unwrap().changed, "a retry changes nothing");
     }
 }
@@ -373,17 +383,21 @@ fn preparing_a_save_waits_for_arrival_and_keeps_default_market_specific() {
         }],
         ..WorkspaceRecipe::default()
     };
-    let mut book = WorkspaceBook::default();
-    book.open_tab(7);
-    book.observe(7, &live.without_bars()).unwrap();
-    let mut sync = TabRecipeSync::default();
-    sync.settle(7, live.clone());
-    sync.queue(7, live.clone());
-    prepare_save(&mut book, &sync, 7);
-    assert_eq!(book.tab_copy(7), Some(&live.without_bars()));
-    sync.finish(7);
-    prepare_save(&mut book, &sync, 7);
-    book.save_to(7).unwrap();
-    assert_eq!(book.recipe(DEFAULT_WORKSPACE), Some(&live.without_bars()));
-    assert!(!book.save_to(7).unwrap().changed);
+    let mut host = OneTab {
+        shows: live.clone(),
+        ..OneTab::default()
+    };
+    host.book.open_tab(7);
+    host.book.observe(7, &live.without_bars()).unwrap();
+    host.sync.queue(7, live.clone());
+    assert!(!observe_tab(&mut host, 7));
+    assert_eq!(host.book.tab_copy(7), Some(&live.without_bars()));
+    host.sync.finish(7);
+    observe_tab(&mut host, 7);
+    host.book.save_to(7).unwrap();
+    assert_eq!(
+        host.book.recipe(DEFAULT_WORKSPACE),
+        Some(&live.without_bars())
+    );
+    assert!(!host.book.save_to(7).unwrap().changed);
 }

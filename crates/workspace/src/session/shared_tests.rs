@@ -5,7 +5,7 @@
 //! writes what they all show. Tabs on two workspaces never share.
 use super::*;
 use crate::book_upkeep::{
-    TabRecipeHost, Upkeep, maintain, prepare_save, show_recipe, tab_holdings,
+    TabRecipeHost, Upkeep, maintain, show_recipe, tab_holdings, take_shown_sets,
 };
 use crate::indicator_document::SavedKind;
 use crate::workspace_book::{SaveOutcome, WorkspaceBook};
@@ -209,7 +209,7 @@ impl Desk {
 
     /// Save to, as the control call does it.
     fn save(&mut self, tab: u64) -> SaveOutcome {
-        prepare_save(&mut self.book, &self.sync, tab);
+        take_shown_sets(&mut self.book, &self.sync, tab);
         let saved = self.book.save_to(tab).unwrap();
         for other in &saved.tabs_changed {
             let recipe = self.book.tab_copy(*other).cloned().unwrap();
@@ -220,7 +220,7 @@ impl Desk {
 
     /// Save as, as the control call does it.
     fn save_as(&mut self, tab: u64, name: &str) {
-        prepare_save(&mut self.book, &self.sync, tab);
+        take_shown_sets(&mut self.book, &self.sync, tab);
         self.book.save_as(tab, name).unwrap();
     }
 
