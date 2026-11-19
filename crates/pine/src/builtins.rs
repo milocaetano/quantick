@@ -185,7 +185,8 @@ pub enum Builtin {
     Bgcolor,
     /// `barcolor(...)`
     Barcolor,
-    /// `alertcondition(...)` — parsed, inert, load warning.
+    /// `alertcondition(condition, title, message)` — raises an alarm on a
+    /// commit run whose condition holds.
     AlertCondition,
 
     // ---- draw objects ----

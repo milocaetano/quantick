@@ -131,6 +131,16 @@ pub enum IndicatorEvent {
     /// A hot reload failed to compile; the previous version keeps running
     /// ("stale — edit has errors").
     ReloadFailed { slot: SlotId, message: String },
+    /// A script's `alertcondition` held on a bar that closed live
+    /// ([`IndicatorCommand::BarClosed`]). Never sent for a forming bar, and
+    /// never for history replayed by a backfill, rebuild, add or reload.
+    AlertFired {
+        slot: SlotId,
+        /// Close time of the bar that raised it, exchange milliseconds.
+        bar_close_ms: i64,
+        title: String,
+        message: String,
+    },
 }
 
 /// The superseding rule for commands parked behind a full queue: `newer`

@@ -1,0 +1,25 @@
+//@version=5
+// Renko POC flip: an alarm when a renko brick closes in the opposite colour
+// to the brick before it and its point of control moved the same way.
+//
+//   Bull flip: an up brick after a down brick, POC above the previous POC.
+//   Bear flip: a down brick after an up brick, POC below the previous POC.
+//
+// Alarms fire once, when the brick closes; a forming brick never fires.
+// A brick without footprint data has no POC and never flips.
+indicator("Renko POC flip", overlay=true)
+
+up = close > open
+down = close < open
+// Read the previous brick on every bar, outside the `and` chains below.
+wasUp = up[1]
+wasDown = down[1]
+prevPoc = poc[1]
+bullFlip = up and wasDown and poc > prevPoc
+bearFlip = down and wasUp and poc < prevPoc
+
+plotshape(bullFlip, title="Bull flip", style=shape.triangleup, location=location.belowbar, color=color.teal)
+plotshape(bearFlip, title="Bear flip", style=shape.triangledown, location=location.abovebar, color=color.red)
+
+alertcondition(bullFlip, title="Bull flip", message="Renko flipped up with the POC above the previous brick's POC")
+alertcondition(bearFlip, title="Bear flip", message="Renko flipped down with the POC below the previous brick's POC")

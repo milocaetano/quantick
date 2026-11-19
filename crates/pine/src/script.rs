@@ -8,7 +8,7 @@
 //! scripted indicator from a native one.
 
 use quantick_indicators::{
-    Ctx, EvalError, Indicator, IndicatorBar, IndicatorDescriptor, InputValue, PlotBuffer,
+    Ctx, EvalError, FiredAlert, Indicator, IndicatorBar, IndicatorDescriptor, InputValue, PlotBuffer,
     PreviewFrame, Rgba8,
 };
 
@@ -33,6 +33,10 @@ pub struct ScriptIndicator {
     /// calling `barcolor` stops being painted instead of inheriting the
     /// previous bar's colour.
     paint: Option<Rgba8>,
+    /// The alarms the last commit run raised, until taken. Cleared at the
+    /// top of every commit run and on its failure; a preview run neither
+    /// adds to nor clears it.
+    alerts: Vec<FiredAlert>,
     timezone: crate::calendar::CalendarTimezone,
 }
 
@@ -89,6 +93,7 @@ impl ScriptIndicator {
             row,
             candles,
             paint: None,
+            alerts: Vec::new(),
             timezone: crate::calendar::CalendarTimezone::default(),
         }
     }
@@ -122,6 +127,17 @@ impl ScriptIndicator {
         self.row.fill(f64::NAN);
         self.candles.fill(None);
         self.paint = None;
+        // A preview stages into a throwaway list, so it cannot touch the
+        // commit run's alarms.
+        let mut preview_alerts = Vec::new();
+        if is_commit {
+            self.alerts.clear();
+        }
+        let alerts = if is_commit {
+            &mut self.alerts
+        } else {
+            &mut preview_alerts
+        };
         let mut eval = Eval::new(
             &self.compiled,
             &self.inputs,
@@ -132,6 +148,7 @@ impl ScriptIndicator {
                 row: &mut self.row,
                 candles: &mut self.candles,
                 paint: &mut self.paint,
+                alerts,
             },
             is_commit,
         );
@@ -164,7 +181,10 @@ impl Indicator for ScriptIndicator {
     }
 
     fn on_close(&mut self, bar: &IndicatorBar, ctx: &mut Ctx<'_>) -> Result<(), EvalError> {
-        self.run_once(bar, ctx, true)?;
+        if let Err(error) = self.run_once(bar, ctx, true) {
+            self.alerts.clear();
+            return Err(error);
+        }
         self.state.commit_bar();
         // The append is the last step: an Err above leaves no half row. The
         // paint rides with it so a row and its colour can never disagree.
@@ -218,6 +238,11 @@ impl Indicator for ScriptIndicator {
         self.row.fill(f64::NAN);
         self.candles.fill(None);
         self.paint = None;
+        self.alerts.clear();
+    }
+
+    fn take_fired_alerts(&mut self) -> Vec<FiredAlert> {
+        std::mem::take(&mut self.alerts)
     }
 
     fn objects(&self) -> Option<&quantick_indicators::ObjectStore> {

@@ -88,6 +88,7 @@ impl<'s> Applying<'s> {
             }
             IndicatorCommand::BarClosed(bar) => {
                 self.session.host.push_closed_bar(&bar);
+                self.session.fire_alerts(bar.bar.close_time, effects);
                 self.cut();
             }
             IndicatorCommand::PartialUpdated {

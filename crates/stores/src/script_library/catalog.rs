@@ -33,6 +33,10 @@ pub const EMBEDDED_SCRIPTS: &[(&str, &str)] = &[
         "exhaustion_reversal.pine",
         include_str!("../../../app/scripts/exhaustion_reversal.pine"),
     ),
+    (
+        "renko_poc_flip.pine",
+        include_str!("../../../app/scripts/renko_poc_flip.pine"),
+    ),
     ("sma.pine", include_str!("../../../app/scripts/sma.pine")),
     ("wma.pine", include_str!("../../../app/scripts/wma.pine")),
     ("vwma.pine", include_str!("../../../app/scripts/vwma.pine")),

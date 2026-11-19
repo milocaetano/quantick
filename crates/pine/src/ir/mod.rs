@@ -95,7 +95,7 @@ pub struct CompiledScript {
     pub candle_plots: Vec<quantick_indicators::CandlePlotSpec>,
     /// Fills between plot pairs, resolved at load time.
     pub fills: Vec<FillSpec>,
-    /// Load-time warnings (ignored args, inert `alertcondition`, missing
+    /// Load-time warnings (ignored args, inert `bgcolor`, missing
     /// version directive) — surfaced in the UI, never fatal.
     pub warnings: Vec<PineError>,
     /// Per-node resolution (dense, indexed by `NodeId`).
