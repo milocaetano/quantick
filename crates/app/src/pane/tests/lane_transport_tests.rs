@@ -234,7 +234,7 @@ fn the_chunked_tape_sends_the_worker_what_the_slice_sent() {
                 assert_eq!(lane.set_rungs(rungs), oracle.set_rungs(rungs));
             }
             let want = oracle.command(state.partial().cloned(), &contiguous);
-            match lane.command(state.partial().cloned(), state.trades()) {
+            match lane.command(state.partial().cloned().map(Into::into), state.trades()) {
                 crate::indicator_worker::IndicatorCommand::PartialUpdated { run, .. } => {
                     assert!(
                         run.len() == want.len()

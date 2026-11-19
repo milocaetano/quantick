@@ -23,6 +23,7 @@ fn bar(index: usize, close: f64) -> IndicatorBar {
         buy_volume: 2.0,
         sell_volume: 1.0,
         trade_count: 3.0,
+        poc: None,
     }
 }
 

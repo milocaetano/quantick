@@ -26,6 +26,7 @@ fn local_libraries_types_and_methods() {
             buy_volume: 0.0,
             sell_volume: 0.0,
             trade_count: 0.0,
+            poc: None,
         };
         let mut ctx = Ctx {
             bar_index: index,
@@ -79,6 +80,7 @@ fn object_alias_copy_and_version_history() {
                 buy_volume: 0.0,
                 sell_volume: 0.0,
                 trade_count: 0.0,
+                poc: None,
             };
             let mut ctx = Ctx {
                 bar_index: index,
@@ -137,6 +139,7 @@ fn nested_shallow_copy_and_polymorphic_fields() {
         buy_volume: 0.0,
         sell_volume: 0.0,
         trade_count: 0.0,
+        poc: None,
     };
     let mut ctx = Ctx {
         bar_index: 0,
@@ -187,6 +190,7 @@ fn library_private_names_and_field_labels_do_not_escape() {
         buy_volume: 0.0,
         sell_volume: 0.0,
         trade_count: 0.0,
+        poc: None,
     };
     let mut ctx = Ctx {
         bar_index: 0,
@@ -239,6 +243,7 @@ fn mixed_object_collection_golden() {
             buy_volume: 0.0,
             sell_volume: 0.0,
             trade_count: 0.0,
+            poc: None,
         };
         let mut ctx = Ctx {
             bar_index: index,
@@ -269,6 +274,7 @@ fn object_eager_reads_preserve_conditional_mutations() {
         buy_volume: 0.0,
         sell_volume: 0.0,
         trade_count: 0.0,
+        poc: None,
     };
     for (index, line) in include_str!("golden/libraries/eager.csv")
         .lines()
@@ -304,6 +310,7 @@ fn mixed_graph_history_and_first_preview_varip() {
         buy_volume: 0.0,
         sell_volume: 0.0,
         trade_count: 0.0,
+        poc: None,
     };
     for (step, line) in include_str!("golden/libraries/varip_graph.csv")
         .lines()
@@ -371,6 +378,7 @@ fn object_varip_fields_are_independent_of_reference_mode() {
             buy_volume: 0.0,
             sell_volume: 0.0,
             trade_count: 0.0,
+            poc: None,
         };
         let mut ctx = Ctx {
             bar_index: 0,
@@ -412,6 +420,7 @@ fn builtin_field_defaults_evaluate_at_construction() {
             buy_volume: 3.0,
             sell_volume: 4.0,
             trade_count: 0.0,
+            poc: None,
         };
         let mut ctx = Ctx {
             bar_index: index,
@@ -499,6 +508,7 @@ fn mixed_shallow_copies_and_varip_collection_fields_preserve_aliases() {
         buy_volume: 0.0,
         sell_volume: 0.0,
         trade_count: 0.0,
+        poc: None,
     };
     let mut ctx = Ctx {
         bar_index: 0,
@@ -533,6 +543,7 @@ fn missing_object_fields_fail_deterministically() {
         buy_volume: 0.0,
         sell_volume: 0.0,
         trade_count: 0.0,
+        poc: None,
     };
     let mut ctx = Ctx {
         bar_index: 0,
@@ -571,6 +582,7 @@ fn exported_methods_keep_qualified_library_identity() {
         buy_volume: 0.0,
         sell_volume: 0.0,
         trade_count: 0.0,
+        poc: None,
     };
     let mut ctx = Ctx {
         bar_index: 0,
@@ -607,6 +619,7 @@ fn repeated_imports_share_exported_type_identity() {
         buy_volume: 0.0,
         sell_volume: 0.0,
         trade_count: 0.0,
+        poc: None,
     };
     let mut ctx = Ctx {
         bar_index: 0,

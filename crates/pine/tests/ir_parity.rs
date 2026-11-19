@@ -24,6 +24,7 @@ fn slot_ir_commit_preview_parity() {
             buy_volume: 1.0,
             sell_volume: 0.0,
             trade_count: 1.0,
+            poc: None,
         };
         let mut ctx = Ctx {
             bar_index,
@@ -70,6 +71,7 @@ fn slot_ir_eager_paths_history_functions() {
             buy_volume: 1.0,
             sell_volume: 0.0,
             trade_count: 1.0,
+            poc: None,
         };
         let mut ctx = Ctx {
             bar_index,

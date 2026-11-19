@@ -16,6 +16,7 @@ fn execute(body: &str) -> Vec<f64> {
         buy_volume: 1.0,
         sell_volume: 0.0,
         trade_count: 1.0,
+        poc: None,
     };
     let mut ctx = Ctx {
         bar_index: 0,
@@ -62,6 +63,7 @@ fn types_qualifiers_and_overloads() {
             buy_volume: 0.0,
             sell_volume: 0.0,
             trade_count: 0.0,
+            poc: None,
         };
         let mut ctx = Ctx {
             bar_index: index,
@@ -207,6 +209,7 @@ fn types_skipped_nested_overload_advances_only_selected_kernel() {
         buy_volume: 0.0,
         sell_volume: 0.0,
         trade_count: 0.0,
+        poc: None,
     };
     for index in 0..2 {
         script

@@ -1,7 +1,7 @@
 use crate::{
     IndicatorCommand, IndicatorSession, LaneDiagnostics, LaneSample, SessionEffects, SlotId,
 };
-use quantick_engine::Bar;
+use quantick_indicators::FootprintBar;
 use std::collections::BTreeMap;
 /// Survivors retain original envelope indexes, including intervening markers.
 #[derive(Default)]
@@ -31,7 +31,7 @@ impl InputSelection {
 pub struct Applying<'s> {
     session: &'s mut IndicatorSession,
     selection: InputSelection,
-    partial: Option<Option<Bar>>,
+    partial: Option<Option<FootprintBar>>,
     lane_request: Option<usize>,
     rebuilt: bool,
 }
@@ -177,7 +177,9 @@ mod batch_tests {
             keep
         });
     }
-    use quantick_engine::{BarBuilder as _, Side, TickBarBuilder, Trade, golden as engine_golden};
+    use quantick_engine::{
+        Bar, BarBuilder as _, Side, TickBarBuilder, Trade, golden as engine_golden,
+    };
     use quantick_indicators::InputValue;
     use rust_decimal::Decimal;
     fn trade(i: u64) -> Trade {
@@ -214,7 +216,7 @@ mod batch_tests {
         };
         let batch = [
             set(a, 10),
-            IndicatorCommand::BarClosed(bars_and_partial(3, 2).0[0].clone()),
+            IndicatorCommand::BarClosed(bars_and_partial(3, 2).0[0].clone().into()),
             set(b, 20),
             set(a, 11),
             set(a, 12),

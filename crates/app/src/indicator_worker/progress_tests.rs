@@ -89,9 +89,9 @@ fn held_real_indicator_has_exact_backlog_progress_and_ordered_suffixes() {
     let thread = std::thread::spawn(run);
     first.reached();
     clock.at(10);
-    worker.send(IndicatorCommand::Backfilled(vec![Bar::opened_by(&print(
-        1, 10,
-    ))]));
+    worker.send(IndicatorCommand::Backfilled(vec![
+        Bar::opened_by(&print(1, 10)).into(),
+    ]));
     for _ in 0..2 {
         worker.send(IndicatorCommand::SetInputs {
             slot: SlotId(0),
@@ -100,13 +100,13 @@ fn held_real_indicator_has_exact_backlog_progress_and_ordered_suffixes() {
     }
     let mut partial = Bar::opened_by(&print(2, 2));
     worker.send(IndicatorCommand::PartialUpdated {
-        partial: Some(partial.clone()),
+        partial: Some(partial.clone().into()),
         run: vec![print(2, 2)],
         rungs: 2,
     });
     partial.extend(&print(3, -1));
     worker.send(IndicatorCommand::PartialUpdated {
-        partial: Some(partial),
+        partial: Some(partial.into()),
         run: vec![print(3, -1)],
         rungs: 2,
     });
@@ -195,9 +195,9 @@ fn indicator_unwind_failed_send_and_explicit_replacement_keep_separate_identity(
     let worker = IndicatorWorker::spawn_with_progress(progress);
     worker.send(add());
     hold.reached();
-    worker.send(IndicatorCommand::Backfilled(vec![Bar::opened_by(&print(
-        1, 10,
-    ))]));
+    worker.send(IndicatorCommand::Backfilled(vec![
+        Bar::opened_by(&print(1, 10)).into(),
+    ]));
     let abandoned_ack = acknowledge(&worker);
     hold.unwind();
     terminal.reached();
@@ -220,9 +220,9 @@ fn indicator_unwind_failed_send_and_explicit_replacement_keep_separate_identity(
     assert_eq!(worker.progress().counts.failed_sends, 1);
     let replacement = IndicatorWorker::spawn();
     replacement.send(add());
-    replacement.send(IndicatorCommand::Backfilled(vec![Bar::opened_by(&print(
-        1, 10,
-    ))]));
+    replacement.send(IndicatorCommand::Backfilled(vec![
+        Bar::opened_by(&print(1, 10)).into(),
+    ]));
     acknowledge(&replacement)
         .recv_timeout(Duration::from_secs(10))
         .expect("replacement replay published");
@@ -245,9 +245,9 @@ fn receiver_disconnection_does_not_turn_completed_cycles_into_delivered_events()
     hold.reached();
     let (_, unused_receiver) = channel();
     drop(std::mem::replace(&mut worker.events, unused_receiver));
-    worker.send(IndicatorCommand::Backfilled(vec![Bar::opened_by(&print(
-        1, 10,
-    ))]));
+    worker.send(IndicatorCommand::Backfilled(vec![
+        Bar::opened_by(&print(1, 10)).into(),
+    ]));
     let ack = acknowledge(&worker);
     hold.release();
     ack.recv_timeout(Duration::from_secs(10))

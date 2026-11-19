@@ -88,7 +88,14 @@ preview runs — the forming bar is the newest).
 
 **Order-flow builtins Pine doesn't have:** `buy_volume`, `sell_volume`,
 `delta` (= buy − sell), `cvd` (host-maintained running sum of delta, shared
-by every indicator), `trade_count`.
+by every indicator), `trade_count`, `poc`.
+
+`poc` is the bar's footprint point of control: the lower edge of the row that
+traded the most volume, at the chart's footprint row width, ties going to the
+lower row. The forming bar's `poc` moves with its prints on preview runs. A
+bar with no captured footprint reads `na` — footprints off, venue history
+candles, backtests, and the rungs of the live lane — and nothing estimates
+one from the bar's OHLC.
 
 ## History `[n]`
 

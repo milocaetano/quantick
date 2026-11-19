@@ -28,6 +28,7 @@ fn version_six_semantic_parity() {
                 buy_volume: 0.0,
                 sell_volume: 0.0,
                 trade_count: 0.0,
+                poc: None,
             };
             let mut ctx = Ctx {
                 bar_index: index,
@@ -107,6 +108,7 @@ fn version_dynamic_loop_budget() {
         buy_volume: 0.0,
         sell_volume: 0.0,
         trade_count: 0.0,
+        poc: None,
     };
     let mut ctx = Ctx {
         bar_index: 0,
@@ -134,6 +136,7 @@ fn version_numeric_markers_preserve_absolute_values() {
                 buy_volume: 0.0,
                 sell_volume: 0.0,
                 trade_count: 0.0,
+                poc: None,
             };
             let mut ctx = Ctx {
                 bar_index: index,

@@ -24,7 +24,9 @@ fn drive() -> (
     let trades: Vec<quantick_engine::Trade> = (1..=8).map(tests::trade).collect();
     let mut builder = quantick_engine::TickBarBuilder::new(2);
     let bars = quantick_engine::golden::replay(&mut builder, &trades);
-    worker.send(IndicatorCommand::Backfilled(bars.clone()));
+    worker.send(IndicatorCommand::Backfilled(
+        bars.clone().into_iter().map(Into::into).collect(),
+    ));
     // Drain the initial publication (a frame passes before any reload
     // in reality; batching them would let the initial Rebuilt clear the
     // stale flag the reload sets).
@@ -65,7 +67,7 @@ fn a_broken_reload_keeps_the_last_good_version_and_flags_stale() {
             text: BROKEN.to_owned(),
         },
     });
-    worker.send(IndicatorCommand::BarClosed(bars[0].clone()));
+    worker.send(IndicatorCommand::BarClosed(bars[0].clone().into()));
     worker.flush();
     for event in worker.drain_events() {
         views.apply(event);
@@ -103,7 +105,10 @@ fn a_rebuild_does_not_clear_the_stale_flag() {
     assert!(views.all()[0].stale.is_some(), "flagged after a bad edit");
 
     // Exactly what scrolling left does.
-    worker.send(IndicatorCommand::Rebuild(bars.clone(), None));
+    worker.send(IndicatorCommand::Rebuild(
+        bars.clone().into_iter().map(Into::into).collect(),
+        None,
+    ));
     worker.flush();
     for event in worker.drain_events() {
         views.apply(event);
@@ -135,7 +140,9 @@ fn a_slot_that_never_loaded_is_healed_by_a_good_reload() {
             text: BROKEN.to_owned(),
         },
     });
-    worker.send(IndicatorCommand::Backfilled(bars.clone()));
+    worker.send(IndicatorCommand::Backfilled(
+        bars.clone().into_iter().map(Into::into).collect(),
+    ));
     worker.flush();
     for event in worker.drain_events() {
         views.apply(event);

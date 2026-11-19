@@ -107,6 +107,7 @@ fn zero_volume_bars_read_na_without_dividing() {
         buy_volume: 0.0,
         sell_volume: 0.0,
         trade_count: 0.0,
+        poc: None,
     };
     let mut indicator = fixture_indicator();
     let cvd = [0.0];

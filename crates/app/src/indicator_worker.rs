@@ -4,6 +4,7 @@ use crate::live_envelope::{INDICATOR_COMMAND_QUEUE, INDICATOR_EVENT_QUEUE};
 use crate::worker_progress::{
     Coalescing, ObservedOutput, ObservedSender, ProgressSnapshot, SharedProgress, WorkerProgress,
 };
+#[cfg(test)]
 use quantick_engine::Bar;
 use quantick_engine::trade_tape::TradeTape;
 #[cfg(test)]
@@ -16,6 +17,7 @@ pub(crate) use quantick_indicator_session::{
     IndicatorCommand, IndicatorEvent, IndicatorSource, MAX_LANE_RUNGS, SlotId,
 };
 use quantick_indicator_session::{IndicatorSession, InputsRebound, SessionEffects};
+use quantick_indicators::FootprintBar;
 #[cfg(test)]
 use quantick_indicators::{IndicatorHost, InputValue, Rgba8};
 use std::sync::Arc;
@@ -97,12 +99,16 @@ impl LaneTransport {
     /// Rate: **per frame**. The copy is the unsent suffix of the tape only —
     /// the prints since the previous command, or the forming bar's whole run
     /// after a reset — taken chunk slice by chunk slice, never the tape.
-    pub(crate) fn command(&mut self, partial: Option<Bar>, trades: &TradeTape) -> IndicatorCommand {
+    pub(crate) fn command(
+        &mut self,
+        partial: Option<FootprintBar>,
+        trades: &TradeTape,
+    ) -> IndicatorCommand {
         let count = partial
             .as_ref()
             .filter(|_| self.rungs > 0)
             .map_or(0, |bar| {
-                usize::try_from(bar.trade_count)
+                usize::try_from(bar.bar.trade_count)
                     .unwrap_or(usize::MAX)
                     .min(trades.len())
             });

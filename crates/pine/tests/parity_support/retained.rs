@@ -63,6 +63,7 @@ pub fn scalar_goldens() -> usize {
                 buy_volume: 0.0,
                 sell_volume: 0.0,
                 trade_count: 0.0,
+                poc: None,
             };
             let mut ctx = Ctx {
                 bar_index: index,
@@ -163,6 +164,7 @@ pub fn graph_goldens() -> (usize, String) {
                     0.0
                 },
                 trade_count: 1.0,
+                poc: None,
             };
             let mut ctx = Ctx {
                 bar_index: index,
@@ -233,6 +235,7 @@ pub fn negative_golden() {
             buy_volume: 1.0,
             sell_volume: 0.0,
             trade_count: 1.0,
+            poc: None,
         };
         let result = script.on_close(
             &bar,

@@ -34,11 +34,15 @@ fn ladder(trades: &[Trade], group: &str) -> BarFootprint {
 
 #[test]
 fn poc_is_the_heaviest_row_priced_at_its_row_width() {
-    let trades = [trade(1, "100.0", "1"), trade(2, "100.5", "3"), trade(3, "101.0", "1")];
+    let trades = [
+        trade(1, "100.0", "1"),
+        trade(2, "100.5", "3"),
+        trade(3, "101.0", "1"),
+    ];
     let footprint = ladder(&trades, "0.5");
     let bar = FootprintBar::new(bar_of(&trades), Some(&footprint));
     assert_eq!(bar.poc, Some(dec("100.5")));
-    assert_eq!(IndicatorBar::from(&bar).poc, 100.5);
+    assert_eq!(IndicatorBar::from(&bar).poc, Some(100.5));
 }
 
 #[test]
@@ -46,7 +50,7 @@ fn no_footprint_means_no_poc() {
     let trades = [trade(1, "100.0", "1")];
     let bar = FootprintBar::new(bar_of(&trades), None);
     assert_eq!(bar.poc, None);
-    assert!(IndicatorBar::from(&bar).poc.is_nan());
+    assert_eq!(IndicatorBar::from(&bar).poc, None);
     assert_eq!(FootprintBar::from(bar_of(&trades)), bar);
 }
 
@@ -61,5 +65,5 @@ fn an_empty_ladder_has_no_poc() {
 #[test]
 fn a_bare_engine_bar_projects_poc_as_na() {
     let trades = [trade(1, "100.0", "1")];
-    assert!(IndicatorBar::from(&bar_of(&trades)).poc.is_nan());
+    assert_eq!(IndicatorBar::from(&bar_of(&trades)).poc, None);
 }

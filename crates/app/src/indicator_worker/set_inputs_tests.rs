@@ -26,7 +26,9 @@ plot(close * k)
             .to_owned(),
         },
     });
-    worker.send(IndicatorCommand::Backfilled(bars.clone()));
+    worker.send(IndicatorCommand::Backfilled(
+        bars.clone().into_iter().map(Into::into).collect(),
+    ));
     worker.send(IndicatorCommand::SetInputs {
         slot,
         values: vec![InputValue::Int(3)],
@@ -68,7 +70,9 @@ fn set_inputs_recomputes_like_a_fresh_instance() {
             values: vec![InputValue::Int(3), InputValue::Source(SourceId::Close)],
         },
     });
-    worker.send(IndicatorCommand::Backfilled(bars.clone()));
+    worker.send(IndicatorCommand::Backfilled(
+        bars.clone().into_iter().map(Into::into).collect(),
+    ));
     worker.send(IndicatorCommand::SetInputs {
         slot,
         values: vec![InputValue::Int(2), InputValue::Source(SourceId::Hl2)],

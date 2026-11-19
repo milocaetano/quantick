@@ -59,6 +59,7 @@ fn bar(index: usize, t: Tape) -> IndicatorBar {
         buy_volume: t.buy,
         sell_volume: t.sell,
         trade_count: 3.0,
+        poc: None,
     }
 }
 

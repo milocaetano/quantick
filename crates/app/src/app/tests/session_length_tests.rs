@@ -576,10 +576,10 @@ impl ChartRig {
                 self.lane.reset();
             }
         }
-        match self
-            .lane
-            .command(self.state.partial().cloned(), self.state.trades())
-        {
+        match self.lane.command(
+            self.state.partial().cloned().map(Into::into),
+            self.state.trades(),
+        ) {
             IndicatorCommand::PartialUpdated { run, .. } => run.len() as u64,
             _ => unreachable!("the lane transport only builds forming-bar updates"),
         }

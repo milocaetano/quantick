@@ -89,7 +89,9 @@ fn the_embedded_exhaustion_reversal_marks_through_the_whole_chain() {
             text: source.to_owned(),
         },
     });
-    worker.send(IndicatorCommand::Backfilled(bars.clone()));
+    worker.send(IndicatorCommand::Backfilled(
+        bars.clone().into_iter().map(Into::into).collect(),
+    ));
     worker.flush();
     for event in worker.drain_events() {
         views.apply(event);

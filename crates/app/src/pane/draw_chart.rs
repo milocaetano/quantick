@@ -347,6 +347,7 @@ impl ChartPane {
         let footprint_on = ((self.presentation.footprint.visible || self.wants_range_profile())
             && !footprint_blocked)
             || candle_aggression;
+        let footprints_from = self.series.state.series_revision();
         self.series.state.set_footprint_enabled(footprint_on);
         // Accumulating is not painting, and the candles answer to the second.
         // A range profile turns the ladders *on* without ever asking for the
@@ -369,6 +370,9 @@ impl ChartPane {
                 })
         {
             self.series.state.set_footprint_group(base);
+        }
+        if self.series.state.series_revision() != footprints_from {
+            self.send_indicator_rebuild(); // ladders refolded: stale `poc`
         }
         if footprint_on {
             let now = painter.ctx().input(|i| i.time);
@@ -518,7 +522,7 @@ impl ChartPane {
         let rungs = lane_rungs(lane_px);
         if self.lane.set_rungs(rungs) {
             let command = self.lane.command(
-                self.series.state.partial().cloned(),
+                self.series_read().partial_footprint_bar(),
                 self.series.state.trades(),
             );
             self.indicator_worker.send(command);

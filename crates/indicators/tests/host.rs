@@ -90,7 +90,7 @@ fn preview_stages_cvd_without_committing_it() {
     assert_eq!(frame.values, vec![staged], "preview sees the staged cvd");
     assert_eq!(host.cvd(), committed.as_slice(), "committed cvd untouched");
 
-    host.set_partial(None);
+    host.set_partial::<Bar>(None);
     assert!(host.preview(cvd_id).is_none(), "cleared with the partial");
 }
 
@@ -533,7 +533,7 @@ fn a_walk_without_a_forming_bar_clears_the_previews_it_staged() {
     for bar in &bars {
         host.push_closed_bar(bar);
     }
-    host.set_partial(None);
+    host.set_partial::<Bar>(None);
 
     host.walk_partial_prefixes(&[partial], |_, _| {});
 
@@ -777,7 +777,7 @@ fn the_forming_bar_is_painted_from_the_preview_and_commits_nothing() {
         "and the committed channel never grew a row for it"
     );
 
-    host.set_partial(None);
+    host.set_partial::<Bar>(None);
     assert_eq!(
         host.forming_paint(),
         None,

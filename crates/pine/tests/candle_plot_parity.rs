@@ -20,6 +20,7 @@ fn bar(values: &str) -> IndicatorBar {
         buy_volume: 2.0,
         sell_volume: 1.0,
         trade_count: 3.0,
+        poc: None,
     }
 }
 fn color(c: Option<Rgba8>) -> String {

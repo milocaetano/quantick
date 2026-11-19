@@ -27,6 +27,7 @@ fn collections_copy_on_write_rollback() {
             buy_volume: 1.0,
             sell_volume: 0.0,
             trade_count: 1.0,
+            poc: None,
         };
         let mut ctx = Ctx {
             bar_index,
@@ -65,6 +66,7 @@ fn bar() -> IndicatorBar {
         buy_volume: 1.0,
         sell_volume: 0.0,
         trade_count: 1.0,
+        poc: None,
     }
 }
 fn run(source: &str) -> Vec<f64> {

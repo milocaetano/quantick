@@ -65,8 +65,8 @@ impl ChartPane {
         }
         self.lane.reset();
         self.indicator_worker.send(IndicatorCommand::Rebuild(
-            self.series_read().closed_bars(),
-            self.series.state.partial().cloned(),
+            self.series_read().closed_footprint_bars(),
+            self.series_read().partial_footprint_bar(),
         ));
         self.publish_partial();
     }
@@ -109,7 +109,7 @@ impl ChartPane {
                 SeriesEffect::ReanchorDrawings(old_slots) => self.reanchor_drawings(old_slots),
                 SeriesEffect::BackfillIndicators(slots) => {
                     self.lane.reset();
-                    let mut history = self.series_read().closed_bars();
+                    let mut history = self.series_read().closed_footprint_bars();
                     history.truncate(slots);
                     self.indicator_worker
                         .send(IndicatorCommand::Backfilled(history));
@@ -359,7 +359,7 @@ impl ChartPane {
                 &self.series.state.bars()[index],
                 self.series.history_prefix.len() + index,
             );
-            let closed = self.series.state.bars()[index].clone();
+            let closed = self.series_read().footprint_bar(index);
             self.lane.reset();
             self.indicator_worker
                 .send(IndicatorCommand::BarClosed(closed));
@@ -378,10 +378,8 @@ impl ChartPane {
     /// Publish only the forming run's unsent suffix; the worker retains it.
     /// Rebuilds and lane enable cold-seed the current run once.
     fn partial_command(&mut self) -> IndicatorCommand {
-        self.lane.command(
-            self.series.state.partial().cloned(),
-            self.series.state.trades(),
-        )
+        let partial = self.series_read().partial_footprint_bar();
+        self.lane.command(partial, self.series.state.trades())
     }
 }
 

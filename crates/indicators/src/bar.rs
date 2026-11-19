@@ -42,12 +42,16 @@ pub struct IndicatorBar {
     pub sell_volume: f64,
     /// Number of trades aggregated into the bar.
     pub trade_count: f64,
+    /// Point-of-control price of the bar's footprint (`poc` in scripts);
+    /// `None` (`na`) when the bar came without a footprint. An `Option`
+    /// rather than NaN so two projections of one bar still compare equal.
+    pub poc: Option<f64>,
 }
 
 /// `Decimal` → `f64`, defensively: an unrepresentable value becomes NaN (`na`)
 /// rather than a silently wrong number. `Decimal`'s full range fits in f64, so
 /// this is a belt-and-suspenders honesty guard, not an expected path.
-fn to_f64(d: Decimal) -> f64 {
+pub(crate) fn to_f64(d: Decimal) -> f64 {
     d.to_f64().unwrap_or(f64::NAN)
 }
 
@@ -64,6 +68,7 @@ impl From<&Bar> for IndicatorBar {
             sell_volume: to_f64(bar.sell_volume),
             // u64 → f64 is exact for any realistic trade count (< 2^53).
             trade_count: bar.trade_count as f64,
+            poc: None,
         }
     }
 }
@@ -141,6 +146,7 @@ mod tests {
         assert_eq!(ib.buy_volume, 1.5);
         assert_eq!(ib.sell_volume, 0.4);
         assert_eq!(ib.trade_count, 7.0);
+        assert_eq!(ib.poc, None);
     }
 
     #[test]

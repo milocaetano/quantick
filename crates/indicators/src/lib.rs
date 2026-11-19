@@ -51,6 +51,7 @@ pub mod spot_perp_cvd;
 pub mod ta;
 
 mod bar;
+mod footprint_bar;
 mod host;
 mod indicator;
 mod input;
@@ -58,6 +59,7 @@ mod objects;
 mod output;
 
 pub use bar::IndicatorBar;
+pub use footprint_bar::{FootprintBar, HostBar};
 pub use host::{IndicatorHost, InstanceId, PreviewsAt};
 pub use indicator::{Ctx, EvalError, Indicator, IndicatorDescriptor};
 pub use input::{BoundInputs, InputSpec, InputValue, SourceId, bind_by_position};

@@ -79,7 +79,10 @@ fn a_bar_without_a_footprint_reads_na() {
         host.push_closed_bar(&bar.bar);
     }
     host.set_partial(Some(&forming.bar));
-    let column = host.plots(id).expect("the probe is hosted").column(PlotId::new(0));
+    let column = host
+        .plots(id)
+        .expect("the probe is hosted")
+        .column(PlotId::new(0));
     assert_eq!(column.len(), 3);
     assert!(column.iter().all(|v| v.is_nan()), "got {column:?}");
     let frame = host.preview(id).expect("a forming bar is previewed");

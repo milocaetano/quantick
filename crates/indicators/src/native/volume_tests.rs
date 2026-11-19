@@ -11,6 +11,7 @@ fn bar(volume: f64, close: f64) -> IndicatorBar {
         buy_volume: volume * 0.6,
         sell_volume: volume * 0.4,
         trade_count: 2.0,
+        poc: None,
     }
 }
 
