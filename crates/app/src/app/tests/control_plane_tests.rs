@@ -179,7 +179,8 @@ fn the_scene_names_the_corner_and_what_operates_it() {
 
     let chip_rect = app
         .chrome_reads()
-        .feed_chip_rect()
+        .feed_drawn()
+        .chip
         .expect("the corner is up");
     click_chart(&mut app, &ctx, chip_rect.center());
     let scene = observer_scene(&app);

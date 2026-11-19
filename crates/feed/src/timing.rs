@@ -22,9 +22,11 @@ pub fn live_tape_text(
     let Some(arrival) = tape_arrival_ms(arrival, latency) else {
         return "arrival —".to_owned();
     };
-    if !latency
-        .is_some_and(|split| split.source_lag_ms.is_some() && split.transport_lag_ms.is_some())
-        || arrival < 0
+    // The one rule the trade gate also reads: a measured delay, else a clock.
+    if latency
+        .as_ref()
+        .and_then(FeedLatency::measured_ms)
+        .is_none()
     {
         return stamp_offset_label(arrival);
     }

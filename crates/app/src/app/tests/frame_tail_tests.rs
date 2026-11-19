@@ -411,7 +411,7 @@ fn frame_tail_none_settles_every_tab_and_preserves_toast_priority() {
     app.runtime.tabs.runtime_mut(1).symbol = "BACKGROUND".to_owned();
     let run = |app: &mut QuantickApp| {
         let _ = ctx.run(egui::RawInput::default(), |ctx| {
-            let mut chip = None;
+            let mut drawn = Default::default();
             app.surfaces
                 .feed_notice
                 .update(quantick_ui_model::feed_notice::Intent::InitializeOpen(7));
@@ -419,7 +419,7 @@ fn frame_tail_none_settles_every_tab_and_preserves_toast_priority() {
                 tabs: &mut app.runtime.tabs,
                 config: &app.config,
                 surfaces: &mut app.surfaces,
-                chip_rect: &mut chip,
+                drawn: &mut drawn,
             }
             .execute(
                 super::super::frame_tail::FrameTailInput {
@@ -430,15 +430,18 @@ fn frame_tail_none_settles_every_tab_and_preserves_toast_priority() {
                     popup_tab: 7,
                     chip_clicked: false,
                     dismissed: false,
-                    chip_rect: Some(egui::Rect::from_min_size(
-                        egui::Pos2::ZERO,
-                        egui::vec2(20.0, 20.0),
-                    )),
+                    drawn: quantick_ui_model::feed_notice::Drawn {
+                        chip: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            egui::vec2(20.0, 20.0),
+                        )),
+                        reconnect: None,
+                    },
                 },
                 &mut |_, _, _, _| panic!("None action must not spawn"),
                 FrameTailPlan::stages(),
             );
-            assert!(chip.is_some());
+            assert!(drawn.chip.is_some());
             assert_eq!(app.surfaces.feed_notice.model_state.open(), Some(7));
         });
     };
@@ -479,13 +482,13 @@ fn feed_notice_settles_only_for_the_presented_view() {
     let tab = app.runtime.tabs.active_id();
     app.surfaces.feed_notice.update(Intent::InitializeOpen(tab));
     let chip = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(20.0, 20.0));
-    app.chrome.feed_chip_rect = Some(chip);
+    app.chrome.feed_drawn.chip = Some(chip);
     for presented in [false, true] {
         super::super::frame_tail::FrameTailOwners {
             tabs: &mut app.runtime.tabs,
             config: &app.config,
             surfaces: &mut app.surfaces,
-            chip_rect: &mut app.chrome.feed_chip_rect,
+            drawn: &mut app.chrome.feed_drawn,
         }
         .execute(
             super::super::frame_tail::FrameTailInput {
@@ -496,7 +499,7 @@ fn feed_notice_settles_only_for_the_presented_view() {
                 popup_tab: tab,
                 chip_clicked: false,
                 dismissed: true,
-                chip_rect: None,
+                drawn: Default::default(),
             },
             &mut |_, _, _, _| panic!("popup publication must not execute recovery"),
             [FrameTailStage::PublishFeedPopup],
@@ -505,7 +508,7 @@ fn feed_notice_settles_only_for_the_presented_view() {
             app.surfaces.feed_notice.model_state.open(),
             (!presented).then_some(tab)
         );
-        assert_eq!(app.chrome.feed_chip_rect, (!presented).then_some(chip));
+        assert_eq!(app.chrome.feed_drawn.chip, (!presented).then_some(chip));
         assert_eq!(app.chrome_reads().feed_popup_open(), !presented);
     }
 }

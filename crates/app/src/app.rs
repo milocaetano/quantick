@@ -336,7 +336,7 @@ impl QuantickApp {
                 surface: None,
                 window_menu: Default::default(),
                 history_menu_rect: None,
-                feed_chip_rect: None,
+                feed_drawn: Default::default(),
                 // The hook stands in for a click on the opening tab's chip, which
                 // is the first tab there is.
             },

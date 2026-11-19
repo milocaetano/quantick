@@ -845,6 +845,13 @@ impl ConnectionTracker {
     pub fn has_recovery_door(&self) -> bool {
         matches!(self.state.link, Link::Offline | Link::Quiet)
     }
+
+    /// Whether the link is latched offline: the stall the entry pause and the
+    /// one-click Reconnect both read.
+    #[must_use]
+    pub fn is_offline(&self) -> bool {
+        self.state.link == Link::Offline
+    }
 }
 
 fn stream_dot(name: &'static str, stream: Stream, hovers: [&'static str; 3]) -> Dot {

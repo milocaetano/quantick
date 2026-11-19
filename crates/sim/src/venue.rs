@@ -187,6 +187,13 @@ impl TradingVenue for Simulator {
         }));
     }
 
+    fn in_flight_entry(&self, id: OrderId) -> Option<&Order> {
+        self.queued().iter().find_map(|action| match action {
+            QueuedAction::Entry(order) if order.id == id => Some(order.as_ref()),
+            _ => None,
+        })
+    }
+
     fn closed_trades(&self) -> &[ClosedTrade] {
         Simulator::closed_trades(self)
     }

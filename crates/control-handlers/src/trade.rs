@@ -48,7 +48,7 @@ use quantick_paper::report::session_edit::{
     JournalEdit, JournalEditOutcome, JournalScope, SessionEditError,
 };
 use quantick_paper::{PaperAccount, format::PositionSummary, risk_sizing::RiskState};
-use quantick_session::paper::{SharedChange, TradeCommand, TradeOutcome};
+use quantick_session::paper::{SharedChange, TradeCommand, TradeOutcome, TradeRefusal};
 use quantick_sim::{Bracket, EntryKind, Order, OrderId, OrderIntent, VenueEvent};
 use rust_decimal::Decimal;
 use serde_json::{Value, json};
@@ -292,11 +292,33 @@ fn run<A: JournalAccess>(
         .ok_or_else(no_chart_open)?
         .execute(command);
     if let Some(refusal) = outcome.refusal {
-        return Err(ControlError::invalid_request(refusal));
+        return Err(match refusal {
+            TradeRefusal::Paused(gate) => paused_error(&gate),
+            TradeRefusal::Ticket(sentence) => ControlError::invalid_request(sentence),
+        });
     }
     let result = answer(paper, &outcome.events);
     journal(access, actor, kind, &result, asked);
     to_value(result)
+}
+
+/// An entry refused while the chart is out of sync with its feed. Nothing
+/// was sent, so the same call is safe to retry once it catches up; the
+/// details name the reading, as the `health` scope's `trade_gate` does.
+fn paused_error(gate: &quantick_sources::sync::Desync) -> ControlError {
+    let code = quantick_control::error::codes::CAPABILITY_UNAVAILABLE;
+    let mut error = quantick_control_host::admission::known_error(code, gate.sentence(), true);
+    error.context.details = Some(json!({
+        "trade_gate": gate.reading.word(),
+        "link": gate.link.word(),
+        "latency_ms": gate.latency_ms,
+        "tape_age_ms": gate.tape_age_ms,
+    }));
+    error.context.next_steps = vec![format!(
+        "retry once the chart catches up, or call {} first",
+        quantick_control_schema::recovery::RECONNECT_CAPABILITY_ID
+    )];
+    error
 }
 
 fn bracket_order<H: PaperHost + ?Sized, A: JournalAccess>(

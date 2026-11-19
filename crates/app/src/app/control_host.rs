@@ -433,8 +433,8 @@ pub(crate) struct ChromeReads<'a> {
 /// What the last frame published about the window chrome.
 #[derive(Clone, Copy, Default)]
 pub(crate) struct ChromeDrawn {
-    /// Where the feed's offline chip was painted, or `None` when it was not.
-    pub(crate) feed_chip_rect: Option<egui::Rect>,
+    /// Where the feed's offline chip and the tape cell's Reconnect were painted.
+    pub(crate) feed_drawn: quantick_ui_model::feed_notice::Drawn<egui::Rect>,
     /// The tab whose chip opened the feed's recovery popup, if any.
     pub(crate) feed_popup_tab: Option<u64>,
     /// Whether a recording opens with the session day before it joined.
@@ -496,12 +496,12 @@ impl<'a> ChromeReads<'a> {
         self.tool_rail
     }
 
-    /// Where the feed's offline chip was painted, or `None` when it was not.
+    /// Where the feed's offline chip and the tape cell's Reconnect were painted.
     ///
     /// The projection reads what was drawn rather than re-deciding it, so the
     /// scene and the screen cannot disagree across the edge of a stall budget.
-    pub(crate) fn feed_chip_rect(self) -> Option<egui::Rect> {
-        self.drawn.feed_chip_rect
+    pub(crate) fn feed_drawn(self) -> quantick_ui_model::feed_notice::Drawn<egui::Rect> {
+        self.drawn.feed_drawn
     }
 
     /// The word the status bar is painting about the active tab's feed.
@@ -512,11 +512,12 @@ impl<'a> ChromeReads<'a> {
             .map(|word| word.word)
     }
 
-    /// Whether a one-click Reconnect stands outside the popup: the overlay's or
-    /// the status bar's, whichever is up.
+    /// Whether a one-click Reconnect stands outside the popup; see
+    /// `quantick_control_handlers::connection::reconnect_offered`.
     pub(crate) fn feed_reconnect_offered(self) -> bool {
         let tab = &self.tabs[self.tabs.active_index()];
-        tab.connection.state().link == quantick_chart::connection_state::Link::Offline
+        let link = tab.connection.state().link;
+        quantick_control_handlers::connection::reconnect_offered(link, tab.paper.trade_gate())
     }
 
     /// Whether the recovery popup that chip opens is showing, on the chart
@@ -759,7 +760,7 @@ impl quantick_control_handlers::workspace_book::WorkspaceBookHost for QuantickAp
 impl ChromePort for QuantickApp {
     fn chrome_reads(&self) -> ChromeReads<'_> {
         let drawn = ChromeDrawn {
-            feed_chip_rect: self.chrome.feed_chip_rect,
+            feed_drawn: self.chrome.feed_drawn,
             feed_popup_tab: self.surfaces.feed_notice.model_state.open(),
             replay_day_before: self.surfaces.replay_browser.day_before(),
         };

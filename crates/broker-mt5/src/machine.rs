@@ -766,6 +766,12 @@ impl BrokerCore {
         out.extend(self.entries.iter().map(|order| order.id));
     }
 
+    /// The in-flight entry `id`, while the terminal has not answered it.
+    #[must_use]
+    pub fn in_flight_entry(&self, id: OrderId) -> Option<&Order> {
+        self.entries.iter().find(|order| order.id == id)
+    }
+
     #[must_use]
     pub fn closed_trades(&self) -> &[ClosedTrade] {
         &self.ledger.closed

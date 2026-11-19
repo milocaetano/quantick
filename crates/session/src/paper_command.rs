@@ -6,12 +6,18 @@
 //! the ruler is put away, what the venue answered. [`TabPaper::execute`] owns
 //! those decisions now, so every surface asks for the same [`TradeCommand`]
 //! and gets the same [`TradeOutcome`].
+//!
+//! The one decision made before any of that: while the host says the chart
+//! is out of sync with its feed ([`TabPaper::set_trade_gate`]), a command
+//! that would open or grow exposure is refused with the cause, on every
+//! route; one that only reduces it never is (`paper_gate.rs`).
 
 use std::borrow::BorrowMut;
 
 use quantick_engine::Side;
 use quantick_paper::PaperAccount;
 use quantick_sim::{Bracket, OrderId, OrderIntent, VenueEvent};
+use quantick_sources::sync::Desync;
 
 use super::TabPaper;
 
@@ -62,23 +68,44 @@ pub enum TradeCommand {
 pub struct TradeOutcome {
     /// What the venue answered, in order; empty when nothing reached it.
     pub events: Vec<VenueEvent>,
-    /// The sentence that refused the command before it reached the venue —
-    /// the same words the trader's toast carries.
-    pub refusal: Option<String>,
+    /// Why the command never reached the venue, if it did not.
+    pub refusal: Option<TradeRefusal>,
+}
+
+/// Why a [`TradeCommand`] was refused before it reached the venue.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TradeRefusal {
+    /// The ticket's, the risk's or the venue's complaint, in the words the
+    /// trader's toast carries.
+    Ticket(String),
+    /// New entries pause while the chart is out of sync with its feed:
+    /// nothing was sent, so a retry is safe once it catches up.
+    Paused(Desync),
+}
+
+impl TradeRefusal {
+    /// The refusal in the toast's words, without the route's.
+    #[must_use]
+    pub fn sentence(&self) -> String {
+        match self {
+            Self::Ticket(sentence) => sentence.clone(),
+            Self::Paused(gate) => gate.sentence(),
+        }
+    }
 }
 
 impl TradeOutcome {
     fn sent(events: Vec<VenueEvent>) -> Self {
         Self {
             events,
-            refusal: None,
+            ..Self::default()
         }
     }
 
     fn refused(sentence: String) -> Self {
         Self {
-            events: Vec::new(),
-            refusal: Some(sentence),
+            refusal: Some(TradeRefusal::Ticket(sentence)),
+            ..Self::default()
         }
     }
 }
@@ -87,6 +114,12 @@ impl<A: BorrowMut<PaperAccount>> TabPaper<A> {
     /// Run one trade command: the bracket choice, the risk refusal, the
     /// ruler clear and the venue's answer, the same for every caller.
     pub fn execute(&mut self, command: TradeCommand) -> TradeOutcome {
+        if let Some(gate) = self.entry_paused(&command) {
+            return TradeOutcome {
+                refusal: Some(TradeRefusal::Paused(gate)),
+                ..TradeOutcome::default()
+            };
+        }
         match command {
             TradeCommand::Market { side } => self.market_entry(side),
             TradeCommand::Place { intent } => self.place(*intent),

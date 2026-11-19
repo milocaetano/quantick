@@ -47,7 +47,13 @@ impl HealthSnapshot {
                     late: tape.arrival_latency_ms.is_some_and(|ms| ms > high_lag_ms),
                 });
                 tab.tape = None;
-                TabHealthRevisionKey { tab, tape }
+                // The pause's edges and cause move it; its ageing figures do not.
+                let trade_gate = tab.trade_gate.take().map(|gate| (gate.reading, gate.link));
+                TabHealthRevisionKey {
+                    tab,
+                    tape,
+                    trade_gate,
+                }
             })
             .collect()
     }
@@ -59,6 +65,7 @@ impl HealthSnapshot {
 pub struct TabHealthRevisionKey {
     tab: TabHealthSnapshot,
     tape: Option<TapeRevisionKey>,
+    trade_gate: Option<(String, String)>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -114,6 +121,35 @@ pub struct TabHealthSnapshot {
     /// replaying — a recording's prints are as old as the day they were
     /// captured and the playback clock decides when they appear.
     pub tape: Option<TapeHealthSnapshot>,
+    /// Why new entries are paused on this tab; `null` while they are not.
+    #[serde(default)]
+    pub trade_gate: Option<TradeGateSnapshot>,
+}
+
+/// New entries are paused because the chart is out of sync with its feed;
+/// exits still work. Every reading is the one the pause was judged on.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct TradeGateSnapshot {
+    /// Which reading paused entries: `link`, `latency` or `tape_age`.
+    pub reading: String,
+    /// The chart's link to the feed: `up`, `attempting` or `offline`.
+    pub link: String,
+    /// The provider's measured arrival latency; `null` without a split.
+    #[schemars(extend("x-unit" = "milliseconds"))]
+    pub latency_ms: Option<i64>,
+    /// The provider's name for the hop that owns most of it.
+    pub latency_hop: Option<String>,
+    /// Wall clock minus the newest event on the tape.
+    #[schemars(extend("x-unit" = "milliseconds"))]
+    pub tape_age_ms: Option<i64>,
+    #[schemars(extend("x-unit" = "milliseconds"))]
+    pub max_latency_ms: i64,
+    #[schemars(extend("x-unit" = "milliseconds"))]
+    pub max_tape_age_ms: i64,
+    /// What the feed's own notice says, when it says anything.
+    pub notice: Option<String>,
+    /// The refusal an entry answers with, as the toast says it.
+    pub sentence: String,
 }
 
 /// Counts source messages, never estimates how many executed trades were lost.

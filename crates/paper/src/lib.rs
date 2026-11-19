@@ -37,6 +37,8 @@ pub mod risk_sizing;
 pub mod route;
 pub mod state;
 
+#[cfg(any(test, feature = "test-support"))]
+pub mod fake_broker;
 #[cfg(test)]
 mod scratch;
 

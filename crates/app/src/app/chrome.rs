@@ -32,12 +32,11 @@ pub(super) struct ChromeState {
     pub(super) window_startup: crate::launch::window::WindowStartupState,
     /// Saved override for recording deal counters; `None` follows feed config.
     pub(super) record_deals: Option<bool>,
-    /// Where the status word was drawn while it is the popup's door, or `None`.
-    ///
-    /// Written as part of drawing it, so the scene says what is *painted*, and it
-    /// is the one control with no capability behind it, so its rectangle is the
+    /// Where the status word, the popup's door, and the tape cell's Reconnect
+    /// were drawn: written as part of drawing them, so the scene says what is
+    /// *painted*. The word has no capability behind it, so its rectangle is the
     /// only way an operator reaches it.
-    pub(super) feed_chip_rect: Option<egui::Rect>,
+    pub(super) feed_drawn: quantick_ui_model::feed_notice::Drawn<egui::Rect>,
 
     /// The toolbar's + and its ADD TO CANVAS menu.
     pub(super) add_menu: crate::add_widget::AddMenu,

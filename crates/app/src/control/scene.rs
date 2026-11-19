@@ -56,7 +56,7 @@ use quantick_control::{
 };
 
 use eframe::egui;
-use quantick_control_handlers::feed_status::{FeedStatusView, feed_status_controls};
+use quantick_control_handlers::feed_status::{FeedChip, FeedStatusView, feed_status_scene};
 use quantick_control_schema::orderflow_settings as settings;
 
 use crate::{
@@ -69,7 +69,7 @@ use crate::{
 use super::{
     registry::{CaptureContext, ProjectionRegistry, ProjectionRegistryError},
     types::{
-        AvailabilitySnapshot, SCREEN_DECIMAL_PLACES, available, canonical_f32, unavailable,
+        SCREEN_DECIMAL_PLACES, available, bounds_not_recorded, canonical_f32, unavailable,
         visible_panes,
     },
 };
@@ -689,66 +689,32 @@ fn push_feed_status<P: TabsPort + ChromePort + ?Sized>(
     app: &P,
     tab: &Tab,
 ) {
-    let Some(chip) = app.chrome_reads().feed_chip_rect() else {
+    // The tape cell's Reconnect stands alone, with no chip, on a late link.
+    let drawn = app.chrome_reads().feed_drawn();
+    let Some(_) = drawn.chip.or(drawn.reconnect) else {
         return;
     };
-    let owner = || SceneOwnerSnapshot {
-        kind: SceneOwnerKindDto::FeedStatus,
-        id: FEED_STATUS_OWNER_ID.to_owned(),
-    };
-    let popup_open = app.chrome_reads().feed_popup_open();
-    let chip_bounds = rect_bounds(chip);
-    controls.push(SceneControlSnapshot {
-        control_id: FEED_CHIP_CONTROL_ID.to_owned(),
-        // The word the status bar paints, not one assembled here.
-        label: app
-            .chrome_reads()
-            .feed_word()
-            .unwrap_or(crate::feed_notice::OFFLINE_LABEL)
-            .to_owned(),
-        description: None,
-        role: SceneRoleDto::Toggle,
-        owner: owner(),
-        selected: popup_open,
-        availability: available(),
-        bounds_availability: match &chip_bounds {
-            Bounds::Rect(_) => available(),
-            Bounds::NotDrawn => unavailable("the_chip_has_not_been_drawn_yet"),
-            Bounds::NotReportable => unavailable("the_chips_rectangle_is_not_a_reportable_number"),
-        },
-        bounds: chip_bounds.into_snapshot(),
-        // Opening the popup is a gesture, not a call: everything behind it is
-        // reachable directly, so a capability whose only effect is to show a
-        // human something would be a second way to say the same thing.
-        capability_id: None,
-    });
+    let reported = |rect: egui::Rect| rect_bounds(rect).into_snapshot();
+    let (chip, reconnect) = (
+        drawn.chip.and_then(reported),
+        drawn.reconnect.and_then(reported),
+    );
+    let word = app.chrome_reads().feed_word();
     // All inside the popup, in the order it paints them. Outside it, the
     // one-click act standing on screen: the overlay's or the status bar's.
     let stall = tab.stall_at(app.tab_reads().config(), crate::metrics::wall_clock_ms());
     let view = FeedStatusView {
         roll: tab.link.roll_offer(),
         primary: quantick_feed::notice_report::popup_primary(&tab.link.notice, stall.as_ref()),
-        popup_open,
+        popup_open: app.chrome_reads().feed_popup_open(),
         offered: app.chrome_reads().feed_reconnect_offered(),
+        chip: drawn.chip.map(|_| FeedChip {
+            word: word.unwrap_or(crate::feed_notice::OFFLINE_LABEL),
+            bounds: chip.as_ref(),
+        }),
+        reconnect_drawn: reconnect.as_ref(),
     };
-    for entry in feed_status_controls(view) {
-        let control = entry.control;
-        controls.push(SceneControlSnapshot {
-            control_id: control.control_id().to_owned(),
-            label: entry.label,
-            description: entry.description,
-            role: SceneRoleDto::Action,
-            owner: owner(),
-            // Which one leads is the application's judgement about
-            // *this* stall, and it is a matter of emphasis rather than of
-            // state: neither control is chosen until it is pressed.
-            selected: false,
-            availability: entry.refused.map_or_else(available, unavailable),
-            bounds: None,
-            bounds_availability: bounds_not_recorded(),
-            capability_id: Some(control.capability_id().to_owned()),
-        });
-    }
+    controls.extend(feed_status_scene(view));
 }
 
 /// The chart canvases of the active tab.
@@ -856,8 +822,4 @@ fn rect_bounds(rect: egui::Rect) -> Bounds {
         }
         _ => Bounds::NotReportable,
     }
-}
-
-fn bounds_not_recorded() -> AvailabilitySnapshot {
-    unavailable("bounds_are_not_recorded_for_this_control")
 }

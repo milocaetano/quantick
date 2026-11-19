@@ -234,7 +234,7 @@ fn the_corner_appears_only_while_the_chart_is_not_being_fed() {
     let ctx = egui::Context::default();
     run_frame(&mut app, &ctx);
     assert!(
-        app.chrome_reads().feed_chip_rect().is_none(),
+        app.chrome_reads().feed_drawn().chip.is_none(),
         "a chart with nothing wrong with it says nothing"
     );
 
@@ -242,7 +242,8 @@ fn the_corner_appears_only_while_the_chart_is_not_being_fed() {
     run_frame(&mut app, &ctx);
     let chip = app
         .chrome_reads()
-        .feed_chip_rect()
+        .feed_drawn()
+        .chip
         .expect("a stalled feed shows the corner");
     assert!(
         chip.width() < 100.0 && chip.height() < 30.0,
@@ -251,7 +252,7 @@ fn the_corner_appears_only_while_the_chart_is_not_being_fed() {
     app.active_tab_mut().link.forced_stall = None;
     run_frame(&mut app, &ctx);
     assert!(
-        app.chrome_reads().feed_chip_rect().is_none(),
+        app.chrome_reads().feed_drawn().chip.is_none(),
         "a feed that came back takes its corner with it"
     );
 }
@@ -285,7 +286,8 @@ fn the_empty_chart_never_says_the_same_thing_twice() {
 
     let chip = app
         .chrome_reads()
-        .feed_chip_rect()
+        .feed_drawn()
+        .chip
         .expect("the corner is up");
     click_chart(&mut app, &ctx, chip.center());
     let output = run_frame(&mut app, &ctx);
@@ -331,7 +333,8 @@ fn the_overlay_stands_down_while_the_popup_is_open() {
 
     let word = app
         .chrome_reads()
-        .feed_chip_rect()
+        .feed_drawn()
+        .chip
         .expect("the word is a door");
     click_chart(&mut app, &ctx, word.center());
     let output = run_frame(&mut app, &ctx);
@@ -471,8 +474,54 @@ fn the_status_word_and_the_recovery_on_offer_follow_the_stall() {
             offered,
             "{stall:?}"
         );
-        assert!(app.chrome_reads().feed_chip_rect().is_some(), "{stall:?}");
+        assert!(app.chrome_reads().feed_drawn().chip.is_some(), "{stall:?}");
     }
+}
+
+/// The frame hands the feed's judgement to the tab's paper: a connected feed
+/// keeps up; a late split pauses the toolbar's BUY (refused, toasted) and
+/// offers Reconnect, as the scene names it. The thresholds and the refusal
+/// itself are `quantick_feed::sync`'s and `quantick_session`'s.
+#[test]
+fn a_late_feed_pauses_the_toolbar_buy_and_offers_reconnect() {
+    let (mut app, notices, _channels) = test_app_with_notices();
+    let ctx = egui::Context::default();
+    notices.blocking_send(FeedNotice::Connected).unwrap();
+    run_frame(&mut app, &ctx);
+    run_frame(&mut app, &ctx);
+    assert_eq!(app.active_tab().paper.trade_gate(), None, "it keeps up");
+    assert!(!app.chrome_reads().feed_reconnect_offered());
+
+    app.active_tab_mut().link.forced_latency = Some(feed::FeedLatency {
+        arrival_lag_ms: 900,
+        source_lag_ms: Some(820),
+        source_lag_peak_ms: None,
+        transport_lag_ms: Some(80),
+        hop: Some("MT5"),
+        prints: 4,
+    });
+    run_frame(&mut app, &ctx);
+    let gate = app.active_tab().paper.trade_gate().expect("paused");
+    assert_eq!(gate.reading, feed::sync::SyncReading::Latency);
+    assert!(app.chrome_reads().feed_reconnect_offered());
+    let painted = app.chrome_reads().feed_drawn().reconnect;
+    assert!(painted.is_some(), "Reconnect stands beside the tape cell");
+    let scene = crate::control::scene_snapshot(&app);
+    let named = quantick_control_schema::scene::FEED_RECONNECT_CONTROL_ID;
+    let reconnect = (scene.controls.iter())
+        .find(|control| control.control_id == named)
+        .expect("the scene names the tape cell's Reconnect");
+    assert_eq!(reconnect.capability_id.as_deref(), Some("feed.reconnect"));
+    assert!(
+        reconnect.bounds.is_some(),
+        "where it was painted: {painted:?}"
+    );
+    let toast = app.active_tab_mut().paper.take_toast();
+    app.apply_toolbar_action(ToolbarAction::PaperBuy);
+    assert!(app.active_tab().paper.is_flat(), "{toast:?}");
+    assert!(app.active_tab().paper.working_orders().is_empty());
+    let refusal = app.active_tab_mut().paper.take_toast().expect("toasted");
+    assert!(refusal.contains("prints arrive 900 ms late"), "{refusal}");
 }
 
 /// A click on the chart puts the popup away. The rule is a table in
@@ -486,7 +535,8 @@ fn a_click_on_the_chart_puts_the_popup_away() {
     run_frame(&mut app, &ctx);
     let chip = app
         .chrome_reads()
-        .feed_chip_rect()
+        .feed_drawn()
+        .chip
         .expect("the corner is up");
     click_chart(&mut app, &ctx, chip.center());
     assert!(app.chrome_reads().feed_popup_open(), "the chip opened it");
@@ -503,7 +553,7 @@ fn a_click_on_the_chart_puts_the_popup_away() {
         "a click on the chart is a click somewhere else"
     );
     assert!(
-        app.chrome_reads().feed_chip_rect().is_some(),
+        app.chrome_reads().feed_drawn().chip.is_some(),
         "and the corner itself stays, because the feed is still stalled"
     );
 }
@@ -526,12 +576,14 @@ fn nothing_the_corner_does_throws_a_chart_away() {
     run_frame(&mut app, &ctx);
     let chip = app
         .chrome_reads()
-        .feed_chip_rect()
+        .feed_drawn()
+        .chip
         .expect("the corner is up");
     click_chart(&mut app, &ctx, chip.center());
     let chip = app
         .chrome_reads()
-        .feed_chip_rect()
+        .feed_drawn()
+        .chip
         .expect("the corner is still up");
     click_chart(&mut app, &ctx, chip.center());
     run_frame(&mut app, &ctx);
