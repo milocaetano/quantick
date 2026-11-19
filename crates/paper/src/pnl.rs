@@ -214,7 +214,7 @@ impl PnlReader<'_> {
                 |primary| format!("{} first, as the P&L switch reads", primary.label(None)),
             );
         format!(
-            "Simulated figures, {lead}; point values from instruments.toml or a declared value."
+            "Displayed P&L · {lead}. Point values come from instruments.toml or a declared value."
         )
     }
 

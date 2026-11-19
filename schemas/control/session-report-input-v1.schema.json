@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "oneOf": [
+    {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "const": "ordinary",
+          "type": "string"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "const": "session",
+          "type": "string"
+        },
+        "session": {
+          "maxLength": 512,
+          "type": "string"
+        }
+      },
+      "required": [
+        "action",
+        "session"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "const": "day",
+          "type": "string"
+        },
+        "day": {
+          "maxLength": 10,
+          "minLength": 10,
+          "type": "string"
+        },
+        "session": {
+          "maxLength": 512,
+          "type": "string"
+        }
+      },
+      "required": [
+        "action",
+        "session",
+        "day"
+      ],
+      "type": "object"
+    }
+  ],
+  "title": "ReportInput"
+}

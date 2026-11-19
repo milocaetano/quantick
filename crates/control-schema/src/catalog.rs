@@ -22,6 +22,7 @@ pub fn documents() -> Vec<(&'static str, serde_json::Value)> {
     documents.extend(crate::price_tag_progress::documents());
     documents.extend(crate::chart_settings::documents());
     documents.extend(crate::journal_sessions::documents());
+    documents.extend(crate::session_reports::documents());
     documents.extend(crate::time_axis::documents());
     documents.extend(crate::opening_scale::documents());
     documents.extend(crate::bubble_scale::documents());

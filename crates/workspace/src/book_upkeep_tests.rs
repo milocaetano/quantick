@@ -3,6 +3,68 @@ use crate::market_settings::{MarketSettings, parse_settings};
 use crate::workspace_sync::AUTOSAVE_QUIET;
 use std::cell::Cell;
 
+#[test]
+fn saving_a_legacy_workspace_captures_each_shown_timeframe() {
+    use crate::workspace_recipe::{ContextPaneRecipe, DeclaredLayout};
+    for save_as in [true, false] {
+        let live = WorkspaceRecipe {
+            layout: DeclaredLayout::TimeTimeAndFlow,
+            flow_bars: Some("time:60000".to_owned()),
+            context_panes: ["time:300000", "time:3600000"]
+                .map(|bars| ContextPaneRecipe {
+                    bars: Some(bars.to_owned()),
+                    ..ContextPaneRecipe::default()
+                })
+                .to_vec(),
+            ..WorkspaceRecipe::default()
+        };
+        let mut book = WorkspaceBook::default();
+        book.set_autosave(false);
+        book.open_tab(7);
+        let mut legacy = live.without_bars();
+        legacy.context_panes.pop();
+        book.observe(7, &legacy).unwrap();
+        book.save_as(7, "Legacy").unwrap();
+        book.open_tab(9);
+        book.set(9, "Legacy").unwrap();
+        book.settle_tab(
+            9,
+            &WorkspaceRecipe {
+                flow_bars: Some("tick:500".to_owned()),
+                ..live.clone()
+            },
+        );
+        book.settle_tab(7, &live);
+        assert!(!book.differs(7), "inherited intervals are no edit");
+        assert!(book.captures_inherited_bars(7));
+        assert_eq!(book.save_to_preview(7).unwrap(), [9]);
+        let name = if save_as { "Saved" } else { "Legacy" };
+        let saved = if save_as {
+            book.save_as(7, name)
+        } else {
+            book.save_to(7)
+        };
+        let saved = saved.unwrap();
+        assert!(saved.changed, "the explicit save captures the bars");
+        assert_eq!(saved.tabs_changed, if save_as { vec![] } else { vec![9] });
+        let mut reopened = crate::workspace_book::parse_book(&toml::to_string(&book).unwrap())
+            .expect("the saved book reloads");
+        reopened.open_tab(8);
+        reopened.set(8, name).unwrap();
+        let recipe = reopened.tab_copy(8).unwrap();
+        assert_eq!(
+            recipe.rules_over(
+                "tick:500",
+                &["time:900000".to_owned(), "time:900000".to_owned()]
+            ),
+            [(0, "time:60000"), (1, "time:300000"), (2, "time:3600000")],
+            "every saved interval overrides a new tab's market defaults"
+        );
+        assert!(!book.captures_inherited_bars(7));
+        assert!(!book.save_to(7).unwrap().changed, "a retry changes nothing");
+    }
+}
+
 /// One tab, always settled, whose panes show whatever `shows` says.
 #[derive(Default)]
 struct OneTab {
@@ -307,4 +369,35 @@ fn a_failed_write_through_is_retried_after_the_quiet_second() {
     assert!(early.is_empty(), "not per frame");
     let retry = maintain(&mut host, failed_at + AUTOSAVE_QUIET).write_through;
     assert_eq!(retry, vec![7]);
+}
+
+#[test]
+fn preparing_a_save_waits_for_arrival_and_keeps_default_market_specific() {
+    use crate::workspace_recipe::{ContextPaneRecipe, DeclaredLayout};
+    let live = WorkspaceRecipe {
+        layout: DeclaredLayout::TimeAndFlow,
+        flow_bars: Some("tick:2000".to_owned()),
+        context_panes: vec![ContextPaneRecipe {
+            bars: Some("time:300000".to_owned()),
+            ..ContextPaneRecipe::default()
+        }],
+        ..WorkspaceRecipe::default()
+    };
+    let mut host = OneTab {
+        shows: live.clone(),
+        ..OneTab::default()
+    };
+    host.book.open_tab(7);
+    host.book.observe(7, &live.without_bars()).unwrap();
+    host.sync.queue(7, live.clone());
+    assert!(!observe_tab(&mut host, 7));
+    assert_eq!(host.book.tab_copy(7), Some(&live.without_bars()));
+    host.sync.finish(7);
+    observe_tab(&mut host, 7);
+    host.book.save_to(7).unwrap();
+    assert_eq!(
+        host.book.recipe(DEFAULT_WORKSPACE),
+        Some(&live.without_bars())
+    );
+    assert!(!host.book.save_to(7).unwrap().changed);
 }

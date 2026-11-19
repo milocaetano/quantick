@@ -210,6 +210,11 @@ fn broker_closes_go_to_their_own_journal() {
     go_long(account);
     account.close_position();
     account.on_trade(&print(2, 103));
+    assert_eq!(
+        account.ledger_chart_selection(Some(0)),
+        None,
+        "a simulator ledger index cannot select a broker tape mark"
+    );
     let real = account.broker_trades_dir().join("WINZ26");
     assert!(
         std::fs::read_dir(&real).is_ok_and(|mut files| files.next().is_some()),
@@ -364,6 +369,63 @@ fn a_hold_begun_on_one_account_never_arms_another() {
     desk.frame(&mut tabs, LIVE, 10);
     desk.hold_still(&mut tabs, LIVE, HOLD_TO_ARM_MS);
     assert_eq!(desk.route().route(), Route::Sim);
+}
+
+#[test]
+fn a_final_parked_close_by_tape_or_poll_only_reaches_the_broker_journal() {
+    for by_poll in [false, true] {
+        let (_desk, mut tabs, script) = armed(TradeMode::Demo);
+        let account = tabs.active();
+        go_long(account);
+        account.park_broker();
+        account.close_position();
+        if by_poll {
+            script.borrow_mut().poll_print = Some(print(2, 105));
+            account.poll_broker(2_000);
+        } else {
+            account.on_trade(&print(2, 105));
+        }
+        assert!(!account.broker_shown());
+        assert!(account.simulator_trades().is_empty());
+        assert!(account.session_trade_sources().is_empty());
+        assert!(account.session_journal_paths().is_empty());
+        assert!(account.take_journal_changed());
+        let history = crate::report::journals::load(account.trades_dir(), None, &[]);
+        assert_eq!(history.rows.len(), 1);
+        assert!(history.rows[0].session.as_ref().unwrap().is_broker());
+        assert_eq!(
+            history.rows[0].source,
+            Some(quantick_sim::history::SessionSource::Broker(
+                TradeMode::Demo
+            ))
+        );
+    }
+}
+
+#[test]
+fn an_account_change_with_exposure_rearms_the_same_tab_and_journals_the_new_account() {
+    let (mut desk, mut tabs, script) = armed(TradeMode::Demo);
+    go_long(tabs.active());
+    tabs.active().close_position();
+    tabs.active().on_trade(&print(2, 105));
+    go_long(tabs.active());
+    script.borrow_mut().trade_mode = Some(TradeMode::Real);
+    script.borrow_mut().login = Some(9876);
+    desk.frame(&mut tabs, LIVE, 3_000);
+    assert_eq!(desk.route().route(), Route::Sim);
+    assert!(tabs.active().parked_broker().is_some());
+    desk.hold_start(&tabs, LIVE, 4_000).unwrap();
+    desk.hold_still(&mut tabs, LIVE, 4_000 + HOLD_TO_ARM_MS);
+    assert_eq!(desk.route().route(), Route::Real);
+    tabs.active().close_position();
+    tabs.active().on_trade(&print(6, 106));
+    let history = crate::report::journals::load(tabs.active().trades_dir(), None, &[]);
+    let sources: Vec<_> = history.rows.iter().map(|row| row.source).collect();
+    assert_eq!(
+        sources,
+        [TradeMode::Demo, TradeMode::Real]
+            .map(|mode| Some(quantick_sim::history::SessionSource::Broker(mode)))
+    );
 }
 
 /// DEMO armed on the active tab, long one, then left at the broker.

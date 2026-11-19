@@ -113,7 +113,7 @@ Owner keys (other paths appear in full):
 | `QUANTICK_PAPER_STATE=<toml>` | home | the paper sidecar: the picked journal folder and the cmd-trading settings. **Point at a scratchpad file** — an unhooked run reads and rewrites the trader's real `paper-state.toml`, and startup consolidation may clear their stored folder pick. |
 | `QUANTICK_INSTRUMENTS=<toml>` | home | the trader's `instruments.toml` over the shipped catalog; point at scratch |
 | `QUANTICK_DOCK_TAB=<l2\|bubbles\|session\|trading\|trades>` | hooks | the dock open on that tab — `trading` is the ticket (with the CMD TRADING block), `trades` the ledger |
-| `QUANTICK_PAPER_REPORT_AUTOSTART=1` | hooks | the Simulated performance window (Source/Period filter rows, typed period, import button) |
+| `QUANTICK_PAPER_REPORT_AUTOSTART=1` | hooks | Trading performance; also `session:<key>` or `day:<YYYY-MM-DD>:<key>` via `session.report.open`. |
 | `QUANTICK_PAPER_DEMO=1` | account | scripted deterministic trade sequence — real journaled trades for every paper surface; pair with `QUANTICK_TRADES_DIR` at scratch |
 
 | `QUANTICK_DRAWING_TOOL=<tool id>` | toolrail | `drawing-harness` opt-in. opens with that tool armed — any id in `DRAWING_TOOLS` (`trend-line`, `ray`, `measure`, `text`, …) |

@@ -67,6 +67,7 @@ impl FrameTailOwners<'_> {
                 };
                 let tab = self.tabs.runtime_mut(self.tabs.active_index());
                 let mut env = BorrowedSurfaceEnv::Paper(PaperPanelEnv {
+                    live_journals: &[],
                     alerts_open: false,
                     replay: tab.link.replay.as_ref(),
                     paper: &mut tab.paper,

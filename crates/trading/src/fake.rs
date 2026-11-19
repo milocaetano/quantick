@@ -185,7 +185,10 @@ impl FakeVenue {
             mfe_points: Some(favorable.saturating_mul(quantity)),
         };
         self.closed.push(trade.clone());
-        events.push(VenueEvent::Closed(trade));
+        events.push(VenueEvent::Closed {
+            trade,
+            broker_account: None,
+        });
     }
 }
 

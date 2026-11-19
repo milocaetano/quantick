@@ -29,6 +29,8 @@ use crate::workspace_recipe::{ContextPaneRecipe, FACTORY_SUMMARY, WorkspaceRecip
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+mod bar_rules;
+
 #[path = "workspace_book_manage.rs"]
 mod manage;
 pub use manage::{UNDO_WINDOW_MS, UndoOutcome};
@@ -695,9 +697,9 @@ impl WorkspaceBook {
     pub fn tab_state(&self, tab: u64) -> Option<TabWorkspaceState<'_>> {
         let state = self.tabs.get(&tab)?;
         let modified = if self.autosave {
-            self.unsynced.contains_key(&tab) && self.is_modified(state)
+            self.unsynced.contains_key(&tab) && self.is_modified(tab, state)
         } else {
-            self.is_modified(state) || self.held_drawings(tab) > 0
+            self.is_modified(tab, state) || self.held_drawings(tab) > 0
         };
         Some(TabWorkspaceState {
             workspace: &state.workspace,
@@ -787,7 +789,7 @@ impl WorkspaceBook {
     pub fn unsynced(&self, tab: u64) -> Option<Unsynced> {
         let state = self.tabs.get(&tab)?;
         let why = self.unsynced.get(&tab).copied()?;
-        self.is_modified(state).then_some(why)
+        self.is_modified(tab, state).then_some(why)
     }
 
     /// The tabs whose write-through failed and still differ: what the window
@@ -842,7 +844,9 @@ impl WorkspaceBook {
         let workspace = &self.tabs.get(&tab)?.workspace;
         let rivals: Vec<u64> = (self.tabs.iter())
             .filter(|(id, state)| {
-                state.workspace == *workspace && self.is_modified(state) && !self.outvoted(**id)
+                state.workspace == *workspace
+                    && self.is_modified(**id, state)
+                    && !self.outvoted(**id)
             })
             .map(|(id, _)| *id)
             .collect();
@@ -911,7 +915,7 @@ impl WorkspaceBook {
     pub fn differing_tabs(&self) -> Vec<u64> {
         self.tabs
             .iter()
-            .filter(|(_, state)| self.is_modified(state))
+            .filter(|(tab, state)| self.is_modified(**tab, state))
             .map(|(tab, _)| *tab)
             .collect()
     }
@@ -921,7 +925,7 @@ impl WorkspaceBook {
     pub fn differs(&self, tab: u64) -> bool {
         self.tabs
             .get(&tab)
-            .is_some_and(|state| self.is_modified(state))
+            .is_some_and(|state| self.is_modified(tab, state))
     }
 
     /// What closing the tab would lose: `None` when the tab holds nothing, so
@@ -930,7 +934,7 @@ impl WorkspaceBook {
     #[must_use]
     pub fn unsaved_edits(&self, tab: u64) -> Option<UnsavedEdits> {
         let state = self.tabs.get(&tab)?;
-        let (modified, held) = (self.is_modified(state), self.held_drawings(tab));
+        let (modified, held) = (self.is_modified(tab, state), self.held_drawings(tab));
         let holds = if self.autosave {
             self.unsynced(tab).is_some()
         } else {
@@ -955,9 +959,17 @@ impl WorkspaceBook {
         let Some(state) = self.tabs.get(&tab) else {
             return Vec::new();
         };
-        (self.baseline(state).filter(|_| self.is_modified(state)))
-            .map(|base| base.masked(&state.copy).changes_from(base))
-            .unwrap_or_default()
+        (self
+            .baseline(state)
+            .filter(|_| self.is_modified(tab, state)))
+        .map(|base| {
+            let mut shown = base.masked(&state.copy);
+            if self.held_capture(tab) {
+                shown.take_inherited_bars(&state.copy);
+            }
+            shown.changes_from(base)
+        })
+        .unwrap_or_default()
     }
 
     /// The arrangement the tab holds now.
@@ -979,9 +991,10 @@ impl WorkspaceBook {
         )
     }
 
-    fn is_modified(&self, state: &TabWorkspace) -> bool {
+    fn is_modified(&self, tab: u64, state: &TabWorkspace) -> bool {
         self.baseline(state)
             .is_none_or(|base| !base.holds(&state.copy))
+            || self.held_capture(tab)
     }
 
     /// Why `name` cannot be deleted, or `None` when it can: what greys the
@@ -995,25 +1008,6 @@ impl WorkspaceBook {
             .then(|| WorkspaceRefusal::UnknownWorkspace(name.to_owned()))
     }
 
-    /// A tab's panes stand, showing `live`. On the factory `Default`, a clean
-    /// tab takes that as its copy and its baseline; a tab with edits keeps them.
-    pub fn settle_tab(&mut self, tab: u64, live: &WorkspaceRecipe) {
-        let Some(state) = self.tabs.get(&tab) else {
-            return;
-        };
-        let factory = self
-            .recipes
-            .get(&state.workspace)
-            .is_some_and(WorkspaceRecipe::is_factory);
-        if factory
-            && !self.is_modified(state)
-            && let Some(state) = self.tabs.get_mut(&tab)
-        {
-            state.copy = live.clone();
-            state.opened = Some(live.without_bars());
-        }
-    }
-
     /// What the desk keeps for a tab: the workspace, and the copy only while it
     /// differs from the recipe, so a clean tab follows later saves.
     #[must_use]
@@ -1021,7 +1015,7 @@ impl WorkspaceBook {
         match self.tabs.get(&tab) {
             Some(state) => (
                 Some(state.workspace.clone()),
-                self.is_modified(state).then(|| state.copy.clone()),
+                self.is_modified(tab, state).then(|| state.copy.clone()),
             ),
             None => (None, None),
         }
@@ -1057,11 +1051,13 @@ impl WorkspaceBook {
             .resolve(workspace)
             .unwrap_or(DEFAULT_WORKSPACE)
             .to_owned();
+        let held_copy = copy.is_some();
         let mut copy = copy.unwrap_or_else(|| self.recipes.get(&name).cloned().unwrap_or_default());
         copy.adopt_legacy_bars();
         self.tabs.insert(tab, TabWorkspace::on(&name, copy));
         self.unsynced.remove(&tab);
-        if self.autosave && self.differs(tab) {
+        if self.autosave && (self.differs(tab) || (held_copy && self.captures_inherited_bars(tab)))
+        {
             self.unsynced.insert(tab, Unsynced::Outvoted);
         }
     }
@@ -1179,7 +1175,7 @@ impl WorkspaceBook {
         let shared = others.any(|(_, held)| {
             held.workspace == state.workspace && same_sets(&held.copy, &state.copy)
         });
-        rest || (sets && !shared)
+        rest || self.held_capture(tab) || (sets && !shared)
     }
 
     fn state(&self, tab: u64) -> Result<&TabWorkspace, WorkspaceRefusal> {
@@ -1193,14 +1189,16 @@ impl WorkspaceBook {
     /// No such tab.
     pub fn save_to_preview(&self, tab: u64) -> Result<Vec<u64>, WorkspaceRefusal> {
         let saver = self.state(tab)?;
-        if !self.is_modified(saver) {
+        if !self.is_modified(tab, saver) && !self.captures_inherited_bars(tab) {
             return Ok(Vec::new());
         }
         Ok(self
             .tabs
             .iter()
             .filter(|(other, state)| {
-                **other != tab && state.workspace == saver.workspace && !self.is_modified(state)
+                **other != tab
+                    && state.workspace == saver.workspace
+                    && !self.is_modified(**other, state)
             })
             .map(|(other, _)| *other)
             .collect())
@@ -1215,7 +1213,7 @@ impl WorkspaceBook {
         let tabs_changed = self.save_to_preview(tab)?;
         let saver = self.state(tab)?;
         let workspace = saver.workspace.clone();
-        if !self.is_modified(saver) {
+        if !self.is_modified(tab, saver) && !self.captures_inherited_bars(tab) {
             return Ok(SaveOutcome {
                 workspace,
                 changed: false,
@@ -1263,7 +1261,7 @@ impl WorkspaceBook {
     pub fn save_as(&mut self, tab: u64, name: &str) -> Result<SaveOutcome, WorkspaceRefusal> {
         let saver = self.state(tab)?;
         let cleaned = clean(name)?;
-        if saver.workspace == cleaned && !self.is_modified(saver) {
+        if saver.workspace == cleaned && !self.is_modified(tab, saver) {
             return Ok(SaveOutcome {
                 workspace: cleaned,
                 changed: false,
@@ -1297,7 +1295,7 @@ impl WorkspaceBook {
             return Err(WorkspaceRefusal::TabOpening(tab));
         }
         let cleaned = self.validate_new_name(name)?;
-        let dropped_edits = self.is_modified(state);
+        let dropped_edits = self.is_modified(tab, state);
         let recipe = state.copy.emptied();
         self.recipes.insert(cleaned.clone(), recipe.clone());
         self.tabs.insert(tab, TabWorkspace::on(&cleaned, recipe));

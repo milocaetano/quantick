@@ -366,8 +366,9 @@ impl PaperAccount {
     /// Feed one live print through the simulator and act on what it did.
     pub fn on_trade(&mut self, trade: &Trade) {
         self.observe_precision(trade);
+        let route = self.route_kind();
         let events = self.venue.on_trade(trade);
-        self.handle_events(events);
+        self.handle_events_from(events, route);
         if self.demo.is_some() {
             self.run_demo_step();
         }
@@ -790,9 +791,13 @@ impl PaperAccount {
         let had_orders = !self.venue.working_orders().is_empty() || self.venue.in_flight() > 0;
         let events = self.venue.reset();
         let mut all_saved = true;
-        for event in &events {
-            if let VenueEvent::Closed(trade) = event {
-                all_saved &= self.journal(&trade.clone());
+        for event in events {
+            if let VenueEvent::Closed {
+                trade,
+                broker_account,
+            } = event
+            {
+                all_saved &= self.save_close(&trade, broker_account);
                 // The same invalidation law as handle_events, including a
                 // failed write. Do not erase an earlier hint on a quiet reset.
                 self.outbox.journal_changed = true;
@@ -815,6 +820,17 @@ impl PaperAccount {
     // Events, journal, parsing
     // ------------------------------------------------------------------
 
+    fn save_close(
+        &mut self,
+        trade: &ClosedTrade,
+        broker_account: Option<quantick_trading::TradeMode>,
+    ) -> bool {
+        match broker_account {
+            Some(mode) => self.journal_broker(trade, mode),
+            None => self.journal(trade),
+        }
+    }
+
     /// One funnel for everything the simulator reports: closures are
     /// journaled, fills and closures toast, rejections teach — and while a
     /// bot is listening, every batch is buffered for the armed instances
@@ -826,13 +842,17 @@ impl PaperAccount {
     /// via the buffer — which the state machine tolerates by design (every
     /// transition consumes its trigger, so a replayed event finds no match).
     pub fn handle_events(&mut self, events: Vec<VenueEvent>) {
+        self.handle_events_from(events, self.route_kind());
+    }
+
+    fn handle_events_from(&mut self, events: Vec<VenueEvent>, route: crate::route::Route) {
         if self.bot_listening && !events.is_empty() {
             self.bot_events.extend(events.iter().cloned());
         }
         // Every acknowledgement leads with where the order went: a broker's
         // refusal is its own text, verbatim, after the route's word.
-        let word = self.route_kind().word();
-        let broker = self.broker_shown();
+        let word = route.word();
+        let broker = route.is_broker();
         for event in events {
             if broker {
                 broker_log::log_broker_event(&event, word, &self.symbol);
@@ -857,12 +877,14 @@ impl PaperAccount {
                         ));
                     }
                 }
-                VenueEvent::Closed(trade) => {
-                    let saved = if broker {
-                        self.journal_broker(&trade)
-                    } else {
-                        self.journal(&trade)
-                    };
+                VenueEvent::Closed {
+                    trade,
+                    broker_account,
+                } => {
+                    let saved = self.save_close(&trade, broker_account);
+                    let word = broker_account.map_or("SIM", |mode| {
+                        history::SessionSource::Broker(mode).account_label()
+                    });
                     // The report reads from disk and the close just wrote
                     // to disk; the host must re-read now or its window shows
                     // yesterday until the manual refresh - the "my trade is

@@ -111,6 +111,7 @@ impl LedgerEdit {
 /// What a session row, its menu, an inline row or a key asked for.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SessionPress {
+    Report(super::scope::ReportRequest),
     Fold(SessionKey, bool),
     StartRename(SessionKey),
     /// The session, its label and its trade count, which the confirm names.
@@ -259,6 +260,7 @@ impl LedgerState {
         history: Option<&LoadedHistory>,
     ) -> Option<JournalEdit> {
         match press {
+            SessionPress::Report(_) => None,
             SessionPress::Fold(key, folded) => {
                 self.view.set_folded(key.clone(), folded);
                 self.focused = Some(key);

@@ -179,7 +179,7 @@ fn draw(
                     }
                     // The ledger manages its own scroll (a virtualised
                     // list with a pinned totals strip).
-                    DockTab::Trades => match env.paper.draw_trades_tab(ui, env.timezone) {
+                    DockTab::Trades => match env.paper.draw_trades_tab(ui, env.timezone, env.live_journals) {
                         Some(LedgerAction::Navigate(opened, closed)) => {
                             response.navigate_to_trade = Some((opened, closed));
                         }

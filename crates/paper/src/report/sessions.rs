@@ -25,7 +25,8 @@ use crate::pnl::{PnlTotal, SymbolPnl};
 pub use quantick_sim::history::TradeRef;
 
 /// One session file, named relative to the trades folder:
-/// `<symbol folder>/<file>.csv`. Stable across restarts and the identifier
+/// `<symbol folder>/<file>.csv`, prefixed with `broker/` for the sibling
+/// broker journal. Stable across restarts and the identifier
 /// the control plane speaks, so it never carries an absolute path.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct SessionKey(Arc<str>);
@@ -42,7 +43,11 @@ impl SessionKey {
     /// which no symbol folder does.
     #[must_use]
     pub fn parse(text: &str) -> Option<Self> {
-        let (folder, file) = text.split_once('/')?;
+        let relative = text
+            .strip_prefix("broker/")
+            .filter(|rest| rest.contains('/'))
+            .unwrap_or(text);
+        let (folder, file) = relative.split_once('/')?;
         let plain = |part: &str| {
             !part.is_empty()
                 && !part.starts_with('.')
@@ -60,14 +65,16 @@ impl SessionKey {
     /// folder of `dir`.
     #[must_use]
     pub fn of(dir: &Path, path: &Path) -> Option<Self> {
-        let relative = path.strip_prefix(dir).ok()?;
-        let mut parts = relative.components();
-        let folder = parts.next()?.as_os_str().to_str()?;
-        let file = parts.next()?.as_os_str().to_str()?;
-        if parts.next().is_some() {
-            return None;
-        }
-        Self::parse(&format!("{folder}/{file}"))
+        let under = |root: &Path| {
+            let mut parts = path.strip_prefix(root).ok()?.components();
+            let folder = parts.next()?.as_os_str().to_str()?;
+            let file = parts.next()?.as_os_str().to_str()?;
+            if parts.next().is_some() {
+                return None;
+            }
+            Self::parse(&format!("{folder}/{file}"))
+        };
+        under(dir).or_else(|| under(&super::journals::broker_dir(dir)).map(|key| key.for_broker()))
     }
 
     #[must_use]
@@ -79,13 +86,38 @@ impl SessionKey {
     #[must_use]
     pub fn path(&self, dir: &Path) -> PathBuf {
         let (folder, file) = self.parts();
-        dir.join(folder).join(file)
+        self.root(dir).join(folder).join(file)
+    }
+
+    pub fn is_broker(&self) -> bool {
+        self.0.starts_with("broker/") && self.0.matches('/').count() == 2
+    }
+
+    pub fn for_broker(&self) -> Self {
+        if self.is_broker() {
+            self.clone()
+        } else {
+            Self(Arc::from(format!("broker/{}", self.0)))
+        }
+    }
+
+    pub fn root(&self, dir: &Path) -> PathBuf {
+        if self.is_broker() {
+            super::journals::broker_dir(dir)
+        } else {
+            dir.to_path_buf()
+        }
     }
 
     /// The symbol folder and the file name.
     #[must_use]
     pub fn parts(&self) -> (&str, &str) {
-        self.0.split_once('/').unwrap_or(("", &self.0))
+        let text = if self.is_broker() {
+            &self.0["broker/".len()..]
+        } else {
+            &self.0
+        };
+        text.split_once('/').unwrap_or(("", &self.0))
     }
 
     /// `N` for a `.rerun-N.csv` file — the same tape traded again — else
@@ -130,10 +162,15 @@ impl SessionInfo {
     /// The session as one file read it.
     #[must_use]
     pub fn of(key: SessionKey, symbol: String, parsed: &history::TradeHistory, live: bool) -> Self {
+        let source = if key.is_broker() {
+            Some(SessionSource::Broker(quantick_trading::TradeMode::Unknown))
+        } else {
+            parsed.source
+        };
         Self {
             key,
             symbol,
-            source: parsed.source,
+            source,
             name: parsed.name.clone(),
             live,
             trades: parsed.trades.len(),
@@ -288,6 +325,7 @@ pub fn clock_second(timestamp_ms: i64, tz: TzOffset) -> String {
 #[must_use]
 pub fn source_word(source: Option<SessionSource>) -> &'static str {
     match source {
+        Some(SessionSource::Broker(_)) => "Broker",
         Some(SessionSource::Live) => "Live",
         Some(SessionSource::Replay) => "Replay",
         None => "Unrecorded",

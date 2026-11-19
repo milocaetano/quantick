@@ -16,7 +16,9 @@
 //! ```
 //!
 //! `# source=` records where the whole session's trades came from (a
-//! session is wholly live or wholly a replay). Files from before the line
+//! simulator session is wholly live or wholly a replay). Broker journals use
+//! `# source=broker` and `# account=demo|real|contest|unknown` before each
+//! trade row; the receipt applies only to that row. Files from before the line
 //! existed parse with [`TradeHistory::source`] `None` — unrecorded, not
 //! guessed.
 //!
@@ -53,7 +55,7 @@ use std::collections::BTreeMap;
 use quantick_engine::Side;
 use rust_decimal::Decimal;
 
-use quantick_trading::{ClosedTrade, ExitReason};
+use quantick_trading::{ClosedTrade, ExitReason, TradeMode};
 
 /// Magic token on the first line, naming the format.
 pub const FORMAT_NAME: &str = "quantick-trades";
@@ -131,6 +133,8 @@ pub enum SessionSource {
     Live,
     /// A recorded session was driving the tape (market replay).
     Replay,
+    /// Broker execution; the account mode belongs to the trade, not the current connection.
+    Broker(TradeMode),
 }
 
 impl SessionSource {
@@ -140,6 +144,7 @@ impl SessionSource {
         match self {
             Self::Live => "live",
             Self::Replay => "replay",
+            Self::Broker(_) => "broker",
         }
     }
 
@@ -149,8 +154,34 @@ impl SessionSource {
         match token {
             "live" => Some(Self::Live),
             "replay" => Some(Self::Replay),
+            "broker" => Some(Self::Broker(TradeMode::Unknown)),
             _ => None,
         }
+    }
+}
+
+impl SessionSource {
+    /// Account text for a broker row; simulator rows keep their existing wording.
+    pub fn account_label(self) -> &'static str {
+        match self {
+            Self::Broker(TradeMode::Demo) => "DEMO",
+            Self::Broker(TradeMode::Real) => "REAL",
+            Self::Broker(TradeMode::Contest) => "CONTEST",
+            Self::Broker(TradeMode::Unknown) => "UNKNOWN",
+            Self::Live => "Live",
+            Self::Replay => "Replay",
+        }
+    }
+}
+
+/// One account receipt applies only to the following data row. A missing or torn
+/// receipt cannot inherit the preceding trade's account.
+pub fn write_account(mode: TradeMode) -> &'static str {
+    match mode {
+        TradeMode::Demo => "# account=demo\n",
+        TradeMode::Real => "# account=real\n",
+        TradeMode::Contest => "# account=contest\n",
+        TradeMode::Unknown => "# account=unknown\n",
     }
 }
 
@@ -162,6 +193,8 @@ pub struct TradeHistory {
     /// Session source from the `# source=` comment; `None` for files from
     /// before the line existed (unrecorded, never guessed).
     pub source: Option<SessionSource>,
+    /// Per-row sources, including execution account receipts; index-aligned with trades.
+    pub sources: Vec<Option<SessionSource>>,
     /// The session's name from the last `# name=` line; `None` when it was
     /// never named or the last line cleared it.
     pub name: Option<String>,
@@ -383,6 +416,8 @@ pub fn parse(text: &str) -> Result<TradeHistory, HistoryError> {
 
     let mut symbol = None;
     let mut source = None;
+    let mut sources = Vec::new();
+    let mut account = None;
     let mut name = None;
     let mut tags = BTreeMap::new();
     let mut header_seen = false;
@@ -412,6 +447,20 @@ pub fn parse(text: &str) -> Result<TradeHistory, HistoryError> {
                         ),
                     }),
                 }
+            } else if let Some(value) = comment.strip_prefix("account=") {
+                account = Some(match value.trim() {
+                    "demo" => TradeMode::Demo,
+                    "real" => TradeMode::Real,
+                    "contest" => TradeMode::Contest,
+                    "unknown" => TradeMode::Unknown,
+                    other => {
+                        problems.push(HistoryProblem {
+                            line: line_number,
+                            message: format!("unknown account mode `{other}`"),
+                        });
+                        TradeMode::Unknown
+                    }
+                });
             } else if let Some(value) = comment.strip_prefix("name=") {
                 let value = clean_session_name(value);
                 name = (!value.is_empty()).then_some(value);
@@ -445,8 +494,12 @@ pub fn parse(text: &str) -> Result<TradeHistory, HistoryError> {
             header_seen = true;
             continue;
         }
+        let row_account = account.take();
         match parse_row(trimmed, version) {
-            Ok(trade) => trades.push(trade),
+            Ok(trade) => {
+                sources.push(row_account.map(SessionSource::Broker).or(source));
+                trades.push(trade);
+            }
             Err(message) => problems.push(HistoryProblem {
                 line: line_number,
                 message,
@@ -462,6 +515,7 @@ pub fn parse(text: &str) -> Result<TradeHistory, HistoryError> {
     Ok(TradeHistory {
         symbol,
         source,
+        sources,
         name,
         tags,
         trades,
@@ -596,6 +650,33 @@ mod tests {
         assert_eq!(history.source, Some(SessionSource::Live));
         assert_eq!(history.trades, trades.to_vec());
         assert!(history.problems.is_empty());
+    }
+
+    #[test]
+    fn broker_receipts_are_per_trade_and_a_torn_row_cannot_leak_its_account() {
+        let trade = sample(Side::Buy, 5, ExitReason::Manual);
+        let mut text = write_header("WINZ26", SessionSource::Broker(TradeMode::Unknown));
+        text.push_str(write_account(TradeMode::Demo));
+        text.push_str(&write_trade(&trade));
+        text.push_str(write_account(TradeMode::Real));
+        text.push_str(&write_trade(&trade));
+        text.push_str("# account=demo\ntorn,row\n");
+        text.push_str(&write_trade(&trade));
+        text.push_str("# account=nonsense\n");
+        text.push_str(&write_trade(&trade));
+        let parsed = parse(&text).unwrap();
+        assert_eq!(
+            parsed.sources,
+            [
+                TradeMode::Demo,
+                TradeMode::Real,
+                TradeMode::Unknown,
+                TradeMode::Unknown
+            ]
+            .map(|mode| Some(SessionSource::Broker(mode)))
+        );
+        assert_eq!(parsed.problems.len(), 2);
+        assert_eq!(parsed.trades, vec![trade; 4]);
     }
 
     #[test]

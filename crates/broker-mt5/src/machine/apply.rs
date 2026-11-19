@@ -626,7 +626,16 @@ impl BrokerCore {
         };
         self.ledger.realized = self.ledger.realized.saturating_add(pnl);
         self.ledger.closed.push(trade.clone());
-        events.push(VenueEvent::Closed(trade));
+        events.push(VenueEvent::Closed {
+            trade,
+            broker_account: Some(
+                self.account
+                    .as_ref()
+                    .map_or(quantick_trading::TradeMode::Unknown, |facts| {
+                        facts.trade_mode
+                    }),
+            ),
+        });
     }
 }
 

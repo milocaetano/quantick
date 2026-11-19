@@ -1,6 +1,27 @@
 use super::*;
 
 #[test]
+fn scoped_report_launches_use_the_registered_session_action() {
+    for (value, expected) in [
+        (
+            "session:broker/WINZ26/a.csv",
+            serde_json::json!({"action":"session", "session":"broker/WINZ26/a.csv"}),
+        ),
+        (
+            "day:2026-11-18:WINZ26/a.csv",
+            serde_json::json!({"action":"day", "day":"2026-11-18", "session":"WINZ26/a.csv"}),
+        ),
+    ] {
+        assert_eq!(
+            session_report(value),
+            Some((crate::session_reports::REPORT_OPEN_CAPABILITY_ID, expected))
+        );
+    }
+    assert!(session_report("1").is_none());
+    assert!(session_report("session:").is_none());
+}
+
+#[test]
 fn a_price_range_becomes_a_manual_axis_on_the_named_pane() {
     let (id, input) = price_range(" 100.5 : 102 ", 3, 7).expect("a readable range");
     assert_eq!(id, price_axis::PRICE_AXIS_CAPABILITY_ID);

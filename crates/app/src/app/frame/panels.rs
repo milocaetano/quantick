@@ -111,8 +111,16 @@ pub(super) fn draw_dock(
     alerts_open: bool,
 ) -> SurfaceResponse {
     let (tabs, route) = (&mut runtime.tabs, runtime.broker.sheet());
+    crate::app::paper_wiring::follow_journals(tabs);
+    let live = if surfaces.dock.model_state.tab() == Some(quantick_workspace::dock::DockTab::Trades)
+    {
+        crate::app::paper_wiring::journal_scope(tabs).live
+    } else {
+        Vec::new()
+    };
     let Tab { link, paper, .. } = tabs.runtime_mut(tabs.active_index());
     let mut env = BorrowedSurfaceEnv::Paper(PaperPanelEnv {
+        live_journals: &live,
         alerts_open,
         replay: link.replay.as_ref(),
         paper,

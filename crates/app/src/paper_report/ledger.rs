@@ -31,11 +31,17 @@ use quantick_appearance::panel_chrome::FOOTER;
 use quantick_appearance::paper::{CARD_GAP_PX, ledger_frame};
 
 impl Paint<'_, '_> {
-    /// The Trades dock tab: the ledger of closed simulated trades — the
+    /// The Trades dock tab: broker and simulator round trips — the
     /// open position pinned on top, this session under it, the saved
     /// history under that, each day split by session where it holds
     /// several, and a totals strip that never scrolls away.
-    pub(crate) fn draw_trades_tab(&mut self, ui: &mut egui::Ui, tz: TzOffset, env: &ReportEnv<'_>) {
+    pub(crate) fn draw_trades_tab(
+        &mut self,
+        ui: &mut egui::Ui,
+        tz: TzOffset,
+        env: &ReportEnv<'_>,
+        live: &[std::path::PathBuf],
+    ) {
         let palette = theme::get(ui.ctx());
         self.ledger(LedgerIntent::EnsureLoaded);
         self.ledger(LedgerIntent::Timezone(tz));
@@ -80,7 +86,7 @@ impl Paint<'_, '_> {
         };
         // Each close's session and file trade were recorded as it was
         // written; only the set of files still being written is read here.
-        let live_keys = live_keys(env.dir, env.session_journal_paths);
+        let live_keys = live_keys(env.dir, live);
         // This session's trades go through the same filter the saved rows
         // were cut with, a handful per frame.
         let (live, hidden_live) = self.sessions().live_trades(
@@ -302,7 +308,7 @@ impl Paint<'_, '_> {
             Some(symbol) if !symbol.is_empty() => {
                 format!("No trades for {symbol}.")
             }
-            _ => "No simulated trades yet.".to_owned(),
+            _ => "No trades in this view yet.".to_owned(),
         };
         ui.label(egui::RichText::new(headline).color(palette.text_primary()));
         ui.label(

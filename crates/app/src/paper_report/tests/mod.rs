@@ -20,6 +20,7 @@ use crate::paper_trading::PaperTrading;
 use quantick_paper::pnl::PnlReader;
 use quantick_paper::report::ledger_rows::trade_detail as ledger_detail;
 
+mod context_reports_tests;
 mod ledger_keys_tests;
 mod narrow_ledger_tests;
 mod scroll_tests;

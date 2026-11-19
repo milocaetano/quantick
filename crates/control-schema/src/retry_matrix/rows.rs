@@ -27,6 +27,7 @@ pub const FAMILIES: &[&[Readback]] = &[
     crate::history::READBACKS,
     indicator_guide::READBACKS,
     crate::journal_sessions::READBACKS,
+    crate::session_reports::READBACKS,
     layers::READBACKS,
     layout::READBACKS,
     notify::READBACKS,
