@@ -1389,6 +1389,11 @@ mod tests {
         let region = Region::new(dec("100"), dec("110"));
         let mut instance =
             ArmedStrategy::new(params(Side::Buy), Box::new(Recorder(Rc::clone(&seen))));
+        assert_eq!(
+            instance.trigger().warmup_bars(),
+            2,
+            "warmup covers history by default"
+        );
         instance.warm(&[bar("100", "101")]);
         instance.on_closed_bar(&bar("101", "102"), &region, true, true);
         instance.on_closed_bar(&bar("102", "103"), &region, true, true);

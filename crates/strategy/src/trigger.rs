@@ -37,7 +37,11 @@ pub struct Signal {
 
 /// What a trigger judges: one bar, and the closed bars of the same series
 /// that preceded it.
+///
+/// Non-exhaustive so the next ruler's input lands as a field without
+/// breaking callers: build one with [`TriggerContext::new`].
 #[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
 pub struct TriggerContext<'a> {
     /// The bar under judgement — closed for [`Trigger::on_closed_bar`],
     /// still forming for [`Trigger::preview`].
@@ -47,6 +51,13 @@ pub struct TriggerContext<'a> {
     /// shorter until that many have closed since the arm or the last
     /// [`Trigger::reset`].
     pub history: &'a [Bar],
+}
+
+impl<'a> TriggerContext<'a> {
+    #[must_use]
+    pub fn new(bar: &'a Bar, history: &'a [Bar]) -> Self {
+        Self { bar, history }
+    }
 }
 
 /// The port. Feed **every** closed bar of the series in order, whether or
@@ -139,11 +150,13 @@ pub trait Trigger {
     /// How many recent closed bars re-warm this ruler after a [`reset`]
     /// (or a fresh arm) — the consumer replays that many from its series,
     /// gates shut, so "armed" means armed *now* instead of after another
-    /// unexplained warmup. A stateless trigger needs none.
+    /// unexplained warmup. It must cover [`Self::history_bars`], or the
+    /// first bar judged after arming sees a short history; the default is
+    /// exactly that bound, so a stateless trigger needs none.
     ///
     /// [`reset`]: Self::reset
     fn warmup_bars(&self) -> usize {
-        0
+        self.history_bars()
     }
 }
 
@@ -281,10 +294,7 @@ pub(crate) struct ClosedBars {
 impl ClosedBars {
     /// The context for judging `bar` against the bars recorded so far.
     pub(crate) fn context<'a>(&'a self, bar: &'a Bar) -> TriggerContext<'a> {
-        TriggerContext {
-            bar,
-            history: &self.bars,
-        }
+        TriggerContext::new(bar, &self.bars)
     }
 
     /// Append a bar that has just been judged closed, keeping the newest
@@ -347,7 +357,7 @@ mod tests {
 
     /// Judge `bar` with no history: the force ruler reads none.
     fn judge(trigger: &mut ForceTrigger, bar: &Bar) -> Option<Signal> {
-        trigger.on_closed_bar(&TriggerContext { bar, history: &[] })
+        trigger.on_closed_bar(&TriggerContext::new(bar, &[]))
     }
 
     #[test]
