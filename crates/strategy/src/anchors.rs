@@ -15,7 +15,9 @@ use quantick_sim::Command;
 
 use crate::presets::StoredPreset;
 use crate::sound::Cue;
-use crate::{AlarmEvent, ArmedState, ArmedStrategy, DisarmReason, Execution, Region, SignalAlarm};
+use crate::{
+    AlarmEvent, ArmedState, ArmedStrategy, DisarmReason, Execution, Placement, SignalAlarm,
+};
 
 /// What the last alarm judgement left standing over the drawing.
 ///
@@ -128,7 +130,7 @@ impl<K> AnchoredInstance<K> {
     pub fn alarm_on_forming_bar(
         &mut self,
         bar: &Bar,
-        region: &Region,
+        placement: &dyn Placement,
         region_active: bool,
         progress: Option<BarProgress>,
         now_ms: u64,
@@ -141,7 +143,7 @@ impl<K> AnchoredInstance<K> {
         }
         let qualifies = self
             .armed
-            .preview_opportunity(bar, region, region_active)
+            .preview_opportunity(bar, placement, region_active)
             .is_some();
         let event = self
             .alarm
@@ -343,7 +345,7 @@ pub fn badge_text<K>(instance: &AnchoredInstance<K>) -> String {
 mod tests {
     use super::*;
     use crate::sound::AlertSound;
-    use crate::{ForceParams, ForceTrigger, Rearm, StrategyParams};
+    use crate::{ForceParams, ForceTrigger, Rearm, Region, StrategyParams};
     use quantick_engine::Side;
     use rust_decimal::Decimal;
 

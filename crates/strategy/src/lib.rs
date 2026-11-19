@@ -24,6 +24,11 @@
 //! the expected next tenant — dock beside it without surgery on the state
 //! machine.
 //!
+//! Where a setup may trade is a port too ([`Placement`]): the drawn
+//! rectangle ([`Region`]), a [`FixedRange`], a [`LineCross`] in one
+//! direction, or [`Anywhere`]. The state machine reads only the port's
+//! verdict ([`Reach`]), so a new placement docks beside these.
+//!
 //! The *region test* is read off the trigger bar's **body** — open to
 //! close, its wicks ignored ([`BodyCut`]) — because a shadow poking into
 //! the band is the level being probed and refused, not cut. That scope is
@@ -61,6 +66,9 @@ mod alarm;
 pub mod anchors;
 mod armed;
 mod force;
+mod placement;
+#[cfg(test)]
+mod placement_tests;
 pub mod presets;
 mod region;
 pub mod runner;
@@ -75,5 +83,6 @@ pub use armed::{
     Rearm, StrategyParams,
 };
 pub use force::{BarVerdict, ForceBar, ForceParams, ForceWindow};
+pub use placement::{Anywhere, CrossDirection, FixedRange, LineCross, Placement, Reach};
 pub use region::{BodyCut, Region};
 pub use trigger::{ForceTrigger, Signal, Trigger, TriggerContext};

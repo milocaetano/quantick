@@ -392,10 +392,10 @@ impl<D: Copy + PartialEq> TabStrategies<D> {
                     if !wants {
                         continue;
                     }
-                    let (shape, active) =
-                        runner::region_or_hold(region(id, instance.drawing, slot));
+                    let resolved = region(id, instance.drawing, slot);
+                    let (shape, active) = runner::placement_or_hold(resolved.as_ref());
                     answer.alarms.extend(
-                        instance.alarm_on_forming_bar(&bar, &shape, active, progress, now_ms),
+                        instance.alarm_on_forming_bar(&bar, shape, active, progress, now_ms),
                     );
                 }
             }
