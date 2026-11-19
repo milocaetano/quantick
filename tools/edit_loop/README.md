@@ -246,6 +246,15 @@ applicability, not recalibration: every ceiling, host, toolchain, jobs,
 protocol, top-three selection and representative is unchanged, and the PR's
 own ordinary exact-final-head run must pass every one.
 
+The script-trigger member-only amendment (feat/script-trigger, authorized by
+the trader on 2026-11-19 for the script strategy trigger) binds root SHA256
+`3a1b5b56f03433997bdb660f7612642f5e75a3708785a118258c2ec4570ea356`.
+Relative to the broker-mt5 identity above, only the `crates/script-trigger`
+member is added; all other parsed manifest values are equal. This is
+applicability, not recalibration: every ceiling, host, toolchain, jobs,
+protocol, top-three selection and representative is unchanged, and the PR's
+own ordinary exact-final-head run must pass every one.
+
 The drawings top-three change (#662, under the #660 authorization for
 feature #659) happened when the tools moved into `quantick-drawings`: by the
 frozen lexer it holds 7,241 production lines to `guards`' 5,898, so the
