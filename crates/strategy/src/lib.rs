@@ -76,4 +76,4 @@ pub use armed::{
 };
 pub use force::{BarVerdict, ForceBar, ForceParams, ForceWindow};
 pub use region::{BodyCut, Region};
-pub use trigger::{ForceTrigger, Signal, Trigger};
+pub use trigger::{ForceTrigger, Signal, Trigger, TriggerContext};

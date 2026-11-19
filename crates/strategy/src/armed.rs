@@ -14,7 +14,7 @@ use quantick_sim::{Bracket, Command, OrderId, RejectReason, VenueEvent};
 use rust_decimal::Decimal;
 
 use crate::region::{BodyCut, Region};
-use crate::trigger::{Signal, Trigger};
+use crate::trigger::{ClosedBars, Signal, Trigger};
 
 /// What the instance does after its operation closes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -293,6 +293,9 @@ pub struct HoldReason {
 pub struct ArmedStrategy {
     params: StrategyParams,
     trigger: Box<dyn Trigger>,
+    /// The closed bars the trigger reads as history, bounded by its
+    /// [`Trigger::history_bars`] and forgotten with its [`Trigger::reset`].
+    closed: ClosedBars,
     state: ArmedState,
     /// What the bar just judged left standing, cleared by the next bar the
     /// trigger had nothing to say about.
@@ -329,6 +332,7 @@ impl ArmedStrategy {
         Self {
             params,
             trigger,
+            closed: ClosedBars::default(),
             state: ArmedState::Armed,
             note: None,
             last_hold: None,
@@ -395,7 +399,7 @@ impl ArmedStrategy {
         region: &Region,
         region_active: bool,
     ) -> Option<Opportunity> {
-        let signal = self.trigger.preview(bar)?;
+        let signal = self.trigger.preview(&self.closed.context(bar))?;
         signal_is_ours(&self.params, region_active, &signal).ok()?;
         entry_geometry(&self.params, region, bar).ok()
     }
@@ -438,7 +442,7 @@ impl ArmedStrategy {
         region_active: bool,
         account_flat: bool,
     ) -> Vec<Command> {
-        let signal = self.trigger.on_closed_bar(bar);
+        let signal = self.judge_closed(bar);
         // The *opportunity* is judged for every closed bar, whatever the
         // state machine is doing and whoever holds the account: it is a
         // statement about the setup, not about this instance's ability to
@@ -741,6 +745,7 @@ impl ArmedStrategy {
         match &self.state {
             ArmedState::Disarmed { reason } if reason.resets_series() => {
                 self.trigger.reset();
+                self.closed.clear();
                 self.clear_notes();
                 self.state = ArmedState::Armed;
             }
@@ -759,9 +764,17 @@ impl ArmedStrategy {
     /// held" note about a judgement that never happened.
     pub fn warm(&mut self, bars: &[Bar]) {
         for bar in bars {
-            let _ = self.trigger.on_closed_bar(bar);
+            let _ = self.judge_closed(bar);
         }
         self.clear_notes();
+    }
+
+    /// The trigger's verdict on a closed bar, judged against the history
+    /// before it; the bar then joins that history.
+    fn judge_closed(&mut self, bar: &Bar) -> Option<Signal> {
+        let signal = self.trigger.on_closed_bar(&self.closed.context(bar));
+        self.closed.record(bar, self.trigger.history_bars());
+        signal
     }
 
     /// Forget both the bar's note and the standing refusal — used where
@@ -885,7 +898,7 @@ fn project_bracket(
 mod tests {
     use super::*;
     use crate::force::ForceParams;
-    use crate::trigger::{ForceTrigger, Signal};
+    use crate::trigger::{ForceTrigger, Signal, TriggerContext};
     use core::str::FromStr;
 
     fn dec(s: &str) -> Decimal {
@@ -1263,10 +1276,10 @@ mod tests {
     fn a_fake_trigger_docks_and_drives_the_same_machine() {
         struct EveryBar;
         impl Trigger for EveryBar {
-            fn on_closed_bar(&mut self, bar: &Bar) -> Option<Signal> {
+            fn on_closed_bar(&mut self, cx: &TriggerContext<'_>) -> Option<Signal> {
                 Some(Signal {
                     side: Side::Buy,
-                    reference: bar.close,
+                    reference: cx.bar.close,
                     projection: Decimal::ONE,
                 })
             }
@@ -1304,10 +1317,10 @@ mod tests {
     fn a_trigger_that_declines_to_preview_is_never_previewed() {
         struct EveryClosedBar;
         impl Trigger for EveryClosedBar {
-            fn on_closed_bar(&mut self, bar: &Bar) -> Option<Signal> {
+            fn on_closed_bar(&mut self, cx: &TriggerContext<'_>) -> Option<Signal> {
                 Some(Signal {
                     side: Side::Buy,
-                    reference: bar.close,
+                    reference: cx.bar.close,
                     projection: Decimal::ONE,
                 })
             }
@@ -1335,6 +1348,72 @@ mod tests {
                 .is_empty()
         );
         assert_eq!(instance.last_close_opportunity(), Some(Opportunity::Market));
+    }
+
+    /// The history a trigger reads: closed bars only, oldest first, never
+    /// the judged bar, bounded by `history_bars`, and gone after a reset.
+    #[test]
+    fn a_trigger_reads_bounded_closed_history() {
+        use std::cell::RefCell;
+        use std::rc::Rc;
+
+        type Seen = Rc<RefCell<Vec<(Decimal, Vec<Decimal>)>>>;
+        struct Recorder(Seen);
+        impl Recorder {
+            fn note(&self, cx: &TriggerContext<'_>) {
+                let history = cx.history.iter().map(|bar| bar.close).collect();
+                self.0.borrow_mut().push((cx.bar.close, history));
+            }
+        }
+        impl Trigger for Recorder {
+            fn on_closed_bar(&mut self, cx: &TriggerContext<'_>) -> Option<Signal> {
+                self.note(cx);
+                None
+            }
+            fn preview(&self, cx: &TriggerContext<'_>) -> Option<Signal> {
+                self.note(cx);
+                None
+            }
+            fn history_bars(&self) -> usize {
+                2
+            }
+            fn status(&self) -> String {
+                "recording".to_owned()
+            }
+            fn refusal(&self) -> Option<&'static str> {
+                Some("recorder never fires")
+            }
+        }
+
+        let seen = Seen::default();
+        let region = Region::new(dec("100"), dec("110"));
+        let mut instance =
+            ArmedStrategy::new(params(Side::Buy), Box::new(Recorder(Rc::clone(&seen))));
+        assert_eq!(
+            instance.trigger().warmup_bars(),
+            2,
+            "warmup covers history by default"
+        );
+        instance.warm(&[bar("100", "101")]);
+        instance.on_closed_bar(&bar("101", "102"), &region, true, true);
+        instance.on_closed_bar(&bar("102", "103"), &region, true, true);
+        let _ = instance.preview_opportunity(&bar("103", "109"), &region, true);
+        instance.on_closed_bar(&bar("103", "104"), &region, true, true);
+        let _ = instance.disarm(DisarmReason::BarSpecChanged);
+        instance.rearm();
+        instance.on_closed_bar(&bar("104", "105"), &region, true, true);
+
+        let expected: Vec<(Decimal, Vec<Decimal>)> = vec![
+            (dec("101"), vec![]),
+            (dec("102"), vec![dec("101")]),
+            (dec("103"), vec![dec("101"), dec("102")]),
+            // The forming bar reads the same history and joins none of it.
+            (dec("109"), vec![dec("102"), dec("103")]),
+            (dec("104"), vec![dec("102"), dec("103")]),
+            // A series reset forgets the bars of the series that ended.
+            (dec("105"), vec![]),
+        ];
+        assert_eq!(*seen.borrow(), expected);
     }
 
     /// "Never fire unprotected" extends past the fill: a bracket the
