@@ -22,23 +22,35 @@ fn each_guide_previews_the_layout_that_releasing_commits() {
                 };
                 let panes = open_panes(&state, area, Some(slot));
                 for (target, zone) in drop_zones(area, &panes) {
-                    let DropTarget::Dock(target) = target else {
-                        continue;
-                    };
                     let point = center(zone);
-                    assert_eq!(
-                        held.release(&state, area, area, point),
-                        DropOutcome::Dock(target)
-                    );
                     let mut after = state.clone();
-                    after.dock(slot, target).unwrap();
-                    let placed = after
-                        .rects(area)
-                        .into_iter()
-                        .find(|(id, _)| *id == slot)
-                        .unwrap()
-                        .1;
-                    assert_eq!(held.dock_preview(&state, area, area, point), Some(placed));
+                    let outcome = held.release(&state, area, area, point);
+                    let placed = match (target, outcome) {
+                        (DropTarget::Dock(expected), DropOutcome::Dock(actual)) => {
+                            assert_eq!(expected, actual);
+                            after.dock(slot, actual).unwrap();
+                            after
+                                .rects(area)
+                                .into_iter()
+                                .find(|(id, _)| *id == slot)
+                                .unwrap()
+                                .1
+                        }
+                        (DropTarget::Park(expected), DropOutcome::Park(actual)) => {
+                            assert_eq!(expected, actual);
+                            after.park(slot, actual, area).unwrap();
+                            let Some(FloatHost::Canvas { rect }) = after.host(slot) else {
+                                panic!("parked on canvas")
+                            };
+                            *rect
+                        }
+                        (DropTarget::Park(_), DropOutcome::Float(rect)) if slot == 0 => {
+                            after.float(slot, rect).unwrap();
+                            rect
+                        }
+                        pair => panic!("guide and release disagree: {pair:?}"),
+                    };
+                    assert_eq!(held.drop_preview(&state, area, area, point), Some(placed));
                     assert_eq!(
                         state.mode(added),
                         Some(PaneMode::Floating),
@@ -56,7 +68,7 @@ fn only_the_hovered_pane_offers_a_compass_and_gaps_do_not_dock() {
     let state = CanvasState::from_preset(preset("charts-4").unwrap());
     let panes = open_panes(&state, area, None);
     let point = center(panes[0].1);
-    let guides = drop_guides(area, &panes, Some(point));
+    let guides = drop_guides(area, &panes, Some(point)).zones;
     assert_eq!(guides.len(), 13);
     for (target, zone) in &guides {
         if let DropTarget::Dock(DockTarget::Swap(slot) | DockTarget::Beside { slot, .. }) = target {
@@ -78,7 +90,9 @@ fn only_the_hovered_pane_offers_a_compass_and_gaps_do_not_dock() {
     let gap = CanvasPoint::new(swap.x - drop::DOCK_GUIDE_GAP_PX / 2.0, center(swap).y);
     assert_eq!(drop_target(area, &panes, gap), DropTarget::Float);
     assert_eq!(
-        drop_guides(area, &panes, Some(CanvasPoint::new(-1.0, -1.0))).len(),
+        drop_guides(area, &panes, Some(CanvasPoint::new(-1.0, -1.0)))
+            .zones
+            .len(),
         8
     );
 }

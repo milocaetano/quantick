@@ -41,7 +41,7 @@ pub use drag::{
     open_panes,
 };
 pub use drop::{
-    Corner, DOCK_EDGE_BAND_PX, DOCK_GUIDE_PX, DockTarget, DropTarget, PARK_CORNER_PX,
+    Corner, DOCK_EDGE_BAND_PX, DOCK_GUIDE_PX, DockTarget, DropGuides, DropTarget, PARK_CORNER_PX,
     PARK_MARGIN_PX, drop_guides, drop_target, drop_zones, kept_inside, park_rect,
 };
 pub use menu::{

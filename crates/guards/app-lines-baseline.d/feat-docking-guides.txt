@@ -1,3 +1,3 @@
-# Docking guide painting and title-bar input add 99 lines; main has 12 lines of headroom.
-crates/app +87
-!budget +87
+# Docking guide painting and title-bar input add 89 lines; main has 12 lines of headroom.
+crates/app +77
+!budget +77

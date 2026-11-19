@@ -163,10 +163,7 @@ fn resize_cursor(edges: ResizeEdges) -> egui::CursorIcon {
     }
 }
 
-/// While a chart is held: the slot a drop would dock it into, lit with its
-/// pill, and the hint; on letting go, what the drop does. The canvas's edges
-/// and corners and each docked chart's sides and centre are published as the
-/// drop targets they are.
+/// Publish the visible drop guides and paint their destination while a chart moves.
 pub(crate) fn preview(
     ctx: &egui::Context,
     floats: &mut FloatingPanes,
@@ -184,14 +181,7 @@ pub(crate) fn preview(
         held,
         pointer.filter(|_| held.is_some()),
     );
-    let mut selected = false;
-    floats
-        .drawn
-        .extend(targets.into_iter().map(|(id, label, rect, capability)| {
-            let hot = !selected && held.is_some() && pointer.is_some_and(|at| rect.contains(at));
-            selected |= hot;
-            (id, label, rect, capability, hot)
-        }));
+    floats.drawn.extend(targets);
     let (Some(held), Some(pointer)) = (floats.held, floats.pointer(ctx)) else {
         return;
     };
@@ -211,16 +201,13 @@ pub(crate) fn preview(
     let palette = theme::get(ctx);
     let layer = egui::LayerId::new(egui::Order::Foreground, egui::Id::new("canvas_drop"));
     let painter = ctx.layer_painter(layer);
-    if let Some(slot) = held.dock_preview(state, area, window, at) {
+    if let Some(slot) = held.drop_preview(state, area, window, at) {
         let slot = screen_rect(slot);
         let tint = [TINT.0, TINT.1][usize::from(ctx.style().visuals.dark_mode)];
         painter.rect_filled(slot, 0.0, palette.accent().gamma_multiply(tint));
         painter.rect_stroke(slot, 0.0, Stroke::new(OUTLINE_PX, palette.accent()));
     }
     guides(&painter, state, area, held.slot(), at);
-    let words = (palette.chrome(), palette.text_primary());
-    let hint = pos2(canvas.center().x, canvas.bottom() - 80.0);
-    pill(&painter, hint, DOCK_HINT, words);
 }
 
 fn guides(
@@ -231,7 +218,8 @@ fn guides(
     at: CanvasPoint,
 ) {
     let palette = theme::get(painter.ctx());
-    for guide in quantick_ui_model::canvas_guides::guides(state, area, held, at) {
+    let guides = quantick_ui_model::canvas_guides::guides(state, area, held, at);
+    for guide in &guides {
         let (rect, badge, hot) = (
             screen_rect(guide.zone),
             screen_rect(guide.badge),
@@ -269,12 +257,14 @@ fn guides(
         let font = egui::FontId::proportional(size);
         painter.text(badge.center(), Align2::CENTER_CENTER, text, font, ink);
     }
-}
-
-/// `text` on a rounded plate centred on `at`.
-fn pill(painter: &egui::Painter, at: egui::Pos2, text: &str, (fill, ink): (Color32, Color32)) {
-    let galley = painter.layout_no_wrap(text.to_owned(), egui::FontId::proportional(12.0), ink);
+    let at = pos2(area.x + area.w / 2.0, area.bottom() - 80.0);
+    let (fill, ink) = (palette.chrome(), palette.text_primary());
+    let galley =
+        painter.layout_no_wrap(DOCK_HINT.to_owned(), egui::FontId::proportional(12.0), ink);
     let plate = Rect::from_center_size(at, galley.size() + vec2(20.0, 10.0));
+    if !quantick_ui_model::canvas_guides::hint_fits(area, model_rect(plate), &guides) {
+        return;
+    }
     painter.rect_filled(plate, plate.height() / 2.0, fill);
     painter.galley(plate.center() - galley.size() / 2.0, galley, ink);
 }

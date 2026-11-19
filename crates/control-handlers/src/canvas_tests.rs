@@ -502,7 +502,8 @@ fn drops_windows_and_hooks_become_canvas_acts() {
     assert!(
         visible
             .iter()
-            .any(|(id, label, rect, cap)| id == "canvas.dock.swap.0"
+            .any(|(id, label, rect, cap, selected)| *selected
+                && id == "canvas.dock.swap.0"
                 && label == "Swap with chart 0"
                 && *rect == swap
                 && *cap == quantick_control_schema::canvas::DOCK_CAPABILITY_ID)

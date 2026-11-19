@@ -39,6 +39,7 @@ fn a_held_pane_follows_the_pointer_and_lands_where_the_drop_rule_says() {
         grip.release(&state, CANVAS, WINDOW, middle),
         DropOutcome::Float(grip.rect(middle))
     );
+    assert_eq!(grip.drop_preview(&state, CANVAS, WINDOW, middle), None);
     let left = CanvasPoint::new(10.0, 500.0);
     assert_eq!(
         grip.release(&state, CANVAS, WINDOW, left),
@@ -97,5 +98,8 @@ fn an_edge_resizes_and_never_below_the_floor() {
         DropOutcome::Float(gesture.rect(pointer)),
         "a resize never docks or pops out"
     );
+    let state = CanvasState::from_preset(preset("time").unwrap());
+    let corner = CanvasPoint::new(CANVAS.x + 2.0, CANVAS.y + 2.0);
+    assert_eq!(gesture.drop_preview(&state, CANVAS, WINDOW, corner), None);
     assert_eq!(gesture.slot(), 3);
 }

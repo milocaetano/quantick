@@ -68,9 +68,9 @@ pub fn drop_target(
     panes: &[(PaneSlot, CanvasRect)],
     pointer: CanvasPoint,
 ) -> DropTarget {
-    let zones = drop_guides(canvas, panes, Some(pointer)).into_iter();
-    let mut hit = zones.filter(|(_, zone)| zone.contains(pointer));
-    hit.next().map_or(DropTarget::Float, |(target, _)| target)
+    drop_guides(canvas, panes, Some(pointer))
+        .selected
+        .unwrap_or(DropTarget::Float)
 }
 
 /// Every zone a drop docks or parks in on `canvas`, in the order the drop
@@ -127,6 +127,11 @@ pub fn drop_zones(
     corners.into_iter().chain(edges).chain(panes).collect()
 }
 
+pub struct DropGuides {
+    pub zones: Vec<(DropTarget, CanvasRect)>,
+    pub selected: Option<DropTarget>,
+}
+
 /// The visible guides: canvas destinations and the pane under the pointer.
 /// Without a pointer, publishes every destination for discovery.
 #[must_use]
@@ -134,13 +139,20 @@ pub fn drop_guides(
     canvas: CanvasRect,
     panes: &[(PaneSlot, CanvasRect)],
     pointer: Option<CanvasPoint>,
-) -> Vec<(DropTarget, CanvasRect)> {
+) -> DropGuides {
     let panes: Vec<_> = panes
         .iter()
         .copied()
         .filter(|(_, rect)| pointer.is_none_or(|point| rect.contains(point)))
         .collect();
-    drop_zones(canvas, &panes)
+    let zones = drop_zones(canvas, &panes);
+    let selected = pointer.and_then(|at| {
+        zones
+            .iter()
+            .find(|(_, rect)| rect.contains(at))
+            .map(|(target, _)| *target)
+    });
+    DropGuides { zones, selected }
 }
 
 /// A compass inside the canvas bands; narrow panes keep a readable Swap target.
