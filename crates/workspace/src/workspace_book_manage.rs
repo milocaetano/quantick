@@ -271,7 +271,7 @@ impl WorkspaceBook {
                 continue;
             }
             // Untouched, or settled clean on a factory Default: as it stood.
-            let untouched = state.copy == one.left || !self.is_modified(state);
+            let untouched = state.copy == one.left || !self.is_modified(one.tab, state);
             let Some(state) = self.tabs.get_mut(&one.tab) else {
                 continue;
             };
