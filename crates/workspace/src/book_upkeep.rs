@@ -373,13 +373,22 @@ pub fn tab_holdings<'a>(
     held.chain(arriving)
 }
 
-/// Before a save: the tab's copy takes the indicator sets its panes showed
-/// when last read, so a save writes what every tab on the workspace shows, a
-/// set healed on landing included, and nothing else of the copy moves. A
-/// heal alone never reaches a recipe this way: autosave and a flush write a
-/// tab only once its copy differs.
-pub fn take_shown_sets(book: &mut WorkspaceBook, sync: &TabRecipeSync, tab: u64) {
-    if let Some(shown) = sync.shown(tab).filter(|_| !sync.is_pending(tab)) {
+/// Before a save, capture the shown indicator sets and bar rules, including
+/// intervals inherited from the market by a recipe that did not name any.
+/// Autosave and a flush still run only once the tab's copy differs.
+pub fn prepare_save(book: &mut WorkspaceBook, sync: &TabRecipeSync, tab: u64) {
+    if let Some(shown) = sync.shown(tab).filter(|_| !sync.is_pending(tab))
+        && let Some(mut copy) = book.tab_copy(tab).cloned()
+    {
+        copy.flow_bars.clone_from(&shown.flow_bars);
+        copy.context_panes.resize_with(
+            copy.context_panes.len().max(shown.context_panes.len()),
+            Default::default,
+        );
+        for (pane, seen) in copy.context_panes.iter_mut().zip(&shown.context_panes) {
+            pane.bars.clone_from(&seen.bars);
+        }
+        let _ = book.observe(tab, &copy);
         book.take_sets(tab, shown);
     }
 }

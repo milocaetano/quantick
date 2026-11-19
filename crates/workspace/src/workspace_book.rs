@@ -651,7 +651,7 @@ impl WorkspaceBook {
     }
 
     /// The indicator sets `shown` names become the tab's copy's, pane by
-    /// pane; nothing else of it moves. See `book_upkeep::take_shown_sets`.
+    /// pane; nothing else of it moves. See `book_upkeep::prepare_save`.
     pub fn take_sets(&mut self, tab: u64, shown: &WorkspaceRecipe) {
         let Some(state) = self.tabs.get_mut(&tab) else {
             return;
@@ -984,6 +984,14 @@ impl WorkspaceBook {
             .is_none_or(|base| !base.holds(&state.copy))
     }
 
+    fn needs_save(&self, state: &TabWorkspace) -> bool {
+        self.is_modified(state)
+            || (state.workspace != DEFAULT_WORKSPACE
+                && self
+                    .baseline(state)
+                    .is_some_and(|base| !base.same_bars(&state.copy)))
+    }
+
     /// Why `name` cannot be deleted, or `None` when it can: what greys the
     /// Manage dialog's Delete, the same rule [`Self::delete`] refuses by.
     #[must_use]
@@ -1193,7 +1201,7 @@ impl WorkspaceBook {
     /// No such tab.
     pub fn save_to_preview(&self, tab: u64) -> Result<Vec<u64>, WorkspaceRefusal> {
         let saver = self.state(tab)?;
-        if !self.is_modified(saver) {
+        if !self.needs_save(saver) {
             return Ok(Vec::new());
         }
         Ok(self
@@ -1215,7 +1223,7 @@ impl WorkspaceBook {
         let tabs_changed = self.save_to_preview(tab)?;
         let saver = self.state(tab)?;
         let workspace = saver.workspace.clone();
-        if !self.is_modified(saver) {
+        if !self.needs_save(saver) {
             return Ok(SaveOutcome {
                 workspace,
                 changed: false,

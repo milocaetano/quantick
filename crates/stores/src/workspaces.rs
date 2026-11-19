@@ -235,9 +235,9 @@ impl WorkspaceBookStore {
         quantick_workspace::book_upkeep::tab_holdings(self.parts())
     }
 
-    /// Before a save: `quantick_workspace::book_upkeep::take_shown_sets`.
-    pub fn take_shown_sets(&mut self, tab: u64) {
-        quantick_workspace::book_upkeep::take_shown_sets(&mut self.book, &self.sync, tab);
+    /// Before a save: `quantick_workspace::book_upkeep::prepare_save`.
+    pub fn prepare_save(&mut self, tab: u64) {
+        quantick_workspace::book_upkeep::prepare_save(&mut self.book, &self.sync, tab);
     }
 
     /// A tab closed: nothing of it stays.

@@ -442,6 +442,15 @@ impl WorkspaceRecipe {
         bare
     }
 
+    pub(crate) fn same_bars(&self, other: &Self) -> bool {
+        self.flow_bars == other.flow_bars
+            && self
+                .context_panes
+                .iter()
+                .map(|pane| &pane.bars)
+                .eq(other.context_panes.iter().map(|pane| &pane.bars))
+    }
+
     /// `copy` read against this recipe: a bar rule this recipe does not name
     /// is the tab's own, never an edit, so it is left out; a pane this recipe
     /// keeps for a chart past the copy's canvas is no edit either (see

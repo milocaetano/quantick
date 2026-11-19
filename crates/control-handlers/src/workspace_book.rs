@@ -484,9 +484,9 @@ pub fn save_tab_to<H: WorkspaceOwner + ?Sized>(
     tab: u64,
 ) -> Result<SaveOutcome, ControlError> {
     let before = book(app)?.clone();
-    // What its panes show, which every tab on the workspace shows.
+    // Capture the shown sets and intervals before writing the workspace.
     if let Some(store) = app.workspace_store() {
-        store.take_shown_sets(tab);
+        store.prepare_save(tab);
     }
     let saved = written(app, |book| book.save_to(tab), |saved| saved.changed);
     if saved.as_ref().is_err_and(failed_write) {
@@ -604,7 +604,7 @@ pub fn save_tab_as<H: WorkspaceOwner + ?Sized>(
         .map_err(|refusal| refused(&refusal))?;
     // What its panes show, held edits of the workspace's included.
     if let Some(store) = app.workspace_store() {
-        store.take_shown_sets(tab);
+        store.prepare_save(tab);
     }
     let save = |book: &mut WorkspaceBook| book.save_as_coloured(tab, name, colour);
     let mut outcome = written(app, save, |saved| saved.changed)?;
