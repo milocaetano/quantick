@@ -10,9 +10,7 @@ use super::state::{CanvasState, PaneMode};
 use super::tree::{CanvasPoint, CanvasRect, PaneSlot};
 
 /// The hint the canvas shows while a pane is dragged.
-pub const DOCK_HINT: &str = "Drop on an edge or a chart to dock · anywhere else to float";
-/// The pill on the slot a drop would dock into.
-pub const DOCK_PILL: &str = "Dock here";
+pub const DOCK_HINT: &str = "Arrows dock · Swap exchanges charts · Elsewhere floats";
 /// How far in from a floating pane's edge a press resizes it.
 pub const RESIZE_GRIP_PX: f32 = 6.0;
 /// How far the pointer travels from its press on a docked pane's ⋯ before

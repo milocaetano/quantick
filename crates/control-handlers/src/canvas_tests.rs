@@ -462,10 +462,10 @@ fn drops_windows_and_hooks_become_canvas_acts() {
     };
     assert_eq!((rect.x, rect.y), (10.0, 60.0));
     assert!(
-        drop_targets(&state, area, None).is_empty(),
+        drop_targets(&state, area, None, None).is_empty(),
         "nothing floats"
     );
-    let held = drop_targets(&state, area, Some(0));
+    let held = drop_targets(&state, area, Some(0), None);
     let ids: Vec<_> = held.iter().map(|(id, ..)| id.as_str()).collect();
     assert!(
         ids.contains(&"canvas.dock.swap.1"),
@@ -477,7 +477,7 @@ fn drops_windows_and_hooks_become_canvas_acts() {
         "never its own: {ids:?}"
     );
     let added = state.add(PaneKind::Time, area).unwrap();
-    let targets = drop_targets(&state, area, None);
+    let targets = drop_targets(&state, area, None, None);
     assert_eq!(
         targets.len(),
         8 + 2 * 5,
@@ -491,6 +491,23 @@ fn drops_windows_and_hooks_become_canvas_acts() {
     ] {
         assert!(ids.contains(&id), "{id} in {ids:?}");
     }
+    let swap = targets
+        .iter()
+        .find(|(id, ..)| id == "canvas.dock.swap.0")
+        .unwrap()
+        .2;
+    let point =
+        quantick_workspace::canvas::CanvasPoint::new(swap.x + swap.w / 2.0, swap.y + swap.h / 2.0);
+    let visible = drop_targets(&state, area, Some(added), Some(point));
+    assert!(
+        visible
+            .iter()
+            .any(|(id, label, rect, cap)| id == "canvas.dock.swap.0"
+                && label == "Swap with chart 0"
+                && *rect == swap
+                && *cap == quantick_control_schema::canvas::DOCK_CAPABILITY_ID)
+    );
+    assert!(!visible.iter().any(|(id, ..)| id == "canvas.dock.swap.1"));
     let (held, share) = held_by_hook(&state, &format!("{added}:0.02,0.5")).unwrap();
     assert_eq!((held.slot(), share), (added, (0.02, 0.5)));
     assert!(

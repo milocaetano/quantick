@@ -239,4 +239,4 @@ For a screen that represents the user's real setup, enable the trio:
 | `QUANTICK_WIDGETS=<ids>` | opens these widget panes |
 | `QUANTICK_ADD_MENU=1` | the toolbar's + menu open; one-shot |
 | `QUANTICK_CANVAS_ACTS=<acts>` | `;`-separated canvas acts on the first drawn frame, each through its `canvas.*` capability: `add:<widget>`, `dock:<slot>:<edge>`, `park:<slot>:<corner>`, `resize:<slot>:width\|height:<share>`, `<verb>:<slot>` for float, pop_out, return, minimize, maximize, restore, remove |
-| `QUANTICK_CANVAS_HOLD=<slot>:<x>,<y>` | a floating chart held by its grip, the pointer pinned at that share of the canvas: the dock preview stays up |
+| `QUANTICK_CANVAS_HOLD=<slot>:<x>,<y>` | a floating chart held by its title bar, the pointer pinned at that share of the canvas: directional guides, selection and the dock preview stay visible |

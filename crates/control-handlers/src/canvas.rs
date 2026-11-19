@@ -787,12 +787,13 @@ pub fn drop_targets(
     state: &CanvasState,
     area: CanvasRect,
     held: Option<u32>,
+    pointer: Option<canvas::CanvasPoint>,
 ) -> Vec<(String, String, CanvasRect, &'static str)> {
     let over = |pane: &canvas::FloatingPane| matches!(pane.host, FloatHost::Canvas { .. });
     if held.is_none() && !state.floating().iter().any(over) {
         return Vec::new();
     }
-    let zones = canvas::drop_zones(area, &canvas::open_panes(state, area, held));
+    let zones = canvas::drop_guides(area, &canvas::open_panes(state, area, held), pointer);
     let named = |target| match target {
         DropTarget::Park(corner) => {
             let at = match corner {

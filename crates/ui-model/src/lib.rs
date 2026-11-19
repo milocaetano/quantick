@@ -1,5 +1,6 @@
 //! Intent-driven UI state. Domain decisions remain in their owning crates.
 //! Time, snapshots and completion results arrive as intents; no clock is read.
+pub mod canvas_guides;
 mod catalog;
 pub mod colour_palette;
 pub mod frame_settlement;

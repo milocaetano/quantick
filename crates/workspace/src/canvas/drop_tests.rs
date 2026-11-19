@@ -135,11 +135,17 @@ fn a_drop_on_a_pane_side_splits_that_pane() {
     let (mut state, slot) = floating_over("charts-2");
     let (zero, one) = (rect_of(&state, 0), rect_of(&state, 1));
     let panes = open_panes(&state, CANVAS, None);
-    let bottom = CanvasPoint::new(one.x + one.w / 2.0, one.bottom() - DOCK_EDGE_BAND_PX - 10.0);
     let target = DockTarget::Beside {
         slot: 1,
         side: Edge::Bottom,
     };
+    let bottom = centre(
+        drop_zones(CANVAS, &panes)
+            .into_iter()
+            .find(|(at, _)| *at == DropTarget::Dock(target))
+            .unwrap()
+            .1,
+    );
     assert_eq!(
         drop_target(CANVAS, &panes, bottom),
         DropTarget::Dock(target)

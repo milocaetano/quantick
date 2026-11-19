@@ -10,6 +10,8 @@ use quantick_workspace::canvas::{CanvasState, Edge, PANE_MENU_BUTTON_PX, PaneMen
 use quantick_workspace::canvas::{PaneSlot, pane_menu};
 
 use crate::theme;
+#[cfg(test)]
+mod drag_tests;
 use crate::toolbar::DrawnControl;
 use quantick_ui_model::{
     UpdateSession,
@@ -34,6 +36,74 @@ pub(crate) struct PaneMenus {
 }
 
 impl PaneMenus {
+    /// Register before header controls so their clicks and drags keep priority.
+    pub(crate) fn header(
+        &mut self,
+        ui: &egui::Ui,
+        strip: Rect,
+        slot: PaneSlot,
+        state: &CanvasState,
+    ) {
+        use quantick_control_schema::canvas::{FLOAT_CAPABILITY_ID, POP_OUT_CAPABILITY_ID};
+        use quantick_workspace::canvas::{PaneMode, RESIZE_GRIP_PX};
+        let windowed = state.mode(slot) == Some(PaneMode::OsWindow);
+        let hit = if state.mode(slot) == Some(PaneMode::Floating) {
+            strip
+                .shrink2(vec2(RESIZE_GRIP_PX, 0.0))
+                .with_min_y(strip.top() + RESIZE_GRIP_PX)
+        } else {
+            strip
+        };
+        let id = ui.id().with(("pane_title_drag", slot));
+        let response = ui.interact(hit, id, Sense::click_and_drag());
+        if ui.input(|i| i.pointer.primary_pressed() || !i.pointer.primary_down()) {
+            let hits = ui
+                .ctx()
+                .interaction_snapshot(|s| s.contains_pointer.clone());
+            let blocked = hits.into_iter().filter(|hit| *hit != id).any(|hit| {
+                ui.ctx().read_response(hit).is_some_and(|r| {
+                    r.layer_id == ui.layer_id()
+                        && r.sense.click
+                        && r.rect.height() <= strip.height()
+                        && r.rect.intersects(strip)
+                })
+            });
+            ui.ctx().data_mut(|data| data.insert_temp(id, blocked));
+        }
+        let blocked = ui
+            .ctx()
+            .data(|data| data.get_temp::<bool>(id))
+            .unwrap_or(true);
+        if !blocked {
+            let moved = ui.input(|i| {
+                i.pointer
+                    .press_origin()
+                    .zip(i.pointer.latest_pos())
+                    .is_some_and(|(start, now)| {
+                        start.distance(now) >= quantick_workspace::canvas::LIFT_PX
+                    })
+            });
+            if response.dragged_by(egui::PointerButton::Primary) && moved {
+                if windowed {
+                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
+                } else {
+                    self.lift = Some(slot);
+                }
+            }
+            response.on_hover_cursor(egui::CursorIcon::Grab);
+        }
+        self.publish(
+            format!("pane_title.{slot}"),
+            "Drag title bar to move chart",
+            hit,
+            Some(if windowed {
+                POP_OUT_CAPABILITY_ID
+            } else {
+                FLOAT_CAPABILITY_ID
+            }),
+        );
+    }
+
     pub(crate) fn publish(
         &mut self,
         id: String,

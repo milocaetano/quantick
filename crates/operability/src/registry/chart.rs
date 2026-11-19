@@ -241,28 +241,28 @@ pub(super) const CANVAS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "canvas.pane.float",
         title: "Float a docked chart, or move or resize a floating one over the canvas",
-        reach: "a docked chart's ⋯ → Float, or its ⋯ dragged; a floating chart's grip dropped away from the dock zones and corners, or an edge dragged",
+        reach: "a chart's non-control title bar or ⋯ dragged; its ⋯ → Float; a floating chart's edge dragged to resize",
         keys: &[(Source::Authored, GRIP)],
         mapping: capability!("canvas.pane.float"),
     },
     UiBehaviour {
         id: "canvas.pane.dock",
         title: "Dock a floating chart into the layout at a canvas edge, beside a docked chart, or in a docked chart's place",
-        reach: "a floating chart's grip (or a docked chart's ⋯, which lifts it) dropped on a canvas edge, a chart's side or its centre, where the slot lights with Dock here; or a floating chart's ⋯ → Dock left/right/top/bottom",
+        reach: "drag a chart's title bar onto a canvas edge or a hovered pane's directional guide; Swap exchanges positions; the highlighted preview shows the result; also ⋯ → Dock left/right/top/bottom",
         keys: &[(Source::Authored, GRIP)],
         mapping: capability!("canvas.pane.dock"),
     },
     UiBehaviour {
         id: "canvas.pane.park",
         title: "Park a floating chart in a canvas corner",
-        reach: "a floating chart's grip dropped in a canvas corner",
+        reach: "a chart's title bar dragged onto a canvas corner marked Park",
         keys: &[(Source::Authored, GRIP)],
         mapping: capability!("canvas.pane.park"),
     },
     UiBehaviour {
         id: "canvas.pane.pop_out",
         title: "Open a chart in its own OS window",
-        reach: "a chart header's ⋯ menu, Open in new window; a floating chart's grip dragged past the window's edge",
+        reach: "a chart's ⋯ → Open in new window; a title-bar drag past the window edge; drag a pop-out title bar to reposition it",
         keys: &[(
             Source::Authored,
             "a row of the chart's ⋯ menu, whose rows are `PaneMenuItem`, not an action enum",

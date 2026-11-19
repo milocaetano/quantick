@@ -76,7 +76,7 @@ fn grip(app: &QuantickApp, slot: u32) -> egui::Pos2 {
     let Some(FloatHost::Canvas { rect }) = host(app, slot) else {
         panic!("chart {slot} floats over the canvas");
     };
-    egui::pos2(rect.x + crate::floating_panes::GRIP_PX / 2.0, rect.y + 8.0)
+    egui::pos2(rect.x + rect.w / 2.0, rect.y + 17.0)
 }
 
 /// C16: the + menu lists the registry; picking "Timeframe chart" opens a
@@ -320,12 +320,9 @@ fn canvas_dock_minimize_restore_resize_round_trip() {
     let (mut app, ctx) = saved_tab("time+time+flow");
     let added = add_chart(&mut app, &ctx);
     let first = model_rects(&app);
-    let one = (first.iter()).find(|(slot, _)| *slot == 1);
-    let one = one.expect("chart 1 is docked").1;
-    let below = egui::pos2(
-        one.x + one.w / 2.0,
-        one.bottom() - quantick_workspace::canvas::DOCK_EDGE_BAND_PX - 8.0,
-    );
+    let below = drawn(&app, "canvas.dock.beside.1.bottom")
+        .expect("bottom guide")
+        .center();
     let from = grip(&app, added);
     drag_sized(&mut app, &ctx, TEST_WINDOW, from, below);
     frames(&mut app, &ctx, 4);
@@ -472,5 +469,64 @@ fn press_menu_opens(app: &mut QuantickApp, ctx: &egui::Context, slot: u32) {
     assert_eq!(
         app.surfaces.remove_chart.scoped(id).0.menu_open(),
         Some(slot)
+    );
+}
+
+#[test]
+fn docked_title_space_lifts_the_addressed_pane_and_publishes_the_hovered_guides() {
+    let (mut app, ctx) = saved_tab("charts-2");
+    let header = drawn(&app, "pane_title.0").expect("title drag region");
+    let start = header.center();
+    run_sized_frame(
+        &mut app,
+        &ctx,
+        TEST_WINDOW,
+        vec![
+            egui::Event::PointerMoved(start),
+            pointer_button(start, true),
+        ],
+    );
+    run_sized_frame(
+        &mut app,
+        &ctx,
+        TEST_WINDOW,
+        vec![egui::Event::PointerMoved(start + egui::vec2(0.0, 50.0))],
+    );
+    assert_eq!(
+        app.active_tab().canvas.floats.held.map(|held| held.slot()),
+        Some(0)
+    );
+    let target = model_rects(&app)
+        .into_iter()
+        .find(|(slot, _)| *slot == 1)
+        .unwrap()
+        .1;
+    let center = egui::pos2(target.x + target.w / 2.0, target.y + target.h / 2.0);
+    run_sized_frame(
+        &mut app,
+        &ctx,
+        TEST_WINDOW,
+        vec![egui::Event::PointerMoved(center)],
+    );
+    let controls = &app.active_tab().canvas.menus.drawn;
+    let swap = controls
+        .iter()
+        .find(|control| control.id == "canvas.dock.swap.1")
+        .expect("hovered pane's Swap");
+    assert!(swap.selected);
+    assert!(
+        !controls
+            .iter()
+            .any(|control| control.id == "canvas.dock.swap.0")
+    );
+    run_sized_frame(
+        &mut app,
+        &ctx,
+        TEST_WINDOW,
+        vec![pointer_button(center, false)],
+    );
+    assert!(
+        app.active_tab().canvas.floats.held.is_none(),
+        "release settles the gesture"
     );
 }
