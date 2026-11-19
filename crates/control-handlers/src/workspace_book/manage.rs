@@ -239,7 +239,7 @@ pub fn name_colour<H: WorkspaceOwner + ?Sized>(
     let (Some(book), Some(dialog)) = (host.workspace_book_ref(), menu.dialog.as_mut()) else {
         return;
     };
-    let current = WorkspaceColour::parse(dialog.colour.as_deref().unwrap_or_default());
+    let current = chosen(dialog);
     let model = choosing(book, current);
     let popover = &mut dialog.palette;
     let picked = match intent {

@@ -40,6 +40,7 @@ impl WorkspaceCreation {
                 self.charts
             ],
             flow_bars: bars,
+            reset_presentation: true,
             candle_styles: Some(Vec::new()),
             ..WorkspaceRecipe::default()
         })
@@ -161,6 +162,7 @@ time_bars='time:1m'",
         book.restore_tab(1, &name, saved_tab.workspace_copy);
         let copy = book.tab_copy(1).unwrap();
         assert_eq!(copy.context_panes.len(), 3);
+        assert!(copy.reset_presentation);
         assert_eq!(copy.candle_styles.as_deref(), Some([].as_slice()));
         let pristine = WorkspaceRecipe::default();
         assert!(pristine.is_factory());
@@ -173,6 +175,53 @@ time_bars='time:1m'",
         assert_eq!(book.tab_copy(1), Some(&edited));
         assert!(book.tab_state(1).unwrap().modified);
         assert!(book.autosave_winners(&[1], 1).is_empty());
+    }
+
+    #[test]
+    fn parked_edits_belong_to_the_deleted_workspace_and_the_original_desk_tab() {
+        let mut book = WorkspaceBook::default();
+        book.open_tab(1);
+        book.create(1, "Original").unwrap();
+        let mut edit = book.tab_copy(1).unwrap().clone();
+        edit.layers.insert("volume".into(), false);
+        book.observe(1, &edit).unwrap();
+        book.create(1, "Other").unwrap();
+
+        let mut replaced = book.clone();
+        let saved = toml::from_str(
+            "feed='f'\nsymbol='s'\nlayout='time'\nflow_bars='tick:50'\ntime_bars='time:1m'",
+        )
+        .unwrap();
+        replaced.restore_saved_workspace(1, &saved);
+        replaced.set(1, "Original").unwrap();
+        assert_eq!(replaced.tab_copy(1), replaced.recipe("Original"));
+
+        book.delete_at("Original", 0).unwrap();
+        let mut reused = book.clone();
+        reused.close_tab(1);
+        reused.open_tab(1);
+        reused.undo_delete("Original", 1).unwrap();
+        reused.set(1, "Original").unwrap();
+        assert_eq!(reused.tab_copy(1), reused.recipe("Original"));
+
+        let mut undone = book.clone();
+        undone.undo_delete("Original", 1).unwrap();
+        undone.set(1, "Original").unwrap();
+        assert_eq!(undone.tab_copy(1), Some(&edit));
+
+        book.open_tab(2);
+        book.create(2, "Original").unwrap();
+        book.set(1, "Original").unwrap();
+        assert_eq!(book.tab_copy(1), book.recipe("Original"));
+    }
+
+    #[test]
+    fn starter_uses_layout_one_when_its_name_is_free() {
+        let mut book = crate::layout_document::LayoutBook::default();
+        book.rename(book.active_id(), "Layout 9").unwrap();
+        let first = book.workspace_starter().unwrap();
+        assert_eq!(book.get(first).unwrap().name, "Layout 1");
+        assert_eq!(book.workspace_starter().unwrap(), first);
     }
 
     #[test]

@@ -1063,7 +1063,7 @@ impl WorkspaceBook {
     /// A tab closed: nothing of it stays. Its edits go with it.
     pub fn close_tab(&mut self, tab: u64) {
         self.tabs.remove(&tab);
-        self.parked.remove(&tab);
+        self.forget_parked_tab(tab);
         self.drawings.remove(&tab);
         self.unsynced.remove(&tab);
     }
@@ -1369,49 +1369,6 @@ impl WorkspaceBook {
         })
     }
 
-    /// Delete a workspace; its tabs move to `Default`. A clean one adopts
-    /// `Default`'s recipe; one with edits keeps them, marked `Default •`, so
-    /// nothing is lost.
-    ///
-    /// # Errors
-    /// `name` is `Default`, or no workspace has it, as on a repeat.
-    pub fn delete(&mut self, name: &str) -> Result<DeleteOutcome, WorkspaceRefusal> {
-        if let Some(refusal) = self.delete_refusal(name) {
-            return Err(refusal);
-        }
-        let recipe = self.recipes.remove(name).expect("delete_refusal found it");
-        self.renamed.retain(|_, current| current != name);
-        let fallback = self.default_recipe().clone();
-        let mut outcome = DeleteOutcome {
-            changed: true,
-            ..DeleteOutcome::default()
-        };
-        for (tab, state) in &mut self.tabs {
-            if state.workspace != name {
-                continue;
-            }
-            state.workspace = DEFAULT_WORKSPACE.to_owned();
-            state.opened = None;
-            outcome.moved.push(*tab);
-            if recipe.holds(&state.copy) {
-                state.copy.clone_from(&fallback);
-                outcome.adopted.push(*tab);
-            } else {
-                outcome.kept_edits.push(*tab);
-            }
-        }
-        // With autosave on a kept copy is not in `Default`: marked, and
-        // written only when the trader saves it.
-        if self.autosave {
-            for tab in &outcome.kept_edits {
-                self.unsynced.insert(*tab, Unsynced::Outvoted);
-            }
-        }
-        // Its colour frees for the next workspace made.
-        self.settle_colours();
-        Ok(outcome)
-    }
-
     fn default_recipe(&self) -> &WorkspaceRecipe {
         self.recipes
             .get(DEFAULT_WORKSPACE)
@@ -1487,6 +1444,7 @@ pub fn capture_recipe(
             .collect(),
         layers,
         footprint_style,
+        reset_presentation: false,
         candle_styles: (!tab.candle_styles.is_empty()).then(|| tab.candle_styles.clone()),
         flow_bars: Some(tab.flow_bars.clone()),
         legacy_context_bars: Vec::new(),

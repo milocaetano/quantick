@@ -1080,6 +1080,38 @@ fn a_new_workspace_reads_clean_after_real_frames() {
             .iter()
             .all(|pane| pane.indicators.is_empty())
     );
+    let before = live_recipe(&app.runtime, first).unwrap();
+    let (layer, enabled) = some_layer(&app, first, 0);
+    app.runtime
+        .workspace
+        .book
+        .book_mut()
+        .save_as(first, "Styled")
+        .unwrap();
+    let window = app.runtime.footprint_config.clone();
+    let different = crate::footprint_config::FootprintStyle::ALL
+        .into_iter()
+        .find(|style| *style != window.style)
+        .unwrap();
+    let tab = app.runtime.tabs.by_id_mut(first).unwrap();
+    for pane in tab.panes_mut() {
+        pane.presentation
+            .footprint
+            .config
+            .pin_style(different, &window);
+        pane.layer_write()
+            .apply_states(&std::collections::BTreeMap::from([(layer, !enabled)]));
+    }
+    frames(&mut app, 3);
+    save_tab_to(&mut app.workspace_calls(), first).unwrap();
+    let styled = live_recipe(&app.runtime, first).unwrap();
+    assert_ne!(styled.footprint_style, before.footprint_style);
+    assert_ne!(styled.layers.get(layer.id()), before.layers.get(layer.id()));
+    set_tab_workspace(&mut app.workspace_calls(), first, "Blank").unwrap();
+    frames(&mut app, 3);
+    let returned = live_recipe(&app.runtime, first).unwrap();
+    assert_eq!(returned.layers, before.layers);
+    assert_eq!(returned.footprint_style, before.footprint_style);
 }
 
 /// Autosave off: a level drawn on the chart marks the tab and waits in memory;

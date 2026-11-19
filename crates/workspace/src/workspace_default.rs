@@ -28,6 +28,7 @@ impl WorkspaceBook {
     /// Resolve an old desk's Default before its tabs join the protected book.
     /// Newly saved references explicitly identify the built-in template.
     pub fn restore_saved_workspace(&mut self, tab: u64, saved: &SavedTab) -> Option<String> {
+        self.forget_parked_tab(tab);
         if !saved.workspace_parked.is_empty() {
             self.parked.insert(tab, saved.workspace_parked.clone());
         }

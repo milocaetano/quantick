@@ -16,8 +16,8 @@ use super::{ArrangementHost, layout_wiring::LayoutAdapter};
 use crate::pane::{ChartPane, PaneSide};
 use crate::tab::{CanvasCollapseRestore, LegendFold};
 
-fn layer_states(layers: &BTreeMap<String, bool>) -> BTreeMap<ChartLayer, bool> {
-    quantick_layers::recipe_states(crate::pane::registered_layers().layers(), layers)
+fn layer_states(layers: &BTreeMap<String, bool>, reset: bool) -> BTreeMap<ChartLayer, bool> {
+    quantick_layers::recipe_states(crate::pane::registered_layers().layers(), layers, reset)
 }
 
 impl TabRecipeHost for WorkspaceCalls<'_> {
@@ -194,8 +194,13 @@ fn apply_recipe_switches(runtime: &mut Runtime, id: u64, recipe: &WorkspaceRecip
         }
     }
     for (pane, side) in tab.panes_with_sides_mut() {
-        pane.layer_write()
-            .apply_states(&layer_states(recipe.for_pane(side.index()).1));
+        if recipe.reset_presentation {
+            pane.presentation.footprint.config.set_own(None);
+        }
+        pane.layer_write().apply_states(&layer_states(
+            recipe.for_pane(side.index()).1,
+            recipe.reset_presentation,
+        ));
         if let Some(style) = style {
             pane.presentation.footprint.config.pin_style(style, window);
         }

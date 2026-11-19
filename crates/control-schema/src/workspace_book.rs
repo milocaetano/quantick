@@ -129,6 +129,7 @@ pub struct WorkspaceSaveAsInput {
 /// Make a new, empty workspace and put a tab on it.
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+#[schemars(extend("x-idempotency-key-unless-named-by" = "name"))]
 pub struct WorkspaceNewInput {
     /// The tab. Left out, the one on screen.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -360,8 +361,8 @@ pub fn workspace_new_descriptor() -> CapabilityDescriptor {
             WORKSPACE_NEW_CAPABILITY_ID,
             MODULE_ID,
             "Make a new, empty workspace for a tab",
-            "Creates a clean workspace with charts (1-8, default 1) and timeframe_ms (current time interval, otherwise 5m), on a generic Layout N. All charts use the chosen interval. Existing workspace edits are parked and restored when revisiting it; dropped_edits is false. Other tabs and market-owned drawings are preserved. An omitted or blank name chooses Workspace N. An explicit name must be unique. Colour is a preset or #RRGGBB; omitted selects the next free color, and a held color is refused without swapping. Invalid choices are refused before mutation. The New workspace form's Create action; open and preview it with workspace.dialog.open.",
-            "A repeat finds the name taken and is refused with workspace.name_taken; nothing changes.",
+            "Creates a clean workspace with charts (1-8, default 1) and timeframe_ms (current time interval, otherwise 5m), on a generic Layout N. All charts use the chosen interval. Existing workspace edits are parked and restored when revisiting it; dropped_edits is false. Other tabs and market-owned drawings are preserved. An omitted or blank name requires an idempotency key and chooses Workspace N. An explicit name must be unique. Colour is a preset or #RRGGBB; omitted selects the next free color, and a held color is refused without swapping. Invalid choices are refused before mutation. The New workspace form's Create action; open and preview it with workspace.dialog.open.",
+            "Repeat the same payload and key to replay the original result. An explicit name also permits an unkeyed request; repeating it refuses with workspace.name_taken.",
         ),
     )
 }

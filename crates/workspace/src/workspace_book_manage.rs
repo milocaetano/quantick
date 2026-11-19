@@ -32,6 +32,7 @@ pub(super) struct Deleted {
     /// The old names that led to it, which a desk may still hold.
     renamed: Vec<(String, String)>,
     tabs: Vec<MovedTab>,
+    parked: Vec<(u64, WorkspaceRecipe)>,
     until_ms: i64,
     undone: bool,
 }
@@ -127,6 +128,60 @@ impl WorkspaceBook {
             .unwrap_or_default()
     }
 
+    /// Delete a workspace; its tabs move to `Default`. A clean one adopts
+    /// `Default`'s recipe; one with edits keeps them, marked `Default •`, so
+    /// nothing is lost.
+    ///
+    /// # Errors
+    /// `name` is `Default`, or no workspace has it, as on a repeat.
+    pub fn delete(&mut self, name: &str) -> Result<DeleteOutcome, WorkspaceRefusal> {
+        if let Some(refusal) = self.delete_refusal(name) {
+            return Err(refusal);
+        }
+        let recipe = self.recipes.remove(name).expect("delete_refusal found it");
+        for copies in self.parked.values_mut() {
+            copies.remove(name);
+        }
+        self.renamed.retain(|_, current| current != name);
+        let fallback = self.default_recipe().clone();
+        let mut outcome = DeleteOutcome {
+            changed: true,
+            ..DeleteOutcome::default()
+        };
+        for (tab, state) in &mut self.tabs {
+            if state.workspace != name {
+                continue;
+            }
+            state.workspace = DEFAULT_WORKSPACE.to_owned();
+            state.opened = None;
+            outcome.moved.push(*tab);
+            if recipe.holds(&state.copy) {
+                state.copy.clone_from(&fallback);
+                outcome.adopted.push(*tab);
+            } else {
+                outcome.kept_edits.push(*tab);
+            }
+        }
+        // With autosave on a kept copy is not in `Default`: marked, and
+        // written only when the trader saves it.
+        if self.autosave {
+            for tab in &outcome.kept_edits {
+                self.unsynced.insert(*tab, Unsynced::Outvoted);
+            }
+        }
+        // Its colour frees for the next workspace made.
+        self.settle_colours();
+        Ok(outcome)
+    }
+
+    /// A closed or replaced tab no longer owns edits held by a pending Undo.
+    pub(super) fn forget_parked_tab(&mut self, tab: u64) {
+        self.parked.remove(&tab);
+        for record in self.deleted.values_mut() {
+            record.parked.retain(|(owner, _)| *owner != tab);
+        }
+    }
+
     /// [`Self::delete`], recorded so [`Self::undo_delete`] can take it back
     /// until `now_ms` plus [`UNDO_WINDOW_MS`].
     ///
@@ -150,6 +205,11 @@ impl WorkspaceBook {
             .filter(|(_, state)| state.workspace == name)
             .map(|(tab, state)| (*tab, state.clone(), self.unsynced.get(tab).copied()))
             .collect();
+        let parked = self
+            .parked
+            .iter()
+            .filter_map(|(tab, copies)| Some((*tab, copies.get(name)?.clone())))
+            .collect();
         let outcome = self.delete(name)?;
         let tabs = (before.into_iter())
             .map(|(tab, before, unsynced)| MovedTab {
@@ -169,6 +229,7 @@ impl WorkspaceBook {
             colour,
             renamed,
             tabs,
+            parked,
             until_ms: now_ms.saturating_add(UNDO_WINDOW_MS),
             undone: false,
         };
@@ -230,6 +291,14 @@ impl WorkspaceBook {
             return Err(WorkspaceRefusal::DuplicateName(held.to_owned()));
         }
         self.recipes.insert(name.to_owned(), record.recipe.clone());
+        for (tab, copy) in record.parked {
+            if self.tabs.contains_key(&tab) {
+                self.parked
+                    .entry(tab)
+                    .or_default()
+                    .insert(name.to_owned(), copy);
+            }
+        }
         self.renamed.extend(record.renamed.iter().cloned());
         if self
             .colours

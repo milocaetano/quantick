@@ -139,11 +139,6 @@ impl WorkspaceOwner for WorkspaceCalls<'_> {
             .map_err(|error| error.to_string())?;
         if !apply {
             book_upkeep::observe_tab(self, tab);
-        } else if let Some(tab) = self.runtime.tabs.by_id_mut(tab) {
-            for pane in tab.panes_mut() {
-                pane.layers = Default::default();
-                pane.presentation.footprint.config.set_own(None);
-            }
         }
         Ok(())
     }

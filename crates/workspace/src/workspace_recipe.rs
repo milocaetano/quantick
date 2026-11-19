@@ -163,6 +163,9 @@ pub struct WorkspaceRecipe {
     /// The footprint style's id; absent keeps the window's footprint style.
     #[serde(default)]
     pub footprint_style: Option<String>,
+    /// Reset pane layer and footprint overrides before applying this recipe.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub reset_presentation: bool,
     /// Authored pane appearances. Legacy recipes leave the desk's appearance in place.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub candle_styles: Option<Vec<SavedPaneStyle>>,
@@ -208,6 +211,8 @@ struct StoredRecipe {
     #[serde(default)]
     footprint_style: Option<String>,
     #[serde(default)]
+    reset_presentation: bool,
+    #[serde(default)]
     candle_styles: Option<Vec<SavedPaneStyle>>,
     #[serde(default)]
     flow_bars: Option<String>,
@@ -230,6 +235,7 @@ impl From<StoredRecipe> for WorkspaceRecipe {
             context_panes,
             layers,
             footprint_style,
+            reset_presentation,
             candle_styles,
             flow_bars,
             legacy_context_bars,
@@ -254,6 +260,7 @@ impl From<StoredRecipe> for WorkspaceRecipe {
             context_panes,
             layers,
             footprint_style,
+            reset_presentation,
             candle_styles,
             flow_bars,
             legacy_context_bars,
@@ -277,6 +284,7 @@ impl Default for WorkspaceRecipe {
             context_panes: Vec::new(),
             layers: BTreeMap::new(),
             footprint_style: None,
+            reset_presentation: false,
             candle_styles: None,
             flow_bars: None,
             legacy_context_bars: Vec::new(),
@@ -336,6 +344,7 @@ impl WorkspaceRecipe {
     /// reading short of its canvas (a chart still to be built) takes none.
     #[must_use]
     pub fn with_unshown_of(mut self, stored: &Self) -> Self {
+        self.reset_presentation = stored.reset_presentation;
         if self.candle_styles.is_none() && stored.candle_styles.is_some() {
             self.candle_styles = Some(Vec::new());
         }

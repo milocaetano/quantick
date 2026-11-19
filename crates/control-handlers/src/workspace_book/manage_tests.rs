@@ -447,6 +447,12 @@ fn new_commits_the_visible_custom_colour_and_every_panes_choices_together() {
         &mut host,
         &mut access,
         &actor,
+        WorkspaceCommand::NameColour(ColourIntent::Pick("last_custom".to_owned())),
+    );
+    press(
+        &mut host,
+        &mut access,
+        &actor,
         WorkspaceCommand::SubmitDialog,
     );
     let recipe = host.book.recipe("Workspace 9").unwrap();
