@@ -9,8 +9,8 @@ use quantick_sim::{Bracket, Command};
 use rust_decimal::Decimal;
 
 use crate::{
-    Anywhere, ArmedStrategy, BreakPolicy, CrossDirection, Execution, ForceParams, ForceTrigger,
-    LineCross, Opportunity, Placement, PriceRange, Reach, Rearm, Region, StrategyParams,
+    Anywhere, ArmedStrategy, BreakPolicy, CrossDirection, Execution, FixedRange, ForceParams,
+    ForceTrigger, LineCross, Opportunity, Placement, Reach, Rearm, StrategyParams,
 };
 
 fn dec(s: &str) -> Decimal {
@@ -49,30 +49,8 @@ fn down(level: &str) -> LineCross {
 }
 
 #[test]
-fn the_rectangle_keeps_its_verdicts_and_its_words() {
-    let region = Region::new(dec("100"), dec("110"));
-    assert_eq!(region.reach(Side::Buy, &bar("95", "105")), Reach::Market);
-    assert_eq!(
-        region.reach(Side::Buy, &bar("105", "115")),
-        Reach::Cut {
-            edge: dec("110"),
-            retest_off: "cut the region, retest option off",
-        }
-    );
-    assert_eq!(
-        region.reach(Side::Buy, &bar("111", "115")),
-        Reach::Missed("the body never cut the region")
-    );
-    assert_eq!(
-        region.reach(Side::Buy, &bar("105", "95")),
-        Reach::Missed("closed outside region")
-    );
-}
-
-#[test]
-fn a_price_range_tests_like_a_band_and_names_itself() {
-    let range = PriceRange::new(dec("110"), dec("100"));
-    assert_eq!(range.band(), Region::new(dec("100"), dec("110")));
+fn a_fixed_range_tests_like_a_band_and_names_itself() {
+    let range = FixedRange::new(dec("110"), dec("100"));
     assert_eq!(range.reach(Side::Sell, &bar("115", "105")), Reach::Market);
     assert_eq!(
         range.reach(Side::Sell, &bar("105", "95")),
@@ -205,7 +183,7 @@ fn market_order() -> Vec<Command> {
 #[test]
 fn every_placement_that_admits_the_bar_fires_where_its_alarm_rings() {
     let admitting: [&dyn Placement; 3] = [
-        &PriceRange::new(dec("100"), dec("110")),
+        &FixedRange::new(dec("100"), dec("110")),
         &up("104"),
         &Anywhere,
     ];
@@ -221,11 +199,11 @@ fn every_placement_that_admits_the_bar_fires_where_its_alarm_rings() {
 fn every_placement_that_refuses_the_bar_is_silent_on_both_paths_and_says_why() {
     let refusing: [(&dyn Placement, &str); 4] = [
         (
-            &PriceRange::new(dec("90"), dec("100")),
+            &FixedRange::new(dec("90"), dec("100")),
             "the body never cut the range",
         ),
         (
-            &PriceRange::new(dec("110"), dec("120")),
+            &FixedRange::new(dec("110"), dec("120")),
             "closed outside range",
         ),
         (&down("104"), "did not close beyond the line"),
@@ -243,7 +221,7 @@ fn every_placement_that_refuses_the_bar_is_silent_on_both_paths_and_says_why() {
 
 #[test]
 fn a_cut_range_follows_the_break_policy_like_a_region() {
-    let range = PriceRange::new(dec("100"), dec("104"));
+    let range = FixedRange::new(dec("100"), dec("104"));
     let (previewed, closed, commands, armed) = judge(&range, BreakPolicy::Ignore);
     assert_eq!((previewed, closed), (None, None));
     assert!(commands.is_empty());

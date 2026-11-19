@@ -219,10 +219,11 @@ fn signal_is_ours(
 ///
 /// The geometry is the bar's own body against the instance's
 /// [`Placement`] — open to close, wicks ignored — because that is what
-/// "the force bar cut the region" means to the trader reading the chart. A signal's `reference` keeps its separate job: the
-/// price the bracket projects from.
+/// "the force bar cut the region" means to the trader reading the chart.
+/// A signal's `reference` keeps its separate job: the price the bracket
+/// projects from.
 ///
-/// Each arm is complete on its own, policy included, so that a fifth
+/// Each arm is complete on its own, policy included, so that a new
 /// [`Reach`] or a third [`BreakPolicy`] cannot fall through into a
 /// neighbour's outcome and rest a real order by accident. Every refusal
 /// names the gate that actually decided it — the geometry when the bar

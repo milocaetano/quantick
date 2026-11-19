@@ -25,7 +25,7 @@
 //! machine.
 //!
 //! Where a setup may trade is a port too ([`Placement`]): the drawn
-//! rectangle ([`Region`]), a fixed [`PriceRange`], a [`LineCross`] in one
+//! rectangle ([`Region`]), a [`FixedRange`], a [`LineCross`] in one
 //! direction, or [`Anywhere`]. The state machine reads only the port's
 //! verdict ([`Reach`]), so a new placement docks beside these.
 //!
@@ -83,6 +83,6 @@ pub use armed::{
     Rearm, StrategyParams,
 };
 pub use force::{BarVerdict, ForceBar, ForceParams, ForceWindow};
-pub use placement::{Anywhere, CrossDirection, LineCross, Placement, PriceRange, Reach};
+pub use placement::{Anywhere, CrossDirection, FixedRange, LineCross, Placement, Reach};
 pub use region::{BodyCut, Region};
 pub use trigger::{ForceTrigger, Signal, Trigger, TriggerContext};

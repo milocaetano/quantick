@@ -30,8 +30,9 @@ use quantick_engine::Bar;
 use quantick_sim::{Command, VenueEvent};
 
 use crate::anchors::AnchoredInstance;
+use crate::placement::Unresolved;
 use crate::sound::Cue;
-use crate::{Anywhere, ArmedStrategy, Placement};
+use crate::{ArmedStrategy, Placement};
 
 /// The account as the runner reaches it: the one way a command gets out,
 /// and the one question the flat gate asks.
@@ -95,19 +96,17 @@ impl RunnerInstance for ArmedStrategy {
     }
 }
 
-/// The placement a bar is judged against, or an inactive stand-in when
-/// none can be resolved.
+/// The placement a bar is judged against, or an inactive stand-in that
+/// admits nothing when none can be resolved.
 ///
 /// A placement that cannot honestly be tested (hidden, off its series,
 /// another market) holds fire but never starves the ruler: the trigger's
 /// contract is every closed bar, so the gates shut instead of the feed.
-/// The inactive gate refuses before any placement is read, so the stand-in
-/// is never consulted.
 #[must_use]
 pub fn placement_or_hold<L: Placement>(resolved: Option<&(L, bool)>) -> (&dyn Placement, bool) {
     match resolved {
         Some((placement, active)) => (placement, *active),
-        None => (&Anywhere, false),
+        None => (&Unresolved, false),
     }
 }
 
@@ -440,6 +439,12 @@ mod tests {
         assert_eq!(asked, [7], "the region is resolved for the bar's own slot");
         assert_eq!(port.take_log(), [Seen::Flat], "nothing fired");
         assert_eq!(instances[0].state(), &ArmedState::Armed);
-        assert!(!placement_or_hold(None::<&(Region, bool)>).1);
+        let (stand_in, active) = placement_or_hold(None::<&(Region, bool)>);
+        assert!(!active);
+        assert_eq!(
+            stand_in.reach(Side::Buy, &bar(102, 106)),
+            crate::Reach::Missed("placement not resolved"),
+            "the stand-in admits nothing even if read past the inactive gate"
+        );
     }
 }
