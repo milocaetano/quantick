@@ -661,14 +661,14 @@ impl QuantickApp {
             popup_tab: answers.popup_tab,
             chip_clicked: answers.chip_clicked,
             dismissed: answers.dismissed,
-            chip_rect: answers.chip_rect,
+            drawn: answers.drawn,
         };
         super::frame_tail::run(
             super::frame_tail::FrameTailOwners {
                 tabs: &mut self.runtime.tabs,
                 config: &self.config,
                 surfaces: &mut self.surfaces,
-                chip_rect: &mut self.chrome.feed_chip_rect,
+                drawn: &mut self.chrome.feed_drawn,
             },
             &input,
             &mut self.runtime.workspace,

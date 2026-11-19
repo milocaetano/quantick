@@ -219,7 +219,7 @@ impl Desk {
 
     /// The size an entry press would send: the risk-derived one, else the
     /// typed field.
-    fn entry_quantity(&self, account: &PaperAccount) -> Option<Decimal> {
+    pub fn entry_quantity(&self, account: &PaperAccount) -> Option<Decimal> {
         let derived = self.risk_report(account).0.derived_quantity();
         derived.or_else(|| self.ticket.quantity_preview())
     }

@@ -557,6 +557,51 @@ fn reverse_flips_the_position_in_one_call_and_refuses_while_flat() {
     );
 }
 
+/// A named entry on a paused desk is refused as unavailable for now, with
+/// the reading in the details and nothing sent or journaled; a named exit
+/// still lands.
+#[test]
+fn a_paused_desk_refuses_a_named_entry_as_retryable_and_still_flattens() {
+    use quantick_sources::sync::{Desync, LinkState, SyncLimits, SyncReading};
+    let mut window = desk_window();
+    let mut access = FakeAccess::with_budget(0);
+    let trader = FakeWindow::trader();
+    window.desk.set_trade_gate(Some(Desync {
+        reading: SyncReading::Link,
+        link: LinkState::Offline,
+        latency_ms: None,
+        latency_hop: None,
+        tape_age_ms: Some(12_000),
+        limits: SyncLimits::default(),
+        notice: None,
+    }));
+    let refused = place_order(
+        &mut window,
+        &mut access,
+        &trader,
+        &json!({ "side": "buy", "kind": "market", "quantity": "1" }),
+    )
+    .expect_err("an entry waits for the feed");
+    assert_eq!(
+        refused.code.as_str(),
+        quantick_control::error::codes::CAPABILITY_UNAVAILABLE
+    );
+    assert!(refused.retryable, "nothing was sent, so a retry is safe");
+    assert!(
+        refused.message.contains("the feed is offline"),
+        "{refused:?}"
+    );
+    let details = refused.context.details.expect("the reading is named");
+    assert_eq!(details["trade_gate"], "link");
+    assert_eq!(details["link"], "offline");
+    assert!(access.events.is_empty(), "nothing journaled");
+    assert!(window.desk.working_orders().is_empty(), "nothing sent");
+
+    let flattened = flatten_position(&mut window, &mut access, &trader, &json!({}))
+        .expect("an exit is never paused");
+    assert_eq!(flattened["accepted"], true, "{flattened}");
+}
+
 /// A ticket edit persists the one shared setting it changed — the exit
 /// strategies or the risk settings — and the ruler and an order persist
 /// nothing.

@@ -32,10 +32,12 @@ use rust_decimal::Decimal;
 
 #[path = "paper_command.rs"]
 mod command;
+#[path = "paper_gate.rs"]
+mod gate;
 #[path = "paper_settings.rs"]
 mod settings;
 
-pub use command::{NOTHING_TO_REVERSE, TradeCommand, TradeOutcome};
+pub use command::{NOTHING_TO_REVERSE, TradeCommand, TradeOutcome, TradeRefusal};
 pub use settings::{SharedChange, SharedSettings};
 
 /// What a rebuilt timeline says when it flattened a position.
@@ -68,6 +70,9 @@ pub struct TabPaper<A = PaperAccount> {
     pub desk: Desk,
     /// The money path, as its host holds it.
     pub account: A,
+    /// Why new entries pause, while the chart is out of sync with its feed;
+    /// told by the host every observation (`Self::set_trade_gate`).
+    gate: Option<quantick_sources::sync::Desync>,
 }
 
 impl<A: BorrowMut<PaperAccount>> TabPaper<A> {
@@ -77,6 +82,7 @@ impl<A: BorrowMut<PaperAccount>> TabPaper<A> {
         Self {
             desk: Desk::default(),
             account,
+            gate: None,
         }
     }
 
@@ -133,7 +139,10 @@ impl<A: BorrowMut<PaperAccount>> TabPaper<A> {
     /// and offsets; answers whether the simulator accepted it, and toasts
     /// the ticket's complaint when an offset does not parse.
     pub fn place_resting(&mut self, side: Side, kind: EntryKind, raw_price: f64) -> bool {
-        let Self { desk, account } = self;
+        if self.pauses_ticket_entry(side) {
+            return false;
+        }
+        let Self { desk, account, .. } = self;
         match desk.place_resting(account.borrow_mut(), side, kind, raw_price) {
             Ok(placed) => placed,
             Err(message) => {
@@ -203,6 +212,7 @@ impl<A: BorrowMut<PaperAccount>> TabPaper<A> {
 
     /// Feed one live print through the simulator and act on what it did.
     pub fn on_trade(&mut self, trade: &Trade) {
+        self.tape_arrived();
         self.core_mut().on_trade(trade);
     }
 
@@ -282,7 +292,7 @@ impl<A: BorrowMut<PaperAccount>> TabPaper<A> {
 
     /// Replace the remembered steps wholesale, as the host restores them.
     pub fn set_ruler_steps(&mut self, steps: BTreeMap<String, Decimal>) {
-        let Self { desk, account } = self;
+        let Self { desk, account, .. } = self;
         desk.ruler
             .set_steps(steps, Borrow::<PaperAccount>::borrow(account).symbol());
     }
@@ -290,7 +300,7 @@ impl<A: BorrowMut<PaperAccount>> TabPaper<A> {
     /// Name this instrument's step, in points; `None` puts it back on the
     /// derived default.
     pub fn set_ruler_step(&mut self, step: Option<Decimal>) {
-        let Self { desk, account } = self;
+        let Self { desk, account, .. } = self;
         desk.ruler
             .set_step(Borrow::<PaperAccount>::borrow(account).symbol(), step);
     }
@@ -384,6 +394,9 @@ impl<A: BorrowMut<PaperAccount>> TabPaper<A> {
 /// account's own.
 impl<A: BorrowMut<PaperAccount>> quantick_strategy::runner::StrategyPort for TabPaper<A> {
     fn apply(&mut self, command: Command) -> Vec<VenueEvent> {
+        if let Some(refused) = self.strategy_refusal(&command) {
+            return refused;
+        }
         self.core_mut().apply_strategy_command(command)
     }
 

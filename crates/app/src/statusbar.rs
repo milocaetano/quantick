@@ -1,37 +1,14 @@
-//! The status bar: wrapping 28 px rows answering "how healthy is it?"
-//! (`docs/ux/ui-design-model.md` §8).
-//!
-//! Three sections replace the perf overlay, the floating timezone pill and
-//! the mode text that used to be painted over candles: provenance on the
-//! left (state dot, venue, symbol, lag), content in the middle (honesty
-//! labels), machinery on the right (fps and the timezone picker). What the
-//! forming bar has left lives on its own price tag, not here. A reading
-//! that breaches its threshold turns
-//! the `warn` token; narrow windows wrap cells without hiding their facts.
-//!
-//! The bar's controls share one raised hover. The workspace moved to the
-//! toolbar's capsule; the timezone picker sits at the right end. A
-//! `Reconnect`/`Reload` pair once stood in the provenance section, because
-//! the notice card refused to cover a working
-//! chart, and a terminal that froze mid-session left the trader nothing to
-//! press anywhere in the window. The offline chip in the chart's bottom-right
-//! corner answers that better: it is in one place whatever the chart holds, so
-//! the pair went back out rather than stand as a second way to do the same two
-//! things.
-//!
-//! At the left end stands the window's one word on the feed's global
-//! state, in grey, and it is the recovery popup's door: see
-//! [`quantick_chart::connection_state`] for what it says and [`crate::feed_notice`]
-//! for what it opens.
-//!
-//! The section values are computed by the app and handed in as a plain
-//! [`StatusModel`], so every text and colour decision here stays pure and
-//! unit-testable.
+//! Wrapping 28 px status rows: provenance, data honesty and frame performance
+//! (`docs/ux/ui-design-model.md` §8). Readings over their thresholds use `warn`.
+//! The feed word opens the recovery popup; a desync pause offers Reconnect
+//! beside the tape cell. See [`quantick_chart::connection_state`] and
+//! [`crate::feed_notice`]. Values arrive in a precomputed [`StatusModel`].
 
 use eframe::egui;
 use egui_phosphor::regular as icons;
 
 use crate::deal_recording::RecState;
+use crate::feed_notice::NoticeAction;
 use crate::metrics;
 use crate::theme;
 use crate::timezone::TzOffset;
@@ -152,22 +129,9 @@ impl DealCell {
 /// every frame. A socket that stays open and delivers nothing keeps a healthy
 /// arrival figure forever, so the honest readout is the age of the tape.
 ///
-/// A late tape that knows *where* the time went says so by **replacing** the
-/// word `arrival` with the hop's name: `MT5 4210 ms`. Replacing rather than
-/// appending, because this row has no width budget between its three sections —
-/// a label that grows in the middle overruns the machinery readouts on the
-/// right, which is what the side-note comment in [`draw_content`] has always
-/// warned about, and it was reproduced at 1000 px by an earlier version of this
-/// cell that appended ` · bridge`. Swapped rather than appended, and swapped
-/// for something no wider: `LatencyHop::MAX_LABEL_CHARS` is the width of the
-/// word `arrival` itself, so the cell can only get narrower by knowing more.
-/// Both ends assert it.
-///
-/// Nothing is lost by dropping `arrival`: the word was only ever explained by
-/// the hover, which still explains both readings and now carries the numbers
-/// too. The name appears only once the delay is worth acting on
-/// ([`metrics::HIGH_LAG_MS`]) — a healthy tape does not need to tell anyone
-/// which of its hops was nominally slowest.
+/// Above [`metrics::HIGH_LAG_MS`], the slowest hop replaces `arrival`, for
+/// example `MT5 4210 ms`. `LatencyHop::MAX_LABEL_CHARS` keeps it no wider than
+/// `arrival`; the hover retains the complete breakdown without widening the row.
 #[must_use]
 pub fn tape_text(
     replay: Option<ReplayFigures>,
@@ -208,10 +172,12 @@ pub struct StatusResponse {
     pub open_display_settings: bool,
     /// The word was clicked: it opens and closes the recovery popup.
     pub word_clicked: bool,
-    /// The word's rect while it is a door, which is the popup's anchor.
-    pub word_rect: Option<egui::Rect>,
+    /// Where the word, while it is a door, and the tape cell's Reconnect were painted.
+    pub drawn: quantick_ui_model::feed_notice::Drawn<egui::Rect>,
     /// The one-click control beside the word was pressed.
     pub reconnect: bool,
+    /// The Reconnect beside the tape cell, while entries pause, was pressed.
+    pub gate_reconnect: bool,
 }
 
 /// What the feed-state cell shows this frame.
@@ -225,9 +191,11 @@ pub struct StatusLead<'a> {
     /// The reason, on the word's hover, so reading it takes no click.
     pub report: Option<crate::feed_notice::Report<'a>>,
     /// What the one-click control beside the word asks: the popup's first.
-    pub action: crate::feed_notice::NoticeAction,
+    pub action: NoticeAction,
     /// Why the tab shows another contract than it was opened on.
     pub note: Option<String>,
+    /// Why entries pause, while the pause offers Reconnect beside the tape cell.
+    pub gate: Option<&'a quantick_feed::sync::Desync>,
 }
 
 impl<'a> StatusLead<'a> {
@@ -252,6 +220,7 @@ impl<'a> StatusLead<'a> {
                 .rolled
                 .as_ref()
                 .map(quantick_feed::link::Rolled::sentence),
+            gate: (tab.paper.trade_gate()).filter(|gate| gate.offers_reconnect()),
         }
     }
 }
@@ -281,6 +250,12 @@ pub fn draw(
                 ui.spacing_mut().item_spacing.x = CELL_SPACING_PX;
                 draw_lead(ui, lead, &mut response);
                 draw_provenance(ui, model);
+                if let Some(gate) = lead.gate.filter(|_| !lead.open) {
+                    let why = |ui: &mut egui::Ui| _ = ui.label(gate.sentence());
+                    let pressed = quick_control(ui, &NoticeAction::Reconnect, why);
+                    response.gate_reconnect = pressed.clicked();
+                    response.drawn.reconnect = Some(pressed.rect);
+                }
                 ui.separator();
                 response.open_trading_tab = draw_content(ui, model);
                 response.open_display_settings = draw_machinery(ui, model, tz);
@@ -352,7 +327,7 @@ fn draw_lead(ui: &mut egui::Ui, lead: &StatusLead<'_>, response: &mut StatusResp
         palette.loading_meta(),
     );
     if lead.door {
-        response.word_rect = Some(rect);
+        response.drawn.chip = Some(rect);
         let cell = cell
             .on_hover_cursor(egui::CursorIcon::PointingHand)
             .on_hover_ui(|ui| {
@@ -366,19 +341,22 @@ fn draw_lead(ui: &mut egui::Ui, lead: &StatusLead<'_>, response: &mut StatusResp
         response.word_clicked = cell.clicked();
     }
     if word.reconnect && !lead.open {
-        let reconnect = ui
-            .add(
-                egui::Label::new(
-                    egui::RichText::new(lead.action.label())
-                        .small()
-                        .color(palette.loading_meta()),
-                )
-                .sense(egui::Sense::click()),
-            )
-            .on_hover_cursor(egui::CursorIcon::PointingHand)
-            .on_hover_text(lead.action.cost());
-        response.reconnect = reconnect.clicked();
+        let cost = |ui: &mut egui::Ui| _ = ui.label(lead.action.cost());
+        response.reconnect = quick_control(ui, &lead.action, cost).clicked();
     }
+}
+
+/// The one-click act a feed in trouble offers, `hover` saying why.
+fn quick_control(
+    ui: &mut egui::Ui,
+    action: &NoticeAction,
+    hover: impl FnOnce(&mut egui::Ui),
+) -> egui::Response {
+    let colour = theme::get(ui.ctx()).loading_meta();
+    let text = egui::RichText::new(action.label()).small().color(colour);
+    ui.add(egui::Label::new(text).sense(egui::Sense::click()))
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_ui(hover)
 }
 
 /// Venue, symbol, lag.

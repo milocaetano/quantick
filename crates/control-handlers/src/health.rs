@@ -24,9 +24,10 @@ use quantick_control_host::{
 use quantick_control_schema::health::{
     FeedIntegritySnapshot, FrameHealthSnapshot, HealthSnapshot, IndicatorHealthRead,
     IntakeLagSnapshot, LoadingTaskSnapshot, MODULE_ID, PaneHealthSnapshot, SCHEMA_VERSION,
-    SCOPE_ID, TabHealthRevisionKey, TabHealthSnapshot, TapeHealthSnapshot,
+    SCOPE_ID, TabHealthRevisionKey, TabHealthSnapshot, TapeHealthSnapshot, TradeGateSnapshot,
 };
 use quantick_orderflow::engine::OrderflowHealth;
+use quantick_sources::sync::Desync;
 use quantick_sources::timing::FeedLatency;
 
 use crate::dock::ProjectionDock;
@@ -65,6 +66,8 @@ pub trait HealthTab {
     /// How long live prints waited inside a drain; `None` before the feed
     /// session's first live print.
     fn intake_lag(&self) -> Option<IntakeLagSnapshot>;
+    /// Why new entries are paused on this tab, if they are.
+    fn trade_gate(&self) -> Option<&Desync>;
     /// Hand `visit` the tab's panes in its order, as one sized iterator so
     /// the summary's list is allocated to fit.
     fn visit_panes(&self, visit: &mut dyn FnMut(&mut dyn Iterator<Item = PaneHealthRead<'_>>));
@@ -165,6 +168,21 @@ fn tab_health(tab_id: u64, tab: &dyn HealthTab) -> TabHealthSnapshot {
         active_loading_tasks: loading_tasks(tab.loading()),
         panes,
         tape: tape_health(tab),
+        trade_gate: tab.trade_gate().map(trade_gate),
+    }
+}
+
+fn trade_gate(gate: &Desync) -> TradeGateSnapshot {
+    TradeGateSnapshot {
+        reading: gate.reading.word().to_owned(),
+        link: gate.link.word().to_owned(),
+        latency_ms: gate.latency_ms,
+        latency_hop: gate.latency_hop.map(str::to_owned),
+        tape_age_ms: gate.tape_age_ms,
+        max_latency_ms: gate.limits.max_latency_ms,
+        max_tape_age_ms: gate.limits.max_tape_age_ms,
+        notice: gate.notice.clone(),
+        sentence: gate.sentence(),
     }
 }
 

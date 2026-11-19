@@ -15,14 +15,16 @@ fn the_chip_is_the_popups_only_door() {
 
     let chip = app
         .chrome_reads()
-        .feed_chip_rect()
+        .feed_drawn()
+        .chip
         .expect("the corner is up");
     click_chart(&mut app, &ctx, chip.center());
     assert!(app.chrome_reads().feed_popup_open(), "the chip opens it");
 
     let chip = app
         .chrome_reads()
-        .feed_chip_rect()
+        .feed_drawn()
+        .chip
         .expect("the corner is still up");
     click_chart(&mut app, &ctx, chip.center());
     assert!(
@@ -48,7 +50,8 @@ fn the_corner_answers_a_hover_without_being_opened() {
     run_frame(&mut app, &ctx);
     let chip = app
         .chrome_reads()
-        .feed_chip_rect()
+        .feed_drawn()
+        .chip
         .expect("the corner is up");
     let headline = app
         .active_tab()

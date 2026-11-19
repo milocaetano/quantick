@@ -433,6 +433,14 @@ fn test_config() -> AppConfig {
             default_bars: None,
             record_deals: false,
             short_name: None,
+            // The fixtures' fake feeds never say they connected and drain on
+            // made-up clocks (`|| 0`): no connect or tape age limit, so only
+            // an offline link and the latency pause entries here.
+            sync: quantick_feed::sync::SyncLimits {
+                max_tape_age_ms: i64::MAX,
+                max_connecting_ms: i64::MAX,
+                ..Default::default()
+            },
         }],
         broker: Default::default(),
         metatrader: Default::default(),
@@ -2013,6 +2021,7 @@ fn two_metatrader_feeds() -> AppConfig {
                 default_bars: None,
                 record_deals: false,
                 short_name: None,
+                sync: Default::default(),
             },
             FeedConfig {
                 id: "b3".to_string(),
@@ -2030,6 +2039,7 @@ fn two_metatrader_feeds() -> AppConfig {
                 default_bars: None,
                 record_deals: false,
                 short_name: None,
+                sync: Default::default(),
             },
         ],
         broker: Default::default(),

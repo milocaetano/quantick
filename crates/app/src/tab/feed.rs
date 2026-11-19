@@ -473,6 +473,11 @@ impl Tab {
         super::alerts::observe_alert_lifecycle(self, observer);
         self.drain_frame_with_stages(tab_id, config, policy, TabDrainPlan::stages(), observer);
         super::alerts::observe_alert_lifecycle(self, observer);
+        // After the drain took in its prints, before any stage can trade.
+        let offline = self.connection.is_offline();
+        let (limits, now) = (config.sync_limits(&self.feed_id), metrics::wall_clock_ms());
+        let gate = self.link.sync_at(&self.symbol, offline, limits, now);
+        self.paper.set_trade_gate(gate);
     }
 
     fn drain_frame_with_stages(
@@ -908,6 +913,7 @@ impl Tab {
             match self.link.book_events.try_recv() {
                 Ok(event) => {
                     let received_at_ms = *received_at_ms.get_or_insert_with(&mut wall_clock_ms);
+                    self.link.observe_book_arrival(received_at_ms);
                     self.tape_mut().handle_depth_event_at(event, received_at_ms);
                 }
                 Err(mpsc::error::TryRecvError::Empty) => break,

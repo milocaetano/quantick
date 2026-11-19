@@ -187,6 +187,10 @@ impl TradingVenue for Mt5Venue {
         self.core.in_flight_entries(out);
     }
 
+    fn in_flight_entry(&self, id: OrderId) -> Option<&Order> {
+        self.core.in_flight_entry(id)
+    }
+
     fn closed_trades(&self) -> &[ClosedTrade] {
         self.core.closed_trades()
     }

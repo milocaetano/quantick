@@ -439,6 +439,18 @@
             }
           ],
           "description": "How late this tab's tape is, and where the time is going. `None` while\nreplaying — a recording's prints are as old as the day they were\ncaptured and the playback clock decides when they appear."
+        },
+        "trade_gate": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TradeGateSnapshot"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Why new entries are paused on this tab; `null` while they are not."
         }
       },
       "required": [
@@ -521,6 +533,73 @@
       },
       "required": [
         "sampled_prints"
+      ],
+      "type": "object"
+    },
+    "TradeGateSnapshot": {
+      "description": "New entries are paused because the chart is out of sync with its feed;\nexits still work. Every reading is the one the pause was judged on.",
+      "properties": {
+        "latency_hop": {
+          "description": "The provider's name for the hop that owns most of it.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "latency_ms": {
+          "description": "The provider's measured arrival latency; `null` without a split.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "x-unit": "milliseconds"
+        },
+        "link": {
+          "description": "The chart's link to the feed: `up`, `attempting` or `offline`.",
+          "type": "string"
+        },
+        "max_latency_ms": {
+          "format": "int64",
+          "type": "integer",
+          "x-unit": "milliseconds"
+        },
+        "max_tape_age_ms": {
+          "format": "int64",
+          "type": "integer",
+          "x-unit": "milliseconds"
+        },
+        "notice": {
+          "description": "What the feed's own notice says, when it says anything.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reading": {
+          "description": "Which reading paused entries: `link`, `latency` or `tape_age`.",
+          "type": "string"
+        },
+        "sentence": {
+          "description": "The refusal an entry answers with, as the toast says it.",
+          "type": "string"
+        },
+        "tape_age_ms": {
+          "description": "Wall clock minus the newest event on the tape.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "x-unit": "milliseconds"
+        }
+      },
+      "required": [
+        "reading",
+        "link",
+        "max_latency_ms",
+        "max_tape_age_ms",
+        "sentence"
       ],
       "type": "object"
     },

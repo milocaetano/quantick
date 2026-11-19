@@ -728,7 +728,8 @@ fn the_popup_belongs_to_the_tab_whose_chip_opened_it() {
     run_frame(&mut app, &ctx);
     let chip = app
         .chrome_reads()
-        .feed_chip_rect()
+        .feed_drawn()
+        .chip
         .expect("the corner is up");
     click_chart(&mut app, &ctx, chip.center());
     assert!(
@@ -739,7 +740,7 @@ fn the_popup_belongs_to_the_tab_whose_chip_opened_it() {
     app.runtime.tabs.select(1);
     run_frame(&mut app, &ctx);
     assert!(
-        app.chrome_reads().feed_chip_rect().is_some(),
+        app.chrome_reads().feed_drawn().chip.is_some(),
         "the second chart is stalled too, so it has its own corner"
     );
     assert!(
@@ -754,7 +755,7 @@ fn the_popup_belongs_to_the_tab_whose_chip_opened_it() {
         "and leaving the chart put it away, the way clicking elsewhere does"
     );
     assert!(
-        app.chrome_reads().feed_chip_rect().is_some(),
+        app.chrome_reads().feed_drawn().chip.is_some(),
         "the corner itself stays: the feed is still stalled"
     );
 }
@@ -765,7 +766,7 @@ fn the_popup_belongs_to_the_tab_whose_chip_opened_it() {
 fn a_tab_reads_the_split_its_provider_publishes_and_nothing_more() {
     let (mut app, _evt_tx, _cmd_rx, _book_tx) = test_app();
     assert_eq!(
-        app.active_tab().feed_latency(),
+        app.active_tab().link.latency_split(),
         None,
         "a feed that has published nothing yet has nothing to report"
     );
@@ -781,12 +782,12 @@ fn a_tab_reads_the_split_its_provider_publishes_and_nothing_more() {
     app.active_tab_mut().publish_latency_for_test(Some(split));
     // The cell the trader reads takes it from there:
     // `quantick_feed::timing`'s tests name the hop.
-    assert_eq!(app.active_tab().feed_latency(), Some(split));
+    assert_eq!(app.active_tab().link.latency_split(), Some(split));
 
     // A provider that cannot cut its own chain leaves the cell exactly as
     // it has always been — never a breakdown of zeros nobody measured.
     app.active_tab_mut().publish_latency_for_test(None);
-    assert_eq!(app.active_tab().feed_latency(), None);
+    assert_eq!(app.active_tab().link.latency_split(), None);
 }
 
 /// The reverse, so the test above cannot pass on a stroke that was always
@@ -1749,6 +1750,7 @@ fn a_new_tab_takes_the_feeds_declared_defaults_over_inheritance() {
         default_bars: Some("tick:7".to_string()),
         record_deals: false,
         short_name: None,
+        sync: Default::default(),
     });
     let mut app = app_on(config, "binance", "TESTUSDT");
     assert_eq!(app.active_tab().canvas.layout, CanvasLayout::Single);

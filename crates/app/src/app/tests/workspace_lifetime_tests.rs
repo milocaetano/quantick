@@ -227,7 +227,7 @@ fn workspace_lifetime_rebind_keeps_report_and_popup_while_unpresented_tail_settl
     let before = native_frame(&mut app, &ctx, egui::ViewportId::ROOT);
     assert!(painted_text_center(&before, "Simulated performance").is_some());
     assert!(painted_text_center(&before, "Reload").is_some());
-    let chip = app.chrome.feed_chip_rect.expect("visible feed chip");
+    let chip = app.chrome.feed_drawn.chip.expect("visible feed chip");
     app.active_tab_mut().paper.on_timeline_reset();
     assert!(
         app.active_tab()
@@ -245,7 +245,7 @@ fn workspace_lifetime_rebind_keeps_report_and_popup_while_unpresented_tail_settl
         let old = native_frame(&mut app, &ctx, egui::ViewportId::ROOT);
         assert!(old.shapes.is_empty(), "the old native view must not paint");
         assert_eq!(app.surfaces.feed_notice.model_state.open(), Some(tab));
-        assert_eq!(app.chrome.feed_chip_rect, Some(chip));
+        assert_eq!(app.chrome.feed_drawn.chip, Some(chip));
         let report = app.active_tab().paper.report_state();
         assert!(report.is_open());
         assert!(
