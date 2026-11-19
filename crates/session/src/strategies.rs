@@ -101,22 +101,23 @@ impl<D: Copy + PartialEq> PaneStrategies<D> {
         self.popup_request.take()
     }
 
-    /// Re-arm the instance riding `drawing`, re-warming its ruler on
-    /// `warmup(depth)` when the disarm named a *rebuilt series* (a replay
+    /// Re-arm every ended instance riding `drawing`, re-warming a ruler on
+    /// `warmup(depth)` when its disarm named a *rebuilt series* (a replay
     /// seek, a bar-spec change, a market switch). Without the re-warm,
-    /// "re-armed" silently means "warming up for another twenty bars".
-    pub fn rearm(&mut self, drawing: D, warmup: impl FnOnce(usize) -> Vec<Bar>) {
-        let Some(instance) = self.anchors.for_drawing_mut(drawing) else {
-            return;
-        };
-        let series_changed = matches!(
-            instance.armed.state(),
-            ArmedState::Disarmed { reason } if reason.resets_series()
-        );
-        instance.armed.rearm();
-        if series_changed {
-            let bars = warmup(instance.armed.trigger().warmup_bars());
-            instance.armed.warm(&bars);
+    /// "re-armed" silently means "warming up for another twenty bars". An
+    /// instance still watching is left as it is.
+    pub fn rearm(&mut self, drawing: D, mut warmup: impl FnMut(usize) -> Vec<Bar>) {
+        let reached = self.anchors.on_drawing_mut(drawing);
+        for instance in reached.filter(|instance| instance.rearmable()) {
+            let series_changed = matches!(
+                instance.armed.state(),
+                ArmedState::Disarmed { reason } if reason.resets_series()
+            );
+            instance.armed.rearm();
+            if series_changed {
+                let bars = warmup(instance.armed.trigger().warmup_bars());
+                instance.armed.warm(&bars);
+            }
         }
     }
 
@@ -137,18 +138,20 @@ impl<D: Copy + PartialEq> PaneStrategies<D> {
         std::mem::take(&mut self.cleanup)
     }
 
-    /// Remove the instance riding `drawing` and queue the sweep of its
-    /// pending entry — every "the bot dies with its drawing" path funnels
+    /// Remove every instance riding `drawing` and queue the sweep of their
+    /// pending entries — every "the bot dies with its drawing" path funnels
     /// through here.
     pub fn remove_for_drawing(&mut self, drawing: D) {
         let cleanup = self.anchors.remove_for_drawing(drawing);
         self.cleanup.extend(cleanup);
     }
 
-    /// Call off the strategy riding `drawing`, as the user, and queue the
-    /// sweep of whatever it left resting. Nothing to call off is a no-op.
+    /// Call off every strategy riding `drawing` still watching, as the
+    /// user, and queue the sweep of whatever they left resting. An ended
+    /// one keeps its reason. Nothing to call off is a no-op.
     pub fn disarm(&mut self, drawing: D) {
-        if let Some(instance) = self.anchors.for_drawing_mut(drawing) {
+        let reached = self.anchors.on_drawing_mut(drawing);
+        for instance in reached.filter(|instance| instance.watching()) {
             let cleanup = instance.armed.disarm(DisarmReason::User);
             self.cleanup.extend(cleanup);
         }
@@ -162,9 +165,9 @@ impl<D: Copy + PartialEq> PaneStrategies<D> {
     }
 
     /// Arm `form` on `drawing`, warmed on `warmup(depth)`, once `check` —
-    /// the chart's judgement of the drawing — passed. Answers with the
-    /// cleanup an instance it replaced owes the simulator, and the cue its
-    /// alarm rings with, if it carries one.
+    /// the chart's judgement of the drawing — passed, beside any instance
+    /// already riding it. Answers with the cue its alarm rings with, if it
+    /// carries one.
     ///
     /// # Errors
     ///
@@ -177,7 +180,7 @@ impl<D: Copy + PartialEq> PaneStrategies<D> {
         preset: String,
         check: impl FnOnce() -> Result<(), String>,
         warmup: impl FnOnce(usize) -> Vec<Bar>,
-    ) -> Result<(Vec<Command>, Option<Cue>), String> {
+    ) -> Result<Option<Cue>, String> {
         let Some(CompiledPreset {
             params,
             force,
@@ -195,7 +198,7 @@ impl<D: Copy + PartialEq> PaneStrategies<D> {
         // Armed means armed now, not after another twenty bars of warmup
         // the trader cannot see the reason for.
         armed.warm(&warmup(armed.trigger().warmup_bars()));
-        let replaced = self.anchors.arm(AnchoredInstance {
+        self.anchors.arm(AnchoredInstance {
             drawing,
             preset,
             spec: form.clone(),
@@ -204,7 +207,7 @@ impl<D: Copy + PartialEq> PaneStrategies<D> {
             cue: alarm.map(|setup| setup.cue).unwrap_or_default(),
             mark: AlarmMark::Quiet,
         });
-        Ok((replaced, alarm.map(|setup| setup.cue)))
+        Ok(alarm.map(|setup| setup.cue))
     }
 }
 

@@ -469,14 +469,15 @@ impl DrawingControllerAccess<'_> {
         side: crate::pane::PaneSide,
         duplicated: drawings::Duplicated,
     ) {
-        let Some((spec, label)) = host.watching_strategy(duplicated.source) else {
-            return;
-        };
-        if let Err(reason) = host.arm_copy(side, duplicated.copy, &spec, label, alerts) {
-            effects.note(
-                format!("the copy carries no strategy: {reason}"),
-                Instant::now(),
-            );
+        for (spec, label) in host.watching_strategies(duplicated.source) {
+            if let Err(reason) = host.arm_copy(side, duplicated.copy, &spec, label, alerts) {
+                effects.note(
+                    format!("the copy carries no strategy: {reason}"),
+                    Instant::now(),
+                );
+                // The refusal is the copy's, not one bot's: say it once.
+                break;
+            }
         }
     }
 }

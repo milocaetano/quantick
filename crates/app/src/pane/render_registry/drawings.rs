@@ -380,8 +380,9 @@ impl DrawingPass<'_> {
         // Badges paint outside the visibility gate above: a hidden drawing
         // hides its geometry, never the fact that a bot rides it — an
         // invisible armed instance is the one state this surface must not
-        // allow. O(armed instances), zero when none.
-        for instance in &anchors.instances {
+        // allow. One badge per drawing however many ride it; zero when none.
+        for stack in anchors.stacks() {
+            let (instance, riders) = (stack.speaker, stack.riders);
             let Some(index) = drawings.index_of(instance.drawing) else {
                 continue;
             };
@@ -398,7 +399,7 @@ impl DrawingPass<'_> {
                 .collect();
             super::super::strategies::paint_strategy_badge(
                 &clipped,
-                instance,
+                (instance, riders),
                 drawing,
                 &points,
                 drawings.all_hidden(),

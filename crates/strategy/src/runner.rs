@@ -447,4 +447,67 @@ mod tests {
             "the stand-in admits nothing even if read past the inactive gate"
         );
     }
+
+    /// Two instances armed on one rectangle step in creation order and
+    /// fire independently: each gets its own order id, a fill moves only
+    /// its owner, and deleting the drawing sweeps only the entry still
+    /// pending — the filled one's position stays the trader's.
+    #[test]
+    fn two_instances_on_one_drawing_fire_independently() {
+        use crate::anchors::{AlarmMark, StrategyAnchors};
+        use crate::presets::StoredPreset;
+
+        let riding = |preset: &str| AnchoredInstance {
+            drawing: 1_u64,
+            preset: preset.to_owned(),
+            spec: StoredPreset::starting_point(Side::Buy),
+            armed: warmed(),
+            alarm: None,
+            cue: Cue::default(),
+            mark: AlarmMark::Quiet,
+        };
+        let mut anchors = StrategyAnchors::default();
+        anchors.arm(riding("first"));
+        anchors.arm(riding("second"));
+        let mut port = RecordingPort::default();
+
+        let _ = step_closed_bar(
+            &mut anchors.instances,
+            &bar(102, 106),
+            3,
+            |drawing, _| region().filter(|_| drawing == 1),
+            &mut port,
+            0,
+        );
+        for (instance, id) in anchors.instances.iter().zip([1, 2]) {
+            assert_eq!(
+                instance.armed.state(),
+                &ArmedState::Fired {
+                    order_id: Some(OrderId(id)),
+                    retest: false
+                },
+                "{} fired with its own order, in creation order",
+                instance.preset
+            );
+        }
+
+        let events = port.consume(vec![entry_fill(1)]);
+        deliver_print_events(&mut anchors.instances, &events, &mut port);
+        assert_eq!(anchors.instances[0].armed.state(), &ArmedState::InPosition);
+        assert_eq!(
+            anchors.instances[1].armed.state(),
+            &ArmedState::Fired {
+                order_id: Some(OrderId(2)),
+                retest: false
+            },
+            "the first instance's fill is not the second's"
+        );
+
+        assert_eq!(
+            anchors.remove_for_drawing(1),
+            vec![Command::CancelOrder { id: OrderId(2) }],
+            "deleting the drawing disarms both, sweeping the pending entry"
+        );
+        assert!(anchors.is_empty());
+    }
 }
