@@ -1,5 +1,3 @@
-# Docking guide painting and title-bar input: +100 over pinned main (86506).
-# Main already exceeds its 86452 ceiling by 54 (CI run 44398851961).
-# Geometry, drop decisions and guide presentation remain in headless owners.
-crates/app +154
-!budget +154
+# Docking guide painting and title-bar input add 99 lines; main has 12 lines of headroom.
+crates/app +87
+!budget +87

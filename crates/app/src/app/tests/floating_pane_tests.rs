@@ -474,59 +474,70 @@ fn press_menu_opens(app: &mut QuantickApp, ctx: &egui::Context, slot: u32) {
 
 #[test]
 fn docked_title_space_lifts_the_addressed_pane_and_publishes_the_hovered_guides() {
-    let (mut app, ctx) = saved_tab("charts-2");
-    let header = drawn(&app, "pane_title.0").expect("title drag region");
-    let start = header.center();
-    run_sized_frame(
-        &mut app,
-        &ctx,
-        TEST_WINDOW,
-        vec![
-            egui::Event::PointerMoved(start),
-            pointer_button(start, true),
-        ],
-    );
-    run_sized_frame(
-        &mut app,
-        &ctx,
-        TEST_WINDOW,
-        vec![egui::Event::PointerMoved(start + egui::vec2(0.0, 50.0))],
-    );
-    assert_eq!(
-        app.active_tab().canvas.floats.held.map(|held| held.slot()),
-        Some(0)
-    );
-    let target = model_rects(&app)
-        .into_iter()
-        .find(|(slot, _)| *slot == 1)
-        .unwrap()
-        .1;
-    let center = egui::pos2(target.x + target.w / 2.0, target.y + target.h / 2.0);
-    run_sized_frame(
-        &mut app,
-        &ctx,
-        TEST_WINDOW,
-        vec![egui::Event::PointerMoved(center)],
-    );
-    let controls = &app.active_tab().canvas.menus.drawn;
-    let swap = controls
-        .iter()
-        .find(|control| control.id == "canvas.dock.swap.1")
-        .expect("hovered pane's Swap");
-    assert!(swap.selected);
-    assert!(
-        !controls
+    for (layout, moving_kind) in [("charts-2", PaneKind::Time), ("time+flow", PaneKind::Flow)] {
+        let (mut app, ctx) = saved_tab(layout);
+        let panes = model_rects(&app);
+        let source = app
+            .active_tab()
+            .canvas
+            .state
+            .panes()
+            .into_iter()
+            .find(|(_, kind, _)| *kind == moving_kind)
+            .expect("source pane")
+            .0;
+        let (destination, target) = panes
+            .into_iter()
+            .find(|(slot, _)| *slot != source)
+            .expect("destination pane");
+        let header = drawn(&app, &format!("pane_title.{source}")).expect("title drag region");
+        let start = header.center();
+        run_sized_frame(
+            &mut app,
+            &ctx,
+            TEST_WINDOW,
+            vec![
+                egui::Event::PointerMoved(start),
+                pointer_button(start, true),
+            ],
+        );
+        run_sized_frame(
+            &mut app,
+            &ctx,
+            TEST_WINDOW,
+            vec![egui::Event::PointerMoved(start + egui::vec2(0.0, 50.0))],
+        );
+        assert_eq!(
+            app.active_tab().canvas.floats.held.map(|held| held.slot()),
+            Some(source)
+        );
+        let center = egui::pos2(target.x + target.w / 2.0, target.y + target.h / 2.0);
+        run_sized_frame(
+            &mut app,
+            &ctx,
+            TEST_WINDOW,
+            vec![egui::Event::PointerMoved(center)],
+        );
+        let controls = &app.active_tab().canvas.menus.drawn;
+        let swap = controls
             .iter()
-            .any(|control| control.id == "canvas.dock.swap.0")
-    );
-    run_sized_frame(
-        &mut app,
-        &ctx,
-        TEST_WINDOW,
-        vec![pointer_button(center, false)],
-    );
-    assert!(
-        app.active_tab().canvas.floats.held.is_none(),
-        "release settles the gesture"
-    );
+            .find(|control| control.id == format!("canvas.dock.swap.{destination}"))
+            .expect("hovered pane's Swap");
+        assert!(swap.selected);
+        assert!(
+            !controls
+                .iter()
+                .any(|control| control.id == format!("canvas.dock.swap.{source}"))
+        );
+        run_sized_frame(
+            &mut app,
+            &ctx,
+            TEST_WINDOW,
+            vec![pointer_button(center, false)],
+        );
+        assert!(
+            app.active_tab().canvas.floats.held.is_none(),
+            "release settles the gesture"
+        );
+    }
 }

@@ -215,13 +215,7 @@ pub(crate) fn preview(
         let slot = screen_rect(slot);
         let tint = [TINT.0, TINT.1][usize::from(ctx.style().visuals.dark_mode)];
         painter.rect_filled(slot, 0.0, palette.accent().gamma_multiply(tint));
-        let plate = (palette.accent(), Color32::WHITE);
-        let swap = matches!(
-            held.release(state, area, window, at),
-            DropOutcome::Dock(quantick_workspace::canvas::DockTarget::Swap(_))
-        );
-        let label = if swap { "Swap" } else { "Dock here" };
-        pill(&painter, slot.center_top() + vec2(0.0, 24.0), label, plate);
+        painter.rect_stroke(slot, 0.0, Stroke::new(OUTLINE_PX, palette.accent()));
     }
     guides(&painter, state, area, held.slot(), at);
     let words = (palette.chrome(), palette.text_primary());
@@ -261,14 +255,19 @@ fn guides(
             5.0,
             Stroke::new(OUTLINE_PX, if hot { ink } else { palette.border() }),
         );
-        let font = egui::FontId::proportional(guide.text_size);
-        painter.text(
-            badge.center(),
-            Align2::CENTER_CENTER,
-            guide.label,
-            font,
-            ink,
-        );
+        use egui_phosphor::regular as icons;
+        use quantick_ui_model::canvas_guides::GuideMark;
+        use quantick_workspace::canvas::Edge;
+        let (text, size) = match guide.mark {
+            GuideMark::Split(Edge::Left) => (icons::ARROW_LEFT, 22.0),
+            GuideMark::Split(Edge::Right) => (icons::ARROW_RIGHT, 22.0),
+            GuideMark::Split(Edge::Top) => (icons::ARROW_UP, 22.0),
+            GuideMark::Split(Edge::Bottom) => (icons::ARROW_DOWN, 22.0),
+            GuideMark::Swap => ("Swap", 11.0),
+            GuideMark::Park => ("Park", 11.0),
+        };
+        let font = egui::FontId::proportional(size);
+        painter.text(badge.center(), Align2::CENTER_CENTER, text, font, ink);
     }
 }
 

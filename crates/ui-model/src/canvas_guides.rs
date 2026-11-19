@@ -3,11 +3,16 @@ use quantick_workspace::canvas::{
     self, CanvasPoint, CanvasRect, CanvasState, DockTarget, DropTarget, Edge, PaneSlot,
 };
 
+pub enum GuideMark {
+    Split(Edge),
+    Swap,
+    Park,
+}
+
 pub struct Guide {
     pub zone: CanvasRect,
     pub badge: CanvasRect,
-    pub label: &'static str,
-    pub text_size: f32,
+    pub mark: GuideMark,
     pub selected: bool,
 }
 
@@ -22,20 +27,12 @@ pub fn guides(
     canvas::drop_guides(area, &panes, Some(at))
         .into_iter()
         .map(|(target, zone)| {
-            let (label, text_size) = match target {
+            let mark = match target {
                 DropTarget::Dock(
                     DockTarget::Canvas(edge) | DockTarget::Beside { side: edge, .. },
-                ) => (
-                    match edge {
-                        Edge::Left => "←",
-                        Edge::Right => "→",
-                        Edge::Top => "↑",
-                        Edge::Bottom => "↓",
-                    },
-                    22.0,
-                ),
-                DropTarget::Dock(DockTarget::Swap(_)) => ("Swap", 11.0),
-                DropTarget::Park(_) => ("Park", 11.0),
+                ) => GuideMark::Split(edge),
+                DropTarget::Dock(DockTarget::Swap(_)) => GuideMark::Swap,
+                DropTarget::Park(_) => GuideMark::Park,
                 DropTarget::Float => unreachable!("floating has no drop zone"),
             };
             let badge = CanvasRect::new(
@@ -48,8 +45,7 @@ pub fn guides(
             Guide {
                 zone,
                 badge,
-                label,
-                text_size,
+                mark,
                 selected: target == selected,
             }
         })
