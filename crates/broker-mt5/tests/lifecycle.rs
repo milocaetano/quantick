@@ -158,6 +158,40 @@ fn long(
 }
 
 #[test]
+fn one_poll_can_return_closes_from_both_sides_of_an_account_change() {
+    use quantick_trading::TradeMode;
+    let (mut venue, bridge) = long(1);
+    bridge.push(
+        &Snapshot::new()
+            .deal(deal(901, 71, 77, "sell", "out", "tp", 1, 125_050))
+            .line(),
+    );
+    let real = support::account(9876, "real", "exchange");
+    bridge.push(
+        &Snapshot::new()
+            .account(real.clone())
+            .position(position(88, "buy", 1, 125_100, MAGIC))
+            .line(),
+    );
+    bridge.push(
+        &Snapshot::new()
+            .account(real)
+            .deal(deal(902, 81, 88, "sell", "out", "tp", 1, 125_110))
+            .line(),
+    );
+    let events = venue.poll();
+    let modes: Vec<_> = events
+        .iter()
+        .filter_map(|event| match event {
+            VenueEvent::Closed { broker_account, .. } => Some(*broker_account),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(modes, [Some(TradeMode::Demo), Some(TradeMode::Real)]);
+    assert!(notices(&events).contains(&VenueNotice::AccountChanged));
+}
+
+#[test]
 fn moving_the_stop_is_a_native_sltp_on_the_position() {
     let (mut venue, bridge) = long(1);
     let events = venue.amend_bracket(
@@ -361,7 +395,7 @@ fn a_reverse_is_one_opposite_entry_the_broker_nets() {
     let closed: Vec<_> = events
         .iter()
         .filter_map(|e| match e {
-            VenueEvent::Closed(trade) => Some(trade.clone()),
+            VenueEvent::Closed { trade, .. } => Some(trade.clone()),
             _ => None,
         })
         .collect();

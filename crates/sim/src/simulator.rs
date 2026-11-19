@@ -1090,7 +1090,10 @@ impl Simulator {
             mfe_points: Some(favorable.saturating_mul(close_quantity)),
         };
         self.realized_points = self.realized_points.saturating_add(closed.pnl_points);
-        events.push(VenueEvent::Closed(closed.clone()));
+        events.push(VenueEvent::Closed {
+            trade: closed.clone(),
+            broker_account: None,
+        });
         self.closed.push(closed);
     }
 }

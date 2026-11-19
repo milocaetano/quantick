@@ -25,7 +25,8 @@ pub const DELETED_DIR: &str = ".deleted";
 /// Why an edit was refused, with a stable [`Self::code`] a caller branches on.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SessionEditError {
-    /// The key is not `<symbol folder>/<file>.csv`.
+    DayNotInSession(quantick_civil::CivilDate),
+    /// The key is not an optionally broker-prefixed `<symbol>/<file>.csv`.
     InvalidKey(String),
     /// No such session file.
     NotFound(SessionKey),
@@ -48,6 +49,7 @@ impl SessionEditError {
     #[must_use]
     pub fn code(&self) -> &'static str {
         match self {
+            Self::DayNotInSession(_) => "day_not_in_session",
             Self::InvalidKey(_) => "invalid_session",
             Self::NotFound(_) => "session_not_found",
             Self::LiveSession(_) => "live_session",
@@ -69,9 +71,10 @@ impl SessionEditError {
 impl std::fmt::Display for SessionEditError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::DayNotInSession(day) => write!(f, "the session has no trade on {}", day.iso()),
             Self::InvalidKey(key) => write!(
                 f,
-                "`{key}` is not a session - send `<symbol folder>/<file>.csv` as listed"
+                "`{key}` is not a session - send `<symbol>/<file>.csv` or `broker/<symbol>/<file>.csv` as listed"
             ),
             Self::NotFound(key) => write!(f, "no session file `{key}`"),
             Self::LiveSession(key) => write!(
@@ -272,19 +275,32 @@ pub fn delete_session(
 
 /// The file `key` opens under `dir`, as the filesystem names it: its key
 /// spelled the way the folder lists it, and its canonical path.
-fn resolve(dir: &Path, key: &SessionKey) -> Result<(SessionKey, PathBuf), SessionEditError> {
+pub(super) fn resolve(
+    dir: &Path,
+    key: &SessionKey,
+) -> Result<(SessionKey, PathBuf), SessionEditError> {
     let path = key.path(dir);
     if !path.is_file() {
         return Err(SessionEditError::NotFound(key.clone()));
     }
     let io = |error: std::io::Error| SessionEditError::Io(error.to_string());
     let path = std::fs::canonicalize(path).map_err(io)?;
-    let root = std::fs::canonicalize(dir).map_err(io)?;
+    let root = std::fs::canonicalize(key.root(dir)).map_err(io)?;
+    if !path.starts_with(&root) {
+        return Err(SessionEditError::InvalidKey(key.to_string()));
+    }
     // A link out of the trades folder resolves to no key of it, and is no
     // session of it either.
     let own = SessionKey::of(&root, &path)
         .ok_or_else(|| SessionEditError::InvalidKey(key.to_string()))?;
-    Ok((own, path))
+    Ok((
+        if key.is_broker() {
+            own.for_broker()
+        } else {
+            own
+        },
+        path,
+    ))
 }
 
 fn rename_file(
@@ -329,7 +345,7 @@ fn delete_file(
     }
     guard(path)?;
     let (folder, file) = key.parts();
-    let bin = dir.join(DELETED_DIR).join(folder);
+    let bin = key.root(dir).join(DELETED_DIR).join(folder);
     std::fs::create_dir_all(&bin).map_err(|error| SessionEditError::Io(error.to_string()))?;
     let target = free_name(&bin, file);
     std::fs::rename(path, &target).map_err(|error| SessionEditError::Io(error.to_string()))?;

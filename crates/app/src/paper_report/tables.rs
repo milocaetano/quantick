@@ -281,6 +281,7 @@ pub(super) fn draw_trade_list(
                     }
                     let cells = trade_cells(view, ordinal, &palette);
                     paint_list_row(ui.painter(), rect, &cells, widths);
+                    let [.., (source_label, _)] = &cells;
                     // Repeat the complete facts on hover, including the
                     // session source, which is never guessed.
                     // Spelled with words, not an arrow: a hover card is
@@ -297,10 +298,7 @@ pub(super) fn draw_trade_list(
                         view.trade_text(ordinal),
                         trade.exit_reason.as_str().replace('_', " "),
                         fmt_duration_ms(trade.closed_ms.saturating_sub(trade.opened_ms)),
-                        match row.source {
-                            Some(source) => format!("{} session", source.as_str()),
-                            None => "saved before quantick recorded a session source".to_owned(),
-                        },
+                        source_label,
                     ));
                 }
             },
@@ -371,12 +369,12 @@ fn trade_cells(
         ),
         (view.equity.text(index), points_color(palette, equity)),
         match row.source {
-            Some(history::SessionSource::Live) => ("live".to_owned(), palette.text_faint()),
-            Some(history::SessionSource::Replay) => ("replay".to_owned(), palette.warn()),
-            // Unrecorded is not "live": a file from before
-            // the source line existed says so with a mark
-            // that reads as absence, never as a fact.
-            None => ("—".to_owned(), palette.text_faint()),
+            Some(source @ history::SessionSource::Broker(_)) => {
+                (format!("Broker {}", source.account_label()), palette.warn())
+            }
+            Some(history::SessionSource::Live) => ("Sim live".to_owned(), palette.text_faint()),
+            Some(history::SessionSource::Replay) => ("Sim replay".to_owned(), palette.warn()),
+            None => ("Sim (feed unknown)".to_owned(), palette.text_faint()),
         },
     ]
 }

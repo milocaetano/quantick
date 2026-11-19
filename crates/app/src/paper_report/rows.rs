@@ -21,7 +21,7 @@ use quantick_paper::report::fit::{FittedPieces, fit_pieces, fit_trade_row};
 use quantick_sim::ClosedTrade;
 use rust_decimal::Decimal;
 
-use super::sessions::source_glyph;
+use super::sessions::trade_source_mark;
 use super::{LEDGER_PAGE_TRADES, LEDGER_ROW_HEIGHT_PX, OpenRow};
 use crate::paper_calendar::CivilDate;
 use crate::paper_chrome::signed_text;
@@ -409,7 +409,7 @@ fn paint_trade(
     let ink = *palette.get(look.ink);
     let detail = *palette.get(look.detail_at(selected));
     let (title, small) = (palette.mono_font(TITLE_PX), palette.mono_font(DETAIL_PX));
-    let (mark, mark_ink) = source_glyph(&palette, words.source, &look).unwrap_or(("", detail));
+    let (mark, mark_ink) = trade_source_mark(&palette, words.source, &look);
     let text = words.row_text(mark);
     let piece = |text: &str, font: &egui::FontId, ink| (text.to_owned(), font.clone(), ink);
     let head = [(text.head, ink), (text.route, detail)].map(|(t, c)| piece(t, &title, c));

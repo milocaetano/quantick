@@ -261,12 +261,12 @@ pub struct GroupView<'s> {
 
 /// A session's row as the list paints it.
 pub struct SessionHead {
+    pub day: CivilDate,
     pub key: SessionKey,
     /// What the row writes, and what the search, the delete confirm and the
     /// control plane call it: its label, `Live · 12:16–13:56`, from its
     /// first entry to its last exit ([`session_title`]).
     pub title: String,
-    pub source: Option<SessionSource>,
     pub count: usize,
     /// The leading figure alone; the day above carries the pair.
     pub net: (Decimal, String),
@@ -327,9 +327,9 @@ pub fn push_groups<'a>(
                         |label| label.text.clone(),
                     );
                     rows.push(LedgerRow::SessionHead(SessionHead {
+                        day: day.day,
                         key: key.clone(),
                         title,
-                        source: first.meta.source,
                         count: session.count,
                         net: (session.tint, session.lead.clone()),
                         folded: view.collapsed_sessions.contains(key),

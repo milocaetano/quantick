@@ -76,7 +76,7 @@ fn report_text(ctx: &egui::Context, output: &egui::FullOutput) -> Vec<String> {
     for shape in &output.shapes {
         collect(&shape.shape, area, shape.clip_rect, &mut found);
     }
-    assert!(found.iter().any(|text| text == "Simulated performance"));
+    assert!(found.iter().any(|text| text == "Trading performance"));
     found
 }
 
@@ -349,6 +349,79 @@ fn frame_tail_recovery_refusals_never_spawn_or_reset_and_reconnect_keeps_the_pos
                 .paper
                 .account_mut()
                 .take_journal_changed()
+        );
+    }
+}
+
+#[test]
+fn a_warm_trades_dock_follows_broker_closes_on_either_tab_with_performance_closed() {
+    use quantick_paper::fake_broker::{TradeMode, broker};
+    use quantick_workspace::dock::DockTab;
+
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(50);
+    let (other, _events, _commands2, _book) = test_app();
+    let opening = app.runtime.tabs.plan_open();
+    app.runtime
+        .tabs
+        .append(opening, other.runtime.tabs.into_single_runtime());
+    let scratch = crate::scratch::ScratchDir::new("warm-broker-dock");
+    for tab in app.runtime.tabs.iter_mut() {
+        tab.paper.redirect_history_dir(scratch.join("paper"));
+        tab.paper.set_symbol("WINZ26");
+    }
+    app.surfaces
+        .dock
+        .update(quantick_ui_model::dock::Intent::OpenTab(DockTab::Trades));
+    let paint = |app: &mut QuantickApp| {
+        frame(
+            app,
+            &ctx,
+            Vec::new(),
+            &mut |_, _, _, _| panic!("ledger paint must not spawn"),
+            false,
+        );
+    };
+    for i in [1, 0] {
+        app.runtime.tabs.select(i);
+        paint(&mut app);
+        assert!(
+            app.active_tab()
+                .paper
+                .report_state()
+                .saved_rows_loaded()
+                .unwrap()
+                .is_empty()
+        );
+    }
+    for (writer, expected) in [(0, 1), (1, 2)] {
+        let paper = &mut app.runtime.tabs.runtime_mut(writer).paper;
+        paper.account_mut().attach_broker(broker(TradeMode::Demo).0);
+        paper.seed(&print(0, 100));
+        paper.market(quantick_engine::Side::Buy);
+        paper.on_trade(&print(1, 100));
+        paper.close_position();
+        paper.on_trade(&print(2 + writer as u64, 105));
+        paint(&mut app);
+        assert!(!app.active_tab().paper.report_state().is_open());
+        assert_eq!(
+            app.active_tab()
+                .paper
+                .report_state()
+                .saved_rows_loaded()
+                .unwrap()
+                .len(),
+            expected
+        );
+        assert!(
+            app.runtime
+                .tabs
+                .runtime_mut(1)
+                .paper
+                .report_state()
+                .saved_rows_loaded()
+                .is_none(),
+            "invalidating a hidden ledger defers its disk read"
         );
     }
 }

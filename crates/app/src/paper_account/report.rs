@@ -49,7 +49,7 @@ impl PaperAccount {
                 symbol: core.symbol(),
                 dir: core.trades_dir(),
                 session_journal_paths: core.session_journal_paths(),
-                session_trades: core.session_trades(),
+                session_trades: core.simulator_trades(),
                 session_trade_at: core.session_trade_at(),
                 session_trade_sources: core.session_trade_sources(),
                 open,
@@ -72,7 +72,7 @@ impl PaperAccount {
             summary,
             mark_price: venue.mark_price(),
             held_ms,
-            source: self.core.session_source(),
+            source: self.core.execution_source(),
         })
     }
 

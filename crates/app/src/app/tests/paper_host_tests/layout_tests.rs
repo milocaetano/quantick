@@ -115,7 +115,7 @@ fn paper_values_and_actions_fit_narrow_panels() {
                                     .frame(egui::Frame::none())
                                     .show(ctx, |ui| {
                                         if ledger {
-                                            paper.draw_trades_tab(ui, TzOffset::new(0));
+                                            paper.draw_trades_tab(ui, TzOffset::new(0), &[]);
                                         } else {
                                             paper.draw_trading_tab(ui);
                                         }

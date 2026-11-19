@@ -28,6 +28,7 @@ mod cases {
                         &mut dock,
                         ctx,
                         &mut PaperPanelEnv {
+                            live_journals: &[],
                             alerts_open: false,
                             replay: None,
                             paper: &mut paper,
@@ -46,6 +47,7 @@ mod cases {
                 &mut dock,
                 ctx,
                 &mut PaperPanelEnv {
+                    live_journals: &[],
                     alerts_open: false,
                     replay: None,
                     paper: &mut paper,
@@ -74,6 +76,7 @@ mod cases {
                         dock,
                         ctx,
                         &mut PaperPanelEnv {
+                            live_journals: &[],
                             alerts_open: false,
                             replay: None,
                             paper,
@@ -116,6 +119,7 @@ mod cases {
         env: &mut PaperPanelEnv<'_>,
     ) -> PaperPanelEffects {
         let mut env = BorrowedSurfaceEnv::Paper(PaperPanelEnv {
+            live_journals: env.live_journals,
             alerts_open: false,
             paper: env.paper,
             replay: env.replay,
@@ -142,6 +146,7 @@ mod cases {
         let mut response = SurfaceResponse::default();
         let output = ctx.run(panel_input(viewport, events), |ctx| {
             let mut env = BorrowedSurfaceEnv::Paper(PaperPanelEnv {
+                live_journals: &[],
                 alerts_open: false,
                 paper,
                 replay: None,
@@ -343,6 +348,7 @@ mod cases {
                 input.screen_rect = Some(screen);
                 let output = ctx.run(input, |ctx| {
                     let mut env = BorrowedSurfaceEnv::Paper(PaperPanelEnv {
+                        live_journals: &[],
                         alerts_open: false,
                         paper: &mut paper,
                         replay: None,
@@ -500,6 +506,7 @@ fn paper_report_composition_preserves_account_lifetime_and_tail_registration() {
     for paper in [&mut first, &mut second] {
         let _ = ctx.run(egui::RawInput::default(), |ctx| {
             let mut env = BorrowedSurfaceEnv::Paper(PaperPanelEnv {
+                live_journals: &[],
                 alerts_open: false,
                 paper,
                 replay: None,
@@ -549,6 +556,7 @@ fn paper_report_composition_preserves_account_lifetime_and_tail_registration() {
             SurfaceResponse::default()
         );
         let mut env = BorrowedSurfaceEnv::Paper(PaperPanelEnv {
+            live_journals: &[],
             alerts_open: false,
             paper: &mut first,
             replay: None,

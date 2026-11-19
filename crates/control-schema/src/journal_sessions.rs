@@ -55,6 +55,10 @@ pub const MAX_VIEW_FOLDS: usize = 64;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum JournalSourceFilter {
+    /// Trades sent to a broker, including DEMO and REAL accounts.
+    Broker,
+    /// All simulator trades, on live and replay feeds.
+    Simulator,
     /// Live sessions, and files from before a source was recorded.
     Real,
     /// Replay-driven practice sessions.
@@ -218,7 +222,7 @@ pub struct JournalSessionsResult {
     /// a delete.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session: Option<JournalSessionSnapshot>,
-    /// A delete: where the file went, relative to the trades folder.
+    /// A delete: destination relative to its journal root, prefixed with broker/ for broker sessions.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub moved_to: Option<String>,
     /// A view call: what the ledger shows after it.
@@ -238,7 +242,7 @@ pub fn descriptor() -> CapabilityDescriptor {
     let mut descriptor = crate::recovery::descriptor(
         JOURNAL_SESSIONS_CAPABILITY_ID,
         "List, name or tag trade journal sessions, or set the Trades ledger's view",
-        "The Trades ledger's session acts that remove nothing. A session is one journal file under the trades folder, named `<symbol folder>/<file>.csv`; three replays of one tape are three sessions. `list` returns the sessions holding a trade the ledger's filter keeps (source pills, a civil date span, and a search where `#tag` tokens must all be on the trade and other words must appear in the session's name or default label), newest first and bounded, and changes nothing. `rename` and `tag` append a line to the session's own file (the last line wins, the trade columns never change), the live session included. `view` sets the active tab's ledger filter and folds sessions shut or open, and answers what the ledger then shows; with no field it only reads. Deleting a session is `session.journal.delete`. Refusals carry `details.code`: invalid_session, session_not_found, trade_not_found, invalid_tag, session_unreadable, writes_refused, write_failed, no_ledger. Every edit and view change journals `session.journal.changed`, and every open ledger and report re-reads the folder after an edit.",
+        "The Trades ledger's session acts that remove nothing. A session is one journal file under the trades folder, named `<symbol folder>/<file>.csv` for simulator history or `broker/<symbol folder>/<file>.csv` for the sibling real-trades folder; three replays of one tape are three sessions. `list` returns the sessions holding a trade the ledger's filter keeps (source pills, a civil date span, and a search where `#tag` tokens must all be on the trade and other words must appear in the session's name or default label), newest first and bounded, and changes nothing. `rename` and `tag` append a line to the session's own file (the last line wins, the trade columns never change), the live session included. `view` sets the active tab's ledger filter and folds sessions shut or open, and answers what the ledger then shows; with no field it only reads. Deleting a session is `session.journal.delete`. Open an exact session or origin-specific civil-day report with `session.report.open`. Source filters broker and simulator separate execution origins; real retains its legacy meaning of simulator-on-live-feed, replay selects simulator replays, and both includes all origins. Refusals carry `details.code`: invalid_session, session_not_found, trade_not_found, invalid_tag, session_unreadable, writes_refused, write_failed, no_ledger. Every edit and view change journals `session.journal.changed`, and every open ledger and report re-reads the folder after an edit.",
         false,
         generated_schema::<JournalSessionsInput>(),
     );

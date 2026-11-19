@@ -12,7 +12,7 @@ pub struct ReportSnapshot<'a> {
     pub source: SourceFilter,
     pub window: ReportWindow,
     pub hidden_outside: usize,
-    pub hidden_by_source: usize,
+    pub hidden_by_source_or_scope: usize,
     pub rows: &'a [HistoryRow],
     pub report: &'a PerformanceReport,
 }
@@ -26,7 +26,7 @@ impl<'a> ReportSnapshot<'a> {
                 .range
                 .map_or(ReportWindow::Period(view.period), ReportWindow::Dates),
             hidden_outside: view.hidden_outside,
-            hidden_by_source: view.hidden_by_source,
+            hidden_by_source_or_scope: view.hidden_by_source_or_scope,
             rows: &view.rows,
             report: &view.report,
         }

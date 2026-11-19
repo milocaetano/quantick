@@ -94,6 +94,7 @@ fn borrowed_domain_rows_reborrow_in_catalog_order() {
         settings.enabled = initial;
         paper.set_cmd_trading(settings);
         let mut env = BorrowedSurfaceEnv::Paper(PaperPanelEnv {
+            live_journals: &[],
             alerts_open: false,
             paper: &mut paper,
             replay: None,
@@ -192,6 +193,7 @@ fn borrowed_domain_rows_reborrow_in_catalog_order() {
     for env in [None, Some(&mut wrong)] {
         // Seed stale observations independently before each absent/wrong facet.
         let mut paper_env = BorrowedSurfaceEnv::Paper(PaperPanelEnv {
+            live_journals: &[],
             alerts_open: false,
             paper: &mut paper,
             replay: None,
@@ -251,6 +253,7 @@ fn borrowed_domain_rows_reborrow_in_catalog_order() {
     }
     let before = paper.cmd_trading();
     let mut env = BorrowedSurfaceEnv::Paper(PaperPanelEnv {
+        live_journals: &[],
         alerts_open: false,
         paper: &mut paper,
         replay: None,

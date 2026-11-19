@@ -82,7 +82,7 @@ fn frame(ctx: &egui::Context, paper: &mut PaperTrading, events: Vec<egui::Event>
             .resizable(true)
             .default_width(320.0)
             .width_range(crate::dock::DOCK_MIN_WIDTH..=crate::dock::DOCK_MAX_WIDTH)
-            .show(ctx, |ui| shown.action = paper.draw_trades_tab(ui, UTC));
+            .show(ctx, |ui| shown.action = paper.draw_trades_tab(ui, UTC, &[]));
         egui::CentralPanel::default().show(ctx, |_| {});
     });
     shown.width = egui::containers::panel::PanelState::load(ctx, egui::Id::new(PANEL))

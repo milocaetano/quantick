@@ -21,12 +21,13 @@ use quantick_control_schema::journal_sessions::{
     MAX_LISTED_SESSIONS, MAX_LISTED_TAGGED_TRADES, delete_descriptor, descriptor,
 };
 use quantick_control_schema::session::MODULE_ID;
+use quantick_paper::report::SourceFilter;
+use quantick_paper::report::journals::load as load_history;
 use quantick_paper::report::ledger_state::{LedgerView, LedgerViewChange};
 use quantick_paper::report::session_edit::{JournalEdit, JournalEditOutcome, SessionEditError};
 use quantick_paper::report::sessions::{
     LedgerFilter, SessionInfo, SessionKey, TradeRef, live_keys, source_word, summarize_sessions,
 };
-use quantick_paper::report::{SourceFilter, load_history};
 
 use serde_json::{Value, json};
 
@@ -144,16 +145,23 @@ fn run_edit<A: NotifyAccess>(
     let tz = paper.journal_timezone();
     let live = live_keys(&scope.dir, &scope.live);
     let result = match &outcome {
-        JournalEditOutcome::Deleted { moved_to, .. } => JournalSessionsResult {
-            moved_to: Some(
-                moved_to
-                    .strip_prefix(&scope.dir)
-                    .unwrap_or(moved_to)
-                    .to_string_lossy()
-                    .replace('\\', "/"),
-            ),
-            ..answer("delete", true)
-        },
+        JournalEditOutcome::Deleted { session, moved_to } => {
+            let relative = moved_to
+                .strip_prefix(session.root(&scope.dir))
+                .map_err(|_| {
+                    ControlError::invalid_request(
+                        "deleted session destination is outside its journal",
+                    )
+                })?;
+            let origin = if session.is_broker() { "broker/" } else { "" };
+            JournalSessionsResult {
+                moved_to: Some(format!(
+                    "{origin}{}",
+                    relative.to_string_lossy().replace('\\', "/")
+                )),
+                ..answer("delete", true)
+            }
+        }
         JournalEditOutcome::Renamed { session, .. }
         | JournalEditOutcome::Tagged { session, .. } => {
             let action = match outcome {
@@ -296,6 +304,8 @@ fn ledger_view(view: &LedgerView) -> JournalLedgerView {
     JournalLedgerView {
         source: match view.filter.source {
             SourceFilter::Real => JournalSourceFilter::Real,
+            SourceFilter::Broker => JournalSourceFilter::Broker,
+            SourceFilter::Simulator => JournalSourceFilter::Simulator,
             SourceFilter::Replay => JournalSourceFilter::Replay,
             SourceFilter::All => JournalSourceFilter::Both,
         },
@@ -313,6 +323,8 @@ fn wire_count(count: usize) -> WireU64 {
 fn source_filter(source: JournalSourceFilter) -> SourceFilter {
     match source {
         JournalSourceFilter::Real => SourceFilter::Real,
+        JournalSourceFilter::Broker => SourceFilter::Broker,
+        JournalSourceFilter::Simulator => SourceFilter::Simulator,
         JournalSourceFilter::Replay => SourceFilter::Replay,
         JournalSourceFilter::Both => SourceFilter::All,
     }
@@ -342,18 +354,22 @@ fn key(text: &str) -> Result<SessionKey, ControlError> {
 }
 
 /// An edit's refusal, its stable `details.code` beside the control code.
-fn refusal(error: SessionEditError) -> ControlError {
+pub(crate) fn refusal(error: SessionEditError) -> ControlError {
     let code = match &error {
         SessionEditError::NotFound(_) => codes::RESOURCE_GONE,
         SessionEditError::LiveSession(_)
         | SessionEditError::WritesRefused(_)
         | SessionEditError::Io(_) => codes::CAPABILITY_UNAVAILABLE,
-        SessionEditError::InvalidKey(_)
+        SessionEditError::DayNotInSession(_)
+        | SessionEditError::InvalidKey(_)
         | SessionEditError::TradeNotFound(..)
         | SessionEditError::InvalidTag(_)
         | SessionEditError::Unreadable(..) => codes::INVALID_REQUEST,
     };
     let next_step = match &error {
+        SessionEditError::DayNotInSession(_) => {
+            "send a civil day shown under this session in the Trades ledger"
+        }
         SessionEditError::LiveSession(_) => {
             "a tab is still journaling to this session; it can be deleted once that tab moves to another feed, replay or symbol"
         }

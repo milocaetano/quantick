@@ -138,10 +138,10 @@ impl PaperOwner for super::workspace_calls::WorkspaceCalls<'_> {
 }
 
 /// The trades folder and every file any tab is still journaling to.
-fn journal_scope(tabs: &ArrangementHost) -> JournalScope {
+pub(super) fn journal_scope(tabs: &ArrangementHost) -> JournalScope {
     let live = tabs
         .iter()
-        .flat_map(|tab| tab.paper.account().session_journal_paths());
+        .flat_map(|tab| tab.paper.account().journal_paths());
     JournalScope {
         dir: tabs[tabs.active_index()]
             .paper
@@ -149,6 +149,21 @@ fn journal_scope(tabs: &ArrangementHost) -> JournalScope {
             .trades_dir()
             .to_path_buf(),
         live: live.cloned().collect(),
+    }
+}
+
+/// Share close notifications before the dock reads its tab's cached ledger.
+pub(super) fn follow_journals(tabs: &mut ArrangementHost) {
+    let writers: Vec<_> = tabs
+        .iter_with_ids_mut()
+        .filter_map(|(id, tab)| tab.paper.account_mut().take_journal_write().then_some(id))
+        .collect();
+    if !writers.is_empty() {
+        for (id, tab) in tabs.iter_with_ids_mut() {
+            if writers.as_slice() != [id] {
+                tab.paper.account_mut().invalidate_history();
+            }
+        }
     }
 }
 

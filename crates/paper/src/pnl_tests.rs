@@ -497,8 +497,8 @@ fn the_report_footnote_names_the_chosen_figure_and_the_catalog() {
     let auto = b3_reader(&declared, &catalog, &unchosen).footnote();
     assert_eq!(
         auto,
-        "Simulated figures, money where a point value is known, else pts/ct; \
-         point values from instruments.toml or a declared value."
+        "Displayed P&L · money where a point value is known, else pts/ct. \
+         Point values come from instruments.toml or a declared value."
     );
     let chosen = PnlSettings {
         chosen: Some(PnlPrimary::PointsPerContract),

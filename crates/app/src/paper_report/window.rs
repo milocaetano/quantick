@@ -50,7 +50,7 @@ impl Paint<'_, '_> {
             - frame.inner_margin.sum().y)
             .max(0.0);
         let id = egui::Id::new("Simulated performance");
-        crate::popup::centred(egui::Window::new("Simulated performance"), id, ctx)
+        crate::popup::centred(egui::Window::new("Trading performance"), id, ctx)
             .open(&mut open)
             .collapsible(false)
             .resizable(true)
@@ -77,6 +77,17 @@ impl Paint<'_, '_> {
                 #[cfg(any(feature = "scenario-harness", test))]
                 self.native.scroll_probe.report(ui);
                 reload = self.draw_report_filters(ui);
+                if let Some(scope) = self.report_scope() {
+                    let reset = ui
+                        .horizontal(|ui| {
+                            ui.label(&scope.title);
+                            ui.button("Back to ordinary report").clicked()
+                        })
+                        .inner;
+                    if reset {
+                        self.update(Intent::ClearFilters(env.symbol.to_owned()));
+                    }
+                }
                 self.draw_report_calendar(ui, tz);
                 // The rows above can retire the view — a picked day, a
                 // pill, a cleared range. Re-cutting it here rather than
@@ -128,7 +139,7 @@ impl Paint<'_, '_> {
                         #[cfg(any(feature = "scenario-harness", test))]
                         self.native.scroll_probe.rows(ui);
                     }
-                    _ => reload |= self.draw_report_empty(ui, env),
+                    _ => self.draw_report_empty(ui, env),
                 }
                 self.draw_report_footer(ui, env);
             });
@@ -144,8 +155,8 @@ impl Paint<'_, '_> {
         self.update(Intent::DrainToast);
     }
 
-    /// Why nothing is listed and the way back; true when history must reload.
-    fn draw_report_empty(&mut self, ui: &mut egui::Ui, env: &ReportEnv<'_>) -> bool {
+    /// Why nothing is listed and the way back.
+    fn draw_report_empty(&mut self, ui: &mut egui::Ui, env: &ReportEnv<'_>) {
         let palette = theme::get(ui.ctx());
         ui.add_space(8.0);
         ui.label(
@@ -156,10 +167,10 @@ impl Paint<'_, '_> {
             .as_deref()
             .unwrap_or("any symbol")
             .to_owned();
-        let hidden_by_source = self
+        let hidden_by_source_or_scope = self
             .report_view()
             .as_ref()
-            .map_or(0, |view| view.hidden_by_source);
+            .map_or(0, |view| view.hidden_by_source_or_scope);
         let picked = self.calendar().selection.range();
         let text = if let Some(range) = picked {
             // The dates are the user's own pick, so the
@@ -169,12 +180,9 @@ impl Paint<'_, '_> {
                  the date filter to go back to the period pills.",
                 range.label(),
             )
-        } else if hidden_by_source > 0 {
-            // The trades exist; the one control that would
-            // reveal them must be named, not implied.
+        } else if hidden_by_source_or_scope > 0 {
             format!(
-                "{scope} has {hidden_by_source} trade(s) behind the Source \
-                 filter. Try Source \"Both\".",
+                "{scope} has {hidden_by_source_or_scope} trade(s) outside the selected source or report scope."
             )
         } else {
             format!(
@@ -193,12 +201,10 @@ impl Paint<'_, '_> {
                 .clicked()
         {
             self.update(Intent::ClearFilters(env.symbol.to_owned()));
-            return true;
         }
-        false
     }
 
-    /// The unreadable-file count, the scope line and the P&L footnote.
+    /// The unreadable-file count, the history scan totals and the P&L footnote.
     fn draw_report_footer(&mut self, ui: &mut egui::Ui, env: &ReportEnv<'_>) {
         let palette = theme::get(ui.ctx());
         ui.add_space(6.0);
@@ -216,7 +222,7 @@ impl Paint<'_, '_> {
             }
             ui.label(
                 egui::RichText::new(format!(
-                    "{} trade(s) across {} file(s) in scope",
+                    "Loaded history total · {} trade(s), {} journal file(s) checked",
                     history.rows.len(),
                     history.files
                 ))
@@ -339,7 +345,7 @@ impl Paint<'_, '_> {
             });
         });
         if let Some(view) = self.report_view() {
-            let text = match (view.range, view.anchor_ms) {
+            let mut text = match (view.range, view.anchor_ms) {
                 // A picked range names itself in absolute dates: the whole
                 // point of the calendar is a window the trader can state.
                 (Some(range), _) => {
@@ -353,12 +359,6 @@ impl Paint<'_, '_> {
                         text.push_str(&format!(
                             " - {} saved trade(s) outside these dates",
                             view.hidden_outside,
-                        ));
-                    }
-                    if view.hidden_by_source > 0 {
-                        text.push_str(&format!(
-                            " - {} trade(s) behind the Source filter",
-                            view.hidden_by_source,
                         ));
                     }
                     text
@@ -377,21 +377,16 @@ impl Paint<'_, '_> {
                             view.hidden_outside,
                         ));
                     }
-                    if view.hidden_by_source > 0 {
-                        text.push_str(&format!(
-                            " - {} trade(s) behind the Source filter",
-                            view.hidden_by_source,
-                        ));
-                    }
                     text
                 }
-                (None, None) if view.hidden_by_source > 0 => format!(
-                    "no saved trades in this scope - {} trade(s) sit behind the Source \
-                     filter (try Both)",
-                    view.hidden_by_source,
-                ),
                 (None, None) => "no saved trades in this scope".to_owned(),
             };
+            if view.hidden_by_source_or_scope > 0 {
+                text.push_str(&format!(
+                    " - {} trade(s) outside the selected source or report scope",
+                    view.hidden_by_source_or_scope,
+                ));
+            }
             ui.label(egui::RichText::new(text).color(palette.text_support()));
         }
         reload

@@ -73,6 +73,28 @@ pub fn when_one(value: Option<&str>, capability: &'static str) -> Option<LaunchC
     crate::launch_values::one(value).then(|| (capability, json!({})))
 }
 
+/// `session:<key>` or `day:<YYYY-MM-DD>:<key>`; admission validates the named session.
+pub fn session_report(value: &str) -> Option<LaunchCall> {
+    let (kind, rest) = value.split_once(':')?;
+    let input = match kind {
+        "session" if !rest.is_empty() => crate::session_reports::ReportInput::Session {
+            session: rest.to_owned(),
+        },
+        "day" => {
+            let (day, session) = rest.split_once(':')?;
+            crate::session_reports::ReportInput::Day {
+                day: day.to_owned(),
+                session: session.to_owned(),
+            }
+        }
+        _ => return None,
+    };
+    Some((
+        crate::session_reports::REPORT_OPEN_CAPABILITY_ID,
+        serde_json::to_value(input).ok()?,
+    ))
+}
+
 #[cfg(test)]
 #[path = "launch_calls_tests.rs"]
 mod tests;

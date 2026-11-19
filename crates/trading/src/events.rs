@@ -359,7 +359,11 @@ pub enum VenueEvent {
     /// A simulated execution happened.
     Filled(Fill),
     /// An exit completed a round trip against the average entry.
-    Closed(ClosedTrade),
+    Closed {
+        trade: ClosedTrade,
+        /// The terminal mode at execution. A simulator close has no broker account.
+        broker_account: Option<crate::TradeMode>,
+    },
     /// The position's protective prices were replaced.
     BracketSet {
         stop_loss: Option<Decimal>,

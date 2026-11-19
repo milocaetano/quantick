@@ -226,20 +226,24 @@ impl Paint<'_, '_> {
 }
 
 /// A session's header, the top of its box inside the day's card, on one
-/// line: a large caret, the source glyph and `Live · 12:16–13:56`, its count
+/// line: a large caret, the execution origin and `Live · 12:16–13:56`, its count
 /// and leading figure flush right; narrow, the figure goes, then the stem is
 /// cut, never the span ([`fit_session_head`]). A click folds it; the menu
 /// renames or deletes it, the confirm naming it as the header does.
 pub(super) fn draw_session_head(ui: &mut egui::Ui, head: &SessionHead) -> Option<SessionPress> {
     let palette = theme::get(ui.ctx());
     let look = ledger_row(palette.resolved.dark, RowKind::Session);
-    let glyph = source_glyph(&palette, head.source, &look);
+    let origin = if head.key.is_broker() {
+        ("Broker", palette.warn())
+    } else {
+        ("Simulator", *palette.get(look.detail))
+    };
     let (stem, span) = title_span(&head.title);
     let figures = (head.count, head.net.1.as_str());
     let response = draw_header(
         ui,
         &look,
-        (&[stem, span], glyph),
+        (&[stem, span], Some(origin)),
         &|width, texts, measure| fit_session_head(width, SIDE_GAP_PX, texts, figures, measure),
         (SESSION_HEAD_PAD, Bold::Neither),
         (head.folded, head.focused),
@@ -249,12 +253,24 @@ pub(super) fn draw_session_head(ui: &mut egui::Ui, head: &SessionHead) -> Option
         press = Some(SessionPress::Fold(head.key.clone(), !head.folded));
     }
     let response = response.on_hover_text(format!(
-        "{} · {} trade(s) - click to {}, right-click to rename or delete; F2 renames, Del deletes",
+        "{} · {} trade(s) - click to {}, right-click for reports, rename or delete; F2 renames, Del deletes",
         head.key,
         head.count,
         if head.folded { "open it" } else { "fold it" }
     ));
     response.context_menu(|ui| {
+        for (label, day) in [("Session report", None), ("Day report", Some(head.day))] {
+            if ui.button(label).clicked() {
+                press = Some(SessionPress::Report(
+                    quantick_paper::report::scope::ReportRequest {
+                        session: head.key.clone(),
+                        day,
+                    },
+                ));
+                ui.close_menu();
+            }
+        }
+        ui.separator();
         if let Some(menu) = session_menu(ui, &head.key, &head.title, head.count, head.live) {
             press = Some(menu);
         }
@@ -415,19 +431,19 @@ pub(super) fn draw_hidden_live(ui: &mut egui::Ui, hidden: usize) {
     }
 }
 
-/// Replay wears a play glyph - Dark's amber, or the row's own mark ink -
-/// live none, unrecorded a `?` in the row's secondary ink.
-pub(super) fn source_glyph(
+/// Broker accounts and compact simulator marks share the trade row's detail line.
+pub(super) fn trade_source_mark(
     palette: &crate::theme::Palette,
     source: Option<SessionSource>,
     look: &RowLook,
-) -> Option<(&'static str, egui::Color32)> {
+) -> (&'static str, egui::Color32) {
     match source {
-        Some(SessionSource::Replay) => Some((
+        Some(source @ SessionSource::Broker(_)) => (source.account_label(), palette.warn()),
+        Some(SessionSource::Replay) => (
             icons::PLAY,
             look.mark.map_or(palette.amber(), |mark| *palette.get(mark)),
-        )),
-        Some(SessionSource::Live) => None,
-        None => Some(("?", *palette.get(look.detail))),
+        ),
+        Some(SessionSource::Live) => ("Sim", *palette.get(look.detail)),
+        None => ("?", *palette.get(look.detail)),
     }
 }

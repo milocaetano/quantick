@@ -15,7 +15,7 @@ pub enum DockTab {
     Session,
     /// Paper trading: simulated position, order entry, pending orders.
     Trading,
-    /// The trade ledger: closed simulated trades, this session and saved.
+    /// The trade ledger: closed broker and simulator trades.
     Trades,
 }
 
@@ -52,7 +52,7 @@ impl DockTab {
         match self {
             Self::Session => "SESSION",
             Self::Trading => "PAPER TRADING · SIM",
-            Self::Trades => "TRADES · SIM",
+            Self::Trades => "TRADES",
         }
     }
 
@@ -62,7 +62,7 @@ impl DockTab {
         match self {
             Self::Session => "Market replay session",
             Self::Trading => "Paper trading — simulated orders, position and history",
-            Self::Trades => "Closed simulated trades — this session and the saved history",
+            Self::Trades => "Closed broker and simulator trades, current and saved",
         }
     }
 

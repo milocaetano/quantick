@@ -71,6 +71,7 @@ pub mod schema_documents;
 pub mod script;
 pub mod semantic;
 pub mod session;
+pub mod session_reports;
 pub mod settings;
 mod tabs;
 pub mod tape_fold;
