@@ -34,10 +34,15 @@ mod bar_rules;
 #[path = "workspace_book_manage.rs"]
 mod manage;
 pub use manage::{UNDO_WINDOW_MS, UndoOutcome};
+#[path = "workspace_creation.rs"]
+mod creation;
+#[path = "workspace_default.rs"]
+mod protected_default;
+pub use creation::{DEFAULT_TIMEFRAME_MS, WorkspaceCreation};
 
 /// The file beside the layouts file.
 pub const WORKSPACES_FILE: &str = "workspaces.toml";
-/// The workspace that always exists and cannot be deleted or renamed.
+/// The immutable built-in workspace template.
 pub const DEFAULT_WORKSPACE: &str = "Default";
 /// Longest a workspace name may be: it sits on a tab chip.
 pub const MAX_WORKSPACE_NAME: usize = 32;
@@ -53,6 +58,7 @@ pub enum WorkspaceRefusal {
     DuplicateName(String),
     UnknownWorkspace(String),
     DefaultProtected,
+    CreationInvalid,
     UnknownTab(u64),
     /// The tab's panes are still being built, so there is nothing to read an
     /// empty recipe from yet.
@@ -78,6 +84,7 @@ impl WorkspaceRefusal {
             Self::DuplicateName(_) => "workspace.name_taken",
             Self::UnknownWorkspace(_) => "workspace.unknown",
             Self::DefaultProtected => "workspace.default_protected",
+            Self::CreationInvalid => "workspace.creation_invalid",
             Self::UnknownTab(_) => "workspace.unknown_tab",
             Self::TabOpening(_) => "workspace.tab_not_ready",
             Self::RevertRemoved => "workspace.revert_removed",
@@ -99,8 +106,12 @@ impl std::fmt::Display for WorkspaceRefusal {
             Self::DuplicateName(name) => write!(f, "a workspace is already called {name}"),
             Self::UnknownWorkspace(name) => write!(f, "no workspace is called {name}"),
             Self::DefaultProtected => {
-                write!(f, "{DEFAULT_WORKSPACE} cannot be deleted or renamed")
+                write!(
+                    f,
+                    "{DEFAULT_WORKSPACE} is a built-in template; use Save as to keep changes"
+                )
             }
+            Self::CreationInvalid => f.write_str("choose 1 to 8 charts and a positive timeframe"),
             Self::UnknownTab(tab) => write!(f, "no open tab has id {tab}"),
             Self::TabOpening(tab) => {
                 write!(f, "tab {tab} is still opening; retry once its charts stand")
@@ -310,6 +321,9 @@ pub struct WorkspaceBook {
     /// Kept in the desk, on [`SavedTab`], not in this file.
     #[serde(skip)]
     tabs: BTreeMap<u64, TabWorkspace>,
+    /// Copies parked by New workspace, retained by the desk until revisited.
+    #[serde(skip)]
+    parked: BTreeMap<u64, BTreeMap<String, WorkspaceRecipe>>,
     /// The desk's `auto_save`, told at launch: not in this file.
     #[serde(skip, default = "autosave_default")]
     autosave: bool,
@@ -384,6 +398,7 @@ impl Default for WorkspaceBook {
                 WorkspaceColour::Preset(workspace_colour::DEFAULT_PRESET),
             )]),
             tabs: BTreeMap::new(),
+            parked: BTreeMap::new(),
             autosave: autosave_default(),
             drawings: BTreeMap::new(),
             unsynced: BTreeMap::new(),
@@ -475,12 +490,10 @@ pub fn parse_book(text: &str) -> Result<WorkspaceBook, BookParseError> {
     book.recipes
         .entry(DEFAULT_WORKSPACE.to_owned())
         .or_default();
-    for (name, recipe) in &mut book.recipes {
+    for recipe in book.recipes.values_mut() {
         recipe.adopt_legacy_bars();
-        if name == DEFAULT_WORKSPACE {
-            *recipe = recipe.without_bars();
-        }
     }
+    book.protect_default();
     // A book from before colours gets them here, in the book's order:
     // `Default` first, then by name, whatever order the file lists them in.
     book.settle_colours();
@@ -611,6 +624,13 @@ impl WorkspaceBook {
         colour: WorkspaceColour,
         swap: bool,
     ) -> Result<ColourOutcome, WorkspaceRefusal> {
+        if name == DEFAULT_WORKSPACE
+            || self
+                .colour(DEFAULT_WORKSPACE)
+                .is_some_and(|held| held.identical(colour))
+        {
+            return Err(WorkspaceRefusal::DefaultProtected);
+        }
         if !self.recipes.contains_key(name) {
             return Err(WorkspaceRefusal::UnknownWorkspace(name.to_owned()));
         }
@@ -696,7 +716,7 @@ impl WorkspaceBook {
     #[must_use]
     pub fn tab_state(&self, tab: u64) -> Option<TabWorkspaceState<'_>> {
         let state = self.tabs.get(&tab)?;
-        let modified = if self.autosave {
+        let modified = if self.autosave && state.workspace != DEFAULT_WORKSPACE {
             self.unsynced.contains_key(&tab) && self.is_modified(tab, state)
         } else {
             self.is_modified(tab, state) || self.held_drawings(tab) > 0
@@ -835,7 +855,8 @@ impl WorkspaceBook {
     }
 
     fn outvoted(&self, tab: u64) -> bool {
-        self.unsynced.get(&tab) == Some(&Unsynced::Outvoted)
+        self.tab_workspace(tab) == DEFAULT_WORKSPACE
+            || self.unsynced.get(&tab) == Some(&Unsynced::Outvoted)
     }
 
     /// The tab whose copy autosave writes into `tab`'s workspace: of every tab
@@ -935,7 +956,7 @@ impl WorkspaceBook {
     pub fn unsaved_edits(&self, tab: u64) -> Option<UnsavedEdits> {
         let state = self.tabs.get(&tab)?;
         let (modified, held) = (self.is_modified(tab, state), self.held_drawings(tab));
-        let holds = if self.autosave {
+        let holds = if self.autosave && state.workspace != DEFAULT_WORKSPACE {
             self.unsynced(tab).is_some()
         } else {
             modified || held > 0
@@ -1036,6 +1057,7 @@ impl WorkspaceBook {
     /// A tab closed: nothing of it stays. Its edits go with it.
     pub fn close_tab(&mut self, tab: u64) {
         self.tabs.remove(&tab);
+        self.forget_parked_tab(tab);
         self.drawings.remove(&tab);
         self.unsynced.remove(&tab);
     }
@@ -1140,8 +1162,18 @@ impl WorkspaceBook {
             });
         }
         let dropped_edits = self.drops_on_leaving(tab);
-        self.tabs.insert(tab, TabWorkspace::on(name, recipe));
+        let parked = self
+            .parked
+            .get_mut(&tab)
+            .and_then(|copies| copies.remove(name));
+        self.tabs.insert(
+            tab,
+            TabWorkspace::on(name, parked.clone().unwrap_or(recipe)),
+        );
         self.unsynced.remove(&tab);
+        if parked.is_some() && (self.differs(tab) || self.captures_inherited_bars(tab)) {
+            self.unsynced.insert(tab, Unsynced::Outvoted);
+        }
         Ok(SetOutcome {
             changed: true,
             dropped_edits,
@@ -1186,9 +1218,12 @@ impl WorkspaceBook {
     /// the click: clean tabs on the same workspace.
     ///
     /// # Errors
-    /// No such tab.
+    /// No such tab, or the tab is on the protected factory Default.
     pub fn save_to_preview(&self, tab: u64) -> Result<Vec<u64>, WorkspaceRefusal> {
         let saver = self.state(tab)?;
+        if saver.workspace == DEFAULT_WORKSPACE {
+            return Err(WorkspaceRefusal::DefaultProtected);
+        }
         if !self.is_modified(tab, saver) && !self.captures_inherited_bars(tab) {
             return Ok(Vec::new());
         }
@@ -1208,7 +1243,7 @@ impl WorkspaceBook {
     /// with edits of its own keeps them, compared now to the new recipe.
     ///
     /// # Errors
-    /// No such tab.
+    /// No such tab, or the tab is on the protected factory Default.
     pub fn save_to(&mut self, tab: u64) -> Result<SaveOutcome, WorkspaceRefusal> {
         let tabs_changed = self.save_to_preview(tab)?;
         let saver = self.state(tab)?;
@@ -1220,11 +1255,7 @@ impl WorkspaceBook {
                 tabs_changed,
             });
         }
-        let recipe = if workspace == DEFAULT_WORKSPACE {
-            saver.copy.without_bars()
-        } else {
-            saver.copy.clone()
-        };
+        let recipe = saver.copy.clone();
         for other in &tabs_changed {
             if let Some(state) = self.tabs.get_mut(other) {
                 state.copy = recipe.clone();
@@ -1283,30 +1314,6 @@ impl WorkspaceBook {
         })
     }
 
-    /// Make a new workspace of an empty recipe ([`WorkspaceRecipe::emptied`]
-    /// of what the tab holds) and put the tab on it. No other tab changes.
-    ///
-    /// # Errors
-    /// No such tab; a tab still opening, whose copy is the factory `Default`
-    /// that names no arrangement; the name is empty, too long or taken.
-    pub fn create(&mut self, tab: u64, name: &str) -> Result<CreateOutcome, WorkspaceRefusal> {
-        let state = self.state(tab)?;
-        if state.copy.is_factory() {
-            return Err(WorkspaceRefusal::TabOpening(tab));
-        }
-        let cleaned = self.validate_new_name(name)?;
-        let dropped_edits = self.is_modified(tab, state);
-        let recipe = state.copy.emptied();
-        self.recipes.insert(cleaned.clone(), recipe.clone());
-        self.tabs.insert(tab, TabWorkspace::on(&cleaned, recipe));
-        self.unsynced.remove(&tab);
-        self.settle_colours();
-        Ok(CreateOutcome {
-            workspace: cleaned,
-            dropped_edits,
-        })
-    }
-
     /// Rename a workspace; its tabs follow, and so does a desk still naming it
     /// the old way. Answers the name as stored and whether it moved.
     ///
@@ -1342,6 +1349,11 @@ impl WorkspaceBook {
                 state.workspace.clone_from(&cleaned);
             }
         }
+        for copies in self.parked.values_mut() {
+            if let Some(copy) = copies.remove(name) {
+                copies.insert(cleaned.clone(), copy);
+            }
+        }
         self.renamed.remove(&cleaned);
         for current in self.renamed.values_mut() {
             if current == name {
@@ -1353,49 +1365,6 @@ impl WorkspaceBook {
             workspace: cleaned,
             changed: true,
         })
-    }
-
-    /// Delete a workspace; its tabs move to `Default`. A clean one adopts
-    /// `Default`'s recipe; one with edits keeps them, marked `Default •`, so
-    /// nothing is lost.
-    ///
-    /// # Errors
-    /// `name` is `Default`, or no workspace has it, as on a repeat.
-    pub fn delete(&mut self, name: &str) -> Result<DeleteOutcome, WorkspaceRefusal> {
-        if let Some(refusal) = self.delete_refusal(name) {
-            return Err(refusal);
-        }
-        let recipe = self.recipes.remove(name).expect("delete_refusal found it");
-        self.renamed.retain(|_, current| current != name);
-        let fallback = self.default_recipe().clone();
-        let mut outcome = DeleteOutcome {
-            changed: true,
-            ..DeleteOutcome::default()
-        };
-        for (tab, state) in &mut self.tabs {
-            if state.workspace != name {
-                continue;
-            }
-            state.workspace = DEFAULT_WORKSPACE.to_owned();
-            state.opened = None;
-            outcome.moved.push(*tab);
-            if recipe.holds(&state.copy) {
-                state.copy.clone_from(&fallback);
-                outcome.adopted.push(*tab);
-            } else {
-                outcome.kept_edits.push(*tab);
-            }
-        }
-        // With autosave on a kept copy is not in `Default`: marked, and
-        // written only when the trader saves it.
-        if self.autosave {
-            for tab in &outcome.kept_edits {
-                self.unsynced.insert(*tab, Unsynced::Outvoted);
-            }
-        }
-        // Its colour frees for the next workspace made.
-        self.settle_colours();
-        Ok(outcome)
     }
 
     fn default_recipe(&self) -> &WorkspaceRecipe {
@@ -1473,6 +1442,8 @@ pub fn capture_recipe(
             .collect(),
         layers,
         footprint_style,
+        reset_presentation: false,
+        candle_styles: (!tab.candle_styles.is_empty()).then(|| tab.candle_styles.clone()),
         flow_bars: Some(tab.flow_bars.clone()),
         legacy_context_bars: Vec::new(),
         canvas: None,

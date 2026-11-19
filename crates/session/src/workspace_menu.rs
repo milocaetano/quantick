@@ -41,6 +41,8 @@ pub enum WorkspaceCommand {
     Manage(ManageIntent),
     /// A press in the create dialog's palette.
     NameColour(ColourIntent),
+    CreationTimeframe(u64),
+    CreationCharts(usize),
 }
 
 /// What the name dialog is asking for.
@@ -72,6 +74,7 @@ pub struct NameDialog {
     pub colour: Option<String>,
     /// The create dialogs' palette: its focus and Custom.
     pub palette: ColourPopover,
+    pub creation: quantick_workspace::workspace_book::WorkspaceCreation,
 }
 
 /// The menus' state across frames.
@@ -354,6 +357,7 @@ impl WorkspaceMenuState {
             wants_focus: true,
             colour: None,
             palette: ColourPopover::default(),
+            creation: Default::default(),
         });
     }
 

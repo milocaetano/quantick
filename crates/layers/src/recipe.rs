@@ -25,16 +25,45 @@ pub fn recipe_layers(states: BTreeMap<ChartLayer, bool>) -> BTreeMap<String, boo
 }
 
 /// A recipe's switches as the `registered` layers they name. A layer the
-/// recipe leaves out keeps what the pane decided.
+/// recipe leaves out keeps what the pane decided unless the recipe explicitly
+/// starts from the registered layer defaults.
 #[must_use]
 pub fn recipe_states(
     registered: &[ChartLayer],
     layers: &BTreeMap<String, bool>,
+    reset: bool,
 ) -> BTreeMap<ChartLayer, bool> {
     registered
         .iter()
         .copied()
         .filter(|layer| in_recipe(*layer))
-        .filter_map(|layer| layers.get(layer.id()).map(|on| (layer, *on)))
+        .filter_map(|layer| {
+            let visible = layers
+                .get(layer.id())
+                .copied()
+                .or_else(|| (reset && layer.persisted()).then_some(layer.0.default_on));
+            visible.map(|on| (layer, on))
+        })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn clean_recipe_defaults_only_switches_it_can_capture() {
+        let registered = [ChartLayer::Footprint, ChartLayer::Bubbles];
+        let empty = BTreeMap::new();
+        assert_eq!(
+            recipe_states(&registered, &empty, true),
+            BTreeMap::from([(ChartLayer::Footprint, ChartLayer::Footprint.0.default_on)])
+        );
+        assert!(recipe_states(&registered, &empty, false).is_empty());
+        let explicit = BTreeMap::from([(ChartLayer::Bubbles.id().to_owned(), true)]);
+        assert_eq!(
+            recipe_states(&registered, &explicit, true).get(&ChartLayer::Bubbles),
+            Some(&true)
+        );
+    }
 }

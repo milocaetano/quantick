@@ -401,6 +401,7 @@ pub fn cell_menu(
     );
     let colour = book.colour(workspace);
     let swatch = CellRow {
+        unavailable: (workspace == DEFAULT_WORKSPACE).then_some(DEFAULT_PROTECTED_REASON),
         tip: colour.map(|colour| format!("{}{SEPARATOR}change colour", said(colour))),
         command: Some(WorkspaceCommand::Colour(ColourIntent::Toggle)),
         capability: Some(WORKSPACE_COLOUR_POPOVER_CAPABILITY_ID),
@@ -442,7 +443,12 @@ fn head(
     keys: &str,
 ) -> Vec<CellRow> {
     let save_call = calls::WORKSPACE_SAVE_TO_CAPABILITY_ID;
-    let save = if auto && !captures_bars {
+    let save = if workspace == DEFAULT_WORKSPACE {
+        CellRow {
+            unavailable: Some(DEFAULT_PROTECTED_REASON),
+            ..CellRow::new(RowKind::Quiet, "save", "Built-in template · locked")
+        }
+    } else if auto && !captures_bars {
         CellRow {
             unavailable: Some(AUTOSAVE_SAVES_REASON),
             capability: Some(save_call),

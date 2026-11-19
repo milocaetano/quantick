@@ -249,7 +249,9 @@ fn a_drag_names_its_place_in_thousandths() {
 /// and the name move right by the swatch's extra width, 13 pt.
 #[test]
 fn the_header_swatch_is_a_sixteen_point_press() {
-    let book = mock(true);
+    let mut book = mock(true);
+    book.open_tab(1);
+    book.set(1, "Flow").unwrap();
     let marks = header(&book, true);
     let swatch = marks
         .iter()

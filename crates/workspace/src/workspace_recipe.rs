@@ -20,6 +20,14 @@ use crate::indicator_document::SavedIndicator;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+/// Opaque style document interpreted and validated by the stores crate.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SavedPaneStyle {
+    pub pane_index: usize,
+    pub version: u32,
+    pub style: toml::Value,
+}
+
 /// What the factory `Default`'s summary says: it opens as the feed declares.
 pub const FACTORY_SUMMARY: &str = "as the feed opens";
 const SUMMARY_SEPARATOR: &str = " \u{b7} ";
@@ -155,6 +163,12 @@ pub struct WorkspaceRecipe {
     /// The footprint style's id; absent keeps the window's footprint style.
     #[serde(default)]
     pub footprint_style: Option<String>,
+    /// Reset pane layer and footprint overrides before applying this recipe.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub reset_presentation: bool,
+    /// Authored pane appearances. Legacy recipes leave the desk's appearance in place.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub candle_styles: Option<Vec<SavedPaneStyle>>,
     /// The flow pane's bar rule, e.g. `tick:2000`; absent keeps the tab's.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub flow_bars: Option<String>,
@@ -197,6 +211,10 @@ struct StoredRecipe {
     #[serde(default)]
     footprint_style: Option<String>,
     #[serde(default)]
+    reset_presentation: bool,
+    #[serde(default)]
+    candle_styles: Option<Vec<SavedPaneStyle>>,
+    #[serde(default)]
     flow_bars: Option<String>,
     #[serde(default, rename = "context_bars")]
     legacy_context_bars: Vec<String>,
@@ -217,6 +235,8 @@ impl From<StoredRecipe> for WorkspaceRecipe {
             context_panes,
             layers,
             footprint_style,
+            reset_presentation,
+            candle_styles,
             flow_bars,
             legacy_context_bars,
             canvas,
@@ -240,6 +260,8 @@ impl From<StoredRecipe> for WorkspaceRecipe {
             context_panes,
             layers,
             footprint_style,
+            reset_presentation,
+            candle_styles,
             flow_bars,
             legacy_context_bars,
             canvas,
@@ -262,6 +284,8 @@ impl Default for WorkspaceRecipe {
             context_panes: Vec::new(),
             layers: BTreeMap::new(),
             footprint_style: None,
+            reset_presentation: false,
+            candle_styles: None,
             flow_bars: None,
             legacy_context_bars: Vec::new(),
             canvas: None,
@@ -320,6 +344,10 @@ impl WorkspaceRecipe {
     /// reading short of its canvas (a chart still to be built) takes none.
     #[must_use]
     pub fn with_unshown_of(mut self, stored: &Self) -> Self {
+        self.reset_presentation = stored.reset_presentation;
+        if self.candle_styles.is_none() && stored.candle_styles.is_some() {
+            self.candle_styles = Some(Vec::new());
+        }
         let held = self.context_panes.len();
         if held == self.shown_charts() {
             (self.context_panes).extend(stored.context_panes.iter().skip(held).cloned());
@@ -598,6 +626,9 @@ impl WorkspaceRecipe {
         };
         if layers(self) != layers(base) {
             note("layers".to_owned());
+        }
+        if self.candle_styles != base.candle_styles {
+            note("candle style".to_owned());
         }
         if self.footprint_style != base.footprint_style {
             note("footprint style".to_owned());

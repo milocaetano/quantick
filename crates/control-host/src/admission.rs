@@ -25,9 +25,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use quantick_control::{
     error::{ControlError, codes},
     id::{CapabilityId, ErrorCode, PermissionId},
-    registry::{
-        CapabilityDescriptor, ControlRegistry, RegistryError, RevisionPolicy, check_idempotency_key,
-    },
+    registry::{CapabilityDescriptor, ControlRegistry, RegistryError, RevisionPolicy},
     schema::CompiledSchema,
     wire::RequestEnvelope,
 };
@@ -201,7 +199,7 @@ impl<'a> CapabilityAdmitted<'a> {
             .validate(&envelope.payload)
             .map_err(|error| ControlError::invalid_request(error.to_string()))?;
         let carries_key = envelope.idempotency_key.is_some();
-        check_idempotency_key(descriptor.idempotency, carries_key, envelope.dry_run)?;
+        descriptor.check_request_key(&envelope.payload, carries_key, envelope.dry_run)?;
         let accepts_dry_run = policy.accepts_dry_runs && descriptor.dry_run_supported;
         let accepts_revisions = policy.accepts_expected_revisions
             && descriptor.revision_policy != RevisionPolicy::Forbidden;

@@ -607,9 +607,7 @@ fn a_restore_keeps_the_fuller_recipe_over_a_kept_copy() {
     assert!(!desk.modified(10) && !desk.modified(20));
 }
 
-/// Deleting a workspace whose tab holds an indicator edit, while a tab stands
-/// on `Default`: the copies meet as twins and the fuller stays, so the edit
-/// `WorkspaceBook::delete` promises to keep is still shown.
+/// Deleted workspace edits stay on their tab and spare other Default instances.
 #[test]
 fn a_deleted_workspace_keeps_its_tabs_indicator_edits() {
     let mut desk = Desk::open(&[10, 20]);
@@ -620,11 +618,9 @@ fn a_deleted_workspace_keeps_its_tabs_indicator_edits() {
     let deleted = desk.book.delete("Scalp").unwrap();
     assert_eq!(deleted.kept_edits, [20]);
     desk.share();
-    assert_eq!(desk.session.layout(21), desk.session.layout(11));
-    assert_eq!(
-        [11, 21].map(|pane| desk.set(pane)),
-        [(); 2].map(|()| vec![native("native.cvd")])
-    );
+    assert_ne!(desk.session.layout(21), desk.session.layout(11));
+    assert_eq!(desk.set(21), vec![native("native.cvd")]);
+    assert!(desk.set(11).is_empty());
 }
 
 /// Three tabs come back on Pair, tied: tab A clean on EMA, B and C each

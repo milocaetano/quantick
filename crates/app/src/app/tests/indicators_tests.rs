@@ -337,6 +337,8 @@ fn both_panes_reopen_with_the_legend_the_trader_folded() {
                 flow_legend_collapsed: true,
                 time_legend_collapsed: true,
                 workspace: None,
+                protected_default: false,
+                workspace_parked: Default::default(),
                 workspace_copy: None,
                 orderflow_panel: Default::default(),
             }],

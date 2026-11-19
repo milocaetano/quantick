@@ -22,6 +22,7 @@ quantick-sources = { path = "../sources" }
 quantick-sim = { path = "../sim" }
 # The kernel the tab's armed strategies run through.
 quantick-strategy = { path = "../strategy" }
+quantick-workspace = { path = "../workspace" }
 rust_decimal = { workspace = true }
 tracing = { workspace = true }
 

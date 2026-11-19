@@ -168,15 +168,6 @@ fn an_idle_frame_builds_no_recipe() {
 fn a_tab_whose_workspace_is_gone_keeps_what_it_shows_as_default_marked() {
     let mut host = OneTab::default();
     host.book.set_autosave(false);
-    let saved = WorkspaceRecipe {
-        split_fraction: Some(0.5),
-        ..WorkspaceRecipe::default()
-    };
-    host.book.open_tab(1);
-    host.book.observe(1, &saved).unwrap();
-    host.book.save_to(1).unwrap();
-    host.book.close_tab(1);
-    assert!(!host.book.recipe("Default").unwrap().is_factory());
     host.shows.split_fraction = Some(0.2);
     host.sync.arrive(7, Some("Deleted since".to_owned()), None);
     assert_eq!(
@@ -394,10 +385,12 @@ fn preparing_a_save_waits_for_arrival_and_keeps_default_market_specific() {
     assert_eq!(host.book.tab_copy(7), Some(&live.without_bars()));
     host.sync.finish(7);
     observe_tab(&mut host, 7);
-    host.book.save_to(7).unwrap();
-    assert_eq!(
-        host.book.recipe(DEFAULT_WORKSPACE),
-        Some(&live.without_bars())
-    );
-    assert!(!host.book.save_to(7).unwrap().changed);
+    assert_eq!(host.book.tab_copy(7), Some(&live));
+    assert!(matches!(
+        host.book.save_to(7),
+        Err(crate::workspace_book::WorkspaceRefusal::DefaultProtected)
+    ));
+    assert!(host.book.recipe(DEFAULT_WORKSPACE).unwrap().is_factory());
+    host.book.save_as(7, "Captured").unwrap();
+    assert_eq!(host.book.recipe("Captured"), Some(&live));
 }

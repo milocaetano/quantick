@@ -237,6 +237,27 @@ pub struct CapabilityDescriptor {
     pub pagination: Option<PaginationConsistency>,
 }
 
+impl CapabilityDescriptor {
+    /// A server-generated name needs a retry identity even when an explicitly
+    /// named request can safely use the capability without a key.
+    pub fn check_request_key(
+        &self,
+        payload: &Value,
+        carries_key: bool,
+        dry_run: bool,
+    ) -> Result<(), ControlError> {
+        let generated = self.input_schema["x-idempotency-key-unless-named-by"]
+            .as_str()
+            .is_some_and(|field| payload[field].as_str().is_none_or(|s| s.trim().is_empty()));
+        let policy = if generated {
+            IdempotencyPolicy::Required
+        } else {
+            self.idempotency
+        };
+        check_idempotency_key(policy, carries_key, dry_run)
+    }
+}
+
 pub trait ControlModule {
     /// Register module-owned permissions before profile ceilings are finalized.
     fn register_permissions(&self, _registry: &mut ControlRegistry) -> Result<(), RegistryError> {

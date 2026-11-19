@@ -128,7 +128,7 @@ const TOOLBAR_BEHAVIOUR: &str = "toolrail.dock.set";
 const HELP_BEHAVIOUR: &str = "window.help.open";
 const NO_EDITS_HOVER: &str = "This tab holds no edits";
 /// Why Default's Rename and Delete are greyed, in the menu and the dialog.
-pub const DEFAULT_PROTECTED_HOVER: &str = "Default cannot be deleted or renamed";
+pub const DEFAULT_PROTECTED_HOVER: &str = "Default is a locked built-in template; use Save as";
 
 /// Every command row of the window menu, in no particular order.
 pub const ROWS: &[Row] = &[
@@ -525,7 +525,7 @@ pub const MANAGE_WORKSPACE_CAPTION: &str = "WORKSPACE";
 pub const MANAGE_TABS_CAPTION: &str = "TABS";
 /// The line under Default's row.
 pub const MANAGE_DEFAULT_NOTE: &str =
-    "Default is the fallback for tabs whose workspace is deleted. It cannot be renamed or deleted.";
+    "Locked built-in template, always available. Use Save as to keep your changes.";
 /// The pencil's and the trash's hovers.
 pub const MANAGE_RENAME_HOVER: &str = "Rename \u{b7} F2";
 pub const MANAGE_DELETE_HOVER: &str = "Delete \u{b7} Del";

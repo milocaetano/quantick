@@ -125,6 +125,141 @@ fn enter_after_a_swatch_click_saves() {
     );
 }
 
+/// Pointer input into the picker and chart controls reaches the same draft
+/// that Create commits. Escape leaves a custom editor before the dialog.
+#[test]
+fn creating_from_the_picker_keeps_its_colour_across_chart_choices() {
+    let (mut app, ctx, first, _layouts) = scalp("workspace-picker-create");
+    let mut source_style = crate::style::ChartStyle::default();
+    source_style.candles.fill_opacity = 0.37;
+    app.active_tab_mut()
+        .flow_pane
+        .presentation
+        .candles
+        .set(source_style);
+    call(
+        &mut app,
+        "workspace.dialog.open",
+        serde_json::json!({"mode":"new"}),
+    );
+    let click = |app: &mut QuantickApp, key| {
+        let rect = drawn(app, &ctx, key);
+        click_sized(app, &ctx, FULL_HD, rect.center());
+    };
+    click(&mut app, "name_dialog.colour.custom");
+    drawn(&mut app, &ctx, "name_dialog.colour.square");
+    run_sized_frame(&mut app, &ctx, FULL_HD, vec![key_press(egui::Key::Escape)]);
+    assert!(
+        !app.chrome
+            .window_menu
+            .tab_workspace
+            .dialog
+            .as_ref()
+            .unwrap()
+            .palette
+            .custom
+    );
+    click(&mut app, "name_dialog.colour.custom");
+    click(&mut app, "name_dialog.colour.hue");
+    click(&mut app, "name_dialog.colour.square");
+    let draft = app
+        .chrome
+        .window_menu
+        .tab_workspace
+        .dialog
+        .as_ref()
+        .unwrap()
+        .palette
+        .hex
+        .clone();
+    click(&mut app, "name_dialog.charts.3");
+    click(&mut app, "name_dialog.timeframe.60000");
+    let dialog = app
+        .chrome
+        .window_menu
+        .tab_workspace
+        .dialog
+        .as_ref()
+        .unwrap();
+    assert_eq!(dialog.creation.charts, 3);
+    assert_eq!(dialog.palette.hex, draft);
+    let name = dialog.name.clone();
+    click(&mut app, "name_dialog.save");
+    for _ in 0..6 {
+        run_frame_at(&mut app, &ctx, FULL_HD);
+    }
+    let book = app.runtime.workspace.book.book();
+    assert_eq!(book.tab_workspace(first), name);
+    assert_eq!(book.colour(&name).unwrap().key(), draft);
+    let tab = app.runtime.tabs.by_id(first).unwrap();
+    let intervals: Vec<_> = tab
+        .panes()
+        .map(|(_, side)| tab.pane(side).series.state.spec().time_interval_ms())
+        .collect();
+    assert!(
+        intervals.iter().all(|ms| *ms == Some(60_000)),
+        "{intervals:?}"
+    );
+    assert_eq!(book.recipe(&name).unwrap().canvas_state().panes().len(), 3);
+    assert!(tab.flow_pane.presentation.candles.authored().is_none());
+    call(
+        &mut app,
+        "tab.workspace.set",
+        serde_json::json!({"name":"Scalp"}),
+    );
+    for _ in 0..6 {
+        run_frame_at(&mut app, &ctx, FULL_HD);
+    }
+    let restored = app
+        .active_tab()
+        .flow_pane
+        .presentation
+        .candles
+        .authored()
+        .unwrap();
+    assert_eq!(
+        restored.candles.fill_opacity,
+        source_style.candles.fill_opacity
+    );
+}
+
+#[test]
+fn creating_before_the_next_frame_parks_the_latest_style() {
+    let (mut app, ctx, _, _layouts) = scalp("workspace-create-same-frame");
+    for _ in 0..6 {
+        run_frame_at(&mut app, &ctx, FULL_HD);
+    }
+    let mut style = crate::style::ChartStyle::default();
+    style.candles.fill_opacity = 0.29;
+    app.active_tab_mut()
+        .flow_pane
+        .presentation
+        .candles
+        .set(style);
+    call(
+        &mut app,
+        "workspace.new",
+        serde_json::json!({"name":"Desk"}),
+    );
+    call(
+        &mut app,
+        "tab.workspace.set",
+        serde_json::json!({"name":"Scalp"}),
+    );
+    for _ in 0..6 {
+        run_frame_at(&mut app, &ctx, FULL_HD);
+    }
+    assert_eq!(
+        app.active_tab()
+            .flow_pane
+            .presentation
+            .candles
+            .authored()
+            .map(|style| style.candles.fill_opacity),
+        Some(0.29)
+    );
+}
+
 /// Enter in the inline field reaches `workspace.rename`.
 #[test]
 fn enter_in_the_name_field_reaches_the_rename() {
@@ -198,4 +333,150 @@ fn the_create_dialog_s_enter_saves_in_its_colour() {
     let book = app.runtime.workspace.book.book();
     let lavender = quantick_stores::workspaces::WorkspaceColour::preset(7);
     assert_eq!(book.colour("Scalp 2"), lavender);
+}
+
+fn visible_dialog_row(app: &QuantickApp, id: &str) -> Option<egui::Rect> {
+    app.chrome
+        .window_menu
+        .dialog_rows
+        .iter()
+        .find(|(row, _)| row.scene_id() == id)
+        .map(|(_, rect)| *rect)
+}
+
+#[test]
+fn focused_chart_selector_handles_enter_without_creating() {
+    let (mut app, ctx, first, _layouts) = scalp("workspace-selector-enter");
+    call(
+        &mut app,
+        "workspace.dialog.open",
+        serde_json::json!({"mode":"new"}),
+    );
+    drawn(&mut app, &ctx, "name_dialog.charts.3");
+    let focused = |app: &QuantickApp, ctx: &egui::Context| {
+        let rect = visible_dialog_row(app, "name_dialog.charts.3").unwrap();
+        ctx.memory(|m| m.focused())
+            .and_then(|id| ctx.read_response(id))
+            .is_some_and(|response| rect.contains(response.rect.center()))
+    };
+    for _ in 0..64 {
+        if focused(&app, &ctx) {
+            break;
+        }
+        run_sized_frame(
+            &mut app,
+            &ctx,
+            FULL_HD,
+            vec![key_press_with(egui::Key::Tab, egui::Modifiers::SHIFT)],
+        );
+        let release = key_release_with(egui::Key::Tab, egui::Modifiers::SHIFT);
+        run_sized_frame(&mut app, &ctx, FULL_HD, vec![release]);
+    }
+    assert!(focused(&app, &ctx), "Tab reached the three-chart selector");
+    assert_eq!(
+        app.chrome
+            .window_menu
+            .tab_workspace
+            .dialog
+            .as_ref()
+            .unwrap()
+            .creation
+            .charts,
+        1
+    );
+    run_sized_frame(&mut app, &ctx, FULL_HD, vec![key_press(egui::Key::Enter)]);
+    run_frame_at(&mut app, &ctx, FULL_HD);
+    let dialog = app
+        .chrome
+        .window_menu
+        .tab_workspace
+        .dialog
+        .as_ref()
+        .expect("Enter kept the form open");
+    assert_eq!(dialog.creation.charts, 3);
+    assert_eq!(
+        app.runtime.workspace.book.book().tab_workspace(first),
+        "Scalp"
+    );
+}
+
+#[test]
+fn expanded_colour_scroll_reaches_both_footer_actions() {
+    let (mut app, ctx, first, _layouts) = scalp("workspace-constrained-scroll");
+    let size = egui::vec2(1000.0, 525.0);
+    let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, size);
+    for submit in [false, true] {
+        call(
+            &mut app,
+            "workspace.dialog.open",
+            serde_json::json!({"mode":"new"}),
+        );
+        for _ in 0..5 {
+            run_frame_at(&mut app, &ctx, size);
+        }
+        let anchor = screen.center();
+        for _ in 0..12 {
+            if visible_dialog_row(&app, "name_dialog.colour.custom").is_some() {
+                break;
+            }
+            scroll_dialog(&mut app, &ctx, size, anchor);
+        }
+        let custom = visible_dialog_row(&app, "name_dialog.colour.custom")
+            .expect("Custom reachable by scrolling");
+        click_sized(&mut app, &ctx, size, custom.center());
+        for _ in 0..3 {
+            run_frame_at(&mut app, &ctx, size);
+        }
+        let dialog = app
+            .chrome
+            .window_menu
+            .tab_workspace
+            .dialog
+            .as_ref()
+            .unwrap();
+        assert!(dialog.palette.custom);
+        let name = dialog.name.clone();
+        let anchor = screen.center();
+        for _ in 0..12 {
+            scroll_dialog(&mut app, &ctx, size, anchor);
+        }
+        for _ in 0..4 {
+            run_frame_at(&mut app, &ctx, size);
+        }
+        let create =
+            visible_dialog_row(&app, "name_dialog.save").expect("Create visible after scrolling");
+        let cancel =
+            visible_dialog_row(&app, "name_dialog.cancel").expect("Cancel visible after scrolling");
+        assert!(screen.contains_rect(create) && screen.contains_rect(cancel));
+        click_sized(
+            &mut app,
+            &ctx,
+            size,
+            if submit { create } else { cancel }.center(),
+        );
+        run_frame_at(&mut app, &ctx, size);
+        assert!(app.chrome.window_menu.tab_workspace.dialog.is_none());
+        let book = app.runtime.workspace.book.book();
+        assert_eq!(book.recipe(&name).is_some(), submit);
+        assert_eq!(
+            book.tab_workspace(first),
+            if submit { name.as_str() } else { "Scalp" }
+        );
+    }
+}
+
+fn scroll_dialog(app: &mut QuantickApp, ctx: &egui::Context, size: egui::Vec2, anchor: egui::Pos2) {
+    run_sized_frame(
+        app,
+        ctx,
+        size,
+        vec![
+            egui::Event::PointerMoved(anchor),
+            egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                delta: egui::vec2(0.0, -160.0),
+                modifiers: egui::Modifiers::NONE,
+            },
+        ],
+    );
 }
