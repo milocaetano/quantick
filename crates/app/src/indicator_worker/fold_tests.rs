@@ -106,10 +106,22 @@ fn inputs_fold_per_slot_and_replays_fold_into_the_newest_replay() {
 #[test]
 fn closed_bars_and_lifecycle_commands_never_fold() {
     let bar = forming(1..=2).expect("a bar");
-    let mut older = IndicatorCommand::BarClosed(bar.clone().into());
-    assert!(fold_parked(&mut older, IndicatorCommand::BarClosed(bar.clone().into())).is_some());
+    let mut older = IndicatorCommand::BarClosed(bar.clone().into(), 0);
+    assert!(
+        fold_parked(
+            &mut older,
+            IndicatorCommand::BarClosed(bar.clone().into(), 0)
+        )
+        .is_some()
+    );
     assert!(fold_parked(&mut older, partial(forming(3..=3), 3..=3, 8)).is_some());
     let mut forming_update = partial(forming(1..=2), 1..=2, 8);
-    assert!(fold_parked(&mut forming_update, IndicatorCommand::BarClosed(bar.into())).is_some());
+    assert!(
+        fold_parked(
+            &mut forming_update,
+            IndicatorCommand::BarClosed(bar.into(), 0)
+        )
+        .is_some()
+    );
     assert!(fold_parked(&mut forming_update, IndicatorCommand::Remove(SlotId(1))).is_some());
 }

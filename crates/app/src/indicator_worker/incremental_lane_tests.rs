@@ -144,7 +144,7 @@ fn close_cuts_an_earlier_partial_before_the_next_run_in_the_same_batch() {
         add(),
         IndicatorCommand::Backfilled(vec![bar(&[print(0, 10)]).into()]),
         update(&old, &old, 8),
-        IndicatorCommand::BarClosed(bar(&old).into()),
+        IndicatorCommand::BarClosed(bar(&old).into(), 0),
         update(&next, &next[..1], 8),
         update(&next, &next[1..], 8),
     ]);
@@ -166,7 +166,7 @@ fn close_cuts_an_earlier_partial_before_the_next_run_in_the_same_batch() {
     let (closed, lane) = one_batch(vec![
         add(),
         update(&old, &old, 8),
-        IndicatorCommand::BarClosed(bar(&old).into()),
+        IndicatorCommand::BarClosed(bar(&old).into(), 0),
     ]);
     assert_eq!(closed.all()[0].columns, vec![vec![1.0]]);
     assert!(closed.all()[0].preview.is_none());
@@ -251,7 +251,7 @@ fn retired_epoch_releases_peak_capacity_and_preserves_small_run_outputs() {
     let history = bar(&[print(0, 10)]);
     for (reset, mut columns) in [
         (
-            IndicatorCommand::BarClosed(bar(&large).into()),
+            IndicatorCommand::BarClosed(bar(&large).into(), 0),
             vec![10.0, 10.0],
         ),
         (
@@ -332,7 +332,7 @@ fn retired_epoch_releases_peak_capacity_and_preserves_small_run_outputs() {
             worker.send(update(&run, &[], 2));
             assert_eq!(publish(&worker, &mut views), lane);
             assert_eq!(worker.retained_lane_for_test(), (length, capacity));
-            worker.send(IndicatorCommand::BarClosed(bar(&run).into()));
+            worker.send(IndicatorCommand::BarClosed(bar(&run).into(), 0));
             assert!(publish(&worker, &mut views).is_empty());
             assert_eq!(worker.retained_lane_for_test(), (0, 0));
             columns.push(preview);

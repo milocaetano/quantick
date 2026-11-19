@@ -197,12 +197,14 @@ impl IndicatorViews {
             }
             IndicatorEvent::AlertFired {
                 slot,
+                tag,
                 bar_close_ms,
                 title,
                 message,
             } => {
                 if let Some(view) = self.views.iter().find(|view| view.slot == slot) {
                     self.alarms.push(ScriptAlarm {
+                        tag,
                         indicator: view.descriptor.title.clone(),
                         bar_close_ms,
                         alert: FiredAlert { title, message },

@@ -496,6 +496,7 @@ fn a_fired_alert_queues_under_its_indicator_until_drained() {
     views.apply(rebuilt(slot, descriptor(true, 1), vec![vec![1.0]]));
     let fired = |slot| IndicatorEvent::AlertFired {
         slot,
+        tag: 3,
         bar_close_ms: 7,
         title: "Bull flip".to_owned(),
         message: "up".to_owned(),
@@ -506,6 +507,7 @@ fn a_fired_alert_queues_under_its_indicator_until_drained() {
     assert_eq!(
         alarms,
         vec![quantick_indicators::ScriptAlarm {
+            tag: 3,
             indicator: "test".to_owned(),
             bar_close_ms: 7,
             alert: quantick_indicators::FiredAlert {

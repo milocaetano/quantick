@@ -109,6 +109,9 @@ pub struct FiredAlert {
 /// the bar closing when.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScriptAlarm {
+    /// The consumer's opaque tag for where the bar closed (its market), as
+    /// it handed it with the close.
+    pub tag: u64,
     /// The indicator's title, as its legend shows it.
     pub indicator: String,
     /// Close time of the bar that raised it, exchange milliseconds.

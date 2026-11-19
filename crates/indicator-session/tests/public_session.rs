@@ -84,7 +84,7 @@ fn public_session_preserves_immediate_errors_and_incremental_cvd_trace() {
     recorder.0.clear();
     run(
         &mut session,
-        vec![Command::BarClosed(partial.into())],
+        vec![Command::BarClosed(partial.into(), 0)],
         &mut recorder,
     );
     assert_eq!(recorder.0.len(), 3);

@@ -50,7 +50,12 @@ impl IndicatorSession {
         self.host.indicator_count()
     }
     /// Send the alarms each slot raised on the bar just closed live.
-    pub(crate) fn fire_alerts(&mut self, bar_close_ms: i64, effects: &mut impl SessionEffects) {
+    pub(crate) fn fire_alerts(
+        &mut self,
+        tag: u64,
+        bar_close_ms: i64,
+        effects: &mut impl SessionEffects,
+    ) {
         for (&slot, mirror) in &self.slots {
             let Some(host_id) = mirror.host_id else {
                 continue;
@@ -58,6 +63,7 @@ impl IndicatorSession {
             for alert in self.host.take_fired_alerts(host_id) {
                 effects.event(IndicatorEvent::AlertFired {
                     slot,
+                    tag,
                     bar_close_ms,
                     title: alert.title,
                     message: alert.message,

@@ -21,13 +21,14 @@ impl SessionEffects for Recorder {
     fn inputs_rebound(&mut self, _: InputsRebound<'_>) {}
 }
 impl Recorder {
-    /// `(slot, bar close)` of every alarm recorded, taking them.
-    fn fired(&mut self) -> Vec<(u64, i64)> {
+    /// `(slot, tag, bar close)` of every alarm recorded, taking them.
+    fn fired(&mut self) -> Vec<(u64, u64, i64)> {
         self.0
             .drain(..)
             .filter_map(|event| match event {
                 Event::AlertFired {
                     slot,
+                    tag,
                     bar_close_ms,
                     title,
                     message,
@@ -36,7 +37,7 @@ impl Recorder {
                         (title.as_str(), message.as_str()),
                         ("closed", "a bar closed")
                     );
-                    Some((slot.0, bar_close_ms))
+                    Some((slot.0, tag, bar_close_ms))
                 }
                 _ => None,
             })
@@ -112,14 +113,14 @@ fn only_a_live_close_fires_and_only_once() {
 
     run(
         &mut session,
-        vec![Command::BarClosed(live[0].clone().into())],
+        vec![Command::BarClosed(live[0].clone().into(), 7)],
         &mut recorder,
     );
     let close = live[0].close_time;
     assert_eq!(
         recorder.fired(),
-        vec![(1, close), (2, close)],
-        "one per slot"
+        vec![(1, 7, close), (2, 7, close)],
+        "one per slot, echoing the close's tag"
     );
 
     run(&mut session, vec![partial(&forming)], &mut recorder);
@@ -145,9 +146,9 @@ fn only_a_live_close_fires_and_only_once() {
 
     run(
         &mut session,
-        vec![Command::BarClosed(live[1].clone().into())],
+        vec![Command::BarClosed(live[1].clone().into(), 8)],
         &mut recorder,
     );
     let close = live[1].close_time;
-    assert_eq!(recorder.fired(), vec![(1, close), (2, close)]);
+    assert_eq!(recorder.fired(), vec![(1, 8, close), (2, 8, close)]);
 }

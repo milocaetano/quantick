@@ -58,7 +58,12 @@ pub(super) fn deliver(
     popup: &mut Popup,
 ) -> Vec<quantick_stores::script_alarms::ScriptAlarmEntry> {
     let (runtime, tabs) = (&mut owners.alerts, &mut owners.tabs);
-    let raised = tabs.iter_mut().flat_map(|tab| tab.script_alarms.drain(..));
+    let raised = tabs.iter_mut().flat_map(|tab| {
+        let panes = tab.panes_mut();
+        let alarms: Vec<_> = panes.flat_map(|p| p.indicators.drain_alarms()).collect();
+        let labels = &tab.alarm_labels;
+        alarms.into_iter().filter_map(|alarm| labels.raise(alarm))
+    });
     let scripts = runtime.core.script_alarms.record(raised, wall_clock_ms());
     let script_cues = scripts.iter().map(|_| Cue::default());
     let strategy_cues = tabs.iter_mut().flat_map(|tab| tab.market.drain_alarms());
@@ -159,7 +164,7 @@ pub(crate) fn context(
     use rust_decimal::prelude::ToPrimitive;
     crate::surfaces::alerts::Context {
         market: MarketRef {
-            source: tab.alert_source(),
+            source: crate::tab::Tab::alert_source(&tab.link, &tab.active).to_context(),
             symbol: tab.active.1.clone(),
             aggregation: pane.series.bar_config(),
         },

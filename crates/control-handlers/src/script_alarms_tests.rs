@@ -3,7 +3,7 @@ use crate::scratch;
 use crate::test_support::{FakeAccess, FakeWindow};
 use quantick_alerts::SourceContext;
 use quantick_stores::alerts::AlertRuntime;
-use quantick_stores::script_alarms::{FiredAlert, Raised, ScriptAlarm, label};
+use quantick_stores::script_alarms::{FiredAlert, Raised, ScriptAlarm};
 use serde_json::json;
 
 struct Host(AlertRuntime);
@@ -20,6 +20,7 @@ fn host(name: &str) -> Host {
 
 fn raised(title: &str) -> Raised {
     let alarm = ScriptAlarm {
+        tag: 1,
         indicator: "Renko POC flip".to_owned(),
         bar_close_ms: 42,
         alert: FiredAlert {
@@ -27,12 +28,15 @@ fn raised(title: &str) -> Raised {
             message: "POC above".to_owned(),
         },
     };
-    let live = SourceContext::Live {
+    let source = SourceContext::Live {
         feed: "mt5".to_owned(),
     };
-    label(&live, "WINZ25", [alarm])
-        .next()
-        .expect("one alarm, labelled")
+    let symbol = "WINZ25".to_owned();
+    Raised {
+        source,
+        symbol,
+        alarm,
+    }
 }
 
 fn read(host: &mut Host, input: Value) -> Result<Value, ControlError> {
@@ -88,4 +92,12 @@ fn each_delivered_alarm_is_journaled_once_and_toasted() {
 
     let notes = journal::<FakeAccess>(None, &delivered);
     assert_eq!(notes.len(), 1, "a window with no journal still toasts");
+
+    let burst = log.record([raised("Bull flip"), raised("Bear flip")], 2_000);
+    let notes = journal(Some((&mut access, &actor)), &burst);
+    assert_eq!(
+        notes,
+        ["WINZ25 Renko POC flip: Bull flip — POC above (+1 more)"]
+    );
+    assert_eq!(access.events.len(), 3, "each alarm is journaled");
 }

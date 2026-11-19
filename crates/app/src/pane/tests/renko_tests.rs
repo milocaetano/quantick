@@ -126,10 +126,10 @@ fn bricks_cut_from_held_prints_reach_no_strategy_and_no_live_close() {
     pane.ingest_backfill(&tape[..10]);
     let mut queued: Vec<usize> = Vec::new();
     for trade in &tape[10..64] {
-        pane.ingest_live_trade_observed(trade, &mut |_, _, slot| queued.push(slot));
+        pane.ingest_live_trade_observed(trade, 0, &mut |_, _, slot| queued.push(slot));
     }
     let _ = settled(&pane);
-    pane.ingest_live_trade_observed(&tape[64], &mut |_, _, slot| queued.push(slot));
+    pane.ingest_live_trade_observed(&tape[64], 0, &mut |_, _, slot| queued.push(slot));
     assert_eq!(pane.closed_slots(), 34);
     assert_eq!(pane.series.state.backfill_boundary(), Some(31));
     let events = settled(&pane);

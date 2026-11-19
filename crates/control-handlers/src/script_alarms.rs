@@ -52,7 +52,7 @@ fn history(log: &ScriptAlarmLog, input: &wire::Input) -> History {
 
 /// Journal each delivered alarm as `alerts.script.fired` under the actor
 /// `journal` names (a window with no journal journals nothing), and answer
-/// the toast for each.
+/// one toast for them all, so a burst does not bury the chart.
 pub fn journal<A: JournalAccess>(
     journal: Journal<'_, A>,
     delivered: &[ScriptAlarmEntry],
@@ -64,7 +64,11 @@ pub fn journal<A: JournalAccess>(
             access.record_event(NewEvent::by(MODULE_ID, FIRED_EVENT_KIND, actor, payload));
         }
     }
-    delivered.iter().map(ScriptAlarmEntry::notice).collect()
+    match delivered {
+        [] => Vec::new(),
+        [one] => vec![one.notice()],
+        [first, rest @ ..] => vec![format!("{} (+{} more)", first.notice(), rest.len())],
+    }
 }
 
 #[cfg(test)]

@@ -13,8 +13,9 @@ use serde::{Deserialize, Serialize};
 pub const HISTORY_CAPABILITY_ID: &str = "alerts.script.history";
 
 /// Journaled once per script alarm as the window delivers it; its payload is
-/// one [`ScriptAlarm`]. The window journals it under its own local actor, as
-/// it does an automatic contract roll: no trader gesture is implied.
+/// one [`ScriptAlarm`]. Its actor is the window's `HumanUi` hand, as for an
+/// automatic contract roll; the event kind, not the actor, says that no
+/// trader gesture raised it.
 pub const FIRED_EVENT_KIND: &str = "alerts.script.fired";
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
