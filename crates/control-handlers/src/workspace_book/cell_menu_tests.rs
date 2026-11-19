@@ -127,6 +127,22 @@ fn the_blocks_keep_the_designed_order_and_name_their_calls() {
     assert_eq!(CAPTION, "WORKSPACES");
 }
 
+#[test]
+fn inherited_intervals_enable_an_explicit_save_without_a_dirty_mark() {
+    for autosave in [false, true] {
+        let mut book = desk(autosave);
+        let mut live = book.tab_copy(1).unwrap().clone();
+        live.flow_bars = Some("time:60000".to_owned());
+        book.settle_tab(1, &live);
+        let menu = menu_of(&book, 1);
+        assert!(!menu.current.dot);
+        assert_eq!(menu.head[0].command, Some(WorkspaceCommand::SaveTo));
+        assert_eq!(menu.head[0].unavailable, None);
+        book.save_to(1).unwrap();
+        assert!(menu_of(&book, 1).head[0].unavailable.is_some());
+    }
+}
+
 /// Every command the menu had before the redesign is still a row.
 #[test]
 fn every_command_the_menu_had_stays_reachable() {

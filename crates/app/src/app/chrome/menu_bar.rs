@@ -64,7 +64,7 @@ fn snapshot(app: &QuantickApp, ctx: &egui::Context) -> Snapshot {
     let followers = book.save_to_preview(tab_id).unwrap_or_default();
     let workspace = Workspace {
         name,
-        modified,
+        can_save: modified || book.captures_inherited_bars(tab_id),
         symbol: tab.symbol.clone(),
         autosave: book.autosave(),
         followers: crate::app::tab_workspaces::symbols_of(&app.runtime.tabs, &followers),

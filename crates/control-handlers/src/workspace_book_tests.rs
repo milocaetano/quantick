@@ -1355,6 +1355,35 @@ fn a_failed_write_through_marks_the_tab_and_toasts_once() {
     assert!(host.book.failed_writes().is_empty());
 }
 
+#[test]
+fn a_failed_explicit_timeframe_capture_retries_without_saving_other_legacy_tabs() {
+    let (mut host, _, _) = autosaving();
+    for (tab, name) in [(1, "Fast"), (2, "Slow")] {
+        host.book.save_as(tab, name).unwrap();
+        let mut live = host.book.tab_copy(tab).unwrap().clone();
+        live.flow_bars = Some("time:60000".to_owned());
+        host.book.settle_tab(tab, &live);
+    }
+    assert!(host.book.autosave_winners(&[1, 2], 2).is_empty());
+    host.write_fails = true;
+    assert!(save_tab_to(&mut host, 1).is_err());
+    assert!(host.book.tab_state(1).unwrap().modified);
+    assert_eq!(host.book.unsynced(1), Some(Unsynced::Failed));
+    assert_eq!(host.book.failed_writes(), [1]);
+    let due = host.book.autosave_winners(&[1, 2], 2);
+    assert_eq!(due, [1]);
+    host.write_fails = false;
+    let _ = write_through::<_, FakeAccess>(&mut host, None, &due);
+    assert_eq!(host.writes, 1);
+    assert!(host.book.failed_writes().is_empty());
+    assert!(!host.book.tab_state(1).unwrap().modified);
+    assert_eq!(
+        host.book.recipe("Fast").unwrap().flow_bars.as_deref(),
+        Some("time:60000")
+    );
+    assert_eq!(host.book.recipe("Slow").unwrap().flow_bars, None);
+}
+
 /// Turning autosave on where one save fails: the setting stays on, the save
 /// that landed and the setting are journaled, and the answer is the failure
 /// naming both, with the failed tab marked and owed a retry.

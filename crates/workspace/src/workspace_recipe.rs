@@ -470,6 +470,33 @@ impl WorkspaceRecipe {
         bare
     }
 
+    pub(crate) fn inherits_bars_from(&self, shown: &Self) -> bool {
+        (self.flow_bars.is_none() && shown.flow_bars.is_some())
+            || shown.context_panes.iter().enumerate().any(|(slot, pane)| {
+                pane.bars.is_some()
+                    && self
+                        .context_panes
+                        .get(slot)
+                        .is_none_or(|saved| saved.bars.is_none())
+            })
+    }
+
+    pub(crate) fn take_inherited_bars(&mut self, live: &Self) {
+        if self.flow_bars.is_none() {
+            self.flow_bars.clone_from(&live.flow_bars);
+        }
+        for (slot, pane) in live.context_panes.iter().enumerate() {
+            if let Some(rule) = &pane.bars {
+                if self.context_panes.len() <= slot {
+                    self.context_panes.resize_with(slot + 1, Default::default);
+                }
+                self.context_panes[slot]
+                    .bars
+                    .get_or_insert_with(|| rule.clone());
+            }
+        }
+    }
+
     /// `copy` read against this recipe: a bar rule this recipe does not name
     /// is the tab's own, never an edit, so it is left out; a pane this recipe
     /// keeps for a chart past the copy's canvas is no edit either (see
@@ -498,6 +525,17 @@ impl WorkspaceRecipe {
             {
                 pane.bars = None;
             }
+        }
+        // A legacy recipe may omit a slot whose only value is an inherited interval.
+        if copy
+            .context_panes
+            .iter()
+            .skip(self.context_panes.len())
+            .any(|pane| pane.bars.is_some())
+        {
+            fit_open(&mut read.context_panes, &self.context_panes, |pane| {
+                *pane == ContextPaneRecipe::default()
+            });
         }
         read
     }

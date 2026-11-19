@@ -422,21 +422,33 @@ pub fn cell_menu(
     CellMenu {
         current,
         swatch,
-        head: head(workspace, modified, auto, keys),
+        head: head(
+            workspace,
+            modified,
+            auto,
+            book.captures_inherited_bars(tab),
+            keys,
+        ),
         list,
         foot: foot(auto, keys),
     }
 }
 
 /// Save, or its quiet line while autosave saves; Save as; Rename.
-fn head(workspace: &str, modified: bool, auto: bool, keys: &str) -> Vec<CellRow> {
+fn head(
+    workspace: &str,
+    modified: bool,
+    auto: bool,
+    captures_bars: bool,
+    keys: &str,
+) -> Vec<CellRow> {
     let save_call = calls::WORKSPACE_SAVE_TO_CAPABILITY_ID;
     let save = if workspace == DEFAULT_WORKSPACE {
         CellRow {
             unavailable: Some(DEFAULT_PROTECTED_REASON),
             ..CellRow::new(RowKind::Quiet, "save", "Built-in template · locked")
         }
-    } else if auto {
+    } else if auto && !captures_bars {
         CellRow {
             unavailable: Some(AUTOSAVE_SAVES_REASON),
             capability: Some(save_call),
@@ -445,7 +457,7 @@ fn head(workspace: &str, modified: bool, auto: bool, keys: &str) -> Vec<CellRow>
     } else {
         CellRow {
             beside: keys.to_owned(),
-            unavailable: (!modified).then_some(NO_EDITS_REASON),
+            unavailable: (!modified && !captures_bars).then_some(NO_EDITS_REASON),
             dot: modified,
             ..CellRow::press(
                 "save",

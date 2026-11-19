@@ -67,7 +67,7 @@ impl WorkspaceBook {
     ) -> Result<super::CreateOutcome, WorkspaceRefusal> {
         let old = self.state(tab)?.clone();
         let name = self.create_recipe(name, colour, creation)?;
-        if self.is_modified(&old) {
+        if self.is_modified(tab, &old) {
             self.parked
                 .entry(tab)
                 .or_default()
@@ -175,6 +175,33 @@ time_bars='time:1m'",
         assert_eq!(book.tab_copy(1), Some(&edited));
         assert!(book.tab_state(1).unwrap().modified);
         assert!(book.autosave_winners(&[1], 1).is_empty());
+    }
+
+    #[test]
+    fn creating_parks_a_failed_inherited_interval_for_explicit_retry() {
+        let mut book = WorkspaceBook::default();
+        book.open_tab(1);
+        let mut legacy = WorkspaceRecipe::default();
+        legacy.layers.insert("volume".into(), false);
+        book.observe(1, &legacy).unwrap();
+        book.save_as(1, "Legacy").unwrap();
+        let mut live = legacy.clone();
+        live.flow_bars = Some("time:60000".into());
+        book.settle_tab(1, &live);
+        assert!(book.captures_inherited_bars(1));
+        book.note_write_failed(1);
+        book.create(1, "New").unwrap();
+        assert_eq!(
+            book.tab_copy(1).unwrap().flow_bars.as_deref(),
+            Some("time:300000")
+        );
+        book.set(1, "Legacy").unwrap();
+        assert!(book.tab_state(1).unwrap().modified);
+        assert_eq!(book.tab_copy(1).unwrap().flow_bars, live.flow_bars);
+        assert!(book.autosave_winners(&[1], 1).is_empty());
+        assert!(book.save_to(1).unwrap().changed);
+        assert_eq!(book.recipe("Legacy").unwrap().flow_bars, live.flow_bars);
+        assert!(!book.save_to(1).unwrap().changed);
     }
 
     #[test]
