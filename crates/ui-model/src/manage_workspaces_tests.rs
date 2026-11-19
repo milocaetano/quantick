@@ -107,9 +107,9 @@ fn the_rows_follow_the_list_with_the_current_pill() {
 }
 
 /// Default says why under its row, its pencil and trash are greyed with
-/// today's reason, and its chip works.
+/// the lock reason, and its chip is read-only.
 #[test]
-fn default_s_row_says_why_and_only_its_colour_changes() {
+fn default_s_row_explains_the_lock_and_disables_every_edit() {
     let manage = view(&ManageDialog::new(1), true);
     let band = piece(&manage.list, "manage_workspaces.Default");
     let rule = band.marks.iter().find_map(|mark| match mark {
@@ -123,9 +123,12 @@ fn default_s_row_says_why_and_only_its_colour_changes() {
         let icon = piece(&manage.list, &format!("manage_workspaces.Default.{part}"));
         let row = icon.row.as_ref().unwrap();
         assert!(!icon.press && row.unavailable.is_some());
-        assert_eq!(row.tip(false), Some("Default cannot be deleted or renamed"));
+        assert_eq!(
+            row.tip(false),
+            Some("Default is a locked built-in template; use Save as")
+        );
     }
-    assert!(piece(&manage.list, "manage_workspaces.Default.chip").press);
+    assert!(!piece(&manage.list, "manage_workspaces.Default.chip").press);
     assert!(!piece(&manage.list, "manage_workspaces.Default.name").double);
     assert_eq!(manage.names[0], ("Default".to_owned(), true));
 }
@@ -345,7 +348,8 @@ fn the_create_dialog_holds_the_palette_on_the_next_free_colour() {
     let new = name_dialog(&book(), &create("new"), false, &measure);
     let title = piece(&new.list, "name_dialog").row.as_ref().unwrap();
     assert_eq!(title.label, "New workspace");
-    assert_eq!(new.size, shown.size, "identical but for title and name");
+    assert_eq!(new.size[0], shown.size[0]);
+    assert!(new.size[1] > shown.size[1], "room for the creation choices");
 }
 
 /// A locked swatch's initials are pure black or white and read at least
@@ -563,4 +567,37 @@ fn the_name_dialog_keeps_its_top_and_fits_the_window() {
         "never above the window's margin"
     );
     assert_eq!(short_room, 300.0 - 2.0 * DIALOG_MARGIN_PT);
+}
+
+#[test]
+fn new_keeps_focus_on_the_selected_choice_and_submits_only_a_valid_draft() {
+    let mut dialog = create("new");
+    dialog.palette.custom = true;
+    for hex in ["#invalid", "#5DBDEB"] {
+        dialog.palette.hex = hex.to_owned();
+        let shown = name_dialog(&book(), &dialog, true, &measure);
+        assert!(!piece(&shown.list, "name_dialog.save").press);
+        assert_eq!(
+            name_answer(&mut dialog, "", None, ([false, true], shown.saves, false)),
+            None
+        );
+    }
+    dialog.palette.hex = "#123456".to_owned();
+    let shown = name_dialog(&book(), &dialog, false, &measure);
+    assert!(shown.saves);
+    let pick = WorkspaceCommand::CreationCharts(3);
+    assert_eq!(
+        name_answer(
+            &mut dialog,
+            "",
+            Some(pick.clone()),
+            ([false, true], true, false)
+        ),
+        Some(pick)
+    );
+    assert_eq!(dialog.palette.hex, "#123456");
+    assert_eq!(
+        name_answer(&mut dialog, "", None, ([false, true], true, false)),
+        Some(WorkspaceCommand::SubmitDialog)
+    );
 }

@@ -187,13 +187,43 @@ pub fn fill_create<H: WorkspaceOwner + ?Sized>(host: &H, menu: &mut WorkspaceMen
         NameDialogMode::Rename { .. } => return,
     };
     dialog.colour = Some(choosing(book, None).current.key());
+    dialog.creation = initial_creation(host, dialog.tab);
 }
 
-/// The create dialog's colour: the chosen swatch, or the Custom colour its
-/// Apply chose; `None` for none chosen. A colour typed but not applied is
-/// not chosen.
+pub fn initial_creation<H: WorkspaceOwner + ?Sized>(
+    host: &H,
+    tab: u64,
+) -> quantick_workspace::workspace_book::WorkspaceCreation {
+    let mut creation = quantick_workspace::workspace_book::WorkspaceCreation::default();
+    if let Some(ms) = host.creation_timeframe_ms(tab) {
+        creation.timeframe_ms = ms;
+    }
+    creation
+}
+
+pub fn validate_creation(
+    creation: quantick_workspace::workspace_book::WorkspaceCreation,
+) -> Result<(), ControlError> {
+    creation.recipe().map_err(|error| refused(&error))?;
+    let ms = i64::try_from(creation.timeframe_ms).ok();
+    if !ms.is_some_and(quantick_engine::bar_registry::is_time_interval) {
+        return Err(refused(&WorkspaceRefusal::CreationInvalid));
+    }
+    Ok(())
+}
+
+pub fn creation_colour(dialog: &NameDialog) -> Result<Option<WorkspaceColour>, ControlError> {
+    chosen(dialog)
+        .map(Some)
+        .ok_or_else(|| refused(&WorkspaceRefusal::ColourInvalid(dialog.palette.hex.clone())))
+}
+
+/// New uses its live custom draft. Save as uses the last applied swatch.
 #[must_use]
 pub fn chosen(dialog: &NameDialog) -> Option<WorkspaceColour> {
+    if dialog.mode == NameDialogMode::New && dialog.palette.custom {
+        return parse_typed_hex(&dialog.palette.hex).map(WorkspaceColour::Custom);
+    }
     WorkspaceColour::parse(dialog.colour.as_deref()?)
 }
 
@@ -223,6 +253,12 @@ pub fn name_colour<H: WorkspaceOwner + ?Sized>(
         ColourIntent::Square { x, y } => pressed(popover, None, Some((x, y))).and(None),
         ColourIntent::Hue(x) => pressed(popover, Some(x), None).and(None),
         ColourIntent::Close | ColourIntent::Toggle | ColourIntent::Answer(_) => {
+            if dialog.mode == NameDialogMode::New
+                && popover.custom
+                && let Some(rgb) = parse_typed_hex(&popover.hex)
+            {
+                dialog.colour = Some(WorkspaceColour::Custom(rgb).key());
+            }
             popover.custom = false;
             None
         }
@@ -251,8 +287,34 @@ pub(super) fn dialog_open<H: WorkspaceOwner + ?Sized, A: NotifyAccess>(
     actor: &ActorContext,
     value: &Value,
 ) -> Result<Value, ControlError> {
-    let WorkspaceDialogOpenInput { mode, tab_id } = input(value)?;
+    let WorkspaceDialogOpenInput {
+        mode,
+        tab_id,
+        timeframe_ms,
+        charts,
+        custom_hex,
+    } = input(value)?;
     let tab = tab_of(app, tab_id)?;
+    if mode != WorkspaceDialog::New
+        && (timeframe_ms.is_some() || charts.is_some() || custom_hex.is_some())
+    {
+        return Err(ControlError::invalid_request(
+            "creation choices require the new workspace dialog",
+        ));
+    }
+    let mut creation = initial_creation(app, tab);
+    if let Some(ms) = timeframe_ms {
+        creation.timeframe_ms = ms.get();
+    }
+    if let Some(charts) = charts {
+        creation.charts = charts;
+    }
+    validate_creation(creation)?;
+    if custom_hex.as_ref().is_some_and(|word| word.len() > 16) {
+        return Err(ControlError::invalid_request(
+            "a color draft holds at most 16 characters",
+        ));
+    }
     let mut menu = std::mem::take(app.workspace_menu().ok_or_else(unavailable)?.0);
     menu.close_chip_menu();
     match mode {
@@ -261,6 +323,13 @@ pub(super) fn dialog_open<H: WorkspaceOwner + ?Sized, A: NotifyAccess>(
         WorkspaceDialog::Manage => menu.open_manage(tab),
     }
     fill_create(app, &mut menu);
+    if let Some(dialog) = &mut menu.dialog {
+        dialog.creation = creation;
+        if let Some(hex) = custom_hex {
+            let rgb = parse_typed_hex(&hex).unwrap_or([0, 0, 0]);
+            dialog.palette.open_custom(hex, rgb_hsv(rgb));
+        }
+    }
     let dialog = menu
         .dialog
         .as_ref()
@@ -276,6 +345,8 @@ pub(super) fn dialog_open<H: WorkspaceOwner + ?Sized, A: NotifyAccess>(
         tab_id: WireU64::new(tab),
         name: dialog.map(|dialog| dialog.name.clone()),
         colour: dialog.and_then(chosen).map(Into::into),
+        timeframe_ms: (mode == WorkspaceDialog::New).then_some(WireU64::new(creation.timeframe_ms)),
+        charts: (mode == WorkspaceDialog::New).then_some(creation.charts),
     };
     *app.workspace_menu().ok_or_else(unavailable)?.0 = menu;
     let payload = json!({ "dialog": mode.word(), "tab_id": WireU64::new(tab) });

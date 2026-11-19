@@ -266,6 +266,18 @@ fn centred(
     )
 }
 
+pub(crate) fn selection_check(
+    at: Area,
+    rgb: Rgb,
+    dark: bool,
+    measure: crate::workspace_menu::Measure<'_>,
+) -> Mark {
+    tinted(
+        centred(measure, at, CHECK, 12.0, chrome(dark).ink),
+        mono_ink(rgb),
+    )
+}
+
 /// One swatch at `at`: its colour, the current one ringed and checked, a
 /// held one carrying its owner's initials, its name under it, its focus.
 fn swatch(
@@ -293,8 +305,7 @@ fn swatch(
     };
     if swatch.current {
         marks.extend([ring(at, 3.0, ink.ink), ring(at, 2.0, ink.ink)]);
-        let check = centred(measure, at, CHECK, 12.0, ink.ink);
-        marks.push(tinted(check, mono_ink(rgb)));
+        marks.push(selection_check(at, rgb, dark, measure));
     } else if let Some(initials) = &swatch.initials {
         let initials = centred(measure, at, initials, NAME_PT, ink.ink);
         marks.push(tinted(initials, mono_ink(rgb)));

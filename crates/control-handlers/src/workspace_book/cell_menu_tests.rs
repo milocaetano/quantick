@@ -89,7 +89,7 @@ fn desk(autosave: bool) -> WorkspaceBook {
 
 #[test]
 fn the_blocks_keep_the_designed_order_and_name_their_calls() {
-    let menu = menu_of(&book(false), 1);
+    let menu = menu_of(&desk(false), 1);
     assert_eq!(menu.current.kind, RowKind::Current);
     assert_eq!(menu.current.key, "current");
     assert_eq!(keys(&menu.head), ["save", "save_as", "rename"]);
@@ -252,7 +252,7 @@ fn autosave_on_quiets_save_and_hides_every_unsaved_mark() {
 
 #[test]
 fn autosave_off_says_the_shortcut_saves_and_greys_save_without_edits() {
-    let menu = menu_of(&book(false), 1);
+    let menu = menu_of(&desk(false), 1);
     let switch = &menu.foot[0];
     assert!(!switch.on);
     assert_eq!(switch.summary, "Off \u{b7} Ctrl+S saves");
@@ -261,7 +261,10 @@ fn autosave_off_says_the_shortcut_saves_and_greys_save_without_edits() {
     assert_eq!(save.kind, RowKind::Press);
     assert_eq!(save.unavailable, Some(NO_EDITS_REASON));
     assert!(!save.dot);
-    let rename = &menu.head[2];
+    let locked = menu_of(&book(false), 1);
+    assert_eq!(locked.head[0].kind, RowKind::Quiet);
+    assert_eq!(locked.head[0].unavailable, Some(DEFAULT_PROTECTED_REASON));
+    let rename = &locked.head[2];
     assert_eq!(rename.unavailable, Some(DEFAULT_PROTECTED_REASON));
     assert!(rename.disabled_hover.is_some());
 }
@@ -379,7 +382,7 @@ fn the_scene_reads_the_header_rows_filter_and_footer() {
 
 #[test]
 fn a_greyed_row_is_listed_unavailable_with_its_reason() {
-    let menu = menu_of(&book(false), 1);
+    let menu = menu_of(&desk(false), 1);
     let save = menu.head[0].scene_control("toolbar", None);
     assert_eq!(save.control_id, "toolbar.workspace_menu.save");
     assert!(!save.availability.available);

@@ -33,6 +33,7 @@ impl<'a> StyleSurface<'a> {
 pub struct PaneStyle {
     authored: Option<ChartStyle>,
     requested: bool,
+    revision: u64,
     context: u64,
     /// The time grid the theme this pane paints with asks for
     /// (`chart_time_grid`), kept by [`Self::follow_theme`].
@@ -43,6 +44,7 @@ impl PaneStyle {
         Self {
             authored: style,
             requested: false,
+            revision: 0,
             context: 0,
             theme_time_grid: false,
         }
@@ -111,8 +113,14 @@ impl PaneStyle {
         style.ownership.time_grid = Inheritance::Explicit;
         self.set(style);
     }
+    pub fn revision(&self) -> u64 {
+        self.revision
+    }
     pub fn set(&mut self, style: ChartStyle) {
-        self.authored = Some(style);
+        if self.authored != Some(style) {
+            self.authored = Some(style);
+            self.revision = self.revision.wrapping_add(1);
+        }
     }
 }
 

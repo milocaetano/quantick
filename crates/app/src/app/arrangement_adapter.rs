@@ -402,12 +402,9 @@ impl ArrangementRead<'_> {
             .tabs
             .iter_presented_ids()
             .filter_map(|id| {
-                let (workspace, workspace_copy) = self.workspace_book.saved_fields(id);
-                Some(ui_state::SavedTab {
-                    workspace,
-                    workspace_copy,
-                    ..saved_tab_of(self.tabs.by_id(id)?)
-                })
+                let mut saved = saved_tab_of(self.tabs.by_id(id)?);
+                self.workspace_book.stamp_saved_tab(id, &mut saved);
+                Some(saved)
             })
             .collect();
         let chrome = ui_state::SavedChrome {
@@ -537,6 +534,8 @@ pub(super) fn saved_tab_of(tab: &Tab) -> ui_state::SavedTab {
         // that never existed cannot have been folded.
         time_legend_collapsed: tab.time_pane().is_some_and(|pane| pane.legend_collapsed),
         workspace: None,
+        protected_default: false,
+        workspace_parked: Default::default(),
         workspace_copy: None,
         orderflow_panel: tab.tape().settings_panel.clone(),
     }

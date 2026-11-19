@@ -50,6 +50,14 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "description": "The dialog now on screen.",
   "properties": {
+    "charts": {
+      "format": "uint",
+      "minimum": 0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
     "colour": {
       "anyOf": [
         {
@@ -74,6 +82,16 @@
     },
     "tab_id": {
       "$ref": "#/$defs/WireU64"
+    },
+    "timeframe_ms": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/WireU64"
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "title": {
       "type": "string"

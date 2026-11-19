@@ -106,15 +106,6 @@ fn an_idle_frame_builds_no_recipe() {
 fn a_tab_whose_workspace_is_gone_keeps_what_it_shows_as_default_marked() {
     let mut host = OneTab::default();
     host.book.set_autosave(false);
-    let saved = WorkspaceRecipe {
-        split_fraction: Some(0.5),
-        ..WorkspaceRecipe::default()
-    };
-    host.book.open_tab(1);
-    host.book.observe(1, &saved).unwrap();
-    host.book.save_to(1).unwrap();
-    host.book.close_tab(1);
-    assert!(!host.book.recipe("Default").unwrap().is_factory());
     host.shows.split_fraction = Some(0.2);
     host.sync.arrive(7, Some("Deleted since".to_owned()), None);
     assert_eq!(

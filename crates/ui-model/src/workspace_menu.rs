@@ -425,7 +425,7 @@ fn swatch(line: Area, row: &CellRow, ink: &MenuChrome) -> Piece {
     });
     Piece {
         row: Some(row.clone()),
-        press: true,
+        press: row.unavailable.is_none(),
         hover: Some(Plate {
             toward: None,
             at: ring,

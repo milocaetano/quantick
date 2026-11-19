@@ -262,6 +262,8 @@ fn restore_testusdt(app: &mut QuantickApp) {
                 flow_legend_collapsed: false,
                 time_legend_collapsed: false,
                 workspace: None,
+                protected_default: false,
+                workspace_parked: Default::default(),
                 workspace_copy: None,
                 orderflow_panel: Default::default(),
             }],

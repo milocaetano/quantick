@@ -110,12 +110,7 @@ impl WorkspaceBook {
         name: &str,
         colour: Option<WorkspaceColour>,
     ) -> Result<CreateOutcome, WorkspaceRefusal> {
-        self.checked(name, colour)?;
-        let made = self.create(tab, name)?;
-        if let Some(colour) = colour {
-            self.set_colour(&made.workspace, colour, false)?;
-        }
-        Ok(made)
+        self.create_with(tab, name, colour, super::WorkspaceCreation::default())
     }
 
     /// The first free `<stem> <n>` from `n = from`, cut to fit a name.

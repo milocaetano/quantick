@@ -74,6 +74,9 @@ const TRASH: &str = "\u{e4a6}";
 const PLUS: &str = "\u{e3d4}";
 const CLOSE: &str = "\u{e4f6}";
 
+#[path = "workspace_creation.rs"]
+mod creation;
+
 fn words(x: f32, y: f32, said: &str, size: f32, ink: Token, width: f32) -> Mark {
     Mark::Text(Words {
         x,
@@ -363,6 +366,7 @@ fn chip(line: &Line<'_>, ink: &MenuChrome) -> Piece {
     let hit = area(PAD, line.top + (ROW_PT - HIT) / 2.0, HIT, HIT);
     let row = CellRow {
         tip: Some(format!("{}{}", line.colour.words, " \u{b7} change colour")),
+        unavailable: line.protected.then_some("workspace.default_protected"),
         colour: Some(line.colour.clone()),
         hover: Some(text::MANAGE_CHIP_HOVER),
         ..scene(
@@ -377,7 +381,7 @@ fn chip(line: &Line<'_>, ink: &MenuChrome) -> Piece {
         radius: RADIUS,
         rgb: line.colour.rgb,
     };
-    press(hit, row, true, vec![colour], ink)
+    press(hit, row, !line.protected, vec![colour], ink)
 }
 
 /// The tab count at the right, its hover naming the tabs.
@@ -923,9 +927,9 @@ pub fn name_dialog(
         });
         y += LINE_PT;
     }
-    // The caption and the check stay on the chosen colour until Apply.
+    creation::controls(&mut pieces, &mut y, dialog, dark, measure);
     let colour = chosen(dialog);
-    let mut saves = !dialog.name.trim().is_empty();
+    let mut saves = dialog.mode == NameDialogMode::New || !dialog.name.trim().is_empty();
     let mut palette = None;
     if dialog.colour.is_some() {
         let model = choosing(book, colour);
@@ -952,6 +956,15 @@ pub fn name_dialog(
         y += LINE_PT - 4.0;
         let state = &mut dialog.palette.clone(); // Settled for this frame only.
         let mut pop = colour_palette::choosing(book, colour, state, dark, measure);
+        if dialog.mode == NameDialogMode::New {
+            pop.pieces.retain(|piece| {
+                !piece
+                    .row
+                    .as_ref()
+                    .is_some_and(|row| row.key.ends_with("apply") || row.key.ends_with("cancel"))
+            });
+            creation::colour(&mut pieces, &mut y, colour, dark, measure);
+        }
         pop.scoped(NAME_SCOPE, "");
         let height = pop.size[1];
         palette = Some(([0.0, y], pop));
@@ -976,7 +989,11 @@ pub fn name_dialog(
         unavailable: (!saves).then_some("the_name_or_the_colour_is_refused"),
         ..named(
             "save",
-            text::DIALOG_SAVE,
+            if dialog.mode == NameDialogMode::New {
+                "Create workspace"
+            } else {
+                text::DIALOG_SAVE
+            },
             Some(WorkspaceCommand::SubmitDialog),
             call,
         )
@@ -1003,7 +1020,11 @@ pub fn name_dialog(
             measure,
             width - PAD,
             top + HIT / 2.0,
-            text::DIALOG_ENTER_SAVES,
+            if dialog.mode == NameDialogMode::New {
+                "Enter creates"
+            } else {
+                text::DIALOG_ENTER_SAVES
+            },
             SMALL_PT,
             Token::KeyHint,
         )],
@@ -1054,8 +1075,8 @@ pub fn capped(mut view: Sheet, room: f32) -> Sheet {
 }
 
 /// What a name dialog's frame asks: a press (its palette's as the
-/// dialog's), else Enter: Save while it would save, or Custom's Apply while
-/// Custom is open; else Esc's. A typed change clears the refusal.
+/// dialog's), then Enter on a valid form. Save as may apply its custom
+/// swatch first. A typed change clears the refusal.
 pub fn name_answer(
     dialog: &mut NameDialog,
     typed: &str,
@@ -1065,7 +1086,10 @@ pub fn name_answer(
     if dialog.name != typed {
         dialog.refusal = None;
     }
-    let submit = match (field || anywhere, dialog.palette.custom) {
+    let submit = match (
+        field || anywhere,
+        dialog.palette.custom && dialog.mode != NameDialogMode::New,
+    ) {
         (true, true) => Some(WorkspaceCommand::NameColour(ColourIntent::Apply)),
         (true, false) => saves.then_some(WorkspaceCommand::SubmitDialog),
         (false, _) => None,

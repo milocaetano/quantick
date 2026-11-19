@@ -133,10 +133,18 @@ pub struct WorkspaceNewInput {
     /// The tab. Left out, the one on screen.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tab_id: Option<WireU64>,
+    /// Omitted or blank chooses the next Workspace N.
+    #[serde(default)]
     pub name: String,
     /// A preset's name or `#RRGGBB`. Left out, the next free colour.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub colour: Option<String>,
+    /// Initial interval on every chart; omitted uses the current time interval or 5m.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeframe_ms: Option<WireU64>,
+    /// Number of timeframe charts, from the registered 1-8 chart presets.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub charts: Option<usize>,
 }
 
 /// The new workspace as stored, and whether the tab's edits were dropped.
@@ -327,7 +335,7 @@ pub fn workspace_save_to_descriptor() -> CapabilityDescriptor {
             WORKSPACE_SAVE_TO_CAPABILITY_ID,
             MODULE_ID,
             "Save a tab's edits to its workspace",
-            "Writes the tab's edits into the workspace it uses and answers the other tabs that changed: the ones on that workspace without edits of their own. A tab with edits keeps them.",
+            "Writes the tab's edits into the workspace it uses and answers the other tabs that changed: the ones on that workspace without edits of their own. A tab with edits keeps them. Default refuses overwrite. Use workspace.save_as to keep its edits.",
             "A repeat finds no edits, writes nothing and answers changed false.",
         ),
     )
@@ -352,7 +360,7 @@ pub fn workspace_new_descriptor() -> CapabilityDescriptor {
             WORKSPACE_NEW_CAPABILITY_ID,
             MODULE_ID,
             "Make a new, empty workspace for a tab",
-            "Makes a workspace of an empty recipe: what the tab shows, its canvas, pane sizes, context intervals, layers and footprint style, with every indicator removed. The tab moves onto it and its unsaved edits are dropped; the answer says so. No other tab changes. Unlike workspace.save_as, it copies no indicators. It takes colour (a preset's name or #RRGGBB; left out, the next free colour); one another workspace holds is refused with workspace.colour_taken, never swapped on create. An empty or taken name is refused with the reason; a tab still opening is refused with workspace.tab_not_ready, retryable. The New workspace dialog's Save; open it with workspace.dialog.open.",
+            "Creates a clean workspace with charts (1-8, default 1) and timeframe_ms (current time interval, otherwise 5m), on a generic Layout N. All charts use the chosen interval. Existing workspace edits are parked and restored when revisiting it; dropped_edits is false. Other tabs and market-owned drawings are preserved. An omitted or blank name chooses Workspace N. An explicit name must be unique. Colour is a preset or #RRGGBB; omitted selects the next free color, and a held color is refused without swapping. Invalid choices are refused before mutation. The New workspace form's Create action; open and preview it with workspace.dialog.open.",
             "A repeat finds the name taken and is refused with workspace.name_taken; nothing changes.",
         ),
     )
@@ -429,7 +437,7 @@ pub fn workspace_colour_set_descriptor() -> CapabilityDescriptor {
         MODULE_ID,
         "Give a workspace a colour",
         "Gives a workspace a colour: one of the sixteen presets by name (cobalt, orchid, sky, violet, slate, fuchsia, petrol, lavender, ultramarine, mauve, denim, grape, ink, plum, ice, blossom) or a custom #RRGGBB. The open tab paints its symbol in it, the capsule its tint, border and left bar, and the workspace menu its row's and header's slot. No two workspaces hold identical colours (the same value in either theme): a colour another workspace holds is refused with workspace.colour_taken, its details listing the holders in owners and, for a single holder, the colour it would get in owner_would_get. With swap true a single holder takes this workspace's old colour, named in swapped_with and holder_colour; two or more holders, or a swap that would give the holder a colour a third workspace matches, are refused even with swap. A new workspace takes the next free colour and a deleted one frees its own. Read the colours with workspace.list or on each tab of workspace.summary. The answer's warnings list what the colour warns, none of which blocks: kind close (hard to tell from the named workspace's colour), near_buy, near_sell, or low_contrast (lost on the named theme's tab strip, dark or light). An applied custom colour becomes the palette's last custom colour (workspace.colour.palette). A name no workspace has is refused with workspace.unknown, a colour that is neither a preset nor #RRGGBB with workspace.colour_invalid.",
-        "The call names the colour it wants, so a repeat answers changed false and writes nothing.",
+        "Default is protected against direct changes and swaps. The call names the colour it wants, so a repeat answers changed false and writes nothing.",
     ))
 }
 
@@ -438,7 +446,7 @@ pub fn workspace_list_descriptor() -> CapabilityDescriptor {
         id: WORKSPACE_LIST_CAPABILITY_ID,
         module: MODULE_ID,
         title: "List the workspaces",
-        description: "Lists every saved workspace with a one-line summary (panes, intervals, indicator count), its colour and the open tabs using it, Default first. Which workspace a tab uses and whether it holds edits is also on each tab in workspace.summary.",
+        description: "Lists every saved workspace with a one-line summary (panes, intervals, indicator count), its colour and the open tabs using it, The immutable factory Default comes first. Which workspace a tab uses and whether it holds edits is also on each tab in workspace.summary.",
         permissions: &[OBSERVE_PERMISSION_ID, "observe.workspace"],
         pagination: None,
     })
@@ -616,7 +624,8 @@ mod tests {
         assert_eq!(input.tab_id, None);
         assert!(serde_json::from_value::<WorkspaceTabInput>(json!({"tab": 1})).is_err());
         assert!(serde_json::from_value::<WorkspaceSaveAsInput>(json!({})).is_err());
-        assert!(serde_json::from_value::<WorkspaceNewInput>(json!({})).is_err());
+        let unnamed: WorkspaceNewInput = serde_json::from_value(json!({})).unwrap();
+        assert!(unnamed.name.is_empty());
         let new: WorkspaceNewInput = serde_json::from_value(json!({"name": "Blank"})).unwrap();
         assert_eq!((new.tab_id, new.name.as_str()), (None, "Blank"));
     }

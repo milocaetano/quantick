@@ -77,6 +77,7 @@ impl TabRecipeHost for WorkspaceCalls<'_> {
                 share.to_bits().hash(&mut hash);
             }
             for (pane, _) in tab.panes() {
+                pane.presentation.candles.revision().hash(&mut hash);
                 let spec = pane.series.state.spec();
                 let style = pane.footprint_config(&runtime.footprint_config).style;
                 (pane.layout_id(), pane.layer_read().mask(&runtime.style)).hash(&mut hash);
@@ -179,6 +180,9 @@ fn apply_recipe_switches(runtime: &mut Runtime, id: u64, recipe: &WorkspaceRecip
         return;
     };
     let saved = super::arrangement_adapter::saved_tab_of(tab);
+    if let Some(styles) = &recipe.candle_styles {
+        tab.restore_candle_styles(styles);
+    }
     let rules = &quantick_engine::bar_registry::BUILTIN_BARS;
     for (address, rule) in recipe.rules_over(&saved.flow_bars, &saved.context_bars) {
         let put = (rules.parse(rule).map_err(|e| e.to_string())).and_then(|spec| {

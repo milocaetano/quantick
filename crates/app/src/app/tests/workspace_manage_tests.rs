@@ -125,6 +125,141 @@ fn enter_after_a_swatch_click_saves() {
     );
 }
 
+/// Pointer input into the picker and chart controls reaches the same draft
+/// that Create commits. Escape leaves a custom editor before the dialog.
+#[test]
+fn creating_from_the_picker_keeps_its_colour_across_chart_choices() {
+    let (mut app, ctx, first, _layouts) = scalp("workspace-picker-create");
+    let mut source_style = crate::style::ChartStyle::default();
+    source_style.candles.fill_opacity = 0.37;
+    app.active_tab_mut()
+        .flow_pane
+        .presentation
+        .candles
+        .set(source_style);
+    call(
+        &mut app,
+        "workspace.dialog.open",
+        serde_json::json!({"mode":"new"}),
+    );
+    let click = |app: &mut QuantickApp, key| {
+        let rect = drawn(app, &ctx, key);
+        click_sized(app, &ctx, FULL_HD, rect.center());
+    };
+    click(&mut app, "name_dialog.colour.custom");
+    drawn(&mut app, &ctx, "name_dialog.colour.square");
+    run_sized_frame(&mut app, &ctx, FULL_HD, vec![key_press(egui::Key::Escape)]);
+    assert!(
+        !app.chrome
+            .window_menu
+            .tab_workspace
+            .dialog
+            .as_ref()
+            .unwrap()
+            .palette
+            .custom
+    );
+    click(&mut app, "name_dialog.colour.custom");
+    click(&mut app, "name_dialog.colour.hue");
+    click(&mut app, "name_dialog.colour.square");
+    let draft = app
+        .chrome
+        .window_menu
+        .tab_workspace
+        .dialog
+        .as_ref()
+        .unwrap()
+        .palette
+        .hex
+        .clone();
+    click(&mut app, "name_dialog.charts.3");
+    click(&mut app, "name_dialog.timeframe.60000");
+    let dialog = app
+        .chrome
+        .window_menu
+        .tab_workspace
+        .dialog
+        .as_ref()
+        .unwrap();
+    assert_eq!(dialog.creation.charts, 3);
+    assert_eq!(dialog.palette.hex, draft);
+    let name = dialog.name.clone();
+    click(&mut app, "name_dialog.save");
+    for _ in 0..6 {
+        run_frame_at(&mut app, &ctx, FULL_HD);
+    }
+    let book = app.runtime.workspace.book.book();
+    assert_eq!(book.tab_workspace(first), name);
+    assert_eq!(book.colour(&name).unwrap().key(), draft);
+    let tab = app.runtime.tabs.by_id(first).unwrap();
+    let intervals: Vec<_> = tab
+        .panes()
+        .map(|(_, side)| tab.pane(side).series.state.spec().time_interval_ms())
+        .collect();
+    assert!(
+        intervals.iter().all(|ms| *ms == Some(60_000)),
+        "{intervals:?}"
+    );
+    assert_eq!(book.recipe(&name).unwrap().canvas_state().panes().len(), 3);
+    assert!(tab.flow_pane.presentation.candles.authored().is_none());
+    call(
+        &mut app,
+        "tab.workspace.set",
+        serde_json::json!({"name":"Scalp"}),
+    );
+    for _ in 0..6 {
+        run_frame_at(&mut app, &ctx, FULL_HD);
+    }
+    let restored = app
+        .active_tab()
+        .flow_pane
+        .presentation
+        .candles
+        .authored()
+        .unwrap();
+    assert_eq!(
+        restored.candles.fill_opacity,
+        source_style.candles.fill_opacity
+    );
+}
+
+#[test]
+fn creating_before_the_next_frame_parks_the_latest_style() {
+    let (mut app, ctx, _, _layouts) = scalp("workspace-create-same-frame");
+    for _ in 0..6 {
+        run_frame_at(&mut app, &ctx, FULL_HD);
+    }
+    let mut style = crate::style::ChartStyle::default();
+    style.candles.fill_opacity = 0.29;
+    app.active_tab_mut()
+        .flow_pane
+        .presentation
+        .candles
+        .set(style);
+    call(
+        &mut app,
+        "workspace.new",
+        serde_json::json!({"name":"Desk"}),
+    );
+    call(
+        &mut app,
+        "tab.workspace.set",
+        serde_json::json!({"name":"Scalp"}),
+    );
+    for _ in 0..6 {
+        run_frame_at(&mut app, &ctx, FULL_HD);
+    }
+    assert_eq!(
+        app.active_tab()
+            .flow_pane
+            .presentation
+            .candles
+            .authored()
+            .map(|style| style.candles.fill_opacity),
+        Some(0.29)
+    );
+}
+
 /// Enter in the inline field reaches `workspace.rename`.
 #[test]
 fn enter_in_the_name_field_reaches_the_rename() {

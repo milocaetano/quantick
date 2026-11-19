@@ -46,6 +46,8 @@ pub fn reconcile_startup(
                 flow_legend_collapsed: false,
                 time_legend_collapsed: false,
                 workspace: None,
+                protected_default: false,
+                workspace_parked: Default::default(),
                 workspace_copy: None,
                 orderflow_panel: Default::default(),
             }

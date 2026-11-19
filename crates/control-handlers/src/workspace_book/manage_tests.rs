@@ -318,8 +318,8 @@ fn recolour_and_swap_in_manage_go_through_the_colour_handler() {
     );
     assert_eq!(
         host.book.colour("Default"),
-        Some(preset(7)),
-        "Default's colour changes"
+        Some(preset(4)),
+        "Default stays locked"
     );
 }
 
@@ -410,6 +410,55 @@ fn new_workspace_suggests_its_name_and_saves_the_preselected_colour() {
     );
     assert!(toast.unwrap().ends_with("Workspace 9"));
     assert_eq!(host.book.colour("Workspace 9"), Some(preset(6)), "Petrol");
+}
+
+#[test]
+fn new_commits_the_visible_custom_colour_and_every_panes_choices_together() {
+    let (mut host, mut access, actor) = host();
+    press(&mut host, &mut access, &actor, WorkspaceCommand::BeginNew);
+    let colour = WorkspaceCommand::NameColour(ColourIntent::Custom { dark: false });
+    press(&mut host, &mut access, &actor, colour);
+    for hex in ["#123", "#5DBDEB"] {
+        host.menu.dialog.as_mut().unwrap().palette.hex = hex.to_owned();
+        press(
+            &mut host,
+            &mut access,
+            &actor,
+            WorkspaceCommand::SubmitDialog,
+        );
+        assert!(host.menu.dialog.as_ref().unwrap().refusal.is_some());
+        assert_eq!(host.writes, 0);
+    }
+    host.menu.dialog.as_mut().unwrap().palette.hex = "#123456".to_owned();
+    press(
+        &mut host,
+        &mut access,
+        &actor,
+        WorkspaceCommand::CreationCharts(3),
+    );
+    press(
+        &mut host,
+        &mut access,
+        &actor,
+        WorkspaceCommand::CreationTimeframe(60_000),
+    );
+    assert_eq!(host.menu.dialog.as_ref().unwrap().palette.hex, "#123456");
+    press(
+        &mut host,
+        &mut access,
+        &actor,
+        WorkspaceCommand::SubmitDialog,
+    );
+    let recipe = host.book.recipe("Workspace 9").unwrap();
+    assert_eq!(recipe.context_panes.len(), 3);
+    assert!(
+        recipe
+            .context_panes
+            .iter()
+            .all(|pane| pane.bars.as_deref() == Some("time:60000"))
+    );
+    assert_eq!(host.book.colour("Workspace 9").unwrap().key(), "#123456");
+    assert!(host.menu.dialog.is_none());
 }
 
 /// `workspace.dialog.open` opens each dialog on the tab and names it; the

@@ -128,6 +128,25 @@ impl DeskOwner for WorkspaceCalls<'_> {
 }
 
 impl WorkspaceOwner for WorkspaceCalls<'_> {
+    fn creation_timeframe_ms(&self, tab: u64) -> Option<u64> {
+        let pane = self.runtime.tabs.by_id(tab)?.focused_pane();
+        let interval = pane.series.state.spec().time_interval_ms()?;
+        u64::try_from(interval).ok()
+    }
+    fn creation_layout(&mut self, tab: u64, apply: bool) -> Result<(), String> {
+        self.layout()
+            .workspace_starter(tab, apply)
+            .map_err(|error| error.to_string())?;
+        if !apply {
+            book_upkeep::observe_tab(self, tab);
+        } else if let Some(tab) = self.runtime.tabs.by_id_mut(tab) {
+            for pane in tab.panes_mut() {
+                pane.layers = Default::default();
+                pane.presentation.footprint.config.set_own(None);
+            }
+        }
+        Ok(())
+    }
     fn workspace_store(&mut self) -> Option<&mut WorkspaceBookStore> {
         Some(&mut self.runtime.workspace.book)
     }

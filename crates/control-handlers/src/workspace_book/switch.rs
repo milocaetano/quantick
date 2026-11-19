@@ -163,8 +163,13 @@ fn unsaved(asked: &SwitchQuestion) -> ControlError {
         followers,
         ..
     } = asked;
+    let keep = if workspace == quantick_workspace::workspace_book::DEFAULT_WORKSPACE {
+        quantick_control_schema::workspace_book::WORKSPACE_SAVE_AS_CAPABILITY_ID
+    } else {
+        quantick_control_schema::workspace_book::WORKSPACE_SAVE_TO_CAPABILITY_ID
+    };
     let mut error = ControlError::invalid_request(format!(
-        "{} Call workspace.save_to first to keep them, or pass edits discard to switch to {target} without saving.",
+        "{} Call {keep} first to keep them, or pass edits discard to switch to {target} without saving.",
         text::close_prompt_body(workspace, changes, followers),
     ));
     error.context.details = Some(json!({ "code": UNSAVED_EDITS_CODE, "workspace": workspace,
@@ -181,7 +186,7 @@ pub fn prompt(prompt: &SwitchPrompt) -> Option<Prompt> {
     let label = |answer| match answer {
         SwitchAnswer::Cancel => text::CLOSE_CANCEL.to_owned(),
         SwitchAnswer::SwitchWithoutSaving => text::SWITCH_WITHOUT_SAVING.to_owned(),
-        SwitchAnswer::Save => text::save_to_short_label(&asked.workspace),
+        SwitchAnswer::Save => super::save_prompt_label(&asked.workspace),
     };
     Some(Prompt {
         id: format!("workspace_switch_prompt_{}", asked.tab),

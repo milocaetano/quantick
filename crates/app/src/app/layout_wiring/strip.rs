@@ -12,6 +12,30 @@ use smallvec::SmallVec;
 use std::time::Instant;
 
 impl LayoutAdapter<'_> {
+    pub(crate) fn workspace_starter(&mut self, tab: u64, apply: bool) -> Result<(), LayoutError> {
+        let sides: Vec<_> = self
+            .tabs
+            .by_id(tab)
+            .ok_or(LayoutError::Unknown)?
+            .panes()
+            .map(|(_, side)| side)
+            .collect();
+        if sides
+            .iter()
+            .any(|side| self.pane_facts(tab, *side).gesture_in_flight)
+        {
+            return Err(LayoutError::GestureInFlight);
+        }
+        self.store.book().clone().workspace_starter()?;
+        if apply {
+            let layout = self.store.session_mut().workspace_starter()?;
+            for side in sides {
+                self.switch_pane_layout(tab, side, layout)?;
+            }
+            self.mark_layouts_dirty();
+        }
+        Ok(())
+    }
     // ------------------------------------------------------------------
     // Reload, rename, strip
     // ------------------------------------------------------------------
