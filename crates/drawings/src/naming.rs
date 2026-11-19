@@ -23,6 +23,14 @@ impl<T: ToolCatalog> Drawings<T> {
         }
     }
 
+    /// The generated numbers this store has handed out or been told of, for
+    /// `market`; none when its floors belong to another market.
+    #[must_use]
+    pub fn name_floors_of(&self, market: &MarketKey) -> Option<&NameFloors> {
+        let other = self.name_market.as_ref().is_some_and(|held| held != market);
+        (!other).then_some(&self.name_floors)
+    }
+
     /// The next free name for a mark of `tool`, taken.
     pub(crate) fn take_name(&mut self, tool: T) -> String {
         let names = self.items.iter().filter_map(|mark| mark.name.as_deref());
@@ -33,7 +41,11 @@ impl<T: ToolCatalog> Drawings<T> {
     /// `drawing` with a name: its own, or the next free one.
     pub(crate) fn named(&mut self, mut drawing: Drawing<T>) -> Drawing<T> {
         if drawing.name.is_none() {
-            drawing.name = Some(self.take_name(drawing.tool));
+            let name = match self.pending_name.take() {
+                Some(name) => name,
+                None => self.take_name(drawing.tool),
+            };
+            drawing.name = Some(name);
         }
         drawing
     }

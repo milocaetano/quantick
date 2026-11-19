@@ -213,6 +213,7 @@ pub fn persist_pane(
     bars: &str,
 ) -> PaneWrite {
     let write = crate::store_marks(settings, key, bars, drawings.items(), base);
+    keep_name_floors(drawings, settings, key);
     if write.merged {
         refresh_shared(drawings, base, settings, key, bars);
     } else {
@@ -266,8 +267,21 @@ pub fn put_away_pane(
     key: &DrawingKey,
     bars: &str,
 ) -> PaneWrite {
+    keep_name_floors(drawings, settings, key);
     let marks = drawings.take_all();
     crate::store_marks(settings, key, bars, &marks, &std::mem::take(base))
+}
+
+/// Write the names the pane handed out into the market's high-water, so a
+/// deleted mark's name is not reused after a restart.
+fn keep_name_floors(
+    drawings: &Drawings<DrawingTool>,
+    settings: &mut MarketSettings,
+    key: &DrawingKey,
+) {
+    if let Some(floors) = drawings.name_floors_of(&key.market) {
+        settings.raise_name_floors(&key.market, floors);
+    }
 }
 
 /// One pane's side of the store: its marks, its layout bookkeeping, the bars

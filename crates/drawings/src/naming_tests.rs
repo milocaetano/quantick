@@ -110,3 +110,50 @@ fn the_line_prefix_covers_exactly_the_lines_family() {
     family.sort_unstable();
     assert_eq!(family, LINE_TOOL_IDS, "every {LINE_PREFIX} tool, no other");
 }
+
+#[test]
+fn a_generated_name_is_not_typed_and_is_the_public_label() {
+    let mut drawings = Drawings::default();
+    place(&mut drawings, tool("rectangle"));
+    place(&mut drawings, tool("rectangle"));
+    drawings.rename_at(1, "absorption");
+    let [generated, typed] = drawings.items() else {
+        panic!("two marks");
+    };
+    assert!(!generated.has_typed_name());
+    assert_eq!(generated.public_label(0), "zone-1");
+    assert!(typed.has_typed_name());
+    assert_eq!(
+        typed.public_label(1),
+        format!("{} 2", tool("rectangle").name()),
+        "the trader's words stay off the public label"
+    );
+    drawings.rename_at(0, "line-4");
+    assert!(
+        drawings.items()[0].has_typed_name(),
+        "another kind's shape is typed"
+    );
+}
+
+#[test]
+fn a_huge_typed_number_raises_no_floor_and_names_stay_apart() {
+    let mut drawings = Drawings::default();
+    place(&mut drawings, tool("rectangle"));
+    drawings.rename_at(0, "zone-18446744073709551615");
+    place(&mut drawings, tool("rectangle"));
+    place(&mut drawings, tool("rectangle"));
+    assert_eq!(
+        names(&drawings),
+        ["zone-18446744073709551615", "zone-2", "zone-3"]
+    );
+}
+
+#[test]
+fn a_rename_to_the_name_held_records_no_undo_step() {
+    let mut drawings = Drawings::default();
+    place(&mut drawings, tool("rectangle"));
+    let depth = drawings.undo_depth();
+    drawings.rename_at(0, " zone-1 ");
+    drawings.rename_at(0, "");
+    assert_eq!(drawings.undo_depth(), depth);
+}

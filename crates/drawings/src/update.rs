@@ -241,11 +241,13 @@ fn place(
     let legacy_tail = points.split_off(required.min(points.len()));
     let mut opening = Some(opening);
     let mut completed = false;
+    store.pending_name = name;
     for point in points {
         completed = store.place_with(tool, &band, point, |_| {
             opening.take().expect("one opening look per placement")
         });
     }
+    store.pending_name = None;
     if !completed {
         // Never leave a partial draft, which would block every later edit.
         store.cancel_draft();
@@ -254,10 +256,6 @@ fn place(
     let drawing = store.selected_mut().ok_or(PlacementFailure::Unreadable)?;
     drawing.points.extend(legacy_tail);
     drawing.author = author;
-    // A placement that names nothing keeps the name the store gave it.
-    if name.is_some() {
-        drawing.name = name;
-    }
     if let Some(text) = text
         && drawing.tool.holds_text()
     {

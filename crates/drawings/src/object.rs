@@ -85,6 +85,28 @@ pub struct Drawing<T> {
 }
 
 impl<T: ToolCatalog> Drawing<T> {
+    /// Whether its name is one the trader (or an agent) chose, rather than
+    /// the `<prefix>-<n>` the store generated for its tool
+    /// ([`quantick_workspace::drawing_names::is_generated_for`]).
+    #[must_use]
+    pub fn has_typed_name(&self) -> bool {
+        let name = self.name.as_deref();
+        name.is_some_and(|name| {
+            !quantick_workspace::drawing_names::is_generated_for(name, self.tool.id())
+        })
+    }
+
+    /// The label a surface without the trader's text may publish: the
+    /// generated name, the one `chart.context.read` reports, or the tool
+    /// name and 1-based position when the name is the trader's own words.
+    #[must_use]
+    pub fn public_label(&self, index: usize) -> String {
+        match &self.name {
+            Some(name) if !self.has_typed_name() => name.clone(),
+            _ => format!("{} {}", self.tool.name(), index + 1),
+        }
+    }
+
     /// The label every list and menu shows: the trader's name when one was
     /// given, the tool name plus the 1-based position otherwise.
     #[must_use]

@@ -192,6 +192,11 @@ pub struct MarketSettings {
     /// a hand-edited file out of order or with a market twice reads the same.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     bar_progress_off: BTreeSet<MarketKey>,
+    /// Per market, the highest generated drawing name number each prefix
+    /// ever reached: never lowered, so a deleted mark's name is not handed
+    /// out again after a restart. See [`names`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    name_floors: Vec<names::MarketNameFloors>,
 }
 
 impl Default for MarketSettings {
@@ -200,6 +205,7 @@ impl Default for MarketSettings {
             version: FORMAT_VERSION,
             drawings: Vec::new(),
             bar_progress_off: BTreeSet::new(),
+            name_floors: Vec::new(),
         }
     }
 }

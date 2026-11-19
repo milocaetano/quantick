@@ -102,7 +102,7 @@
           ]
         },
         "prices": {
-          "description": "One per anchor, in anchor order; null for an anchor whose price is\nnot a finite number.",
+          "description": "One per anchor, in anchor order; null for an anchor whose price is\nnot a finite number or not representable as a canonical decimal.",
           "items": {
             "anyOf": [
               {
@@ -207,7 +207,7 @@
           "$ref": "#/$defs/WireU64"
         },
         "drawing_name": {
-          "description": "The name of the drawing it rides; absent when that drawing is gone.",
+          "description": "The name of the drawing it rides; absent when that drawing is gone or\nheld only for another strip layout, so not listed in `drawings`.",
           "type": [
             "string",
             "null"

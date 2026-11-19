@@ -76,3 +76,27 @@ fn the_floors_are_the_highest_number_each_prefix_uses_in_the_market() {
     assert_eq!(floors.get("zone"), Some(&6));
     assert_eq!(floors.get("line"), Some(&1));
 }
+
+#[test]
+fn the_name_high_water_is_kept_in_the_file_and_never_lowered() {
+    let mut settings = parse_settings(&file()).unwrap();
+    let market = MarketKey {
+        venue: "binance".to_owned(),
+        asset: "BTCUSDT".to_owned(),
+    };
+    let floors = |zone: u64| crate::drawing_names::NameFloors::from([("zone".to_owned(), zone)]);
+    settings.raise_name_floors(&market, &floors(9));
+    settings.raise_name_floors(&market, &floors(2));
+    let reread = parse_settings(&to_text(&settings).unwrap()).unwrap();
+    assert_eq!(reread, settings);
+    assert_eq!(reread.name_floors(&market).get("zone"), Some(&9));
+    let other = MarketKey {
+        venue: "binance".to_owned(),
+        asset: "ETHUSDT".to_owned(),
+    };
+    assert_eq!(
+        reread.name_floors(&other).get("zone"),
+        Some(&1),
+        "per market"
+    );
+}

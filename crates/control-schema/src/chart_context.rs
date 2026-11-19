@@ -84,7 +84,7 @@ pub struct Drawing {
     /// a mark of an instant, which has no value axis.
     pub band: Option<AnnotationBand>,
     /// One per anchor, in anchor order; null for an anchor whose price is
-    /// not a finite number.
+    /// not a finite number or not representable as a canonical decimal.
     pub prices: Vec<Option<CanonicalDecimal>>,
     pub selected: bool,
     pub locked: bool,
@@ -95,7 +95,8 @@ pub struct Drawing {
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
 pub struct Strategy {
     pub drawing_id: WireU64,
-    /// The name of the drawing it rides; absent when that drawing is gone.
+    /// The name of the drawing it rides; absent when that drawing is gone or
+    /// held only for another strip layout, so not listed in `drawings`.
     pub drawing_name: Option<String>,
     pub preset: String,
     /// `buy` or `sell`.

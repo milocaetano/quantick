@@ -246,6 +246,21 @@ fn a_placement_lands_stamped_and_selected_and_says_its_label() {
 }
 
 #[test]
+fn a_placement_that_brings_its_name_spends_no_generated_number() {
+    let mut store = lines(1);
+    let mut named = level(105.0);
+    named.name = Some("absorption".to_owned());
+    let _ = update(&mut store, DrawingIntent::Place(named));
+    let _ = update(&mut store, DrawingIntent::Place(level(106.0)));
+    let names: Vec<_> = store
+        .items()
+        .iter()
+        .map(|mark| mark.name.clone().unwrap())
+        .collect();
+    assert_eq!(names, ["line-1", "absorption", "line-2"]);
+}
+
+#[test]
 fn a_placement_that_names_nothing_says_its_generated_name() {
     let mut store = lines(1);
     let effects = update(&mut store, DrawingIntent::Place(level(105.0)));

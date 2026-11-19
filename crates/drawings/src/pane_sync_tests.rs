@@ -542,3 +542,41 @@ fn two_charts_of_one_market_name_their_marks_apart() {
     assert_eq!(name(&flow_chart).as_deref(), Some("line-1"));
     assert_eq!(name(&context_chart).as_deref(), Some("line-2"));
 }
+
+/// A deleted mark's name is not handed out again: not after a write, not
+/// after the file is read back, not on a fresh chart of the market.
+#[test]
+fn a_deleted_name_is_not_reused_after_a_save_and_a_reload() {
+    let mut settings = MarketSettings::default();
+    let mut pane = Pane::open(&settings, flow(), "tick:100");
+    for bar in 0..5 {
+        let at = |offset: f32| {
+            let time = Some(T0 + i64::from(bar) * 60_000 + offset as i64);
+            ChartPoint::at_time(bar as f32 + offset, 100.0 + offset as f64, time)
+        };
+        assert!(!pane.drawings.place(tool("rectangle"), at(0.0)));
+        assert!(pane.drawings.place(tool("rectangle"), at(0.5)));
+    }
+    let last = pane.drawings.items()[4].id;
+    assert_eq!(pane.drawings.items()[4].name.as_deref(), Some("zone-5"));
+    assert!(pane.drawings.remove_by_id(last));
+    pane.persist(&mut settings);
+
+    let text = quantick_workspace::market_settings::to_text(&settings).unwrap();
+    let reloaded = quantick_workspace::market_settings::parse_settings(&text).unwrap();
+    let mut fresh = Pane::open(&reloaded, flow(), "tick:100");
+    assert!(
+        !fresh
+            .drawings
+            .place(tool("rectangle"), ChartPoint::at(8.0, 90.0))
+    );
+    assert!(
+        fresh
+            .drawings
+            .place(tool("rectangle"), ChartPoint::at(9.0, 95.0))
+    );
+    let names: Vec<_> = (fresh.drawings.items().iter())
+        .map(|mark| mark.name.clone().unwrap())
+        .collect();
+    assert_eq!(names, ["zone-1", "zone-2", "zone-3", "zone-4", "zone-6"]);
+}

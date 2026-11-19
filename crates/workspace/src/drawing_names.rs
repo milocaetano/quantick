@@ -31,6 +31,11 @@ pub const LINE_TOOL_IDS: [&str; 7] = [
     "vertical-line",
 ];
 
+/// The highest number read as a generated name. A typed name with a larger
+/// one (`zone-18446744073709551615`) is the trader's own text: it raises no
+/// floor, so the next name can never overflow.
+pub const MAX_GENERATED_NUMBER: u64 = 1_000_000;
+
 /// The highest number each prefix has used: the floor the next name of that
 /// prefix starts above.
 pub type NameFloors = BTreeMap<String, u64>;
@@ -49,7 +54,7 @@ pub fn prefix_for(tool_id: &str) -> &str {
 }
 
 /// The prefix and number of `name` when it reads `<prefix>-<n>` with
-/// `n >= 1`, whatever the prefix: a generated name of any tool, or a typed
+/// `1 <= n <= MAX_GENERATED_NUMBER`, whatever the prefix: a generated name of any tool, or a typed
 /// name shaped like one, which the next generated name must not repeat.
 #[must_use]
 pub fn split_generated(name: &str) -> Option<(&str, u64)> {
@@ -61,7 +66,8 @@ pub fn split_generated(name: &str) -> Option<(&str, u64)> {
     {
         return None;
     }
-    Some((prefix, digits.parse().ok()?))
+    let n: u64 = digits.parse().ok()?;
+    (n <= MAX_GENERATED_NUMBER).then_some((prefix, n))
 }
 
 /// Whether `name` is a generated name of a mark of `tool_id`.
@@ -83,7 +89,7 @@ pub fn raise_floors<'a>(floors: &mut NameFloors, names: impl IntoIterator<Item =
 pub fn next_name(floors: &mut NameFloors, tool_id: &str) -> String {
     let prefix = prefix_for(tool_id);
     let floor = floors.entry(prefix.to_owned()).or_insert(0);
-    *floor += 1;
+    *floor = floor.saturating_add(1);
     format!("{prefix}-{floor}")
 }
 
