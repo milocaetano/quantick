@@ -1,5 +1,5 @@
 //! Paints a chart floating over the canvas or standing in its own OS window:
-//! its shadow, outline and grip, the edges that resize it, the slot a drop
+//! its shadow and outline, the edges that resize it, the slot a drop
 //! would dock it into, and the window it pops out to.
 //!
 //! Where it goes is `quantick_workspace::canvas`'s: the held gesture, the
@@ -8,17 +8,13 @@
 //! through the `canvas.*` capabilities.
 
 use eframe::egui::{self, Align2, Color32, Rect, Sense, Stroke, pos2, vec2};
-use egui_phosphor::regular as icons;
 use quantick_workspace::canvas::{
-    CanvasPoint, CanvasRect, CanvasState, DOCK_HINT, DOCK_PILL, DropOutcome, FloatGesture,
-    MIN_FLOAT_SIZE, PaneSlot, RESIZE_GRIP_PX, ResizeEdges,
+    CanvasPoint, CanvasRect, CanvasState, DOCK_HINT, DropOutcome, FloatGesture, MIN_FLOAT_SIZE,
+    PaneSlot, RESIZE_GRIP_PX, ResizeEdges,
 };
 
 use crate::theme;
-use quantick_control_schema::canvas::FLOAT_CAPABILITY_ID;
 
-/// The grip's width at a floating chart's header left end.
-pub(crate) const GRIP_PX: f32 = 22.0;
 /// The outline a floating chart wears, and Light's blue for it.
 const OUTLINE_PX: f32 = 1.5;
 const LIGHT_OUTLINE: Color32 = Color32::from_rgb(0x7C, 0x9C, 0xD6);
@@ -41,9 +37,8 @@ pub(crate) struct FloatingPanes {
     pub(crate) held: Option<FloatGesture>,
     pub(crate) dropped: Option<(PaneSlot, DropOutcome)>,
     pub(crate) windows: Vec<(PaneSlot, WindowEvents)>,
-    /// The grips and the canvas's drop targets as drawn, for the scene: id,
-    /// label, place and the capability that does what they do.
-    pub(crate) drawn: Vec<(String, String, CanvasRect, &'static str)>,
+    /// Drop targets for the scene: identity, label, geometry, capability, selection.
+    pub(crate) drawn: Vec<(String, String, CanvasRect, &'static str, bool)>,
     /// The window's desktop origin, in points, and its scale, as last read.
     pub(crate) origin: (f32, f32),
     pub(crate) scale: f32,
@@ -120,15 +115,13 @@ pub(crate) fn layer(ctx: &egui::Context, (tab, slot): (u64, PaneSlot), rect: Rec
     ui
 }
 
-/// A floating chart's frame at `rect`: shadow, outline, the grip that moves
-/// it and the edges that resize it. Answers the grip's width and the chart's
-/// content inside the outline.
+/// A floating chart's frame and resize edges; returns its content rectangle.
 pub(crate) fn frame(
     ui: &mut egui::Ui,
     rect: Rect,
     slot: PaneSlot,
     floats: &mut FloatingPanes,
-) -> (f32, Rect) {
+) -> Rect {
     let palette = theme::get(ui.ctx());
     let outline = [LIGHT_OUTLINE, palette.accent()][usize::from(ui.visuals().dark_mode)];
     let shadow = egui::epaint::Shadow {
@@ -144,16 +137,6 @@ pub(crate) fn frame(
     let from = model_rect(rect);
     let ring = rect.expand(RESIZE_GRIP_PX);
     let edge = ui.interact(ring, ui.id().with("edges"), Sense::drag());
-    let held = grip(ui, content);
-    let (id, float) = (format!("floating.{slot}.grip"), FLOAT_CAPABILITY_ID);
-    let label = "Move chart".to_owned();
-    floats.drawn.push((id, label, model_rect(held.rect), float));
-    let pressed = ui
-        .input(|input| input.pointer.press_origin())
-        .map(model_point);
-    if let (true, Some(start)) = (held.drag_started(), pressed.or(pointer)) {
-        floats.held = Some(FloatGesture::Move { slot, from, start });
-    }
     let edges = pointer.and_then(|pointer| ResizeEdges::at(from, pointer).zip(Some(pointer)));
     if let (true, Some((edges, start))) = (edge.drag_started(), edges) {
         floats.held = Some(FloatGesture::Resize {
@@ -168,23 +151,7 @@ pub(crate) fn frame(
     }
     ui.painter()
         .rect_stroke(rect, 0.0, Stroke::new(OUTLINE_PX, outline));
-    (GRIP_PX, content)
-}
-
-/// The ⠿ grip at `content`'s top-left, lit while hovered or held.
-fn grip(ui: &mut egui::Ui, content: Rect) -> egui::Response {
-    let palette = theme::get(ui.ctx());
-    let header = palette.layout(crate::time_header::HEIGHT_PX);
-    let rect = Rect::from_min_size(content.min, vec2(GRIP_PX, header));
-    let held = ui.interact(rect, ui.id().with("grip"), Sense::drag());
-    if held.hovered() || held.dragged() {
-        ui.painter().rect_filled(rect, 0.0, palette.hover_fill());
-    }
-    let (font, ink) = (egui::FontId::proportional(14.0), palette.text_muted());
-    let glyph = icons::DOTS_SIX_VERTICAL;
-    ui.painter()
-        .text(rect.center(), Align2::CENTER_CENTER, glyph, font, ink);
-    held.on_hover_cursor(egui::CursorIcon::Grab)
+    content
 }
 
 fn resize_cursor(edges: ResizeEdges) -> egui::CursorIcon {
@@ -196,18 +163,24 @@ fn resize_cursor(edges: ResizeEdges) -> egui::CursorIcon {
     }
 }
 
-/// While a chart is held: the slot a drop would dock it into, lit with its
-/// pill, and the hint; on letting go, what the drop does. The canvas's edges
-/// and corners and each docked chart's sides and centre are published as the
-/// drop targets they are.
+/// Publish the visible drop guides and paint their destination while a chart moves.
 pub(crate) fn preview(
     ctx: &egui::Context,
     floats: &mut FloatingPanes,
     state: &CanvasState,
     canvas: Rect,
 ) {
-    let held = floats.held.map(|held| held.slot());
-    let targets = quantick_control_handlers::canvas::drop_targets(state, model_rect(canvas), held);
+    let held = floats
+        .held
+        .filter(|held| matches!(held, FloatGesture::Move { .. }))
+        .map(|held| held.slot());
+    let pointer = floats.pointer(ctx).map(model_point);
+    let targets = quantick_control_handlers::canvas::drop_targets(
+        state,
+        model_rect(canvas),
+        held,
+        pointer.filter(|_| held.is_some()),
+    );
     floats.drawn.extend(targets);
     let (Some(held), Some(pointer)) = (floats.held, floats.pointer(ctx)) else {
         return;
@@ -228,22 +201,70 @@ pub(crate) fn preview(
     let palette = theme::get(ctx);
     let layer = egui::LayerId::new(egui::Order::Foreground, egui::Id::new("canvas_drop"));
     let painter = ctx.layer_painter(layer);
-    if let Some(slot) = held.dock_preview(state, area, window, at) {
+    if let Some(slot) = held.drop_preview(state, area, window, at) {
         let slot = screen_rect(slot);
         let tint = [TINT.0, TINT.1][usize::from(ctx.style().visuals.dark_mode)];
         painter.rect_filled(slot, 0.0, palette.accent().gamma_multiply(tint));
-        let plate = (palette.accent(), Color32::WHITE);
-        pill(&painter, slot.center(), DOCK_PILL, plate);
+        painter.rect_stroke(slot, 0.0, Stroke::new(OUTLINE_PX, palette.accent()));
     }
-    let words = (palette.chrome(), palette.text_primary());
-    let hint = pos2(canvas.center().x, canvas.bottom() - 28.0);
-    pill(&painter, hint, DOCK_HINT, words);
+    guides(&painter, state, area, held.slot(), at);
 }
 
-/// `text` on a rounded plate centred on `at`.
-fn pill(painter: &egui::Painter, at: egui::Pos2, text: &str, (fill, ink): (Color32, Color32)) {
-    let galley = painter.layout_no_wrap(text.to_owned(), egui::FontId::proportional(12.0), ink);
+fn guides(
+    painter: &egui::Painter,
+    state: &CanvasState,
+    area: CanvasRect,
+    held: PaneSlot,
+    at: CanvasPoint,
+) {
+    let palette = theme::get(painter.ctx());
+    let guides = quantick_ui_model::canvas_guides::guides(state, area, held, at);
+    for guide in &guides {
+        let (rect, badge, hot) = (
+            screen_rect(guide.zone),
+            screen_rect(guide.badge),
+            guide.selected,
+        );
+        let (fill, ink) = if hot {
+            (palette.accent(), Color32::WHITE)
+        } else {
+            (palette.chrome(), palette.text_primary())
+        };
+        painter.rect_filled(
+            rect,
+            4.0,
+            palette
+                .accent()
+                .gamma_multiply(if hot { 0.22 } else { 0.06 }),
+        );
+        painter.rect_filled(badge, 5.0, fill);
+        painter.rect_stroke(
+            badge,
+            5.0,
+            Stroke::new(OUTLINE_PX, if hot { ink } else { palette.border() }),
+        );
+        use egui_phosphor::regular as icons;
+        use quantick_ui_model::canvas_guides::GuideMark;
+        use quantick_workspace::canvas::Edge;
+        let (text, size) = match guide.mark {
+            GuideMark::Split(Edge::Left) => (icons::ARROW_LEFT, 22.0),
+            GuideMark::Split(Edge::Right) => (icons::ARROW_RIGHT, 22.0),
+            GuideMark::Split(Edge::Top) => (icons::ARROW_UP, 22.0),
+            GuideMark::Split(Edge::Bottom) => (icons::ARROW_DOWN, 22.0),
+            GuideMark::Swap => ("Swap", 11.0),
+            GuideMark::Park => ("Park", 11.0),
+        };
+        let font = egui::FontId::proportional(size);
+        painter.text(badge.center(), Align2::CENTER_CENTER, text, font, ink);
+    }
+    let at = pos2(area.x + area.w / 2.0, area.bottom() - 80.0);
+    let (fill, ink) = (palette.chrome(), palette.text_primary());
+    let galley =
+        painter.layout_no_wrap(DOCK_HINT.to_owned(), egui::FontId::proportional(12.0), ink);
     let plate = Rect::from_center_size(at, galley.size() + vec2(20.0, 10.0));
+    if !quantick_ui_model::canvas_guides::hint_fits(area, model_rect(plate), &guides) {
+        return;
+    }
     painter.rect_filled(plate, plate.height() / 2.0, fill);
     painter.galley(plate.center() - galley.size() / 2.0, galley, ink);
 }
@@ -291,14 +312,4 @@ pub(crate) fn os_window(
         let moved = settled.map(|at| (at, monitor_of(at, scale)));
         WindowEvents { moved, closed }
     })
-}
-
-/// The grip at a chart window's header left end: it moves the window.
-/// Answers its width and the content beside and below it.
-pub(crate) fn window_grip(ui: &mut egui::Ui) -> (f32, Rect) {
-    let content = ui.max_rect();
-    if grip(ui, content).drag_started() {
-        ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
-    }
-    (GRIP_PX, content)
 }

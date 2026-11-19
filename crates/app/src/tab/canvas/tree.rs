@@ -125,7 +125,7 @@ impl Tab {
             self.focus_from_pointer(ui, &focus_bands, flow_band.unwrap_or(egui::Rect::NOTHING));
         }
         if let Some(band) = flow_band {
-            self.draw_flow_band(tab_id, ui, (band, 0.0), chrome, &mut rects);
+            self.draw_flow_band(tab_id, ui, (band, false), chrome, &mut rects);
         }
         let frame = CanvasFrame {
             area,
@@ -191,13 +191,12 @@ impl Tab {
         crate::toolbar::available_bar_inputs(chrome.capabilities, recording.as_ref())
     }
 
-    /// The flow pane in `band`: its surface, its header (right of `grip`
-    /// points kept for a floating pane's grip) and its panel.
+    /// The flow pane's surface, header and panel, without a footer when floating.
     fn draw_flow_band(
         &mut self,
         tab_id: u64,
         ui: &mut egui::Ui,
-        (band, grip): (egui::Rect, f32),
+        (band, floating): (egui::Rect, bool),
         chrome: &mut CanvasChrome<'_>,
         rects: &mut PaneRects,
     ) {
@@ -206,7 +205,7 @@ impl Tab {
         rects.pane_bands.push((PaneSide::Flow, band));
         // A floating chart keeps no layout footer: it would draw under it.
         let mut pane_areas = split_pane_layout_strip(band);
-        if grip > 0.0 {
+        if floating {
             pane_areas.body = band;
         }
         let areas = split_flow_pane(pane_areas.body, palette.layout(1.0));
@@ -215,7 +214,7 @@ impl Tab {
             egui::Rounding::ZERO,
             palette.flow_surface(),
         );
-        let header = areas.band.with_min_x(areas.band.min.x + grip);
+        let header = areas.band;
         self.draw_flow_header(tab_id, ui, header, chrome);
         rects.flow_side_row = Some((areas.side_row, bar_inputs));
         self.flow_pane.frame.side_row = Some(areas.side_row);
@@ -258,8 +257,8 @@ impl Tab {
                     let rect = floating_panes::placed(&self.canvas.floats, slot, rect, &ctx);
                     let mut layer = floating_panes::layer(&ctx, (tab_id, slot), rect);
                     let floats = &mut self.canvas.floats;
-                    let (grip, content) = floating_panes::frame(&mut layer, rect, slot, floats);
-                    self.draw_solo(tab_id, &mut layer, chrome, (side, content, grip, false));
+                    let content = floating_panes::frame(&mut layer, rect, slot, floats);
+                    self.draw_solo(tab_id, &mut layer, chrome, (side, content, false));
                     continue;
                 }
                 FloatHost::OsWindow { rect, .. } => rect,
@@ -267,8 +266,8 @@ impl Tab {
             let placed = self.canvas.floats.placed.entry(slot);
             let mut at = *placed.or_insert((window, window));
             let events = floating_panes::os_window(&ctx, (tab_id, slot), (window, &mut at), |ui| {
-                let (grip, content) = floating_panes::window_grip(ui);
-                self.draw_solo(tab_id, ui, chrome, (side, content, grip, true));
+                let content = ui.max_rect();
+                self.draw_solo(tab_id, ui, chrome, (side, content, true));
             });
             self.canvas.floats.placed.insert(slot, at);
             self.canvas.floats.windows.push((slot, events));
@@ -276,28 +275,30 @@ impl Tab {
         let canvas_state = &mut self.canvas;
         let floats = &mut canvas_state.floats;
         floating_panes::preview(&ctx, floats, &canvas_state.state, canvas);
-        let drawn = floats.drawn.drain(..).map(|(id, label, rect, capability)| {
-            let (rect, capability) = (floating_panes::screen_rect(rect), Some(capability));
-            crate::toolbar::DrawnControl {
-                id,
-                label,
-                rect,
-                selected: false,
-                capability,
-                description: None,
-            }
-        });
+        let drawn = floats
+            .drawn
+            .drain(..)
+            .map(|(id, label, rect, capability, selected)| {
+                let (rect, capability) = (floating_panes::screen_rect(rect), Some(capability));
+                crate::toolbar::DrawnControl {
+                    id,
+                    label,
+                    rect,
+                    selected,
+                    capability,
+                    description: None,
+                }
+            });
         canvas_state.menus.drawn.extend(drawn);
     }
 
-    /// One floating chart's own pane pass, in `content` on `ui`'s layer or
-    /// window, its header right of a `grip` points wide grip.
+    /// One floating chart's pane pass on its layer or native window.
     fn draw_solo(
         &mut self,
         tab_id: u64,
         ui: &mut egui::Ui,
         chrome: &mut CanvasChrome<'_>,
-        (side, content, grip, windowed): (PaneSide, egui::Rect, f32, bool),
+        (side, content, windowed): (PaneSide, egui::Rect, bool),
     ) {
         let palette = theme::get(ui.ctx());
         let built = self.time_panes.len();
@@ -312,7 +313,7 @@ impl Tab {
                 let bar_inputs = self.bar_inputs(chrome);
                 let height = palette.layout(crate::time_header::HEIGHT_PX);
                 let areas = split_pane_header(content, height);
-                let header = areas.header.with_min_x(areas.header.min.x + grip);
+                let header = areas.header;
                 self.draw_time_header(
                     ui,
                     seat,
@@ -329,7 +330,7 @@ impl Tab {
                 ui.painter().rect_filled(content, 0.0, palette.chrome());
                 return;
             }
-            PaneSide::Flow => self.draw_flow_band(tab_id, ui, (content, grip), chrome, &mut rects),
+            PaneSide::Flow => self.draw_flow_band(tab_id, ui, (content, true), chrome, &mut rects),
         }
         // A window's own coordinates mean nothing to the canvas's readers.
         let bands = rects.pane_bands.iter().filter(|_| !windowed);

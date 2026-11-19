@@ -37,12 +37,12 @@ pub use bands::{
 };
 pub use columns::{ColumnDrag, ColumnHold, column_drag, revealed};
 pub use drag::{
-    DOCK_HINT, DOCK_PILL, DropOutcome, FloatGesture, LIFT_PX, MIN_FLOAT_SIZE, RESIZE_GRIP_PX,
-    ResizeEdges, open_panes,
+    DOCK_HINT, DropOutcome, FloatGesture, LIFT_PX, MIN_FLOAT_SIZE, RESIZE_GRIP_PX, ResizeEdges,
+    open_panes,
 };
 pub use drop::{
-    Corner, DOCK_EDGE_BAND_PX, DockTarget, DropTarget, PANE_CENTRE_PX, PANE_SIDE_PX,
-    PARK_CORNER_PX, PARK_MARGIN_PX, drop_target, drop_zones, kept_inside, park_rect,
+    Corner, DOCK_EDGE_BAND_PX, DOCK_GUIDE_PX, DockTarget, DropGuides, DropTarget, PARK_CORNER_PX,
+    PARK_MARGIN_PX, drop_guides, drop_target, drop_zones, kept_inside, park_rect,
 };
 pub use menu::{
     AddRow, PANE_MENU_BUTTON_PX, PaneMenuItem, RemoveAnswer, RemovePrompt, SURFACE_UNSERVED,
@@ -77,6 +77,8 @@ mod columns_tests;
 mod drag_tests;
 #[cfg(test)]
 mod drop_tests;
+#[cfg(test)]
+mod guide_tests;
 #[cfg(test)]
 mod menu_tests;
 #[cfg(test)]

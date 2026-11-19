@@ -787,12 +787,13 @@ pub fn drop_targets(
     state: &CanvasState,
     area: CanvasRect,
     held: Option<u32>,
-) -> Vec<(String, String, CanvasRect, &'static str)> {
+    pointer: Option<canvas::CanvasPoint>,
+) -> Vec<(String, String, CanvasRect, &'static str, bool)> {
     let over = |pane: &canvas::FloatingPane| matches!(pane.host, FloatHost::Canvas { .. });
     if held.is_none() && !state.floating().iter().any(over) {
         return Vec::new();
     }
-    let zones = canvas::drop_zones(area, &canvas::open_panes(state, area, held));
+    let zones = canvas::drop_guides(area, &canvas::open_panes(state, area, held), pointer);
     let named = |target| match target {
         DropTarget::Park(corner) => {
             let at = match corner {
@@ -825,10 +826,10 @@ pub fn drop_targets(
         // A drop away from every zone floats: no zone of its own to publish.
         DropTarget::Float => None,
     };
-    (zones.into_iter())
+    (zones.zones.into_iter())
         .filter_map(|(target, place)| {
             let (id, label, capability) = named(target)?;
-            Some((id, label, place, capability))
+            Some((id, label, place, capability, Some(target) == zones.selected))
         })
         .collect()
 }

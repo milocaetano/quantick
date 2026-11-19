@@ -461,6 +461,7 @@ impl Tab {
         strip: egui::Rect,
         chrome: &mut CanvasChrome<'_>,
     ) {
+        self.header_drag(ui, strip, None);
         let chip = self.connection.chip();
         let slot = self.connection.slot(self.session.history_note());
         let pane = &mut self.flow_pane;
@@ -571,6 +572,7 @@ impl Tab {
         job_slot: Option<(String, bool)>,
         (tab_id, surfaces): (u64, &mut crate::surfaces::Surfaces),
     ) {
+        self.header_drag(ui, strip, Some(slot));
         let rebuilding = self
             .loading
             .is_active(crate::loading::LoadingTask::BarRebuild);
@@ -613,6 +615,13 @@ impl Tab {
         );
         if indicators {
             self.time_panes[slot].request_indicator_picker();
+        }
+    }
+
+    fn header_drag(&mut self, ui: &egui::Ui, strip: egui::Rect, seat: Option<usize>) {
+        let canvas = &mut self.canvas;
+        if let Some(slot) = seat_slot(&canvas.state, &mut canvas.seats, seat) {
+            canvas.menus.header(ui, strip, slot, &canvas.state);
         }
     }
 

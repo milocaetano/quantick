@@ -10,9 +10,7 @@ use super::state::{CanvasState, PaneMode};
 use super::tree::{CanvasPoint, CanvasRect, PaneSlot};
 
 /// The hint the canvas shows while a pane is dragged.
-pub const DOCK_HINT: &str = "Drop on an edge or a chart to dock · anywhere else to float";
-/// The pill on the slot a drop would dock into.
-pub const DOCK_PILL: &str = "Dock here";
+pub const DOCK_HINT: &str = "Arrows dock · Swap exchanges charts · Elsewhere floats";
 /// How far in from a floating pane's edge a press resizes it.
 pub const RESIZE_GRIP_PX: f32 = 6.0;
 /// How far the pointer travels from its press on a docked pane's ⋯ before
@@ -165,16 +163,26 @@ impl FloatGesture {
         window: CanvasRect,
         pointer: CanvasPoint,
     ) -> DropOutcome {
+        self.resolve(state, canvas, window, pointer).0
+    }
+
+    fn resolve(
+        &self,
+        state: &CanvasState,
+        canvas: CanvasRect,
+        window: CanvasRect,
+        pointer: CanvasPoint,
+    ) -> (DropOutcome, DropTarget) {
         let rect = self.rect(pointer);
         if matches!(self, Self::Resize { .. }) {
-            return DropOutcome::Float(rect);
+            return (DropOutcome::Float(rect), DropTarget::Float);
         }
         if !window.contains(pointer) {
-            return DropOutcome::PopOut(rect);
+            return (DropOutcome::PopOut(rect), DropTarget::Float);
         }
         let rect = kept_inside(rect, canvas);
         if !canvas.contains(pointer) {
-            return DropOutcome::Float(rect);
+            return (DropOutcome::Float(rect), DropTarget::Float);
         }
         let panes = open_panes(state, canvas, Some(self.slot()));
         let docked = state.tree().holds(self.slot());
@@ -182,7 +190,8 @@ impl FloatGesture {
             .rects(canvas)
             .into_iter()
             .find(|(held, _)| *held == self.slot());
-        match drop_target(canvas, &panes, pointer) {
+        let target = drop_target(canvas, &panes, pointer);
+        let outcome = match target {
             // Back over its own place a held docked pane stays where it was.
             DropTarget::Float if home.is_some_and(|(_, home)| home.contains(pointer)) => {
                 DropOutcome::Dock(DockTarget::Swap(self.slot()))
@@ -199,7 +208,8 @@ impl FloatGesture {
             }
             DropTarget::Park(corner) => DropOutcome::Park(corner),
             DropTarget::Float => DropOutcome::Float(rect),
-        }
+        };
+        (outcome, target)
     }
 
     /// The slot a drop at `pointer` would dock the pane into, as the canvas
@@ -215,6 +225,42 @@ impl FloatGesture {
         let DropOutcome::Dock(target) = self.release(state, canvas, window, pointer) else {
             return None;
         };
+        self.docked_bounds(state, canvas, target)
+    }
+
+    /// Final bounds of the selected guide, including both ways a pane can park.
+    #[must_use]
+    pub fn drop_preview(
+        &self,
+        state: &CanvasState,
+        canvas: CanvasRect,
+        window: CanvasRect,
+        pointer: CanvasPoint,
+    ) -> Option<CanvasRect> {
+        let (outcome, target) = self.resolve(state, canvas, window, pointer);
+        match (target, outcome) {
+            (DropTarget::Dock(_), DropOutcome::Dock(target)) => {
+                self.docked_bounds(state, canvas, target)
+            }
+            (DropTarget::Park(_), DropOutcome::Float(rect)) => Some(rect),
+            (DropTarget::Park(corner), DropOutcome::Park(_)) => {
+                let mut parked = state.clone();
+                parked.park(self.slot(), corner, canvas).ok()?;
+                match parked.host(self.slot())? {
+                    super::FloatHost::Canvas { rect } => Some(*rect),
+                    super::FloatHost::OsWindow { .. } => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
+    fn docked_bounds(
+        &self,
+        state: &CanvasState,
+        canvas: CanvasRect,
+        target: DockTarget,
+    ) -> Option<CanvasRect> {
         let slot = self.slot();
         let mut docked = state.clone();
         docked.dock(slot, target).ok()?;

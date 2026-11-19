@@ -1,10 +1,7 @@
 //! The one rule that decides what dropping a dragged pane does.
 //!
-//! A canvas corner parks the pane floating there, a canvas edge docks it at
-//! that edge, a docked pane's side splits that pane and its centre swaps the
-//! two; anywhere else it floats where it lands. The trader has not settled
-//! whether a corner should dock or park; this file is the one place that
-//! answer lives, so flipping it is an edit here and nowhere else.
+//! Canvas corners park, edge bands dock, and a compass over the hovered pane
+//! offers splits and Swap. Painting, scene discovery and release share these zones.
 
 pub use super::tree::Edge;
 use super::tree::{CanvasPoint, CanvasRect, PaneSlot};
@@ -16,12 +13,11 @@ pub const DOCK_EDGE_BAND_PX: f32 = 48.0;
 pub const PARK_CORNER_PX: f32 = 64.0;
 /// The gap a parked pane keeps from the corner's two edges.
 pub const PARK_MARGIN_PX: f32 = 12.0;
-/// How deep a docked pane's side zone reaches in from its edge, at most; a
-/// small pane gives a quarter of its extent.
-pub const PANE_SIDE_PX: f32 = 96.0;
-/// How wide and tall a docked pane's centre zone is, at most; a small pane
-/// gives a third of its extent.
-pub const PANE_CENTRE_PX: f32 = 120.0;
+/// Size of a docking guide and the space between guides in its compass.
+pub const DOCK_GUIDE_PX: f32 = 44.0;
+pub const DOCK_GUIDE_GAP_PX: f32 = 4.0;
+/// Below this size the pane offers only its center, keeping Swap readable.
+pub const MIN_DOCK_GUIDE_PX: f32 = 32.0;
 
 const _: () = assert!(
     PARK_CORNER_PX > DOCK_EDGE_BAND_PX,
@@ -72,14 +68,14 @@ pub fn drop_target(
     panes: &[(PaneSlot, CanvasRect)],
     pointer: CanvasPoint,
 ) -> DropTarget {
-    let zones = drop_zones(canvas, panes).into_iter();
-    let mut hit = zones.filter(|(_, zone)| zone.contains(pointer));
-    hit.next().map_or(DropTarget::Float, |(target, _)| target)
+    drop_guides(canvas, panes, Some(pointer))
+        .selected
+        .unwrap_or(DropTarget::Float)
 }
 
 /// Every zone a drop docks or parks in on `canvas`, in the order the drop
-/// rule tries them: the four corners, the four edge bands, then each docked
-/// pane's four sides and centre, in pane order. What the scene publishes and
+/// rule tries them: four corners, four edge bands, then each docked pane's
+/// compass, in pane order. What the scene publishes and
 /// what [`drop_target`] tests a pointer against, so the two never disagree.
 #[must_use]
 pub fn drop_zones(
@@ -96,15 +92,31 @@ pub fn drop_zones(
         (Corner::BottomRight, r(far_x, far_y, corner, corner)),
     ];
     let edges = [
-        (Edge::Left, r(canvas.x, canvas.y, band, canvas.h)),
+        (
+            Edge::Left,
+            r(canvas.x, canvas.y + corner, band, canvas.h - 2.0 * corner),
+        ),
         (
             Edge::Right,
-            r(canvas.right() - band, canvas.y, band, canvas.h),
+            r(
+                canvas.right() - band,
+                canvas.y + corner,
+                band,
+                canvas.h - 2.0 * corner,
+            ),
         ),
-        (Edge::Top, r(canvas.x, canvas.y, canvas.w, band)),
+        (
+            Edge::Top,
+            r(canvas.x + corner, canvas.y, canvas.w - 2.0 * corner, band),
+        ),
         (
             Edge::Bottom,
-            r(canvas.x, canvas.bottom() - band, canvas.w, band),
+            r(
+                canvas.x + corner,
+                canvas.bottom() - band,
+                canvas.w - 2.0 * corner,
+                band,
+            ),
         ),
     ];
     let corners = corners.map(|(at, zone)| (DropTarget::Park(at), zone));
@@ -115,15 +127,41 @@ pub fn drop_zones(
     corners.into_iter().chain(edges).chain(panes).collect()
 }
 
-/// `slot`'s zones: the part of its rect the canvas bands leave, a side strip
-/// along each edge less the corners the two strips share, and a box at its
-/// centre. A pane too small to give a zone gives none.
+pub struct DropGuides {
+    pub zones: Vec<(DropTarget, CanvasRect)>,
+    pub selected: Option<DropTarget>,
+}
+
+/// The visible guides: canvas destinations and the pane under the pointer.
+/// Without a pointer, publishes every destination for discovery.
+#[must_use]
+pub fn drop_guides(
+    canvas: CanvasRect,
+    panes: &[(PaneSlot, CanvasRect)],
+    pointer: Option<CanvasPoint>,
+) -> DropGuides {
+    let panes: Vec<_> = panes
+        .iter()
+        .copied()
+        .filter(|(_, rect)| pointer.is_none_or(|point| rect.contains(point)))
+        .collect();
+    let zones = drop_zones(canvas, &panes);
+    let selected = pointer.and_then(|at| {
+        zones
+            .iter()
+            .find(|(_, rect)| rect.contains(at))
+            .map(|(target, _)| *target)
+    });
+    DropGuides { zones, selected }
+}
+
+/// A compass inside the canvas bands; narrow panes keep a readable Swap target.
 fn pane_zones(
     canvas: CanvasRect,
     slot: PaneSlot,
     rect: CanvasRect,
 ) -> impl Iterator<Item = (DockTarget, CanvasRect)> {
-    let band = DOCK_EDGE_BAND_PX;
+    let band = PARK_CORNER_PX + DOCK_GUIDE_GAP_PX;
     let inner = CanvasRect::new(
         canvas.x + band,
         canvas.y + band,
@@ -135,19 +173,31 @@ fn pane_zones(
     let right = rect.right().min(inner.right());
     let bottom = rect.bottom().min(inner.bottom());
     let (w, h) = (right - left, bottom - top);
-    let (dx, dy) = (PANE_SIDE_PX.min(w / 4.0), PANE_SIDE_PX.min(h / 4.0));
-    let (cw, ch) = (PANE_CENTRE_PX.min(w / 3.0), PANE_CENTRE_PX.min(h / 3.0));
+    let gap = DOCK_GUIDE_GAP_PX;
+    let size = DOCK_GUIDE_PX.min((w.min(h) - 2.0 * gap) / 3.0);
+    let centre_size = size.max(MIN_DOCK_GUIDE_PX);
     let r = CanvasRect::new;
+    let mut centre = r(0.0, 0.0, centre_size, centre_size).centred_in(rect);
+    let inset = if size >= MIN_DOCK_GUIDE_PX {
+        size + gap
+    } else {
+        0.0
+    };
+    centre.x = centre.x.min(right - centre_size - inset).max(left + inset);
+    centre.y = centre.y.min(bottom - centre_size - inset).max(top + inset);
+    let (x, y, step) = (centre.x, centre.y, size + gap);
     let zones = [
-        (Edge::Left, r(left, top + dy, dx, h - 2.0 * dy)),
-        (Edge::Right, r(right - dx, top + dy, dx, h - 2.0 * dy)),
-        (Edge::Top, r(left + dx, top, w - 2.0 * dx, dy)),
-        (Edge::Bottom, r(left + dx, bottom - dy, w - 2.0 * dx, dy)),
+        (Edge::Left, r(x - step, y, size, size)),
+        (Edge::Right, r(x + step, y, size, size)),
+        (Edge::Top, r(x, y - step, size, size)),
+        (Edge::Bottom, r(x, y + step, size, size)),
     ];
-    let sides = zones.map(|(side, zone)| (DockTarget::Beside { slot, side }, zone));
-    let centre = r(left + (w - cw) / 2.0, top + (h - ch) / 2.0, cw, ch);
+    let sides = zones
+        .into_iter()
+        .filter(move |_| size >= MIN_DOCK_GUIDE_PX)
+        .map(move |(side, zone)| (DockTarget::Beside { slot, side }, zone));
     let all = sides.into_iter().chain([(DockTarget::Swap(slot), centre)]);
-    all.filter(move |_| w > 0.0 && h > 0.0)
+    all.filter(move |_| w >= MIN_DOCK_GUIDE_PX && h >= MIN_DOCK_GUIDE_PX)
 }
 
 /// Where a pane of `size` (width, height) sits parked in `corner`, clear of

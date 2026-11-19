@@ -236,6 +236,6 @@ For a screen that represents the user's real setup, enable the trio:
 | `QUANTICK_WIDGETS=<ids>` | `widget_surfaces/mod.rs` | opens these widget panes |
 | `QUANTICK_ADD_MENU=1` | wiring | the toolbar's + menu open; one-shot |
 | `QUANTICK_CANVAS_ACTS=<acts>` | wiring | `;`-separated canvas acts on the first drawn frame, each through its `canvas.*` capability: `add:<widget>`, `dock:<slot>:<edge>`, `park:<slot>:<corner>`, `resize:<slot>:width\|height:<share>`, `<verb>:<slot>` for float, pop_out, return, minimize, maximize, restore, remove |
-| `QUANTICK_CANVAS_HOLD=<slot>:<x>,<y>` | `tab/layout.rs` | a floating chart held by its grip, the pointer pinned at that share of the canvas: the dock preview stays up |
+| `QUANTICK_CANVAS_HOLD=<slot>:<x>,<y>` | `tab/layout.rs` | Hold a floating pane by its title at canvas fractions x,y to show guides and preview |
 
 156 hooks registered.
