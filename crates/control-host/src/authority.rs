@@ -144,6 +144,9 @@ pub const TRADE_MODULE_ID: &str = "trade";
 pub const TRADE_EFFECT_ID: &str = "trade";
 pub const TRADE_PERMISSION_ID: &str = "trade";
 
+/// Strategies armed on a chart: Pine scripts that ring alarm-only.
+pub const STRATEGY_MODULE_ID: &str = "strategy";
+
 /// Notifications: a popup, a toast, a sound.
 pub const NOTIFY_MODULE_ID: &str = "notify";
 /// Permission to raise a popup or a toast the trader has to read.
@@ -673,6 +676,12 @@ pub fn modules() -> Vec<ModuleDescriptor> {
             description:
                 "Placing, bracketing and cancelling orders on the charted symbol. Fills are simulated."
                     .to_owned(),
+        },
+        ModuleDescriptor {
+            id: module(STRATEGY_MODULE_ID),
+            title: "Strategy".to_owned(),
+            description: "Pine scripts armed on a chart's bars that ring an alarm and place nothing."
+                .to_owned(),
         },
         ModuleDescriptor {
             id: module(EVENTS_MODULE_ID),

@@ -9,15 +9,10 @@
 
 use quantick_engine::{Bar, Trade};
 use quantick_strategy::sound::Cue;
+use rust_decimal::Decimal;
 
+pub use crate::strategies::LiveClose;
 use crate::strategies::TabStrategies;
-
-/// A bar one print closed on one pane, at the composed slot it closed at.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LiveClose {
-    pub bar: Bar,
-    pub slot: usize,
-}
 
 /// What folding one print into one pane reported.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -38,10 +33,11 @@ impl PaneFold {
         }
     }
 
-    /// Record the bar the print closed at `slot`.
-    pub fn close(&mut self, bar: &Bar, slot: usize) {
+    /// Record the bar the print closed at `slot`, with its footprint POC.
+    pub fn close(&mut self, bar: &Bar, poc: Option<Decimal>, slot: usize) {
         self.closes.push(LiveClose {
             bar: bar.clone(),
+            poc,
             slot,
         });
     }

@@ -28600,6 +28600,896 @@
         "status": "available"
       },
       "confirmation_class": "none",
+      "description": "Loads a .pine file from the strategy library and arms it alarm-only on one chart's closed bars: an alertcondition that holds rings the alarm when the bar's body meets the placement (a drawn rectangle, a fixed range, a line crossed one way, or anywhere). The title's first word is the side (bull, buy or long; bear, sell or short; any case); a script with a title naming no side, a computed title, no alertcondition, or a compile error is refused with the reason, compile errors as `line N: <CODE> <message>`. Never places an order. A runtime error later disarms that instance alone; strategy.script.list shows the reason. Journaled as strategy.script.armed. Lives for the session.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "annotate",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "strategy.script.arm",
+      "idempotency": "forbidden",
+      "input_schema": {
+        "$defs": {
+          "ActionSide": {
+            "description": "Which way the order goes.",
+            "enum": [
+              "buy",
+              "sell"
+            ],
+            "type": "string"
+          },
+          "CrossDirection": {
+            "enum": [
+              "up",
+              "down"
+            ],
+            "type": "string"
+          },
+          "Placement": {
+            "description": "Where a script may ring. Prices are decimal strings.",
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "description": "The rectangle drawing `drawing_id` on the pane marks, while its time\nspan covers the bar.",
+                "properties": {
+                  "drawing_id": {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  "kind": {
+                    "const": "region",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "drawing_id"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "description": "A fixed band; both edges inside, either order.",
+                "properties": {
+                  "high": {
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "range",
+                    "type": "string"
+                  },
+                  "low": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "low",
+                  "high"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "description": "A horizontal line the bar's body must cross in `direction`.",
+                "properties": {
+                  "direction": {
+                    "$ref": "#/$defs/CrossDirection"
+                  },
+                  "kind": {
+                    "const": "line",
+                    "type": "string"
+                  },
+                  "level": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "level",
+                  "direction"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "description": "Any closed bar.",
+                "properties": {
+                  "kind": {
+                    "const": "anywhere",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "pane_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "The chart whose closed bars the script judges; absent for the flow\nchart."
+          },
+          "placement": {
+            "$ref": "#/$defs/Placement"
+          },
+          "script": {
+            "description": "A `.pine` file name in the strategy library, as `strategy.script.list`\nreports it.",
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          },
+          "side": {
+            "$ref": "#/$defs/ActionSide",
+            "description": "The side the instance hunts: alerts whose title names the other side\ndo not ring it."
+          },
+          "tab_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "The tab; absent for the one on screen."
+          }
+        },
+        "required": [
+          "script",
+          "side",
+          "placement"
+        ],
+        "title": "ArmInput",
+        "type": "object"
+      },
+      "module": "strategy",
+      "output_schema": {
+        "$defs": {
+          "ActionSide": {
+            "description": "Which way the order goes.",
+            "enum": [
+              "buy",
+              "sell"
+            ],
+            "type": "string"
+          },
+          "CrossDirection": {
+            "enum": [
+              "up",
+              "down"
+            ],
+            "type": "string"
+          },
+          "Placement": {
+            "description": "Where a script may ring. Prices are decimal strings.",
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "description": "The rectangle drawing `drawing_id` on the pane marks, while its time\nspan covers the bar.",
+                "properties": {
+                  "drawing_id": {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  "kind": {
+                    "const": "region",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "drawing_id"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "description": "A fixed band; both edges inside, either order.",
+                "properties": {
+                  "high": {
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "range",
+                    "type": "string"
+                  },
+                  "low": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "low",
+                  "high"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "description": "A horizontal line the bar's body must cross in `direction`.",
+                "properties": {
+                  "direction": {
+                    "$ref": "#/$defs/CrossDirection"
+                  },
+                  "kind": {
+                    "const": "line",
+                    "type": "string"
+                  },
+                  "level": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "level",
+                  "direction"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "description": "Any closed bar.",
+                "properties": {
+                  "kind": {
+                    "const": "anywhere",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "ScriptStrategy": {
+            "description": "One armed script.",
+            "properties": {
+              "alarm_only": {
+                "description": "Always true: a script strategy never places an order.",
+                "type": "boolean"
+              },
+              "disarm_reason": {
+                "description": "Why it stopped: `line N: <CODE> <message>` when its script failed at\nruntime, otherwise the disarm reason in the badge's words.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "id": {
+                "$ref": "#/$defs/WireU64",
+                "description": "Stable for the tab's session; never reused."
+              },
+              "pane_id": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "placement": {
+                "$ref": "#/$defs/Placement"
+              },
+              "script": {
+                "type": "string"
+              },
+              "side": {
+                "$ref": "#/$defs/ActionSide"
+              },
+              "state": {
+                "$ref": "#/$defs/ScriptStrategyState"
+              },
+              "status": {
+                "description": "What the last closed bar did, as the instance's badge line says it.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "pane_id",
+              "script",
+              "side",
+              "placement",
+              "state",
+              "status",
+              "alarm_only"
+            ],
+            "type": "object"
+          },
+          "ScriptStrategyState": {
+            "enum": [
+              "watching",
+              "disarmed"
+            ],
+            "type": "string"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "strategy": {
+            "$ref": "#/$defs/ScriptStrategy"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          }
+        },
+        "required": [
+          "tab_id",
+          "strategy"
+        ],
+        "title": "ArmResult",
+        "type": "object"
+      },
+      "persistence": "transient",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "annotate",
+        "annotate.script"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "Each arm adds one instance with a new id, so arming twice rings twice; no retry key can make that safe. Read strategy.script.list, or the strategy.script.armed events after a cursor taken before the call, before retrying one whose answer was lost.",
+      "title": "Arm a script strategy",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Removes one armed script strategy by the id strategy.script.arm answered; it rings no more. An id no instance has answers disarmed: false. Journaled as strategy.script.disarmed.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "annotate",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "strategy.script.disarm",
+      "idempotency": "forbidden",
+      "input_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "$ref": "#/$defs/WireU64",
+            "description": "The id `strategy.script.arm` answered."
+          },
+          "tab_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "title": "DisarmInput",
+        "type": "object"
+      },
+      "module": "strategy",
+      "output_schema": {
+        "$defs": {
+          "ActionSide": {
+            "description": "Which way the order goes.",
+            "enum": [
+              "buy",
+              "sell"
+            ],
+            "type": "string"
+          },
+          "CrossDirection": {
+            "enum": [
+              "up",
+              "down"
+            ],
+            "type": "string"
+          },
+          "Placement": {
+            "description": "Where a script may ring. Prices are decimal strings.",
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "description": "The rectangle drawing `drawing_id` on the pane marks, while its time\nspan covers the bar.",
+                "properties": {
+                  "drawing_id": {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  "kind": {
+                    "const": "region",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "drawing_id"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "description": "A fixed band; both edges inside, either order.",
+                "properties": {
+                  "high": {
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "range",
+                    "type": "string"
+                  },
+                  "low": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "low",
+                  "high"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "description": "A horizontal line the bar's body must cross in `direction`.",
+                "properties": {
+                  "direction": {
+                    "$ref": "#/$defs/CrossDirection"
+                  },
+                  "kind": {
+                    "const": "line",
+                    "type": "string"
+                  },
+                  "level": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "level",
+                  "direction"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "description": "Any closed bar.",
+                "properties": {
+                  "kind": {
+                    "const": "anywhere",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "ScriptStrategy": {
+            "description": "One armed script.",
+            "properties": {
+              "alarm_only": {
+                "description": "Always true: a script strategy never places an order.",
+                "type": "boolean"
+              },
+              "disarm_reason": {
+                "description": "Why it stopped: `line N: <CODE> <message>` when its script failed at\nruntime, otherwise the disarm reason in the badge's words.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "id": {
+                "$ref": "#/$defs/WireU64",
+                "description": "Stable for the tab's session; never reused."
+              },
+              "pane_id": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "placement": {
+                "$ref": "#/$defs/Placement"
+              },
+              "script": {
+                "type": "string"
+              },
+              "side": {
+                "$ref": "#/$defs/ActionSide"
+              },
+              "state": {
+                "$ref": "#/$defs/ScriptStrategyState"
+              },
+              "status": {
+                "description": "What the last closed bar did, as the instance's badge line says it.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "pane_id",
+              "script",
+              "side",
+              "placement",
+              "state",
+              "status",
+              "alarm_only"
+            ],
+            "type": "object"
+          },
+          "ScriptStrategyState": {
+            "enum": [
+              "watching",
+              "disarmed"
+            ],
+            "type": "string"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "disarmed": {
+            "description": "False when no armed script had the id.",
+            "type": "boolean"
+          },
+          "id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "strategy": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ScriptStrategy"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The instance as it stood when removed."
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          }
+        },
+        "required": [
+          "tab_id",
+          "id",
+          "disarmed"
+        ],
+        "title": "DisarmResult",
+        "type": "object"
+      },
+      "persistence": "transient",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "annotate",
+        "annotate.script"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "Disarming names one instance by id, and a second disarm of the same id reports it was not there.",
+      "title": "Disarm a script strategy",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Reads the strategy library (the .pine files strategy.script.arm accepts, sorted) and every script strategy armed on the tab: its id, chart, script, side, placement, whether it is watching or disarmed and why, and its badge line. Changes nothing.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "observe",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "strategy.script.list",
+      "idempotency": "forbidden",
+      "input_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "tab_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "title": "ListInput",
+        "type": "object"
+      },
+      "module": "strategy",
+      "output_schema": {
+        "$defs": {
+          "ActionSide": {
+            "description": "Which way the order goes.",
+            "enum": [
+              "buy",
+              "sell"
+            ],
+            "type": "string"
+          },
+          "CrossDirection": {
+            "enum": [
+              "up",
+              "down"
+            ],
+            "type": "string"
+          },
+          "LibraryListing": {
+            "description": "The strategy library as the call found it.",
+            "properties": {
+              "error": {
+                "description": "Why the folder could not be read; `scripts` is then empty.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "folder": {
+                "description": "The folder the launch named (`QUANTICK_STRATEGIES_DIR`), else\n`strategies` beside the working directory.",
+                "type": "string"
+              },
+              "omitted": {
+                "$ref": "#/$defs/WireU64",
+                "description": "How many names did not fit."
+              },
+              "scripts": {
+                "description": "Its `.pine` file names, sorted; at most 256.",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "folder",
+              "scripts",
+              "omitted"
+            ],
+            "type": "object"
+          },
+          "Placement": {
+            "description": "Where a script may ring. Prices are decimal strings.",
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "description": "The rectangle drawing `drawing_id` on the pane marks, while its time\nspan covers the bar.",
+                "properties": {
+                  "drawing_id": {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  "kind": {
+                    "const": "region",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "drawing_id"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "description": "A fixed band; both edges inside, either order.",
+                "properties": {
+                  "high": {
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "range",
+                    "type": "string"
+                  },
+                  "low": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "low",
+                  "high"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "description": "A horizontal line the bar's body must cross in `direction`.",
+                "properties": {
+                  "direction": {
+                    "$ref": "#/$defs/CrossDirection"
+                  },
+                  "kind": {
+                    "const": "line",
+                    "type": "string"
+                  },
+                  "level": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "level",
+                  "direction"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "description": "Any closed bar.",
+                "properties": {
+                  "kind": {
+                    "const": "anywhere",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "ScriptStrategy": {
+            "description": "One armed script.",
+            "properties": {
+              "alarm_only": {
+                "description": "Always true: a script strategy never places an order.",
+                "type": "boolean"
+              },
+              "disarm_reason": {
+                "description": "Why it stopped: `line N: <CODE> <message>` when its script failed at\nruntime, otherwise the disarm reason in the badge's words.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "id": {
+                "$ref": "#/$defs/WireU64",
+                "description": "Stable for the tab's session; never reused."
+              },
+              "pane_id": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "placement": {
+                "$ref": "#/$defs/Placement"
+              },
+              "script": {
+                "type": "string"
+              },
+              "side": {
+                "$ref": "#/$defs/ActionSide"
+              },
+              "state": {
+                "$ref": "#/$defs/ScriptStrategyState"
+              },
+              "status": {
+                "description": "What the last closed bar did, as the instance's badge line says it.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "pane_id",
+              "script",
+              "side",
+              "placement",
+              "state",
+              "status",
+              "alarm_only"
+            ],
+            "type": "object"
+          },
+          "ScriptStrategyState": {
+            "enum": [
+              "watching",
+              "disarmed"
+            ],
+            "type": "string"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "armed": {
+            "description": "Every armed script on the tab, charts in id order, each chart's in\narming order.",
+            "items": {
+              "$ref": "#/$defs/ScriptStrategy"
+            },
+            "type": "array"
+          },
+          "library": {
+            "$ref": "#/$defs/LibraryListing"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          }
+        },
+        "required": [
+          "tab_id",
+          "library",
+          "armed"
+        ],
+        "title": "ListResult",
+        "type": "object"
+      },
+      "persistence": "none",
+      "preconditions": [],
+      "read_only": true,
+      "required_permissions": [
+        "observe",
+        "observe.indicators",
+        "observe.user_text"
+      ],
+      "reversible": false,
+      "revision_policy": "forbidden",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "title": "List script strategies",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
       "description": "Closes one tab. With autosave on an edit on its way is written first and it closes at once; a tab whose copy autosave did not write (marked) asks as held edits do. With autosave off and edits held, a call without save refuses with workspace.unsaved_edits, naming the workspace, the tabs a save also changes and what changed, and closes nothing; save true writes the edits first, save false drops them. The window's last tab refuses with workspace.last_tab before anything is saved or written.",
       "destructive": false,
       "dry_run_supported": false,
@@ -33184,6 +34074,11 @@
       "description": "Coherent multi-module semantic captures.",
       "id": "snapshot",
       "title": "Snapshot"
+    },
+    {
+      "description": "Pine scripts armed on a chart's bars that ring an alarm and place nothing.",
+      "id": "strategy",
+      "title": "Strategy"
     },
     {
       "description": "Application build and runtime identity.",

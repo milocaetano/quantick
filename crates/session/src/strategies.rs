@@ -20,23 +20,39 @@
 use std::collections::BTreeMap;
 
 use quantick_engine::{Bar, BarProgress};
+use quantick_script_trigger::ScriptInstance;
 use quantick_sim::{Command, VenueEvent};
 use quantick_strategy::anchors::{AlarmMark, AnchoredInstance, StrategyAnchors};
 use quantick_strategy::presets::{CompiledPreset, StoredPreset};
 use quantick_strategy::runner::{self, StrategyPort};
 use quantick_strategy::sound::Cue;
 use quantick_strategy::{ArmedState, ArmedStrategy, DisarmReason, ForceTrigger, Region};
+use rust_decimal::Decimal;
+
+/// A bar one print closed on one pane, at the composed slot it closed at:
+/// what the pane's strategies are queued.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LiveClose {
+    pub bar: Bar,
+    /// The point of control of the bar's footprint, when the pane kept one:
+    /// what a script strategy reads as `poc`.
+    pub poc: Option<Decimal>,
+    pub slot: usize,
+}
 
 /// The armed strategies of one pane and the work they park for the tab.
 /// See the module docs.
 pub struct PaneStrategies<D> {
     /// Armed strategy instances riding this pane's drawings.
     pub anchors: StrategyAnchors<D>,
+    /// Pine scripts armed alarm-only on this pane's bars, in arming order
+    /// (`crate::script_strategies`).
+    pub scripts: Vec<ScriptInstance<D>>,
     /// Closed bars awaiting evaluation, each with the slot it closed at.
     /// Queued only while instances exist and drained in the same ingestion
     /// sweep, so the slot and the drawings' anchors are read against one
     /// cut of the series.
-    pending: Vec<(Bar, usize)>,
+    pending: Vec<LiveClose>,
     /// The drawing whose "Add strategy…" was clicked; drained into the
     /// arming dialog over this pane.
     popup_request: Option<D>,
@@ -49,6 +65,7 @@ impl<D> Default for PaneStrategies<D> {
     fn default() -> Self {
         Self {
             anchors: StrategyAnchors::default(),
+            scripts: Vec::new(),
             pending: Vec::new(),
             popup_request: None,
             cleanup: Vec::new(),
@@ -57,31 +74,39 @@ impl<D> Default for PaneStrategies<D> {
 }
 
 impl<D: Copy + PartialEq> PaneStrategies<D> {
-    /// Queue the bar that closed at `slot`, only while an instance exists:
-    /// an idle chart clones nothing on the per-trade path. The slot is the
-    /// composed one (venue history prefix + live bars), the space the
-    /// drawings' anchors live in.
-    pub fn queue_closed(&mut self, bar: &Bar, slot: usize) {
-        if !self.anchors.is_empty() {
-            self.pending.push((bar.clone(), slot));
+    /// Queue the bar that closed at `slot`, with its footprint POC, only
+    /// while an instance exists: an idle chart clones nothing on the
+    /// per-trade path. The slot is the composed one (venue history prefix +
+    /// live bars), the space the drawings' anchors live in.
+    pub fn queue_closed(&mut self, bar: &Bar, poc: Option<Decimal>, slot: usize) {
+        if !self.is_empty() {
+            let bar = bar.clone();
+            self.pending.push(LiveClose { bar, poc, slot });
         }
     }
 
-    /// The closed bars awaiting evaluation, slot each.
+    /// Whether no instance of either kind rides this pane.
     #[must_use]
-    pub fn pending(&self) -> &[(Bar, usize)] {
+    pub fn is_empty(&self) -> bool {
+        self.anchors.is_empty() && self.scripts.is_empty()
+    }
+
+    /// The closed bars awaiting evaluation.
+    #[must_use]
+    pub fn pending(&self) -> &[LiveClose] {
         &self.pending
     }
 
-    /// Whether any instance carries an alarm.
+    /// Whether any instance carries an alarm: a watching script always does.
     #[must_use]
     pub fn any_alarm(&self) -> bool {
         (self.anchors.instances.iter()).any(|instance| instance.alarm.is_some())
+            || self.scripts.iter().any(ScriptInstance::watching)
     }
 
     /// The closed bars awaiting evaluation, drained.
     #[must_use]
-    pub fn take_bars(&mut self) -> Vec<(Bar, usize)> {
+    pub fn take_bars(&mut self) -> Vec<LiveClose> {
         std::mem::take(&mut self.pending)
     }
 
@@ -158,6 +183,9 @@ impl<D: Copy + PartialEq> PaneStrategies<D> {
     /// the series that ended; answers with the cleanup the instances owe.
     pub fn disarm_all(&mut self, reason: DisarmReason) -> Vec<Command> {
         self.pending.clear();
+        for script in &mut self.scripts {
+            script.disarm(reason);
+        }
         self.anchors.disarm_all(reason)
     }
 
@@ -237,17 +265,30 @@ pub struct Evaluation {
 /// Every pane's strategies, keyed by the pane's id.
 pub struct TabStrategies<D> {
     panes: BTreeMap<u64, PaneStrategies<D>>,
+    /// The id the next armed script takes; never reused in the tab's life.
+    pub(crate) next_script_id: u64,
 }
 
 impl<D> Default for TabStrategies<D> {
     fn default() -> Self {
         Self {
             panes: BTreeMap::new(),
+            next_script_id: 1,
         }
     }
 }
 
 impl<D: Copy + PartialEq> TabStrategies<D> {
+    /// Every pane that has held a strategy, in id order.
+    pub(crate) fn panes(&self) -> impl Iterator<Item = (u64, &PaneStrategies<D>)> {
+        self.panes.iter().map(|(&id, pane)| (id, pane))
+    }
+
+    /// Every pane that has held a strategy, in id order, to act on.
+    pub(crate) fn panes_mut(&mut self) -> impl Iterator<Item = (u64, &mut PaneStrategies<D>)> {
+        self.panes.iter_mut().map(|(&id, pane)| (id, pane))
+    }
+
     /// The strategies of pane `id`, when it has ever held one.
     #[must_use]
     pub fn pane(&self, id: u64) -> Option<&PaneStrategies<D>> {
@@ -268,7 +309,7 @@ impl<D: Copy + PartialEq> TabStrategies<D> {
     /// Whether any pane carries an instance.
     #[must_use]
     pub fn any_armed(&self) -> bool {
-        self.panes.values().any(|pane| !pane.anchors.is_empty())
+        self.panes.values().any(|pane| !pane.is_empty())
     }
 
     /// The instances riding pane `id`'s drawings, if any.
@@ -290,9 +331,9 @@ impl<D: Copy + PartialEq> TabStrategies<D> {
 
     /// Queue the bar pane `id` closed at `slot` (see
     /// [`PaneStrategies::queue_closed`]). Opens no entry: the per-trade path.
-    pub fn queue_closed(&mut self, id: u64, bar: &Bar, slot: usize) {
+    pub fn queue_closed(&mut self, id: u64, bar: &Bar, poc: Option<Decimal>, slot: usize) {
         if let Some(pane) = self.panes.get_mut(&id) {
-            pane.queue_closed(bar, slot);
+            pane.queue_closed(bar, poc, slot);
         }
     }
 
@@ -352,7 +393,7 @@ impl<D: Copy + PartialEq> TabStrategies<D> {
             let Some(pane) = self.panes.get_mut(&id) else {
                 continue;
             };
-            if pane.anchors.is_empty() {
+            if pane.is_empty() {
                 continue;
             }
             // The batch to each instance, applying what it answers with —
@@ -366,16 +407,30 @@ impl<D: Copy + PartialEq> TabStrategies<D> {
                 for command in pane.anchors.drop_orphans(|drawing| exists(id, drawing)) {
                     let _ = port.apply(command);
                 }
+                // A script riding a region dies with its drawing too.
+                (pane.scripts).retain(|script| {
+                    (script.placement.drawing()).is_none_or(|drawing| exists(id, drawing))
+                });
             }
-            for (bar, slot) in &bars {
+            for close in &bars {
                 answer.alarms.extend(runner::step_closed_bar(
                     &mut pane.anchors.instances,
-                    bar,
-                    *slot,
+                    &close.bar,
+                    close.slot,
                     |drawing, slot| region(id, drawing, slot),
                     port,
                     now_ms,
                 ));
+                for script in &mut pane.scripts {
+                    let resolved =
+                        (script.placement).resolve(|drawing| region(id, drawing, close.slot));
+                    answer.alarms.extend(script.on_closed_bar(
+                        &close.bar,
+                        close.poc,
+                        resolved.as_ref(),
+                        now_ms,
+                    ));
+                }
             }
             // The bar still forming, judged for the alarm only. Per print,
             // so it opens with the question that costs least.

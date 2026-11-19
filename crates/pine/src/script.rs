@@ -13,7 +13,19 @@ use quantick_indicators::{
 };
 
 use crate::compile::CompiledScript;
+use crate::error::ErrorCode;
 use crate::eval::{Eval, ScriptState, Staged};
+
+/// The last runtime failure as data: what [`EvalError`]'s message renders,
+/// kept apart so a consumer that reports it — a strategy disarming on it —
+/// never parses the line and the code back out of a sentence.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeFault {
+    /// 1-based line the failing node starts on.
+    pub line: usize,
+    pub code: ErrorCode,
+    pub message: String,
+}
 
 /// A loaded script instance: compiled tables + bound inputs + running state.
 pub struct ScriptIndicator {
@@ -37,6 +49,8 @@ pub struct ScriptIndicator {
     /// top of every commit run and on its failure; a preview run neither
     /// adds to nor clears it.
     alerts: Vec<FiredAlert>,
+    /// The last run's failure, until a clean run or a reset.
+    fault: Option<RuntimeFault>,
     timezone: crate::calendar::CalendarTimezone,
 }
 
@@ -94,6 +108,7 @@ impl ScriptIndicator {
             candles,
             paint: None,
             alerts: Vec::new(),
+            fault: None,
             timezone: crate::calendar::CalendarTimezone::default(),
         }
     }
@@ -110,6 +125,12 @@ impl ScriptIndicator {
     fn draws_objects(&self) -> bool {
         let (lines, boxes, labels) = self.state.objects.counts();
         lines + boxes + labels > 0 || self.state.objects.revision() > 0
+    }
+
+    /// The last run's runtime failure, `None` after a clean run or a reset.
+    #[must_use]
+    pub fn runtime_fault(&self) -> Option<&RuntimeFault> {
+        self.fault.as_ref()
     }
 
     /// Load-time warnings (surfaced by the indicator panel).
@@ -155,8 +176,14 @@ impl ScriptIndicator {
         eval.timezone = self.timezone;
         let result = eval.run();
         self.state.project_objects();
+        self.fault = None;
         result.map_err(|error| {
             let (line, col) = error.span.line_col(&self.source);
+            self.fault = Some(RuntimeFault {
+                line,
+                code: error.code,
+                message: error.message.clone(),
+            });
             EvalError {
                 bar_index: ctx.bar_index,
                 message: format!(
@@ -239,6 +266,7 @@ impl Indicator for ScriptIndicator {
         self.candles.fill(None);
         self.paint = None;
         self.alerts.clear();
+        self.fault = None;
     }
 
     fn take_fired_alerts(&mut self) -> Vec<FiredAlert> {

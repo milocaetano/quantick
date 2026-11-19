@@ -48,6 +48,7 @@ fn setup(alarm: bool) -> (TabMarket<DrawingId>, Owners) {
         pane_id,
         closes: vec![LiveClose {
             bar: bar(100, 101),
+            poc: None,
             slot,
         }],
     };
@@ -87,7 +88,7 @@ impl LiveTradeOwners for Owners {
                 pending
                     .unwrap_or_default()
                     .into_iter()
-                    .map(move |(_, slot)| (id, slot))
+                    .map(move |close| (id, close.slot))
             })
             .collect();
         self.seen.push(Seen::Evaluate { now_ms, queued });

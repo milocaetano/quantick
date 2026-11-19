@@ -3342,6 +3342,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "quantick-script-trigger"
+version = "0.1.0"
+dependencies = [
+ "quantick-engine",
+ "quantick-indicators",
+ "quantick-pine",
+ "quantick-strategy",
+ "rust_decimal",
+]
+
+[[package]]
 name = "quantick-session"
 version = "0.1.0"
 dependencies = [
@@ -3350,6 +3361,7 @@ dependencies = [
  "quantick-civil",
  "quantick-engine",
  "quantick-paper",
+ "quantick-script-trigger",
  "quantick-sim",
  "quantick-sources",
  "quantick-strategy",

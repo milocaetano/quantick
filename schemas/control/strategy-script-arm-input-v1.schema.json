@@ -1,0 +1,152 @@
+{
+  "$defs": {
+    "ActionSide": {
+      "description": "Which way the order goes.",
+      "enum": [
+        "buy",
+        "sell"
+      ],
+      "type": "string"
+    },
+    "CrossDirection": {
+      "enum": [
+        "up",
+        "down"
+      ],
+      "type": "string"
+    },
+    "Placement": {
+      "description": "Where a script may ring. Prices are decimal strings.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "The rectangle drawing `drawing_id` on the pane marks, while its time\nspan covers the bar.",
+          "properties": {
+            "drawing_id": {
+              "$ref": "#/$defs/WireU64"
+            },
+            "kind": {
+              "const": "region",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "drawing_id"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A fixed band; both edges inside, either order.",
+          "properties": {
+            "high": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "range",
+              "type": "string"
+            },
+            "low": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "low",
+            "high"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A horizontal line the bar's body must cross in `direction`.",
+          "properties": {
+            "direction": {
+              "$ref": "#/$defs/CrossDirection"
+            },
+            "kind": {
+              "const": "line",
+              "type": "string"
+            },
+            "level": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "level",
+            "direction"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Any closed bar.",
+          "properties": {
+            "kind": {
+              "const": "anywhere",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "pane_id": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/WireU64"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "The chart whose closed bars the script judges; absent for the flow\nchart."
+    },
+    "placement": {
+      "$ref": "#/$defs/Placement"
+    },
+    "script": {
+      "description": "A `.pine` file name in the strategy library, as `strategy.script.list`\nreports it.",
+      "maxLength": 128,
+      "minLength": 1,
+      "type": "string"
+    },
+    "side": {
+      "$ref": "#/$defs/ActionSide",
+      "description": "The side the instance hunts: alerts whose title names the other side\ndo not ring it."
+    },
+    "tab_id": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/WireU64"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "The tab; absent for the one on screen."
+    }
+  },
+  "required": [
+    "script",
+    "side",
+    "placement"
+  ],
+  "title": "ArmInput",
+  "type": "object"
+}

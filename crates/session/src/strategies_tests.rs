@@ -23,7 +23,7 @@ const PANE: u64 = 7;
 
 /// An account that records every command it is handed and is always flat.
 #[derive(Default)]
-struct RecordingPort {
+pub(crate) struct RecordingPort {
     applied: Vec<Command>,
 }
 
@@ -116,7 +116,7 @@ fn resting(drawing: DrawingId) -> AnchoredInstance<DrawingId> {
 fn orphaned_instance_returns_its_cleanup() {
     let mut strategies = TabStrategies::default();
     let _ = strategies.pane_mut(PANE).anchors.arm(resting(DrawingId(3)));
-    strategies.queue_closed(PANE, &bar(106, 107), 4);
+    strategies.queue_closed(PANE, &bar(106, 107), None, 4);
     let mut port = RecordingPort::default();
     let answer = strategies.evaluate(
         &[PANE],
@@ -141,16 +141,16 @@ fn orphaned_instance_returns_its_cleanup() {
 #[test]
 fn an_idle_pane_queues_nothing_and_a_disarm_forgets_the_queue() {
     let mut strategies: TabStrategies<DrawingId> = TabStrategies::default();
-    strategies.queue_closed(PANE, &bar(1, 2), 0);
+    strategies.queue_closed(PANE, &bar(1, 2), None, 0);
     assert!(
         strategies.pane(PANE).is_none(),
         "the per-trade path opens no entry"
     );
     let pane = strategies.pane_mut(PANE);
-    pane.queue_closed(&bar(1, 2), 0);
+    pane.queue_closed(&bar(1, 2), None, 0);
     assert!(pane.pending().is_empty(), "nothing armed, nothing cloned");
     let _ = pane.anchors.arm(instance(DrawingId(1)));
-    pane.queue_closed(&bar(1, 2), 5);
+    pane.queue_closed(&bar(1, 2), None, 5);
     assert_eq!(pane.pending().len(), 1);
     let cleanup = pane.disarm_all(DisarmReason::TimelineReset);
     assert!(cleanup.is_empty(), "nothing was resting");
@@ -211,7 +211,7 @@ fn a_refused_check_arms_nothing_and_a_passed_one_warms_on_the_series() {
 fn a_sweep_walks_only_the_panes_it_is_given() {
     let mut strategies = TabStrategies::default();
     let _ = strategies.pane_mut(PANE).anchors.arm(resting(DrawingId(3)));
-    strategies.queue_closed(PANE, &bar(106, 107), 4);
+    strategies.queue_closed(PANE, &bar(106, 107), None, 4);
     let mut port = RecordingPort::default();
     let answer = strategies.evaluate(
         &[1],

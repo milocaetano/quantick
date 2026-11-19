@@ -66,7 +66,9 @@ impl live_trade::LiveTradeOwners for LiveTradeOwners<'_> {
         };
         let mut fold = PaneFold::new(pane.id);
         let tag = self.alarm_tag;
-        pane.ingest_live_trade_observed(trade, tag, &mut |_, bar, slot| fold.close(bar, slot));
+        pane.ingest_live_trade_observed(trade, tag, &mut |_, closed, slot| {
+            fold.close(&closed.bar, closed.poc, slot);
+        });
         fold
     }
     fn observe_alert(&mut self, pane: usize, trade: &Trade, close: Option<&LiveClose>) {
@@ -1210,9 +1212,9 @@ impl Tab {
         } = self;
         for pane in std::iter::once(flow_pane).chain(time_panes.iter_mut()) {
             for trade in trades {
-                pane.ingest_live_trade_observed(trade, tag, &mut |pane, bar, slot| {
+                pane.ingest_live_trade_observed(trade, tag, &mut |pane, closed, slot| {
                     if to_strategies {
-                        strategies.queue_closed(pane.id, bar, slot);
+                        strategies.queue_closed(pane.id, &closed.bar, closed.poc, slot);
                     }
                 });
             }

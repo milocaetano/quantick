@@ -54,6 +54,7 @@ pub mod retry_matrix;
 pub mod scene;
 pub mod script;
 pub mod script_alarms;
+pub mod script_strategy;
 pub mod session;
 pub mod settings_sections;
 pub mod tape_fold;

@@ -3,6 +3,7 @@ use super::Tab;
 use crate::config::AppConfig;
 use quantick_control_handlers::contract_roll::AutoRoll;
 use quantick_control_handlers::market_tab::{FeedSelection, MarketTab, RecoveredFeed};
+use quantick_control_handlers::script_strategy::{ScriptPane, ScriptTab};
 use quantick_feed::stall::Recovery;
 use quantick_session::{HistoryAct, HistoryOutcome, SessionSnapshot};
 
@@ -48,5 +49,18 @@ impl MarketTab for Tab {
     }
     fn session(&self) -> SessionSnapshot {
         self.session.snapshot()
+    }
+    fn script_tab(&mut self) -> Option<ScriptTab<'_>> {
+        let panes = std::iter::once(&self.flow_pane).chain(&self.time_panes);
+        Some(ScriptTab {
+            library: crate::launch::operator_paths().strategies_dir.as_deref(),
+            panes: (panes.map(|pane| ScriptPane {
+                id: pane.id,
+                series: pane.series_read(),
+                drawings: &pane.drawings,
+            }))
+            .collect(),
+            strategies: &mut self.market.strategies,
+        })
     }
 }

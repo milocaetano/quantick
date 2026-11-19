@@ -36,3 +36,4 @@ platform consumed by `app` only; the OS-window exception: the native window call
 # `operability` left it when `feed` and `control-schema` began keeping and
 # reading the intake-lag window.
 ui-model consumed by `app` only; the headless UI model contract and shared surface catalog requested in #922 intentionally have one shipped desktop view host. Domain rules remain in their existing crates.
+script-trigger consumed by `session` only; the trigger port's second tenant, kept apart so the `strategy` kernel never links the Pine compiler. Open: `backtest` arming a script strategy over a recorded session is its second consumer.
