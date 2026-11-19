@@ -127,7 +127,7 @@ fn the_equity_walk_is_cut_once_and_both_readers_share_it() {
 const GOLDEN_REPORT: &str = r#"== ALL ==
 rows: 8
 hidden_outside: 0
-hidden_by_source: 1
+hidden_by_source_or_scope: 1
 anchor_ms: Some(1728000000)
 equity.points: [0, 12, 7, 4, 4, 13, 5, 9, 15]
 equity.plot: [0.0, 12.0, 7.0, 4.0, 4.0, 13.0, 5.0, 9.0, 15.0]
@@ -260,7 +260,7 @@ equity.low: 0.0  equity.high: 15.0
 == WEEK ==
 rows: 5
 hidden_outside: 3
-hidden_by_source: 1
+hidden_by_source_or_scope: 1
 anchor_ms: Some(1728000000)
 equity.points: [0, 0, 9, 1, 5, 11]
 equity.plot: [0.0, 0.0, 9.0, 1.0, 5.0, 11.0]
@@ -512,7 +512,10 @@ fn dump_report(view: &ReportView) -> String {
     let mut out = String::new();
     out.push_str(&format!("rows: {}\n", view.rows.len()));
     out.push_str(&format!("hidden_outside: {}\n", view.hidden_outside));
-    out.push_str(&format!("hidden_by_source: {}\n", view.hidden_by_source));
+    out.push_str(&format!(
+        "hidden_by_source_or_scope: {}\n",
+        view.hidden_by_source_or_scope
+    ));
     out.push_str(&format!("anchor_ms: {:?}\n", view.anchor_ms));
     out.push_str(&format!("equity.points: {:?}\n", view.equity.points));
     out.push_str(&format!("equity.plot: {:?}\n", view.equity.plot));

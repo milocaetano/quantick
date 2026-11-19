@@ -173,6 +173,10 @@ fn context_reports_replace_scope_for_named_and_unnamed_sessions_across_origins()
                 Some(&whole_day.receipt.request),
             );
             assert_eq!(cut.rows.len(), 3);
+            assert_eq!(
+                cut.hidden_by_source_or_scope, 3,
+                "All sources still excludes trades outside the origin and day"
+            );
             assert!(
                 cut.rows
                     .iter()

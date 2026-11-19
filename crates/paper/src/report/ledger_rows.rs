@@ -267,7 +267,6 @@ pub struct SessionHead {
     /// control plane call it: its label, `Live · 12:16–13:56`, from its
     /// first entry to its last exit ([`session_title`]).
     pub title: String,
-    pub source: Option<SessionSource>,
     pub count: usize,
     /// The leading figure alone; the day above carries the pair.
     pub net: (Decimal, String),
@@ -331,7 +330,6 @@ pub fn push_groups<'a>(
                         day: day.day,
                         key: key.clone(),
                         title,
-                        source: first.meta.source,
                         count: session.count,
                         net: (session.tint, session.lead.clone()),
                         folded: view.collapsed_sessions.contains(key),

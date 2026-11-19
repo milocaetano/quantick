@@ -269,7 +269,7 @@ fn the_report_opens_on_real_and_keeps_replay_out_until_asked() {
         .expect("view built");
     assert_eq!(view.rows.len(), 2, "live + unrecorded-legacy count as real");
     assert_eq!(
-        view.hidden_by_source, 1,
+        view.hidden_by_source_or_scope, 1,
         "the replay trade sits behind the filter"
     );
     assert_eq!(
@@ -289,7 +289,7 @@ fn the_report_opens_on_real_and_keeps_replay_out_until_asked() {
     let view = paper.report_state().report_view.as_ref().expect("rebuilt");
     assert_eq!(view.rows.len(), 1, "the practice run, alone");
     assert_eq!(view.report.net_points, Decimal::from(100));
-    assert_eq!(view.hidden_by_source, 2);
+    assert_eq!(view.hidden_by_source_or_scope, 2);
 
     Model::update(paper.report_state_mut(), Intent::Source(SourceFilter::All));
     paper
@@ -297,7 +297,7 @@ fn the_report_opens_on_real_and_keeps_replay_out_until_asked() {
         .ensure_report_view(utc, PnlReader::plain());
     let view = paper.report_state().report_view.as_ref().expect("rebuilt");
     assert_eq!(view.rows.len(), 3, "All mixes on purpose");
-    assert_eq!(view.hidden_by_source, 0);
+    assert_eq!(view.hidden_by_source_or_scope, 0);
 }
 
 /// The report answers as data, not only as pixels: the snapshot names
@@ -344,7 +344,7 @@ fn the_report_reports_itself_as_data() {
     assert_eq!(snapshot.source, SourceFilter::Real);
     assert_eq!(snapshot.window, ReportWindow::Period(ReportPeriod::All));
     assert_eq!(snapshot.rows.len(), 2, "the practice run is filtered out");
-    assert_eq!(snapshot.hidden_by_source, 1);
+    assert_eq!(snapshot.hidden_by_source_or_scope, 1);
     assert_eq!(snapshot.report.net_points, Decimal::from(2));
     assert_eq!(snapshot.window.label(), "everything saved");
 

@@ -388,8 +388,8 @@ pub struct ReportView {
     /// Saved trades the window keeps out — the honest answer to "where did
     /// my old trades go": they exist, the filter just stops short of them.
     pub hidden_outside: usize,
-    /// Saved trades the Source filter keeps out of this view.
-    pub hidden_by_source: usize,
+    /// Loaded trades excluded by the source filter or session/day scope, before the time window.
+    pub hidden_by_source_or_scope: usize,
     /// The filtered trades, each still carrying the symbol folder and the
     /// session source it was journaled under — the report lists them, and
     /// a list that could not name its instrument would be the very gap
@@ -444,7 +444,7 @@ impl ReportView {
             .filter(|row| source.admits(row.source))
             .filter(|row| scope.is_none_or(|scope| scope.admits(row, tz)))
             .collect();
-        let hidden_by_source = history.rows.len().saturating_sub(in_scope.len());
+        let hidden_by_source_or_scope = history.rows.len().saturating_sub(in_scope.len());
         let anchor_ms = in_scope.last().map(|row| row.trade.closed_ms);
         let cutoff = match range {
             Some(_) => None,
@@ -469,7 +469,7 @@ impl ReportView {
             tz,
             anchor_ms,
             hidden_outside,
-            hidden_by_source,
+            hidden_by_source_or_scope,
             rows,
             equity,
             report,

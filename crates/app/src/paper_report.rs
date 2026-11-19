@@ -88,8 +88,8 @@ impl Paint<'_, '_> {
                     event_code = "PAPER_REPORT_CUT", symbol = snapshot.symbol.unwrap_or("*"),
                     source = snapshot.source.label(), window = %snapshot.window.label(),
                     trades = snapshot.rows.len(), hidden_outside = snapshot.hidden_outside,
-                    hidden_by_source = snapshot.hidden_by_source, net_points = %snapshot.report.net_points,
-                    "the simulated performance report was re-cut");
+                    hidden_by_source_or_scope = snapshot.hidden_by_source_or_scope, net_points = %snapshot.report.net_points,
+                    "the trading performance report was re-cut");
             }
         }
         if self.native.report_layout_revision != self.report_layout_revision() {

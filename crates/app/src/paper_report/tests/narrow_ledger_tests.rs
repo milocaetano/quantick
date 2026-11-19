@@ -312,7 +312,6 @@ fn trade_rows_and_session_headers_never_wrap_at_the_docked_widths() {
             day: quantick_civil::CivilDate::from_day_number(0),
             key: SessionKey::parse("WINZ26/2026-11-09-replay.csv").unwrap(),
             title: "Replay · rerun 2 · 09:04–12:02".to_owned(),
-            source: Some(SessionSource::Replay),
             count: 12,
             net: (Decimal::ONE, "-316.09 BRL".to_owned()),
             folded: false,
@@ -453,7 +452,6 @@ fn a_session_row_at_the_docked_width_keeps_its_span_and_count() {
         day: quantick_civil::CivilDate::from_day_number(0),
         key: SessionKey::parse("WINZ26/2026-10-21-replay.csv").unwrap(),
         title: "morning replay of the opening drive · 10:50–10:58".to_owned(),
-        source: Some(SessionSource::Replay),
         count: 11,
         net: (Decimal::new(11_520, 2), "+115.20 BRL".to_owned()),
         folded: false,
@@ -463,8 +461,8 @@ fn a_session_row_at_the_docked_width_keeps_its_span_and_count() {
     let texts = painted_text(NARROW_PX, |ui| _ = draw_session_head(ui, &head));
     assert_apart(&texts, NARROW_PX);
     assert!(
-        has(&texts, "morning replay") && has(&texts, "…") && has(&texts, "10:50–10:58"),
-        "the name is cut at its end, the span whole: {texts:?}"
+        has(&texts, "Simulator morning") && has(&texts, "… · 10:50–10:58"),
+        "the execution origin and clock span survive a shortened name: {texts:?}"
     );
     assert!(
         texts.iter().any(|(text, _)| text == "11"),

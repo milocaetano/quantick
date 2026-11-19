@@ -62,17 +62,16 @@ fn button(pos: egui::Pos2, button: egui::PointerButton, pressed: bool) -> Vec<eg
 #[test]
 fn right_click_session_menu_emits_exact_session_and_clicked_day_requests() {
     let day = quantick_civil::parse_iso_date("2026-11-18").unwrap();
-    for (label, selected_day) in [
-        ("Session report", None),
-        ("Day report", Some(day)),
-        ("Delete session…", None),
+    for (label, selected_day, key, origin) in [
+        ("Session report", None, "broker/WINZ26/a.csv", "Broker"),
+        ("Day report", Some(day), "WINZ26/a.csv", "Simulator"),
+        ("Delete session…", None, "broker/WINZ26/a.csv", "Broker"),
     ] {
         let ctx = egui::Context::default();
         let head = SessionHead {
             day,
-            key: SessionKey::parse("broker/WINZ26/a.csv").unwrap(),
+            key: SessionKey::parse(key).unwrap(),
             title: "My opening".to_owned(),
-            source: history::SessionSource::parse("broker"),
             count: 1,
             net: (Decimal::ONE, "+1".to_owned()),
             folded: false,
@@ -81,6 +80,8 @@ fn right_click_session_menu_emits_exact_session_and_clicked_day_requests() {
         };
         frame(&ctx, &head, vec![]);
         let (_, painted) = frame(&ctx, &head, vec![]);
+        let heading = format!("{origin} My opening");
+        assert!(painted.iter().any(|(text, _)| text.contains(&heading)));
         let at = painted
             .iter()
             .find(|(text, _)| text.contains("My opening"))
