@@ -85,7 +85,9 @@ impl LiveTradeOwners for Owners {
         let queued = [FLOW, TIME]
             .into_iter()
             .flat_map(|id| {
-                let pending = strategies.pane(id).map(|pane| pane.pending().to_vec());
+                let pending = strategies
+                    .pane(id)
+                    .map(|pane| pane.pending().cloned().collect::<Vec<_>>());
                 pending
                     .unwrap_or_default()
                     .into_iter()

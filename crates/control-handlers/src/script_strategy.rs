@@ -56,6 +56,29 @@ pub struct ScriptTab<'a> {
     pub library: Option<&'a str>,
 }
 
+impl<'a> ScriptTab<'a> {
+    /// Lend a tab from its strategies, the library folder the launch named,
+    /// and each chart as `(id, series, drawings)`, the flow chart first.
+    pub fn lend(
+        strategies: &'a mut TabStrategies<DrawingId>,
+        library: Option<&'a str>,
+        panes: impl IntoIterator<Item = (u64, PaneSeriesRead<'a>, &'a Drawings<DrawingTool>)>,
+    ) -> Self {
+        let panes = (panes.into_iter())
+            .map(|(id, series, drawings)| ScriptPane {
+                id,
+                series,
+                drawings,
+            })
+            .collect();
+        Self {
+            strategies,
+            panes,
+            library,
+        }
+    }
+}
+
 /// The tabs as these calls reach them.
 pub trait ScriptStrategyHost: TabDirectory {
     /// The tab at `index`, a position the directory gave.
@@ -108,10 +131,15 @@ fn arm<H: ScriptStrategyHost + ?Sized, A: JournalAccess>(
         quantick_drawings::alert_geometry::check_arm(pane.drawings, drawing, closed)
             .map_err(|refusal| invalid(format!("drawing {}: {refusal}", drawing.0)))?;
     }
-    let source = match library_of(library).load(&input.script) {
+    let (scripts, read) = library_of(library);
+    let source = match scripts.load(&input.script) {
         LoadedScript::Read { text, .. } => text,
-        LoadedScript::Unreadable { message, .. } | LoadedScript::Missing { message } => {
-            return Err(invalid(message));
+        LoadedScript::Unreadable { message, .. } => return Err(invalid(message)),
+        LoadedScript::Missing { message } => {
+            return Err(invalid(match read {
+                Err(folder) => format!("{message}; {folder}"),
+                Ok(_) => message,
+            }));
         }
     };
     let request = ScriptArm {
@@ -192,14 +220,35 @@ fn disarm<H: ScriptStrategyHost + ?Sized, A: JournalAccess>(
 
 /// The library over the folder the launch named, scanned for this call: a
 /// script dropped in arms without a restart.
-fn library_of(folder: Option<&str>) -> ScriptLibrary {
-    ScriptLibrary::scan_dir(Path::new(folder.unwrap_or(DEFAULT_LIBRARY)))
+///
+/// The folder is probed first, so how it read is labelled rather than lost:
+/// `Ok(false)` for the default folder that does not exist (no folder, not a
+/// fault), `Err` for one that cannot be read — the bundled scripts stand in
+/// for both.
+fn library_of(folder: Option<&str>) -> (ScriptLibrary, Result<bool, String>) {
+    let path = Path::new(folder.unwrap_or(DEFAULT_LIBRARY));
+    match std::fs::read_dir(path) {
+        Ok(_) => (ScriptLibrary::scan_dir(path), Ok(true)),
+        Err(error) if folder.is_none() && error.kind() == std::io::ErrorKind::NotFound => {
+            (ScriptLibrary::bundled(path), Ok(false))
+        }
+        Err(error) => (
+            ScriptLibrary::bundled(path),
+            Err(format!(
+                "the strategy library folder {} cannot be read: {error}",
+                path.display()
+            )),
+        ),
+    }
 }
 
 fn listing(folder: Option<&str>) -> LibraryListing {
+    let (library, read) = library_of(folder);
     LibraryListing {
         folder: folder.unwrap_or(DEFAULT_LIBRARY).to_owned(),
-        scripts: (library_of(folder).entries().iter())
+        found: read == Ok(true),
+        error: read.err(),
+        scripts: (library.entries().iter())
             .map(|entry| entry.name.clone())
             .collect(),
     }

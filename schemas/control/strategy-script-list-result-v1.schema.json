@@ -18,12 +18,23 @@
     "LibraryListing": {
       "description": "The strategy library as the call found it.",
       "properties": {
+        "error": {
+          "description": "Why the folder could not be read; its scripts are then missing here.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "folder": {
           "description": "The folder the launch named (`QUANTICK_STRATEGIES_DIR`), else\n`strategies` beside the working directory.",
           "type": "string"
         },
+        "found": {
+          "description": "Whether the folder exists and was read. The default folder absent is\n`false` with no `error`: there is simply no folder.",
+          "type": "boolean"
+        },
         "scripts": {
-          "description": "The scripts `strategy.script.arm` can name: the bundled ones, then\nthe folder's `.pine` files, sorted. An unreadable folder lists the\nbundled ones only.",
+          "description": "The scripts `strategy.script.arm` can name: the bundled ones, then\nthe folder's `.pine` files, sorted.",
           "items": {
             "type": "string"
           },
@@ -32,6 +43,7 @@
       },
       "required": [
         "folder",
+        "found",
         "scripts"
       ],
       "type": "object"

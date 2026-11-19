@@ -131,9 +131,13 @@ pub struct LibraryListing {
     /// The folder the launch named (`QUANTICK_STRATEGIES_DIR`), else
     /// `strategies` beside the working directory.
     pub folder: String,
+    /// Whether the folder exists and was read. The default folder absent is
+    /// `false` with no `error`: there is simply no folder.
+    pub found: bool,
+    /// Why the folder could not be read; its scripts are then missing here.
+    pub error: Option<String>,
     /// The scripts `strategy.script.arm` can name: the bundled ones, then
-    /// the folder's `.pine` files, sorted. An unreadable folder lists the
-    /// bundled ones only.
+    /// the folder's `.pine` files, sorted.
     pub scripts: Vec<String>,
 }
 

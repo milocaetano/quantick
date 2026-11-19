@@ -143,6 +143,18 @@ impl<D: Copy> ScriptInstance<D> {
             && !matches!(self.armed.state(), ArmedState::Disarmed { .. })
     }
 
+    /// Feed a closed bar nobody heard live — a refilled hole — to the script
+    /// only: it rings nothing and judges no gate, so the script's history
+    /// stays the one the chart's copy of it computed.
+    pub fn warm(&mut self, bar: &Bar, poc: Option<Decimal>) {
+        if !self.watching() {
+            return;
+        }
+        self.run.borrow_mut().poc = poc;
+        self.armed.warm(std::slice::from_ref(bar));
+        self.run.borrow_mut().forget_last();
+    }
+
     /// Stop listening for `reason`. Alarm-only, so nothing is owed.
     pub fn disarm(&mut self, reason: DisarmReason) {
         let owed = self.armed.disarm(reason);

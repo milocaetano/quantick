@@ -70,7 +70,7 @@ impl<D: Copy + PartialEq> TabMarket<D> {
                         let fold = owners.fold_pane(pane, trade);
                         for close in &fold.closes {
                             let (bar, poc, slot) = (&close.bar, close.poc, close.slot);
-                            (self.strategies).queue_closed(fold.pane_id, bar, poc, slot);
+                            (self.strategies).queue_closed(fold.pane_id, bar, poc, slot, true);
                             owners.observe_alert(pane, trade, Some(close));
                         }
                         owners.observe_alert(pane, trade, None);

@@ -85,7 +85,7 @@ fn sweep(
     drawing_lives: bool,
 ) -> usize {
     for close in closes {
-        strategies.queue_closed(PANE, &close.bar, close.poc, close.slot);
+        strategies.queue_closed(PANE, &close.bar, close.poc, close.slot, true);
     }
     let region = Region::new(dec("100.9"), dec("101.2"));
     strategies
@@ -251,4 +251,53 @@ fn a_region_script_stops_with_its_drawing_and_says_why() {
         "a stopped script keeps nothing listening"
     );
     assert!(!strategies.any_alarm());
+}
+
+#[test]
+fn a_refilled_close_warms_the_script_so_its_next_verdict_matches_a_full_run() {
+    let down = close(0, "101", "100", Some("100.5"));
+    let up = close(1, "100", "101", Some("100.8"));
+    let mut heard = TabStrategies::default();
+    arm(&mut heard, FLIP, ScriptPlacement::Anywhere).expect("arms");
+    let mut refilled = TabStrategies::default();
+    arm(&mut refilled, FLIP, ScriptPlacement::Anywhere).expect("arms");
+
+    assert_eq!(sweep(&mut heard, std::slice::from_ref(&down), true), 0);
+    refilled.queue_closed(PANE, &down.bar, down.poc, down.slot, false);
+    assert_eq!(
+        sweep(&mut refilled, &[], true),
+        0,
+        "a refilled close rings nothing"
+    );
+
+    let rang = |strategies: &mut TabStrategies<DrawingId>| {
+        sweep(strategies, std::slice::from_ref(&up), true)
+    };
+    assert_eq!(
+        rang(&mut heard),
+        1,
+        "a run that saw every bar rings the flip"
+    );
+    assert_eq!(
+        rang(&mut refilled),
+        1,
+        "so does one that saw the hole refilled"
+    );
+    assert_eq!(
+        heard.script_readings()[0].status,
+        refilled.script_readings()[0].status
+    );
+}
+
+#[test]
+fn a_refilled_close_reaches_no_drawn_instance_and_is_not_queued_without_a_script() {
+    let mut strategies = TabStrategies::default();
+    let _ = strategies
+        .pane_mut(PANE)
+        .anchors
+        .arm(crate::strategies_tests::instance(DrawingId(3)));
+    let down = close(0, "101", "100", None);
+    strategies.queue_closed(PANE, &down.bar, down.poc, down.slot, false);
+    let pending = strategies.pane(PANE).map(|pane| pane.pending().len());
+    assert_eq!(pending, Some(0), "only a watching script hears a refill");
 }

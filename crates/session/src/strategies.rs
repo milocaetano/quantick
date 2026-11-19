@@ -55,7 +55,9 @@ pub struct PaneStrategies<D> {
     /// Queued only while instances exist and drained in the same ingestion
     /// sweep, so the slot and the drawings' anchors are read against one
     /// cut of the series.
-    pending: Vec<LiveClose>,
+    /// Each with whether it is judged: `false` is a close nobody heard live
+    /// (a refilled hole), which a script only warms on.
+    pending: Vec<(LiveClose, bool)>,
     /// The drawing whose "Add strategy…" was clicked; drained into the
     /// arming dialog over this pane.
     popup_request: Option<D>,
@@ -78,13 +80,22 @@ impl<D> Default for PaneStrategies<D> {
 
 impl<D: Copy + PartialEq> PaneStrategies<D> {
     /// Queue the bar that closed at `slot`, with its footprint POC, only
-    /// while an instance exists: an idle chart clones nothing on the
+    /// while an instance listens: an idle chart clones nothing on the
     /// per-trade path. The slot is the composed one (venue history prefix +
     /// live bars), the space the drawings' anchors live in.
-    pub fn queue_closed(&mut self, bar: &Bar, poc: Option<Decimal>, slot: usize) {
-        if !self.is_empty() {
+    ///
+    /// A close that is not `judged` — heard after the fact, as a refill —
+    /// trades and rings nothing: drawn instances never see it, and a script
+    /// warms on it in order, so its history stays the chart's copy's.
+    pub fn queue_closed(&mut self, bar: &Bar, poc: Option<Decimal>, slot: usize, judged: bool) {
+        let listens = if judged {
+            !self.is_empty()
+        } else {
+            self.scripts.iter().any(ScriptInstance::watching)
+        };
+        if listens {
             let bar = bar.clone();
-            self.pending.push(LiveClose { bar, poc, slot });
+            self.pending.push((LiveClose { bar, poc, slot }, judged));
         }
     }
 
@@ -96,9 +107,8 @@ impl<D: Copy + PartialEq> PaneStrategies<D> {
     }
 
     /// The closed bars awaiting evaluation.
-    #[must_use]
-    pub fn pending(&self) -> &[LiveClose] {
-        &self.pending
+    pub fn pending(&self) -> impl ExactSizeIterator<Item = &LiveClose> {
+        self.pending.iter().map(|(close, _)| close)
     }
 
     /// Whether any instance carries an alarm: a watching script always does.
@@ -126,9 +136,10 @@ impl<D: Copy + PartialEq> PaneStrategies<D> {
         }
     }
 
-    /// The closed bars awaiting evaluation, drained.
+    /// The closed bars awaiting evaluation, drained, each with whether it
+    /// is judged.
     #[must_use]
-    pub fn take_bars(&mut self) -> Vec<LiveClose> {
+    pub fn take_bars(&mut self) -> Vec<(LiveClose, bool)> {
         std::mem::take(&mut self.pending)
     }
 
@@ -355,9 +366,16 @@ impl<D: Copy + PartialEq> TabStrategies<D> {
 
     /// Queue the bar pane `id` closed at `slot` (see
     /// [`PaneStrategies::queue_closed`]). Opens no entry: the per-trade path.
-    pub fn queue_closed(&mut self, id: u64, bar: &Bar, poc: Option<Decimal>, slot: usize) {
+    pub fn queue_closed(
+        &mut self,
+        id: u64,
+        bar: &Bar,
+        poc: Option<Decimal>,
+        slot: usize,
+        judged: bool,
+    ) {
         if let Some(pane) = self.panes.get_mut(&id) {
-            pane.queue_closed(bar, poc, slot);
+            pane.queue_closed(bar, poc, slot, judged);
         }
     }
 
@@ -434,7 +452,13 @@ impl<D: Copy + PartialEq> TabStrategies<D> {
                 // A script riding a region stops with its drawing, and says so.
                 pane.halt_orphan_scripts(|drawing| exists(id, drawing));
             }
-            for close in &bars {
+            for (close, judged) in &bars {
+                if !judged {
+                    for script in &mut pane.scripts {
+                        script.warm(&close.bar, close.poc);
+                    }
+                    continue;
+                }
                 answer.alarms.extend(runner::step_closed_bar(
                     &mut pane.anchors.instances,
                     &close.bar,

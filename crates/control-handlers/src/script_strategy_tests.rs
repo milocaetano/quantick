@@ -262,6 +262,48 @@ fn a_region_placement_must_name_a_rectangle_on_that_chart() {
 }
 
 #[test]
+fn an_unreadable_folder_lists_its_reason_and_a_missing_script_names_it() {
+    let mut window = window();
+    window.dir = Some(format!("{BUNDLED}/no-such-folder"));
+    let mut access = FakeAccess::default();
+    let listed = call(
+        list::<Window, FakeAccess>,
+        &mut window,
+        &mut access,
+        json!({}),
+    )
+    .expect("the list still answers");
+    assert_eq!(listed["library"]["found"], false);
+    let reason = listed["library"]["error"].as_str().expect("labelled");
+    assert!(reason.contains("strategy library folder"), "{reason}");
+    assert!(reason.contains("no-such-folder"), "{reason}");
+    let missing = arm_renko(&mut window, &mut access, json!({"script": "mine.pine"}))
+        .expect_err("not bundled, and the folder is unreadable");
+    assert!(missing.message.contains("mine.pine"), "{}", missing.message);
+    assert!(
+        missing.message.contains("no-such-folder"),
+        "{}",
+        missing.message
+    );
+}
+
+#[test]
+fn the_default_folder_absent_reads_as_no_folder() {
+    let mut window = window();
+    window.dir = None;
+    let listed = call(
+        list::<Window, FakeAccess>,
+        &mut window,
+        &mut FakeAccess::default(),
+        json!({}),
+    )
+    .expect("answers");
+    assert_eq!(listed["library"]["folder"], "strategies");
+    assert_eq!(listed["library"]["found"], false);
+    assert_eq!(listed["library"]["error"], Value::Null);
+}
+
+#[test]
 fn an_unreadable_folder_still_lists_and_arms_the_bundled_scripts() {
     let mut window = window();
     window.dir = Some(format!("{BUNDLED}/no-such-folder"));

@@ -348,10 +348,9 @@ impl ChartPane {
     /// `alarm_tag` rides each close to the indicators and back on the
     /// alarms it raises, naming the market it closed on.
     ///
-    /// `closed_observer` hears each bar the print closed, with its footprint
-    /// summary, at its *composed* slot (venue history prefix + live bars) —
-    /// the space the drawings' anchors live in, which is why the tab queues
-    /// strategy closes from it.
+    /// `closed_observer` hears each bar the print closed, with its footprint,
+    /// at its *composed* slot (venue history prefix + live bars) — the space
+    /// the drawings' anchors live in, which is why the tab queues strategy closes from it.
     pub(crate) fn ingest_live_trade_observed(
         &mut self,
         trade: &quantick_engine::Trade,
