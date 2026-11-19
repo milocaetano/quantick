@@ -1,6 +1,8 @@
 //! A fake window and a fake access: every port a family names, over plain
 //! fields a test sets and reads back. The second implementation of each port,
 //! after the application's own adapter.
+//! Test-only even when inspected independently of the parent module.
+#![cfg(test)]
 
 use std::time::Duration;
 
