@@ -1,22 +1,17 @@
-//! Script strategies on a tab's panes, armed from a library folder and run
+//! Script strategies on a tab's panes, armed from their source and run
 //! through the same sweep as the drawn instances.
 
 use quantick_engine::{Bar, Side};
 use quantick_strategy::Region;
 use rust_decimal::Decimal;
 
-use crate::script_strategies::{ScriptArm, ScriptPlace, ScriptReading, library_scripts};
-use crate::strategies::{LiveClose, Print, TabStrategies};
+use crate::script_strategies::{ScriptArm, ScriptPlacement, ScriptReading};
+use crate::strategies::{DRAWING_REMOVED, LiveClose, Print, TabStrategies};
 use crate::strategies_tests::{DrawingId, RecordingPort};
-
-#[path = "../../stores/src/scratch.rs"]
-#[allow(dead_code)]
-mod scratch;
 
 const PANE: u64 = 4;
 
-/// The bundled scripts, `renko_poc_flip.pine` among them.
-const BUNDLED: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../app/scripts");
+const RENKO_POC_FLIP: &str = include_str!("../../app/scripts/renko_poc_flip.pine");
 
 const BREAKS_ON_THE_THIRD_BAR: &str = "//@version=5\n\
     indicator(\"breaks\")\n\
@@ -55,21 +50,32 @@ fn close(index: i64, open: &str, close: &str, poc: Option<&str>) -> LiveClose {
     }
 }
 
-fn arm(
+fn arm_side(
     strategies: &mut TabStrategies<DrawingId>,
-    library: &str,
-    script: &str,
-    place: ScriptPlace<DrawingId>,
+    (script, source): (&str, &str),
+    side: Side,
+    place: ScriptPlacement<DrawingId>,
+    warmup: Vec<(Bar, Option<Decimal>)>,
 ) -> Result<ScriptReading<DrawingId>, String> {
     let request = ScriptArm {
         pane_id: PANE,
-        library: Some(library),
         script,
-        side: Side::Buy,
+        source,
+        side,
         place,
     };
-    strategies.arm_script(request, |_| Vec::new())
+    strategies.arm_script(request, |_| warmup)
 }
+
+fn arm(
+    strategies: &mut TabStrategies<DrawingId>,
+    script: (&str, &str),
+    place: ScriptPlacement<DrawingId>,
+) -> Result<ScriptReading<DrawingId>, String> {
+    arm_side(strategies, script, Side::Buy, place, Vec::new())
+}
+
+const FLIP: (&str, &str) = ("renko_poc_flip.pine", RENKO_POC_FLIP);
 
 /// Queue `closes` on the pane and sweep, the region of drawing 3 sitting
 /// around the flip's close; answers how many alarms rang.
@@ -101,18 +107,8 @@ fn sweep(
 #[test]
 fn the_bundled_flip_rings_through_the_sweep_on_a_region_and_anywhere() {
     let mut strategies = TabStrategies::default();
-    let region = arm(
-        &mut strategies,
-        BUNDLED,
-        "renko_poc_flip.pine",
-        ScriptPlace::Region(DrawingId(3)),
-    );
-    let anywhere = arm(
-        &mut strategies,
-        BUNDLED,
-        "renko_poc_flip.pine",
-        ScriptPlace::Anywhere,
-    );
+    let region = arm(&mut strategies, FLIP, ScriptPlacement::Region(DrawingId(3)));
+    let anywhere = arm(&mut strategies, FLIP, ScriptPlacement::Anywhere);
     assert_eq!(region.map(|reading| reading.id), Ok(1));
     assert_eq!(anywhere.map(|reading| reading.id), Ok(2));
     assert!(strategies.any_alarm(), "a watching script carries an alarm");
@@ -128,30 +124,33 @@ fn the_bundled_flip_rings_through_the_sweep_on_a_region_and_anywhere() {
 }
 
 #[test]
-fn a_failing_script_disarms_alone_and_its_sibling_keeps_ringing() {
-    let library = scratch::ScratchDir::new("session-script-strategies");
-    std::fs::write(library.path().join("breaks.pine"), BREAKS_ON_THE_THIRD_BAR).expect("writable");
-    std::fs::write(library.path().join("steady.pine"), ALWAYS_RINGS).expect("writable");
-    let folder = library.path().to_str().expect("a unicode scratch path");
+fn a_footprint_warmup_rings_a_flip_on_the_first_live_brick() {
     let mut strategies = TabStrategies::default();
-    arm(
+    let down = close(0, "101", "100", Some("100.5"));
+    let warmup = vec![(down.bar, down.poc)];
+    arm_side(
         &mut strategies,
-        folder,
-        "breaks.pine",
-        ScriptPlace::Anywhere,
+        FLIP,
+        Side::Buy,
+        ScriptPlacement::Anywhere,
+        warmup,
     )
     .expect("arms");
-    arm(
-        &mut strategies,
-        folder,
-        "steady.pine",
-        ScriptPlace::Anywhere,
-    )
-    .expect("arms");
+    let up = close(1, "100", "101", Some("100.8"));
     assert_eq!(
-        library_scripts(Some(folder)),
-        Ok(vec!["breaks.pine".to_owned(), "steady.pine".to_owned()])
+        sweep(&mut strategies, &[up], true),
+        1,
+        "the warm POC is history"
     );
+}
+
+#[test]
+fn a_failing_script_disarms_alone_and_its_sibling_keeps_ringing() {
+    let mut strategies = TabStrategies::default();
+    let breaks = ("breaks.pine", BREAKS_ON_THE_THIRD_BAR);
+    let steady = ("steady.pine", ALWAYS_RINGS);
+    arm(&mut strategies, breaks, ScriptPlacement::Anywhere).expect("arms");
+    arm(&mut strategies, steady, ScriptPlacement::Anywhere).expect("arms");
 
     let up = |index| close(index, "100", "101", None);
     assert_eq!(
@@ -170,8 +169,7 @@ fn a_failing_script_disarms_alone_and_its_sibling_keeps_ringing() {
         .as_deref()
         .expect("the failure disarmed it");
     assert!(reason.starts_with("line 6: PINE_LOOP_BUDGET "), "{reason}");
-    assert!(!readings[0].watching);
-    assert!(readings[1].watching, "{:?}", readings[1]);
+    assert_eq!(readings[1].disarm_reason, None, "{:?}", readings[1]);
     assert_eq!(
         sweep(&mut strategies, &[up(3)], true),
         1,
@@ -180,57 +178,52 @@ fn a_failing_script_disarms_alone_and_its_sibling_keeps_ringing() {
 }
 
 #[test]
-fn arming_refuses_an_unreadable_name_and_an_unsided_title() {
+fn arming_refuses_a_script_with_no_alert_and_a_side_no_title_names() {
     let mut strategies = TabStrategies::default();
-    let missing = arm(
-        &mut strategies,
-        BUNDLED,
-        "absent.pine",
-        ScriptPlace::Anywhere,
-    );
-    assert!(missing.is_err_and(|refusal| refusal.contains("absent.pine")));
-    let escape = arm(
-        &mut strategies,
-        BUNDLED,
-        "../scripts/rsi.pine",
-        ScriptPlace::Anywhere,
-    );
-    assert!(escape.is_err_and(|refusal| refusal.contains("bare file name")));
-    let silent = arm(&mut strategies, BUNDLED, "rsi.pine", ScriptPlace::Anywhere);
+    let rsi = ("rsi.pine", include_str!("../../app/scripts/rsi.pine"));
+    let silent = arm(&mut strategies, rsi, ScriptPlacement::Anywhere);
     assert!(
         silent.is_err_and(|refusal| refusal.contains("`rsi.pine` cannot be armed")),
         "an indicator with no alertcondition never rings"
+    );
+    let steady = ("steady.pine", ALWAYS_RINGS);
+    let sell = arm_side(
+        &mut strategies,
+        steady,
+        Side::Sell,
+        ScriptPlacement::Anywhere,
+        Vec::new(),
+    );
+    assert_eq!(
+        sell,
+        Err(
+            "`steady.pine` cannot be armed to sell: none of its alert titles (`Long up`) \
+             names that side"
+                .to_owned()
+        )
     );
     assert!(strategies.script_readings().is_empty(), "nothing armed");
     assert!(!strategies.any_armed());
 }
 
 #[test]
-fn a_disarm_removes_one_instance_by_id() {
+fn a_disarm_removes_one_instance_by_id_and_answers_it_disarmed() {
     let mut strategies = TabStrategies::default();
-    let range = ScriptPlace::Range {
+    let range = ScriptPlacement::Range {
         a: dec("102"),
         b: dec("100"),
     };
-    let line = ScriptPlace::Line {
+    let line = ScriptPlacement::Line {
         level: dec("100.5"),
         rising: true,
     };
-    arm(&mut strategies, BUNDLED, "renko_poc_flip.pine", range).expect("arms");
-    arm(&mut strategies, BUNDLED, "renko_poc_flip.pine", line).expect("arms");
+    arm(&mut strategies, FLIP, range).expect("arms");
+    arm(&mut strategies, FLIP, line).expect("arms");
     let gone = strategies.disarm_script(1).expect("instance 1 was armed");
-    assert_eq!(
-        gone.place,
-        ScriptPlace::Range {
-            a: dec("100"),
-            b: dec("102")
-        },
-        "a band reads back low to high"
-    );
+    assert_eq!(gone.place, range);
+    assert_eq!(gone.disarm_reason.as_deref(), Some("disarmed"));
     assert_eq!(strategies.disarm_script(1), None, "already gone");
-    let left: Vec<_> = strategies
-        .script_readings()
-        .into_iter()
+    let left: Vec<_> = (strategies.script_readings().into_iter())
         .map(|reading| reading.id)
         .collect();
     assert_eq!(left, [2]);
@@ -238,31 +231,24 @@ fn a_disarm_removes_one_instance_by_id() {
 }
 
 #[test]
-fn a_region_script_dies_with_its_drawing() {
+fn a_region_script_stops_with_its_drawing_and_says_why() {
     let mut strategies = TabStrategies::default();
-    arm(
-        &mut strategies,
-        BUNDLED,
-        "renko_poc_flip.pine",
-        ScriptPlace::Region(DrawingId(3)),
-    )
-    .expect("arms");
-    arm(
-        &mut strategies,
-        BUNDLED,
-        "renko_poc_flip.pine",
-        ScriptPlace::Anywhere,
-    )
-    .expect("arms");
+    arm(&mut strategies, FLIP, ScriptPlacement::Region(DrawingId(3))).expect("arms");
+    arm(&mut strategies, FLIP, ScriptPlacement::Anywhere).expect("arms");
     sweep(&mut strategies, &[close(0, "101", "100", None)], false);
-    let left: Vec<_> = strategies
-        .script_readings()
-        .into_iter()
-        .map(|reading| reading.place)
+    let reasons: Vec<_> = (strategies.script_readings().into_iter())
+        .map(|reading| reading.disarm_reason)
         .collect();
-    assert_eq!(
-        left,
-        [ScriptPlace::Anywhere],
-        "the region's drawing is gone"
+    assert_eq!(reasons, [Some(DRAWING_REMOVED.to_owned()), None]);
+
+    let mut strategies = TabStrategies::default();
+    arm(&mut strategies, FLIP, ScriptPlacement::Region(DrawingId(3))).expect("arms");
+    strategies.pane_mut(PANE).remove_for_drawing(DrawingId(3));
+    let reading = &strategies.script_readings()[0];
+    assert_eq!(reading.disarm_reason.as_deref(), Some(DRAWING_REMOVED));
+    assert!(
+        !strategies.any_armed(),
+        "a stopped script keeps nothing listening"
     );
+    assert!(!strategies.any_alarm());
 }

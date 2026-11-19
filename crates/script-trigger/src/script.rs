@@ -13,7 +13,7 @@ const SELL_WORDS: [&str; 3] = ["bear", "sell", "short"];
 /// `long` for a buy, `bear`, `sell` or `short` for a sell, in any case — or
 /// `None`. The whole word: `Bullish` names nothing.
 #[must_use]
-pub fn side_of_title(title: &str) -> Option<Side> {
+pub(crate) fn side_of_title(title: &str) -> Option<Side> {
     let first = title.split_whitespace().next()?.to_ascii_lowercase();
     if BUY_WORDS.contains(&first.as_str()) {
         Some(Side::Buy)
@@ -150,7 +150,7 @@ impl Script {
 
     /// The name it was loaded under: its library file name.
     #[must_use]
-    pub fn name(&self) -> &str {
+    pub(crate) fn name(&self) -> &str {
         &self.name
     }
 
@@ -166,5 +166,27 @@ impl Script {
 
     pub(crate) fn compiled(&self) -> &CompiledScript {
         &self.compiled
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_title_s_first_word_names_the_side_in_any_case() {
+        for (title, side) in [
+            ("Bull flip", Some(Side::Buy)),
+            ("BUY the dip", Some(Side::Buy)),
+            ("long", Some(Side::Buy)),
+            ("Bear flip", Some(Side::Sell)),
+            ("sell rally", Some(Side::Sell)),
+            ("  Short squeeze", Some(Side::Sell)),
+            ("Bullish engulfing", None),
+            ("Flip bull", None),
+            ("", None),
+        ] {
+            assert_eq!(side_of_title(title), side, "{title:?}");
+        }
     }
 }

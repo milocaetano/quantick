@@ -40,6 +40,9 @@ pub struct LiveClose {
     pub slot: usize,
 }
 
+/// Why a script riding a region stopped when its rectangle was deleted.
+pub const DRAWING_REMOVED: &str = "its region drawing was removed";
+
 /// The armed strategies of one pane and the work they park for the tab.
 /// See the module docs.
 pub struct PaneStrategies<D> {
@@ -85,10 +88,11 @@ impl<D: Copy + PartialEq> PaneStrategies<D> {
         }
     }
 
-    /// Whether no instance of either kind rides this pane.
+    /// Whether nothing on this pane listens to its bars: no drawn instance,
+    /// and no script still watching.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.anchors.is_empty() && self.scripts.is_empty()
+        self.anchors.is_empty() && !self.scripts.iter().any(ScriptInstance::watching)
     }
 
     /// The closed bars awaiting evaluation.
@@ -100,8 +104,26 @@ impl<D: Copy + PartialEq> PaneStrategies<D> {
     /// Whether any instance carries an alarm: a watching script always does.
     #[must_use]
     pub fn any_alarm(&self) -> bool {
+        self.anchor_alarm() || self.scripts.iter().any(ScriptInstance::watching)
+    }
+
+    /// Whether a drawn instance carries an alarm — the only kind that
+    /// previews the forming bar.
+    fn anchor_alarm(&self) -> bool {
         (self.anchors.instances.iter()).any(|instance| instance.alarm.is_some())
-            || self.scripts.iter().any(ScriptInstance::watching)
+    }
+
+    /// Halt every script riding a drawing `exists` denies, naming why.
+    fn halt_orphan_scripts(&mut self, exists: impl Fn(D) -> bool) {
+        for script in &mut self.scripts {
+            if script
+                .placement
+                .drawing()
+                .is_some_and(|drawing| !exists(drawing))
+            {
+                script.halt(DRAWING_REMOVED);
+            }
+        }
     }
 
     /// The closed bars awaiting evaluation, drained.
@@ -149,6 +171,7 @@ impl<D: Copy + PartialEq> PaneStrategies<D> {
     /// owe for the same-frame drain — for the deletion paths that have no
     /// id in hand (delete-all, undo, redo).
     pub fn sweep_orphans(&mut self, exists: impl Fn(D) -> bool) {
+        self.halt_orphan_scripts(&exists);
         if self.anchors.is_empty() {
             return;
         }
@@ -166,6 +189,7 @@ impl<D: Copy + PartialEq> PaneStrategies<D> {
     /// pending entry — every "the bot dies with its drawing" path funnels
     /// through here.
     pub fn remove_for_drawing(&mut self, drawing: D) {
+        self.halt_orphan_scripts(|riding| riding != drawing);
         let cleanup = self.anchors.remove_for_drawing(drawing);
         self.cleanup.extend(cleanup);
     }
@@ -407,10 +431,8 @@ impl<D: Copy + PartialEq> TabStrategies<D> {
                 for command in pane.anchors.drop_orphans(|drawing| exists(id, drawing)) {
                     let _ = port.apply(command);
                 }
-                // A script riding a region dies with its drawing too.
-                (pane.scripts).retain(|script| {
-                    (script.placement.drawing()).is_none_or(|drawing| exists(id, drawing))
-                });
+                // A script riding a region stops with its drawing, and says so.
+                pane.halt_orphan_scripts(|drawing| exists(id, drawing));
             }
             for close in &bars {
                 answer.alarms.extend(runner::step_closed_bar(
@@ -434,7 +456,7 @@ impl<D: Copy + PartialEq> TabStrategies<D> {
             }
             // The bar still forming, judged for the alarm only. Per print,
             // so it opens with the question that costs least.
-            let any_alarm = pane.any_alarm();
+            let any_alarm = pane.anchor_alarm();
             if let Some(Forming {
                 bar,
                 progress,

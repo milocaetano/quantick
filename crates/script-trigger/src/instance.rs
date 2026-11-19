@@ -21,7 +21,7 @@ use crate::trigger::{ScriptRun, ScriptTrigger};
 pub enum ScriptState {
     Watching,
     /// Stopped for good: `line N: <CODE> <message>` when its script failed,
-    /// otherwise the kernel's disarm label.
+    /// the reason it was halted, or the kernel's disarm label.
     Disarmed {
         reason: String,
     },
@@ -40,6 +40,9 @@ pub struct ScriptInstance<D> {
     run: Rc<RefCell<ScriptRun>>,
     alarm: SignalAlarm,
     cue: Cue,
+    /// Why the instance was stopped from outside the kernel — its region's
+    /// drawing removed — which no [`DisarmReason`] names.
+    halted: Option<&'static str>,
 }
 
 impl<D> std::fmt::Debug for ScriptInstance<D> {
@@ -54,15 +57,16 @@ impl<D> std::fmt::Debug for ScriptInstance<D> {
 
 impl<D: Copy> ScriptInstance<D> {
     /// Arm `script` hunting `side` on `placement`, its run warmed on
-    /// `warmup` — closed bars, oldest first, that ring nothing. A script that
-    /// fails while warming is armed already disarmed, with the reason.
+    /// `warmup` — closed bars with their footprint POC, oldest first, that
+    /// ring nothing. A script that fails while warming is armed already
+    /// disarmed, with the reason.
     #[must_use]
     pub fn arm(
         id: u64,
         script: &Script,
         side: Side,
         placement: ScriptPlacement<D>,
-        warmup: &[Bar],
+        warmup: &[(Bar, Option<Decimal>)],
     ) -> Self {
         let (trigger, run) = ScriptTrigger::new(script, side);
         let params = StrategyParams {
@@ -75,7 +79,13 @@ impl<D: Copy> ScriptInstance<D> {
             execution: Execution::AlarmOnly,
         };
         let mut armed = ArmedStrategy::new(params, Box::new(trigger));
-        armed.warm(warmup);
+        for (bar, poc) in warmup {
+            run.borrow_mut().poc = *poc;
+            armed.warm(std::slice::from_ref(bar));
+        }
+        // A flip among the warmup bars rang nothing; the badge must not
+        // narrate it as the last bar's.
+        run.borrow_mut().forget_last();
         Self {
             id,
             script: script.name().to_owned(),
@@ -84,10 +94,10 @@ impl<D: Copy> ScriptInstance<D> {
             run,
             alarm: SignalAlarm::new(AlarmParams::default()),
             cue: Cue::default(),
+            halted: None,
         }
     }
 
-    /// The side the instance hunts.
     #[must_use]
     pub fn side(&self) -> Side {
         self.armed.params().side
@@ -99,7 +109,6 @@ impl<D: Copy> ScriptInstance<D> {
         &self.armed
     }
 
-    /// The script's failure, if it failed.
     #[must_use]
     pub fn fault(&self) -> Option<ScriptFault> {
         self.run.borrow().fault.clone()
@@ -110,6 +119,11 @@ impl<D: Copy> ScriptInstance<D> {
         if let Some(fault) = self.fault() {
             return ScriptState::Disarmed {
                 reason: fault.to_string(),
+            };
+        }
+        if let Some(reason) = self.halted {
+            return ScriptState::Disarmed {
+                reason: reason.to_owned(),
             };
         }
         match self.armed.state() {
@@ -124,7 +138,8 @@ impl<D: Copy> ScriptInstance<D> {
     /// formats nothing.
     #[must_use]
     pub fn watching(&self) -> bool {
-        self.run.borrow().fault.is_none()
+        self.halted.is_none()
+            && self.run.borrow().fault.is_none()
             && !matches!(self.armed.state(), ArmedState::Disarmed { .. })
     }
 
@@ -132,6 +147,12 @@ impl<D: Copy> ScriptInstance<D> {
     pub fn disarm(&mut self, reason: DisarmReason) {
         let owed = self.armed.disarm(reason);
         debug_assert!(owed.is_empty(), "an alarm-only instance places nothing");
+        self.alarm.reset();
+    }
+
+    /// Stop listening for a reason outside the kernel's; the first one stands.
+    pub fn halt(&mut self, reason: &'static str) {
+        self.halted.get_or_insert(reason);
         self.alarm.reset();
     }
 

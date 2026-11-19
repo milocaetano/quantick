@@ -10,19 +10,22 @@ use super::*;
 fn the_script_strategy_calls_reach_the_tab_s_strategies() {
     let (mut app, _commands) = app_with_history(4);
     let flow = app.active_tab().flow_pane.id;
-    let bundled = concat!(env!("CARGO_MANIFEST_DIR"), "/scripts");
-    let request = quantick_session::script_strategies::ScriptArm {
-        pane_id: flow,
-        library: Some(bundled),
-        script: "renko_poc_flip.pine",
-        side: quantick_engine::Side::Buy,
-        place: quantick_session::script_strategies::ScriptPlace::Anywhere,
-    };
-    let armed = (app.active_tab_mut().market.strategies)
-        .arm_script(request, |_| Vec::new())
-        .expect("the bundled flip arms");
-
     let origin = || crate::control::ActionOrigin::Human;
+    let input = json!({
+        "script": "renko_poc_flip.pine",
+        "side": "buy",
+        "placement": { "kind": "anywhere" },
+    });
+    let armed = app
+        .control_action("strategy.script.arm", 1, origin(), input)
+        .expect("the bundled flip arms from the default library");
+    let id = armed["strategy"]["id"].clone();
+    assert_eq!(
+        app.active_tab().market.strategies.script_readings().len(),
+        1,
+        "the arm landed on the tab's own strategies"
+    );
+
     let listed = app
         .control_action("strategy.script.list", 1, origin(), json!({}))
         .expect("the list dispatches");
@@ -30,10 +33,10 @@ fn the_script_strategy_calls_reach_the_tab_s_strategies() {
         listed["library"]["folder"], "strategies",
         "no launch folder: the default"
     );
-    assert_eq!(listed["armed"][0]["id"], armed.id.to_string());
+    assert_eq!(listed["armed"][0]["id"], id);
     assert_eq!(listed["armed"][0]["pane_id"], flow.to_string());
 
-    let input = json!({ "id": armed.id.to_string() });
+    let input = json!({ "id": id });
     let gone = app
         .control_action("strategy.script.disarm", 1, origin(), input)
         .expect("the disarm dispatches");

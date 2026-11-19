@@ -8,8 +8,9 @@ use quantick_strategy::sound::Cue;
 use quantick_strategy::{AlarmParams, SignalAlarm};
 use rust_decimal::Decimal;
 
-use crate::live_trade::{LiveClose, LiveTradeOwners, PaneFold};
+use crate::live_trade::{LiveTradeOwners, PaneFold};
 use crate::market::TabMarket;
+use crate::strategies::LiveClose;
 use crate::strategies::TabStrategies;
 use crate::strategies_tests::{DrawingId, bar, instance};
 

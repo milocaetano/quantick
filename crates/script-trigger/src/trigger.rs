@@ -83,6 +83,11 @@ impl ScriptTrigger {
 }
 
 impl ScriptRun {
+    /// Forget what the last judged bar left, as a fresh arm has judged none.
+    pub(crate) fn forget_last(&mut self) {
+        self.last = Last::Nothing;
+    }
+
     /// Run the script over one closed bar, answering the side of the alert
     /// that held, if any.
     fn judge(&mut self, cx: &TriggerContext<'_>) -> Option<Side> {
@@ -100,15 +105,9 @@ impl ScriptRun {
             bar_index: self.cvd.len() - 1,
             cvd: &self.cvd,
         };
-        if let Err(error) = self.indicator.on_close(&bar, &mut ctx) {
-            self.fault = Some(self.indicator.runtime_fault().map_or_else(
-                || ScriptFault {
-                    line: 0,
-                    code: "PINE_RUNTIME",
-                    message: error.message.clone(),
-                },
-                ScriptFault::runtime,
-            ));
+        if self.indicator.on_close(&bar, &mut ctx).is_err() {
+            // A failed commit run always leaves its fault behind.
+            self.fault = self.indicator.runtime_fault().map(ScriptFault::runtime);
             return None;
         }
         let fired = self.indicator.take_fired_alerts();

@@ -32,7 +32,8 @@ use quantick_feed::{
     REFILL_PRINTS_PER_DRAIN, past_resume_floor_logged,
 };
 use quantick_layers::ChartLayer;
-use quantick_session::live_trade::{self, LiveClose, PaneFold};
+use quantick_session::live_trade::{self, PaneFold};
+use quantick_session::strategies::LiveClose;
 use quantick_session::{
     Act, Delivery, Effect, FeedRequest, Msg, OlderCandles, Refusal, TabView, Wait, WaitChange,
 };

@@ -144,7 +144,6 @@ fn arm_list_and_disarm_a_script_strategy() {
         scripts.contains(&json!("renko_poc_flip.pine")),
         "{scripts:?}"
     );
-    assert_eq!(listed["library"]["error"], Value::Null);
     let ids: Vec<_> = (listed["armed"].as_array().expect("armed").iter())
         .map(|strategy| strategy["id"].clone())
         .collect();
@@ -163,6 +162,8 @@ fn arm_list_and_disarm_a_script_strategy() {
     .expect("disarms");
     assert_eq!(gone["disarmed"], true);
     assert_eq!(gone["strategy"]["id"], "1");
+    assert_eq!(gone["strategy"]["state"], "disarmed");
+    assert_eq!(gone["strategy"]["disarm_reason"], "disarmed");
     let again = call(
         disarm::<Window, FakeAccess>,
         &mut window,
@@ -261,17 +262,70 @@ fn a_region_placement_must_name_a_rectangle_on_that_chart() {
 }
 
 #[test]
-fn a_library_that_cannot_be_read_lists_the_reason() {
+fn an_unreadable_folder_still_lists_and_arms_the_bundled_scripts() {
     let mut window = window();
     window.dir = Some(format!("{BUNDLED}/no-such-folder"));
+    let mut access = FakeAccess::default();
     let listed = call(
         list::<Window, FakeAccess>,
         &mut window,
-        &mut FakeAccess::default(),
+        &mut access,
         json!({}),
     )
     .expect("the list still answers");
-    assert_eq!(listed["library"]["scripts"], json!([]));
-    let error = listed["library"]["error"].as_str().expect("the reason");
-    assert!(error.contains("no-such-folder"), "{error}");
+    let scripts = listed["library"]["scripts"].as_array().expect("names");
+    assert!(
+        scripts.contains(&json!("renko_poc_flip.pine")),
+        "{scripts:?}"
+    );
+    arm_renko(&mut window, &mut access, json!({})).expect("the bundled flip arms");
+}
+
+#[test]
+fn a_side_no_title_names_is_refused_with_the_titles() {
+    let mut window = window();
+    let mut access = FakeAccess::default();
+    let source = "//@version=5\nindicator(\"t\")\nalertcondition(close > open, title=\"Long up\")\nplot(close)\n";
+    let folder = crate::scratch::thread_dir("script-strategy-side");
+    std::fs::write(folder.join("long_only.pine"), source).expect("writable");
+    window.dir = Some(folder.to_str().expect("unicode").to_owned());
+    let error = arm_renko(
+        &mut window,
+        &mut access,
+        json!({"script": "long_only.pine", "side": "sell"}),
+    )
+    .expect_err("no title names sell");
+    assert!(error.message.contains("`Long up`"), "{}", error.message);
+}
+
+#[test]
+fn the_warmup_carries_each_closed_bar_s_footprint_poc() {
+    use quantick_engine::{Side as TradeSide, Trade};
+    let mut state = ChartState::new(BarSpec::Tick(2));
+    state.set_footprint_enabled(true);
+    let print = |id: u64, price: u32, quantity: u32| Trade {
+        agg_id: id,
+        timestamp_ms: 1_000 + i64::try_from(id).expect("small"),
+        price: Decimal::from(price),
+        quantity: Decimal::from(quantity),
+        side: TradeSide::Buy,
+    };
+    // A down brick traded mostly at 100, then the first print of the next.
+    for trade in [print(1, 101, 1), print(2, 100, 3), print(3, 100, 1)] {
+        state.ingest_live(&trade);
+    }
+    let spec = SpecSelector::new(BarSpec::Tick(2));
+    let series = PaneSeriesRead {
+        history_prefix: &[],
+        state: &state,
+        spec: &spec,
+    };
+    let warm = footprint_warmup(&series, 5);
+    assert_eq!(warm.len(), 1, "one closed brick");
+    assert_eq!(warm[0].0.close, Decimal::from(100));
+    let poc = warm[0].1.expect("the brick kept its footprint");
+    assert!(
+        poc >= Decimal::from(100) && poc < Decimal::from(101),
+        "{poc}"
+    );
 }

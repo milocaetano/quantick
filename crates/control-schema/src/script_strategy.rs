@@ -32,9 +32,6 @@ pub const ARM_LIST_DISARM_TEST: &str = "arm_list_and_disarm_a_script_strategy";
 /// The longest script file name a call may give.
 pub const SCRIPT_NAME_MAX_BYTES: usize = 128;
 
-/// The most library names a list answers with; the rest are counted.
-pub const MAX_LIBRARY_NAMES: usize = 256;
-
 /// Where a script may ring. Prices are decimal strings.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
@@ -134,12 +131,10 @@ pub struct LibraryListing {
     /// The folder the launch named (`QUANTICK_STRATEGIES_DIR`), else
     /// `strategies` beside the working directory.
     pub folder: String,
-    /// Its `.pine` file names, sorted; at most 256.
+    /// The scripts `strategy.script.arm` can name: the bundled ones, then
+    /// the folder's `.pine` files, sorted. An unreadable folder lists the
+    /// bundled ones only.
     pub scripts: Vec<String>,
-    /// How many names did not fit.
-    pub omitted: WireU64,
-    /// Why the folder could not be read; `scripts` is then empty.
-    pub error: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -188,7 +183,7 @@ pub fn arm_descriptor() -> CapabilityDescriptor {
     action::<ArmInput, ArmResult>(
         ARM_CAPABILITY_ID,
         "Arm a script strategy",
-        "Loads a .pine file from the strategy library and arms it alarm-only on one chart's closed bars: an alertcondition that holds rings the alarm when the bar's body meets the placement (a drawn rectangle, a fixed range, a line crossed one way, or anywhere). The title's first word is the side (bull, buy or long; bear, sell or short; any case); a script with a title naming no side, a computed title, no alertcondition, or a compile error is refused with the reason, compile errors as `line N: <CODE> <message>`. Never places an order. A runtime error later disarms that instance alone; strategy.script.list shows the reason. Journaled as strategy.script.armed. Lives for the session.",
+        "Loads a .pine file from the strategy library and arms it alarm-only on one chart's closed bars: an alertcondition that holds rings the alarm when the bar's body meets the placement (a drawn rectangle, a fixed range, a line crossed one way, or anywhere). The title's first word is the side (bull, buy or long; bear, sell or short; any case); a script with a title naming no side, a computed title, no alertcondition, no title naming the side asked for, or a compile error is refused with the reason, compile errors as `line N: <CODE> <message>`. Never places an order. A runtime error later disarms that instance alone; strategy.script.list shows the reason. Journaled as strategy.script.armed. Lives for the session.",
         "Each arm adds one instance with a new id, so arming twice rings twice; no retry key can make that safe. Read strategy.script.list, or the strategy.script.armed events after a cursor taken before the call, before retrying one whose answer was lost.",
     )
 }
@@ -229,7 +224,7 @@ pub fn list_descriptor() -> CapabilityDescriptor {
         id: LIST_CAPABILITY_ID,
         module: STRATEGY_MODULE_ID,
         title: "List script strategies",
-        description: "Reads the strategy library (the .pine files strategy.script.arm accepts, sorted) and every script strategy armed on the tab: its id, chart, script, side, placement, whether it is watching or disarmed and why, and its badge line. Changes nothing.",
+        description: "Reads the strategy library (the bundled scripts, then the folder's .pine files, sorted: what strategy.script.arm accepts) and every script strategy armed on the tab: its id, chart, script, side, placement, whether it is watching or disarmed and why, and its badge line. Changes nothing.",
         permissions: &["observe", "observe.indicators", "observe.user_text"],
         pagination: None,
     })

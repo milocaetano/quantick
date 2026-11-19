@@ -1,7 +1,10 @@
 //! Where a script instance may ring: any placement the kernel knows.
 
 use quantick_engine::{Bar, Side};
-use quantick_strategy::{Anywhere, FixedRange, LineCross, Placement, Reach, Region};
+use quantick_strategy::{
+    Anywhere, CrossDirection, FixedRange, LineCross, Placement, Reach, Region,
+};
+use rust_decimal::Decimal;
 
 /// The placement an instance was armed with. Only a drawn region needs the
 /// chart to resolve it — per bar, since a rectangle has a time span — so it
@@ -10,10 +13,11 @@ use quantick_strategy::{Anywhere, FixedRange, LineCross, Placement, Reach, Regio
 pub enum ScriptPlacement<D> {
     /// The rectangle drawing `D` marks.
     Region(D),
-    /// A fixed price band, both edges inside; tested as a [`FixedRange`].
-    Range(Region),
-    /// A horizontal line the body must cross one way.
-    Line(LineCross),
+    /// A fixed price band between two prices, either order, both edges
+    /// inside; tested as a [`FixedRange`].
+    Range { a: Decimal, b: Decimal },
+    /// A horizontal line the body must cross, upward when `rising`.
+    Line { level: Decimal, rising: bool },
     /// No price condition.
     Anywhere,
 }
@@ -33,7 +37,7 @@ impl<D: Copy> ScriptPlacement<D> {
     pub fn drawing(&self) -> Option<D> {
         match self {
             Self::Region(drawing) => Some(*drawing),
-            Self::Range(_) | Self::Line(_) | Self::Anywhere => None,
+            Self::Range { .. } | Self::Line { .. } | Self::Anywhere => None,
         }
     }
 
@@ -48,11 +52,18 @@ impl<D: Copy> ScriptPlacement<D> {
             Self::Region(drawing) => {
                 region(drawing).map(|(band, active)| (ResolvedPlacement::Region(band), active))
             }
-            Self::Range(band) => Some((
-                ResolvedPlacement::Range(FixedRange::new(band.low(), band.high())),
-                true,
-            )),
-            Self::Line(line) => Some((ResolvedPlacement::Line(line), true)),
+            Self::Range { a, b } => Some((ResolvedPlacement::Range(FixedRange::new(a, b)), true)),
+            Self::Line { level, rising } => {
+                let direction = if rising {
+                    CrossDirection::Up
+                } else {
+                    CrossDirection::Down
+                };
+                Some((
+                    ResolvedPlacement::Line(LineCross { level, direction }),
+                    true,
+                ))
+            }
             Self::Anywhere => Some((ResolvedPlacement::Anywhere, true)),
         }
     }

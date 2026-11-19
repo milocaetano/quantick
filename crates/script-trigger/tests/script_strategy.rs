@@ -5,9 +5,8 @@
 use quantick_engine::{Bar, Side};
 use quantick_script_trigger::{
     ArmRefusal, ResolvedPlacement, Script, ScriptInstance, ScriptPlacement, ScriptState,
-    side_of_title,
 };
-use quantick_strategy::{CrossDirection, DisarmReason, LineCross, Region};
+use quantick_strategy::{DisarmReason, Region};
 use rust_decimal::Decimal;
 
 const RENKO_POC_FLIP: &str = include_str!("../../app/scripts/renko_poc_flip.pine");
@@ -125,23 +124,26 @@ fn a_fixed_range_and_a_line_cross_gate_the_same_flip() {
     let mut in_range = arm(
         RENKO_POC_FLIP,
         Side::Buy,
-        ScriptPlacement::Range(Region::new(dec("100.5"), dec("102"))),
+        ScriptPlacement::Range {
+            a: dec("100.5"),
+            b: dec("102"),
+        },
     );
     let mut crossing = arm(
         RENKO_POC_FLIP,
         Side::Buy,
-        ScriptPlacement::Line(LineCross {
+        ScriptPlacement::Line {
             level: dec("100.5"),
-            direction: CrossDirection::Up,
-        }),
+            rising: true,
+        },
     );
     let mut wrong_way = arm(
         RENKO_POC_FLIP,
         Side::Buy,
-        ScriptPlacement::Line(LineCross {
+        ScriptPlacement::Line {
             level: dec("100.5"),
-            direction: CrossDirection::Down,
-        }),
+            rising: false,
+        },
     );
     for instance in [&mut in_range, &mut crossing, &mut wrong_way] {
         assert!(!ring(instance, &down, unused));
@@ -149,23 +151,6 @@ fn a_fixed_range_and_a_line_cross_gate_the_same_flip() {
     assert!(ring(&mut in_range, &up, unused), "closed inside the range");
     assert!(ring(&mut crossing, &up, unused), "crossed the line upward");
     assert!(!ring(&mut wrong_way, &up, unused), "the line wanted a fall");
-}
-
-#[test]
-fn the_title_s_first_word_names_the_side_in_any_case() {
-    for (title, side) in [
-        ("Bull flip", Some(Side::Buy)),
-        ("BUY the dip", Some(Side::Buy)),
-        ("long", Some(Side::Buy)),
-        ("Bear flip", Some(Side::Sell)),
-        ("sell rally", Some(Side::Sell)),
-        ("  Short squeeze", Some(Side::Sell)),
-        ("Bullish engulfing", None),
-        ("Flip bull", None),
-        ("", None),
-    ] {
-        assert_eq!(side_of_title(title), side, "{title:?}");
-    }
 }
 
 #[test]
@@ -288,7 +273,9 @@ fn a_runtime_error_disarms_that_instance_only_with_line_and_code() {
 #[test]
 fn an_error_during_warmup_disarms_at_arm_time() {
     let script = Script::load("breaks.pine", BREAKS_ON_THE_THIRD_BAR).expect("arms");
-    let history: Vec<Bar> = (0..4).map(|index| brick(index, "100", "101")).collect();
+    let history: Vec<_> = (0..4)
+        .map(|index| (brick(index, "100", "101"), None))
+        .collect();
     let instance: ScriptInstance<Drawing> =
         ScriptInstance::arm(1, &script, Side::Buy, ScriptPlacement::Anywhere, &history);
     assert!(
@@ -301,7 +288,9 @@ fn an_error_during_warmup_disarms_at_arm_time() {
 #[test]
 fn warmup_feeds_the_script_without_ringing_for_history() {
     let script = Script::load("steady.pine", ALWAYS_RINGS).expect("arms");
-    let history: Vec<Bar> = (0..3).map(|index| brick(index, "100", "101")).collect();
+    let history: Vec<_> = (0..3)
+        .map(|index| (brick(index, "100", "101"), None))
+        .collect();
     let mut instance: ScriptInstance<Drawing> =
         ScriptInstance::arm(1, &script, Side::Buy, ScriptPlacement::Anywhere, &history);
     let unused = Region::new(Decimal::ZERO, Decimal::ONE);
@@ -337,4 +326,72 @@ fn a_region_placement_names_its_drawing_and_the_others_resolve_alone() {
         anywhere,
         Some((ResolvedPlacement::Anywhere, true))
     ));
+}
+
+#[test]
+fn a_warmup_with_footprints_lets_the_first_live_brick_flip() {
+    let script = Script::load("renko_poc_flip.pine", RENKO_POC_FLIP).expect("arms");
+    let [down, up] = bull_flip();
+    let unused = Region::new(Decimal::ZERO, Decimal::ONE);
+    let mut warmed: ScriptInstance<Drawing> = ScriptInstance::arm(
+        1,
+        &script,
+        Side::Buy,
+        ScriptPlacement::Anywhere,
+        std::slice::from_ref(&down),
+    );
+    assert!(
+        !warmed.armed().status_line().contains("Bull flip"),
+        "a fresh arm narrates no bar: {}",
+        warmed.armed().status_line()
+    );
+    assert!(
+        ring(&mut warmed, &up, unused),
+        "the warm brick's POC is in its history"
+    );
+
+    let mut blind: ScriptInstance<Drawing> = ScriptInstance::arm(
+        2,
+        &script,
+        Side::Buy,
+        ScriptPlacement::Anywhere,
+        &[(down.0.clone(), None)],
+    );
+    assert!(
+        !ring(&mut blind, &up, unused),
+        "a warmup without POC hides the flip"
+    );
+}
+
+#[test]
+fn a_flip_during_warmup_is_not_the_status() {
+    let script = Script::load("renko_poc_flip.pine", RENKO_POC_FLIP).expect("arms");
+    let instance: ScriptInstance<Drawing> = ScriptInstance::arm(
+        1,
+        &script,
+        Side::Buy,
+        ScriptPlacement::Anywhere,
+        &bull_flip(),
+    );
+    let status = instance.armed().status_line();
+    assert!(status.contains("waiting for bars"), "{status}");
+}
+
+#[test]
+fn a_halted_instance_names_its_reason_and_stays_quiet() {
+    let mut instance = arm(ALWAYS_RINGS, Side::Buy, ScriptPlacement::Anywhere);
+    instance.halt("its region drawing was removed");
+    instance.halt("a later reason");
+    let unused = Region::new(Decimal::ZERO, Decimal::ONE);
+    assert!(!ring(
+        &mut instance,
+        &(brick(0, "100", "101"), None),
+        unused
+    ));
+    assert_eq!(
+        instance.state(),
+        ScriptState::Disarmed {
+            reason: "its region drawing was removed".to_owned()
+        }
+    );
 }

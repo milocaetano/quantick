@@ -1,10 +1,11 @@
 //! `strategy.script.arm`, `.list` and `.disarm`: Pine scripts armed
 //! alarm-only on a tab's charts, read and removed by id.
 //!
-//! The tab's strategies decide (`quantick_session::script_strategies`): which
-//! library file loads, whether its titles name sides, what each instance is
-//! doing. What is here is parsing, the drawing check a region placement
-//! needs, and the journal. The tab lends itself through
+//! The tab's strategies decide (`quantick_session::script_strategies`):
+//! whether a script's titles name sides, what each instance is doing. What
+//! is here is parsing, reading the source through the script library the
+//! indicators use, the drawing check a region placement needs, the
+//! footprint warmup, and the journal. The tab lends itself through
 //! [`MarketTab::script_tab`](crate::market_tab::MarketTab::script_tab).
 
 use quantick_chart::pane_series::PaneSeriesRead;
@@ -15,18 +16,18 @@ use quantick_control_host::authority::STRATEGY_MODULE_ID;
 use quantick_control_host::journal::NewEvent;
 use quantick_control_schema::script_strategy::{
     self as wire, ARMED_EVENT_KIND, ArmInput, ArmResult, CrossDirection, DISARMED_EVENT_KIND,
-    DisarmInput, DisarmResult, LibraryListing, ListInput, ListResult, MAX_LIBRARY_NAMES, Placement,
-    ScriptStrategy, ScriptStrategyState,
+    DisarmInput, DisarmResult, LibraryListing, ListInput, ListResult, Placement, ScriptStrategy,
+    ScriptStrategyState,
 };
 use quantick_control_schema::trade::ActionSide;
 use quantick_drawings::{DrawingId, DrawingTool, Drawings};
-use quantick_engine::Side;
-use quantick_session::script_strategies::{
-    ScriptArm, ScriptPlace, ScriptReading, library_folder, library_scripts,
-};
+use quantick_engine::{Bar, Side};
+use quantick_session::script_strategies::{ScriptArm, ScriptPlacement, ScriptReading};
 use quantick_session::strategies::TabStrategies;
+use quantick_stores::script_library::{LoadedScript, ScriptLibrary};
 use rust_decimal::Decimal;
 use serde_json::Value;
+use std::path::Path;
 
 use crate::JournalAccess;
 use crate::dock::ActionDock;
@@ -41,6 +42,10 @@ pub struct ScriptPane<'a> {
     pub series: PaneSeriesRead<'a>,
     pub drawings: &'a Drawings<DrawingTool>,
 }
+
+/// The folder the library scans when the launch named none, relative to the
+/// working directory.
+const DEFAULT_LIBRARY: &str = "strategies";
 
 /// One open tab, lent for one call: its strategies, its charts with the
 /// flow chart first, and the library folder the launch named (`None`: the
@@ -98,20 +103,26 @@ fn arm<H: ScriptStrategyHost + ?Sized, A: JournalAccess>(
         Some(id) => panes.iter().find(|pane| pane.id == id.get()),
     }
     .ok_or_else(|| invalid("the tab has no such chart; omit pane_id for the flow chart"))?;
-    if let ScriptPlace::Region(drawing) = place {
+    if let ScriptPlacement::Region(drawing) = place {
         let closed = pane.series.closed_slots();
         quantick_drawings::alert_geometry::check_arm(pane.drawings, drawing, closed)
             .map_err(|refusal| invalid(format!("drawing {}: {refusal}", drawing.0)))?;
     }
+    let source = match library_of(library).load(&input.script) {
+        LoadedScript::Read { text, .. } => text,
+        LoadedScript::Unreadable { message, .. } | LoadedScript::Missing { message } => {
+            return Err(invalid(message));
+        }
+    };
     let request = ScriptArm {
         pane_id: pane.id,
-        library,
         script: &input.script,
+        source: &source,
         side: input.side.into_engine(),
         place,
     };
     let reading = strategies
-        .arm_script(request, |depth| pane.series.warmup_bars(depth))
+        .arm_script(request, |depth| footprint_warmup(&pane.series, depth))
         .map_err(invalid)?;
     let result = ArmResult {
         tab_id: WireU64::new(tab_id),
@@ -179,19 +190,32 @@ fn disarm<H: ScriptStrategyHost + ?Sized, A: JournalAccess>(
     Ok(answer)
 }
 
-/// The library as one call found it, bounded.
+/// The library over the folder the launch named, scanned for this call: a
+/// script dropped in arms without a restart.
+fn library_of(folder: Option<&str>) -> ScriptLibrary {
+    ScriptLibrary::scan_dir(Path::new(folder.unwrap_or(DEFAULT_LIBRARY)))
+}
+
 fn listing(folder: Option<&str>) -> LibraryListing {
-    let (scripts, error) = match library_scripts(folder) {
-        Ok(names) => (names, None),
-        Err(error) => (Vec::new(), Some(error)),
-    };
-    let omitted = scripts.len().saturating_sub(MAX_LIBRARY_NAMES);
     LibraryListing {
-        folder: library_folder(folder),
-        scripts: scripts.into_iter().take(MAX_LIBRARY_NAMES).collect(),
-        omitted: WireU64::new(u64::try_from(omitted).unwrap_or(u64::MAX)),
-        error,
+        folder: folder.unwrap_or(DEFAULT_LIBRARY).to_owned(),
+        scripts: (library_of(folder).entries().iter())
+            .map(|entry| entry.name.clone())
+            .collect(),
     }
+}
+
+/// The pane's last `depth` closed live bars with their footprint POC, oldest
+/// first: what the chart's own copy of a script read, so a strategy armed on
+/// it judges the next brick against the same history.
+fn footprint_warmup(series: &PaneSeriesRead<'_>, depth: usize) -> Vec<(Bar, Option<Decimal>)> {
+    let live = series.state.bars().len();
+    (live.saturating_sub(depth)..live)
+        .map(|index| {
+            let closed = series.footprint_bar(index);
+            (closed.bar, closed.poc)
+        })
+        .collect()
 }
 
 fn price(field: &str, text: &str) -> Result<Decimal, ControlError> {
@@ -200,31 +224,31 @@ fn price(field: &str, text: &str) -> Result<Decimal, ControlError> {
         .map_err(|_| invalid(format!("`{field}` must be a decimal price, got `{text}`")))
 }
 
-fn place_of(placement: &Placement) -> Result<ScriptPlace<DrawingId>, ControlError> {
+fn place_of(placement: &Placement) -> Result<ScriptPlacement<DrawingId>, ControlError> {
     Ok(match placement {
-        Placement::Region { drawing_id } => ScriptPlace::Region(DrawingId(drawing_id.get())),
-        Placement::Range { low, high } => ScriptPlace::Range {
+        Placement::Region { drawing_id } => ScriptPlacement::Region(DrawingId(drawing_id.get())),
+        Placement::Range { low, high } => ScriptPlacement::Range {
             a: price("low", low)?,
             b: price("high", high)?,
         },
-        Placement::Line { level, direction } => ScriptPlace::Line {
+        Placement::Line { level, direction } => ScriptPlacement::Line {
             level: price("level", level)?,
             rising: *direction == CrossDirection::Up,
         },
-        Placement::Anywhere => ScriptPlace::Anywhere,
+        Placement::Anywhere => ScriptPlacement::Anywhere,
     })
 }
 
-fn placement(place: ScriptPlace<DrawingId>) -> Placement {
+fn placement(place: ScriptPlacement<DrawingId>) -> Placement {
     match place {
-        ScriptPlace::Region(drawing) => Placement::Region {
+        ScriptPlacement::Region(drawing) => Placement::Region {
             drawing_id: WireU64::new(drawing.0),
         },
-        ScriptPlace::Range { a, b } => Placement::Range {
+        ScriptPlacement::Range { a, b } => Placement::Range {
             low: a.min(b).to_string(),
             high: a.max(b).to_string(),
         },
-        ScriptPlace::Line { level, rising } => Placement::Line {
+        ScriptPlacement::Line { level, rising } => Placement::Line {
             level: level.to_string(),
             direction: if rising {
                 CrossDirection::Up
@@ -232,7 +256,7 @@ fn placement(place: ScriptPlace<DrawingId>) -> Placement {
                 CrossDirection::Down
             },
         },
-        ScriptPlace::Anywhere => Placement::Anywhere,
+        ScriptPlacement::Anywhere => Placement::Anywhere,
     }
 }
 
@@ -246,7 +270,7 @@ fn strategy(reading: &ScriptReading<DrawingId>) -> ScriptStrategy {
             Side::Sell => ActionSide::Sell,
         },
         placement: placement(reading.place),
-        state: if reading.watching {
+        state: if reading.disarm_reason.is_none() {
             ScriptStrategyState::Watching
         } else {
             ScriptStrategyState::Disarmed

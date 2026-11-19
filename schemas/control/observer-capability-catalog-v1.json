@@ -28600,7 +28600,7 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Loads a .pine file from the strategy library and arms it alarm-only on one chart's closed bars: an alertcondition that holds rings the alarm when the bar's body meets the placement (a drawn rectangle, a fixed range, a line crossed one way, or anywhere). The title's first word is the side (bull, buy or long; bear, sell or short; any case); a script with a title naming no side, a computed title, no alertcondition, or a compile error is refused with the reason, compile errors as `line N: <CODE> <message>`. Never places an order. A runtime error later disarms that instance alone; strategy.script.list shows the reason. Journaled as strategy.script.armed. Lives for the session.",
+      "description": "Loads a .pine file from the strategy library and arms it alarm-only on one chart's closed bars: an alertcondition that holds rings the alarm when the bar's body meets the placement (a drawn rectangle, a fixed range, a line crossed one way, or anywhere). The title's first word is the side (bull, buy or long; bear, sell or short; any case); a script with a title naming no side, a computed title, no alertcondition, no title naming the side asked for, or a compile error is refused with the reason, compile errors as `line N: <CODE> <message>`. Never places an order. A runtime error later disarms that instance alone; strategy.script.list shows the reason. Journaled as strategy.script.armed. Lives for the session.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "annotate",
@@ -29216,7 +29216,7 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Reads the strategy library (the .pine files strategy.script.arm accepts, sorted) and every script strategy armed on the tab: its id, chart, script, side, placement, whether it is watching or disarmed and why, and its badge line. Changes nothing.",
+      "description": "Reads the strategy library (the bundled scripts, then the folder's .pine files, sorted: what strategy.script.arm accepts) and every script strategy armed on the tab: its id, chart, script, side, placement, whether it is watching or disarmed and why, and its badge line. Changes nothing.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "observe",
@@ -29273,23 +29273,12 @@
           "LibraryListing": {
             "description": "The strategy library as the call found it.",
             "properties": {
-              "error": {
-                "description": "Why the folder could not be read; `scripts` is then empty.",
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
               "folder": {
                 "description": "The folder the launch named (`QUANTICK_STRATEGIES_DIR`), else\n`strategies` beside the working directory.",
                 "type": "string"
               },
-              "omitted": {
-                "$ref": "#/$defs/WireU64",
-                "description": "How many names did not fit."
-              },
               "scripts": {
-                "description": "Its `.pine` file names, sorted; at most 256.",
+                "description": "The scripts `strategy.script.arm` can name: the bundled ones, then\nthe folder's `.pine` files, sorted. An unreadable folder lists the\nbundled ones only.",
                 "items": {
                   "type": "string"
                 },
@@ -29298,8 +29287,7 @@
             },
             "required": [
               "folder",
-              "scripts",
-              "omitted"
+              "scripts"
             ],
             "type": "object"
           },

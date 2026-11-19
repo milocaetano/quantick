@@ -16,21 +16,18 @@
 //! and the stable error code as the reason ([`ScriptFault`]); its siblings
 //! keep ringing.
 //!
-//! Headless like the kernel it plugs into: no UI, no network, no clock. The
-//! one outside read is the [`Library`] folder, which the window resolves and
-//! hands in.
+//! Headless like the kernel it plugs into: no UI, no network, no clock, no
+//! file reads — the caller hands in the source.
 //!
 //! [`Signal`]: quantick_strategy::Signal
 //! [`Execution::AlarmOnly`]: quantick_strategy::Execution::AlarmOnly
 
 mod instance;
-mod library;
 mod placement;
 mod script;
 mod trigger;
 
 pub use instance::{ScriptInstance, ScriptState};
-pub use library::{DEFAULT_DIR, Library, LibraryError, SCRIPT_MAX_BYTES};
 pub use placement::{ResolvedPlacement, ScriptPlacement};
-pub use script::{ArmRefusal, Script, ScriptFault, side_of_title};
+pub use script::{ArmRefusal, Script, ScriptFault};
 pub use trigger::{SCRIPT_FAULT, ScriptTrigger, WARMUP_BARS};

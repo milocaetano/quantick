@@ -11,8 +11,7 @@ use quantick_engine::{Bar, Trade};
 use quantick_strategy::sound::Cue;
 use rust_decimal::Decimal;
 
-pub use crate::strategies::LiveClose;
-use crate::strategies::TabStrategies;
+use crate::strategies::{LiveClose, TabStrategies};
 
 /// What folding one print into one pane reported.
 #[derive(Debug, Clone, PartialEq, Eq)]
