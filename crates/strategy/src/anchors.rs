@@ -122,14 +122,17 @@ impl<K> AnchoredInstance<K> {
     }
 
     /// How loudly this instance claims the drawing's one badge: an open
-    /// position, then an order in flight, then a signal, then plain
-    /// watching, then an ended instance still showing a mark.
+    /// position, then an order in flight, then a signal, then a stop the
+    /// trader did not ask for (a rejected entry, a dropped bracket — the
+    /// reason is the lesson), then plain watching, then an ended instance
+    /// still showing a mark.
     fn urgency(&self) -> u8 {
         let marked = self.mark != AlarmMark::Quiet;
         match self.armed.state() {
-            ArmedState::InPosition => 5,
-            ArmedState::Fired { .. } => 4,
-            ArmedState::Armed if marked => 3,
+            ArmedState::InPosition => 6,
+            ArmedState::Fired { .. } => 5,
+            ArmedState::Armed if marked => 4,
+            ArmedState::Disarmed { reason } if *reason != DisarmReason::User => 3,
             ArmedState::Armed => 2,
             ArmedState::Done | ArmedState::Disarmed { .. } => u8::from(marked),
         }
@@ -635,6 +638,28 @@ mod tests {
         assert_eq!(stack.badge(), "⚡×2 newer · disarmed · signal");
         assert!(!stack.disarmable);
         assert!(stack.rearmable);
+    }
+
+    /// A sibling stopped by something the trader did not ask for keeps the
+    /// badge over a plain watcher: its reason is the lesson, and a badge
+    /// naming only the watcher would leave the Re-arm entry restarting it
+    /// blind.
+    #[test]
+    fn an_unasked_stop_outranks_a_plain_watcher_on_the_badge() {
+        let mut anchors = StrategyAnchors::default();
+        anchors.arm(instance(DrawingId(1)));
+        let mut newer = instance(DrawingId(1));
+        newer.preset = "newer".to_owned();
+        anchors.arm(newer);
+        let _ = (anchors.instances[0].armed).disarm(DisarmReason::EntryCancelled);
+        let stack = anchors.stack(DrawingId(1)).expect("two ride it");
+        assert_eq!(stack.badge(), "⚡×2 test · entry cancelled");
+        assert!(stack.disarmable && stack.rearmable);
+
+        // The trader's own Disarm is no news: the watcher speaks again.
+        let _ = (anchors.instances[0].armed).disarm(DisarmReason::User);
+        let stack = anchors.stack(DrawingId(1)).expect("two ride it");
+        assert_eq!(stack.badge(), "⚡×2 newer");
     }
 
     #[test]
