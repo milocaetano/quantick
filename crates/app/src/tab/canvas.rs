@@ -703,7 +703,8 @@ impl Tab {
             .map(|tape| tape.capture_grouping_now())
         {
             for pane in time_panes.iter_mut() {
-                pane.series.state.set_footprint_group(base);
+                let replay = pane.series.set_footprint_group(base);
+                pane.apply_series_effects(replay);
             }
         }
         // Context panes carry addresses `1..`, the flow pane `0` — the order

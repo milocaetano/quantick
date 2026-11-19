@@ -66,9 +66,8 @@ impl ChartPane {
         self.replay_indicators();
     }
 
-    /// Replay the bars into the indicators and nothing else: what a refold
-    /// of the footprint ladders needs, whose bars did not change.
-    pub(crate) fn replay_indicators(&mut self) {
+    /// Replay the bars into the indicators alone: a ladder refold's need.
+    fn replay_indicators(&mut self) {
         self.lane.reset();
         self.indicator_worker.send(IndicatorCommand::Rebuild(
             self.series_read().closed_footprint_bars(),
@@ -95,7 +94,7 @@ impl ChartPane {
     }
 
     /// Carry out what the pane's series decided, in order.
-    fn apply_series_effects(&mut self, effects: impl IntoIterator<Item = SeriesEffect>) {
+    pub(crate) fn apply_series_effects(&mut self, effects: impl IntoIterator<Item = SeriesEffect>) {
         use PrefixInstallEffect::{
             RebuildIndicators, ShiftDrawings, ShiftIndicatorRows, ShiftViewport,
         };
@@ -122,6 +121,7 @@ impl ChartPane {
                 }
                 SeriesEffect::PublishPartial => self.publish_partial(),
                 SeriesEffect::PublishTapePriceStep => self.publish_tape_price_step(),
+                SeriesEffect::ReplayIndicators => self.replay_indicators(),
             }
         }
     }

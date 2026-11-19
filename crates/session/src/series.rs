@@ -17,6 +17,7 @@ use quantick_chart::viewport::Viewport;
 use quantick_chart_interaction::pane_history::{HistoryState, PrefixChange, PrefixInstallEffect};
 use quantick_engine::trade_tape::TradeTape;
 use quantick_engine::{Bar, DealSample, Trade};
+use rust_decimal::Decimal;
 
 use crate::SeamTrace;
 use crate::strategies::Forming;
@@ -56,6 +57,9 @@ pub enum SeriesEffect {
     PublishPartial,
     /// Hand the order-flow engine the tape's own price grid.
     PublishTapePriceStep,
+    /// Replay the indicators over unchanged bars: the footprint ladders were
+    /// refolded or dropped, and the `poc` each bar carried came from them.
+    ReplayIndicators,
 }
 
 /// What installing one venue prefix did, for the window to apply.
@@ -102,6 +106,25 @@ impl PaneSeries {
             state: &self.state,
             spec,
         }
+    }
+
+    /// Switch footprint accumulation as the view asks.
+    #[must_use]
+    pub fn set_footprint_enabled(&mut self, enabled: bool) -> Option<SeriesEffect> {
+        self.refolding(|state| state.set_footprint_enabled(enabled))
+    }
+
+    /// Capture the footprints at row width `group`.
+    #[must_use]
+    pub fn set_footprint_group(&mut self, group: Decimal) -> Option<SeriesEffect> {
+        self.refolding(|state| state.set_footprint_group(group))
+    }
+
+    /// Apply `change`; a ladder refold or drop moves the series revision.
+    fn refolding(&mut self, change: impl FnOnce(&mut ChartState)) -> Option<SeriesEffect> {
+        let revision = self.state.series_revision();
+        change(&mut self.state);
+        (self.state.series_revision() != revision).then_some(SeriesEffect::ReplayIndicators)
     }
 
     fn closed_slots(&self) -> usize {

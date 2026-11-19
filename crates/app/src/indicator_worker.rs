@@ -6,7 +6,6 @@ use crate::worker_progress::{
 };
 #[cfg(test)]
 use quantick_engine::Bar;
-use quantick_engine::trade_tape::TradeTape;
 #[cfg(test)]
 use quantick_engine::{Trade, forming_run::FormingRun};
 #[cfg(test)]
@@ -14,10 +13,9 @@ pub(crate) use quantick_indicator_session::LaneSample;
 #[cfg(test)]
 use quantick_indicator_session::fold_parked;
 pub(crate) use quantick_indicator_session::{
-    IndicatorCommand, IndicatorEvent, IndicatorSource, MAX_LANE_RUNGS, SlotId,
+    IndicatorCommand, IndicatorEvent, IndicatorSource, LaneTransport, MAX_LANE_RUNGS, SlotId,
 };
 use quantick_indicator_session::{IndicatorSession, InputsRebound, SessionEffects};
-use quantick_indicators::FootprintBar;
 #[cfg(test)]
 use quantick_indicators::{IndicatorHost, InputValue, Rgba8};
 use std::sync::Arc;
@@ -72,60 +70,6 @@ impl SessionEffects for RuntimeEffects<'_> {
             "saved settings were rebound to a changed input list");
     }
 }
-/// Producer cursor for the worker-owned forming run. No trade storage lives here.
-#[derive(Default)]
-pub(crate) struct LaneTransport {
-    rungs: usize,
-    sent: usize,
-}
-
-impl LaneTransport {
-    pub(crate) fn reset(&mut self) {
-        self.sent = 0;
-    }
-
-    pub(crate) fn set_rungs(&mut self, rungs: usize) -> bool {
-        let changed = self.rungs != rungs;
-        if rungs == 0 {
-            self.reset();
-        }
-        self.rungs = rungs;
-        changed
-    }
-
-    /// The forming-bar update for this frame: the partial, and the forming
-    /// run's prints not yet sent.
-    ///
-    /// Rate: **per frame**. The copy is the unsent suffix of the tape only —
-    /// the prints since the previous command, or the forming bar's whole run
-    /// after a reset — taken chunk slice by chunk slice, never the tape.
-    pub(crate) fn command(
-        &mut self,
-        partial: Option<FootprintBar>,
-        trades: &TradeTape,
-    ) -> IndicatorCommand {
-        let count = partial
-            .as_ref()
-            .filter(|_| self.rungs > 0)
-            .map_or(0, |bar| {
-                usize::try_from(bar.bar.trade_count)
-                    .unwrap_or(usize::MAX)
-                    .min(trades.len())
-            });
-        let start = trades.len() - count + self.sent.min(count);
-        let mut run = Vec::with_capacity(trades.len() - start);
-        for slice in trades.slices(start..) {
-            run.extend_from_slice(slice);
-        }
-        self.sent = count;
-        IndicatorCommand::PartialUpdated {
-            partial,
-            run,
-            rungs: self.rungs,
-        }
-    }
-}
-
 /// What the worker thread reports about its forming run and its own work.
 #[cfg(test)]
 pub(crate) struct LaneProbe {
