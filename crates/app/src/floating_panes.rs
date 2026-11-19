@@ -259,7 +259,7 @@ fn guides(
         painter.rect_stroke(
             badge,
             5.0,
-            Stroke::new(1.5, if hot { ink } else { palette.border() }),
+            Stroke::new(OUTLINE_PX, if hot { ink } else { palette.border() }),
         );
         let font = egui::FontId::proportional(guide.text_size);
         painter.text(
