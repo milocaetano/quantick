@@ -48,7 +48,7 @@ pub(super) fn badge_text_for(
     all_hidden: bool,
     closed_slots: usize,
 ) -> String {
-    let mut text = crate::strategy_anchors::stacked_badge_text(instance, riders);
+    let mut text = crate::strategy_anchors::badge_text(instance, riders);
     // The region's own state first, and *instead of* the kernel's
     // reason rather than beside it. A paused or expired region makes
     // `PaneStrategies::region` refuse, which the kernel records as "region

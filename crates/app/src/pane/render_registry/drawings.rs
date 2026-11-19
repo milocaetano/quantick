@@ -381,7 +381,8 @@ impl DrawingPass<'_> {
         // hides its geometry, never the fact that a bot rides it — an
         // invisible armed instance is the one state this surface must not
         // allow. One badge per drawing however many ride it; zero when none.
-        for (instance, riders) in anchors.badges() {
+        for stack in anchors.stacks() {
+            let (instance, riders) = (stack.speaker, stack.riders);
             let Some(index) = drawings.index_of(instance.drawing) else {
                 continue;
             };

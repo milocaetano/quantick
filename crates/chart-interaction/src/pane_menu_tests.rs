@@ -123,7 +123,8 @@ fn descriptors_pin_empty_sections_utf8_and_captured_tape_order() {
         )
     );
 }
-/// A region already carrying a bot still offers another: instances stack.
+/// A region already carrying bots still offers another — instances stack —
+/// and offers Disarm and Re-arm together when one watches and one ended.
 #[test]
 fn a_region_with_a_strategy_still_offers_another() {
     let mut facts = facts();
@@ -138,13 +139,15 @@ fn a_region_with_a_strategy_still_offers_another() {
         strategy_region: true,
         strategy: Some(StrategyFact {
             status: "armed".into(),
-            phase: StrategyPhase::Watching,
+            disarmable: true,
+            rearmable: true,
+            retest_resting: false,
             footed: true,
             span_alive: true,
         }),
     });
     let entries = describe(&Model::default(), &facts);
-    let labels: Vec<_> = entries[..6].iter().map(|e| e.label.as_str()).collect();
+    let labels: Vec<_> = entries[..7].iter().map(|e| e.label.as_str()).collect();
     assert_eq!(
         labels,
         [
@@ -152,12 +155,14 @@ fn a_region_with_a_strategy_still_offers_another() {
             "name this object",
             "armed",
             "Disarm",
+            "Re-arm",
             "Remove strategy",
             "Add strategy\u{2026}"
-        ]
+        ],
+        "a watching bot and an ended one on one drawing: both verbs"
     );
     assert!(matches!(
-        entries[5].kind,
+        entries[6].kind,
         Kind::Button {
             event: Event::Choice(MenuIntent::StrategyAdd(DrawingId(7))),
             ..

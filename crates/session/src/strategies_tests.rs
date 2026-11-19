@@ -177,20 +177,40 @@ fn removal_and_disarm_queue_their_cancels_for_the_drain_in_pane_order() {
     );
 }
 
-/// The drawing's Disarm and Re-arm speak for every instance riding it;
-/// another drawing's bot is left as it is.
+/// The drawing's Disarm reaches every bot on it still watching, and its
+/// Re-arm every one that ended; another drawing's bot is left alone, and
+/// an ended sibling keeps its own reason through a Disarm, so a later
+/// Re-arm still re-warms the ruler a market switch emptied.
 #[test]
 fn disarm_and_rearm_reach_every_instance_on_the_drawing() {
+    use quantick_strategy::ArmedState;
+
     let mut strategies = TabStrategies::default();
     let pane = strategies.pane_mut(PANE);
     pane.anchors.arm(resting(DrawingId(1)));
     pane.anchors.arm(instance(DrawingId(1)));
     pane.anchors.arm(instance(DrawingId(2)));
+    pane.anchors.arm(instance(DrawingId(1)));
+    let switched = pane.anchors.instances[3]
+        .armed
+        .disarm(DisarmReason::MarketChanged);
+    assert!(switched.is_empty());
     pane.disarm(DrawingId(1));
     let watching: Vec<_> = (pane.anchors.instances.iter())
         .map(AnchoredInstance::watching)
         .collect();
-    assert_eq!(watching, [false, false, true], "only drawing 1's bots stop");
+    assert_eq!(
+        watching,
+        [false, false, true, false],
+        "only drawing 1's bots stop"
+    );
+    assert_eq!(
+        pane.anchors.instances[3].armed.state(),
+        &ArmedState::Disarmed {
+            reason: DisarmReason::MarketChanged
+        },
+        "the ended sibling keeps its reason"
+    );
     assert_eq!(
         strategies.take_cleanup(&[PANE]),
         vec![Command::CancelOrder { id: OrderId(11) }]
@@ -198,14 +218,19 @@ fn disarm_and_rearm_reach_every_instance_on_the_drawing() {
 
     let pane = strategies.pane_mut(PANE);
     let _ = pane.anchors.instances[2].armed.disarm(DisarmReason::User);
-    pane.rearm(DrawingId(1), |_| Vec::new());
+    let mut warmed = 0;
+    pane.rearm(DrawingId(1), |_| {
+        warmed += 1;
+        Vec::new()
+    });
+    assert_eq!(warmed, 1, "only the market switch asks for a re-warm");
     let watching: Vec<_> = (pane.anchors.instances.iter())
         .map(AnchoredInstance::watching)
         .collect();
     assert_eq!(
         watching,
-        [true, true, false],
-        "both re-armed, not the other"
+        [true, true, false, true],
+        "drawing 1 re-armed, not 2"
     );
 }
 

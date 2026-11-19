@@ -475,6 +475,8 @@ impl DrawingControllerAccess<'_> {
                     format!("the copy carries no strategy: {reason}"),
                     Instant::now(),
                 );
+                // The refusal is the copy's, not one bot's: say it once.
+                break;
             }
         }
     }

@@ -3,7 +3,7 @@
 //! of them crosses here, where the kernel types are in reach.
 
 use quantick_engine::Side;
-use quantick_strategy::anchors::{AnchoredInstance, badge_text};
+use quantick_strategy::anchors::AnchoredInstance;
 use quantick_strategy::{ArmedState, BreakPolicy, Execution, Rearm};
 use rust_decimal::Decimal;
 
@@ -29,13 +29,14 @@ pub struct ArmedReading<D> {
     pub state: &'static str,
     /// Why a disarmed instance stopped, in the badge's words.
     pub disarm_reason: Option<&'static str>,
-    /// The whole badge as the chart prints it.
+    /// The whole badge as the chart prints it beside the drawing — one per
+    /// drawing, so every instance riding it reads the same words.
     pub badge: String,
 }
 
 impl<D: Copy> ArmedReading<D> {
     #[must_use]
-    pub fn of(instance: &AnchoredInstance<D>) -> Self {
+    pub fn of(instance: &AnchoredInstance<D>, badge: String) -> Self {
         let params = instance.armed.params();
         let (state, disarm_reason) = match instance.armed.state() {
             ArmedState::Armed => ("armed", None),
@@ -66,7 +67,7 @@ impl<D: Copy> ArmedReading<D> {
             },
             state,
             disarm_reason,
-            badge: badge_text(instance),
+            badge,
         }
     }
 }
@@ -77,7 +78,15 @@ impl<D: Copy + PartialEq> TabStrategies<D> {
     #[must_use]
     pub fn readings(&self, id: u64) -> Vec<ArmedReading<D>> {
         self.anchors(id).map_or_else(Vec::new, |anchors| {
-            anchors.instances.iter().map(ArmedReading::of).collect()
+            (anchors.instances.iter())
+                .map(|instance| {
+                    let stack = anchors.stack(instance.drawing);
+                    ArmedReading::of(
+                        instance,
+                        stack.map(|stack| stack.badge()).unwrap_or_default(),
+                    )
+                })
+                .collect()
         })
     }
 }

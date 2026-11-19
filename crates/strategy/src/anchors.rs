@@ -5,7 +5,7 @@
 //! instance, how simulator events fan out to them, and when an instance
 //! dies with its drawing. A drawing may carry several instances: each
 //! steps independently, in creation order, and the drawing's one badge
-//! speaks for the newest still watching and counts the rest, so a
+//! speaks for the one with the most urgent news and counts the rest, so a
 //! rectangle never hides a stack of bots behind a badge that names one.
 //!
 //! Generic over the anchor `K`: the window anchors to its drawing id, and
@@ -100,13 +100,39 @@ impl<K> AnchoredInstance<K> {
         !matches!(self.armed.state(), ArmedState::Disarmed { .. })
     }
 
-    /// Whether this instance is armed or mid-operation.
+    /// Whether this instance is armed or mid-operation — what the drawing's
+    /// Disarm reaches. An ended instance is left alone: it keeps the reason
+    /// it ended with, which a re-arm reads to know whether the series
+    /// changed under the ruler.
     #[must_use]
     pub fn watching(&self) -> bool {
         matches!(
             self.armed.state(),
             ArmedState::Armed | ArmedState::Fired { .. } | ArmedState::InPosition
         )
+    }
+
+    /// Whether the drawing's Re-arm reaches this instance.
+    #[must_use]
+    pub fn rearmable(&self) -> bool {
+        matches!(
+            self.armed.state(),
+            ArmedState::Done | ArmedState::Disarmed { .. }
+        )
+    }
+
+    /// How loudly this instance claims the drawing's one badge: an open
+    /// position, then an order in flight, then a signal, then plain
+    /// watching, then an ended instance still showing a mark.
+    fn urgency(&self) -> u8 {
+        let marked = self.mark != AlarmMark::Quiet;
+        match self.armed.state() {
+            ArmedState::InPosition => 5,
+            ArmedState::Fired { .. } => 4,
+            ArmedState::Armed if marked => 3,
+            ArmedState::Armed => 2,
+            ArmedState::Done | ArmedState::Disarmed { .. } => u8::from(marked),
+        }
     }
 
     /// Judge the bar that just closed, and answer with the sound to play.
@@ -186,6 +212,29 @@ impl<K> AnchoredInstance<K> {
     }
 }
 
+/// The instances riding one drawing, as its one badge and its menu read
+/// them.
+pub struct Stack<'a, K> {
+    /// The instance the badge speaks for (see [`StrategyAnchors::for_drawing`]).
+    pub speaker: &'a AnchoredInstance<K>,
+    /// How many instances ride the drawing.
+    pub riders: usize,
+    /// Whether any of them the drawing's Disarm would reach.
+    pub disarmable: bool,
+    /// Whether any of them the drawing's Re-arm would reach.
+    pub rearmable: bool,
+    /// Whether any of them has a retest limit resting.
+    pub retest_resting: bool,
+}
+
+impl<K> Stack<'_, K> {
+    /// The words the chart prints beside the drawing.
+    #[must_use]
+    pub fn badge(&self) -> String {
+        badge_text(self.speaker, self.riders)
+    }
+}
+
 /// The pane's armed instances. A plain `Vec`: evaluation order is creation
 /// order, stable and deterministic.
 pub struct StrategyAnchors<K> {
@@ -208,9 +257,10 @@ impl<K: Copy + PartialEq> StrategyAnchors<K> {
     }
 
     /// The instance that speaks for `drawing` on its badge and its menu:
-    /// the newest one still watching, else the newest. Newest, because it
-    /// is the trader's latest choice; watching first, because an ended
-    /// instance must not hide a live one behind its word.
+    /// the one with the most urgent news — an open position, an order in
+    /// flight, a signal, plain watching, an ended one — the newest among
+    /// equals, so a stacked bot's position or alarm is never hidden behind
+    /// a quieter sibling's word.
     #[must_use]
     pub fn for_drawing(&self, drawing: K) -> Option<&AnchoredInstance<K>> {
         self.speaker(drawing).map(|index| &self.instances[index])
@@ -223,12 +273,33 @@ impl<K: Copy + PartialEq> StrategyAnchors<K> {
     }
 
     fn speaker(&self, drawing: K) -> Option<usize> {
-        let mut riding = (self.instances.iter().enumerate().rev())
-            .filter(|(_, instance)| instance.drawing == drawing);
-        let newest = riding.clone().next().map(|(index, _)| index);
-        (riding.find(|(_, instance)| instance.watching()))
+        (self.instances.iter().enumerate())
+            .filter(|(_, instance)| instance.drawing == drawing)
+            .max_by_key(|(index, instance)| (instance.urgency(), *index))
             .map(|(index, _)| index)
-            .or(newest)
+    }
+
+    /// The stack riding `drawing`, if any instance does.
+    #[must_use]
+    pub fn stack(&self, drawing: K) -> Option<Stack<'_, K>> {
+        let speaker = self.for_drawing(drawing)?;
+        let mut stack = Stack {
+            speaker,
+            riders: 0,
+            disarmable: false,
+            rearmable: false,
+            retest_resting: false,
+        };
+        for instance in self.on_drawing(drawing) {
+            stack.riders += 1;
+            stack.disarmable |= instance.watching();
+            stack.rearmable |= instance.rearmable();
+            stack.retest_resting |= matches!(
+                instance.armed.state(),
+                ArmedState::Fired { retest: true, .. }
+            );
+        }
+        Some(stack)
     }
 
     /// Every instance riding `drawing`, in creation order.
@@ -241,19 +312,19 @@ impl<K: Copy + PartialEq> StrategyAnchors<K> {
         (self.instances.iter_mut()).filter(move |instance| instance.drawing == drawing)
     }
 
-    /// One badge per drawing: the instance speaking for it (see
-    /// [`Self::for_drawing`]) and how many instances ride it, ordered by
-    /// each drawing's first instance.
-    pub fn badges(&self) -> impl Iterator<Item = (&AnchoredInstance<K>, usize)> {
-        self.instances
-            .iter()
-            .enumerate()
-            .filter_map(|(index, instance)| {
-                let first = (self.instances[..index].iter())
-                    .all(|earlier| earlier.drawing != instance.drawing);
-                let speaker = self.for_drawing(instance.drawing)?;
-                first.then(|| (speaker, self.on_drawing(instance.drawing).count()))
-            })
+    /// One stack per drawing, ordered by each drawing's first instance —
+    /// what the chart paints one badge for.
+    #[must_use]
+    pub fn stacks(&self) -> Vec<Stack<'_, K>> {
+        let mut drawings: Vec<K> = Vec::new();
+        for instance in &self.instances {
+            if !drawings.contains(&instance.drawing) {
+                drawings.push(instance.drawing);
+            }
+        }
+        (drawings.into_iter())
+            .filter_map(|drawing| self.stack(drawing))
+            .collect()
     }
 
     /// Attach `instance` beside any already riding its drawing. Nothing is
@@ -329,19 +400,13 @@ impl<K: Copy + PartialEq> StrategyAnchors<K> {
     }
 }
 
-/// Badge text for one instance state — the on-chart label next to the
-/// drawing. Colors are the paint site's business; words are
+/// Badge text for the instance speaking for a drawing `riders` instances
+/// ride — the on-chart label next to the drawing. More than one rider
+/// puts the count on the bolt, so a second bot is never hidden behind
+/// the first one's name. Colors are the paint site's business; words are
 /// decided here so every surface says the same thing.
 #[must_use]
-pub fn badge_text<K>(instance: &AnchoredInstance<K>) -> String {
-    stacked_badge_text(instance, 1)
-}
-
-/// [`badge_text`] for the instance speaking for a drawing `riders`
-/// instances ride: more than one puts the count on the bolt, so a second
-/// bot is never hidden behind the first one's name.
-#[must_use]
-pub fn stacked_badge_text<K>(instance: &AnchoredInstance<K>, riders: usize) -> String {
+pub fn badge_text<K>(instance: &AnchoredInstance<K>, riders: usize) -> String {
     // An alarm-only instance says so, because an idle `Armed` badge reads as
     // an ordinary bot the trader is still waiting on an order from. It is a
     // clause *beside* the state, never instead of it: such an instance is
@@ -531,36 +596,45 @@ mod tests {
         assert!(anchors.is_empty());
     }
 
-    /// The drawing's one badge speaks for the newest instance still
-    /// watching — an ended newer one must not hide a live older one — and
-    /// counts every rider.
+    /// The drawing's one badge speaks for the instance with the most urgent
+    /// news — newest among equals — and counts every rider; the stack says
+    /// which of the drawing's verbs reach anyone.
     #[test]
-    fn the_badge_speaks_for_the_newest_watcher_and_counts_the_stack() {
+    fn the_badge_speaks_for_the_most_urgent_instance_and_counts_the_stack() {
         let mut anchors = StrategyAnchors::default();
-        let mut older = instance(DrawingId(1));
+        let mut older = pending(DrawingId(1), 7);
         older.preset = "older".to_owned();
         anchors.arm(older);
         anchors.arm(instance(DrawingId(2)));
         let mut newer = instance(DrawingId(1));
         newer.preset = "newer".to_owned();
         anchors.arm(newer);
-
-        let badges: Vec<_> = (anchors.badges())
-            .map(|(speaker, riders)| stacked_badge_text(speaker, riders))
-            .collect();
-        assert_eq!(badges, ["⚡×2 newer", "⚡ test"]);
-
-        let _ = anchors.instances[2].armed.disarm(DisarmReason::User);
-        let speaker = anchors.for_drawing(DrawingId(1)).expect("two ride it");
-        assert_eq!(stacked_badge_text(speaker, 2), "⚡×2 older");
-
-        let _ = anchors.instances[0].armed.disarm(DisarmReason::User);
-        let speaker = anchors.for_drawing(DrawingId(1)).expect("two ride it");
+        let badges: Vec<_> = anchors.stacks().iter().map(Stack::badge).collect();
         assert_eq!(
-            stacked_badge_text(speaker, 2),
-            "⚡×2 newer · disarmed",
-            "with none watching, the newest speaks"
+            badges,
+            ["⚡×2 older · fired", "⚡ test"],
+            "an order in flight outranks a newer plain watcher"
         );
+
+        // A signal on the plain watcher still loses to the order in
+        // flight; once that ends, the signal speaks.
+        anchors.instances[2].mark = AlarmMark::Confirmed;
+        let stack = anchors.stack(DrawingId(1)).expect("two ride it");
+        assert_eq!(stack.badge(), "⚡×2 older · fired");
+        assert!(stack.disarmable, "the plain watcher can be disarmed");
+        assert!(!stack.rearmable);
+        let _ = anchors.instances[0].armed.disarm(DisarmReason::User);
+        assert_eq!(
+            anchors.stack(DrawingId(1)).expect("two ride it").badge(),
+            "⚡×2 newer · signal"
+        );
+
+        // With none watching, the newest ended one speaks.
+        let _ = anchors.instances[2].armed.disarm(DisarmReason::User);
+        let stack = anchors.stack(DrawingId(1)).expect("two ride it");
+        assert_eq!(stack.badge(), "⚡×2 newer · disarmed · signal");
+        assert!(!stack.disarmable);
+        assert!(stack.rearmable);
     }
 
     #[test]
@@ -670,7 +744,7 @@ mod tests {
         // A trading instance shows both halves: the order it placed and the
         // signal that placed it. They are separate facts, and the badge
         // does not collapse one into the other.
-        assert_eq!(badge_text(&instance), "⚡ test · fired · signal");
+        assert_eq!(badge_text(&instance, 1), "⚡ test · fired · signal");
     }
 
     /// The head start, and its honest label: the alarm sounds on a bar that
@@ -704,7 +778,7 @@ mod tests {
             Some(Cue::whole(AlertSound::Exclamation))
         );
         assert_eq!(instance.mark, AlarmMark::Preview);
-        assert_eq!(badge_text(&instance), "⚡ test · signal (preview)");
+        assert_eq!(badge_text(&instance, 1), "⚡ test · signal (preview)");
 
         // The bar keeps forming and gives the force back: it closes as an
         // ordinary small body.
@@ -716,7 +790,7 @@ mod tests {
             "withdrawing a signal is shown, never played"
         );
         assert_eq!(instance.mark, AlarmMark::Faded);
-        assert_eq!(badge_text(&instance), "⚡ test · preview did not hold");
+        assert_eq!(badge_text(&instance, 1), "⚡ test · preview did not hold");
     }
 
     /// An alarm-only instance says so on its badge. Its state never leaves
@@ -737,16 +811,16 @@ mod tests {
             Box::new(ForceTrigger::new(ForceParams::default_band())),
         );
         assert!(instance.alarm_only());
-        assert_eq!(badge_text(&instance), "⚡ test · alarm only");
+        assert_eq!(badge_text(&instance, 1), "⚡ test · alarm only");
         instance.mark = AlarmMark::Confirmed;
-        assert_eq!(badge_text(&instance), "⚡ test · alarm only · signal");
+        assert_eq!(badge_text(&instance, 1), "⚡ test · alarm only · signal");
 
         // "alarm only" is a clause beside the state, never instead of it:
         // such an instance is not pinned to `Armed`, and the badge is the
         // one surface that would tell the trader their watcher is dead.
         let _ = instance.armed.disarm(DisarmReason::User);
         assert_eq!(
-            badge_text(&instance),
+            badge_text(&instance, 1),
             "⚡ test · alarm only · disarmed · signal"
         );
     }

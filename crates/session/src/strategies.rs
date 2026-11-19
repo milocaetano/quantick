@@ -107,7 +107,8 @@ impl<D: Copy + PartialEq> PaneStrategies<D> {
     /// "re-armed" silently means "warming up for another twenty bars". An
     /// instance still watching is left as it is.
     pub fn rearm(&mut self, drawing: D, mut warmup: impl FnMut(usize) -> Vec<Bar>) {
-        for instance in self.anchors.on_drawing_mut(drawing) {
+        let reached = self.anchors.on_drawing_mut(drawing);
+        for instance in reached.filter(|instance| instance.rearmable()) {
             let series_changed = matches!(
                 instance.armed.state(),
                 ArmedState::Disarmed { reason } if reason.resets_series()
@@ -145,10 +146,12 @@ impl<D: Copy + PartialEq> PaneStrategies<D> {
         self.cleanup.extend(cleanup);
     }
 
-    /// Call off every strategy riding `drawing`, as the user, and queue the
-    /// sweep of whatever they left resting. Nothing to call off is a no-op.
+    /// Call off every strategy riding `drawing` still watching, as the
+    /// user, and queue the sweep of whatever they left resting. An ended
+    /// one keeps its reason. Nothing to call off is a no-op.
     pub fn disarm(&mut self, drawing: D) {
-        for instance in self.anchors.on_drawing_mut(drawing) {
+        let reached = self.anchors.on_drawing_mut(drawing);
+        for instance in reached.filter(|instance| instance.watching()) {
             let cleanup = instance.armed.disarm(DisarmReason::User);
             self.cleanup.extend(cleanup);
         }

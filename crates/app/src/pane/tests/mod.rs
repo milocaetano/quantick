@@ -2240,8 +2240,6 @@ fn a_paused_regions_badge_says_the_specific_thing_and_not_the_general_one() {
         cue: crate::audio::Cue::default(),
         mark: crate::strategy_anchors::AlarmMark::Quiet,
     };
-    // Nothing was armed here before, so there is no replaced instance
-    // whose resting order would need sweeping.
     let mut anchors = crate::strategy_anchors::StrategyAnchors::default();
     anchors.arm(instance);
 

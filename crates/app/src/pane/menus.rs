@@ -104,7 +104,7 @@ pub(crate) struct PaneMenuHosts<'a> {
 use quantick_chart_interaction::pane::{Intent, update};
 use quantick_chart_interaction::pane_menu::{
     self as menu, ChipFact, DrawingMenuFact, Facts, IndicatorFact, LayerFact, ObjectFact,
-    PlaceFact, StrategyFact, StrategyPhase, TapeFact,
+    PlaceFact, StrategyFact, TapeFact,
 };
 
 impl From<LayerRow> for LayerFact {
@@ -125,25 +125,17 @@ impl PaneMenuView<'_> {
             .map(|index| {
                 let drawing = &self.drawings.items()[index];
                 let strategy = (self.strategies)
-                    .and_then(|strategies| strategies.anchors.for_drawing(drawing.id))
-                    .map(|instance| {
-                        use quantick_strategy::ArmedState;
-                        let phase = match instance.armed.state() {
-                            ArmedState::Armed | ArmedState::InPosition => StrategyPhase::Watching,
-                            ArmedState::Fired { retest: true, .. } => StrategyPhase::RestingRetest,
-                            ArmedState::Done | ArmedState::Disarmed { .. } => StrategyPhase::Ended,
-                            ArmedState::Fired { retest: false, .. } => StrategyPhase::Fired,
-                        };
-                        StrategyFact {
-                            status: instance.armed.status_line(),
-                            phase,
-                            footed: super::region_pause(drawing, self.drawings.all_hidden())
-                                .is_none(),
-                            span_alive: super::strategies::region_can_fire(
-                                drawing,
-                                self.series.closed_slots(),
-                            ),
-                        }
+                    .and_then(|strategies| strategies.anchors.stack(drawing.id))
+                    .map(|stack| StrategyFact {
+                        status: stack.speaker.armed.status_line(),
+                        disarmable: stack.disarmable,
+                        rearmable: stack.rearmable,
+                        retest_resting: stack.retest_resting,
+                        footed: super::region_pause(drawing, self.drawings.all_hidden()).is_none(),
+                        span_alive: super::strategies::region_can_fire(
+                            drawing,
+                            self.series.closed_slots(),
+                        ),
                     });
                 DrawingMenuFact {
                     drawing: super::context_menu::drawing_fact(drawing),

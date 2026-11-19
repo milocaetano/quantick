@@ -39,6 +39,22 @@ fn a_pane_reads_its_instances_in_arming_order_with_their_state() {
     );
 }
 
+/// Instances stacked on one drawing each read their own state, and all
+/// read the one badge the chart prints beside it.
+#[test]
+fn stacked_instances_read_the_drawing_s_one_badge() {
+    let mut strategies = TabStrategies::default();
+    let pane = strategies.pane_mut(7);
+    pane.anchors.arm(instance(DrawingId(1)));
+    pane.anchors.arm(instance(DrawingId(1)));
+    let _ = pane.anchors.instances[0].armed.disarm(DisarmReason::User);
+    let read = strategies.readings(7);
+    let states: Vec<_> = read.iter().map(|reading| reading.state).collect();
+    assert_eq!(states, ["disarmed", "armed"]);
+    let badges: Vec<_> = read.iter().map(|reading| reading.badge.as_str()).collect();
+    assert_eq!(badges, ["⚡×2 test", "⚡×2 test"]);
+}
+
 #[test]
 fn a_pane_that_never_held_an_instance_reads_none() {
     let strategies = TabStrategies::<DrawingId>::default();
