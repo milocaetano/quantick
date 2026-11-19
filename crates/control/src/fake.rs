@@ -21,7 +21,6 @@ use crate::{
         ControlRegistry, DefaultGrant, EffectConstraints, EffectPersistence, EffectPolicy,
         ExpectedCost, IdempotencyPolicy, McpHintFloor, ModuleDescriptor, PermissionDescriptor,
         PreconditionDescriptor, ProfileDescriptor, RegistryError, RevisionPolicy,
-        check_idempotency_key,
     },
     schema::validate_instance,
     wire::{
@@ -595,8 +594,8 @@ impl FakeHost {
                 "capability does not support dry runs",
             ));
         }
-        if let Err(error) = check_idempotency_key(
-            descriptor.idempotency,
+        if let Err(error) = descriptor.check_request_key(
+            &request.payload,
             request.idempotency_key.is_some(),
             request.dry_run,
         ) {

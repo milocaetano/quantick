@@ -214,6 +214,7 @@ pub const ALLOWED: &[(&str, &[&str])] = &[
             "sim",
             "sources",
             "strategy",
+            "workspace",
         ],
     ),
     // What a source is, below the host that runs one: the provider settings

@@ -190,15 +190,15 @@ pub struct IndicatorFact {
     pub label: String,
     pub hidden: bool,
 }
-pub enum StrategyPhase {
-    Watching,
-    RestingRetest,
-    Ended,
-    Fired,
-}
+/// The strategies riding one drawing, as its menu reads them.
 pub struct StrategyFact {
     pub status: String,
-    pub phase: StrategyPhase,
+    /// Some bot here is watching and Disarm would reach it.
+    pub disarmable: bool,
+    /// Some bot here has ended and Re-arm would reach it.
+    pub rearmable: bool,
+    /// Some bot here has a retest limit resting.
+    pub retest_resting: bool,
     pub footed: bool,
     pub span_alive: bool,
 }
@@ -316,25 +316,25 @@ fn drawing_entries(fact: &DrawingMenuFact) -> Vec<Entry> {
     if fact.strategy_region {
         if let Some(strategy) = &fact.strategy {
             out.push(heading(&strategy.status));
-            match strategy.phase {
-                StrategyPhase::Watching | StrategyPhase::RestingRetest => out.push(button("Disarm", MenuIntent::StrategyDisarm(id),
-                    if matches!(strategy.phase, StrategyPhase::RestingRetest) { "cancel the resting retest limit and stop watching" } else {
-                        "stop watching; an open operation keeps its position and bracket \u{2014} yours to manage" }, "Disarm")),
-                StrategyPhase::Ended => out.push(button("Re-arm", MenuIntent::StrategyRearm(id), "watch this region again with the same parameters", "Re-arm")
+            if strategy.disarmable {
+                out.push(button("Disarm", MenuIntent::StrategyDisarm(id),
+                    if strategy.retest_resting { "stop every bot watching here and cancel any unfilled entry or resting retest limit" } else {
+                        "stop every bot watching here and cancel any unfilled entry; an open operation keeps its position and bracket \u{2014} yours to manage" }, "Disarm"));
+            }
+            if strategy.rearmable {
+                out.push(button("Re-arm", MenuIntent::StrategyRearm(id), "watch this region again with every ended bot here, same parameters", "Re-arm")
                     .disabled((!strategy.footed || !strategy.span_alive).then(|| if strategy.footed {
                         "the region ends before the next bar \u{2014} stretch it right, or turn on \"extend right\" in its Region settings".into()
-                    } else { "this drawing belongs to another market or lost its series \u{2014} redraw the region here first".into() }))),
-                StrategyPhase::Fired => {},
+                    } else { "this drawing belongs to another market or lost its series \u{2014} redraw the region here first".into() })));
             }
-            out.push(button("Remove strategy", MenuIntent::StrategyRemove(id), "detach the bot from this drawing; an open operation keeps its position and bracket", "Remove strategy"));
-        } else {
-            out.push(button(
-                "Add strategy\u{2026}",
-                MenuIntent::StrategyAdd(id),
-                "arm a strategy on this region: it fires on the trigger bar, in paper trading",
-                "Add strategy",
-            ));
+            out.push(button("Remove strategy", MenuIntent::StrategyRemove(id), "detach every bot from this drawing; an open operation keeps its position and bracket", "Remove strategy"));
         }
+        out.push(button(
+            "Add strategy\u{2026}",
+            MenuIntent::StrategyAdd(id),
+            "arm a strategy on this region: it fires on the trigger bar, in paper trading, beside any already armed here",
+            "Add strategy",
+        ));
     }
     let lock = if fact.drawing.locked {
         "Unlock"

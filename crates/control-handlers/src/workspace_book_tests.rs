@@ -110,6 +110,12 @@ fn parts() -> (FakeHost, FakeAccess, ActorContext) {
     (host, access, actor)
 }
 
+/// Put both tabs on the same editable recipe for save and follower cases.
+fn share_editable_workspace(host: &mut FakeHost) {
+    host.book.save_as(1, "Shared").unwrap();
+    host.book.set(2, "Shared").unwrap();
+}
+
 /// Two open tabs on a book with autosave on, as a fresh desk opens.
 fn autosaving() -> (FakeHost, FakeAccess, ActorContext) {
     let mut book = WorkspaceBook::default();
@@ -419,7 +425,10 @@ fn default_cannot_be_deleted_or_renamed() {
     let value = json!({ "name": DEFAULT_WORKSPACE });
     let error = delete(&mut host, &mut access, &actor, &value).unwrap_err();
     assert_eq!(detail(&error), "workspace.default_protected");
-    assert_eq!(error.message, "Default cannot be deleted or renamed");
+    assert_eq!(
+        error.message,
+        "Default is a built-in template; use Save as to keep changes"
+    );
     let value = json!({ "name": DEFAULT_WORKSPACE, "to": "Other" });
     let error = rename(&mut host, &mut access, &actor, &value).unwrap_err();
     assert_eq!(detail(&error), "workspace.default_protected");
@@ -557,6 +566,13 @@ static SKY: std::sync::LazyLock<Value> = std::sync::LazyLock::new(
 fn colour_set_takes_a_free_colour_and_swaps_a_held_one_only_when_asked() {
     let (mut host, mut access, actor) = parts();
     save_as(&mut host, &mut access, &actor, &json!({ "name": "Scalp" })).unwrap();
+    save_as(
+        &mut host,
+        &mut access,
+        &actor,
+        &json!({ "name": "Other", "colour": "#010203" }),
+    )
+    .unwrap();
     let (writes, journaled) = (host.writes, access.events.len());
     let free = json!({ "name": "Scalp", "colour": "sky" });
     let taken = colour_set(&mut host, &mut access, &actor, &free).unwrap();
@@ -570,29 +586,29 @@ fn colour_set_takes_a_free_colour_and_swaps_a_held_one_only_when_asked() {
         (writes + 1, journaled + 1)
     );
 
-    let held = json!({ "name": "Scalp", "colour": "slate" });
+    let held = json!({ "name": "Scalp", "colour": "#010203" });
     let refused = colour_set(&mut host, &mut access, &actor, &held).unwrap_err();
     assert_eq!(detail(&refused), "workspace.colour_taken");
     let details = refused.context.details.as_ref().unwrap();
-    assert_eq!(details["owners"], json!(["Default"]));
+    assert_eq!(details["owners"], json!(["Other"]));
     assert_eq!(details["owner_would_get"], SKY.clone());
-    assert!(refused.message.contains("Default"), "{}", refused.message);
+    assert!(refused.message.contains("Other"), "{}", refused.message);
     assert_eq!(
         (host.writes, access.events.len()),
         (writes + 1, journaled + 1)
     );
 
-    let swap = json!({ "name": "Scalp", "colour": "slate", "swap": true });
+    let swap = json!({ "name": "Scalp", "colour": "#010203", "swap": true });
     let swapped = colour_set(&mut host, &mut access, &actor, &swap).unwrap();
     assert_eq!(
         swapped,
-        json!({ "workspace": "Scalp", "colour": SLATE.clone(), "changed": true,
-                "swapped_with": "Default", "holder_colour": SKY.clone(),
-                "warnings": [] })
+        json!({ "workspace": "Scalp", "colour": json!({"custom":"#010203","light":"#010203","dark":"#010203"}), "changed": true,
+                "swapped_with": "Other", "holder_colour": SKY.clone(),
+                "warnings": [{"kind":"low_contrast","theme":"dark"}] })
     );
     let event = access.events.last().unwrap();
-    assert_eq!(event.payload["colour"], "slate");
-    assert_eq!(event.payload["swapped_with"], "Default");
+    assert_eq!(event.payload["colour"], "#010203");
+    assert_eq!(event.payload["swapped_with"], "Other");
     assert_eq!(event.payload["holder_colour"], "sky");
     assert_eq!(
         (host.writes, access.events.len()),
@@ -657,7 +673,7 @@ fn a_colour_that_cannot_be_written_changes_nothing() {
     save_as(&mut host, &mut access, &actor, &json!({ "name": "Scalp" })).unwrap();
     host.write_fails = true;
     let before = host.book.clone();
-    let value = json!({ "name": "Scalp", "colour": "slate", "swap": true });
+    let value = json!({ "name": "Scalp", "colour": "sky", "swap": true });
     let refused = colour_set(&mut host, &mut access, &actor, &value).unwrap_err();
     assert_eq!(detail(&refused), WRITE_FAILED_CODE);
     assert_eq!(host.book, before);
@@ -743,7 +759,7 @@ fn the_new_call_makes_an_empty_recipe_and_a_repeat_is_refused() {
     let made = new(&mut host, &mut access, &actor, &json!({ "name": "Blank" })).unwrap();
     assert_eq!(
         made,
-        json!({ "tab_id": "1", "workspace": "Blank", "dropped_edits": true })
+        json!({ "tab_id": "1", "workspace": "Blank", "dropped_edits": false })
     );
     assert!(
         host.book
@@ -758,18 +774,35 @@ fn the_new_call_makes_an_empty_recipe_and_a_repeat_is_refused() {
     assert_eq!((host.writes, access.events.len()), (1, 1));
 }
 
-/// A tab still opening has no arrangement to empty: the call is refused as
-/// retryable, the way a tab the book has not met is.
+/// Creation choices describe the complete starter even before the original
+/// tab has supplied a canvas. Invalid counts or intervals leave nothing behind.
 #[test]
-fn the_new_call_on_a_tab_still_opening_is_refused_retryably() {
+fn new_validates_the_initial_canvas_before_writing_or_redrawing() {
     let (mut host, mut access, actor) = parts();
     let before = host.book.clone();
-    let error = new(&mut host, &mut access, &actor, &json!({ "name": "Blank" })).unwrap_err();
-    assert_eq!(error.code.as_str(), codes::CAPABILITY_UNAVAILABLE);
-    assert!(error.retryable);
-    assert_eq!(detail(&error), TAB_NOT_READY_CODE);
-    assert_eq!(host.book, before);
-    assert_eq!((host.writes, access.events.len()), (0, 0));
+    for options in [
+        json!({"name":"Blank","charts":0}),
+        json!({"name":"Blank","charts":9}),
+        json!({"name":"Blank","timeframe_ms":"0"}),
+    ] {
+        assert!(new(&mut host, &mut access, &actor, &options).is_err());
+        assert_eq!(host.book, before);
+        assert_eq!(
+            (host.writes, access.events.len(), host.shown.len()),
+            (0, 0, 0)
+        );
+    }
+    let options = json!({"charts":8,"timeframe_ms":"120000"});
+    let made = new(&mut host, &mut access, &actor, &options).unwrap();
+    assert_eq!(made["workspace"], "Workspace 2");
+    let recipe = host.book.recipe("Workspace 2").unwrap();
+    assert_eq!(recipe.context_panes.len(), 8);
+    assert!(
+        recipe
+            .context_panes
+            .iter()
+            .all(|pane| pane.bars.as_deref() == Some("time:120000"))
+    );
 }
 
 /// Turning autosave on writes every held edit at once and the desk once; a
@@ -777,12 +810,13 @@ fn the_new_call_on_a_tab_still_opening_is_refused_retryably() {
 #[test]
 fn autosave_on_saves_the_pending_edits_and_a_repeat_is_no_change() {
     let (mut host, mut access, actor) = parts();
+    share_editable_workspace(&mut host);
     edit(&mut host, 1);
     assert!(host.book.tab_state(1).unwrap().modified);
     let on = autosave_set(&mut host, &mut access, &actor, &json!({ "on": true })).unwrap();
     assert_eq!(on["auto_save"], true);
     assert_eq!(on["changed"], true);
-    assert_eq!(on["saved"][0]["workspace"], DEFAULT_WORKSPACE);
+    assert_eq!(on["saved"][0]["workspace"], "Shared");
     assert_eq!(host.desk_writes, [true]);
     assert!(!host.book.differs(1), "the edit reached its workspace");
     assert!(!host.book.tab_state(1).unwrap().modified);
@@ -809,18 +843,15 @@ fn a_failed_desk_write_keeps_autosave_as_it_was() {
 #[test]
 fn autosave_on_writes_through_and_never_marks() {
     let (mut host, mut access, actor) = autosaving();
+    share_editable_workspace(&mut host);
     edit(&mut host, 1);
     assert!(!host.book.tab_state(1).unwrap().modified);
     assert!(host.book.unsaved_edits(1).is_none());
     let notes = write_through(&mut host, Some((&mut access, &actor)), &[1]);
-    assert_eq!(
-        notes,
-        ["Default saved \u{b7} SYM2 follows"],
-        "tab 2 follows"
-    );
+    assert_eq!(notes, ["Shared saved \u{b7} SYM2 follows"], "tab 2 follows");
     assert!(!host.book.differs(1));
     assert_eq!(host.writes, 1);
-    let value = json!({ "tab_id": "2", "name": "Default" });
+    let value = json!({ "tab_id": "2", "name": "Shared" });
     save_as(&mut host, &mut access, &actor, &json!({ "name": "Solo" })).unwrap();
     set(&mut host, &mut access, &actor, &value).unwrap();
     edit(&mut host, 1);
@@ -833,12 +864,13 @@ fn autosave_on_writes_through_and_never_marks() {
 #[test]
 fn tab_close_refuses_unsaved_edits_then_obeys_the_flag() {
     let (mut host, mut access, actor) = parts();
+    share_editable_workspace(&mut host);
     edit(&mut host, 1);
     let value = json!({ "tab_id": "1" });
     let refused = close(&mut host, &mut access, &actor, &value).unwrap_err();
     assert_eq!(detail(&refused), "workspace.unsaved_edits");
     let details = refused.context.details.clone().unwrap();
-    assert_eq!(details["workspace"], DEFAULT_WORKSPACE);
+    assert_eq!(details["workspace"], "Shared");
     assert_eq!(details["followers"], json!(["SYM2"]));
     assert_eq!(host.tabs, [1, 2], "the tab stays open");
     assert!(access.events.is_empty());
@@ -846,7 +878,7 @@ fn tab_close_refuses_unsaved_edits_then_obeys_the_flag() {
     let value = json!({ "tab_id": "1", "save": true });
     let closed = close(&mut host, &mut access, &actor, &value).unwrap();
     assert_eq!(closed["tab_id"], "1");
-    assert_eq!(closed["saved"]["workspace"], DEFAULT_WORKSPACE);
+    assert_eq!(closed["saved"]["workspace"], "Shared");
     assert_eq!(host.closed, [1]);
     assert_eq!(host.writes, 1);
 }
@@ -868,6 +900,7 @@ fn tab_close_without_saving_leaves_the_workspace_as_it_was() {
 #[test]
 fn tab_close_with_autosave_on_never_asks() {
     let (mut host, mut access, actor) = autosaving();
+    share_editable_workspace(&mut host);
     edit(&mut host, 1);
     let closed = close(&mut host, &mut access, &actor, &json!({ "tab_id": "1" })).unwrap();
     assert_eq!(closed["tab_id"], "1");
@@ -907,6 +940,7 @@ fn file_has_the_level(host: &FakeHost) -> Option<bool> {
 #[test]
 fn save_to_writes_held_drawings_and_clears_the_mark() {
     let (mut host, mut access, actor) = parts();
+    share_editable_workspace(&mut host);
     with_held_drawing(&mut host);
     assert!(host.book.tab_state(1).unwrap().modified);
     let saved = save_to(&mut host, &mut access, &actor, &json!({ "tab_id": "1" })).unwrap();
@@ -962,11 +996,49 @@ fn row(
     apply_row_command(host, Some((access, actor)), menu, 1, "SYM1", command)
 }
 
+/// Saving at a protected tab's close or exit prompt starts Save as and
+/// keeps the tab and its changes while the trader chooses a name.
+#[test]
+fn an_edited_default_offers_save_as_on_close_and_exit() {
+    for scope in [CloseScope::Tabs, CloseScope::App] {
+        let (mut host, mut access, actor) = parts();
+        edit(&mut host, 1);
+        let before = host.book.clone();
+        let mut menu = WorkspaceMenuState::default();
+        let close = WorkspaceCommand::Close(scope, vec![1]);
+        row(&mut host, &mut access, &actor, &mut menu, close);
+        assert_eq!(
+            close_prompt(&menu.close).unwrap().buttons[2],
+            text::SAVE_AS_DIALOG_TITLE
+        );
+        answer(&mut host, &mut access, &actor, &mut menu, CloseAnswer::Save);
+        assert!(menu.close.scope().is_none());
+        assert!(!menu.close.take_exit());
+        assert_eq!(host.tabs, [1, 2]);
+        assert_eq!(host.book, before);
+        assert_eq!(menu.dialog.as_ref().unwrap().tab, 1);
+        row(
+            &mut host,
+            &mut access,
+            &actor,
+            &mut menu,
+            WorkspaceCommand::SubmitDialog,
+        );
+        assert_ne!(host.book.tab_workspace(1), DEFAULT_WORKSPACE);
+        assert_eq!(
+            host.book.recipe(DEFAULT_WORKSPACE),
+            before.recipe(DEFAULT_WORKSPACE)
+        );
+        assert_eq!(host.book.tab_copy(1), before.tab_copy(1));
+    }
+}
+
 /// The window's prompt and `tab.close` ask one question: same words, and the
 /// prompt's Save writes then closes.
 #[test]
 fn the_close_prompt_asks_what_tab_close_refuses_with() {
     let (mut host, mut access, actor) = parts();
+    share_editable_workspace(&mut host);
     edit(&mut host, 1);
     let refused = close(&mut host, &mut access, &actor, &json!({ "tab_id": "1" })).unwrap_err();
     let mut menu = WorkspaceMenuState::default();
@@ -977,13 +1049,13 @@ fn the_close_prompt_asks_what_tab_close_refuses_with() {
     );
     let prompt = close_prompt(&menu.close).expect("the close asks");
     assert_eq!(prompt.title, "Close SYM1");
-    let body = format!(
-        "This tab changed its layout since {DEFAULT_WORKSPACE} was last saved (footprint style). \
-         Saving also changes SYM2."
+    let body = String::from(
+        "This tab changed its layout since Shared was last saved (footprint style). \
+         Saving also changes SYM2.",
     );
     assert_eq!(prompt.body, body);
     assert!(refused.message.starts_with(&body), "{}", refused.message);
-    let save = format!("Save to {DEFAULT_WORKSPACE}");
+    let save = "Save to Shared".to_owned();
     assert_eq!(
         prompt.buttons,
         ["Cancel", "Close without saving", save.as_str()]
@@ -1020,6 +1092,7 @@ fn cancel_on_the_close_prompt_closes_and_writes_nothing() {
 #[test]
 fn an_exit_asks_per_pending_tab_and_keeps_every_tab() {
     let (mut host, mut access, actor) = parts();
+    share_editable_workspace(&mut host);
     edit(&mut host, 1);
     edit(&mut host, 2);
     let mut menu = WorkspaceMenuState::default();
@@ -1041,6 +1114,7 @@ fn an_exit_asks_per_pending_tab_and_keeps_every_tab() {
 #[test]
 fn an_exit_with_autosave_on_flushes_and_never_asks() {
     let (mut host, mut access, actor) = autosaving();
+    share_editable_workspace(&mut host);
     edit(&mut host, 1);
     let mut menu = WorkspaceMenuState::default();
     let exit = WorkspaceCommand::Close(CloseScope::App, vec![1, 2]);
@@ -1098,6 +1172,7 @@ fn with_a_held_drawing_on_each_tab(host: &mut FakeHost) {
 #[test]
 fn a_save_commits_only_its_own_tab_s_drawings() {
     let (mut host, mut access, actor) = parts();
+    share_editable_workspace(&mut host);
     with_a_held_drawing_on_each_tab(&mut host);
     save_to(&mut host, &mut access, &actor, &json!({ "tab_id": "1" })).unwrap();
     let written = host.market_written.clone().unwrap();
@@ -1128,9 +1203,10 @@ fn a_save_commits_only_its_own_tab_s_drawings() {
 #[test]
 fn a_save_whose_market_write_fails_reports_it_and_stays_marked() {
     let (mut host, mut access, actor) = parts();
+    share_editable_workspace(&mut host);
     with_held_drawing(&mut host);
     edit(&mut host, 1);
-    let before = host.book.recipe(DEFAULT_WORKSPACE).cloned();
+    let before = host.book.recipe("Shared").cloned();
     host.market_fails = true;
     let value = json!({ "tab_id": "1" });
     let error = save_to(&mut host, &mut access, &actor, &value).unwrap_err();
@@ -1142,9 +1218,9 @@ fn a_save_whose_market_write_fails_reports_it_and_stays_marked() {
     );
     assert_eq!(access.events.len(), 0);
     assert_eq!(host.writes, 2, "the recipe, then the recipe put back");
-    let file = host.persisted.as_ref().unwrap().recipe(DEFAULT_WORKSPACE);
+    let file = host.persisted.as_ref().unwrap().recipe("Shared");
     assert_eq!(file.cloned(), before, "the file holds the old recipe");
-    assert_eq!(host.book.recipe(DEFAULT_WORKSPACE).cloned(), before);
+    assert_eq!(host.book.recipe("Shared").cloned(), before);
     assert!(
         host.book.tab_state(1).unwrap().modified,
         "nothing reads saved"
@@ -1213,6 +1289,7 @@ fn an_exit_cancelled_on_a_later_tab_lets_nothing_go() {
 #[test]
 fn an_exit_without_saving_leaves_the_desk_no_edits_to_restore() {
     let (mut host, mut access, actor) = parts();
+    share_editable_workspace(&mut host);
     edit(&mut host, 1);
     edit_to(&mut host, 2, "volume");
     let mut menu = WorkspaceMenuState::default();
@@ -1228,15 +1305,12 @@ fn an_exit_without_saving_leaves_the_desk_no_edits_to_restore() {
     answer(&mut host, &mut access, &actor, &mut menu, CloseAnswer::Save);
     assert!(menu.close.take_exit());
     let (workspace, copy) = host.book.saved_fields(1);
-    assert_eq!(
-        (workspace.as_deref(), copy),
-        (Some(DEFAULT_WORKSPACE), None)
-    );
+    assert_eq!((workspace.as_deref(), copy), (Some("Shared"), None));
     let mut next = host.book.clone();
     next.close_tab(1);
-    next.restore_tab(1, DEFAULT_WORKSPACE, None);
-    assert_eq!(next.tab_copy(1), host.book.recipe(DEFAULT_WORKSPACE));
-    assert_eq!(host.book.tab_copy(1), host.book.recipe(DEFAULT_WORKSPACE));
+    next.restore_tab(1, "Shared", None);
+    assert_eq!(next.tab_copy(1), host.book.recipe("Shared"));
+    assert_eq!(host.book.tab_copy(1), host.book.recipe("Shared"));
     assert_eq!(host.shown, [1], "the screen shows what is kept");
     assert_eq!(host.writes, 1, "tab 2's save");
 }
@@ -1263,6 +1337,7 @@ fn closing_the_last_tab_refuses_before_it_writes() {
 #[test]
 fn a_failed_write_through_marks_the_tab_and_toasts_once() {
     let (mut host, mut access, actor) = autosaving();
+    share_editable_workspace(&mut host);
     edit(&mut host, 1);
     host.write_fails = true;
     let notes = write_through(&mut host, Some((&mut access, &actor)), &[1]);
@@ -1315,6 +1390,7 @@ fn a_failed_explicit_timeframe_capture_retries_without_saving_other_legacy_tabs(
 #[test]
 fn autosave_on_with_a_save_failing_journals_what_landed() {
     let (mut host, mut access, actor) = parts();
+    share_editable_workspace(&mut host);
     save_as(
         &mut host,
         &mut access,
@@ -1331,7 +1407,7 @@ fn autosave_on_with_a_save_failing_journals_what_landed() {
     let details = error.context.details.clone().unwrap();
     assert_eq!(details["code"], WRITE_FAILED_CODE);
     assert_eq!(details["auto_save"], true);
-    assert_eq!(details["saved"], json!([DEFAULT_WORKSPACE]));
+    assert_eq!(details["saved"], json!(["Shared"]));
     let kinds: Vec<_> = rows(&access).into_iter().map(|row| row.1).collect();
     assert_eq!(
         kinds,
@@ -1485,6 +1561,7 @@ fn an_exit_writes_one_pending_copy_per_workspace_and_asks_for_the_other() {
 #[test]
 fn a_save_whose_recipe_write_fails_writes_no_drawing() {
     let (mut host, mut access, actor) = parts();
+    share_editable_workspace(&mut host);
     with_held_drawing(&mut host);
     edit(&mut host, 1);
     host.write_fails = true;

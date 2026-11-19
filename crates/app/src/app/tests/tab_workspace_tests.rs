@@ -156,9 +156,13 @@ fn a_switch_to_a_two_pane_recipe_reaches_both_context_panes() {
 fn footprint_style_and_layers_stay_on_their_tab_until_save_to() {
     let layouts = crate::scratch::ScratchFile::new("workspace-no-leak-all", "layouts.toml");
     let (mut app, first, second) = two_tabs(&layouts);
-    for tab in [first, second] {
-        set_tab_workspace(&mut app.workspace_calls(), tab, "Default").expect("always there");
-    }
+    app.runtime
+        .workspace
+        .book
+        .book_mut()
+        .save_as(first, "Shared")
+        .unwrap();
+    set_tab_workspace(&mut app.workspace_calls(), second, "Shared").unwrap();
     frames(&mut app, 3);
     let edited = app.runtime.tabs.active_id();
     let other = if edited == first { second } else { first };
@@ -1076,6 +1080,38 @@ fn a_new_workspace_reads_clean_after_real_frames() {
             .iter()
             .all(|pane| pane.indicators.is_empty())
     );
+    let before = live_recipe(&app.runtime, first).unwrap();
+    let (layer, enabled) = some_layer(&app, first, 0);
+    app.runtime
+        .workspace
+        .book
+        .book_mut()
+        .save_as(first, "Styled")
+        .unwrap();
+    let window = app.runtime.footprint_config.clone();
+    let different = crate::footprint_config::FootprintStyle::ALL
+        .into_iter()
+        .find(|style| *style != window.style)
+        .unwrap();
+    let tab = app.runtime.tabs.by_id_mut(first).unwrap();
+    for pane in tab.panes_mut() {
+        pane.presentation
+            .footprint
+            .config
+            .pin_style(different, &window);
+        pane.layer_write()
+            .apply_states(&std::collections::BTreeMap::from([(layer, !enabled)]));
+    }
+    frames(&mut app, 3);
+    save_tab_to(&mut app.workspace_calls(), first).unwrap();
+    let styled = live_recipe(&app.runtime, first).unwrap();
+    assert_ne!(styled.footprint_style, before.footprint_style);
+    assert_ne!(styled.layers.get(layer.id()), before.layers.get(layer.id()));
+    set_tab_workspace(&mut app.workspace_calls(), first, "Blank").unwrap();
+    frames(&mut app, 3);
+    let returned = live_recipe(&app.runtime, first).unwrap();
+    assert_eq!(returned.layers, before.layers);
+    assert_eq!(returned.footprint_style, before.footprint_style);
 }
 
 /// Autosave off: a level drawn on the chart marks the tab and waits in memory;
@@ -2496,6 +2532,12 @@ fn popover_on(face: &str) -> (QuantickApp, egui::Context, crate::scratch::Scratc
         .book_mut()
         .create(first, "Scalp")
         .unwrap();
+    app.runtime
+        .workspace
+        .book
+        .book_mut()
+        .create_recipe("Swing", Some(preset(3)), Default::default())
+        .unwrap();
     let staged = app.chrome.window_menu.tab_workspace.stage(first, face);
     assert!(staged, "{face}");
     (app, egui::Context::default(), layouts)
@@ -2535,24 +2577,21 @@ fn the_header_swatch_opens_the_popover_and_the_scene_lists_it() {
 /// toast says which workspace changed.
 #[test]
 fn swap_reaches_the_colour_handler_and_the_toast_names_the_holder() {
-    let (mut app, ctx, _layouts) = popover_on("cell:colour:ask=slate");
+    let (mut app, ctx, _layouts) = popover_on("cell:colour:ask=violet");
     let held = app.runtime.workspace.book.book().colour("Scalp").unwrap();
     let swap = drawn_row(&mut app, &ctx, "workspace_menu.colour.swap");
     click_sized(&mut app, &ctx, FULL_HD, swap.center());
     let book = app.runtime.workspace.book.book();
-    assert_eq!(book.colour("Scalp"), Some(preset(4)));
-    assert_eq!(book.colour("Default"), Some(held), "Scalp's old colour");
+    assert_eq!(book.colour("Scalp"), Some(preset(3)));
+    assert_eq!(book.colour("Swing"), Some(held), "Scalp's old colour");
     let note = app.surfaces.toast.model_state.message();
-    assert_eq!(
-        note,
-        Some(format!("Default is now {}", held.name()).as_str())
-    );
+    assert_eq!(note, Some(format!("Swing is now {}", held.name()).as_str()));
 }
 
 /// Cancel on the question changes nothing.
 #[test]
 fn cancel_on_the_question_changes_nothing() {
-    let (mut app, ctx, _layouts) = popover_on("cell:colour:ask=slate");
+    let (mut app, ctx, _layouts) = popover_on("cell:colour:ask=violet");
     let before = app.runtime.workspace.book.book().list();
     let cancel = drawn_row(&mut app, &ctx, "workspace_menu.colour.cancel");
     click_sized(&mut app, &ctx, FULL_HD, cancel.center());

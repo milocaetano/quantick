@@ -645,7 +645,10 @@ impl LayoutSession {
         I: IntoIterator<Item = (u64, &'a str, bool)>,
         I::IntoIter: Clone,
     {
-        let tabs = tabs.into_iter();
+        // Built-in instances own their edits independently of other Default tabs.
+        let tabs = tabs
+            .into_iter()
+            .filter(|(_, name, _)| *name != crate::workspace_book::DEFAULT_WORKSPACE);
         let (mut count, mut settled) = (0, 0);
         let same = tabs.clone().all(|(tab, name, standing)| {
             count += 1;
@@ -1002,6 +1005,9 @@ impl LayoutSession {
     }
     pub fn create(&mut self, name: Option<&str>) -> Result<LayoutId, LayoutError> {
         self.book.create(name)
+    }
+    pub fn workspace_starter(&mut self) -> Result<LayoutId, LayoutError> {
+        self.book.workspace_starter()
     }
     pub fn create_for(
         &mut self,

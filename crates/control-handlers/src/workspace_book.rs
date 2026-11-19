@@ -88,6 +88,13 @@ pub trait WorkspaceOwner: TabDirectory {
     }
     /// Put a recipe on a tab's charts.
     fn show_tab_recipe(&mut self, _tab: u64, _recipe: &WorkspaceRecipe) {}
+    /// Validate, then select a generic strip layout for a newly created workspace.
+    fn creation_layout(&mut self, _tab: u64, _apply: bool) -> Result<(), String> {
+        Ok(())
+    }
+    fn creation_timeframe_ms(&self, _tab: u64) -> Option<u64> {
+        None
+    }
     /// The book, for reading.
     fn workspace_book_ref(&self) -> Option<&WorkspaceBook> {
         self.workspace_store_ref().map(WorkspaceBookStore::book)
@@ -157,6 +164,14 @@ pub fn colour_rows(book: &WorkspaceBook) -> Vec<WorkspaceColourRow> {
 /// still lands, and nothing is journaled.
 pub type Journal<'a, A> = Option<(&'a mut A, &'a ActorContext)>;
 
+fn save_prompt_label(workspace: &str) -> String {
+    if workspace == quantick_workspace::workspace_book::DEFAULT_WORKSPACE {
+        text::SAVE_AS_DIALOG_TITLE.to_owned()
+    } else {
+        text::save_to_short_label(workspace)
+    }
+}
+
 /// Carry out what a workspace row asked for, through the same steps the
 /// control call takes, so a row leaves the call's journal row. Answers what
 /// to tell the trader, naming the tabs.
@@ -168,6 +183,31 @@ pub fn apply_row_command<H: WorkspaceOwner + ?Sized, A: NotifyAccess>(
     symbol: &str,
     command: WorkspaceCommand,
 ) -> Option<String> {
+    let save_as_tab = match command {
+        WorkspaceCommand::AnswerClose(CloseAnswer::Save) => menu
+            .close
+            .question()
+            .filter(|asked| {
+                asked.workspace == quantick_workspace::workspace_book::DEFAULT_WORKSPACE
+            })
+            .map(|asked| asked.tab),
+        WorkspaceCommand::AnswerSwitch(quantick_session::switch_prompt::SwitchAnswer::Save) => menu
+            .switch
+            .question()
+            .filter(|asked| {
+                asked.workspace == quantick_workspace::workspace_book::DEFAULT_WORKSPACE
+            })
+            .map(|asked| asked.tab),
+        _ => None,
+    };
+    if let Some(tab) = save_as_tab {
+        menu.close.answer(CloseAnswer::Cancel);
+        menu.switch
+            .answer(quantick_session::switch_prompt::SwitchAnswer::Cancel);
+        menu.open_save_as(tab);
+        manage::fill_create(host, menu);
+        return None;
+    }
     let note = match command {
         WorkspaceCommand::BeginSaveAs => {
             menu.open_save_as(tab);
@@ -182,6 +222,18 @@ pub fn apply_row_command<H: WorkspaceOwner + ?Sized, A: NotifyAccess>(
         WorkspaceCommand::Manage(intent) => return manage::act(host, &mut to, menu, intent),
         WorkspaceCommand::NameColour(intent) => {
             manage::name_colour(host, menu, intent);
+            return None;
+        }
+        WorkspaceCommand::CreationTimeframe(ms) => {
+            if let Some(dialog) = &mut menu.dialog {
+                dialog.creation.timeframe_ms = ms;
+            }
+            return None;
+        }
+        WorkspaceCommand::CreationCharts(charts) => {
+            if let Some(dialog) = &mut menu.dialog {
+                dialog.creation.charts = charts;
+            }
             return None;
         }
         WorkspaceCommand::BeginRename(from) => {
@@ -220,6 +272,15 @@ pub fn apply_row_command<H: WorkspaceOwner + ?Sized, A: NotifyAccess>(
         WorkspaceCommand::AnswerSwitch(answer) => {
             switch::answer(host, &mut to, &mut menu.switch, answer)
         }
+        WorkspaceCommand::SaveTo
+            if host.workspace_book_ref().is_some_and(|book| {
+                book.tab_workspace(tab) == quantick_workspace::workspace_book::DEFAULT_WORKSPACE
+            }) =>
+        {
+            menu.open_save_as(tab);
+            manage::fill_create(host, menu);
+            return None;
+        }
         WorkspaceCommand::SaveTo => save_to_journaled(host, &mut to, tab).map(|saved| {
             saved.changed.then(|| {
                 text::saved_toast(&saved.workspace, &host.tab_symbols(&saved.tabs_changed))
@@ -245,7 +306,10 @@ fn submit_name_dialog<H: WorkspaceOwner + ?Sized, A: NotifyAccess>(
     let outcome = match &dialog.mode {
         NameDialogMode::SaveAsNew => save_as_journaled(host, to, tab, (&dialog.name, colour))
             .map(|saved| Some(text::saved_as_toast(symbol, &saved.workspace))),
-        NameDialogMode::New => new_journaled(host, to, tab, (&dialog.name, colour))
+        NameDialogMode::New => manage::creation_colour(&dialog)
+            .and_then(|colour| {
+                new_journaled(host, to, tab, (&dialog.name, colour), dialog.creation)
+            })
             .map(|made| Some(text::created_toast(symbol, &made.workspace))),
         NameDialogMode::Rename { from } => {
             rename_journaled(host, to, from, &dialog.name).map(|moved| {
@@ -518,15 +582,24 @@ fn commit_market_whole<H: WorkspaceOwner + ?Sized>(
         Err(error) => error,
     };
     if recipe_written {
-        *book(app)? = before;
-        if let Err(reason) = app.persist_workspace_book() {
-            error.message = format!(
-                "{}; the workspaces file could not be put back either: {reason}",
-                error.message
-            );
-        }
+        restore_book(app, before, &mut error)?;
     }
     Err(error)
+}
+
+fn restore_book<H: WorkspaceOwner + ?Sized>(
+    app: &mut H,
+    before: WorkspaceBook,
+    error: &mut ControlError,
+) -> Result<(), ControlError> {
+    *book(app)? = before;
+    if let Err(reason) = app.persist_workspace_book() {
+        error.message = format!(
+            "{}; the workspaces file could not be put back either: {reason}",
+            error.message
+        );
+    }
+    Ok(())
 }
 
 /// A save of `tab` did not reach the disk: with autosave on it reads modified
@@ -620,9 +693,22 @@ pub fn new_tab_workspace<H: WorkspaceOwner + ?Sized>(
     app: &mut H,
     tab: u64,
     (name, colour): (&str, Option<WorkspaceColour>),
+    creation: quantick_workspace::workspace_book::WorkspaceCreation,
 ) -> Result<CreateOutcome, ControlError> {
-    let create = |book: &mut WorkspaceBook| book.create_coloured(tab, name, colour);
+    manage::validate_creation(creation)?;
+    let name = book(app)?
+        .creation_name(name, colour)
+        .map_err(|error| refused(&error))?;
+    app.creation_layout(tab, false)
+        .map_err(ControlError::invalid_request)?;
+    let before = book(app)?.clone();
+    let create = |book: &mut WorkspaceBook| book.create_with(tab, &name, colour, creation);
     let outcome = written(app, create, |_| true)?;
+    if let Err(reason) = app.creation_layout(tab, true) {
+        let mut error = ControlError::invalid_request(reason);
+        restore_book(app, before, &mut error)?;
+        return Err(error);
+    }
     show(app, &[tab])?;
     Ok(outcome)
 }
@@ -784,8 +870,13 @@ fn unsaved(asked: &CloseQuestion) -> ControlError {
         followers,
         ..
     } = asked;
+    let keep = if workspace == quantick_workspace::workspace_book::DEFAULT_WORKSPACE {
+        "Call workspace.save_as first to keep the edits".to_owned()
+    } else {
+        format!("Pass save true to save to {workspace}")
+    };
     let mut error = ControlError::invalid_request(format!(
-        "{} Pass save true to save to {workspace}, or save false to close without saving.",
+        "{} {keep}, or save false to close without saving.",
         text::close_prompt_body(workspace, changes, followers),
     ));
     error.context.details = Some(json!({ "code": UNSAVED_EDITS_CODE,
@@ -821,7 +912,7 @@ pub fn close_prompt(queue: &CloseQueue) -> Option<Prompt> {
     let label = |answer| match answer {
         CloseAnswer::Cancel => text::CLOSE_CANCEL.to_owned(),
         CloseAnswer::CloseWithoutSaving => text::CLOSE_WITHOUT_SAVING.to_owned(),
-        CloseAnswer::Save => text::save_to_short_label(&asked.workspace),
+        CloseAnswer::Save => save_prompt_label(&asked.workspace),
     };
     Some(Prompt {
         id: format!("workspace_close_prompt_{}", asked.tab),
@@ -987,9 +1078,9 @@ fn new_journaled<H: WorkspaceOwner + ?Sized, A: NotifyAccess>(
     to: &mut Journal<'_, A>,
     tab: u64,
     asked: (&str, Option<WorkspaceColour>),
+    creation: quantick_workspace::workspace_book::WorkspaceCreation,
 ) -> Result<CreateOutcome, ControlError> {
-    flush(app, to, tab)?;
-    let outcome = new_tab_workspace(app, tab, asked)?;
+    let outcome = new_tab_workspace(app, tab, asked, creation)?;
     let payload = json!({ "tab_id": WireU64::new(tab), "workspace": outcome.workspace,
         "dropped_edits": outcome.dropped_edits });
     journal(to, WORKSPACE_CREATED_EVENT_KIND, payload);
@@ -1164,10 +1255,25 @@ fn new<H: WorkspaceOwner + ?Sized, A: NotifyAccess>(
         tab_id,
         name,
         colour,
+        timeframe_ms,
+        charts,
     } = input(value)?;
     let colour = colour_word(colour.as_deref())?;
     let tab = tab_on_book(app, tab_id)?;
-    let outcome = new_journaled(app, &mut Some((access, actor)), tab, (&name, colour))?;
+    let mut creation = manage::initial_creation(app, tab);
+    if let Some(ms) = timeframe_ms {
+        creation.timeframe_ms = ms.get();
+    }
+    if let Some(charts) = charts {
+        creation.charts = charts;
+    }
+    let outcome = new_journaled(
+        app,
+        &mut Some((access, actor)),
+        tab,
+        (&name, colour),
+        creation,
+    )?;
     answer(&WorkspaceNewResult {
         tab_id: WireU64::new(tab),
         workspace: outcome.workspace,

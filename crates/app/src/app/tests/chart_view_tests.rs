@@ -998,6 +998,8 @@ fn a_restored_bar_rule_moves_the_selector_that_edits_it() {
                 flow_legend_collapsed: false,
                 time_legend_collapsed: false,
                 workspace: None,
+                protected_default: false,
+                workspace_parked: Default::default(),
                 workspace_copy: None,
                 orderflow_panel: Default::default(),
             }],

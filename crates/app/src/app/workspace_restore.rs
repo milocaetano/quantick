@@ -108,9 +108,14 @@ impl ArrangementAdapter<'_> {
                     tab.link.arm_auto_roll(&tab.symbol);
                     let showing = index == active && crate::orderflow_panel::flow_pane_shown(tab);
                     tab.tape_mut().settings_panel = saved.restored_panel(chrome, showing);
+                    let workspace = self
+                        .workspace
+                        .book
+                        .book_mut()
+                        .restore_saved_workspace(target.0, saved);
                     self.workspace.book.sync_mut().arrive(
                         target.0,
-                        saved.workspace.clone(),
+                        workspace,
                         saved.workspace_copy.clone(),
                     );
                 }

@@ -125,7 +125,11 @@ fn built(book: &WorkspaceBook, name: &str, current: WorkspaceColour, choosing: b
         .filter_map(WorkspaceColour::preset)
         .map(|colour| swatch(colour.key(), colour, colour.name().to_owned()))
         .collect();
-    let last_custom = book.last_custom().map(|rgb| {
+    let custom = match current {
+        WorkspaceColour::Custom(rgb) => Some(rgb),
+        _ => book.last_custom(),
+    };
+    let last_custom = custom.map(|rgb| {
         swatch(
             LAST_CUSTOM_KEY.to_owned(),
             WorkspaceColour::Custom(rgb),
@@ -198,6 +202,14 @@ impl Palette {
             return Pick::Refused(super::WorkspaceRefusal::ColourTaken(taken).to_string());
         }
         let mut trial = self.colours.clone();
+        if self.workspace == super::DEFAULT_WORKSPACE
+            || self
+                .colours
+                .get(super::DEFAULT_WORKSPACE)
+                .is_some_and(|held| held.identical(colour))
+        {
+            return Pick::Refused(super::WorkspaceRefusal::DefaultProtected.to_string());
+        }
         match workspace_colour::pick(&mut trial, &self.workspace, colour, false) {
             Ok(_) => Pick::Apply(colour),
             Err(ColourTaken::Held {

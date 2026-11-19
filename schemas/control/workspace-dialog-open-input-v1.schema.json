@@ -29,6 +29,22 @@
   "additionalProperties": false,
   "description": "Open a workspace dialog on a tab.",
   "properties": {
+    "charts": {
+      "description": "New dialog only: initial draft chart count (1-8).",
+      "format": "uint",
+      "minimum": 0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "custom_hex": {
+      "description": "New dialog only: draft HEX, including incomplete text for inline feedback.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "mode": {
       "$ref": "#/$defs/WorkspaceDialog"
     },
@@ -42,6 +58,17 @@
         }
       ],
       "description": "The tab. Left out, the one on screen."
+    },
+    "timeframe_ms": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/WireU64"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "New dialog only: initial draft interval, without creating anything."
     }
   },
   "required": [

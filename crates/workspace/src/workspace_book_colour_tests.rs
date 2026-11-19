@@ -110,22 +110,22 @@ fn a_taken_colour_is_refused_without_swap_and_swapped_with_it() {
     let mut book = book();
     book.create(1, "Scalp").unwrap();
     book.create(1, "Swing").unwrap();
-    let refused = book.set_colour("Swing", preset(4), false);
+    let refused = book.set_colour("Swing", preset(0), false);
     assert_eq!(
         refused,
         Err(WorkspaceRefusal::ColourTaken(ColourTaken::Held {
-            owner: DEFAULT_WORKSPACE.to_owned(),
+            owner: "Scalp".to_owned(),
             owner_would_get: preset(1),
         }))
     );
     assert_eq!(refused.unwrap_err().code(), "workspace.colour_taken");
     assert_eq!(book.colour("Swing"), Some(preset(1)), "nothing moved");
-    let outcome = book.set_colour("Swing", preset(4), true).unwrap();
-    assert_eq!(outcome.swapped_with.as_deref(), Some(DEFAULT_WORKSPACE));
-    assert_eq!(book.colour(DEFAULT_WORKSPACE), Some(preset(1)));
-    assert_eq!(book.colour("Swing"), Some(preset(4)));
+    let outcome = book.set_colour("Swing", preset(0), true).unwrap();
+    assert_eq!(outcome.swapped_with.as_deref(), Some("Scalp"));
+    assert_eq!(book.colour("Scalp"), Some(preset(1)));
+    assert_eq!(book.colour("Swing"), Some(preset(0)));
     assert_unique(&book);
-    let again = book.set_colour("Swing", preset(4), false).unwrap();
+    let again = book.set_colour("Swing", preset(0), false).unwrap();
     assert!(!again.changed, "a repeat");
     assert_eq!(
         book.set_colour("Nope", preset(12), false),
@@ -133,17 +133,14 @@ fn a_taken_colour_is_refused_without_swap_and_swapped_with_it() {
     );
 }
 
-/// Default's colour changes like any other's.
 #[test]
-fn defaults_colour_can_change() {
+fn defaults_colour_stays_locked() {
     let mut book = book();
-    let custom = Custom([0x3A, 0x7B, 0xD5]);
-    assert!(
-        book.set_colour(DEFAULT_WORKSPACE, custom, false)
-            .unwrap()
-            .changed
+    assert_eq!(
+        book.set_colour(DEFAULT_WORKSPACE, Custom([1, 2, 3]), false),
+        Err(WorkspaceRefusal::DefaultProtected)
     );
-    assert_eq!(book.colour(DEFAULT_WORKSPACE), Some(custom));
+    assert_eq!(book.colour(DEFAULT_WORKSPACE), Some(preset(4)));
     assert_eq!(colours(&reload(&book)), colours(&book));
 }
 
@@ -202,11 +199,11 @@ fn the_stored_form_is_an_index_or_a_hex_string_and_round_trips() {
 #[test]
 fn an_index_and_hex_of_either_case_read_as_written() {
     let book = stored("Default = 9\nScalp = \"#3a7bd5\"\n");
-    assert_eq!(book.colour(DEFAULT_WORKSPACE), Some(preset(9)));
+    assert_eq!(book.colour("Default copy 1"), Some(preset(9)));
     assert_eq!(book.colour("Scalp"), Some(Custom([0x3A, 0x7B, 0xD5])));
     let book = stored("Default = \"#3A7BD5\"\nScalp = 0\n");
     assert_eq!(
-        book.colour(DEFAULT_WORKSPACE),
+        book.colour("Default copy 1"),
         Some(Custom([0x3A, 0x7B, 0xD5]))
     );
     assert_eq!(book.colour("Scalp"), Some(preset(0)));
@@ -216,7 +213,8 @@ fn an_index_and_hex_of_either_case_read_as_written() {
 #[test]
 fn the_old_words_read_through_the_fixed_table() {
     let table = [
-        ("steel", 4),
+        // Steel is reserved by Default, so this workspace takes the first free preset.
+        ("steel", 0),
         ("violet", 11),
         ("cyan", 2),
         ("magenta", 1),
@@ -246,8 +244,8 @@ fn an_unreadable_value_is_dropped_and_the_workspace_settles_on_a_free_colour() {
         "true",
     ] {
         let book = stored(&format!("Default = 9\nScalp = {bad}\n"));
-        assert_eq!(book.list().len(), 2, "every recipe is kept: {bad}");
-        assert_eq!(book.colour(DEFAULT_WORKSPACE), Some(preset(9)), "{bad}");
+        assert_eq!(book.list().len(), 3, "every recipe is kept: {bad}");
+        assert_eq!(book.colour("Default copy 1"), Some(preset(9)), "{bad}");
         assert_eq!(book.colour("Scalp"), Some(preset(0)), "{bad}");
     }
 }
@@ -255,7 +253,7 @@ fn an_unreadable_value_is_dropped_and_the_workspace_settles_on_a_free_colour() {
 #[test]
 fn a_stored_duplicate_or_stranger_is_settled_on_load() {
     let book = stored("Default = 2\nScalp = \"#1F86BF\"\nGone = 4\n");
-    assert_eq!(book.colour(DEFAULT_WORKSPACE), Some(preset(2)));
+    assert_eq!(book.colour("Default copy 1"), Some(preset(2)));
     assert_eq!(book.colour("Scalp"), Some(preset(0)), "Sky's Light value");
     assert_eq!(book.colour("Gone"), None);
     assert!(!toml::to_string_pretty(&book).unwrap().contains("Gone"));

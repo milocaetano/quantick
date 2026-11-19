@@ -512,6 +512,34 @@ impl LayoutBook {
         Ok(id)
     }
 
+    /// A generic strip entry whose workspace-local copy will start empty.
+    pub fn workspace_starter(&mut self) -> Result<LayoutId, LayoutError> {
+        if self.by_name("Layout 1").is_none() {
+            return self.create(None);
+        }
+        if let Some(layout) = self
+            .layouts
+            .iter()
+            .filter(|layout| {
+                layout.origin.is_none()
+                    && layout.indicators.is_empty()
+                    && layout.drawings.is_empty()
+                    && layout
+                        .name
+                        .strip_prefix(DEFAULT_NAME_PREFIX)
+                        .is_some_and(|tail| tail.parse::<u32>().is_ok_and(|n| n > 0))
+            })
+            .min_by_key(|layout| {
+                layout.name[DEFAULT_NAME_PREFIX.len()..]
+                    .parse::<u32>()
+                    .unwrap_or(u32::MAX)
+            })
+        {
+            return Ok(layout.id);
+        }
+        self.create(None)
+    }
+
     /// Rename `id`. Saving the same name is not a change and not an error.
     pub fn rename(&mut self, id: LayoutId, name: &str) -> Result<bool, LayoutError> {
         let name = clean_name(name).ok_or(LayoutError::Empty)?;

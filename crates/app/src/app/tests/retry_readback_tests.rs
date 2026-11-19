@@ -863,12 +863,7 @@ fn replay_plan() -> Vec<(&'static str, u32, Value, Readback)> {
             Value::Null,
             Readback::Moves,
         ),
-        (
-            "workspace.new",
-            1,
-            json!({ "name": "Blank" }),
-            Readback::Moves,
-        ),
+        ("workspace.new", 1, json!({ "name": "  " }), Readback::Moves),
         // Last: deleting a workspace lays its tab out as a new tab, and the rows
         // above work on the charts the earlier rows opened.
         (
@@ -1009,6 +1004,15 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
         reachable,
         "the plan covers every reachable optional row, and nothing else"
     );
+    let mut client = connect(&directory, &cockpit);
+    for payload in [json!({}), json!({"name": " "})] {
+        let (answer, dispatched) = unkeyed_call(&mut app, &mut client, "workspace.new", payload);
+        assert!(
+            matches!(answer.outcome, ResponseOutcome::Failure { ref error } if error.message.contains("idempotency key"))
+        );
+        assert!(dispatched.is_empty());
+    }
+    drop(client);
     let mut first_layout = Value::Null;
     // A dialog already up, so the desk's dialog rows answer without raising a
     // real one on whoever runs the tests.

@@ -3365,6 +3365,7 @@ dependencies = [
  "quantick-sim",
  "quantick-sources",
  "quantick-strategy",
+ "quantick-workspace",
  "rust_decimal",
  "tracing",
 ]

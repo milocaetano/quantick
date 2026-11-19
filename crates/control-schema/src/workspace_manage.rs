@@ -57,6 +57,15 @@ pub struct WorkspaceDialogOpenInput {
     /// The tab. Left out, the one on screen.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tab_id: Option<WireU64>,
+    /// New dialog only: initial draft interval, without creating anything.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeframe_ms: Option<WireU64>,
+    /// New dialog only: initial draft chart count (1-8).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub charts: Option<usize>,
+    /// New dialog only: draft HEX, including incomplete text for inline feedback.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custom_hex: Option<String>,
 }
 
 /// The dialog now on screen.
@@ -70,6 +79,10 @@ pub struct WorkspaceDialogOpenResult {
     pub name: Option<String>,
     /// The create dialogs' preselected colour: the next free one.
     pub colour: Option<WorkspaceColourDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeframe_ms: Option<WireU64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub charts: Option<usize>,
 }
 
 /// Take back a recent delete.
@@ -97,7 +110,7 @@ pub fn workspace_dialog_open_descriptor() -> CapabilityDescriptor {
         WORKSPACE_DIALOG_OPEN_CAPABILITY_ID,
         MODULE_ID,
         "Open a workspace dialog",
-        "Puts a workspace dialog on screen for a tab (left out, the one on screen), as the workspace menu's entries do, and journals workspace.dialog_opened: save_as (Save as new workspace) or new (New workspace), each with its suggested name selected and the palette open on the next free colour, which the answer names; or manage (Manage workspaces: one row per workspace with its colour chip, name, tab count, rename and delete). Nothing is written to the workspaces: Save is workspace.save_as or workspace.new with colour, and Manage's actions are workspace.colour.set, workspace.rename, workspace.delete and workspace.delete.undo. An unknown tab is refused with workspace.unknown_tab.",
+        "Opens save_as, new or manage for a tab, defaulting to the active tab. New previews timeframe_ms, charts (1-8) and custom_hex in one form. A blank name uses Workspace N. Invalid or occupied colours stay visible and block Create. Manage shows the locked Default first. Opening or cancelling writes nothing. An unknown tab is refused with workspace.unknown_tab.",
         "Opening a dialog twice leaves one open, the create dialogs reset to their suggested name and colour.",
     );
     descriptor.expected_cost.max_response_bytes = Some(2048);

@@ -25,7 +25,7 @@ and `.agents/skills/`.
 | `control-schema` | control, control-host, stores, pine, layers, operability, trading, orderflow, indicators, orderbook, engine | Control-plane schemas over the domain crates. |
 | `stores` | alerts, appearance, chart, drawings, sources, workspace, orderflow, indicators, engine, orderbook (dev) | Cockpit documents; the alert observer cache. |
 | `ui-model` | alerts, appearance, chart*, civil, control, control-handlers, control-schema, drawings, engine, indicators, layers, orderflow, paper, replay, session, sources, stores, strategy, workspace, sim (dev), trading (dev) | UI contracts and catalog. |
-| `session` | chart*, civil, engine, paper, sim, sources, strategy | A tab's reach-back: candles, history paging. |
+| `session` | chart*, civil, engine, paper, sim, sources, strategy, workspace | Candles, paging, draft choices. |
 | `drawings` | alerts, anchored-studies, appearance, chart*, engine, indicators, workspace | Chart marks: store, update, scenes. |
 | `alerts` | civil, workspace | Alerts and sounds. |
 | `appearance` | — | Colors and typography. |

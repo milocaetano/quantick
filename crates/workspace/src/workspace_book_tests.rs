@@ -605,19 +605,15 @@ fn create_puts_the_tab_on_an_empty_recipe_and_no_other_tab_moves() {
         made,
         CreateOutcome {
             workspace: "Blank".to_owned(),
-            dropped_edits: true
+            dropped_edits: false
         }
     );
     assert_eq!(state(&book, 1), ("Blank".to_owned(), false));
     assert_eq!(state(&book, 2), ("Scalp".to_owned(), false));
     let empty = book.recipe("Blank").unwrap();
     assert!(empty.flow_indicators.is_empty());
-    assert_eq!(
-        empty.split_fraction,
-        Some(0.3),
-        "the sizes the tab reads back"
-    );
-    assert_eq!(empty.layers.get("bubbles"), Some(&true));
+    assert_eq!(empty.split_fraction, None);
+    assert!(empty.layers.is_empty());
     assert_eq!(book.tab_copy(1), Some(empty));
     let shown = empty.clone();
     assert!(
@@ -627,29 +623,22 @@ fn create_puts_the_tab_on_an_empty_recipe_and_no_other_tab_moves() {
     assert_eq!(state(&book, 1), ("Blank".to_owned(), false));
 }
 
-/// A tab still opening holds the factory `Default`, which names no
-/// arrangement: an empty recipe read from it would be that recipe again.
 #[test]
-fn create_refuses_a_tab_still_opening() {
+fn create_uses_the_requested_recipe_on_a_new_tab() {
     let mut book = held_book();
     book.open_tab(1);
-    let before = book.clone();
-    assert_eq!(
-        book.create(1, "Blank"),
-        Err(WorkspaceRefusal::TabOpening(1))
-    );
-    assert_eq!(book, before);
+    book.create(1, "Blank").unwrap();
+    assert_eq!(book.tab_copy(1), book.recipe("Blank"));
 }
 
 #[test]
-fn create_refuses_a_taken_or_empty_name_and_changes_nothing() {
+fn create_refuses_a_taken_name_and_changes_nothing() {
     let mut book = two_tabs_on_scalp();
     let before = book.clone();
     assert!(matches!(
         book.create(1, "scalp"),
         Err(WorkspaceRefusal::DuplicateName(_))
     ));
-    assert!(book.create(1, "  ").is_err());
     assert!(book.create(9, "Fresh").is_err(), "no such tab");
     assert_eq!(book, before);
 }
@@ -912,18 +901,10 @@ fn default_keeps_no_bar_rule_and_a_timeframe_on_it_is_no_edit() {
     let mut wider = on_bars("tick:2000", "time:300000");
     wider.split_fraction = Some(0.4);
     book.observe(1, &wider).unwrap();
-    book.save_to(1).unwrap();
-    let default = book.recipe(DEFAULT_WORKSPACE).unwrap();
-    assert_eq!(default.flow_bars, None);
-    assert_eq!(default.context_panes[0].bars, None);
-    assert_eq!(default.split_fraction, Some(0.4), "the rest is saved");
-    let mut narrower = on_bars("tick:500", "time:60000");
-    narrower.split_fraction = Some(0.4);
-    book.observe(1, &narrower).unwrap();
-    assert!(
-        !book.tab_state(1).unwrap().modified,
-        "the market's bar is no edit"
-    );
+    assert_eq!(book.save_to(1), Err(WorkspaceRefusal::DefaultProtected));
+    assert!(book.recipe(DEFAULT_WORKSPACE).unwrap().is_factory());
+    book.save_as(1, "Wider").unwrap();
+    assert_eq!(book.recipe("Wider"), Some(&wider));
 }
 
 /// The Manage dialog greys Delete by the rule `delete` refuses by.
@@ -971,8 +952,10 @@ fn an_old_book_s_context_bars_land_on_the_panes() {
     assert_eq!(scalp.context_panes[0].bars.as_deref(), Some("time:5m"));
     assert!(scalp.legacy_context_bars.is_empty());
     assert_eq!(
-        book.recipe(DEFAULT_WORKSPACE).unwrap().context_panes[0].bars,
-        None
+        book.recipe("Default copy 1").unwrap().context_panes[0]
+            .bars
+            .as_deref(),
+        Some("time:1m")
     );
 }
 

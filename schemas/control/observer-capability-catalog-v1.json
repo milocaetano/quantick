@@ -33147,7 +33147,7 @@
       "revision_policy": "optional_for_additive",
       "risk_flags": [],
       "risk_reducing": false,
-      "stale_input_safety": "The call names the colour it wants, so a repeat answers changed false and writes nothing.",
+      "stale_input_safety": "Default is protected against direct changes and swaps. The call names the colour it wants, so a repeat answers changed false and writes nothing.",
       "title": "Give a workspace a colour",
       "version": 1
     },
@@ -33380,7 +33380,7 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Puts a workspace dialog on screen for a tab (left out, the one on screen), as the workspace menu's entries do, and journals workspace.dialog_opened: save_as (Save as new workspace) or new (New workspace), each with its suggested name selected and the palette open on the next free colour, which the answer names; or manage (Manage workspaces: one row per workspace with its colour chip, name, tab count, rename and delete). Nothing is written to the workspaces: Save is workspace.save_as or workspace.new with colour, and Manage's actions are workspace.colour.set, workspace.rename, workspace.delete and workspace.delete.undo. An unknown tab is refused with workspace.unknown_tab.",
+      "description": "Opens save_as, new or manage for a tab, defaulting to the active tab. New previews timeframe_ms, charts (1-8) and custom_hex in one form. A blank name uses Workspace N. Invalid or occupied colours stay visible and block Create. Manage shows the locked Default first. Opening or cancelling writes nothing. An unknown tab is refused with workspace.unknown_tab.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "cockpit",
@@ -33422,6 +33422,22 @@
         "additionalProperties": false,
         "description": "Open a workspace dialog on a tab.",
         "properties": {
+          "charts": {
+            "description": "New dialog only: initial draft chart count (1-8).",
+            "format": "uint",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "custom_hex": {
+            "description": "New dialog only: draft HEX, including incomplete text for inline feedback.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "mode": {
             "$ref": "#/$defs/WorkspaceDialog"
           },
@@ -33435,6 +33451,17 @@
               }
             ],
             "description": "The tab. Left out, the one on screen."
+          },
+          "timeframe_ms": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "New dialog only: initial draft interval, without creating anything."
           }
         },
         "required": [
@@ -33496,6 +33523,14 @@
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "description": "The dialog now on screen.",
         "properties": {
+          "charts": {
+            "format": "uint",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
           "colour": {
             "anyOf": [
               {
@@ -33520,6 +33555,16 @@
           },
           "tab_id": {
             "$ref": "#/$defs/WireU64"
+          },
+          "timeframe_ms": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "title": {
             "type": "string"
@@ -33553,7 +33598,7 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Lists every saved workspace with a one-line summary (panes, intervals, indicator count), its colour and the open tabs using it, Default first. Which workspace a tab uses and whether it holds edits is also on each tab in workspace.summary.",
+      "description": "Lists every saved workspace with a one-line summary (panes, intervals, indicator count), its colour and the open tabs using it, The immutable factory Default comes first. Which workspace a tab uses and whether it holds edits is also on each tab in workspace.summary.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "observe",
@@ -33692,7 +33737,7 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Makes a workspace of an empty recipe: what the tab shows, its canvas, pane sizes, context intervals, layers and footprint style, with every indicator removed. The tab moves onto it and its unsaved edits are dropped; the answer says so. No other tab changes. Unlike workspace.save_as, it copies no indicators. It takes colour (a preset's name or #RRGGBB; left out, the next free colour); one another workspace holds is refused with workspace.colour_taken, never swapped on create. An empty or taken name is refused with the reason; a tab still opening is refused with workspace.tab_not_ready, retryable. The New workspace dialog's Save; open it with workspace.dialog.open.",
+      "description": "Creates a clean workspace with charts (1-8, default 1) and timeframe_ms (current time interval, otherwise 5m), on a generic Layout N. All charts use the chosen interval. Existing workspace edits are parked and restored when revisiting it; dropped_edits is false. Other tabs and market-owned drawings are preserved. An omitted or blank name requires an idempotency key and chooses Workspace N. An explicit name must be unique. Colour is a preset or #RRGGBB; omitted selects the next free color, and a held color is refused without swapping. Invalid choices are refused before mutation. The New workspace form's Create action; open and preview it with workspace.dialog.open.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "cockpit",
@@ -33714,6 +33759,15 @@
         "additionalProperties": false,
         "description": "Make a new, empty workspace and put a tab on it.",
         "properties": {
+          "charts": {
+            "description": "Number of timeframe charts, from the registered 1-8 chart presets.",
+            "format": "uint",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
           "colour": {
             "description": "A preset's name or `#RRGGBB`. Left out, the next free colour.",
             "type": [
@@ -33722,6 +33776,8 @@
             ]
           },
           "name": {
+            "default": "",
+            "description": "Omitted or blank chooses the next Workspace N.",
             "type": "string"
           },
           "tab_id": {
@@ -33734,13 +33790,22 @@
               }
             ],
             "description": "The tab. Left out, the one on screen."
+          },
+          "timeframe_ms": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Initial interval on every chart; omitted uses the current time interval or 5m."
           }
         },
-        "required": [
-          "name"
-        ],
         "title": "WorkspaceNewInput",
-        "type": "object"
+        "type": "object",
+        "x-idempotency-key-unless-named-by": "name"
       },
       "module": "workspace",
       "output_schema": {
@@ -33782,7 +33847,7 @@
       "revision_policy": "optional_for_additive",
       "risk_flags": [],
       "risk_reducing": false,
-      "stale_input_safety": "A repeat finds the name taken and is refused with workspace.name_taken; nothing changes.",
+      "stale_input_safety": "Repeat the same payload and key to replay the original result. An explicit name also permits an unkeyed request; repeating it refuses with workspace.name_taken.",
       "title": "Make a new, empty workspace for a tab",
       "version": 1
     },
@@ -34051,7 +34116,7 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Writes the tab's edits into the workspace it uses and answers the other tabs that changed: the ones on that workspace without edits of their own. A tab with edits keeps them.",
+      "description": "Writes the tab's edits into the workspace it uses and answers the other tabs that changed: the ones on that workspace without edits of their own. A tab with edits keeps them. Default refuses overwrite. Use workspace.save_as to keep its edits.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "cockpit",

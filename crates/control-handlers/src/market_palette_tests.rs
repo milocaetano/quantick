@@ -652,6 +652,7 @@ fn a_workspace_pick_writes_a_pending_autosave_edit_first() {
     let mut host = Host::new();
     host.book.set_autosave(true);
     host.book.open_tab(5);
+    host.book.save_as(5, "Shared").unwrap();
     let edited = quantick_stores::workspaces::WorkspaceRecipe {
         footprint_style: Some("heatmap".to_owned()),
         ..Default::default()
@@ -662,9 +663,9 @@ fn a_workspace_pick_writes_a_pending_autosave_edit_first() {
         ..switch_to("PEPEUSDT")
     };
     settle(&mut host, PaletteIntent::Switch(picked)).unwrap();
-    let default = host.book.recipe("Default").unwrap();
+    let shared = host.book.recipe("Shared").unwrap();
     assert_eq!(
-        default.footprint_style.as_deref(),
+        shared.footprint_style.as_deref(),
         Some("heatmap"),
         "written"
     );

@@ -296,7 +296,7 @@ fn row(s: &Snapshot, id: RowId) -> Option<Row> {
         RowId::SaveToWorkspace => {
             row.label = menu::save_to_label(&workspace.symbol, &workspace.name);
             row.hover = menu::save_to_hover(&workspace.followers);
-            row.enabled = workspace.can_save;
+            row.enabled = workspace.can_save && workspace.name != quantick_stores::workspaces::DEFAULT_WORKSPACE;
             row.action = Action::Workspace(WorkspaceCommand::SaveTo);
         }
         RowId::WorkspaceSaveAsNew => row.action = Action::Workspace(WorkspaceCommand::BeginSaveAs),
@@ -450,6 +450,7 @@ mod tests {
                 chart_shown: true,
                 workspace: Workspace {
                     name: quantick_stores::workspaces::DEFAULT_WORKSPACE.into(),
+                    can_save: true,
                     ..Default::default()
                 },
                 ..Default::default()
@@ -463,6 +464,7 @@ mod tests {
         for action in [
             Action::Row(RowId::CommandPalette),
             Action::Row(RowId::CloseReplay),
+            Action::Workspace(WorkspaceCommand::SaveTo),
             Action::Workspace(WorkspaceCommand::BeginRename(
                 quantick_stores::workspaces::DEFAULT_WORKSPACE.into(),
             )),

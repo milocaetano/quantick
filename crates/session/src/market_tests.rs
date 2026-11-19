@@ -44,7 +44,7 @@ fn setup(alarm: bool) -> (TabMarket<DrawingId>, Owners) {
     let mut armed = instance(DrawingId(1));
     armed.alarm = alarm.then(|| SignalAlarm::new(AlarmParams::default()));
     let mut market = TabMarket::default();
-    let _ = market.strategies.pane_mut(TIME).anchors.arm(armed);
+    market.strategies.pane_mut(TIME).anchors.arm(armed);
     let fold = |pane_id, slot| PaneFold {
         pane_id,
         closes: vec![LiveClose {

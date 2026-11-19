@@ -24,6 +24,7 @@ quantick-script-trigger = { path = "../script-trigger" }
 quantick-sim = { path = "../sim" }
 # The kernel the tab's armed strategies run through.
 quantick-strategy = { path = "../strategy" }
+quantick-workspace = { path = "../workspace" }
 rust_decimal = { workspace = true }
 tracing = { workspace = true }
 
