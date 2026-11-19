@@ -1,7 +1,7 @@
 use crate::IndicatorSource;
-use quantick_engine::{Bar, Trade};
+use quantick_engine::Trade;
 use quantick_indicators::{
-    EvalError, IndicatorDescriptor, InputValue, ObjectSnapshot, PreviewFrame, Rgba8,
+    EvalError, FootprintBar, IndicatorDescriptor, InputValue, ObjectSnapshot, PreviewFrame, Rgba8,
 };
 
 /// One rung of the lane ladder as the UI receives it: the instant on the
@@ -24,15 +24,16 @@ pub struct LaneSample {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct SlotId(pub u64);
 
-/// Commands mirror the host's mutation surface (plan §4.1).
+/// Commands mirror the host's mutation surface (plan §4.1). Bars travel
+/// with their footprint summary; one sent without a footprint reads `na`.
 pub enum IndicatorCommand {
     /// Initial history landed: replay it (equivalent to a rebuild).
-    Backfilled(Vec<Bar>),
+    Backfilled(Vec<FootprintBar>),
     /// One live bar closed.
-    BarClosed(Bar),
+    BarClosed(FootprintBar),
     /// Latest forming bar and ordered new trades; only the preview is latest-wins.
     PartialUpdated {
-        partial: Option<Bar>,
+        partial: Option<FootprintBar>,
         /// Unsent forming trades, in occurrence order. A reset/enable seeds
         /// the current run once; later updates append only new prints.
         run: Vec<Trade>,
@@ -42,7 +43,7 @@ pub enum IndicatorCommand {
         rungs: usize,
     },
     /// Spec switch / prepended history / source reset: replay from scratch.
-    Rebuild(Vec<Bar>, Option<Bar>),
+    Rebuild(Vec<FootprintBar>, Option<FootprintBar>),
     /// Instantiate `source` behind `slot` and catch it up over history.
     Add {
         slot: SlotId,

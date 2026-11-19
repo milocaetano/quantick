@@ -220,6 +220,7 @@ fn popular_pine_hand_calculated_trend_anchors() {
             buy_volume: 6.0,
             sell_volume: 4.0,
             trade_count: 1.0,
+            poc: None,
         })
         .collect();
     let anchors: &[(&str, &[f64])] = &[

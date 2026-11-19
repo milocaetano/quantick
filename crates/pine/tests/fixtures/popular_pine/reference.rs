@@ -32,6 +32,7 @@ pub fn fixture(scenario: &str, count: usize) -> Vec<IndicatorBar> {
                 buy_volume: volume * 0.625,
                 sell_volume: volume * 0.375,
                 trade_count: 2.0,
+                poc: None,
             }
         })
         .collect()

@@ -53,7 +53,9 @@ fn an_embedded_script_plots_through_the_worker() {
     let trades: Vec<quantick_engine::Trade> = (1..=24).map(tests::trade).collect();
     let mut builder = quantick_engine::TickBarBuilder::new(2);
     let bars = quantick_engine::golden::replay(&mut builder, &trades);
-    worker.send(IndicatorCommand::Backfilled(bars.clone()));
+    worker.send(IndicatorCommand::Backfilled(
+        bars.clone().into_iter().map(Into::into).collect(),
+    ));
     worker.flush();
     for event in worker.drain_events() {
         views.apply(event);

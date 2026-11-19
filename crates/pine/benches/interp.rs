@@ -47,6 +47,7 @@ fn make_bars(n: usize) -> Vec<IndicatorBar> {
                 buy_volume: ((i % 900) + 1) as f64 / 1000.0,
                 sell_volume: ((i % 700) + 1) as f64 / 1000.0,
                 trade_count: (i % 50 + 1) as f64,
+                poc: None,
             }
         })
         .collect()
@@ -94,6 +95,7 @@ fn make_active_bars(n: usize) -> Vec<IndicatorBar> {
             buy_volume: ((i % 900) + 1) as f64 / 1000.0,
             sell_volume: ((i % 700) + 1) as f64 / 1000.0,
             trade_count: (i % 50 + 1) as f64,
+            poc: None,
         });
         open = close;
     }

@@ -25,7 +25,7 @@ fn forming(ids: std::ops::RangeInclusive<u64>) -> Option<Bar> {
 
 fn partial(bar: Option<Bar>, ids: impl IntoIterator<Item = u64>, rungs: usize) -> IndicatorCommand {
     IndicatorCommand::PartialUpdated {
-        partial: bar,
+        partial: bar.map(Into::into),
         run: ids.into_iter().map(print).collect(),
         rungs,
     }
@@ -39,7 +39,7 @@ fn run_of(command: &IndicatorCommand) -> (Vec<u64>, Option<u64>, usize) {
             rungs,
         } => (
             run.iter().map(|t| t.agg_id).collect(),
-            partial.as_ref().map(|b| b.trade_count),
+            partial.as_ref().map(|b| b.bar.trade_count),
             *rungs,
         ),
         _ => panic!("not a forming-bar update"),
@@ -94,20 +94,22 @@ fn inputs_fold_per_slot_and_replays_fold_into_the_newest_replay() {
     assert!(
         fold_parked(
             &mut replay,
-            IndicatorCommand::Rebuild(Vec::new(), newest.clone())
+            IndicatorCommand::Rebuild(Vec::new(), newest.clone().map(Into::into))
         )
         .is_none()
     );
-    assert!(matches!(&replay, IndicatorCommand::Rebuild(_, partial) if partial == &newest));
+    assert!(
+        matches!(&replay, IndicatorCommand::Rebuild(_, partial) if partial == &newest.map(Into::into))
+    );
 }
 
 #[test]
 fn closed_bars_and_lifecycle_commands_never_fold() {
     let bar = forming(1..=2).expect("a bar");
-    let mut older = IndicatorCommand::BarClosed(bar.clone());
-    assert!(fold_parked(&mut older, IndicatorCommand::BarClosed(bar.clone())).is_some());
+    let mut older = IndicatorCommand::BarClosed(bar.clone().into());
+    assert!(fold_parked(&mut older, IndicatorCommand::BarClosed(bar.clone().into())).is_some());
     assert!(fold_parked(&mut older, partial(forming(3..=3), 3..=3, 8)).is_some());
     let mut forming_update = partial(forming(1..=2), 1..=2, 8);
-    assert!(fold_parked(&mut forming_update, IndicatorCommand::BarClosed(bar)).is_some());
+    assert!(fold_parked(&mut forming_update, IndicatorCommand::BarClosed(bar.into())).is_some());
     assert!(fold_parked(&mut forming_update, IndicatorCommand::Remove(SlotId(1))).is_some());
 }

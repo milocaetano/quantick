@@ -1,6 +1,7 @@
 //! Composed venue-prefix and trade-series coordinates, shared by pane readers.
 use crate::state::{ChartState, SpecSelector};
 use crate::viewport::Viewport;
+use quantick_indicators::FootprintBar;
 #[derive(Clone, Copy)]
 pub struct PaneSeriesRead<'a> {
     pub history_prefix: &'a [quantick_engine::Bar],
@@ -105,6 +106,31 @@ impl<'a> PaneSeriesRead<'a> {
         bars.extend_from_slice(self.history_prefix);
         bars.extend_from_slice(self.state.bars());
         bars
+    }
+    /// [`Self::closed_bars`] with footprint summaries, for the indicators.
+    /// Venue candles carry no footprint, so their `poc` reads `na`.
+    pub fn closed_footprint_bars(&self) -> Vec<FootprintBar> {
+        let mut bars = Vec::with_capacity(self.closed_slots());
+        bars.extend(self.history_prefix.iter().cloned().map(Into::into));
+        bars.extend((0..self.state.bars().len()).map(|index| self.footprint_bar(index)));
+        bars
+    }
+    /// The engine's closed bar `index` with its footprint summary. While
+    /// footprints are off there is no ladder and `poc` reads `na`.
+    ///
+    /// # Panics
+    ///
+    /// If `index` is not one of the engine's closed bars.
+    pub fn footprint_bar(&self, index: usize) -> FootprintBar {
+        let ladder = self.state.bar_footprints().get(index);
+        FootprintBar::new(self.state.bars()[index].clone(), ladder)
+    }
+    /// The forming bar with its footprint summary.
+    pub fn partial_footprint_bar(&self) -> Option<FootprintBar> {
+        let ladder = self.state.partial_footprint();
+        self.state
+            .partial()
+            .map(|bar| FootprintBar::new(bar.clone(), ladder))
     }
     pub fn history_view_anchor(
         &self,

@@ -51,12 +51,14 @@ fn delta_stream_replays_to_identical_columns() {
             values: vec![InputValue::Int(3), InputValue::Source(SourceId::Close)],
         },
     });
-    worker.send(IndicatorCommand::Backfilled(bars[..split].to_vec()));
+    worker.send(IndicatorCommand::Backfilled(
+        bars[..split].iter().cloned().map(Into::into).collect(),
+    ));
     for bar in &bars[split..] {
-        worker.send(IndicatorCommand::BarClosed(bar.clone()));
+        worker.send(IndicatorCommand::BarClosed(bar.clone().into()));
     }
     worker.send(IndicatorCommand::PartialUpdated {
-        partial: partial.clone(),
+        partial: partial.clone().map(Into::into),
         run: Vec::new(),
         rungs: 0,
     });
@@ -103,10 +105,12 @@ fn rebuild_resyncs_the_views() {
             values: Vec::new(),
         },
     });
-    worker.send(IndicatorCommand::Backfilled(coarse));
+    worker.send(IndicatorCommand::Backfilled(
+        coarse.into_iter().map(Into::into).collect(),
+    ));
     worker.send(IndicatorCommand::Rebuild(
-        fine.clone(),
-        fine_partial.clone(),
+        fine.clone().into_iter().map(Into::into).collect(),
+        fine_partial.clone().map(Into::into),
     ));
     worker.flush();
     for event in worker.drain_events() {
@@ -151,7 +155,9 @@ fn remove_isolates_the_survivor() {
     ] {
         worker.send(IndicatorCommand::Add { slot, source });
     }
-    worker.send(IndicatorCommand::Backfilled(bars[..2].to_vec()));
+    worker.send(IndicatorCommand::Backfilled(
+        bars[..2].iter().cloned().map(Into::into).collect(),
+    ));
     worker.flush();
     for event in worker.drain_events() {
         views.apply(event);
@@ -160,7 +166,7 @@ fn remove_isolates_the_survivor() {
 
     views.remove(doomed);
     worker.send(IndicatorCommand::Remove(doomed));
-    worker.send(IndicatorCommand::BarClosed(bars[2].clone()));
+    worker.send(IndicatorCommand::BarClosed(bars[2].clone().into()));
     worker.flush();
     for event in worker.drain_events() {
         views.apply(event);
@@ -242,9 +248,11 @@ fn the_lane_samples_end_where_the_preview_does() {
             values: Vec::new(),
         },
     });
-    worker.send(IndicatorCommand::Backfilled(bars.clone()));
+    worker.send(IndicatorCommand::Backfilled(
+        bars.clone().into_iter().map(Into::into).collect(),
+    ));
     worker.send(IndicatorCommand::PartialUpdated {
-        partial: Some(partial),
+        partial: Some(partial.into()),
         run: run.clone(),
         rungs: 8,
     });
@@ -311,9 +319,11 @@ fn dropping_the_lane_clears_the_samples_already_published() {
             values: Vec::new(),
         },
     });
-    worker.send(IndicatorCommand::Backfilled(bars.clone()));
+    worker.send(IndicatorCommand::Backfilled(
+        bars.clone().into_iter().map(Into::into).collect(),
+    ));
     worker.send(IndicatorCommand::PartialUpdated {
-        partial: Some(partial.clone()),
+        partial: Some(partial.clone().into()),
         run,
         rungs: 8,
     });
@@ -324,7 +334,7 @@ fn dropping_the_lane_clears_the_samples_already_published() {
     assert!(!views.all()[0].lane.is_empty(), "the fixture drew a lane");
 
     worker.send(IndicatorCommand::PartialUpdated {
-        partial: Some(partial),
+        partial: Some(partial.into()),
         run: Vec::new(),
         rungs: 0,
     });

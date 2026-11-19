@@ -82,6 +82,7 @@ fn make(index: usize, row: Ohlc) -> IndicatorBar {
         buy_volume: 2.0,
         sell_volume: 1.0,
         trade_count: 3.0,
+        poc: None,
     }
 }
 

@@ -63,10 +63,15 @@ impl ChartPane {
         if let Some(owner) = self.orderflow.as_mut() {
             owner.reset_flow_executions();
         }
+        self.replay_indicators();
+    }
+
+    /// Replay the bars into the indicators alone: a ladder refold's need.
+    fn replay_indicators(&mut self) {
         self.lane.reset();
         self.indicator_worker.send(IndicatorCommand::Rebuild(
-            self.series_read().closed_bars(),
-            self.series.state.partial().cloned(),
+            self.series_read().closed_footprint_bars(),
+            self.series_read().partial_footprint_bar(),
         ));
         self.publish_partial();
     }
@@ -89,7 +94,7 @@ impl ChartPane {
     }
 
     /// Carry out what the pane's series decided, in order.
-    fn apply_series_effects(&mut self, effects: impl IntoIterator<Item = SeriesEffect>) {
+    pub(crate) fn apply_series_effects(&mut self, effects: impl IntoIterator<Item = SeriesEffect>) {
         use PrefixInstallEffect::{
             RebuildIndicators, ShiftDrawings, ShiftIndicatorRows, ShiftViewport,
         };
@@ -109,13 +114,14 @@ impl ChartPane {
                 SeriesEffect::ReanchorDrawings(old_slots) => self.reanchor_drawings(old_slots),
                 SeriesEffect::BackfillIndicators(slots) => {
                     self.lane.reset();
-                    let mut history = self.series_read().closed_bars();
+                    let mut history = self.series_read().closed_footprint_bars();
                     history.truncate(slots);
                     self.indicator_worker
                         .send(IndicatorCommand::Backfilled(history));
                 }
                 SeriesEffect::PublishPartial => self.publish_partial(),
                 SeriesEffect::PublishTapePriceStep => self.publish_tape_price_step(),
+                SeriesEffect::ReplayIndicators => self.replay_indicators(),
             }
         }
     }
@@ -359,7 +365,7 @@ impl ChartPane {
                 &self.series.state.bars()[index],
                 self.series.history_prefix.len() + index,
             );
-            let closed = self.series.state.bars()[index].clone();
+            let closed = self.series_read().footprint_bar(index);
             self.lane.reset();
             self.indicator_worker
                 .send(IndicatorCommand::BarClosed(closed));
@@ -378,10 +384,8 @@ impl ChartPane {
     /// Publish only the forming run's unsent suffix; the worker retains it.
     /// Rebuilds and lane enable cold-seed the current run once.
     fn partial_command(&mut self) -> IndicatorCommand {
-        self.lane.command(
-            self.series.state.partial().cloned(),
-            self.series.state.trades(),
-        )
+        let partial = self.series_read().partial_footprint_bar();
+        self.lane.command(partial, self.series.state.trades())
     }
 }
 

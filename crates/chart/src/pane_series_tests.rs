@@ -271,3 +271,58 @@ fn a_weekly_future_slot_opens_on_the_next_monday() {
     assert_eq!(series.anchor_time(1.5), Some(monday + WEEK_MS));
     assert_eq!(series.future_slot_at_time(monday + WEEK_MS), Some(1.0));
 }
+
+/// Indicators get each bar with its footprint summary: the point of control
+/// while the ladders are folded, `na` for venue candles and while they are
+/// off. Switching them on or off moves the series revision the pane replays
+/// the indicators on.
+#[test]
+fn footprint_bars_carry_the_poc_only_while_ladders_are_folded() {
+    let spec = SpecSelector::new(BarSpec::Tick(2));
+    let mut state = ChartState::new(BarSpec::Tick(2));
+    let priced = |id: u64, price: i64| Trade {
+        price: Decimal::from(price),
+        ..print_at(id)
+    };
+    for (id, price) in [(1, 100), (2, 101), (3, 102)] {
+        state.ingest_live(&priced(id, price));
+    }
+    let prefix = [bar(0, 1)];
+    let off = read(&prefix, &state, &spec);
+    assert_eq!(off.footprint_bar(0).poc, None, "footprints are off");
+    assert_eq!(off.partial_footprint_bar().map(|bar| bar.poc), Some(None));
+
+    let revision = state.series_revision();
+    state.set_footprint_enabled(true);
+    assert_ne!(
+        state.series_revision(),
+        revision,
+        "a refold is a new series"
+    );
+    let on = read(&prefix, &state, &spec);
+    assert_eq!(on.footprint_bar(0).bar, state.bars()[0]);
+    assert_eq!(
+        on.footprint_bar(0).poc,
+        Some(Decimal::from(100)),
+        "ties go low"
+    );
+    let pocs: Vec<_> = on
+        .closed_footprint_bars()
+        .iter()
+        .map(|bar| bar.poc)
+        .collect();
+    assert_eq!(pocs, [None, Some(Decimal::from(100))], "venue candle first");
+    assert_eq!(
+        on.partial_footprint_bar().and_then(|bar| bar.poc),
+        Some(Decimal::from(102))
+    );
+
+    let revision = state.series_revision();
+    state.set_footprint_enabled(false);
+    assert_ne!(
+        state.series_revision(),
+        revision,
+        "dropping the ladders too"
+    );
+    assert_eq!(read(&prefix, &state, &spec).footprint_bar(0).poc, None);
+}

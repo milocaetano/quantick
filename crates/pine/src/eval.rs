@@ -302,6 +302,7 @@ impl<'a> Eval<'a> {
             Builtin::Delta => bar.delta(),
             Builtin::Cvd => self.ctx.cvd_now(),
             Builtin::TradeCount => bar.trade_count,
+            Builtin::Poc => bar.poc.unwrap_or(f64::NAN),
             Builtin::Hl2 => bar.hl2(),
             Builtin::Hlc3 => bar.hlc3(),
             Builtin::Ohlc4 => bar.ohlc4(),

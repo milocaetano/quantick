@@ -55,6 +55,7 @@ fn make_bar(index: usize, open: f64, close: f64, high: f64, low: f64) -> Indicat
         buy_volume: 2.0,
         sell_volume: 1.0,
         trade_count: 3.0,
+        poc: None,
     }
 }
 

@@ -331,3 +331,28 @@ fn indicator_row_drift_returns_its_answer() {
     });
     assert_eq!((caught_up, views.answered), (None, false));
 }
+
+/// A ladder refold or drop asks for the indicators' replay — their `poc`
+/// came from the ladders — and a switch that changes nothing does not.
+#[test]
+fn a_footprint_refold_replays_the_indicators() {
+    let mut series = series();
+    let replay = Some(SeriesEffect::ReplayIndicators);
+    assert_eq!(series.set_footprint_enabled(true), replay, "switched on");
+    assert_eq!(series.set_footprint_enabled(true), None, "already on");
+    assert_eq!(
+        series.set_footprint_group(Decimal::from(2)),
+        replay,
+        "new row width"
+    );
+    assert_eq!(
+        series.set_footprint_group(Decimal::from(2)),
+        None,
+        "same width"
+    );
+    assert_eq!(
+        series.set_footprint_enabled(false),
+        replay,
+        "ladders dropped"
+    );
+}

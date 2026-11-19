@@ -10,7 +10,7 @@ pub(super) fn variable(b: Builtin) -> Type {
         BarIndex | LastBarIndex | Time | TimeClose | Calendar(_) => Base::Int,
         BarstateIsConfirmed | BarstateIsLast => Base::Bool,
         Open | High | Low | Close | Volume | BuyVolume | SellVolume | Delta | Cvd | TradeCount
-        | Hl2 | Hlc3 | Ohlc4 | Hlcc4 | TaTr => Base::Float,
+        | Poc | Hl2 | Hlc3 | Ohlc4 | Hlcc4 | TaTr => Base::Float,
         _ => Base::Unknown,
     };
     Type::new(base, Qualifier::Series)

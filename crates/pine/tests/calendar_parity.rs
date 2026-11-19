@@ -13,6 +13,7 @@ fn bar(time: i64) -> IndicatorBar {
         buy_volume: 0.0,
         sell_volume: 0.0,
         trade_count: 0.0,
+        poc: None,
     }
 }
 fn load(source: &str) -> ScriptIndicator {

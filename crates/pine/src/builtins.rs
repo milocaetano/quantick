@@ -34,6 +34,8 @@ pub enum Builtin {
     Cvd,
     /// `trade_count` (flow, ours)
     TradeCount,
+    /// `poc` (flow, ours): the bar's footprint point-of-control price
+    Poc,
     /// `hl2`
     Hl2,
     /// `hlc3`
@@ -227,6 +229,7 @@ const BUILTINS: &[(&str, Builtin)] = &[
     ("delta", Builtin::Delta),
     ("cvd", Builtin::Cvd),
     ("trade_count", Builtin::TradeCount),
+    ("poc", Builtin::Poc),
     ("hl2", Builtin::Hl2),
     ("hlc3", Builtin::Hlc3),
     ("ohlc4", Builtin::Ohlc4),

@@ -23,7 +23,7 @@ fn bar(run: &[Trade]) -> Bar {
 
 fn update(run: &[Trade], new: &[Trade], rungs: usize) -> IndicatorCommand {
     IndicatorCommand::PartialUpdated {
-        partial: (!run.is_empty()).then(|| bar(run)),
+        partial: (!run.is_empty()).then(|| bar(run)).map(Into::into),
         run: new.to_vec(),
         rungs,
     }
@@ -106,13 +106,13 @@ fn irregular_drains_and_batched_commands_match_independent_cvd_rungs() {
     let history = bar(&[print(0, 10)]);
     let (whole, whole_lane) = one_batch(vec![
         add(),
-        IndicatorCommand::Backfilled(vec![history.clone()]),
+        IndicatorCommand::Backfilled(vec![history.clone().into()]),
         update(&prints, &prints, 3),
     ]);
     assert_final(&whole, &whole_lane);
     let (batched, batched_lane) = one_batch(vec![
         add(),
-        IndicatorCommand::Backfilled(vec![history.clone()]),
+        IndicatorCommand::Backfilled(vec![history.clone().into()]),
         update(&prints[..1], &prints[..1], 3),
         update(&prints[..4], &prints[1..4], 3),
         update(&prints[..4], &[], 3),
@@ -122,7 +122,7 @@ fn irregular_drains_and_batched_commands_match_independent_cvd_rungs() {
     assert_final(&batched, &batched_lane);
     let worker = IndicatorWorker::spawn();
     worker.send(add());
-    worker.send(IndicatorCommand::Backfilled(vec![history]));
+    worker.send(IndicatorCommand::Backfilled(vec![history.into()]));
     let mut before = 0;
     let mut events = Vec::new();
     for after in [1, 4, 4, 6, 7] {
@@ -142,9 +142,9 @@ fn close_cuts_an_earlier_partial_before_the_next_run_in_the_same_batch() {
     let next = [print(3, 7), print(4, -2)];
     let (views, lane) = one_batch(vec![
         add(),
-        IndicatorCommand::Backfilled(vec![bar(&[print(0, 10)])]),
+        IndicatorCommand::Backfilled(vec![bar(&[print(0, 10)]).into()]),
         update(&old, &old, 8),
-        IndicatorCommand::BarClosed(bar(&old)),
+        IndicatorCommand::BarClosed(bar(&old).into()),
         update(&next, &next[..1], 8),
         update(&next, &next[1..], 8),
     ]);
@@ -166,7 +166,7 @@ fn close_cuts_an_earlier_partial_before_the_next_run_in_the_same_batch() {
     let (closed, lane) = one_batch(vec![
         add(),
         update(&old, &old, 8),
-        IndicatorCommand::BarClosed(bar(&old)),
+        IndicatorCommand::BarClosed(bar(&old).into()),
     ]);
     assert_eq!(closed.all()[0].columns, vec![vec![1.0]]);
     assert!(closed.all()[0].preview.is_none());
@@ -178,8 +178,8 @@ fn rebuild_backfill_vanished_partial_and_disabled_lane_cut_stale_runs() {
     let stale = [print(1, 90)];
     let current = [print(2, 3), print(3, -1)];
     for reset in [
-        IndicatorCommand::Rebuild(vec![bar(&[print(0, 20)])], None),
-        IndicatorCommand::Backfilled(vec![bar(&[print(0, 20)])]),
+        IndicatorCommand::Rebuild(vec![bar(&[print(0, 20)]).into()], None),
+        IndicatorCommand::Backfilled(vec![bar(&[print(0, 20)]).into()]),
     ] {
         let (views, lane) = one_batch(vec![
             add(),
@@ -250,13 +250,16 @@ fn retired_epoch_releases_peak_capacity_and_preserves_small_run_outputs() {
         .collect();
     let history = bar(&[print(0, 10)]);
     for (reset, mut columns) in [
-        (IndicatorCommand::BarClosed(bar(&large)), vec![10.0, 10.0]),
         (
-            IndicatorCommand::Backfilled(vec![history.clone()]),
+            IndicatorCommand::BarClosed(bar(&large).into()),
+            vec![10.0, 10.0],
+        ),
+        (
+            IndicatorCommand::Backfilled(vec![history.clone().into()]),
             vec![10.0],
         ),
         (
-            IndicatorCommand::Rebuild(vec![history.clone()], None),
+            IndicatorCommand::Rebuild(vec![history.clone().into()], None),
             vec![10.0],
         ),
     ] {
@@ -264,7 +267,7 @@ fn retired_epoch_releases_peak_capacity_and_preserves_small_run_outputs() {
         let mut views = IndicatorViews::new();
         views.allocate_slot("native.cvd");
         worker.send(add());
-        worker.send(IndicatorCommand::Backfilled(vec![history.clone()]));
+        worker.send(IndicatorCommand::Backfilled(vec![history.clone().into()]));
         worker.send(update(&large[..2048], &large[..2048], 2));
         publish(&worker, &mut views);
         assert_eq!(worker.retained_lane_for_test().0, 2048);
@@ -329,7 +332,7 @@ fn retired_epoch_releases_peak_capacity_and_preserves_small_run_outputs() {
             worker.send(update(&run, &[], 2));
             assert_eq!(publish(&worker, &mut views), lane);
             assert_eq!(worker.retained_lane_for_test(), (length, capacity));
-            worker.send(IndicatorCommand::BarClosed(bar(&run)));
+            worker.send(IndicatorCommand::BarClosed(bar(&run).into()));
             assert!(publish(&worker, &mut views).is_empty());
             assert_eq!(worker.retained_lane_for_test(), (0, 0));
             columns.push(preview);

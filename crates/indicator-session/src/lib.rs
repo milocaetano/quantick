@@ -3,12 +3,14 @@
 //! synchronously at the original transitions, without buffering output history.
 mod batch;
 mod lane;
+mod lane_transport;
 mod protocol;
 mod publication;
 mod session;
 mod source;
 pub use batch::{Applying, Publishing};
 pub use lane::{LaneDiagnostics, MAX_LANE_RUNGS};
+pub use lane_transport::LaneTransport;
 pub use protocol::{
     IndicatorCommand, IndicatorEvent, LaneSample, SlotId, fold_parked, unloaded_script_events,
 };

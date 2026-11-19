@@ -78,6 +78,7 @@ fn bar() -> IndicatorBar {
         buy_volume: 1.0,
         sell_volume: 0.0,
         trade_count: 1.0,
+        poc: None,
     }
 }
 

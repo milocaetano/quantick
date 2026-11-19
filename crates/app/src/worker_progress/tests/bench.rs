@@ -160,7 +160,7 @@ fn indicator_fixture(spec: Spec) -> Vec<Vec<IndicatorCommand>> {
                 assert!(i == 20_000 || i == 40_000, "independent dollar close index");
                 assert_indicator_bar(&closed, closed_count * 20_000 + 1, i);
                 closed_count += 1;
-                commands.push(IndicatorCommand::BarClosed(closed));
+                commands.push(IndicatorCommand::BarClosed(closed.into()));
             }
             let partial = builder.partial().cloned();
             let suffix = if partial.is_some() {
@@ -169,7 +169,7 @@ fn indicator_fixture(spec: Spec) -> Vec<Vec<IndicatorCommand>> {
                 Vec::new()
             };
             commands.push(IndicatorCommand::PartialUpdated {
-                partial,
+                partial: partial.map(Into::into),
                 run: suffix,
                 rungs: 16,
             });

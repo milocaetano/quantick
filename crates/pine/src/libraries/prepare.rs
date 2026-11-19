@@ -183,7 +183,7 @@ fn builtin_default(ast: &Ast, node: crate::ast::NodeId) -> Option<&'static str> 
         BarIndex | LastBarIndex | Time | TimeClose | Calendar(_) => Some("int"),
         BarstateIsConfirmed | BarstateIsLast => Some("bool"),
         Open | High | Low | Close | Volume | BuyVolume | SellVolume | Delta | Cvd | TradeCount
-        | Hl2 | Hlc3 | Ohlc4 | Hlcc4 | TaTr => Some("float"),
+        | Poc | Hl2 | Hlc3 | Ohlc4 | Hlcc4 | TaTr => Some("float"),
         _ => None,
     }
 }

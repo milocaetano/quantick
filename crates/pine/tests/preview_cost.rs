@@ -50,6 +50,7 @@ fn preview_tick_cost_on_two_thousand_bars() {
             buy_volume: buy,
             sell_volume: sell,
             trade_count: 3.0,
+            poc: None,
         });
         sum += buy - sell;
         cvd.push(sum);

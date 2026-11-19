@@ -164,7 +164,8 @@ impl Rig {
             if self.state.bars().len() > before {
                 self.lane.reset();
                 let closed = self.state.bars().last().cloned().expect("a bar closed");
-                self.indicators.send(IndicatorCommand::BarClosed(closed));
+                self.indicators
+                    .send(IndicatorCommand::BarClosed(closed.into()));
             }
         }
         for _ in 0..depth {
@@ -186,9 +187,10 @@ impl Rig {
                 received_at_ms: at,
             });
         }
-        let partial = self
-            .lane
-            .command(self.state.partial().cloned(), self.state.trades());
+        let partial = self.lane.command(
+            self.state.partial().cloned().map(Into::into),
+            self.state.trades(),
+        );
         self.indicators.send(partial);
         self.book.send(BookCommand::Project(ProjectionRequest {
             timeline_revision: 1,

@@ -72,6 +72,7 @@ pub fn kernel_goldens() -> usize {
             buy_volume: b,
             sell_volume: 0.0,
             trade_count: 0.0,
+            poc: None,
         };
         let mut ctx = Ctx {
             bar_index: index as usize,

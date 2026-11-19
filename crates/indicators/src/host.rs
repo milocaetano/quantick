@@ -11,8 +11,8 @@
 //! app-side. A backtester or bot drives this same type directly: push bars,
 //! read committed plot columns. That symmetry is the point.
 //!
-//! The host retains the projected bar history (`IndicatorBar` is 9 machine
-//! words; 100k bars ≈ 7 MB). That is what lets [`add`](IndicatorHost::add)
+//! The host retains the projected bar history (`IndicatorBar` is 11 machine
+//! words; 100k bars ≈ 8.8 MB). That is what lets [`add`](IndicatorHost::add)
 //! and [`replace`](IndicatorHost::replace) catch a newcomer up over the full
 //! history without asking the caller to re-supply bars — an input change is
 //! "construct with new inputs, replace, host replays", so a running script
@@ -21,6 +21,7 @@
 use quantick_engine::Bar;
 
 use crate::bar::IndicatorBar;
+use crate::footprint_bar::HostBar;
 use crate::indicator::{Ctx, EvalError, Indicator, IndicatorDescriptor};
 use crate::output::{PlotBuffer, PreviewFrame, Rgba8, resolve_bar_paint};
 
@@ -137,8 +138,8 @@ impl IndicatorHost {
     /// Commit one closed bar: project it once, extend the shared cvd, run
     /// every healthy indicator's commit run. A failing indicator enters its
     /// error state; the others are unaffected.
-    pub fn push_closed_bar(&mut self, bar: &Bar) {
-        self.commit_bar(&IndicatorBar::from(bar));
+    pub fn push_closed_bar(&mut self, bar: &impl HostBar) {
+        self.commit_bar(&bar.project());
     }
 
     /// Run previews against the forming bar (or clear them with `None`).
@@ -146,7 +147,7 @@ impl IndicatorHost {
     /// The forming bar's cvd is staged onto the committed column and popped
     /// right after the previews — the same truncate-don't-clone discipline
     /// the series store uses, so a preview costs no allocation here.
-    pub fn set_partial(&mut self, partial: Option<&Bar>) {
+    pub fn set_partial<B: HostBar>(&mut self, partial: Option<&B>) {
         let Some(bar) = partial else {
             self.partial = None;
             for instance in &mut self.instances {
@@ -154,7 +155,7 @@ impl IndicatorHost {
             }
             return;
         };
-        let bar = IndicatorBar::from(bar);
+        let bar = bar.project();
         self.partial = Some(bar);
         let bar_index = self.bars.len();
         let staged_cvd = self.cvd.last().copied().unwrap_or(0.0) + bar.delta();
@@ -275,7 +276,7 @@ impl IndicatorHost {
     /// Reset everything and replay `bars` from scratch (spec switch, replay
     /// seek, prepended history). Error states clear — a deterministic
     /// failure will honestly re-surface at the same bar.
-    pub fn rebuild(&mut self, bars: &[Bar], partial: Option<&Bar>) {
+    pub fn rebuild<B: HostBar>(&mut self, bars: &[B], partial: Option<&B>) {
         self.bars.clear();
         self.cvd.clear();
         for instance in &mut self.instances {
@@ -284,7 +285,7 @@ impl IndicatorHost {
             instance.preview = None;
         }
         for bar in bars {
-            self.commit_bar(&IndicatorBar::from(bar));
+            self.commit_bar(&bar.project());
         }
         self.set_partial(partial);
     }

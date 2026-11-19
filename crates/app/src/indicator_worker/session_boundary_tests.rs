@@ -124,9 +124,9 @@ fn a_middle_flush_waits_for_later_inputs_while_a_probe_sees_its_position() {
         crate::indicator_worker::WorkerCommand::Flush(ack_tx),
         IndicatorCommand::Remove(SlotId(99)).into(),
         IndicatorCommand::SetInputs { slot: SlotId(0), values: vec![InputValue::Int(3)] }.into(),
-        IndicatorCommand::PartialUpdated { partial: Some(one), run: vec![first], rungs: 2 }.into(),
+        IndicatorCommand::PartialUpdated { partial: Some(one.into()), run: vec![first], rungs: 2 }.into(),
         crate::indicator_worker::WorkerCommand::InspectLane(probe_tx),
-        IndicatorCommand::PartialUpdated { partial: Some(partial), run: vec![second], rungs: 2 }.into(),
+        IndicatorCommand::PartialUpdated { partial: Some(partial.into()), run: vec![second], rungs: 2 }.into(),
     ] { worker.send(command); }
     let thread = std::thread::spawn(run);
     publication.reached();
@@ -183,12 +183,12 @@ fn applying_effect_unwind_keeps_the_reached_subsets_in_the_actual_runtime_guard(
             values: vec![],
         },
         IndicatorCommand::PartialUpdated {
-            partial: Some(partial.clone()),
+            partial: Some(partial.clone().into()),
             run: vec![one],
             rungs: 1,
         },
         IndicatorCommand::PartialUpdated {
-            partial: Some(partial),
+            partial: Some(partial.into()),
             run: vec![],
             rungs: 1,
         },

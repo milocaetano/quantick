@@ -35,6 +35,7 @@ pub fn bars(tape: &str) -> Vec<IndicatorBar> {
                 buy_volume: n(6),
                 sell_volume: n(7),
                 trade_count: n(8),
+                poc: None,
             }
         })
         .collect()

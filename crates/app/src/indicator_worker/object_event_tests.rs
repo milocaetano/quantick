@@ -24,7 +24,9 @@ fn zigzag_objects_flow_to_the_views_and_survive_rebuild() {
     let trades: Vec<quantick_engine::Trade> = (1..=60).map(tests::trade).collect();
     let mut builder = quantick_engine::TickBarBuilder::new(1);
     let bars = quantick_engine::golden::replay(&mut builder, &trades);
-    worker.send(IndicatorCommand::Backfilled(bars.clone()));
+    worker.send(IndicatorCommand::Backfilled(
+        bars.clone().into_iter().map(Into::into).collect(),
+    ));
     worker.flush();
     for event in worker.drain_events() {
         views.apply(event);
@@ -47,7 +49,10 @@ fn zigzag_objects_flow_to_the_views_and_survive_rebuild() {
     // A rebuild over the same bars reproduces the identical object set —
     // determinism through the seek/spec-switch path.
     let before = objects.clone();
-    worker.send(IndicatorCommand::Rebuild(bars, None));
+    worker.send(IndicatorCommand::Rebuild(
+        bars.into_iter().map(Into::into).collect(),
+        None,
+    ));
     worker.flush();
     for event in worker.drain_events() {
         views.apply(event);

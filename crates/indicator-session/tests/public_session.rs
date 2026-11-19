@@ -56,9 +56,9 @@ fn public_session_preserves_immediate_errors_and_incremental_cvd_trace() {
         vec![
             add(0, "fixture.missing"),
             add(1, "native.cvd"),
-            Command::Backfilled(vec![Bar::opened_by(&trade(1, 10, Side::Buy))]),
+            Command::Backfilled(vec![Bar::opened_by(&trade(1, 10, Side::Buy)).into()]),
             Command::PartialUpdated {
-                partial: Some(partial.clone()),
+                partial: Some(partial.clone().into()),
                 run: vec![first, second],
                 rungs: 2,
             },
@@ -84,7 +84,7 @@ fn public_session_preserves_immediate_errors_and_incremental_cvd_trace() {
     recorder.0.clear();
     run(
         &mut session,
-        vec![Command::BarClosed(partial)],
+        vec![Command::BarClosed(partial.into())],
         &mut recorder,
     );
     assert_eq!(recorder.0.len(), 3);
