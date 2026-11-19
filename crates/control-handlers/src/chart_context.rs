@@ -19,6 +19,7 @@ use quantick_session::strategy_reading::ArmedReading;
 use serde_json::Value;
 
 use crate::addressed_pane::AddressedPanePort;
+use crate::annotate::annotation_band;
 use crate::chart::{ChartPort, MissingPane};
 use crate::dock::ActionDock;
 use crate::indicator_host::IndicatorControlHost;
@@ -32,7 +33,6 @@ pub trait ArmedTab {
     fn armed_on(&self, pane_id: u64) -> Vec<ArmedReading<DrawingId>>;
 }
 
-/// Everything the read reaches.
 pub trait ChartContextHost:
     ChartPort + IndicatorControlHost + OpenTabs<Tab: ArmedTab> + AddressedPanePort<Pane: PaneMarks>
 {
@@ -47,8 +47,6 @@ impl<T> ChartContextHost for T where
 {
 }
 
-/// Dock `chart.context.read`.
-///
 /// # Errors
 /// The capability is already docked.
 pub fn register<D, H, A>(registry: &mut D) -> Result<(), RegistryError>
@@ -71,8 +69,6 @@ fn request<H: ChartContextHost + ?Sized, A>(
     serde_json::to_value(document).map_err(|error| ControlError::invalid_request(error.to_string()))
 }
 
-/// The pane `input` names, read whole.
-///
 /// # Errors
 /// An unknown tab or pane, or an indicator owner that refuses the read.
 pub fn read<H: ChartContextHost + ?Sized>(
@@ -111,34 +107,34 @@ pub fn read<H: ChartContextHost + ?Sized>(
         indicators: wire::indicators(saved),
         indicators_total,
         drawings: drawings(marks),
-        drawings_total: wire_usize(marks.items().len()),
+        drawings_total: wire_usize(marks.shown_count()),
         strategies: strategies(&armed, marks),
         strategies_total: wire_usize(armed.len()),
     })
 }
 
+/// The marks this chart's layout shows ([`Drawings::shown`]), as the
+/// analysis scope lists them.
 fn drawings(marks: &Drawings<DrawingTool>) -> Vec<Drawing> {
-    let selected = marks.selected_id();
-    (marks.items().iter().take(MAX_DRAWINGS))
-        .map(|mark| Drawing {
+    let selected = marks.selected();
+    (marks.shown().take(MAX_DRAWINGS))
+        .map(|(index, mark)| Drawing {
             id: WireU64::new(mark.id.0),
             name: mark.name.clone(),
             kind: mark.tool.id().to_owned(),
+            band: annotation_band(&mark.band),
             prices: (mark.points.iter())
-                .filter_map(|point| canonical_f64(point.price, ANNOTATION_PRICE_DECIMALS))
+                .map(|point| canonical_f64(point.price, ANNOTATION_PRICE_DECIMALS))
                 .collect(),
-            selected: selected == Some(mark.id),
+            selected: selected == Some(index),
             locked: mark.locked,
-            hidden: mark.hidden,
+            hidden: mark.hidden || marks.all_hidden(),
         })
         .collect()
 }
 
 fn strategies(armed: &[ArmedReading<DrawingId>], marks: &Drawings<DrawingTool>) -> Vec<Strategy> {
-    let name_of = |id| {
-        let index = marks.index_of(id)?;
-        marks.items()[index].name.clone()
-    };
+    let name_of = |id| marks.shown_by_id(id)?.name.clone();
     (armed.iter().take(MAX_STRATEGIES))
         .map(|reading| Strategy {
             drawing_id: WireU64::new(reading.drawing.0),
@@ -150,6 +146,9 @@ fn strategies(armed: &[ArmedReading<DrawingId>], marks: &Drawings<DrawingTool>) 
             }
             .to_owned(),
             quantity: canonical_decimal(reading.quantity),
+            tp_mult: canonical_decimal(reading.tp_mult),
+            sl_mult: canonical_decimal(reading.sl_mult),
+            on_break: reading.on_break.to_owned(),
             execution: reading.execution.to_owned(),
             rearm: reading.rearm.to_owned(),
             state: reading.state.to_owned(),

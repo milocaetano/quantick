@@ -1,23 +1,26 @@
-//! A pane's armed strategies as a reader sees them: plain words and numbers,
-//! no kernel type, so a control call can list them without reaching into the
-//! strategy crate. The words are the kernel's own badge vocabulary.
+//! A pane's armed strategies as plain words and numbers. The control crates
+//! may not depend on `quantick-strategy` (`guards/src/graph.rs`), so a read
+//! of them crosses here, where the kernel types are in reach.
 
 use quantick_engine::Side;
 use quantick_strategy::anchors::{AnchoredInstance, badge_text};
-use quantick_strategy::{ArmedState, Execution, Rearm};
+use quantick_strategy::{ArmedState, BreakPolicy, Execution, Rearm};
 use rust_decimal::Decimal;
 
 use crate::strategies::TabStrategies;
 
-/// One armed instance, read.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ArmedReading<D> {
-    /// The drawing the instance rides.
     pub drawing: D,
-    /// The preset name the badge shows.
     pub preset: String,
     pub side: Side,
     pub quantity: Decimal,
+    /// Take profit at `tp_mult` × the bar's projection; zero or less, none.
+    pub tp_mult: Decimal,
+    /// Stop at `sl_mult` × the bar's projection; zero or less, none.
+    pub sl_mult: Decimal,
+    /// `ignore` or `retest_limit`: what a bar cutting through the region does.
+    pub on_break: &'static str,
     /// `paper` places orders; `alarm_only` only watches.
     pub execution: &'static str,
     /// `one_shot` or `auto`.
@@ -31,7 +34,6 @@ pub struct ArmedReading<D> {
 }
 
 impl<D: Copy> ArmedReading<D> {
-    /// `instance`, read.
     #[must_use]
     pub fn of(instance: &AnchoredInstance<D>) -> Self {
         let params = instance.armed.params();
@@ -48,6 +50,12 @@ impl<D: Copy> ArmedReading<D> {
             preset: instance.preset.clone(),
             side: params.side,
             quantity: params.quantity,
+            tp_mult: params.tp_mult,
+            sl_mult: params.sl_mult,
+            on_break: match params.on_break {
+                BreakPolicy::Ignore => "ignore",
+                BreakPolicy::RetestLimit => "retest_limit",
+            },
             execution: match params.execution {
                 Execution::Paper => "paper",
                 Execution::AlarmOnly => "alarm_only",

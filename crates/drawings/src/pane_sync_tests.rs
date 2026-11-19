@@ -523,3 +523,22 @@ fn putting_a_chart_away_forgets_a_blocked_recut() {
     chart.marks().put_away(store.settings_mut());
     assert!(chart.layout.recut_checked.is_none());
 }
+
+/// Two charts of one market never hand out the same name: a chart follows
+/// the store's names before it names its next mark.
+#[test]
+fn two_charts_of_one_market_name_their_marks_apart() {
+    let mut store = market_store();
+    let session = LayoutSession::new(LayoutBook::default());
+    let mut flow_chart = Chart::open(store.settings(), flow(), 1);
+    let mut context_chart = Chart::open(store.settings(), context(), 5);
+    level_at(&mut flow_chart.drawings, 1.0, 100.0);
+    flow_chart.drawings.items_mut()[0].set_scope(DrawingScope::ThisChart);
+    flow_chart.marks().persist(store.settings_mut());
+
+    context_chart.marks().follow_store(&store, &session);
+    level_at(&mut context_chart.drawings, 2.0, 200.0);
+    let name = |chart: &Chart| chart.drawings.items()[0].name.clone();
+    assert_eq!(name(&flow_chart).as_deref(), Some("line-1"));
+    assert_eq!(name(&context_chart).as_deref(), Some("line-2"));
+}

@@ -6,11 +6,17 @@
 
 use crate::{Drawing, Drawings, ToolCatalog};
 use quantick_workspace::drawing_names::{self, NameFloors};
+use quantick_workspace::market_settings::MarketKey;
 
 impl<T: ToolCatalog> Drawings<T> {
-    /// Never name a mark at or below `floors`: the generated numbers its
-    /// market's store already uses.
-    pub fn reserve_names(&mut self, floors: &NameFloors) {
+    /// Never name a mark at or below `floors`: the generated numbers
+    /// `market`'s store already uses. Floors rise while the store holds one
+    /// market, and start over when it holds another.
+    pub fn reserve_names(&mut self, market: &MarketKey, floors: &NameFloors) {
+        if self.name_market.as_ref() != Some(market) {
+            self.name_floors.clear();
+            self.name_market = Some(market.clone());
+        }
         for (prefix, floor) in floors {
             let held = self.name_floors.entry(prefix.clone()).or_insert(0);
             *held = (*held).max(*floor);
@@ -19,10 +25,8 @@ impl<T: ToolCatalog> Drawings<T> {
 
     /// The next free name for a mark of `tool`, taken.
     pub(crate) fn take_name(&mut self, tool: T) -> String {
-        drawing_names::raise_floors(
-            &mut self.name_floors,
-            (self.items.iter()).map(|mark| (mark.tool.id(), mark.name.as_deref())),
-        );
+        let names = self.items.iter().filter_map(|mark| mark.name.as_deref());
+        drawing_names::raise_floors(&mut self.name_floors, names);
         drawing_names::next_name(&mut self.name_floors, tool.id())
     }
 
@@ -35,16 +39,18 @@ impl<T: ToolCatalog> Drawings<T> {
     }
 
     /// Rename the object at `index` as one undo step. Whitespace-only input
-    /// gives it back a generated name, never none.
+    /// keeps a generated name and replaces a typed one with the next
+    /// generated name, so a mark is never left without one.
     pub fn rename_at(&mut self, index: usize, name: &str) {
-        if index >= self.items.len() {
+        let Some(mark) = self.items.get(index) else {
             return;
-        }
+        };
+        let (tool, held) = (mark.tool, mark.name.clone());
         let trimmed = name.trim();
-        let name = if trimmed.is_empty() {
-            self.take_name(self.items[index].tool)
-        } else {
-            trimmed.to_owned()
+        let name = match held {
+            _ if !trimmed.is_empty() => trimmed.to_owned(),
+            Some(held) if drawing_names::is_generated_for(&held, tool.id()) => held,
+            _ => self.take_name(tool),
         };
         let before = self.snapshot();
         self.items[index].name = Some(name);

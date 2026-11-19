@@ -44,8 +44,6 @@ impl<T: Clone + PartialEq> Drawings<T> {
         self.undo.clear();
         self.redo.clear();
         self.gesture_baseline = None;
-        // Names are per market, and what comes next may be another market.
-        self.name_floors.clear();
         std::mem::take(&mut self.items)
     }
 

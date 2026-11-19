@@ -65,8 +65,10 @@ pub struct Drawings<T> {
     pub(crate) let_go: Option<crate::DrawingId>,
     /// The highest generated name number per prefix this store has handed
     /// out or been told its market uses: never lowered while the store holds
-    /// one market, so a deleted mark's name is not reborn on the next one.
+    /// [`Self::name_market`], so a deleted mark's name is not reborn.
     pub(crate) name_floors: quantick_workspace::drawing_names::NameFloors,
+    /// The market [`Self::name_floors`] were read from.
+    pub(crate) name_market: Option<quantick_workspace::market_settings::MarketKey>,
 }
 
 // By hand: a derive would ask the tool handle for a `Default` it has no
@@ -88,6 +90,7 @@ impl<T> Default for Drawings<T> {
             unclaimed: Vec::new(),
             let_go: None,
             name_floors: quantick_workspace::drawing_names::NameFloors::new(),
+            name_market: None,
         }
     }
 }

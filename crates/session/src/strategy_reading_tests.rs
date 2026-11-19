@@ -21,6 +21,11 @@ fn a_pane_reads_its_instances_in_arming_order_with_their_state() {
     assert_eq!(read[0].side, Side::Buy);
     assert_eq!(read[0].quantity, Decimal::ONE);
     assert_eq!(
+        (read[0].tp_mult, read[0].sl_mult),
+        (Decimal::ONE, Decimal::ONE)
+    );
+    assert_eq!(read[0].on_break, "ignore");
+    assert_eq!(
         (read[0].execution, read[0].rearm, read[0].state),
         ("paper", "one_shot", "armed")
     );

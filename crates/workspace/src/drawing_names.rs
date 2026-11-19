@@ -48,28 +48,33 @@ pub fn prefix_for(tool_id: &str) -> &str {
     }
 }
 
-/// The number in `name` when it reads `<prefix>-<n>` with `n >= 1`.
+/// The prefix and number of `name` when it reads `<prefix>-<n>` with
+/// `n >= 1`, whatever the prefix: a generated name of any tool, or a typed
+/// name shaped like one, which the next generated name must not repeat.
 #[must_use]
-pub fn number_in(name: &str, prefix: &str) -> Option<u64> {
-    let digits = name.strip_prefix(prefix)?.strip_prefix('-')?;
-    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) || digits.starts_with('0') {
+pub fn split_generated(name: &str) -> Option<(&str, u64)> {
+    let (prefix, digits) = name.rsplit_once('-')?;
+    if prefix.is_empty()
+        || digits.is_empty()
+        || !digits.bytes().all(|b| b.is_ascii_digit())
+        || digits.starts_with('0')
+    {
         return None;
     }
-    digits.parse().ok()
+    Some((prefix, digits.parse().ok()?))
 }
 
-/// Raise `floors` to every name in `marks` that reads like its tool's
-/// generated name. `marks` yields `(tool id, name)`.
-pub fn raise_floors<'a>(
-    floors: &mut NameFloors,
-    marks: impl IntoIterator<Item = (&'a str, Option<&'a str>)>,
-) {
-    for (tool, name) in marks {
-        let prefix = prefix_for(tool);
-        if let Some(n) = name.and_then(|name| number_in(name, prefix)) {
-            let floor = floors.entry(prefix.to_owned()).or_insert(0);
-            *floor = (*floor).max(n);
-        }
+/// Whether `name` is a generated name of a mark of `tool_id`.
+#[must_use]
+pub fn is_generated_for(name: &str, tool_id: &str) -> bool {
+    split_generated(name).is_some_and(|(prefix, _)| prefix == prefix_for(tool_id))
+}
+
+/// Raise `floors` to every name in `names` shaped like a generated one.
+pub fn raise_floors<'a>(floors: &mut NameFloors, names: impl IntoIterator<Item = &'a str>) {
+    for (prefix, n) in names.into_iter().filter_map(split_generated) {
+        let floor = floors.entry(prefix.to_owned()).or_insert(0);
+        *floor = (*floor).max(n);
     }
 }
 

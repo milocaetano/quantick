@@ -13,10 +13,7 @@ impl MarketSettings {
         let mut floors = NameFloors::new();
         let sets = self.drawings.iter().filter(|set| set.is_market(market));
         let marks = sets.flat_map(|set| &set.items);
-        drawing_names::raise_floors(
-            &mut floors,
-            marks.map(|mark| (mark.tool.as_str(), mark.name.as_deref())),
-        );
+        drawing_names::raise_floors(&mut floors, marks.filter_map(|mark| mark.name.as_deref()));
         floors
     }
 

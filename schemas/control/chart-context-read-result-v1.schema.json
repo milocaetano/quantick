@@ -1,5 +1,43 @@
 {
   "$defs": {
+    "AnnotationBand": {
+      "description": "Which value axis of the pane an annotation's anchor prices are read on.\nOmitted: the candles' price axis, so every call written before indicator\nbands existed means what it always meant.",
+      "oneOf": [
+        {
+          "const": "price",
+          "description": "The candles' price axis.",
+          "type": "string"
+        },
+        {
+          "additionalProperties": false,
+          "description": "One indicator pane's own value axis, named by the `kind` and `ordinal`\nthe pane's indicators snapshot reports (`native.cvd`, `0`). Anchor\n`price` is then that indicator's value: a CVD level, not a price.",
+          "properties": {
+            "indicator": {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "type": "string"
+                },
+                "ordinal": {
+                  "format": "uint32",
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "kind",
+                "ordinal"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "indicator"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "BarSpecDto": {
       "properties": {
         "imbalance_unit": {
@@ -30,9 +68,20 @@
       "type": "string"
     },
     "Drawing": {
-      "description": "One drawn object.",
       "properties": {
+        "band": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AnnotationBand"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The value axis the prices are on: the candles' price axis, or an\nindicator pane's (then a price is that indicator's value). Absent for\na mark of an instant, which has no value axis."
+        },
         "hidden": {
+          "description": "Hidden by its own eye or by the chart's hide-all.",
           "type": "boolean"
         },
         "id": {
@@ -53,9 +102,16 @@
           ]
         },
         "prices": {
-          "description": "Each anchor's price, in anchor order.",
+          "description": "One per anchor, in anchor order; null for an anchor whose price is\nnot a finite number.",
           "items": {
-            "$ref": "#/$defs/CanonicalDecimal"
+            "anyOf": [
+              {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "type": "array"
         },
@@ -74,7 +130,6 @@
       "type": "object"
     },
     "Indicator": {
-      "description": "One indicator slot and its committed inputs.",
       "properties": {
         "hidden": {
           "type": "boolean"
@@ -137,7 +192,6 @@
       "type": "string"
     },
     "Strategy": {
-      "description": "One strategy armed on a drawing.",
       "properties": {
         "badge": {
           "description": "The badge the chart prints beside the drawing.",
@@ -163,6 +217,10 @@
           "description": "`paper` places orders; `alarm_only` only watches.",
           "type": "string"
         },
+        "on_break": {
+          "description": "`ignore` or `retest_limit`: what a bar cutting through the region does.",
+          "type": "string"
+        },
         "preset": {
           "type": "string"
         },
@@ -177,9 +235,17 @@
           "description": "`buy` or `sell`.",
           "type": "string"
         },
+        "sl_mult": {
+          "$ref": "#/$defs/CanonicalDecimal",
+          "description": "Stop at this multiple of the trigger bar's projection; zero or less,\nno stop leg."
+        },
         "state": {
           "description": "`armed`, `fired`, `retest_resting`, `in_position`, `done` or `disarmed`.",
           "type": "string"
+        },
+        "tp_mult": {
+          "$ref": "#/$defs/CanonicalDecimal",
+          "description": "Take profit at this multiple of the trigger bar's projection; zero or\nless, no take-profit leg."
         }
       },
       "required": [
@@ -187,6 +253,9 @@
         "preset",
         "side",
         "quantity",
+        "tp_mult",
+        "sl_mult",
+        "on_break",
         "execution",
         "rearm",
         "state",
@@ -315,14 +384,12 @@
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "One chart pane's context.",
   "properties": {
     "bar_spec": {
-      "$ref": "#/$defs/BarSpecDto",
-      "description": "The bar type and its parameter."
+      "$ref": "#/$defs/BarSpecDto"
     },
     "drawings": {
-      "description": "The first [`MAX_DRAWINGS`], back to front.",
+      "description": "The first [`MAX_DRAWINGS`] this chart's layout shows, back to front;\na mark held only for another strip layout is left out.",
       "items": {
         "$ref": "#/$defs/Drawing"
       },

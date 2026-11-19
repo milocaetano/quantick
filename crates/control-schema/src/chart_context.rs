@@ -3,6 +3,7 @@
 //! its drawings by name, and the strategies armed on them. Each list is
 //! capped; its total says how many there were.
 use crate::native_indicator::Value;
+use quantick_control::annotation::AnnotationBand;
 use quantick_control::registry::CapabilityDescriptor;
 use quantick_control::wire::{CanonicalDecimal, WireU64};
 use quantick_control_host::authority::{ReadSpec, read_descriptor};
@@ -12,11 +13,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 pub const CONTEXT_CAPABILITY_ID: &str = "chart.context.read";
-/// The most indicators one document lists.
 pub const MAX_INDICATORS: usize = 64;
-/// The most drawings one document lists.
 pub const MAX_DRAWINGS: usize = 256;
-/// The most armed strategies one document lists.
 pub const MAX_STRATEGIES: usize = 64;
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
@@ -26,19 +24,18 @@ pub struct Input {
     pub pane_id: WireU64,
 }
 
-/// One chart pane's context.
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 pub struct Document {
     pub tab_id: WireU64,
     pub pane_id: WireU64,
     pub feed_id: String,
     pub symbol: String,
-    /// The bar type and its parameter.
     pub bar_spec: BarSpecDto,
     /// The first [`MAX_INDICATORS`], in the pane's order.
     pub indicators: Vec<Indicator>,
     pub indicators_total: WireU64,
-    /// The first [`MAX_DRAWINGS`], back to front.
+    /// The first [`MAX_DRAWINGS`] this chart's layout shows, back to front;
+    /// a mark held only for another strip layout is left out.
     pub drawings: Vec<Drawing>,
     pub drawings_total: WireU64,
     /// The first [`MAX_STRATEGIES`], in arming order.
@@ -53,7 +50,6 @@ pub enum IndicatorKind {
     Script,
 }
 
-/// One indicator slot and its committed inputs.
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 pub struct Indicator {
     pub slot_id: WireU64,
@@ -75,7 +71,6 @@ pub struct IndicatorInput {
     pub value: Value,
 }
 
-/// One drawn object.
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
 pub struct Drawing {
     pub id: WireU64,
@@ -84,14 +79,19 @@ pub struct Drawing {
     pub name: Option<String>,
     /// The drawing tool id (`rectangle`, `trend-line`).
     pub kind: String,
-    /// Each anchor's price, in anchor order.
-    pub prices: Vec<CanonicalDecimal>,
+    /// The value axis the prices are on: the candles' price axis, or an
+    /// indicator pane's (then a price is that indicator's value). Absent for
+    /// a mark of an instant, which has no value axis.
+    pub band: Option<AnnotationBand>,
+    /// One per anchor, in anchor order; null for an anchor whose price is
+    /// not a finite number.
+    pub prices: Vec<Option<CanonicalDecimal>>,
     pub selected: bool,
     pub locked: bool,
+    /// Hidden by its own eye or by the chart's hide-all.
     pub hidden: bool,
 }
 
-/// One strategy armed on a drawing.
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
 pub struct Strategy {
     pub drawing_id: WireU64,
@@ -101,6 +101,14 @@ pub struct Strategy {
     /// `buy` or `sell`.
     pub side: String,
     pub quantity: CanonicalDecimal,
+    /// Take profit at this multiple of the trigger bar's projection; zero or
+    /// less, no take-profit leg.
+    pub tp_mult: CanonicalDecimal,
+    /// Stop at this multiple of the trigger bar's projection; zero or less,
+    /// no stop leg.
+    pub sl_mult: CanonicalDecimal,
+    /// `ignore` or `retest_limit`: what a bar cutting through the region does.
+    pub on_break: String,
     /// `paper` places orders; `alarm_only` only watches.
     pub execution: String,
     /// `one_shot` or `auto`.
@@ -117,7 +125,7 @@ pub fn descriptor() -> CapabilityDescriptor {
         id: CONTEXT_CAPABILITY_ID,
         module: "chart",
         title: "Read one chart's context",
-        description: "Reads one exact pane as a single document: feed, symbol and bar type with its parameter; indicators (up to 64) with kind, id, hidden and loaded state and their committed input values; drawings (up to 256) with id, name, tool kind, anchor prices, and selected, locked and hidden flags; strategies armed on its drawings (up to 64) with the drawing they ride, preset, side, quantity, execution, rearm, state and badge. Every drawing carries a name: the trader's, or one generated per kind on placement and on load (zone-1, line-2), stable across save and load. Each list reports its total. Script inputs list values in declaration order without names. Changes nothing.",
+        description: "Reads one exact pane as a single document: feed, symbol and bar type with its parameter; indicators (up to 64) with kind, id, hidden and loaded state and their committed input values; drawings this chart's layout shows (up to 256) with id, name, tool kind, value band, anchor prices (null where not finite), and selected, locked and hidden (own or hide-all) flags; strategies armed on its drawings (up to 64) with the drawing they ride, preset, side, quantity, take-profit and stop multiples, break policy, execution, rearm, state and badge. Every drawing carries a name: the trader's, or one generated per kind on placement and on load (zone-1, line-2), stable across save and load. Each list reports its total. Script inputs list values in declaration order without names. Changes nothing.",
         permissions: &[
             "observe",
             "observe.market",

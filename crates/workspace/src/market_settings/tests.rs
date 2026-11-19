@@ -71,14 +71,7 @@ fn known(tool: &str) -> bool {
 /// that predates generated names compares against.
 pub(super) fn without_names(text: &str) -> String {
     let lines = text.lines().filter(|line| !line.starts_with("name = "));
-    lines
-        .map(|line| {
-            format!(
-                "{line}
-"
-            )
-        })
-        .collect()
+    lines.map(|line| format!("{line}\n")).collect()
 }
 
 fn absorbed() -> MarketSettings {
