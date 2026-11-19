@@ -13,7 +13,7 @@ use quantick_engine::{Bar, Side};
 use quantick_sim::{Bracket, Command, OrderId, RejectReason, VenueEvent};
 use rust_decimal::Decimal;
 
-use crate::region::{BodyCut, Region};
+use crate::placement::{Placement, Reach};
 use crate::trigger::{ClosedBars, Signal, Trigger};
 
 /// What the instance does after its operation closes.
@@ -28,7 +28,7 @@ pub enum Rearm {
 }
 
 /// What the instance does when the trigger bar cuts *through* the region —
-/// same side, region active, and a body ([`Region::body_cut`]) that opened
+/// same side, region active, and a body ([`crate::Region::body_cut`]) that opened
 /// on the region's side of the edge the trade leaves by and closed beyond
 /// it. Closing inside still fires at market; closing beyond the *opposite*
 /// edge, or beyond an edge the body never crossed, never fires at all.
@@ -217,37 +217,34 @@ fn signal_is_ours(
 /// Where this bar's body puts the entry, or the named reason there is no
 /// entry to put. The second half of the opportunity test.
 ///
-/// The geometry is the bar's own body — open to close, wicks ignored —
-/// because that is what "the force bar cut the region" means to the trader
-/// reading the chart. A signal's `reference` keeps its separate job: the
+/// The geometry is the bar's own body against the instance's
+/// [`Placement`] — open to close, wicks ignored — because that is what
+/// "the force bar cut the region" means to the trader reading the chart. A signal's `reference` keeps its separate job: the
 /// price the bracket projects from.
 ///
 /// Each arm is complete on its own, policy included, so that a fifth
-/// [`BodyCut`] or a third [`BreakPolicy`] cannot fall through into a
+/// [`Reach`] or a third [`BreakPolicy`] cannot fall through into a
 /// neighbour's outcome and rest a real order by accident. Every refusal
 /// names the gate that actually decided it — the geometry when the bar
 /// could never have traded, the policy when the option was simply off.
 fn entry_geometry(
     params: &StrategyParams,
-    region: &Region,
+    placement: &dyn Placement,
     bar: &Bar,
 ) -> Result<Opportunity, &'static str> {
-    match region.body_cut(params.side, bar) {
-        BodyCut::ClosedInside => Ok(Opportunity::Market),
+    match placement.reach(params.side, bar) {
+        Reach::Market => Ok(Opportunity::Market),
         // The body crossed the edge and finished beyond it — the one
         // geometry the retest option exists for. With the option off, the
         // policy is what held fire, and the badge says so rather than
         // blaming a bar that did its part.
-        BodyCut::CutThrough { edge } => match params.on_break {
+        Reach::Cut { edge, retest_off } => match params.on_break {
             BreakPolicy::RetestLimit => Ok(Opportunity::Retest { edge }),
-            BreakPolicy::Ignore => Err("cut the region, retest option off"),
+            BreakPolicy::Ignore => Err(retest_off),
         },
-        // The bar closed past the edge but opened past it too: it travelled
-        // beyond a region it never crossed into. Resting a limit on that
-        // edge would put an order in a band this bar has no claim on. True
+        // A body that never reached the placement could not have traded
         // whatever the policy says, so the geometry is the honest reason.
-        BodyCut::NoCut => Err("the body never cut the region"),
-        BodyCut::ClosedAway => Err("closed outside region"),
+        Reach::Missed(reason) => Err(reason),
     }
 }
 
@@ -396,12 +393,12 @@ impl ArmedStrategy {
     pub fn preview_opportunity(
         &self,
         bar: &Bar,
-        region: &Region,
+        placement: &dyn Placement,
         region_active: bool,
     ) -> Option<Opportunity> {
         let signal = self.trigger.preview(&self.closed.context(bar))?;
         signal_is_ours(&self.params, region_active, &signal).ok()?;
-        entry_geometry(&self.params, region, bar).ok()
+        entry_geometry(&self.params, placement, bar).ok()
     }
 
     #[must_use]
@@ -438,7 +435,7 @@ impl ArmedStrategy {
     pub fn on_closed_bar(
         &mut self,
         bar: &Bar,
-        region: &Region,
+        placement: &dyn Placement,
         region_active: bool,
         account_flat: bool,
     ) -> Vec<Command> {
@@ -451,7 +448,7 @@ impl ArmedStrategy {
         // one-shot instance would never trade.
         self.last_close_opportunity = signal.as_ref().and_then(|signal| {
             signal_is_ours(&self.params, region_active, signal).ok()?;
-            entry_geometry(&self.params, region, bar).ok()
+            entry_geometry(&self.params, placement, bar).ok()
         });
 
         // A live operation ends the moment the account is flat again: its
@@ -487,7 +484,7 @@ impl ArmedStrategy {
         // unpriceable leg — or a busy account — there sends the trader
         // tuning something that was never the reason. The badge names the
         // gate that actually decided.
-        let opportunity = match entry_geometry(&self.params, region, bar) {
+        let opportunity = match entry_geometry(&self.params, placement, bar) {
             Ok(opportunity) => opportunity,
             Err(reason) => {
                 self.hold(reason);
@@ -898,6 +895,7 @@ fn project_bracket(
 mod tests {
     use super::*;
     use crate::force::ForceParams;
+    use crate::region::Region;
     use crate::trigger::{ForceTrigger, Signal, TriggerContext};
     use core::str::FromStr;
 

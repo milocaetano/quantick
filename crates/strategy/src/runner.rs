@@ -28,11 +28,10 @@
 
 use quantick_engine::Bar;
 use quantick_sim::{Command, VenueEvent};
-use rust_decimal::Decimal;
 
 use crate::anchors::AnchoredInstance;
 use crate::sound::Cue;
-use crate::{ArmedStrategy, Region};
+use crate::{Anywhere, ArmedStrategy, Placement};
 
 /// The account as the runner reaches it: the one way a command gets out,
 /// and the one question the flat gate asks.
@@ -96,15 +95,20 @@ impl RunnerInstance for ArmedStrategy {
     }
 }
 
-/// The region a bar is judged against when none can be resolved: zero
-/// width and inactive.
+/// The placement a bar is judged against, or an inactive stand-in when
+/// none can be resolved.
 ///
-/// A region that cannot honestly be tested (hidden, off its series, another
-/// market) holds fire but never starves the ruler: the trigger's contract
-/// is every closed bar, so the gates shut instead of the feed.
+/// A placement that cannot honestly be tested (hidden, off its series,
+/// another market) holds fire but never starves the ruler: the trigger's
+/// contract is every closed bar, so the gates shut instead of the feed.
+/// The inactive gate refuses before any placement is read, so the stand-in
+/// is never consulted.
 #[must_use]
-pub fn region_or_hold(resolved: Option<(Region, bool)>) -> (Region, bool) {
-    resolved.unwrap_or((Region::new(Decimal::ZERO, Decimal::ZERO), false))
+pub fn placement_or_hold<L: Placement>(resolved: Option<&(L, bool)>) -> (&dyn Placement, bool) {
+    match resolved {
+        Some((placement, active)) => (placement, *active),
+        None => (&Anywhere, false),
+    }
 }
 
 /// Apply `commands` through `port` in order, handing each one's events to
@@ -147,32 +151,35 @@ where
 /// Judge one closed bar with every instance, in creation order. Step 3 of
 /// the module contract.
 ///
-/// `region_of` resolves an instance's anchor into the kernel's terms for
-/// the bar that closed at `slot`; `None` falls back to [`region_or_hold`].
+/// `placement_of` resolves an instance's anchor into the kernel's terms
+/// for the bar that closed at `slot`; `None` falls back to
+/// [`placement_or_hold`].
 /// Each instance reads the flat gate after the previous one's commands
 /// were applied, and hears its own commands' events before the next
 /// instance judges. `now_ms` governs only the alarms; the answer is the
 /// cues they raised.
 #[must_use = "play the cues the closed bar raised"]
-pub fn step_closed_bar<I, P>(
+pub fn step_closed_bar<I, P, L>(
     instances: &mut [I],
     bar: &Bar,
     slot: usize,
-    mut region_of: impl FnMut(I::Anchor, usize) -> Option<(Region, bool)>,
+    mut placement_of: impl FnMut(I::Anchor, usize) -> Option<(L, bool)>,
     port: &mut P,
     now_ms: u64,
 ) -> Vec<Cue>
 where
     I: RunnerInstance,
     P: StrategyPort + ?Sized,
+    L: Placement,
 {
     let mut cues = Vec::new();
     for instance in instances {
-        let (region, active) = region_or_hold(region_of(instance.anchor(), slot));
+        let resolved = placement_of(instance.anchor(), slot);
+        let (placement, active) = placement_or_hold(resolved.as_ref());
         let flat = port.is_flat();
         let commands = instance
             .armed_mut()
-            .on_closed_bar(bar, &region, active, flat);
+            .on_closed_bar(bar, placement, active, flat);
         // The alarm judges the same bar, from the kernel's own reading of
         // it rather than from whether an order went out — a busy account
         // and a spent one shot silence the order, never the signal. Every
@@ -190,10 +197,11 @@ where
 mod tests {
     use super::*;
     use crate::{ArmedState, DisarmReason, Execution, ForceParams, ForceTrigger, Rearm};
-    use crate::{BreakPolicy, StrategyParams};
+    use crate::{BreakPolicy, Region, StrategyParams};
     use quantick_engine::Side;
     use quantick_sim::RejectReason;
     use quantick_sim::{Bracket, EntryKind, Fill, FillRole, Order, OrderId, OrderRole};
+    use rust_decimal::Decimal;
     use std::cell::RefCell;
 
     /// What the fake account saw, in the order it saw it.
@@ -414,7 +422,7 @@ mod tests {
     /// An unresolvable region holds fire on a bar that would have fired,
     /// and the instance is still asked — the ruler is fed every close.
     #[test]
-    fn an_unresolved_region_holds_fire_on_the_inactive_zero_region() {
+    fn an_unresolved_placement_holds_fire_on_the_inactive_stand_in() {
         let mut instances = [warmed()];
         let mut port = RecordingPort::default();
         let mut asked = Vec::new();
@@ -424,7 +432,7 @@ mod tests {
             7,
             |(), slot| {
                 asked.push(slot);
-                None
+                None::<(Region, bool)>
             },
             &mut port,
             0,
@@ -432,9 +440,6 @@ mod tests {
         assert_eq!(asked, [7], "the region is resolved for the bar's own slot");
         assert_eq!(port.take_log(), [Seen::Flat], "nothing fired");
         assert_eq!(instances[0].state(), &ArmedState::Armed);
-        assert_eq!(
-            region_or_hold(None),
-            (Region::new(Decimal::ZERO, Decimal::ZERO), false)
-        );
+        assert!(!placement_or_hold(None::<&(Region, bool)>).1);
     }
 }
