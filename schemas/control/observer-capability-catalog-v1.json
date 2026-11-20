@@ -28809,6 +28809,2338 @@
         "status": "available"
       },
       "confirmation_class": "none",
+      "description": "Arms one ended strategy again, warmed on the chart's latest closes and unpaused; a script is recompiled from the source it was armed with. A watching one, one whose drawing no longer passes the arm check, and a drawn one that places paper orders are refused. Journaled as strategy.desk.changed.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "annotate",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "strategy.desk.arm",
+      "idempotency": "forbidden",
+      "input_schema": {
+        "$defs": {
+          "InstanceId": {
+            "description": "Which instance of a tab a call names.",
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "description": "A script, by the id `strategy.script.arm` answered.",
+                "properties": {
+                  "id": {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  "kind": {
+                    "const": "script",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "id"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "description": "Instance `id` riding drawing `drawing_id` on chart `pane_id`, as\n`strategy.desk.list` reports it; never reused in the tab's session.",
+                "properties": {
+                  "drawing_id": {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  "id": {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  "kind": {
+                    "const": "drawing",
+                    "type": "string"
+                  },
+                  "pane_id": {
+                    "$ref": "#/$defs/WireU64"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "pane_id",
+                  "drawing_id",
+                  "id"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "One instance on one tab.",
+        "properties": {
+          "instance": {
+            "$ref": "#/$defs/InstanceId"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64",
+            "description": "The tab the row came from: ids are numbered per tab."
+          }
+        },
+        "required": [
+          "tab_id",
+          "instance"
+        ],
+        "title": "InstanceInput",
+        "type": "object"
+      },
+      "module": "strategy",
+      "output_schema": {
+        "$defs": {
+          "InstanceId": {
+            "description": "Which instance of a tab a call names.",
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "description": "A script, by the id `strategy.script.arm` answered.",
+                "properties": {
+                  "id": {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  "kind": {
+                    "const": "script",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "id"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "description": "Instance `id` riding drawing `drawing_id` on chart `pane_id`, as\n`strategy.desk.list` reports it; never reused in the tab's session.",
+                "properties": {
+                  "drawing_id": {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  "id": {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  "kind": {
+                    "const": "drawing",
+                    "type": "string"
+                  },
+                  "pane_id": {
+                    "$ref": "#/$defs/WireU64"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "pane_id",
+                  "drawing_id",
+                  "id"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "What a desk command did.",
+        "properties": {
+          "capability": {
+            "description": "The call that ran.",
+            "type": "string"
+          },
+          "changed": {
+            "description": "How many instances changed: zero when each already stood as asked.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "created": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/InstanceId"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The copy a duplicate armed, paused."
+          },
+          "saved_as": {
+            "description": "The library file a save wrote.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tab_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The tab, absent for an asset call that spans every tab."
+          }
+        },
+        "required": [
+          "capability",
+          "changed"
+        ],
+        "title": "CommandResult",
+        "type": "object"
+      },
+      "persistence": "transient",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "annotate",
+        "annotate.script"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "The instance is named by an id never reused in the tab's session, so a repeat reaches the same instance or none; read strategy.desk.list, or the strategy.desk.changed events after a cursor taken before the call, before retrying.",
+      "title": "Arm an ended strategy",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Pauses every watching strategy on charts of the symbol and bar type, on every open tab; the other assets' are untouched. Answers how many changed. Journaled as strategy.desk.changed.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "annotate",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "strategy.desk.asset.pause",
+      "idempotency": "forbidden",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "One asset across every open tab, as `strategy.desk.list` groups it.",
+        "properties": {
+          "bar_type": {
+            "maxLength": 64,
+            "minLength": 1,
+            "type": "string"
+          },
+          "symbol": {
+            "maxLength": 64,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "symbol",
+          "bar_type"
+        ],
+        "title": "AssetInput",
+        "type": "object"
+      },
+      "module": "strategy",
+      "output_schema": {
+        "$defs": {
+          "InstanceId": {
+            "description": "Which instance of a tab a call names.",
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "description": "A script, by the id `strategy.script.arm` answered.",
+                "properties": {
+                  "id": {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  "kind": {
+                    "const": "script",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "id"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "description": "Instance `id` riding drawing `drawing_id` on chart `pane_id`, as\n`strategy.desk.list` reports it; never reused in the tab's session.",
+                "properties": {
+                  "drawing_id": {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  "id": {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  "kind": {
+                    "const": "drawing",
+                    "type": "string"
+                  },
+                  "pane_id": {
+                    "$ref": "#/$defs/WireU64"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "pane_id",
+                  "drawing_id",
+                  "id"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "What a desk command did.",
+        "properties": {
+          "capability": {
+            "description": "The call that ran.",
+            "type": "string"
+          },
+          "changed": {
+            "description": "How many instances changed: zero when each already stood as asked.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "created": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/InstanceId"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The copy a duplicate armed, paused."
+          },
+          "saved_as": {
+            "description": "The library file a save wrote.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tab_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The tab, absent for an asset call that spans every tab."
+          }
+        },
+        "required": [
+          "capability",
+          "changed"
+        ],
+        "title": "CommandResult",
+        "type": "object"
+      },
+      "persistence": "transient",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "annotate",
+        "annotate.script"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "Pausing again changes nothing; the answer counts what changed.",
+      "title": "Pause an asset's strategies",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Resumes every paused strategy on charts of the symbol and bar type, on every open tab, except drawn strategies that place paper orders, which stay paused for the trader to restart; the answer counts what changed. Journaled as strategy.desk.changed.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "annotate",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "strategy.desk.asset.resume",
+      "idempotency": "forbidden",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "One asset across every open tab, as `strategy.desk.list` groups it.",
+        "properties": {
+          "bar_type": {
+            "maxLength": 64,
+            "minLength": 1,
+            "type": "string"
+          },
+          "symbol": {
+            "maxLength": 64,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "symbol",
+          "bar_type"
+        ],
+        "title": "AssetInput",
+        "type": "object"
+      },
+      "module": "strategy",
+      "output_schema": {
+        "$defs": {
+          "InstanceId": {
+            "description": "Which instance of a tab a call names.",
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "description": "A script, by the id `strategy.script.arm` answered.",
+                "properties": {
+                  "id": {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  "kind": {
+                    "const": "script",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "id"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "description": "Instance `id` riding drawing `drawing_id` on chart `pane_id`, as\n`strategy.desk.list` reports it; never reused in the tab's session.",
+                "properties": {
+                  "drawing_id": {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  "id": {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  "kind": {
+                    "const": "drawing",
+                    "type": "string"
+                  },
+                  "pane_id": {
+                    "$ref": "#/$defs/WireU64"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "pane_id",
+                  "drawing_id",
+                  "id"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "What a desk command did.",
+        "properties": {
+          "capability": {
+            "description": "The call that ran.",
+            "type": "string"
+          },
+          "changed": {
+            "description": "How many instances changed: zero when each already stood as asked.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "created": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/InstanceId"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The copy a duplicate armed, paused."
+          },
+          "saved_as": {
+            "description": "The library file a save wrote.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tab_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The tab, absent for an asset call that spans every tab."
+          }
+        },
+        "required": [
+          "capability",
+          "changed"
+        ],
+        "title": "CommandResult",
+        "type": "object"
+      },
+      "persistence": "transient",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "annotate",
+        "annotate.script"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "Resuming again changes nothing; the answer counts what changed.",
+      "title": "Resume an asset's strategies",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Reads one strategy: its desk row, description, side, placement, declared inputs with their values, closes it fired on today (UTC day of the tab's latest print), its script source, and the chart's loaded slots a fresh copy fires on through the live kernel. Changes nothing.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "observe",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "strategy.desk.detail",
+      "idempotency": "forbidden",
+      "input_schema": {
+        "$defs": {
+          "InstanceId": {
+            "description": "Which instance of a tab a call names.",
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "description": "A script, by the id `strategy.script.arm` answered.",
+                "properties": {
+                  "id": {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  "kind": {
+                    "const": "script",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "id"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "description": "Instance `id` riding drawing `drawing_id` on chart `pane_id`, as\n`strategy.desk.list` reports it; never reused in the tab's session.",
+                "properties": {
+                  "drawing_id": {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  "id": {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  "kind": {
+                    "const": "drawing",
+                    "type": "string"
+                  },
+                  "pane_id": {
+                    "$ref": "#/$defs/WireU64"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "pane_id",
+                  "drawing_id",
+                  "id"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "One instance on one tab.",
+        "properties": {
+          "instance": {
+            "$ref": "#/$defs/InstanceId"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64",
+            "description": "The tab the row came from: ids are numbered per tab."
+          }
+        },
+        "required": [
+          "tab_id",
+          "instance"
+        ],
+        "title": "InstanceInput",
+        "type": "object"
+      },
+      "module": "strategy",
+      "output_schema": {
+        "$defs": {
+          "ActionSide": {
+            "description": "Which way the order goes.",
+            "enum": [
+              "buy",
+              "sell"
+            ],
+            "type": "string"
+          },
+          "CrossDirection": {
+            "enum": [
+              "up",
+              "down"
+            ],
+            "type": "string"
+          },
+          "DeclaredInput": {
+            "description": "One declared input with the value the instance runs on.",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "value": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "value"
+            ],
+            "type": "object"
+          },
+          "DeskRow": {
+            "description": "One instance as the desk lists it.",
+            "properties": {
+              "action": {
+                "$ref": "#/$defs/FireAction"
+              },
+              "ended_reason": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "instance": {
+                "$ref": "#/$defs/InstanceId"
+              },
+              "link": {
+                "$ref": "#/$defs/Link"
+              },
+              "name": {
+                "description": "The script's file name, or the drawn instance's preset.",
+                "type": "string"
+              },
+              "pane_id": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "state": {
+                "$ref": "#/$defs/DeskState"
+              },
+              "status": {
+                "description": "The instance's badge line.",
+                "type": "string"
+              },
+              "tab_id": {
+                "$ref": "#/$defs/WireU64"
+              }
+            },
+            "required": [
+              "tab_id",
+              "pane_id",
+              "instance",
+              "name",
+              "state",
+              "link",
+              "action",
+              "status"
+            ],
+            "type": "object"
+          },
+          "DeskState": {
+            "oneOf": [
+              {
+                "enum": [
+                  "watching"
+                ],
+                "type": "string"
+              },
+              {
+                "const": "paused",
+                "description": "Rings and places nothing, still reading closes.",
+                "type": "string"
+              },
+              {
+                "const": "ended",
+                "description": "Stopped until `strategy.desk.arm`; `ended_reason` says why.",
+                "type": "string"
+              }
+            ]
+          },
+          "FireAction": {
+            "description": "What a firing does.",
+            "oneOf": [
+              {
+                "enum": [
+                  "alarm"
+                ],
+                "type": "string"
+              },
+              {
+                "const": "order",
+                "description": "A paper order: drawn strategies only, never a script.",
+                "type": "string"
+              }
+            ]
+          },
+          "InstanceId": {
+            "description": "Which instance of a tab a call names.",
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "description": "A script, by the id `strategy.script.arm` answered.",
+                "properties": {
+                  "id": {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  "kind": {
+                    "const": "script",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "id"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "description": "Instance `id` riding drawing `drawing_id` on chart `pane_id`, as\n`strategy.desk.list` reports it; never reused in the tab's session.",
+                "properties": {
+                  "drawing_id": {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  "id": {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  "kind": {
+                    "const": "drawing",
+                    "type": "string"
+                  },
+                  "pane_id": {
+                    "$ref": "#/$defs/WireU64"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "pane_id",
+                  "drawing_id",
+                  "id"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "Link": {
+            "oneOf": [
+              {
+                "description": "It rides the drawing; `name` is the drawing's, when it has one.",
+                "properties": {
+                  "drawing_id": {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  "kind": {
+                    "const": "drawing",
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                },
+                "required": [
+                  "kind",
+                  "drawing_id"
+                ],
+                "type": "object"
+              },
+              {
+                "description": "A script on a fixed range, a line or anywhere on the chart.",
+                "properties": {
+                  "kind": {
+                    "const": "chart",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "Placement": {
+            "description": "Where a script may ring. Prices are decimal strings.",
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "description": "The rectangle drawing `drawing_id` on the pane marks, while its time\nspan covers the bar.",
+                "properties": {
+                  "drawing_id": {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  "kind": {
+                    "const": "region",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "drawing_id"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "description": "A fixed band; both edges inside, either order.",
+                "properties": {
+                  "high": {
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "range",
+                    "type": "string"
+                  },
+                  "low": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "low",
+                  "high"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "description": "A horizontal line the bar's body must cross in `direction`.",
+                "properties": {
+                  "direction": {
+                    "$ref": "#/$defs/CrossDirection"
+                  },
+                  "kind": {
+                    "const": "line",
+                    "type": "string"
+                  },
+                  "level": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "level",
+                  "direction"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "description": "Any closed bar.",
+                "properties": {
+                  "kind": {
+                    "const": "anywhere",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "code": {
+            "description": "The script's source; none for a drawn instance.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "description": {
+            "description": "The script's declared title, or the drawn preset's setup in words.",
+            "type": "string"
+          },
+          "fires_today": {
+            "description": "Closes it fired on during the UTC day of the tab's latest print.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "history_slots": {
+            "description": "The chart's closed slots (from zero, the oldest loaded bar) a fresh\ncopy armed on the oldest fires on, through the live kernel.",
+            "items": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "type": "array"
+          },
+          "inputs": {
+            "description": "Read-only: an armed instance runs on these.",
+            "items": {
+              "$ref": "#/$defs/DeclaredInput"
+            },
+            "type": "array"
+          },
+          "placement": {
+            "$ref": "#/$defs/Placement",
+            "description": "Where it may fire; a drawn instance always rides its region."
+          },
+          "side": {
+            "$ref": "#/$defs/ActionSide"
+          },
+          "strategy": {
+            "$ref": "#/$defs/DeskRow"
+          }
+        },
+        "required": [
+          "strategy",
+          "description",
+          "side",
+          "placement",
+          "inputs",
+          "fires_today",
+          "history_slots"
+        ],
+        "title": "DetailResult",
+        "type": "object"
+      },
+      "persistence": "none",
+      "preconditions": [],
+      "read_only": true,
+      "required_permissions": [
+        "observe",
+        "observe.indicators",
+        "observe.user_text"
+      ],
+      "reversible": false,
+      "revision_policy": "forbidden",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "title": "Read one strategy in full",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Arms a copy beside one strategy — the same script or preset, side and placement on the same chart — paused, and answers its id. A drawing that no longer passes the arm check, and a drawn strategy that places paper orders, are refused. Journaled as strategy.desk.changed.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "annotate",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "strategy.desk.duplicate",
+      "idempotency": "forbidden",
+      "input_schema": {
+        "$defs": {
+          "InstanceId": {
+            "description": "Which instance of a tab a call names.",
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "description": "A script, by the id `strategy.script.arm` answered.",
+                "properties": {
+                  "id": {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  "kind": {
+                    "const": "script",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "id"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "description": "Instance `id` riding drawing `drawing_id` on chart `pane_id`, as\n`strategy.desk.list` reports it; never reused in the tab's session.",
+                "properties": {
+                  "drawing_id": {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  "id": {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  "kind": {
+                    "const": "drawing",
+                    "type": "string"
+                  },
+                  "pane_id": {
+                    "$ref": "#/$defs/WireU64"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "pane_id",
+                  "drawing_id",
+                  "id"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "One instance on one tab.",
+        "properties": {
+          "instance": {
+            "$ref": "#/$defs/InstanceId"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64",
+            "description": "The tab the row came from: ids are numbered per tab."
+          }
+        },
+        "required": [
+          "tab_id",
+          "instance"
+        ],
+        "title": "InstanceInput",
+        "type": "object"
+      },
+      "module": "strategy",
+      "output_schema": {
+        "$defs": {
+          "InstanceId": {
+            "description": "Which instance of a tab a call names.",
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "description": "A script, by the id `strategy.script.arm` answered.",
+                "properties": {
+                  "id": {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  "kind": {
+                    "const": "script",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "id"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "description": "Instance `id` riding drawing `drawing_id` on chart `pane_id`, as\n`strategy.desk.list` reports it; never reused in the tab's session.",
+                "properties": {
+                  "drawing_id": {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  "id": {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  "kind": {
+                    "const": "drawing",
+                    "type": "string"
+                  },
+                  "pane_id": {
+                    "$ref": "#/$defs/WireU64"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "pane_id",
+                  "drawing_id",
+                  "id"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "What a desk command did.",
+        "properties": {
+          "capability": {
+            "description": "The call that ran.",
+            "type": "string"
+          },
+          "changed": {
+            "description": "How many instances changed: zero when each already stood as asked.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "created": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/InstanceId"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The copy a duplicate armed, paused."
+          },
+          "saved_as": {
+            "description": "The library file a save wrote.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tab_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The tab, absent for an asset call that spans every tab."
+          }
+        },
+        "required": [
+          "capability",
+          "changed"
+        ],
+        "title": "CommandResult",
+        "type": "object"
+      },
+      "persistence": "transient",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "annotate",
+        "annotate.script"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "Each duplicate arms another copy; read strategy.desk.list, or the strategy.desk.changed events after a cursor taken before the call, before retrying.",
+      "title": "Duplicate a strategy",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Reads every strategy the open tabs have armed, drawn and scripted, grouped by symbol and bar type: per group whether it is paused and how many it holds, per strategy its tab, chart, id, name, state (watching, paused or ended and why), what it rides (a drawing or the chart), whether it rings an alarm or places an order, and its badge line. Changes nothing.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "observe",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "strategy.desk.list",
+      "idempotency": "forbidden",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "title": "ListInput",
+        "type": "object"
+      },
+      "module": "strategy",
+      "output_schema": {
+        "$defs": {
+          "DeskGroup": {
+            "properties": {
+              "bar_type": {
+                "description": "The chart's bar type as its toolbar summarises it (`tick(4)`).",
+                "type": "string"
+              },
+              "count": {
+                "format": "uint32",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "paused": {
+                "description": "True when none of its instances watches and at least one is paused.",
+                "type": "boolean"
+              },
+              "rows": {
+                "items": {
+                  "$ref": "#/$defs/DeskRow"
+                },
+                "type": "array"
+              },
+              "symbol": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "symbol",
+              "bar_type",
+              "paused",
+              "count",
+              "rows"
+            ],
+            "type": "object"
+          },
+          "DeskRow": {
+            "description": "One instance as the desk lists it.",
+            "properties": {
+              "action": {
+                "$ref": "#/$defs/FireAction"
+              },
+              "ended_reason": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "instance": {
+                "$ref": "#/$defs/InstanceId"
+              },
+              "link": {
+                "$ref": "#/$defs/Link"
+              },
+              "name": {
+                "description": "The script's file name, or the drawn instance's preset.",
+                "type": "string"
+              },
+              "pane_id": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "state": {
+                "$ref": "#/$defs/DeskState"
+              },
+              "status": {
+                "description": "The instance's badge line.",
+                "type": "string"
+              },
+              "tab_id": {
+                "$ref": "#/$defs/WireU64"
+              }
+            },
+            "required": [
+              "tab_id",
+              "pane_id",
+              "instance",
+              "name",
+              "state",
+              "link",
+              "action",
+              "status"
+            ],
+            "type": "object"
+          },
+          "DeskState": {
+            "oneOf": [
+              {
+                "enum": [
+                  "watching"
+                ],
+                "type": "string"
+              },
+              {
+                "const": "paused",
+                "description": "Rings and places nothing, still reading closes.",
+                "type": "string"
+              },
+              {
+                "const": "ended",
+                "description": "Stopped until `strategy.desk.arm`; `ended_reason` says why.",
+                "type": "string"
+              }
+            ]
+          },
+          "FireAction": {
+            "description": "What a firing does.",
+            "oneOf": [
+              {
+                "enum": [
+                  "alarm"
+                ],
+                "type": "string"
+              },
+              {
+                "const": "order",
+                "description": "A paper order: drawn strategies only, never a script.",
+                "type": "string"
+              }
+            ]
+          },
+          "InstanceId": {
+            "description": "Which instance of a tab a call names.",
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "description": "A script, by the id `strategy.script.arm` answered.",
+                "properties": {
+                  "id": {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  "kind": {
+                    "const": "script",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "id"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "description": "Instance `id` riding drawing `drawing_id` on chart `pane_id`, as\n`strategy.desk.list` reports it; never reused in the tab's session.",
+                "properties": {
+                  "drawing_id": {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  "id": {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  "kind": {
+                    "const": "drawing",
+                    "type": "string"
+                  },
+                  "pane_id": {
+                    "$ref": "#/$defs/WireU64"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "pane_id",
+                  "drawing_id",
+                  "id"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "Link": {
+            "oneOf": [
+              {
+                "description": "It rides the drawing; `name` is the drawing's, when it has one.",
+                "properties": {
+                  "drawing_id": {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  "kind": {
+                    "const": "drawing",
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                },
+                "required": [
+                  "kind",
+                  "drawing_id"
+                ],
+                "type": "object"
+              },
+              {
+                "description": "A script on a fixed range, a line or anywhere on the chart.",
+                "properties": {
+                  "kind": {
+                    "const": "chart",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "groups": {
+            "description": "In symbol, then bar type order; each tab's rows in chart then arming\norder.",
+            "items": {
+              "$ref": "#/$defs/DeskGroup"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "groups"
+        ],
+        "title": "ListResult",
+        "type": "object"
+      },
+      "persistence": "none",
+      "preconditions": [],
+      "read_only": true,
+      "required_permissions": [
+        "observe",
+        "observe.indicators",
+        "observe.user_text"
+      ],
+      "reversible": false,
+      "revision_policy": "forbidden",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "title": "List the strategy desk",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Pauses one watching strategy: it rings and places nothing, while its script or ruler keeps reading closes, so a resume judges the next close as a never-paused one would. A resting order or an open position keeps its course. Pausing a paused one changes nothing; an ended one is refused. Journaled as strategy.desk.changed.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "annotate",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "strategy.desk.pause",
+      "idempotency": "forbidden",
+      "input_schema": {
+        "$defs": {
+          "InstanceId": {
+            "description": "Which instance of a tab a call names.",
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "description": "A script, by the id `strategy.script.arm` answered.",
+                "properties": {
+                  "id": {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  "kind": {
+                    "const": "script",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "id"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "description": "Instance `id` riding drawing `drawing_id` on chart `pane_id`, as\n`strategy.desk.list` reports it; never reused in the tab's session.",
+                "properties": {
+                  "drawing_id": {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  "id": {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  "kind": {
+                    "const": "drawing",
+                    "type": "string"
+                  },
+                  "pane_id": {
+                    "$ref": "#/$defs/WireU64"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "pane_id",
+                  "drawing_id",
+                  "id"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "One instance on one tab.",
+        "properties": {
+          "instance": {
+            "$ref": "#/$defs/InstanceId"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64",
+            "description": "The tab the row came from: ids are numbered per tab."
+          }
+        },
+        "required": [
+          "tab_id",
+          "instance"
+        ],
+        "title": "InstanceInput",
+        "type": "object"
+      },
+      "module": "strategy",
+      "output_schema": {
+        "$defs": {
+          "InstanceId": {
+            "description": "Which instance of a tab a call names.",
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "description": "A script, by the id `strategy.script.arm` answered.",
+                "properties": {
+                  "id": {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  "kind": {
+                    "const": "script",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "id"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "description": "Instance `id` riding drawing `drawing_id` on chart `pane_id`, as\n`strategy.desk.list` reports it; never reused in the tab's session.",
+                "properties": {
+                  "drawing_id": {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  "id": {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  "kind": {
+                    "const": "drawing",
+                    "type": "string"
+                  },
+                  "pane_id": {
+                    "$ref": "#/$defs/WireU64"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "pane_id",
+                  "drawing_id",
+                  "id"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "What a desk command did.",
+        "properties": {
+          "capability": {
+            "description": "The call that ran.",
+            "type": "string"
+          },
+          "changed": {
+            "description": "How many instances changed: zero when each already stood as asked.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "created": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/InstanceId"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The copy a duplicate armed, paused."
+          },
+          "saved_as": {
+            "description": "The library file a save wrote.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tab_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The tab, absent for an asset call that spans every tab."
+          }
+        },
+        "required": [
+          "capability",
+          "changed"
+        ],
+        "title": "CommandResult",
+        "type": "object"
+      },
+      "persistence": "transient",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "annotate",
+        "annotate.script"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "The instance is named by an id never reused in the tab's session, so a repeat reaches the same instance or none; read strategy.desk.list, or the strategy.desk.changed events after a cursor taken before the call, before retrying.",
+      "title": "Pause a strategy",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Removes one strategy; a drawn one's resting entry is cancelled, an open position stays the trader's, and its drawing keeps its other strategies. Journaled as strategy.desk.changed.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "annotate",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "strategy.desk.remove",
+      "idempotency": "forbidden",
+      "input_schema": {
+        "$defs": {
+          "InstanceId": {
+            "description": "Which instance of a tab a call names.",
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "description": "A script, by the id `strategy.script.arm` answered.",
+                "properties": {
+                  "id": {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  "kind": {
+                    "const": "script",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "id"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "description": "Instance `id` riding drawing `drawing_id` on chart `pane_id`, as\n`strategy.desk.list` reports it; never reused in the tab's session.",
+                "properties": {
+                  "drawing_id": {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  "id": {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  "kind": {
+                    "const": "drawing",
+                    "type": "string"
+                  },
+                  "pane_id": {
+                    "$ref": "#/$defs/WireU64"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "pane_id",
+                  "drawing_id",
+                  "id"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "One instance on one tab.",
+        "properties": {
+          "instance": {
+            "$ref": "#/$defs/InstanceId"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64",
+            "description": "The tab the row came from: ids are numbered per tab."
+          }
+        },
+        "required": [
+          "tab_id",
+          "instance"
+        ],
+        "title": "InstanceInput",
+        "type": "object"
+      },
+      "module": "strategy",
+      "output_schema": {
+        "$defs": {
+          "InstanceId": {
+            "description": "Which instance of a tab a call names.",
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "description": "A script, by the id `strategy.script.arm` answered.",
+                "properties": {
+                  "id": {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  "kind": {
+                    "const": "script",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "id"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "description": "Instance `id` riding drawing `drawing_id` on chart `pane_id`, as\n`strategy.desk.list` reports it; never reused in the tab's session.",
+                "properties": {
+                  "drawing_id": {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  "id": {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  "kind": {
+                    "const": "drawing",
+                    "type": "string"
+                  },
+                  "pane_id": {
+                    "$ref": "#/$defs/WireU64"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "pane_id",
+                  "drawing_id",
+                  "id"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "What a desk command did.",
+        "properties": {
+          "capability": {
+            "description": "The call that ran.",
+            "type": "string"
+          },
+          "changed": {
+            "description": "How many instances changed: zero when each already stood as asked.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "created": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/InstanceId"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The copy a duplicate armed, paused."
+          },
+          "saved_as": {
+            "description": "The library file a save wrote.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tab_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The tab, absent for an asset call that spans every tab."
+          }
+        },
+        "required": [
+          "capability",
+          "changed"
+        ],
+        "title": "CommandResult",
+        "type": "object"
+      },
+      "persistence": "transient",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "annotate",
+        "annotate.script"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "A second remove of the same id finds no instance and is refused. Read strategy.desk.list, or the strategy.desk.changed events after a cursor taken before the call, before retrying.",
+      "title": "Remove a strategy",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Resumes one paused strategy from the next close. Resuming a watching one changes nothing; an ended one is refused, and so is a drawn strategy that places paper orders: only the trader restarts those. Journaled as strategy.desk.changed.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "annotate",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "strategy.desk.resume",
+      "idempotency": "forbidden",
+      "input_schema": {
+        "$defs": {
+          "InstanceId": {
+            "description": "Which instance of a tab a call names.",
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "description": "A script, by the id `strategy.script.arm` answered.",
+                "properties": {
+                  "id": {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  "kind": {
+                    "const": "script",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "id"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "description": "Instance `id` riding drawing `drawing_id` on chart `pane_id`, as\n`strategy.desk.list` reports it; never reused in the tab's session.",
+                "properties": {
+                  "drawing_id": {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  "id": {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  "kind": {
+                    "const": "drawing",
+                    "type": "string"
+                  },
+                  "pane_id": {
+                    "$ref": "#/$defs/WireU64"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "pane_id",
+                  "drawing_id",
+                  "id"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "One instance on one tab.",
+        "properties": {
+          "instance": {
+            "$ref": "#/$defs/InstanceId"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64",
+            "description": "The tab the row came from: ids are numbered per tab."
+          }
+        },
+        "required": [
+          "tab_id",
+          "instance"
+        ],
+        "title": "InstanceInput",
+        "type": "object"
+      },
+      "module": "strategy",
+      "output_schema": {
+        "$defs": {
+          "InstanceId": {
+            "description": "Which instance of a tab a call names.",
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "description": "A script, by the id `strategy.script.arm` answered.",
+                "properties": {
+                  "id": {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  "kind": {
+                    "const": "script",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "id"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "description": "Instance `id` riding drawing `drawing_id` on chart `pane_id`, as\n`strategy.desk.list` reports it; never reused in the tab's session.",
+                "properties": {
+                  "drawing_id": {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  "id": {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  "kind": {
+                    "const": "drawing",
+                    "type": "string"
+                  },
+                  "pane_id": {
+                    "$ref": "#/$defs/WireU64"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "pane_id",
+                  "drawing_id",
+                  "id"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "What a desk command did.",
+        "properties": {
+          "capability": {
+            "description": "The call that ran.",
+            "type": "string"
+          },
+          "changed": {
+            "description": "How many instances changed: zero when each already stood as asked.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "created": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/InstanceId"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The copy a duplicate armed, paused."
+          },
+          "saved_as": {
+            "description": "The library file a save wrote.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tab_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The tab, absent for an asset call that spans every tab."
+          }
+        },
+        "required": [
+          "capability",
+          "changed"
+        ],
+        "title": "CommandResult",
+        "type": "object"
+      },
+      "persistence": "transient",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "annotate",
+        "annotate.script"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "The instance is named by an id never reused in the tab's session, so a repeat reaches the same instance or none; read strategy.desk.list, or the strategy.desk.changed events after a cursor taken before the call, before retrying.",
+      "title": "Resume a strategy",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Writes the source a script strategy was armed with to the strategy library as a new .pine file; the name must be free. The instance is unchanged. A drawn strategy has no script and is refused. Journaled as strategy.desk.changed.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "annotate",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "strategy.desk.save_as",
+      "idempotency": "forbidden",
+      "input_schema": {
+        "$defs": {
+          "InstanceId": {
+            "description": "Which instance of a tab a call names.",
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "description": "A script, by the id `strategy.script.arm` answered.",
+                "properties": {
+                  "id": {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  "kind": {
+                    "const": "script",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "id"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "description": "Instance `id` riding drawing `drawing_id` on chart `pane_id`, as\n`strategy.desk.list` reports it; never reused in the tab's session.",
+                "properties": {
+                  "drawing_id": {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  "id": {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  "kind": {
+                    "const": "drawing",
+                    "type": "string"
+                  },
+                  "pane_id": {
+                    "$ref": "#/$defs/WireU64"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "pane_id",
+                  "drawing_id",
+                  "id"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "instance": {
+            "$ref": "#/$defs/InstanceId",
+            "description": "A script instance."
+          },
+          "name": {
+            "description": "The new library file: letters, digits, `_` or `-`, then `.pine`.",
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64",
+            "description": "The tab the row came from: ids are numbered per tab."
+          }
+        },
+        "required": [
+          "tab_id",
+          "instance",
+          "name"
+        ],
+        "title": "SaveAsInput",
+        "type": "object"
+      },
+      "module": "strategy",
+      "output_schema": {
+        "$defs": {
+          "InstanceId": {
+            "description": "Which instance of a tab a call names.",
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "description": "A script, by the id `strategy.script.arm` answered.",
+                "properties": {
+                  "id": {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  "kind": {
+                    "const": "script",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "id"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "description": "Instance `id` riding drawing `drawing_id` on chart `pane_id`, as\n`strategy.desk.list` reports it; never reused in the tab's session.",
+                "properties": {
+                  "drawing_id": {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  "id": {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  "kind": {
+                    "const": "drawing",
+                    "type": "string"
+                  },
+                  "pane_id": {
+                    "$ref": "#/$defs/WireU64"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "pane_id",
+                  "drawing_id",
+                  "id"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "What a desk command did.",
+        "properties": {
+          "capability": {
+            "description": "The call that ran.",
+            "type": "string"
+          },
+          "changed": {
+            "description": "How many instances changed: zero when each already stood as asked.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "created": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/InstanceId"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The copy a duplicate armed, paused."
+          },
+          "saved_as": {
+            "description": "The library file a save wrote.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tab_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The tab, absent for an asset call that spans every tab."
+          }
+        },
+        "required": [
+          "capability",
+          "changed"
+        ],
+        "title": "CommandResult",
+        "type": "object"
+      },
+      "persistence": "transient",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "annotate",
+        "annotate.script"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "A second save under the same name is refused because the file exists.",
+      "title": "Save a script strategy as",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
       "description": "Loads a .pine file from the strategy library and arms it alarm-only on one chart's closed bars: an alertcondition that holds rings the alarm when the bar's body meets the placement (a drawn rectangle, a fixed range, a line crossed one way, or anywhere). The title's first word is the side (bull, buy or long; bear, sell or short; any case); a script with a title naming no side, a computed title, no alertcondition, no title naming the side asked for, or a compile error is refused with the reason, compile errors as `line N: <CODE> <message>`. Never places an order. A runtime error later disarms that instance alone; strategy.script.list shows the reason. Journaled as strategy.script.armed. Lives for the session.",
       "destructive": false,
       "dry_run_supported": false,
@@ -34350,7 +36682,7 @@
       "title": "Snapshot"
     },
     {
-      "description": "Pine scripts armed on a chart's bars that ring an alarm and place nothing.",
+      "description": "Strategies armed on charts: Pine scripts that ring an alarm and place nothing, and the strategy desk that lists, pauses and resumes them beside the drawn ones.",
       "id": "strategy",
       "title": "Strategy"
     },

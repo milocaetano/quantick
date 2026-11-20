@@ -1686,6 +1686,7 @@ fn every_reachable_forbidden_row_refuses_a_key_before_the_application() {
     let mut client = connect(&directory, &options("annotator", ANNOTATE_SCOPES));
     let anchors = two_anchors(&app);
     let fib_anchors = chart_anchors(&anchors);
+    let tab = app.runtime.tabs.active_id().to_string();
     let script = "//@version=5\nindicator(\"agent ema\")\nplot(close)\n";
     let rows: Vec<_> = retry_matrix::READBACKS
         .iter()
@@ -1717,6 +1718,19 @@ fn every_reachable_forbidden_row_refuses_a_key_before_the_application() {
                 json!({ "script": "keyed.pine", "side": "buy", "placement": { "kind": "anywhere" } })
             }
             "strategy.script.disarm" => json!({ "id": "1" }),
+            "strategy.desk.pause"
+            | "strategy.desk.resume"
+            | "strategy.desk.remove"
+            | "strategy.desk.arm"
+            | "strategy.desk.duplicate" => {
+                json!({ "tab_id": tab, "instance": { "kind": "script", "id": "1" } })
+            }
+            "strategy.desk.asset.pause" | "strategy.desk.asset.resume" => {
+                json!({ "symbol": "keyed", "bar_type": "tick(1)" })
+            }
+            "strategy.desk.save_as" => {
+                json!({ "tab_id": tab, "instance": { "kind": "script", "id": "1" }, "name": "keyed.pine" })
+            }
             other => panic!("`{other}` is a reachable forbidden row with no input here; add one"),
         };
         let (response, served) = keyed_call(

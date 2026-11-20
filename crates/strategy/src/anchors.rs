@@ -243,12 +243,15 @@ impl<K> Stack<'_, K> {
 pub struct StrategyAnchors<K> {
     /// The armed instances, in creation order.
     pub instances: Vec<AnchoredInstance<K>>,
+    /// The desk number the next armed instance takes; never reused.
+    next_desk_id: u64,
 }
 
 impl<K> Default for StrategyAnchors<K> {
     fn default() -> Self {
         Self {
             instances: Vec::new(),
+            next_desk_id: 1,
         }
     }
 }
@@ -333,7 +336,10 @@ impl<K: Copy + PartialEq> StrategyAnchors<K> {
     /// Attach `instance` beside any already riding its drawing. Nothing is
     /// replaced, so nothing is owed: each instance steps on its own and
     /// leaves only with its drawing or when the trader removes it.
-    pub fn arm(&mut self, instance: AnchoredInstance<K>) {
+    /// Each takes the next desk number ([`ArmedStrategy::desk_id`]).
+    pub fn arm(&mut self, mut instance: AnchoredInstance<K>) {
+        instance.armed.set_desk_id(self.next_desk_id);
+        self.next_desk_id += 1;
         self.instances.push(instance);
     }
 

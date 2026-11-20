@@ -29,6 +29,8 @@ use quantick_strategy::sound::Cue;
 use quantick_strategy::{ArmedState, ArmedStrategy, DisarmReason, ForceTrigger, Region};
 use rust_decimal::Decimal;
 
+use crate::strategy_desk_book::{DeskBook, InstanceRef};
+
 /// A bar one print closed on one pane, at the composed slot it closed at:
 /// what the pane's strategies are queued.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -167,16 +169,15 @@ impl<D: Copy + PartialEq> PaneStrategies<D> {
     pub fn rearm(&mut self, drawing: D, mut warmup: impl FnMut(usize) -> Vec<Bar>) {
         let reached = self.anchors.on_drawing_mut(drawing);
         for instance in reached.filter(|instance| instance.rearmable()) {
-            let series_changed = matches!(
-                instance.armed.state(),
-                ArmedState::Disarmed { reason } if reason.resets_series()
-            );
-            instance.armed.rearm();
-            if series_changed {
-                let bars = warmup(instance.armed.trigger().warmup_bars());
-                instance.armed.warm(&bars);
-            }
+            rearm_instance(instance, &mut warmup);
         }
+    }
+
+    /// Remove the drawn instance at `index`, queueing the sweep of its
+    /// resting entry; its drawing's other instances stay.
+    pub(crate) fn remove_instance_at(&mut self, index: usize) {
+        let instance = self.anchors.instances.remove(index);
+        self.cleanup.extend(instance.armed.pending_entry_cancel());
     }
 
     /// Sweep instances whose drawing no longer `exists`, queueing what they
@@ -274,6 +275,25 @@ impl<D: Copy + PartialEq> PaneStrategies<D> {
     }
 }
 
+/// Re-arm one ended instance (see [`PaneStrategies::rearm`]).
+pub(crate) fn rearm_instance<D>(
+    instance: &mut AnchoredInstance<D>,
+    mut warmup: impl FnMut(usize) -> Vec<Bar>,
+) {
+    let series_changed = matches!(
+        instance.armed.state(),
+        ArmedState::Disarmed { reason } if reason.resets_series()
+    );
+    instance.armed.rearm();
+    // Re-armed means armed: a pause does not outlive the re-arm, from the
+    // drawing's menu or the desk alike.
+    instance.armed.resume();
+    if series_changed {
+        let bars = warmup(instance.armed.trigger().warmup_bars());
+        instance.armed.warm(&bars);
+    }
+}
+
 /// One print as the strategies hear it: the venue events the account
 /// produced consuming it, and the time the alarms are judged at.
 #[derive(Clone, Copy)]
@@ -305,6 +325,8 @@ pub struct TabStrategies<D> {
     panes: BTreeMap<u64, PaneStrategies<D>>,
     /// The id the next armed script takes; never reused in the tab's life.
     pub(crate) next_script_id: u64,
+    /// What the strategy desk keeps beside the instances.
+    pub(crate) desk: DeskBook<D>,
 }
 
 impl<D> Default for TabStrategies<D> {
@@ -312,6 +334,7 @@ impl<D> Default for TabStrategies<D> {
         Self {
             panes: BTreeMap::new(),
             next_script_id: 1,
+            desk: DeskBook::default(),
         }
     }
 }
@@ -433,6 +456,7 @@ impl<D: Copy + PartialEq> TabStrategies<D> {
         mut forming: impl FnMut(u64) -> Option<Forming>,
     ) -> Evaluation {
         let Print { events, now_ms } = print;
+        self.desk.heard(now_ms);
         let mut answer = Evaluation::default();
         for &id in panes {
             let Some(pane) = self.panes.get_mut(&id) else {
@@ -470,15 +494,21 @@ impl<D: Copy + PartialEq> TabStrategies<D> {
                     port,
                     now_ms,
                 ));
+                self.desk.count_drawn(id, &pane.anchors.instances, now_ms);
                 for script in &mut pane.scripts {
+                    // Paused from the desk: its script keeps its history.
+                    if self.desk.script_paused(script.id) {
+                        script.warm(&close.bar, close.poc);
+                        continue;
+                    }
                     let resolved =
                         (script.placement).resolve(|drawing| region(id, drawing, close.slot));
-                    answer.alarms.extend(script.on_closed_bar(
-                        &close.bar,
-                        close.poc,
-                        resolved.as_ref(),
-                        now_ms,
-                    ));
+                    let rang =
+                        script.on_closed_bar(&close.bar, close.poc, resolved.as_ref(), now_ms);
+                    if rang.is_some() {
+                        self.desk.fired(InstanceRef::Script(script.id), now_ms);
+                    }
+                    answer.alarms.extend(rang);
                 }
             }
             // The bar still forming, judged for the alarm only. Per print,

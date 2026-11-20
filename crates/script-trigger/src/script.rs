@@ -3,6 +3,7 @@
 use std::fmt;
 
 use quantick_engine::Side;
+use quantick_indicators::InputValue;
 use quantick_pine::{AlertTitle, CompiledScript, PineError, RuntimeFault, alert_titles, compile};
 
 /// The words a title may open with to name a side, any case.
@@ -160,12 +161,48 @@ impl Script {
         &self.sides
     }
 
-    pub(crate) fn source(&self) -> &str {
+    /// The text it was compiled from.
+    #[must_use]
+    pub fn source(&self) -> &str {
         &self.source
+    }
+
+    /// The title its `indicator()` declaration gives, or the file name.
+    #[must_use]
+    pub fn title(&self) -> &str {
+        &self.compiled.title
+    }
+
+    /// Each declared `input.*` as its label and default value, in source
+    /// order: what the script runs with, since an armed script takes no
+    /// overrides.
+    #[must_use]
+    pub fn inputs(&self) -> Vec<(String, String)> {
+        let inputs = self.compiled.inputs.iter();
+        inputs
+            .map(|input| (input.title().to_owned(), input_text(&input.default_value())))
+            .collect()
     }
 
     pub(crate) fn compiled(&self) -> &CompiledScript {
         &self.compiled
+    }
+}
+
+/// A default as the trader typed it.
+fn input_text(value: &InputValue) -> String {
+    match value {
+        InputValue::Int(value) => value.to_string(),
+        InputValue::Float(value) => format!("{value:?}"),
+        InputValue::Bool(value) => value.to_string(),
+        InputValue::Color(value) => {
+            format!(
+                "#{:02x}{:02x}{:02x}{:02x}",
+                value.r, value.g, value.b, value.a
+            )
+        }
+        InputValue::Str(value) => value.clone(),
+        InputValue::Source(value) => value.as_str().to_owned(),
     }
 }
 

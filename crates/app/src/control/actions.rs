@@ -73,6 +73,7 @@ pub(crate) fn standard_actions() -> Result<ActionRegistry, RegistryError> {
     quantick_control_handlers::chart_context::register(&mut registry)?;
     quantick_control_handlers::script_alarms::register(&mut registry)?;
     quantick_control_handlers::script_strategy::register(&mut registry)?;
+    quantick_control_handlers::strategy_desk::register(&mut registry)?;
     quantick_control_handlers::script::register(&mut registry)?;
     quantick_control_handlers::script_editor::register(&mut registry)?;
     quantick_control_handlers::trade::register(&mut registry)?;
