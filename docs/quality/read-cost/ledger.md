@@ -116,3 +116,4 @@ a bound.
 | 1115 | 2026-11-19 | feat/pine-alertcondition-live | main | 50785 | 29 | `crates/control-handlers/src/workspace_book.rs` (1067) |
 | 1122 | 2026-11-19 | feat/strategy-multi-instance | main | 8009 | 11 | `crates/app/src/orderflow_view.rs` (834) |
 | 1123 | 2026-11-19 | feat/script-trigger | main | 40293 | 29 | `crates/control-handlers/src/workspace_book.rs` (1067) |
+| 1135 | 2026-11-20 | feat/1125-strategy-desk | feature/strategies-panel | 34965 | 19 | `crates/control-handlers/src/workspace_book.rs` (1170) |
