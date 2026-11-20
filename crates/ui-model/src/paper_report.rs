@@ -321,6 +321,9 @@ impl State {
     /// source or a report scope are counted; else the period over the symbol.
     #[must_use]
     pub fn empty_hint(&self) -> String {
+        if self.filter.source == SourceSelection::default() {
+            return "Select one or more sources to see their saved trades.".to_owned();
+        }
         let scope = self.report_symbol.as_deref().unwrap_or("any symbol");
         let hidden = (self.report_view.as_ref()).map_or(0, |view| view.hidden_by_source_or_scope);
         if let Some(range) = self.calendar.selection.range() {
@@ -343,7 +346,8 @@ impl State {
     #[must_use]
     pub fn filters_narrowed(&self, symbol: &str) -> bool {
         let default_symbol = (!symbol.is_empty()).then(|| symbol.to_owned());
-        self.report_period != ReportPeriod::All
+        self.filter.source != SourceFilter::Real.into()
+            || self.report_period != ReportPeriod::All
             || self.report_symbol != default_symbol
             || self.calendar.selection.range().is_some()
     }

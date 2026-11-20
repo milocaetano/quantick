@@ -21,7 +21,6 @@ mod sessions;
 mod tables;
 mod window;
 
-#[cfg(test)]
 pub(crate) use quantick_paper::report::LoadedHistory;
 pub(crate) use quantick_paper::report::ledger_rows::LedgerScope;
 pub(crate) use quantick_paper::report::snapshot::{OpenRow, ReportEnv};
@@ -29,6 +28,16 @@ pub(crate) use quantick_paper::report::{HistoryRow, ReportView, SourceFilter};
 #[cfg(test)]
 use quantick_sim::ClosedTrade;
 pub(crate) use quantick_ui_model::paper_report::LedgerAction;
+
+fn draw_history_warning(ui: &mut egui::Ui, history: &LoadedHistory) {
+    if let Some(warning) = history.scan_warning() {
+        ui.label(
+            egui::RichText::new(warning)
+                .color(crate::theme::get(ui.ctx()).warn())
+                .small(),
+        );
+    }
+}
 
 #[derive(Default)]
 pub(crate) struct ReportResponse {

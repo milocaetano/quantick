@@ -330,21 +330,9 @@ impl Paint<'_, '_> {
     /// The honesty line under the ledger: unreadable files and skipped rows
     /// are counted, never silently dropped.
     fn draw_ledger_disclosure(&self, ui: &mut egui::Ui) {
-        let palette = theme::get(ui.ctx());
-        let Some(cache) = self.history_cache() else {
-            return;
-        };
-        if cache.unreadable_files == 0 && cache.problem_rows == 0 {
-            return;
+        if let Some(history) = self.history_cache() {
+            super::draw_history_warning(ui, history);
         }
-        ui.label(
-            egui::RichText::new(format!(
-                "{} file(s) unreadable, {} row(s) skipped - counted, never silently dropped.",
-                cache.unreadable_files, cache.problem_rows,
-            ))
-            .color(palette.warn())
-            .small(),
-        );
     }
 }
 

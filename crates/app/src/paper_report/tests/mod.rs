@@ -247,7 +247,7 @@ fn paper_report_filter_input_recuts_before_dependent_paint() {
         );
         let view = report.report_view().as_ref().unwrap();
         let text = if view.rows.is_empty() {
-            view.scope_label()
+            view.scope_line()
         } else {
             view.net_text.0.clone()
         };

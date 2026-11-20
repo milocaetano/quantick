@@ -168,7 +168,12 @@ fn source_edits_leave_context_and_all_readouts_follow_the_union_across_reloads()
                     "warm frames reuse the cut"
                 );
                 if count == 0 {
-                    assert_eq!(view.scope_label(), "No sources selected");
+                    assert_eq!(view.scope_line(), "No sources selected");
+                    assert!(state.filters_narrowed("X"));
+                    assert_eq!(
+                        state.empty_hint(),
+                        "Select one or more sources to see their saved trades."
+                    );
                 }
             }
         }

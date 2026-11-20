@@ -71,6 +71,25 @@ pub struct LoadedHistory {
     pub sessions: BTreeMap<SessionKey, SessionInfo>,
 }
 
+impl LoadedHistory {
+    pub fn scan_warning(&self) -> Option<String> {
+        (self.unreadable_files > 0 || self.problem_rows > 0).then(|| {
+            format!(
+                "{} file(s) unreadable, {} row(s) skipped - counted, never silently dropped.",
+                self.unreadable_files, self.problem_rows,
+            )
+        })
+    }
+
+    pub fn scan_summary(&self) -> String {
+        format!(
+            "Loaded history total · {} trade(s), {} journal file(s) checked",
+            self.rows.len(),
+            self.files
+        )
+    }
+}
+
 /// Execution origin and feed filters. The legacy `Real` identifier means
 /// simulator-on-live-feed; broker executions have their own explicit filter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -489,6 +508,9 @@ impl ReportView {
     /// keeps out — "where did my old trades go" gets a literal answer.
     #[must_use]
     pub fn scope_line(&self) -> String {
+        if self.source == SourceSelection::default() {
+            return self.source.label().to_owned();
+        }
         let mut text = match (self.range, self.anchor_ms) {
             (Some(range), _) => format!(
                 "{} ({} day(s), the dates you picked - the period pills are standing down)",
