@@ -1,0 +1,230 @@
+{
+  "$defs": {
+    "DeskGroup": {
+      "properties": {
+        "bar_type": {
+          "description": "The chart's bar type as its toolbar summarises it (`tick(4)`).",
+          "type": "string"
+        },
+        "count": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "paused": {
+          "description": "True when none of its instances watches and at least one is paused.",
+          "type": "boolean"
+        },
+        "rows": {
+          "items": {
+            "$ref": "#/$defs/DeskRow"
+          },
+          "type": "array"
+        },
+        "symbol": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "symbol",
+        "bar_type",
+        "paused",
+        "count",
+        "rows"
+      ],
+      "type": "object"
+    },
+    "DeskRow": {
+      "description": "One instance as the desk lists it.",
+      "properties": {
+        "action": {
+          "$ref": "#/$defs/FireAction"
+        },
+        "ended_reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "instance": {
+          "$ref": "#/$defs/InstanceId"
+        },
+        "link": {
+          "$ref": "#/$defs/Link"
+        },
+        "name": {
+          "description": "The script's file name, or the drawn instance's preset.",
+          "type": "string"
+        },
+        "pane_id": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "state": {
+          "$ref": "#/$defs/DeskState"
+        },
+        "status": {
+          "description": "The instance's badge line.",
+          "type": "string"
+        },
+        "tab_id": {
+          "$ref": "#/$defs/WireU64"
+        }
+      },
+      "required": [
+        "tab_id",
+        "pane_id",
+        "instance",
+        "name",
+        "state",
+        "link",
+        "action",
+        "status"
+      ],
+      "type": "object"
+    },
+    "DeskState": {
+      "oneOf": [
+        {
+          "enum": [
+            "watching"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "paused",
+          "description": "Rings and places nothing, still reading closes.",
+          "type": "string"
+        },
+        {
+          "const": "ended",
+          "description": "Stopped until `strategy.desk.arm`; `ended_reason` says why.",
+          "type": "string"
+        }
+      ]
+    },
+    "FireAction": {
+      "description": "What a firing does.",
+      "oneOf": [
+        {
+          "enum": [
+            "alarm"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "order",
+          "description": "A paper order: drawn strategies only, never a script.",
+          "type": "string"
+        }
+      ]
+    },
+    "InstanceId": {
+      "description": "Which instance of a tab a call names.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "A script, by the id `strategy.script.arm` answered.",
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/WireU64"
+            },
+            "kind": {
+              "const": "script",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "id"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Instance `id` riding drawing `drawing_id` on chart `pane_id`, as\n`strategy.desk.list` reports it; never reused in the tab's session.",
+          "properties": {
+            "drawing_id": {
+              "$ref": "#/$defs/WireU64"
+            },
+            "id": {
+              "$ref": "#/$defs/WireU64"
+            },
+            "kind": {
+              "const": "drawing",
+              "type": "string"
+            },
+            "pane_id": {
+              "$ref": "#/$defs/WireU64"
+            }
+          },
+          "required": [
+            "kind",
+            "pane_id",
+            "drawing_id",
+            "id"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "Link": {
+      "oneOf": [
+        {
+          "description": "It rides the drawing; `name` is the drawing's, when it has one.",
+          "properties": {
+            "drawing_id": {
+              "$ref": "#/$defs/WireU64"
+            },
+            "kind": {
+              "const": "drawing",
+              "type": "string"
+            },
+            "name": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "drawing_id"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A script on a fixed range, a line or anywhere on the chart.",
+          "properties": {
+            "kind": {
+              "const": "chart",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "groups": {
+      "description": "In symbol, then bar type order; each tab's rows in chart then arming\norder.",
+      "items": {
+        "$ref": "#/$defs/DeskGroup"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "groups"
+  ],
+  "title": "ListResult",
+  "type": "object"
+}

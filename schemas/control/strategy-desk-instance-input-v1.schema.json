@@ -1,0 +1,82 @@
+{
+  "$defs": {
+    "InstanceId": {
+      "description": "Which instance of a tab a call names.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "A script, by the id `strategy.script.arm` answered.",
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/WireU64"
+            },
+            "kind": {
+              "const": "script",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "id"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Instance `id` riding drawing `drawing_id` on chart `pane_id`, as\n`strategy.desk.list` reports it; never reused in the tab's session.",
+          "properties": {
+            "drawing_id": {
+              "$ref": "#/$defs/WireU64"
+            },
+            "id": {
+              "$ref": "#/$defs/WireU64"
+            },
+            "kind": {
+              "const": "drawing",
+              "type": "string"
+            },
+            "pane_id": {
+              "$ref": "#/$defs/WireU64"
+            }
+          },
+          "required": [
+            "kind",
+            "pane_id",
+            "drawing_id",
+            "id"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "One instance on one tab.",
+  "properties": {
+    "instance": {
+      "$ref": "#/$defs/InstanceId"
+    },
+    "tab_id": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/WireU64"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "The tab; absent for the one on screen."
+    }
+  },
+  "required": [
+    "instance"
+  ],
+  "title": "InstanceInput",
+  "type": "object"
+}
