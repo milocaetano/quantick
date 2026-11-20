@@ -10,7 +10,7 @@ and `.agents/skills/`.
 [Authority](crates/mcp/README.md); [inventory](docs/control-plane/capability-inventory.md);
 [catalog](schemas/control/observer-capability-catalog-v1.json).
 
-## The map
+## Map
 
 `crates/` workspace. Edges: `crates/guards/src/graph.rs`.
 `app`, `backtest`, `mcp` and `guards` are leaves.
@@ -54,5 +54,5 @@ and `.agents/skills/`.
 | `chart-interaction` | layers, orderflow | Pane state, menus, quick ranges, anchors. |
 | `layers` | — | Layer visibility and persistence. |
 | `backpressure` | — | Owner-to-worker admission (never drop); told the time. |
-| `operability` | — | UI behaviours, capabilities and exclusions. |
+| `operability` | control | UI behaviours, capabilities and exclusions. |
 | `platform` | — | OS window calls for `app`. |

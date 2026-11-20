@@ -3278,6 +3278,9 @@ dependencies = [
 [[package]]
 name = "quantick-operability"
 version = "0.1.0"
+dependencies = [
+ "quantick-control",
+]
 
 [[package]]
 name = "quantick-orderbook"
