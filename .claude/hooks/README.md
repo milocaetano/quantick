@@ -126,10 +126,10 @@ denial is reported to the coordinator, never routed around.
 
 ## Full CI at the exact head
 
-One full CI run is nine jobs in `.github/workflows/ci.yml`: `ci`,
+One full CI run is ten jobs in `.github/workflows/ci.yml`: `guards` first, then `ci`,
 `linux-tests`, `harness-app`, `harness-combined` and `harness-scenario` on
 Linux, `windows`, `windows-tests`, `windows-heavy-tests` and
-`windows-app-tests` on Windows. They run in parallel. An agent iterating on a
+`windows-app-tests` on Windows. Those nine jobs run in parallel. An agent iterating on a
 draft still needs a signal sooner than the full verdict, and readiness needs
 the full verdict anyway, so the two are separated rather than one being traded
 for the other.
