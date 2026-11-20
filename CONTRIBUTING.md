@@ -81,6 +81,11 @@ fragments after downward-only tightening; a daily workflow opens or updates one
 maintenance PR for the user to merge. Size, context and other guards retain
 their absolute policies.
 
+An interrupted fold keeps a checked recovery journal and rejects baseline reads
+until `--tighten --fold` finishes recovery. Preserve a journal reported as corrupt
+for repair; deleting it can lose the fragment accounting. Folds hold one OS file
+lock across recovery, tightening and consolidation.
+
 The fold workflow requires the repository's Actions setting **Allow GitHub
 Actions to create and approve pull requests**. It reports a setup error when
 PR creation is denied; it never changes permissions or merges. The user also

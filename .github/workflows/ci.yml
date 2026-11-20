@@ -236,7 +236,9 @@ jobs:
         # docs-only PR that renames a marker on one side, which is the point.
         run: sh .claude/hooks/guardrails_test.sh
       - name: Ratchet orchestration fixtures
-        run: python tools/ci/test_ratchet_delta.py
+        run: |
+          python tools/ci/test_ratchet_delta.py
+          python tools/ci/test_ratchet_fold.py
       - name: Python tooling lint
         # The MetaTrader bridge and the session exporter are Python, so not one
         # of the cargo steps below can see them. An undefined name reached main

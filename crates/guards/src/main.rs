@@ -114,11 +114,9 @@ fn main() -> ExitCode {
         None => run_guards(&root, None, base.as_deref()),
         Some("--tighten") if args.len() == 1 => tighten(&root),
         Some("--tighten") if args.len() == 2 && args[1] == "--fold" => {
-            if tighten(&root) != ExitCode::SUCCESS {
-                return ExitCode::FAILURE;
-            }
-            match fold::run(&root) {
-                Ok(()) => ExitCode::SUCCESS,
+            match fold::run_after(&root, || tighten(&root) == ExitCode::SUCCESS) {
+                Ok(true) => ExitCode::SUCCESS,
+                Ok(false) => ExitCode::FAILURE,
                 Err(error) => {
                     eprintln!("{error}");
                     ExitCode::FAILURE

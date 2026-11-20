@@ -51,6 +51,8 @@ pub const BUDGET_DIRECTIVE: &str = "!budget";
 /// `app-lines-baseline.d/`.
 pub const RAISES_SUFFIX: &str = ".d";
 
+pub(crate) const FOLD_STAGE: &str = "crates/guards/.ratchet-fold";
+
 /// What a guard's own walk measured, summed.
 ///
 /// One owner for the arithmetic; each guard's `measured` reaches it through
@@ -216,6 +218,14 @@ impl Policy {
     /// [`BUDGET_DIRECTIVE`] line, because a typo silently dropping an entry
     /// would leave a file unguarded and looking green.
     pub fn baseline(&self, root: &Path) -> Result<Baseline, String> {
+        if root
+            .join(FOLD_STAGE)
+            .join("pending")
+            .try_exists()
+            .map_err(|error| error.to_string())?
+        {
+            return Err("ratchet fold is pending; retry --tighten --fold to recover".to_owned());
+        }
         let file = root.join(self.baseline_file);
         let text = fs::read_to_string(&file)
             .map_err(|e| format!("{} is unreadable: {e}", file.display()))?;

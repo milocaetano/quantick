@@ -25,28 +25,4 @@ jobs:
       - name: Tighten and fold into one maintenance PR
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          existing=$(gh pr list --base main --state open --search 'in:title "chore: fold ratchet fragments"' --json number,headRefName --jq '.[0] // empty')
-          if [ -n "$existing" ]; then
-            branch=$(printf '%s' "$existing" | jq -r .headRefName)
-            git checkout "$branch"
-            git merge origin/main --no-edit
-          else
-            branch="docs/ratchet-fold-$(date -u +%Y%m%d)-${GITHUB_RUN_ID}"
-            git checkout -b "$branch"
-          fi
-          cargo run -q -p quantick-guards -- --tighten --fold
-          python tools/ci/ratchet_delta.py --base origin/main
-          git add 'crates/guards/*-baseline.txt' 'crates/guards/*-baseline.d'
-          if git diff --cached --quiet; then exit 0; fi
-          git commit -m 'chore: fold ratchet fragments'
-          git push origin "$branch"
-          if [ -z "$existing" ]; then
-            printf '%s\n' 'Consolidate signed ratchet fragments after downward-only tightening. The user approves any waiting workflow runs and merges this maintenance PR after green CI; no automatic merge is configured.' > /tmp/ratchet-fold-body.md
-            if ! gh pr create --base main --head "$branch" --title 'chore: fold ratchet fragments' --body-file /tmp/ratchet-fold-body.md; then
-              echo '::error::Bot PR creation requires Settings > Actions > General > Workflow permissions > Allow GitHub Actions to create and approve pull requests. Enable that repository setting and rerun this workflow; it never merges automatically.'
-              exit 1
-            fi
-          fi
+        run: python tools/ci/ratchet_fold.py
