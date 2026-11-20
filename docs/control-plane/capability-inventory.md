@@ -168,6 +168,9 @@ capability that cannot change application state.
 | `settings.open` | 1 | `settings` | no | `cockpit`, `cockpit.layout` |
 | `settings.set` | 1 | `settings` | no | `cockpit`, `cockpit.layout` |
 | `snapshot.read` | 1 | `snapshot` | yes | `observe` |
+| `strategy.script.arm` | 1 | `strategy` | no | `annotate`, `annotate.script` |
+| `strategy.script.disarm` | 1 | `strategy` | no | `annotate`, `annotate.script` |
+| `strategy.script.list` | 1 | `strategy` | yes | `observe`, `observe.indicators`, `observe.user_text` |
 | `tab.close` | 1 | `tab` | no | `cockpit`, `cockpit.desk` |
 | `tab.market.set` | 1 | `tab` | no | `cockpit`, `cockpit.recover` |
 | `tab.workspace.set` | 1 | `tab` | no | `cockpit`, `cockpit.layout` |
@@ -200,4 +203,4 @@ capability that cannot change application state.
 | `workspace.save_as` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
 | `workspace.save_to` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
 
-175 capabilities registered.
+178 capabilities registered.

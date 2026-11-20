@@ -1713,6 +1713,10 @@ fn every_reachable_forbidden_row_refuses_a_key_before_the_application() {
             "indicator.script.attach" => json!({ "name": "keyed", "source": script }),
             "indicator.script.detach" => json!({ "slot_id": "1" }),
             "notify.popup" | "notify.toast" | "notify.sound" => json!({ "message": "keyed" }),
+            "strategy.script.arm" => {
+                json!({ "script": "keyed.pine", "side": "buy", "placement": { "kind": "anywhere" } })
+            }
+            "strategy.script.disarm" => json!({ "id": "1" }),
             other => panic!("`{other}` is a reachable forbidden row with no input here; add one"),
         };
         let (response, served) = keyed_call(

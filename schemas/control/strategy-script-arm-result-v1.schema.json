@@ -1,0 +1,176 @@
+{
+  "$defs": {
+    "ActionSide": {
+      "description": "Which way the order goes.",
+      "enum": [
+        "buy",
+        "sell"
+      ],
+      "type": "string"
+    },
+    "CrossDirection": {
+      "enum": [
+        "up",
+        "down"
+      ],
+      "type": "string"
+    },
+    "Placement": {
+      "description": "Where a script may ring. Prices are decimal strings.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "The rectangle drawing `drawing_id` on the pane marks, while its time\nspan covers the bar.",
+          "properties": {
+            "drawing_id": {
+              "$ref": "#/$defs/WireU64"
+            },
+            "kind": {
+              "const": "region",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "drawing_id"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A fixed band; both edges inside, either order.",
+          "properties": {
+            "high": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "range",
+              "type": "string"
+            },
+            "low": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "low",
+            "high"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A horizontal line the bar's body must cross in `direction`.",
+          "properties": {
+            "direction": {
+              "$ref": "#/$defs/CrossDirection"
+            },
+            "kind": {
+              "const": "line",
+              "type": "string"
+            },
+            "level": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "level",
+            "direction"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Any closed bar.",
+          "properties": {
+            "kind": {
+              "const": "anywhere",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "ScriptStrategy": {
+      "description": "One armed script.",
+      "properties": {
+        "alarm_only": {
+          "description": "Always true: a script strategy never places an order.",
+          "type": "boolean"
+        },
+        "disarm_reason": {
+          "description": "Why it stopped: `line N: <CODE> <message>` when its script failed at\nruntime, otherwise the disarm reason in the badge's words.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "$ref": "#/$defs/WireU64",
+          "description": "Stable for the tab's session; never reused."
+        },
+        "pane_id": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "placement": {
+          "$ref": "#/$defs/Placement"
+        },
+        "script": {
+          "type": "string"
+        },
+        "side": {
+          "$ref": "#/$defs/ActionSide"
+        },
+        "state": {
+          "$ref": "#/$defs/ScriptStrategyState"
+        },
+        "status": {
+          "description": "What the last closed bar did, as the instance's badge line says it.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "pane_id",
+        "script",
+        "side",
+        "placement",
+        "state",
+        "status",
+        "alarm_only"
+      ],
+      "type": "object"
+    },
+    "ScriptStrategyState": {
+      "enum": [
+        "watching",
+        "disarmed"
+      ],
+      "type": "string"
+    },
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "strategy": {
+      "$ref": "#/$defs/ScriptStrategy"
+    },
+    "tab_id": {
+      "$ref": "#/$defs/WireU64"
+    }
+  },
+  "required": [
+    "tab_id",
+    "strategy"
+  ],
+  "title": "ArmResult",
+  "type": "object"
+}

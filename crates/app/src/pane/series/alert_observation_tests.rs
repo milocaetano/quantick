@@ -19,13 +19,13 @@ fn committed_observer_excludes_held_history_and_preserves_equal_time_closes() {
     pane.ingest_backfill(&tape[..10]);
     let mut closes = Vec::new();
     for print in &tape[10..] {
-        pane.ingest_live_trade_observed(print, 0, &mut |_, bar, slot| {
-            closes.push((bar.close, slot))
+        pane.ingest_live_trade_observed(print, 0, &mut |_, closed, slot| {
+            closes.push((closed.bar.close, slot))
         });
     }
     assert!(closes.is_empty());
-    pane.ingest_live_trade_observed(&trade(64, 170), 0, &mut |_, bar, slot| {
-        closes.push((bar.close, slot))
+    pane.ingest_live_trade_observed(&trade(64, 170), 0, &mut |_, closed, slot| {
+        closes.push((closed.bar.close, slot))
     });
     assert_eq!(
         closes.iter().map(|(_, slot)| *slot).collect::<Vec<_>>(),

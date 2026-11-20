@@ -32,7 +32,8 @@ use quantick_feed::{
     REFILL_PRINTS_PER_DRAIN, past_resume_floor_logged,
 };
 use quantick_layers::ChartLayer;
-use quantick_session::live_trade::{self, LiveClose, PaneFold};
+use quantick_session::live_trade::{self, PaneFold};
+use quantick_session::strategies::LiveClose;
 use quantick_session::{
     Act, Delivery, Effect, FeedRequest, Msg, OlderCandles, Refusal, TabView, Wait, WaitChange,
 };
@@ -66,7 +67,9 @@ impl live_trade::LiveTradeOwners for LiveTradeOwners<'_> {
         };
         let mut fold = PaneFold::new(pane.id);
         let tag = self.alarm_tag;
-        pane.ingest_live_trade_observed(trade, tag, &mut |_, bar, slot| fold.close(bar, slot));
+        pane.ingest_live_trade_observed(trade, tag, &mut |_, closed, slot| {
+            fold.close(&closed.bar, closed.poc, slot);
+        });
         fold
     }
     fn observe_alert(&mut self, pane: usize, trade: &Trade, close: Option<&LiveClose>) {
@@ -1193,7 +1196,7 @@ impl Tab {
 
     /// Prints made while nobody listened, a resumed window or a refilled hole: the live
     /// path's bars, tape and indicators, and the paper mark only (see [`Self::ingest_resumed`]).
-    /// Without `to_strategies` the bars they close never reach a strategy.
+    /// Without `to_strategies` the bars they close only warm script strategies.
     fn ingest_unheard(&mut self, trades: &[Trade], to_strategies: bool) -> bool {
         let Some(last) = trades.last() else {
             return false;
@@ -1210,10 +1213,8 @@ impl Tab {
         } = self;
         for pane in std::iter::once(flow_pane).chain(time_panes.iter_mut()) {
             for trade in trades {
-                pane.ingest_live_trade_observed(trade, tag, &mut |pane, bar, slot| {
-                    if to_strategies {
-                        strategies.queue_closed(pane.id, bar, slot);
-                    }
+                pane.ingest_live_trade_observed(trade, tag, &mut |pane, closed, slot| {
+                    strategies.queue_closed(pane.id, &closed.bar, closed.poc, slot, to_strategies);
                 });
             }
         }

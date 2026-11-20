@@ -80,7 +80,7 @@ impl Paint<'_, '_> {
                 self.ensure_report_view(tz, env.pnl);
                 if let Some(view) = self.report_view() {
                     ui.label(
-                        egui::RichText::new(view.scope_label())
+                        egui::RichText::new(view.scope_line())
                             .color(theme::get(ui.ctx()).text_support()),
                     );
                 }
@@ -166,39 +166,8 @@ impl Paint<'_, '_> {
         ui.label(
             egui::RichText::new("No saved trades for this filter.").color(palette.text_primary()),
         );
-        let scope = self
-            .report_symbol()
-            .as_deref()
-            .unwrap_or("any symbol")
-            .to_owned();
-        let hidden_by_source_or_scope = self
-            .report_view()
-            .as_ref()
-            .map_or(0, |view| view.hidden_by_source_or_scope);
-        let picked = self.calendar().selection.range();
-        let text = if let Some(range) = picked {
-            // The dates are the user's own pick, so the
-            // refusal names them and the way back out.
-            format!(
-                "{scope} closed no trades in {} - pick another day, or clear \
-                 the date filter to go back to the period pills.",
-                range.label(),
-            )
-        } else if hidden_by_source_or_scope > 0 {
-            format!(
-                "{scope} has {hidden_by_source_or_scope} trade(s) outside the selected source or report scope."
-            )
-        } else {
-            format!(
-                "{scope} has no trades in {}. Try \"All\", or another symbol.",
-                self.report_period().phrase(),
-            )
-        };
-        ui.label(egui::RichText::new(text).color(palette.text_support()));
-        let default_symbol = (!env.symbol.is_empty()).then(|| env.symbol.to_owned());
-        if (self.report_period() != ReportPeriod::All
-            || self.report_symbol() != &default_symbol
-            || picked.is_some())
+        ui.label(egui::RichText::new(self.empty_hint()).color(palette.text_support()));
+        if self.filters_narrowed(env.symbol)
             && ui
                 .button("Clear filters")
                 .on_hover_text("back to this symbol, all time, no dates")
@@ -213,25 +182,11 @@ impl Paint<'_, '_> {
         let palette = theme::get(ui.ctx());
         ui.add_space(6.0);
         if let Some(history) = self.report() {
-            if history.unreadable_files > 0 || history.problem_rows > 0 {
-                ui.label(
-                    egui::RichText::new(format!(
-                        "{} file(s) unreadable, {} row(s) skipped - counted, never \
-                         silently dropped.",
-                        history.unreadable_files, history.problem_rows,
-                    ))
-                    .color(palette.warn())
-                    .small(),
-                );
-            }
+            super::draw_history_warning(ui, history);
             ui.label(
-                egui::RichText::new(format!(
-                    "Loaded history total · {} trade(s), {} journal file(s) checked",
-                    history.rows.len(),
-                    history.files
-                ))
-                .color(palette.text_muted())
-                .small(),
+                egui::RichText::new(history.scan_summary())
+                    .color(palette.text_muted())
+                    .small(),
             );
         }
         let _footer =
@@ -394,30 +349,11 @@ impl Paint<'_, '_> {
                 {
                     self.update(Intent::Dates(DaySelection::None));
                 }
-            } else if self.report_days().is_empty() {
+            } else {
                 ui.label(
-                    egui::RichText::new("no days on record in this scope")
+                    egui::RichText::new(self.report_days().span_label())
                         .color(palette.text_muted())
                         .small(),
-                );
-            } else if let (Some(oldest), Some(newest)) =
-                (self.report_days().first(), self.report_days().last())
-            {
-                // The span on record, stated: it is the answer to "how far
-                // back can I even ask" before the first click is made.
-                ui.label(
-                    egui::RichText::new(format!(
-                        // "to", not an arrow: this label is drawn in the
-                        // proportional UI font, which has no glyph for → and
-                        // renders a tofu box in its place (the same reason
-                        // DateRange::label spells its span with a word).
-                        "{} day(s) with trades · {} to {}",
-                        self.report_days().len(),
-                        oldest.iso(),
-                        newest.iso(),
-                    ))
-                    .color(palette.text_muted())
-                    .small(),
                 );
             }
         });

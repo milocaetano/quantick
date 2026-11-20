@@ -316,6 +316,37 @@ impl State {
     pub fn report_view(&self) -> &Option<ReportView> {
         &self.report_view
     }
+    /// Why an empty report lists nothing, and the way back: the picked
+    /// dates are the trader's own and are named; trades held back by the
+    /// source or a report scope are counted; else the period over the symbol.
+    #[must_use]
+    pub fn empty_hint(&self) -> String {
+        let scope = self.report_symbol.as_deref().unwrap_or("any symbol");
+        let hidden = (self.report_view.as_ref()).map_or(0, |view| view.hidden_by_source_or_scope);
+        if let Some(range) = self.calendar.selection.range() {
+            format!(
+                "{scope} closed no trades in {} - pick another day, or clear \
+                 the date filter to go back to the period pills.",
+                range.label(),
+            )
+        } else if hidden > 0 {
+            format!("{scope} has {hidden} trade(s) outside the selected source or report scope.")
+        } else {
+            format!(
+                "{scope} has no trades in {}. Try \"All\", or another symbol.",
+                self.report_period.phrase(),
+            )
+        }
+    }
+    /// Whether a filter narrows the report past `symbol`, all time and no
+    /// dates — whether "Clear filters" has anything to clear.
+    #[must_use]
+    pub fn filters_narrowed(&self, symbol: &str) -> bool {
+        let default_symbol = (!symbol.is_empty()).then(|| symbol.to_owned());
+        self.report_period != ReportPeriod::All
+            || self.report_symbol != default_symbol
+            || self.calendar.selection.range().is_some()
+    }
     pub fn report_layout_revision(&self) -> u64 {
         self.report_layout_revision
     }

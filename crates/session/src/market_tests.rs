@@ -8,8 +8,9 @@ use quantick_strategy::sound::Cue;
 use quantick_strategy::{AlarmParams, SignalAlarm};
 use rust_decimal::Decimal;
 
-use crate::live_trade::{LiveClose, LiveTradeOwners, PaneFold};
+use crate::live_trade::{LiveTradeOwners, PaneFold};
 use crate::market::TabMarket;
+use crate::strategies::LiveClose;
 use crate::strategies::TabStrategies;
 use crate::strategies_tests::{DrawingId, bar, instance};
 
@@ -48,6 +49,7 @@ fn setup(alarm: bool) -> (TabMarket<DrawingId>, Owners) {
         pane_id,
         closes: vec![LiveClose {
             bar: bar(100, 101),
+            poc: None,
             slot,
         }],
     };
@@ -83,11 +85,13 @@ impl LiveTradeOwners for Owners {
         let queued = [FLOW, TIME]
             .into_iter()
             .flat_map(|id| {
-                let pending = strategies.pane(id).map(|pane| pane.pending().to_vec());
+                let pending = strategies
+                    .pane(id)
+                    .map(|pane| pane.pending().cloned().collect::<Vec<_>>());
                 pending
                     .unwrap_or_default()
                     .into_iter()
-                    .map(move |(_, slot)| (id, slot))
+                    .map(move |close| (id, close.slot))
             })
             .collect();
         self.seen.push(Seen::Evaluate { now_ms, queued });

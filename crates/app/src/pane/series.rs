@@ -348,14 +348,14 @@ impl ChartPane {
     /// `alarm_tag` rides each close to the indicators and back on the
     /// alarms it raises, naming the market it closed on.
     ///
-    /// `closed_observer` hears each bar the print closed, at its *composed*
-    /// slot (venue history prefix + live bars) — the space the drawings'
-    /// anchors live in, which is why the tab queues strategy closes from it.
+    /// `closed_observer` hears each bar the print closed, with its footprint,
+    /// at its *composed* slot (venue history prefix + live bars) — the space
+    /// the drawings' anchors live in, which is why the tab queues strategy closes from it.
     pub(crate) fn ingest_live_trade_observed(
         &mut self,
         trade: &quantick_engine::Trade,
         alarm_tag: u64,
-        closed_observer: &mut dyn FnMut(&Self, &quantick_engine::Bar, usize),
+        closed_observer: &mut dyn FnMut(&Self, &quantick_indicators::FootprintBar, usize),
     ) {
         if let Some(orderflow) = self.orderflow.as_mut() {
             orderflow.record_trade(trade);
@@ -364,12 +364,8 @@ impl ChartPane {
         self.publish_tape_price_step();
         self.apply_series_effects(ingest.backfilled.map(SeriesEffect::BackfillIndicators));
         for index in ingest.closed {
-            closed_observer(
-                self,
-                &self.series.state.bars()[index],
-                self.series.history_prefix.len() + index,
-            );
             let closed = self.series_read().footprint_bar(index);
+            closed_observer(self, &closed, self.series.history_prefix.len() + index);
             self.lane.reset();
             self.indicator_worker
                 .send(IndicatorCommand::BarClosed(closed, alarm_tag));

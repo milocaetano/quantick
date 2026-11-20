@@ -33,6 +33,7 @@ mod native;
 mod paging;
 pub mod paper;
 pub mod prompt;
+pub mod script_strategies;
 pub mod series;
 pub mod strategies;
 pub mod strategy_reading;
@@ -968,6 +969,8 @@ mod paper_gate_tests;
 mod paper_settings_tests;
 #[cfg(test)]
 mod paper_tests;
+#[cfg(test)]
+mod script_strategies_tests;
 #[cfg(test)]
 mod series_tests;
 #[cfg(test)]

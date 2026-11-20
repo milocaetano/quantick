@@ -246,6 +246,15 @@ applicability, not recalibration: every ceiling, host, toolchain, jobs,
 protocol, top-three selection and representative is unchanged, and the PR's
 own ordinary exact-final-head run must pass every one.
 
+The script-trigger member-only amendment (feat/script-trigger, authorized by
+the trader on 2026-11-19 for the script strategy trigger) binds root SHA256
+`3a1b5b56f03433997bdb660f7612642f5e75a3708785a118258c2ec4570ea356`.
+Relative to the broker-mt5 identity above, only the `crates/script-trigger`
+member is added; all other parsed manifest values are equal. This is
+applicability, not recalibration: every ceiling, host, toolchain, jobs,
+protocol, top-three selection and representative is unchanged, and the PR's
+own ordinary exact-final-head run must pass every one.
+
 The drawings top-three change (#662, under the #660 authorization for
 feature #659) happened when the tools moved into `quantick-drawings`: by the
 frozen lexer it holds 7,241 production lines to `guards`' 5,898, so the
@@ -612,3 +621,12 @@ commands grew `control-handlers` to 13,905 production lines, past `workspace`
 at 13,781. Run 44122706326 at 5ea3569cb measured its loops at 1.834, 1.844,
 1.863, 1.857 and 1.830 seconds, so the unchanged policy gives 2.329 seconds.
 App and orderflow keep their ceilings; no ceiling is raised.
+
+PR #1123 (2026-11-19, trader-authorized for this change only) re-anchors two
+ceilings with the unchanged formula. Main's own run 44623820182 at 606156a39
+already failed `control-handlers` at a 3.089-second loop maximum against
+2.329, and the PR's run 44630407122 at e7ee9be20 measured `orderflow` at
+38.815 seconds (package tests 36.386) against 38.703, on a slow runner that
+also took the app tests from 49.8 to 61.7 seconds. The slower run of the two
+gives `control-handlers` 3.862 seconds and `orderflow` 48.52 seconds. App,
+representatives, top-three selection and the protocol are unchanged.
