@@ -89,6 +89,18 @@ impl DayIndex {
             .map(|day| CivilDate::from_day_number(*day))
     }
 
+    pub fn span_label(&self) -> String {
+        match (self.first(), self.last()) {
+            (Some(first), Some(last)) => format!(
+                "{} day(s) with trades · {} to {}",
+                self.len(),
+                first.iso(),
+                last.iso()
+            ),
+            _ => "no days on record in this scope".to_owned(),
+        }
+    }
+
     /// How many days hold at least one trade.
     pub fn len(&self) -> usize {
         self.days.len()

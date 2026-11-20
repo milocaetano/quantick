@@ -4,6 +4,36 @@
       "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
       "type": "string"
     },
+    "JournalSourceFilter": {
+      "description": "The ledger's source pills.",
+      "oneOf": [
+        {
+          "const": "broker",
+          "description": "Trades sent to a broker, including DEMO and REAL accounts.",
+          "type": "string"
+        },
+        {
+          "const": "simulator",
+          "description": "All simulator trades, on live and replay feeds.",
+          "type": "string"
+        },
+        {
+          "const": "real",
+          "description": "Live sessions, and files from before a source was recorded.",
+          "type": "string"
+        },
+        {
+          "const": "replay",
+          "description": "Replay-driven practice sessions.",
+          "type": "string"
+        },
+        {
+          "const": "both",
+          "description": "Everything.",
+          "type": "string"
+        }
+      ]
+    },
     "ReportResult": {
       "properties": {
         "action": {
@@ -79,6 +109,64 @@
       "required": [
         "action",
         "title"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "action": {
+          "type": "string"
+        },
+        "loaded": {
+          "type": "boolean"
+        },
+        "net_points": {
+          "$ref": "#/$defs/CanonicalDecimal"
+        },
+        "open": {
+          "type": "boolean"
+        },
+        "scope": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "skipped_rows": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "sources": {
+          "items": {
+            "$ref": "#/$defs/JournalSourceFilter"
+          },
+          "type": "array"
+        },
+        "symbol": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "trade_count": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "unreadable_files": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "window": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "action",
+        "sources",
+        "open",
+        "loaded",
+        "window",
+        "trade_count",
+        "unreadable_files",
+        "skipped_rows",
+        "net_points"
       ],
       "type": "object"
     }
