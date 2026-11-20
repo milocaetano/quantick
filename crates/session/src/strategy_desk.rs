@@ -5,8 +5,9 @@
 //! An asset is a symbol and a bar type: the tab answers the symbol, each
 //! chart its bar type ([`DeskTab`]). An instance is named by
 //! [`InstanceRef`]: a script by the id it was armed with, a drawn instance by
-//! its chart, its drawing and its place among that drawing's instances, which
-//! shifts when an earlier sibling is removed.
+//! its chart, its drawing and the number the desk gave it. Both numbers come
+//! from one tab-owned sequence, in arming order, and are never reused, so a
+//! sibling's removal leaves every other name pointing where it did.
 //!
 //! A paused instance rings and places nothing, yet keeps its history: a
 //! paused script still warms on every close and a paused drawn instance's
@@ -72,13 +73,8 @@ impl DeskTab<'_> {
 pub enum InstanceRef<D> {
     /// A script, by the id `arm_script` answered.
     Script(u64),
-    /// The `nth` instance (from zero, in arming order) riding `drawing` on
-    /// chart `pane_id`.
-    Drawing {
-        pane_id: u64,
-        drawing: D,
-        nth: usize,
-    },
+    /// Instance `id` riding `drawing` on chart `pane_id`.
+    Drawing { pane_id: u64, drawing: D, id: u64 },
 }
 
 /// What the desk asks of a tab's instances.
@@ -180,13 +176,15 @@ impl<D> Default for StrategyDeskView<D> {
 }
 
 impl<D: Copy + PartialEq> StrategyDeskView<D> {
-    /// Add `tab`'s instances, naming drawings through `name_of(pane, drawing)`.
+    /// Add `tab`'s instances, naming drawings through `name_of(pane, drawing)`;
+    /// a drawn instance not yet numbered gets its desk number here.
     pub fn read(
         &mut self,
         tab: &DeskTab<'_>,
-        strategies: &TabStrategies<D>,
+        strategies: &mut TabStrategies<D>,
         name_of: impl Fn(u64, D) -> Option<String>,
     ) {
+        strategies.number_instances();
         for (asset, row) in strategies.desk_rows(tab, &name_of) {
             self.groups.entry(asset).or_default().push(row);
         }
@@ -287,15 +285,12 @@ impl<D: Copy + PartialEq> DeskBook<D> {
         instances: &[AnchoredInstance<D>],
         now_ms: u64,
     ) {
-        for (index, instance) in instances.iter().enumerate() {
+        for instance in instances {
             let listening = !matches!(instance.armed.state(), ArmedState::Disarmed { .. });
-            if listening && instance.armed.last_close_opportunity().is_some() {
-                let nth = nth_on_drawing(instances, index);
-                let key = InstanceRef::Drawing {
-                    pane_id,
-                    drawing: instance.drawing,
-                    nth,
-                };
+            let key = drawn_ref(pane_id, instance);
+            if let Some(key) = key.filter(|_| listening)
+                && instance.armed.last_close_opportunity().is_some()
+            {
                 self.fired(key, now_ms);
             }
         }
@@ -310,37 +305,19 @@ impl<D: Copy + PartialEq> DeskBook<D> {
             .map_or(0, |(_, _, count)| *count)
     }
 
-    /// Forget a removed drawn instance's count, and move its later siblings'
-    /// down to the places they now hold.
-    fn forget_drawn(&mut self, pane_id: u64, drawing: D, nth: usize) {
-        self.fires.retain_mut(|(key, _, _)| {
-            let InstanceRef::Drawing {
-                pane_id: pane,
-                drawing: held,
-                nth: place,
-            } = key
-            else {
-                return true;
-            };
-            if *pane != pane_id || *held != drawing {
-                return true;
-            }
-            if *place == nth {
-                return false;
-            }
-            if *place > nth {
-                *place -= 1;
-            }
-            true
-        });
+    fn forget(&mut self, key: InstanceRef<D>) {
+        self.fires.retain(|(held, _, _)| *held != key);
     }
 }
 
-/// The place among its drawing's instances of `instances[index]`.
-fn nth_on_drawing<D: PartialEq>(instances: &[AnchoredInstance<D>], index: usize) -> usize {
-    let drawing = &instances[index].drawing;
-    let earlier = instances[..index].iter();
-    earlier.filter(|other| other.drawing == *drawing).count()
+/// The name a numbered drawn instance answers to.
+fn drawn_ref<D: Copy>(pane_id: u64, instance: &AnchoredInstance<D>) -> Option<InstanceRef<D>> {
+    let id = instance.armed.desk_id()?;
+    Some(InstanceRef::Drawing {
+        pane_id,
+        drawing: instance.drawing,
+        id,
+    })
 }
 
 const NO_SUCH: &str = "no armed strategy on this tab has that id; read strategy.desk.list again";
@@ -357,6 +334,22 @@ enum Located {
 }
 
 impl<D: Copy + PartialEq> TabStrategies<D> {
+    /// Give every drawn instance armed since the last call its desk number,
+    /// from the sequence script ids come from: panes in id order, each in
+    /// arming order.
+    pub(crate) fn number_instances(&mut self) {
+        let mut next = self.next_script_id;
+        for (_, pane) in self.panes_mut() {
+            for instance in &mut pane.anchors.instances {
+                if instance.armed.desk_id().is_none() {
+                    instance.armed.set_desk_id(next);
+                    next += 1;
+                }
+            }
+        }
+        self.next_script_id = next;
+    }
+
     fn locate(&self, id: InstanceRef<D>) -> Option<Located> {
         match id {
             InstanceRef::Script(script) => self.panes().find_map(|(pane_id, pane)| {
@@ -366,11 +359,12 @@ impl<D: Copy + PartialEq> TabStrategies<D> {
             InstanceRef::Drawing {
                 pane_id,
                 drawing,
-                nth,
+                id,
             } => {
-                let instances = self.pane(pane_id)?.anchors.instances.iter().enumerate();
-                let mut riding = instances.filter(|(_, held)| held.drawing == drawing);
-                let (index, _) = riding.nth(nth)?;
+                let instances = &self.pane(pane_id)?.anchors.instances;
+                let index = instances
+                    .iter()
+                    .position(|held| held.drawing == drawing && held.armed.desk_id() == Some(id))?;
                 Some(Located::Drawn { pane_id, index })
             }
         }
@@ -426,11 +420,7 @@ impl<D: Copy + PartialEq> TabStrategies<D> {
                 DeskRow {
                     tab_id,
                     pane_id,
-                    id: InstanceRef::Drawing {
-                        pane_id,
-                        drawing: instance.drawing,
-                        nth: nth_on_drawing(instances, index),
-                    },
+                    id: drawn_ref(pane_id, instance).expect("numbered before it is read"),
                     name: instance.preset.clone(),
                     state,
                     link: DeskLink::Drawing {
@@ -496,6 +486,7 @@ impl<D: Copy + PartialEq> TabStrategies<D> {
         may_start_orders: bool,
         warmup: impl FnMut(u64, usize) -> Vec<(Bar, Option<Decimal>)>,
     ) -> Result<DeskOutcome<D>, String> {
+        self.number_instances();
         if !may_start_orders && self.starts_orders(&command) {
             return Err(STARTS_ORDERS.to_owned());
         }
@@ -615,11 +606,8 @@ impl<D: Copy + PartialEq> TabStrategies<D> {
                 self.disarm_script(script);
             }
             Located::Drawn { pane_id, index } => {
-                let pane = self.pane_at(pane_id);
-                let drawing = pane.anchors.instances[index].drawing;
-                let nth = nth_on_drawing(&pane.anchors.instances, index);
-                pane.remove_instance_at(index);
-                self.desk.forget_drawn(pane_id, drawing, nth);
+                self.pane_at(pane_id).remove_instance_at(index);
+                self.desk.forget(id);
             }
         }
         Ok(())
@@ -681,15 +669,13 @@ impl<D: Copy + PartialEq> TabStrategies<D> {
                     (held.drawing, held.spec.clone(), held.preset.clone());
                 let warm = |depth| bars_of(warmup(pane_id, depth));
                 pane.arm(drawing, &spec, preset, || Ok(()), warm)?;
-                let instances = &mut pane.anchors.instances;
-                let last = instances.len() - 1;
-                pause_drawn(&mut instances[last], true);
-                let nth = nth_on_drawing(instances, last);
-                Ok(InstanceRef::Drawing {
-                    pane_id,
-                    drawing,
-                    nth,
-                })
+                let copy = pane.anchors.instances.last_mut().expect("just armed");
+                pause_drawn(copy, true);
+                self.number_instances();
+                let copy = self
+                    .pane(pane_id)
+                    .and_then(|pane| pane.anchors.instances.last());
+                Ok(drawn_ref(pane_id, copy.expect("just armed")).expect("just numbered"))
             }
         }
     }
@@ -699,13 +685,14 @@ impl<D: Copy + PartialEq> TabStrategies<D> {
     /// their POC, slot zero first — against `region(pane, drawing, slot)`,
     /// the band a drawing marks there and whether it covers the slot.
     pub fn detail(
-        &self,
+        &mut self,
         tab: &DeskTab<'_>,
         id: InstanceRef<D>,
         name_of: impl Fn(u64, D) -> Option<String>,
         bars: impl FnOnce(u64) -> Vec<(Bar, Option<Decimal>)>,
         mut region: impl FnMut(u64, D, usize) -> Option<(Decimal, Decimal, bool)>,
     ) -> Option<StrategyDetail<D>> {
+        self.number_instances();
         let located = self.locate(id)?;
         let row = self.row(tab.tab_id, &located, &name_of);
         let pane_id = row.pane_id;

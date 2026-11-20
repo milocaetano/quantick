@@ -120,7 +120,9 @@ fn command(
     strategies.execute_desk(&tab(&panes), command, true, |_, _| Vec::new())
 }
 
-fn view(strategies: &TabStrategies<DrawingId>) -> Vec<crate::strategy_desk::DeskGroup<DrawingId>> {
+fn view(
+    strategies: &mut TabStrategies<DrawingId>,
+) -> Vec<crate::strategy_desk::DeskGroup<DrawingId>> {
     let panes = panes();
     let mut view = StrategyDeskView::default();
     view.read(&tab(&panes), strategies, |_, drawing| {
@@ -143,7 +145,7 @@ fn groups_instances_by_asset() {
         ScriptPlacement::Anywhere,
     );
 
-    let groups = view(&strategies);
+    let groups = view(&mut strategies);
 
     let assets: Vec<_> = groups.iter().map(|group| &group.asset).collect();
     assert_eq!(assets, [&asset("tick(4)"), &asset("time(1m)")]);
@@ -165,7 +167,7 @@ fn groups_instances_by_asset() {
         InstanceRef::Drawing {
             pane_id: TICK,
             drawing: DrawingId(3),
-            nth: 0,
+            id: 2,
         }
     );
     let script = &groups[1].rows[0];
@@ -192,7 +194,7 @@ fn paused_instance_does_not_fire() {
     let drawn = InstanceRef::Drawing {
         pane_id: TICK,
         drawing: DrawingId(3),
-        nth: 0,
+        id: 2,
     };
 
     assert_eq!(
@@ -242,7 +244,7 @@ fn paused_instance_does_not_fire() {
         "resumed, the next firing bar fires"
     );
     assert!(
-        view(&strategies)[0]
+        view(&mut strategies)[0]
             .rows
             .iter()
             .all(|row| row.state == DeskState::Watching)
@@ -275,7 +277,7 @@ fn asset_pause_spans_its_instances_only() {
     );
 
     assert_eq!(paused, Ok(DeskOutcome::Changed(2)));
-    let groups = view(&strategies);
+    let groups = view(&mut strategies);
     assert!(groups[0].paused);
     assert!(
         groups[0]
@@ -300,7 +302,7 @@ fn asset_pause_spans_its_instances_only() {
         StrategyDeskCommand::ResumeAsset(asset("tick(4)")),
     );
     assert_eq!(resumed, Ok(DeskOutcome::Changed(2)));
-    assert!(!view(&strategies)[0].paused);
+    assert!(!view(&mut strategies)[0].paused);
 }
 
 #[test]
@@ -311,21 +313,27 @@ fn remove_drops_only_that_instance() {
     let pane = strategies.pane_mut(TICK);
     pane.anchors.arm(instance(DrawingId(3)));
     pane.anchors.arm(second);
-    let first = InstanceRef::Drawing {
+    let on_drawing = |id| InstanceRef::Drawing {
         pane_id: TICK,
         drawing: DrawingId(3),
-        nth: 0,
+        id,
     };
+    let listed: Vec<_> = view(&mut strategies)[0]
+        .rows
+        .iter()
+        .map(|row| row.id)
+        .collect();
+    assert_eq!(listed, [on_drawing(1), on_drawing(2)]);
 
     assert_eq!(
-        command(&mut strategies, StrategyDeskCommand::Remove(first)),
+        command(&mut strategies, StrategyDeskCommand::Remove(on_drawing(1))),
         Ok(DeskOutcome::Changed(1))
     );
 
-    let rows = &view(&strategies)[0].rows;
+    let rows = &view(&mut strategies)[0].rows;
     assert_eq!(rows.len(), 1, "the drawing keeps its other instance");
     assert_eq!(rows[0].name, "second");
-    assert_eq!(rows[0].id, first, "the survivor takes the first place");
+    assert_eq!(rows[0].id, on_drawing(2), "the survivor keeps its id");
     let script = arm_script(
         &mut strategies,
         TICK,
@@ -341,7 +349,7 @@ fn remove_drops_only_that_instance() {
         command(&mut strategies, StrategyDeskCommand::Remove(gone)).is_err(),
         "gone is gone"
     );
-    assert_eq!(view(&strategies)[0].rows.len(), 1);
+    assert_eq!(view(&mut strategies)[0].rows.len(), 1);
 }
 
 #[test]
@@ -356,7 +364,7 @@ fn duplicate_and_save_as() {
     let copy = command(&mut strategies, StrategyDeskCommand::Duplicate(original));
 
     assert_eq!(copy, Ok(DeskOutcome::Duplicated(InstanceRef::Script(2))));
-    let rows = &view(&strategies)[0].rows;
+    let rows = &view(&mut strategies)[0].rows;
     assert_eq!(rows.len(), 2);
     assert_eq!(rows[1].name, "steady.pine");
     assert_eq!(rows[1].state, DeskState::Paused, "a copy is armed paused");
@@ -384,7 +392,7 @@ fn duplicate_and_save_as() {
     let drawn = InstanceRef::Drawing {
         pane_id: TICK,
         drawing: DrawingId(3),
-        nth: 0,
+        id: 3,
     };
     let refused = StrategyDeskCommand::SaveAs {
         instance: drawn,
@@ -400,7 +408,7 @@ fn duplicate_and_save_as() {
         Ok(DeskOutcome::Duplicated(InstanceRef::Drawing {
             pane_id: TICK,
             drawing: DrawingId(3),
-            nth: 1,
+            id: 4,
         }))
     );
 }
@@ -483,7 +491,7 @@ fn a_caller_without_the_trade_tier_cannot_restart_an_order_strategy() {
     let drawn = InstanceRef::Drawing {
         pane_id: TICK,
         drawing: DrawingId(3),
-        nth: 0,
+        id: 2,
     };
     let panes = panes();
     let mut agent =
@@ -506,4 +514,48 @@ fn a_caller_without_the_trade_tier_cannot_restart_an_order_strategy() {
         Ok(DeskOutcome::Changed(1)),
         "the script resumes, the order strategy stays paused"
     );
+}
+
+#[test]
+fn removing_an_earlier_sibling_leaves_a_later_id_on_the_same_instance() {
+    let mut strategies = TabStrategies::default();
+    let mut second = instance(DrawingId(3));
+    second.preset = "second".to_owned();
+    let pane = strategies.pane_mut(TICK);
+    pane.anchors.arm(instance(DrawingId(3)));
+    pane.anchors.arm(second);
+    let on_drawing = |id| InstanceRef::Drawing {
+        pane_id: TICK,
+        drawing: DrawingId(3),
+        id,
+    };
+    let listed: Vec<_> = view(&mut strategies)[0]
+        .rows
+        .iter()
+        .map(|row| row.id)
+        .collect();
+    let (first, later) = (listed[0], listed[1]);
+
+    let remove = || StrategyDeskCommand::Remove(first);
+    assert_eq!(
+        command(&mut strategies, remove()),
+        Ok(DeskOutcome::Changed(1))
+    );
+    assert!(
+        command(&mut strategies, remove()).is_err(),
+        "a second remove of the same id reaches no other instance"
+    );
+
+    assert_eq!(later, on_drawing(2));
+    assert_eq!(
+        command(&mut strategies, StrategyDeskCommand::Pause(later)),
+        Ok(DeskOutcome::Changed(1))
+    );
+    let survivor = &view(&mut strategies)[0].rows[0];
+    assert_eq!(survivor.id, later);
+    assert_eq!(
+        survivor.name, "second",
+        "the id still names the same instance"
+    );
+    assert_eq!(survivor.state, DeskState::Paused);
 }

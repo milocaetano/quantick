@@ -4,7 +4,8 @@
 //!
 //! An instance is named by [`InstanceId`]: a script by the id
 //! `strategy.script.arm` answered, a drawn instance by its chart, its drawing
-//! and its place among that drawing's instances. Instances live for the
+//! and the id the desk gave it. Ids are never reused within a tab's session,
+//! so a removal never makes an id name another instance. Instances live for the
 //! session; a call names its tab, absent for the one on screen.
 
 use quantick_control::id::ModuleId;
@@ -46,12 +47,12 @@ pub const ASSET_TEXT_MAX_BYTES: usize = 64;
 pub enum InstanceId {
     /// A script, by the id `strategy.script.arm` answered.
     Script { id: WireU64 },
-    /// The `nth` instance (from zero, in arming order) riding drawing
-    /// `drawing_id` on chart `pane_id`; removing an earlier one moves it down.
+    /// Instance `id` riding drawing `drawing_id` on chart `pane_id`, as
+    /// `strategy.desk.list` reports it; never reused in the tab's session.
     Drawing {
         pane_id: WireU64,
         drawing_id: WireU64,
-        nth: u32,
+        id: WireU64,
     },
 }
 
@@ -218,7 +219,7 @@ fn action<Input: JsonSchema>(
     descriptor
 }
 
-const BY_INSTANCE: &str = "The instance is named by id; a drawn instance's place shifts when an earlier sibling is removed, so read strategy.desk.list again before a retry, or the strategy.desk.changed events after a cursor taken before the call.";
+const BY_INSTANCE: &str = "The instance is named by an id never reused in the tab's session, so a repeat reaches the same instance or none; read strategy.desk.list, or the strategy.desk.changed events after a cursor taken before the call, before retrying.";
 
 /// Every desk command's descriptor, in the order the handlers register them.
 #[must_use]
@@ -240,7 +241,7 @@ pub fn command_descriptors() -> Vec<CapabilityDescriptor> {
             REMOVE_CAPABILITY_ID,
             "Remove a strategy",
             "Removes one strategy; a drawn one's resting entry is cancelled, an open position stays the trader's, and its drawing keeps its other strategies. Journaled as strategy.desk.changed.",
-            "A second remove of the same id names another instance or none. Read strategy.desk.list, or the strategy.desk.changed events after a cursor taken before the call, before retrying.",
+            "A second remove of the same id finds no instance and is refused. Read strategy.desk.list, or the strategy.desk.changed events after a cursor taken before the call, before retrying.",
         ),
         action::<AssetInput>(
             ASSET_PAUSE_CAPABILITY_ID,

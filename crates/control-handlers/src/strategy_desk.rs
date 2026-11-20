@@ -403,11 +403,11 @@ fn instance_ref(id: InstanceId) -> InstanceRef<DrawingId> {
         InstanceId::Drawing {
             pane_id,
             drawing_id,
-            nth,
+            id,
         } => InstanceRef::Drawing {
             pane_id: pane_id.get(),
             drawing: DrawingId(drawing_id.get()),
-            nth: usize::try_from(nth).unwrap_or(usize::MAX),
+            id: id.get(),
         },
     }
 }
@@ -420,11 +420,11 @@ fn instance_id(id: InstanceRef<DrawingId>) -> InstanceId {
         InstanceRef::Drawing {
             pane_id,
             drawing,
-            nth,
+            id,
         } => InstanceId::Drawing {
             pane_id: WireU64::new(pane_id),
             drawing_id: WireU64::new(drawing.0),
-            nth: count(nth),
+            id: WireU64::new(id),
         },
     }
 }

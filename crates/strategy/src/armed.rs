@@ -316,6 +316,8 @@ pub struct ArmedStrategy {
     /// operation still completes, but no closed bar presents an opportunity
     /// and no signal becomes an order until it is resumed.
     paused: bool,
+    /// The number its tab's strategy desk names it by, once given one.
+    desk_id: Option<u64>,
 }
 
 impl std::fmt::Debug for ArmedStrategy {
@@ -340,7 +342,21 @@ impl ArmedStrategy {
             last_hold: None,
             last_close_opportunity: None,
             paused: false,
+            desk_id: None,
         }
+    }
+
+    /// The number the strategy desk names this instance by; `None` until
+    /// the desk numbered it.
+    #[must_use]
+    pub fn desk_id(&self) -> Option<u64> {
+        self.desk_id
+    }
+
+    /// Give the instance its desk number. Kept for its life: a re-arm, a
+    /// pause or a sibling's removal leaves it as it is.
+    pub fn set_desk_id(&mut self, id: u64) {
+        self.desk_id = Some(id);
     }
 
     /// Stop judging setups until [`Self::resume`]; nothing is owed, since a

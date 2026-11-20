@@ -320,7 +320,8 @@ pub struct Evaluation {
 /// Every pane's strategies, keyed by the pane's id.
 pub struct TabStrategies<D> {
     panes: BTreeMap<u64, PaneStrategies<D>>,
-    /// The id the next armed script takes; never reused in the tab's life.
+    /// The id the next armed script or newly numbered drawn instance takes
+    /// (`crate::strategy_desk`); never reused in the tab's life.
     pub(crate) next_script_id: u64,
     /// What the strategy desk keeps beside the instances.
     pub(crate) desk: DeskBook<D>,
@@ -454,6 +455,7 @@ impl<D: Copy + PartialEq> TabStrategies<D> {
     ) -> Evaluation {
         let Print { events, now_ms } = print;
         self.desk.heard(now_ms);
+        self.number_instances();
         let mut answer = Evaluation::default();
         for &id in panes {
             let Some(pane) = self.panes.get_mut(&id) else {
