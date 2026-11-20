@@ -3,11 +3,7 @@
 pub(crate) use quantick_control_schema::workspace::*;
 
 use crate::app::{ChromePort, GatewayPort, HealthPort, TabsPort};
-use quantick_control::{
-    id::{ModuleId, SnapshotScopeId},
-    registry::ModuleDescriptor,
-    wire::WireU64,
-};
+use quantick_control::wire::WireU64;
 
 use quantick_feed::history_reach::HistoryReach;
 
@@ -17,24 +13,11 @@ use super::{
 };
 
 pub(crate) fn register(registry: &mut ProjectionRegistry) -> Result<(), ProjectionRegistryError> {
-    let module_id = ModuleId::new(MODULE_ID).expect("static module ID is valid");
     registry.register_module(
-        ModuleDescriptor {
-            id: module_id.clone(),
-            title: "Workspace".to_owned(),
-            description: "Open tabs, pane layout, and current focus.".to_owned(),
-        },
+        quantick_control_handlers::generation::workspace::module_descriptor(),
         revision,
     )?;
-    registry.register_scope(
-        SnapshotScopeId::new(SCOPE_ID).expect("static scope ID is valid"),
-        module_id,
-        SCHEMA_VERSION,
-        "Workspace summary",
-        "Reports every tab and pane with stable IDs, visibility, and focus.",
-        &["observe", "observe.workspace", "observe.market"],
-        project,
-    )
+    quantick_control_handlers::generation::workspace::scope_spec().register(registry, project)
 }
 
 fn revision<P: TabsPort + ChromePort + HealthPort + GatewayPort + ?Sized>(

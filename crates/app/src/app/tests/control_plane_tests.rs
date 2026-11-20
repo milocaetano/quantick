@@ -5037,24 +5037,14 @@ fn evidence_costs_the_frame_nothing_until_a_client_asks_for_it() {
     std::fs::remove_dir_all(directory).unwrap();
 }
 
-/// How a stale observer snapshot is rewritten: asked for by name, never read
-/// from the environment.
-const REGENERATE_OBSERVER_SCHEMAS: &str =
-    "cargo test -p quantick-app -- --ignored regenerate_observer_schemas";
-
-#[test]
-#[ignore = "rewrites schemas/control; run by name to regenerate"]
-fn regenerate_observer_schemas() {
-    observer_schemas(true);
-    observer_catalog(true);
-}
+const REGENERATE_OBSERVER_SCHEMAS: &str = "sh tools/regen.sh --write control";
 
 #[test]
 fn observer_schemas_are_versioned_valid_and_ui_framework_free() {
-    observer_schemas(false);
+    observer_schemas();
 }
 
-fn observer_schemas(update: bool) {
+fn observer_schemas() {
     let documents = crate::control::schema_catalog::documents();
     // Every published wire type has a committed document, so a breaking
     // change shows up as a diff in review (contract §6). The count is
@@ -5096,9 +5086,6 @@ fn observer_schemas(update: bool) {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
         .join("schemas/control");
-    if update {
-        std::fs::create_dir_all(&root).unwrap();
-    }
     for document in documents {
         quantick_control::schema::validate_schema(&document.schema)
             .unwrap_or_else(|error| panic!("{} is invalid: {error}", document.file_name));
@@ -5112,9 +5099,6 @@ fn observer_schemas(update: bool) {
             document.file_name
         );
         let path = root.join(document.file_name);
-        if update {
-            std::fs::write(&path, &json).unwrap();
-        }
         let committed = std::fs::read_to_string(&path).unwrap_or_else(|error| {
                 panic!(
                     "read {} ({error}); regenerate observer schemas with `{REGENERATE_OBSERVER_SCHEMAS}`",
@@ -5132,10 +5116,10 @@ fn observer_schemas(update: bool) {
 
 #[test]
 fn observer_capability_catalog_is_registry_derived_and_versioned() {
-    observer_catalog(false);
+    observer_catalog();
 }
 
-fn observer_catalog(update: bool) {
+fn observer_catalog() {
     let catalog = crate::control::schema_catalog::capability_catalog();
     assert_eq!(catalog["catalog_version"], 1);
     assert_eq!(catalog["profile_id"], "observer");
@@ -5195,10 +5179,6 @@ fn observer_catalog(update: bool) {
         .join("schemas/control");
     let path = root.join("observer-capability-catalog-v1.json");
     let json = format!("{}\n", serde_json::to_string_pretty(&catalog).unwrap());
-    if update {
-        std::fs::create_dir_all(&root).unwrap();
-        std::fs::write(&path, &json).unwrap();
-    }
     let committed = std::fs::read_to_string(&path).unwrap_or_else(|error| {
         panic!(
             "read {} ({error}); regenerate observer schemas with `{REGENERATE_OBSERVER_SCHEMAS}`",
@@ -6014,4 +5994,40 @@ fn canvas_actions_drive_through_the_control_plane() {
             "no scene control operates {id}: {seen:?}"
         );
     }
+}
+
+/// Exercise the independent live registrations, including every handler family,
+/// against descriptor-only composition. This must not call generation on both sides.
+#[test]
+fn headless_generation_matches_live_registration_bytes() {
+    use quantick_control_handlers::generation;
+    let build = quantick_control_host::system::BuildIdentity {
+        application_version: env!("CARGO_PKG_VERSION"),
+        git_commit: crate::launch::GIT_COMMIT,
+    };
+    let live = crate::control::inventory::standard_contract().unwrap();
+    let description = live.describe(
+        quantick_control::id::InstanceId::from_bytes([0; 16]),
+        quantick_control::id::ProfileId::new(quantick_control_host::authority::OBSERVER_PROFILE_ID)
+            .unwrap(),
+        live.default_grant(),
+        quantick_control::handshake::ProtocolLimits::default(),
+    );
+    assert_eq!(
+        serde_json::to_vec(&description).unwrap(),
+        serde_json::to_vec(&generation::describe(build).unwrap()).unwrap()
+    );
+    assert_eq!(
+        serde_json::to_vec_pretty(&crate::control::schema_catalog::capability_catalog()).unwrap(),
+        serde_json::to_vec_pretty(&generation::capability_catalog(build).unwrap()).unwrap()
+    );
+    let capabilities: Vec<_> = live.registry().capabilities().collect();
+    assert_eq!(
+        quantick_control_host::inventory::render(&capabilities),
+        generation::capability_inventory_markdown().unwrap()
+    );
+    assert_eq!(
+        quantick_control_handlers::retry_matrix::render(live.capabilities()),
+        generation::retry_matrix_markdown().unwrap()
+    );
 }

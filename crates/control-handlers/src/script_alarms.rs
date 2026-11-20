@@ -74,3 +74,7 @@ pub fn journal<A: JournalAccess>(
 #[cfg(test)]
 #[path = "script_alarms_tests.rs"]
 mod tests;
+
+pub(crate) fn action_descriptors() -> Vec<quantick_control::registry::CapabilityDescriptor> {
+    vec![wire::descriptor()]
+}

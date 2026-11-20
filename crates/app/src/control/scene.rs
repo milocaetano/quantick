@@ -48,12 +48,7 @@ use crate::toolrail::ToolRailExt as _;
 pub(crate) use quantick_control_schema::scene::*;
 
 use crate::app::{ChromePort, TabsPort};
-use quantick_control::{
-    id::{ModuleId, SnapshotScopeId},
-    limits::CONTROL_SCENE_MAX_CONTROLS,
-    registry::ModuleDescriptor,
-    wire::WireU64,
-};
+use quantick_control::{limits::CONTROL_SCENE_MAX_CONTROLS, wire::WireU64};
 
 use eframe::egui;
 use quantick_control_handlers::feed_status::{FeedChip, FeedStatusView, feed_status_scene};
@@ -75,35 +70,12 @@ use super::{
 };
 
 pub(crate) fn register(registry: &mut ProjectionRegistry) -> Result<(), ProjectionRegistryError> {
-    let module_id = ModuleId::new(MODULE_ID).expect("static module ID is valid");
     registry.register_module(
-        ModuleDescriptor {
-            id: module_id.clone(),
-            title: "Scene".to_owned(),
-            description: "What is on screen, as named controls rather than pixels.".to_owned(),
-        },
+        quantick_control_handlers::generation::scene::module_descriptor(),
         revision,
     )?;
-    registry.register_scope(
-        SnapshotScopeId::new(CONTROLS_SCOPE_ID).expect("static scope ID is valid"),
-        module_id,
-        SCHEMA_VERSION,
-        "Visible controls",
-        "Every control on screen with a frame-stable ID, its owner, whether it is selected, and the coded reason when it cannot be operated.",
-        // A chip's label is the market it is open on and a layer's reason is
-        // what the live source publishes, so this scope carries the same
-        // `observe.market` payload `workspace.summary` and `interaction.cursor`
-        // do, and the same `observe.workspace` list of open charts. Named here
-        // too: a trader who withholds one of those scopes withholds it
-        // everywhere, or the narrower grant is worth nothing.
-        &[
-            "observe",
-            "observe.attention",
-            "observe.workspace",
-            "observe.market",
-        ],
-        project_controls,
-    )
+    quantick_control_handlers::generation::scene::controls_spec()
+        .register(registry, project_controls)
 }
 
 fn revision<P: TabsPort + ChromePort + ?Sized>(app: &P) -> SceneSnapshot {

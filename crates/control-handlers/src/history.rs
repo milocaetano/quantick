@@ -159,3 +159,7 @@ mod history_tests;
 #[cfg(test)]
 #[path = "history_session_tests.rs"]
 mod history_session_tests;
+
+pub(crate) fn action_descriptors() -> Vec<quantick_control::registry::CapabilityDescriptor> {
+    vec![load_descriptor(), cancel_descriptor()]
+}

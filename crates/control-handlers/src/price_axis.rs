@@ -74,3 +74,10 @@ fn set_tape<H: AddressedPanePort<Pane: AxisPane> + ?Sized, A>(
 #[cfg(test)]
 #[path = "price_axis_tests.rs"]
 mod tests;
+
+pub(crate) fn action_descriptors() -> Vec<quantick_control::registry::CapabilityDescriptor> {
+    vec![
+        quantick_control_schema::price_axis::descriptor(),
+        quantick_control_schema::tape_view::descriptor(),
+    ]
+}

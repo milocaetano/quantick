@@ -141,3 +141,7 @@ fn to_value(result: &PnlDisplayResult) -> Result<Value, ControlError> {
 #[cfg(test)]
 #[path = "pnl_display_tests.rs"]
 mod pnl_display_tests;
+
+pub(crate) fn action_descriptors() -> Vec<quantick_control::registry::CapabilityDescriptor> {
+    vec![descriptor()]
+}

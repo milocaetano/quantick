@@ -159,3 +159,12 @@ fn tick_tuning(
 #[cfg(test)]
 #[path = "bubble_preset_tests.rs"]
 mod tests;
+
+pub(crate) fn action_descriptors() -> Vec<quantick_control::registry::CapabilityDescriptor> {
+    vec![
+        quantick_control_schema::tick_bubbles::descriptor(),
+        quantick_control_schema::bubble_preset::apply_descriptor(),
+        quantick_control_schema::bubble_preset::list_descriptor(),
+        quantick_control_schema::bubble_preset::reset_descriptor(),
+    ]
+}

@@ -45,3 +45,7 @@ fn invalid(error: impl std::fmt::Display) -> ControlError {
 #[cfg(test)]
 #[path = "tape_view_set_tests.rs"]
 mod tape_view_set_tests;
+
+pub(crate) fn action_descriptors() -> Vec<quantick_control::registry::CapabilityDescriptor> {
+    vec![descriptor()]
+}

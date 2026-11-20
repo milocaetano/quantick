@@ -538,3 +538,19 @@ where
 #[cfg(test)]
 #[path = "trade_tests.rs"]
 mod trade_tests;
+
+pub(crate) fn action_descriptors() -> Vec<quantick_control::registry::CapabilityDescriptor> {
+    let mut descriptors = vec![
+        select_strategy_descriptor(),
+        set_ruler_descriptor(),
+        set_risk_descriptor(),
+        set_instrument_money_descriptor(),
+        place_descriptor(),
+        bracket_descriptor(),
+        cancel_descriptor(),
+        flatten_descriptor(),
+        reverse_descriptor(),
+    ];
+    descriptors.extend(crate::trade_account::action_descriptors());
+    descriptors
+}

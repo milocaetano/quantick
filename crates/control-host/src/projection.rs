@@ -177,30 +177,16 @@ impl<H: ?Sized + 'static> ProjectionRegistry<H> {
     where
         T: JsonSchema + Serialize + Send + 'static,
     {
-        if schema_version == 0 {
-            return Err(ProjectionRegistryError::InvalidDescriptor(
-                "scope schema version must be positive".to_owned(),
-            ));
-        }
-        if !self.modules.contains_key(&module_id) {
-            return Err(ProjectionRegistryError::UnknownModule(module_id));
-        }
-        let prefix = format!("{module_id}.");
-        if !scope_id.as_str().starts_with(&prefix) {
-            return Err(ProjectionRegistryError::InvalidDescriptor(format!(
-                "scope `{scope_id}` is not owned by module `{module_id}`"
-            )));
-        }
-        if self.scopes.contains_key(&scope_id) {
-            return Err(ProjectionRegistryError::DuplicateScope(scope_id));
-        }
+        validate_scope_identity(
+            &scope_id,
+            &module_id,
+            schema_version,
+            self.modules.contains_key(&module_id),
+            self.scopes.contains_key(&scope_id),
+        )?;
         let title = title.into();
         let description = description.into();
-        if title.trim().is_empty() || description.trim().is_empty() {
-            return Err(ProjectionRegistryError::InvalidDescriptor(
-                "scope title and description must not be empty".to_owned(),
-            ));
-        }
+        validate_scope_text(&title, &description)?;
         let required_permissions = required_permission_ids
             .iter()
             .map(|id| {
@@ -211,17 +197,9 @@ impl<H: ?Sized + 'static> ProjectionRegistry<H> {
                 })
             })
             .collect::<Result<BTreeSet<_>, _>>()?;
-        if required_permissions.is_empty() {
-            return Err(ProjectionRegistryError::InvalidDescriptor(format!(
-                "scope `{scope_id}` must declare at least one permission"
-            )));
-        }
+        validate_scope_permissions(&scope_id, &required_permissions)?;
         let schema = generated_schema::<T>();
-        validate_schema(&schema).map_err(|error| {
-            ProjectionRegistryError::InvalidDescriptor(format!(
-                "scope `{scope_id}` generated an invalid schema: {error}"
-            ))
-        })?;
+        validate_scope_schema(&scope_id, &schema)?;
         self.scopes.insert(
             scope_id.clone(),
             ProjectionDescriptor {
@@ -457,6 +435,69 @@ impl fmt::Display for ProjectionRegistryError {
 }
 
 impl std::error::Error for ProjectionRegistryError {}
+
+// Live registration and raw catalog composition use the same validation in
+// the same order, before generating or compiling a schema unnecessarily.
+pub(crate) fn validate_scope_identity(
+    id: &SnapshotScopeId,
+    module_id: &ModuleId,
+    schema_version: u32,
+    known_module: bool,
+    duplicate: bool,
+) -> Result<(), ProjectionRegistryError> {
+    if schema_version == 0 {
+        return Err(ProjectionRegistryError::InvalidDescriptor(
+            "scope schema version must be positive".into(),
+        ));
+    }
+    if !known_module {
+        return Err(ProjectionRegistryError::UnknownModule(module_id.clone()));
+    }
+    if !id.as_str().starts_with(&format!("{module_id}.")) {
+        return Err(ProjectionRegistryError::InvalidDescriptor(format!(
+            "scope `{id}` is not owned by module `{module_id}`"
+        )));
+    }
+    if duplicate {
+        return Err(ProjectionRegistryError::DuplicateScope(id.clone()));
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_scope_text(
+    title: &str,
+    description: &str,
+) -> Result<(), ProjectionRegistryError> {
+    if title.trim().is_empty() || description.trim().is_empty() {
+        return Err(ProjectionRegistryError::InvalidDescriptor(
+            "scope title and description must not be empty".into(),
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_scope_permissions(
+    id: &SnapshotScopeId,
+    permissions: &BTreeSet<PermissionId>,
+) -> Result<(), ProjectionRegistryError> {
+    if permissions.is_empty() {
+        return Err(ProjectionRegistryError::InvalidDescriptor(format!(
+            "scope `{id}` must declare at least one permission"
+        )));
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_scope_schema(
+    id: &SnapshotScopeId,
+    schema: &Value,
+) -> Result<(), ProjectionRegistryError> {
+    validate_schema(schema).map_err(|error| {
+        ProjectionRegistryError::InvalidDescriptor(format!(
+            "scope `{id}` generated an invalid schema: {error}"
+        ))
+    })
+}
 
 #[cfg(test)]
 mod tests {

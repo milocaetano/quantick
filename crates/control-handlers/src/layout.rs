@@ -548,3 +548,24 @@ fn set_bar_spec<H: LayoutHost + ?Sized, A>(
         .map_err(ControlError::invalid_request)?;
     result(app, index, changed)
 }
+
+pub(crate) fn action_descriptors() -> Vec<quantick_control::registry::CapabilityDescriptor> {
+    let mut descriptors = vec![
+        resize_pair_descriptor(),
+        apply_preset_descriptor(),
+        move_pane_descriptor(),
+        resize_descriptor(),
+        collapse_descriptor(),
+        expand_descriptor(),
+        flow_collapse_descriptor(),
+        flow_expand_descriptor(),
+        focus_descriptor(),
+        interval_descriptor(),
+        bar_spec_descriptor(),
+        tab_switch_descriptor(),
+        tab_create_descriptor(),
+        tab_rename_descriptor(),
+    ];
+    descriptors.extend(v2::action_descriptors());
+    descriptors
+}

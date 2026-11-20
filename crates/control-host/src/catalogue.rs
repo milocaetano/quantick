@@ -44,11 +44,47 @@ pub fn snapshot_scope_catalogue<H: ?Sized + 'static>(
     projections: &ProjectionRegistry<H>,
     permissions: &[PermissionDescriptor],
 ) -> Result<SnapshotScopeCatalogue, RegistryError> {
+    let scopes = projections
+        .descriptors()
+        .map(|descriptor| SnapshotScopeDescriptor {
+            id: descriptor.scope_id.clone(),
+            module_id: descriptor.module_id.clone(),
+            schema_version: descriptor.schema_version,
+            title: descriptor.title.clone(),
+            description: descriptor.description.clone(),
+            required_permissions: descriptor.required_permissions.clone(),
+            schema: descriptor.schema.clone(),
+        })
+        .collect();
+    metadata_scope_catalogue(scopes, permissions, projections.module_descriptors())
+}
+
+pub(crate) fn metadata_scope_catalogue<'a>(
+    mut scopes: Vec<SnapshotScopeDescriptor>,
+    permissions: &[PermissionDescriptor],
+    modules: impl Iterator<Item = &'a quantick_control::registry::ModuleDescriptor>,
+) -> Result<SnapshotScopeCatalogue, RegistryError> {
+    use crate::projection::{
+        validate_scope_identity, validate_scope_permissions, validate_scope_schema,
+        validate_scope_text,
+    };
+    let modules: BTreeSet<_> = modules.map(|module| &module.id).collect();
     let mut scope_permissions = BTreeMap::new();
-    let mut snapshot_scopes = Vec::new();
-    for descriptor in projections.descriptors() {
-        let required_permissions = descriptor.required_permissions.clone();
-        for permission in &required_permissions {
+    for scope in &scopes {
+        let validated = (|| {
+            validate_scope_identity(
+                &scope.id,
+                &scope.module_id,
+                scope.schema_version,
+                modules.contains(&scope.module_id),
+                scope_permissions.contains_key(&scope.id),
+            )?;
+            validate_scope_text(&scope.title, &scope.description)?;
+            validate_scope_permissions(&scope.id, &scope.required_permissions)?;
+            validate_scope_schema(&scope.id, &scope.schema)
+        })();
+        validated.map_err(|error| RegistryError::InvalidDescriptor(error.to_string()))?;
+        for permission in &scope.required_permissions {
             if !permissions.iter().any(|known| known.id == *permission) {
                 return Err(RegistryError::Unknown {
                     kind: "permission",
@@ -56,19 +92,10 @@ pub fn snapshot_scope_catalogue<H: ?Sized + 'static>(
                 });
             }
         }
-        scope_permissions.insert(descriptor.scope_id.clone(), required_permissions.clone());
-        snapshot_scopes.push(SnapshotScopeDescriptor {
-            id: descriptor.scope_id.clone(),
-            module_id: descriptor.module_id.clone(),
-            schema_version: descriptor.schema_version,
-            title: descriptor.title.clone(),
-            description: descriptor.description.clone(),
-            required_permissions,
-            schema: descriptor.schema.clone(),
-        });
+        scope_permissions.insert(scope.id.clone(), scope.required_permissions.clone());
     }
-    snapshot_scopes.sort_by(|left, right| left.id.cmp(&right.id));
-    Ok((scope_permissions, snapshot_scopes))
+    scopes.sort_by(|left, right| left.id.cmp(&right.id));
+    Ok((scope_permissions, scopes))
 }
 
 /// Every scope in `snapshot_scopes` this grant already reaches, in the order

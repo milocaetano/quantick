@@ -56,26 +56,8 @@ where
     H: MarketTabHost + ?Sized,
     A: NotifyAccess,
 {
-    registry.register(
-        descriptor(
-            capability_id(Recovery::Reconnect),
-            "Reconnect a stalled feed",
-            "Respawns the transport and keeps everything the chart has built: bars, drawings, indicators, armed strategies and any open paper position. The window the new session replays is dropped rather than counted twice, and a silence long enough to leave a hole in the tape is marked on the chart. The same call the Reconnect button in the chart's offline corner makes.",
-            false,
-            generated_schema::<RecoveryInput>(),
-        ),
-        reconnect,
-    )?;
-    registry.register(
-        descriptor(
-            capability_id(Recovery::Reload),
-            "Reload a chart from a new feed session",
-            "Throws the timeline away and rebuilds it: refetches history, closes any open paper position (journaled, with its reason) and disarms every strategy. For a terminal that froze while its socket stayed open, where reconnecting fixes nothing. The same call the Reload button in the chart's offline corner makes. A reload that respawned journals `feed.timeline.rebuilt` naming who threw the timeline away, with the call's result under `feed_reload`.",
-            true,
-            generated_schema::<RecoveryInput>(),
-        ),
-        reload,
-    )?;
+    registry.register(reconnect_capability_descriptor(), reconnect)?;
+    registry.register(reload_capability_descriptor(), reload)?;
     Ok(())
 }
 
@@ -147,3 +129,30 @@ fn recover<H: MarketTabHost + ?Sized>(
 #[cfg(test)]
 #[path = "recovery_tests.rs"]
 mod recovery_tests;
+
+fn reconnect_capability_descriptor() -> quantick_control::registry::CapabilityDescriptor {
+    descriptor(
+        capability_id(Recovery::Reconnect),
+        "Reconnect a stalled feed",
+        "Respawns the transport and keeps everything the chart has built: bars, drawings, indicators, armed strategies and any open paper position. The window the new session replays is dropped rather than counted twice, and a silence long enough to leave a hole in the tape is marked on the chart. The same call the Reconnect button in the chart's offline corner makes.",
+        false,
+        generated_schema::<RecoveryInput>(),
+    )
+}
+
+fn reload_capability_descriptor() -> quantick_control::registry::CapabilityDescriptor {
+    descriptor(
+        capability_id(Recovery::Reload),
+        "Reload a chart from a new feed session",
+        "Throws the timeline away and rebuilds it: refetches history, closes any open paper position (journaled, with its reason) and disarms every strategy. For a terminal that froze while its socket stayed open, where reconnecting fixes nothing. The same call the Reload button in the chart's offline corner makes. A reload that respawned journals `feed.timeline.rebuilt` naming who threw the timeline away, with the call's result under `feed_reload`.",
+        true,
+        generated_schema::<RecoveryInput>(),
+    )
+}
+
+pub(crate) fn action_descriptors() -> Vec<quantick_control::registry::CapabilityDescriptor> {
+    vec![
+        reconnect_capability_descriptor(),
+        reload_capability_descriptor(),
+    ]
+}

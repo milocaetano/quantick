@@ -401,3 +401,7 @@ fn to_value(result: &JournalSessionsResult) -> Result<Value, ControlError> {
 #[cfg(test)]
 #[path = "journal_sessions_tests.rs"]
 mod journal_sessions_tests;
+
+pub(crate) fn action_descriptors() -> Vec<quantick_control::registry::CapabilityDescriptor> {
+    vec![descriptor(), delete_descriptor()]
+}

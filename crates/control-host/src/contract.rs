@@ -27,6 +27,10 @@ use crate::{
 #[path = "contract/tests/fail_closed.rs"]
 mod fail_closed;
 
+#[cfg(test)]
+#[path = "contract/tests/catalog_metadata.rs"]
+mod catalog_metadata;
+
 /// Authority composition before any capability can be registered.
 pub struct ContractBuilder {
     registry: ControlRegistry,
@@ -70,7 +74,28 @@ impl ContractBuilder {
     ) -> Result<CapabilityContract<P>, RegistryError> {
         let (scope_permissions, snapshot_scopes) =
             catalogue::snapshot_scope_catalogue(projections, &self.permissions)?;
-        Ok(CapabilityContract {
+        Ok(self.with_catalogue(scope_permissions, snapshot_scopes))
+    }
+
+    /// Build a validated, descriptor-only contract without a host or projectors.
+    pub fn build_catalog(
+        self,
+        scopes: Vec<SnapshotScopeDescriptor>,
+    ) -> Result<CapabilityContract<()>, RegistryError> {
+        let (permissions, scopes) = catalogue::metadata_scope_catalogue(
+            scopes,
+            &self.permissions,
+            self.registry.modules(),
+        )?;
+        Ok(self.with_catalogue(permissions, scopes))
+    }
+
+    fn with_catalogue<P>(
+        self,
+        scope_permissions: BTreeMap<SnapshotScopeId, BTreeSet<PermissionId>>,
+        snapshot_scopes: Vec<SnapshotScopeDescriptor>,
+    ) -> CapabilityContract<P> {
+        CapabilityContract {
             registry: self.registry,
             profiles: self.profiles,
             permissions: self.permissions,
@@ -79,7 +104,7 @@ impl ContractBuilder {
             output_validators: BTreeMap::new(),
             snapshot_scopes,
             scope_permissions,
-        })
+        }
     }
 }
 

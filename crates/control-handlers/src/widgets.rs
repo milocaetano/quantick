@@ -477,3 +477,11 @@ fn parse(input: &Value) -> Result<WidgetInput, ControlError> {
 #[cfg(test)]
 #[path = "widgets_tests.rs"]
 mod widgets_tests;
+
+pub(crate) fn action_descriptors() -> Vec<quantick_control::registry::CapabilityDescriptor> {
+    vec![
+        open_descriptor(),
+        close_descriptor(),
+        read_widget_descriptor(),
+    ]
+}

@@ -333,3 +333,11 @@ fn strategy(reading: &ScriptReading<DrawingId>) -> ScriptStrategy {
 #[cfg(test)]
 #[path = "script_strategy_tests.rs"]
 mod tests;
+
+pub(crate) fn action_descriptors() -> Vec<quantick_control::registry::CapabilityDescriptor> {
+    vec![
+        wire::arm_descriptor(),
+        wire::list_descriptor(),
+        wire::disarm_descriptor(),
+    ]
+}

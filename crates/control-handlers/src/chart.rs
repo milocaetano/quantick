@@ -17,7 +17,7 @@ use quantick_chart::style::ChartStyle;
 use quantick_control::{
     cursor::PageCursor,
     error::ControlError,
-    id::{InstanceId, ModuleId, SnapshotScopeId},
+    id::{InstanceId, ModuleId},
     registry::ModuleDescriptor,
     wire::WireU64,
 };
@@ -137,24 +137,8 @@ where
     D: ProjectionDock<H>,
     H: ChartPort + ?Sized + 'static,
 {
-    let module_id = ModuleId::new(MODULE_ID).expect("static module ID is valid");
-    registry.register_module(
-        ModuleDescriptor {
-            id: module_id.clone(),
-            title: "Chart".to_owned(),
-            description: "Pane framing, bar construction, and visible market coverage.".to_owned(),
-        },
-        revision::<H>,
-    )?;
-    registry.register_scope(
-        SnapshotScopeId::new(SCOPE_ID).expect("static scope ID is valid"),
-        module_id,
-        SCHEMA_VERSION,
-        "Chart summary",
-        "Reports every pane's bar rule, revisions, viewport, price range, and coverage.",
-        &["observe", "observe.market", "observe.chart"],
-        project::<H>,
-    )
+    registry.register_module(module_descriptor(), revision::<H>)?;
+    scope_spec().register(registry, project::<H>)
 }
 
 fn revision<H: ChartPort + ?Sized>(app: &H) -> ChartSnapshot {
@@ -370,3 +354,27 @@ fn window_page(
 #[cfg(test)]
 #[path = "chart_tests.rs"]
 mod chart_tests;
+
+pub(crate) fn module_descriptor() -> ModuleDescriptor {
+    ModuleDescriptor {
+        id: ModuleId::new(MODULE_ID).expect("static module ID is valid"),
+        title: "Chart".to_owned(),
+        description: "Pane framing, bar construction, and visible market coverage.".to_owned(),
+    }
+}
+
+pub(crate) fn scope_spec() -> crate::dock::ScopeSpec<ChartSnapshot> {
+    crate::dock::ScopeSpec::new(
+        SCOPE_ID,
+        MODULE_ID,
+        SCHEMA_VERSION,
+        "Chart summary",
+        "Reports every pane's bar rule, revisions, viewport, price range, and coverage.",
+        &["observe", "observe.market", "observe.chart"],
+    )
+}
+
+pub(crate) fn scope_descriptors() -> Vec<quantick_control_host::catalogue::SnapshotScopeDescriptor>
+{
+    vec![scope_spec().descriptor()]
+}

@@ -95,3 +95,7 @@ fn list_request<H: IndicatorControlHost + ?Sized, A>(
 #[cfg(test)]
 #[path = "native_indicator_tests.rs"]
 mod tests;
+
+pub(crate) fn action_descriptors() -> Vec<quantick_control::registry::CapabilityDescriptor> {
+    vec![wire::edit_descriptor(), wire::list_descriptor()]
+}

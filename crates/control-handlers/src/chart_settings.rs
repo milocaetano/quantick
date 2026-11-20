@@ -260,3 +260,7 @@ fn preset_error(error: PresetError) -> ControlError {
 
 #[cfg(test)]
 mod tests;
+
+pub(crate) fn action_descriptors() -> Vec<quantick_control::registry::CapabilityDescriptor> {
+    vec![descriptor()]
+}

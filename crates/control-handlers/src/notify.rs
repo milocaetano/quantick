@@ -70,36 +70,9 @@ where
     H: AttentionHost + ?Sized,
     A: NotifyAccess,
 {
-    registry.register(
-        notify_descriptor(
-            POPUP_CAPABILITY_ID,
-            "Raise a popup",
-            "Opens a small window over the chart carrying one message, attributed to whoever asked for it, dismissed by the trader.",
-            NOTIFY_PERMISSION_ID,
-            false,
-        ),
-        raise_popup,
-    )?;
-    registry.register(
-        notify_descriptor(
-            TOAST_CAPABILITY_ID,
-            "Raise a toast",
-            "Posts one line to the window's acknowledgement lane, attributed to whoever asked for it.",
-            NOTIFY_PERMISSION_ID,
-            false,
-        ),
-        raise_toast,
-    )?;
-    registry.register(
-        notify_descriptor(
-            SOUND_CAPABILITY_ID,
-            "Sound an alert",
-            "Asks the platform to make an audible alert. Needs its own scope, which is off by default, and reports honestly when this build has no audio backend.",
-            NOTIFY_SOUND_PERMISSION_ID,
-            true,
-        ),
-        sound_alert,
-    )?;
+    registry.register(raise_popup_capability_descriptor(), raise_popup)?;
+    registry.register(raise_toast_capability_descriptor(), raise_toast)?;
+    registry.register(sound_alert_capability_descriptor(), sound_alert)?;
     Ok(())
 }
 
@@ -205,3 +178,41 @@ fn raise<H: AttentionHost + ?Sized, A: NotifyAccess>(
 #[cfg(test)]
 #[path = "notify_tests.rs"]
 mod notify_tests;
+
+fn raise_popup_capability_descriptor() -> quantick_control::registry::CapabilityDescriptor {
+    notify_descriptor(
+        POPUP_CAPABILITY_ID,
+        "Raise a popup",
+        "Opens a small window over the chart carrying one message, attributed to whoever asked for it, dismissed by the trader.",
+        NOTIFY_PERMISSION_ID,
+        false,
+    )
+}
+
+fn raise_toast_capability_descriptor() -> quantick_control::registry::CapabilityDescriptor {
+    notify_descriptor(
+        TOAST_CAPABILITY_ID,
+        "Raise a toast",
+        "Posts one line to the window's acknowledgement lane, attributed to whoever asked for it.",
+        NOTIFY_PERMISSION_ID,
+        false,
+    )
+}
+
+fn sound_alert_capability_descriptor() -> quantick_control::registry::CapabilityDescriptor {
+    notify_descriptor(
+        SOUND_CAPABILITY_ID,
+        "Sound an alert",
+        "Asks the platform to make an audible alert. Needs its own scope, which is off by default, and reports honestly when this build has no audio backend.",
+        NOTIFY_SOUND_PERMISSION_ID,
+        true,
+    )
+}
+
+pub(crate) fn action_descriptors() -> Vec<quantick_control::registry::CapabilityDescriptor> {
+    vec![
+        raise_popup_capability_descriptor(),
+        raise_toast_capability_descriptor(),
+        sound_alert_capability_descriptor(),
+    ]
+}
