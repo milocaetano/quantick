@@ -89,13 +89,27 @@ impl<D: Copy + PartialEq> TabStrategies<D> {
                 titles.join(", ")
             ));
         }
-        let id = self.next_script_id;
-        self.next_script_id += 1;
         let warm = warmup(WARMUP_BARS);
-        let instance = ScriptInstance::arm(id, &script, request.side, request.place, &warm);
-        let reading = ScriptReading::of(request.pane_id, &instance);
-        self.pane_mut(request.pane_id).scripts.push(instance);
-        Ok(reading)
+        let instance = ScriptInstance::arm(
+            self.next_script_id,
+            &script,
+            request.side,
+            request.place,
+            &warm,
+        );
+        Ok(self.publish_script(request.pane_id, instance))
+    }
+
+    pub(crate) fn publish_script(
+        &mut self,
+        pane_id: u64,
+        mut instance: ScriptInstance<D>,
+    ) -> ScriptReading<D> {
+        instance.id = self.next_script_id;
+        self.next_script_id += 1;
+        let reading = ScriptReading::of(pane_id, &instance);
+        self.pane_mut(pane_id).scripts.push(instance);
+        reading
     }
 
     /// Disarm and remove script instance `id`, answering it as it stood once
