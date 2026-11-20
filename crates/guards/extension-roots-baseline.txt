@@ -24,7 +24,7 @@
 # Merged with #606 on this branch, where `fold_print` lives in
 # `footprint_series.rs` (PR #596): ChartState measures 586, 18 of the 26
 # signed above, and QuantickApp keeps PR #596's tightened 2226.
-!budget 2812
-ChartState 586
-QuantickApp 2226
 # #526 G5: two root drawing impl modules and shared drawing/strategy operations leave the window.
+!budget 1883
+ChartState 623
+QuantickApp 1260

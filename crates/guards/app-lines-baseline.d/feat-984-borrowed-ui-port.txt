@@ -1,3 +1,0 @@
-# Shared borrowed paint port for #984; concrete consumers arrive in #985.
-crates/app +17
-!budget +17
