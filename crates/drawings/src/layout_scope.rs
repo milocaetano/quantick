@@ -25,6 +25,7 @@ impl<T: Clone + PartialEq> Drawings<T> {
     /// one's.
     pub fn set_layout(&mut self, layout: Option<LayoutId>) {
         if self.layout != layout {
+            self.text_zoom_revision = None;
             self.layout = layout;
             self.claim_unclaimed();
             let held = self.selected_id();
@@ -37,6 +38,7 @@ impl<T: Clone + PartialEq> Drawings<T> {
     /// when the book did not move, so the host names them every frame.
     pub fn set_live_layouts(&mut self, live: impl IntoIterator<Item = LayoutId> + Clone) {
         if !self.live_layouts.iter().copied().eq(live.clone()) {
+            self.text_zoom_revision = None;
             self.live_layouts.clear();
             self.live_layouts.extend(live);
             self.settle_selection();
@@ -271,6 +273,7 @@ impl<T: Clone + PartialEq> Drawings<T> {
     /// chart move together, so a selection on one of them holds, and one the
     /// chart's switch to `to` let go of comes back.
     pub fn retarget_layout(&mut self, from: LayoutId, to: LayoutId) {
+        self.text_zoom_revision = None;
         let moved = |drawing: &Drawing<T>| drawing.layout == Some(from);
         let back = self.let_go.take();
         let back = back.filter(|&id| self.index_of(id).is_some_and(|i| moved(&self.items[i])));

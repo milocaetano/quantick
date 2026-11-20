@@ -170,7 +170,6 @@ impl<T: Clone + PartialEq> Drawings<T> {
 
     /// Push `before` as one undo step if the store actually changed since.
     pub(crate) fn record(&mut self, before: UndoEntry<T>) {
-        self.sync_text_zoom(self.text_px_per_bar);
         if before == self.snapshot() {
             return;
         }
@@ -233,8 +232,18 @@ impl<T: Clone + PartialEq> Drawings<T> {
             return;
         };
         self.claim_for_layout(index, &before_drawing);
+        self.items[index].bind_resized_text(&before_drawing, self.text_px_per_bar);
         *slot = before_drawing;
         self.record(before);
+    }
+
+    /// Install the inspector's edited copy immediately, even when the
+    /// slider's undo step stays open for several frames.
+    pub fn replace_edited(&mut self, index: usize, mut edited: Drawing<T>) {
+        if let Some(drawing) = self.items.get_mut(index) {
+            edited.bind_resized_text(drawing, self.text_px_per_bar);
+            *drawing = edited;
+        }
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -246,13 +255,11 @@ impl<T: Clone + PartialEq> Drawings<T> {
         // Metadata issued after an external inspector snapshot must survive
         // that snapshot's later commit/undo. Runtime IDs are never reused.
         for drawing in &mut entry.items {
-            if let Some(identity) = self
-                .items
-                .iter()
-                .find(|held| held.id == drawing.id)
-                .and_then(|held| held.durable_identity.as_ref())
-            {
-                drawing.durable_identity = Some(identity.clone());
+            if let Some(held) = self.items.iter().find(|held| held.id == drawing.id) {
+                if let Some(identity) = &held.durable_identity {
+                    drawing.durable_identity = Some(identity.clone());
+                }
+                drawing.retain_legacy_text_zoom(held);
             }
         }
         self.revision += 1;

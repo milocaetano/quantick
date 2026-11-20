@@ -259,7 +259,7 @@ impl DrawingAccess<'_> {
     pub(super) fn drawings_mut(&mut self) -> &mut drawings::Drawings {
         let pane = self.pane_mut();
         pane.drawings
-            .sync_text_zoom(pane.model.viewport.px_per_bar());
+            .set_text_spacing(pane.model.viewport.px_per_bar());
         &mut pane.drawings
     }
     pub(super) fn remove_strategy(&mut self, id: drawings::DrawingId) {

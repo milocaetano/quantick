@@ -76,15 +76,11 @@ impl DrawingPayload for TextPayload {
         Some(value)
     }
     fn import_saved(&mut self, value: &toml::Value) -> bool {
-        let zoom = match value.get("zoom") {
-            Some(value) => match value.clone().try_into::<crate::text_scale::TextZoom>() {
-                Ok(zoom) if zoom.valid() => zoom,
-                _ => return false,
-            },
-            None => crate::text_scale::TextZoom::default(),
-        };
         if !self.import_preset(value) { return false; }
-        self.zoom = zoom;
+        self.zoom = value.get("zoom")
+            .and_then(|value| value.clone().try_into::<crate::text_scale::TextZoom>().ok())
+            .filter(|zoom| zoom.valid())
+            .unwrap_or_default();
         true
     }
     fn eq_dyn(&self, other: &dyn DrawingPayload) -> bool {

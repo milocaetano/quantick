@@ -67,7 +67,7 @@ impl AnnotatedPane for ChartPane {
     }
     fn drawings_mut(&mut self) -> &mut Drawings {
         self.drawings
-            .sync_text_zoom(self.model.viewport.px_per_bar());
+            .set_text_spacing(self.model.viewport.px_per_bar());
         &mut self.drawings
     }
     /// The tab sweeps what rode a removed drawing on this same frame
