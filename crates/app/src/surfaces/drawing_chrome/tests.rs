@@ -40,6 +40,7 @@ fn catalog_passes_commit_original_inline_target_once_before_queued_menu() {
         linked_alerts: 0,
         pane_id: 42,
         px_per_bar: 10.0,
+        note_display: &Default::default(),
         selected: None,
         selected_all_windows: false,
         chart_area: None,
@@ -117,6 +118,7 @@ pub(crate) fn pinned_inspector_borrowed_dispatch_shares_the_floating_owner() {
         linked_alerts: 0,
         pane_id: 42,
         px_per_bar: 10.0,
+        note_display: &Default::default(),
         selected: Some(SelectedDrawing {
             index: 3,
             drawing: &drawing,

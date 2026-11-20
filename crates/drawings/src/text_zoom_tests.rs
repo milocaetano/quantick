@@ -7,7 +7,7 @@ fn note(drawings: &Drawings<DrawingTool>) -> &TextPayload {
 
 fn placed() -> Drawings<DrawingTool> {
     let mut drawings = Drawings::default();
-    drawings.sync_text_zoom(20.0);
+    drawings.set_text_spacing(20.0);
     drawings.place(
         DrawingTool::by_id("text").unwrap(),
         ChartPoint::at(3.5, 100.0),
@@ -21,7 +21,7 @@ fn zoom_is_relative_to_size_selection_and_undo_restores_the_reference() {
     let original = drawings.items()[0].clone();
     let revision = drawings.revision();
     let depth = drawings.undo_depth();
-    drawings.sync_text_zoom(10.0);
+    drawings.set_text_spacing(10.0);
     assert_eq!(note(&drawings).format_at(10.0).font.size_px, 6.0);
     assert_eq!(note(&drawings).format_at(20.0).font.size_px, 12.0);
     assert_eq!(drawings.revision(), revision);
@@ -67,11 +67,15 @@ fn legacy_notes_bind_once_and_invalid_chart_spacing_preserves_the_reference() {
     );
     let revision = drawings.revision();
     for zoom in [0.0, -1.0, f32::NAN, f32::INFINITY] {
-        drawings.sync_text_zoom(zoom);
+        drawings.note_display().observe(note(&drawings), zoom);
         assert_eq!(note(&drawings).format_at(zoom).font.size_px, 12.0);
     }
     assert_eq!(drawings.revision(), revision);
-    drawings.sync_text_zoom(8.0);
+    drawings.begin_gesture();
+    let history = drawings.undo_depth();
+    drawings.note_display().observe(note(&drawings), 8.0);
+    drawings.commit_gesture();
+    assert_eq!(drawings.undo_depth(), history);
     assert!(drawings.revision() > revision);
     assert_eq!(note(&drawings).format_at(8.0).font.size_px, 12.0);
     assert_eq!(note(&drawings).format_at(4.0).font.size_px, 6.0);
@@ -98,7 +102,7 @@ fn unreadable_optional_zoom_preserves_the_saved_note_style_and_words() {
         assert!(recovered.appearance.bold);
         assert_eq!(recovered.text, "Keep these words");
         assert!(recovered.export_saved().unwrap().get("zoom").is_none());
-        drawings.sync_text_zoom(10.0);
+        drawings.note_display().observe(note(&drawings), 10.0);
         assert_eq!(note(&drawings).format_at(5.0).font.size_px, 15.0);
     }
 }
@@ -130,7 +134,7 @@ fn loaded_legacy_note_binds_on_the_first_visible_layout_or_eye() {
         drawings.open_all_hidden(hide_all);
         drawings.adopt([saved.to_drawing(DrawingId(1)).unwrap()]);
         let revision = drawings.revision();
-        drawings.sync_text_zoom(10.0);
+        drawings.set_text_spacing(10.0);
         assert!(!drawings.is_visible(0));
         assert_eq!(drawings.revision(), revision);
         assert!(
@@ -150,7 +154,7 @@ fn loaded_legacy_note_binds_on_the_first_visible_layout_or_eye() {
             drawings.set_all_hidden(false);
         }
         assert!(drawings.is_visible(0));
-        drawings.sync_text_zoom(20.0);
+        drawings.note_display().observe(note(&drawings), 20.0);
         assert_eq!(note(&drawings).format_at(20.0).font.size_px, 12.0);
         let persisted = SavedDrawing::from_drawing(&drawings.items()[0]);
         if hidden || hide_all {
@@ -158,12 +162,12 @@ fn loaded_legacy_note_binds_on_the_first_visible_layout_or_eye() {
             assert!(!drawings.is_visible(0));
             drawings.set_hidden_at(0, false);
             drawings.set_all_hidden(false);
-            drawings.sync_text_zoom(10.0);
+            drawings.set_text_spacing(10.0);
             assert_eq!(note(&drawings).format_at(10.0).font.size_px, 6.0);
         }
         let mut loaded = Drawings::default();
         loaded.adopt([persisted.to_drawing(DrawingId(1)).unwrap()]);
-        loaded.sync_text_zoom(10.0);
+        loaded.set_text_spacing(10.0);
         assert_eq!(note(&loaded).format_at(10.0).font.size_px, 6.0);
     }
 }

@@ -104,6 +104,7 @@ fn draw_inner(chrome: &mut Chrome, ctx: &egui::Context, env: &DrawingEnv<'_>) ->
         ask.merge(chrome.emit(super::Intent::EndInline));
         return ask;
     }
+    env.note_display.observe(payload, env.px_per_bar);
     let format = payload.format_at(env.px_per_bar);
     let legacy = payload.appearance == quantick_drawings::text::TextAppearance::default();
     let color = crate::drawings::to_color32(if legacy {

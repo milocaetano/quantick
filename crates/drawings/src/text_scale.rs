@@ -22,7 +22,7 @@ impl TextZoom {
         if !px_per_bar.is_finite() || px_per_bar <= 0.0 {
             return false;
         }
-        if self.valid() && self.size_px == size_px {
+        if self.bound_to(size_px) {
             return false;
         }
         *self = Self {
@@ -32,12 +32,12 @@ impl TextZoom {
         true
     }
 
+    pub(crate) fn bound_to(self, size_px: f32) -> bool {
+        self.valid() && self.size_px == size_px
+    }
+
     pub(crate) fn rendered_size(self, size_px: f32, px_per_bar: f32) -> f32 {
-        let ratio = if self.valid()
-            && self.size_px == size_px
-            && px_per_bar.is_finite()
-            && px_per_bar > 0.0
-        {
+        let ratio = if self.bound_to(size_px) && px_per_bar.is_finite() && px_per_bar > 0.0 {
             px_per_bar / self.px_per_bar
         } else {
             1.0

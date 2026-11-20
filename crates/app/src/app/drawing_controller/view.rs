@@ -75,6 +75,7 @@ fn drawing_env<'a>(
         linked_alerts: read.linked_alerts,
         pane_id: facts.pane_id,
         px_per_bar: host.px_per_bar(),
+        note_display: store.note_display(),
         selected,
         selected_all_windows: store.selected().is_some_and(|i| store.in_all_windows(i)),
         chart_area: facts.chart_area,

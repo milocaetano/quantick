@@ -1,35 +1,57 @@
 //! Binding note sizes to the pane zoom before edits and placement.
 use crate::{Drawing, Drawings, TextPayload};
+use std::cell::Cell;
 
 #[cfg(test)]
 #[path = "text_zoom_tests.rs"]
 mod tests;
 
-impl<T: Clone + PartialEq> Drawings<T> {
+/// Records the first display of legacy notes on their owning store, even
+/// when another pane renders them at a different spacing.
+#[derive(Debug, Default)]
+pub struct NoteDisplay(Cell<u64>);
+
+impl NoteDisplay {
+    pub fn observe(&self, note: &TextPayload, spacing: f32) {
+        if note.bind_zoom(spacing) {
+            self.0.set(self.0.get() + 1);
+        }
+    }
+
+    pub(crate) fn revision(&self) -> u64 {
+        self.0.get()
+    }
+}
+
+impl<T> Drawings<T> {
     /// Supply the operation's viewport, including edits to a hidden note.
     pub fn set_text_spacing(&mut self, px_per_bar: f32) {
         self.text_px_per_bar = px_per_bar;
     }
 
-    /// Bind a loaded note at its first visible zoom. Ordinary frames only
-    /// update the spacing used by subsequent placements and size edits.
-    pub fn sync_text_zoom(&mut self, px_per_bar: f32) {
-        self.set_text_spacing(px_per_bar);
-        if !px_per_bar.is_finite()
-            || px_per_bar <= 0.0
-            || self.all_hidden
-            || self.text_zoom_revision == Some(self.revision)
+    pub fn note_display(&self) -> &NoteDisplay {
+        &self.note_display
+    }
+
+    /// Consume the display effect on the object's store. The scene can then
+    /// be reused for the next mark, including when a companion is painting it.
+    pub fn observe_scene(&self, scene: &mut crate::MarkScene, drawing: &Drawing<T>, spacing: f32) {
+        if std::mem::take(&mut scene.displayed_note)
+            && let Some(note) = drawing.payload.as_any().downcast_ref::<TextPayload>()
         {
-            return;
+            self.note_display.observe(note, spacing);
         }
-        let mut changed = false;
-        for index in 0..self.items.len() {
-            if self.is_visible(index) {
-                changed |= self.items[index].bind_text_zoom(px_per_bar);
-            }
+    }
+}
+
+impl TextPayload {
+    fn bind_zoom(&self, spacing: f32) -> bool {
+        let mut zoom = self.zoom.get();
+        let changed = zoom.bind(self.size_px, spacing);
+        if changed {
+            self.zoom.set(zoom);
         }
-        self.revision += u64::from(changed);
-        self.text_zoom_revision = Some(self.revision);
+        changed
     }
 }
 
@@ -38,7 +60,7 @@ impl<T> Drawing<T> {
         self.payload
             .as_any_mut()
             .downcast_mut::<TextPayload>()
-            .is_some_and(|note| note.zoom.bind(note.size_px, px_per_bar))
+            .is_some_and(|note| note.bind_zoom(px_per_bar))
     }
 
     pub(crate) fn bind_resized_text(&mut self, before: &Self, px_per_bar: f32) {
@@ -46,7 +68,7 @@ impl<T> Drawing<T> {
             && let Some(note) = self.payload.as_any_mut().downcast_mut::<TextPayload>()
             && old.size_px != note.size_px
         {
-            note.zoom.bind(note.size_px, px_per_bar);
+            note.bind_zoom(px_per_bar);
         }
     }
 
@@ -54,11 +76,11 @@ impl<T> Drawing<T> {
     /// visible spacing. An actual size edit keeps its own historical reference.
     pub(crate) fn retain_legacy_text_zoom(&mut self, held: &Self) {
         if let Some(note) = self.payload.as_any_mut().downcast_mut::<TextPayload>()
-            && !note.zoom.valid()
+            && !note.zoom.get().valid()
             && let Some(previous) = held.payload.as_any().downcast_ref::<TextPayload>()
             && note.size_px == previous.size_px
         {
-            note.zoom = previous.zoom;
+            note.zoom.set(previous.zoom.get());
         }
     }
 }

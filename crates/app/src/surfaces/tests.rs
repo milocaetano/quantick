@@ -170,6 +170,7 @@ fn borrowed_domain_rows_reborrow_in_catalog_order() {
         linked_alerts: 0,
         pane_id: 42,
         px_per_bar: 10.0,
+        note_display: &Default::default(),
         selected: None,
         selected_all_windows: false,
         chart_area: None,

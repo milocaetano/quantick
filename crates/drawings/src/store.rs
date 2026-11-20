@@ -32,8 +32,7 @@ pub struct PlacementBatch<T> {
 #[derive(Debug)]
 pub struct Drawings<T> {
     pub(crate) text_px_per_bar: f32,
-    /// Last revision checked for visible legacy notes. Layout changes clear it.
-    pub(crate) text_zoom_revision: Option<u64>,
+    pub(crate) note_display: crate::NoteDisplay,
     /// Bumped on every change to the collection — a placement, an edit, a
     /// delete, an undo, a load. What the layout store compares against to
     /// know a pane's drawings need writing, at the cost of one integer per
@@ -83,7 +82,7 @@ impl<T> Default for Drawings<T> {
     fn default() -> Self {
         Self {
             text_px_per_bar: 0.0,
-            text_zoom_revision: None,
+            note_display: crate::NoteDisplay::default(),
             revision: 0,
             items: Vec::new(),
             draft: None,

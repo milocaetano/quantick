@@ -739,7 +739,7 @@ mod tests {
         with_projection(|projection, bands| {
             let mut store = Marks::default();
             let zoom = projection.viewport.px_per_bar();
-            store.sync_text_zoom(zoom);
+            store.set_text_spacing(zoom);
             store.place(
                 crate::DrawingTool::by_id("text").unwrap(),
                 crate::ChartPoint::at_time(0.0, 50.0, Some(1000)),

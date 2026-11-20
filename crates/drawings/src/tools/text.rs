@@ -40,7 +40,7 @@ pub struct TextPayload {
     pub family: FontFamily,
     pub appearance: TextAppearance,
     pub extent: TextExtent,
-    pub zoom: crate::text_scale::TextZoom,
+    pub zoom: std::cell::Cell<crate::text_scale::TextZoom>,
 }
 
 impl Default for TextPayload {
@@ -51,7 +51,7 @@ impl Default for TextPayload {
             family: FontFamily::Proportional,
             appearance: TextAppearance::default(),
             extent: TextExtent::default(),
-            zoom: crate::text_scale::TextZoom::default(),
+            zoom: Default::default(),
         }
     }
 }
@@ -70,17 +70,17 @@ impl DrawingPayload for TextPayload {
     }
     fn export_saved(&self) -> Option<toml::Value> {
         let mut value = self.export_preset()?;
-        if self.zoom.valid() {
-            value.as_table_mut()?.insert("zoom".into(), toml::Value::try_from(self.zoom).ok()?);
+        if self.zoom.get().valid() {
+            value.as_table_mut()?.insert("zoom".into(), toml::Value::try_from(self.zoom.get()).ok()?);
         }
         Some(value)
     }
     fn import_saved(&mut self, value: &toml::Value) -> bool {
         if !self.import_preset(value) { return false; }
-        self.zoom = value.get("zoom")
+        self.zoom.set(value.get("zoom")
             .and_then(|value| value.clone().try_into::<crate::text_scale::TextZoom>().ok())
             .filter(|zoom| zoom.valid())
-            .unwrap_or_default();
+            .unwrap_or_default());
         true
     }
     fn eq_dyn(&self, other: &dyn DrawingPayload) -> bool {
@@ -253,6 +253,7 @@ impl MarkTool for Text {
         // Rich notes own their foreground/background pair. Canvas contrast
         // correction applies only to legacy notes with no authored appearance.
         let (text, color) = shown(payload, if legacy { style } else { ctxt.style }, ctxt.appearance);
+        painter.displayed_note = !payload.zoom.get().bound_to(payload.size_px);
         let format = payload.format_at(ctxt.px_per_bar);
         let bounds = payload.bounds_at(*anchor, ctxt.text, ctxt.px_per_bar);
         if legacy {
@@ -313,7 +314,7 @@ impl TextPayload {
 
     pub fn format_at(&self, px_per_bar: f32) -> TextFormat {
         let mut format = self.format();
-        format.font.size_px = self.zoom.rendered_size(self.size_px, px_per_bar);
+        format.font.size_px = self.zoom.get().rendered_size(self.size_px, px_per_bar);
         format.appearance.wrap_width_px = format.appearance.wrap_width_px.map(|width| width * format.font.size_px / self.size_px);
         format
     }
