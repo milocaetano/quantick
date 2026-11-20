@@ -134,6 +134,49 @@ fn config_gates_entry_and_requests() {
 }
 
 #[test]
+fn menu_open_rejection_is_visible_and_inert() {
+    let fixture = http::provider(vec![]);
+    let mut app = app_with_worker(configured(&fixture.endpoint, "key='ETHUSDT'"));
+    let dir = crate::scratch::ScratchDir::new("describe-rejected-open");
+    app.surfaces.strategy_describe.view.library = Some(dir.to_path_buf());
+    let ctx = egui::Context::default();
+    let click_entry = |app: &mut QuantickApp| {
+        let menu = panels(app, &ctx);
+        let entry = painted_text_center(&menu, "Describe a strategy...").unwrap();
+        click_sized(app, &ctx, TEST_WINDOW, entry);
+        // A newly opened egui area takes a layout pass before its text paints.
+        run_frame(app, &ctx);
+        run_frame(app, &ctx)
+    };
+
+    let accepted = click_entry(&mut app);
+    assert!(painted_text_center(&accepted, "Send").is_some());
+    let opened = app.dispatch(Intent::Command(Command::Read)).unwrap();
+    assert_eq!(opened.phase, Phase::Ready);
+    let prior = app
+        .dispatch(Intent::Command(Command::Cancel {
+            revision: opened.revision,
+        }))
+        .unwrap();
+    let _market = open_second_tab(&mut app, &ctx, "ETHUSDT");
+    let rejected = click_entry(&mut app);
+    let message = "Input contains the provider credential";
+    assert_eq!(app.surfaces.toast.model_state.message(), Some(message));
+    assert!(painted_text_center(&rejected, message).is_some());
+    assert_eq!(app.dispatch(Intent::Command(Command::Read)).unwrap(), prior);
+
+    assert!(fixture.requests.lock().unwrap().is_empty());
+    assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0);
+    assert!(
+        app.active_tab()
+            .market
+            .strategies
+            .script_readings()
+            .is_empty()
+    );
+}
+
+#[test]
 fn keyboard_shortcuts_remain_available_outside_the_focused_chat_edit() {
     let fixture = http::provider(vec![]);
     let mut app = app_with_worker(configured(&fixture.endpoint, "key='fixture-credential'"));
