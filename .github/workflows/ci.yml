@@ -9,6 +9,12 @@ on:
     # it with the `full-ci` label before that. See the `if:` on each job.
     types: [opened, synchronize, reopened, ready_for_review, labeled]
 
+# Only events that run validation supersede a PR run. Unrelated labels must
+# not cancel the full checks already running at that head.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && (github.event.action != 'labeled' || github.event.label.name == 'full-ci') && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' && (github.event.action != 'labeled' || github.event.label.name == 'full-ci') }}
+
 env:
   CARGO_TERM_COLOR: always
   # Debug info, not optimisation, is what the runners spend their time on.
@@ -32,8 +38,9 @@ env:
   # units too, so the override reaches every unit every job compiles.
   CARGO_PROFILE_DEV_DEBUG: line-tables-only
 
-# Which jobs run where. A draft push runs `fast` alone: fmt, clippy and the
-# tests of the crates the diff reaches. The full verdict is nine jobs — `ci`,
+# Which jobs run where. A draft push runs `guards` then `fast`: fmt, clippy and the
+# tests of the crates the diff reaches. The full verdict has ten jobs:
+# `guards`, `ci`,
 # `linux-tests`, `harness-app`, `harness-combined` and `harness-scenario` on
 # Linux, `windows`, `windows-tests`, `windows-heavy-tests` and
 # `windows-app-tests` on Windows — and they run on every push to main, every
@@ -68,16 +75,48 @@ env:
 # dependency graph, which is why a second test job costs a relink and not a
 # cold build.
 jobs:
+  guards:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Workflow policy
+        run: python3 tools/ci/test_workflow_policy.py
+      - name: Required CI verdict fixtures
+        run: sh .claude/hooks/full_ci_test.sh
+      - name: Agent guardrails
+        # The hooks in .claude/settings.json are what keep an agent session off
+        # the main checkout and off an un-reviewed PR. Nothing in cargo test
+        # touches them, so they get their own step. The suite builds its own
+        # throwaway repos for the hook cases, with one deliberate exception:
+        # its last block reads this checkout's CLAUDE.md and .claude/ prose to
+        # pin that the marker names the gate reads are the ones the
+        # instructions tell an agent to write. So this step can go red on a
+        # docs-only PR that renames a marker on one side, which is the point.
+        run: sh .claude/hooks/guardrails_test.sh
+      - name: Ratchet orchestration fixtures
+        run: |
+          python tools/ci/test_ratchet_delta.py
+          python tools/ci/test_ratchet_fold.py
+      - uses: ./.github/actions/rust-setup
+        with:
+          desktop-deps: "false"
+      - name: Aggregate ratchet delta
+        shell: bash
+        env:
+          RATCHET_BASE: ${{ github.event.pull_request.base.sha || 'HEAD^' }}
+        run: python tools/ci/ratchet_delta.py --base "$RATCHET_BASE" --export-env "$GITHUB_ENV"
+      - name: Guard tests
+        run: cargo test -p quantick-guards
+
   fast:
+    needs: guards
     if: >-
       github.event_name == 'pull_request' &&
       github.event.pull_request.draft &&
       github.event.action != 'labeled'
     runs-on: ubuntu-latest
-    # A newer push to the same draft makes an older signal worthless.
-    concurrency:
-      group: fast-${{ github.event.pull_request.number }}
-      cancel-in-progress: true
     steps:
       - uses: actions/checkout@v4
         with:
@@ -216,6 +255,7 @@ jobs:
             verify --commit "$GITHUB_SHA"
 
   ci:
+    needs: guards
     if: &full-ci >-
       github.event_name != 'pull_request' ||
       (github.event.action == 'labeled' && github.event.label.name == 'full-ci') ||
@@ -225,20 +265,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Agent guardrails
-        # The hooks in .claude/settings.json are what keep an agent session off
-        # the main checkout and off an un-reviewed PR. Nothing in cargo test
-        # touches them, so they get their own step. The suite builds its own
-        # throwaway repos for the hook cases, with one deliberate exception:
-        # its last block reads this checkout's CLAUDE.md and .claude/ prose to
-        # pin that the marker names the gate reads are the ones the
-        # instructions tell an agent to write. So this step can go red on a
-        # docs-only PR that renames a marker on one side, which is the point.
-        run: sh .claude/hooks/guardrails_test.sh
-      - name: Ratchet orchestration fixtures
-        run: |
-          python tools/ci/test_ratchet_delta.py
-          python tools/ci/test_ratchet_fold.py
       - name: Python tooling lint
         # The MetaTrader bridge and the session exporter are Python, so not one
         # of the cargo steps below can see them. An undefined name reached main
@@ -357,6 +383,7 @@ jobs:
   # `--workspace`, so a crate added on Monday is tested on Monday with no guard
   # needed; the Windows side has three selectors and therefore has one.
   linux-tests:
+    needs: guards
     if: *full-ci
     runs-on: ubuntu-latest
     steps:
@@ -385,6 +412,7 @@ jobs:
   # job sat at 251s. Each job now owns two long relinks and some change, which
   # is why a set sometimes sits beside a family it is not named after.
   harness-app:
+    needs: guards
     if: *full-ci
     runs-on: ubuntu-latest
     steps:
@@ -400,6 +428,7 @@ jobs:
         run: cargo check -p quantick-app --all-targets --features control-harness,drawing-harness
 
   harness-combined:
+    needs: guards
     if: *full-ci
     runs-on: ubuntu-latest
     steps:
@@ -417,6 +446,7 @@ jobs:
         run: cargo build -p quantick-app --features harness
 
   harness-scenario:
+    needs: guards
     if: *full-ci
     runs-on: ubuntu-latest
     steps:
@@ -442,6 +472,7 @@ jobs:
   # named control-local diagnostic for real Windows owner/ACL/junction cases.
   # These tests need no GPU, window or MetaTrader terminal.
   windows:
+    needs: guards
     if: *full-ci
     runs-on: windows-latest
     env:
@@ -496,6 +527,7 @@ jobs:
   # the share that compiles no network at all. Rebalancing is a one-line edit
   # on each side, which the guard re-proves.
   windows-heavy-tests:
+    needs: guards
     if: *full-ci
     runs-on: windows-latest
     env:
@@ -517,6 +549,7 @@ jobs:
         run: cargo test -p quantick-indicators -p quantick-workspace -p quantick-guards -p quantick-feed -p quantick-feed-binance -p quantick-feed-hyperliquid -p quantick-feed-mt5
 
   windows-tests:
+    needs: guards
     if: *full-ci
     runs-on: windows-latest
     env:
@@ -531,6 +564,7 @@ jobs:
         run: cargo test --workspace --exclude quantick-app --exclude quantick-indicators --exclude quantick-workspace --exclude quantick-guards --exclude quantick-feed --exclude quantick-feed-binance --exclude quantick-feed-hyperliquid --exclude quantick-feed-mt5
 
   windows-app-tests:
+    needs: guards
     if: *full-ci
     runs-on: windows-latest
     env:
