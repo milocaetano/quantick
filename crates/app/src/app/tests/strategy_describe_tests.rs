@@ -165,6 +165,131 @@ fn keyboard_shortcuts_remain_available_outside_the_focused_chat_edit() {
     );
 }
 
+#[test]
+fn literal_key_is_rejected_at_native_send_and_chart_capture_without_losing_the_chat() {
+    let fixture = http::provider(vec![]);
+    let mut app = app_with_worker(configured(&fixture.endpoint, "key='fixture-credential'"));
+    let ctx = egui::Context::default();
+    let output = panels(&mut app, &ctx);
+    let entry = painted_text_center(&output, "Describe a strategy...").unwrap();
+    click_sized(&mut app, &ctx, TEST_WINDOW, entry);
+    let clean = app.dispatch(Intent::Command(Command::Read)).unwrap();
+    assert_eq!(clean.phase, Phase::Ready);
+    run_frame(&mut app, &ctx);
+    ctx.memory_mut(|m| m.request_focus(egui::Id::new("strategy_describe").with("message")));
+    let output = run_frame_with_events(
+        &mut app,
+        &ctx,
+        vec![egui::Event::Text("pasted fixture-credential".into())],
+    );
+    let send = painted_text_center(&output, "Send").unwrap();
+    click_sized(&mut app, &ctx, TEST_WINDOW, send);
+    run_frame(&mut app, &ctx);
+    assert_eq!(
+        app.surfaces.toast.model_state.message(),
+        Some("Input contains the provider credential")
+    );
+    assert_eq!(app.dispatch(Intent::Command(Command::Read)).unwrap(), clean);
+
+    let original = std::mem::replace(
+        &mut app.active_tab_mut().active.1,
+        "fixture-credential".into(),
+    );
+    let refused = app.dispatch(Intent::Command(Command::Open)).unwrap_err();
+    assert!(!format!("{refused:?}").contains("fixture-credential"));
+    assert_eq!(app.surfaces.strategy_describe.model_state.status, clean);
+    app.active_tab_mut().active.1 = original;
+    assert_eq!(app.dispatch(Intent::Command(Command::Read)).unwrap(), clean);
+    assert!(fixture.requests.lock().unwrap().is_empty());
+}
+
+#[test]
+fn sibling_presentation_keeps_pending_work_and_transferring_the_tab_rebinds_its_dialog() {
+    use super::super::native_windows;
+    use quantick_ui_model::strategy_describe::{Effects, Reply};
+    use quantick_workspace::arrangement::{
+        TabId,
+        windows::{TransferTarget, WindowId},
+    };
+    let fixture = http::provider(vec![]);
+    let mut app = app_with_worker(configured(&fixture.endpoint, "key='fixture-credential'"));
+    let ctx = egui::Context::default();
+    let _second = open_second_tab(&mut app, &ctx, "ETHUSDT");
+    let pinned = TabId(app.runtime.tabs.active_id());
+    let opened = app.dispatch(Intent::Command(Command::Open)).unwrap();
+    // Hold the issued effect at the transport boundary until after a focus change.
+    let effect = quantick_ui_model::strategy_describe::update(
+        &mut app.surfaces.strategy_describe.model_state,
+        Intent::Command(Command::Submit {
+            revision: opened.revision,
+            text: "Alert at close".into(),
+        }),
+    );
+    let Effects::Request(request) = effect else {
+        panic!("expected a pending request")
+    };
+    let child = app
+        .runtime
+        .tabs
+        .transfer_tab(pinned, TransferTarget::NewWindow, 0)
+        .unwrap()
+        .destination;
+    let paint = |app: &mut QuantickApp, window, events| {
+        let id = native_windows::viewport(window);
+        let mut input = egui::RawInput {
+            viewport_id: id,
+            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, TEST_WINDOW)),
+            events,
+            ..Default::default()
+        };
+        input.viewports.entry(id).or_default();
+        let now = frame_instant(&ctx);
+        ctx.run(input, |ctx| native_windows::paint(app, ctx, window, now))
+    };
+    paint(&mut app, child, vec![]);
+    let dialog = paint(&mut app, child, vec![]);
+    assert!(painted_text_center(&dialog, "Waiting for the provider").is_some());
+    let sibling = paint(&mut app, WindowId::ROOT, vec![key_press(egui::Key::F10)]);
+    assert!(painted_text_center(&sibling, "Waiting for the provider").is_none());
+    assert!(
+        app.chrome.window_menu.open,
+        "sibling chart keeps its shortcut"
+    );
+    let read = app.dispatch(Intent::Command(Command::Read)).unwrap();
+    assert_eq!(
+        (read.phase, read.revision),
+        (Phase::Waiting, request.revision)
+    );
+    let root = WindowId::ROOT;
+    app.runtime
+        .tabs
+        .transfer_tab(pinned, TransferTarget::Window(root), 0)
+        .unwrap();
+    paint(&mut app, root, vec![]);
+    assert_eq!(
+        app.surfaces.strategy_describe.view.viewport,
+        native_windows::viewport(root)
+    );
+    let child = app
+        .runtime
+        .tabs
+        .transfer_tab(pinned, TransferTarget::NewWindow, 0)
+        .unwrap()
+        .destination;
+    paint(&mut app, child, vec![]);
+    app.runtime.tabs.focus_window(root).unwrap();
+    let cancelled = app.dispatch(Intent::Command(Command::Read)).unwrap();
+    assert_eq!(cancelled.phase, Phase::Cancelled);
+    let late = app
+        .dispatch(Intent::Replied {
+            revision: request.revision,
+            reply: Ok(Reply::Question("Late".into())),
+        })
+        .unwrap();
+    assert_eq!(late, cancelled);
+    assert!(fixture.requests.lock().unwrap().is_empty());
+}
+
 fn seed_renko(app: &mut QuantickApp) {
     let pane = app.active_tab_mut().focused_pane_mut();
     pane.set_spec(
@@ -358,6 +483,28 @@ fn named_calls_share_ui_state_and_retry_safely() {
     let opened = client.call(&mut app, &ctx, "open", json!({}), "open");
     assert_eq!(opened["result"]["phase"], "ready", "{opened}");
     let revision = opened["result"]["revision"].clone();
+    let sensitive = json!({"revision":revision,"text":"pasted fixture-credential"});
+    let refused = client.call(
+        &mut app,
+        &ctx,
+        "submit",
+        sensitive.clone(),
+        "rejected-submit",
+    );
+    assert_eq!(
+        refused["error"]["message"],
+        "Input contains the provider credential"
+    );
+    assert!(!refused.to_string().contains("fixture-credential"));
+    assert_eq!(
+        client.call(&mut app, &ctx, "submit", sensitive, "rejected-submit")["error"],
+        refused["error"]
+    );
+    assert_eq!(
+        client.call(&mut app, &ctx, "read", json!({}), "")["result"],
+        opened["result"]
+    );
+    assert!(fixture.requests.lock().unwrap().is_empty());
     let input = json!({"revision":revision,"text":"Alert on a confirmed reversal"});
     let sent = client.call(&mut app, &ctx, "submit", input.clone(), "send");
     assert_eq!(sent["result"]["phase"], "waiting", "{sent}");
@@ -378,6 +525,25 @@ fn named_calls_share_ui_state_and_retry_safely() {
             .unwrap()
             .summary
     );
+    let sensitive = json!({"revision":read["result"]["revision"],"id":"fixture-credential.pine"});
+    let refused = client.call(&mut app, &ctx, "save", sensitive, "rejected-save");
+    assert_eq!(
+        refused["error"]["message"],
+        "Input contains the provider credential"
+    );
+    assert!(!refused.to_string().contains("fixture-credential"));
+    assert_eq!(
+        client.call(&mut app, &ctx, "read", json!({}), "")["result"],
+        read["result"]
+    );
+    assert!(
+        app.active_tab()
+            .market
+            .strategies
+            .script_readings()
+            .is_empty()
+    );
+    assert!(!dir.join("fixture-credential.pine").exists());
     let input = json!({"revision":read["result"]["revision"],"id":"mcp.pine"});
     let saved = client.call(&mut app, &ctx, "save", input.clone(), "save");
     assert_eq!(saved["result"]["saved_id"], "mcp.pine", "{saved}");

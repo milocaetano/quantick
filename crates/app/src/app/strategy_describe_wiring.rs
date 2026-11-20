@@ -19,12 +19,22 @@ impl<T: super::control_host::TabsMutPort + ?Sized> DescribeHost for T {
     }
 }
 
+fn focused_tab(tabs: &ArrangementHost) -> u64 {
+    let windows = tabs.windows();
+    windows
+        .window(windows.focused())
+        .expect("focused market window")
+        .selected()
+        .0
+}
+
 fn current(tabs: &ArrangementHost, context: &Context) -> bool {
-    let tab = &tabs[tabs.active_index()];
+    let id = focused_tab(tabs);
+    let tab = tabs.by_id(id).expect("focused tab");
     let pane = tab.focused_pane();
     context.matches_chart(
         tabs.owner(),
-        tabs.active_id(),
+        id,
         pane.id,
         (&tab.active.0, &tab.active.1),
         &pane.series.bar_config(),
@@ -44,7 +54,8 @@ fn history(
     })
 }
 fn capture(tabs: &ArrangementHost) -> Context {
-    let tab = &tabs[tabs.active_index()];
+    let id = focused_tab(tabs);
+    let tab = tabs.by_id(id).expect("focused tab");
     let pane = tab.focused_pane();
     let placement = pane
         .drawings
@@ -58,7 +69,7 @@ fn capture(tabs: &ArrangementHost) -> Context {
     let with_poc = history.iter().filter(|s| s.close.poc.is_some()).count();
     Context {
         workspace: tabs.owner(),
-        tab: tabs.active_id(),
+        tab: id,
         pane: pane.id,
         feed: tab.active.0.clone(),
         symbol: tab.active.1.clone(),
@@ -98,6 +109,26 @@ pub(super) fn dispatch(
         }
         return Err(quantick_control_schema::strategy_describe::unavailable_error());
     }
+    let opened = match &intent {
+        Intent::Command(Command::Open) => {
+            let context = capture(tabs);
+            surface
+                .view
+                .worker
+                .validate_chart(&context)
+                .map_err(ControlError::invalid_request)?;
+            Some(context)
+        }
+        Intent::Command(Command::Submit { text, .. } | Command::Save { id: text, .. }) => {
+            surface
+                .view
+                .worker
+                .validate_input(text)
+                .map_err(ControlError::invalid_request)?;
+            None
+        }
+        _ => None,
+    };
     let state = &mut surface.model_state;
     if state.status.phase == Phase::Unavailable {
         state.status.phase = Phase::Closed;
@@ -117,9 +148,11 @@ pub(super) fn dispatch(
             surface.view.worker.invalidate();
         }
     }
-    let intent = if matches!(intent, Intent::Command(Command::Open)) {
-        surface.view.open();
-        Intent::Opened(capture(tabs).into())
+    let intent = if let Some(context) = opened {
+        surface
+            .view
+            .open(super::native_windows::viewport(tabs.windows().focused()));
+        Intent::Opened(context.into())
     } else {
         intent
     };
@@ -175,7 +208,7 @@ pub(super) fn dispatch(
                     .as_ref()
                     .expect("save requires preview")
                     .source;
-                let tab = tabs.runtime_mut(tabs.active_index());
+                let tab = tabs.by_id_mut(context.tab).expect("validated pinned tab");
                 let result = (|| {
                     let pane = tab.focused_pane();
                     if let Some(id) = context.placement.drawing() {
@@ -221,7 +254,7 @@ pub(super) fn dispatch(
 
 pub(super) fn frame(surfaces: &mut Surfaces, tabs: &mut ArrangementHost, effect: Option<Effects>) {
     let surface = &mut surfaces.strategy_describe;
-    if !surface.view.worker.available() {
+    if !surface.view.worker.available() || tabs.windows().presented() != tabs.windows().focused() {
         return;
     }
     if surface
@@ -236,8 +269,14 @@ pub(super) fn frame(surfaces: &mut Surfaces, tabs: &mut ArrangementHost, effect:
         Some(Effects::Dispatch(c)) => Some(c),
         _ => None,
     });
-    if let Some(command) = command {
-        let _ = dispatch(surfaces, tabs, Intent::Command(command));
+    if let Some(command) = command
+        && let Err(error) = dispatch(surfaces, tabs, Intent::Command(command))
+    {
+        crate::surfaces::toast::note(
+            &mut surfaces.toast,
+            error.message,
+            std::time::Instant::now(),
+        );
     }
     if let Some((revision, reply)) = surfaces.strategy_describe.view.worker.poll() {
         let _ = dispatch(surfaces, tabs, Intent::Replied { revision, reply });

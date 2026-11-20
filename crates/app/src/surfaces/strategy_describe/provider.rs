@@ -1,7 +1,8 @@
 //! The credential and HTTP client live on one worker with bounded mailboxes.
-use quantick_ui_model::strategy_describe::{Reply, Request, Turn};
+use quantick_ui_model::strategy_describe::{Context, Reply, Request, Turn};
 use serde::Deserialize;
 use std::{
+    sync::Arc,
     sync::mpsc::{Receiver, SyncSender, sync_channel},
     time::Duration,
 };
@@ -32,6 +33,45 @@ fn includes_credential(text: &str, key: &str) -> bool {
     })
 }
 
+struct Credential(Box<str>);
+
+impl Credential {
+    fn validate(&self, text: &str) -> Result<(), &'static str> {
+        if includes_credential(text, &self.0) {
+            return Err("Input contains the provider credential");
+        }
+        Ok(())
+    }
+
+    fn chart(&self, context: &Context) -> Result<(), &'static str> {
+        for text in [&context.feed, &context.symbol, &context.bars]
+            .into_iter()
+            .chain(&context.indicators)
+            .chain(&context.drawings)
+            .chain(&context.availability)
+        {
+            self.validate(text)?;
+        }
+        Ok(())
+    }
+
+    fn request(&self, request: &Request) -> Result<(), &'static str> {
+        self.chart(&request.context)?;
+        for turn in &request.transcript {
+            let (Turn::Trader(text) | Turn::Assistant(text)) = turn;
+            self.validate(text)?;
+        }
+        if let Some((source, diagnostics)) = &request.repair {
+            self.validate(source)?;
+            for diagnostic in diagnostics {
+                self.validate(&diagnostic.code)?;
+                self.validate(&diagnostic.message)?;
+            }
+        }
+        Ok(())
+    }
+}
+
 type Completion = (u64, Result<Reply, String>);
 
 #[cfg(test)]
@@ -45,11 +85,54 @@ fn credential_echo_is_distinct_from_an_incidental_letter() {
     ));
 }
 
+#[cfg(test)]
+#[test]
+fn outbound_repair_and_chart_fields_are_checked_before_serialization() {
+    use quantick_session::script_strategies::ScriptPlacement;
+    use quantick_ui_model::strategy_describe::Diagnostic;
+    let credential = Credential(r#"fixture-"quoted"-secret"#.into());
+    let context = Context {
+        workspace: quantick_workspace::lifetime::WorkspaceId(1),
+        tab: 3,
+        pane: 7,
+        feed: "test".into(),
+        symbol: "TEST".into(),
+        bars: "renko:3".into(),
+        placement: ScriptPlacement::Anywhere,
+        indicators: vec![],
+        drawings: vec![],
+        availability: vec![],
+        history: vec![],
+    };
+    let mut request = Request {
+        revision: 1,
+        context: Arc::new(context),
+        transcript: vec![],
+        repair: None,
+    };
+    assert!(credential.request(&request).is_ok());
+    Arc::make_mut(&mut request.context)
+        .indicators
+        .push(credential.0.to_string());
+    assert!(credential.request(&request).is_err());
+    Arc::make_mut(&mut request.context).indicators.clear();
+    request.repair = Some((
+        "source".into(),
+        vec![Diagnostic {
+            line: Some(1),
+            code: "PINE_TEST".into(),
+            message: credential.0.to_string(),
+        }],
+    ));
+    assert!(credential.request(&request).is_err());
+}
+
 #[derive(Default)]
 pub(crate) struct Worker {
     mailbox: Option<Mailbox>,
 }
 struct Mailbox {
+    credential: Arc<Credential>,
     send: SyncSender<Request>,
     receive: Receiver<Completion>,
     current: tokio::sync::watch::Sender<Option<u64>>,
@@ -93,6 +176,9 @@ impl Worker {
             reqwest::header::HeaderValue::from_str(&format!("Bearer {}", key.trim()))
                 .map_err(|_| "Invalid strategy provider credential")?;
         authorization.set_sensitive(true);
+        let credential = Arc::new(Credential(key.trim().into()));
+        credential.validate(&settings.model)?;
+        let transport = Arc::clone(&credential);
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -115,14 +201,7 @@ impl Worker {
                         continue;
                     }
                     let exchange = async {
-                        let secret = key.trim();
-                        if request.transcript.iter().any(|turn| match turn {
-                            Turn::Trader(text) | Turn::Assistant(text) => {
-                                includes_credential(text, secret)
-                            }
-                        }) {
-                            return Err("Request contains the provider credential".into());
-                        }
+                        transport.request(&request)?;
                         let body = protocol::body(&settings.model, &request)?;
                         let mut response = client
                             .post(endpoint.clone())
@@ -156,16 +235,13 @@ impl Worker {
                             bytes.extend_from_slice(&chunk);
                         }
                         let reply = protocol::parse(&bytes)?;
-                        let leaked = match &reply {
-                            Reply::Question(s) => includes_credential(s, secret),
-                            Reply::Candidate { source, summary } => {
-                                includes_credential(source, secret)
-                                    || includes_credential(summary, secret)
-                            }
-                        };
-                        if leaked {
-                            return Err("Provider response contained a credential".into());
+                        match &reply {
+                            Reply::Question(text) => transport.validate(text),
+                            Reply::Candidate { source, summary } => transport
+                                .validate(source)
+                                .and_then(|()| transport.validate(summary)),
                         }
+                        .map_err(|_| "Provider response contained a credential")?;
                         Ok(reply)
                     };
                     let result = runtime.block_on(async {
@@ -185,6 +261,7 @@ impl Worker {
             .map_err(|_| "Cannot start strategy provider worker")?;
         Ok(Self {
             mailbox: Some(Mailbox {
+                credential,
                 send,
                 receive,
                 current,
@@ -194,6 +271,22 @@ impl Worker {
     pub(crate) fn available(&self) -> bool {
         self.mailbox.is_some()
     }
+    pub(crate) fn validate_input(&self, text: &str) -> Result<(), &'static str> {
+        self.mailbox
+            .as_ref()
+            .ok_or("Strategy description is unavailable")?
+            .credential
+            .validate(text)
+    }
+
+    pub(crate) fn validate_chart(&self, context: &Context) -> Result<(), &'static str> {
+        self.mailbox
+            .as_ref()
+            .ok_or("Strategy description is unavailable")?
+            .credential
+            .chart(context)
+    }
+
     pub(crate) fn submit(&mut self, request: Request) -> Result<(), String> {
         let mailbox = self
             .mailbox

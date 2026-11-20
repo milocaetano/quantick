@@ -12,6 +12,7 @@ pub(crate) struct View {
     pub(crate) worker: provider::Worker,
     pub(crate) command: Option<Command>,
     pub(crate) library: Option<std::path::PathBuf>,
+    pub(crate) viewport: egui::ViewportId,
     text: String,
     name: String,
     hidden: Option<u64>,
@@ -30,7 +31,8 @@ fn keyboard_event(event: &egui::Event) -> bool {
     )
 }
 impl View {
-    pub(crate) fn open(&mut self) {
+    pub(crate) fn open(&mut self, viewport: egui::ViewportId) {
+        self.viewport = viewport;
         self.text.clear();
         self.name.clear();
         self.hidden = None;
@@ -45,7 +47,8 @@ impl super::View<Model> for View {
             Phase::Preview => "filename",
             _ => return,
         };
-        if self.hidden == Some(state.status.revision)
+        if ctx.viewport_id() != self.viewport
+            || self.hidden == Some(state.status.revision)
             || !ctx.memory(|memory| memory.has_focus(egui::Id::new(self.id()).with(field)))
         {
             return;
@@ -69,10 +72,17 @@ impl super::View<Model> for View {
         &mut self,
         state: &State,
         target: &mut ViewContext<'_>,
-        _env: Option<&SurfaceEnv<'_>>,
+        env: Option<&SurfaceEnv<'_>>,
     ) -> Option<Intent> {
         let status = &state.status;
-        if matches!(status.phase, Phase::Unavailable | Phase::Closed)
+        if let (Some(context), Some(env)) = (state.context(), env) {
+            if context.tab != env.active_tab {
+                return None;
+            }
+            self.viewport = target.context().viewport_id();
+        }
+        if target.context().viewport_id() != self.viewport
+            || matches!(status.phase, Phase::Unavailable | Phase::Closed)
             || self.hidden == Some(status.revision)
         {
             return None;
@@ -184,7 +194,7 @@ impl super::View<Model> for View {
                         {
                             self.command = Some(Command::Save {
                                 revision,
-                                id: self.name.clone(),
+                                id: std::mem::take(&mut self.name),
                             });
                         }
                     }
