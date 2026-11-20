@@ -6,7 +6,7 @@
 //! `strategy.script.arm` answered, a drawn instance by its chart, its drawing
 //! and the id the desk gave it. Ids are never reused within a tab's session,
 //! so a removal never makes an id name another instance. Instances live for the
-//! session; a call names its tab, absent for the one on screen.
+//! session; an instance call names its tab, since every tab numbers its own.
 
 use quantick_control::id::ModuleId;
 use quantick_control::registry::{CapabilityDescriptor, EffectPersistence, IdempotencyPolicy};
@@ -64,9 +64,8 @@ pub struct ListInput {}
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct InstanceInput {
-    /// The tab; absent for the one on screen.
-    #[serde(default)]
-    pub tab_id: Option<WireU64>,
+    /// The tab the row came from: ids are numbered per tab.
+    pub tab_id: WireU64,
     pub instance: InstanceId,
 }
 
@@ -83,8 +82,8 @@ pub struct AssetInput {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SaveAsInput {
-    #[serde(default)]
-    pub tab_id: Option<WireU64>,
+    /// The tab the row came from: ids are numbered per tab.
+    pub tab_id: WireU64,
     /// A script instance.
     pub instance: InstanceId,
     /// The new library file: letters, digits, `_` or `-`, then `.pine`.
@@ -234,7 +233,7 @@ pub fn command_descriptors() -> Vec<CapabilityDescriptor> {
         action::<InstanceInput>(
             RESUME_CAPABILITY_ID,
             "Resume a strategy",
-            "Resumes one paused strategy from the next close. Resuming a watching one changes nothing; an ended one is refused. Journaled as strategy.desk.changed.",
+            "Resumes one paused strategy from the next close. Resuming a watching one changes nothing; an ended one is refused, and so is a drawn strategy that places paper orders: only the trader restarts those. Journaled as strategy.desk.changed.",
             BY_INSTANCE,
         ),
         action::<InstanceInput>(
@@ -252,13 +251,13 @@ pub fn command_descriptors() -> Vec<CapabilityDescriptor> {
         action::<AssetInput>(
             ASSET_RESUME_CAPABILITY_ID,
             "Resume an asset's strategies",
-            "Resumes every paused strategy on charts of the symbol and bar type, on every open tab. Journaled as strategy.desk.changed.",
+            "Resumes every paused strategy on charts of the symbol and bar type, on every open tab, except drawn strategies that place paper orders, which stay paused for the trader to restart; the answer counts what changed. Journaled as strategy.desk.changed.",
             "Resuming again changes nothing; the answer counts what changed.",
         ),
         action::<InstanceInput>(
             ARM_CAPABILITY_ID,
             "Arm an ended strategy",
-            "Arms one ended strategy again, warmed on the chart's latest closes and unpaused; a script is recompiled from the source it was armed with. A watching one is refused. Journaled as strategy.desk.changed.",
+            "Arms one ended strategy again, warmed on the chart's latest closes and unpaused; a script is recompiled from the source it was armed with. A watching one, one whose drawing no longer passes the arm check, and a drawn one that places paper orders are refused. Journaled as strategy.desk.changed.",
             BY_INSTANCE,
         ),
         action::<SaveAsInput>(
@@ -270,7 +269,7 @@ pub fn command_descriptors() -> Vec<CapabilityDescriptor> {
         action::<InstanceInput>(
             DUPLICATE_CAPABILITY_ID,
             "Duplicate a strategy",
-            "Arms a copy beside one strategy — the same script or preset, side and placement on the same chart — paused, and answers its id. Journaled as strategy.desk.changed.",
+            "Arms a copy beside one strategy — the same script or preset, side and placement on the same chart — paused, and answers its id. A drawing that no longer passes the arm check, and a drawn strategy that places paper orders, are refused. Journaled as strategy.desk.changed.",
             "Each duplicate arms another copy; read strategy.desk.list, or the strategy.desk.changed events after a cursor taken before the call, before retrying.",
         ),
     ]

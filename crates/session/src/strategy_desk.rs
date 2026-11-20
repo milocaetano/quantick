@@ -5,9 +5,10 @@
 //! An asset is a symbol and a bar type: the tab answers the symbol, each
 //! chart its bar type ([`DeskTab`]). An instance is named by
 //! [`InstanceRef`]: a script by the id it was armed with, a drawn instance by
-//! its chart, its drawing and the number the desk gave it. Both numbers come
-//! from one tab-owned sequence, in arming order, and are never reused, so a
-//! sibling's removal leaves every other name pointing where it did.
+//! its chart, its drawing and the number its chart gave it when it was armed
+//! ([`ArmedStrategy::desk_id`]). Neither number is ever reused, so a
+//! sibling's removal leaves every other name pointing where it did, and no
+//! read hands one out.
 //!
 //! A paused instance rings and places nothing, yet keeps its history: a
 //! paused script still warms on every close and a paused drawn instance's
@@ -23,6 +24,7 @@
 //! the latest print the tab heard. Told the time, never reading it.
 //!
 //! [`ArmedStrategy::pause`]: quantick_strategy::ArmedStrategy::pause
+//! [`ArmedStrategy::desk_id`]: quantick_strategy::ArmedStrategy::desk_id
 
 use std::collections::BTreeMap;
 
@@ -166,15 +168,13 @@ impl<D> Default for StrategyDeskView<D> {
 }
 
 impl<D: Copy + PartialEq> StrategyDeskView<D> {
-    /// Add `tab`'s instances, naming drawings through `name_of(pane, drawing)`;
-    /// a drawn instance not yet numbered gets its desk number here.
+    /// Add `tab`'s instances, naming drawings through `name_of(pane, drawing)`.
     pub fn read(
         &mut self,
         tab: &DeskTab<'_>,
-        strategies: &mut TabStrategies<D>,
+        strategies: &TabStrategies<D>,
         name_of: impl Fn(u64, D) -> Option<String>,
     ) {
-        strategies.number_instances();
         for (asset, row) in strategies.desk_rows(tab, &name_of) {
             self.groups.entry(asset).or_default().push(row);
         }
@@ -224,6 +224,7 @@ const STARTS_ORDERS: &str =
     "this strategy places paper orders; only the trader resumes, arms or duplicates it";
 
 /// Where an instance sits on its tab.
+#[derive(Clone, Copy)]
 enum Located {
     Script { pane_id: u64, index: usize },
     Drawn { pane_id: u64, index: usize },
@@ -300,7 +301,7 @@ impl<D: Copy + PartialEq> TabStrategies<D> {
                 DeskRow {
                     tab_id,
                     pane_id,
-                    id: drawn_ref(pane_id, instance).expect("numbered before it is read"),
+                    id: drawn_ref(pane_id, instance).expect("armed instances are numbered"),
                     name: instance.preset.clone(),
                     state,
                     link: DeskLink::Drawing {
@@ -350,7 +351,8 @@ impl<D: Copy + PartialEq> TabStrategies<D> {
 
     /// Carry out `command` on `tab`, warming whatever it arms on
     /// `warmup(pane, depth)` — closed bars with their footprint POC, oldest
-    /// first.
+    /// first — once `check(pane, drawing)`, the chart's judgement of a
+    /// drawing it would ride, passed: the gate a fresh arm passes.
     ///
     /// # Errors
     ///
@@ -364,9 +366,9 @@ impl<D: Copy + PartialEq> TabStrategies<D> {
         tab: &DeskTab<'_>,
         command: StrategyDeskCommand<D>,
         may_start_orders: bool,
+        check: impl Fn(u64, D) -> Result<(), String>,
         warmup: impl FnMut(u64, usize) -> Vec<(Bar, Option<Decimal>)>,
     ) -> Result<DeskOutcome<D>, String> {
-        self.number_instances();
         if !may_start_orders && self.starts_orders(&command) {
             return Err(STARTS_ORDERS.to_owned());
         }
@@ -381,9 +383,9 @@ impl<D: Copy + PartialEq> TabStrategies<D> {
                 let changed = self.pause_asset(tab, &asset, false, may_start_orders);
                 Ok(DeskOutcome::Changed(changed))
             }
-            StrategyDeskCommand::Arm(id) => {
-                self.arm_again(id, warmup).map(|()| DeskOutcome::Changed(1))
-            }
+            StrategyDeskCommand::Arm(id) => self
+                .arm_again(id, &check, warmup)
+                .map(|()| DeskOutcome::Changed(1)),
             StrategyDeskCommand::SaveAs { instance, name } => {
                 let InstanceRef::Script(script) = instance else {
                     return Err(NO_SCRIPT.to_owned());
@@ -393,9 +395,9 @@ impl<D: Copy + PartialEq> TabStrategies<D> {
                 let source = source.source().to_owned();
                 Ok(DeskOutcome::Save { name, source })
             }
-            StrategyDeskCommand::Duplicate(id) => {
-                self.duplicate(id, warmup).map(DeskOutcome::Duplicated)
-            }
+            StrategyDeskCommand::Duplicate(id) => self
+                .duplicate(id, &check, warmup)
+                .map(DeskOutcome::Duplicated),
         }
     }
 
@@ -493,17 +495,41 @@ impl<D: Copy + PartialEq> TabStrategies<D> {
         Ok(())
     }
 
+    /// Run `check` on the drawing a located instance rides, if any.
+    fn check_region(
+        &self,
+        located: &Located,
+        check: &impl Fn(u64, D) -> Result<(), String>,
+    ) -> Result<(), String> {
+        let (pane_id, drawing) = match *located {
+            Located::Script { pane_id, index } => {
+                let pane = self.pane(pane_id).expect("located");
+                (pane_id, pane.scripts[index].placement.drawing())
+            }
+            Located::Drawn { pane_id, index } => {
+                let pane = self.pane(pane_id).expect("located");
+                (pane_id, Some(pane.anchors.instances[index].drawing))
+            }
+        };
+        drawing.map_or(Ok(()), |drawing| check(pane_id, drawing))
+    }
+
     fn arm_again(
         &mut self,
         id: InstanceRef<D>,
+        check: &impl Fn(u64, D) -> Result<(), String>,
         mut warmup: impl FnMut(u64, usize) -> Vec<(Bar, Option<Decimal>)>,
     ) -> Result<(), String> {
-        match self.locate(id).ok_or(NO_SUCH)? {
+        let located = self.locate(id).ok_or(NO_SUCH)?;
+        if let Located::Script { pane_id, index } = located
+            && self.pane(pane_id).expect("located").scripts[index].watching()
+        {
+            return Err(STILL_WATCHING.to_owned());
+        }
+        self.check_region(&located, check)?;
+        match located {
             Located::Script { pane_id, index } => {
                 let held = &self.pane(pane_id).expect("located").scripts[index];
-                if held.watching() {
-                    return Err(STILL_WATCHING.to_owned());
-                }
                 let (script, side, placement) = (held.id, held.side(), held.placement);
                 let source = self.desk.scripts.get(&script).ok_or(NO_SUCH)?;
                 let warm = warmup(pane_id, WARMUP_BARS);
@@ -517,7 +543,6 @@ impl<D: Copy + PartialEq> TabStrategies<D> {
                     return Err(STILL_WATCHING.to_owned());
                 }
                 rearm_instance(instance, |depth| bars_of(warmup(pane_id, depth)));
-                instance.armed.resume();
             }
         }
         Ok(())
@@ -526,9 +551,12 @@ impl<D: Copy + PartialEq> TabStrategies<D> {
     fn duplicate(
         &mut self,
         id: InstanceRef<D>,
+        check: &impl Fn(u64, D) -> Result<(), String>,
         mut warmup: impl FnMut(u64, usize) -> Vec<(Bar, Option<Decimal>)>,
     ) -> Result<InstanceRef<D>, String> {
-        match self.locate(id).ok_or(NO_SUCH)? {
+        let located = self.locate(id).ok_or(NO_SUCH)?;
+        self.check_region(&located, check)?;
+        match located {
             Located::Script { pane_id, index } => {
                 let held = &self.pane(pane_id).expect("located").scripts[index];
                 let (side, placement) = (held.side(), held.placement);
@@ -551,11 +579,7 @@ impl<D: Copy + PartialEq> TabStrategies<D> {
                 pane.arm(drawing, &spec, preset, || Ok(()), warm)?;
                 let copy = pane.anchors.instances.last_mut().expect("just armed");
                 pause_drawn(copy, true);
-                self.number_instances();
-                let copy = self
-                    .pane(pane_id)
-                    .and_then(|pane| pane.anchors.instances.last());
-                Ok(drawn_ref(pane_id, copy.expect("just armed")).expect("just numbered"))
+                Ok(drawn_ref(pane_id, copy).expect("armed instances are numbered"))
             }
         }
     }
@@ -565,14 +589,13 @@ impl<D: Copy + PartialEq> TabStrategies<D> {
     /// their POC, slot zero first — against `region(pane, drawing, slot)`,
     /// the band a drawing marks there and whether it covers the slot.
     pub fn detail(
-        &mut self,
+        &self,
         tab: &DeskTab<'_>,
         id: InstanceRef<D>,
         name_of: impl Fn(u64, D) -> Option<String>,
         bars: impl FnOnce(u64) -> Vec<(Bar, Option<Decimal>)>,
         mut region: impl FnMut(u64, D, usize) -> Option<(Decimal, Decimal, bool)>,
     ) -> Option<StrategyDetail<D>> {
-        self.number_instances();
         let located = self.locate(id)?;
         let row = self.row(tab.tab_id, &located, &name_of);
         let pane_id = row.pane_id;

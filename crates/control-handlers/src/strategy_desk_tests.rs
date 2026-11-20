@@ -136,7 +136,7 @@ fn every_desk_action_has_a_call() {
     assert_eq!(first["state"], "watching");
     let flow_bars = groups[0]["bar_type"].clone();
 
-    let asked = json!({"instance": script("1")});
+    let asked = json!({"tab_id": "31", "instance": script("1")});
     let read = call(detail::<Window, FakeAccess>, window, access, asked);
     assert_eq!(read["description"], "Steady rise");
     assert_eq!(read["inputs"], json!([{"name": "Length", "value": "14"}]));
@@ -145,7 +145,7 @@ fn every_desk_action_has_a_call() {
     assert_eq!(read["fires_today"], 0);
     assert_eq!(read["history_slots"], json!([]));
 
-    let one = json!({"instance": script("1")});
+    let one = json!({"tab_id": "31", "instance": script("1")});
     let paused = call(pause::<Window, FakeAccess>, window, access, one.clone());
     assert_eq!(paused["changed"], 1);
     assert_eq!(paused["tab_id"], "31");
@@ -168,7 +168,7 @@ fn every_desk_action_has_a_call() {
 
     let copy = call(duplicate::<Window, FakeAccess>, window, access, one.clone());
     assert_eq!(copy["created"], script("3"));
-    let save = json!({"instance": script("1"), "name": "steady_copy.pine"});
+    let save = json!({"tab_id": "31", "instance": script("1"), "name": "steady_copy.pine"});
     let saved = call(save_as::<Window, FakeAccess>, window, access, save.clone());
     assert_eq!(saved["saved_as"], "steady_copy.pine");
     let written = std::fs::read_to_string(scratch.path().join("steady_copy.pine"));
@@ -182,7 +182,7 @@ fn every_desk_action_has_a_call() {
         remove::<Window, FakeAccess>,
         window,
         access,
-        json!({"instance": script("3")}),
+        json!({"tab_id": "31", "instance": script("3")}),
     );
     assert_eq!(removed["changed"], 1);
     let listed = call(list::<Window, FakeAccess>, window, access, json!({}));
@@ -225,7 +225,7 @@ fn an_ended_script_is_armed_again_through_its_call() {
         arm::<Window, FakeAccess>,
         &mut window,
         &mut access,
-        json!({"instance": script("1")}),
+        json!({"tab_id": "31", "instance": script("1")}),
     );
 
     assert_eq!(armed["changed"], 1);

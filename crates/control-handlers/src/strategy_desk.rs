@@ -160,7 +160,7 @@ fn detail<H: StrategyDeskHost + ?Sized, A>(
     input: &Value,
 ) -> Result<Value, ControlError> {
     let input: InstanceInput = serde_json::from_value(input.clone()).map_err(invalid)?;
-    let index = tab_index(host, input.tab_id)?;
+    let index = tab_index(host, Some(input.tab_id))?;
     let tab_id = host.tab_id_at(index);
     let symbol = host.desk_symbol(index).ok_or_else(tab_closed)?;
     let ScriptTab {
@@ -285,10 +285,10 @@ fn on_tab<H: StrategyDeskHost + ?Sized, A: JournalAccess>(
     access: &mut A,
     actor: &ActorContext,
     capability: &str,
-    tab_id: Option<WireU64>,
+    tab_id: WireU64,
     command: StrategyDeskCommand<DrawingId>,
 ) -> Result<Value, ControlError> {
-    let index = tab_index(host, tab_id)?;
+    let index = tab_index(host, Some(tab_id))?;
     let tab_id = host.tab_id_at(index);
     let symbol = host.desk_symbol(index).ok_or_else(tab_closed)?;
     let ScriptTab {
@@ -305,8 +305,14 @@ fn on_tab<H: StrategyDeskHost + ?Sized, A: JournalAccess>(
     let warmup = |pane_id: u64, depth: usize| {
         pane(&panes, pane_id).map_or_else(Vec::new, |p| footprint_warmup(&p.series, depth))
     };
+    let check = |pane_id: u64, drawing: DrawingId| {
+        let held = pane(&panes, pane_id).ok_or("the chart closed while the call ran")?;
+        let closed = held.series.closed_slots();
+        quantick_drawings::alert_geometry::check_arm(held.drawings, drawing, closed)
+            .map_err(|refusal| format!("drawing {}: {refusal}", drawing.0))
+    };
     let outcome = strategies
-        .execute_desk(&tab, command, MAY_START_ORDERS, warmup)
+        .execute_desk(&tab, command, MAY_START_ORDERS, check, warmup)
         .map_err(invalid)?;
     let mut result = CommandResult {
         capability: capability.to_owned(),
@@ -360,10 +366,13 @@ fn on_asset<H: StrategyDeskHost + ?Sized, A: JournalAccess>(
             symbol: &asset.symbol,
             panes: &bar_types,
         };
-        let outcome =
-            strategies.execute_desk(&tab, command(asset.clone()), MAY_START_ORDERS, |_, _| {
-                Vec::new()
-            });
+        let outcome = strategies.execute_desk(
+            &tab,
+            command(asset.clone()),
+            MAY_START_ORDERS,
+            |_, _| Ok(()),
+            |_, _| Vec::new(),
+        );
         if let Ok(DeskOutcome::Changed(count)) = outcome {
             changed += count;
         }

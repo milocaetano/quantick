@@ -316,7 +316,8 @@ pub struct ArmedStrategy {
     /// operation still completes, but no closed bar presents an opportunity
     /// and no signal becomes an order until it is resumed.
     paused: bool,
-    /// The number its tab's strategy desk names it by, once given one.
+    /// The number the strategy desk names it by on its pane, given when it
+    /// joins the pane's instances.
     desk_id: Option<u64>,
 }
 
@@ -346,8 +347,8 @@ impl ArmedStrategy {
         }
     }
 
-    /// The number the strategy desk names this instance by; `None` until
-    /// the desk numbered it.
+    /// The number the strategy desk names this instance by on its pane;
+    /// `None` until [`crate::anchors::StrategyAnchors::arm`] gave it one.
     #[must_use]
     pub fn desk_id(&self) -> Option<u64> {
         self.desk_id

@@ -193,7 +193,7 @@ impl Script {
 fn input_text(value: &InputValue) -> String {
     match value {
         InputValue::Int(value) => value.to_string(),
-        InputValue::Float(value) => value.to_string(),
+        InputValue::Float(value) => format!("{value:?}"),
         InputValue::Bool(value) => value.to_string(),
         InputValue::Color(value) => {
             format!(

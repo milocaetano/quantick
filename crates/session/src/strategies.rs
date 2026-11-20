@@ -285,6 +285,9 @@ pub(crate) fn rearm_instance<D>(
         ArmedState::Disarmed { reason } if reason.resets_series()
     );
     instance.armed.rearm();
+    // Re-armed means armed: a pause does not outlive the re-arm, from the
+    // drawing's menu or the desk alike.
+    instance.armed.resume();
     if series_changed {
         let bars = warmup(instance.armed.trigger().warmup_bars());
         instance.armed.warm(&bars);
@@ -320,8 +323,7 @@ pub struct Evaluation {
 /// Every pane's strategies, keyed by the pane's id.
 pub struct TabStrategies<D> {
     panes: BTreeMap<u64, PaneStrategies<D>>,
-    /// The id the next armed script or newly numbered drawn instance takes
-    /// (`crate::strategy_desk`); never reused in the tab's life.
+    /// The id the next armed script takes; never reused in the tab's life.
     pub(crate) next_script_id: u64,
     /// What the strategy desk keeps beside the instances.
     pub(crate) desk: DeskBook<D>,
@@ -338,22 +340,6 @@ impl<D> Default for TabStrategies<D> {
 }
 
 impl<D: Copy + PartialEq> TabStrategies<D> {
-    /// Give every drawn instance armed since the last call its desk number,
-    /// from the sequence script ids come from: panes in id order, each in
-    /// arming order.
-    pub(crate) fn number_instances(&mut self) {
-        let mut next = self.next_script_id;
-        for (_, pane) in self.panes_mut() {
-            for instance in &mut pane.anchors.instances {
-                if instance.armed.desk_id().is_none() {
-                    instance.armed.set_desk_id(next);
-                    next += 1;
-                }
-            }
-        }
-        self.next_script_id = next;
-    }
-
     /// Every pane that has held a strategy, in id order.
     pub(crate) fn panes(&self) -> impl Iterator<Item = (u64, &PaneStrategies<D>)> {
         self.panes.iter().map(|(&id, pane)| (id, pane))
@@ -471,7 +457,6 @@ impl<D: Copy + PartialEq> TabStrategies<D> {
     ) -> Evaluation {
         let Print { events, now_ms } = print;
         self.desk.heard(now_ms);
-        self.number_instances();
         let mut answer = Evaluation::default();
         for &id in panes {
             let Some(pane) = self.panes.get_mut(&id) else {
