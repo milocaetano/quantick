@@ -1,42 +1,138 @@
 //! Drive the actual stdio executable, pumping the same desktop frames as a human.
 use super::*;
 use std::{
+    ffi::OsStr,
     io::{BufRead, BufReader, Write},
     path::{Path, PathBuf},
     process::{Child, ChildStdin, Command, Stdio},
     sync::{OnceLock, mpsc as channel},
 };
 
+fn cargo_target(profile: &Path) -> (&Path, Option<&OsStr>) {
+    let directory = profile.parent().unwrap();
+    // With --target, Cargo puts host build scripts in <root>/<profile> and
+    // test binaries in <root>/<triple>/<profile>, even for the native triple.
+    if let Some(root) = directory.parent()
+        && root
+            .join(profile.file_name().unwrap())
+            .join("build")
+            .is_dir()
+    {
+        let targets = Command::new(std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into()))
+            .args(["--print", "target-list"])
+            .current_dir(env!("CARGO_MANIFEST_DIR"))
+            .output()
+            .expect("list compiler targets for the test output layout");
+        assert!(targets.status.success(), "rustc could not list its targets");
+        let platform = directory.file_name().unwrap();
+        if String::from_utf8(targets.stdout)
+            .unwrap()
+            .lines()
+            .any(|triple| platform == triple)
+        {
+            return (root, Some(platform));
+        }
+    }
+    (directory, None)
+}
+
+fn app_links_quote() -> bool {
+    let tree = Command::new(env!("CARGO"))
+        .args([
+            "tree",
+            "--locked",
+            "-p",
+            "quantick-app",
+            "--edges",
+            "normal,no-proc-macro",
+            "--invert",
+            "quote",
+            "--depth",
+            "0",
+        ])
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .output()
+        .expect("inspect the app's runtime dependencies");
+    assert!(
+        tree.status.success(),
+        "Cargo could not inspect app dependencies: {}",
+        String::from_utf8_lossy(&tree.stderr)
+    );
+    !tree.stdout.is_empty()
+}
+
+#[test]
+fn cargo_target_preserves_the_test_output_layout() {
+    let root = crate::scratch::ScratchDir::new("mcp-cargo-layout");
+    std::fs::create_dir_all(root.join("debug/build")).unwrap();
+    assert_eq!(cargo_target(&root.join("debug")), (&*root, None));
+    let triple = "x86_64-unknown-linux-gnu";
+    assert_eq!(
+        cargo_target(&root.join(triple).join("debug")),
+        (&*root, Some(OsStr::new(triple)))
+    );
+}
+
 fn executable() -> &'static Path {
     static BUILT: OnceLock<PathBuf> = OnceLock::new();
     BUILT.get_or_init(|| {
         let test = std::env::current_exe().unwrap();
         let profile = test.parent().unwrap().parent().unwrap();
-        let name = format!("quantick-mcp{}", std::env::consts::EXE_SUFFIX);
-        let executable = profile.join(&name);
-        if executable.exists() {
-            return executable;
+        let (target_dir, platform) = cargo_target(profile);
+        let profile_name = match profile.file_name().unwrap().to_str().unwrap() {
+            "debug" => "test",
+            name => name,
+        };
+        let mut build = Command::new(env!("CARGO"));
+        build.arg("build");
+        if let Some(triple) = platform {
+            build.arg("--target").arg(triple);
+        } else if app_links_quote() {
+            // In native builds Cargo shares host and runtime units. Linux
+            // links quote through zvariant_utils; keep its runtime profile
+            // so serde's derive graph reuses the units the app just built.
+            build.args(["-p", "quote", "--lib"]);
         }
-        // A package-only test build omits sibling binaries. An isolated target
-        // permits this fixture to run even under a concurrent workspace build.
-        let target = profile.join("strategy-mcp-fixture");
+        // Selecting both packages unifies shared dependency features with the
+        // app build. Only the real MCP binary is requested from Cargo.
+        let output = build
+            .args([
+                "--locked",
+                "-p",
+                "quantick-app",
+                "-p",
+                "quantick-mcp",
+                "--bin",
+                "quantick-mcp",
+                "--message-format=json-render-diagnostics",
+                "--profile",
+                profile_name,
+                "--target-dir",
+            ])
+            .arg(target_dir)
+            .current_dir(env!("CARGO_MANIFEST_DIR"))
+            .stderr(Stdio::inherit())
+            .output()
+            .expect("run Cargo to resolve the MCP fixture");
         assert!(
-            Command::new(env!("CARGO"))
-                .args([
-                    "build",
-                    "--quiet",
-                    "--locked",
-                    "-p",
-                    "quantick-mcp",
-                    "--target-dir"
-                ])
-                .arg(&target)
-                .current_dir(env!("CARGO_MANIFEST_DIR"))
-                .status()
-                .unwrap()
-                .success()
+            output.status.success(),
+            "building the MCP fixture failed: {}",
+            output.status
         );
-        target.join("debug").join(name)
+        let manifest = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .with_file_name("mcp")
+            .join("Cargo.toml");
+        String::from_utf8(output.stdout)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str::<Value>(line).expect("Cargo JSON message"))
+            .filter(|msg| {
+                msg["reason"] == "compiler-artifact"
+                    && msg["target"]["name"] == "quantick-mcp"
+                    && msg["manifest_path"].as_str().map(Path::new) == Some(&manifest)
+            })
+            .find_map(|msg| msg["executable"].as_str().map(PathBuf::from))
+            .expect("Cargo reported no executable for this checkout's MCP binary")
     })
 }
 
