@@ -292,7 +292,7 @@ fn a_refilled_close_warms_the_script_so_its_next_verdict_matches_a_full_run() {
 #[test]
 fn a_refilled_close_reaches_no_drawn_instance_and_is_not_queued_without_a_script() {
     let mut strategies = TabStrategies::default();
-    let _ = strategies
+    strategies
         .pane_mut(PANE)
         .anchors
         .arm(crate::strategies_tests::instance(DrawingId(3)));
