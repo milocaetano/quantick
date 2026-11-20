@@ -134,6 +134,8 @@ pub(crate) struct ManagerRow {
 pub(crate) struct DrawingEnv<'a> {
     pub linked_alerts: usize,
     pub pane_id: u64,
+    pub px_per_bar: f32,
+    pub note_display: &'a quantick_drawings::NoteDisplay,
     /// The selected object on the pane the chrome speaks for, if any.
     pub selected: Option<SelectedDrawing<'a>>,
     /// Whether the store shows the selection in all windows: its word.

@@ -103,6 +103,7 @@ impl PaneGestures {
         options: PlacementOptions,
         defaults: PlacementDefaults<'_>,
     ) -> PlacementOutcome {
+        drawings.set_text_spacing(projection.viewport.px_per_bar());
         let Some(tool) = options.tool else {
             self.cancel_placement(drawings);
             return PlacementOutcome::default();

@@ -104,7 +104,8 @@ fn draw_inner(chrome: &mut Chrome, ctx: &egui::Context, env: &DrawingEnv<'_>) ->
         ask.merge(chrome.emit(super::Intent::EndInline));
         return ask;
     }
-    let format = payload.format();
+    env.note_display.observe(payload, env.px_per_bar);
+    let format = payload.format_at(env.px_per_bar);
     let legacy = payload.appearance == quantick_drawings::text::TextAppearance::default();
     let color = crate::drawings::to_color32(if legacy {
         palette.resolved.legible_drawing(drawing.style.color)
@@ -118,7 +119,7 @@ fn draw_inner(chrome: &mut Chrome, ctx: &egui::Context, env: &DrawingEnv<'_>) ->
         payload.appearance,
     );
     let bounds =
-        crate::drawings::egui_rect(payload.bounds(anchor, &crate::drawings::text::TextFonts(ctx)));
+        crate::drawings::egui_rect(payload.bounds_at(anchor, &crate::drawings::text::TextFonts(ctx), env.px_per_bar));
     let pad = payload.appearance.padding();
     let background = if legacy {
         crate::drawings::text_backing(&palette, color, palette.chrome()).unwrap_or(palette.chrome())

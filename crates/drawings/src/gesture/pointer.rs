@@ -727,6 +727,79 @@ mod tests {
         }
     }
 
+    #[test]
+    fn a_shared_note_keeps_its_measured_owner_pick_after_companion_paint() {
+        use crate::{FontSpec, TextMetrics, TextPayload, gesture::SharedSource};
+        struct Wide;
+        impl TextMetrics for Wide {
+            fn size(&self, text: &str, font: FontSpec) -> Px {
+                crate::vec2(text.len() as f32 * font.size_px, font.size_px)
+            }
+        }
+        with_projection(|projection, bands| {
+            let mut store = Marks::default();
+            let zoom = projection.viewport.px_per_bar();
+            store.set_text_spacing(zoom);
+            store.place(
+                crate::DrawingTool::by_id("text").unwrap(),
+                crate::ChartPoint::at_time(0.0, 50.0, Some(1000)),
+            );
+            let drawing = store.selected_mut().unwrap();
+            drawing.set_all_timeframes(true);
+            let payload = drawing
+                .payload
+                .as_any_mut()
+                .downcast_mut::<TextPayload>()
+                .unwrap();
+            payload.text = "W".repeat(20);
+            let band = &bands[0];
+            let anchor = projection.drawing_screen_point(
+                drawing.points[0],
+                120.0,
+                1,
+                band.scale.as_ref().unwrap(),
+            );
+            let owner_bounds = payload.bounds_at(anchor, &Wide, zoom);
+            let mut other = Viewport::new();
+            other.set_px_per_bar(zoom / 2.0);
+            let companion = DrawingProjection {
+                viewport: &other,
+                ..*projection
+            };
+            let mut painted = false;
+            companion.shared_scenes(
+                (
+                    SharedSource {
+                        drawings: &store,
+                        content_editing: None,
+                    },
+                    None,
+                ),
+                bands,
+                (120.0, 1),
+                (&Wide, quantick_appearance::ResolvedTheme::bundled_dark()),
+                &mut |_, scene| painted |= !scene.shapes.is_empty(),
+            );
+            assert!(painted);
+            assert_eq!(owner_bounds.width(), 240.0);
+            let inside = anchor + crate::vec2(180.0, -10.0);
+            assert_eq!(
+                projection.drawing_pick_at(&store, inside, band, 120.0, 1),
+                Some(0)
+            );
+            let drawing = &store.items()[0];
+            assert_eq!(
+                drawing.tool.content_bounds(
+                    drawing.payload.as_ref(),
+                    PxRect::from_min_max(anchor, anchor),
+                    band.rect,
+                    zoom
+                ),
+                owner_bounds
+            );
+        });
+    }
+
     fn local_line() -> Marks {
         let mut store = Marks::default();
         assert!(store.place(

@@ -179,6 +179,10 @@ fn fixtures() -> Vec<Fixture> {
                 ANCHORS[..drawing_tool.required_points()].to_vec()
             };
             let mut payload = drawing_tool.default_payload();
+            // Keep the frozen renderer fixture at its recorded size; owner tests cover defaults.
+            if matches!(drawing_tool.id(), "arrow-mark-up" | "arrow-mark-down") {
+                assert!(payload.import_preset(&toml::toml! { size_px = 28.0 }.into()));
+            }
             // The golden pins how a projecting extension paints; a fresh one
             // now opens finite, so the fixture asks for the projection.
             if let Some(fib) = payload

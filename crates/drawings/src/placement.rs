@@ -70,6 +70,7 @@ impl<T: ToolCatalog> Drawings<T> {
             });
         }
         let draft = self.draft.as_mut().expect("draft was installed above");
+        draft.bind_text_zoom(self.text_px_per_bar);
         draft.points.push(point);
         // A freehand tool declares no anchor count: its draft is finished by
         // the release, through `finish_draft`, never by arithmetic here.
