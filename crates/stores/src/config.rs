@@ -1103,35 +1103,39 @@ pub fn load_from(
     explicit: Option<PathBuf>,
     added_path: &Path,
 ) -> Result<(AppConfig, ConfigSource), ConfigError> {
+    let (text, source) = read_config_source(explicit)?;
+    let config = parse_config_source(&text, &source, added_path)?;
+    Ok((config, source))
+}
+
+pub fn parse_config_source(
+    text: &str,
+    source: &ConfigSource,
+    added_path: &Path,
+) -> Result<AppConfig, ConfigError> {
     let added = crate::symbols_file::load(added_path);
-    if let Some(path) = explicit {
-        let source = ConfigSource::EnvPath(path.clone());
-        let text = std::fs::read_to_string(&path).map_err(|e| ConfigError::Read {
-            path,
-            message: e.to_string(),
-        })?;
-        return Ok((
-            parse_with_additions(&text, source.clone(), &added, added_path)?,
-            source,
-        ));
-    }
+    parse_with_additions(text, source.clone(), &added, added_path)
+}
 
-    let cwd_path = Path::new(CONFIG_FILENAME);
-    if cwd_path.is_file() {
-        let source = ConfigSource::WorkingDir(cwd_path.to_path_buf());
-        let text = std::fs::read_to_string(cwd_path).map_err(|e| ConfigError::Read {
-            path: cwd_path.to_path_buf(),
-            message: e.to_string(),
-        })?;
-        return Ok((
-            parse_with_additions(&text, source.clone(), &added, added_path)?,
-            source,
-        ));
-    }
-
-    let config =
-        parse_with_additions(EMBEDDED_DEFAULT, ConfigSource::Embedded, &added, added_path)?;
-    Ok((config, ConfigSource::Embedded))
+/// Resolve the launch document once so app-private sections reach only their owner.
+pub fn read_config_source(
+    explicit: Option<PathBuf>,
+) -> Result<(String, ConfigSource), ConfigError> {
+    let source = if let Some(path) = explicit {
+        ConfigSource::EnvPath(path)
+    } else if Path::new(CONFIG_FILENAME).is_file() {
+        ConfigSource::WorkingDir(CONFIG_FILENAME.into())
+    } else {
+        return Ok((EMBEDDED_DEFAULT.to_owned(), ConfigSource::Embedded));
+    };
+    let (ConfigSource::EnvPath(path) | ConfigSource::WorkingDir(path)) = &source else {
+        unreachable!()
+    };
+    let text = std::fs::read_to_string(path).map_err(|error| ConfigError::Read {
+        path: path.clone(),
+        message: error.to_string(),
+    })?;
+    Ok((text, source))
 }
 
 #[cfg(test)]

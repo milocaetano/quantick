@@ -233,6 +233,7 @@ pub(super) fn draw_surfaces(
         &mut registry.chart_settings.model_state,
         std::mem::take(&mut late.persistence),
     );
+    super::super::strategy_describe_wiring::frame(registry, tabs, late.strategy_describe.take());
     super::super::script_editor_wiring::frame(
         registry,
         indicators,

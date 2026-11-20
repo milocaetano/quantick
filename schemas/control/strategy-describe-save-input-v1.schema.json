@@ -1,0 +1,26 @@
+{
+  "$defs": {
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "type": "string"
+    },
+    "revision": {
+      "$ref": "#/$defs/WireU64"
+    }
+  },
+  "required": [
+    "revision",
+    "id"
+  ],
+  "title": "Save",
+  "type": "object"
+}

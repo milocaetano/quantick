@@ -13,6 +13,13 @@
 default_feed = "binance"
 default_symbol = "BTCUSDT"
 
+# Strategy description is opt-in. Use key_env or a literal key in a private config.
+[strategy_describe]
+enabled = false
+provider = "openai-compatible"
+model = ""
+key_env = "OPENAI_API_KEY"
+
 # Each [[feeds]] entry is one selectable feed.
 #   id            — stable identifier, referenced by `default_feed` (unique).
 #   name          — label shown in the feed selector.

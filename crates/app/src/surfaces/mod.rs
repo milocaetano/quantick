@@ -379,6 +379,12 @@ macro_rules! register_surfaces {
 quantick_ui_model::surface_catalog!(register_surfaces);
 
 impl Surfaces {
+    pub(crate) fn with_describe_provider(worker: strategy_describe::provider::Worker) -> Self {
+        let mut surfaces = Self::default();
+        surfaces.strategy_describe.view.worker = worker;
+        surfaces
+    }
+
     #[cfg(test)]
     fn trace_phase(&mut self, phase: &'static str, entry: &'static str) {
         if let Some(trace) = self.phase_trace.as_mut() {
