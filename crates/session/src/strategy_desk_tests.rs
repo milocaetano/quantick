@@ -117,7 +117,7 @@ fn command(
     command: StrategyDeskCommand<DrawingId>,
 ) -> Result<DeskOutcome<DrawingId>, String> {
     let panes = panes();
-    strategies.execute_desk(&tab(&panes), command, |_, _| Vec::new())
+    strategies.execute_desk(&tab(&panes), command, true, |_, _| Vec::new())
 }
 
 fn view(strategies: &TabStrategies<DrawingId>) -> Vec<crate::strategy_desk::DeskGroup<DrawingId>> {
@@ -464,5 +464,46 @@ fn history_markers_match_live_fires() {
         live.history_markers(id, &bars, |_, _| None),
         markers,
         "deterministic"
+    );
+}
+
+#[test]
+fn a_caller_without_the_trade_tier_cannot_restart_an_order_strategy() {
+    let mut strategies = TabStrategies::default();
+    strategies
+        .pane_mut(TICK)
+        .anchors
+        .arm(instance(DrawingId(3)));
+    arm_script(
+        &mut strategies,
+        TICK,
+        ALWAYS_RINGS,
+        ScriptPlacement::Anywhere,
+    );
+    let drawn = InstanceRef::Drawing {
+        pane_id: TICK,
+        drawing: DrawingId(3),
+        nth: 0,
+    };
+    let panes = panes();
+    let mut agent =
+        |command| strategies.execute_desk(&tab(&panes), command, false, |_, _| Vec::new());
+
+    assert_eq!(
+        agent(StrategyDeskCommand::PauseAsset(asset("tick(4)"))),
+        Ok(DeskOutcome::Changed(2)),
+        "pausing is always allowed"
+    );
+    for command in [
+        StrategyDeskCommand::Resume(drawn),
+        StrategyDeskCommand::Arm(drawn),
+        StrategyDeskCommand::Duplicate(drawn),
+    ] {
+        assert!(agent(command.clone()).is_err(), "{command:?}");
+    }
+    assert_eq!(
+        agent(StrategyDeskCommand::ResumeAsset(asset("tick(4)"))),
+        Ok(DeskOutcome::Changed(1)),
+        "the script resumes, the order strategy stays paused"
     );
 }

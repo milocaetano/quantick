@@ -347,6 +347,8 @@ const NO_SUCH: &str = "no armed strategy on this tab has that id; read strategy.
 const STILL_WATCHING: &str = "the strategy is still watching; arm reaches only an ended one";
 const ENDED: &str = "the strategy has ended; arm it again before pausing or resuming it";
 const NO_SCRIPT: &str = "a strategy on a drawing has no script to save";
+const STARTS_ORDERS: &str =
+    "this strategy places paper orders; only the trader resumes, arms or duplicates it";
 
 /// Where an instance sits on its tab.
 enum Located {
@@ -483,22 +485,30 @@ impl<D: Copy + PartialEq> TabStrategies<D> {
     /// # Errors
     ///
     /// The sentence the caller reads: an id no instance has, a pause of an
-    /// ended instance, an arm of a watching one, a save of a drawn one.
+    /// ended instance, an arm of a watching one, a save of a drawn one, or —
+    /// for a caller that `may_start_orders` not — a resume, arm or duplicate
+    /// of a drawn instance that places paper orders. Such a caller's asset
+    /// resume leaves those instances paused.
     pub fn execute_desk(
         &mut self,
         tab: &DeskTab<'_>,
         command: StrategyDeskCommand<D>,
+        may_start_orders: bool,
         warmup: impl FnMut(u64, usize) -> Vec<(Bar, Option<Decimal>)>,
     ) -> Result<DeskOutcome<D>, String> {
+        if !may_start_orders && self.starts_orders(&command) {
+            return Err(STARTS_ORDERS.to_owned());
+        }
         match command {
             StrategyDeskCommand::Pause(id) => self.set_paused(id, true).map(DeskOutcome::Changed),
             StrategyDeskCommand::Resume(id) => self.set_paused(id, false).map(DeskOutcome::Changed),
             StrategyDeskCommand::Remove(id) => self.remove(id).map(|()| DeskOutcome::Changed(1)),
-            StrategyDeskCommand::PauseAsset(asset) => {
-                Ok(DeskOutcome::Changed(self.pause_asset(tab, &asset, true)))
-            }
+            StrategyDeskCommand::PauseAsset(asset) => Ok(DeskOutcome::Changed(
+                self.pause_asset(tab, &asset, true, true),
+            )),
             StrategyDeskCommand::ResumeAsset(asset) => {
-                Ok(DeskOutcome::Changed(self.pause_asset(tab, &asset, false)))
+                let changed = self.pause_asset(tab, &asset, false, may_start_orders);
+                Ok(DeskOutcome::Changed(changed))
             }
             StrategyDeskCommand::Arm(id) => {
                 self.arm_again(id, warmup).map(|()| DeskOutcome::Changed(1))
@@ -515,6 +525,24 @@ impl<D: Copy + PartialEq> TabStrategies<D> {
             StrategyDeskCommand::Duplicate(id) => {
                 self.duplicate(id, warmup).map(DeskOutcome::Duplicated)
             }
+        }
+    }
+
+    /// Whether `command` lets a drawn instance that places paper orders
+    /// start placing them again.
+    fn starts_orders(&self, command: &StrategyDeskCommand<D>) -> bool {
+        let (StrategyDeskCommand::Resume(id)
+        | StrategyDeskCommand::Arm(id)
+        | StrategyDeskCommand::Duplicate(id)) = command
+        else {
+            return false;
+        };
+        match self.locate(*id) {
+            Some(Located::Drawn { pane_id, index }) => {
+                let instances = &self.pane(pane_id).expect("located").anchors.instances;
+                !instances[index].alarm_only()
+            }
+            Some(Located::Script { .. }) | None => false,
         }
     }
 
@@ -546,7 +574,13 @@ impl<D: Copy + PartialEq> TabStrategies<D> {
 
     /// Pause or resume every watching instance of `asset` on `tab`; how many
     /// changed.
-    fn pause_asset(&mut self, tab: &DeskTab<'_>, asset: &Asset, paused: bool) -> usize {
+    fn pause_asset(
+        &mut self,
+        tab: &DeskTab<'_>,
+        asset: &Asset,
+        paused: bool,
+        may_start_orders: bool,
+    ) -> usize {
         let on_asset = |pane_id: u64| tab.asset(pane_id).as_ref() == Some(asset);
         let mut changed = 0;
         let mut scripts = Vec::new();
@@ -555,7 +589,8 @@ impl<D: Copy + PartialEq> TabStrategies<D> {
                 continue;
             }
             for instance in &mut pane.anchors.instances {
-                if instance.watching() {
+                let starts_orders = !paused && !instance.alarm_only();
+                if instance.watching() && (may_start_orders || !starts_orders) {
                     changed += usize::from(pause_drawn(instance, paused));
                 }
             }

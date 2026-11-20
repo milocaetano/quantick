@@ -217,6 +217,17 @@ impl ScriptLibrary {
         self.entries.iter().position(|entry| entry.name == name)
     }
 
+    /// Keep `source` as the new library file `name`: the strategy desk's
+    /// "save as" of a running script.
+    ///
+    /// # Errors
+    ///
+    /// A name that is not `letters-digits_.pine`, one already taken, or a
+    /// write that failed.
+    pub fn save_as(&mut self, name: &str, source: &str) -> Result<ScriptDocument, String> {
+        self.create_document(name, source)
+    }
+
     /// What a saved entry naming `name` loads.
     pub fn load(&self, name: &str) -> LoadedScript {
         let loaded = self.index_of(name).and_then(|index| self.load_at(index));
