@@ -184,7 +184,7 @@ pub const ALLOWED: &[(&str, &[&str])] = &[
     ("mcp", &["control", "control-local"]),
     // The operability contract is a table and a comparison over it; the
     // interface walks its own registries and hands them in.
-    ("operability", &[]),
+    ("operability", &["control"]),
     ("engine", &[]),
     ("orderbook", &[]),
     // The order-flow engine reads bars from `engine` and depth events from

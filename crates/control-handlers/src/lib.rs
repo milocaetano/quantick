@@ -42,6 +42,7 @@ pub mod drawing_scope;
 pub mod drawing_text;
 pub mod feed_source;
 pub mod feed_status;
+pub mod generation;
 pub mod health;
 pub mod history;
 pub mod home_tab;
