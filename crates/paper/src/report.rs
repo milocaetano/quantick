@@ -30,8 +30,10 @@ pub mod scroll_probe;
 pub mod session_edit;
 pub mod sessions;
 pub mod snapshot;
+pub mod sources;
 
 pub use readout::EquityWalk;
+pub use sources::SourceSelection;
 
 use sessions::{SessionInfo, SessionKey};
 
@@ -374,7 +376,7 @@ pub fn fmt_period_ms(period_ms: i64) -> String {
 /// order, their aggregation, and the anchor the period was measured from.
 pub struct ReportView {
     pub period: ReportPeriod,
-    pub source: SourceFilter,
+    pub source: SourceSelection,
     /// The calendar span in force. `Some` puts the report on absolute
     /// dates and takes the anchor-relative pills out of the cut; `None`
     /// leaves them in charge, which is exactly what the report did before
@@ -423,7 +425,7 @@ impl ReportView {
     pub fn cut(
         history: &LoadedHistory,
         period: ReportPeriod,
-        source: SourceFilter,
+        source: impl Into<SourceSelection>,
         range: Option<DateRange>,
         tz: TzOffset,
     ) -> Self {
@@ -433,11 +435,12 @@ impl ReportView {
     pub fn cut_scoped(
         history: &LoadedHistory,
         period: ReportPeriod,
-        source: SourceFilter,
+        source: impl Into<SourceSelection>,
         range: Option<DateRange>,
         tz: TzOffset,
         scope: Option<&scope::ReportRequest>,
     ) -> Self {
+        let source = source.into();
         let in_scope: Vec<&HistoryRow> = history
             .rows
             .iter()

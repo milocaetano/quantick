@@ -1,5 +1,5 @@
 //! Renderer-independent readback of a filtered performance report.
-use super::{HistoryRow, ReportPeriod, ReportView, SourceFilter};
+use super::{HistoryRow, ReportPeriod, ReportView, SourceSelection};
 use crate::format::PositionSummary;
 use quantick_civil::DateRange;
 use quantick_sim::ClosedTrade;
@@ -9,12 +9,26 @@ use std::path::{Path, PathBuf};
 
 pub struct ReportSnapshot<'a> {
     pub symbol: Option<&'a str>,
-    pub source: SourceFilter,
+    pub source: SourceSelection,
     pub window: ReportWindow,
     pub hidden_outside: usize,
     pub hidden_by_source_or_scope: usize,
     pub rows: &'a [HistoryRow],
     pub report: &'a PerformanceReport,
+}
+
+/// Owned inspection of the current report without exposing its trade rows.
+pub struct ReportReadout {
+    pub open: bool,
+    pub loaded: bool,
+    pub source: SourceSelection,
+    pub symbol: Option<String>,
+    pub window: String,
+    pub scope: Option<String>,
+    pub trade_count: usize,
+    pub unreadable_files: usize,
+    pub skipped_rows: usize,
+    pub net_points: Decimal,
 }
 
 impl<'a> ReportSnapshot<'a> {
@@ -109,5 +123,56 @@ impl<'a> ReportEnv<'a> {
             at: self.session_trade_at,
             sources: self.session_trade_sources,
         }
+    }
+}
+
+impl ReportView {
+    pub fn scope_label(&self) -> String {
+        if self.source == SourceSelection::default() {
+            return self.source.label().to_owned();
+        }
+        let mut text = match (self.range, self.anchor_ms) {
+            // A picked range names itself in absolute dates: the whole
+            // point of the calendar is a window the trader can state.
+            (Some(range), _) => {
+                let mut text = format!(
+                    "{} ({} day(s), the dates you picked - the period pills are standing \
+                 down)",
+                    range.label(),
+                    range.days(),
+                );
+                if self.hidden_outside > 0 {
+                    text.push_str(&format!(
+                        " - {} saved trade(s) outside these dates",
+                        self.hidden_outside,
+                    ));
+                }
+                text
+            }
+            (None, Some(anchor)) => {
+                let mut text = format!(
+                    "{} up to {} (newest saved trade, not the wall clock)",
+                    self.period.phrase(),
+                    quantick_civil::CivilDate::from_ms(anchor, self.tz).iso(),
+                );
+                if self.hidden_outside > 0 {
+                    // "Where did my old trades go" gets a literal
+                    // answer: they are saved, before this window.
+                    text.push_str(&format!(
+                        " - {} older saved trade(s) before this window",
+                        self.hidden_outside,
+                    ));
+                }
+                text
+            }
+            (None, None) => "no saved trades in this scope".to_owned(),
+        };
+        if self.hidden_by_source_or_scope > 0 {
+            text.push_str(&format!(
+                " - {} trade(s) outside the selected source or report scope",
+                self.hidden_by_source_or_scope,
+            ));
+        }
+        text
     }
 }

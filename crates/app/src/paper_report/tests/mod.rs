@@ -205,45 +205,58 @@ fn paper_report_filter_input_recuts_before_dependent_paint() {
     for _ in 0..3 {
         output = frame(&mut report, vec![]);
     }
-    let pick = output
-        .shapes
-        .iter()
-        .find_map(|shape| match &shape.shape {
-            egui::Shape::Text(text) if text.galley.text() == "Replay" => {
-                Some(text.pos + text.galley.rect.center().to_vec2())
-            }
-            _ => None,
-        })
-        .expect("the real Source pill is painted");
-    assert_eq!(
-        report.snapshot().unwrap().report.net_points,
-        Decimal::from(5)
-    );
-    for pressed in [true, false] {
-        output = frame(
-            &mut report,
-            vec![
-                egui::Event::PointerMoved(pick),
-                egui::Event::PointerButton {
-                    pos: pick,
-                    button: egui::PointerButton::Primary,
-                    pressed,
-                    modifiers: egui::Modifiers::NONE,
-                },
-            ],
+    for (label, expected) in [
+        ("Replay", SourceFilter::Simulator.into()),
+        ("Sim live", SourceFilter::Replay.into()),
+        ("Replay", quantick_paper::report::SourceSelection::default()),
+        ("Broker", SourceFilter::Broker.into()),
+        (
+            "Sim live",
+            quantick_paper::report::SourceSelection::from(SourceFilter::Broker)
+                .union(SourceFilter::Real),
+        ),
+    ] {
+        let pick = output
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) if text.galley.text() == label => {
+                    Some(text.pos + text.galley.rect.center().to_vec2())
+                }
+                _ => None,
+            })
+            .expect("source pill painted");
+        for pressed in [true, false] {
+            output = frame(
+                &mut report,
+                vec![
+                    egui::Event::PointerMoved(pick),
+                    egui::Event::PointerButton {
+                        pos: pick,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+            );
+        }
+        let readback = report.sources(None, TzOffset::new(0), &env);
+        assert_eq!(
+            readback.source, expected,
+            "control readback observes the clicked selection"
+        );
+        let view = report.report_view().as_ref().unwrap();
+        let text = if view.rows.is_empty() {
+            view.scope_label()
+        } else {
+            view.net_text.0.clone()
+        };
+        assert!(
+            output.shapes.iter().any(|shape| matches!(&shape.shape,
+            egui::Shape::Text(painted) if painted.galley.text() == text)),
+            "the release frame paints the current cut, including explicit empty selections"
         );
     }
-    assert_eq!(report.snapshot().unwrap().source, SourceFilter::Replay);
-    assert_eq!(
-        report.snapshot().unwrap().report.net_points,
-        Decimal::from(19)
-    );
-    let net = &report.report_view().as_ref().unwrap().net_text.0;
-    assert!(
-        output.shapes.iter().any(|shape| matches!(&shape.shape,
-        egui::Shape::Text(text) if text.galley.text() == net)),
-        "the same release frame paints the newly cut total"
-    );
 }
 
 #[test]

@@ -14,13 +14,15 @@ use quantick_paper::report::scope::{PreparedReport, ReportReceipt, ReportRequest
 use quantick_paper::report::session_edit::JournalEdit;
 use quantick_paper::report::sessions::{SessionKey, TradeRef};
 use quantick_paper::report::snapshot::ReportSnapshot;
-use quantick_paper::report::{LoadedHistory, ReportPeriod, ReportView, SourceFilter, parse_period};
+use quantick_paper::report::{
+    LoadedHistory, ReportPeriod, ReportView, SourceFilter, SourceSelection, parse_period,
+};
 
-type ReportDaysKey = (u64, SourceFilter, TzOffset);
+type ReportDaysKey = (u64, SourceSelection, TzOffset);
 pub mod io;
 
 struct ReportFilter {
-    source: SourceFilter,
+    source: SourceSelection,
     scope: Option<ReportReceipt>,
 }
 
@@ -80,7 +82,7 @@ impl Default for State {
     fn default() -> Self {
         Self {
             filter: ReportFilter {
-                source: SourceFilter::Real,
+                source: SourceFilter::Real.into(),
                 scope: None,
             },
             revision: 0,
@@ -192,7 +194,7 @@ pub enum Intent {
     InstallReport(ReportProjection),
     InstallLedger(LedgerProjection),
     Symbol(Option<String>),
-    Source(SourceFilter),
+    Source(SourceSelection),
     Period(ReportPeriod),
     CustomText(String),
     SubmitCustom { enter: bool },
@@ -267,7 +269,7 @@ impl State {
         self.report_days_key = None;
         self.report_symbol = (!symbol.is_empty()).then_some(symbol);
         self.report_period = ReportPeriod::All;
-        self.filter.source = SourceFilter::Real;
+        self.filter.source = SourceFilter::Real.into();
         self.calendar.selection = DaySelection::None;
         self.report_view = None;
     }
@@ -277,7 +279,7 @@ impl State {
         self.report_open = true;
         self.report_symbol = None;
         self.report_period = ReportPeriod::All;
-        self.filter.source = request.source();
+        self.filter.source = request.source().into();
         self.report_custom_text.clear();
         self.calendar = CalendarState::default();
         if let Some(day) = request.day {
@@ -299,7 +301,7 @@ impl State {
     pub fn report_period(&self) -> ReportPeriod {
         self.report_period
     }
-    pub fn report_source(&self) -> SourceFilter {
+    pub fn report_source(&self) -> SourceSelection {
         self.filter.source
     }
     pub fn report_custom_text(&self) -> &str {
@@ -585,6 +587,8 @@ impl crate::Model for Model {
             Intent::Symbol(symbol) => state.report_symbol = symbol,
             Intent::Source(source) => {
                 state.filter.source = source;
+                state.filter.scope = None;
+                state.report_days_key = None;
                 state.report_view = None;
             }
             Intent::Period(period) => {

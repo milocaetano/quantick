@@ -47,6 +47,43 @@ fn open<H: PaperHost + ?Sized, A: NotifyAccess>(
         error
     })?;
     let output = match input {
+        ReportInput::Sources { sources } => {
+            if sources.as_ref().is_some_and(|sources| sources.len() > 5) {
+                return Err(ControlError::invalid_request(
+                    "at most five source selectors are allowed",
+                ));
+            }
+            let sources = sources.map(|sources| {
+                sources.into_iter().fold(
+                    quantick_paper::report::SourceSelection::default(),
+                    |selection, source| {
+                        selection.union(crate::journal_sessions::source_filter(source))
+                    },
+                )
+            });
+            let view = desk.report_sources(sources, tz);
+            use quantick_control_schema::journal_sessions::JournalSourceFilter as WireSource;
+            let sources = [WireSource::Broker, WireSource::Real, WireSource::Replay]
+                .into_iter()
+                .filter(|source| {
+                    view.source
+                        .contains(crate::journal_sessions::source_filter(*source))
+                })
+                .collect();
+            ReportOutput::Sources {
+                action: "sources".to_owned(),
+                sources,
+                open: view.open,
+                loaded: view.loaded,
+                symbol: view.symbol,
+                window: view.window,
+                scope: view.scope,
+                trade_count: WireU64::new(view.trade_count as u64),
+                unreadable_files: WireU64::new(view.unreadable_files as u64),
+                skipped_rows: WireU64::new(view.skipped_rows as u64),
+                net_points: canonical_decimal(view.net_points),
+            }
+        }
         ReportInput::Ordinary {} => {
             desk.reset_report();
             let symbol = desk.account().symbol();

@@ -4,6 +4,55 @@ use crate::trade::{PaperOwner, TradeDesk};
 use quantick_civil::TzOffset;
 use quantick_paper::report::session_edit::{JournalEdit, JournalEditOutcome, JournalScope};
 
+#[test]
+fn sources_call_normalizes_unions_and_rejects_invalid_input_without_success_events() {
+    let scratch = crate::scratch::ScratchDir::new("report-sources");
+    let mut host = Host {
+        desk: Some(PaperDesk::new(
+            quantick_paper::PaperAccount::with_trades_dir(scratch.path().to_owned()),
+        )),
+        dir: scratch.path().to_owned(),
+    };
+    let mut access = FakeAccess::with_budget(0);
+    for (sources, expected) in [
+        (json!(["broker", "real"]), json!(["broker", "real"])),
+        (
+            json!(["simulator", "real", "broker", "real"]),
+            json!(["broker", "real", "replay"]),
+        ),
+        (json!(["both"]), json!(["broker", "real", "replay"])),
+        (json!([]), json!([])),
+    ] {
+        let input = json!({"action":"sources", "sources":sources});
+        let output = open(&mut host, &mut access, &FakeWindow::assistant(), &input).unwrap();
+        assert_eq!(output["sources"], expected);
+        assert_eq!(output["action"], "sources");
+        assert_eq!(access.events.last().unwrap().payload["report"], output);
+        assert_eq!(
+            open(&mut host, &mut access, &FakeWindow::assistant(), &input).unwrap(),
+            output
+        );
+    }
+    let before = access.events.len();
+    for input in [
+        json!({"action":"sources", "sources":["unknown"]}),
+        json!({"action":"sources", "sources":vec!["real"; 6]}),
+        json!({"action":"sources", "session":"X/a.csv"}),
+    ] {
+        assert!(open(&mut host, &mut access, &FakeWindow::assistant(), &input).is_err());
+    }
+    assert_eq!(access.events.len(), before);
+    host.desk = None;
+    let error = open(
+        &mut host,
+        &mut access,
+        &FakeWindow::assistant(),
+        &json!({"action":"sources"}),
+    )
+    .unwrap_err();
+    assert_eq!(error.context.details.unwrap()["code"], "no_ledger");
+}
+
 struct Host {
     desk: Option<PaperDesk>,
     dir: std::path::PathBuf,

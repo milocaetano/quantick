@@ -100,6 +100,17 @@ impl Paint<'_, '_> {
 }
 
 impl ReportAdapter {
+    pub(crate) fn sources(
+        &mut self,
+        sources: Option<quantick_paper::report::SourceSelection>,
+        tz: TzOffset,
+        env: &ReportEnv<'_>,
+    ) -> quantick_paper::report::snapshot::ReportReadout {
+        self.with(env, |paint| {
+            quantick_ui_model::paper_report::io::sources(paint.updates, sources, tz, env)
+        })
+        .0
+    }
     fn with<R>(
         &mut self,
         env: &ReportEnv<'_>,

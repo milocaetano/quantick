@@ -20,7 +20,7 @@ use super::{
     REPORT_FOOTER_RESERVE_PX, REPORT_GRID_MIN_H_PX, REPORT_MIN_HEIGHT_CALENDAR_PX,
     REPORT_MIN_HEIGHT_PX, REPORT_MIN_WIDTH_PX, ReportEnv, SourceFilter,
 };
-use crate::paper_calendar::{CivilDate, DaySelection, today};
+use crate::paper_calendar::{DaySelection, today};
 use crate::paper_chrome::pill_toggle;
 use crate::theme;
 use crate::timezone::TzOffset;
@@ -34,9 +34,7 @@ impl Paint<'_, '_> {
         if !self.report_open() {
             return;
         }
-        self.ensure_report_view(tz, env.pnl);
         let mut open = true;
-        let mut reload = false;
         let mut toggle_list = false;
         let style = ctx.style();
         let title = egui::TextStyle::Heading.resolve(&style);
@@ -76,7 +74,16 @@ impl Paint<'_, '_> {
             .show(ctx, |ui| {
                 #[cfg(any(feature = "scenario-harness", test))]
                 self.native.scroll_probe.report(ui);
-                reload = self.draw_report_filters(ui);
+                if self.draw_report_filters(ui) {
+                    self.update(Intent::ReloadReport);
+                }
+                self.ensure_report_view(tz, env.pnl);
+                if let Some(view) = self.report_view() {
+                    ui.label(
+                        egui::RichText::new(view.scope_label())
+                            .color(theme::get(ui.ctx()).text_support()),
+                    );
+                }
                 if let Some(scope) = self.report_scope() {
                     let reset = ui
                         .horizontal(|ui| {
@@ -145,9 +152,6 @@ impl Paint<'_, '_> {
             });
         if toggle_list {
             self.update(Intent::ListOpen(!self.report_list_open()));
-        }
-        if reload {
-            self.update(Intent::ReloadReport);
         }
         if !open {
             self.update(Intent::Close);
@@ -280,9 +284,9 @@ impl Paint<'_, '_> {
                     .small(),
             );
             for source in SourceFilter::PILLS {
-                let on = self.report_source() == source;
-                if pill_toggle(ui, source.label(), on, source.hover()).clicked() && !on {
-                    self.update(Intent::Source(source));
+                let on = self.report_source().contains(source);
+                if pill_toggle(ui, source.label(), on, source.hover()).clicked() {
+                    self.update(Intent::Source(self.report_source().toggled(source)));
                 }
             }
             ui.separator();
@@ -344,51 +348,6 @@ impl Paint<'_, '_> {
                 }
             });
         });
-        if let Some(view) = self.report_view() {
-            let mut text = match (view.range, view.anchor_ms) {
-                // A picked range names itself in absolute dates: the whole
-                // point of the calendar is a window the trader can state.
-                (Some(range), _) => {
-                    let mut text = format!(
-                        "{} ({} day(s), the dates you picked - the period pills are standing \
-                         down)",
-                        range.label(),
-                        range.days(),
-                    );
-                    if view.hidden_outside > 0 {
-                        text.push_str(&format!(
-                            " - {} saved trade(s) outside these dates",
-                            view.hidden_outside,
-                        ));
-                    }
-                    text
-                }
-                (None, Some(anchor)) => {
-                    let mut text = format!(
-                        "{} up to {} (newest saved trade, not the wall clock)",
-                        view.period.phrase(),
-                        CivilDate::from_ms(anchor, view.tz).iso(),
-                    );
-                    if view.hidden_outside > 0 {
-                        // "Where did my old trades go" gets a literal
-                        // answer: they are saved, before this window.
-                        text.push_str(&format!(
-                            " - {} older saved trade(s) before this window",
-                            view.hidden_outside,
-                        ));
-                    }
-                    text
-                }
-                (None, None) => "no saved trades in this scope".to_owned(),
-            };
-            if view.hidden_by_source_or_scope > 0 {
-                text.push_str(&format!(
-                    " - {} trade(s) outside the selected source or report scope",
-                    view.hidden_by_source_or_scope,
-                ));
-            }
-            ui.label(egui::RichText::new(text).color(palette.text_support()));
-        }
         reload
     }
 

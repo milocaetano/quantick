@@ -66,6 +66,11 @@ pub trait TradeDesk {
     fn show_report(&mut self, report: quantick_paper::report::scope::PreparedReport);
     /// Restore the ordinary report for the chart symbol.
     fn reset_report(&mut self);
+    fn report_sources(
+        &mut self,
+        sources: Option<quantick_paper::report::SourceSelection>,
+        tz: TzOffset,
+    ) -> quantick_paper::report::snapshot::ReportReadout;
     /// The simulated account.
     fn account(&self) -> &PaperAccount;
     /// The simulated account, to place into.
