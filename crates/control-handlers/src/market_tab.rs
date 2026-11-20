@@ -51,6 +51,11 @@ pub trait MarketTab {
     fn history(&mut self, config: &AppConfig, act: HistoryAct) -> HistoryOutcome;
     /// The tab's session as it stands.
     fn session(&self) -> SessionSnapshot;
+    /// The tab's script strategies and charts, lent for one
+    /// `strategy.script.*` call; `None` where the tab keeps none.
+    fn script_tab(&mut self) -> Option<crate::script_strategy::ScriptTab<'_>> {
+        None
+    }
 }
 
 /// The tab a mutating call reaches, beside what the window lends it.

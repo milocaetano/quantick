@@ -149,6 +149,7 @@ mod rail_paint_tests;
 mod rectangle_extend_tests;
 mod retry_readback_tests;
 mod screenshot_evidence_tests;
+mod script_strategy_tests;
 mod session_length_tests;
 mod settled_frame;
 mod tab_workspace_tests;

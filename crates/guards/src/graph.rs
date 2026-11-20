@@ -201,6 +201,7 @@ pub const ALLOWED: &[(&str, &[&str])] = &[
     // `chart` for the pane series a venue prefix installs into, and
     // `chart-interaction` for the history state and the view effects that
     // install decides, and the live-trade plan a print is carried through.
+    // `script-trigger` for the Pine scripts a pane arms alarm-only.
     (
         "session",
         &[
@@ -209,6 +210,7 @@ pub const ALLOWED: &[(&str, &[&str])] = &[
             "civil",
             "engine",
             "paper",
+            "script-trigger",
             "sim",
             "sources",
             "strategy",
@@ -283,6 +285,12 @@ pub const ALLOWED: &[(&str, &[&str])] = &[
     ("workspace", &[]),
     // `workspace` for the one store-write gate the preset bank asks (DS7).
     ("strategy", &["alerts", "engine", "sim", "workspace"]),
+    // A Pine script as a strategy trigger: the kernel's port, run over the
+    // compiler and the indicator runtime. Reached by `session` alone.
+    (
+        "script-trigger",
+        &["engine", "indicators", "pine", "strategy"],
+    ),
     ("indicators", &["engine"]),
     ("indicator-session", &["engine", "indicators", "pine"]),
     ("pine", &["indicators"]),

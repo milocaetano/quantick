@@ -479,6 +479,41 @@ impl ReportView {
             pnl_key: None,
         }
     }
+
+    /// The support line under the report's filters, stating the window out
+    /// loud: a picked range in absolute dates, else the period counted back
+    /// from the newest saved trade (never the wall clock), then what it
+    /// keeps out — "where did my old trades go" gets a literal answer.
+    #[must_use]
+    pub fn scope_line(&self) -> String {
+        let mut text = match (self.range, self.anchor_ms) {
+            (Some(range), _) => format!(
+                "{} ({} day(s), the dates you picked - the period pills are standing down)",
+                range.label(),
+                range.days(),
+            ),
+            (None, Some(anchor)) => format!(
+                "{} up to {} (newest saved trade, not the wall clock)",
+                self.period.phrase(),
+                CivilDate::from_ms(anchor, self.tz).iso(),
+            ),
+            (None, None) => "no saved trades in this scope".to_owned(),
+        };
+        if self.hidden_outside > 0 {
+            let place = match self.range {
+                Some(_) => "saved trade(s) outside these dates",
+                None => "older saved trade(s) before this window",
+            };
+            text.push_str(&format!(" - {} {place}", self.hidden_outside));
+        }
+        if self.hidden_by_source_or_scope > 0 {
+            text.push_str(&format!(
+                " - {} trade(s) outside the selected source or report scope",
+                self.hidden_by_source_or_scope,
+            ));
+        }
+        text
+    }
 }
 
 #[cfg(test)]

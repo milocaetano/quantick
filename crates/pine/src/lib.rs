@@ -15,6 +15,7 @@
 //! indicator runtime, no UI, no clock, no I/O — the app owns files and
 //! folders; this crate only ever sees source text.
 
+pub mod alert_titles;
 pub mod ast;
 pub mod builtins;
 pub mod compile;
@@ -24,9 +25,10 @@ pub mod lexer;
 pub mod parser;
 pub mod script;
 
+pub use alert_titles::{AlertTitle, alert_titles};
 pub use compile::{CompiledScript, compile, render_errors, validate};
 pub use error::{ErrorCode, PineError, Span};
-pub use script::ScriptIndicator;
+pub use script::{RuntimeFault, ScriptIndicator};
 
 // Feature child ownership is documented in docs/pine-parity.md.
 pub mod calendar;

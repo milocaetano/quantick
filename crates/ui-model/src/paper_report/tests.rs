@@ -557,6 +557,42 @@ fn a_picked_day_with_no_trades_reports_an_honest_empty() {
     assert_eq!(view.hidden_outside, 1, "the trade exists, just not here");
 }
 
+/// An empty report says why — the picked dates first, then the trades the
+/// source or a scope holds back, else the period — and offers "Clear
+/// filters" only while something narrows it past this symbol, all time.
+#[test]
+fn an_empty_report_names_why_and_offers_clear_only_when_narrowed() {
+    let tz = TzOffset::new(0);
+    let day = CivilDate::from_ymd(2026, 8, 12);
+    let mut state = State::default();
+    Model::update(&mut state, Intent::Symbol(Some("X".to_owned())));
+    Model::update(&mut state, Intent::Period(ReportPeriod::All));
+    assert!(
+        !state.filters_narrowed("X"),
+        "this symbol, all time, no dates"
+    );
+    assert!(state.filters_narrowed("Y"), "another symbol narrows it");
+    assert_eq!(
+        state.empty_hint(),
+        "X has no trades in everything saved. Try \"All\", or another symbol."
+    );
+    let replay = Some(history::SessionSource::Replay);
+    let rows = vec![row("X", replay, trade_at(day.start_ms(tz) + 1, 5))];
+    Model::update(&mut state, loaded_report(rows));
+    state.ensure_report_view(tz, PnlReader::plain());
+    assert_eq!(
+        state.empty_hint(),
+        "X has 1 trade(s) outside the selected source or report scope."
+    );
+    Model::update(&mut state, Intent::Dates(DaySelection::Anchor(day)));
+    assert!(state.filters_narrowed("X"), "picked dates narrow it");
+    assert_eq!(
+        state.empty_hint(),
+        "X closed no trades in 2026-08-12 - pick another day, or clear the date \
+         filter to go back to the period pills."
+    );
+}
+
 /// The calendar highlights days from the same trades the report would
 /// show — after the Source filter, on the display timezone's clock.
 #[test]

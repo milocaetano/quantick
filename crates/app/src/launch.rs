@@ -47,6 +47,8 @@ pub(crate) struct OperatorPaths {
     pub deals_dir: Option<String>,
     /// `QUANTICK_INDICATORS_DIR`: the indicator script library.
     pub indicators_dir: Option<String>,
+    /// `QUANTICK_STRATEGIES_DIR`: the strategy script library.
+    pub strategies_dir: Option<String>,
     /// `QUANTICK_TRADES_DIR`: the paper-trading journal folder.
     pub trades_dir: Option<OsString>,
     /// `QUANTICK_BUBBLES`: an explicit bubble presets file.
@@ -86,6 +88,7 @@ impl LaunchConfig {
         let replay_dir = text("QUANTICK_REPLAY_DIR");
         let deals_dir = text("QUANTICK_DEALS_DIR");
         let indicators_dir = text("QUANTICK_INDICATORS_DIR");
+        let strategies_dir = text("QUANTICK_STRATEGIES_DIR");
         Self {
             log_format,
             config_path: lookup("QUANTICK_CONFIG").map(PathBuf::from),
@@ -96,6 +99,7 @@ impl LaunchConfig {
                 replay_dir,
                 deals_dir,
                 indicators_dir,
+                strategies_dir,
                 trades_dir: lookup("QUANTICK_TRADES_DIR"),
                 bubbles: lookup("QUANTICK_BUBBLES"),
                 theme: lookup("QUANTICK_THEME"),
@@ -231,6 +235,7 @@ crate::hooks::declare_hooks![
     "QUANTICK_INDICATORS_DIR",
     "QUANTICK_LOG_FORMAT",
     "QUANTICK_REPLAY_DIR",
+    "QUANTICK_STRATEGIES_DIR",
     "QUANTICK_TRADES_DIR",
     "QUANTICK_THEME"
 ];

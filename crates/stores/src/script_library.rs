@@ -97,6 +97,15 @@ impl ScriptLibrary {
         Self::scan_dir(dir)
     }
 
+    /// The embedded scripts alone, over `dir`: for a caller that found the
+    /// folder unreadable and reports that itself.
+    pub fn bundled(dir: &Path) -> Self {
+        Self {
+            entries: Self::embedded(),
+            directory: dir.to_owned(),
+        }
+    }
+
     /// The embedded scripts, which every library starts from.
     fn embedded() -> Vec<ScriptEntry> {
         EMBEDDED_SCRIPTS
