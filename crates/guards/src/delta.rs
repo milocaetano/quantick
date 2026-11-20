@@ -63,6 +63,18 @@ pub fn check(root: &Path, base: &Path, guard: &Guard) -> Vec<Finding> {
 }
 
 fn compare(root: &Path, base: &Path, guard: &Guard) -> Result<(), String> {
+    if base.as_os_str().is_empty() {
+        return Err("base root must not be empty".to_owned());
+    }
+    let head_path = root
+        .canonicalize()
+        .map_err(|error| format!("head root: {error}"))?;
+    let base_path = base
+        .canonicalize()
+        .map_err(|error| format!("base root: {error}"))?;
+    if head_path == base_path {
+        return Err("base root must be a separate checkout from the head".to_owned());
+    }
     let policy = guard
         .ratchet
         .as_ref()

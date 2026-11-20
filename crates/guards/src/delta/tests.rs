@@ -125,3 +125,20 @@ fn zero_net_and_coverage_only_fragments_can_be_folded() {
         assert!(check(head.path(), base.path(), guard()).is_empty());
     }
 }
+
+#[test]
+fn empty_and_canonical_head_base_paths_fail_closed() {
+    let head = tree(500);
+    assert!(
+        check(head.path(), Path::new(""), guard())
+            .iter()
+            .any(|finding| finding.line == "base root must not be empty")
+    );
+    for base in [head.path().to_owned(), head.join(".")] {
+        assert!(
+            check(head.path(), &base, guard()).iter().any(
+                |finding| finding.line == "base root must be a separate checkout from the head"
+            )
+        );
+    }
+}
