@@ -176,6 +176,7 @@ fn settle_row(id: RowId, commands: &mut Vec<MenuCommand>) {
         RowId::DockSession => MenuCommand::OpenDockTab(crate::dock::DockTab::Session),
         RowId::DockPaperTrading => MenuCommand::OpenDockTab(crate::dock::DockTab::Trading),
         RowId::DockTrades => MenuCommand::OpenDockTab(crate::dock::DockTab::Trades),
+        RowId::DockStrategies => MenuCommand::OpenDockTab(crate::dock::DockTab::Strategies),
         RowId::ToolbarLeft => MenuCommand::SetToolboxDock(crate::toolrail::ToolboxDock::Left),
         RowId::ToolbarTop => MenuCommand::SetToolboxDock(crate::toolrail::ToolboxDock::Top),
         RowId::ToolbarBottom => MenuCommand::SetToolboxDock(crate::toolrail::ToolboxDock::Bottom),

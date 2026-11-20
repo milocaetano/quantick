@@ -108,8 +108,9 @@ pub(super) fn draw_dock(
     ctx: &egui::Context,
     surfaces: &mut Surfaces,
     runtime: &mut crate::app::workspace_runtime::WorkspaceRuntime,
-    alerts_open: bool,
+    strategies: Option<&mut crate::strategy_desk::Rail>,
 ) -> SurfaceResponse {
+    let alerts_open = surfaces.alerts.is_open();
     let (tabs, route) = (&mut runtime.tabs, runtime.broker.sheet());
     crate::app::paper_wiring::follow_journals(tabs);
     let live = if surfaces.dock.model_state.tab() == Some(quantick_workspace::dock::DockTab::Trades)
@@ -126,6 +127,7 @@ pub(super) fn draw_dock(
         paper,
         timezone: runtime.tz,
         route,
+        strategies,
     });
     surfaces.draw_slot_unscoped_with_env(
         quantick_ui_model::Slot::LateEdgePanels,

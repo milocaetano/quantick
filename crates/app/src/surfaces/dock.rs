@@ -33,6 +33,7 @@ pub fn tab_icon(tab: DockTab) -> &'static str {
         DockTab::Session => icons::FILM_STRIP,
         DockTab::Trading => icons::TREND_UP,
         DockTab::Trades => icons::RECEIPT,
+        DockTab::Strategies => icons::STRATEGY,
     }
 }
 
@@ -187,6 +188,11 @@ fn draw(
                         Some(LedgerAction::Edit(edit)) => response.journal_edit = Some(edit),
                         None => {}
                     },
+                    DockTab::Strategies => {
+                        if let Some(rail) = env.strategies.as_deref_mut() {
+                            rail.show(ui);
+                        }
+                    }
                 }
             });
         dock.update(Intent::RememberWidth {

@@ -50,6 +50,7 @@ pub enum SavedDockTab {
     Session,
     Trading,
     Trades,
+    Strategies,
 }
 
 impl SavedDockTab {
@@ -59,7 +60,7 @@ impl SavedDockTab {
         match self {
             Self::L2 => Some(PanelSection::L2),
             Self::Bubbles => Some(PanelSection::Bubbles),
-            Self::Session | Self::Trading | Self::Trades => None,
+            Self::Session | Self::Trading | Self::Trades | Self::Strategies => None,
         }
     }
 }

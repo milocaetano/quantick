@@ -14,6 +14,7 @@
 //! child modules, which never see the window.
 
 use super::LayersPort;
+use super::control_host::ControlWindow;
 use super::drawing_controller::{DrawingAccess, DrawingReadAccess};
 #[cfg(any(feature = "scenario-harness", feature = "drawing-harness", test))]
 use super::owners_desk::OwnersDesk as _;
@@ -21,6 +22,7 @@ use super::owners_desk::OwnersDesk as _;
 use super::paper_wiring::panel_effects::paper_panel_steps;
 use super::paper_wiring::panel_effects::{begin_paper_panel_effects, finish_paper_panel_effects};
 use super::{DrawingResponsePort as _, FrameCalls as _, GatewayPort as _};
+use crate::strategy_desk;
 use crate::surfaces::drawing_chrome::DrawingChromeExt as _;
 use crate::surfaces::replay_browser::ReplayBrowserExt as _;
 use crate::surfaces::{AccessPanelEnv, BorrowedSurfaceEnv, ViewContext};
@@ -520,8 +522,10 @@ impl QuantickApp {
     }
 
     fn draw_dock_stage(&mut self, ctx: &egui::Context) -> Option<crate::surfaces::SurfaceResponse> {
-        let alerts_open = self.surfaces.alerts.is_open();
-        let response = panels::draw_dock(ctx, &mut self.surfaces, &mut self.runtime, alerts_open);
+        let open = self.surfaces.dock.tab() == Some(crate::dock::DockTab::Strategies);
+        let mut rail = open.then(|| strategy_desk::Rail::read(self as &mut ControlWindow));
+        let response = panels::draw_dock(ctx, &mut self.surfaces, &mut self.runtime, rail.as_mut());
+        strategy_desk::settle(self as &mut ControlWindow, ctx, rail);
         let response = match begin_dock_effects(self, ctx, response) {
             Ok(response) => response,
             Err(response) => return Some(*response),

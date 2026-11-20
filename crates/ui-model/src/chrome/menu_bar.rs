@@ -285,6 +285,7 @@ fn row(s: &Snapshot, id: RowId) -> Option<Row> {
         RowId::DockSession => s.dock_visible && s.dock_tab == Some(DockTab::Session),
         RowId::DockPaperTrading => s.dock_visible && s.dock_tab == Some(DockTab::Trading),
         RowId::DockTrades => s.dock_visible && s.dock_tab == Some(DockTab::Trades),
+        RowId::DockStrategies => s.dock_visible && s.dock_tab == Some(DockTab::Strategies),
         RowId::ToolbarLeft => s.toolbox_dock == Some(ToolboxDock::Left),
         RowId::ToolbarTop => s.toolbox_dock == Some(ToolboxDock::Top),
         RowId::ToolbarBottom => s.toolbox_dock == Some(ToolboxDock::Bottom),

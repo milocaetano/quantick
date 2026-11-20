@@ -163,6 +163,10 @@ const SCENARIO_OWNERS: &[(&str, &[HookSpec])] = &[
         crate::footprint_render::HOOKS,
     ),
     ("crates/app/src/frvp.rs", crate::frvp::HOOKS),
+    (
+        "crates/app/src/strategy_desk/window.rs",
+        crate::strategy_desk::window::HOOKS,
+    ),
     ("crates/app/src/harness.rs", crate::harness::HOOKS),
     ("crates/app/src/store_home.rs", crate::store_home::HOOKS),
     (

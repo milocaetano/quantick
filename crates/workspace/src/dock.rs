@@ -17,11 +17,13 @@ pub enum DockTab {
     Trading,
     /// The trade ledger: closed broker and simulator trades.
     Trades,
+    /// Every armed strategy instance, grouped by asset.
+    Strategies,
 }
 
 impl DockTab {
     /// Every tab, in strip order.
-    pub const ALL: [Self; 3] = [Self::Session, Self::Trading, Self::Trades];
+    pub const ALL: [Self; 4] = [Self::Session, Self::Trading, Self::Trades, Self::Strategies];
 
     /// The tab a saved name opens: an old file's L2 or Bubbles is no tab any more.
     #[must_use]
@@ -31,6 +33,7 @@ impl DockTab {
             SavedDockTab::Session => Some(Self::Session),
             SavedDockTab::Trading => Some(Self::Trading),
             SavedDockTab::Trades => Some(Self::Trades),
+            SavedDockTab::Strategies => Some(Self::Strategies),
         }
     }
 
@@ -43,6 +46,7 @@ impl DockTab {
             Self::Session => "session",
             Self::Trading => "trading",
             Self::Trades => "trades",
+            Self::Strategies => "strategies",
         }
     }
 
@@ -53,6 +57,7 @@ impl DockTab {
             Self::Session => "SESSION",
             Self::Trading => "PAPER TRADING · SIM",
             Self::Trades => "TRADES",
+            Self::Strategies => "STRATEGIES",
         }
     }
 
@@ -63,6 +68,7 @@ impl DockTab {
             Self::Session => "Market replay session",
             Self::Trading => "Paper trading — simulated orders, position and history",
             Self::Trades => "Closed broker and simulator trades, current and saved",
+            Self::Strategies => "Armed strategies by asset: pause, remove or open one",
         }
     }
 
@@ -79,6 +85,7 @@ impl From<DockTab> for SavedDockTab {
             DockTab::Session => Self::Session,
             DockTab::Trading => Self::Trading,
             DockTab::Trades => Self::Trades,
+            DockTab::Strategies => Self::Strategies,
         }
     }
 }
@@ -107,7 +114,7 @@ impl Dock {
             active: None,
             // Opening widths per tab, ordered as [`DockTab::ALL`]: the Session
             // tab carries the fewest controls.
-            widths: [300.0, 320.0, 320.0],
+            widths: [300.0, 320.0, 320.0, 320.0],
         }
     }
 

@@ -23,7 +23,7 @@ use quantick_drawings::{DrawingId, DrawingTool, Drawings};
 use quantick_engine::{Bar, Side};
 use quantick_session::strategy_desk::{
     Asset, DeskAction, DeskGroup, DeskLink, DeskOutcome, DeskRow, DeskState, DeskTab, InstanceRef,
-    StrategyDeskCommand, StrategyDeskView,
+    StrategyDeskCommand, StrategyDeskView, StrategyDetail,
 };
 use quantick_stores::script_library::ScriptLibrary;
 use rust_decimal::Decimal;
@@ -127,6 +127,13 @@ fn list<H: StrategyDeskHost + ?Sized, A>(
     input: &Value,
 ) -> Result<Value, ControlError> {
     let ListInput {} = serde_json::from_value(input.clone()).map_err(invalid)?;
+    let groups = groups(host).iter().map(group).collect();
+    serde_json::to_value(ListResult { groups }).map_err(invalid)
+}
+
+/// Every open tab's instances grouped by asset: what `strategy.desk.list`
+/// answers and the Strategies tab paints.
+pub fn groups<H: StrategyDeskHost + ?Sized>(host: &mut H) -> Vec<DeskGroup<DrawingId>> {
     let mut view = StrategyDeskView::default();
     for index in 0..host.desk_tab_count() {
         let tab_id = host.tab_id_at(index);
@@ -149,8 +156,7 @@ fn list<H: StrategyDeskHost + ?Sized, A>(
             drawing_name(&panes, pane_id, drawing)
         });
     }
-    let groups = view.groups().iter().map(group).collect();
-    serde_json::to_value(ListResult { groups }).map_err(invalid)
+    view.groups()
 }
 
 fn detail<H: StrategyDeskHost + ?Sized, A>(
@@ -160,27 +166,7 @@ fn detail<H: StrategyDeskHost + ?Sized, A>(
     input: &Value,
 ) -> Result<Value, ControlError> {
     let input: InstanceInput = serde_json::from_value(input.clone()).map_err(invalid)?;
-    let index = tab_index(host, Some(input.tab_id))?;
-    let tab_id = host.tab_id_at(index);
-    let symbol = host.desk_symbol(index).ok_or_else(tab_closed)?;
-    let ScriptTab {
-        strategies, panes, ..
-    } = host.script_tab(index).ok_or_else(tab_closed)?;
-    let bar_types = bar_types(&panes);
-    let tab = DeskTab {
-        tab_id,
-        symbol: &symbol,
-        panes: &bar_types,
-    };
-    let detail = strategies
-        .detail(
-            &tab,
-            instance_ref(input.instance),
-            |pane_id, drawing| drawing_name(&panes, pane_id, drawing),
-            |pane_id| pane(&panes, pane_id).map_or_else(Vec::new, |p| closed_bars(&p.series)),
-            |pane_id, drawing, slot| region(pane(&panes, pane_id)?.drawings, drawing, slot),
-        )
-        .ok_or_else(|| invalid(NO_SUCH))?;
+    let detail = instance_detail(host, input.tab_id.get(), instance_ref(input.instance))?;
     let result = DetailResult {
         strategy: row(&detail.row),
         description: detail.description,
@@ -201,6 +187,38 @@ fn detail<H: StrategyDeskHost + ?Sized, A>(
     serde_json::to_value(result).map_err(invalid)
 }
 
+/// Instance `id` on tab `tab_id` in full, history markers included: what
+/// `strategy.desk.detail` answers and the strategy window paints.
+///
+/// # Errors
+/// No open tab has `tab_id`, or no instance on it has `id`.
+pub fn instance_detail<H: StrategyDeskHost + ?Sized>(
+    host: &mut H,
+    tab_id: u64,
+    id: InstanceRef<DrawingId>,
+) -> Result<StrategyDetail<DrawingId>, ControlError> {
+    let index = tab_index(host, Some(WireU64::new(tab_id)))?;
+    let symbol = host.desk_symbol(index).ok_or_else(tab_closed)?;
+    let ScriptTab {
+        strategies, panes, ..
+    } = host.script_tab(index).ok_or_else(tab_closed)?;
+    let bar_types = bar_types(&panes);
+    let tab = DeskTab {
+        tab_id,
+        symbol: &symbol,
+        panes: &bar_types,
+    };
+    strategies
+        .detail(
+            &tab,
+            id,
+            |pane_id, drawing| drawing_name(&panes, pane_id, drawing),
+            |pane_id| pane(&panes, pane_id).map_or_else(Vec::new, |p| closed_bars(&p.series)),
+            |pane_id, drawing, slot| region(pane(&panes, pane_id)?.drawings, drawing, slot),
+        )
+        .ok_or_else(|| invalid(NO_SUCH))
+}
+
 /// These calls sit in the indicator-script tier, below the trade tier, so
 /// none of them lets a drawn strategy start placing paper orders again.
 const MAY_START_ORDERS: bool = false;
@@ -208,7 +226,7 @@ const MAY_START_ORDERS: bool = false;
 const NO_SUCH: &str = "no armed strategy on this tab has that id; read strategy.desk.list again";
 
 macro_rules! instance_command {
-    ($name:ident, $capability:expr, $variant:ident) => {
+    ($name:ident, $variant:ident) => {
         fn $name<H: StrategyDeskHost + ?Sized, A: JournalAccess>(
             host: &mut H,
             access: &mut A,
@@ -216,18 +234,18 @@ macro_rules! instance_command {
             input: &Value,
         ) -> Result<Value, ControlError> {
             let input: InstanceInput = serde_json::from_value(input.clone()).map_err(invalid)?;
-            let id = instance_ref(input.instance);
-            let command = StrategyDeskCommand::$variant(id);
-            on_tab(host, access, actor, $capability, input.tab_id, command)
+            let command = StrategyDeskCommand::$variant(instance_ref(input.instance));
+            let result = send(host, input.tab_id.get(), command, MAY_START_ORDERS)?;
+            journaled(access, actor, &result)
         }
     };
 }
 
-instance_command!(pause, wire::PAUSE_CAPABILITY_ID, Pause);
-instance_command!(resume, wire::RESUME_CAPABILITY_ID, Resume);
-instance_command!(remove, wire::REMOVE_CAPABILITY_ID, Remove);
-instance_command!(arm, wire::ARM_CAPABILITY_ID, Arm);
-instance_command!(duplicate, wire::DUPLICATE_CAPABILITY_ID, Duplicate);
+instance_command!(pause, Pause);
+instance_command!(resume, Resume);
+instance_command!(remove, Remove);
+instance_command!(arm, Arm);
+instance_command!(duplicate, Duplicate);
 
 fn save_as<H: StrategyDeskHost + ?Sized, A: JournalAccess>(
     host: &mut H,
@@ -240,56 +258,73 @@ fn save_as<H: StrategyDeskHost + ?Sized, A: JournalAccess>(
         instance: instance_ref(input.instance),
         name: input.name,
     };
-    let capability = wire::SAVE_AS_CAPABILITY_ID;
-    on_tab(host, access, actor, capability, input.tab_id, command)
+    let result = send(host, input.tab_id.get(), command, MAY_START_ORDERS)?;
+    journaled(access, actor, &result)
 }
 
-fn asset_pause<H: StrategyDeskHost + ?Sized, A: JournalAccess>(
-    host: &mut H,
-    access: &mut A,
-    actor: &ActorContext,
-    input: &Value,
-) -> Result<Value, ControlError> {
-    let capability = wire::ASSET_PAUSE_CAPABILITY_ID;
-    on_asset(
-        host,
-        access,
-        actor,
-        capability,
-        input,
-        StrategyDeskCommand::PauseAsset,
-    )
+macro_rules! asset_command {
+    ($name:ident, $variant:ident) => {
+        fn $name<H: StrategyDeskHost + ?Sized, A: JournalAccess>(
+            host: &mut H,
+            access: &mut A,
+            actor: &ActorContext,
+            input: &Value,
+        ) -> Result<Value, ControlError> {
+            let AssetInput { symbol, bar_type } =
+                serde_json::from_value(input.clone()).map_err(invalid)?;
+            let command = StrategyDeskCommand::$variant(Asset { symbol, bar_type });
+            let result = send(host, 0, command, MAY_START_ORDERS)?;
+            journaled(access, actor, &result)
+        }
+    };
 }
 
-fn asset_resume<H: StrategyDeskHost + ?Sized, A: JournalAccess>(
-    host: &mut H,
-    access: &mut A,
-    actor: &ActorContext,
-    input: &Value,
-) -> Result<Value, ControlError> {
-    let capability = wire::ASSET_RESUME_CAPABILITY_ID;
-    on_asset(
-        host,
-        access,
-        actor,
-        capability,
-        input,
-        StrategyDeskCommand::ResumeAsset,
-    )
+asset_command!(asset_pause, PauseAsset);
+asset_command!(asset_resume, ResumeAsset);
+
+/// The call that carries `command`.
+const fn capability(command: &StrategyDeskCommand<DrawingId>) -> &'static str {
+    match command {
+        StrategyDeskCommand::Pause(_) => wire::PAUSE_CAPABILITY_ID,
+        StrategyDeskCommand::Resume(_) => wire::RESUME_CAPABILITY_ID,
+        StrategyDeskCommand::Remove(_) => wire::REMOVE_CAPABILITY_ID,
+        StrategyDeskCommand::PauseAsset(_) => wire::ASSET_PAUSE_CAPABILITY_ID,
+        StrategyDeskCommand::ResumeAsset(_) => wire::ASSET_RESUME_CAPABILITY_ID,
+        StrategyDeskCommand::Arm(_) => wire::ARM_CAPABILITY_ID,
+        StrategyDeskCommand::SaveAs { .. } => wire::SAVE_AS_CAPABILITY_ID,
+        StrategyDeskCommand::Duplicate(_) => wire::DUPLICATE_CAPABILITY_ID,
+    }
 }
 
-/// Send `command` to one tab's instances, write what a save hands back, and
-/// journal the answer.
-fn on_tab<H: StrategyDeskHost + ?Sized, A: JournalAccess>(
+/// Send `command` to the instances it names, and write what a save hands
+/// back to the library: the one path the `strategy.desk.*` calls and the
+/// Strategies tab share. An instance command reaches tab `tab_id`; an asset
+/// command reaches every open tab showing its symbol and ignores `tab_id`.
+/// Only a caller that `may_start_orders` — the trader — resumes, arms or
+/// duplicates a drawn instance that places paper orders.
+///
+/// # Errors
+/// No open tab has `tab_id`, or the session refused the command.
+pub fn send<H: StrategyDeskHost + ?Sized>(
     host: &mut H,
-    access: &mut A,
-    actor: &ActorContext,
-    capability: &str,
-    tab_id: WireU64,
+    tab_id: u64,
     command: StrategyDeskCommand<DrawingId>,
-) -> Result<Value, ControlError> {
-    let index = tab_index(host, Some(tab_id))?;
-    let tab_id = host.tab_id_at(index);
+    may_start_orders: bool,
+) -> Result<CommandResult, ControlError> {
+    let mut result = CommandResult {
+        capability: capability(&command).to_owned(),
+        tab_id: None,
+        changed: 0,
+        created: None,
+        saved_as: None,
+    };
+    if let StrategyDeskCommand::PauseAsset(asset) | StrategyDeskCommand::ResumeAsset(asset) =
+        &command
+    {
+        result.changed = count(on_asset(host, asset, &command, may_start_orders));
+        return Ok(result);
+    }
+    let index = tab_index(host, Some(WireU64::new(tab_id)))?;
     let symbol = host.desk_symbol(index).ok_or_else(tab_closed)?;
     let ScriptTab {
         strategies,
@@ -312,15 +347,9 @@ fn on_tab<H: StrategyDeskHost + ?Sized, A: JournalAccess>(
             .map_err(|refusal| format!("drawing {}: {refusal}", drawing.0))
     };
     let outcome = strategies
-        .execute_desk(&tab, command, MAY_START_ORDERS, check, warmup)
+        .execute_desk(&tab, command, may_start_orders, check, warmup)
         .map_err(invalid)?;
-    let mut result = CommandResult {
-        capability: capability.to_owned(),
-        tab_id: Some(WireU64::new(tab_id)),
-        changed: 0,
-        created: None,
-        saved_as: None,
-    };
+    result.tab_id = Some(WireU64::new(tab_id));
     match outcome {
         DeskOutcome::Changed(changed) => result.changed = count(changed),
         DeskOutcome::Duplicated(copy) => {
@@ -334,20 +363,17 @@ fn on_tab<H: StrategyDeskHost + ?Sized, A: JournalAccess>(
             result.changed = 1;
         }
     }
-    journaled(access, actor, &result)
+    Ok(result)
 }
 
-/// Send an asset command to every open tab's instances on that asset.
-fn on_asset<H: StrategyDeskHost + ?Sized, A: JournalAccess>(
+/// Send an asset command to every open tab's instances on `asset`; how many
+/// changed.
+fn on_asset<H: StrategyDeskHost + ?Sized>(
     host: &mut H,
-    access: &mut A,
-    actor: &ActorContext,
-    capability: &str,
-    input: &Value,
-    command: fn(Asset) -> StrategyDeskCommand<DrawingId>,
-) -> Result<Value, ControlError> {
-    let AssetInput { symbol, bar_type } = serde_json::from_value(input.clone()).map_err(invalid)?;
-    let asset = Asset { symbol, bar_type };
+    asset: &Asset,
+    command: &StrategyDeskCommand<DrawingId>,
+    may_start_orders: bool,
+) -> usize {
     let mut changed = 0;
     for index in 0..host.desk_tab_count() {
         let tab_id = host.tab_id_at(index);
@@ -368,8 +394,8 @@ fn on_asset<H: StrategyDeskHost + ?Sized, A: JournalAccess>(
         };
         let outcome = strategies.execute_desk(
             &tab,
-            command(asset.clone()),
-            MAY_START_ORDERS,
+            command.clone(),
+            may_start_orders,
             |_, _| Ok(()),
             |_, _| Vec::new(),
         );
@@ -377,14 +403,7 @@ fn on_asset<H: StrategyDeskHost + ?Sized, A: JournalAccess>(
             changed += count;
         }
     }
-    let result = CommandResult {
-        capability: capability.to_owned(),
-        tab_id: None,
-        changed: count(changed),
-        created: None,
-        saved_as: None,
-    };
-    journaled(access, actor, &result)
+    changed
 }
 
 fn journaled<A: JournalAccess>(

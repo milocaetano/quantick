@@ -112,7 +112,8 @@ Owner keys (other paths appear in full):
 | `QUANTICK_TRADES_DIR` | launch | paper-trading journal location (point at scratch — and note the absent-default is now the user's documents folder, `Documents/Quantick/paper-trades`, so an unhooked run touches real history) |
 | `QUANTICK_PAPER_STATE=<toml>` | home | the paper sidecar: the picked journal folder and the cmd-trading settings. **Point at a scratchpad file** — an unhooked run reads and rewrites the trader's real `paper-state.toml`, and startup consolidation may clear their stored folder pick. |
 | `QUANTICK_INSTRUMENTS=<toml>` | home | the trader's `instruments.toml` over the shipped catalog; point at scratch |
-| `QUANTICK_DOCK_TAB=<l2\|bubbles\|session\|trading\|trades>` | hooks | the dock open on that tab — `trading` is the ticket (with the CMD TRADING block), `trades` the ledger |
+| `QUANTICK_DOCK_TAB=<l2\|bubbles\|session\|trading\|trades\|strategies>` | hooks | the dock open on that tab — `trading` is the ticket (with the CMD TRADING block), `trades` the ledger |
+| `QUANTICK_STRATEGY_WINDOW=<summary\|code\|history>` | `strategy_desk/window.rs` | the strategy window on that page, over the first armed instance |
 | `QUANTICK_PAPER_REPORT_AUTOSTART=1` | hooks | Trading performance; also `session:<key>` or `day:<YYYY-MM-DD>:<key>` via `session.report.open`. |
 | `QUANTICK_PAPER_DEMO=1` | account | scripted deterministic trade sequence — real journaled trades for every paper surface; pair with `QUANTICK_TRADES_DIR` at scratch |
 
@@ -139,8 +140,8 @@ Owner keys (other paths appear in full):
 | `QUANTICK_PAPER_CALENDAR=<YYYY-MM-DD>` | hooks | the same, with that **single day** picked and the report already cut to it — the grid also pages to that day's month, so the pick is on screen rather than a month away. A date that is not a real calendar day (`2026-02-30`, `2026-13-01`) is refused and no calendar opens, instead of silently landing on a normalised neighbour |
 | `QUANTICK_PAPER_CALENDAR=<YYYY-MM-DD..YYYY-MM-DD>` | hooks | a picked **span**, either way round — the two-click range state, which a scripted run cannot otherwise reach because it needs two clicks on two different cells. The support line under the filters reads the span back in words |
 | `QUANTICK_LEDGER_SCOPE=<chart\|all\|SYMBOL>` | hooks | which instrument's saved history the Trades dock lists: `chart` follows the chart (the default), `all` mixes every folder into one timeline, and any other value is read as a symbol folder name — the way to photograph one market's history while the chart shows another. A folder that does not exist simply lists nothing rather than falling back to the chart, which is the honest answer to "show me WDOFUT" when no WDOFUT was ever traded |
-| `QUANTICK_LEDGER_FOLD=1` | hooks | every civil day in the ledger **folded shut** — the one-line-per-day read, each keeping its date, trade count and net. Folding is otherwise a click on each day header (or the fold-all control beside the refresh button), so this is the only way a capture reaches it. Pair with `QUANTICK_DOCK_TAB=trades` |
-| `QUANTICK_LEDGER_PAGES=<n>` | hooks | the Trades dock **past its first page** of saved history: `n` pages of 50 revealed. The only other way there is clicking "show older", so without this the second page and the shrinking "N more saved" count are invisible to a capture. Pair with `QUANTICK_DOCK_TAB=trades` and a `QUANTICK_TRADES_DIR` holding more than 50 saved trades |
+| `QUANTICK_LEDGER_FOLD=1` | hooks | every civil day in the ledger **folded shut**, one line per day with its date, trade count and net (otherwise a click per day header). Pair with `QUANTICK_DOCK_TAB=trades` |
+| `QUANTICK_LEDGER_PAGES=<n>` | hooks | the Trades dock **past its first page** of saved history: `n` pages of 50 revealed, as "show older" clicks would. Pair with `QUANTICK_DOCK_TAB=trades` and a `QUANTICK_TRADES_DIR` holding more than 50 saved trades |
 | `QUANTICK_PAPER_REPORT_SCROLL=report:-20` | hooks | scenario-harness: ordinary report/list wheel stages; grammar, limits, timing, logs and proven enlarged fixture: `docs/ui-harness/report-scroll.md`. |
 | `QUANTICK_PAPER_REPORT_LIST=0` | hooks | collapses the report trade list for capture; any other value preserves its default open state. |
 
@@ -239,4 +240,4 @@ For a screen that represents the user's real setup, enable the trio:
 | `QUANTICK_CANVAS_ACTS=<acts>` | wiring | `;`-separated canvas acts on the first drawn frame, each through its `canvas.*` capability: `add:<widget>`, `dock:<slot>:<edge>`, `park:<slot>:<corner>`, `resize:<slot>:width\|height:<share>`, `<verb>:<slot>` for float, pop_out, return, minimize, maximize, restore, remove |
 | `QUANTICK_CANVAS_HOLD=<slot>:<x>,<y>` | `tab/layout.rs` | Hold a floating pane by its title at canvas fractions x,y to show guides and preview |
 
-157 hooks registered.
+158 hooks registered.
