@@ -1,8 +1,11 @@
 //! Chart-aware strategy conversation. Provider credentials are never part of this contract.
 use crate::readback::{Readback, journal};
 use quantick_control::{
-    id::{ModuleId, PermissionId},
-    registry::{CapabilityDescriptor, EffectPersistence, IdempotencyPolicy},
+    id::{AvailabilityReasonId, ModuleId, PermissionId},
+    registry::{
+        Availability, AvailabilityStatus, CapabilityDescriptor, EffectPersistence,
+        IdempotencyPolicy,
+    },
     schema::generated_schema,
     wire::WireU64,
 };
@@ -18,6 +21,22 @@ pub const SUBMIT_CAPABILITY_ID: &str = "strategy.describe.submit";
 pub const CANCEL_CAPABILITY_ID: &str = "strategy.describe.cancel";
 pub const SAVE_CAPABILITY_ID: &str = "strategy.describe.save";
 pub const EVENT: &str = "strategy.describe.changed";
+const UNAVAILABLE_REASON: &str = "strategy.describe_unavailable";
+const UNAVAILABLE_NEXT_STEP: &str = "Read strategy.describe.read for conversation status.";
+
+pub fn unavailable_error() -> ControlError {
+    let mut error = ControlError::new(
+        quantick_control::id::ErrorCode::new(
+            quantick_control::error::codes::CAPABILITY_UNAVAILABLE,
+        )
+        .expect("static error code"),
+        "Strategy description is unavailable",
+        false,
+    );
+    error.context.details = Some(serde_json::json!({"reason_code": UNAVAILABLE_REASON}));
+    error.context.next_steps.push(UNAVAILABLE_NEXT_STEP.into());
+    error
+}
 
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -83,7 +102,7 @@ pub struct Status {
     pub saved_id: Option<String>,
 }
 
-pub fn descriptor(id: &str) -> CapabilityDescriptor {
+pub fn descriptor(id: &str, mutations_available: bool) -> CapabilityDescriptor {
     let (title, description, schema, durable) = match id {
         OPEN_CAPABILITY_ID => (
             "Open strategy description",
@@ -129,6 +148,15 @@ pub fn descriptor(id: &str) -> CapabilityDescriptor {
         generated_schema::<Status>(),
     );
     desc.module = ModuleId::new(STRATEGY_MODULE_ID).expect("static module id");
+    if !mutations_available {
+        desc.availability = Availability {
+            status: AvailabilityStatus::Unavailable,
+            reason_code: Some(
+                AvailabilityReasonId::new(UNAVAILABLE_REASON).expect("static reason"),
+            ),
+            next_step: Some(UNAVAILABLE_NEXT_STEP.into()),
+        };
+    }
     desc.persistence = if durable {
         EffectPersistence::Durable
     } else {

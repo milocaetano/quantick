@@ -28806,7 +28806,9 @@
     },
     {
       "availability": {
-        "status": "available"
+        "next_step": "Read strategy.describe.read for conversation status.",
+        "reason_code": "strategy.describe_unavailable",
+        "status": "unavailable"
       },
       "confirmation_class": "none",
       "description": "Invalidate pending work for the named conversation revision.",
@@ -28980,7 +28982,9 @@
     },
     {
       "availability": {
-        "status": "available"
+        "next_step": "Read strategy.describe.read for conversation status.",
+        "reason_code": "strategy.describe_unavailable",
+        "status": "unavailable"
       },
       "confirmation_class": "none",
       "description": "Start a conversation pinned to the focused chart.",
@@ -29297,7 +29301,9 @@
     },
     {
       "availability": {
-        "status": "available"
+        "next_step": "Read strategy.describe.read for conversation status.",
+        "reason_code": "strategy.describe_unavailable",
+        "status": "unavailable"
       },
       "confirmation_class": "none",
       "description": "Create a new strategy source and publish its prepared alarm-only instances.",
@@ -29477,7 +29483,9 @@
     },
     {
       "availability": {
-        "status": "available"
+        "next_step": "Read strategy.describe.read for conversation status.",
+        "reason_code": "strategy.describe_unavailable",
+        "status": "unavailable"
       },
       "confirmation_class": "none",
       "description": "Send a sentence or clarification and pinned chart context to the configured provider.",

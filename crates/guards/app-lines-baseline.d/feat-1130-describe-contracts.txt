@@ -1,3 +1,3 @@
 # The disabled overlay, provider mailbox, private launch settings and UI/control adapters require the app.
-crates/app +220
-!budget +220
+crates/app +252
+!budget +252

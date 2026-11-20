@@ -29,6 +29,12 @@ pub(crate) use quantick_control_host::authority::{ANNOTATE_PERMISSION_ID, ANNOTA
 /// The actions every instance registers. A later module adds one descriptor
 /// and one handler here; nothing else opens.
 pub(crate) fn standard_actions() -> Result<ActionRegistry, RegistryError> {
+    actions_for_strategy_describe(false)
+}
+
+pub(super) fn actions_for_strategy_describe(
+    available: bool,
+) -> Result<ActionRegistry, RegistryError> {
     let mut registry = ActionRegistry::new();
     quantick_control_handlers::alerts::register(&mut registry)?;
     quantick_control_handlers::attention::register(&mut registry)?;
@@ -76,7 +82,7 @@ pub(crate) fn standard_actions() -> Result<ActionRegistry, RegistryError> {
     quantick_control_handlers::script::register(&mut registry)?;
     quantick_control_handlers::script_editor::register(&mut registry)?;
     quantick_control_handlers::trade::register(&mut registry)?;
-    super::strategy_describe::register(&mut registry)?;
+    super::strategy_describe::register(&mut registry, available)?;
     Ok(registry)
 }
 

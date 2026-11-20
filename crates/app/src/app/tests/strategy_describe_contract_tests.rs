@@ -59,7 +59,7 @@ fn registered_contracts_are_inert() {
         |node| matches!(node, menu::Node::Row(row) if row.action == menu::Action::DescribeStrategy)
     ));
     let mut registry = ActionRegistry::<FakeWindow, ControlAccess>::new();
-    strategy_describe::register(&mut registry).unwrap();
+    strategy_describe::register(&mut registry, false).unwrap();
     let mut access = ControlAccess::new();
     let actor = FakeWindow::assistant();
     for (id, input) in [
@@ -76,12 +76,31 @@ fn registered_contracts_are_inert() {
         ),
     ] {
         let action = registry.lookup(id, 1).unwrap();
+        use quantick_control::registry::AvailabilityStatus;
+        assert_eq!(
+            action.descriptor.availability.status,
+            if id == wire::READ_CAPABILITY_ID {
+                AvailabilityStatus::Available
+            } else {
+                AvailabilityStatus::Unavailable
+            }
+        );
         let answer = (action.handler)(&mut host, &mut access, &actor, &input);
         if id == wire::READ_CAPABILITY_ID {
             assert_eq!(answer.unwrap()["phase"], "unavailable");
         } else {
+            let error = answer.unwrap_err();
+            let availability = &action.descriptor.availability;
             assert_eq!(
-                answer.unwrap_err().code.as_str(),
+                error.context.details.unwrap()["reason_code"],
+                availability.reason_code.as_ref().unwrap().as_str()
+            );
+            assert_eq!(
+                error.context.next_steps,
+                [availability.next_step.clone().unwrap()]
+            );
+            assert_eq!(
+                error.code.as_str(),
                 quantick_control::error::codes::CAPABILITY_UNAVAILABLE
             );
         }

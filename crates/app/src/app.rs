@@ -12,6 +12,7 @@
 //! [`ChartPane`], not to the window. The market feeding that pane — channels,
 //! connection state, notices, history counters — is still owned here.
 
+use crate::control::ControlAccess;
 #[cfg(any(feature = "drawing-harness", feature = "quick-range-harness", test))]
 use crate::surfaces::drawing_chrome::DrawingChromeExt as _;
 use std::time::Instant;
@@ -336,7 +337,9 @@ impl QuantickApp {
             added_symbols,
             config,
             control: control_host::ControlState {
-                control_access: Some(crate::control::ControlAccess::new()),
+                control_access: Some(ControlAccess::with_strategy_describe(
+                    launch.describe.available(),
+                )),
                 #[cfg(any(feature = "control-harness", test))]
                 scenarios: Default::default(),
             },
