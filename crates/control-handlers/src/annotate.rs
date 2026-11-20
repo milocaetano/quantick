@@ -143,60 +143,30 @@ where
     A: AnnotateAccess,
 {
     registry.register(
-        annotation_descriptor(
-            LABEL_CAPABILITY_ID,
-            "Place a label",
-            "Places an anchored note at one chart coordinate, attributed to its author and removable in one action.",
-        ),
+        label_capability_descriptor(),
         |app, access, actor, input| place(app, access, actor, input, LABEL_TOOL_ID),
     )?;
     registry.register(
-        annotation_descriptor(
-            ARROW_CAPABILITY_ID,
-            "Place an arrow",
-            "Draws an arrow between two chart coordinates, attributed to its author and removable in one action.",
-        ),
+        arrow_capability_descriptor(),
         |app, access, actor, input| place(app, access, actor, input, ARROW_TOOL_ID),
     )?;
+    registry.register(zone_capability_descriptor(), |app, access, actor, input| {
+        place(app, access, actor, input, ZONE_TOOL_ID)
+    })?;
     registry.register(
-        annotation_descriptor(
-            ZONE_CAPABILITY_ID,
-            "Place a zone",
-            "Draws a rectangular region between two chart coordinates, attributed to its author and removable in one action.",
-        ),
-        |app, access, actor, input| place(app, access, actor, input, ZONE_TOOL_ID),
-    )?;
-    registry.register(
-        annotation_descriptor(
-            PROFILE_CAPABILITY_ID,
-            "Place a fixed-range volume profile",
-            "Folds traded volume over the market-time range between two chart coordinates and places the result as an attributed drawing.",
-        ),
+        profile_capability_descriptor(),
         |app, access, actor, input| place(app, access, actor, input, PROFILE_TOOL_ID),
     )?;
     registry.register(
-        chart_descriptor(
-            PROFILE_CAPABILITY_ID,
-            PROFILE_CAPABILITY_VERSION,
-            "Place a fixed-range volume profile",
-            "Folds traded volume over a chart range, including projected space beyond the latest bar.",
-        ),
+        profilev2_capability_descriptor(),
         |app, access, actor, input| place_chart(app, access, actor, input, PROFILE_TOOL_ID),
     )?;
     registry.register(
-        fib_descriptor(
-            FIB_RETRACEMENT_CAPABILITY_ID,
-            "Place a Fibonacci retracement",
-            "Draws retracement levels over one move between two chart coordinates.",
-        ),
+        fib_retracement_capability_descriptor(),
         |app, access, actor, input| place_chart(app, access, actor, input, "fib-retracement"),
     )?;
     registry.register(
-        fib_descriptor(
-            FIB_PROJECTION_CAPABILITY_ID,
-            "Place a Fibonacci projection",
-            "Projects one measured move forward from its second chart coordinate; a legacy third coordinate is the projection origin.",
-        ),
+        fib_projection_capability_descriptor(),
         |app, access, actor, input| place_chart(app, access, actor, input, "fib-extension"),
     )?;
     // In `shape_descriptors` order: rectangle, trend line, parallel channel.
@@ -840,3 +810,75 @@ fn permission_denied(message: impl AsRef<str>) -> ControlError {
 #[cfg(test)]
 #[path = "annotate_tests.rs"]
 mod annotate_tests;
+
+fn label_capability_descriptor() -> quantick_control::registry::CapabilityDescriptor {
+    annotation_descriptor(
+        LABEL_CAPABILITY_ID,
+        "Place a label",
+        "Places an anchored note at one chart coordinate, attributed to its author and removable in one action.",
+    )
+}
+
+fn arrow_capability_descriptor() -> quantick_control::registry::CapabilityDescriptor {
+    annotation_descriptor(
+        ARROW_CAPABILITY_ID,
+        "Place an arrow",
+        "Draws an arrow between two chart coordinates, attributed to its author and removable in one action.",
+    )
+}
+
+fn zone_capability_descriptor() -> quantick_control::registry::CapabilityDescriptor {
+    annotation_descriptor(
+        ZONE_CAPABILITY_ID,
+        "Place a zone",
+        "Draws a rectangular region between two chart coordinates, attributed to its author and removable in one action.",
+    )
+}
+
+fn profile_capability_descriptor() -> quantick_control::registry::CapabilityDescriptor {
+    annotation_descriptor(
+        PROFILE_CAPABILITY_ID,
+        "Place a fixed-range volume profile",
+        "Folds traded volume over the market-time range between two chart coordinates and places the result as an attributed drawing.",
+    )
+}
+
+fn profilev2_capability_descriptor() -> quantick_control::registry::CapabilityDescriptor {
+    chart_descriptor(
+        PROFILE_CAPABILITY_ID,
+        PROFILE_CAPABILITY_VERSION,
+        "Place a fixed-range volume profile",
+        "Folds traded volume over a chart range, including projected space beyond the latest bar.",
+    )
+}
+
+fn fib_retracement_capability_descriptor() -> quantick_control::registry::CapabilityDescriptor {
+    fib_descriptor(
+        FIB_RETRACEMENT_CAPABILITY_ID,
+        "Place a Fibonacci retracement",
+        "Draws retracement levels over one move between two chart coordinates.",
+    )
+}
+
+fn fib_projection_capability_descriptor() -> quantick_control::registry::CapabilityDescriptor {
+    fib_descriptor(
+        FIB_PROJECTION_CAPABILITY_ID,
+        "Place a Fibonacci projection",
+        "Projects one measured move forward from its second chart coordinate; a legacy third coordinate is the projection origin.",
+    )
+}
+
+pub(crate) fn action_descriptors() -> Vec<quantick_control::registry::CapabilityDescriptor> {
+    let mut descriptors = vec![
+        label_capability_descriptor(),
+        arrow_capability_descriptor(),
+        zone_capability_descriptor(),
+        profile_capability_descriptor(),
+        profilev2_capability_descriptor(),
+        fib_retracement_capability_descriptor(),
+        fib_projection_capability_descriptor(),
+    ];
+    descriptors.extend(shape_descriptors());
+    descriptors.extend([horizontal_levels_descriptor(), remove_descriptor()]);
+    descriptors
+}

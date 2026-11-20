@@ -129,6 +129,15 @@ fn invalid(error: impl std::fmt::Display) -> ControlError {
     ControlError::invalid_request(error.to_string())
 }
 
+pub(crate) fn action_descriptors() -> Vec<quantick_control::registry::CapabilityDescriptor> {
+    vec![
+        open_descriptor(),
+        close_descriptor(),
+        section_descriptor(),
+        lights_descriptor(),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

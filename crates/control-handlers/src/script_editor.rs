@@ -67,3 +67,7 @@ pub fn run(
 #[cfg(test)]
 #[path = "script_editor_tests.rs"]
 mod tests;
+
+pub(crate) fn action_descriptors() -> Vec<quantick_control::registry::CapabilityDescriptor> {
+    vec![descriptor()]
+}

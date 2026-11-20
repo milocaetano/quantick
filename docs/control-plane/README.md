@@ -6,6 +6,9 @@ sequence; the files here fix the details that outcome has to honour.
 
 ## Documents
 
+- [Regeneration](regeneration.md) documents the headless control and UI generators,
+  hook target, immutable compatibility fixtures and merge workflow.
+
 - [Capability inventory](capability-inventory.md) lists every capability the
   application registers — identifier, version, module and required
   permissions. **Generated**; see [Precedence](#precedence) before editing it.

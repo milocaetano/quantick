@@ -2,7 +2,7 @@
 use crate::dock::{ActionDock, ProjectionDock};
 use quantick_control::{
     error::ControlError,
-    id::{ModuleId, SnapshotScopeId},
+    id::ModuleId,
     registry::{ModuleDescriptor, RegistryError},
     wire::{ActorContext, WireU64},
 };
@@ -28,18 +28,8 @@ pub fn register_actions<D: ActionDock<H, A>, H: AppearancePort + ?Sized, A>(
 pub fn register<D: ProjectionDock<H>, H: AppearancePort + ?Sized + 'static>(
     registry: &mut D,
 ) -> Result<(), ProjectionRegistryError> {
-    let module = ModuleId::new(MODULE_ID).expect("static module");
-    registry.register_module(
-        ModuleDescriptor {
-            id: module.clone(),
-            title: "Appearance".into(),
-            description: "Active configuration and persistence status.".into(),
-        },
-        revision::<H>,
-    )?;
-    registry.register_scope(SnapshotScopeId::new(SCOPE_ID).expect("static scope"), module, 1,
-        "Appearance state", "Bounded active TOML, paint revision, source and last-known persistence status; no filesystem paths.",
-        &["observe", "observe.workspace"], project::<H>)
+    registry.register_module(module_descriptor(), revision::<H>)?;
+    scope_spec().register(registry, project::<H>)
 }
 fn revision<H: AppearancePort + ?Sized>(host: &H) -> (u64, bool) {
     let store = host.appearance_store();
@@ -118,4 +108,32 @@ fn refusal(error: AppearanceError) -> ControlError {
     let mut error = ControlError::invalid_request(message);
     error.context.details = Some(json!({"code": code, "field": field}));
     error
+}
+
+pub(crate) fn action_descriptors() -> Vec<quantick_control::registry::CapabilityDescriptor> {
+    vec![descriptor()]
+}
+
+pub(crate) fn module_descriptor() -> ModuleDescriptor {
+    ModuleDescriptor {
+        id: ModuleId::new(MODULE_ID).expect("static module ID is valid"),
+        title: "Appearance".into(),
+        description: "Active configuration and persistence status.".into(),
+    }
+}
+
+pub(crate) fn scope_spec() -> crate::dock::ScopeSpec<AppearanceSnapshot> {
+    crate::dock::ScopeSpec::new(
+        SCOPE_ID,
+        MODULE_ID,
+        1,
+        "Appearance state",
+        "Bounded active TOML, paint revision, source and last-known persistence status; no filesystem paths.",
+        &["observe", "observe.workspace"],
+    )
+}
+
+pub(crate) fn scope_descriptors() -> Vec<quantick_control_host::catalogue::SnapshotScopeDescriptor>
+{
+    vec![scope_spec().descriptor()]
 }

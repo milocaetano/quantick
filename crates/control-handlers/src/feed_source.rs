@@ -141,3 +141,10 @@ fn set_market<H: MarketTabHost + ?Sized, A: NotifyAccess>(
 
 #[cfg(test)]
 mod tests;
+
+pub(crate) fn action_descriptors() -> Vec<quantick_control::registry::CapabilityDescriptor> {
+    vec![
+        quantick_control_schema::feed_source::descriptor(),
+        tab_market_descriptor(),
+    ]
+}

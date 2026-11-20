@@ -3,33 +3,16 @@
 pub(crate) use quantick_control_schema::feed::*;
 
 use crate::app::TabsPort;
-use quantick_control::{
-    id::{ModuleId, SnapshotScopeId},
-    registry::ModuleDescriptor,
-    wire::WireU64,
-};
+use quantick_control::wire::WireU64;
 
 use super::registry::{CaptureContext, ProjectionRegistry, ProjectionRegistryError};
 
 pub(crate) fn register(registry: &mut ProjectionRegistry) -> Result<(), ProjectionRegistryError> {
-    let module_id = ModuleId::new(MODULE_ID).expect("static module ID is valid");
     registry.register_module(
-        ModuleDescriptor {
-            id: module_id.clone(),
-            title: "Feed".to_owned(),
-            description: "Feed connection, capabilities, and market-data provenance.".to_owned(),
-        },
+        quantick_control_handlers::generation::feed::module_descriptor(),
         revision,
     )?;
-    registry.register_scope(
-        SnapshotScopeId::new(SCOPE_ID).expect("static scope ID is valid"),
-        module_id,
-        SCHEMA_VERSION,
-        "Feed status",
-        "Reports the selected and active markets, source health, capabilities, and provenance.",
-        &["observe", "observe.market"],
-        project,
-    )
+    quantick_control_handlers::generation::feed::scope_spec().register(registry, project)
 }
 
 fn revision<P: TabsPort + ?Sized>(app: &P) -> FeedSnapshot {

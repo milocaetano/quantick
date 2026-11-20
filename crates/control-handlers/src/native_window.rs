@@ -89,3 +89,7 @@ fn set<H: NativeWindowHost + ?Sized, A>(
     })
     .map_err(invalid)
 }
+
+pub(crate) fn action_descriptors() -> Vec<quantick_control::registry::CapabilityDescriptor> {
+    vec![descriptor()]
+}

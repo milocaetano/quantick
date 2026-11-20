@@ -459,3 +459,10 @@ impl<H: ?Sized + 'static, A> WorkerReadPort for ObserverContract<H, A> {
         )
     }
 }
+
+pub(crate) fn read_descriptors() -> Vec<quantick_control::registry::CapabilityDescriptor> {
+    reads::bindings()
+        .into_iter()
+        .map(|(descriptor, _)| descriptor)
+        .collect()
+}

@@ -27,11 +27,7 @@
 
 pub use quantick_control_schema::orderflow::*;
 
-use quantick_control::{
-    id::{ModuleId, SnapshotScopeId},
-    registry::ModuleDescriptor,
-    wire::WireU64,
-};
+use quantick_control::{id::ModuleId, registry::ModuleDescriptor, wire::WireU64};
 use quantick_control_host::{
     projection::{CaptureContext, ProjectionRegistryError},
     wire::{AvailabilitySnapshot, PaneSideDto, available, unavailable},
@@ -116,69 +112,13 @@ where
     D: ProjectionDock<H>,
     H: OrderflowPort + ?Sized + 'static,
 {
-    let module_id = ModuleId::new(MODULE_ID).expect("static module ID is valid");
-    registry.register_module(
-        ModuleDescriptor {
-            id: module_id.clone(),
-            title: "Order flow".to_owned(),
-            description: "The book, the tape, and the layers drawn over them.".to_owned(),
-        },
-        revision::<H>,
-    )?;
-    registry.register_scope(
-        SnapshotScopeId::new(TAPE_SCOPE_ID).expect("static scope ID is valid"),
-        module_id.clone(),
-        SCHEMA_VERSION,
-        "Tape",
-        "Reports how current each pane's tape is, where its live lane ends, and where its aggressor side comes from.",
-        &["observe", "observe.orderflow"],
-        project_tape::<H>,
-    )?;
-    registry.register_scope(
-        SnapshotScopeId::new(FOOTPRINT_SCOPE_ID).expect("static scope ID is valid"),
-        module_id.clone(),
-        SCHEMA_VERSION,
-        "Footprint",
-        "Reports whether the candle footprint layer is drawn and the setup it is drawn with.",
-        &["observe", "observe.orderflow", "observe.chart"],
-        project_footprint::<H>,
-    )?;
-    registry.register_scope(
-        SnapshotScopeId::new(BUBBLES_SCOPE_ID).expect("static scope ID is valid"),
-        module_id.clone(),
-        SCHEMA_VERSION,
-        "Aggression bubbles",
-        "Reports whether aggression bubbles are drawn over the chart and the lane, whether they are drawn as Bookmap-style volume dots, and what the display floor keeps off the canvas.",
-        &["observe", "observe.orderflow"],
-        project_bubbles::<H>,
-    )?;
-    registry.register_scope(
-        SnapshotScopeId::new(HEATMAP_SCOPE_ID).expect("static scope ID is valid"),
-        module_id.clone(),
-        SCHEMA_VERSION,
-        "Depth heatmap",
-        "Reports whether depth heat is drawn, at which capture and display grouping, and with which retention.",
-        &["observe", "observe.orderflow"],
-        project_heatmap::<H>,
-    )?;
-    registry.register_scope(
-        SnapshotScopeId::new(L2_SCOPE_ID).expect("static scope ID is valid"),
-        module_id.clone(),
-        SCHEMA_VERSION,
-        "Order book",
-        "Reports the published book around the spread: best bid and ask, the clipped ladders, and the capture state.",
-        &["observe", "observe.orderflow", "observe.market"],
-        project_l2::<H>,
-    )?;
-    registry.register_scope(
-        SnapshotScopeId::new(SETTINGS_SCOPE_ID).expect("static scope ID is valid"),
-        module_id,
-        SCHEMA_VERSION,
-        "Order-flow settings panel",
-        "Reports whether each tab's order-flow settings panel is open and which of its sections the tab's asset keeps open, whether or not the panel was painted.",
-        &["observe", "observe.orderflow"],
-        project_settings::<H>,
-    )
+    registry.register_module(module_descriptor(), revision::<H>)?;
+    tape_spec().register(registry, project_tape::<H>)?;
+    footprint_spec().register(registry, project_footprint::<H>)?;
+    bubbles_spec().register(registry, project_bubbles::<H>)?;
+    heatmap_spec().register(registry, project_heatmap::<H>)?;
+    l2_spec().register(registry, project_l2::<H>)?;
+    settings_spec().register(registry, project_settings::<H>)
 }
 
 /// Every tab's rows, built from one walk over the port.
@@ -390,6 +330,92 @@ fn engine_availability(pane: &dyn OrderflowPane) -> AvailabilitySnapshot {
     } else {
         unavailable(NO_ENGINE)
     }
+}
+
+pub(crate) fn module_descriptor() -> ModuleDescriptor {
+    ModuleDescriptor {
+        id: ModuleId::new(MODULE_ID).expect("static module ID is valid"),
+        title: "Order flow".to_owned(),
+        description: "The book, the tape, and the layers drawn over them.".to_owned(),
+    }
+}
+
+pub(crate) fn tape_spec() -> crate::dock::ScopeSpec<TapeSnapshot> {
+    crate::dock::ScopeSpec::new(
+        TAPE_SCOPE_ID,
+        MODULE_ID,
+        SCHEMA_VERSION,
+        "Tape",
+        "Reports how current each pane's tape is, where its live lane ends, and where its aggressor side comes from.",
+        &["observe", "observe.orderflow"],
+    )
+}
+
+pub(crate) fn footprint_spec() -> crate::dock::ScopeSpec<FootprintSnapshot> {
+    crate::dock::ScopeSpec::new(
+        FOOTPRINT_SCOPE_ID,
+        MODULE_ID,
+        SCHEMA_VERSION,
+        "Footprint",
+        "Reports whether the candle footprint layer is drawn and the setup it is drawn with.",
+        &["observe", "observe.orderflow", "observe.chart"],
+    )
+}
+
+pub(crate) fn bubbles_spec() -> crate::dock::ScopeSpec<BubblesSnapshot> {
+    crate::dock::ScopeSpec::new(
+        BUBBLES_SCOPE_ID,
+        MODULE_ID,
+        SCHEMA_VERSION,
+        "Aggression bubbles",
+        "Reports whether aggression bubbles are drawn over the chart and the lane, whether they are drawn as Bookmap-style volume dots, and what the display floor keeps off the canvas.",
+        &["observe", "observe.orderflow"],
+    )
+}
+
+pub(crate) fn heatmap_spec() -> crate::dock::ScopeSpec<HeatmapSnapshot> {
+    crate::dock::ScopeSpec::new(
+        HEATMAP_SCOPE_ID,
+        MODULE_ID,
+        SCHEMA_VERSION,
+        "Depth heatmap",
+        "Reports whether depth heat is drawn, at which capture and display grouping, and with which retention.",
+        &["observe", "observe.orderflow"],
+    )
+}
+
+pub(crate) fn l2_spec() -> crate::dock::ScopeSpec<L2Snapshot> {
+    crate::dock::ScopeSpec::new(
+        L2_SCOPE_ID,
+        MODULE_ID,
+        SCHEMA_VERSION,
+        "Order book",
+        "Reports the published book around the spread: best bid and ask, the clipped ladders, and the capture state.",
+        &["observe", "observe.orderflow", "observe.market"],
+    )
+}
+
+pub(crate) fn settings_spec() -> crate::dock::ScopeSpec<SettingsSnapshot> {
+    crate::dock::ScopeSpec::new(
+        SETTINGS_SCOPE_ID,
+        MODULE_ID,
+        SCHEMA_VERSION,
+        "Order-flow settings panel",
+        "Reports whether each tab's order-flow settings panel is open and which of its sections the tab's asset keeps open, whether or not the panel was painted.",
+        &["observe", "observe.orderflow"],
+    )
+}
+
+pub(crate) fn scope_descriptors() -> Vec<quantick_control_host::catalogue::SnapshotScopeDescriptor>
+{
+    vec![
+        tape_spec().descriptor(),
+        footprint_spec().descriptor(),
+        bubbles_spec().descriptor(),
+        heatmap_spec().descriptor(),
+        l2_spec().descriptor(),
+        settings_spec().descriptor(),
+    ]
 }
 
 #[cfg(test)]

@@ -141,7 +141,6 @@ pub trait CanvasHost {
 pub fn register<H: CanvasHost + ?Sized, A>(
     registry: &mut impl ActionDock<H, A>,
 ) -> Result<(), RegistryError> {
-    let described = |id: &str| descriptor(id).expect("every canvas id is described");
     registry
         .register_outside_replay(described(OPEN_WINDOW_MENU_CAPABILITY_ID), open_window_menu)?;
     registry.register_outside_replay(described(LAYOUT_PICKER_CAPABILITY_ID), layout_picker)?;
@@ -1096,4 +1095,28 @@ pub fn held_by_hook(state: &CanvasState, value: &str) -> Option<(FloatGesture, (
         start,
     };
     Some((held, (share(x)?, share(y)?)))
+}
+
+fn described(id: &str) -> quantick_control::registry::CapabilityDescriptor {
+    descriptor(id).expect("every canvas id is described")
+}
+
+pub(crate) fn action_descriptors() -> Vec<quantick_control::registry::CapabilityDescriptor> {
+    vec![
+        described(OPEN_WINDOW_MENU_CAPABILITY_ID),
+        described(LAYOUT_PICKER_CAPABILITY_ID),
+        described(PICK_LAYOUT_CAPABILITY_ID),
+        described(MINIMIZE_CAPABILITY_ID),
+        described(MAXIMIZE_CAPABILITY_ID),
+        described(RESTORE_CAPABILITY_ID),
+        described(REMOVE_CAPABILITY_ID),
+        described(ADD_WIDGET_CAPABILITY_ID),
+        described(FLOAT_CAPABILITY_ID),
+        described(DOCK_CAPABILITY_ID),
+        described(PARK_CAPABILITY_ID),
+        described(POP_OUT_CAPABILITY_ID),
+        described(RETURN_CAPABILITY_ID),
+        described(RESIZE_CAPABILITY_ID),
+        described(SEAM_DRAG_CAPABILITY_ID),
+    ]
 }

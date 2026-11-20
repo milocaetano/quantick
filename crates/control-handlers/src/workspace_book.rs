@@ -1419,3 +1419,23 @@ fn list<H: WorkspaceOwner + ?Sized, A>(
 #[cfg(test)]
 #[path = "workspace_book_tests.rs"]
 mod workspace_book_tests;
+
+pub(crate) fn action_descriptors() -> Vec<quantick_control::registry::CapabilityDescriptor> {
+    vec![
+        tab_workspace_set_descriptor(),
+        workspace_save_to_descriptor(),
+        workspace_save_as_descriptor(),
+        workspace_new_descriptor(),
+        workspace_revert_descriptor(),
+        workspace_autosave_set_descriptor(),
+        tab_close_descriptor(),
+        workspace_rename_descriptor(),
+        workspace_delete_descriptor(),
+        workspace_delete_undo_descriptor(),
+        workspace_dialog_open_descriptor(),
+        workspace_colour_set_descriptor(),
+        workspace_colour_palette_descriptor(),
+        workspace_colour_popover_descriptor(),
+        workspace_list_descriptor(),
+    ]
+}
