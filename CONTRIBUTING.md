@@ -81,6 +81,11 @@ fragments after downward-only tightening; a daily workflow opens or updates one
 maintenance PR for the user to merge. Size, context and other guards retain
 their absolute policies.
 
+The fold workflow requires the repository's Actions setting **Allow GitHub
+Actions to create and approve pull requests**. It reports a setup error when
+PR creation is denied; it never changes permissions or merges. The user also
+approves any waiting workflow runs before merging the bot PR.
+
 ## Commit style
 
 Conventional style, imperative mood, English: `feat: ...`, `fix: ...`, `docs: ...`, `test: ...`.
