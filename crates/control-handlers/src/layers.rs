@@ -9,7 +9,7 @@
 //! what the journal keeps are decided here.
 use quantick_control::{
     error::{ControlError, codes},
-    id::{ErrorCode, ModuleId, SnapshotScopeId},
+    id::{ErrorCode, ModuleId},
     registry::{ModuleDescriptor, RegistryError},
     wire::{ActorContext, WireU64},
 };
@@ -49,19 +49,8 @@ where
     D: ProjectionDock<H>,
     H: ChartPort + ChartStylePort + ?Sized + 'static,
 {
-    let module = ModuleId::new(MODULE_ID).expect("static module ID");
-    registry.register_module(
-        ModuleDescriptor {
-            id: module.clone(),
-            title: "Chart layers".to_owned(),
-            description: "Registered chart visibility and availability, including hidden panes."
-                .to_owned(),
-        },
-        snapshot::<H>,
-    )?;
-    registry.register_scope(SnapshotScopeId::new(SCOPE_ID).expect("static scope ID"), module, 1,
-        "Layer visibility", "Bounded registered layer discovery and requested/effective visibility per stable pane ID; grid belongs to each pane.",
-        &["observe", "observe.workspace", "observe.market"], project::<H>)
+    registry.register_module(module_descriptor(), snapshot::<H>)?;
+    scope_spec().register(registry, project::<H>)
 }
 
 /// Every pane's registered layers, tab by tab, hidden panes included. Past
@@ -156,3 +145,32 @@ fn set_visibility<H: ChartPort + ChartStylePort + ?Sized, A: JournalAccess>(
 #[cfg(test)]
 #[path = "layers_tests.rs"]
 mod tests;
+
+pub(crate) fn action_descriptors() -> Vec<quantick_control::registry::CapabilityDescriptor> {
+    vec![set_visibility_descriptor()]
+}
+
+pub(crate) fn module_descriptor() -> ModuleDescriptor {
+    ModuleDescriptor {
+        id: ModuleId::new(MODULE_ID).expect("static module ID is valid"),
+        title: "Chart layers".to_owned(),
+        description: "Registered chart visibility and availability, including hidden panes."
+            .to_owned(),
+    }
+}
+
+pub(crate) fn scope_spec() -> crate::dock::ScopeSpec<LayersSnapshot> {
+    crate::dock::ScopeSpec::new(
+        SCOPE_ID,
+        MODULE_ID,
+        1,
+        "Layer visibility",
+        "Bounded registered layer discovery and requested/effective visibility per stable pane ID; grid belongs to each pane.",
+        &["observe", "observe.workspace", "observe.market"],
+    )
+}
+
+pub(crate) fn scope_descriptors() -> Vec<quantick_control_host::catalogue::SnapshotScopeDescriptor>
+{
+    vec![scope_spec().descriptor()]
+}

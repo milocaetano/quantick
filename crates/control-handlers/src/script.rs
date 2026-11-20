@@ -114,3 +114,7 @@ fn journal<T: Serialize>(
 #[cfg(test)]
 #[path = "script_tests.rs"]
 mod tests;
+
+pub(crate) fn action_descriptors() -> Vec<quantick_control::registry::CapabilityDescriptor> {
+    vec![attach_descriptor(), detach_descriptor()]
+}

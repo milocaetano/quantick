@@ -1,11 +1,7 @@
 //! Pointer meaning and current UI selection projections.
 
 use crate::app::TabsPort;
-use quantick_control::{
-    id::{ModuleId, SnapshotScopeId},
-    registry::ModuleDescriptor,
-    wire::WireU64,
-};
+use quantick_control::wire::WireU64;
 
 pub(crate) use quantick_control_schema::interaction::{
     CursorSnapshot, DrawingHitSnapshot, DrawingSelectionSnapshot, PaperTradeSelectionSnapshot,
@@ -28,10 +24,6 @@ use super::{
     },
 };
 
-pub(crate) const CURSOR_SCOPE_ID: &str = "interaction.cursor";
-pub(crate) const SELECTION_SCOPE_ID: &str = "interaction.selection";
-const MODULE_ID: &str = "interaction";
-const SCHEMA_VERSION: u32 = 1;
 const AXIS_DECIMAL_PLACES: u32 = 10;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -41,45 +33,14 @@ struct InteractionRevision {
 }
 
 pub(crate) fn register(registry: &mut ProjectionRegistry) -> Result<(), ProjectionRegistryError> {
-    let module_id = ModuleId::new(MODULE_ID).expect("static module ID is valid");
     registry.register_module(
-        ModuleDescriptor {
-            id: module_id.clone(),
-            title: "Interaction".to_owned(),
-            description: "Semantic pointer resolution and current UI selections.".to_owned(),
-        },
+        quantick_control_handlers::generation::interaction::module_descriptor(),
         revision,
     )?;
-    registry.register_scope(
-        SnapshotScopeId::new(CURSOR_SCOPE_ID).expect("static scope ID is valid"),
-        module_id.clone(),
-        SCHEMA_VERSION,
-        "Semantic cursor",
-        "Resolves the last painted pointer position to pane, axis, bar, flow cell, and drawing meaning.",
-        &[
-            "observe",
-            "observe.attention",
-            "observe.market",
-            "observe.chart",
-            "observe.drawings",
-            "observe.orderflow",
-        ],
-        project_cursor,
-    )?;
-    registry.register_scope(
-        SnapshotScopeId::new(SELECTION_SCOPE_ID).expect("static scope ID is valid"),
-        module_id,
-        SCHEMA_VERSION,
-        "Current selection",
-        "Reports the selected drawing and paper-trade row, with unsupported selections stated explicitly.",
-        &[
-            "observe",
-            "observe.attention",
-            "observe.drawings",
-            "observe.paper",
-        ],
-        project_selection,
-    )
+    quantick_control_handlers::generation::interaction::cursor_spec()
+        .register(registry, project_cursor)?;
+    quantick_control_handlers::generation::interaction::selection_spec()
+        .register(registry, project_selection)
 }
 
 fn revision<P: TabsPort + ?Sized>(app: &P) -> InteractionRevision {

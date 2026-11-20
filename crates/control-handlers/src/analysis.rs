@@ -37,7 +37,7 @@ pub use quantick_control_schema::analysis::*;
 
 use quantick_chart::indicator_views::{IndicatorView, IndicatorViews};
 use quantick_control::{
-    id::{ModuleId, SnapshotScopeId},
+    id::ModuleId,
     limits::{CONTROL_SNAPSHOT_MAX_DRAWINGS_PER_PANE, CONTROL_SNAPSHOT_MAX_INDICATORS_PER_PANE},
     registry::ModuleDescriptor,
     wire::WireU64,
@@ -107,39 +107,9 @@ where
     D: ProjectionDock<H>,
     H: OpenTabs<Tab: AnalysisTab> + ?Sized + 'static,
 {
-    let module_id = ModuleId::new(MODULE_ID).expect("static module ID is valid");
-    registry.register_module(
-        ModuleDescriptor {
-            id: module_id.clone(),
-            title: "Analysis".to_owned(),
-            description: "Indicators and drawings the trader placed on the chart.".to_owned(),
-        },
-        revision::<H>,
-    )?;
-    registry.register_scope(
-        SnapshotScopeId::new(INDICATORS_SCOPE_ID).expect("static scope ID is valid"),
-        module_id.clone(),
-        SCHEMA_VERSION,
-        "Indicators",
-        "Reports each pane's indicators with their declared plots, effective inputs, latest readings and pending failures.",
-        // `observe.user_text` as well as `observe.indicators`: a script's
-        // title, its plot titles and its `script.<name>` kind are prose the
-        // trader wrote, and the contract declares that permission for exactly
-        // "user-authored labels, notes, and scripts". It sits outside the safe
-        // defaults, so this scope answers only once the trader grants it
-        // rather than leaking script prose to a default observer.
-        &["observe", "observe.indicators", "observe.user_text"],
-        project_indicators::<H>,
-    )?;
-    registry.register_scope(
-        SnapshotScopeId::new(DRAWINGS_SCOPE_ID).expect("static scope ID is valid"),
-        module_id,
-        SCHEMA_VERSION,
-        "Drawings",
-        "Reports each pane's drawings with tool, band, scope, lock and visibility state, and the author of anything the trader did not place by hand.",
-        &["observe", "observe.drawings"],
-        project_drawings::<H>,
-    )
+    registry.register_module(module_descriptor(), revision::<H>)?;
+    indicators_spec().register(registry, project_indicators::<H>)?;
+    drawings_spec().register(registry, project_drawings::<H>)
 }
 
 /// Every tab's rows, in screen order.
@@ -444,4 +414,45 @@ fn drawing_snapshot(drawings: &Drawings<DrawingTool>, index: usize) -> DrawingSn
             client_name: author.client_name.clone(),
         }),
     }
+}
+
+pub(crate) fn module_descriptor() -> ModuleDescriptor {
+    ModuleDescriptor {
+        id: ModuleId::new(MODULE_ID).expect("static module ID is valid"),
+        title: "Analysis".to_owned(),
+        description: "Indicators and drawings the trader placed on the chart.".to_owned(),
+    }
+}
+
+pub(crate) fn indicators_spec() -> crate::dock::ScopeSpec<IndicatorsSnapshot> {
+    crate::dock::ScopeSpec::new(
+        INDICATORS_SCOPE_ID,
+        MODULE_ID,
+        SCHEMA_VERSION,
+        "Indicators",
+        "Reports each pane's indicators with their declared plots, effective inputs, latest readings and pending failures.",
+        // `observe.user_text` as well as `observe.indicators`: a script's
+        // title, its plot titles and its `script.<name>` kind are prose the
+        // trader wrote, and the contract declares that permission for exactly
+        // "user-authored labels, notes, and scripts". It sits outside the safe
+        // defaults, so this scope answers only once the trader grants it
+        // rather than leaking script prose to a default observer.
+        &["observe", "observe.indicators", "observe.user_text"],
+    )
+}
+
+pub(crate) fn drawings_spec() -> crate::dock::ScopeSpec<DrawingsSnapshot> {
+    crate::dock::ScopeSpec::new(
+        DRAWINGS_SCOPE_ID,
+        MODULE_ID,
+        SCHEMA_VERSION,
+        "Drawings",
+        "Reports each pane's drawings with tool, band, scope, lock and visibility state, and the author of anything the trader did not place by hand.",
+        &["observe", "observe.drawings"],
+    )
+}
+
+pub(crate) fn scope_descriptors() -> Vec<quantick_control_host::catalogue::SnapshotScopeDescriptor>
+{
+    vec![indicators_spec().descriptor(), drawings_spec().descriptor()]
 }

@@ -73,11 +73,8 @@ fn emit(rendered: Result<String, String>) {
 
 /// Offline dump paths, served before anything opens a window.
 ///
-/// The generated indexes under `docs/` and `.claude/skills/` are produced from
-/// here rather than from a separate tool, because the registries they describe
-/// are private to this binary — `crates/app` has no library target, so no
-/// `examples/` binary and no sibling crate can reach them the way
-/// `crates/control/examples/export_schemas.rs` reaches the wire schemas.
+/// Control dumps delegate to the headless generator; the UI matrix delegates
+/// to operability. Only hook discovery needs the app's feature-gated owners.
 ///
 /// Returns whether the argument named a dump, so `main` can exit before
 /// touching a config file or a display.

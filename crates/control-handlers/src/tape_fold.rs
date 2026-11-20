@@ -48,3 +48,9 @@ fn invalid(error: impl std::fmt::Display) -> ControlError {
 #[cfg(test)]
 #[path = "tape_fold_tests.rs"]
 mod tape_fold_tests;
+
+pub(crate) fn action_descriptors() -> Vec<quantick_control::registry::CapabilityDescriptor> {
+    let mut descriptors = vec![descriptor()];
+    descriptors.extend(crate::tape_market_fold::action_descriptors());
+    descriptors
+}

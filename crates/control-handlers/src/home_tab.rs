@@ -102,3 +102,7 @@ fn leave<H: HomeTabHost + ?Sized, A>(
 #[cfg(test)]
 #[path = "home_tab_tests.rs"]
 mod tests;
+
+pub(crate) fn action_descriptors() -> Vec<quantick_control::registry::CapabilityDescriptor> {
+    vec![descriptor(), leave_descriptor()]
+}

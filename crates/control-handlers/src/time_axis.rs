@@ -51,3 +51,7 @@ fn reset_time<H: AddressedPanePort<Pane: AxisPane> + ?Sized, A>(
 #[cfg(test)]
 #[path = "time_axis_tests.rs"]
 mod tests;
+
+pub(crate) fn action_descriptors() -> Vec<quantick_control::registry::CapabilityDescriptor> {
+    vec![quantick_control_schema::time_axis::descriptor()]
+}

@@ -48,3 +48,7 @@ fn set<H: IndicatorControlHost + ?Sized, A: JournalAccess>(
 #[cfg(test)]
 #[path = "indicator_guide_tests.rs"]
 mod tests;
+
+pub(crate) fn action_descriptors() -> Vec<quantick_control::registry::CapabilityDescriptor> {
+    vec![descriptor()]
+}

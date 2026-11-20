@@ -19,27 +19,15 @@ pub trait AlertDefinitionsPort {
     fn alert_runtime(&mut self) -> &mut quantick_stores::alerts::AlertRuntime;
 }
 
+macro_rules! alert_actions { ($consumer:ident) => { $consumer! { OPEN => open, LIST => list, READ => read, VALIDATE => validate, CREATE => create, EDIT => edit, PAUSE => pause, RESUME => resume, REARM => rearm, DELETE => delete, HISTORY => history, CLEAR_HISTORY => clear_history, TARGET_RESOLVE => resolve,  } }; }
+
 pub fn register<H: AlertDefinitionsPort + ?Sized, A: crate::JournalAccess>(
     registry: &mut impl crate::dock::ActionDock<H, A>,
 ) -> Result<(), quantick_control::registry::RegistryError> {
     macro_rules! action {
-        ($id:ident, $handler:ident) => {
-            registry.register_outside_replay(schema::descriptor(schema::$id), $handler::<H, A>)?;
-        };
+        ($( $id:ident => $handler:ident, )*) => { $( registry.register_outside_replay(schema::descriptor(schema::$id), $handler::<H, A>)?; )* };
     }
-    action!(OPEN, open);
-    action!(LIST, list);
-    action!(READ, read);
-    action!(VALIDATE, validate);
-    action!(CREATE, create);
-    action!(EDIT, edit);
-    action!(PAUSE, pause);
-    action!(RESUME, resume);
-    action!(REARM, rearm);
-    action!(DELETE, delete);
-    action!(HISTORY, history);
-    action!(CLEAR_HISTORY, clear_history);
-    action!(TARGET_RESOLVE, resolve);
+    alert_actions!(action);
     Ok(())
 }
 fn open<H: AlertDefinitionsPort + ?Sized, A>(
@@ -356,4 +344,9 @@ fn record(
         json!({"operation":operation,"request_id":actor.request_id,"receipt":receipt}),
     ));
     receipt
+}
+
+pub(crate) fn action_descriptors() -> Vec<quantick_control::registry::CapabilityDescriptor> {
+    macro_rules! descriptors { ($( $id:ident => $handler:ident, )*) => { vec![$(schema::descriptor(schema::$id)),*] }; }
+    alert_actions!(descriptors)
 }

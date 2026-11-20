@@ -262,3 +262,7 @@ fn answer(result: ContractRollResult) -> Result<Value, ControlError> {
 
 #[cfg(test)]
 mod tests;
+
+pub(crate) fn action_descriptors() -> Vec<quantick_control::registry::CapabilityDescriptor> {
+    vec![quantick_control_schema::contract_roll::descriptor()]
+}

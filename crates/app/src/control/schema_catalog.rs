@@ -1,20 +1,13 @@
 //! Generated observer contracts committed under `schemas/control`.
 
-use quantick_control::schema::generated_schema;
 use quantick_control_handlers::schema_documents::SchemaDocument;
 use serde_json::{Value, json};
 
 use super::contract::ObserverContract;
-use quantick_control_schema::chart::ChartWindowInput;
 
-/// The documents below the app, and the one whose type only the app owns.
+/// The shared documents, compared to this application's live registry below.
 pub(crate) fn documents() -> Vec<SchemaDocument> {
-    let mut documents = quantick_control_handlers::schema_documents::documents();
-    documents.push(SchemaDocument {
-        file_name: "observer-chart-window-input-v1.schema.json",
-        schema: generated_schema::<ChartWindowInput>(),
-    });
-    documents
+    quantick_control_handlers::generation::documents()
 }
 
 pub(crate) fn capability_catalog() -> Value {

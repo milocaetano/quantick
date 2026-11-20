@@ -164,3 +164,7 @@ pub fn recording_error(error: DealRecordingError) -> ControlError {
 #[cfg(test)]
 #[path = "deal_recording_tests.rs"]
 mod deal_recording_tests;
+
+pub(crate) fn action_descriptors() -> Vec<quantick_control::registry::CapabilityDescriptor> {
+    vec![descriptor()]
+}

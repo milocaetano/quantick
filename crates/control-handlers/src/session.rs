@@ -12,7 +12,7 @@
 pub use quantick_control_schema::session::*;
 
 use quantick_control::{
-    id::{ModuleId, SnapshotScopeId},
+    id::ModuleId,
     limits::{CONTROL_SNAPSHOT_MAX_CLOSED_TRADES, CONTROL_SNAPSHOT_MAX_WORKING_ORDERS},
     registry::ModuleDescriptor,
     wire::WireU64,
@@ -66,33 +66,9 @@ where
     D: ProjectionDock<H>,
     H: OpenTabs<Tab: SessionTab> + ?Sized + 'static,
 {
-    let module_id = ModuleId::new(MODULE_ID).expect("static module ID is valid");
-    registry.register_module(
-        ModuleDescriptor {
-            id: module_id.clone(),
-            title: "Session".to_owned(),
-            description: "Recorded-session playback and the paper-trading ledger.".to_owned(),
-        },
-        revision::<H>,
-    )?;
-    registry.register_scope(
-        SnapshotScopeId::new(REPLAY_SCOPE_ID).expect("static scope ID is valid"),
-        module_id.clone(),
-        SCHEMA_VERSION,
-        "Replay state",
-        "Reports which recording each tab is playing, where the playhead is, and whether a control trace sits beside it.",
-        &["observe", "observe.replay"],
-        project_replay::<H>,
-    )?;
-    registry.register_scope(
-        SnapshotScopeId::new(PAPER_SCOPE_ID).expect("static scope ID is valid"),
-        module_id,
-        SCHEMA_VERSION,
-        "Paper trading",
-        "Reports the simulated position, the working orders and the closed-trade ledger, with its provenance declared.",
-        &["observe", "observe.paper"],
-        project_paper::<H>,
-    )
+    registry.register_module(module_descriptor(), revision::<H>)?;
+    replay_spec().register(registry, project_replay::<H>)?;
+    paper_spec().register(registry, project_paper::<H>)
 }
 
 /// Every tab's rows, in screen order.
@@ -326,3 +302,38 @@ fn position_snapshot(summary: PositionSummary) -> PaperPositionSnapshot {
 #[cfg(test)]
 #[path = "session_tests.rs"]
 mod session_tests;
+
+pub(crate) fn module_descriptor() -> ModuleDescriptor {
+    ModuleDescriptor {
+        id: ModuleId::new(MODULE_ID).expect("static module ID is valid"),
+        title: "Session".to_owned(),
+        description: "Recorded-session playback and the paper-trading ledger.".to_owned(),
+    }
+}
+
+pub(crate) fn replay_spec() -> crate::dock::ScopeSpec<ReplaySnapshot> {
+    crate::dock::ScopeSpec::new(
+        REPLAY_SCOPE_ID,
+        MODULE_ID,
+        SCHEMA_VERSION,
+        "Replay state",
+        "Reports which recording each tab is playing, where the playhead is, and whether a control trace sits beside it.",
+        &["observe", "observe.replay"],
+    )
+}
+
+pub(crate) fn paper_spec() -> crate::dock::ScopeSpec<PaperSnapshot> {
+    crate::dock::ScopeSpec::new(
+        PAPER_SCOPE_ID,
+        MODULE_ID,
+        SCHEMA_VERSION,
+        "Paper trading",
+        "Reports the simulated position, the working orders and the closed-trade ledger, with its provenance declared.",
+        &["observe", "observe.paper"],
+    )
+}
+
+pub(crate) fn scope_descriptors() -> Vec<quantick_control_host::catalogue::SnapshotScopeDescriptor>
+{
+    vec![replay_spec().descriptor(), paper_spec().descriptor()]
+}
