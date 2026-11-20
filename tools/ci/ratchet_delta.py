@@ -62,6 +62,10 @@ def coverage(repo, base):
 
 
 def compare_measurements(old, new, signed):
+    required = {key for key in old if key.startswith("ratchet.") and key.endswith(".measured")}
+    missing = required - new.keys()
+    if missing:
+        raise ValueError(f"missing required ratchet measurements: {sorted(missing)}")
     differences = {key: new.get(key, 0) - old.get(key, 0)
                    for key in old.keys() | new.keys()
                    if old.get(key) != new.get(key)}
@@ -84,7 +88,7 @@ def base_checkout(repo, reference):
     base = repo / "target/ratchet-delta" / sha / "base"
     if base.exists():
         actual = run(["git", "rev-parse", "HEAD"], base).strip()
-        dirty = run(["git", "status", "--porcelain", "--untracked-files=all"], base)
+        dirty = run(["git", "status", "--porcelain", "--untracked-files=all", "--ignored"], base)
         if actual != sha or dirty:
             raise ValueError(f"cached base checkout is not pristine: {base}")
     else:

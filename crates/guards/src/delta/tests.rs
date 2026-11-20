@@ -112,3 +112,16 @@ fn fold_never_authorizes_new_growth() {
     .unwrap();
     assert!(check(head.path(), base.path(), guard()).is_empty());
 }
+
+#[test]
+fn zero_net_and_coverage_only_fragments_can_be_folded() {
+    for content in [
+        "crates/app +1\ncrates/app -1\n!budget +1\n!budget -1\n",
+        "!measure-change ratchet.app-lines.measured +1\n",
+    ] {
+        let base = tree(500);
+        let head = tree(500);
+        fragment(base.path(), "old.txt", content);
+        assert!(check(head.path(), base.path(), guard()).is_empty());
+    }
+}

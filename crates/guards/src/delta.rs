@@ -133,7 +133,14 @@ fn validate_fragments(
     let baseline_changed = read(root, policy.baseline_file)? != read(base, policy.baseline_file)?;
     // A fold consumes all fragments into one baseline, preserving or lowering
     // every effective ceiling. It cannot authorize any growth.
-    let fold = baseline_changed
+    let unchanged_fold = !before.raise_files.is_empty()
+        && old_budget == new_budget
+        && before.entries.len() == after.entries.len()
+        && after
+            .entries
+            .iter()
+            .all(|entry| entry.ceiling as i128 == ceiling(before, &entry.path));
+    let fold = (baseline_changed || unchanged_fold)
         && after.raise_files.is_empty()
         && new_budget <= old_budget
         && after

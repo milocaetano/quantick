@@ -10,6 +10,11 @@ import ratchet_delta as delta
 
 
 class MeasurementTests(unittest.TestCase):
+    def test_signed_coverage_cannot_delete_a_required_measurement(self):
+        row = "ratchet.app-lines.measured"
+        with self.assertRaisesRegex(ValueError, "missing required"):
+            delta.compare_measurements({row: 20}, {}, {row: -20})
+
     def test_changed_measurement_requires_exact_signed_coverage(self):
         before = {"ratchet.app-lines.measured": 20}
         after = {"ratchet.app-lines.measured": 21}
@@ -23,6 +28,21 @@ class MeasurementTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 delta.measurements(text)
         self.assertEqual(delta.measurements("x.measured\t3\nx.budget\t4"), {"x.measured": 3})
+
+    def test_cached_base_rejects_ignored_source_that_would_inflate_measurements(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Path(directory)
+            delta.run(["git", "init", "-q"], repo)
+            (repo / ".gitignore").write_text("__pycache__/\ntarget/\n", encoding="utf-8")
+            delta.run(["git", "add", ".gitignore"], repo)
+            delta.run(["git", "-c", "user.name=fixture", "-c", "user.email=fixture@example.test",
+                       "commit", "-qm", "fixture"], repo)
+            _, base = delta.base_checkout(repo, "HEAD")
+            source = base / "crates/app/src/__pycache__/inflated.rs"
+            source.parent.mkdir(parents=True)
+            source.write_text("fn inflated() {}\n" * 1000, encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "not pristine"):
+                delta.base_checkout(repo, "HEAD")
 
     def test_stale_coverage_cannot_be_reused(self):
         with tempfile.TemporaryDirectory() as directory:
