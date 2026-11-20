@@ -83,15 +83,6 @@ impl StrategyDeskHost for Window {
     }
 }
 
-/// A library folder of this test's own, gone when it ends.
-struct Scratch(std::path::PathBuf);
-
-impl Drop for Scratch {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
-
 fn arm_steady(window: &mut Window, pane_id: u64) {
     let request = ScriptArm {
         pane_id,
@@ -118,10 +109,9 @@ fn script(id: &str) -> Value {
 
 #[test]
 fn every_desk_action_has_a_call() {
-    let scratch =
-        Scratch(std::env::temp_dir().join(format!("quantick-desk-{}", std::process::id())));
+    let scratch = crate::scratch::ScratchDir::new("strategy-desk");
     let mut window = Window {
-        library: scratch.0.display().to_string(),
+        library: scratch.path().display().to_string(),
         strategies: TabStrategies::default(),
         panes: vec![
             Pane::new(FLOW, BarSpec::Tick(4)),
@@ -181,7 +171,7 @@ fn every_desk_action_has_a_call() {
     let save = json!({"instance": script("1"), "name": "steady_copy.pine"});
     let saved = call(save_as::<Window, FakeAccess>, window, access, save.clone());
     assert_eq!(saved["saved_as"], "steady_copy.pine");
-    let written = std::fs::read_to_string(scratch.0.join("steady_copy.pine"));
+    let written = std::fs::read_to_string(scratch.path().join("steady_copy.pine"));
     assert_eq!(written.ok().as_deref(), Some(STEADY));
     let refused = save_as::<Window, FakeAccess>(window, access, &FakeWindow::assistant(), &save);
     assert!(refused.is_err(), "the name is taken");

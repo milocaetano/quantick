@@ -29,7 +29,7 @@ use quantick_strategy::sound::Cue;
 use quantick_strategy::{ArmedState, ArmedStrategy, DisarmReason, ForceTrigger, Region};
 use rust_decimal::Decimal;
 
-use crate::strategy_desk::{DeskBook, InstanceRef};
+use crate::strategy_desk_book::{DeskBook, InstanceRef};
 
 /// A bar one print closed on one pane, at the composed slot it closed at:
 /// what the pane's strategies are queued.
@@ -338,6 +338,22 @@ impl<D> Default for TabStrategies<D> {
 }
 
 impl<D: Copy + PartialEq> TabStrategies<D> {
+    /// Give every drawn instance armed since the last call its desk number,
+    /// from the sequence script ids come from: panes in id order, each in
+    /// arming order.
+    pub(crate) fn number_instances(&mut self) {
+        let mut next = self.next_script_id;
+        for (_, pane) in self.panes_mut() {
+            for instance in &mut pane.anchors.instances {
+                if instance.armed.desk_id().is_none() {
+                    instance.armed.set_desk_id(next);
+                    next += 1;
+                }
+            }
+        }
+        self.next_script_id = next;
+    }
+
     /// Every pane that has held a strategy, in id order.
     pub(crate) fn panes(&self) -> impl Iterator<Item = (u64, &PaneStrategies<D>)> {
         self.panes.iter().map(|(&id, pane)| (id, pane))
