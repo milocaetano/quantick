@@ -14,6 +14,15 @@ fn sources_call_normalizes_unions_and_rejects_invalid_input_without_success_even
         dir: scratch.path().to_owned(),
     };
     let mut access = FakeAccess::with_budget(0);
+    let inspected = open(
+        &mut host,
+        &mut access,
+        &FakeWindow::assistant(),
+        &json!({"action":"sources"}),
+    )
+    .unwrap();
+    assert_eq!(inspected["open"], false);
+    assert!(access.events.is_empty());
     for (sources, expected) in [
         (json!(["broker", "real"]), json!(["broker", "real"])),
         (

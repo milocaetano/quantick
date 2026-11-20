@@ -28225,7 +28225,7 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Open the same performance report as the Trades session context menu. action=session selects only that session; action=day requires YYYY-MM-DD in the display timezone and selects every instrument and session of that origin on the clicked day. The session must hold a trade on that day. action=ordinary restores the ordinary Sim live report for the chart symbol over all time; pass no session or day. Session keys are <symbol>/<file>.csv for the simulator and broker/<symbol>/<file>.csv for real-trades, independent of custom names. Replaces prior symbol, period, source and session filters. Returns the opened scope, trade count, net points and counts of unreadable files and skipped rows in the scanned history; events.read reconciles a lost response through session.report.opened. Refusals: invalid_session, session_not_found, session_unreadable, day_not_in_session, no_ledger. Never places orders or writes history.",
+      "description": "Open the same performance report as the Trades session context menu. action=session selects only that session; action=day requires YYYY-MM-DD in the display timezone and selects every instrument and session of that origin on the clicked day. The session must hold a trade on that day. action=ordinary restores the ordinary Sim live report for the chart symbol over all time; pass no session or day. action=sources with sources sets their union, exits session/day context scope and preserves visible symbol/date filters: broker, real (Sim live including legacy), replay, simulator (real + replay), both (all). An empty array selects none. Omitting sources reads the current report without opening it or emitting session.report.opened. Returns normalized sources, window, context, open/loaded status, trade count and net points. Retries set the same selection, never toggle. Session keys are <symbol>/<file>.csv for the simulator and broker/<symbol>/<file>.csv for real-trades, independent of custom names. Session, day and ordinary actions replace prior symbol, period, source and session filters. Returns the opened scope, trade count, net points and counts of unreadable files and skipped rows in the scanned history; events.read reconciles a lost open response through session.report.opened. Refusals: invalid_session, session_not_found, session_unreadable, day_not_in_session, no_ledger. Never places orders or writes history.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "cockpit",
@@ -28237,6 +28237,38 @@
       "id": "session.report.open",
       "idempotency": "optional",
       "input_schema": {
+        "$defs": {
+          "JournalSourceFilter": {
+            "description": "The ledger's source pills.",
+            "oneOf": [
+              {
+                "const": "broker",
+                "description": "Trades sent to a broker, including DEMO and REAL accounts.",
+                "type": "string"
+              },
+              {
+                "const": "simulator",
+                "description": "All simulator trades, on live and replay feeds.",
+                "type": "string"
+              },
+              {
+                "const": "real",
+                "description": "Live sessions, and files from before a source was recorded.",
+                "type": "string"
+              },
+              {
+                "const": "replay",
+                "description": "Replay-driven practice sessions.",
+                "type": "string"
+              },
+              {
+                "const": "both",
+                "description": "Everything.",
+                "type": "string"
+              }
+            ]
+          }
+        },
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "oneOf": [
           {
@@ -28245,6 +28277,31 @@
               "action": {
                 "const": "ordinary",
                 "type": "string"
+              }
+            },
+            "required": [
+              "action"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Set the union of sources, or omit sources to inspect the current report.",
+            "properties": {
+              "action": {
+                "const": "sources",
+                "type": "string"
+              },
+              "sources": {
+                "default": null,
+                "items": {
+                  "$ref": "#/$defs/JournalSourceFilter"
+                },
+                "maxItems": 5,
+                "type": [
+                  "array",
+                  "null"
+                ]
               }
             },
             "required": [
@@ -28303,6 +28360,36 @@
           "CanonicalDecimal": {
             "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
             "type": "string"
+          },
+          "JournalSourceFilter": {
+            "description": "The ledger's source pills.",
+            "oneOf": [
+              {
+                "const": "broker",
+                "description": "Trades sent to a broker, including DEMO and REAL accounts.",
+                "type": "string"
+              },
+              {
+                "const": "simulator",
+                "description": "All simulator trades, on live and replay feeds.",
+                "type": "string"
+              },
+              {
+                "const": "real",
+                "description": "Live sessions, and files from before a source was recorded.",
+                "type": "string"
+              },
+              {
+                "const": "replay",
+                "description": "Replay-driven practice sessions.",
+                "type": "string"
+              },
+              {
+                "const": "both",
+                "description": "Everything.",
+                "type": "string"
+              }
+            ]
           },
           "ReportResult": {
             "properties": {
@@ -28381,6 +28468,64 @@
               "title"
             ],
             "type": "object"
+          },
+          {
+            "properties": {
+              "action": {
+                "type": "string"
+              },
+              "loaded": {
+                "type": "boolean"
+              },
+              "net_points": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "open": {
+                "type": "boolean"
+              },
+              "scope": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "skipped_rows": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "sources": {
+                "items": {
+                  "$ref": "#/$defs/JournalSourceFilter"
+                },
+                "type": "array"
+              },
+              "symbol": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "trade_count": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "unreadable_files": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "window": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "action",
+              "sources",
+              "open",
+              "loaded",
+              "window",
+              "trade_count",
+              "unreadable_files",
+              "skipped_rows",
+              "net_points"
+            ],
+            "type": "object"
           }
         ],
         "title": "ReportOutput"
@@ -28396,7 +28541,7 @@
       "risk_flags": [],
       "risk_reducing": false,
       "stale_input_safety": "Repeating a request opens the same scope from current history; deleted sessions are refused before changing the report.",
-      "title": "Open a session or day report",
+      "title": "Open or filter a performance report",
       "version": 1
     },
     {

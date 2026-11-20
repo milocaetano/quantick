@@ -46,6 +46,7 @@ fn open<H: PaperHost + ?Sized, A: NotifyAccess>(
         error.context.details = Some(json!({"code": "no_ledger"}));
         error
     })?;
+    let inspect_only = matches!(input, ReportInput::Sources { sources: None });
     let output = match input {
         ReportInput::Sources { sources } => {
             if sources.as_ref().is_some_and(|sources| sources.len() > 5) {
@@ -102,12 +103,14 @@ fn open<H: PaperHost + ?Sized, A: NotifyAccess>(
     };
     let result = serde_json::to_value(output)
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
-    access.record_event(NewEvent::by(
-        quantick_control_schema::session::MODULE_ID,
-        EVENT_KIND,
-        actor,
-        json!({"report": result}),
-    ));
+    if !inspect_only {
+        access.record_event(NewEvent::by(
+            quantick_control_schema::session::MODULE_ID,
+            EVENT_KIND,
+            actor,
+            json!({"report": result}),
+        ));
+    }
     Ok(result)
 }
 
