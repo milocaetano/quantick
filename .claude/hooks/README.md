@@ -126,10 +126,10 @@ denial is reported to the coordinator, never routed around.
 
 ## Full CI at the exact head
 
-One full CI run is nine jobs in `.github/workflows/ci.yml`: `ci`,
+One full CI run is ten jobs in `.github/workflows/ci.yml`: `guards` first, then `ci`,
 `linux-tests`, `harness-app`, `harness-combined` and `harness-scenario` on
 Linux, `windows`, `windows-tests`, `windows-heavy-tests` and
-`windows-app-tests` on Windows. They run in parallel. An agent iterating on a
+`windows-app-tests` on Windows. Those nine jobs run in parallel. An agent iterating on a
 draft still needs a signal sooner than the full verdict, and readiness needs
 the full verdict anyway, so the two are separated rather than one being traded
 for the other.
@@ -168,10 +168,10 @@ counts as coverage without counting as a share. It runs in `ci`.
 
 | Event | Runs |
 | --- | --- |
-| Push to a draft PR | `fast` only |
-| Push to a draft labelled `full-ci`, or adding that label | `fast` (push only) plus the nine full jobs |
-| Draft flipped to ready | the nine full jobs, always |
-| Push to a ready PR, push to `main` | the nine full jobs |
+| Push to a draft PR | `guards` then `fast` |
+| Push to a draft labelled `full-ci`, or adding that label | `fast` (push only) plus the ten full jobs, starting with `guards` |
+| Draft flipped to ready | the ten full jobs, always |
+| Push to a ready PR, push to `main` | the ten full jobs |
 
 `fast` runs `cargo fmt --all -- --check`, then `cargo clippy --all-targets`
 and `cargo test` over the crates `tools/ci/affected_crates.py` selects: the
