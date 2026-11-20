@@ -36,6 +36,31 @@ fn cargo_target(profile: &Path) -> (&Path, Option<&OsStr>) {
     (directory, None)
 }
 
+fn app_links_quote() -> bool {
+    let tree = Command::new(env!("CARGO"))
+        .args([
+            "tree",
+            "--locked",
+            "-p",
+            "quantick-app",
+            "--edges",
+            "normal,no-proc-macro",
+            "--invert",
+            "quote",
+            "--depth",
+            "0",
+        ])
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .output()
+        .expect("inspect the app's runtime dependencies");
+    assert!(
+        tree.status.success(),
+        "Cargo could not inspect app dependencies: {}",
+        String::from_utf8_lossy(&tree.stderr)
+    );
+    !tree.stdout.is_empty()
+}
+
 #[test]
 fn cargo_target_preserves_the_test_output_layout() {
     let root = crate::scratch::ScratchDir::new("mcp-cargo-layout");
@@ -62,6 +87,11 @@ fn executable() -> &'static Path {
         build.arg("build");
         if let Some(triple) = platform {
             build.arg("--target").arg(triple);
+        } else if app_links_quote() {
+            // In native builds Cargo shares host and runtime units. Linux
+            // links quote through zvariant_utils; keep its runtime profile
+            // so serde's derive graph reuses the units the app just built.
+            build.args(["-p", "quote", "--lib"]);
         }
         // Selecting both packages unifies shared dependency features with the
         // app build. Only the real MCP binary is requested from Cargo.
