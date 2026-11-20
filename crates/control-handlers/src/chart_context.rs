@@ -161,3 +161,7 @@ fn strategies(armed: &[ArmedReading<DrawingId>], marks: &Drawings<DrawingTool>) 
 #[cfg(test)]
 #[path = "chart_context_tests.rs"]
 mod tests;
+
+pub(crate) fn action_descriptors() -> Vec<quantick_control::registry::CapabilityDescriptor> {
+    vec![wire::descriptor()]
+}

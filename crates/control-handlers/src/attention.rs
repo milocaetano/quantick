@@ -274,3 +274,7 @@ where
 #[cfg(test)]
 #[path = "attention_tests.rs"]
 mod attention_tests;
+
+pub(crate) fn action_descriptors() -> Vec<quantick_control::registry::CapabilityDescriptor> {
+    vec![mark_descriptor()]
+}

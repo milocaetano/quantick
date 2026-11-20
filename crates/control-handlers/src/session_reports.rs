@@ -149,3 +149,7 @@ fn scoped(
 #[cfg(test)]
 #[path = "session_reports_tests.rs"]
 mod tests;
+
+pub(crate) fn action_descriptors() -> Vec<quantick_control::registry::CapabilityDescriptor> {
+    vec![descriptor()]
+}

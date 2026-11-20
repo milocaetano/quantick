@@ -39,3 +39,7 @@ fn invalid(error: impl std::fmt::Display) -> ControlError {
 #[cfg(test)]
 #[path = "bubble_save_tests.rs"]
 mod tests;
+
+pub(crate) fn action_descriptors() -> Vec<quantick_control::registry::CapabilityDescriptor> {
+    vec![descriptor()]
+}

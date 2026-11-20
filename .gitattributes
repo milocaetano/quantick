@@ -2,3 +2,12 @@
 # byte-identical determinism checks must compare equal whether checked out on
 # Windows (dev) or Linux (CI); CRLF drift would break them silently.
 * text=auto eol=lf
+
+# Current generated contracts and indexes. Authored vectors and released
+# compatibility snapshots stay ordinary files and are never regenerated.
+/schemas/control/*.json linguist-generated merge=binary
+/schemas/control/canonical-json-v1-vectors.json -linguist-generated !merge
+/docs/control-plane/capability-inventory.md linguist-generated merge=binary
+/docs/control-plane/retry-matrix.md linguist-generated merge=binary
+/docs/control-plane/ui-behaviour-matrix.md linguist-generated merge=binary
+/.claude/skills/ui-harness/references/hook-registry.md linguist-generated merge=binary

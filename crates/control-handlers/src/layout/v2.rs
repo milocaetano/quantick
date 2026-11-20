@@ -209,3 +209,18 @@ fn resize<H: LayoutHost + ?Sized, A>(
     v1_input["fraction"] = Value::from(share);
     exact(super::resize(app, access, actor, &v1_input)?)
 }
+
+pub(super) fn action_descriptors() -> Vec<CapabilityDescriptor> {
+    vec![
+        descriptor(apply_preset_descriptor()),
+        descriptor(move_pane_descriptor()),
+        descriptor(resize_descriptor()),
+        descriptor(collapse_descriptor()),
+        descriptor(expand_descriptor()),
+        descriptor(flow_collapse_descriptor()),
+        descriptor(flow_expand_descriptor()),
+        descriptor(focus_descriptor()),
+        descriptor(interval_descriptor()),
+        descriptor(bar_spec_descriptor()),
+    ]
+}

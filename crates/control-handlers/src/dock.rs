@@ -137,3 +137,71 @@ impl<H: ?Sized + 'static> ProjectionDock<H> for ProjectionRegistry<H> {
         )
     }
 }
+
+/// A scope's metadata remains tied to the DTO returned by its live projector.
+/// The generator reads the same spec without constructing a host or projector.
+pub struct ScopeSpec<T> {
+    scope_id: &'static str,
+    module_id: &'static str,
+    schema_version: u32,
+    title: &'static str,
+    description: &'static str,
+    permissions: &'static [&'static str],
+    payload: std::marker::PhantomData<fn() -> T>,
+}
+
+impl<T: JsonSchema + Serialize + Send + 'static> ScopeSpec<T> {
+    pub(crate) fn new(
+        scope_id: &'static str,
+        module_id: &'static str,
+        schema_version: u32,
+        title: &'static str,
+        description: &'static str,
+        permissions: &'static [&'static str],
+    ) -> Self {
+        Self {
+            scope_id,
+            module_id,
+            schema_version,
+            title,
+            description,
+            permissions,
+            payload: std::marker::PhantomData,
+        }
+    }
+
+    pub(crate) fn descriptor(&self) -> quantick_control_host::catalogue::SnapshotScopeDescriptor {
+        quantick_control_host::catalogue::SnapshotScopeDescriptor {
+            id: SnapshotScopeId::new(self.scope_id).expect("static scope ID is valid"),
+            module_id: ModuleId::new(self.module_id).expect("static module ID is valid"),
+            schema_version: self.schema_version,
+            title: self.title.into(),
+            description: self.description.into(),
+            required_permissions: self
+                .permissions
+                .iter()
+                .map(|id| {
+                    quantick_control::id::PermissionId::new(*id)
+                        .expect("static permission ID is valid")
+                })
+                .collect(),
+            schema: quantick_control::schema::generated_schema::<T>(),
+        }
+    }
+
+    pub fn register<H: ?Sized>(
+        self,
+        registry: &mut impl ProjectionDock<H>,
+        project: fn(&H, CaptureContext) -> T,
+    ) -> Result<(), ProjectionRegistryError> {
+        registry.register_scope(
+            SnapshotScopeId::new(self.scope_id).expect("static scope ID is valid"),
+            ModuleId::new(self.module_id).expect("static module ID is valid"),
+            self.schema_version,
+            self.title,
+            self.description,
+            self.permissions,
+            project,
+        )
+    }
+}

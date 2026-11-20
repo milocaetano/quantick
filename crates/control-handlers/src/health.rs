@@ -12,11 +12,7 @@ use quantick_chart::{
     indicator_views::IndicatorViews,
     loading::{LoadingTask, LoadingTracker},
 };
-use quantick_control::{
-    id::{ModuleId, SnapshotScopeId},
-    registry::ModuleDescriptor,
-    wire::WireU64,
-};
+use quantick_control::{id::ModuleId, registry::ModuleDescriptor, wire::WireU64};
 use quantick_control_host::{
     projection::{CaptureContext, ProjectionRegistryError},
     wire::{PaneSideDto, wire_usize},
@@ -96,29 +92,8 @@ where
     D: ProjectionDock<H>,
     H: HealthScopePort + ?Sized + 'static,
 {
-    let module_id = ModuleId::new(MODULE_ID).expect("static module ID is valid");
-    registry.register_module(
-        ModuleDescriptor {
-            id: module_id.clone(),
-            title: "Health".to_owned(),
-            description: "Frame cost and subsystem readiness observations.".to_owned(),
-        },
-        revision::<H>,
-    )?;
-    registry.register_scope(
-        SnapshotScopeId::new(SCOPE_ID).expect("static scope ID is valid"),
-        module_id,
-        SCHEMA_VERSION,
-        "Health summary",
-        "Reports frame timing, active work, indicator failures, and the last published order-flow health.",
-        &[
-            "observe",
-            "observe.health",
-            "observe.indicators",
-            "observe.orderflow",
-        ],
-        project::<H>,
-    )
+    registry.register_module(module_descriptor(), revision::<H>)?;
+    scope_spec().register(registry, project::<H>)
 }
 
 fn revision<H: HealthScopePort + ?Sized>(host: &H) -> Vec<TabHealthRevisionKey> {
@@ -242,3 +217,32 @@ fn pane_health(pane: &PaneHealthRead<'_>) -> PaneHealthSnapshot {
 #[cfg(test)]
 #[path = "health_tests.rs"]
 mod tests;
+
+pub(crate) fn module_descriptor() -> ModuleDescriptor {
+    ModuleDescriptor {
+        id: ModuleId::new(MODULE_ID).expect("static module ID is valid"),
+        title: "Health".to_owned(),
+        description: "Frame cost and subsystem readiness observations.".to_owned(),
+    }
+}
+
+pub(crate) fn scope_spec() -> crate::dock::ScopeSpec<HealthSnapshot> {
+    crate::dock::ScopeSpec::new(
+        SCOPE_ID,
+        MODULE_ID,
+        SCHEMA_VERSION,
+        "Health summary",
+        "Reports frame timing, active work, indicator failures, and the last published order-flow health.",
+        &[
+            "observe",
+            "observe.health",
+            "observe.indicators",
+            "observe.orderflow",
+        ],
+    )
+}
+
+pub(crate) fn scope_descriptors() -> Vec<quantick_control_host::catalogue::SnapshotScopeDescriptor>
+{
+    vec![scope_spec().descriptor()]
+}

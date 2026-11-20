@@ -309,3 +309,11 @@ fn remove_call<H: MarketPaletteOwners + ?Sized, A>(
 #[cfg(test)]
 #[path = "market_palette_tests.rs"]
 mod market_palette_tests;
+
+pub(crate) fn action_descriptors() -> Vec<quantick_control::registry::CapabilityDescriptor> {
+    vec![
+        market_open_descriptor(),
+        market_palette_open_descriptor(),
+        catalog_remove_descriptor(),
+    ]
+}

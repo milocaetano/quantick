@@ -209,3 +209,11 @@ where
 #[cfg(test)]
 #[path = "trade_account_tests.rs"]
 mod trade_account_tests;
+
+pub(crate) fn action_descriptors() -> Vec<quantick_control::registry::CapabilityDescriptor> {
+    vec![
+        read_route_descriptor(),
+        select_descriptor(),
+        disarm_descriptor(),
+    ]
+}

@@ -273,3 +273,15 @@ fn reopen<H: DeskHost + ?Sized, A: NotifyAccess>(
 #[cfg(test)]
 #[path = "desk_tests.rs"]
 mod desk_tests;
+
+pub(crate) fn action_descriptors() -> Vec<quantick_control::registry::CapabilityDescriptor> {
+    vec![
+        settings_open_descriptor(),
+        settings_set_descriptor(),
+        desk_save_descriptor(),
+        desk_export_descriptor(),
+        desk_import_descriptor(),
+        desk_forget_descriptor(),
+        desk_reopen_descriptor(),
+    ]
+}

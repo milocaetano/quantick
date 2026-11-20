@@ -170,3 +170,7 @@ fn invalid(error: impl std::fmt::Display) -> ControlError {
 #[cfg(test)]
 #[path = "bubble_scale_tests.rs"]
 mod bubble_scale_tests;
+
+pub(crate) fn action_descriptors() -> Vec<quantick_control::registry::CapabilityDescriptor> {
+    vec![descriptor()]
+}

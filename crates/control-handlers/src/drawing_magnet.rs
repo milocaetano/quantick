@@ -141,3 +141,11 @@ pub fn set_object<'a, J>(
 #[cfg(test)]
 #[path = "drawing_magnet_tests.rs"]
 mod tests;
+
+pub(crate) fn action_descriptors() -> Vec<quantick_control::registry::CapabilityDescriptor> {
+    vec![
+        rail_descriptor(),
+        object_descriptor(),
+        drawing_scope::descriptor(),
+    ]
+}

@@ -10,7 +10,9 @@ use quantick_control_host::journal::EventPage;
 use quantick_control_host::projection::SerializedSnapshotCapture;
 use quantick_control_host::system::SystemSnapshot;
 use quantick_control_schema::analysis::{DrawingsSnapshot, IndicatorsSnapshot};
-use quantick_control_schema::chart::{ChartSnapshot, ChartWindowPage, ChartWindowQuery};
+use quantick_control_schema::chart::{
+    ChartSnapshot, ChartWindowInput, ChartWindowPage, ChartWindowQuery,
+};
 use quantick_control_schema::drawing_magnet::{
     DrawingMagnetInput, DrawingMagnetResult, ObjectMagnetInput, ObjectMagnetResult,
 };
@@ -47,6 +49,7 @@ pub struct SchemaDocument {
 #[must_use]
 pub fn documents() -> Vec<SchemaDocument> {
     let mut documents = vec![
+        document::<ChartWindowInput>("observer-chart-window-input-v1.schema.json"),
         document::<EmptyInput>("observer-empty-input-v1.schema.json"),
         document::<SnapshotReadInput>("observer-snapshot-read-input-v1.schema.json"),
         document::<DescribeResult>("observer-describe-result-v1.schema.json"),
