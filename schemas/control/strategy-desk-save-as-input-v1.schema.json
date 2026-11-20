@@ -68,18 +68,12 @@
       "type": "string"
     },
     "tab_id": {
-      "anyOf": [
-        {
-          "$ref": "#/$defs/WireU64"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null
+      "$ref": "#/$defs/WireU64",
+      "description": "The tab the row came from: ids are numbered per tab."
     }
   },
   "required": [
+    "tab_id",
     "instance",
     "name"
   ],

@@ -28809,7 +28809,7 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Arms one ended strategy again, warmed on the chart's latest closes and unpaused; a script is recompiled from the source it was armed with. A watching one is refused. Journaled as strategy.desk.changed.",
+      "description": "Arms one ended strategy again, warmed on the chart's latest closes and unpaused; a script is recompiled from the source it was armed with. A watching one, one whose drawing no longer passes the arm check, and a drawn one that places paper orders are refused. Journaled as strategy.desk.changed.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "annotate",
@@ -28884,19 +28884,12 @@
             "$ref": "#/$defs/InstanceId"
           },
           "tab_id": {
-            "anyOf": [
-              {
-                "$ref": "#/$defs/WireU64"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "description": "The tab; absent for the one on screen."
+            "$ref": "#/$defs/WireU64",
+            "description": "The tab the row came from: ids are numbered per tab."
           }
         },
         "required": [
+          "tab_id",
           "instance"
         ],
         "title": "InstanceInput",
@@ -29190,7 +29183,7 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Resumes every paused strategy on charts of the symbol and bar type, on every open tab. Journaled as strategy.desk.changed.",
+      "description": "Resumes every paused strategy on charts of the symbol and bar type, on every open tab, except drawn strategies that place paper orders, which stay paused for the trader to restart; the answer counts what changed. Journaled as strategy.desk.changed.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "annotate",
@@ -29426,19 +29419,12 @@
             "$ref": "#/$defs/InstanceId"
           },
           "tab_id": {
-            "anyOf": [
-              {
-                "$ref": "#/$defs/WireU64"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "description": "The tab; absent for the one on screen."
+            "$ref": "#/$defs/WireU64",
+            "description": "The tab the row came from: ids are numbered per tab."
           }
         },
         "required": [
+          "tab_id",
           "instance"
         ],
         "title": "InstanceInput",
@@ -29815,7 +29801,7 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Arms a copy beside one strategy — the same script or preset, side and placement on the same chart — paused, and answers its id. Journaled as strategy.desk.changed.",
+      "description": "Arms a copy beside one strategy — the same script or preset, side and placement on the same chart — paused, and answers its id. A drawing that no longer passes the arm check, and a drawn strategy that places paper orders, are refused. Journaled as strategy.desk.changed.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "annotate",
@@ -29890,19 +29876,12 @@
             "$ref": "#/$defs/InstanceId"
           },
           "tab_id": {
-            "anyOf": [
-              {
-                "$ref": "#/$defs/WireU64"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "description": "The tab; absent for the one on screen."
+            "$ref": "#/$defs/WireU64",
+            "description": "The tab the row came from: ids are numbered per tab."
           }
         },
         "required": [
+          "tab_id",
           "instance"
         ],
         "title": "InstanceInput",
@@ -30378,19 +30357,12 @@
             "$ref": "#/$defs/InstanceId"
           },
           "tab_id": {
-            "anyOf": [
-              {
-                "$ref": "#/$defs/WireU64"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "description": "The tab; absent for the one on screen."
+            "$ref": "#/$defs/WireU64",
+            "description": "The tab the row came from: ids are numbered per tab."
           }
         },
         "required": [
+          "tab_id",
           "instance"
         ],
         "title": "InstanceInput",
@@ -30598,19 +30570,12 @@
             "$ref": "#/$defs/InstanceId"
           },
           "tab_id": {
-            "anyOf": [
-              {
-                "$ref": "#/$defs/WireU64"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "description": "The tab; absent for the one on screen."
+            "$ref": "#/$defs/WireU64",
+            "description": "The tab the row came from: ids are numbered per tab."
           }
         },
         "required": [
+          "tab_id",
           "instance"
         ],
         "title": "InstanceInput",
@@ -30743,7 +30708,7 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Resumes one paused strategy from the next close. Resuming a watching one changes nothing; an ended one is refused. Journaled as strategy.desk.changed.",
+      "description": "Resumes one paused strategy from the next close. Resuming a watching one changes nothing; an ended one is refused, and so is a drawn strategy that places paper orders: only the trader restarts those. Journaled as strategy.desk.changed.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "annotate",
@@ -30818,19 +30783,12 @@
             "$ref": "#/$defs/InstanceId"
           },
           "tab_id": {
-            "anyOf": [
-              {
-                "$ref": "#/$defs/WireU64"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "description": "The tab; absent for the one on screen."
+            "$ref": "#/$defs/WireU64",
+            "description": "The tab the row came from: ids are numbered per tab."
           }
         },
         "required": [
+          "tab_id",
           "instance"
         ],
         "title": "InstanceInput",
@@ -31044,18 +31002,12 @@
             "type": "string"
           },
           "tab_id": {
-            "anyOf": [
-              {
-                "$ref": "#/$defs/WireU64"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null
+            "$ref": "#/$defs/WireU64",
+            "description": "The tab the row came from: ids are numbered per tab."
           }
         },
         "required": [
+          "tab_id",
           "instance",
           "name"
         ],
