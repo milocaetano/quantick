@@ -19,6 +19,7 @@ sequence; the files here fix the details that outcome has to honour.
   **Generated**; see [Precedence](#precedence) before editing it.
 - [Control contract](control-contract.md) fixes identifier, schema, revision,
   authority, limit, tool-surface, determinism, and trade-annotation rules.
+- [Text notes](text-notes.md) explains chosen sizes, chart zoom and persistence.
 - [ADR 0001](adr-0001-local-transport-and-instance-discovery.md) selects the
   local transport and running-instance discovery mechanism.
 - [Observer threat model](observer-threat-model.md) defines the assets, trust

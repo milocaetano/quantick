@@ -19,6 +19,9 @@ impl<'a> DrawingReadAccess<'a> {
     fn focused(&self) -> &ChartPane {
         self.tabs[self.tabs.active_index()].focused_pane()
     }
+    pub(super) fn px_per_bar(&self) -> f32 {
+        self.pane().model.viewport.px_per_bar()
+    }
     pub(super) fn current_range_owner(
         &self,
         requested: Option<crate::surfaces::drawing_chrome::QuickRangeOwner>,
@@ -254,7 +257,10 @@ impl DrawingAccess<'_> {
         &self.pane().drawings
     }
     pub(super) fn drawings_mut(&mut self) -> &mut drawings::Drawings {
-        &mut self.pane_mut().drawings
+        let pane = self.pane_mut();
+        pane.drawings
+            .sync_text_zoom(pane.model.viewport.px_per_bar());
+        &mut pane.drawings
     }
     pub(super) fn remove_strategy(&mut self, id: drawings::DrawingId) {
         let tab = self.tab_mut();

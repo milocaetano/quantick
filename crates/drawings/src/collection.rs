@@ -170,6 +170,7 @@ impl<T: Clone + PartialEq> Drawings<T> {
 
     /// Push `before` as one undo step if the store actually changed since.
     pub(crate) fn record(&mut self, before: UndoEntry<T>) {
+        self.sync_text_zoom(self.text_px_per_bar);
         if before == self.snapshot() {
             return;
         }

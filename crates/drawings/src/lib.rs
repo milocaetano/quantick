@@ -28,6 +28,8 @@ pub mod icons;
 pub mod palette;
 pub mod presets;
 pub mod text;
+pub mod text_scale;
+mod text_zoom;
 
 mod clipboard;
 mod collection;

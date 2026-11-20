@@ -596,7 +596,7 @@ mod appearance_tests {
             let expected = match tool.id() {
                 "fixed-range-profile" => [122, 142, 194, 255],
                 "arrow-mark-up" => [31, 122, 52, 255],
-                "arrow-mark-down" => [17, 17, 17, 255],
+                "arrow-mark-down" => [198, 40, 40, 255],
                 "anchored-vwap" => [43, 54, 64, 255],
                 _ => [0, 0, 0, 255],
             };

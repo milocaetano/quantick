@@ -25,6 +25,13 @@ pub trait DrawingPayload: fmt::Debug {
     fn import_preset(&mut self, _value: &toml::Value) -> bool {
         false
     }
+    /// A saved object may also carry state that must not travel with a style preset.
+    fn export_saved(&self) -> Option<toml::Value> {
+        self.export_preset()
+    }
+    fn import_saved(&mut self, value: &toml::Value) -> bool {
+        self.import_preset(value)
+    }
 }
 
 impl Clone for Box<dyn DrawingPayload> {

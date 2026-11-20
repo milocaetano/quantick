@@ -31,6 +31,7 @@ pub struct PlacementBatch<T> {
 
 #[derive(Debug)]
 pub struct Drawings<T> {
+    pub(crate) text_px_per_bar: f32,
     /// Bumped on every change to the collection — a placement, an edit, a
     /// delete, an undo, a load. What the layout store compares against to
     /// know a pane's drawings need writing, at the cost of one integer per
@@ -79,6 +80,7 @@ pub struct Drawings<T> {
 impl<T> Default for Drawings<T> {
     fn default() -> Self {
         Self {
+            text_px_per_bar: 0.0,
             revision: 0,
             items: Vec::new(),
             draft: None,
