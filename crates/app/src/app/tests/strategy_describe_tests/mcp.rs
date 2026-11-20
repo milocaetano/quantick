@@ -12,31 +12,51 @@ fn executable() -> &'static Path {
     BUILT.get_or_init(|| {
         let test = std::env::current_exe().unwrap();
         let profile = test.parent().unwrap().parent().unwrap();
-        let name = format!("quantick-mcp{}", std::env::consts::EXE_SUFFIX);
-        let executable = profile.join(&name);
-        if executable.exists() {
-            return executable;
-        }
-        // A package-only test build omits sibling binaries. An isolated target
-        // permits this fixture to run even under a concurrent workspace build.
-        let target = profile.join("strategy-mcp-fixture");
+        let profile_name = match profile.file_name().unwrap().to_str().unwrap() {
+            "debug" => "test",
+            name => name,
+        };
+        // Selecting both packages unifies shared dependency features with the
+        // app build. Only the real MCP binary is requested from Cargo.
+        let output = Command::new(env!("CARGO"))
+            .args([
+                "build",
+                "--locked",
+                "-p",
+                "quantick-app",
+                "-p",
+                "quantick-mcp",
+                "--bin",
+                "quantick-mcp",
+                "--message-format=json-render-diagnostics",
+                "--profile",
+                profile_name,
+                "--target-dir",
+            ])
+            .arg(profile.parent().unwrap())
+            .current_dir(env!("CARGO_MANIFEST_DIR"))
+            .stderr(Stdio::inherit())
+            .output()
+            .expect("run Cargo to resolve the MCP fixture");
         assert!(
-            Command::new(env!("CARGO"))
-                .args([
-                    "build",
-                    "--quiet",
-                    "--locked",
-                    "-p",
-                    "quantick-mcp",
-                    "--target-dir"
-                ])
-                .arg(&target)
-                .current_dir(env!("CARGO_MANIFEST_DIR"))
-                .status()
-                .unwrap()
-                .success()
+            output.status.success(),
+            "building the MCP fixture failed: {}",
+            output.status
         );
-        target.join("debug").join(name)
+        let manifest = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .with_file_name("mcp")
+            .join("Cargo.toml");
+        String::from_utf8(output.stdout)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str::<Value>(line).expect("Cargo JSON message"))
+            .filter(|msg| {
+                msg["reason"] == "compiler-artifact"
+                    && msg["target"]["name"] == "quantick-mcp"
+                    && msg["manifest_path"].as_str().map(Path::new) == Some(&manifest)
+            })
+            .find_map(|msg| msg["executable"].as_str().map(PathBuf::from))
+            .expect("Cargo reported no executable for this checkout's MCP binary")
     })
 }
 
