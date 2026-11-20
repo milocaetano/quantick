@@ -108,7 +108,7 @@ pub(super) fn draw_dock(
     ctx: &egui::Context,
     surfaces: &mut Surfaces,
     runtime: &mut crate::app::workspace_runtime::WorkspaceRuntime,
-    strategies: Option<&mut crate::strategy_desk::Rail>,
+    strategies: Option<&crate::strategy_desk::Rail>,
 ) -> SurfaceResponse {
     let alerts_open = surfaces.alerts.is_open();
     let (tabs, route) = (&mut runtime.tabs, runtime.broker.sheet());

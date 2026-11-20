@@ -18,7 +18,7 @@ pub(crate) struct PaperPanelEnv<'a> {
     /// The account route's words, while broker routes are offered.
     pub route: Option<&'a quantick_paper::route::Sheet>,
     /// The Strategies tab's rows, read only while it is open.
-    pub strategies: Option<&'a mut crate::strategy_desk::Rail>,
+    pub strategies: Option<&'a crate::strategy_desk::Rail>,
 }
 /// Validated indicator address and authoritative descriptor/preset services.
 pub(crate) struct IndicatorPanelEnv<'a> {

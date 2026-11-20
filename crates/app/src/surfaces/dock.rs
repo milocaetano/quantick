@@ -189,7 +189,7 @@ fn draw(
                         None => {}
                     },
                     DockTab::Strategies => {
-                        if let Some(rail) = env.strategies.as_deref_mut() {
+                        if let Some(rail) = env.strategies {
                             rail.show(ui);
                         }
                     }

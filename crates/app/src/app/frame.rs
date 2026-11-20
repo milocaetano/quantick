@@ -522,10 +522,8 @@ impl QuantickApp {
     }
 
     fn draw_dock_stage(&mut self, ctx: &egui::Context) -> Option<crate::surfaces::SurfaceResponse> {
-        let open = self.surfaces.dock.tab() == Some(crate::dock::DockTab::Strategies);
-        let mut rail = open.then(|| strategy_desk::Rail::read(self as &mut ControlWindow));
-        let response = panels::draw_dock(ctx, &mut self.surfaces, &mut self.runtime, rail.as_mut());
-        strategy_desk::settle(self as &mut ControlWindow, ctx, rail);
+        let rail = strategy_desk::settle(self as &mut ControlWindow, ctx);
+        let response = panels::draw_dock(ctx, &mut self.surfaces, &mut self.runtime, rail.as_ref());
         let response = match begin_dock_effects(self, ctx, response) {
             Ok(response) => response,
             Err(response) => return Some(*response),

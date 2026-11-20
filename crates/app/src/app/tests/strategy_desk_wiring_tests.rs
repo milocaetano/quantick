@@ -56,6 +56,8 @@ fn rail_pause_sends_the_desk_command() {
     let pauses = painted_at(&output, egui_phosphor::regular::PAUSE);
     assert_eq!(pauses.len(), 3, "one asset pause and two row pauses");
     click_chart(&mut app, &ctx, pauses[1]);
+    // The click is kept on its frame and sent at the next one's settle.
+    run_frame(&mut app, &ctx);
 
     assert_eq!(
         states(&mut app),
