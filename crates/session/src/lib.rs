@@ -33,6 +33,7 @@ mod native;
 mod paging;
 pub mod paper;
 pub mod prompt;
+pub mod script_draft;
 pub mod script_strategies;
 pub mod series;
 pub mod strategies;

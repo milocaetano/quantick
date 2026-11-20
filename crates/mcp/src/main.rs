@@ -38,6 +38,7 @@ const ANNOTATOR_SCOPES: &[&str] = &[
     "annotate.notification",
     "annotate.sound",
     "annotate.script",
+    "annotate.strategy_describe",
 ];
 
 /// The scopes a cockpit connection asks for on top of the annotator's:

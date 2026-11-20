@@ -28806,6 +28806,867 @@
     },
     {
       "availability": {
+        "next_step": "Read strategy.describe.read for conversation status.",
+        "reason_code": "strategy.describe_unavailable",
+        "status": "unavailable"
+      },
+      "confirmation_class": "none",
+      "description": "Invalidate pending work for the named conversation revision.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "annotate",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 65536
+      },
+      "id": "strategy.describe.cancel",
+      "idempotency": "required",
+      "input_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "revision": {
+            "$ref": "#/$defs/WireU64"
+          }
+        },
+        "required": [
+          "revision"
+        ],
+        "title": "Revision",
+        "type": "object"
+      },
+      "module": "strategy",
+      "output_schema": {
+        "$defs": {
+          "ActionSide": {
+            "description": "Which way the order goes.",
+            "enum": [
+              "buy",
+              "sell"
+            ],
+            "type": "string"
+          },
+          "Marker": {
+            "properties": {
+              "close_time": {
+                "format": "int64",
+                "type": "integer"
+              },
+              "side": {
+                "$ref": "#/$defs/ActionSide"
+              },
+              "slot": {
+                "format": "uint",
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "slot",
+              "close_time",
+              "side"
+            ],
+            "type": "object"
+          },
+          "Phase": {
+            "enum": [
+              "unavailable",
+              "closed",
+              "ready",
+              "waiting",
+              "question",
+              "preview",
+              "saved",
+              "cancelled",
+              "failed"
+            ],
+            "type": "string"
+          },
+          "Turn": {
+            "properties": {
+              "author": {
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "author",
+              "text"
+            ],
+            "type": "object"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "markers": {
+            "items": {
+              "$ref": "#/$defs/Marker"
+            },
+            "maxItems": 128,
+            "type": "array"
+          },
+          "message": {
+            "type": "string"
+          },
+          "phase": {
+            "$ref": "#/$defs/Phase"
+          },
+          "revision": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "saved_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "transcript": {
+            "items": {
+              "$ref": "#/$defs/Turn"
+            },
+            "maxItems": 16,
+            "type": "array"
+          }
+        },
+        "required": [
+          "revision",
+          "phase",
+          "message",
+          "transcript",
+          "markers"
+        ],
+        "title": "Status",
+        "type": "object"
+      },
+      "persistence": "transient",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "annotate",
+        "annotate.script",
+        "annotate.strategy_describe",
+        "observe.user_text"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "A request key prevents duplicate work. Submit, cancel and save also name the pinned revision.",
+      "title": "Cancel strategy description",
+      "version": 1
+    },
+    {
+      "availability": {
+        "next_step": "Read strategy.describe.read for conversation status.",
+        "reason_code": "strategy.describe_unavailable",
+        "status": "unavailable"
+      },
+      "confirmation_class": "none",
+      "description": "Start a conversation pinned to the focused chart.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "annotate",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 65536
+      },
+      "id": "strategy.describe.open",
+      "idempotency": "required",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "title": "Empty",
+        "type": "object"
+      },
+      "module": "strategy",
+      "output_schema": {
+        "$defs": {
+          "ActionSide": {
+            "description": "Which way the order goes.",
+            "enum": [
+              "buy",
+              "sell"
+            ],
+            "type": "string"
+          },
+          "Marker": {
+            "properties": {
+              "close_time": {
+                "format": "int64",
+                "type": "integer"
+              },
+              "side": {
+                "$ref": "#/$defs/ActionSide"
+              },
+              "slot": {
+                "format": "uint",
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "slot",
+              "close_time",
+              "side"
+            ],
+            "type": "object"
+          },
+          "Phase": {
+            "enum": [
+              "unavailable",
+              "closed",
+              "ready",
+              "waiting",
+              "question",
+              "preview",
+              "saved",
+              "cancelled",
+              "failed"
+            ],
+            "type": "string"
+          },
+          "Turn": {
+            "properties": {
+              "author": {
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "author",
+              "text"
+            ],
+            "type": "object"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "markers": {
+            "items": {
+              "$ref": "#/$defs/Marker"
+            },
+            "maxItems": 128,
+            "type": "array"
+          },
+          "message": {
+            "type": "string"
+          },
+          "phase": {
+            "$ref": "#/$defs/Phase"
+          },
+          "revision": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "saved_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "transcript": {
+            "items": {
+              "$ref": "#/$defs/Turn"
+            },
+            "maxItems": 16,
+            "type": "array"
+          }
+        },
+        "required": [
+          "revision",
+          "phase",
+          "message",
+          "transcript",
+          "markers"
+        ],
+        "title": "Status",
+        "type": "object"
+      },
+      "persistence": "transient",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "annotate",
+        "annotate.script",
+        "annotate.strategy_describe",
+        "observe.user_text"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "A request key prevents duplicate work. Submit, cancel and save also name the pinned revision.",
+      "title": "Open strategy description",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Read conversation progress, preview markers and saved identity.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "observe",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "strategy.describe.read",
+      "idempotency": "forbidden",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "title": "Empty",
+        "type": "object"
+      },
+      "module": "strategy",
+      "output_schema": {
+        "$defs": {
+          "ActionSide": {
+            "description": "Which way the order goes.",
+            "enum": [
+              "buy",
+              "sell"
+            ],
+            "type": "string"
+          },
+          "Marker": {
+            "properties": {
+              "close_time": {
+                "format": "int64",
+                "type": "integer"
+              },
+              "side": {
+                "$ref": "#/$defs/ActionSide"
+              },
+              "slot": {
+                "format": "uint",
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "slot",
+              "close_time",
+              "side"
+            ],
+            "type": "object"
+          },
+          "Phase": {
+            "enum": [
+              "unavailable",
+              "closed",
+              "ready",
+              "waiting",
+              "question",
+              "preview",
+              "saved",
+              "cancelled",
+              "failed"
+            ],
+            "type": "string"
+          },
+          "Turn": {
+            "properties": {
+              "author": {
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "author",
+              "text"
+            ],
+            "type": "object"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "markers": {
+            "items": {
+              "$ref": "#/$defs/Marker"
+            },
+            "maxItems": 128,
+            "type": "array"
+          },
+          "message": {
+            "type": "string"
+          },
+          "phase": {
+            "$ref": "#/$defs/Phase"
+          },
+          "revision": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "saved_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "transcript": {
+            "items": {
+              "$ref": "#/$defs/Turn"
+            },
+            "maxItems": 16,
+            "type": "array"
+          }
+        },
+        "required": [
+          "revision",
+          "phase",
+          "message",
+          "transcript",
+          "markers"
+        ],
+        "title": "Status",
+        "type": "object"
+      },
+      "persistence": "none",
+      "preconditions": [],
+      "read_only": true,
+      "required_permissions": [
+        "observe",
+        "observe.user_text"
+      ],
+      "reversible": false,
+      "revision_policy": "forbidden",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "title": "Read strategy description",
+      "version": 1
+    },
+    {
+      "availability": {
+        "next_step": "Read strategy.describe.read for conversation status.",
+        "reason_code": "strategy.describe_unavailable",
+        "status": "unavailable"
+      },
+      "confirmation_class": "none",
+      "description": "Create a new strategy source and publish its prepared alarm-only instances.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "annotate",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 65536
+      },
+      "id": "strategy.describe.save",
+      "idempotency": "required",
+      "input_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          },
+          "revision": {
+            "$ref": "#/$defs/WireU64"
+          }
+        },
+        "required": [
+          "revision",
+          "id"
+        ],
+        "title": "Save",
+        "type": "object"
+      },
+      "module": "strategy",
+      "output_schema": {
+        "$defs": {
+          "ActionSide": {
+            "description": "Which way the order goes.",
+            "enum": [
+              "buy",
+              "sell"
+            ],
+            "type": "string"
+          },
+          "Marker": {
+            "properties": {
+              "close_time": {
+                "format": "int64",
+                "type": "integer"
+              },
+              "side": {
+                "$ref": "#/$defs/ActionSide"
+              },
+              "slot": {
+                "format": "uint",
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "slot",
+              "close_time",
+              "side"
+            ],
+            "type": "object"
+          },
+          "Phase": {
+            "enum": [
+              "unavailable",
+              "closed",
+              "ready",
+              "waiting",
+              "question",
+              "preview",
+              "saved",
+              "cancelled",
+              "failed"
+            ],
+            "type": "string"
+          },
+          "Turn": {
+            "properties": {
+              "author": {
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "author",
+              "text"
+            ],
+            "type": "object"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "markers": {
+            "items": {
+              "$ref": "#/$defs/Marker"
+            },
+            "maxItems": 128,
+            "type": "array"
+          },
+          "message": {
+            "type": "string"
+          },
+          "phase": {
+            "$ref": "#/$defs/Phase"
+          },
+          "revision": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "saved_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "transcript": {
+            "items": {
+              "$ref": "#/$defs/Turn"
+            },
+            "maxItems": 16,
+            "type": "array"
+          }
+        },
+        "required": [
+          "revision",
+          "phase",
+          "message",
+          "transcript",
+          "markers"
+        ],
+        "title": "Status",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "annotate",
+        "annotate.script",
+        "annotate.strategy_describe",
+        "observe.user_text"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "A request key prevents duplicate work. Submit, cancel and save also name the pinned revision.",
+      "title": "Save described strategy",
+      "version": 1
+    },
+    {
+      "availability": {
+        "next_step": "Read strategy.describe.read for conversation status.",
+        "reason_code": "strategy.describe_unavailable",
+        "status": "unavailable"
+      },
+      "confirmation_class": "none",
+      "description": "Send a sentence or clarification and pinned chart context to the configured provider.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "strategy.provider",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 65536
+      },
+      "id": "strategy.describe.submit",
+      "idempotency": "required",
+      "input_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "revision": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "text": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "revision",
+          "text"
+        ],
+        "title": "Submit",
+        "type": "object"
+      },
+      "module": "strategy",
+      "output_schema": {
+        "$defs": {
+          "ActionSide": {
+            "description": "Which way the order goes.",
+            "enum": [
+              "buy",
+              "sell"
+            ],
+            "type": "string"
+          },
+          "Marker": {
+            "properties": {
+              "close_time": {
+                "format": "int64",
+                "type": "integer"
+              },
+              "side": {
+                "$ref": "#/$defs/ActionSide"
+              },
+              "slot": {
+                "format": "uint",
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "slot",
+              "close_time",
+              "side"
+            ],
+            "type": "object"
+          },
+          "Phase": {
+            "enum": [
+              "unavailable",
+              "closed",
+              "ready",
+              "waiting",
+              "question",
+              "preview",
+              "saved",
+              "cancelled",
+              "failed"
+            ],
+            "type": "string"
+          },
+          "Turn": {
+            "properties": {
+              "author": {
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "author",
+              "text"
+            ],
+            "type": "object"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "markers": {
+            "items": {
+              "$ref": "#/$defs/Marker"
+            },
+            "maxItems": 128,
+            "type": "array"
+          },
+          "message": {
+            "type": "string"
+          },
+          "phase": {
+            "$ref": "#/$defs/Phase"
+          },
+          "revision": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "saved_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "transcript": {
+            "items": {
+              "$ref": "#/$defs/Turn"
+            },
+            "maxItems": 16,
+            "type": "array"
+          }
+        },
+        "required": [
+          "revision",
+          "phase",
+          "message",
+          "transcript",
+          "markers"
+        ],
+        "title": "Status",
+        "type": "object"
+      },
+      "persistence": "transient",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "annotate",
+        "annotate.script",
+        "annotate.strategy_describe",
+        "observe.user_text"
+      ],
+      "reversible": false,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [
+        "external_chart_context"
+      ],
+      "risk_reducing": false,
+      "stale_input_safety": "A request key prevents duplicate work. Submit, cancel and save also name the pinned revision.",
+      "title": "Submit a strategy description",
+      "version": 1
+    },
+    {
+      "availability": {
         "status": "available"
       },
       "confirmation_class": "none",
@@ -34436,6 +35297,16 @@
       "description": "Play the platform's alert sound, which reaches the trader even when they are not looking at the window.",
       "id": "annotate.sound",
       "label": "Make a sound",
+      "profile_ceilings": [
+        "annotator"
+      ],
+      "sensitive": true
+    },
+    {
+      "default_grant": "prompt",
+      "description": "Read a strategy conversation, send its chart context to the configured provider, and save an alarm-only strategy.",
+      "id": "annotate.strategy_describe",
+      "label": "Describe a strategy",
       "profile_ceilings": [
         "annotator"
       ],

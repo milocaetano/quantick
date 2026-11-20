@@ -73,6 +73,8 @@ pub mod scratch;
 pub mod scratch_dir;
 pub mod single_consumer;
 pub mod size;
+#[cfg(test)]
+mod strategy_describe_tests;
 pub mod struct_width;
 pub mod ui_free;
 pub mod window_reach;

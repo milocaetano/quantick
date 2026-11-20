@@ -144,6 +144,9 @@ pub const TRADE_MODULE_ID: &str = "trade";
 pub const TRADE_EFFECT_ID: &str = "trade";
 pub const TRADE_PERMISSION_ID: &str = "trade";
 
+pub const STRATEGY_PROVIDER_EFFECT_ID: &str = "strategy.provider";
+pub const STRATEGY_PROVIDER_RISK: &str = "external_chart_context";
+pub const STRATEGY_DESCRIBE_PERMISSION_ID: &str = "annotate.strategy_describe";
 /// Strategies armed on a chart: Pine scripts that ring alarm-only.
 pub const STRATEGY_MODULE_ID: &str = "strategy";
 
@@ -538,6 +541,14 @@ pub fn permissions() -> Vec<PermissionDescriptor> {
             profile_ceilings: BTreeSet::from([annotator.clone()]),
         },
         PermissionDescriptor {
+            id: permission(STRATEGY_DESCRIBE_PERMISSION_ID),
+            label: "Describe a strategy".into(),
+            description: "Read a strategy conversation, send its chart context to the configured provider, and save an alarm-only strategy.".into(),
+            sensitive: true,
+            default_grant: DefaultGrant::Prompt,
+            profile_ceilings: BTreeSet::from([annotator.clone()]),
+        },
+        PermissionDescriptor {
             id: permission(SCRIPT_PERMISSION_ID),
             label: "Attach an indicator script".to_owned(),
             description: "Compile a Quantick Pine script and attach the indicator it produces to a pane, with a detach that restores the pane exactly.".to_owned(),
@@ -797,6 +808,31 @@ pub fn effects() -> Vec<EffectPolicy> {
                 allows_destructive: false,
                 durable_requires_reversible: true,
                 irreversible_transient_risk: None,
+                allows_risk_reducing: false,
+            },
+        },
+        EffectPolicy {
+            id: effect(STRATEGY_PROVIDER_EFFECT_ID),
+            permission_floor: permission(STRATEGY_DESCRIBE_PERMISSION_ID),
+            profile_ceilings: BTreeSet::from([annotator.clone()]),
+            confirmation_class: confirmation(NO_CONFIRMATION_ID),
+            risk_reducing_confirmation_class: None,
+            mcp_hint_floor: McpHintFloor {
+                read_only: false,
+                destructive: false,
+                idempotent: false,
+                open_world: true,
+            },
+            required_risk_flags: BTreeSet::from([
+                RiskFlagId::new(STRATEGY_PROVIDER_RISK).expect("static risk flag")
+            ]),
+            constraints: EffectConstraints {
+                required_read_only: Some(false),
+                allows_destructive: false,
+                durable_requires_reversible: true,
+                irreversible_transient_risk: Some(
+                    RiskFlagId::new(STRATEGY_PROVIDER_RISK).expect("static risk flag"),
+                ),
                 allows_risk_reducing: false,
             },
         },

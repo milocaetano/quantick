@@ -14,6 +14,7 @@
 use std::path::{Path, PathBuf};
 
 mod catalog;
+mod create_source;
 mod persistence;
 pub use catalog::{EMBEDDED_SCRIPTS, POPULAR_INDICATORS, ScriptMetadata, script_title};
 pub const MAX_SOURCE_BYTES: usize = 256 * 1024;

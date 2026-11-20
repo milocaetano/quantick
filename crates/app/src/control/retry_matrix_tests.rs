@@ -13,7 +13,7 @@ use super::*;
 /// Where the transport tests that prove the rows live, relative to
 /// `crates/app`. A row's proving test must be a function in one of these or
 /// in [`HANDLER_PROOFS`].
-const PROOF_SOURCES: [&str; 8] = [
+const PROOF_SOURCES: [&str; 9] = [
     "src/app/tests/alerts_control_tests.rs",
     "src/app/tests/retry_readback_tests.rs",
     "src/app/tests/drawing_text_control_tests.rs",
@@ -22,6 +22,7 @@ const PROOF_SOURCES: [&str; 8] = [
     "src/app/tests/native_window_control_tests.rs",
     "src/app/tests/market_window_control_tests.rs",
     "src/app/tests/tape_navigation_tests.rs",
+    "src/app/tests/strategy_describe_contract_tests.rs",
 ];
 
 /// The handler crate, relative to `crates/app`: a row may name a fake-host

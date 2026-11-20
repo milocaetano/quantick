@@ -71,6 +71,7 @@ pub const SUBMENUS: &[SubmenuId] = &[
 /// A stretch of a menu whose rows are computed from live state by the app.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LiveRows {
+    DescribeStrategy,
     /// The layout book's tabs and the three edits the strip's own menu holds.
     LayoutBook,
     /// The canvas arrangements, from the layout registry.
@@ -309,6 +310,7 @@ pub const fn submenu(id: SubmenuId) -> (&'static str, &'static [Item]) {
         SubmenuId::Panels => (
             "Panels",
             &[
+                Item::Live(LiveRows::DescribeStrategy),
                 Item::Row(RowId::DockL2),
                 Item::Row(RowId::DockBubbles),
                 Item::Row(RowId::DockSession),

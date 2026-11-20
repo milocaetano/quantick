@@ -12,6 +12,7 @@
 //! [`ChartPane`], not to the window. The market feeding that pane — channels,
 //! connection state, notices, history counters — is still owned here.
 
+use crate::control::ControlAccess;
 #[cfg(any(feature = "drawing-harness", feature = "quick-range-harness", test))]
 use crate::surfaces::drawing_chrome::DrawingChromeExt as _;
 use std::time::Instant;
@@ -113,6 +114,7 @@ pub(crate) mod launch_hooks;
 mod layout_wiring;
 mod script_editor_wiring;
 mod script_reload;
+mod strategy_describe_wiring;
 pub(crate) use layout_wiring::set_indicator_mouse_vertical_line;
 mod home_wiring;
 mod menu_bar;
@@ -175,6 +177,7 @@ use quantick_chart::indicator_registry::TabSlot;
 /// This value is never retained on the app or used as a frame context.
 #[derive(Default)]
 pub(crate) struct AppLaunch {
+    pub describe: crate::surfaces::strategy_describe::provider::Worker,
     #[cfg(any(feature = "scenario-harness", test))]
     pub scenario: crate::hooks::ScenarioInputs,
     #[cfg(any(feature = "control-harness", test))]
@@ -282,16 +285,6 @@ impl QuantickApp {
         spec: impl Into<crate::state::BarConfiguration>,
         feed: FeedHandle,
         workspace: ui_state::Workspace,
-        #[cfg_attr(
-            not(any(
-                feature = "scenario-harness",
-                feature = "control-harness",
-                feature = "drawing-harness",
-                feature = "quick-range-harness",
-                test
-            )),
-            allow(unused_variables)
-        )]
         launch: AppLaunch,
     ) -> Self {
         let state_path = crate::paper_state::default_path();
@@ -344,11 +337,13 @@ impl QuantickApp {
             added_symbols,
             config,
             control: control_host::ControlState {
-                control_access: Some(crate::control::ControlAccess::new()),
+                control_access: Some(ControlAccess::with_strategy_describe(
+                    launch.describe.available(),
+                )),
                 #[cfg(any(feature = "control-harness", test))]
                 scenarios: Default::default(),
             },
-            surfaces: crate::surfaces::Surfaces::default(),
+            surfaces: crate::surfaces::Surfaces::with_describe_provider(launch.describe),
             drawings: drawing_controller::DrawingController::new(),
             audio: replay_and_history::AlertState {
                 alerts: Box::new(crate::audio::Speaker::default()),

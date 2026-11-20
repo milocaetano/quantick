@@ -54,6 +54,7 @@ mod indicators;
 mod layers;
 mod replay;
 mod script_editor;
+mod strategy_describe;
 mod trading;
 mod workspace;
 
@@ -71,6 +72,7 @@ pub const FAMILIES: &[&[UiBehaviour]] = &[
     chart::HISTORY,
     indicators::ROWS,
     script_editor::ROWS,
+    strategy_describe::ROWS,
     trading::ROWS,
     control::FEED_RECOVERY,
     drawings::TOOL_RAIL,

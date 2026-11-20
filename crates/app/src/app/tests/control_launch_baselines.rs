@@ -143,6 +143,7 @@ const ANNOTATE_GRANT: &[&str] = &[
     "annotate.notification",
     "annotate.script",
     "annotate.sound",
+    "annotate.strategy_describe",
     "observe",
 ];
 

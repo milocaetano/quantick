@@ -48,7 +48,7 @@ pub(in crate::app) fn draw(
                 app.chrome.window_menu.close();
             }
             for action in effect.actions {
-                settle(action, commands);
+                settle(app, action, commands);
             }
         }
     }
@@ -101,6 +101,7 @@ fn snapshot(app: &QuantickApp, ctx: &egui::Context) -> Snapshot {
         replaying: tab.link.replay.is_some(),
         startup_saved: app.runtime.workspace.session().saved(),
         save_on_exit: app.runtime.workspace.session().save_on_exit(),
+        describe_available: app.surfaces.strategy_describe.view.worker.available(),
         dock_visible: app.surfaces.dock.visible(),
         selected_rows,
         flow_pane_shown: crate::orderflow_panel::flow_pane_shown(tab),
@@ -136,9 +137,18 @@ fn snapshot(app: &QuantickApp, ctx: &egui::Context) -> Snapshot {
             .collect(),
     }
 }
-fn settle(action: Action, commands: &mut Vec<MenuCommand>) {
+fn settle(
+    app: &mut impl crate::control::strategy_describe_contract::DescribeHost,
+    action: Action,
+    commands: &mut Vec<MenuCommand>,
+) {
     use crate::layout_strip::StripAction;
     let command = match action {
+        Action::DescribeStrategy => {
+            use quantick_ui_model::strategy_describe::{Command, Intent};
+            let _ = app.dispatch(Intent::Command(Command::Open));
+            return;
+        }
         Action::Row(id) => {
             settle_row(id, commands);
             return;

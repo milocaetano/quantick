@@ -1,0 +1,120 @@
+{
+  "$defs": {
+    "ActionSide": {
+      "description": "Which way the order goes.",
+      "enum": [
+        "buy",
+        "sell"
+      ],
+      "type": "string"
+    },
+    "Marker": {
+      "properties": {
+        "close_time": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "side": {
+          "$ref": "#/$defs/ActionSide"
+        },
+        "slot": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "slot",
+        "close_time",
+        "side"
+      ],
+      "type": "object"
+    },
+    "Phase": {
+      "enum": [
+        "unavailable",
+        "closed",
+        "ready",
+        "waiting",
+        "question",
+        "preview",
+        "saved",
+        "cancelled",
+        "failed"
+      ],
+      "type": "string"
+    },
+    "Turn": {
+      "properties": {
+        "author": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "author",
+        "text"
+      ],
+      "type": "object"
+    },
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "markers": {
+      "items": {
+        "$ref": "#/$defs/Marker"
+      },
+      "maxItems": 128,
+      "type": "array"
+    },
+    "message": {
+      "type": "string"
+    },
+    "phase": {
+      "$ref": "#/$defs/Phase"
+    },
+    "revision": {
+      "$ref": "#/$defs/WireU64"
+    },
+    "saved_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "source": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "summary": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "transcript": {
+      "items": {
+        "$ref": "#/$defs/Turn"
+      },
+      "maxItems": 16,
+      "type": "array"
+    }
+  },
+  "required": [
+    "revision",
+    "phase",
+    "message",
+    "transcript",
+    "markers"
+  ],
+  "title": "Status",
+  "type": "object"
+}
