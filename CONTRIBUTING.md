@@ -66,6 +66,31 @@ cuts there the same way. Update a branch with
 `sh tools/merge_main.sh`: it regenerates the hook registry instead of leaving
 it for a hand merge.
 
+Aggregate PR ratchets compare growth with the merge base, defaulting to zero
+permission. Run `python tools/ci/ratchet_delta.py --base origin/main` (use the
+integration target when applicable). Existing fragments cannot be edited or
+deleted; a new fragment signs only this branch's growth. CI exports the base
+checkout through `QUANTICK_GUARDS_BASE_ROOT` for the guard tests. Main pushes
+compare against their first parent, so shrink-only merges remain green.
+
+Changes to guard source or baseline data also build the base guard and measure
+the head with both binaries. Differences require exact signed
+`!measure-change <report-row> +N|-N` lines in new fragments. Missing measurements,
+stale coverage and build failures fail closed. `--tighten --fold` consolidates
+fragments after downward-only tightening; a daily workflow opens or updates one
+maintenance PR for the user to merge. Size, context and other guards retain
+their absolute policies.
+
+An interrupted fold keeps a checked recovery journal and rejects baseline reads
+until `--tighten --fold` finishes recovery. Preserve a journal reported as corrupt
+for repair; deleting it can lose the fragment accounting. Folds hold one OS file
+lock across recovery, tightening and consolidation.
+
+The fold workflow requires the repository's Actions setting **Allow GitHub
+Actions to create and approve pull requests**. It reports a setup error when
+PR creation is denied; it never changes permissions or merges. The user also
+approves any waiting workflow runs before merging the bot PR.
+
 ## Commit style
 
 Conventional style, imperative mood, English: `feat: ...`, `fix: ...`, `docs: ...`, `test: ...`.

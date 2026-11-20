@@ -44,7 +44,12 @@ fn assert_clean(name: &str) {
         .iter()
         .find(|guard| guard.name == name)
         .unwrap_or_else(|| panic!("`{name}` is a registered guard"));
-    let violations = (guard.check)(&workspace_root());
+    let violations = match std::env::var_os("QUANTICK_GUARDS_BASE_ROOT") {
+        Some(base) => {
+            quantick_guards::delta::check(&workspace_root(), std::path::Path::new(&base), guard)
+        }
+        None => (guard.check)(&workspace_root()),
+    };
     assert!(
         violations.is_empty(),
         "{name} guard: {} finding(s)\n{}\n\n{}",

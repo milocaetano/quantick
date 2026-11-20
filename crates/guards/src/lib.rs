@@ -56,10 +56,12 @@ pub mod app_lines;
 pub mod blast_radius;
 pub mod context;
 pub mod cycle;
+pub mod delta;
 pub mod encoding;
 pub mod evidence;
 pub mod exemption;
 pub mod extension_boundary;
+pub mod fold;
 pub mod generated;
 pub mod graph;
 pub mod headless;
@@ -109,6 +111,8 @@ pub struct Finding {
     pub line: String,
     /// What to do about this one.
     pub remedy: &'static str,
+    /// A downward ratchet cleanup, deferred to folding during delta checks.
+    pub cleanup: bool,
 }
 
 impl Finding {
@@ -118,7 +122,13 @@ impl Finding {
         Self {
             line: line.into(),
             remedy,
+            cleanup: false,
         }
+    }
+
+    pub(crate) fn cleanup(mut self) -> Self {
+        self.cleanup = true;
+        self
     }
 }
 

@@ -18,7 +18,9 @@
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use quantick_guards::{GUARDS, blast_radius, ratchet, remedies, report, workspace_root};
+use quantick_guards::{
+    GUARDS, blast_radius, delta, fold, ratchet, remedies, report, workspace_root,
+};
 
 /// Turn whatever the caller typed into the workspace-relative spelling with
 /// forward slashes that every guard is keyed on.
@@ -57,12 +59,16 @@ fn relative_to(root: &Path, argument: &str) -> Result<String, String> {
 // would do both, while only the first argument was ever honoured — a mistyped
 // invocation exiting 0 having done half of what was asked.
 const USAGE: &str = "\
-usage: quantick-guards (--file <path> | --tighten | --report | --blast-radius)
+usage: quantick-guards [--base-root <path>] [--file <path>]
+       quantick-guards (--tighten [--fold] | --report | --blast-radius)
 
   (no arguments)   run every guard over the repository
   --file <path>    run every guard over one workspace-relative path
+  --base-root     compare aggregate growth with a checked-out merge base;
+                  QUANTICK_GUARDS_BASE_ROOT supplies the same default
   --tighten        lower any baseline entry whose file has shrunk, in every
                    ratchet, and the !budget totals to match -- only downward
+  --fold           after tightening, consolidate all signed fragments
   --report         print the repository's health numbers as a label<TAB>value
                    table; deterministic, so a diff between two runs is the
                    report of what changed between them
@@ -89,11 +95,34 @@ fn main() -> ExitCode {
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
         .unwrap_or_else(workspace_root);
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    let mut args: Vec<String> = std::env::args().skip(1).collect();
+    let mut base = std::env::var_os("QUANTICK_GUARDS_BASE_ROOT").map(PathBuf::from);
+    if args.first().is_some_and(|arg| arg == "--base-root") {
+        if args.get(1).is_none_or(String::is_empty) {
+            eprintln!("--base-root needs a path\n\n{USAGE}");
+            return ExitCode::FAILURE;
+        }
+        base = Some(PathBuf::from(&args[1]));
+        args.drain(..2);
+        if !args.is_empty() && args[0] != "--file" {
+            eprintln!("--base-root only composes with --file\n\n{USAGE}");
+            return ExitCode::FAILURE;
+        }
+    }
 
     match args.first().map(String::as_str) {
-        None => run_guards(&root, None),
+        None => run_guards(&root, None, base.as_deref()),
         Some("--tighten") if args.len() == 1 => tighten(&root),
+        Some("--tighten") if args.len() == 2 && args[1] == "--fold" => {
+            match fold::run_after(&root, || tighten(&root) == ExitCode::SUCCESS) {
+                Ok(true) => ExitCode::SUCCESS,
+                Ok(false) => ExitCode::FAILURE,
+                Err(error) => {
+                    eprintln!("{error}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
         // Printed rather than returned as findings. These numbers describe
         // the tree; none of them is ratcheted, and a measurement that can
         // fail a build is one people negotiate with instead of reading. A
@@ -131,7 +160,7 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         Some("--file") if args.len() == 2 => match relative_to(&root, &args[1]) {
-            Ok(relative) => run_guards(&root, Some(relative)),
+            Ok(relative) => run_guards(&root, Some(relative), base.as_deref()),
             Err(problem) => {
                 eprintln!("{problem}\n\n{USAGE}");
                 ExitCode::FAILURE
@@ -164,12 +193,15 @@ fn main() -> ExitCode {
 
 /// Run every guard, over the whole repository or over one file, and print
 /// what each found.
-fn run_guards(root: &std::path::Path, only: Option<String>) -> ExitCode {
+fn run_guards(root: &std::path::Path, only: Option<String>, base: Option<&Path>) -> ExitCode {
     let mut clean = true;
     for guard in GUARDS {
-        let violations = match &only {
-            Some(path) => (guard.check_file)(root, path),
-            None => (guard.check)(root),
+        let violations = match (base, &only) {
+            (Some(base), _) if delta::selected(guard.name) => delta::check(root, base, guard),
+            (_, only) => match only {
+                Some(path) => (guard.check_file)(root, path),
+                None => (guard.check)(root),
+            },
         };
         if violations.is_empty() {
             continue;

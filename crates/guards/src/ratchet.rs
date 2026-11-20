@@ -51,6 +51,8 @@ pub const BUDGET_DIRECTIVE: &str = "!budget";
 /// `app-lines-baseline.d/`.
 pub const RAISES_SUFFIX: &str = ".d";
 
+pub(crate) const FOLD_STAGE: &str = "crates/guards/.ratchet-fold";
+
 /// What a guard's own walk measured, summed.
 ///
 /// One owner for the arithmetic; each guard's `measured` reaches it through
@@ -216,6 +218,14 @@ impl Policy {
     /// [`BUDGET_DIRECTIVE`] line, because a typo silently dropping an entry
     /// would leave a file unguarded and looking green.
     pub fn baseline(&self, root: &Path) -> Result<Baseline, String> {
+        if root
+            .join(FOLD_STAGE)
+            .join("pending")
+            .try_exists()
+            .map_err(|error| error.to_string())?
+        {
+            return Err("ratchet fold is pending; retry --tighten --fold to recover".to_owned());
+        }
         let file = root.join(self.baseline_file);
         let text = fs::read_to_string(&file)
             .map_err(|e| format!("{} is unreadable: {e}", file.display()))?;
@@ -346,6 +356,11 @@ impl Policy {
                 if content.is_empty() {
                     continue;
                 }
+                if let Some(rest) = content.strip_prefix("!measure-change ") {
+                    parse_coverage(rest)
+                        .map_err(|error| format!("{relative}:{}: {error}", line + 1))?;
+                    continue;
+                }
                 let at = format!("{relative}:{}", line + 1);
                 let (label, delta) = content
                     .rsplit_once(char::is_whitespace)
@@ -363,7 +378,7 @@ impl Policy {
                     .map_err(|e| format!("{at}: `{delta}` is not a count: {e}"))?;
                 let shift = |from: usize| {
                     if raise.is_some() {
-                        Some(from + amount)
+                        from.checked_add(amount)
                     } else {
                         from.checked_sub(amount)
                     }
@@ -424,14 +439,17 @@ impl Policy {
                 ),
                 self.remedy,
             )),
-            Some(entry) if entry.ceiling.saturating_sub(actual) > self.slack => Some(Finding::new(
-                format!(
-                    "  {path}: down to {actual} from {} — good news, tighten the entry to \
+            Some(entry) if entry.ceiling.saturating_sub(actual) > self.slack => Some(
+                Finding::new(
+                    format!(
+                        "  {path}: down to {actual} from {} — good news, tighten the entry to \
                          {actual}",
-                    entry.ceiling
-                ),
-                self.remedy,
-            )),
+                        entry.ceiling
+                    ),
+                    self.remedy,
+                )
+                .cleanup(),
+            ),
             None if actual > self.threshold => Some(Finding::new(
                 format!(
                     "  {path}: {actual} {unit}, over the {} threshold and absent from the \
@@ -455,6 +473,7 @@ impl Policy {
             ),
             self.remedy,
         )
+        .cleanup()
     }
 
     /// How the total stands against the budget.
@@ -503,15 +522,18 @@ impl Policy {
             ));
         }
         if budget.allowed.saturating_sub(total) > self.budget_slack {
-            return Some(Finding::new(
-                format!(
-                    "  {}: the tracked total is {total}, down from the \
+            return Some(
+                Finding::new(
+                    format!(
+                        "  {}: the tracked total is {total}, down from the \
                      {BUDGET_DIRECTIVE} of {} — good news, tighten the budget to {total}",
-                    self.budget_source(recorded, budget),
-                    budget.allowed
-                ),
-                self.budget_slack_remedy,
-            ));
+                        self.budget_source(recorded, budget),
+                        budget.allowed
+                    ),
+                    self.budget_slack_remedy,
+                )
+                .cleanup(),
+            );
         }
         None
     }
@@ -683,6 +705,18 @@ fn branch_slug(root: &Path) -> String {
             None => format!("tighten-{}", head.trim().get(..8).unwrap_or("detached")),
         })
         .unwrap_or_else(|| "tighten".to_owned())
+}
+
+/// Measurement corrections name an exact report row and a signed change.
+pub fn parse_coverage(rest: &str) -> Result<(&str, i128), String> {
+    let fields: Vec<_> = rest.split_whitespace().collect();
+    if fields.len() != 2 || !fields[1].starts_with(['+', '-']) {
+        return Err("expected `!measure-change <report-row> +N|-N`".to_owned());
+    }
+    let amount = fields[1]
+        .parse()
+        .map_err(|_| "invalid measurement change".to_owned())?;
+    Ok((fields[0], amount))
 }
 
 #[cfg(test)]

@@ -1,4 +1,0 @@
-# #839 docks the closed source-editor surface and app-owned store/control adapters.
-# Headless documents, decisions and port dispatch live in stores/control-handlers.
-crates/app +103
-!budget +103
