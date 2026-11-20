@@ -168,10 +168,10 @@ counts as coverage without counting as a share. It runs in `ci`.
 
 | Event | Runs |
 | --- | --- |
-| Push to a draft PR | `fast` only |
-| Push to a draft labelled `full-ci`, or adding that label | `fast` (push only) plus the nine full jobs |
-| Draft flipped to ready | the nine full jobs, always |
-| Push to a ready PR, push to `main` | the nine full jobs |
+| Push to a draft PR | `guards` then `fast` |
+| Push to a draft labelled `full-ci`, or adding that label | `fast` (push only) plus the ten full jobs, starting with `guards` |
+| Draft flipped to ready | the ten full jobs, always |
+| Push to a ready PR, push to `main` | the ten full jobs |
 
 `fast` runs `cargo fmt --all -- --check`, then `cargo clippy --all-targets`
 and `cargo test` over the crates `tools/ci/affected_crates.py` selects: the
