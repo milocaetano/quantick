@@ -466,3 +466,10 @@ overstatement here is a false sense of cover:
 The command hooks need `sh` on `PATH`; on Windows that comes with Git. Check
 with `sh --version`. Hook configuration is read at session start, so an edit
 to `settings.json` needs a new session before it takes effect.
+
+Aggregate ratchets in `guard-watch` use `tools/ci/ratchet_delta.py` and the
+mission review base. Git checkout and old/new binary measurement happen in
+that script; the Rust guards spawn no processes. A missing or corrupt base is
+a finding. The script caches a pristine detached base under `target/` and
+refuses a modified cache. Cleanup-only aggregate findings wait for the daily
+fold PR; every other guard keeps its existing policy.

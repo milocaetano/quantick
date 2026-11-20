@@ -845,7 +845,16 @@ guard_watch_one() {
 
     # The binary is told which root to read, because the one compiled into it
     # is whichever worktree happened to build it.
-    findings=$(QUANTICK_GUARDS_ROOT="$root" "$binary" --file "$relative" 2>&1) && return 0
+    if [ -f "$root/tools/ci/ratchet_delta.py" ]; then
+        if delta_base=$(review_base "$root" 2>/dev/null); then
+            findings=$(python "$root/tools/ci/ratchet_delta.py" --repo "$root" \
+                --base "$delta_base" --binary "$binary" --file "$relative" 2>&1) && return 0
+        else
+            findings="Aggregate ratchets: the merge base is unavailable; restore the mission-base reference."
+        fi
+    else
+        findings=$(QUANTICK_GUARDS_ROOT="$root" "$binary" --file "$relative" 2>&1) && return 0
+    fi
     [ -n "$findings" ] || return 0
 
     # JSON-escape by hand, because there is no jq here. Separate `-e` scripts

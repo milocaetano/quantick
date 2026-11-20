@@ -977,6 +977,18 @@ run "guard-watch: silent for a relative path" \
 run "guard-watch: silent outside a repository" \
     guard-watch "$(json_path "$root/loose.rs")" silent
 
+mkdir -p "$root/wt/tools/ci"
+cat > "$root/wt/tools/ci/ratchet_delta.py" <<'PY'
+import sys
+print("delta invocation: " + " ".join(sys.argv[1:]))
+sys.exit(1)
+PY
+run "guard-watch: aggregate comparison receives the review base" \
+    guard-watch "$(json_path "$root/wt/src/a.rs")" context "--base origin/main"
+run "guard-watch: aggregate comparison receives the edited file" \
+    guard-watch "$(json_path "$root/wt/src/a.rs")" context "--file src/a.rs"
+rm "$root/wt/tools/ci/ratchet_delta.py"
+
 rm -rf "$root/wt/target"
 
 # --- the gate must judge the command, not the prose around it ---------------
