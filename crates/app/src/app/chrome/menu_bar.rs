@@ -4,7 +4,7 @@ use crate::app::{
     menu_bar::{MenuCall, MenuCommand, MenuDoor},
 };
 use eframe::egui;
-use quantick_control_handlers::desk::DeskAct;
+use quantick_control_handlers::{desk::DeskAct, notify::AttentionHost};
 use quantick_control_schema::window_menu::{self as menu, RowId};
 use quantick_ui_model::chrome_menu_bar::{Action, Snapshot, Workspace};
 
@@ -138,7 +138,7 @@ fn snapshot(app: &QuantickApp, ctx: &egui::Context) -> Snapshot {
     }
 }
 fn settle(
-    app: &mut impl crate::control::strategy_describe_contract::DescribeHost,
+    app: &mut (impl crate::control::strategy_describe_contract::DescribeHost + AttentionHost),
     action: Action,
     commands: &mut Vec<MenuCommand>,
 ) {
@@ -146,13 +146,12 @@ fn settle(
     let command = match action {
         Action::DescribeStrategy => {
             use quantick_ui_model::strategy_describe::{Command, Intent};
-            let _ = app.dispatch(Intent::Command(Command::Open));
+            if let Err(error) = app.dispatch(Intent::Command(Command::Open)) {
+                app.attention().show_toast(error.message);
+            }
             return;
         }
-        Action::Row(id) => {
-            settle_row(id, commands);
-            return;
-        }
+        Action::Row(id) => return settle_row(id, commands),
         Action::Workspace(command) => MenuCommand::Workspace(command),
         Action::SaveOnExit(on) => MenuCommand::Call(MenuCall::Desk(DeskAct::SetReopen(on))),
         Action::SwitchLayout(id) => MenuCommand::Call(MenuCall::Strip(StripAction::Switch(id))),
