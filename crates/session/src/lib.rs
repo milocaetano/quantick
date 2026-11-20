@@ -36,6 +36,7 @@ pub mod prompt;
 pub mod script_strategies;
 pub mod series;
 pub mod strategies;
+pub mod strategy_desk;
 pub mod strategy_reading;
 pub mod switch_prompt;
 pub mod tab_chip;

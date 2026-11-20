@@ -312,6 +312,10 @@ pub struct ArmedStrategy {
     /// state machine deliberately left out. The alarm's closed-bar reading;
     /// the order path never consults it.
     last_close_opportunity: Option<Opportunity>,
+    /// Paused from the strategy desk: the trigger keeps warming and a live
+    /// operation still completes, but no closed bar presents an opportunity
+    /// and no signal becomes an order until it is resumed.
+    paused: bool,
 }
 
 impl std::fmt::Debug for ArmedStrategy {
@@ -335,7 +339,25 @@ impl ArmedStrategy {
             note: None,
             last_hold: None,
             last_close_opportunity: None,
+            paused: false,
         }
+    }
+
+    /// Stop judging setups until [`Self::resume`]; nothing is owed, since a
+    /// resting entry or a live position keeps its own course.
+    pub fn pause(&mut self) {
+        self.paused = true;
+        self.last_close_opportunity = None;
+    }
+
+    /// Judge setups again from the next closed bar.
+    pub fn resume(&mut self) {
+        self.paused = false;
+    }
+
+    #[must_use]
+    pub fn paused(&self) -> bool {
+        self.paused
     }
 
     /// Why the **ruler** declined the last bar it judged, as a stable
@@ -397,6 +419,9 @@ impl ArmedStrategy {
         placement: &dyn Placement,
         region_active: bool,
     ) -> Option<Opportunity> {
+        if self.paused {
+            return None;
+        }
         let signal = self.trigger.preview(&self.closed.context(bar))?;
         signal_is_ours(&self.params, region_active, &signal).ok()?;
         entry_geometry(&self.params, placement, bar).ok()
@@ -447,7 +472,10 @@ impl ArmedStrategy {
         // act on it. The alarm reads it from here, which is how a trader
         // executing on another platform still hears a signal their spent
         // one-shot instance would never trade.
-        self.last_close_opportunity = signal.as_ref().and_then(|signal| {
+        // A paused instance has no setups to report, so its alarm stays
+        // silent while the ruler keeps warming.
+        let judged = signal.as_ref().filter(|_| !self.paused);
+        self.last_close_opportunity = judged.and_then(|signal| {
             signal_is_ours(&self.params, region_active, signal).ok()?;
             entry_geometry(&self.params, placement, bar).ok()
         });
@@ -463,7 +491,7 @@ impl ArmedStrategy {
             };
         }
 
-        if self.state != ArmedState::Armed {
+        if self.paused || self.state != ArmedState::Armed {
             return Vec::new();
         }
         // Every gate that holds a seen trigger names itself in the note, so
@@ -824,6 +852,9 @@ impl ArmedStrategy {
     /// One line for the on-chart badge.
     #[must_use]
     pub fn status_line(&self) -> String {
+        if self.paused && self.state == ArmedState::Armed {
+            return "paused".to_owned();
+        }
         match &self.state {
             // Fresh first: the bar just judged is the most useful sentence
             // there is. Once it has passed, the ruler's live reading leads
