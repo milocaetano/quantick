@@ -1,26 +1,72 @@
 //! Drive the actual stdio executable, pumping the same desktop frames as a human.
 use super::*;
 use std::{
+    ffi::OsStr,
     io::{BufRead, BufReader, Write},
     path::{Path, PathBuf},
     process::{Child, ChildStdin, Command, Stdio},
     sync::{OnceLock, mpsc as channel},
 };
 
+fn cargo_target(profile: &Path) -> (&Path, Option<&OsStr>) {
+    let directory = profile.parent().unwrap();
+    // With --target, Cargo puts host build scripts in <root>/<profile> and
+    // test binaries in <root>/<triple>/<profile>, even for the native triple.
+    if let Some(root) = directory.parent()
+        && root
+            .join(profile.file_name().unwrap())
+            .join("build")
+            .is_dir()
+    {
+        let targets = Command::new(std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into()))
+            .args(["--print", "target-list"])
+            .current_dir(env!("CARGO_MANIFEST_DIR"))
+            .output()
+            .expect("list compiler targets for the test output layout");
+        assert!(targets.status.success(), "rustc could not list its targets");
+        let platform = directory.file_name().unwrap();
+        if String::from_utf8(targets.stdout)
+            .unwrap()
+            .lines()
+            .any(|triple| platform == triple)
+        {
+            return (root, Some(platform));
+        }
+    }
+    (directory, None)
+}
+
+#[test]
+fn cargo_target_preserves_the_test_output_layout() {
+    let root = crate::scratch::ScratchDir::new("mcp-cargo-layout");
+    std::fs::create_dir_all(root.join("debug/build")).unwrap();
+    assert_eq!(cargo_target(&root.join("debug")), (&*root, None));
+    let triple = "x86_64-unknown-linux-gnu";
+    assert_eq!(
+        cargo_target(&root.join(triple).join("debug")),
+        (&*root, Some(OsStr::new(triple)))
+    );
+}
+
 fn executable() -> &'static Path {
     static BUILT: OnceLock<PathBuf> = OnceLock::new();
     BUILT.get_or_init(|| {
         let test = std::env::current_exe().unwrap();
         let profile = test.parent().unwrap().parent().unwrap();
+        let (target_dir, platform) = cargo_target(profile);
         let profile_name = match profile.file_name().unwrap().to_str().unwrap() {
             "debug" => "test",
             name => name,
         };
+        let mut build = Command::new(env!("CARGO"));
+        build.arg("build");
+        if let Some(triple) = platform {
+            build.arg("--target").arg(triple);
+        }
         // Selecting both packages unifies shared dependency features with the
         // app build. Only the real MCP binary is requested from Cargo.
-        let output = Command::new(env!("CARGO"))
+        let output = build
             .args([
-                "build",
                 "--locked",
                 "-p",
                 "quantick-app",
@@ -33,7 +79,7 @@ fn executable() -> &'static Path {
                 profile_name,
                 "--target-dir",
             ])
-            .arg(profile.parent().unwrap())
+            .arg(target_dir)
             .current_dir(env!("CARGO_MANIFEST_DIR"))
             .stderr(Stdio::inherit())
             .output()
