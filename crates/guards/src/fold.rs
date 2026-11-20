@@ -1,6 +1,5 @@
 //! Consolidate signed fragments without changing their effective ceilings.
 
-use std::fmt::Write as _;
 use std::fs;
 use std::path::Path;
 
@@ -40,12 +39,12 @@ fn prepare(root: &Path, policy: &Policy) -> Result<(String, String, Vec<String>)
         .lines()
         .filter(|line| line.trim_start().starts_with('#'))
     {
-        writeln!(text, "{line}").unwrap();
+        text.push_str(&format!("{line}\n"));
     }
-    writeln!(text, "!budget {}", budget.allowed).unwrap();
+    text.push_str(&format!("!budget {}\n", budget.allowed));
     baseline.entries.sort_by(|a, b| a.path.cmp(&b.path));
     for entry in &baseline.entries {
-        writeln!(text, "{} {}", entry.path, entry.ceiling).unwrap();
+        text.push_str(&format!("{} {}\n", entry.path, entry.ceiling));
     }
     Ok((policy.baseline_file.to_owned(), text, baseline.raise_files))
 }
