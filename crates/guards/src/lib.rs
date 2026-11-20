@@ -65,6 +65,7 @@ pub mod fold;
 pub mod generated;
 pub mod graph;
 pub mod headless;
+pub mod ignored_test_reason;
 pub mod impl_spread;
 pub mod instruction_links;
 pub mod language;
@@ -203,6 +204,12 @@ pub struct Guard {
 
 /// Every guard this crate runs.
 pub const GUARDS: &[Guard] = &[
+    Guard {
+        name: "ignored-tests",
+        check: ignored_test_reason::check,
+        check_file: ignored_test_reason::check_file,
+        ratchet: None,
+    },
     Guard {
         name: "instruction_links",
         check: instruction_links::check,

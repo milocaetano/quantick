@@ -4,7 +4,7 @@
 //! See `docs/quality/native-indicator-boundary.md` for the grammar,
 //! origin contributions and macro/alias/free-helper limits.
 
-mod lex;
+pub(crate) mod lex;
 mod scan;
 
 use std::collections::BTreeMap;
