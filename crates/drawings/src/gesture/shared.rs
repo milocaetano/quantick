@@ -372,7 +372,7 @@ impl DrawingProjection<'_> {
                 );
                 source
                     .drawings
-                    .observe_scene(&mut scene, drawing, ctxt.px_per_bar);
+                    .observe_scene(&mut scene, drawing, ctxt.text_spacing());
                 paint(band.rect, &scene);
             }
         }

@@ -22,20 +22,56 @@ fn zoom_is_relative_to_size_selection_and_undo_restores_the_reference() {
     let revision = drawings.revision();
     let depth = drawings.undo_depth();
     drawings.set_text_spacing(10.0);
-    assert_eq!(note(&drawings).format_at(10.0).font.size_px, 6.0);
-    assert_eq!(note(&drawings).format_at(20.0).font.size_px, 12.0);
+    assert_eq!(
+        note(&drawings)
+            .format_at(TextSpacing::horizontal(10.0))
+            .font
+            .size_px,
+        6.0
+    );
+    assert_eq!(
+        note(&drawings)
+            .format_at(TextSpacing::horizontal(20.0))
+            .font
+            .size_px,
+        12.0
+    );
     assert_eq!(drawings.revision(), revision);
     assert_eq!(drawings.undo_depth(), depth);
     let tool = drawings.items()[0].tool;
     tool.set_glyph_size(&mut drawings.items_mut()[0], 30.0);
     drawings.record_edit_of(0, original.clone());
-    assert_eq!(note(&drawings).format_at(10.0).font.size_px, 30.0);
-    assert_eq!(note(&drawings).format_at(5.0).font.size_px, 15.0);
+    assert_eq!(
+        note(&drawings)
+            .format_at(TextSpacing::horizontal(10.0))
+            .font
+            .size_px,
+        30.0
+    );
+    assert_eq!(
+        note(&drawings)
+            .format_at(TextSpacing::horizontal(5.0))
+            .font
+            .size_px,
+        15.0
+    );
     drawings.undo();
     assert_eq!(drawings.items()[0], original);
-    assert_eq!(note(&drawings).format_at(10.0).font.size_px, 6.0);
+    assert_eq!(
+        note(&drawings)
+            .format_at(TextSpacing::horizontal(10.0))
+            .font
+            .size_px,
+        6.0
+    );
     drawings.redo();
-    assert_eq!(note(&drawings).format_at(10.0).font.size_px, 30.0);
+    assert_eq!(
+        note(&drawings)
+            .format_at(TextSpacing::horizontal(10.0))
+            .font
+            .size_px,
+        30.0
+    );
     assert_eq!(drawings.items()[0].points, original.points);
 }
 
@@ -51,10 +87,19 @@ fn persisted_reference_survives_reload_but_does_not_travel_with_presets() {
         .as_any()
         .downcast_ref::<TextPayload>()
         .unwrap();
-    assert_eq!(payload.format_at(10.0).font.size_px, 6.0);
+    assert_eq!(
+        payload
+            .format_at(TextSpacing::horizontal(10.0))
+            .font
+            .size_px,
+        6.0
+    );
     let mut preset = TextPayload::default();
     assert!(preset.import_preset(&payload.export_preset().unwrap()));
-    assert_eq!(preset.format_at(10.0).font.size_px, 12.0);
+    assert_eq!(
+        preset.format_at(TextSpacing::horizontal(10.0)).font.size_px,
+        12.0
+    );
     assert_eq!(restored.points, drawings.items()[0].points);
 }
 
@@ -67,21 +112,46 @@ fn legacy_notes_bind_once_and_invalid_chart_spacing_preserves_the_reference() {
     );
     let revision = drawings.revision();
     for zoom in [0.0, -1.0, f32::NAN, f32::INFINITY] {
-        drawings.note_display().observe(note(&drawings), zoom);
-        assert_eq!(note(&drawings).format_at(zoom).font.size_px, 12.0);
+        drawings
+            .note_display()
+            .observe(note(&drawings), TextSpacing::horizontal(zoom));
+        assert_eq!(
+            note(&drawings)
+                .format_at(TextSpacing::horizontal(zoom))
+                .font
+                .size_px,
+            12.0
+        );
     }
     assert_eq!(drawings.revision(), revision);
     drawings.begin_gesture();
     let history = drawings.undo_depth();
-    drawings.note_display().observe(note(&drawings), 8.0);
+    drawings
+        .note_display()
+        .observe(note(&drawings), TextSpacing::horizontal(8.0));
     drawings.commit_gesture();
     assert_eq!(drawings.undo_depth(), history);
     assert!(drawings.revision() > revision);
-    assert_eq!(note(&drawings).format_at(8.0).font.size_px, 12.0);
-    assert_eq!(note(&drawings).format_at(4.0).font.size_px, 6.0);
+    assert_eq!(
+        note(&drawings)
+            .format_at(TextSpacing::horizontal(8.0))
+            .font
+            .size_px,
+        12.0
+    );
+    assert_eq!(
+        note(&drawings)
+            .format_at(TextSpacing::horizontal(4.0))
+            .font
+            .size_px,
+        6.0
+    );
     let original = note(&drawings).clone();
     for zoom in [f32::MIN_POSITIVE, f32::MAX] {
-        let size = original.format_at(zoom).font.size_px;
+        let size = original
+            .format_at(TextSpacing::horizontal(zoom))
+            .font
+            .size_px;
         assert!(size.is_finite() && size > 0.0 && size <= 512.0);
     }
 }
@@ -102,8 +172,16 @@ fn unreadable_optional_zoom_preserves_the_saved_note_style_and_words() {
         assert!(recovered.appearance.bold);
         assert_eq!(recovered.text, "Keep these words");
         assert!(recovered.export_saved().unwrap().get("zoom").is_none());
-        drawings.note_display().observe(note(&drawings), 10.0);
-        assert_eq!(note(&drawings).format_at(5.0).font.size_px, 15.0);
+        drawings
+            .note_display()
+            .observe(note(&drawings), TextSpacing::horizontal(10.0));
+        assert_eq!(
+            note(&drawings)
+                .format_at(TextSpacing::horizontal(5.0))
+                .font
+                .size_px,
+            15.0
+        );
     }
 }
 
@@ -154,8 +232,16 @@ fn loaded_legacy_note_binds_on_the_first_visible_layout_or_eye() {
             drawings.set_all_hidden(false);
         }
         assert!(drawings.is_visible(0));
-        drawings.note_display().observe(note(&drawings), 20.0);
-        assert_eq!(note(&drawings).format_at(20.0).font.size_px, 12.0);
+        drawings
+            .note_display()
+            .observe(note(&drawings), TextSpacing::horizontal(20.0));
+        assert_eq!(
+            note(&drawings)
+                .format_at(TextSpacing::horizontal(20.0))
+                .font
+                .size_px,
+            12.0
+        );
         let persisted = SavedDrawing::from_drawing(&drawings.items()[0]);
         if hidden || hide_all {
             assert!(drawings.undo());
@@ -163,12 +249,24 @@ fn loaded_legacy_note_binds_on_the_first_visible_layout_or_eye() {
             drawings.set_hidden_at(0, false);
             drawings.set_all_hidden(false);
             drawings.set_text_spacing(10.0);
-            assert_eq!(note(&drawings).format_at(10.0).font.size_px, 6.0);
+            assert_eq!(
+                note(&drawings)
+                    .format_at(TextSpacing::horizontal(10.0))
+                    .font
+                    .size_px,
+                6.0
+            );
         }
         let mut loaded = Drawings::default();
         loaded.adopt([persisted.to_drawing(DrawingId(1)).unwrap()]);
         loaded.set_text_spacing(10.0);
-        assert_eq!(note(&loaded).format_at(10.0).font.size_px, 6.0);
+        assert_eq!(
+            note(&loaded)
+                .format_at(TextSpacing::horizontal(10.0))
+                .font
+                .size_px,
+            6.0
+        );
     }
 }
 
@@ -181,14 +279,38 @@ fn explicit_resize_binds_a_hidden_note_before_the_inspector_gesture_ends() {
     let mut edited = before.clone();
     edited.tool.set_glyph_size(&mut edited, 30.0);
     drawings.replace_edited(0, edited);
-    assert_eq!(note(&drawings).format_at(5.0).font.size_px, 15.0);
+    assert_eq!(
+        note(&drawings)
+            .format_at(TextSpacing::horizontal(5.0))
+            .font
+            .size_px,
+        15.0
+    );
     drawings.set_text_spacing(5.0);
     drawings.record_edit_of(0, before);
-    assert_eq!(note(&drawings).format_at(5.0).font.size_px, 15.0);
+    assert_eq!(
+        note(&drawings)
+            .format_at(TextSpacing::horizontal(5.0))
+            .font
+            .size_px,
+        15.0
+    );
     drawings.undo();
-    assert_eq!(note(&drawings).format_at(5.0).font.size_px, 3.0);
+    assert_eq!(
+        note(&drawings)
+            .format_at(TextSpacing::horizontal(5.0))
+            .font
+            .size_px,
+        3.0
+    );
     drawings.redo();
-    assert_eq!(note(&drawings).format_at(5.0).font.size_px, 15.0);
+    assert_eq!(
+        note(&drawings)
+            .format_at(TextSpacing::horizontal(5.0))
+            .font
+            .size_px,
+        15.0
+    );
 }
 
 struct Metrics;
@@ -247,9 +369,14 @@ fn paint_editor_bounds_and_hit_testing_share_zoomed_layout() {
                 })
                 .unwrap();
             assert_eq!(painted, 12.0 * zoom / 20.0);
-            let bounds = payload.bounds_at(anchor, &Metrics, zoom);
+            let bounds = payload.bounds_at(anchor, &Metrics, TextSpacing::horizontal(zoom));
             assert_eq!(
-                tool.content_bounds(payload, PxRect::from_min_max(anchor, anchor), chart, zoom),
+                tool.content_bounds(
+                    payload,
+                    PxRect::from_min_max(anchor, anchor),
+                    chart,
+                    TextSpacing::horizontal(zoom)
+                ),
                 bounds
             );
             assert_eq!(text::anchor_from_bounds(bounds, payload.appearance), anchor);
@@ -263,4 +390,83 @@ fn paint_editor_bounds_and_hit_testing_share_zoomed_layout() {
             ));
         }
     }
+}
+
+#[test]
+fn a_squeezed_value_axis_shrinks_the_note_with_the_chart() {
+    let drawings = placed();
+    drawings
+        .note_display()
+        .observe(note(&drawings), TextSpacing::new(20.0, 2.0));
+    let at = |bar, value| {
+        note(&drawings)
+            .format_at(TextSpacing::new(bar, value))
+            .font
+            .size_px
+    };
+    assert_eq!(at(20.0, 2.0), 12.0, "the scales it was placed at");
+    assert_eq!(at(20.0, 1.0), 6.0, "a shorter chart halves the price axis");
+    assert_eq!(at(10.0, 2.0), 6.0, "a zoomed-out time axis");
+    assert_eq!(at(40.0, 1.0), 6.0, "the axis that shrank most wins");
+    assert_eq!(at(40.0, 4.0), 24.0, "both axes grown");
+    assert_eq!(at(20.0, 0.0), 12.0, "an unknown value axis leaves it alone");
+}
+
+#[test]
+fn a_note_bound_before_the_value_axis_keeps_its_look_on_first_display() {
+    let mut drawings = placed();
+    let saved = SavedDrawing::from_drawing(&drawings.items()[0]);
+    let mut legacy = toml::to_string(&saved).unwrap();
+    legacy = legacy
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("px_per_value"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let saved: SavedDrawing = toml::from_str(&legacy).unwrap();
+    drawings = Drawings::default();
+    drawings.adopt([saved.to_drawing(DrawingId(1)).unwrap()]);
+    let revision = drawings.revision();
+    drawings
+        .note_display()
+        .observe(note(&drawings), TextSpacing::new(20.0, 3.0));
+    assert!(drawings.revision() > revision, "the bound axis is saved");
+    let at = |value| {
+        note(&drawings)
+            .format_at(TextSpacing::new(20.0, value))
+            .font
+            .size_px
+    };
+    assert_eq!(at(3.0), 12.0);
+    assert_eq!(at(1.5), 6.0);
+    let zoom = SavedDrawing::from_drawing(&drawings.items()[0])
+        .payload
+        .unwrap();
+    assert!(zoom.get("zoom").unwrap().get("px_per_value").is_some());
+}
+
+#[test]
+fn a_resize_rebinds_the_value_axis_where_the_note_is_next_shown() {
+    let mut drawings = placed();
+    drawings
+        .note_display()
+        .observe(note(&drawings), TextSpacing::new(20.0, 2.0));
+    let before = drawings.items()[0].clone();
+    let tool = before.tool;
+    tool.set_glyph_size(&mut drawings.items_mut()[0], 30.0);
+    drawings.record_edit_of(0, before);
+    drawings
+        .note_display()
+        .observe(note(&drawings), TextSpacing::new(20.0, 1.0));
+    let at = |value| {
+        note(&drawings)
+            .format_at(TextSpacing::new(20.0, value))
+            .font
+            .size_px
+    };
+    assert_eq!(
+        at(1.0),
+        30.0,
+        "the new size belongs to the chart it was chosen on"
+    );
+    assert_eq!(at(0.5), 15.0);
 }
