@@ -10,7 +10,7 @@ use smallvec::SmallVec;
 
 /// The ports an indicator edit lands on: the workspace, the library, and the
 /// layout chrome an edit can toast or confirm through.
-pub(super) struct IndicatorWiring<'a> {
+pub(crate) struct IndicatorWiring<'a> {
     pub(super) runtime: &'a mut WorkspaceRuntime,
     pub(super) surfaces: &'a mut crate::surfaces::Surfaces,
     #[cfg(any(feature = "scenario-harness", test))]

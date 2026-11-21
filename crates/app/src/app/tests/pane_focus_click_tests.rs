@@ -1,7 +1,7 @@
 //! A click activates whichever pane it lands in, in every layout and every
 //! collapse state the canvas can draw, and only a split marks focus.
 
-use super::*;
+use super::support::*;
 
 /// One layout and collapse state, and the panes it leaves on screen.
 struct Arrangement {

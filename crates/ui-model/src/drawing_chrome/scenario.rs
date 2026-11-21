@@ -1,7 +1,5 @@
 //! Drawing launch state and synchronous phase plans. Hosts supply all facts.
-#[path = "scenario/plan.rs"]
 mod plan;
-#[path = "scenario/profile.rs"]
 mod profile;
 use super::InspectorTab;
 pub use plan::*;
@@ -332,5 +330,4 @@ impl NotePlacement {
     }
 }
 #[cfg(test)]
-#[path = "scenario/tests.rs"]
 mod tests;

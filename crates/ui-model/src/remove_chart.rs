@@ -21,8 +21,12 @@ pub struct State {
     prompt: Option<RemovePrompt>,
 }
 impl State {
-    pub fn menu_open(&self) -> Option<u32> { self.menu_open }
-    pub fn has_pick(&self) -> bool { self.picked.is_some() }
+    pub fn menu_open(&self) -> Option<u32> {
+        self.menu_open
+    }
+    pub fn has_pick(&self) -> bool {
+        self.picked.is_some()
+    }
 
     pub fn pending(&self) -> Option<u32> {
         self.pending
@@ -96,21 +100,24 @@ impl crate::Model for Model {
                 state.menu_open = (state.menu_open != Some(slot)).then_some(slot);
                 Effects::None
             }
-            Intent::SetMenuOpen(slot) => { state.menu_open = slot; Effects::None }
-            Intent::DismissMenu => { state.menu_open = None; Effects::None }
+            Intent::SetMenuOpen(slot) => {
+                state.menu_open = slot;
+                Effects::None
+            }
+            Intent::DismissMenu => {
+                state.menu_open = None;
+                Effects::None
+            }
             Intent::Pick(slot, item) => {
                 state.menu_open = None;
                 state.picked = Some((slot, item));
                 Effects::None
             }
-            Intent::MenuStep {
-                escape,
-                snapshot,
-            } => {
+            Intent::MenuStep { escape, snapshot } => {
                 let before = state.pending;
                 let act = canvas::menu_step(
                     state.picked.take(),
-                        escape && before.is_none(),
+                    escape && before.is_none(),
                     &mut state.pending,
                     &snapshot.live,
                     snapshot.saved.as_ref(),

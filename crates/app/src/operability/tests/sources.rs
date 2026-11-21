@@ -293,7 +293,7 @@ pub(crate) const COMPUTED_MENU_LABELS: usize = 10;
 /// The actual owners that render the menu bar and its workspace file actions.
 const MENU_SOURCES: &[&str] = &[
     "crates/app/src/app/menu_bar.rs",
-    "crates/ui-model/src/chrome/menu_bar.rs",
+    "crates/ui-model/src/chrome_menu_bar.rs",
     "crates/app/src/surfaces/settings_window.rs",
 ];
 

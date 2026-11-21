@@ -162,31 +162,36 @@ fn draw(
                                 env.paper.draw_trading_tab(ui)
                             });
                         match scrolled.inner {
-                                Some(TradingTabAction::PickTradesDir) => {
-                                    response.pick_trades_dir = true;
-                                }
-                                Some(TradingTabAction::CmdTradingChanged) => {
-                                    response.cmd_trading_changed = true;
-                                }
-                                Some(TradingTabAction::OrderStrategiesChanged) => {
-                                    response.order_strategies_changed = true;
-                                }
-                                Some(TradingTabAction::RiskSettingsChanged) => {
-                                    response.risk_settings_changed = true;
-                                }
-                                None => {}
+                            Some(TradingTabAction::PickTradesDir) => {
+                                response.pick_trades_dir = true;
                             }
+                            Some(TradingTabAction::CmdTradingChanged) => {
+                                response.cmd_trading_changed = true;
+                            }
+                            Some(TradingTabAction::OrderStrategiesChanged) => {
+                                response.order_strategies_changed = true;
+                            }
+                            Some(TradingTabAction::RiskSettingsChanged) => {
+                                response.risk_settings_changed = true;
+                            }
+                            None => {}
+                        }
                     }
                     // The ledger manages its own scroll (a virtualised
                     // list with a pinned totals strip).
-                    DockTab::Trades => match env.paper.draw_trades_tab(ui, env.timezone, env.live_journals) {
-                        Some(LedgerAction::Navigate(opened, closed)) => {
-                            response.navigate_to_trade = Some((opened, closed));
+                    DockTab::Trades => {
+                        match env
+                            .paper
+                            .draw_trades_tab(ui, env.timezone, env.live_journals)
+                        {
+                            Some(LedgerAction::Navigate(opened, closed)) => {
+                                response.navigate_to_trade = Some((opened, closed));
+                            }
+                            Some(LedgerAction::OpenTicket) => open_ticket = true,
+                            Some(LedgerAction::Edit(edit)) => response.journal_edit = Some(edit),
+                            None => {}
                         }
-                        Some(LedgerAction::OpenTicket) => open_ticket = true,
-                        Some(LedgerAction::Edit(edit)) => response.journal_edit = Some(edit),
-                        None => {}
-                    },
+                    }
                 }
             });
         dock.update(Intent::RememberWidth {
@@ -214,7 +219,10 @@ fn draw_tab_header(
 ) {
     let palette = theme::get(ui.ctx());
     let row = |ui: &mut egui::Ui| {
-        let ink = ui.visuals().override_text_color.unwrap_or(palette.text_primary());
+        let ink = ui
+            .visuals()
+            .override_text_color
+            .unwrap_or(palette.text_primary());
         let title = quantick_paper::route::dock_title(tab, route);
         let ink = route.map_or(ink, |sheet| account_route::tone_color(sheet.tone, ink));
         ui.label(egui::RichText::new(title).strong().color(ink));

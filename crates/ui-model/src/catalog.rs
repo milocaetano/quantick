@@ -1,8 +1,9 @@
-//! One registration owns module declarations, storage, effects and frame slot.
+//! One registration owns storage, effects and frame slots. Model and view
+//! modules use conventional Rust declarations at their crate boundaries.
 //! Register a surface with `models { [] [] field: Name => model_module = "model.rs",
-//! view_module = "view.rs", effect_conversion, Slot, Host; }`. Model files live beside lib.rs; view files
-//! live under app/src/surfaces. Implement View and convert typed effects into
-//! the existing SurfaceResponse; its host dispatch remains authoritative.
+//! view_module = "view.rs", effect_conversion, Slot, Host; }`. Implement View
+//! and convert typed effects into the existing SurfaceResponse; its host
+//! dispatch remains authoritative.
 //! No projection is rebuilt by the adapter: the view borrows cached State.
 #[macro_export]
 macro_rules! surface_catalog {

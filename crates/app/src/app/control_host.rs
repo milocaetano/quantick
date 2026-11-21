@@ -11,31 +11,22 @@
 //! The families return views over roots the window owns (`Tab`, the style,
 //! the dock), so they live here in `app` rather than in `quantick-control-host`,
 //! which cannot name app types. The chrome family also speaks egui geometry.
-//! The one adapter, `QuantickApp`, follows the views: the only code that
-//! knows which root each family reads. Last comes the gateway's seat — the
+//! The `QuantickApp` adapters live beside their families in `crate::control`;
+//! narrow constructors on the app split the roots each adapter reads. Last
+//! comes the gateway's seat — the
 //! access it runs in between calls and the `QUANTICK_CONTROL_*` launch hooks
 //! that configure it; the scenarios those hooks ask for are headless state in
 //! `quantick_control_host::launch`.
 //!
-//! One file, not two: the adapter and the seat name no `egui` type of their
-//! own, so a file of them alone would count against the app UI-free ratchet
-//! as code that belongs below `app` — which code reading `QuantickApp`'s
-//! fields cannot be.
+//! The shared views stay here because the fake window and every family use
+//! the same split-borrow vocabulary.
 
 use crate::surfaces::drawing_chrome::DrawingChromeExt as _;
-use crate::surfaces::replay_browser::ReplayBrowserExt as _;
-use crate::toolrail::ToolRailExt as _;
 use eframe::egui;
 use quantick_control_handlers::drawing_magnet::RailMagnetPort;
-use quantick_control_handlers::home_tab::{HomeTab, HomeTabHost};
-use quantick_control_handlers::indicator_host::{IndicatorControlHost, IndicatorOwner};
-use quantick_control_handlers::market_palette::{MarketPaletteOwners, MarketTabs, PaletteShowing};
+use quantick_control_handlers::indicator_host::IndicatorControlHost;
 use quantick_control_handlers::market_tab;
-use quantick_control_handlers::widgets::{WidgetHost, WidgetOwner};
-use quantick_control_handlers::workspace_book::{WorkspaceOwner, cell_menu::CellRow};
-use quantick_stores::symbol_catalog::SymbolCatalog;
-use quantick_ui_model::market_palette::Intent;
-use quantick_workspace::market_list::{self as list, SwitchTarget};
+use quantick_control_handlers::workspace_book::cell_menu::CellRow;
 
 use crate::config::AppConfig;
 use crate::drawings::{self, DrawingTool, NewDrawing};
@@ -50,9 +41,93 @@ use quantick_feed::history_reach;
 
 use super::QuantickApp;
 use super::arrangement_host::ArrangementHost;
-use super::chart_layers_wiring::LayerWiring;
 use super::workspace_calls::WorkspaceCalls;
 use super::workspace_runtime::WorkspaceRuntime;
+
+pub(crate) struct ControlReads<'a> {
+    pub(crate) runtime: &'a WorkspaceRuntime,
+    pub(crate) presentation: &'a super::workspace_runtime::WindowPresentation,
+    pub(crate) chrome: &'a super::chrome::ChromeState,
+    pub(crate) added_symbols: &'a crate::symbols_file::AddedSymbols,
+    pub(crate) config: &'a AppConfig,
+    pub(crate) surfaces: &'a crate::surfaces::Surfaces,
+    pub(crate) drawings: &'a super::drawing_controller::DrawingController,
+    pub(crate) health: &'a super::health::HealthCounters,
+}
+
+pub(crate) struct ControlRoots<'a> {
+    pub(crate) runtime: &'a mut WorkspaceRuntime,
+    pub(crate) presentation: &'a mut super::workspace_runtime::WindowPresentation,
+    pub(crate) chrome: &'a mut super::chrome::ChromeState,
+    pub(crate) pane_ids: &'a mut crate::canvas_layout::PaneIdAllocator,
+    pub(crate) added_symbols: &'a mut crate::symbols_file::AddedSymbols,
+    pub(crate) config: &'a mut AppConfig,
+    pub(crate) control: &'a mut ControlState,
+    pub(crate) surfaces: &'a mut crate::surfaces::Surfaces,
+    pub(crate) drawings: &'a mut super::drawing_controller::DrawingController,
+    pub(crate) audio: &'a mut super::replay_and_history::AlertState,
+    pub(crate) health: &'a mut super::health::HealthCounters,
+}
+
+pub(crate) fn control_roots(app: &QuantickApp) -> ControlReads<'_> {
+    ControlReads {
+        runtime: &app.runtime,
+        presentation: &app.presentation,
+        chrome: &app.chrome,
+        added_symbols: &app.added_symbols,
+        config: &app.config,
+        surfaces: &app.surfaces,
+        drawings: &app.drawings,
+        health: &app.health,
+    }
+}
+
+pub(crate) fn control_roots_mut(app: &mut QuantickApp) -> ControlRoots<'_> {
+    ControlRoots {
+        runtime: &mut app.runtime,
+        presentation: &mut app.presentation,
+        chrome: &mut app.chrome,
+        pane_ids: &mut app.pane_ids,
+        added_symbols: &mut app.added_symbols,
+        config: &mut app.config,
+        control: &mut app.control,
+        surfaces: &mut app.surfaces,
+        drawings: &mut app.drawings,
+        audio: &mut app.audio,
+        health: &mut app.health,
+    }
+}
+
+impl<'a> ControlRoots<'a> {
+    pub(crate) fn workspace_calls(self) -> WorkspaceCalls<'a> {
+        WorkspaceCalls {
+            runtime: self.runtime,
+            presentation: self.presentation,
+            chrome: self.chrome,
+            pane_ids: self.pane_ids,
+            config: self.config,
+            control: self.control,
+            surfaces: self.surfaces,
+            health: self.health,
+            drawings: self.drawings,
+        }
+    }
+
+    pub(crate) fn bound_workspace_calls(self) -> WorkspaceCalls<'a> {
+        let runtime = self.runtime.bound_mut(&self.presentation.binding);
+        WorkspaceCalls {
+            runtime,
+            presentation: self.presentation,
+            chrome: self.chrome,
+            pane_ids: self.pane_ids,
+            config: self.config,
+            control: self.control,
+            surfaces: self.surfaces,
+            health: self.health,
+            drawings: self.drawings,
+        }
+    }
+}
 use quantick_control_handlers::health::FrameReading;
 
 /// The window as the gateway holds it: every family at once, `'static`
@@ -277,7 +352,10 @@ pub(crate) struct TabReads<'a> {
 }
 
 impl<'a> TabReads<'a> {
-    fn with_appearance(mut self, appearance: &'a quantick_appearance::ResolvedTheme) -> Self {
+    pub(crate) fn with_appearance(
+        mut self,
+        appearance: &'a quantick_appearance::ResolvedTheme,
+    ) -> Self {
         self.appearance = appearance;
         self
     }
@@ -421,9 +499,9 @@ pub(crate) struct ChromeReads<'a> {
     tz: TzOffset,
     drawing_chrome: &'a crate::surfaces::drawing_chrome::DrawingChromeSurface,
     drawn: ChromeDrawn,
-    title_bar: Option<&'a super::title_bar::TitleBarState>,
-    window_menu: Option<&'a super::menu_bar::WindowMenuState>,
-    settings: Option<quantick_control_schema::settings_sections::SettingsSection>,
+    pub(crate) title_bar: Option<&'a super::title_bar::TitleBarState>,
+    pub(crate) window_menu: Option<&'a super::menu_bar::WindowMenuState>,
+    pub(crate) settings: Option<quantick_control_schema::settings_sections::SettingsSection>,
     /// The toolbar's list door, capsule and layout popover, as drawn.
     pub(crate) toolbar: &'a [crate::toolbar::DrawnControl],
     /// The Trading panel's route block, while broker routes are offered.
@@ -565,7 +643,7 @@ pub(crate) struct HealthReads<'a> {
 
 impl<'a> HealthReads<'a> {
     /// The view over the window's own roots, as [`TabReads::new`].
-    pub(super) fn new(
+    pub(crate) fn new(
         save_on_exit: bool,
         health: &'a super::health::HealthCounters,
         history: &'a quantick_session::HistorySettings,
@@ -622,7 +700,7 @@ pub(crate) struct Alerts<'a> {
 
 impl<'a> Alerts<'a> {
     /// The view over the window's own roots, as [`TabReads::new`].
-    pub(super) fn new(
+    pub(crate) fn new(
         surfaces: &'a mut crate::surfaces::Surfaces,
         audio: &'a mut super::replay_and_history::AlertState,
     ) -> Self {
@@ -664,172 +742,6 @@ impl quantick_control_handlers::notify::Attention for Alerts<'_> {
     }
 }
 
-// `QuantickApp`, the port's one adapter: each family borrows exactly the
-// roots it names.
-
-impl TabsPort for QuantickApp {
-    fn tab_reads(&self) -> TabReads<'_> {
-        self.runtime
-            .resolve(&self.presentation.binding)
-            .expect("bound workspace");
-        TabReads::new(
-            &self.runtime.tabs,
-            &self.config,
-            &self.runtime.footprint_config,
-            &self.drawings.presets,
-        )
-        .with_appearance(self.runtime.appearance.resolved())
-    }
-}
-
-impl TabsMutPort for QuantickApp {
-    fn tabs_mut(&mut self) -> TabsMut<'_> {
-        self.runtime
-            .resolve(&self.presentation.binding)
-            .expect("bound workspace");
-        let reach = &mut self.runtime.history.history_reach;
-        TabsMut::new(&mut self.runtime.tabs, &self.config, reach)
-    }
-}
-
-/// A pane's close button closes it through `widget.close`, so the journal
-/// hears the trader's close as it hears an agent's; directly without a gateway.
-pub(super) fn close_widget(app: &mut QuantickApp, id: &str) {
-    let close = quantick_control_schema::widget::WIDGET_CLOSE_CAPABILITY_ID;
-    let input = serde_json::json!({ "id": id });
-    if app
-        .control_action(close, 1, crate::control::ActionOrigin::Human, input)
-        .is_err()
-    {
-        let _ = quantick_control_handlers::widgets::widget(app, id, Some(false));
-    }
-}
-
-impl quantick_control_handlers::desk::DeskHost for QuantickApp {
-    fn desk(&mut self) -> Option<Box<dyn quantick_control_handlers::desk::DeskOwner + '_>> {
-        Some(Box::new(workspace_calls!(bound self)))
-    }
-}
-
-impl HomeTabHost for QuantickApp {
-    fn home_tab(&mut self) -> Option<HomeTab<'_>> {
-        let shown = super::home_wiring::market_shown(&self.runtime.tabs);
-        Some(HomeTab::new(&mut self.chrome.title_bar.surface, shown))
-    }
-}
-
-impl WidgetHost for QuantickApp {
-    fn widgets(&mut self) -> Option<Box<dyn WidgetOwner + '_>> {
-        Some(Box::new(
-            self.runtime
-                .widget_desk(&mut self.surfaces.widgets, &self.config),
-        ))
-    }
-}
-
-impl MarketPaletteOwners for QuantickApp {
-    fn listed_markets(&self) -> list::MarketSnapshot {
-        let lists = (&self.config, &self.added_symbols);
-        let recent = &self.surfaces.market_palette.model_state.recent;
-        let book = &self.runtime.workspace.book;
-        super::arrangement_adapter::market_snapshot(&self.runtime.tabs, lists, book, recent)
-    }
-    fn market_tabs(&mut self) -> Option<Box<dyn MarketTabs + '_>> {
-        Some(Box::new(self.arrangement_adapter()))
-    }
-    fn market_catalog(&mut self) -> Option<SymbolCatalog<'_>> {
-        Some(SymbolCatalog {
-            config: &mut self.config,
-            added: &mut self.added_symbols,
-            path: self.runtime.workspace.symbols_path(),
-        })
-    }
-    fn show_market_palette(&mut self, query: &str, target: Option<SwitchTarget>) -> PaletteShowing {
-        let palette = &mut self.surfaces.market_palette;
-        palette.update(Intent::open(query, target));
-        Ok(())
-    }
-}
-
-impl quantick_control_handlers::workspace_book::WorkspaceBookHost for QuantickApp {
-    fn workspaces(&mut self) -> Option<Box<dyn WorkspaceOwner + '_>> {
-        Some(Box::new(workspace_calls!(self)))
-    }
-}
-
-impl ChromePort for QuantickApp {
-    fn chrome_reads(&self) -> ChromeReads<'_> {
-        let drawn = ChromeDrawn {
-            feed_drawn: self.chrome.feed_drawn,
-            feed_popup_tab: self.surfaces.feed_notice.model_state.open(),
-            replay_day_before: self.surfaces.replay_browser.day_before(),
-        };
-        let mut reads = ChromeReads::new(
-            &self.runtime.tabs,
-            &self.runtime.style,
-            &self.surfaces.toolrail,
-            &self.surfaces.dock.model_state,
-            self.runtime.tz,
-            &self.surfaces.drawing_chrome,
-            drawn,
-        );
-        reads.alerts_open = self.surfaces.alerts.is_open();
-        reads.title_bar = Some(&self.chrome.title_bar);
-        reads.window_menu = Some(&self.chrome.window_menu);
-        reads.settings = self.surfaces.settings_window.model_state.shown();
-        reads.toolbar = &self.chrome.toolbar_controls;
-        reads.route = self.runtime.broker.sheet();
-        reads
-    }
-}
-
-impl HealthPort for QuantickApp {
-    fn health_reads(&self) -> HealthReads<'_> {
-        let save_on_exit = self.runtime.workspace.session().save_on_exit();
-        HealthReads::new(save_on_exit, &self.health, &self.runtime.history)
-    }
-}
-
-impl quantick_control_handlers::notify::AttentionHost for QuantickApp {
-    fn attention(&mut self) -> Box<dyn quantick_control_handlers::notify::Attention + '_> {
-        Box::new(Alerts::new(&mut self.surfaces, &mut self.audio))
-    }
-}
-
-impl LayersPort for QuantickApp {
-    fn layer_wiring(&mut self) -> LayerWiring<'_> {
-        let chart_settings = &mut self.surfaces.chart_settings.model_state;
-        LayerWiring::of(&mut self.runtime, chart_settings)
-    }
-}
-
-impl IndicatorControlHost for QuantickApp {
-    fn indicators(&mut self) -> Box<dyn IndicatorOwner + '_> {
-        Box::new(self.indicator_wiring())
-    }
-}
-
-impl RailMagnetPort for QuantickApp {
-    fn switch_rail_magnet(&mut self, on: bool) -> bool {
-        self.surfaces.toolrail.set_magnet(on)
-    }
-}
-
-impl GatewayPort for QuantickApp {
-    fn gateway_slot(&mut self) -> &mut Option<crate::control::ControlAccess> {
-        &mut self.control.control_access
-    }
-    fn as_window(&mut self) -> &mut ControlWindow {
-        self
-    }
-    fn workspace(&self) -> &WorkspaceRuntime {
-        &self.runtime
-    }
-    fn workspace_calls(&mut self) -> WorkspaceCalls<'_> {
-        workspace_calls!(self)
-    }
-}
-
 #[cfg(any(feature = "control-harness", test))]
 pub(crate) use quantick_control_host::launch::ControlLaunch;
 #[cfg(any(feature = "control-harness", test))]
@@ -838,8 +750,8 @@ pub(super) use quantick_control_host::launch::{
 };
 
 /// The ordinary local gateway and its opt-in launch scenarios.
-pub(super) struct ControlState {
-    pub(super) control_access: Option<crate::control::ControlAccess>,
+pub(crate) struct ControlState {
+    pub(crate) control_access: Option<crate::control::ControlAccess>,
     #[cfg(any(feature = "control-harness", test))]
     pub(super) scenarios: LaunchScenarios,
 }
@@ -912,19 +824,3 @@ crate::hooks::declare_hooks![
 
 #[cfg(test)]
 pub(crate) mod tests;
-
-impl quantick_control_handlers::appearance::AppearancePort for QuantickApp {
-    fn appearance_store(&self) -> &quantick_stores::appearance::AppearanceStore {
-        &self.runtime.appearance
-    }
-    fn appearance_store_mut(&mut self) -> &mut quantick_stores::appearance::AppearanceStore {
-        &mut self.runtime.appearance
-    }
-    fn publish_appearance(&mut self) {
-        super::frame::sync_appearance(
-            self.presentation.context.as_ref(),
-            &mut self.runtime,
-            &mut self.drawings.presets,
-        );
-    }
-}

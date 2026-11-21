@@ -1,6 +1,6 @@
 //! The per-tab workspace at the window: one state behind chip and snapshot, an
 //! edit that stays on its tab until Save to, and a first run no one can see.
-use super::*;
+use super::support::*;
 use crate::app::tab_workspaces::live_recipe;
 use quantick_control_handlers::workspace_book::{save_tab_to, set_tab_workspace};
 

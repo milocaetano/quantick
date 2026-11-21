@@ -4,7 +4,7 @@
 // `quantick-drawings`' to test (`gesture/projection_tests.rs`,
 // `gesture/placing_tests.rs`, `gesture/pointer.rs`).
 
-use super::*;
+use super::support::*;
 use rust_decimal::prelude::ToPrimitive;
 
 /// Bars of `TRADES_PER_BAR` prints: open, high, low, close, in that order.

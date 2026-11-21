@@ -1,7 +1,7 @@
 //! The launch phase applies the scenario inputs the composition root
 //! captured, and reads nothing else: an app built without them opens as its
 //! workspace left it, whatever the process environment holds.
-use super::*;
+use super::support::*;
 
 #[test]
 fn captured_scenario_inputs_reach_the_launch_phase() {

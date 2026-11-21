@@ -27,27 +27,18 @@ use crate::builtins::Builtin;
 use crate::compile::{CompiledScript, Resolution};
 use crate::error::{ErrorCode, PineError, Span};
 
-#[path = "ir/arena.rs"]
 pub(crate) mod arena;
-#[path = "ir/loops.rs"]
-mod ir_loops;
-#[path = "ir/runtime.rs"]
-mod ir_runtime;
+mod kernel_state;
 use arena::{Arena, FLAGS, GLOBALS, LOCALS, REGISTERS};
+mod ir_loops;
+mod ir_runtime;
 
 /// The title an `alertcondition` without one fires under.
 const DEFAULT_ALERT_TITLE: &str = "Alert";
-#[path = "ir/kernel_state.rs"]
-mod kernel_state;
-mod kernels;
-#[path = "libraries/runtime.rs"]
-mod library_runtime;
-#[path = "ir/object_state.rs"]
+pub(crate) mod kernels;
 mod object_state;
 mod objects;
 mod pure;
-#[path = "semantics/runtime.rs"]
-mod semantic_runtime;
 
 /// Iteration budget per `for`/`while` per bar — a runaway loop errors the
 /// indicator instead of freezing the worker (§3.5).
@@ -124,11 +115,6 @@ pub(crate) struct StateSnapshot {
 /// evaluation — and because the caller reads them together after a clean run:
 /// a row committed without its paint, or with a stale one, would put a colour
 /// on the wrong candle.
-#[path = "candle_plots/eval.rs"]
-mod candle_eval;
-#[path = "collections/eval.rs"]
-mod collection_eval;
-
 pub(crate) struct Staged<'a> {
     /// One cell per plot; pushed by the caller after a clean run.
     pub row: &'a mut [f64],
@@ -165,12 +151,12 @@ pub(crate) struct Eval<'a> {
     /// Current interned call path (0 = top level).
     pub path: u32,
     /// Current frame base in `locals`.
-    frame_base: usize,
-    type_context: u32,
-    prepared_arguments: bool,
-    register_base: usize,
-    global_base: usize,
-    semantic_run: crate::semantics::Run<Vec<u64>>,
+    pub(crate) frame_base: usize,
+    pub(crate) type_context: u32,
+    pub(crate) prepared_arguments: bool,
+    pub(crate) register_base: usize,
+    pub(crate) global_base: usize,
+    pub(crate) semantic_run: crate::semantics::Run<Vec<u64>>,
 }
 
 impl<'a> Eval<'a> {
@@ -273,11 +259,11 @@ impl<'a> Eval<'a> {
         self.script.program.spans[id.index()]
     }
 
-    fn err(&self, id: NodeId, code: ErrorCode, message: impl Into<String>) -> PineError {
+    pub(crate) fn err(&self, id: NodeId, code: ErrorCode, message: impl Into<String>) -> PineError {
         PineError::new(code, self.span(id), message)
     }
 
-    fn type_err(&self, id: NodeId, expected: &str, got: &Value) -> PineError {
+    pub(crate) fn type_err(&self, id: NodeId, expected: &str, got: &Value) -> PineError {
         self.err(
             id,
             ErrorCode::PineType,
@@ -285,26 +271,26 @@ impl<'a> Eval<'a> {
         )
     }
 
-    fn num(&mut self, id: NodeId) -> Result<f64, PineError> {
+    pub(crate) fn num(&mut self, id: NodeId) -> Result<f64, PineError> {
         let value = self.eval(id)?;
         value
             .as_num()
             .ok_or_else(|| self.type_err(id, "a number", &value))
     }
 
-    fn cond(&mut self, id: NodeId) -> Result<bool, PineError> {
+    pub(crate) fn cond(&mut self, id: NodeId) -> Result<bool, PineError> {
         let value = self.eval(id)?;
         value
             .as_cond()
             .ok_or_else(|| self.type_err(id, "a bool condition", &value))
     }
 
-    fn eval(&mut self, id: NodeId) -> Result<Value, PineError> {
+    pub(crate) fn eval(&mut self, id: NodeId) -> Result<Value, PineError> {
         self.execute(id)
     }
 
     /// Write a value through a node's resolution (the `for` loop variable).
-    fn write_resolved(&mut self, id: NodeId, value: Value) {
+    pub(crate) fn write_resolved(&mut self, id: NodeId, value: Value) {
         match self.script.resolutions[id.index()] {
             Resolution::Global(slot) => self.state.arena.set(GLOBALS, slot as usize, value),
             Resolution::Local(slot) => {
@@ -315,7 +301,11 @@ impl<'a> Eval<'a> {
         }
     }
 
-    fn builtin_variable(&mut self, id: NodeId, builtin: Builtin) -> Result<Value, PineError> {
+    pub(crate) fn builtin_variable(
+        &mut self,
+        id: NodeId,
+        builtin: Builtin,
+    ) -> Result<Value, PineError> {
         let bar = self.bar;
         let value = match builtin {
             Builtin::Open => bar.open,
@@ -353,7 +343,12 @@ impl<'a> Eval<'a> {
         Ok(Value::Num(value))
     }
 
-    fn history(&mut self, id: NodeId, subject: NodeId, offset: NodeId) -> Result<Value, PineError> {
+    pub(crate) fn history(
+        &mut self,
+        id: NodeId,
+        subject: NodeId,
+        offset: NodeId,
+    ) -> Result<Value, PineError> {
         let current = self.eval(subject)?;
         let offset_value = self.num(offset)?;
         if offset_value.is_nan() || offset_value < 0.0 {
@@ -372,7 +367,7 @@ impl<'a> Eval<'a> {
         ))
     }
 
-    fn user_call(
+    pub(crate) fn user_call(
         &mut self,
         id: NodeId,
         index: u32,
@@ -434,7 +429,7 @@ impl<'a> Eval<'a> {
     }
 
     #[allow(clippy::too_many_lines)]
-    fn builtin_call(
+    pub(crate) fn builtin_call(
         &mut self,
         id: NodeId,
         builtin: Builtin,
@@ -549,7 +544,11 @@ impl<'a> Eval<'a> {
         self.pure_call(id, builtin, args)
     }
 
-    fn arg_num(&mut self, args: &[crate::ast::Arg], position: usize) -> Result<f64, PineError> {
+    pub(crate) fn arg_num(
+        &mut self,
+        args: &[crate::ast::Arg],
+        position: usize,
+    ) -> Result<f64, PineError> {
         if let Some(values) = &self.semantic_run.arguments {
             return values.get(position).map_or(Ok(f64::NAN), |value| {
                 value
@@ -574,7 +573,7 @@ impl<'a> Eval<'a> {
 
 /// An input's bound value as a runtime [`Value`]. Sources resolve against
 /// the current bar (and the shared cvd).
-fn input_value(input: &InputValue, bar: &IndicatorBar, ctx: &Ctx<'_>) -> Value {
+pub(crate) fn input_value(input: &InputValue, bar: &IndicatorBar, ctx: &Ctx<'_>) -> Value {
     match input {
         InputValue::Int(v) => Value::Num(*v as f64),
         InputValue::Float(v) => Value::Num(*v),
@@ -595,7 +594,7 @@ fn source_value(source: SourceId, bar: &IndicatorBar, ctx: &Ctx<'_>) -> f64 {
 /// `==` semantics shared by the operator and switch matching: numbers by
 /// value (NaN never equals), same-kind primitives by value, everything
 /// else false.
-fn values_equal(a: &Value, b: &Value) -> bool {
+pub(crate) fn values_equal(a: &Value, b: &Value) -> bool {
     match (a, b) {
         (Value::UserObject(a), Value::UserObject(b)) => a == b,
         (Value::Num(a), Value::Num(b)) => a == b,

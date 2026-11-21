@@ -1,11 +1,11 @@
 //! MACD validates each independently allocated window at compile time.
-use super::Compiler;
+use crate::compile::Compiler;
 use crate::{
     ast::{Arg, NodeId},
     error::{ErrorCode, PineError},
 };
 impl Compiler {
-    pub(super) fn check_macd_lengths(&mut self, call: NodeId, args: &[Arg]) {
+    pub(crate) fn check_macd_lengths(&mut self, call: NodeId, args: &[Arg]) {
         if args.len() != 4 {
             self.errors.push(PineError::new(
                 ErrorCode::PineArity,

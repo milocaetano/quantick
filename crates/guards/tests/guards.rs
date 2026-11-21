@@ -17,7 +17,7 @@ use quantick_guards::{GUARDS, remedies, workspace_root};
 /// instead of a green suite over a guard CI never runs — which is the failure
 /// the check exists to prevent, and which a hand-kept list of names invites by
 /// making "add the string" the obvious fix.
-const TESTED: [&str; 20] = [
+const TESTED: [&str; 21] = [
     "size",
     "language",
     "encoding",
@@ -38,6 +38,7 @@ const TESTED: [&str; 20] = [
     "window-reach",
     "ignored-tests",
     "control-families",
+    "production-path",
 ];
 
 /// Run one named guard and fail with everything it found.
@@ -96,6 +97,20 @@ fn every_guard_in_the_registry_has_a_test_here() {
          in CI. Widening TESTED alone will not do: its length is fixed and every slot is indexed \
          by a #[test] above, so the next guard needs the next test."
     );
+}
+
+#[test]
+fn production_path_attributes_are_rejected() {
+    assert_clean(TESTED[20]);
+}
+
+#[test]
+fn app_test_root_is_sorted_modules() {
+    let findings = quantick_guards::production_path::check_file(
+        &workspace_root(),
+        "crates/app/src/app/tests/mod.rs",
+    );
+    assert!(findings.is_empty(), "{findings:?}");
 }
 
 #[test]

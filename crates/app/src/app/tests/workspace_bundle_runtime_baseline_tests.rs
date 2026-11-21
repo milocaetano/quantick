@@ -1,5 +1,5 @@
 //! Existing runtime and picker behavior, characterized before L4 extraction.
-use super::*;
+use super::support::*;
 use crate::workspace_store::WorkspacePick;
 
 #[test]

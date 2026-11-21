@@ -1,6 +1,6 @@
 //! The canvas draws every registered layout exactly as its pane tree lays it
 //! out.
-use super::*;
+use super::support::*;
 
 use crate::canvas_layout::{CANVAS_DIVIDER_PX, LAYOUT_PRESETS};
 use quantick_workspace::canvas::CanvasRect;

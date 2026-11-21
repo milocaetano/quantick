@@ -30,11 +30,8 @@ use quantick_paper::risk_sizing::RiskState;
 use quantick_sim::{Bracket, ClosedTrade, Command, EntryKind, Order, VenueEvent};
 use rust_decimal::Decimal;
 
-#[path = "paper_command.rs"]
 mod command;
-#[path = "paper_gate.rs"]
 mod gate;
-#[path = "paper_settings.rs"]
 mod settings;
 
 pub use command::{NOTHING_TO_REVERSE, TradeCommand, TradeOutcome, TradeRefusal};

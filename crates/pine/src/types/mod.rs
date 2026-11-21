@@ -4,15 +4,7 @@ use std::rc::Rc;
 mod arguments;
 mod calls;
 pub(crate) mod check;
-#[path = "../collections/check.rs"]
-mod collection_check;
-#[path = "../libraries/check.rs"]
-mod library_check;
-#[path = "../libraries/persistence.rs"]
-mod library_persistence;
 pub(crate) mod model;
-#[path = "../version/types.rs"]
-mod version_policy;
 pub(crate) use check::validate;
 
 pub(crate) use crate::ir::TypeProgram as Checked;

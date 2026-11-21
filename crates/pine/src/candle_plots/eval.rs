@@ -1,14 +1,14 @@
 //! Per-run OHLC and color evaluation; no retained state.
-use super::{Eval, Value};
 use crate::{
     ast::{Arg, NodeId},
     candle_plots::{BAR_ARGS, CANDLE_ARGS},
     error::PineError,
 };
+use crate::{eval::Eval, types::Value};
 use quantick_indicators::{CandleSample, Rgba8};
 
 impl Eval<'_> {
-    pub(super) fn candle_plot(&mut self, id: NodeId, args: &[Arg]) -> Result<Value, PineError> {
+    pub(crate) fn candle_plot(&mut self, id: NodeId, args: &[Arg]) -> Result<Value, PineError> {
         let Some(index) = self.script.plot_of_call[id.index()] else {
             return Ok(Value::Na);
         };

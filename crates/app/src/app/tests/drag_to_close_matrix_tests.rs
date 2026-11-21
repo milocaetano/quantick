@@ -13,7 +13,7 @@
 //! registered. Every failure is gathered into one table before the test
 //! fails, so a run says everything that is wrong at once.
 
-use super::*;
+use super::support::*;
 
 use crate::canvas_layout::{CANVAS_DIVIDER_PX, COLLAPSED_PANE_WIDTH_PX, LAYOUT_PRESETS};
 use crate::floating_panes::{model_rect, screen_rect};

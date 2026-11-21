@@ -1,21 +1,25 @@
 //! Eager advancement uses a temporary variable view; conditional side effects
 //! and history writes remain in the selected execution only.
-use super::{Eval, FLAGS, GLOBALS, LOCALS, Value};
 use crate::{
     ast::{Arg, NodeId},
     builtins::Builtin,
     error::{ErrorCode, PineError},
 };
+use crate::{
+    eval::Eval,
+    eval::arena::{FLAGS, GLOBALS, LOCALS},
+    types::Value,
+};
 
 impl Eval<'_> {
-    pub(super) fn advance_arguments(&mut self, args: &[Arg]) -> Result<(), PineError> {
+    pub(crate) fn advance_arguments(&mut self, args: &[Arg]) -> Result<(), PineError> {
         for arg in args {
             self.advance_skipped(arg.value)?;
         }
         Ok(())
     }
 
-    pub(super) fn advance_skipped(&mut self, node: NodeId) -> Result<(), PineError> {
+    pub(crate) fn advance_skipped(&mut self, node: NodeId) -> Result<(), PineError> {
         if !self.has_kernel(node) {
             return Ok(());
         }
@@ -36,7 +40,7 @@ impl Eval<'_> {
         self.script.program.kernel_reach[self.type_context as usize][node.index()]
     }
 
-    pub(super) fn cached_kernel(
+    pub(crate) fn cached_kernel(
         &mut self,
         id: NodeId,
         builtin: Builtin,
@@ -79,9 +83,9 @@ impl Eval<'_> {
         Ok(result)
     }
 
-    pub(super) fn macd_kernel(
+    pub(crate) fn macd_kernel(
         &mut self,
-        call: super::kernels::KernelCall<'_>,
+        call: crate::eval::kernels::KernelCall<'_>,
     ) -> Result<Value, PineError> {
         if call.args.len() != 4 {
             return Err(self.err(

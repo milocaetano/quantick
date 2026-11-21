@@ -1,6 +1,6 @@
 //! A menu command with a named call and that call leave the window the same:
 //! both reach the owner through the port the call's handler takes.
-use super::*;
+use super::support::*;
 
 use super::super::menu_bar::{MenuCall, MenuCommand, apply_menu_command_on};
 use crate::control::ActionOrigin;

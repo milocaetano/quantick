@@ -8,20 +8,25 @@
 mod actions;
 mod addressed_pane;
 mod annotate;
+mod appearance;
 pub(crate) mod chart;
 mod contract;
 mod deal_recording;
+mod desk;
 mod drawing_magnet;
 mod events;
 mod evidence;
 mod feed;
 mod gateway;
 mod health;
+mod home_tab;
+mod indicator_host;
 mod interaction;
 pub(crate) mod inventory;
 // Moved to `quantick-control-host`; named here so `super::journal` resolves.
 use quantick_control_host::journal;
 mod flow_tabs;
+mod layers;
 pub(crate) mod layout;
 mod market_tabs;
 mod notify;
@@ -39,7 +44,9 @@ pub(crate) mod schema_catalog;
 mod system;
 mod trace;
 mod types;
+pub(crate) mod widgets;
 mod workspace;
+mod workspace_book;
 
 pub(crate) use actions::{MARK_CAPABILITY_ID, MARK_CAPABILITY_VERSION};
 pub(crate) use drawing_magnet::{flip_rail_magnet, journal_own_magnet_flip};
@@ -77,7 +84,7 @@ pub(crate) use gateway::RecordedActor;
 #[cfg(test)]
 pub(crate) use gateway::ServedRequest;
 pub(crate) use gateway::{ActionOrigin, ControlAccess, MARK_SHORTCUT};
-pub(crate) use notify::AgentPopup;
+pub(crate) use quantick_control_schema::notify::AgentPopup;
 pub(crate) use types::{PaneSideDto, pane_side_dto};
 
 /// Where the control trace sits beside a recording. Re-exported for the tests

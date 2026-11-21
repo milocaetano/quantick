@@ -1,7 +1,7 @@
 //! The toolbar's + and the charts it adds: floating over the canvas, docked
 //! by a drop on an edge, parked in a corner, popped out to a window of their
 //! own and brought back, and restored with the workspace.
-use super::*;
+use super::support::*;
 
 use crate::canvas_layout::preset;
 use quantick_workspace::canvas::{

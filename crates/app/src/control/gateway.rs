@@ -1,5 +1,7 @@
 //! Explicitly enabled authenticated loopback gateway and UI-thread dispatcher.
 
+use crate::app::workspace_calls::WorkspaceCalls;
+use crate::app::workspace_runtime::WorkspaceRuntime;
 use std::{
     collections::{BTreeMap, BTreeSet},
     net::TcpStream,
@@ -25,6 +27,7 @@ use quantick_control::{
     wire::{ActorContext, ActorKind, RequestEnvelope, WireU64},
 };
 
+use crate::app::{GatewayPort, QuantickApp};
 use crate::{app::ControlWindow, metrics};
 
 use super::{
@@ -1317,6 +1320,23 @@ impl Drop for ControlAccess {
             AccessState::Disabling(Some(runtime)) => runtime.request_shutdown(),
             AccessState::Disabled | AccessState::Enabling | AccessState::Disabling(None) => {}
         }
+    }
+}
+
+impl GatewayPort for QuantickApp {
+    fn gateway_slot(&mut self) -> &mut Option<crate::control::ControlAccess> {
+        let roots = crate::app::control_host::control_roots_mut(self);
+        &mut roots.control.control_access
+    }
+    fn as_window(&mut self) -> &mut ControlWindow {
+        self
+    }
+    fn workspace(&self) -> &WorkspaceRuntime {
+        let roots = crate::app::control_host::control_roots(self);
+        roots.runtime
+    }
+    fn workspace_calls(&mut self) -> WorkspaceCalls<'_> {
+        crate::app::control_host::control_roots_mut(self).workspace_calls()
     }
 }
 

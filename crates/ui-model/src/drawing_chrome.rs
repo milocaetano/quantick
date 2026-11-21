@@ -1,21 +1,12 @@
 //! Presentation state for the drawing chrome. Drawing rules remain in quantick-drawings.
-#[path = "drawing_chrome/actions.rs"]
 mod actions;
-#[path = "drawing_chrome/bar_dismissal.rs"]
 pub mod bar_dismissal;
-#[path = "drawing_chrome/effects.rs"]
 mod effects;
-#[path = "drawing_chrome/inline.rs"]
 mod inline;
-#[path = "drawing_chrome/inspector.rs"]
 pub mod inspector;
-#[path = "drawing_chrome/presets.rs"]
 mod presets;
-#[path = "drawing_chrome/quick_range.rs"]
 pub mod quick_range;
-#[path = "drawing_chrome/scenario.rs"]
 pub mod scenario;
-#[path = "drawing_chrome/types.rs"]
 mod types;
 pub use actions::{ActionInput, apply as apply_actions};
 pub use effects::{DrawingChromeAsk, SelectionToggles};
@@ -290,9 +281,7 @@ impl crate::Model for Model {
 }
 
 #[cfg(test)]
-#[path = "drawing_chrome/preset_tests.rs"]
 mod preset_tests;
 
 #[cfg(test)]
-#[path = "drawing_chrome/tests.rs"]
 mod tests;

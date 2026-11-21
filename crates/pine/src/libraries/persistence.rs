@@ -1,8 +1,8 @@
 //! Load-time restrictions for persistent references and collection field graphs.
-use super::{check::Checker, model::Base};
+use crate::types::{check::Checker, model::Base};
 
 impl Checker<'_> {
-    pub(super) fn varip_type(&self, base: &Base) -> bool {
+    pub(crate) fn varip_type(&self, base: &Base) -> bool {
         match base {
             // A persistent object reference does not persist its ordinary fields.
             Base::UserType(_) => true,
@@ -47,7 +47,7 @@ impl Checker<'_> {
         }
     }
 
-    pub(super) fn validate_varip_fields(&mut self) {
+    pub(crate) fn validate_varip_fields(&mut self) {
         let invalid: Vec<_> = self
             .ast
             .user_types

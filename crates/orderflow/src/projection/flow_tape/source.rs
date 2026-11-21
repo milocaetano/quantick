@@ -132,7 +132,6 @@ pub struct FlowTapeSource {
     peak_walked: Option<(usize, usize)>,
 }
 
-#[path = "incremental.rs"]
 mod incremental;
 
 /// Both classifications are supplied by the complete canonical source owner.

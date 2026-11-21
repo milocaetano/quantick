@@ -1,5 +1,5 @@
 //! Characterization captured before ArrangementLifecycle extraction.
-use super::*;
+use super::support::*;
 
 #[test]
 fn arrangement_baseline_only_the_matching_boot_tab_is_adopted() {

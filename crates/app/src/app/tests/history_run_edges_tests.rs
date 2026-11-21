@@ -1,7 +1,7 @@
 //! The History run at its edges: a pane opened while pages are held, a press
 //! and a reply while a reconnect's resume floor stands, Esc with a drawing tool armed,
 //! and a press that retries a failed rebuild.
-use super::*;
+use super::support::*;
 use crate::toolbar::ToolbarAction;
 use quantick_feed::history_reach::{HistoryReach, SESSION_GAP_MS};
 use quantick_feed::history_run::{Press, RunStatus};

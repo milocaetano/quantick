@@ -1,6 +1,6 @@
 //! Literal launch fixtures against the original rail consumers: each row is
 //! a hook table, fed through `fixed_env` rather than the process environment.
-use super::*;
+use super::support::*;
 
 type Env = &'static [(&'static str, &'static str)];
 

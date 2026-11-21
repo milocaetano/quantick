@@ -3,7 +3,7 @@
 //! name field reaches the rename, Delete then Undo reach their handlers, and
 //! the create dialog's Enter saves in the colour it holds. What each decides
 //! is pinned in `quantick_control_handlers::workspace_book::manage`.
-use super::*;
+use super::support::*;
 
 const FULL_HD: egui::Vec2 = egui::vec2(1920.0, 1000.0);
 

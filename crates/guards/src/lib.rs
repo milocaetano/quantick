@@ -70,6 +70,7 @@ pub mod ignored_test_reason;
 pub mod impl_spread;
 pub mod instruction_links;
 pub mod language;
+pub mod production_path;
 pub mod ratchet;
 pub mod report;
 pub mod scratch;
@@ -205,6 +206,12 @@ pub struct Guard {
 
 /// Every guard this crate runs.
 pub const GUARDS: &[Guard] = &[
+    Guard {
+        name: "production-path",
+        check: production_path::check,
+        check_file: production_path::check_file,
+        ratchet: None,
+    },
     Guard {
         name: "control-families",
         check: control_families::check,

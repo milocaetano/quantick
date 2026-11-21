@@ -1,5 +1,6 @@
 //! Native binding exercises over the actual workspace, feeds and frame adapters.
-use super::*;
+use super::frame_tail_tests;
+use super::support::*;
 use quantick_control_handlers::indicator_host::{IndicatorRefusal, ScriptsPort};
 use quantick_workspace::lifetime::{LifetimeError, ResourceError, WorkspaceId};
 

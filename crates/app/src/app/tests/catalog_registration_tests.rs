@@ -4,7 +4,7 @@
 //! nothing in `QuantickApp` names it, yet a real frame paints it, routes its
 //! intent through `update` and hands its effects to the host.
 
-use super::*;
+use super::support::*;
 use quantick_ui_model::{HostEffect, Slot};
 
 #[test]

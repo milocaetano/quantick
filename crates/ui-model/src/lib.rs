@@ -15,6 +15,78 @@ mod scratch;
 pub mod store_home;
 pub mod workspace_menu;
 
+// Surface models are ordinary Rust modules. The catalog below registers their
+// effects and frame slots; it does not own their filesystem layout.
+pub mod access_panel;
+pub mod agent_popup;
+pub mod alerts;
+pub mod bar_switch;
+#[cfg(any(test, feature = "test-support"))]
+pub mod borrowed_first;
+#[cfg(any(test, feature = "test-support"))]
+pub mod borrowed_second;
+pub mod canvas_popovers;
+pub mod chart_settings;
+#[cfg(any(test, feature = "test-support"))]
+pub mod chrome_early_first;
+#[cfg(any(test, feature = "test-support"))]
+pub mod chrome_early_second;
+#[cfg(any(test, feature = "test-support"))]
+pub mod chrome_edge_first;
+#[cfg(any(test, feature = "test-support"))]
+pub mod chrome_edge_second;
+#[cfg(any(test, feature = "test-support"))]
+pub mod chrome_editor_first;
+#[cfg(any(test, feature = "test-support"))]
+pub mod chrome_editor_second;
+pub mod chrome_menu_bar;
+#[cfg(any(test, feature = "test-support"))]
+pub mod chrome_menu_dialogs_first;
+#[cfg(any(test, feature = "test-support"))]
+pub mod chrome_menu_dialogs_second;
+#[cfg(any(test, feature = "test-support"))]
+pub mod chrome_menu_first;
+#[cfg(any(test, feature = "test-support"))]
+pub mod chrome_menu_second;
+pub mod chrome_tab_strip;
+#[cfg(any(test, feature = "test-support"))]
+pub mod chrome_tabs_first;
+#[cfg(any(test, feature = "test-support"))]
+pub mod chrome_tabs_second;
+pub mod chrome_title_bar;
+#[cfg(any(test, feature = "test-support"))]
+pub mod chrome_title_first;
+#[cfg(any(test, feature = "test-support"))]
+pub mod chrome_title_second;
+pub mod chrome_toolbar;
+#[cfg(any(test, feature = "test-support"))]
+pub mod chrome_toolbar_first;
+#[cfg(any(test, feature = "test-support"))]
+pub mod chrome_toolbar_second;
+pub mod dock;
+pub mod drawing_chrome;
+pub mod feed_notice;
+#[cfg(any(test, feature = "test-support"))]
+pub mod first;
+pub mod home;
+pub mod indicator_picker;
+pub mod indicator_preview;
+pub mod indicator_settings;
+pub mod layout_dialogs;
+pub mod market_palette;
+pub mod pane_header;
+#[cfg(any(test, feature = "test-support"))]
+pub mod paper_tail_probe;
+pub mod remove_chart;
+pub mod replay_browser;
+pub mod script_editor;
+#[cfg(any(test, feature = "test-support"))]
+pub mod second;
+pub mod settings_window;
+pub mod strategy_popup;
+pub mod toast;
+pub mod tool_rail;
+
 /// A deterministic transition over cached presentation state.
 pub trait Model {
     type State;
@@ -211,7 +283,6 @@ macro_rules! models {
      models { $( [$($model_attr:meta),*] [$($view_attr:meta),*]
         $field:ident: $tag:ident => $model:ident = $model_file:literal, $view:ident = $view_file:literal,
         $effects:path, $slot:ident $(| $additional_slot:ident)*, $dispatch:ident; )* }) => {
-        $($(#[$model_attr])* #[path = $model_file] pub mod $model;)*
         /// Typed host effects can grow when a new catalog row docks.
         #[non_exhaustive]
         #[derive(Debug, PartialEq)]

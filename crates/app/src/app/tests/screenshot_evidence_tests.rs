@@ -3,7 +3,7 @@
 //! Only the raster and recorded pane rectangles are fixtures. Parking, serving,
 //! projection, PNG encoding, retention and socket reads use the shipped path.
 
-use super::*;
+use super::support::*;
 
 type Json = serde_json::Value;
 

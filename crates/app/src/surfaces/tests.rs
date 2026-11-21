@@ -1,3 +1,28 @@
+#[macro_use]
+mod chrome_probe_view;
+
+pub(crate) mod borrowed_first;
+pub(crate) mod borrowed_second;
+pub(crate) mod chrome_early_first;
+pub(crate) mod chrome_early_second;
+pub(crate) mod chrome_edge_first;
+pub(crate) mod chrome_edge_second;
+pub(crate) mod chrome_editor_first;
+pub(crate) mod chrome_editor_second;
+pub(crate) mod chrome_menu_dialogs_first;
+pub(crate) mod chrome_menu_dialogs_second;
+pub(crate) mod chrome_menu_first;
+pub(crate) mod chrome_menu_second;
+pub(crate) mod chrome_tabs_first;
+pub(crate) mod chrome_tabs_second;
+pub(crate) mod chrome_title_first;
+pub(crate) mod chrome_title_second;
+pub(crate) mod chrome_toolbar_first;
+pub(crate) mod chrome_toolbar_second;
+pub(crate) mod first_view;
+pub(crate) mod paper_tail_probe;
+pub(crate) mod second_view;
+
 use super::*;
 use quantick_workspace::market_list::PaletteIntent;
 

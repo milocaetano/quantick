@@ -1,7 +1,7 @@
 //! The window follows the canvas model: focus leaves what the model folds,
 //! the divider is the tree's one share whichever painter draws, a folded
 //! chart's whole strip restores it, and the readback says what is drawn.
-use super::*;
+use super::support::*;
 
 use crate::canvas_layout::preset;
 use quantick_control_handlers::canvas::{CanvasAct, CanvasHost};

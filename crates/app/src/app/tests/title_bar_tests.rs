@@ -1,6 +1,6 @@
 //! Exercise the painted title-strip controls with actual pointer input.
 use super::super::title_bar::{HEIGHT, WINDOW_BUTTON_WIDTH};
-use super::*;
+use super::support::*;
 use quantick_control_handlers::native_window::NativeWindowHost as _;
 
 fn sized(app: &mut QuantickApp, ctx: &egui::Context, width: f32) -> egui::FullOutput {

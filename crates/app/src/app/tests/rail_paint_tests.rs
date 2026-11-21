@@ -5,7 +5,7 @@
 //! its hit area and no other drag is under way. The seam beside a rail is no
 //! line; a divider between two open panes paints as before; the rail keeps
 //! its 8 px and the pane beside it comes up to it; its words reach the scene.
-use super::*;
+use super::support::*;
 
 use crate::canvas_layout::{CANVAS_DIVIDER_PX, COLLAPSED_PANE_WIDTH_PX, LAYOUT_PRESETS};
 use crate::floating_panes::{model_rect, screen_rect};

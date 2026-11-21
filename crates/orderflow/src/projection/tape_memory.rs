@@ -23,13 +23,10 @@ use crate::config::{BubbleStyle, LiveLaneStyle};
 use crate::interaction::AggressionCluster;
 
 #[cfg(test)]
-#[path = "tests/dots_tests/tape_tests/native_fact_tests.rs"]
 mod native_fact_tests;
 
-#[path = "tape_past_memory.rs"]
 mod past;
 
-#[path = "tape_work.rs"]
 mod work;
 pub use work::TapeWork;
 

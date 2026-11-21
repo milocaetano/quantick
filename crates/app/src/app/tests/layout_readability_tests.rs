@@ -1,4 +1,4 @@
-use super::*;
+use super::support::*;
 
 #[test]
 fn drawing_toolbar_avoids_manager() {

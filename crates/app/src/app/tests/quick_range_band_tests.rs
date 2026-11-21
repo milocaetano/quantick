@@ -4,7 +4,7 @@
 
 use super::bare_canvas::app_with_history as bare_app_with_history;
 use super::drawings_tests::{click_quick_range_action, drag_quick_range, quick_range_action};
-use super::*;
+use super::support::*;
 use crate::surfaces::drawing_chrome::QuickRangeAction as Action;
 
 /// A CVD-like pane whose values (3,000 to 3,398) are nowhere near the

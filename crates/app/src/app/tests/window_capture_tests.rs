@@ -1,5 +1,5 @@
 //! Real gateway admission and per-viewport paint/image correlation.
-use super::*;
+use super::support::*;
 use quantick_control::wire::ResponseOutcome;
 use quantick_control_handlers::native_window::NativeWindowHost;
 use quantick_workspace::arrangement::{

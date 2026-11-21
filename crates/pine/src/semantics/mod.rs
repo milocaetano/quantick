@@ -1,4 +1,6 @@
 //! Eager kernel policy and state owned by one evaluation.
+mod compile;
+mod runtime;
 use crate::types::Value;
 use std::collections::BTreeMap;
 

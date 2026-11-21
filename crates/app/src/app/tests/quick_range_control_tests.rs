@@ -1,6 +1,6 @@
 //! Exact range operations remain behind the existing admitted control contract.
 
-use super::*;
+use super::support::*;
 use crate::surfaces::drawing_chrome::QuickRangeActionUi as _;
 use quantick_chart_interaction::quick_range::Action;
 use quantick_control::error::codes;

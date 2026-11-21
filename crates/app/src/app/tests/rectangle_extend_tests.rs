@@ -3,7 +3,7 @@
 //! runs that side to the chart edge, and a double click inside puts the
 //! original size back. Each zone shows its own cursor.
 
-use super::*;
+use super::support::*;
 
 const LEFT: f32 = 500.0;
 const RIGHT: f32 = 800.0;

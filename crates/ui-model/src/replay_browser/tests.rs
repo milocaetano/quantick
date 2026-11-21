@@ -205,7 +205,10 @@ fn replay_scan_completion_preserves_requested_selection() {
         quantick_replay::library::ProblemKind::FolderMissing
     );
     assert_eq!(missing.problems[0].path, None);
-    assert_eq!(missing.problems[0].detail, "recordings folder does not exist");
+    assert_eq!(
+        missing.problems[0].detail,
+        "recordings folder does not exist"
+    );
 }
 
 #[test]

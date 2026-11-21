@@ -1,12 +1,12 @@
 #[cfg(test)]
 mod lifecycle {
     use super::super::*;
-    use quantick_ui_model::launch_scenario::Replay as _;
     use crate::surfaces::View as _;
     use quantick_feed::replay_download::{
         DownloadError, DownloadEvent, DownloadJob, DownloadRequest, SessionSource,
     };
     use quantick_feed::{FeedCommand, ReplayControl};
+    use quantick_ui_model::launch_scenario::Replay as _;
     use quantick_ui_model::{Slot, replay_browser::BrowserTab};
     use std::{
         path::Path,

@@ -20,13 +20,9 @@ use crate::{
     reserved_span_ms,
 };
 
-#[path = "engine_live_tape.rs"]
 mod live_tape;
-#[path = "engine_past_tape.rs"]
 mod past_tape;
-#[path = "engine_pending.rs"]
 mod pending;
-#[path = "engine_published.rs"]
 mod published;
 
 pub use published::{BookLadder, BookPublished, CaptureStatus, OrderflowHealth};
@@ -2594,29 +2590,22 @@ mod tests {
 }
 
 #[cfg(test)]
-#[path = "engine_clock_tests.rs"]
 mod clock_tests;
 
 #[cfg(test)]
-#[path = "engine_opening_tests.rs"]
 mod opening_tests;
 
 #[cfg(test)]
-#[path = "engine_native_tape_tests.rs"]
 mod native_tape_tests;
 
 #[cfg(test)]
-#[path = "engine_past_tape_tests.rs"]
 mod past_tape_tests;
 
 #[cfg(test)]
-#[path = "engine_past_heat_tests.rs"]
 mod past_heat_tests;
 
 #[cfg(test)]
-#[path = "engine_tape_seal_tests.rs"]
 mod tape_seal_tests;
 
 #[cfg(test)]
-#[path = "engine_book_carry_tests.rs"]
 mod book_carry_tests;

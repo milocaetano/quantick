@@ -1,9 +1,14 @@
 //! Parser extensions kept beside the user-object language feature.
-use super::*;
-use crate::libraries::{Field, UserType};
+use crate::{
+    ast::{Arg, NodeId, NodeKind},
+    error::{ErrorCode, PineError, Span},
+    lexer::Tok,
+    libraries::{Field, UserType},
+    parser::Parser,
+};
 
 impl Parser<'_> {
-    pub(super) fn library_statement(&mut self, start: Span) -> Option<Option<NodeId>> {
+    pub(crate) fn library_statement(&mut self, start: Span) -> Option<Option<NodeId>> {
         match self.peek() {
             Tok::Ident(word) if word == "type" => Some(self.user_type(start)),
             Tok::Ident(word) if word == "method" => {
@@ -76,7 +81,7 @@ impl Parser<'_> {
         Some(self.ast.push(NodeKind::ExprStmt { expr: value }, start))
     }
 
-    pub(super) fn field_assignment(&mut self, target: NodeId, start: Span) -> Option<NodeId> {
+    pub(crate) fn field_assignment(&mut self, target: NodeId, start: Span) -> Option<NodeId> {
         let NodeKind::Member { object, field } = self.ast.node(target).kind.clone() else {
             self.errors.push(PineError::new(
                 ErrorCode::PineSyntax,

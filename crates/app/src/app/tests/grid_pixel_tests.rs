@@ -1,5 +1,5 @@
 //! Actual app paint preserves price coordinates while aligning inherited Light grids.
-use super::*;
+use super::support::*;
 use quantick_appearance::{Inheritance, Token};
 
 const SIDES: [PaneSide; 2] = [PaneSide::Time(0), PaneSide::Flow];

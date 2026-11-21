@@ -32,16 +32,10 @@ use crate::error::{PineError, Span};
 use crate::lexer;
 use crate::parser;
 
-#[path = "candle_plots/lower.rs"]
-mod candle_lower;
 mod declarations;
-mod fold;
+pub(crate) mod fold;
 mod indicator_lengths;
 mod resolve;
-#[path = "semantics/compile.rs"]
-mod semantic_compile;
-#[path = "version/compile.rs"]
-mod version_compile;
 
 /// Reads deeper than this many bars yield `na` when the offset is dynamic
 /// (constant offsets size storage exactly; the cap bounds the dynamic case).
@@ -122,7 +116,7 @@ pub fn render_errors(errors: &[PineError], file: &str, source: &str) -> String {
 
 /// What a queued pass-1 call turns into once names resolve.
 #[derive(Debug, Clone, Copy)]
-enum PendingPlot {
+pub(crate) enum PendingPlot {
     /// `plot(...)`.
     Plot,
     Candle {
@@ -136,21 +130,21 @@ enum PendingPlot {
     },
 }
 
-struct Compiler {
-    ast: Ast,
+pub(crate) struct Compiler {
+    pub(crate) ast: Ast,
     root: NodeId,
-    errors: Vec<PineError>,
+    pub(crate) errors: Vec<PineError>,
     warnings: Vec<PineError>,
     title: String,
     short_title: Option<String>,
     overlay: bool,
     inputs: Vec<InputSpec>,
-    plots: Vec<PlotSpec>,
-    candle_plots: Vec<quantick_indicators::CandlePlotSpec>,
-    resolutions: Vec<Resolution>,
-    checked_types: crate::types::Checked,
+    pub(crate) plots: Vec<PlotSpec>,
+    pub(crate) candle_plots: Vec<quantick_indicators::CandlePlotSpec>,
+    pub(crate) resolutions: Vec<Resolution>,
+    pub(crate) checked_types: crate::types::Checked,
     call_sites: Vec<Option<CallSiteId>>,
-    plot_of_call: Vec<Option<usize>>,
+    pub(crate) plot_of_call: Vec<Option<usize>>,
     input_of_call: Vec<Option<usize>>,
     history_series: Vec<Option<u32>>,
     functions: Vec<FunctionInfo>,
@@ -161,7 +155,7 @@ struct Compiler {
     history_series_count: u32,
     max_bars_back: usize,
     /// Global declaration RHS by slot, for const folding through names.
-    global_init: Vec<Option<NodeId>>,
+    pub(crate) global_init: Vec<Option<NodeId>>,
     /// Slots reassigned anywhere (`:=`): never const-foldable.
     reassigned: Vec<bool>,
     /// `fill(...)` calls, resolved after name resolution (their plot-handle
@@ -176,7 +170,7 @@ struct Compiler {
     reassigned_names: BTreeSet<String>,
     /// Plot and shape calls found in pass 1, registered after name
     /// resolution so their arguments can fold through names.
-    pending_plots: Vec<(NodeId, Vec<Arg>, PendingPlot)>,
+    pub(crate) pending_plots: Vec<(NodeId, Vec<Arg>, PendingPlot)>,
 }
 
 impl Compiler {
@@ -248,11 +242,11 @@ impl Compiler {
 
     // ---- helpers over the arena ------------------------------------------
 
-    fn kind(&self, id: NodeId) -> &NodeKind {
+    pub(crate) fn kind(&self, id: NodeId) -> &NodeKind {
         &self.ast.node(id).kind
     }
 
-    fn span(&self, id: NodeId) -> Span {
+    pub(crate) fn span(&self, id: NodeId) -> Span {
         self.ast.node(id).span
     }
 
@@ -269,7 +263,7 @@ impl Compiler {
         }
     }
 
-    fn arg<'a>(&self, args: &'a [Arg], position: usize, name: &str) -> Option<&'a Arg> {
+    pub(crate) fn arg<'a>(&self, args: &'a [Arg], position: usize, name: &str) -> Option<&'a Arg> {
         args.iter()
             .find(|a| a.name.as_deref() == Some(name))
             .or_else(|| args.iter().filter(|a| a.name.is_none()).nth(position))

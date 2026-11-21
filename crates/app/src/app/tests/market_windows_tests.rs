@@ -1,5 +1,5 @@
 //! Real frame adapters over one retained runtime, including hidden-root intake.
-use super::*;
+use super::support::*;
 use quantick_workspace::arrangement::{
     TabId,
     windows::{TransferTarget, WindowId},

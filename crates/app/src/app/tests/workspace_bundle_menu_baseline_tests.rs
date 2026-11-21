@@ -1,5 +1,5 @@
 //! Real frames of the window menu's Desk group.
-use super::*;
+use super::support::*;
 
 fn open_bundle_menu(
     app: &mut QuantickApp,

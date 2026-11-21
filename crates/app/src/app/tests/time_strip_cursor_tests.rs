@@ -1,6 +1,6 @@
 //! The time strip carries one cursor at a time, and its double-click resets
 //! the spacing of the axis it sits under.
-use super::*;
+use super::support::*;
 use quantick_chart_interaction::viewport::DEFAULT_PX_PER_BAR;
 
 fn strip_app() -> (QuantickApp, egui::Context, egui::Rect, egui::Rect) {

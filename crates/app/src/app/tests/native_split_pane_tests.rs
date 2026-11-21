@@ -1,6 +1,6 @@
 //! One flow pane: tick candles left of the divider, the WIN tape right of it,
 //! one price axis the tape fits. Switched off, the original tick chart.
-use super::*;
+use super::support::*;
 use quantick_layers::{LayerFacts, LayerState};
 
 /// The WIN source declaration, as a feed switch applies it.

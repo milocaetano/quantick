@@ -218,7 +218,10 @@ const CONTROL_OWNERS: &[(&str, &[HookSpec])] = &[(
 /// The drawing rail and the drawing chrome's demos: `drawing-harness`.
 #[cfg(any(feature = "drawing-harness", test))]
 const DRAWING_OWNERS: &[(&str, &[HookSpec])] = &[
-    ("crates/app/src/toolrail/mod.rs", crate::toolrail::HOOKS),
+    (
+        "crates/app/src/surfaces/toolrail/mod.rs",
+        crate::toolrail::HOOKS,
+    ),
     (
         "crates/app/src/surfaces/drawing_chrome/mod.rs",
         crate::surfaces::drawing_chrome::HOOKS,

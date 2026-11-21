@@ -8,7 +8,6 @@ use quantick_alerts::{
 };
 use quantick_control_schema::alerts::DrawingSelector;
 
-#[path = "alerts/requests.rs"]
 pub mod requests;
 
 /// The focused chart an alert is created for, read by the host each frame.
@@ -344,8 +343,8 @@ fn settle_target(state: &mut State, outcome: Result<DurableDrawingRef, String>) 
     };
     match outcome {
         Ok(target) => {
-            if let Some(choice) = (draft.context.drawings.iter_mut())
-                .find(|choice| choice.selector == selector)
+            if let Some(choice) =
+                (draft.context.drawings.iter_mut()).find(|choice| choice.selector == selector)
             {
                 choice.target = Some(target.clone());
                 draft.spec.conditions[index].operator = quantick_alerts::operators::for_target(
@@ -484,5 +483,4 @@ impl<V, E> crate::Adapter<Model, V, E> {
 }
 
 #[cfg(test)]
-#[path = "alerts/tests.rs"]
 mod tests;

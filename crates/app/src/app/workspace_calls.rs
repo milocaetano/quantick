@@ -17,15 +17,15 @@ use super::workspace_runtime::{WindowPresentation, WorkspaceRuntime};
 
 /// The window's fields the workspace calls reach, borrowed apart.
 pub(crate) struct WorkspaceCalls<'a> {
-    pub(super) runtime: &'a mut WorkspaceRuntime,
-    pub(super) presentation: &'a WindowPresentation,
-    pub(super) chrome: &'a mut super::chrome::ChromeState,
-    pub(super) pane_ids: &'a mut crate::canvas_layout::PaneIdAllocator,
-    pub(super) config: &'a crate::config::AppConfig,
-    pub(super) control: &'a mut super::control_host::ControlState,
-    pub(super) surfaces: &'a mut crate::surfaces::Surfaces,
-    pub(super) health: &'a mut super::health::HealthCounters,
-    pub(super) drawings: &'a mut super::drawing_controller::DrawingController,
+    pub(crate) runtime: &'a mut WorkspaceRuntime,
+    pub(crate) presentation: &'a WindowPresentation,
+    pub(crate) chrome: &'a mut super::chrome::ChromeState,
+    pub(crate) pane_ids: &'a mut crate::canvas_layout::PaneIdAllocator,
+    pub(crate) config: &'a crate::config::AppConfig,
+    pub(crate) control: &'a mut super::control_host::ControlState,
+    pub(crate) surfaces: &'a mut crate::surfaces::Surfaces,
+    pub(crate) health: &'a mut super::health::HealthCounters,
+    pub(crate) drawings: &'a mut super::drawing_controller::DrawingController,
 }
 
 impl<'a> WorkspaceCalls<'a> {

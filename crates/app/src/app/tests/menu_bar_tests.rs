@@ -1,5 +1,5 @@
 //! The `⋮` window menu and the strip beside it, operated the way a trader does.
-use super::*;
+use super::support::*;
 
 use quantick_control_schema::settings_sections::SettingsSection;
 use quantick_control_schema::window_menu::KEBAB_CONTROL;

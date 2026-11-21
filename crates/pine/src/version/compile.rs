@@ -1,12 +1,12 @@
 //! Version restrictions on already supported plot arguments.
-use super::{Compiler, PendingPlot};
+use crate::compile::{Compiler, PendingPlot};
 use crate::{
     ast::{NodeId, NodeKind},
     error::{ErrorCode, PineError},
 };
 
 impl Compiler {
-    pub(super) fn validate_version_arguments(&mut self) {
+    pub(crate) fn validate_version_arguments(&mut self) {
         if !self.checked_types.version.two_state_bool() {
             return;
         }
@@ -67,7 +67,7 @@ impl Compiler {
             NodeKind::Block { statements } => statements.last().is_none_or(|n| next(*n)),
             NodeKind::ExprStmt { expr } => next(*expr),
             NodeKind::Name(_) => match self.resolutions[id.index()] {
-                super::Resolution::Global(slot) => {
+                crate::ir::Resolution::Global(slot) => {
                     self.global_init[slot as usize].is_some_and(next)
                 }
                 _ => false,

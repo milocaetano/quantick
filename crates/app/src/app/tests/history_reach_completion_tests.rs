@@ -1,4 +1,4 @@
-use super::*;
+use super::support::*;
 use quantick_feed::history_reach::HistoryReach;
 
 const SESSION_PRINTS: u64 = 1_000_000;

@@ -2,7 +2,7 @@
 //! 2026-11-03, live BTCUSDT: a few cents of recent prints filled the whole
 //! tape-only pane, and squeezing the price gutter turned it upside down
 //! within a few drags, still narrower than the beside view opens.
-use super::*;
+use super::support::*;
 
 /// Wide candles ten minutes ago, then a tape of prints a dime apart.
 fn priced(agg_id: u64) -> quantick_engine::Trade {

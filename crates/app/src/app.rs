@@ -77,16 +77,16 @@ macro_rules! workspace_calls {
 }
 
 pub(crate) mod alerts_runtime;
-mod arrangement_adapter;
+pub(crate) mod arrangement_adapter;
 mod canvas_owner;
 pub(crate) mod canvas_wiring;
-mod workspace_calls;
-mod workspace_runtime;
+pub(crate) mod workspace_calls;
+pub(crate) mod workspace_runtime;
 use quantick_workspace::lifetime::WorkspaceId;
 const WORKSPACE_ID: WorkspaceId = WorkspaceId(0);
 pub(crate) mod arrangement_host;
 use arrangement_host::ArrangementHost;
-mod chart_layers_wiring;
+pub(crate) mod chart_layers_wiring;
 mod chart_settings_wiring;
 mod chrome;
 pub(crate) mod control_host;
@@ -99,7 +99,7 @@ pub(crate) mod drawing_controller;
 mod owners_desk;
 use owners_desk::OwnersDesk as _;
 
-mod frame;
+pub(crate) mod frame;
 mod frame_calls;
 pub(crate) use drawing_controller::DrawingResponsePort;
 use frame_calls::FrameCalls;
@@ -114,7 +114,7 @@ mod layout_wiring;
 mod script_editor_wiring;
 mod script_reload;
 pub(crate) use layout_wiring::set_indicator_mouse_vertical_line;
-mod home_wiring;
+pub(crate) mod home_wiring;
 mod menu_bar;
 pub(crate) mod native_windows;
 pub(crate) mod paper_wiring;
@@ -211,7 +211,7 @@ impl QuantickApp {
     fn layout_adapter(&mut self) -> layout_wiring::LayoutAdapter<'_> {
         self.indicator_wiring().into_layout()
     }
-    fn indicator_wiring(&mut self) -> indicator_wiring::IndicatorWiring<'_> {
+    pub(crate) fn indicator_wiring(&mut self) -> indicator_wiring::IndicatorWiring<'_> {
         self.owners().into_wiring()
     }
     pub(crate) fn workspace_save_adapter(

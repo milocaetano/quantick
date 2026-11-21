@@ -20,14 +20,20 @@ pub(super) fn context() -> Context {
 
 pub(super) fn opened_draft() -> State {
     let mut state = State::default();
-    Model::update(&mut state, Intent::Apply(Box::new(Request {
-        open: true,
-        ..Request::default()
-    })));
-    Model::update(&mut state, Intent::Create {
-        context: Box::new(context()),
-        target: None,
-    });
+    Model::update(
+        &mut state,
+        Intent::Apply(Box::new(Request {
+            open: true,
+            ..Request::default()
+        })),
+    );
+    Model::update(
+        &mut state,
+        Intent::Create {
+            context: Box::new(context()),
+            target: None,
+        },
+    );
     state
 }
 
@@ -51,7 +57,10 @@ fn alert_editor_workflows() {
     let draft = state.draft().unwrap();
     assert!(book.validate(&draft.spec).is_ok());
     assert_eq!(draft.spec.message, "Preserve me");
-    Model::update(&mut state, Intent::SettleCommand(Err("Disk is full".into())));
+    Model::update(
+        &mut state,
+        Intent::SettleCommand(Err("Disk is full".into())),
+    );
     assert_eq!(state.draft().unwrap().spec.message, "Preserve me");
     assert_eq!(state.error(), Some("Disk is full"));
     Model::update(&mut state, Intent::SettleCommand(Ok(())));
@@ -70,7 +79,10 @@ fn escape_leaves_confirmation_then_draft_then_manager() {
     assert!(!state.draft().unwrap().confirming_delete);
     Model::update(&mut state, Intent::Escape);
     assert!(state.draft().is_none());
-    assert!(state.is_open(), "Escape returns to the manager before closing it");
+    assert!(
+        state.is_open(),
+        "Escape returns to the manager before closing it"
+    );
     Model::update(&mut state, Intent::Escape);
     assert!(!state.is_open());
 }
@@ -138,11 +150,16 @@ fn alert_target_resolution_keeps_operators_compatible() {
             name: "Region fixture".into(),
         });
         let mut state = State::default();
-        Model::update(&mut state, Intent::Create {
-            context: Box::new(chart),
-            target: None,
+        Model::update(
+            &mut state,
+            Intent::Create {
+                context: Box::new(chart),
+                target: None,
+            },
+        );
+        edit(&mut state, |draft| {
+            draft.spec.conditions[0].operator = initial
         });
-        edit(&mut state, |draft| draft.spec.conditions[0].operator = initial);
         let effects = Model::update(&mut state, Intent::Resolve { index: 0, selector });
         assert_eq!(effects.request.unwrap().resolve, Some(selector));
         Model::update(&mut state, Intent::SettleTarget(Ok(target.clone())));
@@ -155,25 +172,34 @@ fn alert_target_resolution_keeps_operators_compatible() {
 #[test]
 fn host_owned_requests_are_refused_and_drawing_opens_wait_for_a_chart() {
     let mut state = State::default();
-    Model::update(&mut state, Intent::Apply(Box::new(Request {
-        locate: Some(DurableDrawingRef {
-            workspace: "w".into(),
-            origin: "o".into(),
-            pane: "p".into(),
-            drawing: 1,
-            incarnation: "i".into(),
-        }),
-        ..Request::default()
-    })));
+    Model::update(
+        &mut state,
+        Intent::Apply(Box::new(Request {
+            locate: Some(DurableDrawingRef {
+                workspace: "w".into(),
+                origin: "o".into(),
+                pane: "p".into(),
+                drawing: 1,
+                incarnation: "i".into(),
+            }),
+            ..Request::default()
+        })),
+    );
     assert_eq!(state.error(), Some("Unavailable"));
     Model::update(&mut state, Intent::OpenDrawing(None));
     assert!(state.is_editing());
     Model::update(&mut state, Intent::CloseManager);
     assert!(state.is_open(), "an editor keeps the manager open");
     Model::update(&mut state, Intent::ConsumePending(None));
-    assert_eq!(state.error(), Some("Open a chart before creating an alert."));
+    assert_eq!(
+        state.error(),
+        Some("Open a chart before creating an alert.")
+    );
     Model::update(&mut state, Intent::OpenDrawing(None));
-    Model::update(&mut state, Intent::ConsumePending(Some(Box::new(context()))));
+    Model::update(
+        &mut state,
+        Intent::ConsumePending(Some(Box::new(context()))),
+    );
     assert_eq!(state.draft().unwrap().spec.name, "TEST price alert");
 }
 
@@ -185,17 +211,17 @@ fn editing_a_saved_alert_restores_its_custom_expiry() {
         display_offset_minutes: -180,
     };
     let mut state = State::default();
-    Model::update(&mut state, Intent::EditExisting {
-        spec: Box::new(spec),
-        revision: 5,
-        context: None,
-        delete: true,
-    });
-    let draft = state.draft().unwrap();
-    assert_eq!(
-        (draft.revision, draft.expiration_choice),
-        (Some(5), 4)
+    Model::update(
+        &mut state,
+        Intent::EditExisting {
+            spec: Box::new(spec),
+            revision: 5,
+            context: None,
+            delete: true,
+        },
     );
+    let draft = state.draft().unwrap();
+    assert_eq!((draft.revision, draft.expiration_choice), (Some(5), 4));
     assert!(draft.confirming_delete && draft.focus_delete_cancel);
     assert_eq!(draft.context.display_offset_minutes, -180);
 }

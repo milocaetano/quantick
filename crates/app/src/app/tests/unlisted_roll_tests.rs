@@ -1,6 +1,6 @@
 //! A contract the venue no longer lists rolls to the one its feed config names
 //! next: offered on the notice popup, and taken by itself on a restored tab.
-use super::*;
+use super::support::*;
 use quantick_feed::FeedNotice;
 
 /// What the MetaTrader bridge's `BRIDGE_SYMBOL_NOT_FOUND` reaches a tab as.

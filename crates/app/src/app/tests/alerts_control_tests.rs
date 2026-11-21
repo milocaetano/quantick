@@ -1,5 +1,5 @@
 //! Actual loopback admission, persistence and retry/readback proofs.
-use super::*;
+use super::support::*;
 use quantick_control::error::codes;
 use quantick_control_local::client::{LocalClient, discover_in};
 use quantick_control_schema::alerts as schema;

@@ -11,18 +11,18 @@ use quantick_workspace::lifetime::{
 pub(crate) struct WorkspaceRuntime {
     pub(super) alerts: super::alerts_runtime::Runtime,
     pub(super) chart_theme: quantick_chart::style::ChartThemeSync,
-    pub(super) appearance: quantick_stores::appearance::AppearanceStore,
+    pub(crate) appearance: quantick_stores::appearance::AppearanceStore,
     pub(super) lifetime: WorkspaceLifetime,
-    pub(super) tabs: super::ArrangementHost,
+    pub(crate) tabs: super::ArrangementHost,
     pub(super) indicators: super::indicator_manager::IndicatorState,
-    pub(super) footprint_config: crate::footprint_config::FootprintConfig,
-    pub(super) style: crate::style::ChartStyle,
+    pub(crate) footprint_config: crate::footprint_config::FootprintConfig,
+    pub(crate) style: crate::style::ChartStyle,
     pub(super) style_revision: u64,
-    pub(super) history: quantick_session::HistorySettings,
-    pub(super) tz: crate::timezone::TzOffset,
-    pub(super) workspace: crate::workspace_store::WorkspaceStore,
+    pub(crate) history: quantick_session::HistorySettings,
+    pub(crate) tz: crate::timezone::TzOffset,
+    pub(crate) workspace: crate::workspace_store::WorkspaceStore,
     /// Where orders go: the simulator or the one broker account.
-    pub(super) broker: quantick_paper::route::BrokerSession,
+    pub(crate) broker: quantick_paper::route::BrokerSession,
 }
 
 impl WorkspaceRuntime {
@@ -145,7 +145,7 @@ impl WorkspaceRuntime {
     pub(super) fn bound_mut(&mut self, view: &WorkspaceView) -> &mut Self {
         self.resolve_mut(view).expect("bound workspace")
     }
-    pub(super) fn widget_desk<'a>(
+    pub(crate) fn widget_desk<'a>(
         &'a mut self,
         surfaces: &'a mut crate::widget_surfaces::WidgetSurfaces,
         config: &'a crate::config::AppConfig,
@@ -176,7 +176,7 @@ impl WorkspaceRuntime {
             slot,
         }
     }
-    pub(super) fn resolve(&self, view: &WorkspaceView) -> Result<&Self, LifetimeError> {
+    pub(crate) fn resolve(&self, view: &WorkspaceView) -> Result<&Self, LifetimeError> {
         self.lifetime.resolve(view)?;
         Ok(self)
     }
@@ -211,9 +211,9 @@ impl WorkspaceRuntime {
 }
 
 /// Native rendering identity stays outside the process-owned workspace payload.
-pub(super) struct WindowPresentation {
-    pub(super) context: Option<egui::Context>,
-    pub(super) binding: WorkspaceView,
+pub(crate) struct WindowPresentation {
+    pub(crate) context: Option<egui::Context>,
+    pub(crate) binding: WorkspaceView,
     pub(super) native: super::native_windows::NativeWindows,
 }
 impl WindowPresentation {

@@ -4,7 +4,7 @@
 
 use serde_json::json;
 
-use super::*;
+use super::support::*;
 
 /// Broker routes on, on an ephemeral port, launching no bridge process.
 fn with_broker_routes(app: &mut QuantickApp) {

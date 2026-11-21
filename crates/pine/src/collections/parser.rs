@@ -1,7 +1,11 @@
 //! Generic collection declarations are parsed without weakening expression comparisons.
-use super::{NodeId, Parser, Tok, VarMode};
+use crate::{
+    ast::{NodeId, VarMode},
+    lexer::Tok,
+    parser::Parser,
+};
 impl Parser<'_> {
-    pub(super) fn collection_declaration_ahead(&self) -> bool {
+    pub(crate) fn collection_declaration_ahead(&self) -> bool {
         let start = usize::from(matches!(self.peek(), Tok::KwVar | Tok::KwVarip));
         (matches!(self.peek_at(start), Tok::Ident(name) if name == "array" || name == "map")
             && matches!(self.peek_at(start + 1), Tok::Lt))
@@ -9,7 +13,7 @@ impl Parser<'_> {
                 && matches!(self.peek_at(start + 1), Tok::LBracket)
                 && matches!(self.peek_at(start + 2), Tok::RBracket))
     }
-    pub(super) fn parameter_words(&mut self) -> Option<Vec<String>> {
+    pub(crate) fn parameter_words(&mut self) -> Option<Vec<String>> {
         let mut words = Vec::new();
         while let Tok::Ident(word) = self.peek().clone() {
             self.advance();
@@ -39,7 +43,7 @@ impl Parser<'_> {
         }
         if words.is_empty() { None } else { Some(words) }
     }
-    pub(super) fn collection_declaration(&mut self) -> Option<NodeId> {
+    pub(crate) fn collection_declaration(&mut self) -> Option<NodeId> {
         let start = self.span();
         let mode = if self.eat(&Tok::KwVar) {
             VarMode::Var

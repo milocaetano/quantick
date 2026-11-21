@@ -1,7 +1,7 @@
 mod pane_model_tests;
 mod tape_aim_tests;
 
-use super::*;
+use super::support::*;
 
 /// A drawing tool takes the *primary button*, never the chart.
 ///

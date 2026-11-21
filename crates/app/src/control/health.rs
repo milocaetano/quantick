@@ -1,7 +1,8 @@
 //! The window's reads for `quantick_control_handlers::health`: its frame cost,
 //! and each tab's feed readings, loading work and panes, lent by the tab.
 
-use crate::app::control_host::ControlPort;
+use crate::app::QuantickApp;
+use crate::app::control_host::{ControlPort, HealthPort, HealthReads};
 use crate::{control::pane_side_dto, orderflow_view::OrderflowView, tab::Tab};
 use quantick_chart::loading::LoadingTracker;
 use quantick_control::wire::WireU64;
@@ -10,6 +11,14 @@ use quantick_control_handlers::health::{
 };
 use quantick_control_schema::health::{FeedIntegritySnapshot, IntakeLagSnapshot};
 use quantick_feed::FeedLatency;
+
+impl HealthPort for QuantickApp {
+    fn health_reads(&self) -> HealthReads<'_> {
+        let roots = crate::app::control_host::control_roots(self);
+        let save_on_exit = roots.runtime.workspace.session().save_on_exit();
+        HealthReads::new(save_on_exit, roots.health, &roots.runtime.history)
+    }
+}
 
 impl HealthScopePort for dyn ControlPort {
     const HIGH_LAG_MS: i64 = crate::metrics::HIGH_LAG_MS;

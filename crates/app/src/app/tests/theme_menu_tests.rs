@@ -1,5 +1,5 @@
 //! Drive the actual toolbar and native choice through the harness RawInput path.
-use super::*;
+use super::support::*;
 use quantick_appearance::Builtin;
 use quantick_stores::appearance::AppearanceStore;
 

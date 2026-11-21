@@ -2,7 +2,6 @@
 use quantick_chart::indicator_registry::{TabSlot, remap_side};
 use quantick_indicators::{InputSpec, InputValue};
 
-#[path = "indicator_settings/preset.rs"]
 mod preset;
 pub use preset::PresetEditor;
 
@@ -352,7 +351,6 @@ pub fn row_order(specs: &[InputSpec]) -> Vec<usize> {
 }
 
 #[cfg(test)]
-#[path = "indicator_settings/tests.rs"]
 mod tests;
 
 #[cfg(test)]

@@ -1,5 +1,9 @@
 //! Caller-supplied local libraries and user-defined objects.
+mod check;
+mod parse;
+mod persistence;
 mod prepare;
+mod runtime;
 mod source_methods;
 mod source_scopes;
 mod sources;

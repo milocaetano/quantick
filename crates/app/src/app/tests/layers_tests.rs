@@ -1,4 +1,4 @@
-use super::*;
+use super::support::*;
 use crate::drawings::StyleColor32;
 
 #[test]

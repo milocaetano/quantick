@@ -258,8 +258,8 @@ pub(crate) fn effects(effects: Vec<Effect>) -> SurfaceResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::toolbar::ToolbarAction;
     use crate::surfaces::Surface;
+    use crate::toolbar::ToolbarAction;
     use std::time::Instant;
     fn frame(
         surface: &mut IndicatorPickerSurface,

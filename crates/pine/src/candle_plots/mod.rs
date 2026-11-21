@@ -1,5 +1,7 @@
 //! Headless candle/bar plot argument vocabulary.
 use crate::ast::Arg;
+mod eval;
+mod lower;
 
 /// Positional arguments through the supported color fields.
 pub(crate) const CANDLE_ARGS: &[&str] = &[
