@@ -76,6 +76,34 @@ class IdentityTests(unittest.TestCase):
         self.commit()
         self.assertNotEqual(before, self.key())
 
+    def test_moving_identical_edit_between_occurrences_stales_review_key(self):
+        self.git("checkout", "-q", "base")
+        self.write("policy.py", "def policy():\n    flags.append(False)\n    work()\n    flags.append(False)\n")
+        self.commit()
+        self.git("checkout", "-q", "-b", "first-occurrence")
+        self.write("policy.py", "def policy():\n    flags.append(True)\n    work()\n    flags.append(False)\n")
+        self.commit()
+        before = self.key()
+        self.git("checkout", "-q", "base")
+        self.write("policy.py", "def policy():\n    flags.append(False)\n    work()\n    flags.append(True)\n")
+        self.commit()
+        self.assertNotEqual(before, self.key())
+
+    def test_repeated_occurrence_identity_ignores_shifted_context(self):
+        self.git("checkout", "-q", "base")
+        self.write("policy.py", "def policy():\n    flags.append(False)\n    work()\n    flags.append(False)\n")
+        self.commit()
+        self.git("checkout", "-q", "-b", "repeated-head")
+        self.write("policy.py", "def policy():\n    flags.append(False)\n    work()\n    flags.append(True)\n")
+        self.commit()
+        before = self.key()
+        self.git("checkout", "-q", "base")
+        self.write("policy.py", "# upstream context\ndef policy():\n    flags.append(False)\n    work()\n    flags.append(False)\n")
+        self.commit()
+        self.git("checkout", "-q", "repeated-head")
+        self.git("rebase", "base")
+        self.assertEqual(before, self.key())
+
     def test_rename_source_and_excluded_destination_both_affect_identity(self):
         self.git("checkout", "-q", "base")
         self.write("old_a.py", "same bytes\n")

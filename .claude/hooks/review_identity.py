@@ -5,6 +5,7 @@ import hashlib
 import io
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tarfile
@@ -77,6 +78,50 @@ def verified_outputs(repo, paths):
         return set()
 
 
+def hunk_occurrences(repo, ancestor, path):
+    """Identify repeated preimages without retaining shift-prone coordinates."""
+    patch = git(repo, "diff", "--no-ext-diff", "--no-textconv", "--no-renames",
+                "--binary", "--full-index", "--unified=0", ancestor, "HEAD", "--", path)
+    try:
+        base = subprocess.check_output(
+            ["git", "-C", str(repo), "show", f"{ancestor}:{path}"],
+            stderr=subprocess.DEVNULL,
+        ).splitlines(keepends=True)
+    except subprocess.CalledProcessError:
+        base = []
+    occurrences = []
+    lines = patch.splitlines(keepends=True)
+    index = 0
+    while index < len(lines):
+        match = re.match(br"@@ -(\d+)(?:,\d+)? \+\d+(?:,\d+)? @@", lines[index])
+        if not match:
+            index += 1
+            continue
+        old_index = int(match.group(1)) - 1
+        index += 1
+        removed = []
+        while index < len(lines) and not lines[index].startswith(b"@@ "):
+            if lines[index].startswith(b"diff --git "):
+                break
+            if lines[index].startswith(b"-") and not lines[index].startswith(b"--- "):
+                removed.append(lines[index][1:])
+            index += 1
+        if not base or old_index < 0:
+            occurrence = 0
+        elif removed:
+            matches = [candidate for candidate in range(len(base) - len(removed) + 1)
+                       if base[candidate:candidate + len(removed)] == removed]
+            occurrence = matches.index(old_index) if old_index in matches else old_index
+        else:
+            boundary = (base[old_index - 1] if old_index else b"", base[old_index] if old_index < len(base) else b"")
+            matches = [candidate for candidate in range(len(base) + 1)
+                       if (base[candidate - 1] if candidate else b"",
+                           base[candidate] if candidate < len(base) else b"") == boundary]
+            occurrence = matches.index(old_index) if old_index in matches else old_index
+        occurrences.append(str(occurrence).encode())
+    return occurrences
+
+
 def identity(repo, base):
     ancestor = git(repo, "merge-base", base, "HEAD").decode().strip()
     # Keep both sides of a rename. The patch below deliberately disables rename
@@ -101,10 +146,12 @@ def identity(repo, base):
     # inheriting approval. Exact changed lines retain indentation, modes and
     # binary patches beside patch-id, which alone ignores whitespace.
     changed_lines = []
+    occurrences = iter(value for path in paths for value in hunk_occurrences(repo, ancestor, path))
     for line in patch.splitlines(keepends=True):
         if line.startswith(b"@@ "):
             marker = line.find(b" @@", 3)
             changed_lines.append(line[marker + 3:] if marker >= 0 else b"\n")
+            changed_lines.append(b"occurrence " + next(occurrences, b"unknown") + b"\n")
         elif not line.startswith(b"index "):
             changed_lines.append(line)
     changed = b"".join(changed_lines)
