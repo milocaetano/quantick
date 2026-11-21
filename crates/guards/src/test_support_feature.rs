@@ -22,7 +22,6 @@ struct Dependency {
     package: String,
     features: Vec<String>,
     defaults: bool,
-    section: String,
     inherited: bool,
     optional: bool,
 }
@@ -105,6 +104,11 @@ fn shipping_dependencies(header: &str) -> bool {
     header.ends_with("dependencies]") && !header.ends_with("dev-dependencies]")
 }
 
+fn dependency_specific_section(header: &str) -> bool {
+    !header.contains("dev-dependencies.")
+        && (header.contains("dependencies.") || header.contains("build-dependencies."))
+}
+
 fn parse(path: PathBuf) -> Result<Manifest, String> {
     let source =
         fs::read_to_string(&path).map_err(|error| format!("{}: {error}", path.display()))?;
@@ -112,6 +116,16 @@ fn parse(path: PathBuf) -> Result<Manifest, String> {
         path,
         ..Manifest::default()
     };
+    if let Some((section, key, _)) =
+        crate::graph::manifest_entries_with_sections(&source, dependency_specific_section)
+            .into_iter()
+            .next()
+    {
+        return Err(format!(
+            "{}: dependency-specific table {section} entry `{key}` is unsupported and cannot be checked safely",
+            out.path.display()
+        ));
+    }
     if let Some((_, value)) = crate::graph::manifest_entries_in(&source, package_section)
         .into_iter()
         .find(|(key, _)| key == "name")
@@ -126,7 +140,7 @@ fn parse(path: PathBuf) -> Result<Manifest, String> {
             strings(&value).map_err(|error| format!("{}: {error}", out.path.display()))?,
         );
     }
-    for (section, key, value) in
+    for (_, key, value) in
         crate::graph::manifest_entries_with_sections(&source, shipping_dependencies)
     {
         let alias = key.trim_matches(['"', '\'']).to_owned();
@@ -146,7 +160,6 @@ fn parse(path: PathBuf) -> Result<Manifest, String> {
                 Vec::new()
             },
             defaults: !value.contains("default-features = false"),
-            section: section.trim_matches(['[', ']']).to_owned(),
             inherited: value.contains("workspace = true"),
             optional: value.contains("optional = true"),
         });
@@ -192,25 +205,16 @@ fn manifests(root: &Path) -> Result<Vec<Manifest>, String> {
 }
 
 fn reaches_test_support<'a>(
-    owner: &'a Manifest,
-    dependency: &Dependency,
+    member: &'a Manifest,
     by_package: &BTreeMap<&'a str, &'a Manifest>,
 ) -> Option<(String, String)> {
-    let mut active_crates = BTreeSet::from([owner.package.clone()]);
+    let mut active_crates = BTreeSet::from([member.package.clone()]);
     let mut active_edges = BTreeSet::new();
     let mut features = BTreeMap::<(String, String), String>::new();
-    if dependency.defaults {
-        features.insert(
-            (owner.package.clone(), "default".to_owned()),
-            format!("{} default", dependency.alias),
-        );
-    }
-    for feature in &dependency.features {
-        features.insert(
-            (owner.package.clone(), feature.clone()),
-            format!("{} feature {feature}", dependency.alias),
-        );
-    }
+    features.insert(
+        (member.package.clone(), "default".to_owned()),
+        format!("{} default", member.package),
+    );
     loop {
         let before = (active_crates.len(), active_edges.len(), features.len());
         for package in active_crates.clone() {
@@ -291,25 +295,6 @@ fn reaches_test_support<'a>(
     })
 }
 
-fn default_activates_optional(manifest: &Manifest, alias: &str) -> bool {
-    let mut pending = vec!["default".to_owned()];
-    let mut seen = BTreeSet::new();
-    while let Some(feature) = pending.pop() {
-        if !seen.insert(feature.clone()) {
-            continue;
-        }
-        for next in manifest.features.get(&feature).into_iter().flatten() {
-            if next == alias || next == &format!("dep:{alias}") {
-                return true;
-            }
-            if !next.contains('/') {
-                pending.push(next.clone());
-            }
-        }
-    }
-    false
-}
-
 pub fn check(root: &Path) -> Vec<Finding> {
     let parsed = match manifests(root) {
         Ok(value) => value,
@@ -321,28 +306,15 @@ pub fn check(root: &Path) -> Vec<Finding> {
         .collect();
     let mut findings = Vec::new();
     for member in &parsed {
-        for dependency in &member.production {
-            if dependency.optional && !default_activates_optional(member, &dependency.alias) {
-                continue;
-            }
-            let Some(owner) = by_package.get(dependency.package.as_str()) else {
-                continue;
-            };
-            if let Some((support_owner, path)) =
-                reaches_test_support(owner, dependency, &by_package)
-            {
-                findings.push(Finding::new(
-                    format!(
-                        "{}: {} dependency `{}` ({}) enables {} through {path}",
-                        member.path.display(),
-                        dependency.section,
-                        dependency.alias,
-                        dependency.package,
-                        support_owner
-                    ),
-                    REMEDY,
-                ));
-            }
+        if let Some((support_owner, path)) = reaches_test_support(member, &by_package) {
+            findings.push(Finding::new(
+                format!(
+                    "{}: production feature graph enables {} through {path}",
+                    member.path.display(),
+                    support_owner
+                ),
+                REMEDY,
+            ));
         }
     }
     findings.sort_by(|left, right| left.line.cmp(&right.line));
@@ -388,12 +360,11 @@ mod tests {
             "[package]\nname = \"quantick-app\"\n[target.'cfg(windows)'.dependencies]\nquantick-middle = { path = \"../middle\" }\n",
         );
         let findings = check(&root);
-        assert_eq!(findings.len(), 1, "{findings:?}");
-        assert!(findings[0].line.contains("builder/test-support"));
         assert!(
-            findings[0]
-                .line
-                .contains("target.'cfg(windows)'.dependencies")
+            findings
+                .iter()
+                .any(|finding| finding.line.contains("builder/test-support")),
+            "{findings:?}"
         );
     }
 
@@ -461,7 +432,10 @@ mod tests {
                 "[package]\nname = \"quantick-app\"\n[dependencies]\nquantick-middle = { path = \"../middle\", features = [\"fixture\"] }\n",
             );
             let findings = check(&root);
-            assert_eq!(findings.len(), 1, "{label}: {findings:?}");
+            assert!(
+                findings.iter().any(|finding| finding.line.contains("app")),
+                "{label}: {findings:?}"
+            );
         }
 
         let root = ScratchDir::new("weak-unactivated");
@@ -484,34 +458,33 @@ mod tests {
     }
 
     #[test]
-    fn root_default_activates_implicit_optional_dependency_feature() {
-        let root = ScratchDir::new("test-support-root-optional");
-        write(
-            &root,
-            "owner",
-            "[package]\nname = \"quantick-owner\"\n[features]\ndefault = [\"test-support\"]\ntest-support = []\n",
-        );
-        write(
-            &root,
-            "app",
-            "[package]\nname = \"quantick-app\"\n[features]\ndefault = [\"owner\"]\n[dependencies]\nowner = { package = \"quantick-owner\", path = \"../owner\", optional = true }\n",
-        );
-        let findings = check(&root);
-        assert_eq!(findings.len(), 1, "{findings:?}");
-        assert!(findings[0].line.contains("quantick-owner"));
-
-        let root = ScratchDir::new("test-support-root-optional-inactive");
-        write(
-            &root,
-            "owner",
-            "[package]\nname = \"quantick-owner\"\n[features]\ndefault = [\"test-support\"]\ntest-support = []\n",
-        );
-        write(
-            &root,
-            "app",
-            "[package]\nname = \"quantick-app\"\n[dependencies]\nowner = { package = \"quantick-owner\", path = \"../owner\", optional = true }\n",
-        );
-        assert!(check(&root).is_empty());
+    fn root_optional_activation_and_forwarding_follow_cargo_semantics() {
+        for (label, root_features, expected) in [
+            ("strong-direct", "default = [\"owner/test-support\"]", true),
+            ("strong-bridge", "default = [\"owner/bridge\"]", true),
+            ("weak-only", "default = [\"owner?/bridge\"]", false),
+            (
+                "weak-after-activation",
+                "default = [\"dep:owner\", \"owner?/bridge\"]",
+                true,
+            ),
+        ] {
+            let root = ScratchDir::new(label);
+            write(
+                &root,
+                "owner",
+                "[package]\nname = \"quantick-owner\"\n[features]\ntest-support = []\nbridge = [\"test-support\"]\n",
+            );
+            write(
+                &root,
+                "app",
+                &format!(
+                    "[package]\nname = \"quantick-app\"\n[features]\n{root_features}\n[dependencies]\nowner = {{ package = \"quantick-owner\", path = \"../owner\", optional = true, default-features = false }}\n"
+                ),
+            );
+            let findings = check(&root);
+            assert_eq!(!findings.is_empty(), expected, "{label}: {findings:?}");
+        }
     }
 
     #[test]
@@ -530,6 +503,53 @@ mod tests {
         let findings = check(&root);
         assert_eq!(findings.len(), 1, "{findings:?}");
         assert!(findings[0].line.contains("quantick-owner"));
+    }
+
+    #[test]
+    fn dependency_specific_tables_fail_closed_in_every_shipping_form() {
+        for (label, header, body) in [
+            (
+                "direct",
+                "[dependencies.owner]",
+                "features = ['test-support']",
+            ),
+            (
+                "renamed",
+                "[dependencies.builder]",
+                "package = 'quantick-owner'\nfeatures = ['test-support']",
+            ),
+            (
+                "build",
+                "[build-dependencies.owner]",
+                "features = ['test-support']",
+            ),
+            (
+                "target",
+                "[target.'cfg(windows)'.dependencies.owner]",
+                "features = ['test-support']",
+            ),
+        ] {
+            let root = ScratchDir::new(label);
+            write(
+                &root,
+                "app",
+                &format!("[package]\nname = 'quantick-app'\n{header}\n{body}\n"),
+            );
+            let findings = check(&root);
+            assert_eq!(findings.len(), 1, "{label}: {findings:?}");
+            assert!(findings[0].line.contains("unsupported"));
+        }
+
+        let root = ScratchDir::new("workspace-specific");
+        fs::write(
+            root.join("Cargo.toml"),
+            "[workspace.dependencies.owner]\nfeatures = ['test-support']\n",
+        )
+        .unwrap();
+        fs::create_dir_all(root.join("crates")).unwrap();
+        let findings = check(&root);
+        assert_eq!(findings.len(), 1, "{findings:?}");
+        assert!(findings[0].line.contains("workspace.dependencies.owner"));
     }
 
     #[test]
