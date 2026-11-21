@@ -1,16 +1,8 @@
-//! Panels and the layer each pane shows.
-//!
-//! Read [`super`] first: it says why the rows are written, how they are
-//! joined, and what the drift guard does with them.
-
 use super::{Mapping, PENDING_SURFACE, Source, UiBehaviour};
-
-/// A chart layer switch: the capsule or header glyph and the pane's layer menu both set
-/// one pane's layer, which `layers.visibility.set` does by stable pane ID.
 const LAYER_SWITCH: Mapping = capability!("layers.visibility.set");
 
-/// Every row this family owns.
-pub(super) const ROWS: &[UiBehaviour] = &[
+pub(super) const BINDING: (usize, &[UiBehaviour]) = (4, ROWS);
+const ROWS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "dock.tab.open",
         title: "Open a panel — session, trading or trades",

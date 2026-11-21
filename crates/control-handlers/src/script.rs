@@ -111,6 +111,8 @@ fn journal<T: Serialize>(
     Ok(())
 }
 
+pub use register as register_actions;
+
 #[cfg(test)]
 #[path = "script_tests.rs"]
 mod tests;

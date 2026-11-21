@@ -1,63 +1,19 @@
 //! The declared list: every family's rows, joined into one table.
 //!
-//! Adding a capability adds a row to its own family module. The only line
-//! that changes here is a new family's, which is why this file is short and
-//! stays short.
+//! Each family owns its rows. The shared control manifest selects them;
+//! this consumer only joins their slices.
 
 use crate::readback::{Readback, flatten, total};
-use crate::{analysis, attention, feed, indicator_guide, layers, layout, notify, script, trade};
 
-/// Every family that declares readback rows. Order is irrelevant: the
-/// document is rendered in the registry's order.
-pub const FAMILIES: &[&[Readback]] = &[
-    crate::alerts::READBACKS,
-    analysis::READBACKS,
-    crate::appearance::READBACKS,
-    attention::READBACKS,
-    crate::bubble_save::READBACKS,
-    crate::bubble_scale::READBACKS,
-    crate::canvas::READBACKS,
-    crate::chart_settings::READBACKS,
-    crate::indicator_picker::READBACKS,
-    crate::native_indicator::READBACKS,
-    crate::drawing_magnet::READBACKS,
-    crate::drawing_scope::READBACKS,
-    crate::drawing_text::READBACKS,
-    feed::READBACKS,
-    crate::history::READBACKS,
-    indicator_guide::READBACKS,
-    crate::journal_sessions::READBACKS,
-    crate::session_reports::READBACKS,
-    layers::READBACKS,
-    layout::READBACKS,
-    notify::READBACKS,
-    crate::opening_scale::READBACKS,
-    crate::tick_bubbles::READBACKS,
-    crate::bubble_preset::READBACKS,
-    crate::pnl_display::READBACKS,
-    crate::desk::READBACKS,
-    crate::workspace_book::READBACKS,
-    crate::workspace_colour::READBACKS,
-    crate::workspace_manage::READBACKS,
-    crate::price_axis::READBACKS,
-    crate::price_tag_progress::READBACKS,
-    crate::home_tab::READBACKS,
-    crate::native_window::READBACKS,
-    crate::market_windows::READBACKS,
-    crate::market_palette::READBACKS,
-    crate::orderflow_settings::READBACKS,
-    crate::tape_fold::READBACKS,
-    crate::tape_market_fold::READBACKS,
-    crate::tape_view::READBACKS,
-    crate::tape_view_set::READBACKS,
-    crate::time_axis::READBACKS,
-    script::READBACKS,
-    crate::script_editor::READBACKS,
-    crate::script_strategy::READBACKS,
-    trade::READBACKS,
-    crate::trade_account::READBACKS,
-    crate::widget::READBACKS,
-];
+macro_rules! readback_families {
+    ($($id:literal {
+            schemas: [$($schema:ident),*], actions: [$($action:ident),*],
+            projections: [$($projection:ident),*], authority: [$($authority:ident),*],
+            readbacks: [$($readback:ident),*], behaviours: [$($behaviour:ident),*],
+            samples: [$($sample:ident),*],
+        })*) => { pub const FAMILIES: &[&[Readback]] = &[$($(crate::$readback::READBACKS,)*)*]; };
+}
+quantick_control::control_families!(readback_families);
 
 const TOTAL: usize = total(FAMILIES);
 /// A static, not a const: the joined table is past clippy's large-array size.

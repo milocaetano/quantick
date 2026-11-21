@@ -807,6 +807,8 @@ fn permission_denied(message: impl AsRef<str>) -> ControlError {
     known_error(codes::PERMISSION_DENIED, message, false)
 }
 
+pub use register as register_actions;
+
 #[cfg(test)]
 #[path = "annotate_tests.rs"]
 mod annotate_tests;

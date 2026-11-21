@@ -193,3 +193,5 @@ pub(crate) fn scope_descriptors() -> Vec<quantick_control_host::catalogue::Snaps
 {
     vec![scope_spec().descriptor()]
 }
+
+pub use register as register_actions;

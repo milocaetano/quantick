@@ -9,7 +9,7 @@ use std::collections::BTreeSet;
 
 pub use crate::schema_documents::SchemaDocument;
 pub use quantick_control_host::system::BuildIdentity;
-mod composition;
+pub(crate) mod composition;
 pub mod feed;
 pub mod interaction;
 pub mod scene;

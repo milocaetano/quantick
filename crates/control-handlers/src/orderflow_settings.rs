@@ -138,6 +138,8 @@ pub(crate) fn action_descriptors() -> Vec<quantick_control::registry::Capability
     ]
 }
 
+pub use register as register_actions;
+
 #[cfg(test)]
 mod tests {
     use super::*;

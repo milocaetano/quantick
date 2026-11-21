@@ -132,3 +132,21 @@ pub const READBACKS: &[Readback] = &[journal(
     "an event after the pre-call cursor matches connection_id and request_id, stable tab/pane IDs, layer ID and requested boolean; emitted even for a no-op, including panes omitted from the bounded snapshot; a retention gap leaves the outcome unknown",
     &[EVERY_OPTIONAL_TEST],
 )];
+
+/// Published schemas, owned beside their wire records.
+pub fn documents() -> Vec<(&'static str, serde_json::Value)> {
+    vec![
+        (
+            "observer-layers-visibility-v1.schema.json",
+            quantick_control::schema::generated_schema::<crate::layers::LayersSnapshot>(),
+        ),
+        (
+            "layers-visibility-set-input-v1.schema.json",
+            quantick_control::schema::generated_schema::<crate::layers::SetVisibilityInput>(),
+        ),
+        (
+            "layers-visibility-set-result-v1.schema.json",
+            quantick_control::schema::generated_schema::<crate::layers::VisibilityResult>(),
+        ),
+    ]
+}

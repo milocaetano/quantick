@@ -161,6 +161,8 @@ pub fn recording_error(error: DealRecordingError) -> ControlError {
     )
 }
 
+pub use register as register_actions;
+
 #[cfg(test)]
 #[path = "deal_recording_tests.rs"]
 mod deal_recording_tests;

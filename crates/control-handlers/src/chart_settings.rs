@@ -258,6 +258,8 @@ fn preset_error(error: PresetError) -> ControlError {
     }
 }
 
+pub use register as register_actions;
+
 #[cfg(test)]
 mod tests;
 

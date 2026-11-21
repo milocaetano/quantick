@@ -92,6 +92,8 @@ fn list_request<H: IndicatorControlHost + ?Sized, A>(
     serde_json::to_value(result).map_err(|e| ControlError::invalid_request(e.to_string()))
 }
 
+pub use register as register_actions;
+
 #[cfg(test)]
 #[path = "native_indicator_tests.rs"]
 mod tests;

@@ -48,6 +48,8 @@ fn reset_time<H: AddressedPanePort<Pane: AxisPane> + ?Sized, A>(
     .map_err(invalid)
 }
 
+pub use register as register_actions;
+
 #[cfg(test)]
 #[path = "time_axis_tests.rs"]
 mod tests;

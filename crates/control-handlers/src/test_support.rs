@@ -1129,7 +1129,7 @@ impl MarkTab for FakeTab {
     }
 }
 
-impl crate::chart_context::ArmedTab for FakeTab {
+impl crate::script_strategy::ArmedTab for FakeTab {
     fn armed_on(
         &self,
         pane_id: u64,

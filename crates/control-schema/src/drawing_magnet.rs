@@ -185,3 +185,29 @@ pub const READBACKS: &[Readback] = &[
         &[EVERY_OPTIONAL_TEST],
     ),
 ];
+
+/// Published schemas, owned beside their wire records.
+pub fn documents() -> Vec<(&'static str, serde_json::Value)> {
+    vec![
+        (
+            "annotate-magnet-input-v1.schema.json",
+            quantick_control::schema::generated_schema::<crate::drawing_magnet::DrawingMagnetInput>(
+            ),
+        ),
+        (
+            "annotate-magnet-result-v1.schema.json",
+            quantick_control::schema::generated_schema::<crate::drawing_magnet::DrawingMagnetResult>(
+            ),
+        ),
+        (
+            "annotate-drawing-magnet-input-v1.schema.json",
+            quantick_control::schema::generated_schema::<crate::drawing_magnet::ObjectMagnetInput>(
+            ),
+        ),
+        (
+            "annotate-drawing-magnet-result-v1.schema.json",
+            quantick_control::schema::generated_schema::<crate::drawing_magnet::ObjectMagnetResult>(
+            ),
+        ),
+    ]
+}

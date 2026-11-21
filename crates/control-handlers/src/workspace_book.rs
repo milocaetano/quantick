@@ -1416,6 +1416,8 @@ fn list<H: WorkspaceOwner + ?Sized, A>(
     answer(&WorkspaceListResult { workspaces })
 }
 
+pub use register as register_actions;
+
 #[cfg(test)]
 #[path = "workspace_book_tests.rs"]
 mod workspace_book_tests;

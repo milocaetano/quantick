@@ -474,6 +474,8 @@ fn parse(input: &Value) -> Result<WidgetInput, ControlError> {
         .map_err(|error| ControlError::invalid_request(error.to_string()))
 }
 
+pub use register as register_actions;
+
 #[cfg(test)]
 #[path = "widgets_tests.rs"]
 mod widgets_tests;

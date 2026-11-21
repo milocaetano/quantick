@@ -1,12 +1,7 @@
-//! Indicators and the scripts behind them.
-//!
-//! Read [`super`] first: it says why the rows are written, how they are
-//! joined, and what the drift guard does with them.
-
 use super::{ExclusionClass, Mapping, PENDING_SURFACE, Source, UiBehaviour};
 
-/// Every row this family owns.
-pub(super) const ROWS: &[UiBehaviour] = &[
+pub(super) const BINDING: (usize, &[UiBehaviour]) = (6, ROWS);
+const ROWS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "appearance.configuration",
         title: "Apply a complete appearance configuration",

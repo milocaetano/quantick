@@ -12,11 +12,18 @@ use super::{
     types::{canonical_f32, wire_usize},
 };
 
-pub(crate) fn register(registry: &mut ProjectionRegistry) -> Result<(), ProjectionRegistryError> {
+pub(crate) fn register_module(
+    registry: &mut ProjectionRegistry,
+) -> Result<(), ProjectionRegistryError> {
     registry.register_module(
         quantick_control_handlers::generation::workspace::module_descriptor(),
         revision,
-    )?;
+    )
+}
+
+pub(crate) fn register_scope(
+    registry: &mut ProjectionRegistry,
+) -> Result<(), ProjectionRegistryError> {
     quantick_control_handlers::generation::workspace::scope_spec().register(registry, project)
 }
 
