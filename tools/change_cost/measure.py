@@ -35,6 +35,12 @@ def main() -> int:
         return 2
     head = command("git", "rev-parse", "HEAD")
     tree = command("git", "rev-parse", "HEAD^{tree}")
+    if not COMMAND_RESULTS.is_file():
+        print(
+            f"C14 command evidence is missing: {COMMAND_RESULTS}; run C0-C13 at {head} and record exact head/tree/base results",
+            file=sys.stderr,
+        )
+        return 2
     command_results = json.loads(COMMAND_RESULTS.read_text(encoding="utf-8-sig"))
     raw = command(sys.executable, "tools/outside_score/measure.py", ".")
     values = dict(line.split("\t", 1) for line in raw.splitlines() if "\t" in line)
