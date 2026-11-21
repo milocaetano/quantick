@@ -202,14 +202,13 @@ fn reaches_test_support<'a>(
                 if let Some(alias) = next.strip_prefix("dep:") {
                     active_edges.insert((package.clone(), alias.to_owned()));
                 } else if let Some((alias, forwarded)) = next.split_once("?/") {
-                    if active_edges.contains(&(package.clone(), alias.to_owned())) {
-                        if let Some(edge) =
+                    if active_edges.contains(&(package.clone(), alias.to_owned()))
+                        && let Some(edge) =
                             manifest.production.iter().find(|edge| edge.alias == alias)
-                        {
-                            features
-                                .entry((edge.package.clone(), forwarded.to_owned()))
-                                .or_insert_with(|| format!("{path} -> {next}"));
-                        }
+                    {
+                        features
+                            .entry((edge.package.clone(), forwarded.to_owned()))
+                            .or_insert_with(|| format!("{path} -> {next}"));
                     }
                 } else if let Some((alias, forwarded)) = next.split_once('/') {
                     active_edges.insert((package.clone(), alias.to_owned()));
