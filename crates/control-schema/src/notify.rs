@@ -204,3 +204,17 @@ pub const READBACKS: &[Readback] = &[
         &[NOTIFY_TEST, EVERY_FORBIDDEN_TEST],
     ),
 ];
+
+/// Published schemas, owned beside their wire records.
+pub fn documents() -> Vec<(&'static str, serde_json::Value)> {
+    vec![
+        (
+            "notify-input-v1.schema.json",
+            quantick_control::schema::generated_schema::<crate::notify::NotifyInput>(),
+        ),
+        (
+            "notify-result-v1.schema.json",
+            quantick_control::schema::generated_schema::<crate::notify::NotifyResult>(),
+        ),
+    ]
+}

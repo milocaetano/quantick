@@ -292,6 +292,8 @@ fn wire_spec(spec: &AlertSpec) -> Value {
     value
 }
 
+pub use register as register_actions;
+
 #[cfg(test)]
 #[path = "alerts_tests.rs"]
 mod tests;

@@ -187,3 +187,18 @@ pub const READBACKS: &[Readback] = &[snapshot(
     "the row under the named `tab_id` and `pane_id` whose `drawing_id` was named carries the requested scope",
     &[EVERY_OPTIONAL_TEST],
 )];
+
+/// Published schemas, owned beside their wire records.
+pub fn documents() -> Vec<(&'static str, serde_json::Value)> {
+    vec![
+        (
+            "annotate-drawing-scope-input-v1.schema.json",
+            quantick_control::schema::generated_schema::<crate::drawing_scope::DrawingScopeInput>(),
+        ),
+        (
+            "annotate-drawing-scope-result-v1.schema.json",
+            quantick_control::schema::generated_schema::<crate::drawing_scope::DrawingScopeResult>(
+            ),
+        ),
+    ]
+}

@@ -1,12 +1,7 @@
-//! Replaying a recorded tape.
-//!
-//! Read [`super`] first: it says why the rows are written, how they are
-//! joined, and what the drift guard does with them.
-
 use super::{ExclusionClass, Mapping, PENDING_SURFACE, Source, UiBehaviour};
 
-/// Every row this family owns.
-pub(super) const ROWS: &[UiBehaviour] = &[
+pub(super) const BINDING: (usize, &[UiBehaviour]) = (1, ROWS);
+const ROWS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "replay.browser.open",
         title: "Open the market replay browser",

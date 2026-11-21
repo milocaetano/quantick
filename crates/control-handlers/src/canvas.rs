@@ -1120,3 +1120,5 @@ pub(crate) fn action_descriptors() -> Vec<quantick_control::registry::Capability
         described(SEAM_DRAG_CAPABILITY_ID),
     ]
 }
+
+pub use register as register_actions;

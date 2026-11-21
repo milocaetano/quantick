@@ -131,18 +131,59 @@ pub(crate) fn registered_action_versions() -> Vec<(String, u32)> {
 /// one registration call here; scope IDs remain open strings in the contract.
 pub(crate) fn standard_registry() -> Result<ProjectionRegistry, ProjectionRegistryError> {
     let mut registry = ProjectionRegistry::new(std::sync::Arc::new(registry::SystemClock));
-    system::register(&mut registry)?;
-    quantick_control_handlers::appearance::register(&mut registry)?;
-    workspace::register(&mut registry)?;
-    quantick_control_handlers::market_windows::register_scope(&mut registry)?;
-    feed::register(&mut registry)?;
-    quantick_control_handlers::chart::register(&mut registry)?;
-    quantick_control_handlers::health::register(&mut registry)?;
-    quantick_control_handlers::analysis::register(&mut registry)?;
-    interaction::register(&mut registry)?;
-    quantick_control_handlers::orderflow::register(&mut registry)?;
-    quantick_control_handlers::session::register(&mut registry)?;
-    scene::register(&mut registry)?;
-    quantick_control_handlers::layers::register_scope(&mut registry)?;
+    // `market_windows` sorts before its `workspace` owner in the family manifest.
+    // Establish the owner before the manifest docks either scope.
+    workspace::register_module(&mut registry)?;
+    macro_rules! dock_projection {
+        (system) => {
+            system::register(&mut registry)?
+        };
+        (workspace) => {
+            workspace::register_scope(&mut registry)?
+        };
+        (feed) => {
+            feed::register(&mut registry)?
+        };
+        (interaction) => {
+            interaction::register(&mut registry)?
+        };
+        (scene) => {
+            scene::register(&mut registry)?
+        };
+        (market_windows) => {
+            quantick_control_handlers::market_windows::register_scope(&mut registry)?
+        };
+        (layers) => {
+            quantick_control_handlers::layers::register_scope(&mut registry)?
+        };
+        ($family:ident) => {
+            quantick_control_handlers::$family::register(&mut registry)?
+        };
+    }
+    macro_rules! projection_families {
+    ($($id:literal {
+            schemas: [$($schema:ident),*], actions: [$($action:ident),*],
+            projections: [$($projection:ident),*], authority: [$($authority:ident),*],
+            readbacks: [$($readback:ident),*], behaviours: [$($behaviour:ident),*],
+            samples: [$($sample:ident),*],
+        })*) => { $( $(dock_projection!($projection);)* )* };
+}
+    quantick_control::control_families!(projection_families);
     Ok(registry)
+}
+
+#[cfg(test)]
+#[test]
+fn manifest_order_registers_owner_before_cross_owned_scopes() {
+    let registry = standard_registry().unwrap();
+    assert!(
+        registry
+            .module_descriptors()
+            .any(|row| row.id.as_str() == "workspace")
+    );
+    assert!(
+        registry
+            .descriptors()
+            .any(|row| row.scope_id.as_str() == "workspace.windows")
+    );
 }

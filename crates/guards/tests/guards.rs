@@ -17,7 +17,7 @@ use quantick_guards::{GUARDS, remedies, workspace_root};
 /// instead of a green suite over a guard CI never runs — which is the failure
 /// the check exists to prevent, and which a hand-kept list of names invites by
 /// making "add the string" the obvious fix.
-const TESTED: [&str; 19] = [
+const TESTED: [&str; 20] = [
     "size",
     "language",
     "encoding",
@@ -37,6 +37,7 @@ const TESTED: [&str; 19] = [
     "impl-spread",
     "window-reach",
     "ignored-tests",
+    "control-families",
 ];
 
 /// Run one named guard and fail with everything it found.
@@ -648,4 +649,9 @@ fn instruction_entrypoint_links_resolve() {
 #[test]
 fn ignored_tests_require_reasons() {
     assert_clean(TESTED[18]);
+}
+
+#[test]
+fn control_families_cover_readbacks() {
+    assert_clean(TESTED[19]);
 }

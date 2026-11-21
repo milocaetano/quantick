@@ -1,21 +1,8 @@
-//! What the trader does to the chart itself: the canvas under the
-//! cursor, and reading further back than the window holds.
-//!
-//! Read [`super`] first: it says why the rows are written, how they are
-//! joined, and what the drift guard does with them.
-
 use super::{ExclusionClass, Mapping, Source, UiBehaviour};
+const GRIP: &str = "the grip of a floating chart or the ⋯ of a docked one, a drag whose drop the canvas model's `drop_target` decides";
 
-/// The venue-candle reach, with no capability yet. Trade history loads
-/// through `feed.history.load` and `feed.history.cancel`.
-const PENDING_HISTORY: Mapping = Mapping::Excluded {
-    class: ExclusionClass::PendingCapability,
-    reason: "no capability fetches older venue candles; trade history loads through \
-             feed.history.load. Tracked in issue 401",
-};
-
-/// The canvas.
-pub(super) const CANVAS: &[UiBehaviour] = &[
+pub(super) const BINDING: (usize, &[UiBehaviour]) = (3, ROWS);
+const ROWS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "chart.bars.set_spec",
         title: "Change what one bar is — kind and size",
@@ -298,47 +285,5 @@ pub(super) const CANVAS: &[UiBehaviour] = &[
             "a drag on a seam or rail, as workspace.summary lists each tab's canvas.seams",
         )],
         mapping: capability!("canvas.seam.drag"),
-    },
-];
-
-/// What a drag on a floating chart's grip is keyed by.
-const GRIP: &str = "the grip of a floating chart or the ⋯ of a docked one, a drag whose drop the canvas model's `drop_target` decides";
-
-/// History.
-pub(super) const HISTORY: &[UiBehaviour] = &[
-    UiBehaviour {
-        id: "history.candles.load_older",
-        title: "Fetch another span of older venue candles",
-        reach: "toolbar history caret",
-        keys: &[(Source::ToolbarAction, "LoadOlderCandles")],
-        mapping: PENDING_HISTORY,
-    },
-    UiBehaviour {
-        id: "history.progressive.toggle",
-        title: "Build venue history backwards a week at a time, or in one request",
-        reach: "window menu",
-        keys: &[(Source::MenuEntry, "Progressive venue history")],
-        mapping: capability!("settings.set"),
-    },
-    UiBehaviour {
-        id: "history.trades.cancel",
-        title: "Stop loading history and keep what arrived",
-        reach: "the loading History button, its menu's Cancel loading, or an Esc no draft, selection or armed tool wants",
-        keys: &[(Source::ToolbarAction, "CancelHistory")],
-        mapping: capability!("feed.history.cancel"),
-    },
-    UiBehaviour {
-        id: "history.trades.load",
-        title: "Load the chart back by hours of trading or to a previous session's open",
-        reach: "toolbar History button (repeats the last target) and its menu's targets",
-        keys: &[(Source::ToolbarAction, "LoadHistory")],
-        mapping: capability!("feed.history.load"),
-    },
-    UiBehaviour {
-        id: "history.venue_lead_in.toggle",
-        title: "Put venue minute candles in front of bars cut by trades",
-        reach: "window menu",
-        keys: &[(Source::MenuEntry, "Venue candles on charts cut by trades")],
-        mapping: capability!("settings.set"),
     },
 ];

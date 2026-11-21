@@ -106,3 +106,20 @@ pub fn descriptor() -> CapabilityDescriptor {
         pagination: None,
     }
 }
+
+/// Published schemas, owned beside their wire records.
+pub fn documents() -> Vec<(&'static str, serde_json::Value)> {
+    vec![
+        (
+            "indicator-mouse-vertical-line-input-v1.schema.json",
+            quantick_control::schema::generated_schema::<crate::indicator_guide::IndicatorGuideInput>(
+            ),
+        ),
+        (
+            "indicator-mouse-vertical-line-result-v1.schema.json",
+            quantick_control::schema::generated_schema::<
+                crate::indicator_guide::IndicatorGuideResult,
+            >(),
+        ),
+    ]
+}

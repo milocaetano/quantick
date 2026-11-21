@@ -99,6 +99,8 @@ fn leave<H: HomeTabHost + ?Sized, A>(
     .map_err(invalid)
 }
 
+pub use register as register_actions;
+
 #[cfg(test)]
 #[path = "home_tab_tests.rs"]
 mod tests;

@@ -330,6 +330,18 @@ fn strategy(reading: &ScriptReading<DrawingId>) -> ScriptStrategy {
     }
 }
 
+pub use register as register_actions;
+
+/// One open tab, as the strategies it armed on its panes' drawings.
+pub trait ArmedTab {
+    /// The instances armed on pane `pane_id`'s drawings, in arming order;
+    /// none for a pane that holds none.
+    fn armed_on(
+        &self,
+        pane_id: u64,
+    ) -> Vec<quantick_session::strategy_reading::ArmedReading<quantick_drawings::DrawingId>>;
+}
+
 #[cfg(test)]
 #[path = "script_strategy_tests.rs"]
 mod tests;

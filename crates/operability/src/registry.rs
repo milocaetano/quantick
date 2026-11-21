@@ -47,37 +47,36 @@ const PENDING_SURFACE: Mapping = Mapping::Excluded {
              and not change it. Tracked in issue 401",
 };
 
-mod chart;
-mod control;
-mod drawings;
-mod indicators;
-mod layers;
-mod replay;
-mod script_editor;
-mod trading;
-mod workspace;
-
 /// Every family's rows, in the order the matrix renders them.
 ///
 /// The order here is the order a reviewer reads, which is why a family that
 /// owns rows in two places in that reading declares two slices rather than
 /// one: where a row is declared cannot move a line of the document.
-pub const FAMILIES: &[&[UiBehaviour]] = &[
-    control::WINDOW_AND_TABS,
-    replay::ROWS,
-    control::LAYOUT_TABS,
-    chart::CANVAS,
-    layers::ROWS,
-    chart::HISTORY,
-    indicators::ROWS,
-    script_editor::ROWS,
-    trading::ROWS,
-    control::FEED_RECOVERY,
-    drawings::TOOL_RAIL,
-    drawings::OBJECTS,
-    workspace::ROWS,
-    control::CHROME,
-];
+macro_rules! behaviour_families {
+    ($($id:literal {
+    schemas: [$($schema:ident),*], actions: [$($action:ident),*],
+    projections: [$($projection:ident),*], authority: [$($authority:ident),*],
+    readbacks: [$($readback:ident),*], behaviours: [$($behaviour:ident),*],
+    samples: [$($sample:ident),*],
+})*) => {
+        $($(mod $behaviour;)*)*
+        const BINDINGS: &[(usize, &[UiBehaviour])] = &[$($($behaviour::BINDING,)*)*];
+    };
+}
+quantick_control::control_families!(behaviour_families);
+
+const fn document_groups() -> [&'static [UiBehaviour]; BINDINGS.len()] {
+    let mut groups: [&[UiBehaviour]; BINDINGS.len()] = [&[]; BINDINGS.len()];
+    let mut next = 0;
+    while next < BINDINGS.len() {
+        let (position, rows) = BINDINGS[next];
+        assert!(position < groups.len() && groups[position].is_empty());
+        groups[position] = rows;
+        next += 1;
+    }
+    groups
+}
+pub const FAMILIES: &[&[UiBehaviour]] = &document_groups();
 
 /// How many rows the declared families hold between them.
 const fn total(families: &[&[UiBehaviour]]) -> usize {

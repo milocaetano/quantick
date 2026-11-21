@@ -126,6 +126,8 @@ fn recover<H: MarketTabHost + ?Sized>(
     })
 }
 
+pub use register as register_actions;
+
 #[cfg(test)]
 #[path = "recovery_tests.rs"]
 mod recovery_tests;

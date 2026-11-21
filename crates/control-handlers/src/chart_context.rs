@@ -26,12 +26,7 @@ use crate::indicator_host::IndicatorControlHost;
 use crate::pane_marks::PaneMarks;
 use crate::tabs::{OpenTabs, tab_index};
 
-/// One open tab, as the strategies it armed on its panes' drawings.
-pub trait ArmedTab {
-    /// The instances armed on pane `pane_id`'s drawings, in arming order;
-    /// none for a pane that holds none.
-    fn armed_on(&self, pane_id: u64) -> Vec<ArmedReading<DrawingId>>;
-}
+pub use crate::script_strategy::ArmedTab;
 
 pub trait ChartContextHost:
     ChartPort + IndicatorControlHost + OpenTabs<Tab: ArmedTab> + AddressedPanePort<Pane: PaneMarks>
@@ -157,6 +152,8 @@ fn strategies(armed: &[ArmedReading<DrawingId>], marks: &Drawings<DrawingTool>) 
         })
         .collect()
 }
+
+pub use register as register_actions;
 
 #[cfg(test)]
 #[path = "chart_context_tests.rs"]

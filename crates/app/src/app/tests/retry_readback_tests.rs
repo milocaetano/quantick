@@ -610,354 +610,9 @@ const LAYOUT_V2: u32 = 2;
 /// work on. Inputs are valid because the contract validates a payload before
 /// it looks at the key, and a call refused on its input never reaches the
 /// store this test is about.
+mod samples;
 fn replay_plan() -> Vec<(&'static str, u32, Value, Readback)> {
-    vec![
-        (
-            "appearance.apply",
-            1,
-            json!({"source": "version = 1\nname = 'Retry appearance'"}),
-            Readback::Moves,
-        ),
-        // First, while the tab's feed still pages: the feed rows below
-        // retire it. The load starts a run; the cancel ends it.
-        (
-            "feed.history.load",
-            1,
-            json!({ "reach": "hours:2" }),
-            Readback::Moves,
-        ),
-        ("feed.history.cancel", 1, json!({}), Readback::Moves),
-        ("layers.visibility.set", 1, Value::Null, Readback::Moves),
-        ("chart.price_axis.set", 1, Value::Null, Readback::Moves),
-        // On by default: the call turns the market's line off.
-        (
-            "chart.price_tag.progress.set",
-            1,
-            Value::Null,
-            Readback::Moves,
-        ),
-        ("chart.settings.set", 1, Value::Null, Readback::Moves),
-        ("indicator.picker.set", 1, Value::Null, Readback::Moves),
-        ("indicator.library.edit", 1, Value::Null, Readback::Moves),
-        // A listing changes nothing, so no `session.journal.changed` is
-        // journaled either side of it; the edits are proven in
-        // `quantick-paper` and `quantick-control-handlers`.
-        (
-            "session.journal.set",
-            1,
-            json!({ "action": "list" }),
-            Readback::Stays,
-        ),
-        // A delete of a session already gone: refused with
-        // `session_not_found`, journaling nothing, the same answer twice.
-        (
-            "session.journal.delete",
-            1,
-            json!({ "session": "WINJ26/no-such-session.csv" }),
-            Readback::Stays,
-        ),
-        // A display preference: the first set moves the stored choice and
-        // journals it; the retry under the same key never reaches the app.
-        (
-            "session.pnl_display.set",
-            1,
-            json!({ "primary": "points_times_qty" }),
-            Readback::Moves,
-        ),
-        ("chart.tape_view.set", 1, Value::Null, Readback::Moves),
-        ("chart.time_axis.reset", 1, Value::Null, Readback::Moves),
-        (
-            "orderflow.tape.opening_scale.set",
-            1,
-            Value::Null,
-            Readback::Moves,
-        ),
-        ("orderflow.tape.view.set", 1, Value::Null, Readback::Moves),
-        ("orderflow.tape.fold.set", 1, Value::Null, Readback::Moves),
-        (
-            "orderflow.tape.market_fold.set",
-            1,
-            Value::Null,
-            Readback::Moves,
-        ),
-        ("orderflow.settings.open", 1, Value::Null, Readback::Moves),
-        (
-            "orderflow.settings.section.set",
-            1,
-            Value::Null,
-            Readback::Moves,
-        ),
-        ("orderflow.settings.close", 1, Value::Null, Readback::Moves),
-        (
-            "orderflow.settings.lights.set",
-            1,
-            Value::Null,
-            Readback::Moves,
-        ),
-        (
-            "orderflow.bubbles.save_changes.set",
-            1,
-            Value::Null,
-            Readback::Moves,
-        ),
-        (
-            "orderflow.bubbles.size.set",
-            1,
-            Value::Null,
-            Readback::Moves,
-        ),
-        (
-            "orderflow.bubbles.preset.apply",
-            1,
-            Value::Null,
-            Readback::Stays,
-        ),
-        ("orderflow.bubbles.reset", 1, Value::Null, Readback::Moves),
-        (
-            "orderflow.bubbles.tick.set",
-            1,
-            Value::Null,
-            Readback::Stays,
-        ),
-        (
-            "layout.preset.apply",
-            LAYOUT_V2,
-            json!({ "preset_id": "stack2+flow" }),
-            Readback::Moves,
-        ),
-        (
-            "layout.focus.set",
-            LAYOUT_V2,
-            json!({ "pane": "2" }),
-            Readback::Moves,
-        ),
-        (
-            "layout.pane.set_interval",
-            LAYOUT_V2,
-            json!({ "pane": "1", "interval_ms": 7_200_000 }),
-            Readback::Moves,
-        ),
-        (
-            "layout.pane.set_bar_spec",
-            LAYOUT_V2,
-            json!({ "pane": "0", "spec": "tick:77" }),
-            Readback::Moves,
-        ),
-        (
-            "layout.pane.move",
-            LAYOUT_V2,
-            json!({ "from": "1", "to": "2" }),
-            Readback::Moves,
-        ),
-        (
-            "layout.pane.collapse",
-            LAYOUT_V2,
-            json!({}),
-            Readback::Moves,
-        ),
-        ("layout.pane.expand", LAYOUT_V2, json!({}), Readback::Moves),
-        (
-            "layout.flow.collapse",
-            LAYOUT_V2,
-            json!({}),
-            Readback::Moves,
-        ),
-        ("layout.flow.expand", LAYOUT_V2, json!({}), Readback::Moves),
-        // Each journals one `widget.changed` naming the pane's new state.
-        ("widget.open", 1, json!({ "id": "depth" }), Readback::Moves),
-        ("widget.close", 1, json!({ "id": "depth" }), Readback::Moves),
-        ("layout.pane.resize_pair", 1, Value::Null, Readback::Moves),
-        // Seven places cannot come back as they were sent, so v2 refuses
-        // them — and the readback stays where it was.
-        (
-            "layout.pane.resize",
-            LAYOUT_V2,
-            json!({ "fraction": "0.1234567" }),
-            Readback::Stays,
-        ),
-        (
-            "layout.pane.resize",
-            LAYOUT_V2,
-            json!({ "fraction": "0.5" }),
-            Readback::Moves,
-        ),
-        // The market on screen, on its own bar and workspace: focused, so
-        // no tab is added.
-        ("market.open", 1, Value::Null, Readback::Stays),
-        (
-            "market.palette.open",
-            1,
-            json!({ "query": "btc" }),
-            Readback::Moves,
-        ),
-        ("catalog.remove", 1, Value::Null, Readback::Moves),
-        ("home.show", 1, json!({}), Readback::Moves),
-        (
-            "settings.open",
-            1,
-            json!({ "section": "data" }),
-            Readback::Moves,
-        ),
-        ("settings.set", 1, Value::Null, Readback::Moves),
-        ("desk.save", 1, json!({}), Readback::Moves),
-        ("desk.export", 1, json!({}), Readback::Stays),
-        ("desk.import", 1, json!({}), Readback::Stays),
-        ("desk.forget", 1, json!({}), Readback::Moves),
-        (
-            "desk.reopen_on_launch.set",
-            1,
-            json!({ "reopen": false }),
-            Readback::Moves,
-        ),
-        ("home.leave", 1, json!({}), Readback::Moves),
-        ("layout.tab.create", 1, json!({}), Readback::Moves),
-        (
-            "layout.tab.rename",
-            1,
-            json!({ "new_name": "Renamed on retry" }),
-            Readback::Moves,
-        ),
-        // Filled in when it runs: the layout that was active before the create.
-        ("layout.tab.switch", 1, Value::Null, Readback::Moves),
-        // A tab whose feed has left the feed table: the call runs, answers
-        // `respawned: false`, and the generation says so by not moving.
-        ("feed.reconnect", 1, json!({}), Readback::Stays),
-        ("feed.reload", 1, json!({}), Readback::Stays),
-        ("feed.source.set", 1, Value::Null, Readback::Stays),
-        ("tab.market.set", 1, Value::Null, Readback::Stays),
-        // A tab already on the target: the retry a dropped answer sends.
-        ("feed.contract.roll", 1, Value::Null, Readback::Stays),
-        // A tab whose feed declares no deal counter and has no recorded day:
-        // stopping a recorder that is not running acts on nothing, and the
-        // scope lists no recorder either side of the call.
-        (
-            "feed.deal_recording.set",
-            1,
-            json!({ "enabled": false }),
-            Readback::Stays,
-        ),
-        (
-            "indicator.mouse_vertical_line.set",
-            1,
-            Value::Null,
-            Readback::Moves,
-        ),
-        (
-            "annotate.magnet.set",
-            1,
-            json!({ "enabled": true }),
-            Readback::Moves,
-        ),
-        // Filled in when it runs: a line placed for the call to act on.
-        (
-            "annotate.drawing_magnet.set",
-            1,
-            Value::Null,
-            Readback::Moves,
-        ),
-        ("annotate.text.set", 1, Value::Null, Readback::Moves),
-        // Filled in when it runs: a dated line placed for the call to keep.
-        (
-            "annotate.drawing_scope.set",
-            1,
-            Value::Null,
-            Readback::Moves,
-        ),
-        ("workspace.new", 1, json!({ "name": "  " }), Readback::Moves),
-        // Last: deleting a workspace lays its tab out as a new tab, and the rows
-        // above work on the charts the earlier rows opened.
-        (
-            "workspace.save_as",
-            1,
-            json!({ "name": "Retried" }),
-            Readback::Moves,
-        ),
-        ("workspace.save_to", 1, json!({}), Readback::Stays),
-        // Refused since revert left the menus: nothing moves.
-        ("workspace.revert", 1, json!({}), Readback::Stays),
-        (
-            "workspace.autosave.set",
-            1,
-            json!({ "on": false }),
-            Readback::Moves,
-        ),
-        (
-            "tab.workspace.set",
-            1,
-            json!({ "name": "Retried" }),
-            Readback::Stays,
-        ),
-        (
-            "workspace.rename",
-            1,
-            json!({ "name": "Retried", "to": "Renamed" }),
-            Readback::Moves,
-        ),
-        (
-            "workspace.colour.set",
-            1,
-            json!({ "name": "Renamed", "colour": "ink" }),
-            Readback::Moves,
-        ),
-        (
-            "workspace.delete",
-            1,
-            json!({ "name": "Renamed" }),
-            Readback::Moves,
-        ),
-        // Inside its ten seconds the delete comes back; then Manage opens.
-        (
-            "workspace.delete.undo",
-            1,
-            json!({ "name": "Renamed" }),
-            Readback::Moves,
-        ),
-        (
-            "workspace.dialog.open",
-            1,
-            json!({ "mode": "manage" }),
-            Readback::Moves,
-        ),
-        // Opening the colour popover journals nothing: the colour stays.
-        (
-            "workspace.colour.popover",
-            1,
-            json!({ "act": "open" }),
-            Readback::Stays,
-        ),
-        // The canvas, in an order where each call has something to do: a
-        // layout, one chart folded, maximized, restored and widened, a widget added,
-        // a chart floated and docked back, the widget parked, popped out,
-        // returned and removed.
-        ("canvas.window_menu.open", 1, json!({}), Readback::Moves),
-        (
-            "canvas.layout.pick",
-            1,
-            json!({ "preset_id": "charts-4" }),
-            Readback::Moves,
-        ),
-        ("canvas.pane.minimize", 1, Value::Null, Readback::Moves),
-        ("canvas.pane.maximize", 1, Value::Null, Readback::Moves),
-        ("canvas.pane.restore", 1, Value::Null, Readback::Moves),
-        ("canvas.pane.resize", 1, Value::Null, Readback::Moves),
-        ("canvas.seam.drag", 1, Value::Null, Readback::Moves),
-        (
-            "canvas.widget.add",
-            1,
-            json!({ "widget_id": "timeframe-chart" }),
-            Readback::Moves,
-        ),
-        ("canvas.pane.float", 1, Value::Null, Readback::Moves),
-        ("canvas.pane.dock", 1, Value::Null, Readback::Moves),
-        ("canvas.pane.park", 1, Value::Null, Readback::Moves),
-        ("canvas.pane.pop_out", 1, Value::Null, Readback::Moves),
-        ("canvas.pane.return", 1, Value::Null, Readback::Moves),
-        ("canvas.pane.remove", 1, Value::Null, Readback::Moves),
-        ("session.report.open", 1, Value::Null, Readback::Moves),
-        ("alerts.open", 1, json!({}), Readback::Moves),
-        // Last of all: it closes the active tab, edits or not.
-        ("tab.close", 1, json!({ "save": false }), Readback::Moves),
-    ]
+    samples::replay_plan()
 }
 
 /// Every reachable `optional` row, not one per family: a keyed call, its
@@ -974,29 +629,31 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
     app.apply_toolbar_action(ToolbarAction::AddNative("native.cvd"));
     settle_indicators(&mut app);
     let directory = gateway_test_directory("retry-every-optional");
-    grant_annotate_for_test(
-        &mut app,
-        "all-reads,observe.user_text,cockpit,cockpit.layout,cockpit.recover,cockpit.journal.delete,cockpit.desk",
-    );
+    let plan = replay_plan();
+    let contract = crate::control::inventory::standard_contract().unwrap();
+    let mut permissions = BTreeSet::from(["observe.user_text"]);
+    for (capability, version, ..) in &plan {
+        let id = quantick_control::id::CapabilityId::new(*capability).unwrap();
+        permissions.extend(
+            contract
+                .registry()
+                .capability(&id, *version)
+                .unwrap()
+                .required_permissions
+                .iter()
+                .map(|permission| permission.as_str()),
+        );
+    }
+    let permissions: Vec<_> = permissions.into_iter().collect();
+    grant_annotate_for_test(&mut app, &format!("all-reads,{}", permissions.join(",")));
     enable_test_gateway(&mut app, &ctx, &directory, 4);
-    let cockpit = options(
-        "cockpit",
-        &[
-            "observe.user_text",
-            "cockpit",
-            "cockpit.layout",
-            "cockpit.recover",
-            "cockpit.journal.delete",
-            "cockpit.desk",
-        ],
-    );
+    let cockpit = options("cockpit", &permissions);
     let reachable: BTreeSet<&str> = retry_matrix::READBACKS
         .iter()
         .filter(|row| row.policy == quantick_control::registry::IdempotencyPolicy::Optional)
         .filter(|row| retry_matrix::reachable_by_a_grant(row.capability))
         .map(|row| row.capability)
         .collect();
-    let plan = replay_plan();
     assert_eq!(
         plan.iter()
             .map(|(capability, ..)| *capability)

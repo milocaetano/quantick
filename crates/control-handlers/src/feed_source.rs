@@ -139,6 +139,8 @@ fn set_market<H: MarketTabHost + ?Sized, A: NotifyAccess>(
     answer(&TabMarketSetResult::from(result))
 }
 
+pub use register as register_actions;
+
 #[cfg(test)]
 mod tests;
 

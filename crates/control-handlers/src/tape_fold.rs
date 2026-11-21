@@ -45,6 +45,8 @@ fn invalid(error: impl std::fmt::Display) -> ControlError {
     ControlError::invalid_request(error.to_string())
 }
 
+pub use register as register_actions;
+
 #[cfg(test)]
 #[path = "tape_fold_tests.rs"]
 mod tape_fold_tests;

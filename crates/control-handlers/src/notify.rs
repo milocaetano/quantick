@@ -175,6 +175,8 @@ fn raise<H: AttentionHost + ?Sized, A: NotifyAccess>(
     .map_err(|error| ControlError::invalid_request(format!("notification result: {error}")))
 }
 
+pub use register as register_actions;
+
 #[cfg(test)]
 #[path = "notify_tests.rs"]
 mod notify_tests;

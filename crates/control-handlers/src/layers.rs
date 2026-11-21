@@ -142,6 +142,8 @@ fn set_visibility<H: ChartPort + ChartStylePort + ?Sized, A: JournalAccess>(
     Ok(result)
 }
 
+pub use register as register_actions;
+
 #[cfg(test)]
 #[path = "layers_tests.rs"]
 mod tests;

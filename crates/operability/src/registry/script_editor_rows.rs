@@ -1,6 +1,7 @@
-//! The source workflow is reachable through the same editor control family.
 use super::{Mapping, Source, UiBehaviour};
-pub const ROWS: &[UiBehaviour] = &[UiBehaviour {
+
+pub(super) const BINDING: (usize, &[UiBehaviour]) = (7, ROWS);
+const ROWS: &[UiBehaviour] = &[UiBehaviour {
     id: "indicator.source.edit",
     title: "Read, copy and edit Pine source",
     reach: "Indicators > Scripts > View source; Pine source window",

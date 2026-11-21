@@ -306,6 +306,8 @@ fn remove_call<H: MarketPaletteOwners + ?Sized, A>(
     answer(&CatalogRemoveResult { feed, symbol })
 }
 
+pub use register as register_actions;
+
 #[cfg(test)]
 #[path = "market_palette_tests.rs"]
 mod market_palette_tests;

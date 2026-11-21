@@ -146,6 +146,8 @@ fn scoped(
     Ok(ReportOutput::Scoped(result))
 }
 
+pub use register as register_actions;
+
 #[cfg(test)]
 #[path = "session_reports_tests.rs"]
 mod tests;
