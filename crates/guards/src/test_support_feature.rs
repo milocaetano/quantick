@@ -27,33 +27,70 @@ struct Dependency {
     optional: bool,
 }
 
-fn strings(value: &str) -> Vec<String> {
-    let Some(open) = value.find('[') else {
-        return Vec::new();
+fn quoted(value: &str) -> Result<(&str, String), String> {
+    let value = value.trim_start();
+    let Some(mark) = value
+        .chars()
+        .next()
+        .filter(|mark| matches!(mark, '\'' | '"'))
+    else {
+        return Err(format!("unsupported manifest string `{value}`"));
     };
-    let Some(close) = value[open..].find(']').map(|at| open + at) else {
-        return Vec::new();
-    };
-    value[open + 1..close]
-        .split(',')
-        .filter_map(|part| {
-            part.trim()
-                .strip_prefix('"')?
-                .strip_suffix('"')
-                .map(str::to_owned)
-        })
-        .collect()
+    let rest = &value[mark.len_utf8()..];
+    for (at, character) in rest.char_indices() {
+        if mark == '"' && character == '\\' {
+            return Err(format!(
+                "unsupported escaped manifest string `{value}`; use an unescaped Cargo package or feature name"
+            ));
+        }
+        if character == mark {
+            return Ok((&rest[at + mark.len_utf8()..], rest[..at].to_owned()));
+        }
+    }
+    Err(format!("unterminated manifest string `{value}`"))
 }
 
-fn quoted_field(value: &str, field: &str) -> Option<String> {
-    let rest = value
-        .split(field)
-        .nth(1)?
-        .trim_start()
-        .strip_prefix('=')?
-        .trim_start();
-    let rest = rest.strip_prefix('"')?;
-    Some(rest.split('"').next()?.to_owned())
+fn strings(value: &str) -> Result<Vec<String>, String> {
+    let Some(open) = value.find('[') else {
+        return Err(format!("expected a manifest string array in `{value}`"));
+    };
+    let Some(close) = value.rfind(']').filter(|close| *close > open) else {
+        return Err(format!("unterminated manifest string array `{value}`"));
+    };
+    let mut rest = value[open + 1..close].trim();
+    let mut result = Vec::new();
+    while !rest.is_empty() {
+        let (after, item) = quoted(rest)?;
+        result.push(item);
+        rest = after.trim_start();
+        if rest.is_empty() {
+            break;
+        }
+        rest = rest
+            .strip_prefix(',')
+            .ok_or_else(|| format!("unsupported manifest array tail `{rest}`"))?
+            .trim_start();
+    }
+    Ok(result)
+}
+
+fn field_tail<'a>(value: &'a str, field: &str) -> Option<&'a str> {
+    value.match_indices(field).find_map(|(at, _)| {
+        let boundary = at == 0
+            || !value[..at].chars().next_back().is_some_and(|character| {
+                character.is_ascii_alphanumeric() || matches!(character, '-' | '_')
+            });
+        let rest = &value[at + field.len()..];
+        (boundary && rest.trim_start().starts_with('=')).then_some(rest)
+    })
+}
+
+fn quoted_field(value: &str, field: &str) -> Result<Option<String>, String> {
+    let Some(rest) = field_tail(value, field) else {
+        return Ok(None);
+    };
+    let rest = rest.trim_start().trim_start_matches('=').trim_start();
+    quoted(rest).map(|(_, parsed)| Some(parsed))
 }
 
 fn package_section(header: &str) -> bool {
@@ -79,21 +116,35 @@ fn parse(path: PathBuf) -> Result<Manifest, String> {
         .into_iter()
         .find(|(key, _)| key == "name")
     {
-        out.package = value.trim_matches('"').to_owned();
+        out.package = quoted(&value)
+            .map_err(|error| format!("{}: {error}", out.path.display()))?
+            .1;
     }
     for (key, value) in crate::graph::manifest_entries_in(&source, features_section) {
-        out.features
-            .insert(key.trim_matches('"').to_owned(), strings(&value));
+        out.features.insert(
+            key.trim_matches(['"', '\'']).to_owned(),
+            strings(&value).map_err(|error| format!("{}: {error}", out.path.display()))?,
+        );
     }
     for (section, key, value) in
         crate::graph::manifest_entries_with_sections(&source, shipping_dependencies)
     {
-        let alias = key.trim_matches('"').to_owned();
-        let package = quoted_field(&value, "package").unwrap_or_else(|| alias.clone());
+        let alias = key.trim_matches(['"', '\'']).to_owned();
+        let package = quoted_field(&value, "package")
+            .map_err(|error| format!("{}: {error}", out.path.display()))?
+            .unwrap_or_else(|| alias.clone());
         out.production.push(Dependency {
             alias,
             package,
-            features: strings(&value),
+            features: if value.trim_start().starts_with('{') {
+                if let Some(features) = field_tail(&value, "features") {
+                    strings(features).map_err(|error| format!("{}: {error}", out.path.display()))?
+                } else {
+                    Vec::new()
+                }
+            } else {
+                Vec::new()
+            },
             defaults: !value.contains("default-features = false"),
             section: section.trim_matches(['[', ']']).to_owned(),
             inherited: value.contains("workspace = true"),
@@ -218,6 +269,12 @@ fn reaches_test_support<'a>(
                             .entry((edge.package.clone(), forwarded.to_owned()))
                             .or_insert_with(|| format!("{path} -> {next}"));
                     }
+                } else if manifest
+                    .production
+                    .iter()
+                    .any(|edge| edge.alias == *next && edge.optional)
+                {
+                    active_edges.insert((package.clone(), next.clone()));
                 } else {
                     features
                         .entry((package.clone(), next.clone()))
@@ -234,6 +291,25 @@ fn reaches_test_support<'a>(
     })
 }
 
+fn default_activates_optional(manifest: &Manifest, alias: &str) -> bool {
+    let mut pending = vec!["default".to_owned()];
+    let mut seen = BTreeSet::new();
+    while let Some(feature) = pending.pop() {
+        if !seen.insert(feature.clone()) {
+            continue;
+        }
+        for next in manifest.features.get(&feature).into_iter().flatten() {
+            if next == alias || next == &format!("dep:{alias}") {
+                return true;
+            }
+            if !next.contains('/') {
+                pending.push(next.clone());
+            }
+        }
+    }
+    false
+}
+
 pub fn check(root: &Path) -> Vec<Finding> {
     let parsed = match manifests(root) {
         Ok(value) => value,
@@ -246,7 +322,7 @@ pub fn check(root: &Path) -> Vec<Finding> {
     let mut findings = Vec::new();
     for member in &parsed {
         for dependency in &member.production {
-            if dependency.optional {
+            if dependency.optional && !default_activates_optional(member, &dependency.alias) {
                 continue;
             }
             let Some(owner) = by_package.get(dependency.package.as_str()) else {
@@ -405,6 +481,55 @@ mod tests {
             "[package]\nname = \"quantick-app\"\n[dependencies]\nquantick-middle = { path = \"../middle\", features = [\"fixture\"] }\n",
         );
         assert!(check(&root).is_empty());
+    }
+
+    #[test]
+    fn root_default_activates_implicit_optional_dependency_feature() {
+        let root = ScratchDir::new("test-support-root-optional");
+        write(
+            &root,
+            "owner",
+            "[package]\nname = \"quantick-owner\"\n[features]\ndefault = [\"test-support\"]\ntest-support = []\n",
+        );
+        write(
+            &root,
+            "app",
+            "[package]\nname = \"quantick-app\"\n[features]\ndefault = [\"owner\"]\n[dependencies]\nowner = { package = \"quantick-owner\", path = \"../owner\", optional = true }\n",
+        );
+        let findings = check(&root);
+        assert_eq!(findings.len(), 1, "{findings:?}");
+        assert!(findings[0].line.contains("quantick-owner"));
+
+        let root = ScratchDir::new("test-support-root-optional-inactive");
+        write(
+            &root,
+            "owner",
+            "[package]\nname = \"quantick-owner\"\n[features]\ndefault = [\"test-support\"]\ntest-support = []\n",
+        );
+        write(
+            &root,
+            "app",
+            "[package]\nname = \"quantick-app\"\n[dependencies]\nowner = { package = \"quantick-owner\", path = \"../owner\", optional = true }\n",
+        );
+        assert!(check(&root).is_empty());
+    }
+
+    #[test]
+    fn literal_strings_have_the_same_feature_graph_semantics() {
+        let root = ScratchDir::new("test-support-literal-strings");
+        write(
+            &root,
+            "owner",
+            "[package]\nname = 'quantick-owner'\n[features]\ntest-support = []\n",
+        );
+        write(
+            &root,
+            "app",
+            "[package]\nname = 'quantick-app'\n[dependencies]\nowner = { package = 'quantick-owner', path = '../owner', features = ['test-support'] }\n",
+        );
+        let findings = check(&root);
+        assert_eq!(findings.len(), 1, "{findings:?}");
+        assert!(findings[0].line.contains("quantick-owner"));
     }
 
     #[test]

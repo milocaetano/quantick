@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -14,8 +16,7 @@ from combined import Counts, compare, history_rows, validate_results
 
 BASE_SHA = "9719d691f22285b5234b99aeb81fa91d785da667"
 BASE = Counts(268631, 311966, 111)
-EVIDENCE = Path.home() / "AppData/Local/Temp/quantick-change-cost/acceptance-evidence-index.json"
-COMMAND_RESULTS = Path.home() / "AppData/Local/Temp/quantick-change-cost/c3-command-results.json"
+DEFAULT_EVIDENCE_DIR = Path(tempfile.gettempdir()) / "quantick-change-cost"
 INTEGRATION_BASE = "e6f5a4855f6e541fddba560304f7bac14637bc5d"
 REQUIRED_COMMANDS = ["C0", "C1", "C2", "C3", "C4", "C5", "C6", "C7", "C8", "C9", "C9a", "C10", "C11", "C12", "C13"]
 
@@ -29,26 +30,42 @@ def validate_evidence(evidence: dict, command_results: list[dict], head: str, tr
     return history_rows(evidence["history"])
 
 
-def main() -> int:
+def arguments(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--evidence",
+        type=Path,
+        default=DEFAULT_EVIDENCE_DIR / "acceptance-evidence-index.json",
+    )
+    parser.add_argument(
+        "--command-results",
+        type=Path,
+        default=DEFAULT_EVIDENCE_DIR / "c3-command-results.json",
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = arguments(argv)
     if command("git", "status", "--porcelain"):
         print("measure.py refuses to attribute a dirty tree to a commit", file=sys.stderr)
         return 2
     head = command("git", "rev-parse", "HEAD")
     tree = command("git", "rev-parse", "HEAD^{tree}")
-    if not COMMAND_RESULTS.is_file():
+    if not args.command_results.is_file():
         print(
-            f"C14 command evidence is missing: {COMMAND_RESULTS}; run C0-C13 at {head} and record exact head/tree/base results",
+            f"C14 command evidence is missing: {args.command_results}; run C0-C13 at {head} and record exact head/tree/base results",
             file=sys.stderr,
         )
         return 2
-    command_results = json.loads(COMMAND_RESULTS.read_text(encoding="utf-8-sig"))
+    command_results = json.loads(args.command_results.read_text(encoding="utf-8-sig"))
     raw = command(sys.executable, "tools/outside_score/measure.py", ".")
     values = dict(line.split("\t", 1) for line in raw.splitlines() if "\t" in line)
     if values.get("measure.version") != "1":
         raise ValueError("canonical outside-score measure.version must be 1")
     measured = Counts(int(values["lines.production"]), int(values["lines.test"]), int(values["panic_sites"]))
     comparison = compare(BASE, measured)
-    evidence = json.loads(EVIDENCE.read_text(encoding="utf-8-sig"))
+    evidence = json.loads(args.evidence.read_text(encoding="utf-8-sig"))
     rows = validate_evidence(evidence, command_results, head, tree)
     canonical = evidence["canonical"]
     if canonical["tool"] != "tools/outside_score/measure.py" or canonical["version"] != 1:

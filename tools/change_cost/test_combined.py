@@ -6,7 +6,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 from combined import Counts, compare, history_rows, validate_history, validate_results
-from measure import INTEGRATION_BASE, REQUIRED_COMMANDS, validate_evidence
+from measure import DEFAULT_EVIDENCE_DIR, INTEGRATION_BASE, REQUIRED_COMMANDS, arguments, validate_evidence
 
 
 class ExactRatios(unittest.TestCase):
@@ -31,6 +31,14 @@ class ExactRatios(unittest.TestCase):
 
 
 class EvidenceContracts(unittest.TestCase):
+    def test_measurement_inputs_are_caller_selected_and_portable(self):
+        selected = arguments(["--evidence", "one.json", "--command-results", "two.json"])
+        self.assertEqual(selected.evidence, Path("one.json"))
+        self.assertEqual(selected.command_results, Path("two.json"))
+        defaults = arguments([])
+        self.assertEqual(defaults.evidence.parent, DEFAULT_EVIDENCE_DIR)
+        self.assertEqual(defaults.command_results.parent, DEFAULT_EVIDENCE_DIR)
+
     def test_every_command_is_unique_successful_and_sha_pinned(self):
         required = ["C0", "C13"]
         head, tree, base = "a" * 40, "b" * 40, "c" * 40
