@@ -370,9 +370,10 @@ impl DrawingProjection<'_> {
                     &ctxt,
                     selected && !drawing.locked,
                 );
-                source
-                    .drawings
-                    .observe_scene(&mut scene, drawing, ctxt.text_spacing());
+                // A companion band's value axis is not the owner's: bind
+                // only the time axis here, the owner's paint binds the rest.
+                let spacing = crate::TextSpacing::horizontal(ctxt.px_per_bar);
+                source.drawings.observe_scene(&mut scene, drawing, spacing);
                 paint(band.rect, &scene);
             }
         }

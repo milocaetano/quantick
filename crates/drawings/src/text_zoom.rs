@@ -83,12 +83,12 @@ impl<T> Drawing<T> {
     /// first display bound. An actual size edit keeps its own reference.
     pub(crate) fn retain_legacy_text_zoom(&mut self, held: &Self) {
         if let Some(note) = self.payload.as_any_mut().downcast_mut::<TextPayload>()
-            && !note.zoom.get().complete(note.size_px)
             && let Some(previous) = held.payload.as_any().downcast_ref::<TextPayload>()
             && note.size_px == previous.size_px
-            && previous.zoom.get().bound_to(previous.size_px)
         {
-            note.zoom.set(previous.zoom.get());
+            let mut zoom = note.zoom.get();
+            zoom.retain_display_bind(previous.zoom.get());
+            note.zoom.set(zoom);
         }
     }
 }

@@ -106,6 +106,20 @@ impl TextZoom {
         self.bound_to(size_px) && self.value_bound()
     }
 
+    /// Take from `held` only what a display bound: the whole reference of a
+    /// note that had none, or the value axis of the same time-axis reference.
+    /// A different reference is an edit, and stays undoable.
+    pub(crate) fn retain_display_bind(&mut self, held: Self) {
+        if !self.valid() {
+            *self = held;
+        } else if !self.value_bound()
+            && held.px_per_bar == self.px_per_bar
+            && held.size_px == self.size_px
+        {
+            self.px_per_value = held.px_per_value;
+        }
+    }
+
     pub(crate) fn rendered_size(self, size_px: f32, spacing: TextSpacing) -> f32 {
         let ratio = if self.bound_to(size_px) {
             let bar = spacing.bar().map(|bar| bar / self.px_per_bar);

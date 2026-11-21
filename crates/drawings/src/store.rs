@@ -81,7 +81,7 @@ pub struct Drawings<T> {
 impl<T> Default for Drawings<T> {
     fn default() -> Self {
         Self {
-            text_spacing: crate::text_scale::TextSpacing::horizontal(0.0),
+            text_spacing: crate::text_scale::TextSpacing::default(),
             note_display: crate::NoteDisplay::default(),
             revision: 0,
             items: Vec::new(),

@@ -470,3 +470,53 @@ fn a_resize_rebinds_the_value_axis_where_the_note_is_next_shown() {
     );
     assert_eq!(at(0.5), 15.0);
 }
+
+#[test]
+fn a_value_axis_bound_mid_gesture_is_not_an_undo_step() {
+    let mut drawings = placed();
+    drawings.begin_gesture();
+    let depth = drawings.undo_depth();
+    drawings
+        .note_display()
+        .observe(note(&drawings), TextSpacing::new(20.0, 2.0));
+    drawings.commit_gesture();
+    assert_eq!(drawings.undo_depth(), depth);
+    let at = |drawings: &Drawings<DrawingTool>| {
+        note(drawings)
+            .format_at(TextSpacing::new(20.0, 1.0))
+            .font
+            .size_px
+    };
+    assert_eq!(at(&drawings), 6.0);
+    assert!(drawings.undo(), "the placement is the only step");
+    assert!(drawings.redo());
+    assert_eq!(at(&drawings), 6.0, "history keeps what the display bound");
+}
+
+#[test]
+fn a_size_round_trip_at_another_zoom_stays_undoable() {
+    let mut drawings = placed();
+    drawings.set_text_spacing(40.0);
+    let at = |drawings: &Drawings<DrawingTool>| {
+        note(drawings)
+            .format_at(TextSpacing::new(40.0, 2.0))
+            .font
+            .size_px
+    };
+    assert_eq!(at(&drawings), 24.0);
+    drawings.begin_gesture();
+    let depth = drawings.undo_depth();
+    for size in [30.0, 12.0] {
+        let mut edited = drawings.items()[0].clone();
+        edited.tool.set_glyph_size(&mut edited, size);
+        drawings.replace_edited(0, edited);
+    }
+    drawings
+        .note_display()
+        .observe(note(&drawings), TextSpacing::new(40.0, 2.0));
+    drawings.commit_gesture();
+    assert_eq!(at(&drawings), 12.0);
+    assert_eq!(drawings.undo_depth(), depth + 1);
+    drawings.undo();
+    assert_eq!(at(&drawings), 24.0);
+}
