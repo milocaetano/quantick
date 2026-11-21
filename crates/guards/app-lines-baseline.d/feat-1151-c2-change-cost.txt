@@ -1,4 +1,4 @@
 # Conventional family, surface, and module registration replaces path-directed
 # hubs; the measured split-borrow and registration shell remains in app.
-crates/app +190
-!budget +190
+crates/app +164
+!budget +164

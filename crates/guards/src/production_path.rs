@@ -23,18 +23,76 @@ fn module_dir(file: &Path) -> PathBuf {
     }
 }
 
+fn cfg_test_attribute(tokens: &[lex::Token], hash: usize) -> Option<usize> {
+    let bracket = hash + 1;
+    if tokens.get(hash)?.text != "#" || tokens.get(bracket)?.text != "[" {
+        return None;
+    }
+    let end = tokens[bracket].pair?;
+    let body: Vec<_> = tokens[bracket + 1..end]
+        .iter()
+        .map(|token| token.text.as_str())
+        .collect();
+    (body == ["cfg", "(", "test", ")"]).then_some(end)
+}
+
+fn attribute_applies_to(tokens: &[lex::Token], mut cursor: usize, item: usize) -> bool {
+    while cursor < item {
+        if tokens[cursor].text == "#"
+            && tokens
+                .get(cursor + 1)
+                .is_some_and(|token| token.text == "[")
+        {
+            let Some(end) = tokens[cursor + 1].pair else {
+                return false;
+            };
+            cursor = end + 1;
+        } else if tokens[cursor].text == "pub" {
+            cursor += 1;
+            if tokens.get(cursor).is_some_and(|token| token.text == "(") {
+                let Some(end) = tokens[cursor].pair else {
+                    return false;
+                };
+                cursor = end + 1;
+            }
+        } else {
+            return false;
+        }
+    }
+    cursor == item
+}
+
+fn directly_test_only(tokens: &[lex::Token], item: usize) -> bool {
+    (0..item).any(|hash| {
+        cfg_test_attribute(tokens, hash)
+            .is_some_and(|end| attribute_applies_to(tokens, end + 1, item))
+    })
+}
+
+fn test_only_module(tokens: &[lex::Token], module: usize) -> bool {
+    directly_test_only(tokens, module)
+        || tokens.iter().enumerate().any(|(open, token)| {
+            token.text == "{"
+                && token
+                    .pair
+                    .is_some_and(|close| open < module && module < close)
+                && open >= 2
+                && tokens[open - 2].text == "mod"
+                && directly_test_only(tokens, open - 2)
+        })
+}
+
 fn external_modules(source: &str, file: &Path) -> Result<Vec<PathBuf>, String> {
-    let flags = crate::size::production_flags(source);
     let tokens = lex::lex(source)?;
     let mut modules = Vec::new();
-    for declaration in tokens.windows(3) {
+    for (index, declaration) in tokens.windows(3).enumerate() {
         let [module, name, semicolon] = declaration else {
             continue;
         };
         if module.text != "mod" || semicolon.text != ";" {
             continue;
         }
-        if !flags.get(module.line).copied().unwrap_or(true) {
+        if test_only_module(&tokens, index) {
             continue;
         }
         if !name
@@ -249,7 +307,7 @@ mod tests {
         fs::create_dir_all(&source).unwrap();
         fs::write(
             source.join("lib.rs"),
-            "pub(crate)\nmod\nreached\n;\n\n#[cfg(test)]\nmod\ntest_only\n;\n",
+            "#[cfg(test)]\nmod\ntest_only\n;\n\npub(crate)\nmod\nreached\n;\n",
         )
         .unwrap();
         fs::write(
