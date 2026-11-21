@@ -10,15 +10,23 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 sys.path.insert(0, str(HERE))
-from combined import Counts, compare, validate_history
+from combined import Counts, compare, history_rows, validate_results
 
 BASE_SHA = "9719d691f22285b5234b99aeb81fa91d785da667"
 BASE = Counts(268631, 311966, 111)
 EVIDENCE = Path.home() / "AppData/Local/Temp/quantick-change-cost/acceptance-evidence-index.json"
+COMMAND_RESULTS = Path.home() / "AppData/Local/Temp/quantick-change-cost/c3-command-results.json"
+INTEGRATION_BASE = "e6f5a4855f6e541fddba560304f7bac14637bc5d"
+REQUIRED_COMMANDS = ["C0", "C1", "C2", "C3", "C4", "C5", "C6", "C7", "C8", "C9", "C9a", "C10", "C11", "C12", "C13"]
 
 
 def command(*args: str) -> str:
     return subprocess.run(args, cwd=ROOT, check=True, text=True, capture_output=True).stdout.strip()
+
+
+def validate_evidence(evidence: dict, command_results: list[dict], head: str, tree: str) -> list[dict]:
+    validate_results(REQUIRED_COMMANDS, command_results, head, tree, INTEGRATION_BASE)
+    return history_rows(evidence["history"])
 
 
 def main() -> int:
@@ -27,6 +35,7 @@ def main() -> int:
         return 2
     head = command("git", "rev-parse", "HEAD")
     tree = command("git", "rev-parse", "HEAD^{tree}")
+    command_results = json.loads(COMMAND_RESULTS.read_text(encoding="utf-8-sig"))
     raw = command(sys.executable, "tools/outside_score/measure.py", ".")
     values = dict(line.split("\t", 1) for line in raw.splitlines() if "\t" in line)
     if values.get("measure.version") != "1":
@@ -34,15 +43,12 @@ def main() -> int:
     measured = Counts(int(values["lines.production"]), int(values["lines.test"]), int(values["panic_sites"]))
     comparison = compare(BASE, measured)
     evidence = json.loads(EVIDENCE.read_text(encoding="utf-8-sig"))
+    rows = validate_evidence(evidence, command_results, head, tree)
     canonical = evidence["canonical"]
     if canonical["tool"] != "tools/outside_score/measure.py" or canonical["version"] != 1:
         raise ValueError("pinned baseline calculator identity changed")
     if (canonical["production"], canonical["test"], canonical["panic"]) != (BASE.production, BASE.tests, BASE.panic):
         raise ValueError("pinned baseline counts changed")
-    rows = []
-    for row in evidence["history"]:
-        rows.append({**row, "state": "unobservable" if row.get("after") else "measured"})
-    validate_history(rows)
     fragments = sum(1 for path in ROOT.glob("crates/guards/*-baseline.d/*.txt"))
     report = {
         "criterion": "C14",

@@ -674,32 +674,45 @@ fn brackets_balance(value: &str) -> bool {
 /// the first `=` wherever it falls and keeps taking lines until the brackets
 /// close.
 fn dependency_entries(text: &str) -> Vec<(String, String)> {
-    dependency_entries_in(text, is_dependency_section)
+    manifest_entries_in(text, is_dependency_section)
 }
 
 /// [`dependency_entries`], over only the sections `section` accepts.
-fn dependency_entries_in(text: &str, section: fn(&str) -> bool) -> Vec<(String, String)> {
+pub(crate) fn manifest_entries_in(text: &str, section: fn(&str) -> bool) -> Vec<(String, String)> {
+    manifest_entries_with_sections(text, section)
+        .into_iter()
+        .map(|(_, name, value)| (name, value))
+        .collect()
+}
+
+/// Balanced manifest entries with the section that owns each entry.
+pub(crate) fn manifest_entries_with_sections(
+    text: &str,
+    section: fn(&str) -> bool,
+) -> Vec<(String, String, String)> {
     let mut entries = Vec::new();
     let mut in_dependencies = false;
-    let mut unclosed: Option<(String, String)> = None;
+    let mut current_section = String::new();
+    let mut unclosed: Option<(String, String, String)> = None;
 
     for line in text.lines() {
         let trimmed = line.trim();
 
         // A value still waiting for its closing bracket swallows this line,
         // comments and all, rather than letting it be read as a new key.
-        if let Some((name, value)) = unclosed.take() {
+        if let Some((header, name, value)) = unclosed.take() {
             let value = format!("{value} {trimmed}");
             if brackets_balance(&value) {
-                entries.push((name, value));
+                entries.push((header, name, value));
             } else {
-                unclosed = Some((name, value));
+                unclosed = Some((header, name, value));
             }
             continue;
         }
 
         if trimmed.starts_with('[') {
             in_dependencies = section(trimmed);
+            current_section = trimmed.to_owned();
             continue;
         }
         if !in_dependencies || trimmed.starts_with('#') || trimmed.is_empty() {
@@ -708,8 +721,12 @@ fn dependency_entries_in(text: &str, section: fn(&str) -> bool) -> Vec<(String, 
         let Some((name, value)) = trimmed.split_once('=') else {
             continue;
         };
-        let entry = (name.trim().to_owned(), value.trim().to_owned());
-        if brackets_balance(&entry.1) {
+        let entry = (
+            current_section.clone(),
+            name.trim().to_owned(),
+            value.trim().to_owned(),
+        );
+        if brackets_balance(&entry.2) {
             entries.push(entry);
         } else {
             unclosed = Some(entry);
@@ -737,7 +754,7 @@ pub fn consumers(root: &Path) -> Vec<(String, Vec<String>)> {
                 .iter()
                 .filter(|consumer| consumer.name != target.name)
                 .filter(|consumer| {
-                    dependency_entries_in(&consumer.text, is_production_section)
+                    manifest_entries_in(&consumer.text, is_production_section)
                         .iter()
                         .filter_map(|(_, value)| path_target(value))
                         .any(|sibling| sibling == target.name)

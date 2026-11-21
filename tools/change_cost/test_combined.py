@@ -5,7 +5,8 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from combined import Counts, compare, validate_history, validate_results
+from combined import Counts, compare, history_rows, validate_history, validate_results
+from measure import INTEGRATION_BASE, REQUIRED_COMMANDS, validate_evidence
 
 
 class ExactRatios(unittest.TestCase):
@@ -32,19 +33,20 @@ class ExactRatios(unittest.TestCase):
 class EvidenceContracts(unittest.TestCase):
     def test_every_command_is_unique_successful_and_sha_pinned(self):
         required = ["C0", "C13"]
+        head, tree, base = "a" * 40, "b" * 40, "c" * 40
         validate_results(required, [
-            {"command": "C0", "exit_code": 0, "sha": "a" * 40},
-            {"command": "C13", "exit_code": 0, "sha": "a" * 40},
-        ])
+            {"command": "C0", "exit_code": 0, "sha": head, "tree": tree, "base": base},
+            {"command": "C13", "exit_code": 0, "sha": head, "tree": tree, "base": base},
+        ], head, tree, base)
         bad = [
             [{"command": "C0", "exit_code": 0, "sha": "a"}],
-            [{"command": "C0", "exit_code": 1, "sha": "a"}, {"command": "C13", "exit_code": 0, "sha": "a"}],
-            [{"command": "C0", "exit_code": 0, "sha": "a"}, {"command": "C0", "exit_code": 0, "sha": "a"}],
-            [{"command": "C0", "exit_code": 0, "sha": ""}, {"command": "C13", "exit_code": 0, "sha": "a"}],
+            [{"command": "C0", "exit_code": 1, "sha": head, "tree": tree, "base": base}, {"command": "C13", "exit_code": 0, "sha": head, "tree": tree, "base": base}],
+            [{"command": "C0", "exit_code": 0, "sha": head, "tree": tree, "base": base}, {"command": "C0", "exit_code": 0, "sha": head, "tree": tree, "base": base}],
+            [{"command": "C0", "exit_code": 0, "sha": "d" * 40, "tree": tree, "base": base}, {"command": "C13", "exit_code": 0, "sha": head, "tree": tree, "base": base}],
         ]
         for results in bad:
             with self.assertRaises(ValueError):
-                validate_results(required, results)
+                validate_results(required, results, head, tree, base)
 
     def test_future_windows_are_gaps_and_measured_rows_keep_sources(self):
         validate_history([
@@ -58,6 +60,24 @@ class EvidenceContracts(unittest.TestCase):
         ]:
             with self.assertRaises(ValueError):
                 validate_history([row])
+
+    def test_history_derivation_rejects_a_contradictory_source_state(self):
+        with self.assertRaises(ValueError):
+            history_rows([{"metric": "future", "state": "measured", "value": 0, "sources": ["x"], "after": "later"}])
+
+    def test_measurement_boundary_rejects_stale_commands_and_history(self):
+        head, tree = "a" * 40, "b" * 40
+        results = [
+            {"command": command, "exit_code": 0, "sha": head, "tree": tree, "base": INTEGRATION_BASE}
+            for command in REQUIRED_COMMANDS
+        ]
+        evidence = {"history": [{"metric": "future", "state": "measured", "value": 0, "sources": ["x"], "after": "later"}]}
+        with self.assertRaises(ValueError):
+            validate_evidence(evidence, results, head, tree)
+        evidence["history"][0]["state"] = "unobservable"
+        results[0]["sha"] = "c" * 40
+        with self.assertRaises(ValueError):
+            validate_evidence(evidence, results, head, tree)
 
 
 if __name__ == "__main__":

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 
 
 @dataclass(frozen=True)
@@ -34,17 +35,30 @@ def compare(base: Counts, head: Counts) -> dict[str, int | bool]:
     }
 
 
-def validate_results(required: list[str], results: list[dict]) -> None:
+def validate_results(
+    required: list[str], results: list[dict], head: str, tree: str, base: str
+) -> None:
     names = [result.get("command") for result in results]
     duplicates = sorted({name for name in names if names.count(name) > 1})
     missing = sorted(set(required) - set(names))
     extras = sorted(set(names) - set(required))
     failed = sorted(result["command"] for result in results if result.get("exit_code") != 0)
-    unpinned = sorted(result["command"] for result in results if not result.get("sha"))
-    if duplicates or missing or extras or failed or unpinned:
+    malformed = sorted(
+        result["command"]
+        for result in results
+        if not re.fullmatch(r"[0-9a-f]{40}", str(result.get("sha", "")))
+    )
+    stale = sorted(
+        result["command"]
+        for result in results
+        if result.get("sha") != head
+        or result.get("tree") != tree
+        or result.get("base") != base
+    )
+    if duplicates or missing or extras or failed or malformed or stale:
         raise ValueError(
             f"invalid command evidence: duplicates={duplicates} missing={missing} "
-            f"extras={extras} failed={failed} unpinned={unpinned}"
+            f"extras={extras} failed={failed} malformed={malformed} stale={stale}"
         )
 
 
@@ -59,3 +73,16 @@ def validate_history(rows: list[dict]) -> None:
             raise ValueError(f"unobservable row {row['metric']} requires its observation condition")
         if row.get("state") == "measured" and row.get("value") is None:
             raise ValueError(f"measured row {row['metric']} has no value")
+
+
+def history_rows(source: list[dict]) -> list[dict]:
+    rows = []
+    for source_row in source:
+        expected = "unobservable" if source_row.get("after") else "measured"
+        if source_row.get("state", expected) != expected:
+            raise ValueError(
+                f"history row {source_row.get('metric')} contradicts derived state {expected}"
+            )
+        rows.append({**source_row, "state": expected})
+    validate_history(rows)
+    return rows

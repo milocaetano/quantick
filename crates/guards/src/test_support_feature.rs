@@ -1,6 +1,6 @@
 //! Keep owner test helpers out of production dependency feature graphs.
 
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -24,6 +24,7 @@ struct Dependency {
     defaults: bool,
     section: String,
     inherited: bool,
+    optional: bool,
 }
 
 fn strings(value: &str) -> Vec<String> {
@@ -55,6 +56,18 @@ fn quoted_field(value: &str, field: &str) -> Option<String> {
     Some(rest.split('"').next()?.to_owned())
 }
 
+fn package_section(header: &str) -> bool {
+    header == "[package]"
+}
+
+fn features_section(header: &str) -> bool {
+    header == "[features]"
+}
+
+fn shipping_dependencies(header: &str) -> bool {
+    header.ends_with("dependencies]") && !header.ends_with("dev-dependencies]")
+}
+
 fn parse(path: PathBuf) -> Result<Manifest, String> {
     let source =
         fs::read_to_string(&path).map_err(|error| format!("{}: {error}", path.display()))?;
@@ -62,39 +75,30 @@ fn parse(path: PathBuf) -> Result<Manifest, String> {
         path,
         ..Manifest::default()
     };
-    let mut section = String::new();
-    for raw in source.lines() {
-        let line = raw.split('#').next().unwrap_or("").trim();
-        if line.starts_with('[') && line.ends_with(']') {
-            section = line[1..line.len() - 1].to_owned();
-            continue;
-        }
-        let Some((key, value)) = line.split_once('=') else {
-            continue;
-        };
-        let key = key.trim().trim_matches('"');
-        let value = value.trim();
-        if section == "package" && key == "name" {
-            out.package = value.trim_matches('"').to_owned();
-        } else if section == "features" {
-            out.features.insert(key.to_owned(), strings(value));
-        } else if section.ends_with("dependencies") && !section.ends_with("dev-dependencies") {
-            let package = quoted_field(value, "package").unwrap_or_else(|| key.to_owned());
-            let features = if value.starts_with('{') {
-                strings(value)
-            } else {
-                Vec::new()
-            };
-            let defaults = !value.contains("default-features = false");
-            out.production.push(Dependency {
-                alias: key.to_owned(),
-                package,
-                features,
-                defaults,
-                section: section.clone(),
-                inherited: value.contains("workspace = true"),
-            });
-        }
+    if let Some((_, value)) = crate::graph::manifest_entries_in(&source, package_section)
+        .into_iter()
+        .find(|(key, _)| key == "name")
+    {
+        out.package = value.trim_matches('"').to_owned();
+    }
+    for (key, value) in crate::graph::manifest_entries_in(&source, features_section) {
+        out.features
+            .insert(key.trim_matches('"').to_owned(), strings(&value));
+    }
+    for (section, key, value) in
+        crate::graph::manifest_entries_with_sections(&source, shipping_dependencies)
+    {
+        let alias = key.trim_matches('"').to_owned();
+        let package = quoted_field(&value, "package").unwrap_or_else(|| alias.clone());
+        out.production.push(Dependency {
+            alias,
+            package,
+            features: strings(&value),
+            defaults: !value.contains("default-features = false"),
+            section: section.trim_matches(['[', ']']).to_owned(),
+            inherited: value.contains("workspace = true"),
+            optional: value.contains("optional = true"),
+        });
     }
     Ok(out)
 }
@@ -127,12 +131,108 @@ fn manifests(root: &Path) -> Result<Vec<Manifest>, String> {
                     dependency.package.clone_from(&shared.package);
                     dependency.features.extend(shared.features.iter().cloned());
                     dependency.defaults &= shared.defaults;
+                    dependency.optional |= shared.optional;
                 }
             }
             result.push(manifest);
         }
     }
     Ok(result)
+}
+
+fn reaches_test_support<'a>(
+    owner: &'a Manifest,
+    dependency: &Dependency,
+    by_package: &BTreeMap<&'a str, &'a Manifest>,
+) -> Option<(String, String)> {
+    let mut active_crates = BTreeSet::from([owner.package.clone()]);
+    let mut active_edges = BTreeSet::new();
+    let mut features = BTreeMap::<(String, String), String>::new();
+    if dependency.defaults {
+        features.insert(
+            (owner.package.clone(), "default".to_owned()),
+            format!("{} default", dependency.alias),
+        );
+    }
+    for feature in &dependency.features {
+        features.insert(
+            (owner.package.clone(), feature.clone()),
+            format!("{} feature {feature}", dependency.alias),
+        );
+    }
+    loop {
+        let before = (active_crates.len(), active_edges.len(), features.len());
+        for package in active_crates.clone() {
+            let Some(manifest) = by_package.get(package.as_str()) else {
+                continue;
+            };
+            for edge in &manifest.production {
+                if !edge.optional {
+                    active_edges.insert((package.clone(), edge.alias.clone()));
+                }
+            }
+        }
+        for (package, alias) in active_edges.clone() {
+            let Some(manifest) = by_package.get(package.as_str()) else {
+                continue;
+            };
+            let Some(edge) = manifest.production.iter().find(|edge| edge.alias == alias) else {
+                continue;
+            };
+            let Some(target) = by_package.get(edge.package.as_str()) else {
+                continue;
+            };
+            active_crates.insert(target.package.clone());
+            if edge.defaults {
+                features
+                    .entry((target.package.clone(), "default".to_owned()))
+                    .or_insert_with(|| format!("{package} -> {alias} default"));
+            }
+            for feature in &edge.features {
+                features
+                    .entry((target.package.clone(), feature.clone()))
+                    .or_insert_with(|| format!("{package} -> {alias}/{feature}"));
+            }
+        }
+        for ((package, feature), path) in features.clone() {
+            let Some(manifest) = by_package.get(package.as_str()) else {
+                continue;
+            };
+            for next in manifest.features.get(&feature).into_iter().flatten() {
+                if let Some(alias) = next.strip_prefix("dep:") {
+                    active_edges.insert((package.clone(), alias.to_owned()));
+                } else if let Some((alias, forwarded)) = next.split_once("?/") {
+                    if active_edges.contains(&(package.clone(), alias.to_owned())) {
+                        if let Some(edge) =
+                            manifest.production.iter().find(|edge| edge.alias == alias)
+                        {
+                            features
+                                .entry((edge.package.clone(), forwarded.to_owned()))
+                                .or_insert_with(|| format!("{path} -> {next}"));
+                        }
+                    }
+                } else if let Some((alias, forwarded)) = next.split_once('/') {
+                    active_edges.insert((package.clone(), alias.to_owned()));
+                    if let Some(edge) = manifest.production.iter().find(|edge| edge.alias == alias)
+                    {
+                        features
+                            .entry((edge.package.clone(), forwarded.to_owned()))
+                            .or_insert_with(|| format!("{path} -> {next}"));
+                    }
+                } else {
+                    features
+                        .entry((package.clone(), next.clone()))
+                        .or_insert_with(|| format!("{path} -> {next}"));
+                }
+            }
+        }
+        if before == (active_crates.len(), active_edges.len(), features.len()) {
+            break;
+        }
+    }
+    features.into_iter().find_map(|((package, feature), path)| {
+        (feature == "test-support").then_some((package, path))
+    })
 }
 
 pub fn check(root: &Path) -> Vec<Finding> {
@@ -147,68 +247,26 @@ pub fn check(root: &Path) -> Vec<Finding> {
     let mut findings = Vec::new();
     for member in &parsed {
         for dependency in &member.production {
+            if dependency.optional {
+                continue;
+            }
             let Some(owner) = by_package.get(dependency.package.as_str()) else {
                 continue;
             };
-            let mut queue = VecDeque::new();
-            if dependency.defaults {
-                queue.push_back((
-                    owner,
-                    "default".to_owned(),
-                    format!("{} default", dependency.alias),
+            if let Some((support_owner, path)) =
+                reaches_test_support(owner, dependency, &by_package)
+            {
+                findings.push(Finding::new(
+                    format!(
+                        "{}: {} dependency `{}` ({}) enables {} through {path}",
+                        member.path.display(),
+                        dependency.section,
+                        dependency.alias,
+                        dependency.package,
+                        support_owner
+                    ),
+                    REMEDY,
                 ));
-            }
-            for feature in &dependency.features {
-                queue.push_back((
-                    owner,
-                    feature.clone(),
-                    format!("{} feature {feature}", dependency.alias),
-                ));
-            }
-            let mut seen = BTreeSet::new();
-            while let Some((crate_manifest, feature, path)) = queue.pop_front() {
-                if !seen.insert((crate_manifest.package.clone(), feature.clone())) {
-                    continue;
-                }
-                if feature == "test-support" {
-                    findings.push(Finding::new(
-                        format!(
-                            "{}: {} dependency `{}` ({}) enables {} through {path}",
-                            member.path.display(),
-                            dependency.section,
-                            dependency.alias,
-                            dependency.package,
-                            crate_manifest.package
-                        ),
-                        REMEDY,
-                    ));
-                    break;
-                }
-                for next in crate_manifest.features.get(&feature).into_iter().flatten() {
-                    if let Some((alias, forwarded)) = next.split_once('/') {
-                        let Some(edge) = crate_manifest
-                            .production
-                            .iter()
-                            .find(|edge| edge.alias == alias)
-                        else {
-                            continue;
-                        };
-                        let Some(target) = by_package.get(edge.package.as_str()) else {
-                            continue;
-                        };
-                        queue.push_back((
-                            target,
-                            forwarded.to_owned(),
-                            format!("{path} -> {alias}/{forwarded}"),
-                        ));
-                    } else if !next.starts_with("dep:") {
-                        queue.push_back((
-                            crate_manifest,
-                            next.clone(),
-                            format!("{path} -> {next}"),
-                        ));
-                    }
-                }
             }
         }
     }
@@ -297,5 +355,79 @@ mod tests {
         let findings = check(&root);
         assert_eq!(findings.len(), 1, "{findings:?}");
         assert!(findings[0].line.contains("test-support"));
+    }
+
+    #[test]
+    fn optional_dependency_activation_and_weak_forwarding_are_followed() {
+        for (label, middle_features) in [
+            ("dep-default", "fixture = [\"dep:builder\"]"),
+            ("strong-default", "fixture = [\"builder/ordinary\"]"),
+            (
+                "weak-after-activation",
+                "fixture = [\"dep:builder\", \"builder?/bridge\"]",
+            ),
+        ] {
+            let root = ScratchDir::new(label);
+            write(
+                &root,
+                "owner",
+                "[package]\nname = \"quantick-owner\"\n[features]\ndefault = [\"test-support\"]\ntest-support = []\nordinary = []\nbridge = [\"test-support\"]\n",
+            );
+            write(
+                &root,
+                "middle",
+                &format!(
+                    "[package]\nname = \"quantick-middle\"\n[features]\n{middle_features}\n[dependencies]\nbuilder = {{ package = \"quantick-owner\", path = \"../owner\", optional = true }}\n"
+                ),
+            );
+            write(
+                &root,
+                "app",
+                "[package]\nname = \"quantick-app\"\n[dependencies]\nquantick-middle = { path = \"../middle\", features = [\"fixture\"] }\n",
+            );
+            let findings = check(&root);
+            assert_eq!(findings.len(), 1, "{label}: {findings:?}");
+        }
+
+        let root = ScratchDir::new("weak-unactivated");
+        write(
+            &root,
+            "owner",
+            "[package]\nname = \"quantick-owner\"\n[features]\ntest-support = []\nbridge = [\"test-support\"]\n",
+        );
+        write(
+            &root,
+            "middle",
+            "[package]\nname = \"quantick-middle\"\n[features]\nfixture = [\"builder?/bridge\"]\n[dependencies]\nbuilder = { package = \"quantick-owner\", path = \"../owner\", optional = true }\n",
+        );
+        write(
+            &root,
+            "app",
+            "[package]\nname = \"quantick-app\"\n[dependencies]\nquantick-middle = { path = \"../middle\", features = [\"fixture\"] }\n",
+        );
+        assert!(check(&root).is_empty());
+    }
+
+    #[test]
+    fn multiline_dependency_and_feature_arrays_keep_the_same_verdict() {
+        let root = ScratchDir::new("test-support-multiline");
+        write(
+            &root,
+            "owner",
+            "[package]\nname = \"quantick-owner\"\n[features]\ntest-support = []\n",
+        );
+        write(
+            &root,
+            "middle",
+            "[package]\nname = \"quantick-middle\"\n[features]\nfixtures = [\n  \"builder/test-support\",\n]\n[dependencies]\nbuilder = {\n  package = \"quantick-owner\",\n  path = \"../owner\",\n}\n",
+        );
+        write(
+            &root,
+            "app",
+            "[package]\nname = \"quantick-app\"\n[dependencies]\nquantick-middle = {\n  path = \"../middle\",\n  features = [\n    \"fixtures\",\n  ],\n}\n",
+        );
+        let findings = check(&root);
+        assert_eq!(findings.len(), 1, "{findings:?}");
+        assert!(findings[0].line.contains("builder/test-support"));
     }
 }

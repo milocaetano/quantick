@@ -30,21 +30,6 @@ impl ActorContextBuilder {
     }
 
     #[must_use]
-    pub fn request_id(mut self, value: &str) -> Self {
-        self.0.request_id = RequestId::new(value).expect("test request id");
-        self
-    }
-    #[must_use]
-    pub fn requested_at(mut self, value: i64) -> Self {
-        self.0.requested_at_unix_ms = value;
-        self
-    }
-    #[must_use]
-    pub fn reason(mut self, value: &str) -> Self {
-        self.0.reason = Some(value.to_owned());
-        self
-    }
-    #[must_use]
     pub fn build(&self) -> ActorContext {
         self.0.clone()
     }
@@ -55,12 +40,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn actor_defaults_overrides_and_repeated_builds_are_valid() {
-        let builder = ActorContextBuilder::agent()
-            .request_id("again-1")
-            .requested_at(42);
+    fn actor_variants_are_valid_and_independent() {
+        let builder = ActorContextBuilder::agent();
         assert!(builder.build().validate().is_ok());
-        assert_eq!(builder.build().requested_at_unix_ms, 42);
         assert_eq!(
             ActorContextBuilder::human().build().actor_kind,
             ActorKind::HumanUi
