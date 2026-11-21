@@ -12,6 +12,7 @@ pub enum Door {
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Action {
+    DescribeStrategy,
     Row(RowId),
     Workspace(WorkspaceCommand),
     SaveOnExit(bool),
@@ -91,6 +92,7 @@ pub struct Snapshot {
     pub startup_saved: bool,
     pub save_on_exit: bool,
     pub dock_visible: bool,
+    pub describe_available: bool,
     pub selected_rows: Vec<RowId>,
     pub flow_pane_shown: bool,
     pub toolbox_dock: Option<quantick_chart_interaction::tool_rail::ToolboxDock>,
@@ -296,7 +298,8 @@ fn row(s: &Snapshot, id: RowId) -> Option<Row> {
         RowId::SaveToWorkspace => {
             row.label = menu::save_to_label(&workspace.symbol, &workspace.name);
             row.hover = menu::save_to_hover(&workspace.followers);
-            row.enabled = workspace.can_save && workspace.name != quantick_stores::workspaces::DEFAULT_WORKSPACE;
+            row.enabled = workspace.can_save
+                && workspace.name != quantick_stores::workspaces::DEFAULT_WORKSPACE;
             row.action = Action::Workspace(WorkspaceCommand::SaveTo);
         }
         RowId::WorkspaceSaveAsNew => row.action = Action::Workspace(WorkspaceCommand::BeginSaveAs),
@@ -415,6 +418,12 @@ fn live(s: &Snapshot, rows: LiveRows) -> Vec<Node> {
                 "This chart has no indicators, so there is no legend to fold".into();
             row.shortcut = Some(Shortcut::Legend);
             result.push(Node::Row(row));
+        }
+        LiveRows::DescribeStrategy if s.describe_available && s.chart_shown => {
+            result.push(Node::Row(Row::new(
+                "Describe a strategy...",
+                Action::DescribeStrategy,
+            )));
         }
         LiveRows::RecentFiles => {
             for (path, label) in &s.recent {

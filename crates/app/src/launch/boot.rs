@@ -157,19 +157,22 @@ pub(crate) fn run() -> eframe::Result {
 
     // Feed and asset are configuration, not constants. A malformed external
     // config is fatal and surfaced, never silently ignored.
-    let (mut config, source) = match crate::config::load(startup.config_path.as_deref()) {
-        Ok(loaded) => loaded,
-        Err(e) => {
-            tracing::error!(
-                target: "quantick::app",
-                event_code = "CONFIG_ERROR",
-                %e,
-                "cannot load configuration; fix it or unset QUANTICK_CONFIG"
-            );
-            feed::log_sink::drain_before_exit();
-            std::process::exit(1);
-        }
-    };
+    let (mut config, source, describe) =
+        match crate::config::load(startup.config_path.as_deref(), |name| {
+            std::env::var(name).ok()
+        }) {
+            Ok(loaded) => loaded,
+            Err(e) => {
+                tracing::error!(
+                    target: "quantick::app",
+                    event_code = "CONFIG_ERROR",
+                    %e,
+                    "cannot load configuration; fix it or unset QUANTICK_CONFIG"
+                );
+                feed::log_sink::drain_before_exit();
+                std::process::exit(1);
+            }
+        };
     if let Err(e) = startup.apply_selection(&mut config) {
         tracing::error!(
             target: "quantick::app",
@@ -258,6 +261,7 @@ pub(crate) fn run() -> eframe::Result {
     let options = startup.native_options(workspace.window);
 
     let launch = crate::app::AppLaunch {
+        describe,
         #[cfg(feature = "scenario-harness")]
         scenario,
         #[cfg(all(test, not(feature = "scenario-harness")))]

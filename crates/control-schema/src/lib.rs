@@ -58,6 +58,7 @@ pub mod script_strategy;
 pub mod session;
 pub mod session_reports;
 pub mod settings_sections;
+pub mod strategy_describe;
 pub mod tape_fold;
 pub mod tape_market_fold;
 pub mod tape_view;

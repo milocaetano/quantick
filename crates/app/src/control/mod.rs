@@ -19,6 +19,8 @@ mod gateway;
 mod health;
 mod interaction;
 pub(crate) mod inventory;
+pub(crate) mod strategy_describe;
+pub(crate) mod strategy_describe_contract;
 // Moved to `quantick-control-host`; named here so `super::journal` resolves.
 use quantick_control_host::journal;
 mod flow_tabs;
