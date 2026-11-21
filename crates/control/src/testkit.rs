@@ -13,7 +13,7 @@ impl ActorContextBuilder {
         Self(ActorContext {
             actor_kind: ActorKind::Agent,
             principal_id: PrincipalId::from_bytes([1; CONTROL_RUNTIME_ID_BYTES]),
-            client_name: "test agent".to_owned(),
+            client_name: "fake assistant".to_owned(),
             connection_id: ConnectionId::from_bytes([2; CONTROL_RUNTIME_ID_BYTES]),
             request_id: RequestId::new("test-1").expect("literal request id"),
             reason: None,
@@ -25,7 +25,7 @@ impl ActorContextBuilder {
     pub fn human() -> Self {
         let mut value = Self::agent();
         value.0.actor_kind = ActorKind::HumanUi;
-        value.0.client_name = "test trader".to_owned();
+        value.0.client_name = "fake trader".to_owned();
         value
     }
 
