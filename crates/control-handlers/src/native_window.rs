@@ -93,3 +93,5 @@ fn set<H: NativeWindowHost + ?Sized, A>(
 pub(crate) fn action_descriptors() -> Vec<quantick_control::registry::CapabilityDescriptor> {
     vec![descriptor()]
 }
+
+pub use register as register_actions;

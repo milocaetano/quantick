@@ -4,38 +4,17 @@ use super::FAMILIES;
 fn family_contract_is_sorted() {
     assert!(!FAMILIES.is_empty());
     assert!(FAMILIES.windows(2).all(|pair| pair[0].id < pair[1].id));
-    assert_eq!(FAMILIES[0].id, "indicator_guide");
-    assert_eq!(FAMILIES[1].id, "notify");
-    assert_eq!(FAMILIES[0].actions, ["indicator_guide"]);
-    assert_eq!(FAMILIES[1].readbacks, ["notify"]);
-    assert!(FAMILIES[1].projections.is_empty());
-    assert!(FAMILIES[1].behaviours.is_empty());
-}
-
-#[test]
-fn consumers_resolve_bindings_locally() {
-    fn indicator_guide() -> u32 {
-        17
-    }
-    fn notify() -> u32 {
-        29
-    }
-    macro_rules! local_actions {
-        ($($id:literal {
-            schemas: [$($schema:ident),*],
-            actions: [$($action:ident),*],
-            $($rest:ident: [$($binding:ident),*],)*
-        })*) => {
-            vec![$(($id, vec![$($action()),*])),*]
-        };
-    }
-    let actions = crate::control_families!(local_actions);
-    assert_eq!(
-        actions,
-        [("indicator_guide", vec![17]), ("notify", vec![29])]
-    );
-    assert_eq!(
-        actions.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
-        FAMILIES.iter().map(|family| family.id).collect::<Vec<_>>()
-    );
+    let context = FAMILIES
+        .iter()
+        .find(|row| row.id == "chart_context")
+        .unwrap();
+    assert_eq!(context.schemas, ["chart_context"]);
+    assert_eq!(context.actions, ["chart_context"]);
+    assert!(context.readbacks.is_empty());
+    let scope = FAMILIES
+        .iter()
+        .find(|row| row.id == "drawing_scope")
+        .unwrap();
+    assert!(scope.actions.is_empty());
+    assert_eq!(scope.readbacks, ["drawing_scope"]);
 }

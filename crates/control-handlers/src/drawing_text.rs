@@ -262,3 +262,5 @@ fn result(
 pub(crate) fn action_descriptors() -> Vec<quantick_control::registry::CapabilityDescriptor> {
     vec![set_descriptor(), repeat_descriptor()]
 }
+
+pub use register as register_actions;

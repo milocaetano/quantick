@@ -152,6 +152,8 @@ pub fn snapshot(status: RunStatus, main: HistoryReach) -> HistoryLoadSnapshot {
     }
 }
 
+pub use register as register_actions;
+
 #[cfg(test)]
 #[path = "history_tests.rs"]
 mod history_tests;

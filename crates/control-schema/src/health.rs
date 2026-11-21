@@ -406,3 +406,11 @@ pub fn orderflow_health(health: &OrderflowHealth) -> OrderflowHealthSnapshot {
         gaps: WireU64::new(health.gaps),
     }
 }
+
+/// Published schemas, owned beside their wire records.
+pub fn documents() -> Vec<(&'static str, serde_json::Value)> {
+    vec![(
+        "observer-health-summary-v1.schema.json",
+        quantick_control::schema::generated_schema::<crate::health::HealthSnapshot>(),
+    )]
+}

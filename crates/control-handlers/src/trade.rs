@@ -535,6 +535,8 @@ where
     crate::trade_account::register(registry)
 }
 
+pub use register as register_actions;
+
 #[cfg(test)]
 #[path = "trade_tests.rs"]
 mod trade_tests;

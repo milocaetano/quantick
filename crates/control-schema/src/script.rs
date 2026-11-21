@@ -257,3 +257,29 @@ pub const READBACKS: &[Readback] = &[
 #[cfg(test)]
 #[path = "script_tests.rs"]
 mod tests;
+
+/// Published schemas, owned beside their wire records.
+pub fn documents() -> Vec<(&'static str, serde_json::Value)> {
+    vec![
+        (
+            "indicator-script-attach-input-v1.schema.json",
+            quantick_control::schema::generated_schema::<crate::script::AttachInput>(),
+        ),
+        (
+            "indicator-script-attach-result-v1.schema.json",
+            quantick_control::schema::generated_schema::<crate::script::AttachResult>(),
+        ),
+        (
+            "indicator-script-detach-input-v1.schema.json",
+            quantick_control::schema::generated_schema::<crate::script::DetachInput>(),
+        ),
+        (
+            "indicator-script-detach-result-v1.schema.json",
+            quantick_control::schema::generated_schema::<crate::script::DetachResult>(),
+        ),
+        (
+            "indicator-script-diagnostic-v1.schema.json",
+            quantick_control::schema::generated_schema::<crate::script::ScriptDiagnostic>(),
+        ),
+    ]
+}

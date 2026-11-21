@@ -1,43 +1,18 @@
-//! The published documents whose wire types this crate owns. The window's
-//! catalogue adds the few it still owns itself and commits them all under
-//! `schemas/control`.
+//! Published wire documents, selected by the shared family manifest and
+//! emitted under `schemas/control` by the headless generator.
 
 /// Every document this crate publishes, as `(file name, schema)`.
 #[must_use]
 pub fn documents() -> Vec<(&'static str, serde_json::Value)> {
     let mut documents = Vec::new();
-    documents.extend(crate::alerts::documents());
-    documents.extend(crate::script_alarms::documents());
-    documents.extend(crate::script_strategy::documents());
-    documents.extend(crate::workspace_book::documents());
-    documents.extend(crate::workspace_colour::documents());
-    documents.extend(crate::workspace_manage::documents());
-    documents.extend(crate::native_window::documents());
-    documents.extend(crate::home_tab::documents());
-    documents.extend(crate::indicator_picker::documents());
-    documents.extend(crate::native_indicator::documents());
-    documents.extend(crate::chart_context::documents());
-    documents.extend(crate::scene::documents());
-    documents.extend(crate::price_axis::documents());
-    documents.extend(crate::price_tag_progress::documents());
-    documents.extend(crate::chart_settings::documents());
-    documents.extend(crate::journal_sessions::documents());
-    documents.extend(crate::session_reports::documents());
-    documents.extend(crate::time_axis::documents());
-    documents.extend(crate::opening_scale::documents());
-    documents.extend(crate::bubble_scale::documents());
-    documents.extend(crate::history::documents());
-    documents.extend(crate::feed_source::documents());
-    documents.extend(crate::tape_view::documents());
-    documents.extend(crate::session::documents());
-    documents.extend(crate::desk::documents());
-    documents.extend(crate::contract_roll::documents());
-    documents.extend(crate::market_windows::documents());
-    documents.extend(crate::market_palette::documents());
-    documents.extend(crate::bubble_preset::documents());
-    documents.extend(crate::appearance::documents());
-    documents.extend(crate::script_editor::documents());
-    documents.extend(crate::canvas::documents());
-    documents.extend(crate::widget::documents());
+    macro_rules! schema_families {
+    ($($id:literal {
+            schemas: [$($schema:ident),*], actions: [$($action:ident),*],
+            projections: [$($projection:ident),*], authority: [$($authority:ident),*],
+            readbacks: [$($readback:ident),*], behaviours: [$($behaviour:ident),*],
+            samples: [$($sample:ident),*],
+        })*) => { $( $(documents.extend(crate::$schema::documents());)* )* };
+}
+    quantick_control::control_families!(schema_families);
     documents
 }

@@ -71,6 +71,8 @@ pub fn journal<A: JournalAccess>(
     }
 }
 
+pub use register as register_actions;
+
 #[cfg(test)]
 #[path = "script_alarms_tests.rs"]
 mod tests;

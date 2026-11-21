@@ -1,12 +1,7 @@
-//! The paper ticket: what a trader does to an order or a position.
-//!
-//! Read [`super`] first: it says why the rows are written, how they are
-//! joined, and what the drift guard does with them.
-
 use super::{Mapping, Source, UiBehaviour};
 
-/// Every row this family owns.
-pub(super) const ROWS: &[UiBehaviour] = &[
+pub(super) const BINDING: (usize, &[UiBehaviour]) = (8, ROWS);
+const ROWS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "trade.account.route",
         title: "Choose where orders go: the simulator or the broker account",

@@ -309,6 +309,14 @@ pub const READBACKS: &[Readback] = &[
     ),
 ];
 
+/// Published schemas, owned beside their wire records.
+pub fn documents() -> Vec<(&'static str, serde_json::Value)> {
+    vec![(
+        "observer-orderflow-settings-v1.schema.json",
+        quantick_control::schema::generated_schema::<crate::orderflow_settings::SettingsSnapshot>(),
+    )]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

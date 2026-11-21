@@ -164,3 +164,17 @@ pub fn flow_cell_snapshot(cell: FlowCellHit) -> FlowCellSnapshot {
         source_book_unix_ms: cell.current_book_source.map(|source| source.event_ms),
     }
 }
+
+/// Published schemas, owned beside their wire records.
+pub fn documents() -> Vec<(&'static str, serde_json::Value)> {
+    vec![
+        (
+            "observer-cursor-v1.schema.json",
+            quantick_control::schema::generated_schema::<crate::interaction::CursorSnapshot>(),
+        ),
+        (
+            "observer-selection-v1.schema.json",
+            quantick_control::schema::generated_schema::<crate::interaction::SelectionSnapshot>(),
+        ),
+    ]
+}

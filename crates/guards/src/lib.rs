@@ -55,6 +55,7 @@
 pub mod app_lines;
 pub mod blast_radius;
 pub mod context;
+pub mod control_families;
 pub mod cycle;
 pub mod delta;
 pub mod encoding;
@@ -204,6 +205,12 @@ pub struct Guard {
 
 /// Every guard this crate runs.
 pub const GUARDS: &[Guard] = &[
+    Guard {
+        name: "control-families",
+        check: control_families::check,
+        check_file: control_families::check_file,
+        ratchet: None,
+    },
     Guard {
         name: "ignored-tests",
         check: ignored_test_reason::check,

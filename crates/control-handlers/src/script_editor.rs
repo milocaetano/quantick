@@ -64,6 +64,8 @@ pub fn run(
     Ok(host.script_library_state(input.offset, input.limit))
 }
 
+pub use register as register_actions;
+
 #[cfg(test)]
 #[path = "script_editor_tests.rs"]
 mod tests;

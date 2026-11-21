@@ -138,6 +138,8 @@ fn to_value(result: &PnlDisplayResult) -> Result<Value, ControlError> {
     serde_json::to_value(result).map_err(|error| ControlError::invalid_request(error.to_string()))
 }
 
+pub use register as register_actions;
+
 #[cfg(test)]
 #[path = "pnl_display_tests.rs"]
 mod pnl_display_tests;

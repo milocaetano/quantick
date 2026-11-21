@@ -65,7 +65,7 @@ impl MarkTab for Tab {
     }
 }
 
-impl quantick_control_handlers::chart_context::ArmedTab for Tab {
+impl quantick_control_handlers::script_strategy::ArmedTab for Tab {
     fn armed_on(
         &self,
         pane_id: u64,

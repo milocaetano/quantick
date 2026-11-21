@@ -1,12 +1,4 @@
-//! The cockpit the trader keeps between sessions.
-//!
-//! Read [`super`] first: it says why the rows are written, how they are
-//! joined, and what the drift guard does with them.
-
 use super::{ExclusionClass, Mapping, Source, UiBehaviour};
-
-/// The three refusals the observer threat model states, quoted where a row
-/// depends on one.
 const AUTHORITY_ARBITRARY_PATH: Mapping = Mapping::Excluded {
     class: ExclusionClass::Authority,
     reason: "`docs/control-plane/observer-threat-model.md` section 6 refuses reading an \
@@ -14,8 +6,8 @@ const AUTHORITY_ARBITRARY_PATH: Mapping = Mapping::Excluded {
              dialog is the ceiling's other side, not a gap in it",
 };
 
-/// Every row this family owns.
-pub(super) const ROWS: &[UiBehaviour] = &[
+pub(super) const BINDING: (usize, &[UiBehaviour]) = (12, ROWS);
+const ROWS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "alerts.list",
         title: "List local alerts and manage their definitions, monitoring and history",

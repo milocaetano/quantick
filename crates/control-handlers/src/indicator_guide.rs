@@ -45,6 +45,8 @@ fn set<H: IndicatorControlHost + ?Sized, A: JournalAccess>(
     serde_json::to_value(result).map_err(|error| ControlError::invalid_request(error.to_string()))
 }
 
+pub use register as register_actions;
+
 #[cfg(test)]
 #[path = "indicator_guide_tests.rs"]
 mod tests;

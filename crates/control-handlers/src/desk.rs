@@ -270,6 +270,8 @@ fn reopen<H: DeskHost + ?Sized, A: NotifyAccess>(
     })
 }
 
+pub use register as register_actions;
+
 #[cfg(test)]
 #[path = "desk_tests.rs"]
 mod desk_tests;

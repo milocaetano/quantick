@@ -120,3 +120,17 @@ pub fn exact(answer: Value) -> Result<Value, ControlError> {
     answer["fraction"] = Value::String(fraction.as_str().to_owned());
     Ok(answer)
 }
+
+/// Published schemas, owned beside their wire records.
+pub fn documents() -> Vec<(&'static str, serde_json::Value)> {
+    vec![
+        (
+            "layout-result-v2.schema.json",
+            quantick_control::schema::generated_schema::<crate::layout_v2::LayoutResultV2>(),
+        ),
+        (
+            "layout-resize-input-v2.schema.json",
+            quantick_control::schema::generated_schema::<crate::layout_v2::ResizeInputV2>(),
+        ),
+    ]
+}

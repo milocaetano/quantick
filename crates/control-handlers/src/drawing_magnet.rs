@@ -138,6 +138,8 @@ pub fn set_object<'a, J>(
     serde_json::to_value(result).map_err(invalid)
 }
 
+pub use register as register_actions;
+
 #[cfg(test)]
 #[path = "drawing_magnet_tests.rs"]
 mod tests;

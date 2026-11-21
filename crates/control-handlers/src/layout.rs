@@ -569,3 +569,5 @@ pub(crate) fn action_descriptors() -> Vec<quantick_control::registry::Capability
     descriptors.extend(v2::action_descriptors());
     descriptors
 }
+
+pub use register as register_actions;

@@ -996,3 +996,29 @@ impl BookSnapshot {
 #[cfg(test)]
 #[path = "orderflow/tests/revision_key.rs"]
 mod revision_key_tests;
+
+/// Published schemas, owned beside their wire records.
+pub fn documents() -> Vec<(&'static str, serde_json::Value)> {
+    vec![
+        (
+            "observer-orderflow-tape-v1.schema.json",
+            quantick_control::schema::generated_schema::<crate::orderflow::TapeSnapshot>(),
+        ),
+        (
+            "observer-orderflow-footprint-v1.schema.json",
+            quantick_control::schema::generated_schema::<crate::orderflow::FootprintSnapshot>(),
+        ),
+        (
+            "observer-orderflow-bubbles-v1.schema.json",
+            quantick_control::schema::generated_schema::<crate::orderflow::BubblesSnapshot>(),
+        ),
+        (
+            "observer-orderflow-heatmap-v1.schema.json",
+            quantick_control::schema::generated_schema::<crate::orderflow::HeatmapSnapshot>(),
+        ),
+        (
+            "observer-orderflow-l2-v1.schema.json",
+            quantick_control::schema::generated_schema::<crate::orderflow::L2Snapshot>(),
+        ),
+    ]
+}

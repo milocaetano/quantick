@@ -8,7 +8,7 @@
 //! the chart model in `quantick-chart`, the history vocabulary in
 //! `quantick-sources`, the marks in `quantick-drawings`, or a plain struct
 //! of its own. The application keeps one adapter per port that reads its
-//! panes and tabs into those types, and one registration line per family.
+//! panes and tabs into those types. The shared manifest selects each family.
 //!
 //! Register functions are generic over the host and the access type, the
 //! registries in `quantick-control-host` already are, so the window docks a
@@ -18,72 +18,28 @@
 //! handed the time, or asks its port to stamp it.
 
 pub mod addressed_pane;
-pub mod alerts;
-pub mod analysis;
-pub mod annotate;
-pub mod attention;
 pub mod axis_pane;
 pub mod bubble_pane;
-pub mod bubble_preset;
-pub mod bubble_save;
-pub mod bubble_scale;
-pub mod canvas;
-pub mod chart;
-pub mod chart_context;
 pub mod chart_layer;
 pub mod connection;
-pub mod contract_roll;
 pub mod deal_recorder;
-pub mod deal_recording;
-pub mod desk;
 pub mod dock;
-pub mod drawing_magnet;
 pub mod drawing_scope;
-pub mod drawing_text;
-pub mod feed_source;
 pub mod feed_status;
 pub mod generation;
-pub mod health;
-pub mod history;
-pub mod home_tab;
-pub mod indicator_guide;
 pub mod indicator_host;
-pub mod indicator_picker;
-pub mod journal_sessions;
-pub mod layers;
-pub mod layout;
-pub mod market_palette;
 pub mod market_switch;
 pub mod market_tab;
-pub mod market_windows;
-pub mod native_window;
-pub mod notify;
 pub mod observer;
-pub mod opening_scale;
-pub mod orderflow;
-pub mod orderflow_settings;
 pub mod pane_marks;
-pub mod pnl_display;
-pub mod price_axis;
-pub mod price_tag_progress;
-pub mod recovery;
 pub mod retry_matrix;
 pub mod schema_documents;
-pub mod script;
 pub mod semantic;
-pub mod session;
-pub mod session_reports;
 pub mod settings;
 mod tabs;
-pub mod tape_fold;
 pub mod tape_market_fold;
-pub mod tape_view_set;
 pub mod ticket_money;
-pub mod time_axis;
-pub mod trade;
 pub mod trade_account;
-pub mod widgets;
-pub mod workspace_book;
 
 pub(crate) use tabs::per_open_tab;
 pub use tabs::{JournalAccess, OpenTabs, TabDirectory, tab_index};
@@ -101,11 +57,27 @@ mod scratch;
 #[cfg(test)]
 mod test_support;
 
-pub mod appearance;
-pub mod chart_settings;
-
-pub mod script_editor;
-
-pub mod native_indicator;
-pub mod script_alarms;
-pub mod script_strategy;
+// These projections use app-local adapters; their descriptor owners live in generation.
+macro_rules! projection_module {
+    (feed) => {};
+    (interaction) => {};
+    (scene) => {};
+    (system) => {};
+    (workspace) => {};
+    ($module:ident) => {
+        pub mod $module;
+    };
+}
+macro_rules! family_module {
+    ([]; [$($projection:ident),*]) => { $(projection_module!($projection);)* };
+    ([$($action:ident),+]; [$($projection:ident),*]) => { $(pub mod $action;)* };
+}
+macro_rules! family_modules {
+    ($($id:literal {
+    schemas: [$($schema:ident),*], actions: [$($action:ident),*],
+    projections: [$($projection:ident),*], authority: [$($authority:ident),*],
+    readbacks: [$($readback:ident),*], behaviours: [$($behaviour:ident),*],
+    samples: [$($sample:ident),*],
+})*) => { $(family_module!([$($action),*]; [$($projection),*]);)* };
+}
+quantick_control::control_families!(family_modules);

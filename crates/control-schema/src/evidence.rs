@@ -1102,6 +1102,32 @@ pub fn permission(id: &str) -> PermissionId {
     PermissionId::new(id).expect("static permission ID is valid")
 }
 
+/// Published schemas, owned beside their wire records.
+pub fn documents() -> Vec<(&'static str, serde_json::Value)> {
+    vec![
+        (
+            "evidence-capture-input-v1.schema.json",
+            quantick_control::schema::generated_schema::<crate::evidence::EvidenceCaptureInput>(),
+        ),
+        (
+            "evidence-manifest-v1.schema.json",
+            quantick_control::schema::generated_schema::<crate::evidence::EvidenceManifest>(),
+        ),
+        (
+            "evidence-read-input-v1.schema.json",
+            quantick_control::schema::generated_schema::<crate::evidence::EvidenceReadInput>(),
+        ),
+        (
+            "evidence-chunk-page-v1.schema.json",
+            quantick_control::schema::generated_schema::<crate::evidence::EvidenceChunkPage>(),
+        ),
+        (
+            "evidence-bundle-v1.schema.json",
+            quantick_control::schema::generated_schema::<crate::evidence::EvidenceDocument>(),
+        ),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;

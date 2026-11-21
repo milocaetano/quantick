@@ -168,3 +168,10 @@ pub(crate) fn action_descriptors() -> Vec<quantick_control::registry::Capability
         quantick_control_schema::bubble_preset::reset_descriptor(),
     ]
 }
+
+pub fn register_actions<D: ActionDock<H, A>, H: PaneBubblesPort + ?Sized, A>(
+    registry: &mut D,
+) -> Result<(), RegistryError> {
+    register_tick(registry)?;
+    register(registry)
+}

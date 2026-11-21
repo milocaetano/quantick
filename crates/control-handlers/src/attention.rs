@@ -26,7 +26,7 @@ use quantick_control::{
         RegistryError, RevisionPolicy,
     },
     schema::generated_schema,
-    wire::{ActorContext, ActorKind, WireU64},
+    wire::{ActorContext, ActorKind},
 };
 use quantick_control_host::journal::{EventActor, NewEvent};
 use quantick_control_schema::interaction::CursorSnapshot;
@@ -60,23 +60,6 @@ fn active_cursor<P: OpenTabs<Tab: MarkTab> + ?Sized>(
     let index = app.active_tab_index();
     let tab = app.open_tab(index).ok_or_else(crate::tabs::tab_closed)?;
     Ok(tab.cursor_snapshot(app.tab_id_at(index), app.config()))
-}
-
-/// What a mark takes: an optional note the human typed, and optionally the
-/// target itself. The hotkey resolves the pointer and supplies the target, so
-/// the input alone determines the mark and a control trace can replay it
-/// identically; a caller that supplies none gets what is under the pointer
-/// at that moment — and a replayed entry without one is refused rather than
-/// resolved against the rerun's pointer, which is not the one that was
-/// marked.
-#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct MarkInput {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(length(max = CONTROL_REASON_MAX_BYTES))]
-    pub note: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub target: Option<CursorSnapshot>,
 }
 
 /// A mark after resolution: the target is settled, and the input says how it
@@ -113,25 +96,6 @@ impl MarkTargetSource {
             Self::Replayed => "replayed",
         }
     }
-}
-
-/// What a mark returns: where it landed in the journal and exactly what was
-/// pointed at when it was taken. The journal event at `sequence` carries the
-/// wall-clock time; the result does not repeat it, so the trace's result
-/// digest depends on what was marked and on its place in the journal, never
-/// on the clock.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct MarkResult {
-    pub sequence: WireU64,
-    pub target: CursorSnapshot,
-    /// Who resolved the target: `pointer` — the human's pointer, at the
-    /// gesture (the hotkey and the hook pass it) or at the call (a caller
-    /// that passed none); `supplied` — an agent passed a target it read from
-    /// a snapshot; `replayed` — a control trace re-injected a recorded mark.
-    pub target_source: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub note: Option<String>,
-    pub actor: EventActor,
 }
 
 /// The mark's descriptor, as the registry publishes it.
@@ -270,6 +234,8 @@ where
         generated_schema::<MarkCanonicalInput>(),
     )
 }
+
+pub use register as register_actions;
 
 #[cfg(test)]
 #[path = "attention_tests.rs"]

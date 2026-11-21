@@ -558,6 +558,28 @@ pub struct ChartWindowInput {
     pub cursor: Option<quantick_control::cursor::PageCursor>,
 }
 
+/// Published schemas, owned beside their wire records.
+pub fn documents() -> Vec<(&'static str, serde_json::Value)> {
+    vec![
+        (
+            "observer-chart-window-input-v1.schema.json",
+            quantick_control::schema::generated_schema::<crate::chart::ChartWindowInput>(),
+        ),
+        (
+            "observer-chart-summary-v1.schema.json",
+            quantick_control::schema::generated_schema::<crate::chart::ChartSnapshot>(),
+        ),
+        (
+            "observer-chart-window-query-v1.schema.json",
+            quantick_control::schema::generated_schema::<crate::chart::ChartWindowQuery>(),
+        ),
+        (
+            "observer-chart-window-page-v1.schema.json",
+            quantick_control::schema::generated_schema::<crate::chart::ChartWindowPage>(),
+        ),
+    ]
+}
+
 #[cfg(test)]
 mod venue_lead_label_tests {
     use super::*;

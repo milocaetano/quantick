@@ -71,6 +71,8 @@ fn set_tape<H: AddressedPanePort<Pane: AxisPane> + ?Sized, A>(
     .map_err(invalid)
 }
 
+pub use register as register_actions;
+
 #[cfg(test)]
 #[path = "price_axis_tests.rs"]
 mod tests;
