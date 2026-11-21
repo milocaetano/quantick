@@ -35,6 +35,11 @@ class IdentityTests(unittest.TestCase):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text, encoding="utf-8", newline="\n")
 
+    def write_bytes(self, name, content):
+        path = self.repo / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(content)
+
     def commit(self):
         self.git("add", "-A")
         self.git("commit", "-qm", "fixture")
@@ -103,6 +108,24 @@ class IdentityTests(unittest.TestCase):
         self.git("checkout", "-q", "repeated-head")
         self.git("rebase", "base")
         self.assertEqual(before, self.key())
+
+    def test_no_final_newline_occurrence_ignores_shifted_context(self):
+        self.git("checkout", "-q", "base")
+        self.write_bytes("policy.py", b"header\nx=False")
+        self.commit()
+        self.git("checkout", "-q", "-b", "no-newline-head")
+        self.write_bytes("policy.py", b"header\nx=True")
+        self.commit()
+        before = self.key()
+        self.git("checkout", "-q", "base")
+        self.write_bytes("policy.py", b"upstream\nheader\nx=False")
+        self.commit()
+        self.git("checkout", "-q", "no-newline-head")
+        self.git("rebase", "base")
+        self.assertEqual(before, self.key())
+        self.write_bytes("policy.py", b"upstream\nheader\nx=True\n")
+        self.commit()
+        self.assertNotEqual(before, self.key())
 
     def test_rename_source_and_excluded_destination_both_affect_identity(self):
         self.git("checkout", "-q", "base")

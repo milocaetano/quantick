@@ -105,6 +105,8 @@ def hunk_occurrences(repo, ancestor, path):
                 break
             if lines[index].startswith(b"-") and not lines[index].startswith(b"--- "):
                 removed.append(lines[index][1:])
+            elif lines[index].startswith(b"\\ No newline at end of file") and removed:
+                removed[-1] = removed[-1].removesuffix(b"\n")
             index += 1
         if not base or old_index < 0:
             occurrence = 0
