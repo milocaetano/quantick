@@ -1,6 +1,8 @@
-"""Pure fixed-budget validation; calibration proposals never rewrite budgets."""
+"""Evidence validation and advisory/rolling-median timing policy."""
 
+from datetime import datetime, timezone
 import math
+from statistics import median
 
 import inputs
 
@@ -55,20 +57,64 @@ def propose(report):
                        for row in report["crates"]]}
 
 
-def check(report, budget):
+WINDOW = 10
+MIN_HISTORY = 3
+REGRESSION_FACTOR = 2
+IDENTITY = ("host_class", "toolchain", "jobs", "profile_hash", "protocol_hash")
+
+
+def timestamp(report):
+    value = datetime.fromisoformat(report["measured_utc"])
+    if value.tzinfo is None or value.utcoffset() != timezone.utc.utcoffset(value):
+        raise ValueError("history timestamps must be UTC")
+    return value
+
+
+def check(report, history=(), context="pr"):
+    """Compare complete runs; missing comparable history is explicitly advisory."""
     valid_report(report)
-    if budget.get("schema") != 1 or budget.get("status") != "calibrated":
-        raise ValueError("budgets are uncalibrated; retain raw run and review a fixed baseline")
-    for field in ("host_class", "toolchain", "jobs", "profile_hash", "protocol_hash"):
-        if report.get(field) != budget.get(field):
-            raise ValueError(f"uncalibrated {field} drift")
-    if len(budget.get("crates", [])) != 3:
-        raise ValueError("missing top-three budget")
-    for row, limit in zip(report["crates"], budget["crates"]):
-        if any(row[key] != limit[key] for key in ("crate", "package", "source")):
-            raise ValueError("uncalibrated top-three/source drift")
-        maximum = limit.get("max_seconds")
-        if type(maximum) not in (int, float) or not math.isfinite(maximum) or maximum <= 0:
-            raise ValueError("invalid fixed budget")
-        if any(value > maximum for value in loop_seconds(row)):
-            raise ValueError(f"edit-loop budget exceeded: {row['package']}")
+    if context not in ("pr", "main"):
+        raise ValueError("timing context must be pr or main")
+    current = timestamp(report)
+    if any(report.get(field) is None for field in IDENTITY):
+        raise ValueError("measurement is missing comparison identity")
+    previous = []
+    seen = set()
+    for prior in history:
+        valid_report(prior)
+        if prior.get("timing_context") != "main":
+            raise ValueError("history must come from main measurements")
+        if any(prior.get(field) is None for field in IDENTITY):
+            raise ValueError("history is missing comparison identity")
+        sha = prior["source_sha"]
+        if sha in seen:
+            raise ValueError("duplicate source SHA in timing history")
+        seen.add(sha)
+        prior_time = timestamp(prior)
+        if prior_time > current or (prior_time == current and sha != report["source_sha"]):
+            raise ValueError("history must precede the current measurement")
+        if sha == report["source_sha"]:
+            continue  # A rerun must not use its own prior result as a baseline.
+        if all(prior[field] == report[field] for field in IDENTITY):
+            previous.append(prior)
+    previous.sort(key=lambda prior: (timestamp(prior), prior["source_sha"]))
+    results = []
+    for row in report["crates"]:
+        comparable = [(prior, old) for prior in previous for old in prior["crates"]
+                      if all(old[key] == row[key] for key in ("crate", "package", "source"))][-WINDOW:]
+        observed = median(loop_seconds(row))
+        result = {"crate": row["crate"], "median_seconds": observed,
+                  "history_count": len(comparable),
+                  "history_shas": [prior["source_sha"] for prior, _ in comparable]}
+        if len(comparable) < MIN_HISTORY:
+            result["status"] = "cold-start" if not comparable else "insufficient-history"
+        else:
+            reference = median(median(loop_seconds(old)) for _, old in comparable)
+            result.update(reference_seconds=reference, limit_seconds=REGRESSION_FACTOR * reference,
+                          status="regression" if observed > REGRESSION_FACTOR * reference else "pass")
+        results.append(result)
+    return {"context": context, "window": WINDOW, "minimum_history": MIN_HISTORY,
+            "regression_factor": REGRESSION_FACTOR, "crates": results,
+            "status": "failed" if context == "main" and any(
+                row["status"] == "regression" for row in results) else "advisory" if context == "pr"
+                or any(row["status"] != "pass" for row in results) else "pass"}

@@ -3040,7 +3040,7 @@ fn returning_to_a_window_returns_its_frame() {
 /// mission's performance gate. Ignored by default: it is a measurement,
 /// not an assertion.
 #[test]
-#[ignore]
+#[ignore = "manual dense-tape projection timing diagnostic"]
 fn bench_projection_over_a_dense_tape() {
     let mut history = LiquidityHistory::new(HeatmapConfig {
         display_grouping: DisplayGrouping::Adaptive { target_rows: 128 },
@@ -3099,7 +3099,7 @@ fn bench_projection_over_a_dense_tape() {
 ///
 /// Ignored by default: a measurement, not an assertion.
 #[test]
-#[ignore]
+#[ignore = "manual live-lane preset projection timing diagnostic"]
 fn bench_the_live_half_under_the_live_lane_pie_preset() {
     // `live lane pie`, from crates/app/config/bubbles.toml: the candle
     // summary on, half-second clustering on the candles and a tenth on the

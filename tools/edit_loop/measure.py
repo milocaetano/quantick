@@ -3,9 +3,8 @@
 
 run requires four disjoint paths: clean source checkout, NEW detached worktree,
 target root (new, or a directory restored from the workflow cache), NEW evidence
-directory. No path is deleted or cleaned. Budget checking follows measurement
-even for an initially uncalibrated budget, so the first calibration attempt is
-honestly red with useful raw artifacts.
+directory. No path is deleted or cleaned. Timing policy follows strict measurement validation; pull requests are advisory
+and main compares recent compatible samples when enough history is available.
 """
 
 import argparse
@@ -24,6 +23,7 @@ import sampling
 # A package warm-up may compile the app's dependencies from an empty target.
 # This timeout is a failure bound, not the calibrated incremental cost budget.
 PROCESS_TIMEOUT_SECONDS = 3600
+HISTORY_LIMIT = 100
 
 
 def version(command, repo):
@@ -122,6 +122,9 @@ def run(args):
               "jobs": inputs.JOBS, "debug_info": inputs.DEBUG_INFO, "worktree": str(worktree),
               "target_root": str(target), "target_restored": target_restored}
     try:
+        if args.history and any(Path(args.history).resolve().is_relative_to(path.resolve())
+                                for path in (repo, worktree, target, output)):
+            raise ValueError("timing history must be outside source, worktree, target and evidence paths")
         inputs.clean_head(repo, args.sha)
         inputs.regular_path(repo, repo / "Cargo.toml")
         if repo.resolve() != inputs.ROOT:
@@ -130,7 +133,7 @@ def run(args):
         if budget_path != repo / "tools/edit_loop/budgets.json":
             raise ValueError("use the committed tools/edit_loop/budgets.json, not a replacement budget")
         budget_bytes = inputs.git(repo, "show", f"{args.sha}:tools/edit_loop/budgets.json")
-        fixed_budget = json.loads(budget_bytes)
+        json.loads(budget_bytes)  # Retain the historical calibration input identity.
         report["budget_sha256"] = inputs.digest(budget_bytes)
         inputs.git(repo, "worktree", "add", "--detach", str(worktree), args.sha)
         inputs.clean_head(worktree, args.sha)
@@ -167,9 +170,13 @@ def run(args):
         report.update(status="complete", restored=True)
         evidence.publish(output, report)
         validated = evidence.load(output / "report.json", repo)
-        budgets.check(validated, fixed_budget)
-        report["budget_status"] = "pass"
-        return 0
+        report["timing_context"] = args.context
+        report["timing_policy"] = budgets.check(validated, read_history(args.history), args.context)
+        report["budget_status"] = report["timing_policy"]["status"]
+        print(json.dumps(report["timing_policy"], indent=2))
+        if args.context == "main" and args.history:
+            save_history(Path(args.history), report)
+        return 1 if report["budget_status"] == "failed" else 0
     except (Exception, KeyboardInterrupt) as error:
         report["error"] = f"{type(error).__name__}: {error}"
         report["budget_status"] = "failed"
@@ -180,18 +187,39 @@ def run(args):
         evidence.publish(output, report)
 
 
+def read_history(path):
+    if not path or not Path(path).exists():
+        return []
+    value = evidence.read_json(Path(path))
+    if not isinstance(value, list):
+        raise ValueError("timing history must be a list of main reports")
+    return value
+
+
+def save_history(path, report):
+    prior = [row for row in read_history(path) if row["source_sha"] != report["source_sha"]]
+    # Bound cache size while keeping enough recent runs for per-crate selection changes.
+    rows = sorted(prior + [report], key=lambda row: (row["measured_utc"], row["source_sha"]))[-HISTORY_LIMIT:]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    inputs.write_json(path, rows)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
     measure = commands.add_parser("run")
     for name in ("repo", "sha", "worktree", "target", "output", "budgets"):
         measure.add_argument("--" + name, required=True)
+    measure.add_argument("--context", choices=("pr", "main"), default="pr")
+    measure.add_argument("--history", help="main-only report history; absent means cold start")
     proposal = commands.add_parser("propose", help="print a fixed budget proposal for independent review")
     proposal.add_argument("report")
     proposal.add_argument("--repo", required=True, help="checkout containing the measured Git commit")
-    checker = commands.add_parser("check", help="validate retained raw evidence against committed budgets")
+    checker = commands.add_parser("check", help="validate retained raw evidence and report timing policy")
     checker.add_argument("report")
     checker.add_argument("--repo", required=True)
+    checker.add_argument("--context", choices=("pr", "main"), default="pr")
+    checker.add_argument("--history")
     args = parser.parse_args(argv)
     if args.command == "run":
         return run(args)
@@ -200,9 +228,9 @@ def main(argv=None):
         if args.command == "propose":
             print(json.dumps(budgets.propose(report), indent=2, sort_keys=True, allow_nan=False))
         else:
-            committed = json.loads(inputs.git(Path(args.repo), "show", "HEAD:tools/edit_loop/budgets.json"))
-            budgets.check(report, committed)
-            print("Raw evidence and committed fixed budgets pass.")
+            result = budgets.check(report, read_history(args.history), args.context)
+            print(json.dumps(result, indent=2))
+            return 1 if result["status"] == "failed" else 0
         return 0
     except (ValueError, OSError, KeyError, TypeError, subprocess.SubprocessError) as error:
         parser.error(str(error))

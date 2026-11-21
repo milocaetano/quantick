@@ -2059,7 +2059,7 @@ fn observer_capture_revisions_are_coherent_and_monotonic() {
 /// Reading only, so it is `#[ignore]`d: it asserts nothing, and the numbers
 /// it prints are worth having on the record when a scope is added.
 #[test]
-#[ignore]
+#[ignore = "manual per-scope capture timing diagnostic"]
 fn observer_per_scope_capture_cost() {
     const MEASURED: usize = 200;
 
@@ -2124,7 +2124,7 @@ fn observer_core_capture_stays_within_the_ui_budget() {
 /// Ignored in the ordinary suite because a p99 measured beside a thousand
 /// other tests reports the runner's load, not the capture's cost.
 #[test]
-#[ignore]
+#[ignore = "p99 capture timing requires a quiet host without concurrent tests"]
 fn observer_core_capture_p99_stays_within_the_ui_budget() {
     let best = measure_core_capture_us();
     let BatchReading {
@@ -3611,7 +3611,7 @@ fn observer_max_chart_window_capture_stays_within_the_ui_budget() {
 /// beside a thousand other tests reports the runner's load, not the
 /// capture's cost.
 #[test]
-#[ignore]
+#[ignore = "maximum-window p99 capture timing requires a quiet host"]
 fn observer_max_chart_window_capture_p99_stays_within_the_ui_budget() {
     let best = measure_max_chart_window_capture_us();
     let BatchReading {
