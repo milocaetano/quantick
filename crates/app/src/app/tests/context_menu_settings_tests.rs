@@ -2,7 +2,7 @@
 //! window, and on the flow pane the gear's panel opened on its L2 or bubbles
 //! section, by a real click on the drawn menu.
 
-use super::*;
+use super::support::*;
 use crate::surfaces::chart_settings::ChartSettingsTab;
 use crate::ui_state::PanelSection;
 

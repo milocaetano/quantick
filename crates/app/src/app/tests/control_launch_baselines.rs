@@ -1,7 +1,7 @@
 //! Literal control launch inputs: each case is a hook table fed through
 //! `fixed_env`, so every case runs in `cargo test` and none reads the
 //! process environment.
-use super::*;
+use super::support::*;
 use quantick_feed::replay::test_support as replay_test_support;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;

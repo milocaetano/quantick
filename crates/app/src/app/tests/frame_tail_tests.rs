@@ -1,4 +1,4 @@
-use super::*;
+use super::support::*;
 
 const WINDOW: egui::Vec2 = egui::vec2(2000.0, 1200.0);
 

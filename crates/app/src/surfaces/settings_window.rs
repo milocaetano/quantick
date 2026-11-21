@@ -160,7 +160,12 @@ fn row_control(state: &State, ui: &mut egui::Ui, row: SettingRow, intent: &mut V
 }
 
 /// The bundled themes; a pick asks the appearance owner to apply it.
-fn theme_menu(ui: &mut egui::Ui, state: &State, current: Option<Builtin>, intent: &mut Vec<Intent>) {
+fn theme_menu(
+    ui: &mut egui::Ui,
+    state: &State,
+    current: Option<Builtin>,
+    intent: &mut Vec<Intent>,
+) {
     let menu = ui.menu_button("Theme", |ui| {
         if state.theme_landed() {
             ui.close_menu();

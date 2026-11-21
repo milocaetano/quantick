@@ -1,6 +1,6 @@
 //! Bubble settings belong to an asset: what one market's tab changes never
 //! dresses another market, and a market shown again comes back as it was left.
-use super::*;
+use super::support::*;
 use crate::bubble_presets::BubblePreset;
 use quantick_orderflow::LaneWindow;
 use quantick_stores::bubble_asset_store::{AssetBinding, AssetBubblesStore, SharedAssetBubbles};

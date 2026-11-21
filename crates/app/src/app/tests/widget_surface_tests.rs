@@ -1,7 +1,7 @@
 //! The widget panes through the control plane, on a live BTCUSDT tab: each
 //! opens, reads back what its window paints, and closes.
 use super::asset_bubbles_tests::shipped_config;
-use super::*;
+use super::support::*;
 use crate::control::ActionOrigin;
 use quantick_chart::widgets::liquidations::LIQUIDATIONS_NOT_PROVIDED;
 use quantick_chart::widgets::open_interest::OPEN_INTEREST_NOT_PROVIDED;

@@ -1,7 +1,7 @@
 use super::*;
 use crate::app::QuantickApp;
-use crate::app::tests::update_indicator_settings;
-use crate::app::tests::{click_chart, pane_point, settle_indicators, split_app};
+use crate::app::tests::support::update_indicator_settings;
+use crate::app::tests::support::{click_chart, pane_point, settle_indicators, split_app};
 use crate::toolbar::ToolbarAction;
 use quantick_indicators::InputValue;
 use quantick_ui_model::indicator_settings::Intent;
@@ -83,7 +83,7 @@ fn i1_preview_and_discard_keep_the_original_target_and_committed_values() {
         before
     );
     assert!(
-        crate::app::tests::pane_set(&app, PaneSide::Flow)[0]
+        crate::app::tests::support::pane_set(&app, PaneSide::Flow)[0]
             .inputs
             .is_empty()
     );

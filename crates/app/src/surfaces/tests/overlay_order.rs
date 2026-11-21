@@ -4,21 +4,21 @@ fn registry() -> Surfaces {
     Surfaces {
         phase_trace: Some(vec![]),
         first: Adapter::new(
-            first_view::View {
+            first_view_tests::View {
                 enabled: true,
                 hook_intent: Some((3, 10)),
                 ..Default::default()
             },
-            first_view::effects,
+            first_view_tests::effects,
         )
         .in_slots(&[Slot::LeadingOverlay, Slot::Overlay]),
         second: Adapter::new(
-            second_view::View {
+            second_view_tests::View {
                 enabled: true,
                 intent: Some((4, 17)),
                 ..Default::default()
             },
-            second_view::effects,
+            second_view_tests::effects,
         )
         .in_slots(&[Slot::Overlay]),
         ..Default::default()
@@ -165,7 +165,7 @@ fn direct_ordinary_overlay_initializes_all_hooks_but_never_paints_leading_entrie
 fn ordinary_nonoverlay_keyboard_capture_is_retained_once() {
     let mut registry = registry();
     registry.second =
-        Adapter::new(Default::default(), second_view::effects).in_slots(&[Slot::Toolbar]);
+        Adapter::new(Default::default(), second_view_tests::effects).in_slots(&[Slot::Toolbar]);
     registry.capture_keyboard(&egui::Context::default());
     assert_eq!(
         order(&registry, "capture"),
@@ -183,7 +183,7 @@ fn ordinary_nonoverlay_keyboard_capture_is_retained_once() {
 fn leading_effect_wins_and_real_toast_undo_survives_the_same_overlay_fold() {
     let mut registry = registry();
     registry.first = Adapter::new(
-        first_view::View {
+        first_view_tests::View {
             enabled: true,
             ..Default::default()
         },
@@ -202,7 +202,7 @@ fn leading_effect_wins_and_real_toast_undo_survives_the_same_overlay_fold() {
     )
     .in_slots(&[Slot::LeadingOverlay, Slot::Overlay]);
     registry.second = Adapter::new(
-        second_view::View {
+        second_view_tests::View {
             enabled: true,
             ..Default::default()
         },

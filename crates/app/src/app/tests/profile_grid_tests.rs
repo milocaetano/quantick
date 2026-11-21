@@ -1,5 +1,5 @@
 //! Market-grid inheritance and exact profile comparisons across bar rules.
-use super::*;
+use super::support::*;
 use quantick_anchored_studies::{LevelPrices, ProfileOutput};
 use quantick_engine::VolumeProfile;
 use quantick_engine::bar_registry::BUILTIN_BARS;

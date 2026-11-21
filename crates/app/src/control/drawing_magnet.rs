@@ -3,9 +3,10 @@
 //! hand's two paths onto the calls `quantick_control_handlers::drawing_magnet`
 //! docks.
 
-pub(crate) use quantick_control_schema::drawing_magnet::*;
+pub(crate) use crate::toolrail::ToolRailExt as _;
+use quantick_control_schema::drawing_magnet::*;
 
-use crate::app::{GatewayPort, TabsPort};
+use crate::app::{GatewayPort, QuantickApp, TabsPort};
 use quantick_control_handlers::drawing_magnet::RailMagnetPort;
 
 use crate::drawings::DrawingId;
@@ -15,6 +16,13 @@ use quantick_control::wire::WireU64;
 use quantick_control::annotation::ANNOTATE_MODULE_ID;
 
 use super::journal::NewEvent;
+
+impl RailMagnetPort for QuantickApp {
+    fn switch_rail_magnet(&mut self, on: bool) -> bool {
+        let roots = crate::app::control_host::control_roots_mut(self);
+        roots.surfaces.toolrail.set_magnet(on)
+    }
+}
 
 /// A hand's flip of the rail's magnet is `annotate.magnet.set`, so it
 /// journals alike. Without control access it lands directly.

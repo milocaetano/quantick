@@ -1,4 +1,4 @@
-use super::*;
+use super::support::*;
 
 fn profile_app() -> (QuantickApp, mpsc::Receiver<FeedCommand>, egui::Context) {
     let (mut app, events, commands, _book) = test_app();

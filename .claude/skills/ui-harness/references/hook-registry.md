@@ -32,7 +32,7 @@ Owner keys (other paths appear in full):
 | settings | `surfaces/chart_settings/mod.rs` |
 | chrome | `surfaces/drawing_chrome/mod.rs` |
 | toast | `surfaces/toast.rs` |
-| toolrail | `toolrail/mod.rs` |
+| toolrail | `surfaces/toolrail/mod.rs` |
 
 | Hook | Owner | Reaches |
 | --- | --- | --- |

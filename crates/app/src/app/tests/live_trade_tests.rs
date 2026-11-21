@@ -1,4 +1,4 @@
-use super::*;
+use super::support::*;
 use quantick_chart_interaction::live_trade_plan::{LiveTradePlan, LiveTradeStage};
 
 // The unchanged force-bar integration fixture's region, parameters and prints.

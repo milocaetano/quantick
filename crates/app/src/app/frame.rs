@@ -754,7 +754,7 @@ impl QuantickApp {
 }
 
 /// Publish already-validated per-owner defaults before any frame operation creates or paints objects.
-pub(super) fn sync_appearance(
+pub(crate) fn sync_appearance(
     ctx: Option<&egui::Context>,
     runtime: &mut super::workspace_runtime::WorkspaceRuntime,
     presets: &mut quantick_drawings::presets::PresetStore,

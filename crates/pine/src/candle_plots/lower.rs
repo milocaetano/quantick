@@ -1,5 +1,5 @@
 //! Load-time registration, kept beside the owning candle behavior.
-use super::{Compiler, fold::Const};
+use crate::compile::{Compiler, fold::Const};
 use crate::{
     ast::{Arg, NodeId},
     candle_plots::{BAR_ARGS, CANDLE_ARGS, argument},
@@ -8,7 +8,7 @@ use crate::{
 use quantick_indicators::CandlePlotSpec;
 
 impl Compiler {
-    pub(super) fn validate_candle_scope(&mut self, call: NodeId) {
+    pub(crate) fn validate_candle_scope(&mut self, call: NodeId) {
         if !self
             .pending_plots
             .iter()
@@ -22,7 +22,7 @@ impl Compiler {
         }
     }
 
-    pub(super) fn candle_call(&mut self, call: NodeId, args: &[Arg], is_bar: bool) {
+    pub(crate) fn candle_call(&mut self, call: NodeId, args: &[Arg], is_bar: bool) {
         let names = if is_bar { BAR_ARGS } else { CANDLE_ARGS };
         let mut seen = std::collections::BTreeSet::new();
         let mut position = 0;

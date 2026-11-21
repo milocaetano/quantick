@@ -5,7 +5,7 @@ use super::bare_canvas::app_with_history as bare_app_with_history;
 use super::drawings_tests::{
     click_quick_range_action, drag_quick_range, quick_range_ends, secondary_button,
 };
-use super::*;
+use super::support::*;
 use crate::surfaces::drawing_chrome::QuickRangeAction as Action;
 use serde_json::json;
 

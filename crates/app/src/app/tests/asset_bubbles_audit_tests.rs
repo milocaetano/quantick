@@ -5,7 +5,7 @@
 //! calls; the rest through the hotkey, the menu or the control action an
 //! agent calls.
 use super::asset_bubbles_tests::{look, maintain, select_market, shipped_config};
-use super::*;
+use super::support::*;
 use crate::bubble_presets::{BubblePreset, BubblePresetFile, embedded, load_from};
 use crate::control::ActionOrigin;
 use quantick_stores::bubble_asset_store::{AssetBinding, AssetBubblesStore, SaveSwitch};

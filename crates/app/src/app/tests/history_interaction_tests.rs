@@ -1,4 +1,4 @@
-use super::*;
+use super::support::*;
 
 #[test]
 fn input_and_an_unfinished_drawing_survive_publication_on_every_pane() {

@@ -2,8 +2,8 @@
 //! adapters with one declared dependency hoisted: each swap does visible
 //! harm, which is what the declaration exists to refuse.
 
-use super::frame::FrameStage;
-use super::*;
+use super::super::frame::FrameStage;
+use super::support::*;
 use quantick_chart_interaction::stage_registry::hoisted;
 use quantick_chart_interaction::tab_drain_plan::TabDrainStage;
 
@@ -497,7 +497,7 @@ fn the_pinned_inspector_before_the_demo_misses_the_selection_it_made() {
 /// stages listed by hand.
 #[test]
 fn the_frame_and_tab_drain_plans_add_no_heap_work_to_a_dense_intake() {
-    use super::frame::FramePlan;
+    use super::super::frame::FramePlan;
     use TabDrainStage::*;
     use quantick_chart_interaction::tab_drain_plan::TabDrainPlan;
     const BY_HAND: [TabDrainStage; 7] = [
@@ -859,18 +859,19 @@ fn paper_panel_recipient_order_surrounds_editor_and_polls_only_in_dock() {
     );
     assert!(!app.surfaces.replay_browser.browser_is_open());
     ready_pickers(&mut app);
-    let (_, dock_steps) = super::paper_wiring::panel_effects::paper_panel_steps::observe(|| {
-        dock_frame(
-            &mut app,
-            &ctx,
-            vec![egui::Event::PointerButton {
-                pos: browser,
-                button: egui::PointerButton::Primary,
-                pressed: false,
-                modifiers: egui::Modifiers::NONE,
-            }],
-        )
-    });
+    let (_, dock_steps) =
+        super::super::paper_wiring::panel_effects::paper_panel_steps::observe(|| {
+            dock_frame(
+                &mut app,
+                &ctx,
+                vec![egui::Event::PointerButton {
+                    pos: browser,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: egui::Modifiers::NONE,
+                }],
+            )
+        });
     assert_eq!(
         dock_steps,
         [
@@ -900,11 +901,12 @@ fn paper_panel_recipient_order_surrounds_editor_and_polls_only_in_dock() {
         closed: -10_000,
         mixed: false,
     });
-    let (_, tail_steps) = super::paper_wiring::panel_effects::paper_panel_steps::observe(|| {
-        let _ = ctx.run(egui::RawInput::default(), |ctx| {
-            assert!(app.run_report_tail_test(ctx, [DrawPaperReport]).is_empty());
+    let (_, tail_steps) =
+        super::super::paper_wiring::panel_effects::paper_panel_steps::observe(|| {
+            let _ = ctx.run(egui::RawInput::default(), |ctx| {
+                assert!(app.run_report_tail_test(ctx, [DrawPaperReport]).is_empty());
+            });
         });
-    });
     assert_eq!(
         tail_steps,
         [

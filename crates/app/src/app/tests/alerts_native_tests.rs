@@ -1,4 +1,4 @@
-use super::*;
+use super::support::*;
 use quantick_alerts::{
     AlertCommand, AlertId, AlertSpec, DeliveryOutcome, Expiration, Frequency, Notification,
     Operator, Predicate, TargetRef,

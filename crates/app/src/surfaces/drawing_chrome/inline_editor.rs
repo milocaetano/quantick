@@ -17,7 +17,6 @@ const INLINE_TEXT_AREA_ID: &str = "inline-text-editor";
 /// What an empty note's field says before anything is typed.
 pub(crate) const INLINE_TEXT_HINT: &str = "Add text";
 
-
 /// Draw this frame.
 pub(crate) fn draw(
     chrome: &mut Chrome,
@@ -118,8 +117,11 @@ fn draw_inner(chrome: &mut Chrome, ctx: &egui::Context, env: &DrawingEnv<'_>) ->
         crate::drawings::px_rect(bbox.shrink(crate::pane::DRAWING_ANCHOR_RADIUS_PX)),
         payload.appearance,
     );
-    let bounds =
-        crate::drawings::egui_rect(payload.bounds_at(anchor, &crate::drawings::text::TextFonts(ctx), env.px_per_bar));
+    let bounds = crate::drawings::egui_rect(payload.bounds_at(
+        anchor,
+        &crate::drawings::text::TextFonts(ctx),
+        env.px_per_bar,
+    ));
     let pad = payload.appearance.padding();
     let background = if legacy {
         crate::drawings::text_backing(&palette, color, palette.chrome()).unwrap_or(palette.chrome())

@@ -1,6 +1,6 @@
 //! A chart's ⋯ menu, its minimized strip and the remove dialog, operated the
 //! way a trader does: by pressing what was painted.
-use super::*;
+use super::support::*;
 
 use crate::canvas_layout::preset;
 use quantick_workspace::canvas::{PaneKind, PaneMode, PresetGroup};

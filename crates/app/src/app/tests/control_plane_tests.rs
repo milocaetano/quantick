@@ -1,6 +1,6 @@
 mod pane_model_tests;
 
-use super::*;
+use super::support::*;
 use quantick_feed::replay::test_support as replay_test_support;
 
 #[test]

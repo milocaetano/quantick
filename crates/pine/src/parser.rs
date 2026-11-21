@@ -14,9 +14,6 @@ use crate::ast::{Arg, Ast, BinOp, NodeId, NodeKind, UnOp, VarMode};
 use crate::error::{ErrorCode, PineError, Span};
 use crate::lexer::{Tok, Token};
 
-#[path = "libraries/parse.rs"]
-mod library_parse;
-
 /// How deeply expressions may nest.
 ///
 /// Descent costs about five stack frames per `(`, and a stack overflow
@@ -33,9 +30,6 @@ const MAX_NEST_DEPTH: usize = 64;
 ///
 /// Every syntax error found, each with its span; the AST is only returned
 /// when the whole script parsed.
-#[path = "collections/parser.rs"]
-mod collection_parser;
-
 pub fn parse(tokens: &[Token]) -> Result<(Ast, NodeId), Vec<PineError>> {
     debug_assert!(
         !tokens.is_empty(),
@@ -56,32 +50,32 @@ pub fn parse(tokens: &[Token]) -> Result<(Ast, NodeId), Vec<PineError>> {
     }
 }
 
-struct Parser<'a> {
-    tokens: &'a [Token],
-    pos: usize,
-    ast: Ast,
-    errors: Vec<PineError>,
+pub(crate) struct Parser<'a> {
+    pub(crate) tokens: &'a [Token],
+    pub(crate) pos: usize,
+    pub(crate) ast: Ast,
+    pub(crate) errors: Vec<PineError>,
     /// Current expression nesting, guarded by [`MAX_NEST_DEPTH`].
-    depth: usize,
+    pub(crate) depth: usize,
 }
 
 impl Parser<'_> {
     // ---- token plumbing ----------------------------------------------
 
-    fn peek(&self) -> &Tok {
+    pub(crate) fn peek(&self) -> &Tok {
         &self.tokens[self.pos.min(self.tokens.len() - 1)].tok
     }
 
-    fn peek_at(&self, ahead: usize) -> &Tok {
+    pub(crate) fn peek_at(&self, ahead: usize) -> &Tok {
         let i = (self.pos + ahead).min(self.tokens.len() - 1);
         &self.tokens[i].tok
     }
 
-    fn span(&self) -> Span {
+    pub(crate) fn span(&self) -> Span {
         self.tokens[self.pos.min(self.tokens.len() - 1)].span
     }
 
-    fn advance(&mut self) -> &Token {
+    pub(crate) fn advance(&mut self) -> &Token {
         let token = &self.tokens[self.pos.min(self.tokens.len() - 1)];
         if self.pos < self.tokens.len() - 1 {
             self.pos += 1;
@@ -89,7 +83,7 @@ impl Parser<'_> {
         token
     }
 
-    fn eat(&mut self, tok: &Tok) -> bool {
+    pub(crate) fn eat(&mut self, tok: &Tok) -> bool {
         if self.peek() == tok {
             self.advance();
             true
@@ -98,7 +92,7 @@ impl Parser<'_> {
         }
     }
 
-    fn expect(&mut self, tok: &Tok, what: &str) -> bool {
+    pub(crate) fn expect(&mut self, tok: &Tok, what: &str) -> bool {
         if self.eat(tok) {
             true
         } else {
@@ -312,7 +306,13 @@ impl Parser<'_> {
         }
     }
 
-    fn declare(&mut self, mode: VarMode, name: String, value: NodeId, start: Span) -> NodeId {
+    pub(crate) fn declare(
+        &mut self,
+        mode: VarMode,
+        name: String,
+        value: NodeId,
+        start: Span,
+    ) -> NodeId {
         let span = self.spanned_from(start);
         let mut words: Vec<String> = self
             .tokens
@@ -393,7 +393,7 @@ impl Parser<'_> {
 
     /// `IDENT ( idents ) => …` — tried with a saved position; a mismatch
     /// backtracks and the caller parses a call expression instead.
-    fn try_function_def(&mut self, name: &str, start: Span) -> Option<NodeId> {
+    pub(crate) fn try_function_def(&mut self, name: &str, start: Span) -> Option<NodeId> {
         let saved = self.pos;
         self.advance(); // name
         self.advance(); // `(`
@@ -452,7 +452,7 @@ impl Parser<'_> {
     /// The value position of a statement: a block-expression keyword or a
     /// plain expression. The bool is true for block forms, whose consumed
     /// `Dedent` already ended the statement (no trailing `Newline` exists).
-    fn statement_value(&mut self) -> Option<(NodeId, bool)> {
+    pub(crate) fn statement_value(&mut self) -> Option<(NodeId, bool)> {
         match self.peek() {
             Tok::KwIf => Some((self.if_expression()?, true)),
             Tok::KwFor => Some((self.for_expression()?, true)),
@@ -462,7 +462,7 @@ impl Parser<'_> {
         }
     }
 
-    fn end_of_statement(&mut self) {
+    pub(crate) fn end_of_statement(&mut self) {
         match self.peek() {
             Tok::Newline => {
                 self.advance();
@@ -670,7 +670,7 @@ impl Parser<'_> {
 
     // ---- expressions -----------------------------------------------------
 
-    fn expression(&mut self) -> Option<NodeId> {
+    pub(crate) fn expression(&mut self) -> Option<NodeId> {
         // The descent happens on the way *down*, so the guard belongs here:
         // by the time unbalanced input would be rejected, the stack is
         // already gone.
@@ -894,7 +894,7 @@ impl Parser<'_> {
         Some(self.ast.push(kind, span))
     }
 
-    fn spanned_from(&self, start: Span) -> Span {
+    pub(crate) fn spanned_from(&self, start: Span) -> Span {
         let end = self.tokens[self.pos.saturating_sub(1).min(self.tokens.len() - 1)].span;
         Span::new(start.start, end.end.max(start.end))
     }

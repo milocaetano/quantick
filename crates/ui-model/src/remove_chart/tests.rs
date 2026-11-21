@@ -17,7 +17,9 @@ fn step(
     picked: Option<PaneMenuItem>,
     escape: bool,
 ) -> Effects {
-    if let Some(item) = picked { Model::update(state, Intent::Pick(0, item)); }
+    if let Some(item) = picked {
+        Model::update(state, Intent::Pick(0, item));
+    }
     Model::update(
         state,
         Intent::MenuStep {
@@ -131,12 +133,7 @@ fn observation_captures_only_input_or_changed_open_context() {
     let mut state = State::default();
     let facts = snapshot();
     let observe = |state: &State, name| {
-        state.observe(
-            false,
-            &facts.live,
-            facts.saved.as_ref(),
-            (name, false),
-        )
+        state.observe(false, &facts.live, facts.saved.as_ref(), (name, false))
     };
     assert!(
         observe(&state, "Desk").is_none(),
@@ -156,7 +153,6 @@ fn observation_captures_only_input_or_changed_open_context() {
     assert!(observe(&state, "Another desk").is_none());
 }
 
-
 #[test]
 fn pane_menu_pick_is_consumed_once_in_its_tab() {
     let mut state = State::default();
@@ -171,14 +167,26 @@ fn pane_menu_pick_is_consumed_once_in_its_tab() {
     assert_eq!(state.menu_open(), None);
     Model::update(&mut state, Intent::Pick(0, PaneMenuItem::Minimize));
     assert!(state.has_pick());
-    assert_eq!(step(&mut state, snapshot(), None, false), Effects::Act(Some(CanvasAct::Minimize { slot: 0 })));
+    assert_eq!(
+        step(&mut state, snapshot(), None, false),
+        Effects::Act(Some(CanvasAct::Minimize { slot: 0 }))
+    );
     assert!(!state.has_pick());
-    assert_eq!(step(&mut state, snapshot(), None, false), Effects::Act(None));
+    assert_eq!(
+        step(&mut state, snapshot(), None, false),
+        Effects::Act(None)
+    );
     Model::update(&mut state, Intent::Pick(0, PaneMenuItem::Remove));
-    assert_eq!(step(&mut state, snapshot(), None, false), Effects::Act(None));
+    assert_eq!(
+        step(&mut state, snapshot(), None, false),
+        Effects::Act(None)
+    );
     assert_eq!(state.pending(), Some(0));
     assert!(!state.has_pick());
-    assert_eq!(answer(&mut state, Some(RemoveAnswer::Cancel), false), Effects::Act(None));
+    assert_eq!(
+        answer(&mut state, Some(RemoveAnswer::Cancel), false),
+        Effects::Act(None)
+    );
 }
 #[test]
 fn pane_menu_scopes_preserve_live_tabs_and_prune_closed_tabs() {

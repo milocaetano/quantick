@@ -1,5 +1,7 @@
 //! Version policy shared by compiler, type checking and execution.
 use crate::error::{ErrorCode, PineError, Span};
+mod compile;
+mod types;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) enum Version {

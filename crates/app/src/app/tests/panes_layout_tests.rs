@@ -1,6 +1,6 @@
 mod pane_model_tests;
 
-use super::*;
+use super::support::*;
 use quantick_feed::history_reach;
 
 /// Hold one primary-button gesture across several frames, as a slow hand does.

@@ -1,4 +1,4 @@
-use super::*;
+use super::support::*;
 use crate::indicators::state_file::SavedPlotStyleExt;
 
 fn selected_cvd_line() -> (QuantickApp, egui::Context, usize, egui::Pos2) {

@@ -211,7 +211,8 @@ macro_rules! models {
      models { $( [$($model_attr:meta),*] [$($view_attr:meta),*]
         $field:ident: $tag:ident => $model:ident = $model_file:literal, $view:ident = $view_file:literal,
         $effects:path, $slot:ident $(| $additional_slot:ident)*, $dispatch:ident; )* }) => {
-        $($(#[$model_attr])* #[path = $model_file] pub mod $model;)*
+        $($(#[$model_attr])* pub mod $model;)*
+
         /// Typed host effects can grow when a new catalog row docks.
         #[non_exhaustive]
         #[derive(Debug, PartialEq)]

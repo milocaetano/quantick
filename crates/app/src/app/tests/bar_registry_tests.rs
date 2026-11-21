@@ -1,5 +1,5 @@
 //! Admitted control calls and UI commands converge at the headless owner.
-use super::*;
+use super::support::*;
 use quantick_engine::bar_registry::BUILTIN_BARS;
 use quantick_engine::bar_selection::{BarInputAvailability, SelectionCommand};
 

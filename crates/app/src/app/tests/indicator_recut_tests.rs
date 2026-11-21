@@ -1,7 +1,7 @@
 //! A pane's indicators must follow its own bars through a spec change, whatever
 //! the venue's refold does to the pane beside it.
 
-use super::*;
+use super::support::*;
 
 fn finish_indicator_commands(pane: &mut pane::ChartPane) {
     let (tx, rx) = std::sync::mpsc::channel();

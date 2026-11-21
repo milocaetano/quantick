@@ -74,7 +74,6 @@ const TRASH: &str = "\u{e4a6}";
 const PLUS: &str = "\u{e3d4}";
 const CLOSE: &str = "\u{e4f6}";
 
-#[path = "workspace_creation.rs"]
 mod creation;
 
 fn words(x: f32, y: f32, said: &str, size: f32, ink: Token, width: f32) -> Mark {
@@ -1149,5 +1148,4 @@ pub fn name_escape(dialog: &NameDialog) -> WorkspaceCommand {
 }
 
 #[cfg(test)]
-#[path = "manage_workspaces_tests.rs"]
 mod tests;

@@ -1,5 +1,5 @@
 //! The toolbar's capsule, popover A and row, operated the way a trader does.
-use super::*;
+use super::support::*;
 
 use crate::app::chrome::capsule::snapshot;
 use crate::canvas_layout::{LAYOUT_PRESETS, preset};

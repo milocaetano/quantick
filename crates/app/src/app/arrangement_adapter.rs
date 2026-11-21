@@ -461,7 +461,7 @@ impl quantick_control_handlers::market_palette::MarketTabs for ArrangementAdapte
 }
 
 /// What "Open a market" lists: the config's markets and the open tabs.
-pub(super) fn market_snapshot(
+pub(crate) fn market_snapshot(
     tabs: &ArrangementHost,
     (config, added): (&AppConfig, &quantick_stores::symbols_file::AddedSymbols),
     book: &quantick_stores::workspaces::WorkspaceBookStore,

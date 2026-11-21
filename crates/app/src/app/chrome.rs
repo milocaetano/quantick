@@ -19,8 +19,8 @@ use crate::window_scale;
 /// own size and surface probe are read once each. What they share is that
 /// none of it is chart state and none of it outlives the frame that is
 /// drawing, except to reach the workspace on the frame after.
-pub(super) struct ChromeState {
-    pub(super) title_bar: super::title_bar::TitleBarState,
+pub(crate) struct ChromeState {
+    pub(crate) title_bar: super::title_bar::TitleBarState,
     /// Every scenario hook an agent drives this window by, captured once at
     /// launch and named. See [`crate::harness`] for what belongs here and why
     /// the trunk asks it rather than holding its flags. Exists only with the
@@ -36,7 +36,7 @@ pub(super) struct ChromeState {
     /// were drawn: written as part of drawing them, so the scene says what is
     /// *painted*. The word has no capability behind it, so its rectangle is the
     /// only way an operator reaches it.
-    pub(super) feed_drawn: quantick_ui_model::feed_notice::Drawn<egui::Rect>,
+    pub(crate) feed_drawn: quantick_ui_model::feed_notice::Drawn<egui::Rect>,
 
     /// The toolbar's + and its ADD TO CANVAS menu.
     pub(super) add_menu: crate::add_widget::AddMenu,
@@ -48,7 +48,7 @@ pub(super) struct ChromeState {
     pub(crate) toolbar_controls: Vec<crate::toolbar::DrawnControl>,
 
     /// The `⋮` window menu and the windows it opens.
-    pub(super) window_menu: super::menu_bar::WindowMenuState,
+    pub(crate) window_menu: super::menu_bar::WindowMenuState,
 
     /// Where the toolbar's history caret is, published by the draw. `None`
     /// while the menu is unreachable — a feed that pages nothing has no menu

@@ -4,8 +4,7 @@
 
 #[cfg(test)]
 #[macro_use]
-#[path = "chrome/tests/probe_view.rs"]
-mod chrome_probe_view;
+mod tests;
 
 /// The actual paper owner and frame facts needed by a paper panel.
 pub(crate) struct PaperPanelEnv<'a> {
@@ -293,11 +292,11 @@ macro_rules! register_surfaces {
      models { $( [$($model_attr:meta),*] [$($view_attr:meta),*]
         $field:ident: $tag:ident => $model:ident = $model_file:literal, $view:ident = $view_file:literal,
         $effects:path, $slot:ident $(| $additional_slot:ident)*, $dispatch:ident; )* }) => {
+        $($(#[$view_attr])* pub(crate) mod $view;)*
+
         register_host_routes! { [] ; $(
             $dispatch [$($view_attr),*] $tag $model $field;
         )* }
-        $(pub(crate) mod $module;)*
-        $($(#[$view_attr])* #[path = $view_file] pub(crate) mod $view;)*
         pub(crate) struct Surfaces {
             $($(#[$view_attr])* pub $field: Adapter<quantick_ui_model::$model::Model, $view::View>,)*
             pub widgets: crate::widget_surfaces::WidgetSurfaces,
@@ -415,9 +414,6 @@ impl Surfaces {
         response
     }
 }
-
-#[cfg(test)]
-mod tests;
 
 #[cfg(test)]
 #[path = "tests/overlay_order.rs"]

@@ -14,7 +14,7 @@ use super::{Compiler, MAX_KERNEL_LENGTH, Resolution};
 
 /// A constant value the folder can produce at load time.
 #[derive(Debug, Clone, PartialEq)]
-pub(super) enum Const {
+pub(crate) enum Const {
     Int(i64),
     Float(f64),
     Bool(bool),
@@ -26,7 +26,7 @@ pub(super) enum Const {
 }
 
 impl Const {
-    pub(super) fn as_f64(&self) -> Option<f64> {
+    pub(crate) fn as_f64(&self) -> Option<f64> {
         match self {
             Const::Int(v) => Some(*v as f64),
             Const::Float(v) => Some(*v),
@@ -42,7 +42,7 @@ impl Const {
     }
 
     /// A positive length that a kernel may actually allocate.
-    pub(super) fn as_kernel_len(&self) -> Option<usize> {
+    pub(crate) fn as_kernel_len(&self) -> Option<usize> {
         self.as_positive_len().filter(|v| *v <= MAX_KERNEL_LENGTH)
     }
 }
@@ -152,7 +152,7 @@ impl Compiler {
             _ => false,
         }
     }
-    pub(super) fn fold(&self, id: NodeId) -> Option<Const> {
+    pub(crate) fn fold(&self, id: NodeId) -> Option<Const> {
         match self.kind(id) {
             NodeKind::Int(v) => Some(Const::Int(*v)),
             NodeKind::Float(v) => Some(Const::Float(*v)),

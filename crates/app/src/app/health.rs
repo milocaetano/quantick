@@ -25,7 +25,7 @@ use super::workspace_runtime::WorkspaceRuntime;
 /// Owned by this module, the only place the numbers are read together.
 /// `frame` records into them each pass, `menu_bar` toggles the status-bar
 /// readout and `control_host` publishes them.
-pub(super) struct HealthCounters {
+pub(crate) struct HealthCounters {
     pub(super) frames: FrameStats,
 
     /// CPU time per frame (update + tessellation + paint, no vsync wait), from

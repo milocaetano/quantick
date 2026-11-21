@@ -41,7 +41,7 @@
 //!
 //! Its output is committed as `docs/quality/session-length/long.txt`.
 
-use super::*;
+use super::support::*;
 use crate::indicator_worker::{IndicatorCommand, IndicatorSource, LaneTransport};
 use crate::live_envelope::{DEPTH_UPDATES_PER_S, RETAINED_TRADES_PER_PANE, SUSTAINED_TRADES_PER_S};
 use crate::state::ChartState;

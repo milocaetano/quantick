@@ -1,12 +1,12 @@
 //! Collection calls adapt evaluated arguments to the arena operations.
-use super::{Eval, Value};
 use crate::{
     ast::{Arg, NodeId},
     collections::Op,
     error::{ErrorCode, PineError},
 };
+use crate::{eval::Eval, types::Value};
 impl Eval<'_> {
-    pub(super) fn collection_call(
+    pub(crate) fn collection_call(
         &mut self,
         id: NodeId,
         op: Op,

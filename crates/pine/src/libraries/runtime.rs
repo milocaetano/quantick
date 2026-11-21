@@ -1,13 +1,13 @@
 //! User fields live entirely in the authoritative transactional word arena.
-use super::{Eval, Value};
 use crate::{
     ast::{Arg, NodeId},
     error::{ErrorCode, PineError},
     libraries::ObjectOp,
 };
+use crate::{eval::Eval, types::Value};
 
 impl Eval<'_> {
-    pub(super) fn user_object(
+    pub(crate) fn user_object(
         &mut self,
         id: NodeId,
         op: ObjectOp,

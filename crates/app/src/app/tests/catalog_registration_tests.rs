@@ -1,10 +1,10 @@
 //! A new surface docks through the catalog alone. The test-only `second`
 //! surface is one model file (`ui-model/src/second.rs`), one view file
-//! (`surfaces/tests/fixtures/second.rs`) and one `surface_catalog!` entry;
+//! (`surfaces/second_view_tests.rs`) and one `surface_catalog!` entry;
 //! nothing in `QuantickApp` names it, yet a real frame paints it, routes its
 //! intent through `update` and hands its effects to the host.
 
-use super::*;
+use super::support::*;
 use quantick_ui_model::{HostEffect, Slot};
 
 #[test]

@@ -44,7 +44,8 @@ use quantick_control::{
 use quantick_control_local::client::{ConnectOptions, LocalClient};
 use serde_json::{Value, json};
 
-use super::*;
+use super::control_launch_baselines;
+use super::support::*;
 use crate::control::{ControlAccess, ServedRequest, retry_matrix};
 
 /// The name every test client connects under, and so the author every object

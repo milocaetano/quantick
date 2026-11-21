@@ -1,5 +1,5 @@
 //! Pane ownership exercised through the same settings operation as the editor.
-use super::*;
+use super::support::*;
 use quantick_control_schema::chart_settings::ChartSettingsInput;
 use serde_json::{Value, json};
 

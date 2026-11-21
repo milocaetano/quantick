@@ -1,0 +1,4 @@
+# Two split-borrow constructors are the conventional privacy seam between
+# QuantickApp and the required control-family implementation modules.
+window-reach +2
+!budget +2

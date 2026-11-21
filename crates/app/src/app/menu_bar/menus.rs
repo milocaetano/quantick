@@ -9,7 +9,7 @@ pub(in crate::app) use quantick_ui_model::chrome_menu_bar::Door as MenuDoor;
 
 /// Whether the menu is up, and which submenus are open along the way.
 #[derive(Default)]
-pub(in crate::app) struct WindowMenuState {
+pub(crate) struct WindowMenuState {
     pub(in crate::app) open: bool,
     pub(in crate::app) viewport: Option<egui::ViewportId>,
     /// The button the open menu hangs from.

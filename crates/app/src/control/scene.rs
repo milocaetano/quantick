@@ -44,10 +44,39 @@
 //! regions read existing frame state. A capture builds the list twice, once for
 //! module revision and once for scope, as other capture-derived projections do.
 
+use crate::app::control_host::ChromeDrawn;
+use crate::surfaces::replay_browser::ReplayBrowserExt as _;
 use crate::toolrail::ToolRailExt as _;
 pub(crate) use quantick_control_schema::scene::*;
 
-use crate::app::{ChromePort, TabsPort};
+use crate::app::{ChromePort, QuantickApp, TabsPort, control_host::ChromeReads};
+
+impl ChromePort for QuantickApp {
+    fn chrome_reads(&self) -> ChromeReads<'_> {
+        let roots = crate::app::control_host::control_roots(self);
+        let drawn = ChromeDrawn {
+            feed_drawn: roots.chrome.feed_drawn,
+            feed_popup_tab: roots.surfaces.feed_notice.model_state.open(),
+            replay_day_before: roots.surfaces.replay_browser.day_before(),
+        };
+        let mut reads = ChromeReads::new(
+            &roots.runtime.tabs,
+            &roots.runtime.style,
+            &roots.surfaces.toolrail,
+            &roots.surfaces.dock.model_state,
+            roots.runtime.tz,
+            &roots.surfaces.drawing_chrome,
+            drawn,
+        );
+        reads.alerts_open = roots.surfaces.alerts.is_open();
+        reads.title_bar = Some(&roots.chrome.title_bar);
+        reads.window_menu = Some(&roots.chrome.window_menu);
+        reads.settings = roots.surfaces.settings_window.model_state.shown();
+        reads.toolbar = &roots.chrome.toolbar_controls;
+        reads.route = roots.runtime.broker.sheet();
+        reads
+    }
+}
 use quantick_control::{limits::CONTROL_SCENE_MAX_CONTROLS, wire::WireU64};
 
 use eframe::egui;
@@ -576,7 +605,9 @@ fn push_tool_rail<P: ChromePort + ?Sized>(controls: &mut Vec<SceneControlSnapsho
             availability: available(),
             bounds: None,
             bounds_availability: bounds_not_recorded(),
-            capability_id: Some(super::drawing_magnet::DRAWING_MAGNET_CAPABILITY_ID.to_owned()),
+            capability_id: Some(
+                quantick_control_schema::drawing_magnet::DRAWING_MAGNET_CAPABILITY_ID.to_owned(),
+            ),
         });
     }
 }

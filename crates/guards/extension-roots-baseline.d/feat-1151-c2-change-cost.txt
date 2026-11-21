@@ -1,0 +1,4 @@
+# Control family implementations now live in their required modules and borrow
+# two explicit root views; this records their measured composition-root shell.
+QuantickApp +24
+!budget +24

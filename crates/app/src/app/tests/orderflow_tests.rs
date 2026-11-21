@@ -1,4 +1,4 @@
-use super::*;
+use super::support::*;
 
 /// The unit chips write one field and nothing else: a unit-only change
 /// is a whole spec change, and the same two settle frames every selector

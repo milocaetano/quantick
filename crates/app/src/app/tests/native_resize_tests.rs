@@ -1,5 +1,5 @@
 //! Real egui pointer routing for the native viewport resize border.
-use super::*;
+use super::support::*;
 use egui::viewport::ResizeDirection as D;
 
 fn resize_commands(output: &egui::FullOutput) -> Vec<D> {

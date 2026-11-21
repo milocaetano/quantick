@@ -189,7 +189,7 @@ impl<'a> Eval<'a> {
     /// by the cap, or deleted) is a silent no-op — Pine's behavior, and the
     /// honest one for GC'd objects.
     #[allow(clippy::too_many_lines)]
-    pub(super) fn method_call(
+    pub(crate) fn method_call(
         &mut self,
         id: NodeId,
         kind: ObjKind,

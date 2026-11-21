@@ -7,7 +7,7 @@
 //! a position in one frame and acts on it in the next is then a test of
 //! the scheduler. These helpers take both out: every tab's tape is flushed
 //! before the frame, and a pinned context's frames advance a fixed step.
-use super::*;
+use super::support::*;
 
 /// The fixed step a pinned context's frames advance: one 60 Hz frame.
 const SETTLED_FRAME_STEP: std::time::Duration = std::time::Duration::from_millis(16);

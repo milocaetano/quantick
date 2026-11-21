@@ -6,8 +6,9 @@
 //! Rate class: a human or an agent asking for attention. Never per trade,
 //! never per frame.
 
-pub(crate) use quantick_control_schema::notify::*;
+pub(crate) use crate::app::control_host::Alerts;
 
+use crate::app::QuantickApp;
 use std::time::Duration;
 
 use quantick_control::wire::ActorContext;
@@ -23,5 +24,12 @@ impl NotifyAccess for ControlAccess {
     /// Journaled at the moment it is recorded, by the window's clock.
     fn record_event(&mut self, event: NewEvent) {
         ControlAccess::append_event(self, event);
+    }
+}
+
+impl quantick_control_handlers::notify::AttentionHost for QuantickApp {
+    fn attention(&mut self) -> Box<dyn quantick_control_handlers::notify::Attention + '_> {
+        let roots = crate::app::control_host::control_roots_mut(self);
+        Box::new(Alerts::new(roots.surfaces, roots.audio))
     }
 }

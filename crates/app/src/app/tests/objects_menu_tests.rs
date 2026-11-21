@@ -2,7 +2,7 @@
 //! confirmed "clear objects…", applied through the drawing controller on the
 //! chart the right-click named.
 
-use super::*;
+use super::support::*;
 
 const SCREEN: egui::Rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(500.0, 700.0));
 

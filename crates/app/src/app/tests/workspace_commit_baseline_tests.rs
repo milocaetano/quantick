@@ -1,5 +1,5 @@
 //! Literal persistence behavior captured before the L3 owner extraction.
-use super::*;
+use super::support::*;
 
 const FUTURE: &str = "version = 99\nsaved = []\nkeep_me = true\n";
 

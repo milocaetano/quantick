@@ -1,7 +1,7 @@
 //! Characterization of the actual demo consumers, before ownership changes.
 //! Each case is a literal hook table fed through `fixed_env`, so every case
 //! runs in the ordinary workspace test and none reads the process environment.
-use super::*;
+use super::support::*;
 
 type Env = &'static [(&'static str, &'static str)];
 

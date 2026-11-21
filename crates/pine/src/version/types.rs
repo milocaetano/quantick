@@ -1,5 +1,5 @@
 //! Version-dependent scalar acceptance.
-use super::{
+use crate::types::{
     check::Checker,
     model::{Base, Type, accepts},
 };

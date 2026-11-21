@@ -15,11 +15,9 @@ use crate::engine::{ProjectionRequest, VisibleOrderflow};
 use crate::projection::PendingTape;
 use crate::tape_clock::{TapeClock, TapeHold};
 
-#[path = "pane_depth.rs"]
 mod depth;
 
 #[cfg(test)]
-#[path = "pane_depth_tests.rs"]
 mod depth_tests;
 
 /// What recording one print asks of the worker that publishes the tape.

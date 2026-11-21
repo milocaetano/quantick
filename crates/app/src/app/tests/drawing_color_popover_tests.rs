@@ -3,7 +3,7 @@
 // change the object without the popover closing under the pointer.
 
 use super::bare_canvas::app_with_history;
-use super::*;
+use super::support::*;
 use crate::drawings::StyleColor32;
 
 /// A selected rectangle with its colour popover open and laid out.

@@ -4,7 +4,7 @@
 // gesture pick and focus.
 
 use super::bare_canvas::app_with_history;
-use super::*;
+use super::support::*;
 
 /// A selected rectangle with its bar on screen.
 fn selected_rectangle() -> (QuantickApp, egui::Context) {

@@ -208,12 +208,9 @@ pub struct EditorView {
     pub summary: String,
 }
 
-#[path = "book_editor.rs"]
 mod editor;
 pub use editor::summary_with;
-#[path = "book_lifecycle.rs"]
 mod lifecycle;
-#[path = "book_predicate.rs"]
 mod predicate;
 use crate::input::ObservationKind;
 use crate::spec::{FORMAT_VERSION, Frequency, MAX_ALERTS, MAX_CONDITIONS, MAX_HISTORY};

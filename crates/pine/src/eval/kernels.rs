@@ -21,11 +21,11 @@ use super::{Eval, Value};
 /// One kernel call as the handlers see it: the node, the builtin, the
 /// `(call site, call path)` identity and the arguments.
 #[derive(Clone, Copy)]
-pub(super) struct KernelCall<'c> {
-    pub(super) id: NodeId,
+pub(crate) struct KernelCall<'c> {
+    pub(crate) id: NodeId,
     builtin: Builtin,
-    pub(super) key: (u32, u32),
-    pub(super) args: &'c [crate::ast::Arg],
+    pub(crate) key: (u32, u32),
+    pub(crate) args: &'c [crate::ast::Arg],
 }
 
 /// The uniform handler signature every kernel family implements.
@@ -62,7 +62,7 @@ fn kernel_handler<'a>(builtin: Builtin) -> Option<KernelHandler<'a>> {
 }
 
 impl<'a> Eval<'a> {
-    pub(super) fn kernel_call(
+    pub(crate) fn kernel_call(
         &mut self,
         id: NodeId,
         builtin: Builtin,
@@ -112,7 +112,7 @@ impl<'a> Eval<'a> {
     }
 
     /// The argument at `position` as a kernel length.
-    pub(super) fn arg_length(
+    pub(crate) fn arg_length(
         &mut self,
         call: KernelCall<'_>,
         position: usize,

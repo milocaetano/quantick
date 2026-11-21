@@ -1,5 +1,5 @@
 //! Comparable workload retained unchanged across the ownership extraction.
-use super::*;
+use super::support::*;
 
 #[test]
 #[ignore = "manual before/after workspace lifetime workload"]

@@ -33,7 +33,7 @@ pub(crate) struct LayerWiring<'a> {
 
 impl<'a> LayerWiring<'a> {
     /// The ports over the bound workspace and the chart settings window.
-    pub(super) fn of(
+    pub(crate) fn of(
         runtime: &'a mut super::workspace_runtime::WorkspaceRuntime,
         chart_settings: &'a mut ChartSettingsSurface,
     ) -> Self {

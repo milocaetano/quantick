@@ -1,4 +1,4 @@
-use super::*;
+use super::support::*;
 
 #[test]
 fn the_load_older_hook_keeps_its_action_while_opening_history_is_publishing() {

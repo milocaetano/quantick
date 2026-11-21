@@ -362,12 +362,9 @@ pub fn update(state: &mut State, intent: Intent) -> super::DrawingChromeAsk {
 }
 
 #[cfg(test)]
-#[path = "quick_range/tests/conversion.rs"]
 mod conversion_tests;
 
-#[path = "quick_range/scenario.rs"]
 mod scenario;
 pub use scenario::Staging;
 #[cfg(test)]
-#[path = "quick_range/tests/scenario.rs"]
 mod tests;

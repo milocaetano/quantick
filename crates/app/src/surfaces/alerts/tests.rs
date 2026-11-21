@@ -129,7 +129,12 @@ mod confirmation {
         assert!(response.late().alerts.is_none());
         assert!(!draft(&surface).confirming_delete);
         assert!(click(&mut surface, &ctx, "Delete").late().alerts.is_none());
-        assert!(click(&mut surface, &ctx, "Keep alert").late().alerts.is_none());
+        assert!(
+            click(&mut surface, &ctx, "Keep alert")
+                .late()
+                .alerts
+                .is_none()
+        );
         assert!(!draft(&surface).confirming_delete);
         assert!(click(&mut surface, &ctx, "Delete").late().alerts.is_none());
         let response = click(&mut surface, &ctx, "Confirm delete");
@@ -200,11 +205,13 @@ fn alert_target_controls_keep_operators_compatible() {
         });
         assert!(
             confirmation::click(&mut surface, &ctx, "Value")
-                .late().alerts
+                .late()
+                .alerts
                 .is_none()
         );
         let request = confirmation::click(&mut surface, &ctx, "Region fixture")
-            .late().alerts
+            .late()
+            .alerts
             .unwrap();
         assert_eq!(request.resolve, Some(selector));
         surface.settle_target(Ok(target.clone()));
@@ -213,12 +220,14 @@ fn alert_target_controls_keep_operators_compatible() {
         assert_eq!(condition.operator, expected);
         assert!(
             confirmation::click(&mut surface, &ctx, "Region fixture")
-                .late().alerts
+                .late()
+                .alerts
                 .is_none()
         );
         assert!(
             confirmation::click(&mut surface, &ctx, "Value")
-                .late().alerts
+                .late()
+                .alerts
                 .is_none()
         );
         let condition = &draft(&surface).spec.conditions[0];
@@ -261,7 +270,8 @@ fn alert_storage_error_never_renders_an_empty_manager() {
         let output = ctx.run(egui::RawInput::default(), |ctx| {
             assert!(
                 draw_manager_panel(&mut surface, ctx, &book, env.alert_error, None)
-                    .late().alerts
+                    .late()
+                    .alerts
                     .is_none()
             );
         });

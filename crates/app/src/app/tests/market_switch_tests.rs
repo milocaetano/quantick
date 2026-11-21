@@ -1,6 +1,6 @@
 //! The toolbar's market button and the palette's switch mode: one tab-market
 //! state, one switch path, drawings kept with each market.
-use super::*;
+use super::support::*;
 use quantick_workspace::market_list::{PaletteIntent, SwitchChoice};
 
 fn painted_starting(output: &egui::FullOutput, prefix: &str) -> Vec<String> {

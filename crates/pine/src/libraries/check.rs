@@ -1,5 +1,5 @@
 //! User-object type checking and field slot resolution.
-use super::{
+use crate::types::{
     check::Checker,
     model::{Base, Qualifier, Type, annotation},
 };
@@ -10,7 +10,7 @@ use crate::{
 };
 
 impl Checker<'_> {
-    pub(super) fn annotation(
+    pub(crate) fn annotation(
         &self,
         words: &[String],
     ) -> Result<Option<(Base, Option<Qualifier>)>, String> {
@@ -65,7 +65,7 @@ impl Checker<'_> {
         annotation(words)
     }
 
-    pub(super) fn user_constructor(
+    pub(crate) fn user_constructor(
         &mut self,
         id: NodeId,
         index: u32,
@@ -124,7 +124,7 @@ impl Checker<'_> {
         }
     }
 
-    pub(super) fn user_field(&mut self, id: NodeId, object: NodeId, field: &str) -> Type {
+    pub(crate) fn user_field(&mut self, id: NodeId, object: NodeId, field: &str) -> Type {
         if let Some((index, ty)) = self.field_type(id, object, field) {
             self.resolutions[id.index()] = Resolution::Object(ObjectOp::Get(index));
             self.object_ops
@@ -135,7 +135,7 @@ impl Checker<'_> {
         }
     }
 
-    pub(super) fn user_operation(
+    pub(crate) fn user_operation(
         &mut self,
         id: NodeId,
         callee: NodeId,

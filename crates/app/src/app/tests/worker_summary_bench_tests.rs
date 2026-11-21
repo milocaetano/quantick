@@ -1,6 +1,6 @@
 //! Identical baseline/candidate diagnostic-cadence harness; no worker telemetry
 //! API is called here, so the baseline can execute its existing summary path.
-use super::*;
+use super::support::*;
 use std::io::Write;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;

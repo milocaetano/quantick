@@ -31,12 +31,9 @@ use std::collections::BTreeMap;
 
 mod bar_rules;
 
-#[path = "workspace_book_manage.rs"]
 mod manage;
 pub use manage::{UNDO_WINDOW_MS, UndoOutcome};
-#[path = "workspace_creation.rs"]
 mod creation;
-#[path = "workspace_default.rs"]
 mod protected_default;
 pub use creation::{DEFAULT_TIMEFRAME_MS, WorkspaceCreation};
 
@@ -1451,9 +1448,7 @@ pub fn capture_recipe(
 }
 
 #[cfg(test)]
-#[path = "workspace_book_tests.rs"]
 mod workspace_book_tests;
 
 #[cfg(test)]
-#[path = "workspace_book_colour_tests.rs"]
 mod workspace_book_colour_tests;

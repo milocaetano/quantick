@@ -1,7 +1,7 @@
 //! The journal events every hand-journaled action writes, pinned byte for
 //! byte: module, kind, actor and payload as a client reads them. A refactor
 //! of how an action journals must leave this file untouched.
-use super::*;
+use super::support::*;
 use serde_json::{Value, json};
 
 /// One event as a client reads it, less the sequence and the wall-clock

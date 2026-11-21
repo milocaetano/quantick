@@ -1,5 +1,5 @@
 //! Home driven by real input: the strip's first tab and its shortcuts.
-use super::*;
+use super::support::*;
 use quantick_control_handlers::home_tab::show_home;
 
 const WINDOW: egui::Vec2 = egui::vec2(1400.0, 760.0);

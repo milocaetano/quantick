@@ -1,6 +1,6 @@
 //! Daily, weekly and monthly time panes: the candle base they ask for, and
 //! what they fold from it.
-use super::*;
+use super::support::*;
 use quantick_engine::time_bucket::{DAY_MS, WEEK_MS};
 
 /// Every queued candle request as `(interval_ms, span_ms, slice_ms)`.

@@ -4,7 +4,7 @@
 
 use serde_json::json;
 
-use super::*;
+use super::support::*;
 
 #[test]
 fn the_script_strategy_calls_reach_the_tab_s_strategies() {
