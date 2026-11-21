@@ -44,14 +44,12 @@ case "$operation" in
     key)
         context_tip=$(git -C "$context_dir" rev-parse --verify "$context_base^{commit}")
         git -C "$context_dir" merge-base "$context_base" HEAD >/dev/null
-        # Preserve legacy main review keys, which a parent-free target shares:
-        # only the user merges there, so the target moving stales nothing.
-        # /feature child keys additionally bind the target ref and its tip, so
-        # another child merge invalidates reviews.
+        context_diff=$(sh "$(dirname "$0")/review_identity.sh" "$context_dir" "$context_base")
+        # Feature children retain target-ref/tip authority even when the patch
+        # itself survives context-only synchronization.
         if [ "$context_parent" = none ]; then
-            git -C "$context_dir" diff "$context_base...HEAD" | git -C "$context_dir" hash-object --stdin
+            printf '%s\n' "$context_diff"
         else
-            context_diff=$(git -C "$context_dir" diff "$context_base...HEAD" | git -C "$context_dir" hash-object --stdin)
             printf '%s\n%s\n%s\n' "$context_base" "$context_tip" "$context_diff" | git -C "$context_dir" hash-object --stdin
         fi
         ;;

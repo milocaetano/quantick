@@ -271,23 +271,7 @@ declared_tier() {
     printf '%s' "$tier"
 }
 
-# The identity of what a review covered: a hash of this branch's own diff
-# against origin/<main>, not the sha of whichever commit happened to carry it.
-# Empty when it cannot be computed, and the caller then fails open exactly as it
-# did when a `rev-parse` failed.
-#
-# The change is strictly tightening one case while relaxing another that never
-# mattered:
-#
-#   rebase, amend, reword         same change -> holds  (it used to break)
-#   origin/main moves, no rebase  same change -> holds  (the merge base is put)
-#   any edit to a tracked file    new change  -> stales, as before
-#   upstream edits a file this    new change  -> stales, which the sha form
-#     branch also touches                        did NOT catch
-#
-# The last row is the point. A sha-keyed marker survives a rebase that lands the
-# branch on top of someone else's edits to the very files it changes, which is
-# the case most deserving of a second look. A diff-keyed one does not.
+# Review identity binds exact changed content, with context-independent patch IDs.
 review_base() {
     base_record=$(marker_path "$1" mission-base) || return 1
     if [ -e "$base_record" ]; then
@@ -303,15 +287,7 @@ review_key() {
         sh "$(dirname "$0")/mission_base.sh" key "$1"
         return $?
     fi
-    # The preconditions are checked first, and the diff is then piped *raw*.
-    # Capturing it in $( ) first would strip the trailing newline, so this
-    # function and the recording command the denial prints - a plain
-    # `git diff ... | git hash-object --stdin` - would hash different bytes and
-    # the gate could never be satisfied. Same pipeline on both sides, always.
-    git -C "$1" rev-parse --verify --quiet "origin/$MAIN_BRANCH" >/dev/null 2>&1 || return 1
-    git -C "$1" merge-base "origin/$MAIN_BRANCH" HEAD >/dev/null 2>&1 || return 1
-    git -C "$1" diff "origin/$MAIN_BRANCH...HEAD" 2>/dev/null |
-        git -C "$1" hash-object --stdin 2>/dev/null
+    sh "$(dirname "$0")/review_identity.sh" "$1" "origin/$MAIN_BRANCH"
 }
 
 # Deny unless marker `$3` in worktree `$1` records exactly the change `$2`
@@ -340,7 +316,7 @@ require_marker() {
     # match it, so one paste of the gate's own instruction could switch it off.
     # Every doc on this branch spells the command with the `cd`; the message
     # must not be the one place that drops it.
-    require_record="git -C \\\"$require_dir\\\" diff origin/$MAIN_BRANCH...HEAD | git hash-object --stdin > \\\"$require_file\\\""
+    require_record="sh .claude/hooks/review_identity.sh \\\"$require_dir\\\" origin/$MAIN_BRANCH > \\\"$require_file\\\""
     if [ -e "$(marker_path "$require_dir" mission-base)" ]; then
         require_record="sh .claude/hooks/mission_base.sh key \\\"$require_dir\\\" > \\\"$require_file\\\""
     fi
@@ -507,12 +483,6 @@ pr_number() {
 # median of the feature branches, rounded to the thousand. A feature branch
 # over it hears about it once, here, while detaching a reference is still
 # cheap, and hears it as news. Nothing on this path can refuse anything.
-#
-# It carries the ledger's other half too. A pull request records its own row,
-# because `main` takes pull requests only and no bot can push to it, so a
-# `gh pr ready` or `gh pr merge` naming a pull request with no row is told
-# which command writes it. That half is not about the ceiling and needs no
-# measurement, so it reaches every branch prefix.
 #
 # Silence answers everything it cannot determine - no interpreter, no
 # calculator in the worktree, no recorded ceiling, a measurement that fails, a

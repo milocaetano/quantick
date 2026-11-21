@@ -7,12 +7,8 @@ the feature-branch warning is measured against, as a marker line, because a
 number that lives in two places drifts and the first symptom is a warning
 nobody can reproduce.
 
-A pull request carries its own row: ``record --pr <n>`` appends it to the
-branch, in the diff, before the merge. The alternative was a workflow pushing
-straight to ``main``, which this repository's ruleset does not allow a bot to
-do and would not allow without a long-lived write credential in CI. The push
-side is therefore a check rather than a writer — ``verify`` says whether the
-pull request a merge commit closed left a row behind.
+Merged pull request rows are collected by a scheduled batch into one bot PR.
+Authors publish without a ledger commit; main still changes only through PRs.
 
 The ceiling is not computed here on every run. It was chosen once from the
 backfill — the median of the ``feat/`` and ``fix/`` rows, rounded to the
@@ -310,6 +306,21 @@ def verify(path, sha):
     if number is None:
         return None
     return row_for(path, number) is not None
+
+
+def batch(repo, path):
+    """Collect every missing merged PR, including rows missed by earlier runs."""
+    pages = gh_json("api", "repos/{owner}/{repo}/pulls?state=closed&per_page=100",
+                    "--paginate", "--slurp")
+    if not isinstance(pages, list) or not all(isinstance(page, list) for page in pages):
+        raise ValueError("Incomplete merged-PR pagination")
+    recorded = {row["pr"] for row in parse_rows(read(path))}
+    numbers = sorted({pull["number"] for page in pages for pull in page
+                      if pull.get("merged_at")} - recorded)
+    for number in numbers:
+        if record(repo, path, number) == FAILED:
+            raise RuntimeError(f"#{number}: batch incomplete; no PR published")
+    return len(numbers)
 
 
 def backfill(repo, path, limit):

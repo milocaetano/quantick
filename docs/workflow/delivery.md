@@ -1,7 +1,6 @@
 # Delivery without repeated reconstruction
 
-This contract owns requirement reconciliation, review progress and validation.
-It changes no review role, merge authority, outcome or score rubric.
+Requirement reconciliation, review progress and validation.
 
 ## Keep execution evidence out of Git
 
@@ -23,8 +22,7 @@ outcome for that goal and must have `R/A` coverage.
 Before code, reconcile the source against this map. For `high` review-level
 goals use an independent source-first completeness pass: give it the source
 first, then the proposed map. Resolve missing asks and record the reviewed
-map/source revision. This is a bounded read-only preflight, not an extra user
-approval. Lower levels reconcile inline. Amend the map when source requirements
+map/source revision. This read-only preflight needs no user approval. Lower levels reconcile inline. Amend the map when source requirements
 change; never freeze away a real omission.
 
 At delivery, derive outcomes, constraints and gates from the retained source
@@ -40,13 +38,15 @@ Distinguish:
   Do not infer a product defect or rerun runtime tests solely from this label.
 - **Operational obligation:** verify its recorded gate or closing step. Missing
   authority or a failed required check blocks delivery even if all `A` pass.
-  A duplicate operational sentence needs no additional `R/A` pair.
+  Repeated gates need no `R/A` pair.
 
 ## Review once, follow up on the delta
 
 The initial required reviews cover the entire declared-base diff. Every review
 report names head, base ref/tip, review key, scope, evidence and findings.
-After edits, old markers are stale: never copy or re-stamp them as approval.
+Substantive edits stale review markers. The [review-key contract](../../.claude/hooks/README.md#the-review-marker)
+preserves changed whitespace/modes/binaries, signed fragments and base authority;
+only ledger and byte-verified generated output may be excluded.
 An independent follow-up may combine the prior report with an inspected delta
 and the full current diff. It verifies affected findings, source/map changes,
 evidence validity and new regressions; it explicitly carries forward unaffected
@@ -56,8 +56,7 @@ review. A follow-up is a real
 review, never a blessing of old evidence over unread change.
 
 Batch compatible corrections before freezing the branch for review. A report
-on a moving head is not final evidence. Do not repeatedly rebuild dossiers or
-restart successful reviews while the reviewed inputs remain unchanged.
+on a moving head is not final evidence. Reuse dossiers and successful reviews while reviewed inputs remain unchanged.
 
 ## Finding identity and bounded progress
 
@@ -85,8 +84,9 @@ history, or grant main merge.
 ### Durable review record
 
 Use `sh .claude/hooks/ai_review_threads.sh progress-show <pr>` to read the
-append-only `quantick-review-progress:v1` records on the PR. A missing record is unknown
-history, not zero attempts. One coordinator writes with `progress-record <pr>`
+single edited `quantick-review-progress:v1` comment on the PR. Start it only
+after a failed review, with observed findings and history; a successful first
+review requires no progress record. Missing history cannot authorize repairs. One coordinator writes with `progress-record <pr>`
 and a JSON body on stdin; it supplies `schema: 1`, `mission`, `revision`, `head`,
 `stage`, cumulative `batches`, `stalled_batches`, `limits`, `findings`, `evidence`
 and `authorization`. Optional `limits.stalls` defaults to two; an authorized
@@ -97,11 +97,12 @@ prior counts with source evidence; never guess away missing history.
 
 Before dispatch, `progress-check <pr> <finding-id>...` must pass; persist the
 incremented batch/target attempt counters and `stalled_batches` before repair.
-After independent review, append dispositions/evidence; only closing a prior
+After independent review, update dispositions/evidence; only closing a prior
 open finding resets the stall streak. On interruption reconcile the reserved
 batch before resuming it; do not reserve another batch for the same action.
 Ordinary discussion replies do not count as attempts. The reader rejects
-conflicting revisions, lost IDs and decreasing counters. Retry a lost write
+conflicting revisions, lost IDs and decreasing counters. The comment retains
+its validated checkpoint chain; legacy comments remain readable. Retry a lost write
 using the identical record; readback reconciles it without another increment.
 Store stage timestamps and the input-bound validation/reuse report as linked
 artifacts in `evidence`; a resumed goal links this PR record instead of

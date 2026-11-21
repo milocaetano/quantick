@@ -1436,7 +1436,34 @@ fn observer_modules_project_headless_state_that_matches_their_schemas() {
         .descriptors()
         .map(|descriptor| (descriptor.scope_id.clone(), descriptor.schema.clone()))
         .collect::<Vec<_>>();
-    assert_eq!(descriptors.len(), 21, "every registered scope is projected");
+    let committed: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../../../schemas/control/observer-capability-catalog-v1.json"
+    ))
+    .unwrap();
+    let expected = committed["snapshot_scopes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|scope| scope["id"].as_str().unwrap())
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        expected.len(),
+        committed["snapshot_scopes"].as_array().unwrap().len(),
+        "duplicate committed scope"
+    );
+    let actual = descriptors
+        .iter()
+        .map(|(scope, _)| scope.as_str())
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        actual.len(),
+        descriptors.len(),
+        "duplicate registered scope"
+    );
+    assert_eq!(
+        actual, expected,
+        "committed and registered scope IDs differ"
+    );
     let scopes = descriptors
         .iter()
         .map(|(scope_id, _)| scope_id.clone())
@@ -5040,16 +5067,42 @@ fn evidence_costs_the_frame_nothing_until_a_client_asks_for_it() {
 const REGENERATE_OBSERVER_SCHEMAS: &str = "sh tools/regen.sh --write control";
 
 #[test]
+fn schema_documents_match_committed_files() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../schemas/control");
+    let documents = crate::control::schema_catalog::documents();
+    let contracts = quantick_control::schema_catalog::public_contract_documents()
+        .into_iter()
+        .filter(|document| document.file_name.ends_with(".schema.json"))
+        .collect::<Vec<_>>();
+    let expected = documents
+        .iter()
+        .map(|document| document.file_name.to_owned())
+        .chain(
+            contracts
+                .iter()
+                .map(|document| document.file_name.to_owned()),
+        )
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        expected.len(),
+        documents.len() + contracts.len(),
+        "duplicate schema filename"
+    );
+    let committed = std::fs::read_dir(root)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+        .filter(|name| name.ends_with(".schema.json"))
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(expected, committed, "schema filenames must match exactly");
+}
+
+#[test]
 fn observer_schemas_are_versioned_valid_and_ui_framework_free() {
     observer_schemas();
 }
 
 fn observer_schemas() {
     let documents = crate::control::schema_catalog::documents();
-    // Every published wire type has a committed document, so a breaking
-    // change shows up as a diff in review (contract §6). The count is
-    // here to make an accidental *removal* visible too.
-    assert_eq!(documents.len(), 197);
     for file_name in [
         "session-report-input-v1.schema.json",
         "session-report-result-v1.schema.json",

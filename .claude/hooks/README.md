@@ -217,22 +217,16 @@ on the PR.
 
 ## The review marker
 
-The `code-review-ok` marker lives in the worktree's own git dir, so it is
-per-branch and never committed. Storing a hash of the change rather than a
-timestamp is what makes the gate honest: edit a tracked file after a review and
-that hash no longer matches, so the gate denies and names both values. A marker
-that only said "a review happened" would pass while the newest work went
-unreviewed.
+The `code-review-ok` marker lives in the worktree's own git dir. Its key uses
+`git patch-id --stable` over zero-context diffs plus exact changed-line bytes,
+file modes and binary content. Rewording and context-only synchronization keep
+the key; substantive edits, including indentation, stale it. Feature-child
+keys also bind their target ref and tip, preserving integration authority.
 
-**Why the change and not the commit.** Keying on `rev-parse HEAD` meant a
-rebase, an amend or a reword stale a review that was still perfectly valid, and
-the cost of that is real: the branch that introduced this paid for five review
-rounds, several of which re-graded a diff nothing had touched. Keying on the
-diff is also *stricter* in the one case the sha form missed — a rebase that
-lands the branch on top of upstream edits to the very files it changes now
-stales the marker, which is exactly the case most deserving of a second look.
-`origin/main` advancing on its own does not stale anything, because the merge
-base does not move when `HEAD` does not.
+Only the ledger and B2 control outputs regenerated from the committed source
+and verified byte-for-byte are excluded. Generator inputs, baselines and every
+signed `.d` fragment remain included. Failed proof keeps the output reviewed;
+a proof is cached by the immutable source tree. No GUI generator runs here.
 
 When the change cannot be identified at all — no `origin/main`, unrelated
 histories — the gate falls back to the commit sha, which is what it keyed on
@@ -304,17 +298,9 @@ that number and the largest files the branch pulls in *by reference alone* —
 the ones it never edits and a reader still has to open, which is the only part
 of the number detaching something would lower.
 
-It carries the ledger's other half as well. Each pull request records its own
-row — `main` takes pull requests only, so no workflow can push one there — and
-a `gh pr ready` or `gh pr merge` that names a pull request with no row is told
-the command that writes it. That half is not about the ceiling, costs no
-measurement, and so reaches every branch prefix.
-
-Both are printed as `systemMessage` and `additionalContext`, never as a
-permission decision, so neither can deny, ask or delay anything. A draft
-`gh pr create` is deliberately included: that is the last point where moving a
-reference is cheap. When the gate denies, the denial is what the caller sees;
-the advice returns on the attempt that passes.
+The advice never blocks publication. Merged PR rows are collected by the
+scheduled read-cost ledger workflow into one user-merged maintenance PR.
+Authors do not add ledger rows or commits before publishing.
 
 Silence covers everything it cannot determine — no `python3` or `python` that
 runs, no calculator in the worktree, no recorded ceiling, a measurement that

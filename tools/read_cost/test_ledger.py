@@ -3,9 +3,11 @@
 
 import importlib.util
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SPEC = importlib.util.spec_from_file_location(
@@ -39,6 +41,89 @@ def written(text):
     with handle:
         handle.write(text)
     return handle.name
+
+
+class Batching(unittest.TestCase):
+    def test_batch_collects_all_missing_merged_prs_once_across_pages(self):
+        path = written(HEADER + "| 1 | 2026-11-20 | feat/old | main | 1 | 1 | |\n")
+        self.addCleanup(os.unlink, path)
+        pages = [[{"number": 1, "merged_at": "date"}, {"number": 2, "merged_at": None}],
+                 [{"number": 3, "merged_at": "date"}, {"number": 4, "merged_at": "date"}]]
+        with patch.object(ledger, "gh_json", return_value=pages), patch.object(ledger, "record", return_value=ledger.APPENDED) as record:
+            self.assertEqual(ledger.batch("repo", path), 2)
+        self.assertEqual([call.args[2] for call in record.call_args_list], [3, 4])
+
+    def test_failed_measurement_stops_publication(self):
+        path = written(HEADER)
+        self.addCleanup(os.unlink, path)
+        with patch.object(ledger, "gh_json", return_value=[[{"number": 3, "merged_at": "date"}]]), patch.object(ledger, "record", return_value=ledger.FAILED):
+            with self.assertRaisesRegex(RuntimeError, "no PR published"):
+                ledger.batch("repo", path)
+
+    def test_bot_creates_or_updates_one_pr_without_merge_or_force_push(self):
+        sys.path.insert(0, HERE)
+        try:
+            batch = ledger.load("read_cost_batch_test", "batch.py")
+        finally:
+            sys.path.pop(0)
+        for existing, changed in ((False, False), (False, True), (True, True)):
+            with self.subTest(existing=existing, changed=changed), tempfile.TemporaryDirectory() as repo:
+                calls = []
+                heads = iter(["old", "new" if changed else "old"])
+
+                def execute(args, _repo):
+                    calls.append(args)
+                    if args[:3] == ["gh", "pr", "list"]:
+                        return '[{"number":1,"headRefName":"docs/read-cost-ledger-1","isCrossRepository":false}]' if existing else '[]'
+                    if args[:3] == ["git", "rev-parse", "HEAD"]:
+                        return next(heads)
+                    if args[:3] == ["git", "diff", "--cached"]:
+                        return ledger.DEFAULT_PATH if changed else ""
+                    return ""
+
+                collected = []
+                batch.maintain(repo, "fixture", execute=execute, collect=lambda *args: collected.append(args))
+                self.assertEqual(len(collected), 1)
+                self.assertEqual(sum(args[:3] == ["gh", "pr", "create"] for args in calls), int(changed and not existing))
+                self.assertFalse(any(args[:3] == ["gh", "pr", "merge"] or "--force" in args for args in calls))
+                self.assertEqual(sum(args[:2] == ["git", "push"] for args in calls), int(changed))
+
+    def test_pr_create_diagnostics_distinguish_denial_from_uncertain_failure(self):
+        sys.path.insert(0, HERE)
+        try:
+            batch = ledger.load("read_cost_batch_failure_test", "batch.py")
+        finally:
+            sys.path.pop(0)
+
+        def exercise(stderr):
+            heads = iter(["old", "new"])
+
+            def execute(args, _repo):
+                if args[:3] == ["gh", "pr", "list"]:
+                    return "[]"
+                if args[:3] == ["git", "rev-parse", "HEAD"]:
+                    return next(heads)
+                if args[:3] == ["git", "diff", "--cached"]:
+                    return ledger.DEFAULT_PATH
+                if args[:3] == ["gh", "pr", "create"]:
+                    raise subprocess.CalledProcessError(1, args, stderr=stderr)
+                return ""
+
+            with tempfile.TemporaryDirectory() as repo:
+                with self.assertRaises(RuntimeError) as raised:
+                    batch.maintain(repo, "fixture", execute=execute, collect=lambda *_: None)
+                self.assertFalse(os.path.exists(os.path.join(repo, ".git-ledger-pr-body.tmp")))
+                return str(raised.exception)
+
+        denied = exercise("GraphQL: Resource not accessible by integration")
+        uncertain = exercise("connection timed out while waiting for response")
+        lost_response = exercise("connection closed after request body was sent")
+
+        self.assertIn("denied by GitHub authorization", denied)
+        self.assertIn("Actions PR permission", denied)
+        self.assertIn("did not return a confirmed result", uncertain)
+        self.assertIn("Read back open ledger PRs", uncertain)
+        self.assertIn("may have failed before or after", lost_response)
 
 
 class Rows(unittest.TestCase):

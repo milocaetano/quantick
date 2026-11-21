@@ -126,12 +126,6 @@ class CeilingWarning(unittest.TestCase):
 
 
 class RowReminder(unittest.TestCase):
-    def test_the_reminder_names_the_pull_request_and_the_command(self):
-        text = report.row_reminder(42)
-
-        self.assertIn("#42", text)
-        self.assertIn(f"{report.ROW_COMMAND} 42", text)
-
     def test_two_notes_arrive_as_one_payload_and_none_as_nothing(self):
         joined = report.advisory(["first", None, "second"])
 
@@ -219,7 +213,7 @@ class Command(unittest.TestCase):
         self.assertEqual(status, 0)
         self.assertIn("Feature-branch ceiling: 1000", body)
 
-    def test_comment_mode_asks_for_the_row_only_while_it_is_missing(self):
+    def test_pr_publication_needs_no_ledger_commit(self):
         path = self.json_report(
             measured([("crates/core/src/lib.rs", 10, ["touched"])])
         )
@@ -236,10 +230,10 @@ class Command(unittest.TestCase):
             ["comment", "--json", path, "--pr", "42", "--ledger", recorded]
         )
 
-        self.assertIn(f"{report.ROW_COMMAND} 42", missing)
-        self.assertNotIn(report.ROW_COMMAND, present)
+        self.assertEqual(missing, present)
+        self.assertNotIn("ledger.py record", missing)
 
-    def test_warn_mode_asks_for_a_missing_row_without_measuring_anything(self):
+    def test_warn_mode_does_not_ask_for_a_missing_row(self):
         base, head = self.repository()
 
         status, printed = captured(
@@ -261,7 +255,7 @@ class Command(unittest.TestCase):
         )
 
         self.assertEqual(status, 0)
-        self.assertIn("#42 has no row", json.loads(printed))
+        self.assertEqual(printed, "")
 
     def test_warn_mode_prints_a_json_string_a_hook_can_paste(self):
         base, head = self.repository()

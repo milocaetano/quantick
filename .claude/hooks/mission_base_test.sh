@@ -28,7 +28,7 @@ printf 'child\n' >> "$fixture/repo/data"
 git -C "$fixture/repo" commit -qam child
 head=$(git -C "$fixture/repo" rev-parse HEAD)
 git_dir=$(git -C "$fixture/repo" rev-parse --absolute-git-dir)
-cp "$script_dir/guardrails.sh" "$helper" "$fixture/hooks/"
+cp "$script_dir/guardrails.sh" "$script_dir/review_identity.sh" "$script_dir/review_identity.py" "$helper" "$fixture/hooks/"
 # Full CI at the exact head is pr-gate's own requirement, covered by
 # guardrails_test.sh; here it is green so the mission-base boundaries are isolated.
 cat > "$fixture/hooks/full_ci.sh" <<'STUB'

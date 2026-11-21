@@ -30,6 +30,7 @@ class Remote:
     def __init__(self):
         self.comments = []
         self.posts = 0
+        self.patches = 0
         self.lose_post_response = False
 
     def gh(self, *args, payload=None):
@@ -39,16 +40,24 @@ class Remote:
             return {"number": 123}
         if "POST" in args:
             self.posts += 1
-            self.comments.append(payload.copy())
+            self.comments.append({**payload, "id": self.posts})
             if self.lose_post_response:
                 raise ValueError("POST response lost")
             return {"id": self.posts}
+        if "PATCH" in args:
+            self.patches += 1
+            identity = int(args[1].rsplit("/", 1)[1])
+            comment = next(item for item in self.comments if item["id"] == identity)
+            comment.update(payload)
+            if self.lose_post_response:
+                raise ValueError("PATCH response lost")
+            return copy.deepcopy(comment)
         # Multiple pages, including normal comments that must not count.
         return [[{"body": "Tried again; ordinary discussion is not a counter."}],
                 copy.deepcopy(self.comments)]
 
     def seed(self, record):
-        self.comments.append({"body": progress.MARKER + json.dumps(record)})
+        self.comments.append({"body": progress.MARKER + json.dumps(record), "id": len(self.comments) + 1})
 
 
 class ProgressTests(unittest.TestCase):
@@ -57,6 +66,44 @@ class ProgressTests(unittest.TestCase):
         self.mock = patch.object(progress, "gh", side_effect=self.remote.gh)
         self.mock.start()
         self.addCleanup(self.mock.stop)
+
+    def test_successful_review_needs_no_progress_comment(self):
+        self.assertIsNone(progress.history("comments"))
+        record = initial()
+        record["findings"] = {}
+        with self.assertRaisesRegex(ValueError, "failed review"):
+            progress.record_checkpoint("comments", record)
+        self.assertEqual(self.remote.comments, [])
+
+    def test_failed_review_updates_one_comment_and_retains_monotonic_history(self):
+        record = initial()
+        progress.record_checkpoint("comments", record)
+        repaired = copy.deepcopy(record)
+        repaired.update(revision=2, batches=1, stalled_batches=1)
+        repaired["findings"]["F1"]["attempts"] = 1
+        progress.record_checkpoint("comments", repaired)
+        self.assertEqual((self.remote.posts, self.remote.patches), (1, 1))
+        self.assertEqual(len(self.remote.comments), 1)
+        self.assertEqual(progress.checkpoints("comments")[0], [record, repaired])
+        self.remote.lose_post_response = True
+        closed = copy.deepcopy(repaired)
+        closed.update(revision=3, stalled_batches=0)
+        closed["findings"]["F1"].update(disposition="fixed", evidence=["Independent passing review"])
+        with self.assertRaisesRegex(ValueError, "PATCH response"):
+            progress.record_checkpoint("comments", closed)
+        self.remote.lose_post_response = False
+        self.assertEqual(progress.record_checkpoint("comments", closed), closed)
+        self.assertEqual((self.remote.posts, self.remote.patches), (1, 2))
+
+    def test_concurrent_change_before_patch_fails_without_writing(self):
+        record = initial()
+        self.remote.seed(record)
+        next_record = copy.deepcopy(record)
+        next_record["revision"] = 2
+        with patch.object(progress, "checkpoints", side_effect=[([record], 1), ([record], 2)]):
+            with self.assertRaisesRegex(ValueError, "concurrent writers"):
+                progress.record_checkpoint("comments", next_record)
+        self.assertEqual(self.remote.patches, 0)
 
     def test_authorized_stall_extension_resumes_without_erasing_history(self):
         old = initial()
@@ -251,7 +298,7 @@ class ProgressTests(unittest.TestCase):
         self.assertEqual(self.remote.posts, 0)
 
     def test_unconfirmed_post_stops_before_repair(self):
-        responses = [[[]], {"id": 1}, [[]]]
+        responses = [[[]], [[]], {"id": 1}, [[]]]
         with patch.object(progress, "gh", side_effect=responses):
             with self.assertRaisesRegex(ValueError, "not confirmed"):
                 progress.record_checkpoint("comments", initial())

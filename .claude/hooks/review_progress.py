@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Append-only, single-writer review checkpoints on a PR, accessed through gh."""
+"""One edited, single-writer review comment preserving validated checkpoints."""
 
 import json
 import re
@@ -101,11 +101,12 @@ def gh(*args, payload=None):
     return json.loads(result.stdout)
 
 
-def history(endpoint):
+def checkpoints(endpoint):
     pages = gh("api", endpoint, "--paginate", "--slurp")
     require(isinstance(pages, list) and all(isinstance(p, list) for p in pages),
             "Incomplete comment pagination.")
     records = {}
+    owner = None
     for page in pages:
         for comment in page:
             require(isinstance(comment, dict) and isinstance(comment.get("body"), str),
@@ -114,31 +115,51 @@ def history(endpoint):
             if not body.startswith("<!-- quantick-review-progress:"):
                 continue
             require(body.startswith(MARKER), "Unknown progress marker version.")
-            record = json.loads(body[len(MARKER):])
-            require(isinstance(record, dict) and integer(record.get("revision")),
-                    "Malformed progress checkpoint.")
-            revision = record["revision"]
-            require(revision not in records or records[revision] == record,
-                    "Conflicting checkpoint revisions; reconcile concurrent writers.")
-            records[revision] = record
+            saved = json.loads(body[len(MARKER):])
+            # Existing append-only records migrate without erasing their history.
+            chain = saved.get("checkpoints") if isinstance(saved, dict) and set(saved) == {"checkpoints"} else [saved]
+            require(isinstance(chain, list) and chain, "Malformed checkpoint history.")
+            for record in chain:
+                require(isinstance(record, dict) and integer(record.get("revision")),
+                        "Malformed progress checkpoint.")
+                revision = record["revision"]
+                require(revision not in records or records[revision] == record,
+                        "Conflicting checkpoint revisions; reconcile concurrent writers.")
+                records[revision] = record
+            if owner is None:
+                owner = comment.get("id")
+    ordered = [records[revision] for revision in sorted(records)]
     previous = None
-    for revision in sorted(records):
-        record = records[revision]
+    for record in ordered:
         validate(record, previous)
         previous = record
-    return previous
+    return ordered, owner
+
+
+def history(endpoint):
+    records, _ = checkpoints(endpoint)
+    return records[-1] if records else None
 
 
 def record_checkpoint(endpoint, record):
     require(isinstance(record, dict), "Checkpoint must be an object.")
-    previous = history(endpoint)
+    records, owner = checkpoints(endpoint)
+    previous = records[-1] if records else None
     if previous == record:
         return previous
     validate(record, previous)
-    # Never retry a failed POST here: it may have reached GitHub. An identical
-    # retry first reads back and returns the saved revision without writing.
-    gh("api", endpoint, "--method", "POST", "--input", "-",
-       payload={"body": MARKER + json.dumps(record, sort_keys=True)})
+    require(previous is not None or any(
+        finding["disposition"] == "open" for finding in record["findings"].values()
+    ), "Start progress after a failed review with observed open findings.")
+    require(not records or owner is not None, "Missing progress comment identity.")
+    # A single coordinator writes. Re-read before editing to detect a stale
+    # reservation; readback also handles uncertain POST/PATCH responses.
+    require(checkpoints(endpoint) == (records, owner),
+            "Progress changed before write; reconcile concurrent writers.")
+    target = endpoint if owner is None else endpoint.rsplit("/issues/", 1)[0] + f"/issues/comments/{owner}"
+    payload = {"body": MARKER + json.dumps({"checkpoints": [*records, record]}, sort_keys=True)}
+    gh("api", target, "--method", "POST" if owner is None else "PATCH",
+       "--input", "-", payload=payload)
     confirmed = history(endpoint)
     require(confirmed == record, "Checkpoint write not confirmed; reconcile before work.")
     return confirmed
