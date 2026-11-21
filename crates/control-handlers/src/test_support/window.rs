@@ -1,3 +1,5 @@
+#![cfg(test)]
+
 use super::*;
 
 /// The fake window: tabs in screen order, the one on screen, and what each

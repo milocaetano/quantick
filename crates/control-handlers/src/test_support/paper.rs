@@ -1,3 +1,5 @@
+#![cfg(test)]
+
 use super::*;
 
 /// A paper owner with no chart open and an empty journal it never writes.

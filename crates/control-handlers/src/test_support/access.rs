@@ -1,3 +1,5 @@
+#![cfg(test)]
+
 use super::*;
 
 /// The fixed time a fake access tells a handler it runs at.

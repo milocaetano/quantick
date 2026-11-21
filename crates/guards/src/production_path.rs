@@ -23,41 +23,37 @@ fn module_dir(file: &Path) -> PathBuf {
     }
 }
 
-fn external_modules(source: &str, file: &Path) -> Vec<PathBuf> {
+fn external_modules(source: &str, file: &Path) -> Result<Vec<PathBuf>, String> {
     let flags = crate::size::production_flags(source);
-    let lines: Vec<_> = source.lines().collect();
+    let tokens = lex::lex(source)?;
     let mut modules = Vec::new();
-    for (index, line) in lines.iter().enumerate() {
-        if !flags[index] {
+    for declaration in tokens.windows(3) {
+        let [module, name, semicolon] = declaration else {
+            continue;
+        };
+        if module.text != "mod" || semicolon.text != ";" {
             continue;
         }
-        let code = line.trim();
-        let Some(before) = code.strip_suffix(';') else {
+        if !flags.get(module.line).copied().unwrap_or(true) {
             continue;
-        };
-        let words: Vec<_> = before.split_whitespace().collect();
-        let Some(position) = words.iter().position(|word| *word == "mod") else {
-            continue;
-        };
-        let Some(name) = words.get(position + 1) else {
-            continue;
-        };
+        }
         if !name
+            .text
             .chars()
             .all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
         {
             continue;
         }
         let base = module_dir(file);
-        let direct = base.join(format!("{name}.rs"));
-        let nested = base.join(name).join("mod.rs");
+        let direct = base.join(format!("{}.rs", name.text));
+        let nested = base.join(&name.text).join("mod.rs");
         if direct.is_file() {
             modules.push(direct);
         } else if nested.is_file() {
             modules.push(nested);
         }
     }
-    modules
+    Ok(modules)
 }
 
 fn production_files(root: &Path) -> Result<BTreeSet<String>, String> {
@@ -96,7 +92,7 @@ fn production_files(root: &Path) -> Result<BTreeSet<String>, String> {
         }
         let source =
             fs::read_to_string(&file).map_err(|error| format!("{}: {error}", file.display()))?;
-        pending.extend(external_modules(&source, &file));
+        pending.extend(external_modules(&source, &file)?);
     }
     Ok(reached)
 }
@@ -225,7 +221,10 @@ pub fn check_file(root: &Path, relative: &str) -> Vec<Finding> {
 
 #[cfg(test)]
 mod tests {
-    use super::attribute_lines;
+    use std::fs;
+
+    use super::{attribute_lines, check_file};
+    use crate::scratch_dir::ScratchDir;
 
     #[test]
     fn direct_cfg_attr_and_macro_paths_are_seen() {
@@ -240,6 +239,36 @@ mod tests {
             attribute_lines("#[cfg(test)]\n#[path = \"fixture.rs\"]\nmod fixture;")
                 .unwrap()
                 .is_empty()
+        );
+    }
+
+    #[test]
+    fn multiline_modules_are_reached_but_test_only_modules_are_not() {
+        let root = ScratchDir::new("production-path-multiline");
+        let source = root.join("crates/example/src");
+        fs::create_dir_all(&source).unwrap();
+        fs::write(
+            source.join("lib.rs"),
+            "pub(crate)\nmod\nreached\n;\n\n#[cfg(test)]\nmod\ntest_only\n;\n",
+        )
+        .unwrap();
+        fs::write(
+            source.join("reached.rs"),
+            "#[path = \"elsewhere.rs\"]\nmod elsewhere;\n",
+        )
+        .unwrap();
+        fs::write(
+            source.join("test_only.rs"),
+            "#[path = \"fixture.rs\"]\nmod fixture;\n",
+        )
+        .unwrap();
+
+        let reached = check_file(&root, "crates/example/src/reached.rs");
+        assert_eq!(reached.len(), 1, "{reached:?}");
+        assert!(reached[0].line.contains("production #[path] attribute"));
+        assert!(
+            check_file(&root, "crates/example/src/test_only.rs").is_empty(),
+            "a cfg(test) module is not production reachability"
         );
     }
 }

@@ -1,3 +1,5 @@
+#![cfg(test)]
+
 use super::*;
 
 /// One fake tab: its market, what its feed and history do when asked, and

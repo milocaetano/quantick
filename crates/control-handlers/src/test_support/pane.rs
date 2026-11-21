@@ -1,3 +1,5 @@
+#![cfg(test)]
+
 use super::*;
 
 /// One pane of a fake tab: a real chart model, an optional venue prefix, and

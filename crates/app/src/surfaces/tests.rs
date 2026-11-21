@@ -1,28 +1,6 @@
 #[macro_use]
 mod chrome_probe_view;
 
-pub(crate) mod borrowed_first;
-pub(crate) mod borrowed_second;
-pub(crate) mod chrome_early_first;
-pub(crate) mod chrome_early_second;
-pub(crate) mod chrome_edge_first;
-pub(crate) mod chrome_edge_second;
-pub(crate) mod chrome_editor_first;
-pub(crate) mod chrome_editor_second;
-pub(crate) mod chrome_menu_dialogs_first;
-pub(crate) mod chrome_menu_dialogs_second;
-pub(crate) mod chrome_menu_first;
-pub(crate) mod chrome_menu_second;
-pub(crate) mod chrome_tabs_first;
-pub(crate) mod chrome_tabs_second;
-pub(crate) mod chrome_title_first;
-pub(crate) mod chrome_title_second;
-pub(crate) mod chrome_toolbar_first;
-pub(crate) mod chrome_toolbar_second;
-pub(crate) mod first_view;
-pub(crate) mod paper_tail_probe;
-pub(crate) mod second_view;
-
 use super::*;
 use quantick_workspace::market_list::PaletteIntent;
 
@@ -645,12 +623,12 @@ fn drive(surface: &mut dyn Surface, ctx: &egui::Context, env: &SurfaceEnv<'_>) -
 #[test]
 fn an_outside_typed_view_delivers_boolean_and_value_requests() {
     let mut adapter = Adapter::<quantick_ui_model::first::Model, _>::new(
-        first_view::View {
+        first_view_tests::View {
             enabled: true,
             intent: Some((8, 17)),
             ..Default::default()
         },
-        first_view::effects,
+        first_view_tests::effects,
     );
     assert_eq!(adapter.view.id(), "first-fixture");
     let ctx = egui::Context::default();
@@ -689,8 +667,8 @@ fn a_shipped_surface_and_an_outside_typed_view_take_the_same_path() {
         agent_popup::effects,
     );
     let mut outside = Adapter::<quantick_ui_model::second::Model, _>::new(
-        second_view::View::default(),
-        second_view::effects,
+        second_view_tests::View::default(),
+        second_view_tests::effects,
     );
     assert_eq!(outside.view.id(), "second-fixture");
     assert_eq!(outside.view.apply_env_hook(&env()), None);

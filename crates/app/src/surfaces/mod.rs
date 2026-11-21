@@ -5,42 +5,6 @@
 #[cfg(test)]
 #[macro_use]
 mod tests;
-#[cfg(test)]
-pub(crate) use tests::{
-    borrowed_first, borrowed_second, chrome_early_first, chrome_early_second, chrome_edge_first,
-    chrome_edge_second, chrome_editor_first, chrome_editor_second, chrome_menu_dialogs_first,
-    chrome_menu_dialogs_second, chrome_menu_first, chrome_menu_second, chrome_tabs_first,
-    chrome_tabs_second, chrome_title_first, chrome_title_second, chrome_toolbar_first,
-    chrome_toolbar_second, first_view, paper_tail_probe, second_view,
-};
-
-pub(crate) mod access_panel;
-pub(crate) mod agent_popup;
-pub(crate) mod alerts;
-pub(crate) mod bar_switch;
-pub(crate) mod canvas_popovers;
-pub(crate) mod chart_settings;
-pub(crate) mod chrome_menu_bar;
-pub(crate) mod chrome_tab_strip;
-pub(crate) mod chrome_title_bar;
-pub(crate) mod chrome_toolbar;
-pub(crate) mod dock;
-pub(crate) mod drawing_chrome;
-pub(crate) mod feed_notice;
-pub(crate) mod home;
-pub(crate) mod indicator_picker;
-pub(crate) mod indicator_preview;
-pub(crate) mod indicator_settings;
-pub(crate) mod layout_dialogs;
-pub(crate) mod market_palette;
-pub(crate) mod pane_header;
-pub(crate) mod remove_chart;
-pub(crate) mod replay_browser;
-pub(crate) mod script_editor;
-pub(crate) mod settings_window;
-pub(crate) mod strategy_popup;
-pub(crate) mod toast;
-pub(crate) mod toolrail;
 
 /// The actual paper owner and frame facts needed by a paper panel.
 pub(crate) struct PaperPanelEnv<'a> {
@@ -328,6 +292,8 @@ macro_rules! register_surfaces {
      models { $( [$($model_attr:meta),*] [$($view_attr:meta),*]
         $field:ident: $tag:ident => $model:ident = $model_file:literal, $view:ident = $view_file:literal,
         $effects:path, $slot:ident $(| $additional_slot:ident)*, $dispatch:ident; )* }) => {
+        $($(#[$view_attr])* pub(crate) mod $view;)*
+
         register_host_routes! { [] ; $(
             $dispatch [$($view_attr),*] $tag $model $field;
         )* }
