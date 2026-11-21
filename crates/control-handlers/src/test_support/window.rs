@@ -195,26 +195,13 @@ impl FakeWindow {
 
     /// The actor every fake call is made as.
     pub fn assistant() -> ActorContext {
-        use quantick_control::limits::CONTROL_RUNTIME_ID_BYTES;
-        ActorContext {
-            actor_kind: ActorKind::Agent,
-            principal_id: PrincipalId::from_bytes([1; CONTROL_RUNTIME_ID_BYTES]),
-            client_name: "fake assistant".to_owned(),
-            connection_id: ConnectionId::from_bytes([2; CONTROL_RUNTIME_ID_BYTES]),
-            request_id: RequestId::new("fake-1").expect("a literal request id is valid"),
-            reason: None,
-            requested_at_unix_ms: 0,
-        }
+        quantick_control::testkit::ActorContextBuilder::agent().build()
     }
 
     /// The trader's own hand on the same door: a call the window makes for a
     /// human gesture.
     pub fn trader() -> ActorContext {
-        ActorContext {
-            actor_kind: ActorKind::HumanUi,
-            client_name: "fake trader".to_owned(),
-            ..Self::assistant()
-        }
+        quantick_control::testkit::ActorContextBuilder::human().build()
     }
 }
 

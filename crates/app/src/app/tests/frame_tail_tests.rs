@@ -3,13 +3,10 @@ use super::support::*;
 const WINDOW: egui::Vec2 = egui::vec2(2000.0, 1200.0);
 
 pub(super) fn print(id: u64, price: i64) -> quantick_engine::Trade {
-    quantick_engine::Trade {
-        agg_id: id,
-        timestamp_ms: 1_700_000_000_000 + id as i64 * 1000,
-        price: Decimal::from(price),
-        quantity: Decimal::ONE,
-        side: quantick_engine::Side::Buy,
-    }
+    quantick_engine::testkit::TradeBuilder::new(id)
+        .timestamp_ms(1_700_000_000_000 + id as i64 * 1000)
+        .price(Decimal::from(price))
+        .build()
 }
 
 fn frame(

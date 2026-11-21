@@ -544,17 +544,15 @@ pub(super) fn enable_heatmap_with_snapshot(
 }
 
 pub(super) fn trade(agg_id: u64) -> quantick_engine::Trade {
-    quantick_engine::Trade {
-        agg_id,
-        timestamp_ms: 1_000 + agg_id as i64 * 100,
-        price: Decimal::from(100) + Decimal::new(agg_id as i64 % 20, 1),
-        quantity: Decimal::ONE,
-        side: if agg_id.is_multiple_of(2) {
+    quantick_engine::testkit::TradeBuilder::new(agg_id)
+        .timestamp_ms(1_000 + agg_id as i64 * 100)
+        .price(Decimal::from(100) + Decimal::new(agg_id as i64 % 20, 1))
+        .side(if agg_id.is_multiple_of(2) {
             quantick_engine::Side::Buy
         } else {
             quantick_engine::Side::Sell
-        },
-    }
+        })
+        .build()
 }
 
 /// An app holding `count` backfilled trades, built into tick(1) bars — one

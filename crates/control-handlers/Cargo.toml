@@ -47,3 +47,8 @@ serde_json = { workspace = true }
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+quantick-control = { path = "../control", features = ["test-support"] }
+quantick-engine = { path = "../engine", features = ["test-support"] }
+quantick-stores = { path = "../stores", features = ["test-support"] }

@@ -79,6 +79,7 @@ pub mod scratch_dir;
 pub mod single_consumer;
 pub mod size;
 pub mod struct_width;
+pub mod test_support_feature;
 pub mod ui_free;
 pub mod window_reach;
 
@@ -206,6 +207,12 @@ pub struct Guard {
 
 /// Every guard this crate runs.
 pub const GUARDS: &[Guard] = &[
+    Guard {
+        name: "production-test-support",
+        check: test_support_feature::check,
+        check_file: test_support_feature::check_file,
+        ratchet: None,
+    },
     Guard {
         name: "production-path",
         check: production_path::check,

@@ -17,7 +17,7 @@ use quantick_guards::{GUARDS, remedies, workspace_root};
 /// instead of a green suite over a guard CI never runs — which is the failure
 /// the check exists to prevent, and which a hand-kept list of names invites by
 /// making "add the string" the obvious fix.
-const TESTED: [&str; 21] = [
+const TESTED: [&str; 22] = [
     "size",
     "language",
     "encoding",
@@ -39,6 +39,7 @@ const TESTED: [&str; 21] = [
     "ignored-tests",
     "control-families",
     "production-path",
+    "production-test-support",
 ];
 
 /// Run one named guard and fail with everything it found.
@@ -69,6 +70,11 @@ fn assert_clean(name: &str) {
 #[test]
 fn no_tracked_file_grows_past_its_recorded_ceiling() {
     assert_clean(TESTED[0]);
+}
+
+#[test]
+fn production_dependencies_cannot_enable_test_support() {
+    assert_clean(TESTED[21]);
 }
 
 #[test]

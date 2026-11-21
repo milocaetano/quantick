@@ -9,10 +9,7 @@ use std::time::Duration;
 use quantick_chart::state::ChartState;
 use quantick_chart::style::ChartStyle;
 use quantick_civil::TzOffset;
-use quantick_control::{
-    id::{ConnectionId, PrincipalId, RequestId},
-    wire::{ActorContext, ActorKind, CanonicalDecimal, WireU64},
-};
+use quantick_control::wire::{ActorContext, ActorKind, CanonicalDecimal, WireU64};
 use quantick_control_host::{
     journal::NewEvent,
     wire::{PaneSideDto, unavailable},
@@ -21,7 +18,7 @@ use quantick_control_schema::chart::{BarProvenanceContext, ViewportSnapshot};
 use quantick_control_schema::interaction::CursorSnapshot;
 use quantick_control_schema::notify::AgentPopup;
 use quantick_engine::bar_registry::{BUILTIN_BARS, BarConfiguration};
-use quantick_engine::{Bar, BarSpec, Side, Trade};
+use quantick_engine::{Bar, BarSpec, Trade};
 use quantick_paper::report::ledger_state::{LedgerView, LedgerViewChange};
 use quantick_paper::report::session_edit::{
     JournalEdit, JournalEditOutcome, JournalScope, SessionEditError,

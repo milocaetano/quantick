@@ -45,6 +45,8 @@ pub mod script_alarms;
 pub mod script_library;
 pub mod symbol_catalog;
 pub mod symbols_file;
+#[cfg(any(test, feature = "test-support"))]
+pub mod testkit;
 pub mod ui_state;
 pub mod workspaces;
 

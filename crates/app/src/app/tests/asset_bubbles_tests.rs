@@ -7,7 +7,7 @@ use quantick_stores::bubble_asset_store::{AssetBinding, AssetBubblesStore, Share
 use quantick_stores::bubble_assets::{AssetBubbles, AssetSource};
 
 pub(super) fn shipped_config() -> AppConfig {
-    toml::from_str(include_str!("../../../config/feeds.toml")).expect("shipped feeds parse")
+    quantick_stores::testkit::AppConfigBuilder::shipped().build()
 }
 
 pub(super) fn look(app: &QuantickApp) -> BubblePreset {
