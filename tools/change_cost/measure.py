@@ -33,7 +33,7 @@ def main() -> int:
         raise ValueError("canonical outside-score measure.version must be 1")
     measured = Counts(int(values["lines.production"]), int(values["lines.test"]), int(values["panic_sites"]))
     comparison = compare(BASE, measured)
-    evidence = json.loads(EVIDENCE.read_text(encoding="utf-8"))
+    evidence = json.loads(EVIDENCE.read_text(encoding="utf-8-sig"))
     canonical = evidence["canonical"]
     if canonical["tool"] != "tools/outside_score/measure.py" or canonical["version"] != 1:
         raise ValueError("pinned baseline calculator identity changed")
