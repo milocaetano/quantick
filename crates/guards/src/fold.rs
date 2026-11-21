@@ -70,7 +70,15 @@ pub fn recover(root: &Path) -> Result<(), String> {
     recover_locked(root)
 }
 
-fn lock(root: &Path) -> Result<fs::File, String> {
+struct FoldLock(fs::File);
+
+impl Drop for FoldLock {
+    fn drop(&mut self) {
+        let _ = self.0.unlock();
+    }
+}
+
+fn lock(root: &Path) -> Result<FoldLock, String> {
     let stage = root.join(FOLD_STAGE);
     fs::create_dir_all(&stage).map_err(|error| error.to_string())?;
     let file = fs::OpenOptions::new()
@@ -82,7 +90,7 @@ fn lock(root: &Path) -> Result<fs::File, String> {
         .map_err(|error| error.to_string())?;
     file.try_lock()
         .map_err(|error| format!("another ratchet fold holds the recovery lock: {error}"))?;
-    Ok(file)
+    Ok(FoldLock(file))
 }
 
 fn recover_locked(root: &Path) -> Result<(), String> {
@@ -210,6 +218,19 @@ mod tests {
         run(root.path()).unwrap();
         assert_effective(root.path(), false);
         recover(root.path()).unwrap();
+    }
+
+    #[test]
+    fn duplicated_lock_handle_does_not_extend_owner_scope() {
+        let root = mixed_tree();
+        let owner = lock(root.path()).unwrap();
+        let duplicate = owner.0.try_clone().unwrap();
+
+        drop(owner);
+
+        let next_owner = lock(root.path()).unwrap();
+        drop(next_owner);
+        drop(duplicate);
     }
 
     #[test]
