@@ -18,7 +18,7 @@ fn block(corpus: &Corpus, case: usize, count: u64) {
 /// Existing globally active work_meter remains in this binary. These are
 /// instrumented app-test timings, not uninstrumented production latency.
 #[test]
-#[ignore]
+#[ignore = "manual instrumented calibration requires A1C_CASE"]
 fn baseline_calibration() {
     let case = case();
     let corpus = Corpus::new();
@@ -49,7 +49,7 @@ fn baseline_calibration() {
 }
 
 #[test]
-#[ignore]
+#[ignore = "manual matched observation requires A1C_CASE, A1C_COUNT and A1C_MODE"]
 fn matched_observation() {
     let case = case();
     let count: u64 = std::env::var("A1C_COUNT")

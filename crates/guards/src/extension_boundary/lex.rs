@@ -1,14 +1,14 @@
 //! A lexical token stream with source lines; no macro expansion or type resolution.
 
 #[derive(Debug)]
-pub(super) struct Token {
+pub(crate) struct Token {
     pub text: String,
     pub line: usize,
     pub end_line: usize,
     pub pair: Option<usize>,
 }
 
-pub(super) fn lex(source: &str) -> Result<Vec<Token>, String> {
+pub(crate) fn lex(source: &str) -> Result<Vec<Token>, String> {
     let bytes = source.as_bytes();
     let mut tokens = Vec::new();
     let mut stack: Vec<(u8, usize)> = Vec::new();

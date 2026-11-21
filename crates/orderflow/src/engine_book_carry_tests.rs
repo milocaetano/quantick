@@ -347,7 +347,7 @@ fn a_gap_is_never_carried_across() {
 /// cost per request and the pane's per-frame book work. Ignored: a
 /// measurement, not an assertion.
 #[test]
-#[ignore]
+#[ignore = "manual live-book worker and render-thread timing diagnostic"]
 fn bench_the_live_book_on_the_worker_and_the_render_thread() {
     const SYMBOL: &str = "BTCUSDT";
     const LEVELS: i64 = 80;
