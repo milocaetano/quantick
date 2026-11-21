@@ -1,0 +1,5 @@
+# fix/text-scale-pane-resize: a note's size needs the value scale of its
+# band, which lives only in the pane's frame-cached bands (app-only state);
+# the drawing read access gains one lookup helper and its import.
+crates/app +2
+!budget +2
