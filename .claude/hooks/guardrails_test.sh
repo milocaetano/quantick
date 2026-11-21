@@ -94,24 +94,9 @@ if [ -z "$rv_git_dir" ]; then
     failed=$((failed + 1))
 fi
 
-# marker_key <worktree> — the value a marker must hold for that branch: the
-# hash of its own diff against origin/main, falling back to the commit when
-# that cannot be computed. This restates guardrails.sh's `review_key`, and is
-# called out as a second copy: the alternative is sourcing a script whose first
-# act is to read stdin and whose last is to dispatch on $1. Every case below
-# fails loudly if the two ever disagree, which is the property that matters.
+# Exercise the same standalone identity as the gate, with a fixture repository.
 marker_key() {
-    # The preconditions come first, exactly as `review_key` checks them. A bare
-    # pipe would hand hash-object an empty stream when `git diff` fails and
-    # yield the empty-blob hash - a well-formed value that is not the fallback
-    # the hook uses, so every no-remote case would fail for the wrong reason.
-    if git -C "$1" rev-parse --verify --quiet origin/main >/dev/null 2>&1 &&
-        git -C "$1" merge-base origin/main HEAD >/dev/null 2>&1; then
-        git -C "$1" diff "origin/main...HEAD" 2>/dev/null |
-            git -C "$1" hash-object --stdin 2>/dev/null
-    else
-        git -C "$1" rev-parse HEAD 2>/dev/null
-    fi
+    sh "$script_dir/review_identity.sh" "$1" origin/main
 }
 
 # --- harness ----------------------------------------------------------------
@@ -401,7 +386,7 @@ run "the script judges the payload, not the tool that produced it" \
 # (`green` when absent); the real script's own cases run further down against a
 # fake `gh`.
 mkdir -p "$root/hooks"
-cp "$GUARDRAILS" "$root/hooks/guardrails.sh"
+cp "$script_dir/review_identity.sh" "$script_dir/review_identity.py" "$GUARDRAILS" "$root/hooks/"
 cat > "$root/hooks/full_ci.sh" <<'STUB'
 #!/bin/sh
 case "$(cat "$(dirname "$0")/fullci" 2>/dev/null || printf 'green\n')" in
@@ -1321,6 +1306,13 @@ fi
 if python3 -c 'import sys; assert sys.version_info.major == 3' >/dev/null 2>&1; then progress_python=python3;
 elif python -c 'import sys; assert sys.version_info.major == 3' >/dev/null 2>&1; then progress_python=python;
 else progress_python=python3; fi
+# context_only_sync_keeps_review_key, fragment_edit_stales_review_key,
+# and indentation_only_substantive_edit_stales_review_key use real Git trees.
+if "$progress_python" "$script_dir/review_identity_test.py"; then
+    passed=$((passed + 1))
+else
+    failed=$((failed + 1))
+fi
 if "$progress_python" "$script_dir/review_progress_test.py"; then
     passed=$((passed + 1))
 else

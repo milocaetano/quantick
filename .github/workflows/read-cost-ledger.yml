@@ -1,0 +1,27 @@
+name: Read-cost ledger batch
+
+on:
+  schedule:
+    - cron: '43 5 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: read-cost-ledger
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  batch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Collect merged PR rows into one maintenance PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python tools/read_cost/batch.py

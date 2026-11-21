@@ -6,20 +6,10 @@ directly reference. `tools/read_cost/measure.py` is the calculator and owns
 what counts; this file is only its record. Direct references, never a
 transitive closure.
 
-A pull request carries its own row. Before the merge, on the branch:
-
-```sh
-python tools/read_cost/ledger.py record --repo . --pr <number>
-```
-
-It measures the same two objects CI measures — the base the pull request was
-opened against and its head — so the row is the same one a workflow would have
-written afterwards. The read-cost comment on the pull request asks for it when
-it is missing, `pr-gate` repeats the ask at `gh pr ready` and `gh pr merge`,
-and after the merge `ci.yml`'s `read-cost-ledger` job annotates the run when a
-merged pull request left none. Nothing writes here on the repository's behalf:
-`main` takes pull requests only, and a bot that could push to it would need a
-write credential living in CI.
+Merged PR rows are collected daily by `.github/workflows/read-cost-ledger.yml`
+into one maintenance PR. The user merges it after CI; authors publish their
+work without a ledger commit. The batch uses the PR's recorded base and head,
+retains existing rows and retries missing measurements on the next run.
 
 The first 30 rows were backfilled through the same calculator, over the last
 30 merged pull requests at the time — campaign children included, which is why
