@@ -127,6 +127,66 @@ class IdentityTests(unittest.TestCase):
         self.commit()
         self.assertNotEqual(before, self.key())
 
+    def test_removing_final_newline_ignores_shifted_context(self):
+        self.git("checkout", "-q", "base")
+        self.write_bytes("policy.py", b"header\nx=False\n")
+        self.commit()
+        self.git("checkout", "-q", "-b", "removed-newline-head")
+        self.write_bytes("policy.py", b"header\nx=True")
+        self.commit()
+        before = self.key()
+        self.git("checkout", "-q", "base")
+        self.write_bytes("policy.py", b"upstream\nheader\nx=False\n")
+        self.commit()
+        self.git("checkout", "-q", "removed-newline-head")
+        self.git("rebase", "base")
+        self.assertEqual(before, self.key())
+
+    def test_crlf_newline_directions_ignore_shifted_context(self):
+        cases = (
+            (b"header\r\nx=False\r\n", b"header\r\nx=True", b"upstream\r\n"),
+            (b"header\r\nx=False", b"header\r\nx=True\r\n", b"upstream\r\n"),
+        )
+        for case, (base, head, prefix) in enumerate(cases):
+            with self.subTest(case=case):
+                branch = f"crlf-head-{case}"
+                base_branch = f"crlf-base-{case}"
+                self.git("checkout", "-q", "base")
+                self.write_bytes("policy.py", base)
+                self.commit()
+                self.git("branch", base_branch)
+                self.git("checkout", "-q", "-b", branch)
+                self.write_bytes("policy.py", head)
+                self.commit()
+                before = identity.identity(self.repo, base_branch)
+                self.git("checkout", "-q", base_branch)
+                self.write_bytes("policy.py", prefix + base)
+                self.commit()
+                self.git("checkout", "-q", branch)
+                self.git("rebase", base_branch)
+                self.assertEqual(before, identity.identity(self.repo, base_branch))
+
+    def test_line_ending_bytes_remain_identity_visible(self):
+        before = self.key()
+        self.write_bytes("code.py", b"# context\r\nif True:\r\n    change()\r\n")
+        self.commit()
+        self.assertNotEqual(before, self.key())
+
+    def test_repeated_no_final_newline_occurrence_ignores_shifted_context(self):
+        self.git("checkout", "-q", "base")
+        self.write_bytes("policy.py", b"def policy():\n    x=False\n    work()\n    x=False")
+        self.commit()
+        self.git("checkout", "-q", "-b", "repeated-no-newline-head")
+        self.write_bytes("policy.py", b"def policy():\n    x=False\n    work()\n    x=True")
+        self.commit()
+        before = self.key()
+        self.git("checkout", "-q", "base")
+        self.write_bytes("policy.py", b"upstream\ndef policy():\n    x=False\n    work()\n    x=False")
+        self.commit()
+        self.git("checkout", "-q", "repeated-no-newline-head")
+        self.git("rebase", "base")
+        self.assertEqual(before, self.key())
+
     def test_rename_source_and_excluded_destination_both_affect_identity(self):
         self.git("checkout", "-q", "base")
         self.write("old_a.py", "same bytes\n")

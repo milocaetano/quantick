@@ -100,13 +100,20 @@ def hunk_occurrences(repo, ancestor, path):
         old_index = int(match.group(1)) - 1
         index += 1
         removed = []
+        marker_owner = None
         while index < len(lines) and not lines[index].startswith(b"@@ "):
             if lines[index].startswith(b"diff --git "):
                 break
             if lines[index].startswith(b"-") and not lines[index].startswith(b"--- "):
                 removed.append(lines[index][1:])
-            elif lines[index].startswith(b"\\ No newline at end of file") and removed:
+                marker_owner = "removed"
+            elif lines[index].startswith(b"+") and not lines[index].startswith(b"+++ "):
+                marker_owner = "added"
+            elif (lines[index].startswith(b"\\ No newline at end of file")
+                  and marker_owner == "removed"):
                 removed[-1] = removed[-1].removesuffix(b"\n")
+            else:
+                marker_owner = None
             index += 1
         if not base or old_index < 0:
             occurrence = 0
