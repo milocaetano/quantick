@@ -79,7 +79,11 @@ def verified_outputs(repo, paths):
 
 def identity(repo, base):
     ancestor = git(repo, "merge-base", base, "HEAD").decode().strip()
-    paths = git(repo, "diff", "--name-only", "-z", ancestor, "HEAD").decode().split("\0")
+    # Keep both sides of a rename. The patch below deliberately disables rename
+    # collapsing, so path discovery must use the same view or source deletions
+    # (including moves into an excluded generated destination) disappear.
+    paths = git(repo, "diff", "--name-only", "--no-renames", "-z",
+                ancestor, "HEAD").decode().split("\0")
     raw = git(repo, "diff", "--raw", "--no-renames", "-z", ancestor, "HEAD").split(b"\0")
     modes = {raw[index + 1].decode() for index in range(0, len(raw) - 1, 2)
              if raw[index].split()[1] != b"100644"
@@ -91,11 +95,19 @@ def identity(repo, base):
         patch = git(repo, "diff", "--no-ext-diff", "--no-textconv", "--no-renames",
                     "--binary", "--full-index", "--unified=0", ancestor, "HEAD", "--", *paths)
     stable = git(repo, "patch-id", "--stable", data=patch).split()
-    # Hunk coordinates and text blob IDs move on context-only synchronization.
-    # Exact changed lines (including indentation), modes and binary patches do
-    # not. Keep those bytes beside patch-id, which alone ignores whitespace.
-    changed = b"".join(line for line in patch.splitlines(keepends=True)
-                       if not line.startswith((b"@@ ", b"index ")))
+    # Coordinates and blob IDs move on context-only synchronization. Retain the
+    # coordinate-free hunk label, however: it identifies the enclosing function
+    # and prevents an identical edit moved to another semantic location from
+    # inheriting approval. Exact changed lines retain indentation, modes and
+    # binary patches beside patch-id, which alone ignores whitespace.
+    changed_lines = []
+    for line in patch.splitlines(keepends=True):
+        if line.startswith(b"@@ "):
+            marker = line.find(b" @@", 3)
+            changed_lines.append(line[marker + 3:] if marker >= 0 else b"\n")
+        elif not line.startswith(b"index "):
+            changed_lines.append(line)
+    changed = b"".join(changed_lines)
     return hashlib.sha256((stable[0] if stable else b"") + b"\0" + changed).hexdigest()
 
 

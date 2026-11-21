@@ -63,6 +63,38 @@ class IdentityTests(unittest.TestCase):
         self.commit()
         self.assertNotEqual(before, self.key())
 
+    def test_moving_identical_edit_between_functions_stales_review_key(self):
+        self.git("checkout", "-q", "base")
+        self.write("policy.py", "def first():\n    return False\n\ndef second():\n    return False\n")
+        self.commit()
+        self.git("checkout", "-q", "-b", "semantic-head")
+        self.write("policy.py", "def first():\n    return True\n\ndef second():\n    return False\n")
+        self.commit()
+        before = self.key()
+        self.git("checkout", "-q", "base")
+        self.write("policy.py", "def first():\n    return False\n\ndef second():\n    return True\n")
+        self.commit()
+        self.assertNotEqual(before, self.key())
+
+    def test_rename_source_and_excluded_destination_both_affect_identity(self):
+        self.git("checkout", "-q", "base")
+        self.write("old_a.py", "same bytes\n")
+        self.write("old_b.py", "same bytes\n")
+        self.commit()
+        self.git("checkout", "-q", "-b", "rename-head")
+        destination = "schemas/control/example.schema.json"
+        (self.repo / destination).parent.mkdir(parents=True, exist_ok=True)
+        self.git("mv", "old_a.py", destination)
+        self.commit()
+        with patch.object(identity, "verified_outputs", return_value={destination}):
+            before = self.key()
+        self.git("checkout", "-q", "base")
+        (self.repo / destination).parent.mkdir(parents=True, exist_ok=True)
+        (self.repo / "old_b.py").replace(self.repo / destination)
+        self.commit()
+        with patch.object(identity, "verified_outputs", return_value={destination}):
+            self.assertNotEqual(before, self.key())
+
     def test_baselines_inputs_and_unverified_outputs_stale(self):
         execute = identity.subprocess.run
 

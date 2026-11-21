@@ -13,7 +13,15 @@ PREFIX = "docs/read-cost-ledger-"
 
 
 def run(args, repo):
-    return subprocess.check_output(args, cwd=repo, text=True, encoding="utf-8").strip()
+    completed = subprocess.run(args, cwd=repo, text=True, encoding="utf-8",
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+    return completed.stdout.strip()
+
+
+def confirmed_pr_permission_denial(error):
+    detail = "\n".join(part for part in (error.stdout, error.stderr) if part).lower()
+    return ("resource not accessible by integration" in detail
+            or "github actions is not permitted to create or approve pull requests" in detail)
 
 
 def maintain(repo, run_id, execute=run, collect=ledger.batch):
@@ -53,9 +61,15 @@ def maintain(repo, run_id, execute=run, collect=ledger.batch):
             call("gh", "pr", "create", "--base", "main", "--head", branch,
                  "--title", TITLE, "--body-file", str(body))
         except subprocess.CalledProcessError as error:
-            raise RuntimeError("Bot PR creation was rejected. Enable the repository's existing "
-                               "Actions PR permission and rerun; no settings or merge authority "
-                               "are changed by this job.") from error
+            if confirmed_pr_permission_denial(error):
+                message = ("Bot PR creation was denied by GitHub authorization. Enable the "
+                           "repository's existing Actions PR permission and rerun; no settings "
+                           "or merge authority are changed by this job.")
+            else:
+                message = ("Bot PR creation did not return a confirmed result. Read back open "
+                           "ledger PRs, then retry; the request may have failed before or after "
+                           "GitHub created the PR.")
+            raise RuntimeError(message) from error
         finally:
             body.unlink()
 

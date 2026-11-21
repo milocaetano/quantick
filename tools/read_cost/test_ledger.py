@@ -3,6 +3,7 @@
 
 import importlib.util
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -86,6 +87,43 @@ class Batching(unittest.TestCase):
                 self.assertEqual(sum(args[:3] == ["gh", "pr", "create"] for args in calls), int(changed and not existing))
                 self.assertFalse(any(args[:3] == ["gh", "pr", "merge"] or "--force" in args for args in calls))
                 self.assertEqual(sum(args[:2] == ["git", "push"] for args in calls), int(changed))
+
+    def test_pr_create_diagnostics_distinguish_denial_from_uncertain_failure(self):
+        sys.path.insert(0, HERE)
+        try:
+            batch = ledger.load("read_cost_batch_failure_test", "batch.py")
+        finally:
+            sys.path.pop(0)
+
+        def exercise(stderr):
+            heads = iter(["old", "new"])
+
+            def execute(args, _repo):
+                if args[:3] == ["gh", "pr", "list"]:
+                    return "[]"
+                if args[:3] == ["git", "rev-parse", "HEAD"]:
+                    return next(heads)
+                if args[:3] == ["git", "diff", "--cached"]:
+                    return ledger.DEFAULT_PATH
+                if args[:3] == ["gh", "pr", "create"]:
+                    raise subprocess.CalledProcessError(1, args, stderr=stderr)
+                return ""
+
+            with tempfile.TemporaryDirectory() as repo:
+                with self.assertRaises(RuntimeError) as raised:
+                    batch.maintain(repo, "fixture", execute=execute, collect=lambda *_: None)
+                self.assertFalse(os.path.exists(os.path.join(repo, ".git-ledger-pr-body.tmp")))
+                return str(raised.exception)
+
+        denied = exercise("GraphQL: Resource not accessible by integration")
+        uncertain = exercise("connection timed out while waiting for response")
+        lost_response = exercise("connection closed after request body was sent")
+
+        self.assertIn("denied by GitHub authorization", denied)
+        self.assertIn("Actions PR permission", denied)
+        self.assertIn("did not return a confirmed result", uncertain)
+        self.assertIn("Read back open ledger PRs", uncertain)
+        self.assertIn("may have failed before or after", lost_response)
 
 
 class Rows(unittest.TestCase):
