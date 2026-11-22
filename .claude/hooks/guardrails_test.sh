@@ -1192,11 +1192,13 @@ else
             ;;
     esac
 
+    # One per Codex hook: worktree-guard, pr-gate, commit-reminder, guard-watch, machine-check.
+    codex_hook_count=5
     windows_commands=$(grep -c -- '"commandWindows"' "$codex_hooks")
-    if [ "$windows_commands" -eq 4 ]; then
+    if [ "$windows_commands" -eq "$codex_hook_count" ]; then
         passed=$((passed + 1))
     else
-        printf 'FAIL Codex hooks define %s Windows commands, expected 4\n' "$windows_commands"
+        printf 'FAIL Codex hooks define %s Windows commands, expected %s\n' "$windows_commands" "$codex_hook_count"
         failed=$((failed + 1))
     fi
 
@@ -1206,14 +1208,14 @@ else
     # Each command must also hand the guardrail's exit code back.
     nested_shells=$(grep -c -- '"commandWindows": "powershell' "$codex_hooks")
     forwarded_exits=$(grep -c -- '"commandWindows": .*exit \$LASTEXITCODE",' "$codex_hooks")
-    if [ "$nested_shells" -eq 0 ] && [ "$forwarded_exits" -eq 4 ]; then
+    if [ "$nested_shells" -eq 0 ] && [ "$forwarded_exits" -eq "$codex_hook_count" ]; then
         passed=$((passed + 1))
     else
-        printf 'FAIL Codex Windows hooks nest PowerShell (%s) or drop the exit code (%s of 4 forward it)\n' "$nested_shells" "$forwarded_exits"
+        printf 'FAIL Codex Windows hooks nest PowerShell (%s) or drop the exit code (%s of %s forward it)\n' "$nested_shells" "$forwarded_exits" "$codex_hook_count"
         failed=$((failed + 1))
     fi
 
-    for mode in worktree-guard pr-gate commit-reminder guard-watch; do
+    for mode in worktree-guard pr-gate commit-reminder guard-watch machine-check; do
         if grep -qF -- '.claude/hooks/guardrails.sh' "$codex_hooks" &&
             grep -qF -- "$mode" "$codex_hooks"; then
             passed=$((passed + 1))
