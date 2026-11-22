@@ -42,13 +42,13 @@ The three exclusion classes are closed:
 
 | Outcome | Behaviours |
 | --- | --- |
-| Reachable by capability | 148 |
+| Reachable by capability | 149 |
 | Excluded: `authority` | 4 |
 | Excluded: `ui_only_by_decision` | 7 |
 | Excluded: `pending_capability` | 35 |
-| **Total** | **194** |
+| **Total** | **195** |
 
-99 of the 194 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 95 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
+100 of the 195 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 95 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
 
 ## Behaviours
 
@@ -151,6 +151,7 @@ The three exclusion classes are closed:
 | `indicator.script.remove` | Remove a script indicator | the legend row's close, and the indicator picker | `indicator.script.detach` | — |
 | `indicator.settings.open` | Open an indicator's settings | the legend row's gear, and the indicator picker | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
 | `indicator.source.edit` | Read, copy and edit Pine source | Indicators > Scripts > View source; Pine source window | `indicator.library.edit` | — |
+| `strategy.describe` | Describe a strategy | Panels > Describe a strategy... | `strategy.describe.open`, `strategy.describe.read`, `strategy.describe.submit`, `strategy.describe.cancel`, `strategy.describe.save` | — |
 | `trade.account.route` | Choose where orders go: the simulator or the broker account | the Trading panel's Account selector, the toolbar's orders notice | `trade.account.select` | — |
 | `trade.aim.bracket` | Send an entry with its stop and target attached | the ticket's bracket fields, and the aim on the chart | `trade.order.bracket` | — |
 | `trade.instrument.money.set` | Declare what one point of an instrument is worth | the Trading panel's instrument section | `trade.instrument.set_money` | — |
@@ -268,7 +269,7 @@ matrix fails the build.
 | `layout_preset` | 16 |
 | `notice_action` | 3 |
 | `hotkey` | 25 |
-| `menu_entry` | 47 |
+| `menu_entry` | 48 |
 | `scripted_menu` | 0 |
 | `authored` | 97 |
 

@@ -6,7 +6,7 @@ const AUTHORITY_ARBITRARY_PATH: Mapping = Mapping::Excluded {
              dialog is the ceiling's other side, not a gap in it",
 };
 
-pub(super) const BINDING: (usize, &[UiBehaviour]) = (12, ROWS);
+pub(super) const BINDING: (usize, &[UiBehaviour]) = (13, ROWS);
 const ROWS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "alerts.list",

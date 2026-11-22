@@ -1,6 +1,6 @@
 use super::{ExclusionClass, Mapping, Source, UiBehaviour};
 
-pub(super) const BINDING: (usize, &[UiBehaviour]) = (11, ROWS);
+pub(super) const BINDING: (usize, &[UiBehaviour]) = (12, ROWS);
 const ROWS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "drawing.text.properties",

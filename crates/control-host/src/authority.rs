@@ -146,6 +146,9 @@ pub const TRADE_MODULE_ID: &str = "trade";
 pub const TRADE_EFFECT_ID: &str = "trade";
 pub const TRADE_PERMISSION_ID: &str = "trade";
 
+pub const STRATEGY_PROVIDER_EFFECT_ID: &str = "strategy.provider";
+pub const STRATEGY_PROVIDER_RISK: &str = "external_chart_context";
+pub const STRATEGY_DESCRIBE_PERMISSION_ID: &str = "annotate.strategy_describe";
 /// Strategies armed on a chart: Pine scripts that ring alarm-only.
 pub const STRATEGY_MODULE_ID: &str = "strategy";
 

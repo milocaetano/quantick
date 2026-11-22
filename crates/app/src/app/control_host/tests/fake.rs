@@ -154,6 +154,10 @@ impl TabsPort for FakeWindow {
 }
 
 impl TabsMutPort for FakeWindow {
+    fn describe_owners(&mut self) -> (&mut crate::surfaces::Surfaces, &mut ArrangementHost) {
+        (&mut self.surfaces, &mut self.tabs)
+    }
+
     fn tabs_mut(&mut self) -> TabsMut<'_> {
         TabsMut::new(
             &mut self.tabs,
