@@ -17,4 +17,6 @@ pub mod limits;
 pub mod registry;
 pub mod schema;
 pub mod schema_catalog;
+#[cfg(any(test, feature = "test-support"))]
+pub mod testkit;
 pub mod wire;

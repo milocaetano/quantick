@@ -32,6 +32,8 @@ pub mod display;
 pub mod fixture;
 pub mod forming_run;
 pub mod golden;
+#[cfg(any(test, feature = "test-support"))]
+pub mod testkit;
 pub mod trade_tape;
 pub mod work_meter;
 

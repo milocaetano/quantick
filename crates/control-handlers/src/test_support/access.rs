@@ -80,13 +80,10 @@ pub(crate) fn loading(reach: HistoryReach) -> RunStatus {
 
 /// A buy print at `price`, the `id`th second of the epoch.
 pub(crate) fn trade(id: u64, price: i64) -> Trade {
-    Trade {
-        agg_id: id,
-        timestamp_ms: i64::try_from(id).expect("small id") * 1_000,
-        price: Decimal::from(price),
-        quantity: Decimal::ONE,
-        side: Side::Buy,
-    }
+    quantick_engine::testkit::TradeBuilder::new(id)
+        .timestamp_ms(i64::try_from(id).expect("small id") * 1_000)
+        .price(Decimal::from(price))
+        .build()
 }
 
 /// A window lending its tabs, by id in screen order, beside the config and

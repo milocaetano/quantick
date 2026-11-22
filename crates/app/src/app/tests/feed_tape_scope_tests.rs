@@ -4,7 +4,7 @@ use crate::bubble_presets::BubblePreset;
 use quantick_orderflow::LaneWindow;
 
 fn shipped_config() -> AppConfig {
-    toml::from_str(include_str!("../../../config/feeds.toml")).expect("shipped feeds parse")
+    quantick_stores::testkit::AppConfigBuilder::shipped().build()
 }
 
 fn appearance(app: &QuantickApp) -> BubblePreset {
