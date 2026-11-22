@@ -5197,6 +5197,7 @@ fn observer_catalog() {
         } else {
             assert!(
                 capability["effect"] == "annotate"
+                        || capability["effect"] == quantick_control_host::authority::STRATEGY_PROVIDER_EFFECT_ID
                         || capability["effect"] == "notify"
                         || capability["effect"] == "cockpit"
                         // Acknowledged deliberately, as the paragraph above

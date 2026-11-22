@@ -22,10 +22,11 @@ CONTEXT_FILES = [
     for name in ("chart_context", "chart_context_tests")
 ]
 FIXTURE_ROW = '            "zz_fixture" { schemas: [zz_fixture], actions: [zz_fixture], projections: [zz_fixture], authority: [zz_fixture], readbacks: [zz_fixture], behaviours: [zz_fixture], samples: [zz_fixture], }\n'
+TARGET_ROOT: Path | None = None
 
 
-def run(root: Path, *args: str, capture: bool = False) -> str:
-    result = subprocess.run(args, cwd=root, text=True, capture_output=capture)
+def run(root: Path, *args: str, capture: bool = False, env: dict[str, str] | None = None) -> str:
+    result = subprocess.run(args, cwd=root, text=True, capture_output=capture, env=env)
     if result.returncode:
         if capture:
             print(result.stdout, flush=True)
@@ -35,7 +36,14 @@ def run(root: Path, *args: str, capture: bool = False) -> str:
 
 
 def cargo(root: Path, *args: str, capture: bool = False) -> str:
-    return run(root, "cargo", "--offline", *args, capture=capture)
+    assert TARGET_ROOT is not None
+    identity = hashlib.sha256()
+    for path in sorted((root / "crates").rglob("*.rs")):
+        identity.update(path.relative_to(root).as_posix().encode() + b"\0")
+        identity.update(path.read_bytes() + b"\0")
+    env = os.environ.copy()
+    env["CARGO_TARGET_DIR"] = str(TARGET_ROOT / identity.hexdigest())
+    return run(root, "cargo", "--offline", *args, capture=capture, env=env)
 
 
 def emit(root: Path) -> dict[str, bytes]:
@@ -144,6 +152,7 @@ def mutation(root: Path, expected: dict[str, bytes]) -> dict[str, object]:
 
 
 def main() -> None:
+    global TARGET_ROOT
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--phase", choices=("all", "chart", "mutation"), default="all")
     parser.add_argument("--keep", action="store_true", help="keep the disposable checkout for inspection")
@@ -153,7 +162,7 @@ def main() -> None:
         help="rebuild this quantick-control-docking-* path instead of choosing a random path",
     )
     args = parser.parse_args()
-    os.environ.setdefault("CARGO_TARGET_DIR", str(ROOT / "target"))
+    TARGET_ROOT = Path(tempfile.mkdtemp(prefix="quantick-control-docking-target-"))
     if args.scratch:
         scratch = args.scratch.resolve()
         scratch_parent = Path(tempfile.gettempdir()).resolve()
@@ -165,6 +174,7 @@ def main() -> None:
     else:
         scratch = Path(tempfile.mkdtemp(prefix="quantick-control-docking-"))
     print(f"scratch={scratch}", flush=True)
+    print(f"target_root={TARGET_ROOT}", flush=True)
     try:
         source = snapshot(ROOT)
         for path, data in source.items():
@@ -186,6 +196,7 @@ def main() -> None:
     finally:
         if not args.keep:
             shutil.rmtree(scratch)
+        shutil.rmtree(TARGET_ROOT, ignore_errors=True)
 
 
 if __name__ == "__main__":

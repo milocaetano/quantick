@@ -190,6 +190,7 @@ impl quantick_control_handlers::TabDirectory for dyn ControlPort {
 
 /// Tabs and panes, changed: the tab or pane an action targets.
 pub(crate) trait TabsMutPort {
+    fn describe_owners(&mut self) -> (&mut crate::surfaces::Surfaces, &mut ArrangementHost);
     fn tabs_mut(&mut self) -> TabsMut<'_>;
 }
 

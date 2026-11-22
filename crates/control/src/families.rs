@@ -92,6 +92,7 @@ macro_rules! control_families {
             "session" { schemas: [session], actions: [], projections: [session], authority: [session], readbacks: [], behaviours: [], samples: [], }
             "session_reports" { schemas: [session_reports], actions: [session_reports], projections: [], authority: [], readbacks: [session_reports], behaviours: [], samples: [session_reports], }
             "snapshot" { schemas: [snapshot], actions: [], projections: [], authority: [snapshot], readbacks: [], behaviours: [], samples: [], }
+            "strategy_describe" { schemas: [strategy_describe], actions: [strategy_describe], projections: [], authority: [strategy_describe], readbacks: [strategy_describe], behaviours: [strategy_describe], samples: [], }
             "system" { schemas: [system], actions: [], projections: [system], authority: [system], readbacks: [], behaviours: [], samples: [], }
             "tape_fold" { schemas: [], actions: [tape_fold], projections: [], authority: [], readbacks: [tape_fold], behaviours: [], samples: [tape_fold], }
             "tape_market_fold" { schemas: [], actions: [], projections: [], authority: [], readbacks: [tape_market_fold], behaviours: [], samples: [tape_market_fold], }

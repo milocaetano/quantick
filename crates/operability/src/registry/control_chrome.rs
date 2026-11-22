@@ -1,6 +1,6 @@
 use super::{ExclusionClass, Mapping, Source, UiBehaviour};
 
-pub(super) const BINDING: (usize, &[UiBehaviour]) = (13, ROWS);
+pub(super) const BINDING: (usize, &[UiBehaviour]) = (14, ROWS);
 const ROWS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "window.menu.open",

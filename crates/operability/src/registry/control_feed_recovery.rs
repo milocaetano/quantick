@@ -1,6 +1,6 @@
 use super::{ExclusionClass, Mapping, Source, UiBehaviour};
 
-pub(super) const BINDING: (usize, &[UiBehaviour]) = (9, ROWS);
+pub(super) const BINDING: (usize, &[UiBehaviour]) = (10, ROWS);
 const ROWS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "feed.reconnect",
