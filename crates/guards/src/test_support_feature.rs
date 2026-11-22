@@ -238,6 +238,7 @@ fn dependency_specific_section(header: &str) -> bool {
 fn parse(path: PathBuf) -> Result<Manifest, String> {
     let source =
         fs::read_to_string(&path).map_err(|error| format!("{}: {error}", path.display()))?;
+    let source = source.strip_prefix('\u{feff}').unwrap_or(&source);
     let mut out = Manifest {
         path,
         ..Manifest::default()
@@ -250,7 +251,7 @@ fn parse(path: PathBuf) -> Result<Manifest, String> {
         table_key(header).map_err(|error| format!("{}: {error}", out.path.display()))?;
     }
     if let Some((section, key, _)) =
-        crate::graph::manifest_entries_with_sections(&source, dependency_specific_section)
+        crate::graph::manifest_entries_with_sections(source, dependency_specific_section)
             .into_iter()
             .next()
     {
@@ -259,7 +260,7 @@ fn parse(path: PathBuf) -> Result<Manifest, String> {
             out.path.display()
         ));
     }
-    if let Some((_, value)) = crate::graph::manifest_entries_in(&source, package_section)
+    if let Some((_, value)) = crate::graph::manifest_entries_in(source, package_section)
         .into_iter()
         .find(|(key, _)| manifest_key(key).is_ok_and(|parts| parts == ["name"]))
     {
@@ -267,7 +268,7 @@ fn parse(path: PathBuf) -> Result<Manifest, String> {
             .map_err(|error| format!("{}: {error}", out.path.display()))?
             .1;
     }
-    for (key, value) in crate::graph::manifest_entries_in(&source, features_section) {
+    for (key, value) in crate::graph::manifest_entries_in(source, features_section) {
         let key = manifest_key(&key).map_err(|error| format!("{}: {error}", out.path.display()))?;
         if key.len() != 1 {
             return Err(format!("{}: unsupported feature key", out.path.display()));
@@ -278,7 +279,7 @@ fn parse(path: PathBuf) -> Result<Manifest, String> {
         );
     }
     for (_, key, value) in
-        crate::graph::manifest_entries_with_sections(&source, shipping_dependencies)
+        crate::graph::manifest_entries_with_sections(source, shipping_dependencies)
     {
         let key = manifest_key(&key).map_err(|error| format!("{}: {error}", out.path.display()))?;
         let inherited_key = matches!(key.as_slice(), [_, field] if field == "workspace");
@@ -328,6 +329,12 @@ fn manifests(root: &Path) -> Result<Vec<Manifest>, String> {
             .join("Cargo.toml");
         if path.is_file() {
             let mut manifest = parse(path)?;
+            if manifest.package.is_empty() {
+                return Err(format!(
+                    "{}: package name is missing or unsupported",
+                    manifest.path.display()
+                ));
+            }
             for dependency in &mut manifest.production {
                 if !dependency.inherited {
                     continue;
@@ -484,6 +491,10 @@ mod tests {
         let path = root.join(format!("crates/{name}"));
         fs::create_dir_all(&path).unwrap();
         fs::write(path.join("Cargo.toml"), body).unwrap();
+    }
+
+    fn write_with_bom(root: &ScratchDir, name: &str, body: &str) {
+        write(root, name, &format!("\u{feff}{body}"));
     }
 
     #[test]
@@ -648,6 +659,58 @@ mod tests {
         let findings = check(&root);
         assert_eq!(findings.len(), 1, "{findings:?}");
         assert!(findings[0].line.contains("quantick-owner"));
+    }
+
+    #[test]
+    fn utf8_bom_preserves_shipping_and_dev_only_verdicts() {
+        for bom in [false, true] {
+            let root = ScratchDir::new(if bom {
+                "test-support-bom-shipping"
+            } else {
+                "test-support-no-bom-shipping"
+            });
+            write(
+                &root,
+                "owner",
+                "[package]\nname = 'quantick-owner'\n[features]\ntest-support = []\n",
+            );
+            let app = "[package]\nname = 'quantick-app'\n[dependencies]\nowner = { package = 'quantick-owner', path = '../owner', features = ['test-support'] }\n";
+            if bom {
+                write_with_bom(&root, "app", app);
+            } else {
+                write(&root, "app", app);
+            }
+            let findings = check(&root);
+            assert_eq!(findings.len(), 1, "bom={bom}: {findings:?}");
+            assert!(findings[0].line.contains("quantick-owner"));
+
+            let root = ScratchDir::new(if bom {
+                "test-support-bom-dev-only"
+            } else {
+                "test-support-no-bom-dev-only"
+            });
+            write(
+                &root,
+                "owner",
+                "[package]\nname = 'quantick-owner'\n[features]\ntest-support = []\n",
+            );
+            let app = "[package]\nname = 'quantick-app'\n[dev-dependencies]\nowner = { package = 'quantick-owner', path = '../owner', features = ['test-support'] }\n";
+            if bom {
+                write_with_bom(&root, "app", app);
+            } else {
+                write(&root, "app", app);
+            }
+            assert!(check(&root).is_empty(), "bom={bom}");
+        }
+    }
+
+    #[test]
+    fn missing_package_identity_fails_closed() {
+        let root = ScratchDir::new("test-support-missing-package-identity");
+        write(&root, "app", "[package]\nversion = '0.1.0'\n");
+        let findings = check(&root);
+        assert_eq!(findings.len(), 1, "{findings:?}");
+        assert!(findings[0].line.contains("package name is missing"));
     }
 
     #[test]
