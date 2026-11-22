@@ -7,8 +7,10 @@ lines in new ratchet fragments. Existing fragments cannot authorize a new change
 """
 
 import argparse
+from dataclasses import dataclass
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 
@@ -40,24 +42,35 @@ def measurements(text):
     return rows
 
 
+@dataclass(frozen=True)
+class Coverage:
+    change: int
+    anchor: str | None
+
+
 def coverage(repo, base):
     result = {}
     for directory in sorted((repo / "crates/guards").glob("*-baseline.d")):
         for fragment in sorted(directory.glob("*.txt")):
             relative = fragment.relative_to(repo)
-            if (base / relative).exists():
-                continue
+            is_new = not (base / relative).exists()
             for line in fragment.read_text(encoding="utf-8").splitlines():
                 content = line.split("#", 1)[0].strip()
                 if not content.startswith("!measure-change"):
                     continue
                 fields = content.split()
-                if len(fields) != 3 or fields[0] != "!measure-change" or fields[2][:1] not in ("+", "-"):
+                if (len(fields) not in (3, 4) or fields[0] != "!measure-change"
+                        or fields[2][:1] not in ("+", "-")):
                     raise ValueError(f"{relative}: invalid measurement coverage")
-                key, value = fields[1:]
+                key, value = fields[1:3]
+                anchor = fields[3] if len(fields) == 4 else None
+                if anchor is None and not is_new:
+                    continue
+                if anchor is not None and not re.fullmatch(r"[0-9a-f]{40}", anchor):
+                    raise ValueError(f"{relative}: measurement anchor must be a full SHA")
                 if key in result:
                     raise ValueError(f"{relative}: duplicate coverage for {key}")
-                result[key] = int(value)
+                result[key] = Coverage(int(value), anchor)
     return result
 
 
@@ -73,6 +86,37 @@ def compare_measurements(old, new, signed):
         missing = {key: value for key, value in differences.items() if signed.get(key) != value}
         stale = {key: value for key, value in signed.items() if differences.get(key) != value}
         raise ValueError(f"measurement disagreement; unsigned or incorrect={missing}; stale coverage={stale}")
+
+
+def verify_measurements(repo, base_sha, base, head_binary):
+    declarations = coverage(repo, base)
+    base_binary = build(base, base.parent / "build")
+    base_report = report(base_binary, repo)
+    head_report = report(head_binary, repo)
+    immediate = {
+        key: declaration.change
+        for key, declaration in declarations.items()
+        if declaration.anchor in (None, base_sha)
+    }
+    compare_measurements(base_report, head_report, immediate)
+
+    anchors = sorted({declaration.anchor for declaration in declarations.values()
+                      if declaration.anchor not in (None, base_sha)})
+    for anchor in anchors:
+        try:
+            run(["git", "merge-base", "--is-ancestor", anchor, base_sha], repo)
+        except ValueError as error:
+            raise ValueError(f"measurement anchor is not an ancestor of the base: {anchor}")
+        resolved = run(["git", "rev-parse", f"{anchor}^{{commit}}"], repo).strip()
+        if resolved != anchor:
+            raise ValueError(f"measurement anchor does not resolve exactly: {anchor}")
+        _, anchor_root = base_checkout(repo, anchor)
+        anchor_binary = build(anchor_root, anchor_root.parent / "build")
+        anchor_report = report(anchor_binary, repo)
+        signed = {key: declaration.change for key, declaration in declarations.items()
+                  if declaration.anchor == anchor}
+        compare_measurements(anchor_report, base_report, signed)
+        compare_measurements(anchor_report, head_report, signed)
 
 
 def measurement_inputs_changed(repo, base_sha):
@@ -112,8 +156,7 @@ def check(repo, reference, binary=None, file=None, export_env=None):
     sha, base = base_checkout(repo, reference)
     binary = binary or build(repo, repo / "target")
     if measurement_inputs_changed(repo, sha):
-        old_binary = build(base, base.parent / "build")
-        compare_measurements(report(old_binary, repo), report(binary, repo), coverage(repo, base))
+        verify_measurements(repo, sha, base, binary)
     args = [str(binary), "--base-root", str(base)]
     if file:
         args += ["--file", file]

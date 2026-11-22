@@ -707,11 +707,20 @@ fn branch_slug(root: &Path) -> String {
         .unwrap_or_else(|| "tighten".to_owned())
 }
 
-/// Measurement corrections name an exact report row and a signed change.
+/// Measurement corrections name an exact report row and a signed change,
+/// optionally tied to the full historical SHA whose guard owned the old row.
 pub fn parse_coverage(rest: &str) -> Result<(&str, i128), String> {
     let fields: Vec<_> = rest.split_whitespace().collect();
-    if fields.len() != 2 || !fields[1].starts_with(['+', '-']) {
-        return Err("expected `!measure-change <report-row> +N|-N`".to_owned());
+    if !(2..=3).contains(&fields.len()) || !fields[1].starts_with(['+', '-']) {
+        return Err("expected `!measure-change <report-row> +N|-N [full-anchor-sha]`".to_owned());
+    }
+    if fields.get(2).is_some_and(|anchor| {
+        anchor.len() != 40
+            || !anchor
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    }) {
+        return Err("measurement anchor must be a full SHA".to_owned());
     }
     let amount = fields[1]
         .parse()
@@ -736,6 +745,23 @@ mod tests {
         budget_slack_remedy: "budget slack",
         baseline_remedy: "syntax",
     };
+
+    #[test]
+    fn measurement_coverage_accepts_an_optional_full_anchor_only() {
+        let anchor = "5c0dd7f7b25ff1ed701c7e40dde6d62da3c052dc";
+        assert_eq!(parse_coverage("graph.edges +1"), Ok(("graph.edges", 1)));
+        assert_eq!(
+            parse_coverage(&format!("graph.edges +1 {anchor}")),
+            Ok(("graph.edges", 1))
+        );
+        for invalid in [
+            "graph.edges +1 short",
+            "graph.edges +1 5C0DD7F7B25FF1ED701C7E40DDE6D62DA3C052DC",
+            "graph.edges +1 5c0dd7f7b25ff1ed701c7e40dde6d62da3c052dc extra",
+        ] {
+            assert!(parse_coverage(invalid).is_err(), "{invalid}");
+        }
+    }
 
     /// A scratch workspace holding one baseline file.
     fn workspace(baseline: &str) -> crate::scratch_dir::ScratchDir {

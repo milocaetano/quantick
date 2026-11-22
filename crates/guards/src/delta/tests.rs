@@ -114,6 +114,68 @@ fn fold_never_authorizes_new_growth() {
 }
 
 #[test]
+fn fold_then_new_fragment_authorizes_only_its_signed_growth() {
+    let base = tree(500);
+    let head = tree(501);
+    fragment(base.path(), "old.txt", "crates/app +10\n!budget +10\n");
+    fs::write(
+        head.join(app_lines::BASELINE_FILE),
+        "!budget 1010\ncrates/app 1010\n",
+    )
+    .unwrap();
+    fragment(head.path(), "new.txt", "crates/app +1\n!budget +1\n");
+    assert!(check(head.path(), base.path(), guard()).is_empty());
+
+    fs::write(
+        head.join("crates/app/src/lib.rs"),
+        "fn line() {}\n".repeat(502),
+    )
+    .unwrap();
+    assert!(!check(head.path(), base.path(), guard()).is_empty());
+}
+
+#[test]
+fn fold_rejects_upward_raw_entry_or_budget_even_with_new_cuts() {
+    for baseline in [
+        "!budget 1010\ncrates/app 1011\n",
+        "!budget 1011\ncrates/app 1010\n",
+    ] {
+        let base = tree(500);
+        let head = tree(500);
+        fragment(base.path(), "old.txt", "crates/app +10\n!budget +10\n");
+        fs::write(head.join(app_lines::BASELINE_FILE), baseline).unwrap();
+        fragment(head.path(), "new.txt", "crates/app -1\n!budget -1\n");
+        assert!(!check(head.path(), base.path(), guard()).is_empty());
+    }
+}
+
+#[test]
+fn fold_rejects_retained_modified_or_partially_consumed_old_fragments() {
+    for old_in_head in [
+        vec![
+            ("first.txt", "crates/app +5\n!budget +5\n"),
+            ("second.txt", "crates/app +5\n!budget +5\n"),
+        ],
+        vec![("first.txt", "crates/app +4\n!budget +4\n")],
+        vec![("second.txt", "crates/app +5\n!budget +5\n")],
+    ] {
+        let base = tree(500);
+        let head = tree(500);
+        fragment(base.path(), "first.txt", "crates/app +5\n!budget +5\n");
+        fragment(base.path(), "second.txt", "crates/app +5\n!budget +5\n");
+        fs::write(
+            head.join(app_lines::BASELINE_FILE),
+            "!budget 1010\ncrates/app 1010\n",
+        )
+        .unwrap();
+        for (name, content) in old_in_head {
+            fragment(head.path(), name, content);
+        }
+        assert!(!check(head.path(), base.path(), guard()).is_empty());
+    }
+}
+
+#[test]
 fn zero_net_and_coverage_only_fragments_can_be_folded() {
     for content in [
         "crates/app +1\ncrates/app -1\n!budget +1\n!budget -1\n",

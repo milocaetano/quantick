@@ -106,11 +106,10 @@ fn compare(root: &Path, base: &Path, guard: &Guard) -> Result<(), String> {
             continue;
         }
         let growth = new as i128 - old as i128;
-        let permission = if folded {
-            0
-        } else {
-            ceiling(&after, key) - ceiling(&before, key)
-        };
+        let permission = folded.as_ref().map_or_else(
+            || ceiling(&after, key) - ceiling(&before, key),
+            |raw| ceiling(&after, key) - raw.get(key).copied().unwrap_or(0),
+        );
         if growth > permission {
             problems.push(format!(
                 "{}: {key} grew by {growth}, this branch signed {permission}",
@@ -133,34 +132,73 @@ fn read(root: &Path, relative: &str) -> Result<Vec<u8>, String> {
     fs::read(root.join(relative)).map_err(|error| format!("{relative}: {error}"))
 }
 
+fn raw_entries(root: &Path, policy: &Policy) -> Result<(BTreeMap<String, i128>, i128), String> {
+    let text = fs::read_to_string(root.join(policy.baseline_file))
+        .map_err(|error| format!("{}: {error}", policy.baseline_file))?;
+    let mut entries = BTreeMap::new();
+    let mut budget = None;
+    for raw in text.lines() {
+        let content = raw.split('#').next().unwrap_or("").trim();
+        if content.is_empty() {
+            continue;
+        }
+        let (label, value) = content
+            .rsplit_once(char::is_whitespace)
+            .ok_or_else(|| format!("{}: invalid baseline row", policy.baseline_file))?;
+        let value = value
+            .parse::<i128>()
+            .map_err(|error| format!("{}: {error}", policy.baseline_file))?;
+        let label = label.trim();
+        if label == "!budget" {
+            budget = Some(value);
+        } else {
+            entries.insert(label.to_owned(), value);
+        }
+    }
+    Ok((
+        entries,
+        budget.ok_or_else(|| format!("{}: no !budget", policy.baseline_file))?,
+    ))
+}
+
 fn validate_fragments(
     root: &Path,
     base: &Path,
     policy: &Policy,
     before: &Baseline,
     after: &Baseline,
-) -> Result<bool, String> {
+) -> Result<Option<BTreeMap<String, i128>>, String> {
     let old_budget = before.budget.as_ref().ok_or("base has no !budget")?.allowed;
-    let new_budget = after.budget.as_ref().ok_or("head has no !budget")?.allowed;
+    after.budget.as_ref().ok_or("head has no !budget")?;
     let baseline_changed = read(root, policy.baseline_file)? != read(base, policy.baseline_file)?;
-    // A fold consumes all fragments into one baseline, preserving or lowering
-    // every effective ceiling. It cannot authorize any growth.
-    let unchanged_fold = !before.raise_files.is_empty()
-        && old_budget == new_budget
-        && before.entries.len() == after.entries.len()
-        && after
+    let all_old_consumed = before
+        .raise_files
+        .iter()
+        .all(|file| !root.join(file).exists());
+    let remaining_are_new = after
+        .raise_files
+        .iter()
+        .all(|file| !base.join(file).exists());
+    if !before.raise_files.is_empty() && all_old_consumed && remaining_are_new {
+        let (raw, raw_budget) = raw_entries(root, policy)?;
+        let old_keys: BTreeSet<_> = before
             .entries
             .iter()
-            .all(|entry| entry.ceiling as i128 == ceiling(before, &entry.path));
-    let fold = (baseline_changed || unchanged_fold)
-        && after.raise_files.is_empty()
-        && new_budget <= old_budget
-        && after
-            .entries
-            .iter()
-            .all(|entry| entry.ceiling as i128 <= ceiling(before, &entry.path));
-    if fold {
-        return Ok(true);
+            .map(|entry| entry.path.as_str())
+            .collect();
+        let raw_keys: BTreeSet<_> = raw.keys().map(String::as_str).collect();
+        let downward = old_keys == raw_keys
+            && raw_budget <= old_budget as i128
+            && raw
+                .iter()
+                .all(|(key, value)| *value <= ceiling(before, key));
+        let unchanged_fold = raw_budget == old_budget as i128
+            && raw
+                .iter()
+                .all(|(key, value)| *value == ceiling(before, key));
+        if downward && (baseline_changed || unchanged_fold) {
+            return Ok(Some(raw));
+        }
     }
     if baseline_changed {
         return Err(format!(
@@ -173,7 +211,7 @@ fn validate_fragments(
             return Err(format!("{file}: existing fragment was changed"));
         }
     }
-    Ok(false)
+    Ok(None)
 }
 
 #[cfg(test)]

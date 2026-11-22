@@ -75,11 +75,14 @@ compare against their first parent, so shrink-only merges remain green.
 
 Changes to guard source or baseline data also build the base guard and measure
 the head with both binaries. Differences require exact signed
-`!measure-change <report-row> +N|-N` lines in new fragments. Missing measurements,
-stale coverage and build failures fail closed. `--tighten --fold` consolidates
-fragments after downward-only tightening; a daily workflow opens or updates one
-maintenance PR for the user to merge. Size, context and other guards retain
-their absolute policies.
+`!measure-change <report-row> +N|-N` lines in new fragments. A declaration may
+append a full ancestor SHA to cover that exact historical change when the
+immediate delta is zero; anchor, base and head guards all measure the current
+head source. Missing measurements, stale coverage and build failures fail
+closed. `--tighten --fold` may consolidate old fragments downward and leave
+new fragments to sign only their own net growth; a daily workflow opens or
+updates one maintenance PR for the user to merge. Size, context and other
+guards retain their absolute policies.
 
 An interrupted fold keeps a checked recovery journal and rejects baseline reads
 until `--tighten --fold` finishes recovery. Preserve a journal reported as corrupt
