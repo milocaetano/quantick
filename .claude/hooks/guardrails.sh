@@ -949,8 +949,8 @@ machine_check() {
             exit 0
         fi
     done
-    printf '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":%s}}
-'         '"This machine has no cargo build.jobs cap, so every cargo command takes one job per core and parallel agents oversubscribe CPU and RAM. Before your first build, tell the user and, only with their consent, run: powershell -NoProfile -ExecutionPolicy Bypass -File tools/dev_machine/setup.ps1 (docs/dev-machine.md explains what it changes)."'
+    printf '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":%s}}\n' \
+        '"This machine has no cargo build.jobs cap, so every cargo command takes one job per core and parallel agents oversubscribe CPU and RAM. Before your first build, tell the user and, only with their consent, apply docs/dev-machine.md; on Windows that is: powershell -NoProfile -ExecutionPolicy Bypass -File tools/dev_machine/setup.ps1"'
     exit 0
 }
 

@@ -28,8 +28,8 @@ peak memory of the biggest rustc and leave that product unchanged.
 
 | Step | Default | Opt-in switch | Effect |
 | --- | --- | --- | --- |
-| Cargo jobs cap | applies | `-Jobs <n>` to pick the number | Writes `[build] jobs = <half the logical cores, at least 2>` to `$CARGO_HOME/config.toml` when no cap exists. It never touches an existing `jobs` key. |
-| Merged worktrees | reports | `-PruneMerged` | Removes clean worktrees whose branch is merged into `origin/main`, then deletes their branches. It keeps a worktree that has uncommitted changes or is still held by a process. A worktree just cut from `origin/main` is not "merged". |
+| Cargo jobs cap | applies | `-Jobs <n>` to pick the number | Writes `[build] jobs = <half the logical cores, at least 2>` to `$CARGO_HOME/config.toml` when no cap exists. It never touches an existing `jobs` key, and it leaves a file it cannot extend safely (dotted `build.*` keys, an inline table) to you rather than write a second `[build]` table. |
+| Merged worktrees | reports | `-PruneMerged` | Removes clean worktrees whose branch is merged into `origin/main`, then deletes their branches. It keeps a worktree that has uncommitted changes or is still held by a process. A worktree just cut from `origin/main` is not "merged"; a clean branch just cut from an integration branch that is already merged would be, so close sessions before pruning. |
 | Agent priority | reports | `-LowerAgentPriority` | Sets running `claude` processes to BelowNormal. The cargo they start afterwards inherits it, so the chart and the editor stay responsive. Use BelowNormal, not Idle: Idle starves builds. |
 | rust-analyzer plugin | reports | `-DisableRustAnalyzerPlugin` | Turns off the `rust-analyzer-lsp` plugin in `~/.claude/settings.json`. Otherwise every agent session that touches the LSP tool can start its own instance, typically 2–6 GB plus a check on save, outside any cap. Takes effect in new sessions. |
 | Defender | reports | none | Says whether real-time protection is on. If scanning is the cost, keep it on and put the worktrees on a Dev Drive rather than excluding folders. |
@@ -44,7 +44,8 @@ jobs = 8   # about half the logical cores
 
 ## How agents learn about it
 
-The `machine-check` hook (`.claude/hooks/guardrails.sh`, SessionStart) is
+The `machine-check` hook (`.claude/hooks/guardrails.sh`, SessionStart on
+`startup`, wired for Claude Code and Codex) is
 silent once a cap exists, either in `CARGO_BUILD_JOBS` or as a `jobs` key in
 cargo's config. Without one, it tells the session to raise this with the user
 and to run the script only with their consent. It never blocks.

@@ -73,15 +73,23 @@ function Set-CargoJobsCap {
         Write-Step 'missing' "cargo has no build.jobs cap; setup would write jobs = $n to $path"
         return $false
     }
-    $build = [regex]::Match($text, '(?m)^\[build\][^\S\r\n]*\r?$')
-    if ($build.Success) {
-        $text = $text.Insert($build.Index + $build.Length, "`njobs = $n")
-    } else {
+    $nl = "`n"
+    if ($text.Contains("`r`n")) { $nl = "`r`n" }
+    $build = [regex]::Matches($text, '(?m)^[ \t]*\[[ \t]*build[ \t]*\][ \t]*(#[^\r\n]*)?(?=\r?$)')
+    if ($build.Count -eq 1) {
+        $text = $text.Insert($build[0].Index + $build[0].Length, "${nl}jobs = $n")
+    } elseif ($build.Count -eq 0 -and $text -notmatch '(?m)^[ \t]*"?build"?[ \t]*[.=]') {
         if ($text.Length -gt 0) {
-            if (-not $text.EndsWith("`n")) { $text += "`n" }
-            $text += "`n"
+            if (-not $text.EndsWith("`n")) { $text += $nl }
+            $text += $nl
         }
-        $text += "[build]`njobs = $n`n"
+        $text += "[build]${nl}jobs = $n$nl"
+    } else {
+        # A dotted `build.*` key, an inline table or a repeated header: a
+        # second [build] table would be invalid TOML and break every cargo
+        # command, so the edit is left to a human.
+        Write-Step 'manual' "$path defines build settings this script cannot place safely; add jobs = $n under [build] by hand"
+        return $false
     }
     New-Item -ItemType Directory -Force -Path (Split-Path $path) | Out-Null
     [IO.File]::WriteAllText($path, $text, $Utf8NoBom)
@@ -89,10 +97,19 @@ function Set-CargoJobsCap {
     return $true
 }
 
+# Windows PowerShell 5.1 turns a native command's stderr into a terminating
+# error under 'Stop', even with 2>$null, and git warns on stderr routinely.
 function Invoke-Git([string[]]$Arguments) {
+    $ErrorActionPreference = 'Continue'
     $output = & git @Arguments 2>$null
     if ($LASTEXITCODE -ne 0) { return $null }
     return $output
+}
+
+function Test-Git([string[]]$Arguments) {
+    $ErrorActionPreference = 'Continue'
+    & git @Arguments 2>$null | Out-Null
+    return ($LASTEXITCODE -eq 0)
 }
 
 function Get-MergedWorktrees([string]$Repo) {
@@ -112,8 +129,8 @@ function Get-MergedWorktrees([string]$Repo) {
         elseif ($line -like 'branch refs/heads/*') { $branch = $line.Substring(18) }
         elseif ($line -eq '' -and $path -and $branch -and $branch -ne 'main') {
             $tip = Invoke-Git @('-C', $Repo, 'rev-parse', $branch)
-            & git -C $Repo merge-base --is-ancestor $branch origin/main 2>$null
-            if ($LASTEXITCODE -eq 0 -and -not $mainline.ContainsKey($tip)) {
+            $isAncestor = Test-Git @('-C', $Repo, 'merge-base', '--is-ancestor', $branch, 'origin/main')
+            if ($isAncestor -and $tip -and -not $mainline.ContainsKey($tip)) {
                 $merged += [pscustomobject]@{ Path = $path; Branch = $branch }
             }
             $path = $null
@@ -138,9 +155,13 @@ function Invoke-WorktreeReport {
             Write-Step 'kept' "$($w.Path) has uncommitted changes"
             continue
         }
-        & git -C $repo worktree remove $w.Path 2>$null
-        if ($LASTEXITCODE -ne 0) { Write-Step 'kept' "$($w.Path) could not be removed (a process may hold it)"; continue }
-        & git -C $repo branch -d $w.Branch 2>$null | Out-Null
+        if (-not (Test-Git @('-C', $repo, 'worktree', 'remove', $w.Path))) {
+            Write-Step 'kept' "$($w.Path) could not be removed (a process may hold it)"
+            continue
+        }
+        # Verified merged into origin/main above, so -D loses no commits even
+        # when the local main checkout is behind and -d would refuse.
+        $null = Test-Git @('-C', $repo, 'branch', '-D', $w.Branch)
         Write-Step 'removed' "$($w.Path) ($($w.Branch))"
     }
 }
@@ -177,7 +198,7 @@ function Invoke-DefenderReport {
         if ($status.RealTimeProtectionEnabled) {
             Write-Step 'info' 'Defender real-time protection is on; a Dev Drive for the worktrees keeps it on and cheap'
         } else {
-            Write-Step 'warn' 'Defender real-time protection is off; this machine runs build scripts from ~580 crates'
+            Write-Step 'warn' 'Defender real-time protection is off; this machine runs build scripts from hundreds of third-party crates'
         }
     } catch {
         Write-Step 'skip' 'Defender status unavailable'

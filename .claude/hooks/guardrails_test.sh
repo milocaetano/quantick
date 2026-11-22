@@ -995,29 +995,28 @@ export CARGO_HOME
 mkdir -p "$CARGO_HOME"
 machine_start='{"hook_event_name":"SessionStart","source":"startup"}'
 
-run "machine-check: speaks when cargo has no config"     machine-check "$machine_start" context "tools/dev_machine/setup.ps1"
+run "machine-check: speaks when cargo has no config" \
+    machine-check "$machine_start" context "tools/dev_machine/setup.ps1"
 
-run "machine-check: asks for the user's consent"     machine-check "$machine_start" context "consent"
+run "machine-check: asks for the user's consent" \
+    machine-check "$machine_start" context "consent"
 
-printf '[net]
-retry = 3
-# jobs = 4 is not a setting
-' > "$CARGO_HOME/config.toml"
-run "machine-check: speaks when the config has no jobs key"     machine-check "$machine_start" context "build.jobs"
+printf '[net]\nretry = 3\n# jobs = 4 is not a setting\n' > "$CARGO_HOME/config.toml"
+run "machine-check: speaks when the config has no jobs key" \
+    machine-check "$machine_start" context "build.jobs"
 
-printf '[build]
-jobs = 8
-' > "$CARGO_HOME/config.toml"
-run "machine-check: silent once config.toml caps jobs"     machine-check "$machine_start" silent
+printf '[build]\njobs = 8\n' > "$CARGO_HOME/config.toml"
+run "machine-check: silent once config.toml caps jobs" \
+    machine-check "$machine_start" silent
 
 rm -f "$CARGO_HOME/config.toml"
-printf '[build]
-  jobs=6
-' > "$CARGO_HOME/config"
-run "machine-check: reads the legacy config file too"     machine-check "$machine_start" silent
+printf '[build]\n  jobs=6\n' > "$CARGO_HOME/config"
+run "machine-check: reads the legacy config file too" \
+    machine-check "$machine_start" silent
 
 rm -f "$CARGO_HOME/config"
-CARGO_BUILD_JOBS=4 run "machine-check: silent when the environment caps jobs"     machine-check "$machine_start" silent
+CARGO_BUILD_JOBS=4 run "machine-check: silent when the environment caps jobs" \
+    machine-check "$machine_start" silent
 
 if [ -n "$machine_saved_home_set" ]; then CARGO_HOME=$machine_saved_home; export CARGO_HOME; else unset CARGO_HOME; fi
 if [ -n "$machine_saved_jobs_set" ]; then CARGO_BUILD_JOBS=$machine_saved_jobs; export CARGO_BUILD_JOBS; fi
