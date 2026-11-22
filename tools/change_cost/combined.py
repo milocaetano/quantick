@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
+import json
+from pathlib import Path
 import re
 
 
@@ -36,7 +39,12 @@ def compare(base: Counts, head: Counts) -> dict[str, int | bool]:
 
 
 def validate_results(
-    required: list[str], results: list[dict], head: str, tree: str, base: str
+    required: list[str],
+    results: list[dict],
+    head: str,
+    tree: str,
+    base: str,
+    evidence_root: Path,
 ) -> None:
     names = [result.get("command") for result in results]
     duplicates = sorted({name for name in names if names.count(name) > 1})
@@ -60,6 +68,37 @@ def validate_results(
             f"invalid command evidence: duplicates={duplicates} missing={missing} "
             f"extras={extras} failed={failed} malformed={malformed} stale={stale}"
         )
+    for result in results:
+        name = result["command"]
+        capture_path = evidence_root / str(result.get("capture", ""))
+        try:
+            capture = json.loads(capture_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as error:
+            raise ValueError(
+                f"invalid command evidence for {name}: capture is unavailable: {error}"
+            ) from error
+        expected = {"command": name, "sha": head, "tree": tree, "base": base}
+        if any(capture.get(key) != value for key, value in expected.items()):
+            raise ValueError(
+                f"invalid command evidence for {name}: capture metadata does not match"
+            )
+        outputs = capture.get("outputs")
+        if not isinstance(outputs, list) or not outputs:
+            raise ValueError(f"invalid command evidence for {name}: captured output is missing")
+        for output in outputs:
+            if not isinstance(output, dict):
+                raise ValueError(
+                    f"invalid command evidence for {name}: captured output is malformed"
+                )
+            output_path = evidence_root / str(output.get("path", ""))
+            try:
+                digest = hashlib.sha256(output_path.read_bytes()).hexdigest()
+            except OSError as error:
+                raise ValueError(
+                    f"invalid command evidence for {name}: output is unavailable: {error}"
+                ) from error
+            if digest != output.get("sha256"):
+                raise ValueError(f"invalid command evidence for {name}: output digest does not match")
 
 
 def validate_history(rows: list[dict]) -> None:

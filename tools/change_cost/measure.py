@@ -25,9 +25,27 @@ def command(*args: str) -> str:
     return subprocess.run(args, cwd=ROOT, check=True, text=True, capture_output=True).stdout.strip()
 
 
-def validate_evidence(evidence: dict, command_results: list[dict], head: str, tree: str) -> list[dict]:
-    validate_results(REQUIRED_COMMANDS, command_results, head, tree, INTEGRATION_BASE)
+def validate_evidence(
+    evidence: dict, command_results: list[dict], head: str, tree: str, evidence_root: Path
+) -> list[dict]:
+    validate_results(
+        REQUIRED_COMMANDS, command_results, head, tree, INTEGRATION_BASE, evidence_root
+    )
     return history_rows(evidence["history"])
+
+
+def validate_canonical(canonical: dict) -> None:
+    if (
+        canonical.get("tool") != "tools/outside_score/measure.py"
+        or canonical.get("version") != 1
+    ):
+        raise ValueError("pinned baseline calculator identity changed")
+    if (canonical.get("production"), canonical.get("test"), canonical.get("panic")) != (
+        BASE.production,
+        BASE.tests,
+        BASE.panic,
+    ):
+        raise ValueError("pinned baseline counts changed")
 
 
 def arguments(argv: list[str] | None = None) -> argparse.Namespace:
@@ -66,12 +84,10 @@ def main(argv: list[str] | None = None) -> int:
     measured = Counts(int(values["lines.production"]), int(values["lines.test"]), int(values["panic_sites"]))
     comparison = compare(BASE, measured)
     evidence = json.loads(args.evidence.read_text(encoding="utf-8-sig"))
-    rows = validate_evidence(evidence, command_results, head, tree)
+    evidence_root = args.command_results.resolve().parent
+    rows = validate_evidence(evidence, command_results, head, tree, evidence_root)
     canonical = evidence["canonical"]
-    if canonical["tool"] != "tools/outside_score/measure.py" or canonical["version"] != 1:
-        raise ValueError("pinned baseline calculator identity changed")
-    if (canonical["production"], canonical["test"], canonical["panic"]) != (BASE.production, BASE.tests, BASE.panic):
-        raise ValueError("pinned baseline counts changed")
+    validate_canonical(canonical)
     fragments = sum(1 for path in ROOT.glob("crates/guards/*-baseline.d/*.txt"))
     report = {
         "criterion": "C14",

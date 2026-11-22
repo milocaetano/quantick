@@ -1,12 +1,23 @@
 """C14 semantic tests: python tools/change_cost/test_combined.py"""
 
+import hashlib
+import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 from combined import Counts, compare, history_rows, validate_history, validate_results
-from measure import DEFAULT_EVIDENCE_DIR, INTEGRATION_BASE, REQUIRED_COMMANDS, arguments, validate_evidence
+from measure import (
+    BASE,
+    DEFAULT_EVIDENCE_DIR,
+    INTEGRATION_BASE,
+    REQUIRED_COMMANDS,
+    arguments,
+    validate_canonical,
+    validate_evidence,
+)
 
 
 class ExactRatios(unittest.TestCase):
@@ -42,19 +53,94 @@ class EvidenceContracts(unittest.TestCase):
     def test_every_command_is_unique_successful_and_sha_pinned(self):
         required = ["C0", "C13"]
         head, tree, base = "a" * 40, "b" * 40, "c" * 40
-        validate_results(required, [
-            {"command": "C0", "exit_code": 0, "sha": head, "tree": tree, "base": base},
-            {"command": "C13", "exit_code": 0, "sha": head, "tree": tree, "base": base},
-        ], head, tree, base)
-        bad = [
-            [{"command": "C0", "exit_code": 0, "sha": "a"}],
-            [{"command": "C0", "exit_code": 1, "sha": head, "tree": tree, "base": base}, {"command": "C13", "exit_code": 0, "sha": head, "tree": tree, "base": base}],
-            [{"command": "C0", "exit_code": 0, "sha": head, "tree": tree, "base": base}, {"command": "C0", "exit_code": 0, "sha": head, "tree": tree, "base": base}],
-            [{"command": "C0", "exit_code": 0, "sha": "d" * 40, "tree": tree, "base": base}, {"command": "C13", "exit_code": 0, "sha": head, "tree": tree, "base": base}],
-        ]
-        for results in bad:
-            with self.assertRaises(ValueError):
-                validate_results(required, results, head, tree, base)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            results = self.command_results(root, required, head, tree, base)
+            validate_results(required, results, head, tree, base, root)
+            bad = [
+                [{"command": "C0", "exit_code": 0, "sha": "a"}],
+                [{**results[0], "exit_code": 1}, results[1]],
+                [results[0], results[0]],
+                [{**results[0], "sha": "d" * 40}, results[1]],
+            ]
+            for candidate in bad:
+                with self.assertRaises(ValueError):
+                    validate_results(required, candidate, head, tree, base, root)
+
+    @staticmethod
+    def command_results(root, required, head, tree, base):
+        results = []
+        for name in required:
+            output = root / f"{name}.log"
+            output.write_bytes(f"native output for {name}\n".encode())
+            capture = {
+                "command": name,
+                "sha": head,
+                "tree": tree,
+                "base": base,
+                "outputs": [
+                    {
+                        "path": output.name,
+                        "sha256": hashlib.sha256(output.read_bytes()).hexdigest(),
+                    }
+                ],
+            }
+            capture_path = root / f"{name}.capture.json"
+            capture_path.write_text(json.dumps(capture), encoding="utf-8")
+            results.append(
+                {
+                    "command": name,
+                    "exit_code": 0,
+                    "sha": head,
+                    "tree": tree,
+                    "base": base,
+                    "capture": capture_path.name,
+                }
+            )
+        return results
+
+    def test_command_evidence_requires_bound_captured_output(self):
+        head, tree, base = "a" * 40, "b" * 40, "c" * 40
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            results = self.command_results(root, ["C0", "C13"], head, tree, base)
+            validate_results(["C0", "C13"], results, head, tree, base, root)
+
+            (root / "C0.log").unlink()
+            with self.assertRaisesRegex(ValueError, "C0"):
+                validate_results(["C0", "C13"], results, head, tree, base, root)
+            (root / "C0.log").write_bytes((root / "C13.log").read_bytes())
+            with self.assertRaisesRegex(ValueError, "C0"):
+                validate_results(["C0", "C13"], results, head, tree, base, root)
+            results = self.command_results(root, ["C0", "C13"], head, tree, base)
+            results[0]["capture"] = "C13.capture.json"
+            with self.assertRaisesRegex(ValueError, "C0"):
+                validate_results(["C0", "C13"], results, head, tree, base, root)
+            results = self.command_results(root, ["C0", "C13"], head, tree, base)
+            capture = json.loads((root / "C0.capture.json").read_text(encoding="utf-8"))
+            capture["sha"] = "d" * 40
+            (root / "C0.capture.json").write_text(json.dumps(capture), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "C0"):
+                validate_results(["C0", "C13"], results, head, tree, base, root)
+
+    def test_canonical_baseline_rejects_identity_version_and_count_mutations(self):
+        canonical = {
+            "tool": "tools/outside_score/measure.py",
+            "version": 1,
+            "production": BASE.production,
+            "test": BASE.tests,
+            "panic": BASE.panic,
+        }
+        validate_canonical(canonical)
+        for field, value in [
+            ("tool", "other.py"),
+            ("version", 2),
+            ("production", BASE.production + 1),
+            ("test", BASE.tests + 1),
+            ("panic", BASE.panic + 1),
+        ]:
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                validate_canonical({**canonical, field: value})
 
     def test_future_windows_are_gaps_and_measured_rows_keep_sources(self):
         validate_history([
@@ -75,17 +161,16 @@ class EvidenceContracts(unittest.TestCase):
 
     def test_measurement_boundary_rejects_stale_commands_and_history(self):
         head, tree = "a" * 40, "b" * 40
-        results = [
-            {"command": command, "exit_code": 0, "sha": head, "tree": tree, "base": INTEGRATION_BASE}
-            for command in REQUIRED_COMMANDS
-        ]
-        evidence = {"history": [{"metric": "future", "state": "measured", "value": 0, "sources": ["x"], "after": "later"}]}
-        with self.assertRaises(ValueError):
-            validate_evidence(evidence, results, head, tree)
-        evidence["history"][0]["state"] = "unobservable"
-        results[0]["sha"] = "c" * 40
-        with self.assertRaises(ValueError):
-            validate_evidence(evidence, results, head, tree)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            results = self.command_results(root, REQUIRED_COMMANDS, head, tree, INTEGRATION_BASE)
+            evidence = {"history": [{"metric": "future", "state": "measured", "value": 0, "sources": ["x"], "after": "later"}]}
+            with self.assertRaises(ValueError):
+                validate_evidence(evidence, results, head, tree, root)
+            evidence["history"][0]["state"] = "unobservable"
+            results[0]["sha"] = "c" * 40
+            with self.assertRaises(ValueError):
+                validate_evidence(evidence, results, head, tree, root)
 
 
 if __name__ == "__main__":

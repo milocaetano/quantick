@@ -525,6 +525,46 @@ mod tests {
     }
 
     #[test]
+    fn build_dependency_paths_are_shipping_and_target_dev_is_not() {
+        for (label, dependency, features, expected) in [
+            (
+                "build-direct",
+                "[build-dependencies]\nbuilder = { package = 'quantick-owner', path = '../owner', features = ['test-support'] }",
+                "",
+                true,
+            ),
+            (
+                "target-build-forwarded",
+                "[target.'cfg(windows)'.build-dependencies]\nbuilder = { package = 'quantick-owner', path = '../owner', features = ['bridge'] }",
+                "bridge = ['test-support']",
+                true,
+            ),
+            (
+                "target-dev",
+                "[target.'cfg(windows)'.dev-dependencies]\nbuilder = { package = 'quantick-owner', path = '../owner', features = ['test-support'] }",
+                "",
+                false,
+            ),
+        ] {
+            let root = ScratchDir::new(label);
+            write(
+                &root,
+                "owner",
+                &format!(
+                    "[package]\nname = 'quantick-owner'\n[features]\ntest-support = []\n{features}\n"
+                ),
+            );
+            write(
+                &root,
+                "app",
+                &format!("[package]\nname = 'quantick-app'\n{dependency}\n"),
+            );
+            let findings = check(&root);
+            assert_eq!(!findings.is_empty(), expected, "{label}: {findings:?}");
+        }
+    }
+
+    #[test]
     fn dev_only_and_unreachable_features_pass() {
         let root = ScratchDir::new("test-support-dev-only");
         write(
