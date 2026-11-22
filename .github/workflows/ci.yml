@@ -268,8 +268,8 @@ jobs:
         run: python3 -m unittest discover -s tools/read_cost -p 'test_*.py'
       - name: Binary hook scan tests
         # The scan below reads a half-gigabyte binary, so its own cases run
-        # against fixtures instead: the boundary rule, the prose exemption, and
-        # both failure directions.
+        # against fixtures instead: adjacent literals, grouped registry names,
+        # schema prose and both feature modes.
         run: python3 tools/ci/test_binary_hook_scan.py
       - name: Edit-loop safety fixtures
         run: python3 -m unittest discover -s tools/edit_loop -p 'test_*.py'
@@ -344,6 +344,10 @@ jobs:
         # control that proves the scan can see a name at all; every other
         # registry name is a harness hook and must be absent.
         run: python3 tools/ci/binary_hook_scan.py
+      - name: Build and audit the release binary
+        run: |
+          cargo build --release -p quantick-app
+          python3 tools/ci/binary_hook_scan.py --binary target/release/quantick-app
 
   # `cargo test --workspace` was 263s of the 508s `ci` took, and it is one
   # command: nothing inside `ci` could overlap with it, and everything else in
@@ -415,6 +419,8 @@ jobs:
         # the test run has just compiled that feature set, so the build is a
         # link and not a second compile.
         run: cargo build -p quantick-app --features harness
+      - name: Capture binary contains every harness family
+        run: python3 tools/ci/binary_hook_scan.py --harness
 
   harness-scenario:
     needs: guards

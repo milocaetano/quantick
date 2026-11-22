@@ -73,7 +73,7 @@ pub struct FeedTabSnapshot {
     /// `null` is the ordinary state: no press yet, a press that landed what it
     /// promised, or one whose remark has had its time. Here because the
     /// outcome of a reach is the whole point of making one, and an operator
-    /// driving the button through `QUANTICK_LOAD_OLDER` or `quantick_invoke`
+    /// driving the button through `quantick_invoke`
     /// must be able to learn it from the same words rather than by diffing
     /// bar counts.
     pub history_reach_note: Option<String>,

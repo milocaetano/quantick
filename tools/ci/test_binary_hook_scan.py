@@ -1,122 +1,93 @@
 #!/usr/bin/env python3
-"""Cases for the default-binary hook scan.
-
-The scan itself reads a half-gigabyte artifact, so these run against bytes
-built here. The first class of case is the one that matters: the fast one-pass
-scan must accept exactly the names the per-name lookbehind accepted, because
-the whole claim of the rewrite is that it changed the cost and not the
-verdict. `reference_present` is that old form, kept as an oracle.
-"""
+"""Compiled-name checks must work without C-style string boundaries."""
 
 import random
-import re
 import sys
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
-sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parent))
-
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 import binary_hook_scan as scan  # noqa: E402
 
-
-def reference_present(binary, names):
-    """The pre-rewrite test, verbatim in behaviour: one lookbehind per name."""
-    return sorted(
-        name
-        for name in names
-        if re.search(
-            rb"(?<![A-Z0-9_])" + name.encode() + rb"(?![A-Z0-9_])",
-            binary,
-        )
-    )
-
-
-LAUNCH = """
-    declare_hooks![
-        ("QUANTICK_CONFIG", config),
-        ("QUANTICK_FEEDS", feeds),
-    ];
-    let other = "QUANTICK_NOT_DECLARED";
-"""
-
+LAUNCH = 'declare_hooks!["QUANTICK_CONFIG", "QUANTICK_FEEDS"]; "QUANTICK_NOT_DECLARED"'
 REGISTRY = """
-| Hook | Meaning |
-| --- | --- |
-| `QUANTICK_CONFIG` | configuration, not a harness hook |
-| `QUANTICK_CAPTURE` | a harness hook |
-| `QUANTICK_LOAD_OLDER` | a harness hook named in published prose |
+| `QUANTICK_CONFIG` | operator configuration |
+| `QUANTICK_CAPTURE` | capture hook |
+| `QUANTICK_LOAD_OLDER` | capture hook also named in schema prose |
 """
+CONFIGURATION = b"QUANTICK_CONFIGQUANTICK_FEEDS"
 
 
-class BoundaryNames(unittest.TestCase):
-    def test_a_name_on_its_own_is_found(self):
-        self.assertIn("QUANTICK_CAPTURE", scan.boundary_names(b"\x00QUANTICK_CAPTURE\x00"))
+class CompiledNames(unittest.TestCase):
+    def test_adjacent_literals_have_no_boundaries(self):
+        binary = b"ERRORQUANTICK_CAPTUREQUANTICK_LOAD_OLDEREND"
+        names = {"QUANTICK_CAPTURE", "QUANTICK_LOAD_OLDER"}
+        self.assertEqual(names, scan.compiled_names(binary, names))
 
-    def test_a_name_at_offset_zero_is_found(self):
-        self.assertIn("QUANTICK_CAPTURE", scan.boundary_names(b"QUANTICK_CAPTURE\x00"))
+    def test_every_occurrence_is_examined(self):
+        binary = b"QUANTICK_UNKNOWN\0QUANTICK_CAPTURE\0QUANTICK_CAPTURE"
+        self.assertEqual({"QUANTICK_CAPTURE"}, scan.compiled_names(binary, {"QUANTICK_CAPTURE"}))
 
-    def test_a_name_continued_on_the_right_is_a_different_name(self):
-        found = scan.boundary_names(b"\x00QUANTICK_CAPTUREX\x00")
-        self.assertNotIn("QUANTICK_CAPTURE", found)
-        self.assertIn("QUANTICK_CAPTUREX", found)
-
-    def test_a_name_preceded_by_a_name_character_is_rejected(self):
-        self.assertEqual(set(), scan.boundary_names(b"\x00XQUANTICK_CAPTURE\x00"))
-
-    def test_a_lowercase_neighbour_is_not_a_name_character(self):
-        # The class the old pattern used is upper case, digits and underscore,
-        # so a lowercase byte is a boundary like any other.
-        self.assertIn("QUANTICK_CAPTURE", scan.boundary_names(b"xQUANTICK_CAPTUREx"))
-
-    def test_several_names_in_one_buffer(self):
-        buffer = b"\x00QUANTICK_A\x00padding\x00QUANTICK_B\x00"
-        self.assertEqual({"QUANTICK_A", "QUANTICK_B"}, scan.boundary_names(buffer))
-
-
-class MatchesTheOldScan(unittest.TestCase):
-    """Random buffers, both forms, same answer."""
-
-    def test_randomised_equivalence(self):
+    def test_randomised_literal_presence(self):
         names = [f"QUANTICK_{letter}" for letter in "ABCDEFGH"]
-        neighbours = [b"", b"\x00", b"X", b"_", b"9", b"x", b"\xff"]
         rng = random.Random(20260919)
         for _ in range(200):
-            pieces = []
-            for _ in range(rng.randrange(0, 12)):
-                name = rng.choice(names).encode()
-                pieces.append(rng.choice(neighbours) + name + rng.choice(neighbours))
-            binary = b"\x00".join(pieces)
-            fast = sorted(set(names) & scan.boundary_names(binary))
-            self.assertEqual(reference_present(binary, names), fast, binary)
+            binary = b"".join(rng.choice([b"", b"X", b"\0"]) + rng.choice(names).encode()
+                              for _ in range(rng.randrange(12)))
+            expected = {name for name in names if name.encode() in binary}
+            self.assertEqual(expected, scan.compiled_names(binary, names))
 
 
 class Verdict(unittest.TestCase):
-    def test_a_clean_binary_passes(self):
-        binary = b"\x00QUANTICK_CONFIG\x00QUANTICK_FEEDS\x00"
-        configuration, hooks, missing, present = scan.verdict(binary, LAUNCH, REGISTRY)
+    def test_default_configuration_only_passes(self):
+        configuration, hooks, missing, present = scan.verdict(CONFIGURATION, LAUNCH, REGISTRY)
         self.assertEqual({"QUANTICK_CONFIG", "QUANTICK_FEEDS"}, configuration)
         self.assertEqual({"QUANTICK_CAPTURE", "QUANTICK_LOAD_OLDER"}, hooks)
-        self.assertEqual([], missing)
-        self.assertEqual([], present)
+        self.assertEqual(([], []), (missing, present))
 
-    def test_a_harness_hook_in_the_binary_is_reported(self):
-        binary = b"\x00QUANTICK_CONFIG\x00QUANTICK_FEEDS\x00QUANTICK_CAPTURE\x00"
-        _, _, missing, present = scan.verdict(binary, LAUNCH, REGISTRY)
-        self.assertEqual([], missing)
+    def test_concatenated_capture_hook_fails(self):
+        _, _, _, present = scan.verdict(CONFIGURATION + b"QUANTICK_CAPTUREEND", LAUNCH, REGISTRY)
         self.assertEqual(["QUANTICK_CAPTURE"], present)
 
-    def test_the_prose_hook_is_exempt(self):
-        binary = b"\x00QUANTICK_CONFIG\x00QUANTICK_FEEDS\x00QUANTICK_LOAD_OLDER\x00"
-        _, _, _, present = scan.verdict(binary, LAUNCH, REGISTRY)
-        self.assertEqual([], present)
+    def test_schema_prose_has_no_exemption(self):
+        _, _, _, present = scan.verdict(CONFIGURATION + b"QUANTICK_LOAD_OLDER", LAUNCH, REGISTRY)
+        self.assertEqual(["QUANTICK_LOAD_OLDER"], present)
 
-    def test_missing_configuration_is_reported(self):
-        binary = b"\x00QUANTICK_CONFIG\x00"
-        _, _, missing, _ = scan.verdict(binary, LAUNCH, REGISTRY)
+    def test_missing_configuration_fails(self):
+        _, _, missing, _ = scan.verdict(b"QUANTICK_CONFIG", LAUNCH, REGISTRY)
         self.assertEqual(["QUANTICK_FEEDS"], missing)
 
-    def test_a_declared_name_outside_the_macro_is_not_configuration(self):
-        configuration = scan.declared_configuration(LAUNCH)
-        self.assertNotIn("QUANTICK_NOT_DECLARED", configuration)
+    def test_harness_requires_every_registered_hook(self):
+        _, _, missing, present = scan.verdict(CONFIGURATION, LAUNCH, REGISTRY, harness=True)
+        self.assertEqual(["QUANTICK_CAPTURE", "QUANTICK_LOAD_OLDER"], missing)
+        self.assertEqual([], present)
+        binary = CONFIGURATION + b"QUANTICK_CAPTUREQUANTICK_LOAD_OLDER"
+        self.assertEqual(([], []), scan.verdict(binary, LAUNCH, REGISTRY, harness=True)[2:])
+
+    def test_grouped_store_names_in_registry_prose_are_checked(self):
+        registry = REGISTRY + "| `QUANTICK_CAPTURE` and siblings | `QUANTICK_SYMBOLS` |"
+        _, hooks, _, present = scan.verdict(CONFIGURATION + b"QUANTICK_SYMBOLS", LAUNCH, registry)
+        self.assertIn("QUANTICK_SYMBOLS", hooks)
+        self.assertEqual(["QUANTICK_SYMBOLS"], present)
+
+    def test_names_outside_configuration_macro_are_not_allowed(self):
+        self.assertNotIn("QUANTICK_NOT_DECLARED", scan.declared_configuration(LAUNCH))
+
+    def test_cli_checks_the_requested_artifact_and_feature_mode(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            binary, launch, registry = (root / name for name in ("app.exe", "launch.rs", "registry.md"))
+            binary.write_bytes(CONFIGURATION)
+            launch.write_text(LAUNCH)
+            registry.write_text(REGISTRY)
+            with patch.object(scan, "DEFAULT_LAUNCH", launch), patch.object(scan, "DEFAULT_REGISTRY", registry):
+                self.assertEqual(0, scan.main(["--binary", str(binary)]))
+                self.assertEqual(1, scan.main(["--binary", str(binary), "--harness"]))
+                binary.write_bytes(CONFIGURATION + b"QUANTICK_CAPTUREQUANTICK_LOAD_OLDER")
+                self.assertEqual(1, scan.main(["--binary", str(binary)]))
+                self.assertEqual(0, scan.main(["--binary", str(binary), "--harness"]))
 
 
 if __name__ == "__main__":
