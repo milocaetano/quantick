@@ -161,6 +161,7 @@ class EvidenceContracts(unittest.TestCase):
 
     def test_measurement_boundary_rejects_stale_commands_and_history(self):
         head, tree = "a" * 40, "b" * 40
+        previous_integration_base = "e6f5a4855f6e541fddba560304f7bac14637bc5d"
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             results = self.command_results(root, REQUIRED_COMMANDS, head, tree, INTEGRATION_BASE)
@@ -168,9 +169,15 @@ class EvidenceContracts(unittest.TestCase):
             with self.assertRaises(ValueError):
                 validate_evidence(evidence, results, head, tree, root)
             evidence["history"][0]["state"] = "unobservable"
+            validate_evidence(evidence, results, head, tree, root)
             results[0]["sha"] = "c" * 40
             with self.assertRaises(ValueError):
                 validate_evidence(evidence, results, head, tree, root)
+            stale_results = self.command_results(
+                root, REQUIRED_COMMANDS, head, tree, previous_integration_base
+            )
+            with self.assertRaises(ValueError):
+                validate_evidence(evidence, stale_results, head, tree, root)
 
 
 if __name__ == "__main__":

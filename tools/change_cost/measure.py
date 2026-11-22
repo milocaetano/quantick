@@ -17,7 +17,7 @@ from combined import Counts, compare, history_rows, validate_results
 BASE_SHA = "9719d691f22285b5234b99aeb81fa91d785da667"
 BASE = Counts(268631, 311966, 111)
 DEFAULT_EVIDENCE_DIR = Path(tempfile.gettempdir()) / "quantick-change-cost"
-INTEGRATION_BASE = "e6f5a4855f6e541fddba560304f7bac14637bc5d"
+INTEGRATION_BASE = "827b83cf0d324dc6b498f9ce0205ddfdd57c277c"
 REQUIRED_COMMANDS = ["C0", "C1", "C2", "C3", "C4", "C5", "C6", "C7", "C8", "C9", "C9a", "C10", "C11", "C12", "C13"]
 
 
