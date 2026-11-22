@@ -49,6 +49,121 @@ fn quoted(value: &str) -> Result<(&str, String), String> {
     Err(format!("unterminated manifest string `{value}`"))
 }
 
+fn manifest_key(value: &str) -> Result<Vec<String>, String> {
+    let characters: Vec<char> = value.chars().collect();
+    let mut at = 0;
+    let mut parts = Vec::new();
+    loop {
+        while characters.get(at).is_some_and(|c| matches!(c, ' ' | '\t')) {
+            at += 1;
+        }
+        let Some(&first) = characters.get(at) else {
+            return Err(format!("empty manifest key `{value}`"));
+        };
+        let mut part = String::new();
+        if matches!(first, '\'' | '"') {
+            let quote = first;
+            at += 1;
+            loop {
+                let Some(&character) = characters.get(at) else {
+                    return Err(format!("unterminated manifest key `{value}`"));
+                };
+                at += 1;
+                if character == quote {
+                    break;
+                }
+                if quote == '"' && character == '\\' {
+                    let Some(&escaped) = characters.get(at) else {
+                        return Err(format!("unterminated manifest escape `{value}`"));
+                    };
+                    at += 1;
+                    match escaped {
+                        'b' => part.push('\u{0008}'),
+                        't' => part.push('\t'),
+                        'n' => part.push('\n'),
+                        'f' => part.push('\u{000c}'),
+                        'r' => part.push('\r'),
+                        '"' => part.push('"'),
+                        '\\' => part.push('\\'),
+                        'u' | 'U' => {
+                            let digits = if escaped == 'u' { 4 } else { 8 };
+                            let mut scalar = 0_u32;
+                            for _ in 0..digits {
+                                let digit = characters
+                                    .get(at)
+                                    .and_then(|c| c.to_digit(16))
+                                    .ok_or_else(|| format!("invalid manifest escape `{value}`"))?;
+                                at += 1;
+                                scalar = scalar * 16 + digit;
+                            }
+                            part.push(char::from_u32(scalar).ok_or_else(|| {
+                                format!("invalid manifest scalar escape `{value}`")
+                            })?);
+                        }
+                        _ => return Err(format!("unsupported manifest escape `{value}`")),
+                    }
+                } else {
+                    part.push(character);
+                }
+            }
+        } else {
+            while let Some(&character) = characters.get(at) {
+                if character.is_ascii_alphanumeric() || matches!(character, '_' | '-') {
+                    part.push(character);
+                    at += 1;
+                } else {
+                    break;
+                }
+            }
+            if part.is_empty() {
+                return Err(format!("unsupported manifest key `{value}`"));
+            }
+        }
+        parts.push(part);
+        while characters.get(at).is_some_and(|c| matches!(c, ' ' | '\t')) {
+            at += 1;
+        }
+        match characters.get(at) {
+            None => return Ok(parts),
+            Some('.') => at += 1,
+            _ => return Err(format!("unsupported manifest key tail `{value}`")),
+        }
+    }
+}
+
+fn table_key(header: &str) -> Result<Option<Vec<String>>, String> {
+    let header = header.trim();
+    if header.starts_with("[[") {
+        return Ok(None);
+    }
+    let Some(body) = header.strip_prefix('[') else {
+        return Ok(None);
+    };
+    let mut quote = None;
+    let mut escaped = false;
+    let mut close = None;
+    for (at, character) in body.char_indices() {
+        if escaped {
+            escaped = false;
+        } else if quote == Some('"') && character == '\\' {
+            escaped = true;
+        } else if quote == Some(character) {
+            quote = None;
+        } else if quote.is_none() && matches!(character, '\'' | '"') {
+            quote = Some(character);
+        } else if quote.is_none() && character == ']' {
+            close = Some(at);
+            break;
+        }
+    }
+    let close = close.ok_or_else(|| format!("unterminated manifest table header `{header}`"))?;
+    let tail = body[close + 1..].trim_start();
+    if !tail.is_empty() && !tail.starts_with('#') {
+        return Err(format!("unsupported manifest table header tail `{header}`"));
+    }
+    manifest_key(&body[..close]).map(Some)
+}
+
 fn strings(value: &str) -> Result<Vec<String>, String> {
     let Some(open) = value.find('[') else {
         return Err(format!("expected a manifest string array in `{value}`"));
@@ -93,20 +208,31 @@ fn quoted_field(value: &str, field: &str) -> Result<Option<String>, String> {
 }
 
 fn package_section(header: &str) -> bool {
-    header == "[package]"
+    table_key(header).is_ok_and(|parts| parts == Some(vec!["package".to_owned()]))
 }
 
 fn features_section(header: &str) -> bool {
-    header == "[features]"
+    table_key(header).is_ok_and(|parts| parts == Some(vec!["features".to_owned()]))
 }
 
 fn shipping_dependencies(header: &str) -> bool {
-    header.ends_with("dependencies]") && !header.ends_with("dev-dependencies]")
+    table_key(header).is_ok_and(|parts| {
+        parts.is_some_and(|parts| {
+            matches!(parts.as_slice(), [kind] if matches!(kind.as_str(), "dependencies" | "build-dependencies"))
+                || matches!(parts.as_slice(), [workspace, kind] if workspace == "workspace" && kind == "dependencies")
+                || matches!(parts.as_slice(), [target, _, kind] if target == "target" && matches!(kind.as_str(), "dependencies" | "build-dependencies"))
+        })
+    })
 }
 
 fn dependency_specific_section(header: &str) -> bool {
-    !header.contains("dev-dependencies.")
-        && (header.contains("dependencies.") || header.contains("build-dependencies."))
+    table_key(header).is_ok_and(|parts| {
+        parts.is_some_and(|parts| {
+            matches!(parts.as_slice(), [kind, _] if matches!(kind.as_str(), "dependencies" | "build-dependencies"))
+                || matches!(parts.as_slice(), [workspace, kind, _] if workspace == "workspace" && kind == "dependencies")
+                || matches!(parts.as_slice(), [target, _, kind, _] if target == "target" && matches!(kind.as_str(), "dependencies" | "build-dependencies"))
+        })
+    })
 }
 
 fn parse(path: PathBuf) -> Result<Manifest, String> {
@@ -116,6 +242,13 @@ fn parse(path: PathBuf) -> Result<Manifest, String> {
         path,
         ..Manifest::default()
     };
+    for header in source
+        .lines()
+        .map(str::trim)
+        .filter(|line| line.starts_with('['))
+    {
+        table_key(header).map_err(|error| format!("{}: {error}", out.path.display()))?;
+    }
     if let Some((section, key, _)) =
         crate::graph::manifest_entries_with_sections(&source, dependency_specific_section)
             .into_iter()
@@ -128,22 +261,34 @@ fn parse(path: PathBuf) -> Result<Manifest, String> {
     }
     if let Some((_, value)) = crate::graph::manifest_entries_in(&source, package_section)
         .into_iter()
-        .find(|(key, _)| key == "name")
+        .find(|(key, _)| manifest_key(key).is_ok_and(|parts| parts == ["name"]))
     {
         out.package = quoted(&value)
             .map_err(|error| format!("{}: {error}", out.path.display()))?
             .1;
     }
     for (key, value) in crate::graph::manifest_entries_in(&source, features_section) {
+        let key = manifest_key(&key).map_err(|error| format!("{}: {error}", out.path.display()))?;
+        if key.len() != 1 {
+            return Err(format!("{}: unsupported feature key", out.path.display()));
+        }
         out.features.insert(
-            key.trim_matches(['"', '\'']).to_owned(),
+            key[0].clone(),
             strings(&value).map_err(|error| format!("{}: {error}", out.path.display()))?,
         );
     }
     for (_, key, value) in
         crate::graph::manifest_entries_with_sections(&source, shipping_dependencies)
     {
-        let alias = key.trim_matches(['"', '\'']).to_owned();
+        let key = manifest_key(&key).map_err(|error| format!("{}: {error}", out.path.display()))?;
+        let inherited_key = matches!(key.as_slice(), [_, field] if field == "workspace");
+        if key.len() != 1 && !inherited_key {
+            return Err(format!(
+                "{}: unsupported dependency key",
+                out.path.display()
+            ));
+        }
+        let alias = key[0].clone();
         let package = quoted_field(&value, "package")
             .map_err(|error| format!("{}: {error}", out.path.display()))?
             .unwrap_or_else(|| alias.clone());
@@ -160,7 +305,7 @@ fn parse(path: PathBuf) -> Result<Manifest, String> {
                 Vec::new()
             },
             defaults: !value.contains("default-features = false"),
-            inherited: value.contains("workspace = true"),
+            inherited: inherited_key || value.contains("workspace = true"),
             optional: value.contains("optional = true"),
         });
     }
@@ -396,7 +541,7 @@ mod tests {
         write(
             &root,
             "app",
-            "[package]\nname = \"quantick-app\"\n[dependencies]\nowner = { workspace = true }\n",
+            "[package]\nname = \"quantick-app\"\n[dependencies]\nowner.workspace = true\n",
         );
         let findings = check(&root);
         assert_eq!(findings.len(), 1, "{findings:?}");
@@ -506,26 +651,44 @@ mod tests {
     }
 
     #[test]
+    fn semantic_headers_and_quoted_aliases_keep_shipping_graph_semantics() {
+        let root = ScratchDir::new("test-support-semantic-headers");
+        write(
+            &root,
+            "owner",
+            "[ 'package' ]\n'name' = 'quantick-owner'\n[ \"features\" ]\n\"test-support\" = []\n",
+        );
+        write(
+            &root,
+            "app",
+            "[[bin]]\nname = 'fixture-app'\npath = 'src/main.rs'\n[ \"package\" ]\nname = 'quantick-app'\n[ \"dependencies\" ] # shipping\n\"builder\" = { package = 'quantick-owner', path = '../owner', features = ['test-support'] }\n",
+        );
+        let findings = check(&root);
+        assert_eq!(findings.len(), 1, "{findings:?}");
+        assert!(findings[0].line.contains("quantick-owner"));
+    }
+
+    #[test]
     fn dependency_specific_tables_fail_closed_in_every_shipping_form() {
         for (label, header, body) in [
             (
                 "direct",
-                "[dependencies.owner]",
+                "[ dependencies . owner ]",
                 "features = ['test-support']",
             ),
             (
                 "renamed",
-                "[dependencies.builder]",
+                "[ \"dependencies\" . \"builder\" ]",
                 "package = 'quantick-owner'\nfeatures = ['test-support']",
             ),
             (
                 "build",
-                "[build-dependencies.owner]",
+                "[ \"build-depend\\u0065ncies\" . owner ]",
                 "features = ['test-support']",
             ),
             (
                 "target",
-                "[target.'cfg(windows)'.dependencies.owner]",
+                "[ target . 'cfg(windows)' . build-dependencies . builder ]",
                 "features = ['test-support']",
             ),
         ] {
@@ -543,13 +706,25 @@ mod tests {
         let root = ScratchDir::new("workspace-specific");
         fs::write(
             root.join("Cargo.toml"),
-            "[workspace.dependencies.owner]\nfeatures = ['test-support']\n",
+            "[[bench]]\nname = 'fixture'\n[ workspace . \"dependencies\" . owner ]\nfeatures = ['test-support']\n",
         )
         .unwrap();
         fs::create_dir_all(root.join("crates")).unwrap();
         let findings = check(&root);
         assert_eq!(findings.len(), 1, "{findings:?}");
-        assert!(findings[0].line.contains("workspace.dependencies.owner"));
+        assert!(findings[0].line.contains("dependency-specific table"));
+        assert!(findings[0].line.contains("owner"));
+    }
+
+    #[test]
+    fn semantic_dev_dependency_specific_tables_remain_outside_shipping() {
+        let root = ScratchDir::new("test-support-semantic-dev-specific");
+        write(
+            &root,
+            "app",
+            "[[bench]]\nname = 'fixture'\n[ 'package' ]\nname = 'quantick-app'\n[ target . 'cfg(windows)' . \"dev-dependencies\" . builder ]\npackage = 'quantick-owner'\nfeatures = ['test-support']\n",
+        );
+        assert!(check(&root).is_empty());
     }
 
     #[test]
