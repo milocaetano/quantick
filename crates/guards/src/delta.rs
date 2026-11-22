@@ -108,7 +108,7 @@ fn compare(root: &Path, base: &Path, guard: &Guard) -> Result<(), String> {
         let growth = new as i128 - old as i128;
         let permission = folded.as_ref().map_or_else(
             || ceiling(&after, key) - ceiling(&before, key),
-            |raw| ceiling(&after, key) - raw.get(key).copied().unwrap_or(0),
+            |permission| permission.get(key).copied().unwrap_or(0),
         );
         if growth > permission {
             problems.push(format!(
@@ -161,6 +161,42 @@ fn raw_entries(root: &Path, policy: &Policy) -> Result<(BTreeMap<String, i128>, 
     ))
 }
 
+fn fragment_changes(root: &Path, file: &str) -> Result<(BTreeMap<String, i128>, i128), String> {
+    let text = fs::read_to_string(root.join(file)).map_err(|error| format!("{file}: {error}"))?;
+    let mut entries = BTreeMap::new();
+    let mut budget = 0;
+    for raw in text.lines() {
+        let content = raw.split('#').next().unwrap_or("").trim();
+        if content.is_empty() || content.starts_with("!measure-change ") {
+            continue;
+        }
+        let (label, value) = content
+            .rsplit_once(char::is_whitespace)
+            .ok_or_else(|| format!("{file}: invalid fragment row"))?;
+        let value = value
+            .parse::<i128>()
+            .map_err(|error| format!("{file}: {error}"))?;
+        if label.trim() == "!budget" {
+            budget += value;
+        } else {
+            *entries.entry(label.trim().to_owned()).or_default() += value;
+        }
+    }
+    Ok((entries, budget))
+}
+
+fn apply_changes(
+    entries: &mut BTreeMap<String, i128>,
+    budget: &mut i128,
+    changes: &(BTreeMap<String, i128>, i128),
+) {
+    for (key, value) in &changes.0 {
+        *entries.entry(key.clone()).or_default() += value;
+    }
+    entries.retain(|_, value| *value != 0);
+    *budget += changes.1;
+}
+
 fn validate_fragments(
     root: &Path,
     base: &Path,
@@ -171,33 +207,66 @@ fn validate_fragments(
     let old_budget = before.budget.as_ref().ok_or("base has no !budget")?.allowed;
     after.budget.as_ref().ok_or("head has no !budget")?;
     let baseline_changed = read(root, policy.baseline_file)? != read(base, policy.baseline_file)?;
-    let all_old_consumed = before
+    let mut retained = Vec::new();
+    let mut consumed = Vec::new();
+    for file in &before.raise_files {
+        if root.join(file).exists() {
+            if read(root, file)? != read(base, file)? {
+                return Err(format!("{file}: existing fragment was changed"));
+            }
+            retained.push(file.as_str());
+        } else {
+            consumed.push(file.as_str());
+        }
+    }
+    let new_files: Vec<_> = after
         .raise_files
         .iter()
-        .all(|file| !root.join(file).exists());
-    let remaining_are_new = after
-        .raise_files
-        .iter()
-        .all(|file| !base.join(file).exists());
-    if !before.raise_files.is_empty() && all_old_consumed && remaining_are_new {
-        let (raw, raw_budget) = raw_entries(root, policy)?;
+        .filter(|file| !base.join(file).exists())
+        .map(String::as_str)
+        .collect();
+    if !before.raise_files.is_empty() && !consumed.is_empty() {
+        for old in &consumed {
+            for new in &new_files {
+                if read(base, old)? == read(root, new)? {
+                    return Err(format!("{new}: consumed fragment was renamed"));
+                }
+            }
+        }
+        let (mut folded, mut folded_budget) = raw_entries(root, policy)?;
+        for file in retained {
+            apply_changes(
+                &mut folded,
+                &mut folded_budget,
+                &fragment_changes(root, file)?,
+            );
+        }
         let old_keys: BTreeSet<_> = before
             .entries
             .iter()
             .map(|entry| entry.path.as_str())
             .collect();
-        let raw_keys: BTreeSet<_> = raw.keys().map(String::as_str).collect();
-        let downward = old_keys == raw_keys
-            && raw_budget <= old_budget as i128
-            && raw
+        let folded_keys: BTreeSet<_> = folded.keys().map(String::as_str).collect();
+        let downward = old_keys == folded_keys
+            && folded_budget <= old_budget as i128
+            && folded
                 .iter()
                 .all(|(key, value)| *value <= ceiling(before, key));
-        let unchanged_fold = raw_budget == old_budget as i128
-            && raw
+        let unchanged_fold = folded_budget == old_budget as i128
+            && folded
                 .iter()
                 .all(|(key, value)| *value == ceiling(before, key));
         if downward && (baseline_changed || unchanged_fold) {
-            return Ok(Some(raw));
+            let mut permission = BTreeMap::new();
+            let mut permission_budget = 0;
+            for file in new_files {
+                apply_changes(
+                    &mut permission,
+                    &mut permission_budget,
+                    &fragment_changes(root, file)?,
+                );
+            }
+            return Ok(Some(permission));
         }
     }
     if baseline_changed {

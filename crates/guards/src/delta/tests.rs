@@ -135,6 +135,74 @@ fn fold_then_new_fragment_authorizes_only_its_signed_growth() {
 }
 
 #[test]
+fn partial_fold_reconstructs_retained_positive_and_negative_fragments() {
+    for (retained, consumed, raw) in [(5, 5, 1005), (-5, 10, 1010)] {
+        let base = tree(500);
+        let head = tree(501);
+        fragment(
+            base.path(),
+            "retained.txt",
+            &format!("crates/app {retained:+}\n!budget {retained:+}\n"),
+        );
+        fragment(
+            head.path(),
+            "retained.txt",
+            &format!("crates/app {retained:+}\n!budget {retained:+}\n"),
+        );
+        fragment(
+            base.path(),
+            "consumed.txt",
+            &format!("crates/app +{consumed}\n!budget +{consumed}\n"),
+        );
+        fs::write(
+            head.join(app_lines::BASELINE_FILE),
+            format!("!budget {raw}\ncrates/app {raw}\n"),
+        )
+        .unwrap();
+        fragment(head.path(), "new.txt", "crates/app +1\n!budget +1\n");
+        assert!(check(head.path(), base.path(), guard()).is_empty());
+    }
+}
+
+#[test]
+fn partial_fold_tightening_passes_but_retained_permission_is_not_counted_twice() {
+    let base = tree(500);
+    let head = tree(501);
+    fragment(base.path(), "retained.txt", "crates/app +5\n!budget +5\n");
+    fragment(head.path(), "retained.txt", "crates/app +5\n!budget +5\n");
+    fragment(base.path(), "consumed.txt", "crates/app +5\n!budget +5\n");
+    fs::write(
+        head.join(app_lines::BASELINE_FILE),
+        "!budget 1004\ncrates/app 1004\n",
+    )
+    .unwrap();
+    fragment(head.path(), "new.txt", "crates/app +1\n!budget +1\n");
+    assert!(check(head.path(), base.path(), guard()).is_empty());
+
+    fs::write(
+        head.join("crates/app/src/lib.rs"),
+        "fn line() {}\n".repeat(502),
+    )
+    .unwrap();
+    assert!(!check(head.path(), base.path(), guard()).is_empty());
+}
+
+#[test]
+fn consumed_fragment_cannot_return_under_a_new_name() {
+    let base = tree(500);
+    let head = tree(500);
+    let content = "crates/app +10\n!budget +10\n";
+    fragment(base.path(), "old.txt", content);
+    fs::write(
+        head.join(app_lines::BASELINE_FILE),
+        "!budget 1000\ncrates/app 1000\n",
+    )
+    .unwrap();
+    fragment(head.path(), "renamed.txt", content);
+    assert!(!check(head.path(), base.path(), guard()).is_empty());
+}
+
+#[test]
 fn fold_rejects_upward_raw_entry_or_budget_even_with_new_cuts() {
     for baseline in [
         "!budget 1010\ncrates/app 1011\n",

@@ -71,6 +71,40 @@ class MeasurementTests(unittest.TestCase):
                 {"graph.edges": delta.Coverage(1, anchor)},
             )
 
+    def test_base_anchored_authority_is_semantically_immutable_in_every_ratchet(self):
+        anchor = "1" * 40
+        original = f"# base\n!measure-change graph.edges +1 {anchor}\n"
+        changes = {
+            "append": original + f"!measure-change other +1 {anchor}\n",
+            "change": f"!measure-change graph.edges +2 {anchor}\n",
+            "remove": "# authority removed\n",
+            "duplicate_removed": original,
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            head, base = root / "head", root / "base"
+            relative = Path("crates/guards/context-baseline.d/existing.txt")
+            for tree in (head, base):
+                (tree / relative).parent.mkdir(parents=True)
+            (base / relative).write_text(original, encoding="utf-8")
+            (head / relative).write_text(
+                f"  !measure-change   graph.edges +1 {anchor} # same authority\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(
+                delta.coverage(head, base),
+                {"graph.edges": delta.Coverage(1, anchor)},
+            )
+            for name, changed in changes.items():
+                with self.subTest(name=name):
+                    base_text = original
+                    if name == "duplicate_removed":
+                        base_text += f"!measure-change graph.edges +1 {anchor}\n"
+                    (base / relative).write_text(base_text, encoding="utf-8")
+                    (head / relative).write_text(changed, encoding="utf-8")
+                    with self.assertRaisesRegex(ValueError, "changed from base"):
+                        delta.coverage(head, base)
+
     def test_invalid_missing_and_duplicate_anchor_coverage_fails_closed(self):
         anchor = "1" * 40
         cases = [

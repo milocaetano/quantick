@@ -50,28 +50,50 @@ class Coverage:
 
 def coverage(repo, base):
     result = {}
-    for directory in sorted((repo / "crates/guards").glob("*-baseline.d")):
-        for fragment in sorted(directory.glob("*.txt")):
-            relative = fragment.relative_to(repo)
-            is_new = not (base / relative).exists()
-            for line in fragment.read_text(encoding="utf-8").splitlines():
-                content = line.split("#", 1)[0].strip()
-                if not content.startswith("!measure-change"):
-                    continue
-                fields = content.split()
-                if (len(fields) not in (3, 4) or fields[0] != "!measure-change"
-                        or fields[2][:1] not in ("+", "-")):
-                    raise ValueError(f"{relative}: invalid measurement coverage")
-                key, value = fields[1:3]
-                anchor = fields[3] if len(fields) == 4 else None
-                if anchor is None and not is_new:
-                    continue
-                if anchor is not None and not re.fullmatch(r"[0-9a-f]{40}", anchor):
-                    raise ValueError(f"{relative}: measurement anchor must be a full SHA")
-                if key in result:
-                    raise ValueError(f"{relative}: duplicate coverage for {key}")
-                result[key] = Coverage(int(value), anchor)
+    head_fragments = {path.relative_to(repo) for directory in
+                      (repo / "crates/guards").glob("*-baseline.d")
+                      for path in directory.glob("*.txt")}
+    base_fragments = {path.relative_to(base) for directory in
+                      (base / "crates/guards").glob("*-baseline.d")
+                      for path in directory.glob("*.txt")}
+    for relative in sorted(head_fragments | base_fragments):
+        fragment = repo / relative
+        base_fragment = base / relative
+        is_new = not base_fragment.exists()
+        head_anchored = anchored_declarations(fragment)
+        if not is_new and head_anchored != anchored_declarations(base_fragment):
+            raise ValueError(f"{relative}: anchored measurement coverage changed from base")
+        if not fragment.exists():
+            continue
+        for line in fragment.read_text(encoding="utf-8").splitlines():
+            content = line.split("#", 1)[0].strip()
+            if not content.startswith("!measure-change"):
+                continue
+            fields = content.split()
+            if (len(fields) not in (3, 4) or fields[0] != "!measure-change"
+                    or fields[2][:1] not in ("+", "-")):
+                raise ValueError(f"{relative}: invalid measurement coverage")
+            key, value = fields[1:3]
+            anchor = fields[3] if len(fields) == 4 else None
+            if anchor is None and not is_new:
+                continue
+            if anchor is not None and not re.fullmatch(r"[0-9a-f]{40}", anchor):
+                raise ValueError(f"{relative}: measurement anchor must be a full SHA")
+            if key in result:
+                raise ValueError(f"{relative}: duplicate coverage for {key}")
+            result[key] = Coverage(int(value), anchor)
     return result
+
+
+def anchored_declarations(fragment):
+    if not fragment.exists():
+        return []
+    declarations = []
+    for line in fragment.read_text(encoding="utf-8").splitlines():
+        fields = line.split("#", 1)[0].split()
+        if len(fields) == 4 and fields[0] == "!measure-change":
+            declarations.append(tuple(fields[1:]))
+    return declarations
 
 
 def compare_measurements(old, new, signed):
