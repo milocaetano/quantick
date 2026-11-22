@@ -1,6 +1,6 @@
 use super::{Mapping, Source, UiBehaviour};
 
-pub(super) const BINDING: (usize, &[UiBehaviour]) = (8, ROWS);
+pub(super) const BINDING: (usize, &[UiBehaviour]) = (9, ROWS);
 const ROWS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "trade.account.route",

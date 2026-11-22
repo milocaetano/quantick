@@ -20,6 +20,7 @@ use quantick_workspace::market_list::PaletteIntent;
 /// one frame still undo once. Action lists and persistence keep draw order.
 #[derive(Debug, Default, PartialEq)]
 pub struct LateEffects {
+    pub strategy_describe: Option<crate::strategy_describe::Effects>,
     pub market: Option<PaletteIntent>,
     pub undo_drawing: bool,
     pub bar_switch: Option<BarSwitchRequest>,
@@ -60,6 +61,7 @@ impl LateEffects {
 
     fn take(&mut self, effect: HostEffect) {
         match effect {
+            HostEffect::StrategyDescribe(asked) => self.strategy_describe = Some(asked),
             HostEffect::MarketPalette(asked) => self.market = self.market.take().or(asked),
             HostEffect::Toast(toast) => self.undo_drawing |= toast.undo_drawing,
             HostEffect::BarSwitch(asked) => self.bar_switch = self.bar_switch.take().or(asked),

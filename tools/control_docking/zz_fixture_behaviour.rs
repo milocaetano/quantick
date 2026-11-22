@@ -1,6 +1,6 @@
 use super::{Mapping, Source, UiBehaviour};
 pub(super) const BINDING: (usize, &[UiBehaviour]) = (
-    14,
+    15,
     &[UiBehaviour {
         id: "fixture.magnet",
         title: "Set the fixture magnet",

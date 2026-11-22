@@ -2961,6 +2961,7 @@ dependencies = [
  "quantick-ui-model",
  "quantick-workspace",
  "raw-window-handle",
+ "reqwest",
  "rfd",
  "rodio",
  "rust_decimal",

@@ -74,6 +74,8 @@ mod session_length_tests;
 mod settled_frame;
 mod source_drain_tests;
 mod stage_order_tests;
+mod strategy_describe_contract_tests;
+mod strategy_describe_tests;
 pub(crate) mod support;
 mod tab_workspace_tests;
 mod tape_clock_tests;

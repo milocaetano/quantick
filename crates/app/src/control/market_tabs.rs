@@ -1,6 +1,6 @@
 //! The window's part in the feed and market calls: resolve the addressed tab
 //! and lend the config, the layout's drawings and the History default.
-use crate::app::arrangement_adapter;
+use crate::app::{arrangement_adapter, arrangement_host::ArrangementHost};
 use quantick_control_handlers::market_palette::{MarketPaletteOwners, MarketTabs, PaletteShowing};
 use quantick_control_handlers::market_tab::{LentTab, MarketTabHost};
 use quantick_stores::symbol_catalog::SymbolCatalog;
@@ -44,6 +44,10 @@ impl TabsPort for QuantickApp {
 }
 
 impl TabsMutPort for QuantickApp {
+    fn describe_owners(&mut self) -> (&mut crate::surfaces::Surfaces, &mut ArrangementHost) {
+        let roots = crate::app::control_host::control_roots_mut(self);
+        (roots.surfaces, &mut roots.runtime.tabs)
+    }
     fn tabs_mut(&mut self) -> TabsMut<'_> {
         let roots = crate::app::control_host::control_roots_mut(self);
         roots

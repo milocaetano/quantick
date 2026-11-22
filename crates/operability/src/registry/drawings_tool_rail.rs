@@ -6,7 +6,7 @@ const PENDING_DRAWING_TOOL: Mapping = Mapping::Excluded {
              parallel channel have one. Tracked in issue 401",
 };
 
-pub(super) const BINDING: (usize, &[UiBehaviour]) = (10, ROWS);
+pub(super) const BINDING: (usize, &[UiBehaviour]) = (11, ROWS);
 const ROWS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "toolrail.dock.set",
