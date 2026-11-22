@@ -62,6 +62,28 @@ class IdentityTests(unittest.TestCase):
         self.commit()
         self.assertNotEqual(before, self.key())
 
+    def test_large_changed_path_set_preserves_identity(self):
+        self.git("checkout", "-q", "base")
+        self.write("many/delete me.txt", "deleted\n")
+        self.write("many/modify-\u00fc.txt", "before\n")
+        self.write("many/rename source.txt", "renamed\n")
+        self.commit()
+        self.git("checkout", "-q", "main")
+        self.git("rebase", "base")
+        (self.repo / "many/delete me.txt").unlink()
+        self.write("many/modify-\u00fc.txt", "after\n")
+        self.git("update-index", "--chmod=+x", "many/modify-\u00fc.txt")
+        self.git("mv", "many/rename source.txt", "many/rename destination.txt")
+        for index in range(600):
+            self.write(f"many/{index:04d}-{'long-path-' * 6}.txt", f"changed {index}\n")
+        self.commit()
+        paths = self.git("diff", "--name-only", "--no-renames", "-z", "base", "HEAD").decode().split("\0")
+        paths = sorted(path for path in paths if path)
+        self.assertGreater(sum(len(path) + 1 for path in paths), 32_767)
+        canonical = identity.stable_patch(self.repo, "base", paths, argument_budget=512)
+        self.assertEqual(canonical, identity.stable_patch(self.repo, "base", paths))
+        self.assertRegex(self.key(), r"^[0-9a-f]{64}$")
+
     def test_indentation_only_substantive_edit_stales_review_key(self):
         before = self.key()
         self.write("code.py", "# context\nif True:\n        change()\n")

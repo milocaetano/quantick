@@ -16,6 +16,7 @@ CONTROL_DOCS = {
     "docs/control-plane/capability-inventory.md",
     "docs/control-plane/retry-matrix.md",
 }
+PATH_ARGUMENT_BUDGET = 8_000
 
 
 def git(repo, *args, data=None):
@@ -131,6 +132,26 @@ def hunk_occurrences(repo, ancestor, path):
     return occurrences
 
 
+def stable_patch(repo, ancestor, paths, argument_budget=PATH_ARGUMENT_BUDGET):
+    """Render the canonical patch without placing every path in one argv."""
+    fixed = ("diff", "--no-ext-diff", "--no-textconv", "--no-renames",
+             "--binary", "--full-index", "--unified=0", ancestor, "HEAD", "--")
+    patch = []
+    batch = []
+    size = sum(len(argument) + 1 for argument in fixed)
+    for path in paths:
+        path_size = len(path) + 1
+        if batch and size + path_size > argument_budget:
+            patch.append(git(repo, *fixed, *batch))
+            batch = []
+            size = sum(len(argument) + 1 for argument in fixed)
+        batch.append(path)
+        size += path_size
+    if batch:
+        patch.append(git(repo, *fixed, *batch))
+    return b"".join(patch)
+
+
 def identity(repo, base):
     ancestor = git(repo, "merge-base", base, "HEAD").decode().strip()
     # Keep both sides of a rename. The patch below deliberately disables rename
@@ -144,10 +165,7 @@ def identity(repo, base):
              or raw[index].split()[0][1:] not in (b"000000", raw[index].split()[1])}
     eligible = set(paths) - modes
     paths = sorted(set(paths) - {"", LEDGER} - verified_outputs(repo, eligible))
-    patch = b""
-    if paths:
-        patch = git(repo, "diff", "--no-ext-diff", "--no-textconv", "--no-renames",
-                    "--binary", "--full-index", "--unified=0", ancestor, "HEAD", "--", *paths)
+    patch = stable_patch(repo, ancestor, paths)
     stable = git(repo, "patch-id", "--stable", data=patch).split()
     # Coordinates and blob IDs move on context-only synchronization. Retain the
     # coordinate-free hunk label, however: it identifies the enclosing function
