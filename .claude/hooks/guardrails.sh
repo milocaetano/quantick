@@ -28,6 +28,9 @@
 #   review-verdict    PostToolUse on SubagentHandback, and SubagentStop.
 #                     Records `code-review-ok` from a review subagent's
 #                     verdict line, so the agent never writes it.
+#   machine-check     SessionStart. Not a gate: when cargo on this machine
+#                     has no `build.jobs` cap, tells the session to bring
+#                     docs/dev-machine.md to the user before building.
 #
 # What `runs_command` can and cannot see is a known, bounded limitation, and it
 # is deliberately left as it was rather than deepened. It splits on `&&`, `||`
@@ -930,11 +933,33 @@ review_verdict() {
     exit 0
 }
 
+# A machine whose cargo has no `build.jobs` cap runs every invocation at one
+# job per core, so N parallel agents ask for N times the cores and the RAM to
+# match. The fix is per machine and outside the repository, which is why it
+# reaches a session as news at its start rather than as a rule it must
+# remember: a gate cannot do it, and setup changes user-level config only with
+# the user's consent. Silent once a cap exists in the environment or in either
+# file cargo reads from CARGO_HOME.
+machine_check() {
+    [ -z "${CARGO_BUILD_JOBS:-}" ] || exit 0
+    machine_cargo_home=${CARGO_HOME:-${HOME:-}/.cargo}
+    for machine_config in "$machine_cargo_home/config.toml" "$machine_cargo_home/config"; do
+        [ -f "$machine_config" ] || continue
+        if grep -Eq '^[[:space:]]*jobs[[:space:]]*=' "$machine_config" 2>/dev/null; then
+            exit 0
+        fi
+    done
+    printf '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":%s}}
+'         '"This machine has no cargo build.jobs cap, so every cargo command takes one job per core and parallel agents oversubscribe CPU and RAM. Before your first build, tell the user and, only with their consent, run: powershell -NoProfile -ExecutionPolicy Bypass -File tools/dev_machine/setup.ps1 (docs/dev-machine.md explains what it changes)."'
+    exit 0
+}
+
 case "$mode" in
     worktree-guard) worktree_guard ;;
     pr-gate) pr_gate ;;
     commit-reminder) commit_reminder ;;
     guard-watch) guard_watch ;;
     review-verdict) review_verdict ;;
+    machine-check) machine_check ;;
     *) exit 0 ;;
 esac
