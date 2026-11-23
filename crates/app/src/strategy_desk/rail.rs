@@ -30,10 +30,7 @@ fn header(ui: &mut egui::Ui, header: &Header) {
     ui.horizontal(|ui| {
         ui.label(RichText::new(&header.label).monospace().strong());
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            send_on(
-                &toggle(ui, header.toggle).on_hover_text(&header.hover),
-                &header.send,
-            );
+            send_on(&toggle(ui, header.toggle, &header.hover), &header.send);
             ui.label(RichText::new(&header.count).color(ink(ui, Ink::Muted)));
         });
     });
@@ -63,18 +60,18 @@ fn row(ui: &mut egui::Ui, line: &Line) {
                 .on_hover_text("remove this strategy");
             send_on(&remove, &line.remove);
             if let Some((glyph, sent)) = &line.toggle {
-                send_on(&toggle(ui, *glyph), sent);
+                send_on(&toggle(ui, *glyph, verb(*glyph)), sent);
             }
         });
     });
 }
 
-fn toggle(ui: &mut egui::Ui, toggle: Toggle) -> egui::Response {
+fn toggle(ui: &mut egui::Ui, toggle: Toggle, hover: &str) -> egui::Response {
     let glyph = match toggle {
         Toggle::Pause => icons::PAUSE,
         Toggle::Resume => icons::PLAY,
     };
-    ui.small_button(glyph).on_hover_text(verb(toggle))
+    ui.small_button(glyph).on_hover_text(hover)
 }
 
 /// Keep `sent` for the next frame's settle when `response` was clicked.

@@ -19,10 +19,10 @@ pub(crate) fn settle<H>(host: &mut H, ctx: &egui::Context) -> Option<Rail>
 where
     H: StrategyDeskHost + AttentionHost + ChromePort + ?Sized,
 {
-    let stale = rail::take(ctx)
-        .map(|sent| model::send(host, sent))
-        .is_some();
-    if let Some(sent) = window::show(host, ctx, stale) {
+    if let Some(sent) = rail::take(ctx) {
+        model::send(host, sent);
+    }
+    if let Some(sent) = window::show(host, ctx) {
         model::send(host, sent);
     }
     let open = host.chrome_reads().dock().tab() == Some(DockTab::Strategies);

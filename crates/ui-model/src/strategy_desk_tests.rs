@@ -131,7 +131,10 @@ fn the_summary_lists_where_action_inputs_asset_and_fires_today() {
 fn history_places_each_fire_along_the_loaded_bars() {
     let fired = window(DeskState::Watching, None, vec![2, 5, 10]);
     let (caption, marks) = fired.history();
-    assert_eq!(caption, "3 fires on the loaded bars");
+    assert_eq!(
+        caption,
+        "3 fires on the loaded bars; the strip ends at the last fire"
+    );
     assert_eq!(marks, [0.2, 0.5, 1.0]);
     let none = window(DeskState::Watching, None, vec![]);
     assert_eq!(none.history().1, Vec::<f32>::new());
@@ -181,4 +184,28 @@ fn a_save_toasts_its_file_and_a_refusal_its_reason() {
         toast(Err(refused)),
         Some("the strategy has ended".to_owned())
     );
+}
+
+#[test]
+fn a_window_reads_again_once_its_listed_row_moves_on() {
+    let mut window = window(DeskState::Watching, None, vec![]);
+    let listed = row(3, DeskState::Watching, DeskLink::Chart);
+    assert!(
+        !window.stale(Some(&listed)),
+        "the row it read is still listed"
+    );
+
+    let reason = "fired once".to_owned();
+    let ended = row(3, DeskState::Ended { reason }, DeskLink::Chart);
+    assert!(window.stale(Some(&ended)), "it ended on its own");
+    assert!(window.stale(None), "another caller removed it");
+
+    window.detail = Some(Err("gone".to_owned()));
+    assert!(
+        !window.stale(None),
+        "a refusal stands while nothing is listed"
+    );
+    assert!(window.stale(Some(&listed)), "it is listed again");
+    window.forget();
+    assert!(window.stale(Some(&listed)), "never read");
 }

@@ -14,19 +14,17 @@ fn key() -> egui::Id {
 
 pub(super) fn open(ctx: &egui::Context, window: StrategyWindow) {
     ctx.data_mut(|data| data.insert_temp(key(), window));
+    ctx.request_repaint();
 }
 
-/// Draw the open window, read again when `stale`; what it sent.
-pub(super) fn show<H>(host: &mut H, ctx: &egui::Context, stale: bool) -> Option<Sent>
+/// Draw the open window over its instance as listed now; what it sent.
+pub(super) fn show<H>(host: &mut H, ctx: &egui::Context) -> Option<Sent>
 where
     H: StrategyDeskHost + ?Sized,
 {
     #[cfg(any(feature = "scenario-harness", test))]
     hooked(host, ctx);
     let mut window: StrategyWindow = ctx.data(|data| data.get_temp(key()))?;
-    if stale {
-        window.forget();
-    }
     window.read(host);
     let (mut keep, mut sent) = (true, None);
     egui::Window::new(window.title().to_owned())
@@ -34,9 +32,6 @@ where
         .open(&mut keep)
         .default_width(420.0)
         .show(ctx, |ui| sent = body(ui, &mut window));
-    if sent.is_some() {
-        window.forget();
-    }
     ctx.data_mut(|data| match keep {
         true => data.insert_temp(key(), window),
         false => data.remove::<StrategyWindow>(key()),
@@ -92,7 +87,7 @@ fn body(ui: &mut egui::Ui, window: &mut StrategyWindow) -> Option<Sent> {
     .inner
 }
 
-/// A strip across the loaded bars with a mark at each fire, oldest left.
+/// A strip from the first loaded bar to the last fire, a mark at each fire.
 fn history(ui: &mut egui::Ui, (caption, marks): (String, Vec<f32>)) {
     let palette = theme::get(ui.ctx());
     ui.label(caption);

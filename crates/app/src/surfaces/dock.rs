@@ -188,11 +188,11 @@ fn draw(
                         Some(LedgerAction::Edit(edit)) => response.journal_edit = Some(edit),
                         None => {}
                     },
-                    DockTab::Strategies => {
-                        if let Some(rail) = env.strategies {
-                            rail.show(ui);
-                        }
-                    }
+                    // Picked on the strip this frame: the rail is read on the next.
+                    DockTab::Strategies => match env.strategies {
+                        Some(rail) => rail.show(ui),
+                        None => ui.ctx().request_repaint(),
+                    },
                 }
             });
         dock.update(Intent::RememberWidth {

@@ -239,12 +239,23 @@ impl StrategyWindow {
         Some(Self::open(&group.rows[0], asset_label(&group.asset), page))
     }
 
-    /// Read the instance in full when the last read is gone.
+    /// Read the instance in full when the last read is gone, or when the
+    /// desk's row for it moved on: it fired, ended, or another caller
+    /// paused or removed it.
     pub fn read<H: StrategyDeskHost + ?Sized>(&mut self, host: &mut H) {
-        if self.detail.is_none() {
+        let groups = desk::groups(host);
+        let mut rows = groups.iter().flat_map(|group| &group.rows);
+        if self.stale(rows.find(|row| row.tab_id == self.tab_id && row.id == self.id)) {
             let detail = desk::instance_detail(host, self.tab_id, self.id);
             self.detail = Some(detail.map_err(|error| error.message));
         }
+    }
+
+    /// Whether the last read no longer matches `listed`, the desk's row for
+    /// the instance now: never read, changed, gone, or back.
+    fn stale(&self, listed: Option<&DeskRow<DrawingId>>) -> bool {
+        let read = (self.detail.as_ref()).map(|read| read.as_ref().ok().map(|detail| &detail.row));
+        read != Some(listed)
     }
 
     /// Drop the last read: a command may have changed the instance.
@@ -325,14 +336,19 @@ impl StrategyWindow {
     }
 
     /// The History page: its caption, and each fire as a fraction of the way
-    /// from the first loaded bar to the last fire.
+    /// from the first loaded bar to the last fire. The detail carries no bar
+    /// count, so the caption says where the strip ends rather than imply the
+    /// right edge is the latest bar.
     #[must_use]
     pub fn history(&self) -> (String, Vec<f32>) {
         let Some(Ok(detail)) = self.detail() else {
             return (String::new(), Vec::new());
         };
         let fired = &detail.history;
-        let caption = format!("{} fires on the loaded bars", fired.len());
+        let caption = format!(
+            "{} fires on the loaded bars; the strip ends at the last fire",
+            fired.len()
+        );
         let last = fired.last().copied().unwrap_or(0).max(1) as f32;
         (
             caption,
