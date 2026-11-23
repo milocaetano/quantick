@@ -1,0 +1,4 @@
+# Trader-approved 2026-11-22, #1124: shared slack lost in the main sync plus
+# main's own debt from #1140 (+2 of these lines).
+crates/app +44
+!budget +44
