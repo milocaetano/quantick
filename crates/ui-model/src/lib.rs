@@ -13,6 +13,7 @@ pub mod paper_report;
 #[cfg(test)]
 mod scratch;
 pub mod store_home;
+pub mod strategy_describe_contract;
 pub mod strategy_desk;
 pub mod workspace_menu;
 

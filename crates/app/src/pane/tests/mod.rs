@@ -2490,6 +2490,37 @@ fn g6_badge_output(
         );
     })
 }
+
+#[test]
+fn local_draw_pass_reports_only_a_displayed_note_to_its_store() {
+    let mut pane = ChartPane::flow(1, BarSpec::Tick(50), "TESTUSDT".to_owned());
+    let key = DrawingBand::Indicator(quantick_drawings::PaneKey {
+        kind: "cvd".into(),
+        ordinal: 0,
+    });
+    pane.drawings.place_on(
+        quantick_drawings::DrawingTool::by_id("text").unwrap(),
+        &key,
+        ChartPoint::at(95.0, 102.0),
+    );
+    let anchors = crate::strategy_anchors::StrategyAnchors::default();
+    let mut band = g6_badge_band(20.0);
+    pane.model.viewport.set_px_per_bar(10.0);
+    let revision = pane.drawings.revision();
+    g6_badge_output((&pane, &anchors), &band, DrawPass::OverCandles);
+    band.key = key;
+    let scale = band.scale.take();
+    g6_badge_output((&pane, &anchors), &band, DrawPass::OverCandles);
+    band.scale = scale;
+    g6_badge_output((&pane, &anchors), &band, DrawPass::UnderCandles);
+    pane.gestures.content_editing = Some(0);
+    g6_badge_output((&pane, &anchors), &band, DrawPass::OverCandles);
+    assert_eq!(pane.drawings.revision(), revision);
+    pane.gestures.content_editing = None;
+    pane.model.viewport.set_px_per_bar(20.0);
+    g6_badge_output((&pane, &anchors), &band, DrawPass::OverCandles);
+    assert_eq!(pane.drawings.revision(), revision + 1);
+}
 #[test]
 fn g6_characterization_hidden_badges_and_actual_stage_order() {
     let band = g6_badge_band(20.0);

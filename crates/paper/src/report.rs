@@ -30,8 +30,10 @@ pub mod scroll_probe;
 pub mod session_edit;
 pub mod sessions;
 pub mod snapshot;
+pub mod sources;
 
 pub use readout::EquityWalk;
+pub use sources::SourceSelection;
 
 use sessions::{SessionInfo, SessionKey};
 
@@ -67,6 +69,25 @@ pub struct LoadedHistory {
     /// Every session file read, the excluded live ones included (marked
     /// `live`, their rows left out) so their names and tags are known too.
     pub sessions: BTreeMap<SessionKey, SessionInfo>,
+}
+
+impl LoadedHistory {
+    pub fn scan_warning(&self) -> Option<String> {
+        (self.unreadable_files > 0 || self.problem_rows > 0).then(|| {
+            format!(
+                "{} file(s) unreadable, {} row(s) skipped - counted, never silently dropped.",
+                self.unreadable_files, self.problem_rows,
+            )
+        })
+    }
+
+    pub fn scan_summary(&self) -> String {
+        format!(
+            "Loaded history total · {} trade(s), {} journal file(s) checked",
+            self.rows.len(),
+            self.files
+        )
+    }
 }
 
 /// Execution origin and feed filters. The legacy `Real` identifier means
@@ -374,7 +395,7 @@ pub fn fmt_period_ms(period_ms: i64) -> String {
 /// order, their aggregation, and the anchor the period was measured from.
 pub struct ReportView {
     pub period: ReportPeriod,
-    pub source: SourceFilter,
+    pub source: SourceSelection,
     /// The calendar span in force. `Some` puts the report on absolute
     /// dates and takes the anchor-relative pills out of the cut; `None`
     /// leaves them in charge, which is exactly what the report did before
@@ -423,7 +444,7 @@ impl ReportView {
     pub fn cut(
         history: &LoadedHistory,
         period: ReportPeriod,
-        source: SourceFilter,
+        source: impl Into<SourceSelection>,
         range: Option<DateRange>,
         tz: TzOffset,
     ) -> Self {
@@ -433,11 +454,12 @@ impl ReportView {
     pub fn cut_scoped(
         history: &LoadedHistory,
         period: ReportPeriod,
-        source: SourceFilter,
+        source: impl Into<SourceSelection>,
         range: Option<DateRange>,
         tz: TzOffset,
         scope: Option<&scope::ReportRequest>,
     ) -> Self {
+        let source = source.into();
         let in_scope: Vec<&HistoryRow> = history
             .rows
             .iter()
@@ -486,6 +508,9 @@ impl ReportView {
     /// keeps out — "where did my old trades go" gets a literal answer.
     #[must_use]
     pub fn scope_line(&self) -> String {
+        if self.source == SourceSelection::default() {
+            return self.source.label().to_owned();
+        }
         let mut text = match (self.range, self.anchor_ms) {
             (Some(range), _) => format!(
                 "{} ({} day(s), the dates you picked - the period pills are standing down)",

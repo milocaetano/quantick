@@ -59,7 +59,7 @@ impl SavedDrawingExt for SavedDrawing {
             shared: drawing.scope == DrawingScope::AllCharts,
             layout: drawing.layout,
             all_windows: drawing.all_windows,
-            payload: drawing.payload.export_preset(),
+            payload: drawing.payload.export_saved(),
             text: drawing
                 .tool
                 .inline_text(drawing.payload.as_ref())
@@ -76,7 +76,7 @@ impl SavedDrawingExt for SavedDrawing {
         let tool = DrawingTool::by_id(&self.tool)?;
         let mut payload = tool.default_payload();
         if let Some(value) = &self.payload {
-            payload.import_preset(value);
+            payload.import_saved(value);
         }
         if let Some(text) = &self.text {
             tool.set_inline_text(payload.as_mut(), text.clone());

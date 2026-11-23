@@ -74,6 +74,8 @@ fn drawing_env<'a>(
     crate::surfaces::DrawingEnv {
         linked_alerts: read.linked_alerts,
         pane_id: facts.pane_id,
+        px_per_bar: host.px_per_bar(),
+        note_display: store.note_display(),
         selected,
         selected_all_windows: store.selected().is_some_and(|i| store.in_all_windows(i)),
         chart_area: facts.chart_area,
@@ -202,6 +204,7 @@ impl DrawingControllerAccess<'_> {
             drawing.payload.as_ref(),
             drawings::px_rect(bbox),
             band.rect,
+            host.px_per_bar(),
         ));
         Some(bbox.expand(DRAWING_ANCHOR_RADIUS_PX))
     }

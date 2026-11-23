@@ -168,6 +168,11 @@ capability that cannot change application state.
 | `settings.open` | 1 | `settings` | no | `cockpit`, `cockpit.layout` |
 | `settings.set` | 1 | `settings` | no | `cockpit`, `cockpit.layout` |
 | `snapshot.read` | 1 | `snapshot` | yes | `observe` |
+| `strategy.describe.cancel` | 1 | `strategy` | no | `annotate`, `annotate.script`, `annotate.strategy_describe`, `observe.user_text` |
+| `strategy.describe.open` | 1 | `strategy` | no | `annotate`, `annotate.script`, `annotate.strategy_describe`, `observe.user_text` |
+| `strategy.describe.read` | 1 | `strategy` | yes | `observe`, `observe.user_text` |
+| `strategy.describe.save` | 1 | `strategy` | no | `annotate`, `annotate.script`, `annotate.strategy_describe`, `observe.user_text` |
+| `strategy.describe.submit` | 1 | `strategy` | no | `annotate`, `annotate.script`, `annotate.strategy_describe`, `observe.user_text` |
 | `strategy.desk.arm` | 1 | `strategy` | no | `annotate`, `annotate.script` |
 | `strategy.desk.asset.pause` | 1 | `strategy` | no | `annotate`, `annotate.script` |
 | `strategy.desk.asset.resume` | 1 | `strategy` | no | `annotate`, `annotate.script` |
@@ -213,4 +218,4 @@ capability that cannot change application state.
 | `workspace.save_as` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
 | `workspace.save_to` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
 
-188 capabilities registered.
+193 capabilities registered.

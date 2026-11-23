@@ -1,5 +1,9 @@
 //! An anchored note.
 //!
+//! The chosen pixel size is relative to horizontal zoom at placement or the
+//! last size change. Saved objects retain that reference; style presets do not.
+//! Rendering is bounded to 0.5..=512 pixels at extreme zoom levels.
+//!
 //! The only tool whose content is words, so it is the only one that has to
 //! answer "what does an empty one look like?". It looks like a placeholder in
 //! muted type — never nothing, because an invisible object the trader cannot
@@ -36,6 +40,7 @@ pub struct TextPayload {
     pub family: FontFamily,
     pub appearance: TextAppearance,
     pub extent: TextExtent,
+    pub zoom: std::cell::Cell<crate::text_scale::TextZoom>,
 }
 
 impl Default for TextPayload {
@@ -46,6 +51,7 @@ impl Default for TextPayload {
             family: FontFamily::Proportional,
             appearance: TextAppearance::default(),
             extent: TextExtent::default(),
+            zoom: Default::default(),
         }
     }
 }
@@ -61,6 +67,21 @@ impl DrawingPayload for TextPayload {
     }
     fn clone_box(&self) -> Box<dyn DrawingPayload> {
         Box::new(self.clone())
+    }
+    fn export_saved(&self) -> Option<toml::Value> {
+        let mut value = self.export_preset()?;
+        if self.zoom.get().valid() {
+            value.as_table_mut()?.insert("zoom".into(), toml::Value::try_from(self.zoom.get()).ok()?);
+        }
+        Some(value)
+    }
+    fn import_saved(&mut self, value: &toml::Value) -> bool {
+        if !self.import_preset(value) { return false; }
+        self.zoom.set(value.get("zoom")
+            .and_then(|value| value.clone().try_into::<crate::text_scale::TextZoom>().ok())
+            .filter(|zoom| zoom.valid())
+            .unwrap_or_default());
+        true
     }
     fn eq_dyn(&self, other: &dyn DrawingPayload) -> bool {
         other
@@ -131,11 +152,11 @@ fn shown<'a>(payload: &'a TextPayload, style: DrawingStyle, appearance: &quantic
 }
 
 impl MarkTool for Text {
-    fn content_bounds(&self, payload: &dyn DrawingPayload, anchors: PxRect, _chart: PxRect) -> PxRect {
+    fn content_bounds(&self, payload: &dyn DrawingPayload, anchors: PxRect, _chart: PxRect, px_per_bar: f32) -> PxRect {
         payload
             .as_any()
             .downcast_ref::<TextPayload>()
-            .map_or(anchors, |payload| payload.bounds(anchors.min, &crate::UNMEASURED))
+            .map_or(anchors, |payload| payload.bounds_at(anchors.min, &crate::UNMEASURED, px_per_bar))
     }
     fn id(&self) -> &'static str {
         "text"
@@ -232,9 +253,11 @@ impl MarkTool for Text {
         // Rich notes own their foreground/background pair. Canvas contrast
         // correction applies only to legacy notes with no authored appearance.
         let (text, color) = shown(payload, if legacy { style } else { ctxt.style }, ctxt.appearance);
-        let bounds = payload.bounds(*anchor, ctxt.text);
+        painter.displayed_note = !payload.zoom.get().bound_to(payload.size_px);
+        let format = payload.format_at(ctxt.px_per_bar);
+        let bounds = payload.bounds_at(*anchor, ctxt.text, ctxt.px_per_bar);
         if legacy {
-            painter.text(*anchor - vec2(0.0, crate::text::TEXT_LIFT_PX), Align2::LEFT_BOTTOM, text, payload.format().font, color);
+            painter.text(*anchor - vec2(0.0, crate::text::TEXT_LIFT_PX), Align2::LEFT_BOTTOM, text, format.font, color);
             return;
         }
         if let Some([r, g, b, a]) = payload.appearance.background {
@@ -246,7 +269,7 @@ impl MarkTool for Text {
         painter.add(MarkShape::NoteText {
             at: bounds.min + vec2(payload.appearance.padding(), payload.appearance.padding()),
             text: text.to_owned(),
-            format: payload.format(),
+            format,
             color,
         });
     }
@@ -265,7 +288,7 @@ impl MarkTool for Text {
         let Some(payload) = payload_of(ctxt) else {
             return false;
         };
-        payload.bounds(*anchor, ctxt.text)
+        payload.bounds_at(*anchor, ctxt.text, ctxt.px_per_bar)
             .expand(radius_px.max(TEXT_HIT_PAD_PX))
             .contains(position)
     }
@@ -286,7 +309,19 @@ impl TextPayload {
     }
 
     pub fn bounds(&self, anchor: Px, metrics: &dyn crate::TextMetrics) -> PxRect {
-        text_bounds(anchor, self.extent.measure(self.shown_text(), self.format(), metrics), self.appearance)
+        self.bounds_at(anchor, metrics, 0.0)
+    }
+
+    pub fn format_at(&self, px_per_bar: f32) -> TextFormat {
+        let mut format = self.format();
+        format.font.size_px = self.zoom.get().rendered_size(self.size_px, px_per_bar);
+        format.appearance.wrap_width_px = format.appearance.wrap_width_px.map(|width| width * format.font.size_px / self.size_px);
+        format
+    }
+
+    pub fn bounds_at(&self, anchor: Px, metrics: &dyn crate::TextMetrics, px_per_bar: f32) -> PxRect {
+        let format = self.format_at(px_per_bar);
+        text_bounds(anchor, self.extent.measure(self.shown_text(), format, metrics), format.appearance)
     }
 }
 

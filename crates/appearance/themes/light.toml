@@ -18,7 +18,7 @@ drawing_label_plates = false
 # New drawings are born black on paper, as on TradingView's light chart.
 drawing_default = "#000000"
 drawing_buy = "#1F7A34"
-drawing_sell = "#111111"
+drawing_sell = "#C62828"
 drawing_vwap = "#2B3640"
 # The reference histogram fill (#B1BCD9) includes its existing 0.55 row opacity.
 drawing_profile = "#7A8EC2"

@@ -290,11 +290,12 @@ impl DrawingControllerAccess<'_> {
             // documented for derived-state refresh only, and a style or a
             // note's words take part in payload equality — writing them through
             // it would let an unrelated in-flight gesture swallow this edit.
-            if let Some(drawing) = host.drawings_mut().selected_mut() {
-                if drawing.magnet != edited.magnet {
+            let drawings = host.drawings_mut();
+            if let Some(index) = drawings.selected() {
+                if drawings.items()[index].magnet != edited.magnet {
                     effects.own_magnet = Some((edited.id, edited.magnet));
                 }
-                *drawing = *edited;
+                drawings.replace_edited(index, *edited);
             }
         }
         if let Some(edit) = ask.commit_edit_gesture.take() {

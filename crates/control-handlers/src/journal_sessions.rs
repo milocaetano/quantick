@@ -320,7 +320,7 @@ fn wire_count(count: usize) -> WireU64 {
     WireU64::new(u64::try_from(count).unwrap_or(u64::MAX))
 }
 
-fn source_filter(source: JournalSourceFilter) -> SourceFilter {
+pub(crate) fn source_filter(source: JournalSourceFilter) -> SourceFilter {
     match source {
         JournalSourceFilter::Real => SourceFilter::Real,
         JournalSourceFilter::Broker => SourceFilter::Broker,

@@ -38,9 +38,7 @@ pub(super) const MARKS_FAMILY: ToolFamily = ToolFamily {
 /// Gap between the candle's extreme and the tip of the mark, in pixels, so
 /// the mark never touches the bar it is about.
 const MARK_GAP_PX: f32 = 6.0;
-/// TradingView's arrow mark, measured on the trader's own reference
-/// capture: a mark the size of a candle body is missed mid-session.
-pub(super) const DEFAULT_MARK_PX: f32 = 28.0;
+pub(super) const DEFAULT_MARK_PX: f32 = 24.0;
 pub(super) const MIN_MARK_PX: f32 = 10.0;
 pub(super) const MAX_MARK_PX: f32 = 64.0;
 /// Ratio of the arrowhead's half-width to the mark's height.

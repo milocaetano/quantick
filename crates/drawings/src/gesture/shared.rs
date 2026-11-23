@@ -370,6 +370,9 @@ impl DrawingProjection<'_> {
                     &ctxt,
                     selected && !drawing.locked,
                 );
+                source
+                    .drawings
+                    .observe_scene(&mut scene, drawing, ctxt.px_per_bar);
                 paint(band.rect, &scene);
             }
         }
