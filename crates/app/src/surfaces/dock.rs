@@ -33,6 +33,7 @@ pub fn tab_icon(tab: DockTab) -> &'static str {
         DockTab::Session => icons::FILM_STRIP,
         DockTab::Trading => icons::TREND_UP,
         DockTab::Trades => icons::RECEIPT,
+        DockTab::Strategies => icons::STRATEGY,
     }
 }
 
@@ -186,6 +187,11 @@ fn draw(
                         Some(LedgerAction::OpenTicket) => open_ticket = true,
                         Some(LedgerAction::Edit(edit)) => response.journal_edit = Some(edit),
                         None => {}
+                    },
+                    // Picked on the strip this frame: the rail is read on the next.
+                    DockTab::Strategies => match env.strategies {
+                        Some(rail) => rail.show(ui),
+                        None => ui.ctx().request_repaint(),
                     },
                 }
             });

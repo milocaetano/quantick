@@ -152,6 +152,7 @@ mod screenshot_evidence_tests;
 mod script_strategy_tests;
 mod session_length_tests;
 mod settled_frame;
+mod strategy_desk_wiring_tests;
 mod tab_workspace_tests;
 mod tape_only_scale_tests;
 mod theme_menu_tests;

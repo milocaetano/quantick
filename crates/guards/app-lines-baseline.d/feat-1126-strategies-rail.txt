@@ -1,0 +1,3 @@
+# trader-approved 2026-11-20, #1124: strategies panel is paint-only (approved up to +251; the review fixes cut it to +243). The rail tab and the strategy window draw `quantick_ui_model::strategy_desk` views and send one `StrategyDeskCommand` per click.
+crates/app +243
+!budget +243

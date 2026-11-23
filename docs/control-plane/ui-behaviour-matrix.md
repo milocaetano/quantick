@@ -107,7 +107,7 @@ The three exclusion classes are closed:
 | `canvas.pane.return` | Bring a chart from its own window back over the canvas | the chart window's ⋯ menu, Return to canvas; closing that window | `canvas.pane.return` | — |
 | `canvas.pane.resize` | Resize docked charts of a canvas layout | drag the divider between two docked charts of a layout the canvas tree lays out | `canvas.pane.resize` | — |
 | `canvas.seam.drag` | Fold a docked chart to its rail, or reopen it, by its seam | drag a seam of a layout the canvas tree lays out to the canvas edge, or a rail back | `canvas.seam.drag` | — |
-| `dock.tab.open` | Open a panel — session, trading or trades | window menu, Panels, the dock's own strip | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
+| `dock.tab.open` | Open a panel — session, trading, trades or strategies | window menu, Panels, the dock's own strip | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
 | `dock.toggle` | Show or hide the panels dock | toolbar sidebar button, window menu, Ctrl+Shift+B | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
 | `layer.bubbles.toggle` | Switch the aggression bubbles on or off | trail capsule glyph, pane right-click layer menu, Ctrl+B | `layers.visibility.set` | — |
 | `layer.footprint.settings.open` | Open the footprint's settings window | right-click the capsule's footprint glyph; the pane's footprint menu | `chart.settings.set` | — |
@@ -260,7 +260,7 @@ matrix fails the build.
 | `toolbar_action` | 22 |
 | `strip_action` | 6 |
 | `tab_action` | 4 |
-| `dock_tab` | 3 |
+| `dock_tab` | 4 |
 | `layer_toggle` | 6 |
 | `drawing_tool` | 22 |
 | `rail_tool` | 2 |
@@ -268,7 +268,7 @@ matrix fails the build.
 | `layout_preset` | 16 |
 | `notice_action` | 3 |
 | `hotkey` | 25 |
-| `menu_entry` | 47 |
+| `menu_entry` | 48 |
 | `scripted_menu` | 0 |
 | `authored` | 97 |
 
