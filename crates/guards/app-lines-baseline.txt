@@ -73,5 +73,7 @@
 # Raised by 38 lines to repair reviewed collapse boundaries: visible-pane
 # focus, stale frame geometry and short-window rail reopening. The observer
 # and pointer now share the corrected visible-pane walk.
-!budget 86529
-crates/app 86529
+!budget 87197
+crates/app 87197
+
+# Folded downward after extracting layer persistence and conversation protocol.

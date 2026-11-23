@@ -3,9 +3,7 @@ pub(crate) use quantick_stores::home::*;
 use quantick_ui_model::store_home::{StoreHome, StorePaths, cockpit_stores};
 #[cfg(test)]
 pub(crate) use quantick_workspace::write_refusal::refuse_writes_on_this_thread;
-pub(crate) use quantick_workspace::write_refusal::{
-    WritesRefused, guard_write, refuse_writes, writes_refused,
-};
+pub(crate) use quantick_workspace::write_refusal::{WritesRefused, refuse_writes, writes_refused};
 use std::path::PathBuf;
 
 static HOME: StoreHome = StoreHome::new();

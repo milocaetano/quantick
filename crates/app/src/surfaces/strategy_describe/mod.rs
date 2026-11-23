@@ -4,7 +4,6 @@ use quantick_ui_model::strategy_describe::{
     Command, Effects, Intent, MAX_TEXT_BYTES, Model, Phase, State, Turn,
 };
 mod preview;
-mod protocol;
 pub(crate) mod provider;
 
 #[derive(Default)]

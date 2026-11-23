@@ -114,18 +114,8 @@ impl<'a> ControlRoots<'a> {
     }
 
     pub(crate) fn bound_workspace_calls(self) -> WorkspaceCalls<'a> {
-        let runtime = self.runtime.bound_mut(&self.presentation.binding);
-        WorkspaceCalls {
-            runtime,
-            presentation: self.presentation,
-            chrome: self.chrome,
-            pane_ids: self.pane_ids,
-            config: self.config,
-            control: self.control,
-            surfaces: self.surfaces,
-            health: self.health,
-            drawings: self.drawings,
-        }
+        self.runtime.bound_mut(&self.presentation.binding);
+        self.workspace_calls()
     }
 }
 use quantick_control_handlers::health::FrameReading;

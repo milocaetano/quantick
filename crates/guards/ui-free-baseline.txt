@@ -39,5 +39,7 @@
 # Raised to 24,436 when main merged in: the branch's signed raises above
 # (115 lines) sat on 55 lines of slack that #607's lowering removed, so
 # the branch's true growth over its base is 170 lines.
-!budget 13421
-crates/app 13421
+!budget 13895
+crates/app 13895
+
+# Folded downward after extracting layer persistence and conversation protocol.

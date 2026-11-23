@@ -265,6 +265,7 @@ pub const ALLOWED: &[(&str, &[&str])] = &[
             "drawings",
             "engine",
             "indicators",
+            "layers",
             "orderbook",
             "orderflow",
             "sources",

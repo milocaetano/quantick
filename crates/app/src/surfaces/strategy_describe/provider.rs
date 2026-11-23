@@ -7,7 +7,7 @@ use std::{
     time::Duration,
 };
 
-use super::protocol;
+use quantick_ui_model::strategy_describe::protocol;
 
 #[derive(Deserialize, Default)]
 #[serde(default, deny_unknown_fields)]
