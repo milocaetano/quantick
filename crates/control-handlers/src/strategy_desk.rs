@@ -37,24 +37,31 @@ use crate::market_tab::MarketTabHost;
 use crate::script_strategy::{
     DEFAULT_LIBRARY, ScriptPane, ScriptStrategyHost, ScriptTab, footprint_warmup, placement,
 };
+use crate::session::SessionTab;
 use crate::tabs::{tab_closed, tab_index};
 
 /// The tabs as the desk reaches them: each lent as for `strategy.script.*`,
 /// beside how many there are and the symbol each shows.
 pub trait StrategyDeskHost: ScriptStrategyHost {
     fn desk_tab_count(&self) -> usize;
-    /// The symbol the tab at `index` shows.
+    /// The symbol of the tab's active source: the recording's while one
+    /// plays, never the live feed parked beneath it.
     fn desk_symbol(&self, index: usize) -> Option<String>;
 }
 
-/// A window's tabs answer through their market.
-impl<T: MarketTabHost + ?Sized> StrategyDeskHost for T {
+/// A window's tabs answer through their market; the symbol is the one the
+/// session scopes read, which follows a replay.
+impl<T> StrategyDeskHost for T
+where
+    T: MarketTabHost + ?Sized,
+    T::Tab: SessionTab,
+{
     fn desk_tab_count(&self) -> usize {
         self.tab_count()
     }
     fn desk_symbol(&self, index: usize) -> Option<String> {
         self.open_tab(index)
-            .map(|tab| crate::market_tab::MarketTab::market(tab).symbol)
+            .map(|tab| SessionTab::symbol(tab).to_owned())
     }
 }
 

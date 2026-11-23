@@ -1,7 +1,7 @@
 use super::*;
 use crate::script_strategy::ScriptPane;
 use crate::tabs::TabDirectory;
-use crate::test_support::{FakeAccess, FakeWindow};
+use crate::test_support::{FakeAccess, FakeTab, FakeWindow};
 use quantick_chart::state::{ChartState, SpecSelector};
 use quantick_engine::BarSpec;
 use quantick_session::script_strategies::{ScriptArm, ScriptPlacement};
@@ -236,4 +236,20 @@ fn an_ended_script_is_armed_again_through_its_call() {
         json!({}),
     );
     assert_eq!(listed["groups"][0]["rows"][0]["state"], "watching");
+}
+
+#[test]
+fn a_replaying_tab_groups_under_the_recordings_symbol() {
+    let mut replaying = FakeTab::new(TAB, "BTCUSDT");
+    replaying.replaying = true;
+    replaying.replay_symbol = Some("WINZ26".to_owned());
+    let window = FakeWindow::new(vec![FakeTab::new(7, "BTCUSDT"), replaying]);
+
+    assert_eq!(window.desk_symbol(0).as_deref(), Some("BTCUSDT"));
+    assert_eq!(
+        window.desk_symbol(1).as_deref(),
+        Some("WINZ26"),
+        "a replay's desk names the recording, not the live feed beneath it"
+    );
+    assert_eq!(window.desk_symbol(2), None, "a closed tab has no symbol");
 }

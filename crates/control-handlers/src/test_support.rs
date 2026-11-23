@@ -57,6 +57,7 @@ use crate::market_tab::RecoveredFeed;
 use crate::market_tab::{LentTab, MarketTab, MarketTabHost};
 use crate::notify::{Attention, AttentionHost, NotifyAccess};
 use crate::pane_marks::PaneMarks;
+use crate::session::{ReplayRead, SessionTab};
 use crate::settings::{SettingsAct, SettingsOwner, SettingsReadings, SettleError};
 use crate::tabs::{OpenTabs, TabDirectory};
 use crate::trade::{PaperHost, PaperOwner, TradeDesk};
@@ -390,6 +391,9 @@ pub(crate) struct FakeTab {
     pub panes: Vec<FakePane>,
     /// The tab plays a recorded session.
     pub replaying: bool,
+    /// The recording's symbol while one plays, as a replay puts it on the
+    /// tab; `symbol` keeps the live pair parked beneath it.
+    pub replay_symbol: Option<String>,
     /// The deal recorder's view; `None` on a feed with no counter.
     pub recording: Option<RecordingView>,
     /// What the recorder refuses to start or load with, when it refuses.
@@ -416,6 +420,7 @@ impl FakeTab {
             main_reach: HistoryReach::Hours(1),
             panes: Vec::new(),
             replaying: false,
+            replay_symbol: None,
             recording: None,
             recorder_refusal: None,
             recorder_acts: Vec::new(),
@@ -553,6 +558,20 @@ impl MarketTab for FakeTab {
     }
     fn session(&self) -> SessionSnapshot {
         self.snapshot(self.last_history)
+    }
+}
+
+/// The fake tab's market as the session scopes read it: the recording's
+/// symbol while one plays. No fake scope reads its paper desk.
+impl SessionTab for FakeTab {
+    fn symbol(&self) -> &str {
+        self.replay_symbol.as_deref().unwrap_or(&self.symbol)
+    }
+    fn desk(&self) -> &dyn TradeDesk {
+        unreachable!("the fake tab keeps no paper desk")
+    }
+    fn replay(&self) -> Option<Box<dyn ReplayRead + '_>> {
+        None
     }
 }
 
