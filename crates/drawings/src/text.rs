@@ -1,5 +1,5 @@
 //! Anchored note layout and persisted appearance, independent of the renderer.
-use std::cell::Cell;
+use std::cell::RefCell;
 use std::hash::{Hash, Hasher};
 
 use serde::{Deserialize, Serialize};
@@ -121,8 +121,14 @@ pub struct TextFormat {
 
 /// A renderer measurement is derived state, excluded from persistence and undo.
 /// The signature prevents a stale extent after changing words or appearance.
-#[derive(Debug, Clone, Default)]
-pub struct TextExtent(Cell<Option<(u64, Px)>>);
+#[derive(Debug, Default)]
+pub struct TextExtent(RefCell<smallvec::SmallVec<[(u64, Px); 1]>>);
+
+impl Clone for TextExtent {
+    fn clone(&self) -> Self {
+        Self::default()
+    }
+}
 
 impl PartialEq for TextExtent {
     fn eq(&self, _other: &Self) -> bool {
@@ -145,16 +151,24 @@ impl TextExtent {
             .hash(&mut hash);
         let key = hash.finish();
         // Measured contexts also refresh after DPI/font changes; the font engine
-        // caches the galley. Headless picks reuse the last real measurement.
+        // caches the galley. Keep the most recently painted formats for all
+        // panes that can project this payload at different zoom levels.
         let measured = metrics.note_size(text, format);
         if measured.x > 0.0 && measured.y > 0.0 {
-            self.0.set(Some((key, measured)));
+            let mut entries = self.0.borrow_mut();
+            if let Some(index) = entries.iter().position(|entry| entry.0 == key) {
+                entries[index].1 = measured;
+                entries[index..].rotate_left(1);
+            } else {
+                if entries.len() == quantick_workspace::canvas_layout::MAX_CANVAS_PANES {
+                    entries.remove(0);
+                }
+                entries.push((key, measured));
+            }
             return measured;
         }
-        if let Some((cached, size)) = self.0.get()
-            && key == cached
-        {
-            return size;
+        if let Some((_, size)) = self.0.borrow().iter().find(|entry| entry.0 == key) {
+            return *size;
         }
         let width = text
             .lines()

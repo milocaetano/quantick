@@ -157,6 +157,98 @@ fn line_on_bar_four() -> Marks {
     drawings
 }
 
+#[test]
+fn parked_legacy_note_binds_on_its_first_drawable_receiving_band() {
+    use crate::{MarkShape, PaneKey, SavedDrawingExt};
+    use quantick_workspace::layout_document::SavedDrawing;
+    let key = DrawingBand::Indicator(PaneKey {
+        kind: "cvd".into(),
+        ordinal: 0,
+    });
+    let mut seed = Marks::default();
+    seed.place_on(
+        crate::DrawingTool::by_id("text").unwrap(),
+        &key,
+        ChartPoint::at_time(4.5, 100.0, Some(1_004_000)),
+    );
+    let mut saved = SavedDrawing::from_drawing(&seed.items()[0]);
+    saved.shared = true;
+    assert!(saved.payload.as_ref().unwrap().get("zoom").is_none());
+    let mut source = Marks::default();
+    source.adopt([saved.to_drawing(crate::DrawingId(1)).unwrap()]);
+    source.set_text_spacing(10.0);
+    let source_revision = source.revision();
+    let state = seconds(20);
+    let spec = SpecSelector::new(BarSpec::Tick(1));
+    let indicators = IndicatorViews::new();
+    let mut band = Band {
+        key,
+        rect: PxRect::from_min_max(Px::ZERO, crate::pos2(400.0, 200.0)),
+        scale: None,
+        label: "cvd".into(),
+        refusal: None,
+    };
+    let paint = |zoom, band: &Band| {
+        let mut viewport = Viewport::new();
+        viewport.set_px_per_bar(zoom);
+        let projection = DrawingProjection {
+            series: PaneSeriesRead {
+                history_prefix: &[],
+                state: &state,
+                spec: &spec,
+            },
+            viewport: &viewport,
+            indicators: &indicators,
+        };
+        let mut font = None;
+        let before_pick = SavedDrawing::from_drawing(&source.items()[0]);
+        let _ = projection.drawing_pick_at(&source, crate::pos2(100.0, 100.0), band, 400.0, 20);
+        assert_eq!(SavedDrawing::from_drawing(&source.items()[0]), before_pick);
+        projection.shared_scenes(
+            (
+                SharedSource {
+                    drawings: &source,
+                    content_editing: None,
+                },
+                None,
+            ),
+            std::slice::from_ref(band),
+            (400.0, 20),
+            (
+                &UNMEASURED,
+                quantick_appearance::ResolvedTheme::bundled_dark(),
+            ),
+            &mut |_, scene| {
+                font = scene.shapes.iter().find_map(|shape| match shape {
+                    MarkShape::Text { font, .. } => Some(font.size_px),
+                    _ => None,
+                });
+            },
+        );
+        font
+    };
+    assert_eq!(paint(10.0, &band), None);
+    assert_eq!(source.revision(), source_revision);
+    assert!(
+        SavedDrawing::from_drawing(&source.items()[0])
+            .payload
+            .unwrap()
+            .get("zoom")
+            .is_none()
+    );
+    band.scale = Some(quantick_chart::geometry::PriceScale::from_range(
+        0.0, 200.0, 0.0, 200.0,
+    ));
+    // The source stays parked. The companion alone can now show the text.
+    assert_eq!(paint(20.0, &band), Some(12.0));
+    assert_eq!(paint(10.0, &band), Some(6.0));
+    assert_eq!(source.revision(), source_revision + 1);
+    let persisted = SavedDrawing::from_drawing(&source.items()[0])
+        .payload
+        .unwrap();
+    assert_eq!(persisted["zoom"]["px_per_bar"].as_float(), Some(20.0));
+}
+
 /// Apply `edit`, made on another pane, to `drawings` on the [`seconds`] tape.
 fn apply(drawings: &mut Marks, edit: SharedEdit) {
     let state = seconds(20);

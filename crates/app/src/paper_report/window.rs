@@ -34,9 +34,7 @@ impl Paint<'_, '_> {
         if !self.report_open() {
             return;
         }
-        self.ensure_report_view(tz, env.pnl);
         let mut open = true;
-        let mut reload = false;
         let mut toggle_list = false;
         let style = ctx.style();
         let title = egui::TextStyle::Heading.resolve(&style);
@@ -76,7 +74,16 @@ impl Paint<'_, '_> {
             .show(ctx, |ui| {
                 #[cfg(any(feature = "scenario-harness", test))]
                 self.native.scroll_probe.report(ui);
-                reload = self.draw_report_filters(ui);
+                if self.draw_report_filters(ui) {
+                    self.update(Intent::ReloadReport);
+                }
+                self.ensure_report_view(tz, env.pnl);
+                if let Some(view) = self.report_view() {
+                    ui.label(
+                        egui::RichText::new(view.scope_line())
+                            .color(theme::get(ui.ctx()).text_support()),
+                    );
+                }
                 if let Some(scope) = self.report_scope() {
                     let reset = ui
                         .horizontal(|ui| {
@@ -146,9 +153,6 @@ impl Paint<'_, '_> {
         if toggle_list {
             self.update(Intent::ListOpen(!self.report_list_open()));
         }
-        if reload {
-            self.update(Intent::ReloadReport);
-        }
         if !open {
             self.update(Intent::Close);
         }
@@ -178,25 +182,11 @@ impl Paint<'_, '_> {
         let palette = theme::get(ui.ctx());
         ui.add_space(6.0);
         if let Some(history) = self.report() {
-            if history.unreadable_files > 0 || history.problem_rows > 0 {
-                ui.label(
-                    egui::RichText::new(format!(
-                        "{} file(s) unreadable, {} row(s) skipped - counted, never \
-                         silently dropped.",
-                        history.unreadable_files, history.problem_rows,
-                    ))
-                    .color(palette.warn())
-                    .small(),
-                );
-            }
+            super::draw_history_warning(ui, history);
             ui.label(
-                egui::RichText::new(format!(
-                    "Loaded history total · {} trade(s), {} journal file(s) checked",
-                    history.rows.len(),
-                    history.files
-                ))
-                .color(palette.text_muted())
-                .small(),
+                egui::RichText::new(history.scan_summary())
+                    .color(palette.text_muted())
+                    .small(),
             );
         }
         let _footer =
@@ -249,9 +239,9 @@ impl Paint<'_, '_> {
                     .small(),
             );
             for source in SourceFilter::PILLS {
-                let on = self.report_source() == source;
-                if pill_toggle(ui, source.label(), on, source.hover()).clicked() && !on {
-                    self.update(Intent::Source(source));
+                let on = self.report_source().contains(source);
+                if pill_toggle(ui, source.label(), on, source.hover()).clicked() {
+                    self.update(Intent::Source(self.report_source().toggled(source)));
                 }
             }
             ui.separator();
@@ -313,9 +303,6 @@ impl Paint<'_, '_> {
                 }
             });
         });
-        if let Some(view) = self.report_view() {
-            ui.label(egui::RichText::new(view.scope_line()).color(palette.text_support()));
-        }
         reload
     }
 
@@ -362,30 +349,11 @@ impl Paint<'_, '_> {
                 {
                     self.update(Intent::Dates(DaySelection::None));
                 }
-            } else if self.report_days().is_empty() {
+            } else {
                 ui.label(
-                    egui::RichText::new("no days on record in this scope")
+                    egui::RichText::new(self.report_days().span_label())
                         .color(palette.text_muted())
                         .small(),
-                );
-            } else if let (Some(oldest), Some(newest)) =
-                (self.report_days().first(), self.report_days().last())
-            {
-                // The span on record, stated: it is the answer to "how far
-                // back can I even ask" before the first click is made.
-                ui.label(
-                    egui::RichText::new(format!(
-                        // "to", not an arrow: this label is drawn in the
-                        // proportional UI font, which has no glyph for → and
-                        // renders a tofu box in its place (the same reason
-                        // DateRange::label spells its span with a word).
-                        "{} day(s) with trades · {} to {}",
-                        self.report_days().len(),
-                        oldest.iso(),
-                        newest.iso(),
-                    ))
-                    .color(palette.text_muted())
-                    .small(),
                 );
             }
         });

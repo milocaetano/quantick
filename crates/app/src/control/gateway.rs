@@ -28,7 +28,9 @@ use quantick_control::{
 use crate::{app::ControlWindow, metrics};
 
 use super::{
-    actions::{ANNOTATE_PERMISSION_ID, ANNOTATOR_PROFILE_ID, ActionRegistry, standard_actions},
+    actions::{
+        ANNOTATE_PERMISSION_ID, ANNOTATOR_PROFILE_ID, ActionRegistry, actions_for_strategy_describe,
+    },
     contract::{ANALYST_PROFILE_ID, COCKPIT_PERMISSION_ID, COCKPIT_PROFILE_ID},
     contract::{
         DeferredActionResult, OBSERVER_PROFILE_ID, ObserverContract, PreparedDispatch,
@@ -465,10 +467,18 @@ pub(crate) struct ControlAccess {
 }
 
 impl ControlAccess {
+    #[cfg(test)]
     pub fn new() -> Self {
+        Self::with_strategy_describe(false)
+    }
+
+    pub fn with_strategy_describe(available: bool) -> Self {
         let projections = super::standard_registry()
             .expect("built-in semantic projection registry must be valid");
-        let actions = Arc::new(standard_actions().expect("built-in action registry must be valid"));
+        let actions = Arc::new(
+            actions_for_strategy_describe(available)
+                .expect("built-in action registry must be valid"),
+        );
         let evidence = EvidenceStore::new();
         let contract = Arc::new(
             ObserverContract::new(

@@ -169,6 +169,7 @@ pub trait MarkTool: Sync {
         _payload: &dyn DrawingPayload,
         anchors: PxRect,
         chart: PxRect,
+        _px_per_bar: f32,
     ) -> PxRect {
         self.painted_bounds(anchors, chart)
     }
@@ -540,8 +541,9 @@ impl DrawingTool {
         payload: &dyn DrawingPayload,
         anchors: PxRect,
         chart: PxRect,
+        px_per_bar: f32,
     ) -> PxRect {
-        self.0.content_bounds(payload, anchors, chart)
+        self.0.content_bounds(payload, anchors, chart, px_per_bar)
     }
 
     /// See [`MarkTool::axis_levels`].

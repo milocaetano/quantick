@@ -27,7 +27,7 @@ impl<T: Clone + PartialEq> Drawings<T> {
     /// field: equal readings mean nothing to write.
     #[must_use]
     pub fn revision(&self) -> u64 {
-        self.revision
+        self.revision + self.note_display.revision()
     }
 
     /// Empty the store and hand back what it held — the way a pane puts its
@@ -169,7 +169,15 @@ impl<T: Clone + PartialEq> Drawings<T> {
     }
 
     /// Push `before` as one undo step if the store actually changed since.
-    pub(crate) fn record(&mut self, before: UndoEntry<T>) {
+    pub(crate) fn record(&mut self, mut before: UndoEntry<T>) {
+        // Showing a legacy note during an open gesture is not an undo step.
+        if self.note_display.revision() > 0 {
+            for (then, now) in before.items.iter_mut().zip(&self.items) {
+                if then.id == now.id {
+                    then.retain_legacy_text_zoom(now);
+                }
+            }
+        }
         if before == self.snapshot() {
             return;
         }
@@ -207,7 +215,7 @@ impl<T: Clone + PartialEq> Drawings<T> {
     /// Only while nothing was recorded or undone since `revision`, the
     /// reading taken right after that step.
     pub fn fold_into_last_step(&mut self, revision: u64) {
-        if revision == self.revision
+        if revision == self.revision()
             && let Some(step) = self.undo.pop()
         {
             self.gesture_baseline = Some(step);
@@ -232,8 +240,19 @@ impl<T: Clone + PartialEq> Drawings<T> {
             return;
         };
         self.claim_for_layout(index, &before_drawing);
+        self.items[index].bind_resized_text(&before_drawing, self.text_px_per_bar);
         *slot = before_drawing;
         self.record(before);
+    }
+
+    /// Install the inspector's edited copy immediately, even when the
+    /// slider's undo step stays open for several frames.
+    pub fn replace_edited(&mut self, index: usize, mut edited: Drawing<T>) {
+        if let Some(drawing) = self.items.get_mut(index) {
+            edited.retain_legacy_text_zoom(drawing);
+            edited.bind_resized_text(drawing, self.text_px_per_bar);
+            *drawing = edited;
+        }
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -245,13 +264,11 @@ impl<T: Clone + PartialEq> Drawings<T> {
         // Metadata issued after an external inspector snapshot must survive
         // that snapshot's later commit/undo. Runtime IDs are never reused.
         for drawing in &mut entry.items {
-            if let Some(identity) = self
-                .items
-                .iter()
-                .find(|held| held.id == drawing.id)
-                .and_then(|held| held.durable_identity.as_ref())
-            {
-                drawing.durable_identity = Some(identity.clone());
+            if let Some(held) = self.items.iter().find(|held| held.id == drawing.id) {
+                if let Some(identity) = &held.durable_identity {
+                    drawing.durable_identity = Some(identity.clone());
+                }
+                drawing.retain_legacy_text_zoom(held);
             }
         }
         self.revision += 1;

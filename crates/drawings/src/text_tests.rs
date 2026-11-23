@@ -45,11 +45,11 @@ fn tool_bounds_dispatch_uses_note_measurement_and_keeps_other_tool_geometry() {
     let chart = crate::PxRect::from_min_size(Px::ZERO, vec2(800.0, 600.0));
     let measured = payload.bounds(anchor, &Measured);
     let tool = DrawingTool::by_id("text").unwrap();
-    assert_eq!(tool.content_bounds(&payload, anchors, chart), measured);
+    assert_eq!(tool.content_bounds(&payload, anchors, chart, 0.0), measured);
     for tool in crate::DRAWING_TOOLS {
         if tool.id() != "text" {
             assert_eq!(
-                tool.content_bounds(tool.default_payload().as_ref(), anchors, chart),
+                tool.content_bounds(tool.default_payload().as_ref(), anchors, chart, 0.0),
                 tool.painted_bounds(anchors, chart),
                 "{} retains its painted geometry",
                 tool.id(),

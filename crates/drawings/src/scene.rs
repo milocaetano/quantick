@@ -136,6 +136,8 @@ impl MarkShape {
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct MarkScene {
     pub shapes: Vec<MarkShape>,
+    /// This pass displayed a note that still needs its initial zoom reference.
+    pub(crate) displayed_note: bool,
 }
 
 impl MarkScene {

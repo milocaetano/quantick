@@ -634,6 +634,9 @@ fn a_mark_is_one_click_in_its_sides_colour_and_the_arrow_is_still_two() {
     ] {
         assert_eq!(tool(id).required_points(), 1, "{id}");
         assert_eq!(tool(id).default_style().color, colour, "{id}");
+        let mut drawings = Drawings::default();
+        drawings.place(tool(id), ChartPoint::at(1.0, 100.0));
+        assert_eq!(tool(id).glyph_size(&drawings.items()[0]).unwrap().px, 24.0);
     }
     assert_eq!(tool("arrow").required_points(), 2);
 }

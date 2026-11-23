@@ -1,5 +1,5 @@
 //! Renderer-independent readback of a filtered performance report.
-use super::{HistoryRow, ReportPeriod, ReportView, SourceFilter};
+use super::{HistoryRow, ReportPeriod, ReportView, SourceSelection};
 use crate::format::PositionSummary;
 use quantick_civil::DateRange;
 use quantick_sim::ClosedTrade;
@@ -9,12 +9,26 @@ use std::path::{Path, PathBuf};
 
 pub struct ReportSnapshot<'a> {
     pub symbol: Option<&'a str>,
-    pub source: SourceFilter,
+    pub source: SourceSelection,
     pub window: ReportWindow,
     pub hidden_outside: usize,
     pub hidden_by_source_or_scope: usize,
     pub rows: &'a [HistoryRow],
     pub report: &'a PerformanceReport,
+}
+
+/// Owned inspection of the current report without exposing its trade rows.
+pub struct ReportReadout {
+    pub open: bool,
+    pub loaded: bool,
+    pub source: SourceSelection,
+    pub symbol: Option<String>,
+    pub window: String,
+    pub scope: Option<String>,
+    pub trade_count: usize,
+    pub unreadable_files: usize,
+    pub skipped_rows: usize,
+    pub net_points: Decimal,
 }
 
 impl<'a> ReportSnapshot<'a> {

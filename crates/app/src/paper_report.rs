@@ -21,7 +21,6 @@ mod sessions;
 mod tables;
 mod window;
 
-#[cfg(test)]
 pub(crate) use quantick_paper::report::LoadedHistory;
 pub(crate) use quantick_paper::report::ledger_rows::LedgerScope;
 pub(crate) use quantick_paper::report::snapshot::{OpenRow, ReportEnv};
@@ -29,6 +28,16 @@ pub(crate) use quantick_paper::report::{HistoryRow, ReportView, SourceFilter};
 #[cfg(test)]
 use quantick_sim::ClosedTrade;
 pub(crate) use quantick_ui_model::paper_report::LedgerAction;
+
+fn draw_history_warning(ui: &mut egui::Ui, history: &LoadedHistory) {
+    if let Some(warning) = history.scan_warning() {
+        ui.label(
+            egui::RichText::new(warning)
+                .color(crate::theme::get(ui.ctx()).warn())
+                .small(),
+        );
+    }
+}
 
 #[derive(Default)]
 pub(crate) struct ReportResponse {
@@ -100,6 +109,17 @@ impl Paint<'_, '_> {
 }
 
 impl ReportAdapter {
+    pub(crate) fn sources(
+        &mut self,
+        sources: Option<quantick_paper::report::SourceSelection>,
+        tz: TzOffset,
+        env: &ReportEnv<'_>,
+    ) -> quantick_paper::report::snapshot::ReportReadout {
+        self.with(env, |paint| {
+            quantick_ui_model::paper_report::io::sources(paint.updates, sources, tz, env)
+        })
+        .0
+    }
     fn with<R>(
         &mut self,
         env: &ReportEnv<'_>,

@@ -10,6 +10,18 @@ use quantick_control::{
 };
 
 #[test]
+fn strategy_description_scope_is_requested_only_by_writing_profiles() {
+    let permission = PermissionId::new("annotate.strategy_describe").unwrap();
+    for profile in AVAILABLE_PROFILES {
+        let scopes = connect_options(profile, false, false, false).requested_scopes;
+        assert_eq!(
+            scopes.contains(&permission),
+            matches!(*profile, "annotator" | "cockpit")
+        );
+    }
+}
+
+#[test]
 fn recovery_requires_both_explicit_cockpit_opt_in_and_the_window_grant() {
     let catalog: serde_json::Value = serde_json::from_str(super::tests::CATALOG).unwrap();
     let mut registry = ControlRegistry::default();

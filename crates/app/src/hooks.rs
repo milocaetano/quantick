@@ -122,6 +122,10 @@ const CONFIGURATION: &[(&str, &[HookSpec])] = &[("crates/app/src/launch.rs", cra
 #[cfg(any(feature = "scenario-harness", test))]
 const SCENARIO_OWNERS: &[(&str, &[HookSpec])] = &[
     (
+        "crates/app/src/surfaces/strategy_describe/mod.rs",
+        crate::surfaces::strategy_describe::HOOKS,
+    ),
+    (
         "crates/app/src/surfaces/alerts/mod.rs",
         crate::surfaces::alerts::HOOKS,
     ),
