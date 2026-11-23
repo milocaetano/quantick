@@ -119,3 +119,4 @@ a bound.
 | 1134 | 2026-11-20 | fix/drawing-mark-text-zoom | main | 14344 | 24 | `crates/app/src/indicator_render.rs` (802) |
 | 1135 | 2026-11-20 | feat/1125-strategy-desk | feature/strategies-panel | 34965 | 19 | `crates/control-handlers/src/workspace_book.rs` (1170) |
 | 1172 | 2026-11-23 | feat/1126-strategies-rail | feature/strategies-panel | 28209 | 18 | `crates/ui-model/src/manage_workspaces.rs` (1041) |
+| 1175 | 2026-11-23 | chore/1173-sync-main | feature/strategies-panel | 78837 | 79 | `crates/app/src/control/gateway/server.rs` (1083) |
