@@ -269,7 +269,7 @@ matrix fails the build.
 | `layout_preset` | 16 |
 | `notice_action` | 3 |
 | `hotkey` | 25 |
-| `menu_entry` | 48 |
+| `menu_entry` | 49 |
 | `scripted_menu` | 0 |
 | `authored` | 97 |
 
