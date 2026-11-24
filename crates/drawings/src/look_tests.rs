@@ -429,3 +429,36 @@ fn a_shared_mark_wears_each_chart_s_ground_and_never_flips_the_set() {
     assert_eq!(time.items()[0].style, light);
     assert_eq!(flow.items()[0].style, dark);
 }
+
+/// A repaint puts on the theme's ink and nothing else: config the mark
+/// carries (a band run to the chart's edge, which an armed strategy reads)
+/// survives the switch, so a following mark is never reset to the factory.
+#[test]
+fn a_repaint_changes_the_ink_and_keeps_the_config() {
+    let mut store = store("look-keeps-config");
+    let mut appearance = Appearance::default();
+    theme(&mut appearance, &mut store, LIGHT);
+    let paper: PaneCanvas = ChartSurface::Paper.into();
+    let band = tool("rectangle");
+    let mut drawings = Drawings::default();
+    drawings.follow_ground(&store, paper);
+    open(&mut drawings, &store, paper, band);
+    drawings.items_mut()[0]
+        .payload
+        .as_any_mut()
+        .downcast_mut::<crate::RectanglePayload>()
+        .expect("a rectangle carries a rectangle payload")
+        .extend_right = true;
+
+    theme(&mut appearance, &mut store, DARK);
+    assert!(drawings.follow_ground(&store, paper));
+    let mark = &drawings.items()[0];
+    assert_eq!(mark.look, Inheritance::Theme);
+    assert_eq!(mark.style, factory(&store, paper, band), "the dark ink");
+    let payload = mark
+        .payload
+        .as_any()
+        .downcast_ref::<crate::RectanglePayload>()
+        .expect("still a rectangle");
+    assert!(payload.extend_right, "the band still runs to the edge");
+}

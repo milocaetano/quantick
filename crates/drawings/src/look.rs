@@ -12,8 +12,8 @@
 
 use quantick_appearance::{Inheritance, PaneCanvas, ResolvedTheme};
 
-use crate::defaults::{factory_opening, palette_on};
-use crate::{Drawing, DrawingStyle, Drawings, PresetHost, ToolCatalog};
+use crate::defaults::palette_on;
+use crate::{Drawing, Drawings, PresetHost, ToolCatalog};
 
 /// The palette a pane's factory-look marks were last dressed from, and the
 /// theme revision it was read at; see [`Drawings::follow_ground`].
@@ -107,25 +107,18 @@ impl<T: ToolCatalog> Drawings<T> {
         let Some(ink) = self.ground_ink.take() else {
             return;
         };
-        // One opening per tool, however many copies the history holds.
-        let mut looks: Vec<(T, DrawingStyle, Option<toml::Value>)> = Vec::new();
+        let palette = ink.palette.as_ref();
         self.each_copy(|items| {
             for drawing in items.iter_mut() {
                 if drawing.look != Inheritance::Theme {
                     continue;
                 }
-                let at = looks
-                    .iter()
-                    .position(|(tool, ..)| *tool == drawing.tool)
-                    .unwrap_or_else(|| {
-                        let fresh = factory_opening(ink.palette.as_ref(), drawing.tool);
-                        looks.push((drawing.tool, fresh.style, fresh.payload.export_preset()));
-                        looks.len() - 1
-                    });
-                let (_, style, payload) = &looks[at];
-                drawing.style = *style;
-                if let Some(payload) = payload {
-                    drawing.payload.import_preset(payload);
+                // Only what the theme decides: the tool's ink and the
+                // payload's theme defaults. A band's extension, a Fib's
+                // levels and a note's words are config, never re-imported.
+                drawing.style = drawing.tool.themed_style(palette);
+                if let Some(palette) = palette {
+                    drawing.payload.apply_theme_defaults(palette);
                 }
             }
         });
