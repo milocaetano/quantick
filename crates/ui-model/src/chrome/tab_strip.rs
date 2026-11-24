@@ -1,4 +1,6 @@
-//! Cached tab identities and intent validation. The arrangement remains authoritative.
+//! Cached tab identities and intent validation, and what a chip paints from:
+//! its face's source, its feed's mark and its corner's words. The arrangement
+//! remains authoritative.
 use quantick_appearance::tab_strip::FeedMark;
 use quantick_session::tab_chip::FaceSource;
 use quantick_workspace::arrangement::strip::{StripSurface, TabFeed, chip_parts};
@@ -116,6 +118,15 @@ impl crate::Model for Model {
 mod tests {
     use super::*;
     use crate::Model as _;
+
+    /// The face starts where the workspace's corner mark ends.
+    #[test]
+    fn the_face_starts_past_the_corner_mark() {
+        assert_eq!(
+            quantick_session::tab_chip::TEXT_LEFT_PT,
+            quantick_appearance::tab_strip::WORKSPACE_CORNER_PT
+        );
+    }
 
     /// The corner's words name the colour as the workspace menu writes it.
     #[test]
