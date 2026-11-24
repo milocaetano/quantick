@@ -381,3 +381,41 @@ fn a_tab_change_closes_the_picker_and_ctrl_z_spares_the_other_tab() {
             .is_none()
     );
 }
+
+/// The revert slot right of the floppy: a layout change shows the revert
+/// arrow; pressing it puts the saved layout back with nothing left unsaved,
+/// and the slot turns into the restore arrow, which brings the change back.
+#[test]
+fn the_revert_arrow_puts_the_saved_layout_back_and_its_restore_the_change() {
+    use quantick_control_schema::workspace_book::{
+        WORKSPACE_REVERT_CAPABILITY_ID, WORKSPACE_REVERT_UNDO_CAPABILITY_ID,
+    };
+    let (mut app, _evt, _cmd, _book) = test_app();
+    let ctx = egui::Context::default();
+    frames(&mut app, &ctx, 2);
+    app.runtime.workspace.book.book_mut().set_autosave(false);
+    frames(&mut app, &ctx, 2);
+    assert!(control(&app, "toolbar.capsule.revert").is_none(), "a clean tab");
+    let saved = app.active_tab().canvas.state.tree().clone();
+    _ = crate::tab::layout::pick(app.active_tab_mut(), preset("charts-4").unwrap());
+    frames(&mut app, &ctx, 6);
+    let edited = app.active_tab().canvas.state.tree().clone();
+    assert_ne!(edited, saved);
+
+    let revert = control(&app, "toolbar.capsule.revert").expect("the arrow shows");
+    assert_eq!(revert.capability, Some(WORKSPACE_REVERT_CAPABILITY_ID));
+    assert!(revert.label.contains("panes"), "{}", revert.label);
+    let at = revert.rect.center();
+    click_sized(&mut app, &ctx, TEST_WINDOW, at);
+    frames(&mut app, &ctx, 6);
+    assert_eq!(app.active_tab().canvas.state.tree(), &saved);
+    assert!(control(&app, "toolbar.capsule.save").is_none(), "nothing unsaved");
+
+    let undo = control(&app, "toolbar.capsule.revert").expect("the restore shows");
+    assert_eq!(undo.capability, Some(WORKSPACE_REVERT_UNDO_CAPABILITY_ID));
+    let at = undo.rect.center();
+    click_sized(&mut app, &ctx, TEST_WINDOW, at);
+    frames(&mut app, &ctx, 6);
+    assert_eq!(app.active_tab().canvas.state.tree(), &edited);
+    assert!(control(&app, "toolbar.capsule.save").is_some(), "unsaved again");
+}

@@ -54,7 +54,10 @@ fn a_revert_puts_the_saved_workspace_back_and_its_undo_the_edits() {
     book.observe(1, &edit).unwrap();
     assert!(!book.can_undo_revert(1), "nothing reverted yet");
     let reverted = book.revert(1).unwrap();
-    assert_eq!((reverted.workspace.as_str(), reverted.changed), ("Scalp", true));
+    assert_eq!(
+        (reverted.workspace.as_str(), reverted.changed),
+        ("Scalp", true)
+    );
     assert_eq!(book.tab_copy(1), Some(&saved));
     assert!(!book.differs(1));
     assert!(book.can_undo_revert(1));
@@ -62,7 +65,10 @@ fn a_revert_puts_the_saved_workspace_back_and_its_undo_the_edits() {
     assert_eq!(book.tab_copy(1), Some(&edit));
     assert!(book.differs(1), "the edits are unsaved again");
     assert!(!book.can_undo_revert(1), "an undo is taken once");
-    assert!(!book.undo_revert(1).unwrap().changed, "a repeat changes nothing");
+    assert!(
+        !book.undo_revert(1).unwrap().changed,
+        "a repeat changes nothing"
+    );
 }
 
 #[test]
@@ -80,7 +86,8 @@ fn a_save_or_a_switch_ends_the_undo() {
     let (mut book, saved) = on_scalp();
     book.observe(1, &edited(&saved)).unwrap();
     book.revert(1).unwrap();
-    book.observe(1, &on_bars("tick:500", "time:300000")).unwrap();
+    book.observe(1, &on_bars("tick:500", "time:300000"))
+        .unwrap();
     book.save_to(1).unwrap();
     assert!(!book.can_undo_revert(1), "the workspace was saved since");
 
@@ -123,13 +130,18 @@ fn a_revert_on_a_workspace_naming_no_bars_restores_the_opened_timeframes() {
     book.save_as(1, "Legacy").unwrap();
     let opened = on_bars("tick:500", "time:60000");
     book.settle_tab(1, &opened);
-    book.observe(1, &on_bars("tick:2000", "time:300000")).unwrap();
+    book.observe(1, &on_bars("tick:2000", "time:300000"))
+        .unwrap();
     assert!(book.revert(1).unwrap().changed);
     let copy = book.tab_copy(1).unwrap();
     assert_eq!(copy.flow_bars.as_deref(), Some("tick:500"));
     assert_eq!(copy.context_panes[0].bars.as_deref(), Some("time:60000"));
     assert!(!book.differs(1));
-    assert_eq!(book.recipe("Legacy").unwrap().flow_bars, None, "nothing written");
+    assert_eq!(
+        book.recipe("Legacy").unwrap().flow_bars,
+        None,
+        "nothing written"
+    );
 }
 
 #[test]

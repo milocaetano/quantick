@@ -1121,14 +1121,17 @@ fn a_timeframe_moved_on_a_workspace_naming_none_is_an_edit_the_save_keeps() {
     assert_eq!(book.recipe("Legacy").unwrap().flow_bars, None);
     book.settle_tab(1, &on_bars("tick:500", "time:60000"));
     assert!(!book.differs(1), "the tab's own timeframe is no edit");
-    book.observe(1, &on_bars("tick:2000", "time:60000")).unwrap();
+    book.observe(1, &on_bars("tick:2000", "time:60000"))
+        .unwrap();
     assert!(book.differs(1), "a moved flow timeframe is an edit");
     assert_eq!(book.layout_changes(1), ["timeframe"]);
-    book.observe(1, &on_bars("tick:500", "time:300000")).unwrap();
+    book.observe(1, &on_bars("tick:500", "time:300000"))
+        .unwrap();
     assert!(book.differs(1), "a moved context timeframe is an edit");
     book.observe(1, &on_bars("tick:500", "time:60000")).unwrap();
     assert!(!book.differs(1), "moved back by hand reads clean");
-    book.observe(1, &on_bars("tick:2000", "time:300000")).unwrap();
+    book.observe(1, &on_bars("tick:2000", "time:300000"))
+        .unwrap();
     assert!(book.save_to(1).unwrap().changed);
     let reopened = parse_book(&toml::to_string(&book).unwrap()).expect("reloads");
     let saved = reopened.recipe("Legacy").unwrap();

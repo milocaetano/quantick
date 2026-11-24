@@ -170,7 +170,9 @@ impl QuantickApp {
             | ToolbarAction::ToggleLayoutPopover
             | ToolbarAction::ToggleAddMenu
             | ToolbarAction::ToggleWorkspaceMenu
-            | ToolbarAction::SaveWorkspace => {}
+            | ToolbarAction::SaveWorkspace
+            | ToolbarAction::RevertWorkspace
+            | ToolbarAction::UndoRevertWorkspace => {}
             ToolbarAction::ToggleDock => self.surfaces.dock.toggle_visible(),
             ToolbarAction::OpenAccountList => {
                 self.surfaces.dock.open_tab(crate::dock::DockTab::Trading);

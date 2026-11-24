@@ -20,7 +20,9 @@ pub(super) fn revert_journaled<H: WorkspaceOwner + ?Sized, A: NotifyAccess>(
     to: &mut Journal<'_, A>,
     tab: u64,
 ) -> Result<RevertOutcome, ControlError> {
-    let outcome = book(app)?.revert(tab).map_err(|refusal| refused(&refusal))?;
+    let outcome = book(app)?
+        .revert(tab)
+        .map_err(|refusal| refused(&refusal))?;
     landed(app, to, tab, &outcome, WORKSPACE_REVERTED_EVENT_KIND)?;
     Ok(outcome)
 }

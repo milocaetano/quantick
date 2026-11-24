@@ -483,7 +483,10 @@ fn revert_drops_the_edit_unsaved_and_its_undo_brings_it_back_once() {
     let edited = host.book.tab_copy(1).cloned();
     let written = host.writes;
     let reverted = revert::revert(&mut host, &mut access, &actor, &json!({})).unwrap();
-    assert_eq!(reverted, json!({ "tab_id": "1", "workspace": "Scalp", "changed": true }));
+    assert_eq!(
+        reverted,
+        json!({ "tab_id": "1", "workspace": "Scalp", "changed": true })
+    );
     assert_eq!(host.book.tab_copy(1).cloned(), saved);
     assert_eq!(host.writes, written, "a revert writes nothing");
     let kinds = |access: &FakeAccess| {
@@ -498,7 +501,10 @@ fn revert_drops_the_edit_unsaved_and_its_undo_brings_it_back_once() {
     assert_eq!(host.book.tab_copy(1).cloned(), edited);
     let again = revert::undo(&mut host, &mut access, &actor, &json!({})).unwrap();
     assert_eq!(again["changed"], false, "taken once");
-    assert_eq!(kinds(&access), ["workspace.reverted", "workspace.revert_undone"]);
+    assert_eq!(
+        kinds(&access),
+        ["workspace.reverted", "workspace.revert_undone"]
+    );
 
     let unknown = json!({ "tab_id": "99" });
     let refused = revert::revert(&mut host, &mut access, &actor, &unknown).unwrap_err();

@@ -1,4 +1,5 @@
 //! Toolbar state and availability, independent of painting and host effects.
+use quantick_session::workspace_menu::WorkspaceCommand;
 use quantick_sources::candles::OlderCandles;
 use quantick_sources::config::FeedCapabilities;
 use quantick_sources::history_reach::HistoryReach;
@@ -40,6 +41,10 @@ pub enum ToolbarAction {
     ToggleWorkspaceMenu,
     /// Save the tab's edits to its workspace (the floppy, Ctrl+S).
     SaveWorkspace,
+    /// Put the tab back on its workspace as saved (the capsule's revert).
+    RevertWorkspace,
+    /// Bring back what the revert dropped (the same slot, after a revert).
+    UndoRevertWorkspace,
     /// Add a native indicator, by its catalog id
     /// (`quantick_indicators::native`). One variant for every native there
     /// will ever be — the menu is drawn from the catalog, so the toolbar
@@ -68,6 +73,96 @@ pub enum ToolbarAction {
 
 pub use ToolbarAction as Action;
 
+impl ToolbarAction {
+    /// The workspace command a capsule button stands for: the window runs it
+    /// through the same step the menu and the control call take.
+    #[must_use]
+    pub fn workspace_command(self) -> Option<WorkspaceCommand> {
+        match self {
+            Self::SaveWorkspace => Some(WorkspaceCommand::SaveTo),
+            Self::RevertWorkspace => Some(WorkspaceCommand::Revert),
+            Self::UndoRevertWorkspace => Some(WorkspaceCommand::UndoRevert),
+            _ => None,
+        }
+    }
+}
+
+/// The capsule's revert slot, left of the +: empty, a revert while the tab
+/// holds unsaved layout edits, or its undo once a revert dropped them.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum RevertSlot {
+    #[default]
+    Empty,
+    /// Carries its hover: what a revert puts back.
+    Revert(String),
+    Undo,
+}
+
+/// The undo's hover, and its label in the observer scene.
+pub const UNDO_REVERT_HOVER: &str = "Restore discarded changes";
+
+/// What pressing the revert slot does: the action, its hover (the scene's
+/// label too) and the call it stands for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RevertPress<'a> {
+    pub action: ToolbarAction,
+    pub hover: &'a str,
+    pub capability: &'static str,
+}
+
+impl RevertSlot {
+    /// The slot for `tab` on `book`, named `workspace` on the capsule.
+    #[must_use]
+    pub fn for_tab(
+        book: &quantick_workspace::workspace_book::WorkspaceBook,
+        tab: u64,
+        workspace: &str,
+    ) -> Self {
+        Self::of(
+            workspace,
+            &book.layout_changes(tab),
+            book.can_undo_revert(tab),
+        )
+    }
+
+    /// The slot for a tab: `changes` in [`quantick_workspace::workspace_recipe::WorkspaceRecipe::changes_from`]'s
+    /// words. Edits of its own come first: a revert drops them before any undo.
+    #[must_use]
+    pub fn of(workspace: &str, changes: &[String], can_undo: bool) -> Self {
+        if !changes.is_empty() {
+            let listed = changes.join(", ");
+            return Self::Revert(format!(
+                "Discard changes, back to \u{201c}{workspace}\u{201d} as saved: {listed}"
+            ));
+        }
+        if can_undo { Self::Undo } else { Self::Empty }
+    }
+
+    /// What the slot does when pressed: none while empty.
+    #[must_use]
+    pub fn press(&self) -> Option<RevertPress<'_>> {
+        use quantick_control_schema::workspace_book as calls;
+        let (action, hover, capability) = match self {
+            Self::Empty => return None,
+            Self::Revert(hover) => (
+                ToolbarAction::RevertWorkspace,
+                hover.as_str(),
+                calls::WORKSPACE_REVERT_CAPABILITY_ID,
+            ),
+            Self::Undo => (
+                ToolbarAction::UndoRevertWorkspace,
+                UNDO_REVERT_HOVER,
+                calls::WORKSPACE_REVERT_UNDO_CAPABILITY_ID,
+            ),
+        };
+        Some(RevertPress {
+            action,
+            hover,
+            capability,
+        })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Capsule {
     pub tree: PaneTree,
@@ -76,6 +171,7 @@ pub struct Capsule {
     pub colour: Option<quantick_stores::workspaces::WorkspaceColour>,
     pub unsaved: bool,
     pub marks: LayoutMarks,
+    pub revert: RevertSlot,
     pub menu_open: bool,
     pub door_open: bool,
     pub door_hover: String,
@@ -216,6 +312,44 @@ impl HistoryButton {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_revert_slot_lists_what_comes_back_and_offers_the_undo_only_when_clean() {
+        let changes = ["timeframe".to_owned(), "EMA".to_owned()];
+        let revert = RevertSlot::of("Scalp", &changes, true);
+        let press = revert.press().unwrap();
+        assert_eq!(press.action, ToolbarAction::RevertWorkspace);
+        assert_eq!(press.capability, "workspace.revert");
+        assert_eq!(
+            press.hover,
+            "Discard changes, back to \u{201c}Scalp\u{201d} as saved: timeframe, EMA"
+        );
+        let undo = RevertSlot::of("Scalp", &[], true);
+        let press = undo.press().unwrap();
+        assert_eq!(press.action, ToolbarAction::UndoRevertWorkspace);
+        assert_eq!(
+            (press.hover, press.capability),
+            (UNDO_REVERT_HOVER, "workspace.revert.undo")
+        );
+        assert_eq!(RevertSlot::of("Scalp", &[], false), RevertSlot::Empty);
+        assert_eq!(RevertSlot::Empty.press(), None);
+    }
+
+    #[test]
+    fn each_capsule_button_names_its_workspace_command_and_no_other_action_does() {
+        let named = [
+            (ToolbarAction::SaveWorkspace, WorkspaceCommand::SaveTo),
+            (ToolbarAction::RevertWorkspace, WorkspaceCommand::Revert),
+            (
+                ToolbarAction::UndoRevertWorkspace,
+                WorkspaceCommand::UndoRevert,
+            ),
+        ];
+        for (action, command) in named {
+            assert_eq!(action.workspace_command(), Some(command));
+        }
+        assert_eq!(ToolbarAction::ToggleDock.workspace_command(), None);
+    }
 
     #[test]
     fn the_history_button_names_its_target_and_cancels_a_run() {
