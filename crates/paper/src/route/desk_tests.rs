@@ -110,6 +110,12 @@ fn a_lost_link_with_a_position_parks_it_in_view_and_refuses_entries() {
         .said
         .push(VenueEvent::Notice(VenueNotice::LinkLost));
     desk.frame(&mut tabs, LIVE, 5_000);
+    assert_eq!(desk.route().route(), Route::Real, "reconnecting first");
+    assert_eq!(
+        desk.take_toast().as_deref(),
+        Some("REAL: no link with the broker - reconnecting, orders refused for up to 30 s")
+    );
+    desk.frame(&mut tabs, LIVE, 5_000 + RECONNECT_GRACE_MS);
     assert_eq!(desk.route().route(), Route::Sim);
     assert_eq!(
         desk.take_toast().as_deref(),
@@ -137,13 +143,108 @@ fn a_lost_link_with_a_position_parks_it_in_view_and_refuses_entries() {
         refused.as_slice(),
         [VenueEvent::Rejected(RejectReason::Blocked(_))]
     ));
-    let sheet = desk.sheet(&tabs, LIVE, None, 19_000);
+    let sheet = desk.sheet(&tabs, LIVE, None, 49_000);
     assert_eq!(sheet.notice.text, "XP 51234567 · no link");
     assert_eq!(sheet.notice.dot, Dot::Hollow);
     assert_eq!(sheet.tone, RouteTone::Lost);
     assert_eq!(
         sheet.status.as_deref(),
-        Some("no link with the broker for 14 s · disarmed · stop and target stay at the broker")
+        Some("no link with the broker for 44 s · disarmed · stop and target stay at the broker"),
+        "counted from the moment the link was lost"
+    );
+}
+
+#[test]
+fn a_reconnecting_route_says_so_and_refuses_every_order() {
+    let (mut desk, mut tabs, script) = armed(TradeMode::Demo);
+    script.borrow_mut().link = Some(LinkState::Lost);
+    desk.frame(&mut tabs, LIVE, 5_000);
+    assert_eq!(desk.route().reconnecting_since(), Some(5_000));
+    let sheet = desk.sheet(&tabs, LIVE, None, 12_000);
+    assert_eq!(sheet.notice.text, "XP 51234567 · DEMO · RECONNECTING");
+    assert_eq!(
+        sheet.selector, sheet.notice.text,
+        "the ticket says the same"
+    );
+    assert_eq!(sheet.notice.dot, Dot::Hollow);
+    assert_eq!(sheet.tone, RouteTone::Lost);
+    assert_eq!(sheet.title, "TRADING · DEMO");
+    assert_eq!(
+        sheet.status.as_deref(),
+        Some(
+            "no link with the broker for 7 s · RECONNECTING · orders refused · stop and target stay at the broker"
+        )
+    );
+    for actor in [Actor::Trader, Actor::Agent] {
+        for allow in [false, true] {
+            assert_eq!(
+                desk.write_block(&tabs, actor, allow),
+                Some(Refusal::Reconnecting)
+            );
+        }
+    }
+    let account = tabs.active();
+    assert!(
+        account.broker_routed(),
+        "the venue stays where the route is"
+    );
+    assert_eq!(
+        account.entry_block(),
+        Some(crate::account::RECONNECTING_BLOCK)
+    );
+    assert!(
+        !account.entry_ready(),
+        "the toolbar and the ticket both refuse"
+    );
+    let blocked = [VenueEvent::Rejected(RejectReason::Blocked(
+        crate::account::RECONNECTING_BLOCK,
+    ))];
+    let venue = account.venue_mut();
+    assert_eq!(
+        venue.submit(OrderIntent::market(Side::Buy, Decimal::ONE)),
+        blocked,
+        "the window's order meets the route's words"
+    );
+    assert_eq!(venue.flatten(), blocked);
+    assert_eq!(venue.cancel(OrderId(1)), blocked);
+}
+
+#[test]
+fn a_link_back_on_the_same_account_resumes_the_route_with_a_toast() {
+    let (mut desk, mut tabs, script) = armed(TradeMode::Demo);
+    script.borrow_mut().link = Some(LinkState::Lost);
+    desk.frame(&mut tabs, LIVE, 5_000);
+    assert!(desk.take_toast().is_some());
+    script.borrow_mut().link = None;
+    desk.frame(&mut tabs, LIVE, 5_000 + RECONNECT_GRACE_MS - 1);
+    assert_eq!(desk.route().route(), Route::Demo);
+    assert_eq!(desk.route().reconnecting_since(), None);
+    assert_eq!(
+        desk.take_toast().as_deref(),
+        Some("DEMO: reconnected to the broker, orders go there again")
+    );
+    assert!(tabs.active().broker_routed());
+    assert_eq!(tabs.active().entry_block(), None, "orders flow again");
+    assert_eq!(desk.write_block(&tabs, Actor::Trader, false), None);
+    let sheet = desk.sheet(&tabs, LIVE, None, 40_000);
+    assert_eq!(sheet.notice.text, "XP 51234567 · DEMO");
+    assert_eq!(sheet.status, None);
+}
+
+#[test]
+fn a_link_back_on_another_account_disarms_to_the_simulator() {
+    let (mut desk, mut tabs, script) = armed(TradeMode::Real);
+    script.borrow_mut().link = Some(LinkState::Lost);
+    desk.frame(&mut tabs, LIVE, 5_000);
+    let mut script = script.borrow_mut();
+    script.link = None;
+    script.login = Some(51_999_999);
+    drop(script);
+    desk.frame(&mut tabs, LIVE, 6_000);
+    assert_eq!(desk.route().route(), Route::Sim);
+    assert_eq!(
+        desk.route().last_disarm(),
+        Some((Disarm::AccountChanged, 6_000))
     );
 }
 #[test]
@@ -320,8 +421,11 @@ fn the_desk_hands_the_frame_time_to_the_broker_wherever_it_sits() {
     // A hung bridge: the venue declares its silent link lost at the tick.
     let lost = VenueEvent::Notice(VenueNotice::LinkLost);
     script.borrow_mut().on_tick.push(lost);
+    script.borrow_mut().link = Some(LinkState::Lost);
     desk.frame(&mut tabs, LIVE, 9_000);
     assert_eq!(script.borrow().ticked.last(), Some(&9_000));
+    assert_eq!(desk.route().reconnecting_since(), Some(9_000));
+    desk.frame(&mut tabs, LIVE, 9_000 + RECONNECT_GRACE_MS);
     assert_eq!(desk.route().route(), Route::Sim);
     assert_eq!(desk.route().last_disarm(), Some((Disarm::LinkLost, 9_000)));
 }

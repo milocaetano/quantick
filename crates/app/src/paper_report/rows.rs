@@ -321,7 +321,7 @@ pub(super) fn draw_day_header(
     count: usize,
     net: &(Decimal, String),
     folded: bool,
-) -> bool {
+) -> egui::Response {
     let palette = theme::get(ui.ctx());
     let look = ledger_row(palette.resolved.dark, RowKind::Day);
     let figures = format!("{count} \u{00b7} {}", net.1);
@@ -335,12 +335,11 @@ pub(super) fn draw_day_header(
         (folded, false),
     )
     .on_hover_text(format!(
-        "{} · {count} trade(s) closed · {} on the day - click to {}",
+        "{} · {count} trade(s) closed · {} on the day - click to {}, right-click for reports",
         date.iso(),
         net.1,
         if folded { "open it" } else { "fold it shut" },
     ))
-    .clicked()
 }
 
 /// The fold caret a day or session row leads with.

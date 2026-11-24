@@ -41,6 +41,8 @@ pub(crate) struct Venues {
 pub(crate) struct Guarded {
     venue: Box<dyn BrokerVenue>,
     routed: bool,
+    /// The route is reconnecting: every write is refused in its words.
+    held: bool,
     /// What the route must hear about the link and the account, from
     /// whichever call drained it - a print drains the venue too - until
     /// [`PaperAccount::poll_broker`] hands it over.
@@ -68,7 +70,19 @@ impl Guarded {
         }
         events
     }
+
+    /// Every write refused while the route reconnects.
+    fn refused(&self) -> Option<Vec<VenueEvent>> {
+        self.held.then(|| {
+            vec![VenueEvent::Rejected(RejectReason::Blocked(
+                RECONNECTING_BLOCK,
+            ))]
+        })
+    }
 }
+
+/// Why every write is refused while the route reconnects.
+pub const RECONNECTING_BLOCK: &str = crate::route::Refusal::Reconnecting.sentence();
 
 /// Why an entry is refused while the broker venue is parked with exposure.
 pub const PARKED_ENTRY_BLOCK: &str = "orders are still open at the broker - close them, or arm the account again, before trading here";
@@ -121,6 +135,9 @@ impl DerefMut for Venues {
 
 impl TradingVenue for Guarded {
     fn submit(&mut self, intent: OrderIntent) -> Vec<VenueEvent> {
+        if let Some(refused) = self.refused() {
+            return refused;
+        }
         if !self.routed {
             return vec![VenueEvent::Rejected(RejectReason::Blocked(
                 PARKED_ENTRY_BLOCK,
@@ -131,26 +148,41 @@ impl TradingVenue for Guarded {
     }
 
     fn amend_price(&mut self, id: OrderId, price: Decimal) -> Vec<VenueEvent> {
+        if let Some(refused) = self.refused() {
+            return refused;
+        }
         let events = self.venue.amend_price(id, price);
         self.keep(events)
     }
 
     fn amend_bracket(&mut self, target: BracketTarget, bracket: Bracket) -> Vec<VenueEvent> {
+        if let Some(refused) = self.refused() {
+            return refused;
+        }
         let events = self.venue.amend_bracket(target, bracket);
         self.keep(events)
     }
 
     fn cancel(&mut self, id: OrderId) -> Vec<VenueEvent> {
+        if let Some(refused) = self.refused() {
+            return refused;
+        }
         let events = self.venue.cancel(id);
         self.keep(events)
     }
 
     fn close(&mut self, amount: CloseAmount) -> Vec<VenueEvent> {
+        if let Some(refused) = self.refused() {
+            return refused;
+        }
         let events = self.venue.close(amount);
         self.keep(events)
     }
 
     fn flatten(&mut self) -> Vec<VenueEvent> {
+        if let Some(refused) = self.refused() {
+            return refused;
+        }
         let events = self.venue.flatten();
         self.keep(events)
     }
@@ -226,6 +258,7 @@ impl PaperAccount {
         self.venue.broker = Some(Guarded {
             venue,
             routed: true,
+            held: false,
             for_route: Vec::new(),
         });
         self.handle_events(events);
@@ -236,6 +269,14 @@ impl PaperAccount {
     pub fn park_broker(&mut self) {
         if let Some(broker) = self.venue.broker.as_mut() {
             broker.routed = false;
+        }
+    }
+
+    /// Refuse every write to the attached broker venue while `held`: the
+    /// route is reconnecting.
+    pub fn hold_broker(&mut self, held: bool) {
+        if let Some(broker) = self.venue.broker.as_mut() {
+            broker.held = held;
         }
     }
 
@@ -345,6 +386,9 @@ impl PaperAccount {
     #[must_use]
     pub fn entry_block(&self) -> Option<&'static str> {
         let broker = self.broker()?;
+        if self.venue.broker.as_ref().is_some_and(|broker| broker.held) {
+            return Some(RECONNECTING_BLOCK);
+        }
         if !self.broker_routed() {
             return self.broker_shown().then_some(PARKED_ENTRY_BLOCK);
         }
