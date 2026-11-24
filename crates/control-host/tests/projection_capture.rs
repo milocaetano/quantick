@@ -284,21 +284,23 @@ fn a_state_returning_to_an_older_value_still_advances_the_revision() {
 #[test]
 fn captures_own_values_before_the_host_changes_or_is_dropped() {
     let mut registry = registry(Arc::new(Clock::default()));
-    let mut host = Host {
-        quote: 10,
-        ..Host::default()
+    let (owned, later) = {
+        let mut host = Host {
+            quote: 10,
+            ..Host::default()
+        };
+        let mut owned = registry
+            .capture(
+                &host,
+                &InstanceId::from_bytes([9; 16]),
+                &scopes(&["quote.last"]),
+            )
+            .unwrap();
+        owned.window_id = Some(WireU64::new(7));
+        host.quote = 20;
+        let later = capture(&mut registry, &host, &["quote.last"]);
+        (owned, later)
     };
-    let mut owned = registry
-        .capture(
-            &host,
-            &InstanceId::from_bytes([9; 16]),
-            &scopes(&["quote.last"]),
-        )
-        .unwrap();
-    owned.window_id = Some(WireU64::new(7));
-    host.quote = 20;
-    let later = capture(&mut registry, &host, &["quote.last"]);
-    drop(host);
     let earlier = owned.into_serialized().unwrap();
     let key = SnapshotScopeId::new("quote.last").unwrap();
     assert_eq!(earlier.scopes[&key].value["value"], 10);

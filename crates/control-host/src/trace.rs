@@ -229,7 +229,6 @@ impl std::fmt::Display for TraceError {
 
 #[cfg(test)]
 mod lifecycle_tests;
-
 #[cfg(test)]
 mod tests {
     use quantick_control::error::codes;
