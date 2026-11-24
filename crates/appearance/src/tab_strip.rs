@@ -199,13 +199,13 @@ pub const ICON_GLYPH_DARK: [u8; 3] = [0x1E, 0x23, 0x29];
 /// A disc this light (Rec. 709 luma, 0 to 255) or lighter takes the dark glyph.
 pub const ICON_LIGHT_LUMA: f32 = 160.0;
 
-/// The day's change: on the open tab the buy ink up and the sell ink down,
-/// flat in the tab's ink; on a closed tab always the tab's ink.
+/// The day's change: on the open tab the theme's tab gain ink up and loss
+/// ink down, flat in the tab's ink; on a closed tab always the tab's ink.
 #[must_use]
 pub const fn change_token(sign: Ordering, open: bool, lit: bool) -> Token {
     match (open, sign) {
-        (true, Ordering::Greater) => Token::BuyInk,
-        (true, Ordering::Less) => Token::SellInk,
+        (true, Ordering::Greater) => Token::TabChangeUp,
+        (true, Ordering::Less) => Token::TabChangeDown,
         _ => tab_ink(lit),
     }
 }
@@ -470,12 +470,36 @@ mod tests {
     #[test]
     fn the_change_is_green_or_red_on_the_open_tab_only() {
         use std::cmp::Ordering::{Equal, Greater, Less};
-        assert_eq!(change_token(Greater, true, true), Token::BuyInk);
-        assert_eq!(change_token(Less, true, true), Token::SellInk);
+        assert_eq!(change_token(Greater, true, true), Token::TabChangeUp);
+        assert_eq!(change_token(Less, true, true), Token::TabChangeDown);
         assert_eq!(change_token(Equal, true, true), tab_ink(true));
         for sign in [Greater, Less, Equal] {
             assert_eq!(change_token(sign, false, false), tab_ink(false));
             assert_eq!(change_token(sign, false, true), tab_ink(true));
+        }
+    }
+
+    /// The open tab's change wears the mock's green and red in both themes,
+    /// not the ladder's inks (Light's sell ink is near-black); a stored copy
+    /// frozen before the keys existed takes its own mode's pair.
+    #[test]
+    fn the_open_tabs_change_wears_the_mocks_gain_and_loss_inks() {
+        let mocks = [
+            ([0x3A, 0xF0, 0xB2], [0xFF, 0x6B, 0x78]),
+            ([0x0B, 0x8A, 0x5C], [0xC6, 0x2F, 0x3A]),
+        ];
+        let frozen = |source: &str| {
+            let lines = source
+                .lines()
+                .filter(|line| !line.starts_with("tab_change_"));
+            ResolvedTheme::parse(&lines.collect::<Vec<_>>().join("\n")).unwrap()
+        };
+        for (source, (up, down)) in [crate::DARK, LIGHT].into_iter().zip(mocks) {
+            for theme in [ResolvedTheme::parse(source).unwrap(), frozen(source)] {
+                let ink = |token| theme.title_strip().color(token).to_array()[..3].to_vec();
+                assert_eq!(ink(Token::TabChangeUp), up, "{}", theme.name);
+                assert_eq!(ink(Token::TabChangeDown), down, "{}", theme.name);
+            }
         }
     }
 

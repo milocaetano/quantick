@@ -2,7 +2,7 @@
 //! its face's source, its feed's mark and its corner's words. The arrangement
 //! remains authoritative.
 use quantick_appearance::tab_strip::FeedMark;
-use quantick_session::tab_chip::{FaceCache, FaceLayout, FaceSource, Squeeze};
+use quantick_session::tab_chip::{CloseTarget, FaceCache, FaceLayout, FaceSource, Squeeze};
 use quantick_session::tab_quote::{TabIcon, TabQuote};
 use quantick_workspace::arrangement::strip::{StripSurface, TabFeed, chip_parts};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -89,29 +89,35 @@ pub fn market_face(
     (icon, quote(last, day, decimals))
 }
 
-/// How far the strip squeezes, and each chip's face at that stage, the open
-/// chip (`open`) on one line. The count's stage over `room` first
-/// ([`Squeeze::of_strip`]); further while the faces, each taking `per_tab`
-/// beside its own width, overrun `tabs_room` ([`Squeeze::fitting`]): the
-/// room beside the labelled Home tab, which the strip's fit measures against.
-/// `width` measures a text at a size, at `scale` pixels per point.
+/// How far the strip squeezes, and each chip's face and close target at that
+/// stage, the open chip (`open`) on one line. The count's stage over `room`
+/// first ([`Squeeze::of_strip`]); further while the faces, each taking its
+/// target's reserve and `gap` beside its own width, overrun `tabs_room`
+/// ([`Squeeze::fitting`]): the room beside the labelled Home tab, which the
+/// strip's fit measures against. `width` measures a text at a size, at
+/// `scale` pixels per point.
 pub fn squeezed_faces(
     chips: &[Chip],
     open: Option<usize>,
-    (room, tabs_room, per_tab): (f32, f32, f32),
+    (room, tabs_room, gap): (f32, f32, f32),
     scale: f32,
     cache: &mut FaceCache,
     width: impl Fn(&str, f32) -> f32,
-) -> (Squeeze, Vec<FaceLayout>) {
+) -> (Squeeze, Vec<(FaceLayout, CloseTarget)>) {
     cache.keep(chips.iter().map(|chip| chip.id));
-    let mut faces_at = |stage: Squeeze| -> Vec<FaceLayout> {
+    let mut faces_at = |stage: Squeeze| -> Vec<(FaceLayout, CloseTarget)> {
         let face = |(i, chip): (usize, &Chip)| {
-            let source = chip.face_source(stage.for_tab(open == Some(i)), scale);
-            cache.layout(chip.id, &source, &width)
+            let worn = stage.for_tab(open == Some(i));
+            let source = chip.face_source(worn, scale);
+            let target = CloseTarget::of(open == Some(i), worn);
+            (cache.layout(chip.id, &source, &width), target)
         };
         chips.iter().enumerate().map(face).collect()
     };
-    let taken = |faces: &[FaceLayout]| faces.iter().map(|face| face.width + per_tab).sum();
+    let taken = |faces: &[(FaceLayout, CloseTarget)]| {
+        let tab = |(face, target): &(FaceLayout, CloseTarget)| face.width + target.reserve();
+        faces.iter().map(|face| tab(face) + gap).sum()
+    };
     let count = Squeeze::of_strip(chips.len(), room);
     let stage = count.fitting(tabs_room, |stage| taken(&faces_at(stage)));
     (stage, faces_at(stage))
@@ -246,16 +252,115 @@ mod tests {
         let width = |text: &str, pt: f32| text.len() as f32 * pt;
         let mut cache = FaceCache::default();
         let mut fit = |tabs_room| {
-            let rooms = (3_000.0, tabs_room, 24.0);
+            let rooms = (3_000.0, tabs_room, 4.0);
             squeezed_faces(&chips, Some(0), rooms, 1.0, &mut cache, width)
         };
         let (roomy, wide) = fit(3_000.0);
         assert_eq!((roomy, wide.len()), (Squeeze::OneLine, 3));
-        let one_line: f32 = wide.iter().map(|face| face.width + 24.0).sum();
+        let tab = |(face, target): &(FaceLayout, CloseTarget)| face.width + target.reserve();
+        let one_line: f32 = wide.iter().map(|face| tab(face) + 4.0).sum();
         let (tight, faces) = fit(one_line - 1.0);
         assert_ne!(tight, Squeeze::OneLine);
         assert_eq!(faces[0], wide[0], "the open tab stays on one line");
-        assert!(faces[1].width < wide[1].width);
+        assert!(faces[1].0.width < wide[1].0.width);
+    }
+
+    /// The mock's tabs (`docs/label/tabs-final`), the fifth open, measured
+    /// in the strip's font, on the strip of a 1,918-point window with the
+    /// agent's pill shown and without: 6 on one line, 10 stacked, 14
+    /// without a price, 26 the icon over the venue, every tab drawn.
+    #[test]
+    fn the_mocks_stages_fit_a_1918_point_window() {
+        use quantick_session::tab_quote::format_change;
+        const MOCK: [(&str, &str, &str, &str); 14] = [
+            ("ETHUSDT", "BIN", "3241.50", "1.12"),
+            ("BTCUSDT", "BIN", "76200.00", "-0.38"),
+            ("ETHUSDT", "HL", "3241.80", "1.13"),
+            ("BTCUSDT", "BIN", "76200.00", "-0.38"),
+            ("WINZ26", "MT5", "172455", "-0.41"),
+            ("WDOZ26", "MT5", "5412.5", "0.22"),
+            ("SOLUSDT", "BIN", "182.40", "2.05"),
+            ("BTCUSDT", "HL", "76195.00", "-0.39"),
+            ("WINZ26", "MT5", "172455", "-0.41"),
+            ("ETHUSDT", "BIN", "3241.50", "1.12"),
+            ("SOLUSDT", "HL", "182.45", "2.08"),
+            ("WDOZ26", "MT5", "5412.5", "0.22"),
+            ("BTCUSDT", "BIN", "76200.00", "-0.38"),
+            ("XRPUSDT", "BIN", "0.6142", "-1.20"),
+        ];
+        let chip = |id: usize| {
+            let (symbol, code, price, change) = MOCK[id % MOCK.len()];
+            Chip {
+                id: id as u64,
+                label: format!("{symbol} \u{b7} {code}"),
+                feed: TabFeed::Live,
+                workspace: "Default".into(),
+                venue_code: code.into(),
+                symbol_ink: None,
+                tag_fill: None,
+                icon: TabIcon::of(symbol, None),
+                quote: TabQuote {
+                    price: Some(price.into()),
+                    change: Some(format_change(change.parse().unwrap())),
+                },
+                corner: None,
+            }
+        };
+        // The app's proportional face (egui's default), em advances.
+        let advance = |c: char| match c {
+            'I' => 0.25,
+            'J' => 0.49,
+            'L' => 0.50,
+            'F' => 0.52,
+            'S' => 0.52,
+            'E' | 'T' => 0.55,
+            'Z' | 'Y' => 0.57,
+            'P' => 0.59,
+            'K' => 0.60,
+            'C' | 'X' => 0.61,
+            'R' | 'V' => 0.62,
+            'B' => 0.63,
+            'A' => 0.64,
+            'G' => 0.66,
+            'U' => 0.68,
+            'H' => 0.69,
+            'D' => 0.70,
+            'N' => 0.71,
+            'O' | 'Q' => 0.77,
+            'M' => 0.86,
+            'W' => 0.92,
+            '.' => 0.25,
+            '-' => 0.28,
+            '%' => 0.83,
+            _ => 0.56,
+        };
+        let width = |text: &str, pt: f32| (text.chars().map(advance).sum::<f32>() * pt).ceil();
+        // 1,918 less the strip's edge (10), the window buttons (3 × 46),
+        // the menu (36), the drag gap (1) and stretch (32), the overflow and
+        // `+` (66) with their gap (4): 1,631, or 1,559 beside the agent's
+        // pill (72). The labelled Home takes 105 of it.
+        for room in [1_559.0, 1_631.0] {
+            let tabs_room = room - 105.0;
+            for (count, stage) in [
+                (6, Squeeze::OneLine),
+                (10, Squeeze::Stacked),
+                (14, Squeeze::NoPrice),
+                (26, Squeeze::IconOverVenue),
+            ] {
+                let chips: Vec<Chip> = (0..count).map(chip).collect();
+                let mut cache = FaceCache::default();
+                let rooms = (room, tabs_room, 4.0);
+                let (worn, faces) = squeezed_faces(&chips, Some(4), rooms, 1.5, &mut cache, width);
+                assert_eq!(worn, stage, "{count} tabs on {room}");
+                let taken: f32 = (faces.iter())
+                    .map(|(face, target)| face.width + target.reserve() + 4.0)
+                    .sum();
+                assert!(
+                    taken <= tabs_room,
+                    "{count} tabs take {taken} of {tabs_room}"
+                );
+            }
+        }
     }
 
     /// The face starts where the workspace's corner mark ends.

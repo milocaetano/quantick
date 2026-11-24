@@ -74,6 +74,7 @@ groups are:
 | --- | --- |
 | `canvas`, `chrome`, `inset`, `control`, `border` | Chart background, fixed surfaces, wells, widgets and borders |
 | `toolbar_sheet`, `tab_idle_fill`, `tab_idle_outline`, `tab_band`, `home_glow` | The active market tab and toolbar row as one sheet; an idle tab's block and its 1 pt edge; the active tab's top band; the glow behind the Home Q, its alpha the peak |
+| `tab_change_up`, `tab_change_down` | The open tab's day change, up and down; a theme without them takes its mode's bundled pair |
 | `tab_strip`, `brand`, `replay_ink` | Market tab strip and window title area, the Home wordmark's "tick", and a replaying tab's mark and word ([decision](ux/layout-appearance-2026-11-06/README.md)) |
 | `chart_grid` | Inherited chart-grid color, independent of widget surfaces; pane opacity still applies |
 | `text_primary`, `text_muted`, `text_faint`, `text_support` | Labels, secondary text, hints and explanatory text |

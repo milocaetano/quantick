@@ -98,6 +98,8 @@ mod tests {
                 | Token::TabIdleOutline
                 | Token::TabBand
                 | Token::HomeGlow
+                | Token::TabChangeUp
+                | Token::TabChangeDown
                 // Light's axes read the root palette, never the slate plot's.
                 | Token::AxisInk
                 | Token::PriceAxisRule

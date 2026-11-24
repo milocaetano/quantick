@@ -113,6 +113,10 @@ tab_idle_fill = "#CFCCC7"
 tab_idle_outline = "#CFCCC700"
 tab_band = "#12C68C"
 home_glow = "#12C68C0E"
+# The open tab's day change: the mock's gain green and loss red
+# (docs/label/tabs-final); sell_ink is the ladder's near-black, not a loss.
+tab_change_up = "#0B8A5C"
+tab_change_down = "#C62F3A"
 # TradingView's axes: near-black labels, no rule beside the price axis and a
 # light rule over the time axis.
 axis_ink = "#131722"

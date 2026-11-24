@@ -103,6 +103,10 @@ tab_band = "#3AF0B2"
 # The glow behind the Q while Home is shown, in the band's green. egui blends
 # in linear light, so this opacity reads as the mock's ~25% rise at the peak.
 home_glow = "#3AF0B210"
+# The open tab's day change: the mock's gain green and loss red
+# (docs/label/tabs-final), brighter than the ladder's buy and sell inks.
+tab_change_up = "#3AF0B2"
+tab_change_down = "#FF6B78"
 # Dark writes its axes in text_muted and rules them in the chart grid's own
 # colour, so the rules follow the grid switch: these three are read by light
 # themes only, and record what Dark's axes look like by default.

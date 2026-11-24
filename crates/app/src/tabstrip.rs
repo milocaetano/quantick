@@ -23,7 +23,7 @@ const STRIP_CONTROLS_WIDTH_PX: f32 = 66.0;
 const CHIP_MIN_WIDTH_PX: f32 = 44.0;
 /// A window so narrow the strip is in its compact form: the × and a sliver.
 const CHIP_COMPACT_MIN_WIDTH_PX: f32 = 38.0;
-pub(crate) const CLOSE_HIT_WIDTH_PX: f32 = 24.0;
+pub(crate) const CLOSE_HIT_WIDTH_PX: f32 = face_layout::CLOSE_TARGET_PT;
 pub(crate) const CHIP_HEIGHT: f32 = 30.0;
 const CHIP_ROUNDING_PX: f32 = quantick_appearance::tab_strip::TAB_CORNER_PT;
 
@@ -90,7 +90,6 @@ pub(crate) fn draw(
     ui.spacing_mut().button_padding = egui::vec2(if compact { 2.0 } else { 8.0 }, 4.0);
     ui.spacing_mut().interact_size.y = CHIP_HEIGHT;
     let controls_width = [STRIP_CONTROLS_WIDTH_PX, 56.0][usize::from(compact)];
-    let close_reserve = CLOSE_HIT_WIDTH_PX;
     let label = home_label(ui);
     let after_q = label.iter().map(|galley| galley.size().x).sum::<f32>() + HOME_LOGO_GAP_PX;
     let labelled = HOME_PADDING_LEFT_PX + HOME_Q.x + after_q + HOME_PADDING_RIGHT_PX;
@@ -100,10 +99,10 @@ pub(crate) fn draw(
     let active_chip = surface.active_chip(active);
     // A compact strip has no room for the margins: the Q alone in a square tab.
     let bare = [HOME_MIN_WIDTH_PX, CHIP_HEIGHT][usize::from(compact)];
-    let rooms = (room, room - labelled, close_reserve + gap);
+    let rooms = (room, room - labelled, gap);
     let (squeeze, faces) =
         squeezed_faces(chips, active_chip, rooms, scale, &mut drawn.faces, width);
-    let natural: Vec<f32> = faces.iter().map(|f| f.width + close_reserve).collect();
+    let natural: Vec<f32> = faces.iter().map(|(f, t)| f.width + t.reserve()).collect();
     let floor = [CHIP_MIN_WIDTH_PX, CHIP_COMPACT_MIN_WIDTH_PX][usize::from(compact)];
     let home = (labelled, bare);
     let strip = StripRoom {
@@ -118,13 +117,13 @@ pub(crate) fn draw(
         .then_some(TabAction::Home);
     let closable = chips.len() > 1 || drawn.allow_close_last;
     for (index, chip_width) in fit.visible.clone().zip(fit.widths) {
-        let chip = &chips[index];
+        let (chip, (face, target)) = (&chips[index], &faces[index]);
         ui.push_id(("market_tab", chip.id), |ui| {
             let selected = active_chip == Some(index);
             let surface = ui.painter().add(egui::Shape::Noop);
             ui.spacing_mut().item_spacing.x = 0.0;
             let (body, response) = ui.allocate_exact_size(
-                egui::vec2((chip_width - close_reserve).max(0.0), CHIP_HEIGHT),
+                egui::vec2((chip_width - target.width()).max(0.0), CHIP_HEIGHT),
                 egui::Sense::click_and_drag(),
             );
             response.widget_info(|| {
@@ -148,11 +147,11 @@ pub(crate) fn draw(
             if bounds.is_positive() {
                 drawn.tabs.push((index, bounds));
             }
-            // Reserve a stable close target so hover never shifts adjacent controls.
+            // A stable close target, so hover never shifts adjacent controls.
             {
                 let close_target = egui::Rect::from_min_size(
                     ui.next_widget_position(),
-                    egui::vec2(CLOSE_HIT_WIDTH_PX, CHIP_HEIGHT),
+                    egui::vec2(target.width(), CHIP_HEIGHT),
                 );
                 let close_hot = ui.rect_contains_pointer(close_target);
                 let slot = face_layout::close_slot(selected, response.hovered() || close_hot);
@@ -162,14 +161,14 @@ pub(crate) fn draw(
                     ui.painter()
                         .circle_filled(center, radius, root.bare_hover());
                 }
-                let glyph = egui::RichText::new("\u{00d7}").size(CLOSE_GLYPH_PX);
+                let glyph = egui::RichText::new(target.glyph()).size(CLOSE_GLYPH_PX);
                 let close = ui
                     .add_enabled_ui(closable, |ui| {
                         ui.add_visible(
                             slot == CloseSlot::Close,
                             egui::Button::new(glyph.color(*root.get(tab_ink(hot))))
                                 .frame(false)
-                                .min_size(egui::vec2(CLOSE_HIT_WIDTH_PX, CHIP_HEIGHT)),
+                                .min_size(egui::vec2(target.width(), CHIP_HEIGHT)),
                         )
                     })
                     .inner;
@@ -191,8 +190,9 @@ pub(crate) fn draw(
                 let pointer = (hovered, response.has_focus() || close.has_focus());
                 let lit =
                     paint_tab_surface(ui, root, surface, (sheet, chip.corner), selected, pointer);
-                // The face reads lit whenever its sheet is: body, × or focus.
-                paint_chip_face(ui, root, (chip, &faces[index]), body, (lit, selected));
+                // Lit whenever its sheet is (body, × or focus); a shown × covers its end.
+                let face_rect = [sheet, body][usize::from(slot == CloseSlot::Close)];
+                paint_chip_face(ui, root, (chip, face), face_rect, (lit, selected));
                 if close.clicked() {
                     action = Some(TabAction::Close(index));
                 }

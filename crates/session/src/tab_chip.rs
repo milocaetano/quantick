@@ -34,9 +34,9 @@ pub const VALUE_GAP_PT: f32 = 9.0;
 /// Between the price and the day's change.
 pub const CHANGE_GAP_PT: f32 = 6.0;
 /// On a squeezed tab's lower line: between the icon and the tag, and the tag
-/// and the change.
+/// and the change (the mock's 3 px).
 pub const SMALL_GAP_PT: f32 = 3.0;
-pub const LOW_GAP_PT: f32 = 5.0;
+pub const LOW_GAP_PT: f32 = 3.0;
 /// How far a stacked line's middle sits above or below the tab's middle.
 pub const STACK_DY_PT: f32 = 6.5;
 /// How far the icon sits above, and the tag below, the middle at the last
@@ -76,10 +76,16 @@ pub enum Squeeze {
 }
 
 /// The least strip room per tab each stage needs, in points: a strip with
-/// less per tab squeezes one stage further.
+/// less per tab squeezes one stage further. Set from the faces the mock's
+/// symbols take beside the open tab and the labelled Home, closed tabs
+/// reserving no room for a close target ([`CloseTarget`]): at a 1,918-point
+/// window a stage is named only for counts whose faces fit: 6 on one line,
+/// 10 stacked, 14 without a price, 26 icon over venue (`quantick-ui-model`'s
+/// `the_mocks_stages_fit_a_1918_point_window`). [`Squeeze::fitting`]
+/// covers longer faces.
 pub const ONE_LINE_ROOM_PT: f32 = 250.0;
 pub const STACKED_ROOM_PT: f32 = 150.0;
-pub const NO_PRICE_ROOM_PT: f32 = 105.0;
+pub const NO_PRICE_ROOM_PT: f32 = 110.0;
 
 impl Squeeze {
     /// The stage `tabs` market tabs take on a strip `strip_width` points wide.
@@ -496,6 +502,61 @@ fn feed_state(mut end: f32, parts: FaceParts) -> (f32, Option<f32>, Option<Spot>
     (end, mark, word)
 }
 
+/// The close target's width, in points.
+pub const CLOSE_TARGET_PT: f32 = 24.0;
+
+/// Where a tab's close target sits. As in the mock, only the open tab keeps
+/// room for its ×: a closed tab's × covers its face's end while hovered, and
+/// at the last squeeze, too narrow to keep a close apart from the tab, it has
+/// none.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CloseTarget {
+    /// Beside the face, its room reserved.
+    Beside,
+    /// Over the face's end, no room of its own.
+    Over,
+    None,
+}
+
+impl CloseTarget {
+    /// The target of a tab, `open` or not, wearing `stage`.
+    #[must_use]
+    pub const fn of(open: bool, stage: Squeeze) -> Self {
+        match (open, stage) {
+            (true, _) => Self::Beside,
+            (false, Squeeze::IconOverVenue) => Self::None,
+            (false, _) => Self::Over,
+        }
+    }
+
+    /// The room the target adds beside the face.
+    #[must_use]
+    pub const fn reserve(self) -> f32 {
+        match self {
+            Self::Beside => CLOSE_TARGET_PT,
+            Self::Over | Self::None => 0.0,
+        }
+    }
+
+    /// The glyph the target shows: none where there is no target.
+    #[must_use]
+    pub const fn glyph(self) -> &'static str {
+        match self {
+            Self::Beside | Self::Over => "\u{00d7}",
+            Self::None => "",
+        }
+    }
+
+    /// The target's own width, at the tab's right end.
+    #[must_use]
+    pub const fn width(self) -> f32 {
+        match self {
+            Self::Beside | Self::Over => CLOSE_TARGET_PT,
+            Self::None => 0.0,
+        }
+    }
+}
+
 /// What the slot right of a chip shows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CloseSlot {
@@ -765,7 +826,7 @@ mod tests {
     }
 
     /// The mock's strip, 1,620 points: up to 6 tabs on one line, 7 to 10
-    /// stacked, 11 to 15 without a price, then the icon over the venue.
+    /// stacked, 11 to 14 without a price, then the icon over the venue.
     #[test]
     fn the_closed_tabs_squeeze_by_stage_as_the_strip_fills() {
         let strip = 1_620.0;
@@ -775,8 +836,7 @@ mod tests {
         assert_eq!(Squeeze::of_strip(10, strip), Squeeze::Stacked);
         assert_eq!(Squeeze::of_strip(11, strip), Squeeze::NoPrice);
         assert_eq!(Squeeze::of_strip(14, strip), Squeeze::NoPrice);
-        assert_eq!(Squeeze::of_strip(15, strip), Squeeze::NoPrice);
-        assert_eq!(Squeeze::of_strip(16, strip), Squeeze::IconOverVenue);
+        assert_eq!(Squeeze::of_strip(15, strip), Squeeze::IconOverVenue);
         assert_eq!(Squeeze::of_strip(26, strip), Squeeze::IconOverVenue);
     }
 
@@ -818,6 +878,27 @@ mod tests {
             (fit, asked),
             (Squeeze::Stacked, vec![Squeeze::Stacked]),
             "never wider"
+        );
+    }
+
+    /// Only the open tab keeps room for its ×; a closed one covers its
+    /// face's end, and the last squeeze has none.
+    #[test]
+    fn only_the_open_tab_reserves_room_for_its_close_target() {
+        let open = CloseTarget::of(true, Squeeze::OneLine);
+        assert_eq!(
+            (open, open.reserve()),
+            (CloseTarget::Beside, CLOSE_TARGET_PT)
+        );
+        for stage in [Squeeze::OneLine, Squeeze::Stacked, Squeeze::NoPrice] {
+            let closed = CloseTarget::of(false, stage);
+            assert_eq!((closed, closed.reserve()), (CloseTarget::Over, 0.0));
+            assert_eq!(closed.width(), CLOSE_TARGET_PT, "over the face's end");
+        }
+        let last = CloseTarget::of(false, Squeeze::IconOverVenue);
+        assert_eq!(
+            (last, last.reserve(), last.width()),
+            (CloseTarget::None, 0.0, 0.0)
         );
     }
 
