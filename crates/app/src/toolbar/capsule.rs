@@ -16,8 +16,9 @@ use crate::theme;
 use quantick_appearance::{Token, tab_strip::WORKSPACE_CAPSULE_BAR_PT as BAR};
 use quantick_ui_model::layout_picker as picker;
 
-/// The capsule's height: History's.
-const HEIGHT_PX: f32 = 22.0;
+/// The chain's buttons' height: just under the +'s (the trader's ask of
+/// 2026-11-24).
+const HEIGHT_PX: f32 = 28.0;
 /// The live layout miniature, inside the layout button.
 const MINIATURE: egui::Vec2 = egui::vec2(40.0, 14.0);
 /// Air around the miniature, the name and the carets.
@@ -90,7 +91,9 @@ fn widths(ui: &egui::Ui, model: &CapsuleModel<'_>) -> (f32, f32) {
     let caret = text(icons::CARET_DOWN);
     let name = text(shown_name(model));
     let layout = PAD_PX + MINIATURE.x + PAD_PX + caret + PAD_PX;
-    (layout, PAD_PX + name + PAD_PX + caret + PAD_PX)
+    // The name stands clear of the colour bar; compact shows no name.
+    let lead = if name > 0.0 { BAR } else { 0.0 };
+    (layout, lead + PAD_PX + name + PAD_PX + caret + PAD_PX)
 }
 
 /// The width [`draw`] takes, + and floppy included, for the collapse plan.
@@ -162,7 +165,7 @@ pub fn draw(
         palette.text_primary(),
     );
     let mid = name_rect.center().y;
-    let text_at = egui::pos2(name_rect.left() + PAD_PX, mid - name.size().y / 2.0);
+    let text_at = egui::pos2(name_rect.left() + BAR + PAD_PX, mid - name.size().y / 2.0);
     ui.painter().galley(text_at, name, palette.text_primary());
     caret(ui, name_rect);
     if menu
