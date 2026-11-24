@@ -30,6 +30,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 mod bar_rules;
+mod revert;
+pub use revert::RevertOutcome;
 
 #[path = "workspace_book_manage.rs"]
 mod manage;
@@ -188,6 +190,9 @@ struct TabWorkspace {
     /// showed when its panes last settled clean, so an edit undone by hand
     /// reads clean again, as on any other workspace.
     opened: Option<WorkspaceRecipe>,
+    /// What the tab showed when its panes last settled on its workspace: the
+    /// bar rules the workspace names none for are told from it.
+    settled: Option<WorkspaceRecipe>,
 }
 
 impl TabWorkspace {
@@ -196,6 +201,7 @@ impl TabWorkspace {
             workspace: workspace.to_owned(),
             copy,
             opened: None,
+            settled: None,
         }
     }
 }
@@ -343,6 +349,9 @@ pub struct WorkspaceBook {
     /// The deletes an Undo can still take back: the window's, never a file's.
     #[serde(skip)]
     deleted: BTreeMap<String, manage::Deleted>,
+    /// The edits each tab's last revert dropped: the window's, never a file's.
+    #[serde(skip)]
+    reverted: BTreeMap<u64, revert::Reverted>,
 }
 
 /// Why a tab's copy differs from its workspace with autosave on. Either way
@@ -404,6 +413,7 @@ impl Default for WorkspaceBook {
             unsynced: BTreeMap::new(),
             active: None,
             deleted: BTreeMap::new(),
+            reverted: BTreeMap::new(),
         }
     }
 }
@@ -911,10 +921,13 @@ impl WorkspaceBook {
         let Some(base) = self.tabs.get(&tab).and_then(|state| self.baseline(state)) else {
             return false;
         };
-        let base = base.clone();
+        let mut copy = base.clone();
         let state = self.tabs.get_mut(&tab).expect("found above");
-        let changed = state.copy != base;
-        state.copy = base;
+        if let Some(settled) = &state.settled {
+            copy.take_inherited_bars(settled);
+        }
+        let changed = state.copy != copy;
+        state.copy = copy;
         changed
     }
 
@@ -984,7 +997,7 @@ impl WorkspaceBook {
             .baseline(state)
             .filter(|_| self.is_modified(tab, state)))
         .map(|base| {
-            let mut shown = base.masked(&state.copy);
+            let mut shown = bar_rules::read(state, base, &state.copy);
             if self.held_capture(tab) {
                 shown.take_inherited_bars(&state.copy);
             }
@@ -1014,7 +1027,7 @@ impl WorkspaceBook {
 
     fn is_modified(&self, tab: u64, state: &TabWorkspace) -> bool {
         self.baseline(state)
-            .is_none_or(|base| !base.holds(&state.copy))
+            .is_none_or(|base| *base != bar_rules::read(state, base, &state.copy))
             || self.held_capture(tab)
     }
 
@@ -1057,6 +1070,7 @@ impl WorkspaceBook {
     /// A tab closed: nothing of it stays. Its edits go with it.
     pub fn close_tab(&mut self, tab: u64) {
         self.tabs.remove(&tab);
+        self.reverted.remove(&tab);
         self.forget_parked_tab(tab);
         self.drawings.remove(&tab);
         self.unsynced.remove(&tab);
@@ -1171,6 +1185,7 @@ impl WorkspaceBook {
             TabWorkspace::on(name, parked.clone().unwrap_or(recipe)),
         );
         self.unsynced.remove(&tab);
+        self.reverted.remove(&tab);
         if parked.is_some() && (self.differs(tab) || self.captures_inherited_bars(tab)) {
             self.unsynced.insert(tab, Unsynced::Outvoted);
         }
@@ -1201,7 +1216,9 @@ impl WorkspaceBook {
             return false;
         };
         let base = self.baseline(state);
-        let rest = base.is_none_or(|base| !base.holds(&with_sets_of(&state.copy, base)));
+        let rest = base.is_none_or(|base| {
+            *base != bar_rules::read(state, base, &with_sets_of(&state.copy, base))
+        });
         let sets = base.is_none_or(|base| !same_sets(&state.copy, base));
         let mut others = (self.tabs.iter()).filter(|(other, _)| **other != tab);
         let shared = others.any(|(_, held)| {
@@ -1454,6 +1471,9 @@ pub fn capture_recipe(
 #[path = "workspace_book_tests.rs"]
 mod workspace_book_tests;
 
+#[cfg(test)]
+#[path = "workspace_book/revert_tests.rs"]
+mod revert_tests;
 #[cfg(test)]
 #[path = "workspace_book_colour_tests.rs"]
 mod workspace_book_colour_tests;

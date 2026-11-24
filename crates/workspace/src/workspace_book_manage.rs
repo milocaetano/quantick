@@ -153,7 +153,7 @@ impl WorkspaceBook {
                 continue;
             }
             state.workspace = DEFAULT_WORKSPACE.to_owned();
-            state.opened = None;
+            (state.opened, state.settled) = (None, None);
             outcome.moved.push(*tab);
             if recipe.holds(&state.copy) {
                 state.copy.clone_from(&fallback);
@@ -348,7 +348,7 @@ impl WorkspaceBook {
                 };
                 continue;
             }
-            (state.workspace, state.opened) = (name.to_owned(), None);
+            (state.workspace, state.opened, state.settled) = (name.to_owned(), None, None);
             if self.autosave && self.differs(one.tab) {
                 self.unsynced.insert(one.tab, Unsynced::Outvoted);
             }

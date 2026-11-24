@@ -1,5 +1,32 @@
 //! The bar rules a settled tab can capture on an explicit workspace save.
-use super::{DEFAULT_WORKSPACE, WorkspaceBook, WorkspaceRecipe};
+use super::{DEFAULT_WORKSPACE, TabWorkspace, WorkspaceBook, WorkspaceRecipe};
+
+/// `copy` as the tab's workspace `base` reads it: [`WorkspaceRecipe::masked`],
+/// except that a bar rule `base` names none for is an edit once it differs
+/// from the one the tab settled on. Without a settled reading, as on the
+/// factory `Default`, the tab's own rules stay no edit.
+pub(super) fn read(
+    state: &TabWorkspace,
+    base: &WorkspaceRecipe,
+    copy: &WorkspaceRecipe,
+) -> WorkspaceRecipe {
+    let mut read = base.masked(copy);
+    let Some(settled) = &state.settled else {
+        return read;
+    };
+    if base.flow_bars.is_none() && copy.flow_bars != settled.flow_bars {
+        read.flow_bars.clone_from(&copy.flow_bars);
+    }
+    let bars = |recipe: &WorkspaceRecipe, slot: usize| {
+        (recipe.context_panes.get(slot)).and_then(|pane| pane.bars.clone())
+    };
+    for (slot, pane) in read.context_panes.iter_mut().enumerate() {
+        if bars(base, slot).is_none() && bars(copy, slot) != bars(settled, slot) {
+            pane.bars = bars(copy, slot);
+        }
+    }
+    read
+}
 
 impl WorkspaceBook {
     /// After a failed save the requested intervals are held until saved or discarded.
@@ -36,8 +63,10 @@ impl WorkspaceBook {
         if opens_on_market {
             state.copy = live.clone();
             state.opened = Some(live.without_bars());
+            state.settled = None;
         } else {
             state.copy.take_inherited_bars(live);
+            state.settled = Some(live.clone());
         }
     }
 }
