@@ -100,7 +100,7 @@ pub(crate) fn draw(
     let active_chip = surface.active_chip(active);
     // A compact strip has no room for the margins: the Q alone in a square tab.
     let bare = [HOME_MIN_WIDTH_PX, CHIP_HEIGHT][usize::from(compact)];
-    let rooms = (room, room - bare - gap, close_reserve + gap);
+    let rooms = (room, room - labelled, close_reserve + gap);
     let (squeeze, faces) =
         squeezed_faces(chips, active_chip, rooms, scale, &mut drawn.faces, width);
     let natural: Vec<f32> = faces.iter().map(|f| f.width + close_reserve).collect();

@@ -92,7 +92,8 @@ pub fn market_face(
 /// How far the strip squeezes, and each chip's face at that stage, the open
 /// chip (`open`) on one line. The count's stage over `room` first
 /// ([`Squeeze::of_strip`]); further while the faces, each taking `per_tab`
-/// beside its own width, overrun `tabs_room` ([`Squeeze::fitting`]).
+/// beside its own width, overrun `tabs_room` ([`Squeeze::fitting`]): the
+/// room beside the labelled Home tab, which the strip's fit measures against.
 /// `width` measures a text at a size, at `scale` pixels per point.
 pub fn squeezed_faces(
     chips: &[Chip],
