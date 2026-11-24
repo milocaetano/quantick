@@ -167,7 +167,7 @@ pub struct WorkspaceSaveResult {
     pub tabs_changed: Vec<WireU64>,
 }
 
-/// What the removed revert would have answered; it now always refuses.
+/// What a revert, or its undo, did.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
 pub struct WorkspaceRevertResult {
     pub tab_id: WireU64,

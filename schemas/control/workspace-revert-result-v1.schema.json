@@ -6,7 +6,7 @@
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "What the removed revert would have answered; it now always refuses.",
+  "description": "What a revert, or its undo, did.",
   "properties": {
     "changed": {
       "type": "boolean"

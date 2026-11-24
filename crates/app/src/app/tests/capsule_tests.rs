@@ -395,7 +395,10 @@ fn the_revert_arrow_puts_the_saved_layout_back_and_its_restore_the_change() {
     frames(&mut app, &ctx, 2);
     app.runtime.workspace.book.book_mut().set_autosave(false);
     frames(&mut app, &ctx, 2);
-    assert!(control(&app, "toolbar.capsule.revert").is_none(), "a clean tab");
+    assert!(
+        control(&app, "toolbar.capsule.revert").is_none(),
+        "a clean tab"
+    );
     let saved = app.active_tab().canvas.state.tree().clone();
     _ = crate::tab::layout::pick(app.active_tab_mut(), preset("charts-4").unwrap());
     frames(&mut app, &ctx, 6);
@@ -409,7 +412,10 @@ fn the_revert_arrow_puts_the_saved_layout_back_and_its_restore_the_change() {
     click_sized(&mut app, &ctx, TEST_WINDOW, at);
     frames(&mut app, &ctx, 6);
     assert_eq!(app.active_tab().canvas.state.tree(), &saved);
-    assert!(control(&app, "toolbar.capsule.save").is_none(), "nothing unsaved");
+    assert!(
+        control(&app, "toolbar.capsule.save").is_none(),
+        "nothing unsaved"
+    );
 
     let undo = control(&app, "toolbar.capsule.revert").expect("the restore shows");
     assert_eq!(undo.capability, Some(WORKSPACE_REVERT_UNDO_CAPABILITY_ID));
@@ -417,5 +423,8 @@ fn the_revert_arrow_puts_the_saved_layout_back_and_its_restore_the_change() {
     click_sized(&mut app, &ctx, TEST_WINDOW, at);
     frames(&mut app, &ctx, 6);
     assert_eq!(app.active_tab().canvas.state.tree(), &edited);
-    assert!(control(&app, "toolbar.capsule.save").is_some(), "unsaved again");
+    assert!(
+        control(&app, "toolbar.capsule.save").is_some(),
+        "unsaved again"
+    );
 }
