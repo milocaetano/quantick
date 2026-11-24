@@ -206,7 +206,10 @@ carries the last non-na value).
   replay): once per closed bar, never on the forming bar's preview, never for
   history recomputed on load or reload. `title` and `message` are strings;
   the title defaults to `Alert` and the message to the title. The alarm
-  sounds and toasts in the app, and agents read it through
+  names its chart (`WINZ26 Renko 6`), since a script runs on every chart
+  showing its layout. It sounds and toasts in the app at most once every
+  3 seconds across all script alarms; a burst rings once, naming the newest
+  with `(+N)`. Every alarm is still kept, and agents read it through
   `alerts.script.history` and the `alerts.script.fired` event.
 - **Draw objects** — `line.new(x1, y1, x2, y2, color?, width?)`,
   `box.new(left, top, right, bottom, border_color?, bgcolor?)`,

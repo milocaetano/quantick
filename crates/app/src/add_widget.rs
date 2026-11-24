@@ -12,9 +12,7 @@ use quantick_workspace::canvas::{AddRow, WidgetSpec};
 use crate::theme;
 use crate::toolbar::DrawnControl;
 
-/// The + button's side, and the air between it and the capsule.
 pub(crate) const BUTTON_PX: f32 = 30.0;
-pub(crate) const GAP_PX: f32 = 8.0;
 /// The menu's width, a row's height and a miniature's size.
 const MENU_PX: f32 = 280.0;
 const ROW_PX: f32 = 44.0;
@@ -36,8 +34,9 @@ pub(crate) struct AddMenu {
 }
 
 /// The + itself: accent-filled with a dark + in Dark, white with a grey edge
-/// and a black + in Light, lit while its menu is `open`.
-pub(crate) fn button(ui: &mut egui::Ui, open: bool) -> egui::Response {
+/// and a black + in Light, lit while its menu is `open`; `tint`, when given,
+/// takes the border (the workspace's colour).
+pub(crate) fn button(ui: &mut egui::Ui, open: bool, tint: Option<Stroke>) -> egui::Response {
     let palette = theme::get(ui.ctx());
     let (rect, response) = ui.allocate_exact_size(vec2(BUTTON_PX, BUTTON_PX), Sense::click());
     let dark = ui.visuals().dark_mode;
@@ -50,6 +49,7 @@ pub(crate) fn button(ui: &mut egui::Ui, open: bool) -> egui::Response {
             Color32::BLACK,
         )
     };
+    let edge = tint.unwrap_or(edge);
     let lit = response.hovered() || open;
     let fill = if lit { fill.gamma_multiply(0.85) } else { fill };
     ui.painter().rect(rect, 4.0_f32, fill, edge);

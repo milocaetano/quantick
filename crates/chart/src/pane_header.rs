@@ -804,18 +804,9 @@ impl PaneHeader {
     pub fn of(identity: PaneIdentity, bars: BarConfiguration) -> Self {
         Self {
             mark: (identity == PaneIdentity::OrderFlow).then_some(ORDER_FLOW_MARK),
-            bars_text: format!("{} · {}", kind_name(bars), bars.parameter_summary()),
+            bars_text: format!("{} · {}", bars.kind_name(), bars.parameter_summary()),
         }
     }
-}
-
-/// The bar kind as a header line writes it: its registered label, capitalised.
-fn kind_name(bars: BarConfiguration) -> String {
-    let label = bars.definition().label();
-    let mut letters = label.chars();
-    letters.next().map_or_else(String::new, |first| {
-        first.to_uppercase().chain(letters).collect()
-    })
 }
 
 #[cfg(test)]

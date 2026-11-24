@@ -241,24 +241,50 @@ fn luma([r, g, b]: [u8; 3]) -> f32 {
     0.2126 * f32::from(r) + 0.7152 * f32::from(g) + 0.0722 * f32::from(b)
 }
 
-/// How much of the workspace's colour tints the toolbar capsule's fill; its
-/// border takes the colour whole (the trader's pick of 2026-11-12, option 7).
+/// How much of the workspace's colour tints the toolbar workspace buttons'
+/// fill; their borders take the colour whole (the trader's pick of 2026-11-12, option 7).
 pub const WORKSPACE_TINT: f32 = 0.12;
-/// The bar in the workspace's colour at the capsule's left edge, cut by its
-/// corner (the trader's ask of 2026-11-13).
+/// The tint a toolbar workspace button takes under the pointer or while its
+/// popover is open (design A-3 of 2026-11-23).
+pub const WORKSPACE_HOVER_TINT: f32 = 0.28;
+/// The bar in the workspace's colour at the workspace button's left edge, cut
+/// by its corner (the trader's ask of 2026-11-13).
 pub const WORKSPACE_CAPSULE_BAR_PT: f32 = 4.0;
 /// The least the open tab's symbol, inked in its workspace's colour, keeps
 /// against the tab's sheet: the graphics floor of WCAG 1.4.11 for a heavy
 /// 13 pt symbol. Below it the symbol keeps the tab's normal ink.
 pub const WORKSPACE_SYMBOL_CONTRAST: f32 = 3.0;
 
-/// The capsule's fill, `base`, tinted toward the workspace's `colour`; both
-/// straight sRGB, the base's alpha kept.
+/// The legs of the filled triangle every market tab paints in its workspace's
+/// colour at its top-left corner (the trader's pick of 2026-11-23, "Canto
+/// cheio"); the tab's face starts past it.
+pub const WORKSPACE_CORNER_PT: f32 = 17.0;
+/// How many straight pieces stand for the corner's quarter circle.
+const CORNER_ARC_STEPS: u16 = 6;
+
+/// The corner mark's outline from the sheet's top-left, clockwise: down the
+/// left leg's end, round the sheet's corner of `radius`, out along the top to
+/// the other leg's end; the hypotenuse closes it. Convex, so one fill.
 #[must_use]
-pub fn workspace_tint(base: [u8; 4], colour: [u8; 3]) -> [u8; 4] {
+pub fn corner_mark(radius: f32) -> Vec<[f32; 2]> {
+    let radius = radius.clamp(0.0, WORKSPACE_CORNER_PT);
+    let arc = (0..=CORNER_ARC_STEPS).map(|step| {
+        let turn = std::f32::consts::FRAC_PI_2 * f32::from(step) / f32::from(CORNER_ARC_STEPS);
+        [radius * (1.0 - turn.cos()), radius * (1.0 - turn.sin())]
+    });
+    std::iter::once([0.0, WORKSPACE_CORNER_PT])
+        .chain(arc)
+        .chain(std::iter::once([WORKSPACE_CORNER_PT, 0.0]))
+        .collect()
+}
+
+/// A workspace button's fill, `base`, tinted `share` of the way toward the
+/// workspace's `colour`; both straight sRGB, the base's alpha kept.
+#[must_use]
+pub fn workspace_tint(base: [u8; 4], colour: [u8; 3], share: f32) -> [u8; 4] {
     let mix = |b: u8, c: u8| {
         let (b, c) = (f32::from(b), f32::from(c));
-        (b + (c - b) * WORKSPACE_TINT).round().clamp(0.0, 255.0) as u8
+        (b + (c - b) * share).round().clamp(0.0, 255.0) as u8
     };
     [
         mix(base[0], colour[0]),
@@ -273,13 +299,35 @@ mod tests {
     use super::*;
     use crate::{LIGHT, ResolvedTheme, contrast::contrast_ratio};
 
+    /// The mark spans both legs, never leaves the triangle, and never crosses
+    /// the sheet's rounded corner.
+    #[test]
+    fn the_corner_mark_fills_the_triangle_inside_the_rounded_corner() {
+        let radius = TAB_CORNER_PT;
+        let points = corner_mark(radius);
+        assert_eq!(points.first(), Some(&[0.0, WORKSPACE_CORNER_PT]));
+        assert_eq!(points.last(), Some(&[WORKSPACE_CORNER_PT, 0.0]));
+        for &[x, y] in &points {
+            assert!(x >= 0.0 && y >= 0.0 && x + y <= WORKSPACE_CORNER_PT + 1e-4);
+            if x < radius && y < radius {
+                let off = ((x - radius).powi(2) + (y - radius).powi(2)).sqrt();
+                assert!((off - radius).abs() < 1e-4, "{x},{y} leaves the corner");
+            }
+        }
+        assert_eq!(corner_mark(0.0)[1], [0.0, 0.0]);
+    }
+
     /// The tint moves the fill a fixed share toward the colour, alpha kept.
     #[test]
     fn the_capsule_tint_moves_a_fixed_share_toward_the_colour() {
-        assert_eq!(workspace_tint([255; 4], [255; 3]), [255; 4]);
+        assert_eq!(workspace_tint([255; 4], [255; 3], WORKSPACE_TINT), [255; 4]);
         assert_eq!(
-            workspace_tint([0, 0, 0, 200], [100, 200, 0]),
+            workspace_tint([0, 0, 0, 200], [100, 200, 0], WORKSPACE_TINT),
             [12, 24, 0, 200]
+        );
+        assert_eq!(
+            workspace_tint([0, 0, 0, 200], [100, 200, 0], WORKSPACE_HOVER_TINT),
+            [28, 56, 0, 200]
         );
     }
 

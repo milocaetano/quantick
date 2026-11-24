@@ -25,14 +25,19 @@ fn presets() -> impl Iterator<Item = WorkspaceColour> {
 fn the_capsule_name_reads_on_every_preset_tint_in_both_themes() {
     for theme in themes() {
         assert_eq!(
-            capsule_fill(WorkspaceColour::Custom([255; 3]), &theme)[3],
+            capsule_fill(WorkspaceColour::Custom([255; 3]), &theme, false)[3],
             255
         );
         let ink = theme.color(Token::TextPrimary);
-        for colour in presets() {
-            let fill = PremultipliedRgba::from_premultiplied(capsule_fill(colour, &theme));
+        for (colour, lit) in presets().flat_map(|colour| [(colour, false), (colour, true)]) {
+            let fill = PremultipliedRgba::from_premultiplied(capsule_fill(colour, &theme, lit));
             let ratio = contrast_ratio(ink, fill);
-            assert!(ratio >= 4.5, "{} {}: {ratio}", theme.name, colour.name());
+            assert!(
+                ratio >= 4.5,
+                "{} {} lit {lit}: {ratio}",
+                theme.name,
+                colour.name()
+            );
         }
     }
 }
@@ -50,7 +55,7 @@ fn no_preset_falls_back_on_the_open_tab_or_the_capsule_in_either_theme() {
             assert_eq!(symbol_ink(colour, &theme), Some(painted), "{name}");
             let ratio = contrast_ratio(rgb(painted), sheet);
             assert!(ratio >= 3.0, "{name} symbol and border: {ratio}");
-            let tint = PremultipliedRgba::from_premultiplied(capsule_fill(colour, &theme));
+            let tint = PremultipliedRgba::from_premultiplied(capsule_fill(colour, &theme, false));
             let ratio = contrast_ratio(rgb(painted), tint);
             assert!(ratio >= 3.0, "{name} border on its tint: {ratio}");
         }

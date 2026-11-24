@@ -100,6 +100,7 @@ pub(super) fn chips_of(
                 tag_fill: tab.paper.account.route_tone().rgb(),
                 icon,
                 quote,
+                corner: book.tab_colour(id).map(|colour| colour.rgb(theme.dark)),
                 feed: quantick_workspace::arrangement::strip::TabFeed::of(
                     tab.link.replay.is_some(),
                     tab.link.feed_connection == quantick_feed::FeedConnectionState::Connected,

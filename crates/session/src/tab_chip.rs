@@ -9,8 +9,9 @@
 //! change. The tab hugs that content: no fixed width, no stretch gap. As the
 //! strip fills, the closed tabs squeeze ([`Squeeze`]).
 
-/// Where the symbol starts: the tab's left air.
-pub const TEXT_LEFT_PT: f32 = 10.0;
+/// Where the face, its icon first, starts at every stage: past the corner mark
+/// (`quantick_appearance::tab_strip::WORKSPACE_CORNER_PT`).
+pub const TEXT_LEFT_PT: f32 = 17.0;
 /// Between the symbol, the tag and the feed's mark.
 pub const PART_GAP_PT: f32 = 7.0;
 /// Between the mark and "Replay".

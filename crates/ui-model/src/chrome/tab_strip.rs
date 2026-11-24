@@ -1,4 +1,6 @@
-//! Cached tab identities and intent validation. The arrangement remains authoritative.
+//! Cached tab identities and intent validation, and what a chip paints from:
+//! its face's source, its feed's mark and its corner's words. The arrangement
+//! remains authoritative.
 use quantick_appearance::tab_strip::FeedMark;
 use quantick_session::tab_chip::{FaceCache, FaceLayout, FaceSource, Squeeze};
 use quantick_session::tab_quote::{TabIcon, TabQuote};
@@ -33,6 +35,9 @@ pub struct Chip {
     /// The asset's icon, and the market's last price and day's change.
     pub icon: TabIcon,
     pub quote: TabQuote,
+    /// The workspace's colour for the theme, painted in every tab's top-left
+    /// corner, open or closed; `None` only before the book has settled one.
+    pub corner: Option<[u8; 3]>,
 }
 
 impl Chip {
@@ -111,7 +116,7 @@ pub fn squeezed_faces(
     (stage, faces_at(stage))
 }
 
-/// The tab's feed state as the theme's mark.
+/// The workspace's feed state as the theme's mark.
 #[must_use]
 pub const fn feed_mark(feed: TabFeed) -> FeedMark {
     match feed {
@@ -122,6 +127,23 @@ pub const fn feed_mark(feed: TabFeed) -> FeedMark {
         TabFeed::Stopped => FeedMark::Stopped,
     }
 }
+
+/// The scene's words for the colour a tab painted in its corner.
+#[must_use]
+pub fn corner_description(rgb: [u8; 3]) -> String {
+    format!("Workspace corner {}", quantick_stores::workspaces::hex(rgb))
+}
+
+/// A drawn tab's scene words as it reads, left to right: the colour in its
+/// `corner`, then its `quote`'s words.
+#[must_use]
+pub fn tab_words(corner: Option<[u8; 3]>, quote: Option<String>) -> Option<String> {
+    match (corner.map(corner_description), quote) {
+        (Some(corner), Some(quote)) => Some(format!("{corner}; {quote}")),
+        (corner, quote) => corner.or(quote),
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Snapshot {
     pub chips: Vec<Chip>,
@@ -188,6 +210,7 @@ mod tests {
             tag_fill: None,
             icon: TabIcon::of("WINZ26", None),
             quote,
+            corner: None,
         };
         chip.quote.price = Some("172455".into());
         chip.quote.change = Some(quantick_session::tab_quote::format_change(
@@ -216,6 +239,7 @@ mod tests {
                 price: Some("76200.00".into()),
                 change: None,
             },
+            corner: None,
         };
         let chips = [chip(1), chip(2), chip(3)];
         let width = |text: &str, pt: f32| text.len() as f32 * pt;
@@ -233,6 +257,26 @@ mod tests {
         assert!(faces[1].width < wide[1].width);
     }
 
+    /// The face starts where the workspace's corner mark ends.
+    #[test]
+    fn the_face_starts_past_the_corner_mark() {
+        assert_eq!(
+            quantick_session::tab_chip::TEXT_LEFT_PT,
+            quantick_appearance::tab_strip::WORKSPACE_CORNER_PT
+        );
+    }
+
+    /// The corner's words name the colour as the workspace menu writes it.
+    #[test]
+    fn the_corner_description_names_the_colour_in_hex() {
+        assert_eq!(
+            corner_description([0x3A, 0x7B, 0xD5]),
+            "Workspace corner #3A7BD5"
+        );
+        let words = tab_words(Some([0x3A, 0x7B, 0xD5]), Some("price 1".into()));
+        assert_eq!(words.as_deref(), Some("Workspace corner #3A7BD5; price 1"));
+        assert_eq!(tab_words(None, Some("price 1".into())).as_deref(), Some("price 1"));
+    }
     #[test]
     fn tab_actions_reject_stale_indices_and_last_tab_close() {
         let mut state = State::default();
@@ -247,6 +291,7 @@ mod tests {
                 tag_fill: None,
                 icon: TabIcon::of("BTC", None),
                 quote: TabQuote::default(),
+                corner: Some([163, 179, 204]),
             }],
             active: 0,
             surface: StripSurface::default(),
