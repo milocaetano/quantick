@@ -320,11 +320,27 @@ fn a_broker_request_after_the_link_is_lost_revives_what_runs_beside_the_venue() 
     session.press(&mut host, RoutePress::OpenList);
     assert_eq!(wiring.borrow().revived, 0, "a live link needs nothing");
 
-    // The bridge process died: the link is lost and the route disarms.
+    // The bridge process died: the route reconnects, reviving it on its own
+    // at most every REVIVE_EVERY_MS, and disarms once the grace is over.
     let script = wiring.borrow().script.clone().expect("built");
     script.borrow_mut().link = Some(LinkState::Lost);
     session.frame(&mut host);
+    assert_eq!(session.read(&host).route, Route::Demo, "reconnecting");
+    assert_eq!(wiring.borrow().revived, 1, "revived at once");
+    host.now_ms = session::REVIVE_EVERY_MS - 1;
+    session.frame(&mut host);
+    assert_eq!(wiring.borrow().revived, 1, "not every frame");
+    host.now_ms = session::REVIVE_EVERY_MS;
+    session.frame(&mut host);
+    assert_eq!(wiring.borrow().revived, 2);
+    host.now_ms = RECONNECT_GRACE_MS;
+    session.frame(&mut host);
     assert_eq!(session.read(&host).route, Route::Sim);
+    assert_eq!(
+        wiring.borrow().revived,
+        2,
+        "a disarmed route stops reviving"
+    );
 
     assert_eq!(
         session.request(
@@ -334,8 +350,8 @@ fn a_broker_request_after_the_link_is_lost_revives_what_runs_beside_the_venue() 
         Err(Refusal::LinkDown),
         "not until the new bridge says hello"
     );
-    assert_eq!(wiring.borrow().revived, 1, "the request relaunches it");
+    assert_eq!(wiring.borrow().revived, 3, "the request relaunches it");
     session.press(&mut host, RoutePress::OpenList);
-    assert_eq!(wiring.borrow().revived, 2, "so does opening the list");
+    assert_eq!(wiring.borrow().revived, 4, "so does opening the list");
     assert_eq!(wiring.borrow().built, 1, "the same venue, waiting");
 }

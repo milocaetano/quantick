@@ -68,7 +68,13 @@ pub struct BrokerSession {
     sheet: Option<Sheet>,
     /// A staged capture's scene: `None` until the host has looked.
     staged: Option<Option<Scene>>,
+    /// When a reconnecting route last asked the connector to revive.
+    revived_ms: Option<i64>,
 }
+
+/// How often a reconnecting route asks the connector to revive its link, in
+/// milliseconds: a bridge that will not start is not relaunched every frame.
+pub(super) const REVIVE_EVERY_MS: i64 = 2_000;
 
 impl Default for BrokerSession {
     fn default() -> Self {
@@ -87,6 +93,7 @@ impl BrokerSession {
             allow_agent_orders,
             sheet: None,
             staged: None,
+            revived_ms: None,
         }
     }
 
@@ -109,8 +116,26 @@ impl BrokerSession {
             if let Some(toast) = self.desk.take_toast() {
                 host.toast(toast);
             }
+            self.revive(host, now_ms);
         }
         self.refresh(host);
+    }
+
+    /// While the route reconnects, ask the connector to restart what the
+    /// link needs, at most every [`REVIVE_EVERY_MS`].
+    fn revive(&mut self, host: &dyn RouteHost, now_ms: i64) {
+        if self.desk.route().reconnecting_since().is_none() {
+            self.revived_ms = None;
+            return;
+        }
+        if self
+            .revived_ms
+            .is_some_and(|at| now_ms.saturating_sub(at) < REVIVE_EVERY_MS)
+        {
+            return;
+        }
+        self.revived_ms = Some(now_ms);
+        self.ensure_venue(host);
     }
 
     /// Carry out a press on the route block or the toolbar notice. Opening

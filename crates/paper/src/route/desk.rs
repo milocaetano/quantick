@@ -133,6 +133,7 @@ impl BrokerDesk {
     pub fn frame(&mut self, port: &mut dyn AccountsPort, source: SourceFacts, now_ms: i64) {
         let before = self.route.last_disarm();
         let was = self.route.route();
+        let was_reconnecting = self.route.reconnecting_since().is_some();
         // A held REAL row arms the frame its hold completes, as long as the
         // row reported itself still pressed since the last frame.
         if self.route.hold_progress(now_ms).is_some() {
@@ -154,6 +155,10 @@ impl BrokerDesk {
             && self.route.last_disarm() != before
         {
             self.toast = Some(super::sheet::disarm_toast(was, reason));
+        }
+        let reconnecting = self.route.reconnecting_since().is_some();
+        if self.route.route().is_broker() && reconnecting != was_reconnecting {
+            self.toast = Some(super::sheet::reconnect_toast(was, reconnecting));
         }
     }
 
@@ -275,9 +280,10 @@ impl BrokerDesk {
     }
 
     /// Why an order from `actor` on the active chart is refused, if it is.
-    /// Every write that reaches a broker venue is judged: an agent's only
-    /// on an armed route the config opened to agents, and never on a venue
-    /// parked with what the trader left at the broker.
+    /// Every write that reaches a broker venue is judged: nobody's while the
+    /// route reconnects, an agent's only on an armed route the config opened
+    /// to agents, and never on a venue parked with what the trader left at
+    /// the broker.
     #[must_use]
     pub fn write_block(
         &self,
@@ -285,11 +291,11 @@ impl BrokerDesk {
         actor: Actor,
         allow_agent_orders: bool,
     ) -> Option<Refusal> {
-        if actor == Actor::Trader {
-            return None;
-        }
         if let Some(refusal) = self.route.write_block(actor, allow_agent_orders) {
             return Some(refusal);
+        }
+        if actor == Actor::Trader {
+            return None;
         }
         let parked = !self.route.route().is_broker()
             && port

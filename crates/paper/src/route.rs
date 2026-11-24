@@ -21,9 +21,13 @@
 //! - **Leaving never hides money.** Going back to the simulator with a
 //!   position or orders at the broker asks first: flatten them, or leave them
 //!   there (their plates stay on the chart).
-//! - **Anything that makes the route unsafe disarms it**, with the reason: the
-//!   link lost, the terminal logged into another account or refused, broker
-//!   routes switched off, or a chart whose source cannot route orders.
+//! - **A brief link loss reconnects; anything else unsafe disarms**, with the
+//!   reason. An armed route whose link drops is *reconnecting*: every order
+//!   is refused with [`Refusal::Reconnecting`] while the venue is revived, and
+//!   the link coming back on the same [`AccountKey`] within
+//!   [`RECONNECT_GRACE_MS`] resumes it. Past that, another account or a
+//!   refused one, broker routes switched off, or a chart whose source cannot
+//!   route orders goes back to the simulator.
 
 use quantick_trading::{AccountFacts, TradeMode, VenueNotice};
 
@@ -45,6 +49,10 @@ pub use sheet::{
 
 /// How long a REAL row is held before it arms, in milliseconds.
 pub const HOLD_TO_ARM_MS: i64 = 1_000;
+
+/// How long an armed route waits for its lost link before it disarms, in
+/// milliseconds.
+pub const RECONNECT_GRACE_MS: i64 = 30_000;
 
 /// Where orders go.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -165,6 +173,7 @@ pub enum Refusal {
     ExposureNeedsChoice,
     AgentOrdersOff,
     ParkedAtBroker,
+    Reconnecting,
 }
 
 impl Refusal {
@@ -182,6 +191,7 @@ impl Refusal {
             Self::ExposureNeedsChoice => "route.exposure_needs_choice",
             Self::AgentOrdersOff => "route.agent_orders_off",
             Self::ParkedAtBroker => "route.parked_at_broker",
+            Self::Reconnecting => "route.reconnecting",
         }
     }
 
@@ -208,6 +218,9 @@ impl Refusal {
             }
             Self::ParkedAtBroker => {
                 "orders left at the broker answer only the trader's own hand - close them in the window, or arm the account again"
+            }
+            Self::Reconnecting => {
+                "the link with the broker is down - reconnecting; nothing was sent, retry once it is back"
             }
         }
     }
@@ -292,6 +305,8 @@ pub struct AccountRoute {
     disarmed: Option<(Disarm, i64)>,
     /// A trader asked to leave with exposure and has not chosen how.
     leaving: bool,
+    /// When the armed route's link was lost, while it waits to come back.
+    reconnecting_since: Option<i64>,
 }
 
 impl AccountRoute {
@@ -310,6 +325,12 @@ impl AccountRoute {
     #[must_use]
     pub fn last_disarm(&self) -> Option<(Disarm, i64)> {
         self.disarmed
+    }
+
+    /// When the armed route's link was lost, while it is reconnecting.
+    #[must_use]
+    pub fn reconnecting_since(&self) -> Option<i64> {
+        self.reconnecting_since
     }
 
     /// Whether a leave with exposure waits for the trader's choice.
@@ -381,6 +402,7 @@ impl AccountRoute {
         };
         self.route = Route::Sim;
         self.leaving = false;
+        self.reconnecting_since = None;
         Ok(RouteChange::ToSim { flatten })
     }
 
@@ -483,9 +505,10 @@ impl AccountRoute {
         change
     }
 
-    /// Re-read the facts each frame: a route that has become unsafe goes
-    /// back to the simulator, with the reason. A hold the facts no longer
-    /// allow is dropped.
+    /// Re-read the facts each frame: a route whose link is down reconnects
+    /// until [`RECONNECT_GRACE_MS`] has passed; one that has become unsafe
+    /// otherwise goes back to the simulator, with the reason. A hold the
+    /// facts no longer allow is dropped.
     pub fn observe(&mut self, facts: &RouteFacts, now_ms: i64) -> RouteChange {
         if self.hold_started_ms.is_some() && Self::availability(facts, Route::Real).is_err() {
             self.hold_started_ms = None;
@@ -494,20 +517,36 @@ impl AccountRoute {
             return RouteChange::None;
         }
         let reason = match Self::availability(facts, self.route) {
-            Ok(()) if facts.account_key == self.account_key => return RouteChange::None,
+            Ok(()) if facts.account_key == self.account_key => {
+                // Back on the account that was armed: the same route resumes.
+                self.reconnecting_since = None;
+                return RouteChange::None;
+            }
             // The same kind of account, but not the one that was armed.
             Ok(()) => Disarm::AccountChanged,
             Err(Refusal::BrokerOff) => Disarm::BrokerOff,
             Err(Refusal::SourceCannotRoute) => Disarm::SourceCannotRoute,
-            Err(Refusal::LinkDown | Refusal::NoAccount) => Disarm::LinkLost,
+            Err(Refusal::LinkDown | Refusal::NoAccount) => {
+                let since = *self.reconnecting_since.get_or_insert(now_ms);
+                if now_ms.saturating_sub(since) < RECONNECT_GRACE_MS {
+                    return RouteChange::None;
+                }
+                // The status counts from the moment the link was lost.
+                return self.disarm(Disarm::LinkLost, since);
+            }
             Err(_) => Disarm::AccountChanged,
         };
         self.disarm(reason, now_ms)
     }
 
-    /// What the broker said about itself: a lost link, another account or
-    /// a refused one disarms.
+    /// What the broker said about itself: a lost link starts reconnecting,
+    /// another account or a refused one disarms.
     pub fn on_notice(&mut self, notice: &VenueNotice, now_ms: i64) -> RouteChange {
+        if matches!(notice, VenueNotice::LinkLost) && self.route.is_broker() {
+            self.hold_started_ms = None;
+            self.reconnecting_since.get_or_insert(now_ms);
+            return RouteChange::None;
+        }
         let reason = match notice {
             VenueNotice::LinkLost => Disarm::LinkLost,
             VenueNotice::AccountChanged => Disarm::AccountChanged,
@@ -527,16 +566,21 @@ impl AccountRoute {
         self.route = Route::Sim;
         self.hold_started_ms = None;
         self.leaving = false;
+        self.reconnecting_since = None;
         self.disarmed = Some((reason, now_ms));
         // Never flattened on the trader's behalf: protective prices already
         // rest at the broker, and a close nobody asked for is a trade.
         RouteChange::ToSim { flatten: false }
     }
 
-    /// Why a broker order from `actor` is refused, if it is: on a broker
-    /// route an agent places orders only where the config allows it.
+    /// Why a broker order from `actor` is refused, if it is: anyone's while
+    /// the route reconnects, and on a broker route an agent's unless the
+    /// config allows it.
     #[must_use]
     pub fn write_block(&self, actor: Actor, allow_agent_orders: bool) -> Option<Refusal> {
+        if self.reconnecting_since.is_some() {
+            return Some(Refusal::Reconnecting);
+        }
         (self.route.is_broker() && actor == Actor::Agent && !allow_agent_orders)
             .then_some(Refusal::AgentOrdersOff)
     }
