@@ -674,6 +674,18 @@ mod tests {
     }
 
     #[test]
+    fn the_last_price_is_the_forming_close_else_the_last_closed_one() {
+        use crate::market_fold::last_price;
+        let mut chart = ChartState::new(BarSpec::Tick(2));
+        assert_eq!(last_price(&chart), None, "an empty chart");
+        chart.ingest_live(&print_at(0, "100"));
+        assert_eq!(last_price(&chart), Some(100.0), "the forming bar");
+        chart.ingest_live(&print_at(1, "101"));
+        assert!(chart.partial().is_none(), "the second print closes the bar");
+        assert_eq!(last_price(&chart), Some(101.0), "the closed bar");
+    }
+
+    #[test]
     fn a_chart_names_the_grid_its_own_tape_prints_on() {
         // B3's mini index moves in five-point steps. Nothing states that here:
         // the chart is told only the prints, exactly as a market replay tells

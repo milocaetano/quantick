@@ -346,7 +346,7 @@ impl ChartPane {
     /// the indicators have to see.
     ///
     /// `alarm_tag` rides each close to the indicators and back on the
-    /// alarms it raises, naming the market it closed on.
+    /// alarms it raises, naming the market and the bars it closed on.
     ///
     /// `closed_observer` hears each bar the print closed, with its footprint,
     /// at its *composed* slot (venue history prefix + live bars) — the space

@@ -5,6 +5,7 @@
 //! that closed while the app watched, and it is raised again only by a bar
 //! that closes again.
 use quantick_alerts::SourceContext;
+use quantick_engine::bar_registry::BarConfiguration;
 /// The alarm a [`Raised`] carries, for readers the dependency graph keeps
 /// off the indicator crate (control-handlers).
 pub use quantick_indicators::{FiredAlert, ScriptAlarm};
@@ -13,12 +14,14 @@ use std::collections::VecDeque;
 /// How many alarms the log keeps; the oldest goes first.
 pub const SCRIPT_ALARM_CAPACITY: usize = 256;
 
-/// An alarm labelled with the market whose bar raised it.
+/// An alarm labelled with the market and the chart whose bar raised it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Raised {
     /// The live feed, or the recording a replay plays.
     pub source: SourceContext,
     pub symbol: String,
+    /// The chart's bars, as its header names them: `Renko 6`, `Time 1m`.
+    pub chart: String,
     pub alarm: ScriptAlarm,
 }
 
@@ -54,50 +57,92 @@ impl SourceRef<'_> {
     }
 }
 
-/// How many market labels a tab remembers: alarms arrive from the indicator
-/// worker a frame or so after their bar closed, so only the last few
-/// markets can still have alarms in flight.
+/// How many market and chart labels a tab remembers, least recently used
+/// out first: alarms arrive from the indicator worker a frame or so after
+/// their bar closed, so only the last few can still have alarms in flight.
 pub const LABELS_KEPT: usize = 16;
 
-/// A tab's market labels by tag. Each closed bar is sent to the indicators
-/// with the tag of the market it closed on, and each alarm echoes it, so a
-/// market switch between the close and the alarm's arrival cannot relabel
-/// the alarm.
+#[derive(Debug)]
+struct Label {
+    tag: u64,
+    source: SourceContext,
+    symbol: String,
+    chart: BarConfiguration,
+}
+
+/// A tab's market and chart labels by tag. Each closed bar is sent to the
+/// indicators with the tag of the market and chart it closed on, and each
+/// alarm echoes it, so a market switch or a bar change between the close
+/// and the alarm's arrival cannot relabel the alarm.
 #[derive(Debug, Default)]
 pub struct AlarmLabels {
-    labels: VecDeque<(u64, SourceContext, String)>,
+    labels: VecDeque<Label>,
     last_tag: u64,
 }
 
 impl AlarmLabels {
-    /// The tag for bars closing on `source` and `symbol` now; a new one
-    /// only when the market differs from the last tagged.
-    pub fn tag(&mut self, source: SourceRef<'_>, symbol: &str) -> u64 {
-        if let Some((tag, kept, kept_symbol)) = self.labels.back()
-            && source.is(kept)
-            && kept_symbol == symbol
-        {
-            return *tag;
+    /// The tag for bars `chart` closes on `source` and `symbol` now; a new
+    /// one only for a label not already kept.
+    pub fn tag(&mut self, source: SourceRef<'_>, symbol: &str, chart: BarConfiguration) -> u64 {
+        let kept = self.labels.iter().rposition(|label| {
+            label.chart == chart && label.symbol == symbol && source.is(&label.source)
+        });
+        if let Some(at) = kept {
+            // Panes tag print by print in turn; keep every live one recent.
+            if at + 1 != self.labels.len() {
+                let label = self.labels.remove(at).expect("a kept position");
+                self.labels.push_back(label);
+            }
+            return self.labels.back().expect("just kept").tag;
         }
         self.last_tag += 1;
         if self.labels.len() == LABELS_KEPT {
             self.labels.pop_front();
         }
-        let label = (self.last_tag, source.to_context(), symbol.to_owned());
-        self.labels.push_back(label);
+        self.labels.push_back(Label {
+            tag: self.last_tag,
+            source: source.to_context(),
+            symbol: symbol.to_owned(),
+            chart,
+        });
         self.last_tag
     }
 
-    /// `alarm` under the market its tag names; `None` for a tag this tab
-    /// never handed out or has forgotten.
+    /// Tags for the charts of a print landing on `source` and `symbol`.
+    pub fn on<'a>(&'a mut self, source: SourceRef<'a>, symbol: &'a str) -> Tagger<'a> {
+        Tagger {
+            labels: self,
+            source,
+            symbol,
+        }
+    }
+
+    /// `alarm` under the market and chart its tag names; `None` for a tag
+    /// this tab never handed out or has forgotten.
     #[must_use]
     pub fn raise(&self, alarm: ScriptAlarm) -> Option<Raised> {
-        let (_, source, symbol) = self.labels.iter().find(|(tag, ..)| *tag == alarm.tag)?;
+        let label = self.labels.iter().find(|label| label.tag == alarm.tag)?;
         Some(Raised {
-            source: source.clone(),
-            symbol: symbol.clone(),
+            source: label.source.clone(),
+            symbol: label.symbol.clone(),
+            chart: label.chart.caption(),
             alarm,
         })
+    }
+}
+
+/// A tab's labels bound to one print's market, so each chart the print
+/// lands on asks for its tag with its own bars only.
+pub struct Tagger<'a> {
+    labels: &'a mut AlarmLabels,
+    source: SourceRef<'a>,
+    symbol: &'a str,
+}
+
+impl Tagger<'_> {
+    /// The tag for the bars `chart` closes on this print's market.
+    pub fn tag(&mut self, chart: BarConfiguration) -> u64 {
+        self.labels.tag(self.source, self.symbol, chart)
     }
 }
 
@@ -117,10 +162,11 @@ impl ScriptAlarmEntry {
         let Raised {
             source,
             symbol,
+            chart,
             alarm,
         } = &self.raised;
         let alert = &alarm.alert;
-        let mut notice = format!("{symbol} {}: {}", alarm.indicator, alert.title);
+        let mut notice = format!("{symbol} {chart} · {}: {}", alarm.indicator, alert.title);
         if alert.message != alert.title {
             notice.push_str(" — ");
             notice.push_str(&alert.message);
@@ -132,10 +178,51 @@ impl ScriptAlarmEntry {
     }
 }
 
+/// The shortest gap between two script-alarm sounds, across every tab: a
+/// fast replay or a burst of panes would otherwise ring on every frame.
+pub const RING_GAP_MS: u64 = 3_000;
+
+/// When script alarms may sound. The first alarm after a quiet gap rings at
+/// once; alarms within [`RING_GAP_MS`] of a ring wait, and once the gap has
+/// passed one ring names the newest with `(+N)` for the others. The gate
+/// decides the sound and the toast only; every alarm is still recorded and
+/// journaled when it arrives. Told the time, never reads it.
+#[derive(Debug, Default)]
+struct RingGate {
+    /// When the last ring sounded, on the caller's monotonic clock.
+    last_ring_ms: Option<u64>,
+    /// The newest alarm waiting to ring, and how many wait with it.
+    held: Option<(ScriptAlarmEntry, usize)>,
+}
+
+impl RingGate {
+    fn hold(&mut self, entry: &ScriptAlarmEntry) {
+        let waiting = self.held.take().map_or(0, |(_, count)| count);
+        self.held = Some((entry.clone(), waiting + 1));
+    }
+
+    fn ring(&mut self, now_ms: u64) -> Option<String> {
+        let quiet = self
+            .last_ring_ms
+            .is_none_or(|last| now_ms.saturating_sub(last) >= RING_GAP_MS);
+        if !quiet {
+            return None;
+        }
+        let (newest, count) = self.held.take()?;
+        self.last_ring_ms = Some(now_ms);
+        let mut notice = newest.notice();
+        if count > 1 {
+            notice.push_str(&format!(" (+{})", count - 1));
+        }
+        Some(notice)
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct ScriptAlarmLog {
     entries: VecDeque<ScriptAlarmEntry>,
     last_sequence: u64,
+    gate: RingGate,
 }
 
 impl ScriptAlarmLog {
@@ -158,9 +245,18 @@ impl ScriptAlarmLog {
                 self.entries.pop_front();
             }
             self.entries.push_back(entry.clone());
+            self.gate.hold(&entry);
             recorded.push(entry);
         }
         recorded
+    }
+
+    /// The toast to show with one alarm sound now, if the alarms recorded
+    /// since the last ring may sound at `now_ms` (a monotonic clock, in
+    /// milliseconds). Ask every frame: a burst's last alarms ring once the
+    /// gap has passed, with no new alarm to prompt them.
+    pub fn ring(&mut self, now_ms: u64) -> Option<String> {
+        self.gate.ring(now_ms)
     }
 
     /// The kept entries with a sequence above `after` (all with `None`),
@@ -189,7 +285,12 @@ impl ScriptAlarmLog {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use quantick_engine::bar_registry::BUILTIN_BARS;
     use std::path::Path;
+
+    fn bars(config: &str) -> BarConfiguration {
+        BUILTIN_BARS.parse(config).expect("a built-in bar")
+    }
 
     fn alarm(tag: u64, title: &str) -> ScriptAlarm {
         ScriptAlarm {
@@ -204,26 +305,27 @@ mod tests {
     }
 
     #[test]
-    fn an_alarm_keeps_the_market_its_bar_closed_on() {
+    fn an_alarm_keeps_the_market_and_chart_its_bar_closed_on() {
         let mut labels = AlarmLabels::default();
-        let win = labels.tag(SourceRef::Live("mt5"), "WINZ25");
-        assert_eq!(
-            labels.tag(SourceRef::Live("mt5"), "WINZ25"),
-            win,
-            "same market"
-        );
-        let wdo = labels.tag(SourceRef::Live("mt5"), "WDOZ25");
-        let replay = labels.tag(SourceRef::Replay(Path::new("s.qtr")), "WINV25");
-        assert_eq!(
-            labels.tag(SourceRef::Replay(Path::new("s.qtr")), "WINV25"),
-            replay
-        );
+        let (renko, minute) = (bars("renko:6"), bars("time:1m"));
+        let live = SourceRef::Live("mt5");
+        let win = labels.tag(live, "WINZ25", renko);
+        let win_minute = labels.tag(live, "WINZ25", minute);
+        assert_ne!(win, win_minute, "each chart has its own label");
+        assert_eq!(labels.tag(live, "WINZ25", renko), win, "same chart again");
+        let wdo = labels.tag(live, "WDOZ25", renko);
+        let recording = SourceRef::Replay(Path::new("s.qtr"));
+        let replay = labels.tag(recording, "WINV25", renko);
+        assert_eq!(labels.tag(recording, "WINV25", renko), replay);
         assert_ne!(win, wdo);
 
-        // Raised on WINZ25 but arriving after two switches.
+        // Raised on WINZ25's renko chart but arriving after two switches.
         let raised = labels.raise(alarm(win, "a")).expect("a recent tag");
         assert_eq!(raised.symbol, "WINZ25");
-        assert_eq!(raised.source, SourceRef::Live("mt5").to_context());
+        assert_eq!(raised.chart, "Renko 6");
+        assert_eq!(raised.source, live.to_context());
+        let raised = labels.raise(alarm(win_minute, "a")).expect("a recent tag");
+        assert_eq!(raised.chart, "Time 1m");
         let raised = labels.raise(alarm(replay, "b")).expect("a recent tag");
         assert_eq!(
             (raised.symbol.as_str(), raised.source),
@@ -238,42 +340,47 @@ mod tests {
     }
 
     #[test]
-    fn only_the_last_markets_are_remembered() {
+    fn only_the_last_used_labels_are_remembered() {
         let mut labels = AlarmLabels::default();
-        let first = labels.tag(SourceRef::Live("mt5"), "S0");
-        for i in 1..=LABELS_KEPT {
-            labels.tag(SourceRef::Live("mt5"), &format!("S{i}"));
+        let live = SourceRef::Live("mt5");
+        let (first, kept) = (bars("renko:6"), bars("time:1m"));
+        let forgotten = labels.tag(live, "S0", first);
+        let in_use = labels.tag(live, "S0", kept);
+        for i in 1..LABELS_KEPT {
+            labels.tag(live, &format!("S{i}"), first);
+            // A pane still printing stays recent however many others came.
+            assert_eq!(labels.tag(live, "S0", kept), in_use);
         }
-        assert_eq!(labels.raise(alarm(first, "a")), None);
+        assert_eq!(labels.raise(alarm(forgotten, "a")), None);
+        assert!(labels.raise(alarm(in_use, "a")).is_some());
     }
 
-    fn entry(
-        log: &mut ScriptAlarmLog,
-        source: SourceContext,
-        alarm: ScriptAlarm,
-    ) -> ScriptAlarmEntry {
-        let raised = Raised {
-            source,
+    fn raised(title: &str) -> Raised {
+        Raised {
+            source: SourceRef::Live("mt5").to_context(),
             symbol: "WINZ25".to_owned(),
-            alarm,
-        };
+            chart: "Renko 6".to_owned(),
+            alarm: alarm(1, title),
+        }
+    }
+
+    fn entry(log: &mut ScriptAlarmLog, raised: Raised) -> ScriptAlarmEntry {
         log.record([raised], 0).remove(0)
     }
 
     #[test]
     fn sequences_increase_and_the_oldest_leaves_first() {
         let mut log = ScriptAlarmLog::default();
-        let live = SourceRef::Live("mt5").to_context();
-        let first = entry(&mut log, live.clone(), alarm(1, "a"));
-        entry(&mut log, live.clone(), alarm(1, "b"));
+        let first = entry(&mut log, raised("a"));
+        entry(&mut log, raised("b"));
         assert_eq!(first.sequence, 1);
-        assert_eq!(first.notice(), "WINZ25 Renko POC flip: a");
+        assert_eq!(first.notice(), "WINZ25 Renko 6 · Renko POC flip: a");
         let after: Vec<_> = log.after(Some(1)).map(|e| e.sequence).collect();
         assert_eq!(after, [2]);
         assert_eq!(log.oldest_sequence(), 1);
 
         for _ in 0..SCRIPT_ALARM_CAPACITY {
-            entry(&mut log, live.clone(), alarm(1, "c"));
+            entry(&mut log, raised("c"));
         }
         assert_eq!(log.after(None).count(), SCRIPT_ALARM_CAPACITY);
         assert_eq!(log.oldest_sequence(), 3);
@@ -281,14 +388,47 @@ mod tests {
     }
 
     #[test]
-    fn the_notice_names_the_message_and_a_replay() {
+    fn the_notice_names_the_chart_the_message_and_a_replay() {
         let mut log = ScriptAlarmLog::default();
-        let mut flip = alarm(1, "Bull flip");
-        flip.alert.message = "POC above".to_owned();
-        let replay = SourceRef::Replay(Path::new("session.qtr")).to_context();
+        let mut flip = raised("Bull flip");
+        flip.alarm.alert.message = "POC above".to_owned();
+        flip.source = SourceRef::Replay(Path::new("session.qtr")).to_context();
         assert_eq!(
-            entry(&mut log, replay, flip).notice(),
-            "WINZ25 Renko POC flip: Bull flip — POC above (replay)"
+            entry(&mut log, flip).notice(),
+            "WINZ25 Renko 6 · Renko POC flip: Bull flip — POC above (replay)"
         );
+    }
+
+    #[test]
+    fn the_first_alarm_rings_at_once_and_a_burst_waits_out_the_gap() {
+        let mut log = ScriptAlarmLog::default();
+        assert_eq!(log.ring(0), None, "nothing to ring");
+
+        entry(&mut log, raised("a"));
+        let lead = "WINZ25 Renko 6 · Renko POC flip: a";
+        assert_eq!(
+            log.ring(10).as_deref(),
+            Some(lead),
+            "the first rings at once"
+        );
+        assert_eq!(log.ring(11), None, "and only once");
+
+        // Three more inside the gap: silent, yet all recorded.
+        for (title, at) in [("b", 500), ("c", 1_200), ("d", 2_000)] {
+            entry(&mut log, raised(title));
+            assert_eq!(log.ring(at), None, "{title} waits");
+        }
+        assert_eq!(log.after(None).count(), 4, "every alarm is kept");
+        assert_eq!(log.ring(10 + RING_GAP_MS - 1), None, "the gap is not over");
+
+        // The gap passes with no new alarm: one ring names the newest.
+        let fold = "WINZ25 Renko 6 · Renko POC flip: d (+2)";
+        assert_eq!(log.ring(10 + RING_GAP_MS).as_deref(), Some(fold));
+        assert_eq!(log.ring(10 + 2 * RING_GAP_MS), None, "nothing left to ring");
+
+        // After a quiet gap the next alarm rings at once again.
+        entry(&mut log, raised("e"));
+        let next = log.ring(10 + 2 * RING_GAP_MS + 1);
+        assert_eq!(next.as_deref(), Some("WINZ25 Renko 6 · Renko POC flip: e"));
     }
 }

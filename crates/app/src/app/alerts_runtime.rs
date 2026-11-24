@@ -48,9 +48,9 @@ pub(crate) fn path() -> std::path::PathBuf {
     crate::store_home::resolve(quantick_stores::alerts::ALERTS_FILE)
 }
 
-/// Frame delivery docking: the script alarms every tab labelled are recorded
-/// and sound with the strategy alarms. Answers the script alarms
-/// delivered this frame, for the journal.
+/// Frame delivery docking: the script alarms every tab labelled are recorded,
+/// and sound and toast with the strategy alarms when their ring gate lets
+/// them. Answers every script alarm delivered this frame, for the journal.
 pub(super) fn deliver(
     owners: &mut super::workspace_runtime::WorkspaceRuntime,
     audio: &mut super::replay_and_history::AlertState,
@@ -64,8 +64,12 @@ pub(super) fn deliver(
         let labels = &tab.alarm_labels;
         alarms.into_iter().filter_map(|alarm| labels.raise(alarm))
     });
-    let scripts = runtime.core.script_alarms.record(raised, wall_clock_ms());
-    let script_cues = scripts.iter().map(|_| Cue::default());
+    let log = &mut runtime.core.script_alarms;
+    let scripts = log.record(raised, wall_clock_ms());
+    let ring = log.ring(runtime.clock_origin.elapsed().as_millis() as u64);
+    let script_cues = ring.as_ref().map(|_| Cue::default());
+    ring.into_iter()
+        .for_each(|it| crate::surfaces::toast::note(toast, it, std::time::Instant::now()));
     let strategy_cues = tabs.iter_mut().flat_map(|tab| tab.market.drain_alarms());
     let cues = strategy_cues.chain(script_cues);
     play(runtime, audio, toast, popup, cues);
@@ -86,19 +90,12 @@ pub(super) fn play(
     popup: &mut Popup,
     cues: impl IntoIterator<Item = Cue>,
 ) {
-    use quantick_alerts::{DeliveryOutcome, sound::AlertSound};
+    use quantick_alerts::DeliveryOutcome;
     // Persist the firing decision before attempting an irreversible notification.
     let persisted = runtime.core.events.is_empty() || runtime.core.flush().is_ok();
     let events: Vec<_> = runtime.core.events.drain().collect();
-    let alert_cues = events.iter().filter(|_| persisted).filter_map(|event| {
-        event
-            .spec
-            .notification
-            .sound
-            .as_deref()
-            .and_then(AlertSound::from_token)
-            .map(|sound| Cue::new(sound, event.spec.notification.sound_seconds))
-    });
+    let alert_cues = events.iter().filter(|_| persisted);
+    let alert_cues = alert_cues.filter_map(|event| event.spec.notification.cue());
     if let Some(message) = audio.play_pending(cues.into_iter().chain(alert_cues)) {
         crate::surfaces::toast::note(toast, message, std::time::Instant::now());
     }
@@ -161,20 +158,13 @@ pub(crate) fn context(
     display_offset_minutes: i32,
 ) -> crate::surfaces::alerts::Context {
     use quantick_alerts::MarketRef;
-    use rust_decimal::prelude::ToPrimitive;
     crate::surfaces::alerts::Context {
         market: MarketRef {
             source: crate::tab::Tab::alert_source(&tab.link, &tab.active).to_context(),
             symbol: tab.active.1.clone(),
             aggregation: pane.series.bar_config(),
         },
-        price: pane
-            .series
-            .state
-            .partial()
-            .or_else(|| pane.series.state.bars().last())
-            .and_then(|bar| bar.close.to_f64())
-            .filter(|price| price.is_finite()),
+        price: quantick_chart::market_fold::last_price(&pane.series.state),
         utc_ms: wall_clock_ms(),
         display_offset_minutes,
         drawings: pane

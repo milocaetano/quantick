@@ -57,6 +57,10 @@
       "format": "int64",
       "type": "integer"
     },
+    "chart": {
+      "description": "The bars of the chart that raised it, as its header names them:\n`Renko 6`, `Time 1m`. A script runs on every chart showing its\nlayout, so the same alarm title can come from several charts.",
+      "type": "string"
+    },
     "indicator": {
       "description": "The indicator's title, as its legend shows it.",
       "type": "string"
@@ -74,7 +78,7 @@
       "description": "Where the bar closed: the live feed, or the recording a replay plays."
     },
     "symbol": {
-      "description": "The market of the tab whose chart raised it, read when it arrived.",
+      "description": "The market the bar closed on.",
       "type": "string"
     },
     "title": {
@@ -92,6 +96,7 @@
     "utc_ms",
     "source",
     "symbol",
+    "chart",
     "indicator",
     "title",
     "message",

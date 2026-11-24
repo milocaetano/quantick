@@ -117,6 +117,15 @@ pub struct Notification {
     pub sound_seconds: Option<u32>,
 }
 
+impl Notification {
+    /// The sound this notification plays, if its token names one in the
+    /// catalog; none for a silent alert or an unknown token.
+    pub fn cue(&self) -> Option<crate::sound::Cue> {
+        let sound = crate::sound::AlertSound::from_token(self.sound.as_deref()?)?;
+        Some(crate::sound::Cue::new(sound, self.sound_seconds))
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AlertSpec {
     pub version: u32,
@@ -145,6 +154,23 @@ impl AlertSpec {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_notification_cues_only_a_catalog_sound() {
+        let mut notification = Notification {
+            popup: false,
+            toast: true,
+            sound: None,
+            sound_seconds: Some(2),
+        };
+        assert_eq!(notification.cue(), None, "a silent alert");
+        notification.sound = Some("no-such-sound".into());
+        assert_eq!(notification.cue(), None, "an unknown token");
+        let sound = crate::sound::AlertSound::Beep;
+        notification.sound = Some(sound.token().into());
+        let cue = crate::sound::Cue::new(sound, Some(2));
+        assert_eq!(notification.cue(), Some(cue));
+    }
 
     /// Native C11: an alert without a message raised an empty toast, so the
     /// trader could not tell which alert fired. The notice always names it.

@@ -31,10 +31,10 @@ fn raised(title: &str) -> Raised {
     let source = SourceContext::Live {
         feed: "mt5".to_owned(),
     };
-    let symbol = "WINZ25".to_owned();
     Raised {
         source,
-        symbol,
+        symbol: "WINZ25".to_owned(),
+        chart: "Renko 6".to_owned(),
         alarm,
     }
 }
@@ -62,6 +62,7 @@ fn history_reads_every_kept_alarm_or_only_newer_ones() {
             "utc_ms": 1_000,
             "source": {"Live": {"feed": "mt5"}},
             "symbol": "WINZ25",
+            "chart": "Renko 6",
             "indicator": "Renko POC flip",
             "title": "Bull flip",
             "message": "POC above",
@@ -80,24 +81,19 @@ fn history_refuses_an_unknown_field() {
 }
 
 #[test]
-fn each_delivered_alarm_is_journaled_once_and_toasted() {
+fn each_delivered_alarm_is_journaled_once_even_while_the_ring_waits() {
     let mut log = ScriptAlarmLog::default();
     let delivered = log.record([raised("Bull flip")], 1_000);
     let mut access = FakeAccess::default();
     let actor = FakeWindow::trader();
-    let notes = journal(Some((&mut access, &actor)), &delivered);
-    assert_eq!(notes, ["WINZ25 Renko POC flip: Bull flip — POC above"]);
+    assert_eq!(journal(Some((&mut access, &actor)), &delivered).count(), 0);
     assert_eq!(access.events.len(), 1);
     assert_eq!(access.events[0].kind.as_str(), FIRED_EVENT_KIND);
-
-    let notes = journal::<FakeAccess>(None, &delivered);
-    assert_eq!(notes.len(), 1, "a window with no journal still toasts");
+    assert_eq!(access.events[0].payload["chart"], "Renko 6");
+    assert!(log.ring(0).is_some(), "the first alarm rings");
 
     let burst = log.record([raised("Bull flip"), raised("Bear flip")], 2_000);
-    let notes = journal(Some((&mut access, &actor)), &burst);
-    assert_eq!(
-        notes,
-        ["WINZ25 Renko POC flip: Bull flip — POC above (+1 more)"]
-    );
-    assert_eq!(access.events.len(), 3, "each alarm is journaled");
+    assert_eq!(journal(Some((&mut access, &actor)), &burst).count(), 0);
+    assert_eq!(log.ring(1), None, "the burst waits for the gap");
+    assert_eq!(access.events.len(), 3, "each alarm is journaled at once");
 }

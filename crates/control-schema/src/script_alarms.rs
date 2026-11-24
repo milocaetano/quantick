@@ -33,8 +33,12 @@ pub struct ScriptAlarm {
     pub utc_ms: i64,
     /// Where the bar closed: the live feed, or the recording a replay plays.
     pub source: AlarmSource,
-    /// The market of the tab whose chart raised it, read when it arrived.
+    /// The market the bar closed on.
     pub symbol: String,
+    /// The bars of the chart that raised it, as its header names them:
+    /// `Renko 6`, `Time 1m`. A script runs on every chart showing its
+    /// layout, so the same alarm title can come from several charts.
+    pub chart: String,
     /// The indicator's title, as its legend shows it.
     pub indicator: String,
     /// The `alertcondition` title.
@@ -71,6 +75,7 @@ impl From<&ScriptAlarmEntry> for ScriptAlarm {
             utc_ms: entry.utc_ms,
             source: AlarmSource::from(&raised.source),
             symbol: raised.symbol.clone(),
+            chart: raised.chart.clone(),
             indicator: raised.alarm.indicator.clone(),
             title: raised.alarm.alert.title.clone(),
             message: raised.alarm.alert.message.clone(),
@@ -96,7 +101,7 @@ pub fn descriptor() -> CapabilityDescriptor {
         id: HISTORY_CAPABILITY_ID,
         module: crate::alerts::MODULE_ID,
         title: "Read script alarms",
-        description: "Reads the alarms indicator scripts raised this session, oldest first: each Pine alertcondition that held on a bar that closed on the tab's source, once per bar; never on a forming bar, nor for history recomputed on load, backfill, input change or reload. A replay is a source too: its alarms carry source Replay with the recording. Each carries sequence, delivery time, source, symbol, indicator title, alert title and message, and the bar's close time. The newest 256 are kept, not persisted; oldest_sequence shows what was dropped. Pass after = a previous last_sequence for only newer ones; each is also journaled as alerts.script.fired. Changes nothing.",
+        description: "Reads the alarms indicator scripts raised this session, oldest first: each Pine alertcondition that held on a bar that closed on the tab's source, once per bar; never on a forming bar, nor for history recomputed on load, backfill, input change or reload. A replay is a source too: its alarms carry source Replay with the recording. Each carries sequence, delivery time, source, symbol, chart (the bars that raised it, e.g. Renko 6), indicator title, alert title and message, and the bar's close time. Every alarm is kept and journaled; the window's sound and toast ring at most once every 3 seconds, naming the newest with (+N) for the others. The newest 256 are kept, not persisted; oldest_sequence shows what was dropped. Pass after = a previous last_sequence for only newer ones; each is also journaled as alerts.script.fired. Changes nothing.",
         permissions: &[
             "observe",
             "observe.market",
