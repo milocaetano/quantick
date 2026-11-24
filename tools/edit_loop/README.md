@@ -98,8 +98,11 @@ missing history, a new representative, or fewer samples produces an explicit
 
 Comparison identity is host class, toolchain, jobs, root profile hash, protocol
 hash, and crate/package/representative path. Source commits intentionally may
-differ. Incompatible runs are excluded; malformed evidence, non-main history,
-duplicate SHAs and non-prior timestamps fail validation. A rerun excludes its
+differ. Incompatible runs are excluded before validation, so a protocol
+change never fails on rows recorded under older rules. Malformed compatible
+evidence, non-main history, duplicate SHAs and timestamps more than five
+minutes after the current run fail validation, in either context; a row ahead
+by less (runner clock skew) is skipped. A rerun excludes its
 own SHA. The last 100 complete reports are retained in a main-only cache;
 uncancelled main runs serialize publication. Cache eviction is a reported cold
 start. PRs read main history but cannot publish it. Regression measurements
@@ -113,6 +116,10 @@ Historical `budgets.json` remains an input artifact; it no longer gates timing
 or crate-selection drift. `propose` still prints the historical fixed-budget
 formula for inspecting retained artifacts; it changes no files. Measurement
 errors and test failures remain failures in either context.
+
+```powershell
+python tools/edit_loop/measure.py propose C:/bench/run-001-evidence/report.json --repo .
+```
 
 ### Historical fixed-budget policy
 

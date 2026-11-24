@@ -277,6 +277,19 @@ class BudgetTests(unittest.TestCase):
         for sha in ("a", "b"):
             with self.subTest(future_sha=sha), self.assertRaisesRegex(ValueError, "precede"):
                 budgets.check(report, [self.report(sha, 21)])
+
+    def test_old_protocol_rows_and_clock_skew_do_not_wedge_runs(self):
+        report = self.report()
+        old_protocol = self.report("b", 1) | {"protocol_hash": "older"}
+        old_protocol["crates"][0]["samples"].pop()  # Valid under its own, older rules.
+        for context in ("pr", "main"):
+            self.assertEqual(budgets.check(report, [old_protocol], context)["status"], "advisory")
+        skewed = self.report("b", 20)
+        skewed["measured_utc"] = "2026-11-20T00:04:00+00:00"
+        self.assertEqual(budgets.check(report, [skewed])["crates"][0]["history_count"], 0)
+        skewed["measured_utc"] = "2026-11-20T00:06:00+00:00"
+        with self.assertRaisesRegex(ValueError, "precede"):
+            budgets.check(report, [skewed])
         for context in ("pr", "main"):
             for broken in ({"tests_passed": None}, {"exit_code": 101},
                            {"elapsed_seconds": float("nan")}):

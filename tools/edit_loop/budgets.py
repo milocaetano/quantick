@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 import math
 from statistics import median
 
+from evidence import MAX_CLOCK_SKEW
 import inputs
 
 # Operational calibration headroom: 25% above the slowest retained loop,
@@ -81,22 +82,25 @@ def check(report, history=(), context="pr"):
     previous = []
     seen = set()
     for prior in history:
-        valid_report(prior)
         if prior.get("timing_context") != "main":
             raise ValueError("history must come from main measurements")
         if any(prior.get(field) is None for field in IDENTITY):
             raise ValueError("history is missing comparison identity")
+        if any(prior[field] != report[field] for field in IDENTITY):
+            # Rows from another protocol are judged by their own rules, not today's;
+            # validating them would let one protocol change wedge every later run.
+            continue
+        valid_report(prior)
         sha = prior["source_sha"]
         if sha in seen:
             raise ValueError("duplicate source SHA in timing history")
         seen.add(sha)
         prior_time = timestamp(prior)
-        if prior_time > current or (prior_time == current and sha != report["source_sha"]):
+        if prior_time > current + MAX_CLOCK_SKEW or (prior_time == current and sha != report["source_sha"]):
             raise ValueError("history must precede the current measurement")
-        if sha == report["source_sha"]:
-            continue  # A rerun must not use its own prior result as a baseline.
-        if all(prior[field] == report[field] for field in IDENTITY):
-            previous.append(prior)
+        if sha == report["source_sha"] or prior_time > current:
+            continue  # A rerun, or a row ahead only by runner clock skew, is no baseline.
+        previous.append(prior)
     previous.sort(key=lambda prior: (timestamp(prior), prior["source_sha"]))
     results = []
     for row in report["crates"]:
