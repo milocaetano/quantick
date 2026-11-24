@@ -2,7 +2,7 @@
 
 use quantick_appearance::{
     Appearance, ChartSurface, DARK, Ground, Inheritance, LIGHT, PaneCanvas, PremultipliedRgba,
-    ResolvedTheme,
+    ResolvedTheme, Token,
 };
 
 use crate::presets::{PRESETS_FILE, PresetStore};
@@ -298,6 +298,13 @@ fn a_time_chart_made_dark_reads_the_dark_bank_and_the_dark_ink() {
         assert_eq!(mark.style, dark[index], "{}", mark.tool.id());
     }
     assert_ne!(dark[1], red());
+    // The tokens a profile paints its casing and POC with are the dark
+    // ground's too, not the light paper's.
+    let palette = drawings.palette().expect("followed a ground");
+    let bundled_dark = ResolvedTheme::bundled(true);
+    for token in [Token::Casing, Token::Poc] {
+        assert_eq!(palette.color(token), bundled_dark.color(token), "{token:?}");
+    }
     // A line opened there reads the dark bank, and is the trader's.
     open(&mut drawings, &store, made_dark, line);
     assert_eq!(drawings.items()[2].style, red());

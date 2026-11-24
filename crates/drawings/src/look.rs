@@ -74,6 +74,15 @@ impl<T: ToolCatalog> Drawings<T> {
         self.canvas
     }
 
+    /// The palette of this pane's ground, from the last
+    /// [`Self::follow_ground`]: what its marks paint their theme tokens
+    /// with (a profile's casing and POC), so a time chart made dark paints
+    /// them as the dark ground does. `None` before the first call.
+    #[must_use]
+    pub fn palette(&self) -> Option<&ResolvedTheme> {
+        self.ground_ink.as_ref()?.palette.as_ref()
+    }
+
     /// Dress the factory-look marks in the factory ink of `canvas` — the
     /// pane's painted canvas — when it or `host`'s theme moved since the
     /// last call. A saved default is no move: it never reaches them. Called
