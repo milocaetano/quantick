@@ -38212,6 +38212,11 @@
                 "$ref": "#/$defs/WireU64",
                 "description": "Identity, stable while the object lives. Position in the list is not\nidentity: removing an earlier object renumbers positions and never\nthis."
               },
+              "follows_ground": {
+                "default": false,
+                "description": "Its look follows the ground of the pane it sits on: that ground's\nsaved default for the tool, else the built-in ink, repainted when the\ntheme, the pane's background or the default changes. False once its\nlook is the trader's own (any edit of colour, width, fill or a tool's\nlook), and for a mark saved before marks recorded it. Optional in the\nschema only so v1 readers stay compatible.",
+                "type": "boolean"
+              },
               "foreign_market": {
                 "description": "The tab changed the instrument under this mark. Time survives a symbol\nswitch and price does not, so the anchors still resolve while the level\nmeans nothing on the chart it is now over. The object stays and says\nso, rather than pretending to be a level on this market.",
                 "type": "boolean"

@@ -3,7 +3,7 @@
 //! the root theme, not from the dark island, so drawings, plot inks and every
 //! colour it leaves out are the root's paper defaults.
 use crate::orderflow::OrderflowOverride;
-use crate::{ColorValue, ResolvedTheme, ThemeDocument, ThemeError};
+use crate::{ColorValue, PremultipliedRgba, ResolvedTheme, ThemeDocument, ThemeError};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -69,6 +69,41 @@ pub enum Ground {
 /// ink out-contrasts black on it.
 pub const DARK_GROUND_MAX_LUMINANCE: f32 = 0.179;
 
+impl Ground {
+    /// The ground a canvas of this colour is: the one rule every pane's
+    /// ground is read by, whatever painted the canvas.
+    #[must_use]
+    pub fn of_canvas(canvas: PremultipliedRgba) -> Self {
+        if crate::contrast::relative_luminance(canvas) < DARK_GROUND_MAX_LUMINANCE {
+            Self::Dark
+        } else {
+            Self::Light
+        }
+    }
+}
+
+/// The canvas a chart pane's drawings sit on: the theme surface it paints
+/// with, and the plot background it paints when it paints one. The two can
+/// disagree: a time chart the trader gave a dark background on a light theme
+/// is as dark as the order-flow island beside it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct PaneCanvas {
+    pub surface: ChartSurface,
+    /// The opaque plot background; `None` paints none, and the surface's own
+    /// canvas shows through.
+    pub background: Option<PremultipliedRgba>,
+}
+
+impl From<ChartSurface> for PaneCanvas {
+    /// A pane that shows its surface's own canvas.
+    fn from(surface: ChartSurface) -> Self {
+        Self {
+            surface,
+            background: None,
+        }
+    }
+}
+
 impl LitFlowOverride {
     pub(crate) fn resolve(&self, parent: &ResolvedTheme) -> Result<ResolvedTheme, ThemeError> {
         if let Some(width) = self.candle_casing_px
@@ -132,11 +167,22 @@ impl ResolvedTheme {
     /// the root.
     #[must_use]
     pub fn ground(&self, surface: ChartSurface) -> Ground {
-        let canvas = self.surface(surface).color(crate::Token::ChartCanvas);
-        if crate::contrast::relative_luminance(canvas) < DARK_GROUND_MAX_LUMINANCE {
-            Ground::Dark
+        Ground::of_canvas(self.surface(surface).color(crate::Token::ChartCanvas))
+    }
+
+    /// The palette a pane's drawings take their built-in ink from, and the
+    /// ground whose saved defaults they read: the ground of the canvas the
+    /// pane shows, and its surface's palette while that surface is of the
+    /// same ground; otherwise the bundled theme of the ground shown, so a
+    /// time chart made dark reads like the order-flow island, not like paper.
+    #[must_use]
+    pub fn drawing_palette(&self, pane: PaneCanvas) -> (&Self, Ground) {
+        let own = self.ground(pane.surface);
+        let ground = pane.background.map_or(own, Ground::of_canvas);
+        if ground == own {
+            (self.surface(pane.surface), ground)
         } else {
-            Ground::Light
+            (Self::bundled(ground == Ground::Dark), ground)
         }
     }
 }

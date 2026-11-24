@@ -174,9 +174,9 @@ pub(crate) struct DrawingEnv<'a> {
     /// whatever now sits at its index.
     pub tab: u64,
     pub side: PaneSide,
-    /// The surface that pane paints on: it picks which ground's saved
+    /// The canvas that pane paints: it picks which ground's saved
     /// defaults the inspector saves and resets.
-    pub surface: quantick_appearance::ChartSurface,
+    pub canvas: quantick_appearance::PaneCanvas,
     /// Whether a drawing tool is armed. The trader is drawing, not editing:
     /// the context bar stands down so it cannot eat the click that places the
     /// next object.

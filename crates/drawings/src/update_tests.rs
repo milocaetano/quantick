@@ -160,7 +160,7 @@ fn placement(tool: DrawingTool, points: Vec<ChartPoint>) -> Placement {
         band: DrawingBand::Price,
         opening: crate::new_drawing_from_defaults(
             &crate::NullPresetHost,
-            quantick_appearance::ChartSurface::Paper,
+            quantick_appearance::ChartSurface::Paper.into(),
             tool,
         ),
         author: Some(DrawingAuthor {

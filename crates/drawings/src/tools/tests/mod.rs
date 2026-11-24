@@ -143,10 +143,14 @@ fn a_saved_default_shapes_the_next_object_and_never_the_ones_already_drawn() {
         payload.levels[1].color = Some([0xFF, 0x00, 0x88]);
         payload.label_mode = LabelMode::RatioPrice;
     }
-    save_tool_default(&mut host, ChartSurface::Paper, &drawings.items()[0].clone());
+    save_tool_default(
+        &mut host,
+        ChartSurface::Paper.into(),
+        &drawings.items()[0].clone(),
+    );
 
     // The next one opens configured, with no name invented for it.
-    let fresh = new_drawing_from_defaults(&host, ChartSurface::Paper, fib);
+    let fresh = new_drawing_from_defaults(&host, ChartSurface::Paper.into(), fib);
     assert_eq!(fresh.style, mine, "the look travels with the configuration");
     let fresh_fib = fresh
         .payload
@@ -158,13 +162,14 @@ fn a_saved_default_shapes_the_next_object_and_never_the_ones_already_drawn() {
     assert_eq!(fresh_fib.label_mode, LabelMode::RatioPrice);
 
     // A tool that was never taught anything still opens factory-fresh.
-    let untouched = new_drawing_from_defaults(&host, ChartSurface::Paper, tool("fib-extension"));
+    let untouched =
+        new_drawing_from_defaults(&host, ChartSurface::Paper.into(), tool("fib-extension"));
     assert_eq!(untouched.style, tool("fib-extension").default_style());
 
     // Reset puts the tool back the way it shipped...
-    reset_tool_default(&mut host, ChartSurface::Paper, fib);
-    assert!(!has_saved_default(&host, ChartSurface::Paper, fib));
-    let after_reset = new_drawing_from_defaults(&host, ChartSurface::Paper, fib);
+    reset_tool_default(&mut host, ChartSurface::Paper.into(), fib);
+    assert!(!has_saved_default(&host, ChartSurface::Paper.into(), fib));
+    let after_reset = new_drawing_from_defaults(&host, ChartSurface::Paper.into(), fib);
     assert_eq!(
         after_reset
             .payload
@@ -210,7 +215,7 @@ fn a_named_default_preset_outranks_the_button_saved_configuration() {
     );
     host.set_default_preset(fib.id(), Some("mine".to_owned()));
 
-    let fresh = new_drawing_from_defaults(&host, ChartSurface::Paper, fib);
+    let fresh = new_drawing_from_defaults(&host, ChartSurface::Paper.into(), fib);
     assert_eq!(
         fresh
             .payload

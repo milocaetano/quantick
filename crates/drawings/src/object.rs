@@ -32,6 +32,12 @@ pub struct Drawing<T> {
     /// The value axis the anchors were placed against.
     pub band: DrawingBand,
     pub style: DrawingStyle,
+    /// Where its look (style and the payload's preset export) comes from.
+    /// `Theme` follows its pane's ground: that ground's saved default for the
+    /// tool, else the built-in ink, repainted when the ground, the theme or
+    /// the default changes. `Explicit` is the trader's own and never
+    /// repainted. Any edit of the look makes it `Explicit` (`crate::look`).
+    pub look: quantick_appearance::Inheritance,
     /// A locked drawing keeps rejecting geometry edits and unforced deletes;
     /// its style stays editable.
     pub locked: bool,
@@ -232,6 +238,7 @@ impl<T: PartialEq> PartialEq for Drawing<T> {
             && self.points == other.points
             && self.band == other.band
             && self.style == other.style
+            && self.look == other.look
             && self.locked == other.locked
             && self.hidden == other.hidden
             && self.magnet == other.magnet
@@ -250,4 +257,19 @@ impl<T: PartialEq> PartialEq for Drawing<T> {
 pub struct NewDrawing {
     pub style: DrawingStyle,
     pub payload: Box<dyn DrawingPayload>,
+    /// `Theme` when the look is the pane ground's default, so the mark keeps
+    /// following it; see [`Drawing::look`].
+    pub look: quantick_appearance::Inheritance,
+}
+
+impl NewDrawing {
+    /// A look the caller chose itself, which no ground change repaints.
+    #[must_use]
+    pub fn explicit(style: DrawingStyle, payload: Box<dyn DrawingPayload>) -> Self {
+        Self {
+            style,
+            payload,
+            look: quantick_appearance::Inheritance::Explicit,
+        }
+    }
 }

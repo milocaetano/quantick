@@ -43,6 +43,8 @@ impl<T: ToolCatalog> Drawings<T> {
         copy.all_windows = false;
         let id = copy.id;
         self.items.push(copy);
+        // Its look was resolved on the source's canvas.
+        self.look_revision = None;
         self.select(Some(self.items.len() - 1));
         self.record(before);
         id

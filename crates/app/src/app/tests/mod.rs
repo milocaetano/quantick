@@ -1247,6 +1247,7 @@ fn split_with_a_shared_line(
         |tool| drawings::NewDrawing {
             style: drawings::DrawingStyle::default(),
             payload: tool.default_payload(),
+            look: Default::default(),
         },
     );
     app.active_tab_mut()
@@ -2532,6 +2533,7 @@ fn loaded_observer_workspace(bars: u64) -> (QuantickApp, mpsc::Receiver<FeedComm
             |tool| drawings::NewDrawing {
                 style: drawings::DrawingStyle::default(),
                 payload: tool.default_payload(),
+                look: Default::default(),
             },
         );
     }

@@ -765,11 +765,12 @@ pub(super) fn sync_appearance(
         crate::theme::sync(ctx, &runtime.appearance);
     }
     presets.sync_theme(&runtime.appearance);
+    let theme = runtime.appearance.resolved();
     for pane in runtime.tabs.iter_mut().flat_map(|tab| tab.panes_mut()) {
-        let surface = pane.surface();
-        pane.presentation
-            .candles
-            .follow_theme(runtime.appearance.resolved(), surface);
+        let (surface, candles) = (pane.surface(), &mut pane.presentation.candles);
+        candles.follow_theme(theme, surface);
+        let canvas = candles.canvas(&runtime.style, theme, surface);
+        pane.drawings.follow_ground(&*presets, canvas);
     }
     if runtime
         .chart_theme

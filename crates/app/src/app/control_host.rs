@@ -315,8 +315,8 @@ impl<'a> TabReads<'a> {
     /// What a freshly placed object of `tool` opens with on the pane at `side`
     /// of the tab at `index`, through the same door the click path uses.
     pub(crate) fn new_drawing(self, index: usize, side: PaneSide, tool: DrawingTool) -> NewDrawing {
-        let surface = self.tabs[index].pane(side).surface();
-        drawings::new_drawing_from_defaults(self.presets, surface, tool)
+        let canvas = self.tabs[index].pane(side).drawings.canvas();
+        drawings::new_drawing_from_defaults(self.presets, canvas, tool)
     }
 
     pub(crate) fn config(self) -> &'a AppConfig {

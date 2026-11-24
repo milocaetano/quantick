@@ -4,7 +4,7 @@
 //! mounts them, because they are window code and the tool is not.
 
 use eframe::egui;
-use quantick_appearance::ChartSurface;
+use quantick_appearance::PaneCanvas;
 use quantick_drawings::{
     AVWAP_SOURCES, AvwapPayload, ChannelPayload, DEFAULT_VALUE_AREA_PCT, FrvpPayload,
     MAX_WIDTH_FRAC, MIN_WIDTH_FRAC, RectanglePayload,
@@ -13,9 +13,9 @@ use quantick_drawings::{
 use super::{Drawing, DrawingPayload, DrawingTool, PresetHost, StyleColor32, fib};
 
 /// One tool's inspector tab: draws it, answering whether anything changed.
-/// The surface is the edited pane's, whose ground a "new objects" default
+/// The canvas is the edited pane's, whose ground a "new objects" default
 /// speaks for.
-type TabDrawer = fn(&mut egui::Ui, &mut Drawing, &mut dyn PresetHost, ChartSurface) -> bool;
+type TabDrawer = fn(&mut egui::Ui, &mut Drawing, &mut dyn PresetHost, PaneCanvas) -> bool;
 
 /// The widgets for the tab a tool declares, by the tool's id.
 fn tab_drawer(tool_id: &str) -> Option<TabDrawer> {
@@ -25,9 +25,9 @@ fn tab_drawer(tool_id: &str) -> Option<TabDrawer> {
         "parallel-channel" => |ui, drawing, _, _| draw_channel_tab(ui, drawing),
         "rectangle" => |ui, drawing, _, _| draw_rectangle_tab(ui, drawing),
         "text" => |ui, drawing, _, _| super::text_properties::draw(ui, drawing),
-        "fib-retracement" | "fib-extension" => |ui, drawing, host, surface| {
+        "fib-retracement" | "fib-extension" => |ui, drawing, host, canvas| {
             fib::remember_drawing_color(ui, drawing.style.color32());
-            fib::draw_levels_tab(ui, drawing, host, surface)
+            fib::draw_levels_tab(ui, drawing, host, canvas)
         },
         _ => return None,
     })
@@ -41,9 +41,9 @@ pub fn draw_extra_tab(
     ui: &mut egui::Ui,
     drawing: &mut Drawing,
     host: &mut dyn PresetHost,
-    surface: ChartSurface,
+    canvas: PaneCanvas,
 ) -> bool {
-    tab_drawer(tool.id()).is_some_and(|draw| draw(ui, drawing, host, surface))
+    tab_drawer(tool.id()).is_some_and(|draw| draw(ui, drawing, host, canvas))
 }
 
 /// The VWAP tab in the inspector: source, the three band pairs, and named

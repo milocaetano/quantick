@@ -291,6 +291,7 @@ fn the_journal_sees_only_the_marks_a_panes_layout_shows() {
     let fresh = |tool: DrawingTool| NewDrawing {
         style: DrawingStyle::default(),
         payload: tool.default_payload(),
+        look: Default::default(),
     };
     drawings.set_layout(Some(LayoutId(2)));
     assert!(drawings.place_with(tool.unwrap(), &DrawingBand::Price, point, fresh));
@@ -341,6 +342,7 @@ fn every_rename_records_an_edit_and_says_only_whether_the_name_was_typed() {
         drawings.place_with(tool, &DrawingBand::Price, point, |tool| NewDrawing {
             style: DrawingStyle::default(),
             payload: tool.default_payload(),
+            look: Default::default(),
         })
     );
     let mut baseline = SemanticBaseline::capture(&source);

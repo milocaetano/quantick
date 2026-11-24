@@ -47,6 +47,7 @@ fn level(drawings: &mut Drawings<DrawingTool>, price: f64) {
     let fresh = |tool: DrawingTool| NewDrawing {
         style: DrawingStyle::default(),
         payload: tool.default_payload(),
+        look: Default::default(),
     };
     assert!(drawings.place_with(tool, &DrawingBand::Price, point, fresh));
     let index = drawings.items().len() - 1;

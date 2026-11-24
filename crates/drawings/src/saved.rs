@@ -53,6 +53,7 @@ impl SavedDrawingExt for SavedDrawing {
             color: [r, g, b, a],
             width_px: f64::from(drawing.style.width_px),
             fill_alpha: drawing.style.fill_alpha,
+            follows_ground: drawing.follows_ground(),
             locked: drawing.locked,
             hidden: drawing.hidden,
             magnet: drawing.magnet,
@@ -115,6 +116,12 @@ impl SavedDrawingExt for SavedDrawing {
                 width_px: (self.width_px as f32)
                     .clamp(crate::MIN_DRAWING_WIDTH_PX, crate::MAX_DRAWING_WIDTH_PX),
                 fill_alpha: self.fill_alpha.min(crate::MAX_DRAWING_FILL_ALPHA),
+            },
+            // A mark without the flag is the trader's: nothing repaints it.
+            look: if self.follows_ground {
+                quantick_appearance::Inheritance::Theme
+            } else {
+                quantick_appearance::Inheritance::Explicit
             },
             locked: self.locked,
             hidden: self.hidden,

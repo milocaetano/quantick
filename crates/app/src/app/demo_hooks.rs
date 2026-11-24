@@ -359,10 +359,7 @@ pub(super) fn apply_strategy_demo(
         for point in anchors {
             pane.drawings
                 .place_with(rectangle, &drawings::DrawingBand::Price, point, |tool| {
-                    drawings::NewDrawing {
-                        style: drawings::DrawingStyle::default(),
-                        payload: tool.default_payload(),
-                    }
+                    drawings::NewDrawing::explicit(Default::default(), tool.default_payload())
                 });
         }
         let index = pane.drawings.items().len().saturating_sub(1);
