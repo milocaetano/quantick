@@ -6,7 +6,6 @@ use eframe::egui;
 use quantick_control_schema::canvas::{
     LAYOUT_PICKER_CAPABILITY_ID, OPEN_WINDOW_MENU_CAPABILITY_ID, PICK_LAYOUT_CAPABILITY_ID,
 };
-use quantick_session::workspace_menu::WorkspaceCommand;
 use quantick_ui_model::canvas_popovers::picked;
 use quantick_workspace::canvas::LayoutMarks;
 

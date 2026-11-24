@@ -152,3 +152,87 @@ fn closing_the_tab_forgets_its_revert() {
     book.close_tab(1);
     assert!(book.reverted.is_empty());
 }
+
+/// Tab 1 on `Legacy`, a workspace naming no bar rule, settled on Tick 500
+/// and 1m.
+fn on_legacy() -> WorkspaceBook {
+    let mut book = WorkspaceBook::default();
+    book.set_autosave(false);
+    book.open_tab(1);
+    book.observe(1, &on_bars("tick:500", "time:60000").without_bars())
+        .unwrap();
+    book.save_as(1, "Legacy").unwrap();
+    book.settle_tab(1, &on_bars("tick:500", "time:60000"));
+    book
+}
+
+/// The window re-settles a tab after an undo redraws it: the timeframes it
+/// brought back stay an edit.
+#[test]
+fn an_undone_revert_s_timeframes_stay_an_edit_once_the_tab_re_settles() {
+    let mut book = on_legacy();
+    let edit = on_bars("tick:2000", "time:300000");
+    book.observe(1, &edit).unwrap();
+    book.revert(1).unwrap();
+    book.settle_tab(1, &on_bars("tick:500", "time:60000"));
+    assert!(book.undo_revert(1).unwrap().changed);
+    book.settle_tab(1, &edit);
+    assert!(book.differs(1), "the floppy stays lit");
+    assert_eq!(
+        book.saved_fields(1).1.and_then(|copy| copy.flow_bars),
+        Some("tick:2000".to_owned()),
+        "the desk keeps the edit"
+    );
+}
+
+/// A relaunch brings a held copy back: its timeframes stay an edit after
+/// the panes settle on them.
+#[test]
+fn a_held_timeframe_edit_survives_a_relaunch_on_a_workspace_naming_none() {
+    let mut book = on_legacy();
+    let edit = on_bars("tick:2000", "time:300000");
+    book.observe(1, &edit).unwrap();
+    let (workspace, copy) = book.saved_fields(1);
+    book.close_tab(1);
+    book.restore_tab(1, &workspace.unwrap(), copy);
+    book.settle_tab(1, &edit);
+    assert!(book.differs(1));
+}
+
+/// The factory `Default` names no bar rule and refuses Save to: a modified
+/// tab settling there takes no reading its timeframes would be told from.
+#[test]
+fn a_modified_tab_on_the_factory_default_takes_no_settled_reading() {
+    let mut book = WorkspaceBook::default();
+    book.set_autosave(false);
+    book.open_tab(1);
+    let mut edit = on_bars("tick:500", "time:60000");
+    edit.split_fraction = Some(0.7);
+    book.observe(1, &edit).unwrap();
+    book.settle_tab(1, &edit);
+    assert!(book.differs(1));
+    assert_eq!(book.tabs[&1].settled, None);
+}
+
+/// A tab differing only by a failed save's held capture has nothing to lay
+/// back: the revert changes nothing and keeps the failed save's marker.
+#[test]
+fn a_revert_with_only_a_failed_save_s_capture_keeps_its_marker() {
+    let mut book = on_legacy();
+    book.unsynced.insert(1, Unsynced::Failed);
+    assert!(book.differs(1));
+    assert!(!book.revert(1).unwrap().changed);
+    assert!(book.unsynced.contains_key(&1));
+}
+
+/// A rename carries the undo; a delete drops it with the workspace.
+#[test]
+fn a_rename_carries_the_undo_and_a_delete_drops_it() {
+    let (mut book, saved) = on_scalp();
+    book.observe(1, &edited(&saved)).unwrap();
+    book.revert(1).unwrap();
+    book.rename("Scalp", "Scalp2").unwrap();
+    assert!(book.can_undo_revert(1));
+    book.delete("Scalp2").unwrap();
+    assert!(book.reverted.is_empty());
+}

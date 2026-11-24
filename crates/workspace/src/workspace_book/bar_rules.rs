@@ -48,6 +48,9 @@ impl WorkspaceBook {
 
     /// Once the panes stand, remember inherited intervals for an explicit save.
     /// A clean tab on the factory `Default` takes its market as its baseline.
+    /// The first settle on a named workspace is the reading its unnamed bar
+    /// rules are told from, kept until the tab leaves the workspace: a later
+    /// settle shows the tab's own edits, never what it opened with.
     pub fn settle_tab(&mut self, tab: u64, live: &WorkspaceRecipe) {
         let Some(state) = self.tabs.get(&tab) else {
             return;
@@ -66,7 +69,9 @@ impl WorkspaceBook {
             state.settled = None;
         } else {
             state.copy.take_inherited_bars(live);
-            state.settled = Some(live.clone());
+            if !factory && state.settled.is_none() {
+                state.settled = Some(live.clone());
+            }
         }
     }
 }

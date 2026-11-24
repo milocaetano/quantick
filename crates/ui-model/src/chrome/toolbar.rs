@@ -118,11 +118,14 @@ impl RevertSlot {
         tab: u64,
         workspace: &str,
     ) -> Self {
-        Self::of(
-            workspace,
-            &book.layout_changes(tab),
-            book.can_undo_revert(tab),
-        )
+        // With autosave on an edit is on its way: nothing to discard.
+        let held = book.tab_state(tab).is_some_and(|state| state.modified);
+        let changes = if held {
+            book.layout_changes(tab)
+        } else {
+            Vec::new()
+        };
+        Self::of(workspace, &changes, book.can_undo_revert(tab))
     }
 
     /// The slot for a tab: `changes` in [`quantick_workspace::workspace_recipe::WorkspaceRecipe::changes_from`]'s
@@ -132,7 +135,7 @@ impl RevertSlot {
         if !changes.is_empty() {
             let listed = changes.join(", ");
             return Self::Revert(format!(
-                "Discard changes, back to \u{201c}{workspace}\u{201d} as saved: {listed}"
+                "Discard layout changes, back to \u{201c}{workspace}\u{201d} as saved: {listed}"
             ));
         }
         if can_undo { Self::Undo } else { Self::Empty }
@@ -322,7 +325,7 @@ mod tests {
         assert_eq!(press.capability, "workspace.revert");
         assert_eq!(
             press.hover,
-            "Discard changes, back to \u{201c}Scalp\u{201d} as saved: timeframe, EMA"
+            "Discard layout changes, back to \u{201c}Scalp\u{201d} as saved: timeframe, EMA"
         );
         let undo = RevertSlot::of("Scalp", &[], true);
         let press = undo.press().unwrap();

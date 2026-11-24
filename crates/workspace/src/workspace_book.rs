@@ -911,17 +911,24 @@ impl WorkspaceBook {
     /// Answers whether the copy changed.
     pub fn discard_edits(&mut self, tab: u64) -> bool {
         self.unsynced.remove(&tab);
-        let Some(base) = self.tabs.get(&tab).and_then(|state| self.baseline(state)) else {
+        let Some(copy) = self.saved_copy(tab) else {
             return false;
         };
-        let mut copy = base.clone();
-        let state = self.tabs.get_mut(&tab).expect("found above");
-        if let Some(settled) = &state.settled {
-            copy.take_inherited_bars(settled);
-        }
+        let state = self.tabs.get_mut(&tab).expect("saved_copy found it");
         let changed = state.copy != copy;
         state.copy = copy;
         changed
+    }
+
+    /// What a discard lays on the tab: its workspace as saved, each bar rule
+    /// the workspace names none for as the tab settled on it.
+    fn saved_copy(&self, tab: u64) -> Option<WorkspaceRecipe> {
+        let state = self.tabs.get(&tab)?;
+        let mut copy = self.baseline(state)?.clone();
+        if let Some(settled) = &state.settled {
+            copy.take_inherited_bars(settled);
+        }
+        Some(copy)
     }
 
     /// Whether edits are written through as they are made.
@@ -1083,7 +1090,15 @@ impl WorkspaceBook {
         let held_copy = copy.is_some();
         let mut copy = copy.unwrap_or_else(|| self.recipes.get(&name).cloned().unwrap_or_default());
         copy.adopt_legacy_bars();
-        self.tabs.insert(tab, TabWorkspace::on(&name, copy));
+        let mut state = TabWorkspace::on(&name, copy);
+        // A kept copy's bar rules are edits the last session held: told from
+        // the workspace's own, which name none, so a relaunch keeps them.
+        let recipe = self
+            .recipes
+            .get(&name)
+            .filter(|recipe| !recipe.is_factory());
+        state.settled = recipe.filter(|_| held_copy).cloned();
+        self.tabs.insert(tab, state);
         self.unsynced.remove(&tab);
         if self.autosave && (self.differs(tab) || (held_copy && self.captures_inherited_bars(tab)))
         {
@@ -1359,6 +1374,7 @@ impl WorkspaceBook {
                 state.workspace.clone_from(&cleaned);
             }
         }
+        self.revert_renamed(name, &cleaned);
         for copies in self.parked.values_mut() {
             if let Some(copy) = copies.remove(name) {
                 copies.insert(cleaned.clone(), copy);

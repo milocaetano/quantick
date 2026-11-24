@@ -362,6 +362,12 @@ impl<'a> TabsMut<'a> {
         }
     }
 
+    /// The toolbar's History press, on the active tab.
+    pub(crate) fn press_active_history(self, reach: history_reach::HistoryReach) {
+        let active = self.tabs.active_index();
+        self.press_history(active, reach);
+    }
+
     /// One tab beside the feed table and History default a call lends it.
     pub(crate) fn lend_tab(self, index: usize) -> Option<market_tab::LentTab<'a>> {
         Some(market_tab::LentTab {

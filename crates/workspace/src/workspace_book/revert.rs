@@ -3,7 +3,7 @@ use super::{TabWorkspace, WorkspaceBook, WorkspaceRecipe, WorkspaceRefusal};
 
 /// The edits a revert dropped, held for [`WorkspaceBook::undo_revert`] while
 /// the tab stays on `workspace` and `workspace` still reads `base`: a save
-/// or a switch ends them.
+/// or a switch ends them, a rename carries them.
 #[derive(Debug, Clone, PartialEq)]
 pub(super) struct Reverted {
     workspace: String,
@@ -33,7 +33,10 @@ impl WorkspaceBook {
             workspace, copy, ..
         } = self.state(tab)?.clone();
         let base = self.recipes.get(&workspace).cloned();
-        let changed = self.differs(tab) && self.discard_edits(tab);
+        // A tab differing only by a failed save's held capture keeps its
+        // marker: there is nothing to lay back.
+        let moves = self.saved_copy(tab).is_some_and(|saved| saved != copy);
+        let changed = self.differs(tab) && moves && self.discard_edits(tab);
         if let Some(base) = base.filter(|_| changed) {
             let held = Reverted {
                 workspace: workspace.clone(),
@@ -68,6 +71,14 @@ impl WorkspaceBook {
         let held = self.reverted.remove(&tab).expect("held, checked above");
         let changed = self.observe(tab, &held.copy)?;
         Ok(RevertOutcome { workspace, changed })
+    }
+
+    /// A rename carries the held reverts of its tabs.
+    pub(super) fn revert_renamed(&mut self, name: &str, to: &str) {
+        let held = self.reverted.values_mut();
+        for held in held.filter(|held| held.workspace == name) {
+            held.workspace = to.to_owned();
+        }
     }
 
     fn held_revert(&self, tab: u64) -> Option<&Reverted> {

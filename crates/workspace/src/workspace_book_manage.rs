@@ -154,6 +154,7 @@ impl WorkspaceBook {
             }
             state.workspace = DEFAULT_WORKSPACE.to_owned();
             (state.opened, state.settled) = (None, None);
+            self.reverted.remove(tab);
             outcome.moved.push(*tab);
             if recipe.holds(&state.copy) {
                 state.copy.clone_from(&fallback);
