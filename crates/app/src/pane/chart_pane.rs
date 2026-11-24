@@ -350,7 +350,8 @@ impl ChartPane {
         let spec = spec.into();
         let selector = SpecSelector::new(spec);
 
-        let drawings = Drawings::default();
+        let lit = orderflow.as_ref().map(|of| of.settings_panel.lights_on());
+        let drawings = Drawings::on_canvas(quantick_appearance::ChartSurface::pane(lit).into());
         let model = quantick_chart_interaction::pane::Model {
             selection: drawings.selection_handle(),
             ..Default::default()

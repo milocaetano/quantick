@@ -106,25 +106,39 @@ fn a_theme_switch_repaints_the_marks_that_follow_their_ground_both_ways() {
     assert_eq!(back, light);
 }
 
-/// A default the trader saved on the dark ground is what a following mark on
-/// a dark pane wears, and saving it repaints the marks still following.
+/// Saving a default, by any door, leaves the marks on the chart as they are,
+/// following ones too; a ground switch then dresses them in that ground's
+/// saved default.
 #[test]
-fn a_saved_dark_default_paints_the_following_marks_on_a_dark_pane() {
-    let mut store = store("look-dark-bank");
+fn a_saved_default_waits_for_a_ground_switch_to_reach_a_following_mark() {
+    let mut store = store("look-save-waits");
     let mut appearance = Appearance::default();
     theme(&mut appearance, &mut store, LIGHT);
-    let island: PaneCanvas = ChartSurface::Flow.into();
+    let paper: PaneCanvas = ChartSurface::Paper.into();
     let line = tool("trend-line");
     let mut drawings = Drawings::default();
-    drawings.follow_ground(&store, island);
-    open(&mut drawings, &store, island, line);
+    drawings.follow_ground(&store, paper);
+    open(&mut drawings, &store, paper, line);
+    let factory = drawings.items()[0].style;
+    let blue = DrawingStyle {
+        color: PremultipliedRgba::from_rgb(30, 60, 220),
+        ..red()
+    };
+
+    let mut saved = drawings.items()[0].clone();
+    saved.style = blue;
+    crate::save_tool_default(&mut store, paper, &saved);
     store.set_default_style(line.id(), Ground::Dark, Some(red()));
-    assert!(drawings.follow_ground(&store, island));
-    assert_eq!(drawings.items()[0].style, red());
-    // The light ground's bank stays out of it.
-    store.set_default_style(line.id(), Ground::Light, Some(DrawingStyle::default()));
-    drawings.follow_ground(&store, island);
-    assert_eq!(drawings.items()[0].style, red());
+    assert!(!drawings.follow_ground(&store, paper), "a save is no move");
+    assert_eq!(drawings.items()[0].style, factory);
+    assert_eq!(drawings.items()[0].look, Inheritance::Theme);
+
+    theme(&mut appearance, &mut store, DARK);
+    assert!(drawings.follow_ground(&store, paper));
+    assert_eq!(drawings.items()[0].style, red(), "the dark bank");
+    theme(&mut appearance, &mut store, LIGHT);
+    assert!(drawings.follow_ground(&store, paper));
+    assert_eq!(drawings.items()[0].style, blue, "the light bank");
 }
 
 /// An edit of the look is the trader's, through any door that records it;
@@ -248,4 +262,75 @@ fn adopted_and_pasted_marks_resolve_on_this_pane_s_canvas() {
     drawings.adopt([mark]);
     assert!(drawings.follow_ground(&store, island));
     assert_eq!(drawings.items()[1].style, style_on(&store, island, line));
+}
+
+/// One market, a light time chart and a dark flow chart sharing a mark with
+/// the factory look: each shows its own ground's ink once the other writes,
+/// and resolving it is no edit, so neither chart writes its ink back.
+#[test]
+fn a_shared_mark_wears_each_chart_s_ground_and_never_flips_the_set() {
+    use crate::{adopt_pane, persist_pane, refresh_shared};
+    use quantick_workspace::market_settings::{DrawingKey, MarketSettings};
+
+    let mut store = store("look-shared");
+    let mut appearance = Appearance::default();
+    theme(&mut appearance, &mut store, LIGHT);
+    let (paper, island) = (ChartSurface::Paper.into(), ChartSurface::Flow.into());
+    let line = tool("horizontal-line");
+    let market = |role: Option<&str>| {
+        DrawingKey::of_pane("binance", "BTCUSDT".to_owned(), role.map(str::to_owned))
+    };
+    let (time_key, flow_key) = (market(Some("time:5m")), market(None));
+    let mut settings = MarketSettings::default();
+    let (mut time, mut time_base) = (Drawings::on_canvas(paper), Vec::new());
+    let (mut flow, mut flow_base) = (Drawings::on_canvas(island), Vec::new());
+    adopt_pane(&mut time, &mut time_base, &settings, &time_key, "time:5m");
+    adopt_pane(&mut flow, &mut flow_base, &settings, &flow_key, "tick:100");
+    time.follow_ground(&store, paper);
+    flow.follow_ground(&store, island);
+
+    let point = ChartPoint::at_time(1.0, 100.0, Some(1_700_000_000_000));
+    time.place_with(line, &DrawingBand::Price, point, |tool| {
+        new_drawing_from_defaults(&store, paper, tool)
+    });
+    time.selected_mut().expect("just placed").scope = crate::DrawingScope::AllCharts;
+    let write = persist_pane(
+        &mut time,
+        &mut time_base,
+        &mut settings,
+        &time_key,
+        "time:5m",
+    );
+    assert!(write.all_timeframes);
+    let (light, dark) = (
+        style_on(&store, paper, line),
+        style_on(&store, island, line),
+    );
+    assert_ne!(light, dark);
+
+    refresh_shared(&mut flow, &mut flow_base, &settings, &flow_key, "tick:100");
+    let revision = flow.revision();
+    assert!(flow.follow_ground(&store, island), "the arrival resolves");
+    assert_eq!(flow.items()[0].style, dark);
+    assert_eq!(flow.revision(), revision, "a resolve is not an edit");
+    assert!(!time.follow_ground(&store, paper));
+    assert_eq!(time.items()[0].style, light);
+
+    // The flow chart writes an edit of its own: the shared set keeps its ink.
+    assert!(flow.place(line, ChartPoint::at(2.0, 90.0)));
+    let write = persist_pane(
+        &mut flow,
+        &mut flow_base,
+        &mut settings,
+        &flow_key,
+        "tick:100",
+    );
+    assert!(write.own && !write.all_timeframes, "{write:?}");
+    let stored = settings.shared_drawings(&time_key.market);
+    assert_eq!(stored.len(), 1);
+    assert!(stored[0].follows_ground);
+    refresh_shared(&mut time, &mut time_base, &settings, &time_key, "time:5m");
+    time.follow_ground(&store, paper);
+    assert_eq!(time.items()[0].style, light);
+    assert_eq!(flow.items()[0].style, dark);
 }

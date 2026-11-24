@@ -31,10 +31,10 @@ pub trait PresetHost {
     fn theme(&self) -> Option<&ResolvedTheme> {
         None
     }
-    /// Moves whenever the theme or anything a new object opens with does:
-    /// the marks that follow their ground re-resolve when it moves
-    /// ([`crate::Drawings::follow_ground`]). A host that never changes keeps 0.
-    fn defaults_revision(&self) -> u64 {
+    /// Moves whenever [`Self::theme`] does: the marks that follow their
+    /// ground re-resolve when it moves ([`crate::Drawings::follow_ground`]).
+    /// A saved default does not move it. A host without a theme keeps 0.
+    fn theme_revision(&self) -> u64 {
         0
     }
     fn custom_preset_names(&self, tool_id: &str) -> Vec<String>;
@@ -122,9 +122,11 @@ pub fn new_drawing_from_defaults<T: ToolCatalog>(
 /// open with on `canvas`'s ground (the other ground keeps its own) — the named call behind the inspector's "save as default", so a
 /// script or the future assistant can do it without the button.
 ///
-/// Marks on that ground that still follow its default
-/// ([`Drawing::look`] `Theme`) take it as well: they never had a look of
-/// their own. A mark whose look the trader set is never touched.
+/// Objects already on the chart are never touched: a default is a statement
+/// about the *next* object, and repainting the marks a trader has placed is a
+/// bulk edit nobody asked for. A mark that follows its ground
+/// ([`Drawing::look`] `Theme`) re-resolves only when its pane's ground or the
+/// theme changes ([`crate::Drawings::follow_ground`]).
 pub fn save_tool_default<T: ToolCatalog>(
     host: &mut dyn PresetHost,
     canvas: PaneCanvas,

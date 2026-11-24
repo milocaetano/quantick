@@ -270,7 +270,7 @@ struct PaneAnalysisRevisionKey {
 struct DrawingRevisionKey {
     id: u64,
     /// Locked, magnet, hidden, named, authored, foreign market, off series,
-    /// all timeframes, all windows.
+    /// all timeframes, all windows, follows its pane's ground.
     flags: [bool; 10],
     /// The layout it belongs to.
     layout: Option<u64>,

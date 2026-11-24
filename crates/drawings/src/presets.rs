@@ -168,9 +168,6 @@ pub struct PresetStore {
     tools: BTreeMap<String, ToolPresets>,
     /// See [`StoreFile::grounds`].
     grounds: bool,
-    /// Bumped on every write; with the theme's revision it is
-    /// [`PresetHost::defaults_revision`].
-    writes: u64,
 }
 
 impl PresetStore {
@@ -234,7 +231,6 @@ impl PresetStore {
             tools,
             grounds,
             theme: None,
-            writes: 0,
         }
     }
 
@@ -244,8 +240,7 @@ impl PresetStore {
         &self.path
     }
 
-    fn persist(&mut self) {
-        self.writes = self.writes.wrapping_add(1);
+    fn persist(&self) {
         if quantick_workspace::write_refusal::guard_write(&self.path).is_err() {
             return;
         }
@@ -275,9 +270,8 @@ impl PresetHost for PresetStore {
     fn theme(&self) -> Option<&quantick_appearance::ResolvedTheme> {
         self.theme.as_ref().map(|(_, theme)| theme)
     }
-    fn defaults_revision(&self) -> u64 {
-        let theme = self.theme.as_ref().map_or(0, |(revision, _)| *revision);
-        theme.wrapping_add(self.writes)
+    fn theme_revision(&self) -> u64 {
+        self.theme.as_ref().map_or(0, |(revision, _)| *revision)
     }
     fn custom_preset_names(&self, tool_id: &str) -> Vec<String> {
         self.tools

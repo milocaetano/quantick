@@ -2,10 +2,11 @@
 //! pane's ground in step with it.
 //!
 //! A mark opened from its tool's defaults follows the ground of the pane it
-//! sits on ([`Drawing::look`] `Theme`): when the theme, the canvas the pane
-//! paints or the saved default moves, it takes what a new mark there would
-//! open with. An edit of its look makes it the trader's (`Explicit`), and
-//! nothing repaints it again.
+//! sits on ([`Drawing::look`] `Theme`): when the theme or the canvas the pane
+//! paints moves, it takes what a new mark there would open with: that
+//! ground's saved default, else the factory look. Saving a default moves
+//! neither, so it leaves the marks on the chart as they are. An edit of its
+//! look makes it the trader's (`Explicit`), and nothing repaints it again.
 
 use quantick_appearance::{Inheritance, PaneCanvas};
 
@@ -37,6 +38,19 @@ impl<T> Drawing<T> {
     }
 }
 
+impl<T> Drawings<T> {
+    /// An empty store whose marks will sit on `canvas`: a pane seeds the
+    /// canvas it is built with, so what it places or saves before its first
+    /// [`Self::follow_ground`] reads the right ground.
+    #[must_use]
+    pub fn on_canvas(canvas: PaneCanvas) -> Self {
+        Self {
+            canvas,
+            ..Self::default()
+        }
+    }
+}
+
 impl<T: ToolCatalog> Drawings<T> {
     /// The canvas this pane's marks were last resolved on: what every path
     /// that opens, saves or edits a default for this pane reads its ground
@@ -48,25 +62,28 @@ impl<T: ToolCatalog> Drawings<T> {
 
     /// Bring the marks that follow their ground to the look a new mark of
     /// their tool opens with on `canvas` — the pane's painted canvas — when
-    /// it, or anything `host` opens marks with, moved since the last call.
-    /// Called once per frame; does the work only on a move.
+    /// it or `host`'s theme moved since the last call, and the marks that
+    /// arrived from elsewhere since. A saved default is no move. Called once
+    /// per frame; does the work only on a move or an arrival.
     ///
     /// Never an edit: the undo history and the gesture baseline move with
     /// the live marks (an undo must not bring back the other ground's ink),
     /// the revision stays, and the marks keep following. A note keeps its
     /// words and a profile its fold. Answers whether it re-resolved.
     pub fn follow_ground(&mut self, host: &dyn PresetHost, canvas: PaneCanvas) -> bool {
-        let revision = host.defaults_revision();
-        if self.canvas == canvas && self.look_revision == Some(revision) {
+        let theme = host.theme_revision();
+        let moved = self.canvas != canvas || self.look_revision != Some(theme);
+        if !moved && self.arrived.is_empty() {
             return false;
         }
         self.canvas = canvas;
-        self.look_revision = Some(revision);
+        self.look_revision = Some(theme);
+        let arrived = std::mem::take(&mut self.arrived);
         // One opening per tool, however many copies the history holds.
         let mut looks: Vec<(T, DrawingStyle, Option<toml::Value>)> = Vec::new();
         self.each_copy(|items| {
             for drawing in items.iter_mut() {
-                if drawing.look != Inheritance::Theme {
+                if drawing.look != Inheritance::Theme || !(moved || arrived.contains(&drawing.id)) {
                     continue;
                 }
                 let at = looks

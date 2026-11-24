@@ -60,7 +60,6 @@ impl<T: Clone + PartialEq> Drawings<T> {
     /// against its own series right after, exactly as after a re-cut.
     pub fn adopt(&mut self, items: impl IntoIterator<Item = Drawing<T>>) {
         self.revision += 1;
-        self.look_revision = None;
         for mut drawing in items {
             let wanted = drawing.id.0;
             let taken = self.items.iter().any(|held| held.id.0 == wanted);
@@ -69,6 +68,7 @@ impl<T: Clone + PartialEq> Drawings<T> {
             } else {
                 self.next_id = self.next_id.max(wanted);
             }
+            self.arrived.push(drawing.id);
             self.items.push(drawing);
         }
     }

@@ -77,9 +77,12 @@ pub struct Drawings<T> {
     /// The canvas the marks following their ground were last resolved on;
     /// see [`Self::follow_ground`].
     pub(crate) canvas: quantick_appearance::PaneCanvas,
-    /// The host's defaults revision they were resolved at; `None` once marks
-    /// arrive from elsewhere (a load, a paste), resolved on another canvas.
+    /// The theme revision they were resolved at; `None` before the first
+    /// call and once the store is emptied.
     pub(crate) look_revision: Option<u64>,
+    /// Marks that arrived from elsewhere since (a load, a paste, another
+    /// chart's write), resolved on another canvas: the next call resolves them.
+    pub(crate) arrived: Vec<crate::DrawingId>,
 }
 
 // By hand: a derive would ask the tool handle for a `Default` it has no
@@ -107,6 +110,7 @@ impl<T> Default for Drawings<T> {
             pending_name: None,
             canvas: quantick_appearance::PaneCanvas::default(),
             look_revision: None,
+            arrived: Vec::new(),
         }
     }
 }

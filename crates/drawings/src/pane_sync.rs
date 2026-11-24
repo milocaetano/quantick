@@ -76,6 +76,8 @@ impl<T: Clone + PartialEq> Drawings<T> {
         for entry in self.undo.iter_mut().chain(self.redo.iter_mut()) {
             entry.items = rewrite(&entry.items);
         }
+        // The set carries the writing chart's look: resolve it on this one.
+        self.arrived.extend(set);
         let now = self.snapshot();
         drop_still_steps(&mut self.undo, &now);
         drop_still_steps(&mut self.redo, &now);

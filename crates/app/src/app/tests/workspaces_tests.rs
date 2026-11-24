@@ -465,10 +465,8 @@ fn parking_the_popup_never_recreates_a_workspace_that_was_reset() {
     );
 }
 
-/// A fib that still follows its ground's defaults takes the new default too;
-/// one whose look the trader edited would not (`quantick_drawings::look`).
 #[test]
-fn a_default_preset_shapes_new_fibs_and_the_ones_still_following_it() {
+fn a_default_preset_shapes_new_fibs_and_leaves_existing_ones_alone() {
     use crate::drawings::DrawingPayload as _;
     use quantick_drawings::FibPayload;
 
@@ -523,7 +521,7 @@ fn a_default_preset_shapes_new_fibs_and_the_ones_still_following_it() {
         .len();
     assert_eq!(new_levels, 5, "a new fib starts from the default preset");
 
-    // ...and the first one, never edited, follows it.
+    // ...and the first one is untouched.
     let old_levels = app.active_tab().flow_pane.drawings.items()[0]
         .payload
         .as_any()
@@ -531,10 +529,7 @@ fn a_default_preset_shapes_new_fibs_and_the_ones_still_following_it() {
         .expect("fib payload")
         .levels
         .len();
-    assert_eq!(
-        old_levels, 5,
-        "an untouched fib follows its ground's default"
-    );
+    assert_eq!(old_levels, 7, "the default never rewrites existing objects");
     let _ = std::fs::remove_file(preset_path);
 }
 
