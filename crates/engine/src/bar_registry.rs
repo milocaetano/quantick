@@ -189,8 +189,12 @@ impl BarConfiguration {
             first.to_uppercase().chain(letters).collect()
         })
     }
-    /// The chart's bars in a few words, e.g. `Renko 6` or `Time 1m`.
+    /// The chart's bars in a few words, e.g. `Renko 6`; a time chart by
+    /// its interval alone, `1m`, as traders name one.
     pub fn caption(self) -> String {
+        if self.definition.fixed_time_interval {
+            return self.parameter_summary();
+        }
         format!("{} {}", self.kind_name(), self.parameter_summary())
     }
     pub fn parameter_summary(self) -> String {

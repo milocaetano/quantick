@@ -809,7 +809,6 @@ impl PaneHeader {
     }
 }
 
-/// The bar kind as a header line writes it: its registered label, capitalised.
 #[cfg(test)]
 mod tests {
     use super::*;

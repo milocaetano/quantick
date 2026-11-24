@@ -2625,7 +2625,7 @@
                 "type": "integer"
               },
               "chart": {
-                "description": "The bars of the chart that raised it, as its header names them:\n`Renko 6`, `Time 1m`. A script runs on every chart showing its\nlayout, so the same alarm title can come from several charts.",
+                "description": "The bars of the chart that raised it, in a few words: `Renko 6`,\n`1m`. A script runs on every chart showing its\nlayout, so the same alarm title can come from several charts.",
                 "type": "string"
               },
               "indicator": {

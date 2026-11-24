@@ -35,8 +35,8 @@ pub struct ScriptAlarm {
     pub source: AlarmSource,
     /// The market the bar closed on.
     pub symbol: String,
-    /// The bars of the chart that raised it, as its header names them:
-    /// `Renko 6`, `Time 1m`. A script runs on every chart showing its
+    /// The bars of the chart that raised it, in a few words: `Renko 6`,
+    /// `1m`. A script runs on every chart showing its
     /// layout, so the same alarm title can come from several charts.
     pub chart: String,
     /// The indicator's title, as its legend shows it.

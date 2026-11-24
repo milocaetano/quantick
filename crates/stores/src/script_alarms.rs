@@ -20,7 +20,7 @@ pub struct Raised {
     /// The live feed, or the recording a replay plays.
     pub source: SourceContext,
     pub symbol: String,
-    /// The chart's bars, as its header names them: `Renko 6`, `Time 1m`.
+    /// The chart's bars in a few words: `Renko 6`, `1m`.
     pub chart: String,
     pub alarm: ScriptAlarm,
 }
@@ -325,7 +325,7 @@ mod tests {
         assert_eq!(raised.chart, "Renko 6");
         assert_eq!(raised.source, live.to_context());
         let raised = labels.raise(alarm(win_minute, "a")).expect("a recent tag");
-        assert_eq!(raised.chart, "Time 1m");
+        assert_eq!(raised.chart, "1m");
         let raised = labels.raise(alarm(replay, "b")).expect("a recent tag");
         assert_eq!(
             (raised.symbol.as_str(), raised.source),
@@ -430,5 +430,16 @@ mod tests {
         entry(&mut log, raised("e"));
         let next = log.ring(10 + 2 * RING_GAP_MS + 1);
         assert_eq!(next.as_deref(), Some("WINZ25 Renko 6 · Renko POC flip: e"));
+    }
+
+    #[test]
+    fn alarms_landing_in_one_frame_ring_once_naming_the_newest() {
+        let mut log = ScriptAlarmLog::default();
+        // Two panes close bars on the same print: one delivery, one ring.
+        log.record([raised("Bull flip"), raised("Bear flip")], 0);
+        let ring = log.ring(0);
+        let fold = "WINZ25 Renko 6 · Renko POC flip: Bear flip (+1)";
+        assert_eq!(ring.as_deref(), Some(fold));
+        assert_eq!(log.ring(RING_GAP_MS), None, "both were told");
     }
 }
