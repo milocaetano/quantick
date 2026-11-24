@@ -215,44 +215,88 @@ class ObservationTests(unittest.TestCase):
                                                          "tests_seconds": 40, "loop_max_seconds": 49})
 
 class BudgetTests(unittest.TestCase):
-    def test_budget_uses_fixed_baseline_and_rejects_drift_or_overrun(self):
-        report = {"schema": 1, "status": "complete", "source_sha": "a" * 40,
-                  "measured_utc": "2026-09-14T00:00:00+00:00", "host_class": "fixture",
+    def report(self, sha="a", day=20, elapsed=1):
+        report = {"schema": 1, "status": "complete", "source_sha": sha * 40,
+                  "measured_utc": f"2026-11-{day:02}T00:00:00+00:00", "host_class": "fixture",
                   "toolchain": "pinned", "jobs": 2, "profile_hash": "profile",
-                  "protocol_hash": "protocol",
+                  "protocol_hash": "protocol", "timing_context": "main",
                   "restored": True, "crates": []}
         process = {"exit_code": 0, "timed_out": False, "tree_quiescent": True,
                    "orphaned_descendants": False}
         for name in ("a", "b", "c"):
             report["crates"].append({"crate": name, "package": "quantick-" + name,
                                       "source": f"crates/{name}/src/lib.rs",
-                                      "samples": [process | {"elapsed_seconds": v, "recompiled": True}
-                                                  for v in (1, 2, 3, 4, 5)],
-                                      "tests": process | {"elapsed_seconds": 35, "recompiled": False,
+                                      "samples": [process | {"elapsed_seconds": elapsed, "recompiled": True}
+                                                  for _ in range(5)],
+                                      "tests": process | {"elapsed_seconds": 0, "recompiled": False,
                                                           "tests_passed": True}})
-        baseline = budgets.propose(report)
-        # The ceiling covers the slowest touched build plus the one test run.
-        self.assertEqual(baseline["crates"][0]["max_seconds"], 50)
-        budgets.check(report, baseline)
-        for stage in ("samples", "tests"):
-            changed = json.loads(json.dumps(report))
-            if stage == "samples":
-                changed["crates"][0]["samples"][4]["elapsed_seconds"] = 10000
-            else:
-                changed["crates"][0]["tests"]["elapsed_seconds"] = 10000
-            with self.subTest(stage=stage), self.assertRaisesRegex(ValueError, "budget"):
-                budgets.check(changed, baseline)
-        for broken in ({"tests_passed": None}, {"exit_code": 101}):
-            changed = json.loads(json.dumps(report))
-            changed["crates"][0]["tests"] |= broken
-            with self.subTest(broken=broken), self.assertRaisesRegex(ValueError, "test-run"):
-                budgets.check(changed, baseline)
-        for field, value in (("host_class", "different"), ("toolchain", "different"),
-                             ("status", "failed")):
-            with self.subTest(field=field), self.assertRaises(ValueError):
-                budgets.check(report | {field: value}, baseline)
-        with self.assertRaises(ValueError):
-            budgets.check(report, {"schema": 1, "status": "uncalibrated"})
+        return report
+
+    def test_pr_advisory_and_main_rolling_median(self):
+        history = [self.report(sha, day, value) for sha, day, value in
+                   (("b", 1, 1), ("c", 2, 100), ("d", 3, 2))]
+        for elapsed, expected in ((4, "pass"), (4.001, "failed")):
+            report = self.report(elapsed=elapsed)
+            self.assertEqual(budgets.check(report, history, "main")["status"], expected)
+            self.assertEqual(budgets.check(report, history, "pr")["status"], "advisory")
+        varied = self.report()
+        for sample, value in zip(varied["crates"][0]["samples"], (1, 2, 3, 4, 1000)):
+            sample["elapsed_seconds"] = value
+        self.assertEqual(budgets.check(varied, history, "main")["status"], "pass")
+        report["crates"].reverse()
+        self.assertEqual(budgets.check(report, history, "main")["status"], "failed")
+        report["crates"][0]["source"] = "crates/c/src/new.rs"
+        result = budgets.check(report, history, "pr")
+        self.assertEqual(result["crates"][0]["status"], "cold-start")
+        for count, status in ((0, "cold-start"), (2, "insufficient-history")):
+            result = budgets.check(self.report(elapsed=1000), history[:count], "main")
+            self.assertEqual(result["status"], "advisory")
+            self.assertEqual(result["crates"][0]["status"], status)
+        # The latest ten comparable source commits, not ten fastest samples.
+        history = [self.report(format(i + 1, "x"), i + 1, 100 if i == 0 else 2)
+                   for i in range(11)]
+        result = budgets.check(self.report(sha="f", elapsed=4), history, "main")
+        self.assertEqual(result["crates"][0]["history_count"], 10)
+        self.assertEqual(result["crates"][0]["reference_seconds"], 2)
+
+    def test_history_identity_provenance_and_evidence_remain_strict(self):
+        report, prior = self.report(), self.report("b", 1)
+        for field in budgets.IDENTITY:
+            incompatible = prior | {field: "different"}
+            self.assertEqual(budgets.check(report, [incompatible], "main")["status"], "advisory")
+        for broken in (prior | {"timing_context": "pr"}, prior | {"status": "failed"},
+                       prior | {"measured_utc": report["measured_utc"]},
+                       prior | {"protocol_hash": None}):
+            with self.subTest(broken=broken), self.assertRaises(ValueError):
+                budgets.check(report, [broken])
+        with self.assertRaisesRegex(ValueError, "duplicate"):
+            budgets.check(report, [prior, prior])
+        self.assertEqual(budgets.check(report, [prior | {"source_sha": report["source_sha"]}])
+                         ["crates"][0]["history_count"], 0)
+        self.assertEqual(budgets.check(report, [report])["crates"][0]["history_count"], 0)
+        for sha in ("a", "b"):
+            with self.subTest(future_sha=sha), self.assertRaisesRegex(ValueError, "precede"):
+                budgets.check(report, [self.report(sha, 21)])
+
+    def test_old_protocol_rows_and_clock_skew_do_not_wedge_runs(self):
+        report = self.report()
+        old_protocol = self.report("b", 1) | {"protocol_hash": "older"}
+        old_protocol["crates"][0]["samples"].pop()  # Valid under its own, older rules.
+        for context in ("pr", "main"):
+            self.assertEqual(budgets.check(report, [old_protocol], context)["status"], "advisory")
+        skewed = self.report("b", 20)
+        skewed["measured_utc"] = "2026-11-20T00:04:00+00:00"
+        self.assertEqual(budgets.check(report, [skewed])["crates"][0]["history_count"], 0)
+        skewed["measured_utc"] = "2026-11-20T00:06:00+00:00"
+        with self.assertRaisesRegex(ValueError, "precede"):
+            budgets.check(report, [skewed])
+        for context in ("pr", "main"):
+            for broken in ({"tests_passed": None}, {"exit_code": 101},
+                           {"elapsed_seconds": float("nan")}):
+                changed = json.loads(json.dumps(report))
+                changed["crates"][0]["tests"] |= broken
+                with self.subTest(context=context, broken=broken), self.assertRaises(ValueError):
+                    budgets.check(changed, [], context)
 
 
 if __name__ == "__main__":

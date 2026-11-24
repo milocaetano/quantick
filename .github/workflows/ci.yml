@@ -9,6 +9,12 @@ on:
     # it with the `full-ci` label before that. See the `if:` on each job.
     types: [opened, synchronize, reopened, ready_for_review, labeled]
 
+# Only events that run validation supersede a PR run. Unrelated labels must
+# not cancel the full checks already running at that head.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && (github.event.action != 'labeled' || github.event.label.name == 'full-ci') && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' && (github.event.action != 'labeled' || github.event.label.name == 'full-ci') }}
+
 env:
   CARGO_TERM_COLOR: always
   # Debug info, not optimisation, is what the runners spend their time on.
@@ -74,9 +80,11 @@ jobs:
     if: >-
       github.event_name == 'pull_request' &&
       github.event.pull_request.draft &&
-      github.event.action != 'labeled'
+      (github.event.action != 'labeled' || github.event.label.name == 'full-ci')
     runs-on: ubuntu-latest
-    # A newer push to the same draft makes an older signal worthless.
+    # A newer push to the same draft makes an older signal worthless. A `full-ci`
+    # label cancels the run at its head (see `concurrency:` above), so it reruns
+    # `fast` rather than leave that head with a cancelled check.
     concurrency:
       group: fast-${{ github.event.pull_request.number }}
       cancel-in-progress: true
