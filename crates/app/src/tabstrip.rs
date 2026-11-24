@@ -61,10 +61,9 @@ pub(crate) struct StripDrawn {
     pub(crate) allow_close_last: bool,
     pub(crate) home: Option<egui::Rect>,
     pub(crate) tabs: Vec<(usize, egui::Rect)>,
-    /// Each tab's id, its sheet and × as drawn, and the stage its face wore.
-    pub(crate) tab_ids: Vec<(u64, egui::Rect, Squeeze)>,
-    /// The workspace colour each drawn tab painted in its corner.
-    pub(crate) corners: Vec<(u64, [u8; 3])>,
+    /// Each tab's id, its sheet and × as drawn, the stage its face wore and
+    /// the workspace colour it painted in its corner.
+    pub(crate) tab_ids: Vec<(u64, egui::Rect, Squeeze, Option<[u8; 3]>)>,
     pub(crate) add: Option<egui::Rect>,
     pub(crate) overflow: Option<egui::Rect>,
     /// Each tab's face, measured once while its words hold.
@@ -84,7 +83,6 @@ pub(crate) fn draw(
     drawn.close.clear();
     drawn.tabs.clear();
     drawn.tab_ids.clear();
-    drawn.corners.clear();
     drawn.add = None;
     drawn.overflow = None;
     let compact = ui.available_width() < 240.0;
@@ -186,20 +184,15 @@ pub(crate) fn draw(
                 let sheet = response.rect.union(close.rect);
                 let chip_bounds = sheet.intersect(ui.clip_rect());
                 if chip_bounds.is_positive() {
-                    drawn
-                        .tab_ids
-                        .push((chip.id, chip_bounds, squeeze.for_tab(selected)));
-                    drawn.corners.extend(chip.corner.map(|rgb| (chip.id, rgb)));
+                    let told = (chip.id, chip_bounds, squeeze.for_tab(selected), chip.corner);
+                    drawn.tab_ids.push(told);
                 }
                 let hovered = response.hovered() || close.hovered();
                 let pointer = (hovered, response.has_focus() || close.has_focus());
                 let lit =
                     paint_tab_surface(ui, root, surface, (sheet, chip.corner), selected, pointer);
-                // The face reads lit whenever its sheet is: body, × or focus;
-                // only the open tab wears its workspace's colour, on the symbol.
-                let own = (chip.symbol_ink.filter(|_| selected))
-                    .map(|[r, g, b]| egui::Color32::from_rgb(r, g, b));
-                paint_chip_face(ui, root, (chip, &faces[index]), body, (lit, own, selected));
+                // The face reads lit whenever its sheet is: body, × or focus.
+                paint_chip_face(ui, root, (chip, &faces[index]), body, (lit, selected));
                 if close.clicked() {
                     action = Some(TabAction::Close(index));
                 }
@@ -258,8 +251,8 @@ fn laid(ui: &egui::Ui, text: &str, pt: f32) -> Arc<egui::Galley> {
     ui.fonts(|f| f.layout_no_wrap(text.to_owned(), font, egui::Color32::PLACEHOLDER))
 }
 
-/// The icon, the symbol in its heavier strike (in `own`, the open tab's
-/// workspace colour, when given), the venue's code in its outlined tag, an
+/// The icon, the symbol in its heavier strike (in its workspace's colour on
+/// the open tab, where that reads), the venue's code in its outlined tag, an
 /// unhealthy feed's mark and "Replay", the price and the day's change, each
 /// where the face's stage puts it. The workspace and venue are the hover's.
 fn paint_chip_face(
@@ -267,7 +260,7 @@ fn paint_chip_face(
     palette: &Palette,
     (chip, face): (&TabChip, &FaceLayout),
     body: egui::Rect,
-    (lit, own, open): (bool, Option<egui::Color32>, bool),
+    (lit, open): (bool, bool),
 ) {
     let painter = ui.painter().with_clip_rect(body.intersect(ui.clip_rect()));
     let (left, y) = (body.left(), body.center().y);
@@ -278,6 +271,7 @@ fn paint_chip_face(
     };
     let rgb = |[r, g, b]: [u8; 3]| egui::Color32::from_rgb(r, g, b);
     let (ink, (disc, glyph)) = (*palette.get(tab_ink(lit)), icon_inks(chip.icon.rgb, open));
+    let own = chip.symbol_ink.filter(|_| open).map(rgb);
     let centre = egui::pos2(left + face.icon.x, y + face.icon.dy);
     let fill = disc.map_or(*palette.get(ICON_NEUTRAL), rgb);
     painter.circle_filled(centre, face.icon.pt / 2.0, fill);

@@ -137,10 +137,10 @@ pub fn corner_description(rgb: [u8; 3]) -> String {
 /// A drawn tab's scene words as it reads, left to right: the colour in its
 /// `corner`, then its `quote`'s words.
 #[must_use]
-pub fn tab_words(corner: Option<[u8; 3]>, quote: Option<String>) -> Option<String> {
-    match (corner.map(corner_description), quote) {
-        (Some(corner), Some(quote)) => Some(format!("{corner}; {quote}")),
-        (corner, quote) => corner.or(quote),
+pub fn tab_words(corner: Option<[u8; 3]>, quote: String) -> String {
+    match corner {
+        Some(rgb) => format!("{}; {quote}", corner_description(rgb)),
+        None => quote,
     }
 }
 
@@ -273,9 +273,9 @@ mod tests {
             corner_description([0x3A, 0x7B, 0xD5]),
             "Workspace corner #3A7BD5"
         );
-        let words = tab_words(Some([0x3A, 0x7B, 0xD5]), Some("price 1".into()));
-        assert_eq!(words.as_deref(), Some("Workspace corner #3A7BD5; price 1"));
-        assert_eq!(tab_words(None, Some("price 1".into())).as_deref(), Some("price 1"));
+        let words = tab_words(Some([0x3A, 0x7B, 0xD5]), "price 1".into());
+        assert_eq!(words, "Workspace corner #3A7BD5; price 1");
+        assert_eq!(tab_words(None, "price 1".into()), "price 1");
     }
     #[test]
     fn tab_actions_reject_stale_indices_and_last_tab_close() {
