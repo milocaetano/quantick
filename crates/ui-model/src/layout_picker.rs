@@ -856,6 +856,13 @@ fn dashed(cell: Rect, rgba: PremultipliedRgba) -> Vec<Mark> {
 /// in the colour at 60%.
 #[must_use]
 pub fn thumbnail(tree: &PaneTree, at: Rect, inks: &ColourInks) -> Vec<Mark> {
+    frames(tree, at, inks, false)
+}
+
+/// [`thumbnail`]'s panes; while `titled`, each pane tall enough also wears a
+/// title-bar line in its edge ink, so it reads as a window, a lone chart
+/// included.
+fn frames(tree: &PaneTree, at: Rect, inks: &ColourInks, titled: bool) -> Vec<Mark> {
     let kinds = tree.panes();
     let area = CanvasRect::new(at.x, at.y, at.w, at.h);
     let mut marks = Vec::new();
@@ -886,6 +893,10 @@ pub fn thumbnail(tree: &PaneTree, at: Rect, inks: &ColourInks) -> Vec<Mark> {
         ] {
             marks.push(fill(side, 0.0, edge));
         }
+        if titled && h >= TITLE_BAR_MIN_PT {
+            let line = Rect::new(x0, y0 + TITLE_BAR_DROP_PT, w, 1.0);
+            marks.push(fill(line, 0.0, edge));
+        }
     }
     marks
 }
@@ -904,8 +915,13 @@ pub fn miniature(
     let rgb = colour.map(|colour| colour.rgb(theme.dark));
     let rgb = rgb.unwrap_or([grey[0], grey[1], grey[2]]);
     let ground = PremultipliedRgba::from_premultiplied(ground);
-    thumbnail(tree, at, &colour_inks(rgb, ground, theme.dark))
+    frames(tree, at, &colour_inks(rgb, ground, theme.dark), true)
 }
+
+/// A miniature pane at least this tall wears a title bar.
+const TITLE_BAR_MIN_PT: f32 = 9.0;
+/// The title bar's line, this far under the pane's top.
+const TITLE_BAR_DROP_PT: f32 = 3.0;
 
 /// The picker as the `canvas.layout.picker` read says it.
 #[must_use]

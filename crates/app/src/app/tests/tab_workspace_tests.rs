@@ -2480,8 +2480,8 @@ fn top_fill_at(output: &egui::FullOutput, at: egui::Pos2) -> Option<egui::Color3
     top
 }
 
-/// The capsule's 4 pt bar is the same at rest, under the pointer and with
-/// its workspace menu open: the hover fill never paints over it.
+/// The workspace button's 4 pt bar is the same at rest, under the pointer
+/// and with its menu open: the hover fill never paints over it.
 #[test]
 fn the_capsule_keeps_its_bar_at_rest_hovered_and_open() {
     use crate::control::ActionOrigin;
@@ -2502,9 +2502,9 @@ fn the_capsule_keeps_its_bar_at_rest_hovered_and_open() {
     let custom = egui::Color32::from_rgb(0x3A, 0x7B, 0xD5);
     let ctx = egui::Context::default();
     run_frame_at(&mut app, &ctx, FULL_HD);
-    let (_, capsule) = tab_and_capsule(&app, first);
-    let edge = egui::pos2(capsule.left() + 2.0, capsule.center().y);
-    let hover = app.chrome.capsule.miniature.center();
+    let button = app.chrome.capsule.name;
+    let edge = egui::pos2(button.left() + 2.0, button.center().y);
+    let hover = button.center();
     let none = egui::Modifiers::NONE;
     let output = run_frame_sized(&mut app, &ctx, FULL_HD, Vec::new(), none);
     assert_eq!(top_fill_at(&output, edge), Some(custom), "at rest");

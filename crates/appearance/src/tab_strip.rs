@@ -190,11 +190,14 @@ pub const fn tab_ink(lit: bool) -> Token {
     }
 }
 
-/// How much of the workspace's colour tints the toolbar capsule's fill; its
-/// border takes the colour whole (the trader's pick of 2026-11-12, option 7).
+/// How much of the workspace's colour tints the toolbar workspace buttons'
+/// fill; their borders take the colour whole (the trader's pick of 2026-11-12, option 7).
 pub const WORKSPACE_TINT: f32 = 0.12;
-/// The bar in the workspace's colour at the capsule's left edge, cut by its
-/// corner (the trader's ask of 2026-11-13).
+/// The tint a toolbar workspace button takes under the pointer or while its
+/// popover is open (design A-3 of 2026-11-23).
+pub const WORKSPACE_HOVER_TINT: f32 = 0.28;
+/// The bar in the workspace's colour at the workspace button's left edge, cut
+/// by its corner (the trader's ask of 2026-11-13).
 pub const WORKSPACE_CAPSULE_BAR_PT: f32 = 4.0;
 /// The least the open tab's symbol, inked in its workspace's colour, keeps
 /// against the tab's sheet: the graphics floor of WCAG 1.4.11 for a heavy
@@ -224,13 +227,13 @@ pub fn corner_mark(radius: f32) -> Vec<[f32; 2]> {
         .collect()
 }
 
-/// The capsule's fill, `base`, tinted toward the workspace's `colour`; both
-/// straight sRGB, the base's alpha kept.
+/// A workspace button's fill, `base`, tinted `share` of the way toward the
+/// workspace's `colour`; both straight sRGB, the base's alpha kept.
 #[must_use]
-pub fn workspace_tint(base: [u8; 4], colour: [u8; 3]) -> [u8; 4] {
+pub fn workspace_tint(base: [u8; 4], colour: [u8; 3], share: f32) -> [u8; 4] {
     let mix = |b: u8, c: u8| {
         let (b, c) = (f32::from(b), f32::from(c));
-        (b + (c - b) * WORKSPACE_TINT).round().clamp(0.0, 255.0) as u8
+        (b + (c - b) * share).round().clamp(0.0, 255.0) as u8
     };
     [
         mix(base[0], colour[0]),
@@ -266,10 +269,14 @@ mod tests {
     /// The tint moves the fill a fixed share toward the colour, alpha kept.
     #[test]
     fn the_capsule_tint_moves_a_fixed_share_toward_the_colour() {
-        assert_eq!(workspace_tint([255; 4], [255; 3]), [255; 4]);
+        assert_eq!(workspace_tint([255; 4], [255; 3], WORKSPACE_TINT), [255; 4]);
         assert_eq!(
-            workspace_tint([0, 0, 0, 200], [100, 200, 0]),
+            workspace_tint([0, 0, 0, 200], [100, 200, 0], WORKSPACE_TINT),
             [12, 24, 0, 200]
+        );
+        assert_eq!(
+            workspace_tint([0, 0, 0, 200], [100, 200, 0], WORKSPACE_HOVER_TINT),
+            [28, 56, 0, 200]
         );
     }
 
