@@ -32,8 +32,9 @@ env:
   # units too, so the override reaches every unit every job compiles.
   CARGO_PROFILE_DEV_DEBUG: line-tables-only
 
-# Which jobs run where. A draft push runs `fast` alone: fmt, clippy and the
-# tests of the crates the diff reaches. The full verdict is nine jobs — `ci`,
+# Which jobs run where. A draft push runs `fast` and `aggregate-ratchets`:
+# fmt, clippy, affected tests and aggregate growth. Ratchets check the PR head;
+# the existing checks keep testing GitHub's merge revision. Nine build/test jobs — `ci`,
 # `linux-tests`, `harness-app`, `harness-combined` and `harness-scenario` on
 # Linux, `windows`, `windows-tests`, `windows-heavy-tests` and
 # `windows-app-tests` on Windows — and they run on every push to main, every
@@ -69,6 +70,7 @@ env:
 # cold build.
 jobs:
   fast:
+    needs: aggregate-ratchets
     if: >-
       github.event_name == 'pull_request' &&
       github.event.pull_request.draft &&
@@ -84,7 +86,6 @@ jobs:
           # The affected set diffs the PR's base against its head, and both
           # must be in the clone.
           fetch-depth: 0
-          ref: ${{ github.event.pull_request.head.sha }}
       - uses: ./.github/actions/rust-setup
       - name: Aggregate ratchet delta
         env:
@@ -346,6 +347,19 @@ jobs:
         # registry name is a harness hook and must be absent.
         run: python3 tools/ci/binary_hook_scan.py
 
+  aggregate-ratchets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: ./.github/actions/rust-setup
+      - name: PR head aggregate growth
+        env:
+          RATCHET_BASE: ${{ github.event.pull_request.base.sha || 'HEAD^' }}
+        run: python3 tools/ci/ratchet_delta.py --base "$RATCHET_BASE"
+
   # `cargo test --workspace` was 263s of the 508s `ci` took, and it is one
   # command: nothing inside `ci` could overlap with it, and everything else in
   # that job — the hook suite, the Python tool suites, the supply-chain check,
@@ -356,12 +370,12 @@ jobs:
   # needed; the Windows side has three selectors and therefore has one.
   linux-tests:
     if: *full-ci
+    needs: aggregate-ratchets
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: ./.github/actions/rust-setup
       - name: Aggregate ratchet delta
         env:
@@ -495,6 +509,7 @@ jobs:
   # on each side, which the guard re-proves.
   windows-heavy-tests:
     if: *full-ci
+    needs: aggregate-ratchets
     runs-on: windows-latest
     env:
       QUANTICK_BUBBLES: ${{ github.workspace }}/crates/app/config/bubbles.toml
@@ -502,7 +517,6 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: ./.github/actions/rust-setup
         with:
           desktop-deps: "false"

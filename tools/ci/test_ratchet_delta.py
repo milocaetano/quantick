@@ -55,6 +55,16 @@ class DeltaRunner(unittest.TestCase):
             else:
                 path.write_bytes(previous)
 
+    def test_merge_revision_uses_target_tip_as_integration_baseline(self):
+        branch_base, _ = delta.base_checkout(self.repo, "main")
+        target_tip = self.git("rev-parse", "main").strip()
+        self.git("merge", "--no-ff", "main", "-m", "provider merge preview")
+        merge_base, tree = delta.base_checkout(self.repo, "main")
+        self.assertEqual(branch_base, self.base_sha)
+        self.assertEqual(merge_base, target_tip)
+        self.assertNotEqual(branch_base, merge_base)
+        self.assertTrue((tree / "target-only").exists())
+
     def test_missing_reference_fails_before_build_or_export(self):
         export = self.repo / "environment"
         with patch.object(delta, "build") as build:
