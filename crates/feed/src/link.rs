@@ -137,6 +137,10 @@ pub struct FeedLink {
     /// readout. The latency above is an observation frozen at arrival; this
     /// is what wall clock is compared against every frame.
     pub latest_trade_ms: Option<i64>,
+    /// The venue's newest day reference ([`FeedEvent::DayReference`]) for
+    /// this session's market; `None` until the venue sends one, and again
+    /// after an attach, which may change the market.
+    pub day_reference: Option<quantick_sources::day_reference::DayReference>,
     pub live_trades: u64,
     /// Drain-receipt-to-paper-trading delay of the newest live prints, never
     /// a recording's; reset by [`Self::attach`], so a new feed session starts
@@ -180,6 +184,7 @@ impl FeedLink {
             book_channel_closed_reported: false,
             latest_trade_latency_ms: None,
             latest_trade_ms: None,
+            day_reference: None,
             live_trades: 0,
             intake_lag: Default::default(),
             auto_roll: AutoRoll::default(),
@@ -217,6 +222,7 @@ impl FeedLink {
         self.book_channel_closed_reported = false;
         self.intake_lag.clear();
         self.latest_arrival_ms = None;
+        self.day_reference = None;
     }
 
     /// Forget what this link recorded about the timeline it fed — its gaps,

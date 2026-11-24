@@ -733,6 +733,7 @@ impl Tab {
                     }
                 }
                 Ok(FeedEvent::DealCounter(sample)) => self.observe_deal_counter(sample),
+                Ok(FeedEvent::DayReference(day)) => self.link.day_reference = Some(day),
                 Ok(FeedEvent::RefillStatus(fill)) => {
                     self.link.feed_integrity.last_refill = Some(fill)
                 }

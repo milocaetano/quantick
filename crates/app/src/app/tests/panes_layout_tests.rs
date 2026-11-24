@@ -1745,6 +1745,7 @@ fn a_new_tab_takes_the_feeds_declared_defaults_over_inheritance() {
         asset_aliases: Default::default(),
         symbol_asset_modes: Default::default(),
         symbol_widgets: Default::default(),
+        symbol_icons: Default::default(),
         contract_rolls: Default::default(),
         default_layout: Some(crate::config::DeclaredLayout::TimeAndFlow),
         default_bars: Some("tick:7".to_string()),

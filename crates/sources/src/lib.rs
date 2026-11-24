@@ -16,6 +16,7 @@ pub mod candle_base;
 pub mod candle_series;
 pub mod candles;
 pub mod config;
+pub mod day_reference;
 pub mod history_reach;
 pub mod history_run;
 pub mod ohlcv;

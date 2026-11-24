@@ -1,5 +1,7 @@
 //! The market tab strip's colour decisions, so every painter of a tab reads
 //! the same answer (`docs/ux/layout-appearance-2026-11-06`).
+use std::cmp::Ordering;
+
 use crate::Token;
 
 /// The mark beside a tab's symbol. Which one a tab wears is the caller's
@@ -190,6 +192,33 @@ pub const fn tab_ink(lit: bool) -> Token {
     }
 }
 
+/// The disc an asset the config names no icon for wears.
+pub const ICON_NEUTRAL: Token = Token::TextFaint;
+/// The darker of an icon's two glyph inks, for a light disc.
+pub const ICON_GLYPH_DARK: [u8; 3] = [0x1E, 0x23, 0x29];
+/// A disc this light (Rec. 709 luma, 0 to 255) or lighter takes the dark glyph.
+pub const ICON_LIGHT_LUMA: f32 = 160.0;
+
+/// The day's change: on the open tab the buy ink up and the sell ink down,
+/// flat in the tab's ink; on a closed tab always the tab's ink.
+#[must_use]
+pub const fn change_token(sign: Ordering, open: bool, lit: bool) -> Token {
+    let _ = (sign, open, lit);
+    todo!()
+}
+
+/// A closed tab's icon disc: `rgb` in grey of the same luma.
+#[must_use]
+pub fn icon_grey(rgb: [u8; 3]) -> [u8; 3] {
+    todo!("{rgb:?}")
+}
+
+/// The glyph on a disc of `rgb`: white, or [`ICON_GLYPH_DARK`] on a light disc.
+#[must_use]
+pub fn icon_glyph_ink(rgb: [u8; 3]) -> [u8; 3] {
+    todo!("{rgb:?}")
+}
+
 /// How much of the workspace's colour tints the toolbar capsule's fill; its
 /// border takes the colour whole (the trader's pick of 2026-11-12, option 7).
 pub const WORKSPACE_TINT: f32 = 0.12;
@@ -366,5 +395,27 @@ mod tests {
             samples.windows(2).all(|pair| pair[0] > pair[1]),
             "{samples:?}"
         );
+    }
+
+    #[test]
+    fn the_change_is_green_or_red_on_the_open_tab_only() {
+        use std::cmp::Ordering::{Equal, Greater, Less};
+        assert_eq!(change_token(Greater, true, true), Token::BuyInk);
+        assert_eq!(change_token(Less, true, true), Token::SellInk);
+        assert_eq!(change_token(Equal, true, true), tab_ink(true));
+        for sign in [Greater, Less, Equal] {
+            assert_eq!(change_token(sign, false, false), tab_ink(false));
+            assert_eq!(change_token(sign, false, true), tab_ink(true));
+        }
+    }
+
+    #[test]
+    fn a_closed_icon_is_grey_of_its_own_lightness_and_its_glyph_reads() {
+        assert_eq!(icon_grey([0xF7, 0x93, 0x1A]), [160, 160, 160]);
+        assert_eq!(icon_grey([0, 0, 0]), [0, 0, 0]);
+        assert_eq!(icon_grey([255, 255, 255]), [255, 255, 255]);
+        assert_eq!(icon_glyph_ink([0x3B, 0x42, 0x50]), [255, 255, 255]);
+        assert_eq!(icon_glyph_ink([0xF7, 0x93, 0x1A]), [255, 255, 255]);
+        assert_eq!(icon_glyph_ink([200, 200, 200]), ICON_GLYPH_DARK);
     }
 }

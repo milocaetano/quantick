@@ -28,6 +28,52 @@ pub const SYMBOL_TEXT_PT: f32 = 13.0;
 pub const TAG_TEXT_PT: f32 = 9.5;
 pub const WORD_TEXT_PT: f32 = 12.0;
 
+/// How far the closed tabs are squeezed: the open tab always reads on one
+/// line, the closed ones give up first the line, then the price, then the
+/// symbol (the trader's pick, option C, `docs/label/tabs-final`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Squeeze {
+    /// Icon, symbol, venue, price and change on one line.
+    OneLine,
+    /// Symbol over icon and venue; price over change.
+    Stacked,
+    /// Symbol over icon, venue and change; no price.
+    NoPrice,
+    /// The icon over the venue alone.
+    IconOverVenue,
+}
+
+/// The least strip room per tab each stage needs, in points: a strip with
+/// less per tab squeezes one stage further.
+pub const ONE_LINE_ROOM_PT: f32 = 250.0;
+pub const STACKED_ROOM_PT: f32 = 150.0;
+pub const NO_PRICE_ROOM_PT: f32 = 105.0;
+
+impl Squeeze {
+    /// The stage `tabs` market tabs take on a strip `strip_width` points wide.
+    #[must_use]
+    pub fn of_strip(tabs: usize, strip_width: f32) -> Self {
+        todo!("{tabs} {strip_width}")
+    }
+
+    /// The stage one tab wears: the open one never squeezes.
+    #[must_use]
+    pub const fn for_tab(self, open: bool) -> Self {
+        if open { Self::OneLine } else { self }
+    }
+
+    /// The stage's name on the control plane's scene.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::OneLine => "one_line",
+            Self::Stacked => "stacked",
+            Self::NoPrice => "no_price",
+            Self::IconOverVenue => "icon_over_venue",
+        }
+    }
+}
+
 /// What a tab's face is measured from: a change to any of it measures again.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct FaceSource<'a> {
@@ -275,6 +321,35 @@ mod tests {
         cache.keep([2]);
         cache.layout(1, &source, width);
         assert_eq!(measured.get(), 12, "tab 1 was forgotten");
+    }
+
+    /// The mock's strip, 1,620 points: up to 6 tabs on one line, 7 to 10
+    /// stacked, 11 to 15 without a price, then the icon over the venue.
+    #[test]
+    fn the_closed_tabs_squeeze_by_stage_as_the_strip_fills() {
+        let strip = 1_620.0;
+        assert_eq!(Squeeze::of_strip(0, strip), Squeeze::OneLine);
+        assert_eq!(Squeeze::of_strip(6, strip), Squeeze::OneLine);
+        assert_eq!(Squeeze::of_strip(7, strip), Squeeze::Stacked);
+        assert_eq!(Squeeze::of_strip(10, strip), Squeeze::Stacked);
+        assert_eq!(Squeeze::of_strip(11, strip), Squeeze::NoPrice);
+        assert_eq!(Squeeze::of_strip(14, strip), Squeeze::NoPrice);
+        assert_eq!(Squeeze::of_strip(15, strip), Squeeze::NoPrice);
+        assert_eq!(Squeeze::of_strip(16, strip), Squeeze::IconOverVenue);
+        assert_eq!(Squeeze::of_strip(26, strip), Squeeze::IconOverVenue);
+    }
+
+    #[test]
+    fn each_stage_starts_where_the_room_per_tab_runs_short() {
+        let at = |room: f32| Squeeze::of_strip(4, 4.0 * room);
+        assert_eq!(at(ONE_LINE_ROOM_PT), Squeeze::OneLine);
+        assert_eq!(at(ONE_LINE_ROOM_PT - 0.5), Squeeze::Stacked);
+        assert_eq!(at(STACKED_ROOM_PT), Squeeze::Stacked);
+        assert_eq!(at(STACKED_ROOM_PT - 0.5), Squeeze::NoPrice);
+        assert_eq!(at(NO_PRICE_ROOM_PT), Squeeze::NoPrice);
+        assert_eq!(at(NO_PRICE_ROOM_PT - 0.5), Squeeze::IconOverVenue);
+        assert_eq!(Squeeze::IconOverVenue.for_tab(true), Squeeze::OneLine);
+        assert_eq!(Squeeze::NoPrice.for_tab(false), Squeeze::NoPrice);
     }
 
     #[test]

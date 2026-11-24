@@ -42,6 +42,7 @@ mod strategy_desk_book;
 pub mod strategy_reading;
 pub mod switch_prompt;
 pub mod tab_chip;
+pub mod tab_quote;
 mod venue;
 mod view;
 pub mod workspace_menu;
