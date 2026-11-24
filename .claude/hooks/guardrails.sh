@@ -733,7 +733,7 @@ pr_gate() {
         fi
     fi
 
-    pass_pr_gate "$dir" "$gate_pr"
+    pass_pr_gate "$dir"
 }
 
 # --- commit-reminder --------------------------------------------------------

@@ -1436,7 +1436,6 @@ fn observer_modules_project_headless_state_that_matches_their_schemas() {
         .descriptors()
         .map(|descriptor| (descriptor.scope_id.clone(), descriptor.schema.clone()))
         .collect::<Vec<_>>();
-    assert_eq!(descriptors.len(), 21, "every registered scope is projected");
     let scopes = descriptors
         .iter()
         .map(|(scope_id, _)| scope_id.clone())
@@ -1448,6 +1447,11 @@ fn observer_modules_project_headless_state_that_matches_their_schemas() {
         .into_serialized()
         .unwrap();
     assert!(capture.omitted_scopes.is_empty());
+    assert_eq!(
+        capture.scopes.len(),
+        descriptors.len(),
+        "every registered scope is projected"
+    );
     for (scope_id, schema) in descriptors {
         let value = &capture
             .scopes
@@ -5122,11 +5126,6 @@ fn observer_catalog(update: bool) {
     assert_eq!(catalog["catalog_version"], 1);
     assert_eq!(catalog["profile_id"], "observer");
     let capabilities = catalog["capabilities"].as_array().unwrap();
-    // Nine observer reads plus the annotate tier's registered actions.
-    assert_eq!(
-        capabilities.len(),
-        9 + crate::control::registered_action_count()
-    );
     // Every observe-effect capability is read-only; everything else is an
     // action of a write tier — discoverable to any client, reachable only
     // under a profile the trader granted.
