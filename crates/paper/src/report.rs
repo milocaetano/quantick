@@ -508,22 +508,21 @@ impl ReportView {
     /// keeps out — "where did my old trades go" gets a literal answer.
     #[must_use]
     pub fn scope_line(&self) -> String {
-        if self.source == SourceSelection::default() {
-            return self.source.label().to_owned();
-        }
-        let mut text = match (self.range, self.anchor_ms) {
-            (Some(range), _) => format!(
-                "{} ({} day(s), the dates you picked - the period pills are standing down)",
-                range.label(),
-                range.days(),
-            ),
+        let window = match (self.range, self.anchor_ms) {
+            (Some(range), _) => format!("{} ({} days inclusive)", range.label(), range.days()),
             (None, Some(anchor)) => format!(
-                "{} up to {} (newest saved trade, not the wall clock)",
+                "{} up to {} (newest saved trade)",
                 self.period.phrase(),
-                CivilDate::from_ms(anchor, self.tz).iso(),
+                CivilDate::from_ms(anchor, self.tz).iso()
             ),
-            (None, None) => "no saved trades in this scope".to_owned(),
+            (None, None) => self.period.phrase(),
         };
+        let mut text = format!(
+            "Applied: {window} · closes in {} · {} · {} trade(s)",
+            self.tz.label(),
+            self.source.label(),
+            self.rows.len()
+        );
         if self.hidden_outside > 0 {
             let place = match self.range {
                 Some(_) => "saved trade(s) outside these dates",

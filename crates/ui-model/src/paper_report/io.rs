@@ -1,35 +1,52 @@
 //! Synchronous journal loads shared by native and headless report hosts.
-use quantick_paper::report::snapshot::ReportEnv;
+use quantick_paper::report::snapshot::{ReportChange, ReportEnv, ReportReadout};
 use quantick_paper::report::{journals, scope};
 
 use super::{Effects, Intent, Load, LoadedLedger, LoadedReport};
 
-pub fn sources(
+pub fn report(
     updates: &mut crate::UpdateSession<'_, super::Model>,
-    sources: Option<quantick_paper::report::SourceSelection>,
+    change: Option<ReportChange>,
     tz: quantick_civil::TzOffset,
     env: &ReportEnv<'_>,
-) -> quantick_paper::report::snapshot::ReportReadout {
-    if let Some(sources) = sources {
-        updates.update(Intent::Source(sources));
-        updates.update(Intent::Open(env.symbol.to_owned()));
-    }
-    if let Some(receipt) = updates.state().project_report(tz, env.pnl) {
-        updates.update(Intent::InstallReport(receipt));
+) -> Result<ReportReadout, &'static str> {
+    if let Some(change) = change {
+        let reload = matches!(change, ReportChange::Sources(_));
+        let intent = match change {
+            ReportChange::Sources(sources) => Intent::Source(sources),
+            ReportChange::Draft(draft) => Intent::Draft(draft),
+            ReportChange::Generate => {
+                updates.state().date_draft().range()?;
+                Intent::GenerateDates
+            }
+            ReportChange::ClearDates => Intent::Dates(super::DaySelection::None),
+            ReportChange::Period(period) => Intent::Period(period),
+        };
+        updates.update(intent);
+        if reload || !updates.state().report_open() || updates.state().report().is_none() {
+            updates.update(Intent::Reveal(env.symbol.to_owned()));
+        }
     }
     let state = updates.state();
-    let snapshot = state.snapshot();
-    quantick_paper::report::snapshot::ReportReadout {
+    // An inspection immediately after a filter change may need a fresh cut.
+    // Borrow it for this answer without installing it or touching the window.
+    let projection = state.project_report(tz, env.pnl);
+    let view = projection
+        .as_ref()
+        .and_then(|receipt| receipt.view.as_deref())
+        .or(state.report_view().as_ref());
+    Ok(ReportReadout {
+        draft: state.date_draft().clone(),
+        applied: state.applied_dates(),
         open: state.report_open(),
         loaded: state.report().is_some(),
         source: state.report_source(),
         symbol: state.report_symbol().clone(),
-        window: snapshot.as_ref().map_or_else(
-            || state.report_period().phrase(),
-            |snapshot| snapshot.window.label(),
-        ),
+        window: state
+            .applied_dates()
+            .map_or_else(|| state.report_period().phrase(), |range| range.label()),
         scope: state.report_scope().map(|scope| scope.title.clone()),
-        trade_count: snapshot.as_ref().map_or(0, |snapshot| snapshot.rows.len()),
+        trade_count: view.map_or(0, |view| view.rows.len()),
         unreadable_files: state
             .report()
             .as_ref()
@@ -38,8 +55,8 @@ pub fn sources(
             .report()
             .as_ref()
             .map_or(0, |history| history.problem_rows),
-        net_points: snapshot.map_or_else(Default::default, |snapshot| snapshot.report.net_points),
-    }
+        net_points: view.map_or_else(Default::default, |view| view.report.net_points),
+    })
 }
 
 pub fn local_effects(mut effects: Effects, env: &ReportEnv<'_>) -> (Effects, Option<Intent>) {

@@ -148,7 +148,7 @@ fn the_scope_line_accounts_for_every_hidden_trade() {
     let week = ReportView::cut(&history, ReportPeriod::Week, SourceFilter::Real, None, utc);
     assert_eq!(
         week.scope_line(),
-        "the last 7 days up to 1970-01-11 (newest saved trade, not the wall clock) \
+        "Applied: the last 7 days up to 1970-01-11 (newest saved trade) · closes in UTC · Sim live · 2 trade(s) \
          - 1 older saved trade(s) before this window \
          - 1 trade(s) outside the selected source or report scope"
     );
@@ -165,14 +165,13 @@ fn the_scope_line_accounts_for_every_hidden_trade() {
     );
     assert_eq!(
         range.scope_line(),
-        "1970-01-06 to 1970-01-11 (6 day(s), the dates you picked - the period pills are \
-         standing down) - 1 saved trade(s) outside these dates \
+        "Applied: 1970-01-06 to 1970-01-11 (6 days inclusive) · closes in UTC · Sim live · 2 trade(s) - 1 saved trade(s) outside these dates \
          - 1 trade(s) outside the selected source or report scope"
     );
     let none = ReportView::cut(&history, ReportPeriod::All, SourceFilter::Broker, None, utc);
     assert_eq!(
         none.scope_line(),
-        "no saved trades in this scope - 4 trade(s) outside the selected source or report scope"
+        "Applied: everything saved · closes in UTC · Broker · 0 trade(s) - 4 trade(s) outside the selected source or report scope"
     );
 }
 
