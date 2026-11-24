@@ -938,7 +938,10 @@ impl WorkspaceBook {
             .is_some_and(WorkspaceRecipe::is_factory);
         let own = (factory && state.settled.is_none()).then_some(&state.copy);
         if let Some(rules) = state.settled.as_ref().or(own) {
+            // Only the panes the workspace keeps: a chart added since goes.
+            let panes = copy.context_panes.len();
             copy.take_inherited_bars(rules);
+            copy.context_panes.truncate(panes);
         }
         Some(copy)
     }

@@ -210,7 +210,8 @@ fn relaunch(book: &mut WorkspaceBook, shown: &WorkspaceRecipe) {
     book.stamp_saved_tab(1, &mut saved);
     let text = toml::to_string(&saved).unwrap();
     let saved: SavedTab = toml::from_str(&text).unwrap();
-    book.close_tab(1);
+    *book = parse_book(&toml::to_string(&*book).unwrap()).unwrap();
+    book.set_autosave(false);
     let workspace = book.restore_saved_workspace(1, &saved).unwrap();
     book.restore_tab(1, &workspace, saved.workspace_copy.clone());
     book.settle_tab(1, shown);
@@ -229,6 +230,26 @@ fn a_relaunch_with_a_split_edit_reads_no_timeframe_edit() {
     assert!(!book.layout_changes(1).contains(&"timeframe".to_owned()));
     assert!(book.revert(1).unwrap().changed);
     book.settle_tab(1, &on_bars("tick:500", "time:60000"));
+    assert!(!book.differs(1));
+}
+
+/// A chart added on the factory `Default` goes with a revert.
+#[test]
+fn a_revert_on_the_factory_default_drops_an_added_chart() {
+    let mut book = WorkspaceBook::default();
+    book.set_autosave(false);
+    book.open_tab(1);
+    let shown = on_bars("tick:2000", "time:60000");
+    book.settle_tab(1, &shown);
+    let mut edit = shown.clone();
+    let mut added = edit.context_panes[0].clone();
+    added.bars = Some("time:300000".to_owned());
+    edit.context_panes.push(added);
+    edit.split_fraction = Some(0.7);
+    book.observe(1, &edit).unwrap();
+    assert!(book.differs(1));
+    assert!(book.revert(1).unwrap().changed);
+    assert_eq!(book.tab_copy(1), Some(&shown));
     assert!(!book.differs(1));
 }
 
