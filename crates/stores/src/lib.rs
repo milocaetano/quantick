@@ -27,6 +27,7 @@ pub mod bundle;
 pub mod candle_presets;
 pub mod candle_settings;
 pub mod chart_footprint;
+pub mod chart_layers;
 pub mod chart_style;
 pub mod config;
 pub mod footprint_config;

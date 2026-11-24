@@ -1,4 +1,0 @@
-# The split-borrow control views are app-owned composition wiring beside the
-# egui control host and cannot move below the app leaf.
-crates/app +195
-!budget +195

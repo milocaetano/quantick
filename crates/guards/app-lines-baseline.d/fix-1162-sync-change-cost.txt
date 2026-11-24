@@ -1,4 +1,0 @@
-# Pinned main's strategy provider, window, and manifest adapters land on the
-# integration layout; the aggregate sync growth exceeds its inherited allowance.
-crates/app +44
-!budget +44

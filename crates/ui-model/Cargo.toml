@@ -11,6 +11,8 @@ test-support = []
 scenario-harness = []
 
 [dependencies]
+serde.workspace = true
+serde_json.workspace = true
 tracing.workspace = true
 quantick-layers = { path = "../layers" }
 quantick-alerts = { path = "../alerts" }

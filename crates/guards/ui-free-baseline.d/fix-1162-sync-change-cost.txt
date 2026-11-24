@@ -1,4 +1,0 @@
-# Provider credentials and window/manifest adapters are app-owned; the aggregate
-# sync growth exceeds the inherited UI-free allowance.
-crates/app +21
-!budget +21

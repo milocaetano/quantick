@@ -1,4 +1,5 @@
 //! Admission, revision identity and bounded progress for one chart conversation.
+pub mod protocol;
 pub use crate::strategy_describe_contract::*;
 use std::sync::Arc;
 
