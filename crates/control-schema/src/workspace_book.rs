@@ -28,6 +28,7 @@ pub const WORKSPACE_SAVE_TO_CAPABILITY_ID: &str = "workspace.save_to";
 pub const WORKSPACE_SAVE_AS_CAPABILITY_ID: &str = "workspace.save_as";
 pub const WORKSPACE_NEW_CAPABILITY_ID: &str = "workspace.new";
 pub const WORKSPACE_REVERT_CAPABILITY_ID: &str = "workspace.revert";
+pub const WORKSPACE_REVERT_UNDO_CAPABILITY_ID: &str = "workspace.revert.undo";
 pub const WORKSPACE_RENAME_CAPABILITY_ID: &str = "workspace.rename";
 pub const WORKSPACE_DELETE_CAPABILITY_ID: &str = "workspace.delete";
 pub const WORKSPACE_LIST_CAPABILITY_ID: &str = "workspace.list";
@@ -43,6 +44,8 @@ pub const WORKSPACE_SAVED_EVENT_KIND: &str = "workspace.saved";
 pub const WORKSPACE_CREATED_EVENT_KIND: &str = "workspace.created";
 /// A tab's edits were dropped.
 pub const WORKSPACE_REVERTED_EVENT_KIND: &str = "workspace.reverted";
+/// The edits a revert dropped came back.
+pub const WORKSPACE_REVERT_UNDONE_EVENT_KIND: &str = "workspace.revert_undone";
 /// A new name reached the disk.
 pub const WORKSPACE_RENAMED_EVENT_KIND: &str = "workspace.renamed";
 /// A deletion reached the disk.
@@ -56,9 +59,6 @@ pub const TAB_CLOSED_EVENT_KIND: &str = "workspace.tab_closed";
 /// `tab.close` without `save` on a tab holding edits, autosave off: nothing
 /// closes, and `details` names the workspace, the followers and the changes.
 pub const UNSAVED_EDITS_CODE: &str = "workspace.unsaved_edits";
-/// `workspace.revert` is gone; the refusal names `workspace.save_to` and
-/// `workspace.autosave.set`.
-pub const REVERT_REMOVED_CODE: &str = "workspace.revert_removed";
 /// The last tab of the window cannot close.
 pub const LAST_TAB_CODE: &str = "workspace.last_tab";
 
@@ -374,9 +374,22 @@ pub fn workspace_revert_descriptor() -> CapabilityDescriptor {
     >(
         WORKSPACE_REVERT_CAPABILITY_ID,
         MODULE_ID,
-        "Removed: always refuses",
-        "Revert is gone. Every call refuses with workspace.revert_removed, naming workspace.save_to to keep edits and workspace.autosave.set to write them as they are made. A switch with tab.workspace.set refuses over held edits unless told to discard them.",
-        "Always refuses; nothing changes.",
+        "Discard a tab's unsaved layout edits",
+        "Puts the tab back on its workspace as saved: pane sizes, each chart's bar rule, chart type, indicators and layers; a bar rule the workspace does not name goes back to the one the tab opened with. Drawings, orders and other tabs are not touched, and nothing is written. The dropped edits are held for workspace.revert.undo until the workspace is saved or the tab switches workspace; each revert replaces the last. A tab without unsaved edits answers changed false.",
+        "A repeat finds no edits and answers changed false; the held edits stay.",
+    ))
+}
+
+pub fn workspace_revert_undo_descriptor() -> CapabilityDescriptor {
+    bounded(transient_descriptor::<
+        WorkspaceTabInput,
+        WorkspaceRevertResult,
+    >(
+        WORKSPACE_REVERT_UNDO_CAPABILITY_ID,
+        MODULE_ID,
+        "Bring back the edits a revert dropped",
+        "Puts back the unsaved edits the tab's last workspace.revert dropped, unsaved again. Answers changed false when there are none: nothing reverted, the workspace saved or the tab switched since, or the tab holds edits of its own since, which a revert drops first.",
+        "The held edits are taken once: a repeat answers changed false.",
     ))
 }
 
@@ -492,7 +505,15 @@ pub const READBACKS: &[Readback] = &[
         IdempotencyPolicy::Optional,
         WORKSPACE_REVERTED_EVENT_KIND,
         "payload.workspace",
-        "no event: every call refuses with workspace.revert_removed",
+        "an event after the pre-call cursor names the tab's workspace",
+        &[EVERY_OPTIONAL_TEST],
+    ),
+    journal(
+        WORKSPACE_REVERT_UNDO_CAPABILITY_ID,
+        IdempotencyPolicy::Optional,
+        WORKSPACE_REVERT_UNDONE_EVENT_KIND,
+        "payload.workspace",
+        "an event after the pre-call cursor names the tab's workspace",
         &[EVERY_OPTIONAL_TEST],
     ),
     journal(

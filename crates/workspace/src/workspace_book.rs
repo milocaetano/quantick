@@ -65,8 +65,6 @@ pub enum WorkspaceRefusal {
     /// The tab's panes are still being built, so there is nothing to read an
     /// empty recipe from yet.
     TabOpening(u64),
-    /// `workspace.revert` is gone: edits are kept by Save to or by autosave.
-    RevertRemoved,
     /// Neither a preset's name nor `#RRGGBB`.
     ColourInvalid(String),
     /// Another workspace holds an identical colour: no swap was asked, or
@@ -89,7 +87,6 @@ impl WorkspaceRefusal {
             Self::CreationInvalid => "workspace.creation_invalid",
             Self::UnknownTab(_) => "workspace.unknown_tab",
             Self::TabOpening(_) => "workspace.tab_not_ready",
-            Self::RevertRemoved => "workspace.revert_removed",
             Self::ColourInvalid(_) => "workspace.colour_invalid",
             Self::ColourTaken(_) => "workspace.colour_taken",
             Self::UndoExpired(_) => "workspace.undo_expired",
@@ -118,10 +115,6 @@ impl std::fmt::Display for WorkspaceRefusal {
             Self::TabOpening(tab) => {
                 write!(f, "tab {tab} is still opening; retry once its charts stand")
             }
-            Self::RevertRemoved => f.write_str(
-                "workspace.revert was removed: keep edits with workspace.save_to, or turn on \
-                 workspace.autosave.set; switching the workspace drops held edits",
-            ),
             Self::ColourInvalid(word) => write!(
                 f,
                 "{word:?} is no colour: name a preset (sky, slate, ...) or give #RRGGBB"
