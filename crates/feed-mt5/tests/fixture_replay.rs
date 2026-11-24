@@ -134,6 +134,8 @@ async fn tcp_replay_equals_the_pure_mapper() {
             Mt5Event::HistoryPage { .. } => panic!("nothing asked this fixture for older ticks"),
             // A recorded session predates the deal stamp, so no reading can arrive.
             Mt5Event::DealCounter(sample) => panic!("unexpected deal reading: {sample:?}"),
+            // Nor a settlement: the recording predates the message.
+            Mt5Event::Settlement(reading) => panic!("unexpected settlement: {reading:?}"),
             // The fixture's opening block is one `backfill_start`/`backfill_end`
             // pair; it is small enough that the bridge never slices it.
             Mt5Event::OpeningPage { .. } => panic!("this fixture sends no opening slices"),

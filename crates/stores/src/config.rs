@@ -18,9 +18,11 @@ use serde::Deserialize;
 
 mod asset_modes;
 mod contract_rolls;
+mod icons;
 mod market_asset;
 mod widgets;
 pub use asset_modes::AssetMode;
+pub use icons::{AssetIcon, ICON_GLYPH_MAX_CHARS};
 pub use widgets::{DEFAULT_BIG_TRADE_PRESETS, NotionalKind, WidgetSetup};
 
 use crate::symbols_file::AddedSymbols;
@@ -115,6 +117,10 @@ pub struct FeedConfig {
     /// ([`WidgetSetup`]): tick, notional unit and Big Trades thresholds.
     #[serde(default)]
     pub symbol_widgets: BTreeMap<String, WidgetSetup>,
+    /// Per-asset tab icons, keyed like [`symbol_bubble_presets`](Self::symbol_bubble_presets)
+    /// ([`AssetIcon`]): a glyph on a disc of the asset's colour.
+    #[serde(default)]
+    pub symbol_icons: BTreeMap<String, AssetIcon>,
     /// Which dated contract follows which: `contract_rolls = { "<symbol>" =
     /// "<next>" }`. Exact symbols, never a pattern. The one place a roll's
     /// target comes from ([`Self::next_contract`]).
@@ -824,6 +830,7 @@ impl AppConfig {
             feed.validate_asset_aliases()?;
             feed.validate_contract_rolls()?;
             feed.validate_widgets()?;
+            feed.validate_icons()?;
             feed.sync.validate(&feed.id)?;
             for (symbol, preset) in &feed.symbol_bubble_presets {
                 if !feed

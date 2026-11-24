@@ -312,7 +312,7 @@ impl ThemeDocument {
 /// The tokens an older document takes from its own mode's bundled theme.
 /// Both bundled themes write every one, so resolving Light for
 /// [`ResolvedTheme::bundled`] never asks its own lock again.
-pub(crate) const MODE_TOKENS: [Token; 57] = [
+pub(crate) const MODE_TOKENS: [Token; 59] = [
     Token::TabStrip,
     Token::CapsuleMiniature,
     Token::RestingIcon,
@@ -324,6 +324,8 @@ pub(crate) const MODE_TOKENS: [Token; 57] = [
     Token::TabIdleOutline,
     Token::TabBand,
     Token::HomeGlow,
+    Token::TabChangeUp,
+    Token::TabChangeDown,
     Token::AxisInk,
     Token::PriceAxisRule,
     Token::TimeAxisRule,

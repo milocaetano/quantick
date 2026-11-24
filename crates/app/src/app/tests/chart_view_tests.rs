@@ -947,7 +947,7 @@ fn pushing_the_chart_left_clears_a_window_and_keeps_the_series_on_screen() {
 fn candle_appearance_change_is_render_only() {
     let (mut app, _evt_tx, mut cmd_rx, _book_tx) = test_app();
     take_capture_start(&mut cmd_rx);
-    let capture_epoch = app.active_tab().link.book_capture_epoch;
+    let capture_epoch = app.active_tab().link.book.capture_epoch;
     let bar_spec = *app.active_tab().flow_pane.series.state.spec();
 
     app.runtime.style.apply_preset(CandlePreset::OutlineOnly);
@@ -960,7 +960,7 @@ fn candle_appearance_change_is_render_only() {
 
     assert_eq!(app.active_tab().flow_pane.series.state.spec(), &bar_spec);
     assert!(app.active_tab().tape().enabled());
-    assert_eq!(app.active_tab().link.book_capture_epoch, capture_epoch);
+    assert_eq!(app.active_tab().link.book.capture_epoch, capture_epoch);
     assert!(
         matches!(cmd_rx.try_recv(), Err(mpsc::error::TryRecvError::Empty)),
         "appearance changes must not restart or reconfigure market data"

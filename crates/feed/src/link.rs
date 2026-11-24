@@ -36,6 +36,14 @@ impl Rolled {
     }
 }
 
+/// The order book's side of the link: which capture generation the tab
+/// asked for last, and whether a closed book channel was already reported.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct BookLink {
+    pub capture_epoch: u64,
+    pub channel_closed_reported: bool,
+}
+
 /// The feed half of a tab: its session's channels, notices and transport
 /// state, and the newest live trade it has seen.
 pub struct FeedLink {
@@ -128,8 +136,7 @@ pub struct FeedLink {
     /// that opened it while the others keep streaming, on their own feed
     /// threads and their own clocks.
     pub replay: Option<ReplayLink>,
-    pub book_capture_epoch: u64,
-    pub book_channel_closed_reported: bool,
+    pub book: BookLink,
     /// Exchange-to-UI delay measured when the newest live trade arrived.
     /// Stable while the tape is quiet: market inactivity is not transport lag.
     pub latest_trade_latency_ms: Option<i64>,
@@ -137,6 +144,10 @@ pub struct FeedLink {
     /// readout. The latency above is an observation frozen at arrival; this
     /// is what wall clock is compared against every frame.
     pub latest_trade_ms: Option<i64>,
+    /// What the venue said of this session's price
+    /// ([`FeedEvent::DayReference`], [`FeedEvent::PriceDecimals`]) and its
+    /// live prints' decimals; reset by an attach, which may change the market.
+    pub quote: quantick_sources::day_reference::VenueQuote,
     pub live_trades: u64,
     /// Drain-receipt-to-paper-trading delay of the newest live prints, never
     /// a recording's; reset by [`Self::attach`], so a new feed session starts
@@ -176,10 +187,10 @@ impl FeedLink {
             forced_latency: crate::forced_latency_split(),
             commands: feed.commands,
             replay: feed.replay,
-            book_capture_epoch: 0,
-            book_channel_closed_reported: false,
+            book: BookLink::default(),
             latest_trade_latency_ms: None,
             latest_trade_ms: None,
+            quote: Default::default(),
             live_trades: 0,
             intake_lag: Default::default(),
             auto_roll: AutoRoll::default(),
@@ -214,9 +225,10 @@ impl FeedLink {
         self.feed_connection = FeedConnectionState::Connecting;
         self.commands = handle.commands;
         self.replay = handle.replay;
-        self.book_channel_closed_reported = false;
+        self.book.channel_closed_reported = false;
         self.intake_lag.clear();
         self.latest_arrival_ms = None;
+        self.quote = Default::default();
     }
 
     /// Forget what this link recorded about the timeline it fed — its gaps,
@@ -436,8 +448,10 @@ impl FeedLink {
     /// it to its owners: the arrival delay, the tape-age stamp, the count and,
     /// off a recording, one intake-lag sample read now — the moment paper
     /// trading, the first live-trade stage, runs.
-    pub fn observe_live_trade(&mut self, received_at_ms: i64, trade_ms: i64) {
-        self.observe_live_trade_at(received_at_ms, trade_ms, crate::clock::wall_clock_ms());
+    pub fn observe_live_trade(&mut self, received_at_ms: i64, trade: &quantick_engine::Trade) {
+        self.quote.observe_price(trade.price);
+        let now_ms = crate::clock::wall_clock_ms();
+        self.observe_live_trade_at(received_at_ms, trade.timestamp_ms, now_ms);
     }
 
     fn observe_live_trade_at(&mut self, received_at_ms: i64, trade_ms: i64, now_ms: i64) {

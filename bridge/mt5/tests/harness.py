@@ -227,6 +227,8 @@ def session_for(bridge, terminal, **args):
     session.book_print_msc = None
     session.book_print_seen_ms = 0.0
     session.last_book_stamp_ms = 0
+    session.settlement_said = None
+    session.settlement_checked = 0.0
     session.maybe_heartbeat = lambda: None
     return session
 

@@ -155,10 +155,9 @@ impl Tab {
     /// Allocate a capture generation well above all reconnect generations from
     /// the previous UI capture epoch.
     pub fn next_book_generation(&mut self) -> u64 {
-        self.link.book_capture_epoch = self.link.book_capture_epoch.saturating_add(1);
-        self.link
-            .book_capture_epoch
-            .saturating_mul(BOOK_GENERATION_STRIDE)
+        let book = &mut self.link.book;
+        book.capture_epoch = book.capture_epoch.saturating_add(1);
+        book.capture_epoch.saturating_mul(BOOK_GENERATION_STRIDE)
     }
 
     /// Keep the recorder running for any feed that can stream depth.
@@ -733,6 +732,8 @@ impl Tab {
                     }
                 }
                 Ok(FeedEvent::DealCounter(sample)) => self.observe_deal_counter(sample),
+                Ok(FeedEvent::DayReference(day)) => self.link.quote.hold_day(day),
+                Ok(FeedEvent::PriceDecimals(digits)) => self.link.quote.decimals = Some(digits),
                 Ok(FeedEvent::RefillStatus(fill)) => {
                     self.link.feed_integrity.last_refill = Some(fill)
                 }
@@ -888,8 +889,7 @@ impl Tab {
         observer: &mut dyn super::alerts::Observer,
     ) {
         super::alerts::observe_alert_lifecycle(self, observer);
-        self.link
-            .observe_live_trade(received_at_ms, trade.timestamp_ms);
+        self.link.observe_live_trade(received_at_ms, trade);
         // The simulator taps the same per-trade point the bar engine does, so
         // paper trading works identically on a live feed and a replay — and on
         // a tab the user is not looking at, whose position keeps marking
@@ -926,7 +926,7 @@ impl Tab {
                 }
                 Err(mpsc::error::TryRecvError::Empty) => break,
                 Err(mpsc::error::TryRecvError::Disconnected) => {
-                    if self.tape().enabled() && !self.link.book_channel_closed_reported {
+                    if self.tape().enabled() && !self.link.book.channel_closed_reported {
                         tracing::warn!(
                             target: "quantick::app",
                             schema_version = 1_u8,
@@ -935,7 +935,7 @@ impl Tab {
                             action = "retain_last_book_and_wait_for_feed_switch",
                             "depth event channel closed"
                         );
-                        self.link.book_channel_closed_reported = true;
+                        self.link.book.channel_closed_reported = true;
                     }
                     break;
                 }

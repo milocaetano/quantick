@@ -16,7 +16,7 @@ use tracing::{info, warn};
 
 use quantick_engine::Trade;
 use quantick_feed_hyperliquid::{
-    Backoff, HYPERLIQUID_WS_URL, TradeMapper,
+    Backoff, CANDLE_INTERVAL_1D, HYPERLIQUID_WS_URL, TradeMapper,
     depth::{DepthEvent, HYPERLIQUID_LEVELS_PER_SIDE, run_depth_with_reconnect},
     fetch_candle_history, run_trades_with_reconnect,
 };
@@ -95,6 +95,17 @@ async fn feed_task(
         )
         .await;
     });
+    let day_coin = symbol.clone();
+    let day_open = crate::day_reference::spawn_daily_open(tx.clone(), move |day_start, now| {
+        let coin = day_coin.clone();
+        async move {
+            let (daily, url) = (crate::OHLCV_DAILY_INTERVAL_MS, HYPERLIQUID_WS_URL);
+            fetch_candle_history(url, &coin, CANDLE_INTERVAL_1D, daily, day_start, now)
+                .await
+                .map(|day| day.bars)
+                .unwrap_or_default()
+        }
+    });
     // Candle history runs off this loop: see `spawn_ohlcv` for what awaiting it
     // in a command arm used to cost the live trade stream.
     let (ohlcv_tx, mut ohlcv_rx) = mpsc::channel::<OhlcvReply>(1);
@@ -138,6 +149,7 @@ async fn feed_task(
         }
     }
     reconnect.abort();
+    day_open.abort();
     let _ = reconnect.await;
     feed.shutdown().await;
 }

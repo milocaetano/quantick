@@ -2323,7 +2323,7 @@ fn tab_and_capsule(app: &QuantickApp, tab: u64) -> (egui::Rect, egui::Rect) {
     let strip = &app.chrome.title_bar.strip.tab_ids;
     let open = strip
         .iter()
-        .find(|(id, _)| *id == tab)
+        .find(|(id, ..)| *id == tab)
         .expect("the open tab")
         .1;
     let capsule = app.chrome.capsule;
@@ -2433,7 +2433,11 @@ fn a_colour_set_by_call_reads_alike_on_every_surface() {
         assert!(said.ends_with("Custom #3A7BD5"), "{id}: {said}");
     }
     let corner = said(&quantick_control_schema::scene::tab_control_id(first));
-    assert_eq!(corner.as_deref(), Some("Workspace corner #3A7BD5"));
+    let corner = corner.expect("the tab's words");
+    assert!(
+        corner.starts_with("Workspace corner #3A7BD5; price "),
+        "{corner}"
+    );
 
     let mut registry = crate::control::standard_registry().unwrap();
     let scope = observer_scope("workspace.summary");

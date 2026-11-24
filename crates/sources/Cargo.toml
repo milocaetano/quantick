@@ -11,8 +11,7 @@ quantick-engine = { path = "../engine" }
 # The provider vocabulary and the MetaTrader listener settings are
 # deserialized from the cockpit's TOML config.
 serde = { workspace = true }
-
-[dev-dependencies]
+# A venue's day reference is an exact price.
 rust_decimal = { workspace = true }
 
 [lints]

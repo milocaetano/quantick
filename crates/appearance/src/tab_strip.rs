@@ -1,5 +1,7 @@
 //! The market tab strip's colour decisions, so every painter of a tab reads
 //! the same answer (`docs/ux/layout-appearance-2026-11-06`).
+use std::cmp::Ordering;
+
 use crate::Token;
 
 /// The mark beside a tab's symbol. Which one a tab wears is the caller's
@@ -188,6 +190,55 @@ pub const fn tab_ink(lit: bool) -> Token {
     } else {
         Token::TextMuted
     }
+}
+
+/// The disc an asset the config names no icon for wears.
+pub const ICON_NEUTRAL: Token = Token::TextFaint;
+/// The darker of an icon's two glyph inks, for a light disc.
+pub const ICON_GLYPH_DARK: [u8; 3] = [0x1E, 0x23, 0x29];
+/// A disc this light (Rec. 709 luma, 0 to 255) or lighter takes the dark glyph.
+pub const ICON_LIGHT_LUMA: f32 = 160.0;
+
+/// The day's change: on the open tab the theme's tab gain ink up and loss
+/// ink down, flat in the tab's ink; on a closed tab always the tab's ink.
+#[must_use]
+pub const fn change_token(sign: Ordering, open: bool, lit: bool) -> Token {
+    match (open, sign) {
+        (true, Ordering::Greater) => Token::TabChangeUp,
+        (true, Ordering::Less) => Token::TabChangeDown,
+        _ => tab_ink(lit),
+    }
+}
+
+/// An icon's disc and glyph: the asset's colour on the open tab, grey of the
+/// same lightness on the others; `None` is the [`ICON_NEUTRAL`] disc, under
+/// a white glyph.
+#[must_use]
+pub fn icon_inks(rgb: Option<[u8; 3]>, open: bool) -> (Option<[u8; 3]>, [u8; 3]) {
+    let disc = rgb.map(|rgb| if open { rgb } else { icon_grey(rgb) });
+    (disc, disc.map_or([0xFF; 3], icon_glyph_ink))
+}
+
+/// A closed tab's icon disc: `rgb` in grey of the same luma.
+#[must_use]
+pub fn icon_grey(rgb: [u8; 3]) -> [u8; 3] {
+    let grey = luma(rgb).round().clamp(0.0, 255.0) as u8;
+    [grey; 3]
+}
+
+/// The glyph on a disc of `rgb`: white, or [`ICON_GLYPH_DARK`] on a light disc.
+#[must_use]
+pub fn icon_glyph_ink(rgb: [u8; 3]) -> [u8; 3] {
+    if luma(rgb) >= ICON_LIGHT_LUMA {
+        ICON_GLYPH_DARK
+    } else {
+        [0xFF; 3]
+    }
+}
+
+/// Rec. 709 luma of straight sRGB, 0 to 255.
+fn luma([r, g, b]: [u8; 3]) -> f32 {
+    0.2126 * f32::from(r) + 0.7152 * f32::from(g) + 0.0722 * f32::from(b)
 }
 
 /// How much of the workspace's colour tints the toolbar workspace buttons'
@@ -414,5 +465,55 @@ mod tests {
             samples.windows(2).all(|pair| pair[0] > pair[1]),
             "{samples:?}"
         );
+    }
+
+    #[test]
+    fn the_change_is_green_or_red_on_the_open_tab_only() {
+        use std::cmp::Ordering::{Equal, Greater, Less};
+        assert_eq!(change_token(Greater, true, true), Token::TabChangeUp);
+        assert_eq!(change_token(Less, true, true), Token::TabChangeDown);
+        assert_eq!(change_token(Equal, true, true), tab_ink(true));
+        for sign in [Greater, Less, Equal] {
+            assert_eq!(change_token(sign, false, false), tab_ink(false));
+            assert_eq!(change_token(sign, false, true), tab_ink(true));
+        }
+    }
+
+    /// The open tab's change wears the mock's green and red in both themes,
+    /// not the ladder's inks (Light's sell ink is near-black); a stored copy
+    /// frozen before the keys existed takes its own mode's pair.
+    #[test]
+    fn the_open_tabs_change_wears_the_mocks_gain_and_loss_inks() {
+        let mocks = [
+            ([0x3A, 0xF0, 0xB2], [0xFF, 0x6B, 0x78]),
+            ([0x0B, 0x8A, 0x5C], [0xC6, 0x2F, 0x3A]),
+        ];
+        let frozen = |source: &str| {
+            let lines = source
+                .lines()
+                .filter(|line| !line.starts_with("tab_change_"));
+            ResolvedTheme::parse(&lines.collect::<Vec<_>>().join("\n")).unwrap()
+        };
+        for (source, (up, down)) in [crate::DARK, LIGHT].into_iter().zip(mocks) {
+            for theme in [ResolvedTheme::parse(source).unwrap(), frozen(source)] {
+                let ink = |token| theme.title_strip().color(token).to_array()[..3].to_vec();
+                assert_eq!(ink(Token::TabChangeUp), up, "{}", theme.name);
+                assert_eq!(ink(Token::TabChangeDown), down, "{}", theme.name);
+            }
+        }
+    }
+
+    #[test]
+    fn a_closed_icon_is_grey_of_its_own_lightness_and_its_glyph_reads() {
+        assert_eq!(icon_grey([0xF7, 0x93, 0x1A]), [160, 160, 160]);
+        assert_eq!(icon_grey([0, 0, 0]), [0, 0, 0]);
+        assert_eq!(icon_grey([255, 255, 255]), [255, 255, 255]);
+        assert_eq!(icon_glyph_ink([0x3B, 0x42, 0x50]), [255, 255, 255]);
+        assert_eq!(icon_glyph_ink([0xF7, 0x93, 0x1A]), [255, 255, 255]);
+        assert_eq!(icon_glyph_ink([200, 200, 200]), ICON_GLYPH_DARK);
+        let orange = Some([0xF7, 0x93, 0x1A]);
+        assert_eq!(icon_inks(orange, true), (orange, [0xFF; 3]));
+        assert_eq!(icon_inks(orange, false).0, Some([160, 160, 160]));
+        assert_eq!(icon_inks(None, true), (None, [0xFF; 3]));
     }
 }

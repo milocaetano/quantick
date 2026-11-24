@@ -7,10 +7,11 @@
 use eframe::egui;
 use quantick_appearance::Token;
 use quantick_appearance::tab_strip::{
-    FeedMark, MarkShape, corner_mark, feed_shape, feed_token, glow_mesh, home_glow_strength,
-    tab_ink, tab_layers,
+    FeedMark, ICON_NEUTRAL, MarkShape, change_token, corner_mark, feed_shape, feed_token,
+    glow_mesh, home_glow_strength, icon_inks, tab_ink, tab_layers,
 };
-use quantick_session::tab_chip::{self as face_layout, CloseSlot, FaceLayout};
+use quantick_session::tab_chip::{self as face_layout, CloseSlot, FaceLayout, Spot, Squeeze};
+use quantick_ui_model::chrome_tab_strip::squeezed_faces;
 use quantick_workspace::arrangement::strip::{
     StripRoom, StripSurface, TabFeed, chip_parts, fit_tabs, tab_hover,
 };
@@ -22,7 +23,7 @@ const STRIP_CONTROLS_WIDTH_PX: f32 = 66.0;
 const CHIP_MIN_WIDTH_PX: f32 = 44.0;
 /// A window so narrow the strip is in its compact form: the × and a sliver.
 const CHIP_COMPACT_MIN_WIDTH_PX: f32 = 38.0;
-pub(crate) const CLOSE_HIT_WIDTH_PX: f32 = 24.0;
+pub(crate) const CLOSE_HIT_WIDTH_PX: f32 = face_layout::CLOSE_TARGET_PT;
 pub(crate) const CHIP_HEIGHT: f32 = 30.0;
 const CHIP_ROUNDING_PX: f32 = quantick_appearance::tab_strip::TAB_CORNER_PT;
 
@@ -60,9 +61,9 @@ pub(crate) struct StripDrawn {
     pub(crate) allow_close_last: bool,
     pub(crate) home: Option<egui::Rect>,
     pub(crate) tabs: Vec<(usize, egui::Rect)>,
-    pub(crate) tab_ids: Vec<(u64, egui::Rect)>,
-    /// The workspace colour each drawn tab painted in its corner.
-    pub(crate) corners: Vec<(u64, [u8; 3])>,
+    /// Each tab's id, its sheet and × as drawn, the stage its face wore and
+    /// the workspace colour it painted in its corner.
+    pub(crate) tab_ids: Vec<(u64, egui::Rect, Squeeze, Option<[u8; 3]>)>,
     pub(crate) add: Option<egui::Rect>,
     pub(crate) overflow: Option<egui::Rect>,
     /// Each tab's face, measured once while its words hold.
@@ -82,7 +83,6 @@ pub(crate) fn draw(
     drawn.close.clear();
     drawn.tabs.clear();
     drawn.tab_ids.clear();
-    drawn.corners.clear();
     drawn.add = None;
     drawn.overflow = None;
     let compact = ui.available_width() < 240.0;
@@ -90,20 +90,20 @@ pub(crate) fn draw(
     ui.spacing_mut().button_padding = egui::vec2(if compact { 2.0 } else { 8.0 }, 4.0);
     ui.spacing_mut().interact_size.y = CHIP_HEIGHT;
     let controls_width = [STRIP_CONTROLS_WIDTH_PX, 56.0][usize::from(compact)];
-    let close_reserve = CLOSE_HIT_WIDTH_PX;
     let label = home_label(ui);
     let after_q = label.iter().map(|galley| galley.size().x).sum::<f32>() + HOME_LOGO_GAP_PX;
     let labelled = HOME_PADDING_LEFT_PX + HOME_Q.x + after_q + HOME_PADDING_RIGHT_PX;
     let (gap, scale) = (ui.spacing().item_spacing.x, ui.ctx().pixels_per_point());
     let width = |text: &str, pt: f32| laid(ui, text, pt).size().x;
-    let face = |chip: &TabChip| drawn.faces.layout(chip.id, &chip.face_source(scale), width);
-    let faces: Vec<FaceLayout> = chips.iter().map(face).collect();
-    drawn.faces.keep(chips.iter().map(|chip| chip.id));
-    let natural: Vec<f32> = faces.iter().map(|f| f.width + close_reserve).collect();
-    let floor = [CHIP_MIN_WIDTH_PX, CHIP_COMPACT_MIN_WIDTH_PX][usize::from(compact)];
     let room = ui.available_width() - controls_width - gap;
+    let active_chip = surface.active_chip(active);
     // A compact strip has no room for the margins: the Q alone in a square tab.
     let bare = [HOME_MIN_WIDTH_PX, CHIP_HEIGHT][usize::from(compact)];
+    let rooms = (room, room - labelled, gap);
+    let (squeeze, faces) =
+        squeezed_faces(chips, active_chip, rooms, scale, &mut drawn.faces, width);
+    let natural: Vec<f32> = faces.iter().map(|(f, t)| f.width + t.reserve()).collect();
+    let floor = [CHIP_MIN_WIDTH_PX, CHIP_COMPACT_MIN_WIDTH_PX][usize::from(compact)];
     let home = (labelled, bare);
     let strip = StripRoom {
         room,
@@ -116,15 +116,15 @@ pub(crate) fn draw(
     let mut action = draw_home_tab(ui, &palette, surface.is_home(), shown, bare, drawn)
         .then_some(TabAction::Home);
     let closable = chips.len() > 1 || drawn.allow_close_last;
-    let active_chip = surface.active_chip(active);
     for (index, chip_width) in fit.visible.clone().zip(fit.widths) {
-        let chip = &chips[index];
+        let (chip, (face, target)) = (&chips[index], &faces[index]);
         ui.push_id(("market_tab", chip.id), |ui| {
             let selected = active_chip == Some(index);
             let surface = ui.painter().add(egui::Shape::Noop);
             ui.spacing_mut().item_spacing.x = 0.0;
+            ui.spacing_mut().button_padding = egui::Vec2::ZERO; // × exactly its target
             let (body, response) = ui.allocate_exact_size(
-                egui::vec2((chip_width - close_reserve).max(0.0), CHIP_HEIGHT),
+                egui::vec2((chip_width - target.width()).max(0.0), CHIP_HEIGHT),
                 egui::Sense::click_and_drag(),
             );
             response.widget_info(|| {
@@ -148,28 +148,28 @@ pub(crate) fn draw(
             if bounds.is_positive() {
                 drawn.tabs.push((index, bounds));
             }
-            // Reserve a stable close target so hover never shifts adjacent controls.
+            // A stable close target, so hover never shifts adjacent controls.
             {
                 let close_target = egui::Rect::from_min_size(
                     ui.next_widget_position(),
-                    egui::vec2(CLOSE_HIT_WIDTH_PX, CHIP_HEIGHT),
+                    egui::vec2(target.width(), CHIP_HEIGHT),
                 );
                 let close_hot = ui.rect_contains_pointer(close_target);
-                let slot = face_layout::close_slot(selected, response.hovered() || close_hot);
+                let slot = target.slot(selected, response.hovered() || close_hot);
                 let hot = close_hot && closable && slot == CloseSlot::Close;
                 if hot {
                     let (center, radius) = (close_target.center(), CLOSE_HIT_WIDTH_PX / 2.0 - 2.0);
                     ui.painter()
                         .circle_filled(center, radius, root.bare_hover());
                 }
-                let glyph = egui::RichText::new("\u{00d7}").size(CLOSE_GLYPH_PX);
+                let glyph = egui::RichText::new(target.glyph()).size(CLOSE_GLYPH_PX);
                 let close = ui
                     .add_enabled_ui(closable, |ui| {
                         ui.add_visible(
                             slot == CloseSlot::Close,
                             egui::Button::new(glyph.color(*root.get(tab_ink(hot))))
                                 .frame(false)
-                                .min_size(egui::vec2(CLOSE_HIT_WIDTH_PX, CHIP_HEIGHT)),
+                                .min_size(egui::vec2(target.width(), CHIP_HEIGHT)),
                         )
                     })
                     .inner;
@@ -184,18 +184,16 @@ pub(crate) fn draw(
                 let sheet = response.rect.union(close.rect);
                 let chip_bounds = sheet.intersect(ui.clip_rect());
                 if chip_bounds.is_positive() {
-                    drawn.tab_ids.push((chip.id, chip_bounds));
-                    drawn.corners.extend(chip.corner.map(|rgb| (chip.id, rgb)));
+                    let told = (chip.id, chip_bounds, squeeze.for_tab(selected), chip.corner);
+                    drawn.tab_ids.push(told);
                 }
                 let hovered = response.hovered() || close.hovered();
                 let pointer = (hovered, response.has_focus() || close.has_focus());
                 let lit =
                     paint_tab_surface(ui, root, surface, (sheet, chip.corner), selected, pointer);
-                // The face reads lit whenever its sheet is: body, × or focus;
-                // only the open tab wears its workspace's colour, on the symbol.
-                let own = (chip.symbol_ink.filter(|_| selected))
-                    .map(|[r, g, b]| egui::Color32::from_rgb(r, g, b));
-                paint_chip_face(ui, root, (chip, &faces[index]), body, (lit, own));
+                // Lit whenever its sheet is (body, × or focus); a shown × covers its end.
+                let face_rect = [sheet, body][usize::from(slot == CloseSlot::Close)];
+                paint_chip_face(ui, root, (chip, face), face_rect, (lit, selected));
                 if close.clicked() {
                     action = Some(TabAction::Close(index));
                 }
@@ -254,35 +252,40 @@ fn laid(ui: &egui::Ui, text: &str, pt: f32) -> Arc<egui::Galley> {
     ui.fonts(|f| f.layout_no_wrap(text.to_owned(), font, egui::Color32::PLACEHOLDER))
 }
 
-/// The symbol in its heavier strike, the venue's code in its outlined tag,
-/// clipped there, then a feed that is not healthy and live: its mark, and
-/// "Replay" on a recording; the symbol in `own`, the open tab's workspace
-/// colour, when given. The workspace and the venue's name are the hover's.
+/// The icon, the symbol in its heavier strike (in its workspace's colour on
+/// the open tab, where that reads), the venue's code in its outlined tag, an
+/// unhealthy feed's mark and "Replay", the price and the day's change, each
+/// where the face's stage puts it. The workspace and venue are the hover's.
 fn paint_chip_face(
     ui: &egui::Ui,
     palette: &Palette,
     (chip, face): (&TabChip, &FaceLayout),
     body: egui::Rect,
-    (lit, own): (bool, Option<egui::Color32>),
+    (lit, open): (bool, bool),
 ) {
     let painter = ui.painter().with_clip_rect(body.intersect(ui.clip_rect()));
     let (left, y) = (body.left(), body.center().y);
-    let put = |painter: &egui::Painter, galley: Arc<egui::Galley>, x: f32, ink| {
-        let at = egui::pos2(left + x, y - galley.size().y / 2.0);
+    let put = |painter: &egui::Painter, text: &str, spot: Spot, ink| {
+        let galley = laid(ui, text, spot.pt);
+        let at = egui::pos2(left + spot.x, y + spot.dy - galley.size().y / 2.0);
         painter.galley(at, galley, ink);
     };
-    let ink = *palette.get(tab_ink(lit));
-    let symbol = laid(ui, chip_parts(&chip.label).0, face_layout::SYMBOL_TEXT_PT);
-    put(&painter, symbol.clone(), face.symbol, own.unwrap_or(ink));
-    put(
-        &painter,
-        symbol,
-        face.symbol + SEMIBOLD_STRIKE_PX,
-        own.unwrap_or(ink),
-    );
+    let rgb = |[r, g, b]: [u8; 3]| egui::Color32::from_rgb(r, g, b);
+    let (ink, (disc, glyph)) = (*palette.get(tab_ink(lit)), icon_inks(chip.icon.rgb, open));
+    let own = chip.symbol_ink.filter(|_| open).map(rgb);
+    let centre = egui::pos2(left + face.icon.x, y + face.icon.dy);
+    let fill = disc.map_or(*palette.get(ICON_NEUTRAL), rgb);
+    painter.circle_filled(centre, face.icon.pt / 2.0, fill);
+    let font = egui::FontId::proportional(face.icon.pt * face_layout::ICON_GLYPH_SHARE);
+    let (mid, glyph) = (egui::Align2::CENTER_CENTER, rgb(glyph));
+    painter.text(centre, mid, &chip.icon.glyph, font, glyph);
+    let strikes = face.symbol.map(|at| [at, at.right(SEMIBOLD_STRIKE_PX)]);
+    for at in strikes.into_iter().flatten() {
+        put(&painter, chip_parts(&chip.label).0, at, own.unwrap_or(ink));
+    }
     let tag = egui::Rect::from_x_y_ranges(
-        left + face.tag..=left + face.tag + face.tag_width,
-        egui::Rangef::point(y).expand(face_layout::TAG_HEIGHT_PT / 2.0),
+        left + face.tag.x..=left + face.tag.x + face.tag_width,
+        egui::Rangef::point(y + face.tag.dy).expand(face.tag_half_height()),
     );
     let mut muted = palette.text_muted();
     // Filled in the route's colour while the tab's orders go to a broker.
@@ -291,21 +294,22 @@ fn paint_chip_face(
         muted = egui::Color32::WHITE;
     }
     painter.rect_stroke(tag.shrink(0.5), 3.0, (1.0, muted));
-    let code = laid(ui, &chip.venue_code, face_layout::TAG_TEXT_PT);
-    let x = face.tag + face_layout::TAG_PADDING_PT;
-    put(&painter.with_clip_rect(tag), code, x, muted);
+    let (clipped, code) = (painter.with_clip_rect(tag), &chip.venue_code);
+    put(&clipped, code, face.code, muted);
     let mark = feed_mark(chip.feed);
     let feed_ink = *palette.get(feed_token(mark));
     if let Some(x) = face.mark {
         paint_feed_mark(&painter, egui::pos2(left + x, y), mark, feed_ink);
     }
-    if let (Some(word), Some(x)) = (chip.feed.word(), face.word) {
-        put(
-            &painter,
-            laid(ui, word, face_layout::WORD_TEXT_PT),
-            x,
-            feed_ink,
-        );
+    if let (Some(word), Some(at)) = (chip.feed.word(), face.word) {
+        put(&painter, word, at, feed_ink);
+    }
+    if let (Some(price), Some(at)) = (&chip.quote.price, face.price) {
+        put(&painter, price, at, ink);
+    }
+    if let (Some(change), Some(at)) = (&chip.quote.change, face.change) {
+        let change_ink = *palette.get(change_token(change.sign, open, lit));
+        put(&painter, &change.text, at, change_ink);
     }
 }
 
