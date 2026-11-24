@@ -240,7 +240,7 @@ impl<T: Clone + PartialEq> Drawings<T> {
             return;
         };
         self.claim_for_layout(index, &before_drawing);
-        self.items[index].bind_resized_text(&before_drawing, self.text_px_per_bar);
+        self.items[index].bind_resized_text(&before_drawing, self.text_spacing);
         *slot = before_drawing;
         self.record(before);
     }
@@ -250,7 +250,7 @@ impl<T: Clone + PartialEq> Drawings<T> {
     pub fn replace_edited(&mut self, index: usize, mut edited: Drawing<T>) {
         if let Some(drawing) = self.items.get_mut(index) {
             edited.retain_legacy_text_zoom(drawing);
-            edited.bind_resized_text(drawing, self.text_px_per_bar);
+            edited.bind_resized_text(drawing, self.text_spacing);
             *drawing = edited;
         }
     }

@@ -759,7 +759,8 @@ mod tests {
                 1,
                 band.scale.as_ref().unwrap(),
             );
-            let owner_bounds = payload.bounds_at(anchor, &Wide, zoom);
+            let owner_bounds =
+                payload.bounds_at(anchor, &Wide, crate::TextSpacing::horizontal(zoom));
             let mut other = Viewport::new();
             other.set_px_per_bar(zoom / 2.0);
             let companion = DrawingProjection {
@@ -793,7 +794,7 @@ mod tests {
                     drawing.payload.as_ref(),
                     PxRect::from_min_max(anchor, anchor),
                     band.rect,
-                    zoom
+                    crate::TextSpacing::horizontal(zoom)
                 ),
                 owner_bounds
             );

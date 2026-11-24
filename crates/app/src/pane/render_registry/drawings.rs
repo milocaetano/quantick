@@ -261,7 +261,7 @@ impl DrawingPass<'_> {
                 selected && !drawing.locked && primary_band,
             );
             self.drawings
-                .observe_scene(&mut scene, drawing, ctxt.px_per_bar);
+                .observe_scene(&mut scene, drawing, ctxt.text_spacing());
             paint_scene(&clipped, &scene);
             let points: SmallVec<[egui::Pos2; 4]> = points.iter().copied().map(pos).collect();
             bands::paint_off_band_caret(&clipped, chart_rect, &points, drawing);

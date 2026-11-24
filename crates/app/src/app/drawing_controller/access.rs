@@ -5,6 +5,7 @@ use crate::drawings;
 use crate::pane::{ChartPane, PaneSide};
 use crate::surfaces::drawing_chrome::DrawingChromeExt as _;
 use quantick_appearance::ChartSurface;
+use quantick_drawings::TextSpacing;
 
 pub(crate) struct DrawingReadAccess<'a> {
     tabs: &'a ArrangementHost,
@@ -19,8 +20,9 @@ impl<'a> DrawingReadAccess<'a> {
     fn focused(&self) -> &ChartPane {
         self.tabs[self.tabs.active_index()].focused_pane()
     }
-    pub(super) fn px_per_bar(&self) -> f32 {
-        self.pane().model.viewport.px_per_bar()
+    pub(super) fn text_spacing(&self, on: Option<&drawings::Drawing>) -> TextSpacing {
+        let scale = on.and_then(|drawing| self.band(drawing)?.scale);
+        TextSpacing::at(self.pane().model.viewport.px_per_bar(), scale.as_ref())
     }
     pub(super) fn current_range_owner(
         &self,
