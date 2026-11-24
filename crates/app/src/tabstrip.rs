@@ -11,6 +11,7 @@ use quantick_appearance::tab_strip::{
     home_glow_strength, icon_inks, tab_ink, tab_layers,
 };
 use quantick_session::tab_chip::{self as face_layout, CloseSlot, FaceLayout, Spot, Squeeze};
+use quantick_ui_model::chrome_tab_strip::squeezed_faces;
 use quantick_workspace::arrangement::strip::{
     StripRoom, StripSurface, TabFeed, chip_parts, fit_tabs, tab_hover,
 };
@@ -60,13 +61,12 @@ pub(crate) struct StripDrawn {
     pub(crate) allow_close_last: bool,
     pub(crate) home: Option<egui::Rect>,
     pub(crate) tabs: Vec<(usize, egui::Rect)>,
-    pub(crate) tab_ids: Vec<(u64, egui::Rect)>,
+    /// Each tab's id, its sheet and × as drawn, and the stage its face wore.
+    pub(crate) tab_ids: Vec<(u64, egui::Rect, Squeeze)>,
     pub(crate) add: Option<egui::Rect>,
     pub(crate) overflow: Option<egui::Rect>,
     /// Each tab's face, measured once while its words hold.
     pub(crate) faces: face_layout::FaceCache,
-    /// What the scene says of each painted tab's face ([`TabChip::scene_words`]).
-    pub(crate) told: std::collections::BTreeMap<u64, String>,
 }
 
 pub(crate) fn draw(
@@ -82,7 +82,6 @@ pub(crate) fn draw(
     drawn.close.clear();
     drawn.tabs.clear();
     drawn.tab_ids.clear();
-    drawn.told.clear();
     drawn.add = None;
     drawn.overflow = None;
     let compact = ui.available_width() < 240.0;
@@ -98,18 +97,13 @@ pub(crate) fn draw(
     let width = |text: &str, pt: f32| laid(ui, text, pt).size().x;
     let room = ui.available_width() - controls_width - gap;
     let active_chip = surface.active_chip(active);
-    let squeeze = Squeeze::of_strip(chips.len(), room);
-    let stage = |index| squeeze.for_tab(active_chip == Some(index));
-    let face = |(i, chip): (usize, &TabChip)| {
-        let source = chip.face_source(stage(i), scale);
-        drawn.faces.layout(chip.id, &source, width)
-    };
-    let faces: Vec<FaceLayout> = chips.iter().enumerate().map(face).collect();
-    drawn.faces.keep(chips.iter().map(|chip| chip.id));
-    let natural: Vec<f32> = faces.iter().map(|f| f.width + close_reserve).collect();
-    let floor = [CHIP_MIN_WIDTH_PX, CHIP_COMPACT_MIN_WIDTH_PX][usize::from(compact)];
     // A compact strip has no room for the margins: the Q alone in a square tab.
     let bare = [HOME_MIN_WIDTH_PX, CHIP_HEIGHT][usize::from(compact)];
+    let rooms = (room, room - bare - gap, close_reserve + gap);
+    let (squeeze, faces) =
+        squeezed_faces(chips, active_chip, rooms, scale, &mut drawn.faces, width);
+    let natural: Vec<f32> = faces.iter().map(|f| f.width + close_reserve).collect();
+    let floor = [CHIP_MIN_WIDTH_PX, CHIP_COMPACT_MIN_WIDTH_PX][usize::from(compact)];
     let home = (labelled, bare);
     let strip = StripRoom {
         room,
@@ -152,7 +146,6 @@ pub(crate) fn draw(
             let bounds = response.rect.intersect(ui.clip_rect());
             if bounds.is_positive() {
                 drawn.tabs.push((index, bounds));
-                drawn.told.insert(chip.id, chip.scene_words(stage(index)));
             }
             // Reserve a stable close target so hover never shifts adjacent controls.
             {
@@ -190,7 +183,9 @@ pub(crate) fn draw(
                 let sheet = response.rect.union(close.rect);
                 let chip_bounds = sheet.intersect(ui.clip_rect());
                 if chip_bounds.is_positive() {
-                    drawn.tab_ids.push((chip.id, chip_bounds));
+                    drawn
+                        .tab_ids
+                        .push((chip.id, chip_bounds, squeeze.for_tab(selected)));
                 }
                 let hovered = response.hovered() || close.hovered();
                 let pointer = (hovered, response.has_focus() || close.has_focus());

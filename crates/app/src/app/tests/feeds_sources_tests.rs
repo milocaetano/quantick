@@ -2700,3 +2700,44 @@ fn a_market_action_with_a_price_is_refused_as_a_bad_request() {
         "{error:?}"
     );
 }
+
+/// The venue's day reference and the tab's print reach the scene's words for
+/// that tab; a new feed session withdraws the reference.
+#[test]
+fn a_day_reference_reaches_the_tabs_scene_until_the_feed_is_replaced() {
+    let ctx = egui::Context::default();
+    let (mut app, _notices, (events, _book)) = test_app_with_notices();
+    let tab_id = app.runtime.tabs.active_id();
+    let open = quantick_feed::DayReference::daily_open(0, Decimal::from(100));
+    events
+        .blocking_send(FeedEvent::DayReference(Some(open)))
+        .unwrap();
+    events.blocking_send(FeedEvent::Live(trade(14))).unwrap();
+    app.active_tab_mut().drain_feed(tab_id);
+    run_frame(&mut app, &ctx);
+    let told = |app: &QuantickApp| {
+        let id = quantick_control_schema::scene::tab_control_id(tab_id);
+        let scene = crate::control::scene_snapshot(app);
+        let tab = scene.controls.into_iter().find(|c| c.control_id == id);
+        tab.and_then(|tab| tab.description).expect("the drawn tab")
+    };
+    assert!(told(&app).contains("day +1.40%"), "{}", told(&app));
+    let (_evt_tx, evt_rx) = mpsc::channel(8);
+    let (_book_tx, book_rx) = mpsc::channel(8);
+    let (cmd_tx, _cmd_rx) = mpsc::channel(8);
+    app.active_tab_mut().attach_for_test(FeedHandle {
+        events: evt_rx,
+        book_events: book_rx,
+        notices: feed::silent_notices(),
+        capabilities: feed::fixed_capabilities(ProviderKind::Binance.capabilities()),
+        latency: feed::unsplit_latency(),
+        commands: cmd_tx,
+        replay: None,
+    });
+    run_frame(&mut app, &ctx);
+    assert!(
+        told(&app).contains("day no venue reference"),
+        "{}",
+        told(&app)
+    );
+}

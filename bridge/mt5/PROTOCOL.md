@@ -41,7 +41,7 @@ backfill_end
 rates_start                  optional block, at most once per interval, after backfill_end
   rate × N                   batched historical candles (CopyRates)
 rates_end
-tick | book | heartbeat × …  live, until the session ends
+tick | book | heartbeat | settlement × …  live, until the session ends
 bye                          optional clean goodbye
 ```
 
@@ -118,11 +118,6 @@ this as an ordinary disconnect and retries on its own schedule; the feed logs
   `"trades"` tape whose terminal reports `SYMBOL_SESSION_DEALS`; a quoted CFD
   prints no deals and never declares it. **Absent means no**, which is what
   every bridge written before the field says.
-- `settlement` — *optional*, the previous session's settlement
-  (`SYMBOL_SESSION_PRICE_SETTLEMENT`) as an exact decimal string: the day's
-  reference price a market tab measures its change from. **Absent means
-  none** — an older bridge, or a terminal that reports no settlement — and
-  quantick then shows no day's change rather than computing one.
 
 Depth and candle fields are all additive within schema 1: a bridge that predates
 any of them still connects and still streams ticks.
@@ -328,6 +323,31 @@ The next session re-sends it.
 
 Sent every ~5 s. Refreshes the offset (DST-safe). A feed hearing nothing for
 its read timeout (default 30 s) presumes the bridge dead.
+
+### settlement
+
+```json
+{"type":"settlement","price":"171750","time_ms":1784824301000}
+```
+
+The terminal's `SYMBOL_SESSION_PRICE_SETTLEMENT`, the reference a tab
+measures the day's change from, read at `time_ms` (server time). Sent once the
+opening backfill is out, then whenever the value **or the server day** changes
+(checked every heartbeat).
+
+- `price` — *optional*, an exact decimal string at the precision the terminal
+  holds (it may carry more decimals than `digits`), trailing zeros trimmed.
+  **Absent means none**: the terminal reports no settlement.
+- `time_ms` — when the reading was taken, server time.
+
+quantick holds a reading as the reference for prints **from `time_ms` to the
+end of that server day**, and for no others. A print before the reading may
+belong to the session the settlement closed — B3 publishes it after the close —
+and the next server day waits for a reading of its own, which is why an
+unchanged price is said again on a new day. A reading without a price, and
+every new `hello`, withdraws the one held: the tab then shows no day's change
+rather than one against another session's price. A bridge older than the
+message sends none, and quantick shows no change.
 
 ### backfill_start / backfill_end
 

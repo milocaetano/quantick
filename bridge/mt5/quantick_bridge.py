@@ -51,6 +51,7 @@ from quantick_bridge_core import (
     BRIDGE_VERSION,
     DEFAULT_BACKFILL_MAX_TICKS,
     DEFAULT_OPENING_SLICE_TICKS,
+    D1_INTERVAL_MS,
     SCHEMA_VERSION,
     BridgeExit,
     connect_terminal,
@@ -259,6 +260,10 @@ class Session(TransportMixin, TicksMixin, HistoryMixin, RatesMixin):
         # deserve different answers on the chart.
         self.earliest_ms: int | None = None
         self.earliest_known = False
+        # The settlement last said and the server day it was said on, and
+        # when the terminal was last asked (`monotonic` seconds).
+        self.settlement_said: tuple[str | None, int] | None = None
+        self.settlement_checked = 0.0
 
     # -- framing ----------------------------------------------------------
 
@@ -312,12 +317,6 @@ class Session(TransportMixin, TicksMixin, HistoryMixin, RatesMixin):
                     mt5_error=str(mt5.last_error()),
                     hint="this symbol may have no Depth of Market; ticks still stream",
                 )
-        # The previous session's settlement: the day's reference price a tab
-        # measures its change from. Omitted when the terminal reports none,
-        # and quantick then shows no change rather than computing one.
-        settlement = getattr(info, "session_price_settlement", 0.0) or 0.0
-        if settlement > 0:
-            hello["settlement"] = self.price(settlement)
         self.send(hello)
         # Out now, not at the bottom of the loop. The feed treats a silent
         # socket as a bridge that failed to start, and everything after this
@@ -338,6 +337,43 @@ class Session(TransportMixin, TicksMixin, HistoryMixin, RatesMixin):
             book=self.book_subscribed,
             server_utc_offset_s=offset_s,
         )
+
+    # -- settlement -------------------------------------------------------
+
+    def maybe_settlement(self) -> None:
+        """Ask the terminal for its settlement once a heartbeat interval."""
+        now = time.monotonic()
+        if self.settlement_said is not None and now - self.settlement_checked < self.args.heartbeat_seconds:
+            return
+        self.settlement_checked = now
+        self.say_settlement()
+
+    def say_settlement(self) -> None:
+        """Send the settlement when it, or the server day, changed.
+
+        PROTOCOL.md `settlement`: quantick holds a reading for the prints from
+        its `time_ms` to the end of that server day, so an unchanged price is
+        said again on a new day, and a vanished one is said as none.
+        """
+        info = mt5.symbol_info(self.symbol)
+        value = (getattr(info, "session_price_settlement", 0.0) or 0.0) if info else 0.0
+        price = exact_price(value) if value > 0 else None
+        now_ms = self.server_now_ms()
+        said = (price, now_ms // D1_INTERVAL_MS)
+        if said == self.settlement_said:
+            return
+        self.settlement_said = said
+        message = {"type": "settlement", "time_ms": now_ms}
+        if price is not None:
+            message["price"] = price
+        self.send(message)
+
+
+def exact_price(value: float) -> str:
+    """`value` at the precision the terminal holds it, trailing zeros trimmed:
+    a settlement may carry more decimals than the symbol's `digits`."""
+    return f"{value:.10f}".rstrip("0").rstrip(".")
+
 
 def run_session(args: argparse.Namespace, offset_s: int) -> None:
     with socket.create_connection((args.host, args.port), timeout=10) as sock:
@@ -367,6 +403,7 @@ def run_session(args: argparse.Namespace, offset_s: int) -> None:
                 session.pump_opening()
                 session.pump_history()
                 session.maybe_heartbeat()
+                session.maybe_settlement()
                 # Everything this pass produced leaves before the loop waits.
                 # The buffer's size cap bounds memory; this bounds *latency*,
                 # and without it a quiet tape could hold a print until enough

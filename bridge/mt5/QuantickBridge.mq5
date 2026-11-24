@@ -122,6 +122,9 @@ string   g_book_last_body   = "";    // last image's levels, for change detectio
 long     g_book_print_msc   = 0;     // newest SYMBOL_TIME_MSC seen by BookStampMs (0 = none yet)
 ulong    g_book_print_us    = 0;     // GetMicrosecondCount when that print was first seen
 long     g_book_last_stamp  = 0;     // last book stamp sent; stamps never rewind
+// The settlement last said ("" = none) and the server day it was said on.
+string   g_settlement_said  = "";
+long     g_settlement_day   = -1;
 
 //+------------------------------------------------------------------+
 //| Structured Experts-tab logging (AI-first: parseable, coded).      |
@@ -596,6 +599,8 @@ bool StartSession()
    g_book_print_msc   = 0;
    g_book_print_us    = 0;
    g_book_last_stamp  = 0;
+   g_settlement_said  = "";
+   g_settlement_day   = -1;
 
    string basis = SymbolInfoString(_Symbol, SYMBOL_BASIS);
    if(basis == "")
@@ -618,22 +623,15 @@ bool StartSession()
    // In this order, as statements: the counter check reads the tape flag
    // the probe sets, and MQL5 does not promise which argument of a call is
    // evaluated first.
-   // The previous session's settlement, the day's reference price a tab
-   // measures its change from; omitted when the terminal reports none.
-   string settled    = "";
-   double settlement = SymbolInfoDouble(_Symbol, SYMBOL_SESSION_PRICE_SETTLEMENT);
-   if(settlement > 0.0)
-      settled = StringFormat(",\"settlement\":\"%s\"", DoubleToString(settlement, _Digits));
-
    string tape             = DetectTape();
    bool   has_deal_counter = HasDealCounter();
    string hello = StringFormat(
       "{\"type\":\"hello\",\"schema\":%d,\"bridge\":\"%s\",\"bridge_version\":\"%s\","
       "\"symbol\":\"%s\",\"broker_symbol\":\"%s\",\"digits\":%d,\"server_utc_offset_s\":%I64d,"
-      "\"tape\":\"%s\",\"deal_counter\":%s%s%s}",
+      "\"tape\":\"%s\",\"deal_counter\":%s%s}",
       SCHEMA_VERSION, BRIDGE_NAME, BRIDGE_VERSION,
       _Symbol, basis, _Digits, ServerUtcOffsetSeconds(), tape,
-      (has_deal_counter ? "true" : "false"), depth, settled);
+      (has_deal_counter ? "true" : "false"), depth);
    // Written, not merely queued: the feed's contract is that a bridge says
    // hello *the moment it connects* (crates/feed-mt5/src/stream.rs), and it
    // gives the greeting ten seconds before dropping the connection. The next
@@ -687,10 +685,48 @@ bool StartSession()
       g_sent_at_last_msc = 0;
      }
 
+   if(!MaybeSettlement())
+      return(false);
+
    LogEvent("BRIDGE_SESSION_STARTED",
             StringFormat("\"backfill_ticks\":%d,\"host\":\"%s\",\"port\":%d",
                          fetched, InpHost, InpPort));
    return(true);
+  }
+
+//+------------------------------------------------------------------+
+//| A price at the precision the terminal holds it, trailing zeros    |
+//| trimmed: a settlement may carry more decimals than _Digits.       |
+//+------------------------------------------------------------------+
+string ExactPrice(const double value)
+  {
+   string text = DoubleToString(value, 10);
+   int    len  = StringLen(text);
+   while(len > 0 && StringGetCharacter(text, len - 1) == '0')
+      len--;
+   if(len > 0 && StringGetCharacter(text, len - 1) == '.')
+      len--;
+   return(StringSubstr(text, 0, len));
+  }
+
+//+------------------------------------------------------------------+
+//| The settlement, said when it or the server day changed            |
+//| (PROTOCOL.md `settlement`): quantick holds a reading from its     |
+//| time_ms to the end of that server day. False when the send fails. |
+//+------------------------------------------------------------------+
+bool MaybeSettlement()
+  {
+   double value  = SymbolInfoDouble(_Symbol, SYMBOL_SESSION_PRICE_SETTLEMENT);
+   string price  = (value > 0.0 ? ExactPrice(value) : "");
+   long   now_ms = NowServerMs();
+   long   day    = now_ms / 86400000;
+   if(price == g_settlement_said && day == g_settlement_day)
+      return(true);
+   g_settlement_said = price;
+   g_settlement_day  = day;
+   string field = (price == "" ? "" : StringFormat(",\"price\":\"%s\"", price));
+   return(SendLine(StringFormat("{\"type\":\"settlement\",\"time_ms\":%I64d%s}",
+                                now_ms, field)));
   }
 
 //+------------------------------------------------------------------+
@@ -915,7 +951,7 @@ void MaybeHeartbeat()
       "{\"type\":\"heartbeat\",\"seq_last\":%I64u,\"time_ms\":%I64d,"
       "\"ticks_sent\":%I64u,\"server_utc_offset_s\":%I64d}",
       g_seq, NowServerMs(), g_ticks_sent, ServerUtcOffsetSeconds());
-   if(!SendLine(line))
+   if(!SendLine(line) || !MaybeSettlement())
      {
       Disconnect("heartbeat send failed");
       return;

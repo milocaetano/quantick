@@ -17,9 +17,8 @@ pub const PART_GAP_PT: f32 = 7.0;
 pub const WORD_GAP_PT: f32 = 3.0;
 /// Air after the last part, before the close target.
 pub const PADDING_RIGHT_PT: f32 = 2.0;
-/// The venue tag: the code's padding either side, and the tag's height.
+/// The venue tag: the code's padding either side.
 pub const TAG_PADDING_PT: f32 = 4.0;
-pub const TAG_HEIGHT_PT: f32 = 13.0;
 /// The widest the venue's code runs inside its tag: a code longer than four
 /// capitals is clipped there, never widening the tab.
 pub const TAG_CODE_MAX_PT: f32 = 30.0;
@@ -63,7 +62,7 @@ pub struct StageSizes {
 /// How far the closed tabs are squeezed: the open tab always reads on one
 /// line, the closed ones give up first the line, then the price, then the
 /// symbol (the trader's pick, option C, `docs/label/tabs-final`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Squeeze {
     /// Icon, symbol, venue, price and change on one line.
     OneLine,
@@ -94,6 +93,30 @@ impl Squeeze {
             Self::NoPrice
         } else {
             Self::IconOverVenue
+        }
+    }
+
+    /// The first stage from this one on at which the tabs' faces fit `room`:
+    /// `needed(stage)` is the width they take at a stage, as measured. The
+    /// count's guess can be short for long symbols or prices; the last
+    /// squeeze stands when none fits, and the overflow takes the rest.
+    #[must_use]
+    pub fn fitting(self, room: f32, mut needed: impl FnMut(Self) -> f32) -> Self {
+        let mut stage = self;
+        while needed(stage) > room
+            && let Some(next) = stage.next()
+        {
+            stage = next;
+        }
+        stage
+    }
+
+    const fn next(self) -> Option<Self> {
+        match self {
+            Self::OneLine => Some(Self::Stacked),
+            Self::Stacked => Some(Self::NoPrice),
+            Self::NoPrice => Some(Self::IconOverVenue),
+            Self::IconOverVenue => None,
         }
     }
 
@@ -172,12 +195,18 @@ pub struct FaceSource<'a> {
     pub scale: f32,
 }
 
-/// Each tab's face, laid out once and kept while what it was measured from
-/// holds, so the strip lays out no text a frame for a tab only to learn its
-/// width, and none at all for a tab the overflow hides.
+/// Each tab's face at each stage it was asked for, laid out once and kept
+/// while what it was measured from holds, so the strip lays out no text a
+/// frame for a tab only to learn its width, and none at all for a tab the
+/// overflow hides.
+///
+/// The price and the change are kept by their shape — their length, sign
+/// and separators, their digits as one class — and measured with every
+/// digit at the widest, so an ordinary tick neither measures again nor
+/// moves the tab's neighbours and × target.
 #[derive(Debug, Default)]
 pub struct FaceCache {
-    faces: std::collections::BTreeMap<u64, (Measured, FaceLayout)>,
+    faces: std::collections::BTreeMap<(u64, Squeeze), (Measured, FaceLayout)>,
 }
 
 #[derive(Debug)]
@@ -188,7 +217,6 @@ struct Measured {
     word: Option<&'static str>,
     price: Option<String>,
     change: Option<String>,
-    stage: Squeeze,
     scale: u32,
 }
 
@@ -201,7 +229,6 @@ impl Measured {
             word: source.word,
             price: source.price.map(str::to_owned),
             change: source.change.map(str::to_owned),
-            stage: source.stage,
             scale: source.scale.to_bits(),
         }
     }
@@ -209,21 +236,47 @@ impl Measured {
     fn holds(&self, source: &FaceSource<'_>) -> bool {
         (self.symbol == source.symbol && self.code == source.code)
             && (self.marked, self.word) == (source.marked, source.word)
-            && (self.price.as_deref(), self.change.as_deref()) == (source.price, source.change)
-            && (self.stage, self.scale) == (source.stage, source.scale.to_bits())
+            && same_shape(self.price.as_deref(), source.price)
+            && same_shape(self.change.as_deref(), source.change)
+            && self.scale == source.scale.to_bits()
     }
 }
 
+/// Whether two values have one shape: both missing, or the same text but
+/// for which digit stands where.
+fn same_shape(kept: Option<&str>, now: Option<&str>) -> bool {
+    match (kept, now) {
+        (Some(kept), Some(now)) => {
+            kept.len() == now.len()
+                && (kept.chars().zip(now.chars()))
+                    .all(|(a, b)| a == b || (a.is_ascii_digit() && b.is_ascii_digit()))
+        }
+        (kept, now) => kept.is_none() && now.is_none(),
+    }
+}
+
+/// `text`'s width at `pt` with every digit written as the widest digit.
+fn shape_width(text: &str, pt: f32, width: &impl Fn(&str, f32) -> f32) -> f32 {
+    let digit = |d: char| width(d.encode_utf8(&mut [0; 4]), pt);
+    let widest = ('0'..='9').max_by(|a, b| digit(*a).total_cmp(&digit(*b)));
+    let widest = widest.unwrap_or('0');
+    let shaped: String = (text.chars())
+        .map(|c| if c.is_ascii_digit() { widest } else { c })
+        .collect();
+    width(&shaped, pt)
+}
+
 impl FaceCache {
-    /// Tab `id`'s face: the kept one while `source` holds, else laid out from
-    /// `width`, the width of a text at a size in points, and kept.
+    /// Tab `id`'s face at `source`'s stage: the kept one while `source`
+    /// holds, else laid out from `width`, the width of a text at a size in
+    /// points, and kept.
     pub fn layout(
         &mut self,
         id: u64,
         source: &FaceSource<'_>,
         width: impl Fn(&str, f32) -> f32,
     ) -> FaceLayout {
-        if let Some((measured, layout)) = self.faces.get(&id)
+        if let Some((measured, layout)) = self.faces.get(&(id, source.stage))
             && measured.holds(source)
         {
             return *layout;
@@ -239,21 +292,21 @@ impl FaceCache {
             marked: source.marked,
             word: shown(source.word, stage == Squeeze::OneLine)
                 .map(|word| width(word, WORD_TEXT_PT)),
-            price: shown(source.price, stage.shows_price()).map(|price| width(price, sizes.price)),
+            price: shown(source.price, stage.shows_price())
+                .map(|price| shape_width(price, sizes.price, &width)),
             change: shown(source.change, stage.shows_symbol())
-                .map(|change| width(change, sizes.change)),
+                .map(|change| shape_width(change, sizes.change, &width)),
             stage,
         });
-        self.faces.insert(id, (Measured::of(source), layout));
+        let kept = (Measured::of(source), layout);
+        self.faces.insert((id, stage), kept);
         layout
     }
 
     /// Forget every tab but `ids`, the ones on the strip.
     pub fn keep(&mut self, ids: impl IntoIterator<Item = u64>) {
         let ids: Vec<u64> = ids.into_iter().collect();
-        if self.faces.len() > ids.len() {
-            self.faces.retain(|id, _| ids.contains(id));
-        }
+        self.faces.retain(|(id, _), _| ids.contains(id));
     }
 }
 
@@ -645,38 +698,69 @@ mod tests {
         };
         assert!(cache.layout(1, &replay, width).width > first.width);
         assert_eq!(measured.get(), 5);
-        cache.layout(
-            1,
-            &FaceSource {
-                scale: 2.0,
-                ..replay
-            },
-            width,
-        );
+        let rescaled = FaceSource {
+            scale: 2.0,
+            ..replay
+        };
+        cache.layout(1, &rescaled, width);
         assert_eq!(measured.get(), 8);
         cache.layout(2, &source, width);
         cache.keep([2]);
         cache.layout(1, &source, width);
         assert_eq!(measured.get(), 12, "tab 1 was forgotten");
-        let priced = FaceSource {
-            price: Some("172455"),
-            change: Some("+0.41%"),
-            ..source
-        };
-        cache.layout(1, &priced, width);
-        assert_eq!(measured.get(), 16, "a new price measures again");
-        cache.layout(1, &priced, width);
-        assert_eq!(measured.get(), 16);
         let squeezed = FaceSource {
             stage: Squeeze::IconOverVenue,
-            ..priced
+            ..source
         };
         cache.layout(1, &squeezed, width);
         assert_eq!(
             measured.get(),
-            17,
+            13,
             "the last squeeze measures the code alone"
         );
+        cache.layout(1, &source, width);
+        assert_eq!(
+            measured.get(),
+            13,
+            "each stage's face is kept beside the others"
+        );
+    }
+
+    /// The price and the change are kept by their shape: a tick that only
+    /// changes digits keeps the tab's width; a longer price or a flipped
+    /// sign measures again.
+    #[test]
+    fn an_ordinary_tick_keeps_the_tabs_width() {
+        let measured = std::cell::Cell::new(0);
+        let width = |text: &str, pt: f32| {
+            measured.set(measured.get() + 1);
+            let narrow = text.chars().filter(|c| *c == '1').count() as f32;
+            (text.chars().count() as f32 - narrow / 2.0) * pt
+        };
+        let mut cache = FaceCache::default();
+        let quoted = |price, change| FaceSource {
+            symbol: "BTCUSDT",
+            code: "BIN",
+            marked: false,
+            word: None,
+            price: Some(price),
+            change: Some(change),
+            stage: Squeeze::OneLine,
+            scale: 1.0,
+        };
+        let face = cache.layout(1, &quoted("76200.00", "+1.12%"), width);
+        let once = measured.get();
+        assert_eq!(cache.layout(1, &quoted("76211.10", "+0.98%"), width), face);
+        assert_eq!(measured.get(), once, "the same shape is not measured again");
+        let mut digits = |id, price| cache.layout(id, &quoted(price, "+1.12%"), width).width;
+        assert_eq!(
+            digits(9, "11111.11"),
+            digits(10, "00000.00"),
+            "the widest digit"
+        );
+        assert!(cache.layout(1, &quoted("176200.00", "+1.12%"), width).width > face.width);
+        cache.layout(1, &quoted("76200.00", "\u{2212}1.12%"), width);
+        assert!(measured.get() > once, "a new length or sign measures again");
     }
 
     /// The mock's strip, 1,620 points: up to 6 tabs on one line, 7 to 10
@@ -706,6 +790,34 @@ mod tests {
         assert_eq!(at(NO_PRICE_ROOM_PT - 0.5), Squeeze::IconOverVenue);
         assert_eq!(Squeeze::IconOverVenue.for_tab(true), Squeeze::OneLine);
         assert_eq!(Squeeze::NoPrice.for_tab(false), Squeeze::NoPrice);
+    }
+
+    #[test]
+    fn a_strip_squeezes_further_when_the_measured_faces_do_not_fit() {
+        let needed = |stage| match stage {
+            Squeeze::OneLine => 900.0,
+            Squeeze::Stacked => 700.0,
+            Squeeze::NoPrice => 500.0,
+            Squeeze::IconOverVenue => 300.0,
+        };
+        assert_eq!(Squeeze::OneLine.fitting(900.0, needed), Squeeze::OneLine);
+        assert_eq!(Squeeze::OneLine.fitting(899.0, needed), Squeeze::Stacked);
+        assert_eq!(Squeeze::Stacked.fitting(500.0, needed), Squeeze::NoPrice);
+        assert_eq!(
+            Squeeze::OneLine.fitting(100.0, needed),
+            Squeeze::IconOverVenue,
+            "the last squeeze stands; the overflow takes the rest"
+        );
+        let mut asked = Vec::new();
+        let fit = Squeeze::Stacked.fitting(1_000.0, |stage| {
+            asked.push(stage);
+            0.0
+        });
+        assert_eq!(
+            (fit, asked),
+            (Squeeze::Stacked, vec![Squeeze::Stacked]),
+            "never wider"
+        );
     }
 
     #[test]

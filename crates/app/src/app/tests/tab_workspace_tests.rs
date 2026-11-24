@@ -2314,7 +2314,7 @@ fn tab_and_capsule(app: &QuantickApp, tab: u64) -> (egui::Rect, egui::Rect) {
     let strip = &app.chrome.title_bar.strip.tab_ids;
     let open = strip
         .iter()
-        .find(|(id, _)| *id == tab)
+        .find(|(id, ..)| *id == tab)
         .expect("the open tab")
         .1;
     let capsule = app.chrome.capsule;

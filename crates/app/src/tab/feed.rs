@@ -732,7 +732,8 @@ impl Tab {
                     }
                 }
                 Ok(FeedEvent::DealCounter(sample)) => self.observe_deal_counter(sample),
-                Ok(FeedEvent::DayReference(day)) => self.link.day_reference = Some(day),
+                Ok(FeedEvent::DayReference(day)) => self.link.quote.day = day,
+                Ok(FeedEvent::PriceDecimals(digits)) => self.link.quote.decimals = Some(digits),
                 Ok(FeedEvent::RefillStatus(fill)) => {
                     self.link.feed_integrity.last_refill = Some(fill)
                 }
@@ -888,8 +889,7 @@ impl Tab {
         observer: &mut dyn super::alerts::Observer,
     ) {
         super::alerts::observe_alert_lifecycle(self, observer);
-        self.link
-            .observe_live_trade(received_at_ms, trade.timestamp_ms);
+        self.link.observe_live_trade(received_at_ms, trade);
         // The simulator taps the same per-trade point the bar engine does, so
         // paper trading works identically on a live feed and a replay — and on
         // a tab the user is not looking at, whose position keeps marking

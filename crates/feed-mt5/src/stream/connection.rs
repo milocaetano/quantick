@@ -397,14 +397,10 @@ async fn announce_session(
             rates: hello.rates.unwrap_or(false),
             history_paging: can_page,
             deal_counter: hello.deal_counter.unwrap_or(false),
+            digits: hello.digits,
         }))
         .await
         .is_err()
-    {
-        return Err(ConnEnd::UiGone);
-    }
-    if let Some(price) = hello.settlement_price()
-        && tx.send(Mt5Event::Settlement(price)).await.is_err()
     {
         return Err(ConnEnd::UiGone);
     }
@@ -728,6 +724,10 @@ impl<'a> Connection<'a> {
                 ControlFlow::Continue(())
             }
             BridgeMsg::RatesEnd { partial } => self.on_rates_end(partial).await,
+            BridgeMsg::Settlement(reading) => {
+                let settled = reading.settlement(|server_ms| self.mapper.to_utc_ms(server_ms));
+                delivered(self.tx.send(Mt5Event::Settlement(settled)).await)
+            }
             BridgeMsg::Bye { reason } => {
                 info!(
                     target: "quantick::feed",

@@ -215,6 +215,9 @@ pub enum BridgeMsg {
         #[serde(default)]
         scanned_to_ms: Option<i64>,
     },
+    /// The terminal's settlement reading, sent after the hello and again
+    /// whenever the value or the server day changes.
+    Settlement(SettlementMsg),
     /// The bridge is going away on purpose (EA removed, terminal closing).
     Bye {
         /// Why, e.g. `"deinit"`.
@@ -363,21 +366,46 @@ pub struct Hello {
     /// counter — and a consumer must not wait for one.
     #[serde(default)]
     pub deal_counter: Option<bool>,
-    /// The previous session's settlement (`SYMBOL_SESSION_PRICE_SETTLEMENT`)
-    /// as an exact decimal string: the day's reference price a tab measures
-    /// its change from. Absent from a bridge older than the field and when
-    /// the terminal reports none; the feed then sends no reference and
-    /// computes none.
-    #[serde(default)]
-    pub settlement: Option<String>,
 }
 
-impl Hello {
-    /// The previous settlement, when the bridge sent a positive one.
+/// One `settlement` line: the terminal's `SYMBOL_SESSION_PRICE_SETTLEMENT`
+/// read at `time_ms`, server time. See `bridge/mt5/PROTOCOL.md` `settlement`.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct SettlementMsg {
+    /// The settlement as an exact decimal string; absent or not positive
+    /// when the terminal reports none.
+    #[serde(default)]
+    pub price: Option<String>,
+    /// Server-time epoch milliseconds of the reading.
+    pub time_ms: i64,
+}
+
+/// A settlement and the prints it is the reference for, in UTC epoch
+/// milliseconds: from the reading to the end of the server day it was taken
+/// in. A print before the reading may belong to the session that settlement
+/// closed, and the next server day's prints wait for the next reading.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Settlement {
+    pub price: rust_decimal::Decimal,
+    pub from_ms: i64,
+    pub until_ms: i64,
+}
+
+/// One server day, the span a settlement reading holds for.
+pub const SERVER_DAY_MS: i64 = 86_400_000;
+
+impl SettlementMsg {
+    /// The reading as a windowed settlement, its server times turned to UTC
+    /// by `to_utc_ms`; `None` when it carries no positive price.
     #[must_use]
-    pub fn settlement_price(&self) -> Option<rust_decimal::Decimal> {
-        let price: rust_decimal::Decimal = self.settlement.as_deref()?.trim().parse().ok()?;
-        (price > rust_decimal::Decimal::ZERO).then_some(price)
+    pub fn settlement(&self, to_utc_ms: impl Fn(i64) -> i64) -> Option<Settlement> {
+        let price: rust_decimal::Decimal = self.price.as_deref()?.trim().parse().ok()?;
+        let day_end = (self.time_ms.div_euclid(SERVER_DAY_MS) + 1) * SERVER_DAY_MS;
+        (price > rust_decimal::Decimal::ZERO).then(|| Settlement {
+            price,
+            from_ms: to_utc_ms(self.time_ms),
+            until_ms: to_utc_ms(day_end),
+        })
     }
 }
 
@@ -659,21 +687,29 @@ mod tests {
         );
     }
 
+    /// B3 at UTC-3: a reading at 10:30 server time holds from then to the
+    /// next server midnight, 03:00 UTC.
     #[test]
-    fn a_settlement_is_read_only_when_the_bridge_sends_a_positive_one() {
-        let hello = |extra: &str| {
-            let line = format!(
-                r#"{{"type":"hello","schema":1,"bridge":"b","bridge_version":"1","symbol":"WIN$N","broker_symbol":"WINZ26","digits":0,"server_utc_offset_s":-10800{extra}}}"#
-            );
-            match parse_line(&line).expect("a hello parses") {
-                BridgeMsg::Hello(hello) => hello.settlement_price(),
-                other => panic!("expected hello, got {other:?}"),
+    fn a_settlement_holds_from_its_reading_to_the_end_of_that_server_day() {
+        const OFFSET_MS: i64 = -10_800_000;
+        let day = 20_416 * SERVER_DAY_MS;
+        let reading = |fields: &str| {
+            let line = format!(r#"{{"type":"settlement"{fields}}}"#);
+            match parse_line(&line).expect("a settlement parses") {
+                BridgeMsg::Settlement(msg) => msg.settlement(|server| server - OFFSET_MS),
+                other => panic!("expected a settlement, got {other:?}"),
             }
         };
-        assert_eq!(hello(r#","settlement":"171750""#), Some(171_750.into()));
-        assert_eq!(hello(""), None, "an older bridge sends none");
-        assert_eq!(hello(r#","settlement":"0""#), None, "none reported");
-        assert_eq!(hello(r#","settlement":"n/a""#), None);
+        let at = day + 37_800_000;
+        let settled =
+            reading(&format!(r#","price":"171750.25","time_ms":{at}"#)).expect("a positive price");
+        assert_eq!(settled.price, "171750.25".parse().unwrap());
+        assert_eq!(settled.from_ms, at + 10_800_000);
+        assert_eq!(settled.until_ms, day + SERVER_DAY_MS + 10_800_000);
+        let none = |fields: &str| reading(&format!(r#"{fields},"time_ms":{at}"#));
+        assert_eq!(none(""), None, "the terminal reports none");
+        assert_eq!(none(r#","price":"0""#), None);
+        assert_eq!(none(r#","price":"n/a""#), None);
     }
 
     #[test]

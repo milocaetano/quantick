@@ -1,6 +1,6 @@
 //! Cached tab identities and intent validation. The arrangement remains authoritative.
 use quantick_appearance::tab_strip::FeedMark;
-use quantick_session::tab_chip::{FaceSource, Squeeze};
+use quantick_session::tab_chip::{FaceCache, FaceLayout, FaceSource, Squeeze};
 use quantick_session::tab_quote::{TabIcon, TabQuote};
 use quantick_workspace::arrangement::strip::{StripSurface, TabFeed, chip_parts};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -55,31 +55,59 @@ impl Chip {
             scale,
         }
     }
-
-    /// What the scene says of the face beside its label: the price, the
-    /// day's change and the stage, each named even when missing.
-    #[must_use]
-    pub fn scene_words(&self, stage: Squeeze) -> String {
-        let price = self.quote.price.as_deref().unwrap_or("none");
-        let change = self.quote.change.as_ref();
-        let change = change.map_or("no venue reference", |change| change.text.as_str());
-        format!("price {price}; day {change}; stage {}", stage.name())
-    }
 }
 
+/// A tab's icon and quote.
+pub type MarketFace = (TabIcon, TabQuote);
+
 /// A tab's icon and quote: `symbol`'s icon on its `feed`, and its newest
-/// print `last` priced in the feed's tick and read against the venue's `day`
-/// reference.
+/// print `last` priced in the decimals
+/// [`price_decimals`](quantick_session::tab_quote::price_decimals) picks and
+/// read against the `venue`'s day reference. The chip and the scene both
+/// read a tab through this.
 #[must_use]
 pub fn market_face(
     feed: Option<&quantick_stores::config::FeedConfig>,
     symbol: &str,
     last: Option<&quantick_engine::Trade>,
-    day: Option<&quantick_sources::day_reference::DayReference>,
-) -> (TabIcon, TabQuote) {
+    venue: &quantick_sources::day_reference::VenueQuote,
+) -> MarketFace {
+    use quantick_session::tab_quote::{price_decimals, quote};
     let tick = feed.and_then(|feed| feed.widget_tick(symbol));
     let icon = TabIcon::of(symbol, feed.and_then(|feed| feed.asset_icon(symbol)));
-    (icon, quantick_session::tab_quote::quote(last, day, tick))
+    // A tab whose prints all came as history has folded none of them.
+    let seen = last.map_or(venue.tape_decimals, |last| {
+        venue.tape_decimals_with(last.price)
+    });
+    let decimals = price_decimals(tick, venue.decimals, seen);
+    (icon, quote(last, venue.day.as_ref(), decimals))
+}
+
+/// How far the strip squeezes, and each chip's face at that stage, the open
+/// chip (`open`) on one line. The count's stage over `room` first
+/// ([`Squeeze::of_strip`]); further while the faces, each taking `per_tab`
+/// beside its own width, overrun `tabs_room` ([`Squeeze::fitting`]).
+/// `width` measures a text at a size, at `scale` pixels per point.
+pub fn squeezed_faces(
+    chips: &[Chip],
+    open: Option<usize>,
+    (room, tabs_room, per_tab): (f32, f32, f32),
+    scale: f32,
+    cache: &mut FaceCache,
+    width: impl Fn(&str, f32) -> f32,
+) -> (Squeeze, Vec<FaceLayout>) {
+    cache.keep(chips.iter().map(|chip| chip.id));
+    let mut faces_at = |stage: Squeeze| -> Vec<FaceLayout> {
+        let face = |(i, chip): (usize, &Chip)| {
+            let source = chip.face_source(stage.for_tab(open == Some(i)), scale);
+            cache.layout(chip.id, &source, &width)
+        };
+        chips.iter().enumerate().map(face).collect()
+    };
+    let taken = |faces: &[FaceLayout]| faces.iter().map(|face| face.width + per_tab).sum();
+    let count = Squeeze::of_strip(chips.len(), room);
+    let stage = count.fitting(tabs_room, |stage| taken(&faces_at(stage)));
+    (stage, faces_at(stage))
 }
 
 /// The tab's feed state as the theme's mark.
@@ -145,11 +173,10 @@ mod tests {
     use super::*;
     use crate::Model as _;
 
-    /// The scene names the price, the change and the stage the strip
-    /// painted, and says so when one is missing.
+    /// A chip measures its face from its own symbol, code and quote.
     #[test]
-    fn the_scene_names_price_change_and_stage() {
-        let quote = quantick_session::tab_quote::quote(None, None, None);
+    fn a_chip_measures_its_face_from_its_symbol_and_quote() {
+        let quote = quantick_session::tab_quote::quote(None, None, 0);
         let mut chip = Chip {
             id: 1,
             label: "WINZ26 \u{b7} MetaTrader 5".into(),
@@ -161,18 +188,10 @@ mod tests {
             icon: TabIcon::of("WINZ26", None),
             quote,
         };
-        assert_eq!(
-            chip.scene_words(Squeeze::Stacked),
-            "price none; day no venue reference; stage stacked"
-        );
         chip.quote.price = Some("172455".into());
         chip.quote.change = Some(quantick_session::tab_quote::format_change(
             "0.41".parse().unwrap(),
         ));
-        assert_eq!(
-            chip.scene_words(Squeeze::OneLine),
-            "price 172455; day +0.41%; stage one_line"
-        );
         let source = chip.face_source(Squeeze::NoPrice, 1.5);
         assert_eq!((source.symbol, source.code), ("WINZ26", "MT5"));
         assert_eq!(
@@ -180,6 +199,39 @@ mod tests {
             (Some("172455"), Some("+0.41%"))
         );
     }
+    /// Long faces squeeze the strip past the stage its tab count names.
+    #[test]
+    fn the_strip_squeezes_past_the_count_when_the_faces_do_not_fit() {
+        let chip = |id| Chip {
+            id,
+            label: "BTCUSDT \u{b7} Binance".into(),
+            feed: TabFeed::Live,
+            workspace: "Default".into(),
+            venue_code: "BIN".into(),
+            symbol_ink: None,
+            tag_fill: None,
+            icon: TabIcon::of("BTCUSDT", None),
+            quote: TabQuote {
+                price: Some("76200.00".into()),
+                change: None,
+            },
+        };
+        let chips = [chip(1), chip(2), chip(3)];
+        let width = |text: &str, pt: f32| text.len() as f32 * pt;
+        let mut cache = FaceCache::default();
+        let mut fit = |tabs_room| {
+            let rooms = (3_000.0, tabs_room, 24.0);
+            squeezed_faces(&chips, Some(0), rooms, 1.0, &mut cache, width)
+        };
+        let (roomy, wide) = fit(3_000.0);
+        assert_eq!((roomy, wide.len()), (Squeeze::OneLine, 3));
+        let one_line: f32 = wide.iter().map(|face| face.width + 24.0).sum();
+        let (tight, faces) = fit(one_line - 1.0);
+        assert_ne!(tight, Squeeze::OneLine);
+        assert_eq!(faces[0], wide[0], "the open tab stays on one line");
+        assert!(faces[1].width < wide[1].width);
+    }
+
     #[test]
     fn tab_actions_reject_stale_indices_and_last_tab_close() {
         let mut state = State::default();

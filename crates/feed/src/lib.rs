@@ -31,6 +31,7 @@ pub mod clock;
 pub use quantick_sources::config;
 pub mod continuity;
 pub mod day_reference;
+pub use quantick_sources::day_reference::{DayReference, VenueQuote};
 pub mod timing;
 pub use quantick_sources::history_reach;
 pub use quantick_sources::history_run;
@@ -185,10 +186,15 @@ pub enum FeedEvent {
     RefillStatus(config::TapeBackfill),
     /// The price the venue says this market's day is measured from: a
     /// crypto venue's 00:00 UTC daily open, an exchange's previous
-    /// settlement. Sent when the venue supplies one and again when it
-    /// changes; a feed whose venue supplies none never sends it, and a
+    /// settlement, each windowed to the prints it holds for. Sent when the
+    /// venue supplies one and again when it changes; `None` withdraws the
+    /// last one. A feed whose venue supplies none never sends it, and a
     /// consumer derives none from the tape.
-    DayReference(quantick_sources::day_reference::DayReference),
+    DayReference(Option<quantick_sources::day_reference::DayReference>),
+    /// The decimals the venue quotes this market's price in (MT5's `digits`,
+    /// Binance's `PRICE_FILTER` tick). Sent once a session by a venue that
+    /// says; a feed that cannot tell never sends it.
+    PriceDecimals(u32),
 }
 
 /// A command from the UI to the feed thread.

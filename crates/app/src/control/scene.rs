@@ -47,6 +47,7 @@
 use crate::toolrail::ToolRailExt as _;
 pub(crate) use quantick_control_schema::scene::*;
 
+use crate::app::title_bar::tab_face;
 use crate::app::{ChromePort, TabsPort};
 use quantick_control::{
     id::{ModuleId, SnapshotScopeId},
@@ -193,7 +194,7 @@ pub(crate) fn scene_snapshot<P: TabsPort + ChromePort + ?Sized>(app: &P) -> Scen
     // allocation on the application thread.
     let strip_complete = push_tab_strip(
         &mut controls,
-        tabs,
+        (tabs, app.tab_reads().config()),
         active_chip,
         app.chrome_reads().title_bar(),
     );
@@ -379,21 +380,21 @@ fn push_context_dividers(controls: &mut Vec<SceneControlSnapshot>, tab_id: u64, 
 /// applied to a list that has already been built.
 fn push_tab_strip(
     controls: &mut Vec<SceneControlSnapshot>,
-    tabs: &crate::app::arrangement_host::ArrangementHost,
+    (tabs, config): (
+        &crate::app::arrangement_host::ArrangementHost,
+        &crate::config::AppConfig,
+    ),
     selected_id: Option<u64>,
     title: Option<&crate::app::title_bar::TitleBarState>,
 ) -> bool {
     for index in tabs.window_indices(tabs.windows().presented()) {
         let tab_id = tabs.id_at(index);
         let tab = &tabs[index];
-        let rect = title.and_then(|title| {
-            title
-                .strip
-                .tab_ids
-                .iter()
-                .find(|(visible, _)| *visible == tab_id)
-                .map(|(_, rect)| *rect)
+        let drawn = title.and_then(|title| {
+            let mut tabs = title.strip.tab_ids.iter();
+            tabs.find(|(visible, ..)| *visible == tab_id)
         });
+        let rect = drawn.map(|(_, rect, _)| *rect);
         if title.is_some() && rect.is_none() {
             continue;
         }
@@ -406,7 +407,7 @@ fn push_tab_strip(
             // assistant that named a tab something the trader cannot see
             // would be describing a different screen.
             label: tab.chip_label().to_owned(),
-            description: title.and_then(|title| title.strip.told.get(&tab_id).cloned()),
+            description: drawn.map(|(.., stage)| tab_face(tab, config).1.scene_words(*stage)),
             role: SceneRoleDto::Tab,
             owner: SceneOwnerSnapshot {
                 kind: SceneOwnerKindDto::TabStrip,

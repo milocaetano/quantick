@@ -428,6 +428,7 @@ async fn feed_task(
         refill_limits,
         candles: CandleShelf::default(),
         listener: Listener::default(),
+        settled: false,
     };
     let (mt5_tx, mut mt5_rx) = mpsc::channel::<Mt5Event>(4096);
     let mut server = tokio::spawn(run_bridge_server(server_cfg.clone(), mt5_tx));
@@ -537,6 +538,8 @@ struct Mt5Feed {
     refill_limits: RefillLimits,
     candles: CandleShelf,
     listener: Listener,
+    /// A settlement reference went out and nothing has withdrawn it since.
+    settled: bool,
 }
 
 impl Mt5Feed {
@@ -610,11 +613,7 @@ impl Mt5Feed {
             // Ahead of the prints it stamps, in the same channel, so the
             // consumer holds the reading before the print.
             Mt5Event::DealCounter(sample) => self.live_event(FeedEvent::DealCounter(sample)).await,
-            Mt5Event::Settlement(price) => {
-                let settled =
-                    quantick_sources::day_reference::DayReference::previous_settlement(price);
-                self.send(FeedEvent::DayReference(settled)).await
-            }
+            Mt5Event::Settlement(reading) => self.on_settlement(reading).await,
             Mt5Event::Live(trade) => self.live_event(FeedEvent::Live(trade)).await,
         }
     }
@@ -641,6 +640,29 @@ impl Mt5Feed {
         self.send(FeedEvent::Live(trade)).await
     }
 
+    /// A new bridge session's price facts: the venue's decimals, and no
+    /// settlement until this session reads one — the last one's may be for
+    /// another day.
+    async fn open_quote(&mut self, digits: u32) -> EventFlow {
+        if let EventFlow::UiGone = self.on_settlement(None).await {
+            return EventFlow::UiGone;
+        }
+        self.send(FeedEvent::PriceDecimals(digits)).await
+    }
+
+    /// A settlement reading as the tab's day reference. A reading with no
+    /// price withdraws the one sent, and is not sent when none was.
+    async fn on_settlement(&mut self, reading: Option<quantick_feed_mt5::Settlement>) -> EventFlow {
+        let reference = reading.map(|settled| {
+            use quantick_sources::day_reference::DayReference;
+            DayReference::previous_settlement(settled.price, settled.from_ms, settled.until_ms)
+        });
+        if !std::mem::replace(&mut self.settled, reference.is_some()) && reference.is_none() {
+            return EventFlow::Handled;
+        }
+        self.send(FeedEvent::DayReference(reference)).await
+    }
+
     async fn on_status(&mut self, status: Mt5Status) -> EventFlow {
         // Any status proves the listener is up: a bind failure that later
         // repeats deserves a fresh report.
@@ -654,6 +676,7 @@ impl Mt5Feed {
                 book_levels,
                 history_paging,
                 deal_counter,
+                digits,
                 ..
             } => {
                 self.bridge_connected.store(true, Ordering::Relaxed);
@@ -673,6 +696,9 @@ impl Mt5Feed {
                     *history_paging,
                     *deal_counter,
                 ));
+                if let EventFlow::UiGone = self.open_quote(*digits).await {
+                    return EventFlow::UiGone;
+                }
                 FeedNotice::Connected
             }
             Mt5Status::Waiting { .. } => {
@@ -1435,6 +1461,7 @@ fn log_status(symbol: &str, status: &Mt5Status) {
             rates,
             history_paging,
             deal_counter,
+            ..
         } => info!(
             target: "quantick::app",
             schema_version = 1_u8,
@@ -1470,6 +1497,86 @@ crate::hooks::declare_hooks!["QUANTICK_FAKE_LATENCY_SPLIT"];
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The next event about the tape. The quote facts a hello brings
+    /// (`PriceDecimals`, a withdrawn `DayReference`) have their own test.
+    async fn tape_event(events: &mut mpsc::Receiver<FeedEvent>) -> Option<FeedEvent> {
+        loop {
+            match events.recv().await {
+                Some(FeedEvent::PriceDecimals(_) | FeedEvent::DayReference(_)) => {}
+                other => return other,
+            }
+        }
+    }
+
+    /// A fixture bridge at server time +03:00: the hello's digits and the
+    /// settlement reach the tab windowed in UTC, and a reconnect's hello
+    /// withdraws the settlement before the new session reads its own.
+    #[tokio::test]
+    async fn a_reconnect_withdraws_the_last_sessions_settlement() {
+        let mut ports = std::collections::BTreeMap::new();
+        ports.insert("XAUUSD".to_string(), 19241_u16);
+        let settings = MetaTraderSettings {
+            listen_addr: "127.0.0.1:19242".to_string(),
+            ports,
+            side_source: Mt5SideSource::TickRule,
+            bridge_autostart: false,
+            ..MetaTraderSettings::default()
+        };
+        let mut feed = spawn("XAUUSD", &settings, None);
+        let Some(FeedEvent::Backfilled(_)) = feed.events.recv().await else {
+            panic!("expected the immediate empty backfill");
+        };
+        let hello = concat!(
+            "{\"type\":\"hello\",\"schema\":1,\"bridge\":\"test\",\"bridge_version\":\"0\",",
+            "\"symbol\":\"XAUUSD\",\"broker_symbol\":\"XAUUSD\",\"digits\":2,",
+            "\"server_utc_offset_s\":10800}\n",
+        );
+        async fn dial() -> tokio::net::TcpStream {
+            for _ in 0..50 {
+                if let Ok(sock) = tokio::net::TcpStream::connect("127.0.0.1:19241").await {
+                    return sock;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+            panic!("nothing is listening on the mapped port");
+        }
+        async fn next(feed: &mut FeedHandle) -> FeedEvent {
+            tokio::time::timeout(Duration::from_secs(5), feed.events.recv())
+                .await
+                .expect("timed out waiting for an event")
+                .expect("feed closed")
+        }
+        let at = 1_784_824_300_000_i64;
+        let mut sock = dial().await;
+        let settled =
+            format!("{{\"type\":\"settlement\",\"price\":\"4000.125\",\"time_ms\":{at}}}\n");
+        sock.write_all((hello.to_owned() + &settled).as_bytes())
+            .await
+            .unwrap();
+        sock.flush().await.unwrap();
+        assert!(matches!(next(&mut feed).await, FeedEvent::PriceDecimals(2)));
+        let FeedEvent::DayReference(Some(day)) = next(&mut feed).await else {
+            panic!("expected the settlement");
+        };
+        assert_eq!(day.price, "4000.125".parse().unwrap());
+        assert_eq!(day.from_ms, at - 10_800_000, "server time to UTC");
+        let server_midnight = (at / 86_400_000 + 1) * 86_400_000;
+        assert_eq!(day.until_ms, server_midnight - 10_800_000);
+        drop(sock);
+
+        let mut sock = dial().await;
+        sock.write_all(hello.as_bytes()).await.unwrap();
+        sock.flush().await.unwrap();
+        loop {
+            match next(&mut feed).await {
+                FeedEvent::DayReference(None) => break,
+                FeedEvent::DayReference(Some(day)) => panic!("kept the last session's {day:?}"),
+                _ => {}
+            }
+        }
+        assert!(matches!(next(&mut feed).await, FeedEvent::PriceDecimals(2)));
+    }
 
     #[test]
     fn a_forced_split_parses_into_a_reading() {
@@ -1593,7 +1700,7 @@ mod tests {
             ..MetaTraderSettings::default()
         };
         let mut feed = spawn("WIN$N", &settings, None);
-        let Some(FeedEvent::Backfilled(empty)) = feed.events.recv().await else {
+        let Some(FeedEvent::Backfilled(empty)) = tape_event(&mut feed.events).await else {
             panic!("expected the immediate empty backfill");
         };
         assert!(empty.is_empty());
@@ -1625,7 +1732,7 @@ mod tests {
         sock.flush().await.unwrap();
 
         // History block: seq 1 honestly dropped (no context), seq 2 = buy.
-        let event = tokio::time::timeout(Duration::from_secs(5), feed.events.recv())
+        let event = tokio::time::timeout(Duration::from_secs(5), tape_event(&mut feed.events))
             .await
             .expect("timed out waiting for history")
             .expect("feed closed");
@@ -1636,7 +1743,7 @@ mod tests {
         assert_eq!(history[0].agg_id, 2);
 
         // Live tick: downtick = sell.
-        let event = tokio::time::timeout(Duration::from_secs(5), feed.events.recv())
+        let event = tokio::time::timeout(Duration::from_secs(5), tape_event(&mut feed.events))
             .await
             .expect("timed out waiting for the live trade")
             .expect("feed closed");
@@ -1646,7 +1753,7 @@ mod tests {
         assert_eq!(trade.agg_id, 3);
         assert_eq!(trade.side, quantick_engine::Side::Sell);
         sock.write_all(b"{\"type\":\"tick\",\"seq\":6,\"time_ms\":1003,\"bid\":\"0\",\"ask\":\"0\",\"last\":\"101\",\"volume\":1,\"flags\":1080}\n").await.unwrap();
-        let event = tokio::time::timeout(Duration::from_secs(5), feed.events.recv())
+        let event = tokio::time::timeout(Duration::from_secs(5), tape_event(&mut feed.events))
             .await
             .unwrap();
         assert!(matches!(
@@ -1660,7 +1767,7 @@ mod tests {
                 non_monotonic: false,
             }))
         ));
-        let event = tokio::time::timeout(Duration::from_secs(5), feed.events.recv())
+        let event = tokio::time::timeout(Duration::from_secs(5), tape_event(&mut feed.events))
             .await
             .unwrap();
         assert!(matches!(event, Some(FeedEvent::Live(trade)) if trade.agg_id == 6));
@@ -1683,7 +1790,7 @@ mod tests {
             ..MetaTraderSettings::default()
         };
         let mut feed = spawn("XAUUSD", &settings, None);
-        let Some(FeedEvent::Backfilled(_)) = feed.events.recv().await else {
+        let Some(FeedEvent::Backfilled(_)) = tape_event(&mut feed.events).await else {
             panic!("expected the immediate empty backfill");
         };
 
@@ -1710,7 +1817,7 @@ mod tests {
         sock.flush().await.unwrap();
 
         // seq 1 has no tick-rule context; seq 2 is an uptick.
-        let event = tokio::time::timeout(Duration::from_secs(5), feed.events.recv())
+        let event = tokio::time::timeout(Duration::from_secs(5), tape_event(&mut feed.events))
             .await
             .expect("timed out waiting for the trade")
             .expect("feed closed");
@@ -1757,7 +1864,7 @@ mod tests {
         let mut gold = spawn("XAUUSD", &settings, None);
         let mut index = spawn("US500", &settings, None);
         for feed in [&mut gold, &mut index] {
-            let Some(FeedEvent::Backfilled(_)) = feed.events.recv().await else {
+            let Some(FeedEvent::Backfilled(_)) = tape_event(&mut feed.events).await else {
                 panic!("expected the immediate empty backfill");
             };
         }
@@ -1800,7 +1907,7 @@ mod tests {
         index_sock.flush().await.unwrap();
 
         async fn next_trade(feed: &mut FeedHandle) -> quantick_engine::Trade {
-            let event = tokio::time::timeout(Duration::from_secs(5), feed.events.recv())
+            let event = tokio::time::timeout(Duration::from_secs(5), tape_event(&mut feed.events))
                 .await
                 .expect("timed out waiting for the trade")
                 .expect("feed closed");
@@ -1896,7 +2003,7 @@ mod tests {
             ..MetaTraderSettings::default()
         };
         let mut feed = spawn("WIN$N", &settings, None);
-        let Some(FeedEvent::Backfilled(_)) = feed.events.recv().await else {
+        let Some(FeedEvent::Backfilled(_)) = tape_event(&mut feed.events).await else {
             panic!("expected the immediate empty backfill");
         };
 
@@ -1917,7 +2024,7 @@ mod tests {
             .expect("the feed is listening");
         let answered = tokio::time::timeout(Duration::from_secs(5), async {
             loop {
-                match feed.events.recv().await {
+                match tape_event(&mut feed.events).await {
                     Some(FeedEvent::HistoryPrepended(trades)) => return trades,
                     Some(_) => {}
                     None => panic!("feed closed"),
@@ -1956,7 +2063,7 @@ mod tests {
 
         let event = tokio::time::timeout(Duration::from_secs(10), async {
             loop {
-                match feed.events.recv().await {
+                match tape_event(&mut feed.events).await {
                     Some(FeedEvent::Live(trade)) => return trade,
                     Some(_) => {}
                     None => panic!("feed closed"),
@@ -2020,7 +2127,7 @@ mod tests {
             ..MetaTraderSettings::default()
         };
         let mut feed = spawn("US500", &settings, None);
-        let Some(FeedEvent::Backfilled(_)) = feed.events.recv().await else {
+        let Some(FeedEvent::Backfilled(_)) = tape_event(&mut feed.events).await else {
             panic!("expected the immediate empty backfill");
         };
         // Until a bridge says otherwise, the provider's optimistic answer holds.
@@ -2055,7 +2162,7 @@ mod tests {
 
         // The quote charts: seq 1 has no tick-rule context, seq 2 is a buy at
         // the mid, one unit.
-        let event = tokio::time::timeout(Duration::from_secs(5), feed.events.recv())
+        let event = tokio::time::timeout(Duration::from_secs(5), tape_event(&mut feed.events))
             .await
             .expect("timed out waiting for the live print")
             .expect("feed closed");
@@ -2096,7 +2203,7 @@ mod tests {
             ..MetaTraderSettings::default()
         };
         let mut feed = spawn("WIN$N", &settings, None);
-        let Some(FeedEvent::Backfilled(_)) = feed.events.recv().await else {
+        let Some(FeedEvent::Backfilled(_)) = tape_event(&mut feed.events).await else {
             panic!("expected the immediate empty backfill");
         };
 
@@ -2131,7 +2238,7 @@ mod tests {
         sock.write_all(script.as_bytes()).await.unwrap();
         sock.flush().await.unwrap();
         let Some(FeedEvent::HistoryPrepended(_)) =
-            tokio::time::timeout(Duration::from_secs(5), feed.events.recv())
+            tokio::time::timeout(Duration::from_secs(5), tape_event(&mut feed.events))
                 .await
                 .expect("timed out waiting for the opening block")
         else {
@@ -2149,7 +2256,7 @@ mod tests {
         sock.flush().await.unwrap();
 
         let Some(FeedEvent::OpeningPrepended { trades, remaining }) =
-            tokio::time::timeout(Duration::from_secs(5), feed.events.recv())
+            tokio::time::timeout(Duration::from_secs(5), tape_event(&mut feed.events))
                 .await
                 .expect("the first session's own slice was dropped as a reconnect's")
         else {
@@ -2194,7 +2301,7 @@ mod tests {
             ..MetaTraderSettings::default()
         };
         let mut feed = spawn("WIN$N", &settings, None);
-        let Some(FeedEvent::Backfilled(_)) = feed.events.recv().await else {
+        let Some(FeedEvent::Backfilled(_)) = tape_event(&mut feed.events).await else {
             panic!("expected the immediate empty backfill");
         };
 
@@ -2233,7 +2340,7 @@ mod tests {
         sock.flush().await.unwrap();
 
         let Some(FeedEvent::HistoryPrepended(opening)) =
-            tokio::time::timeout(Duration::from_secs(5), feed.events.recv())
+            tokio::time::timeout(Duration::from_secs(5), tape_event(&mut feed.events))
                 .await
                 .expect("timed out waiting for the opening block")
         else {
@@ -2274,7 +2381,7 @@ mod tests {
         sock.flush().await.unwrap();
 
         let Some(FeedEvent::HistoryPrepended(page)) =
-            tokio::time::timeout(Duration::from_secs(5), feed.events.recv())
+            tokio::time::timeout(Duration::from_secs(5), tape_event(&mut feed.events))
                 .await
                 .expect("timed out waiting for the page")
         else {
@@ -2309,7 +2416,7 @@ mod tests {
         .unwrap();
         sock.flush().await.unwrap();
         let Some(FeedEvent::HistoryPrepended(last)) =
-            tokio::time::timeout(Duration::from_secs(5), feed.events.recv())
+            tokio::time::timeout(Duration::from_secs(5), tape_event(&mut feed.events))
                 .await
                 .expect("timed out waiting for the last page")
         else {
@@ -2343,7 +2450,7 @@ mod tests {
             ..MetaTraderSettings::default()
         };
         let mut feed = spawn("WIN$N", &settings, None);
-        let Some(FeedEvent::Backfilled(_)) = feed.events.recv().await else {
+        let Some(FeedEvent::Backfilled(_)) = tape_event(&mut feed.events).await else {
             panic!("expected the immediate empty backfill");
         };
 
@@ -2378,7 +2485,7 @@ mod tests {
         sock.write_all(script.as_bytes()).await.unwrap();
         sock.flush().await.unwrap();
         let Some(FeedEvent::HistoryPrepended(_)) =
-            tokio::time::timeout(Duration::from_secs(5), feed.events.recv())
+            tokio::time::timeout(Duration::from_secs(5), tape_event(&mut feed.events))
                 .await
                 .expect("timed out waiting for the opening block")
         else {
@@ -2399,7 +2506,7 @@ mod tests {
 
         // The dropped click is answered from the app layer, immediately.
         let Some(FeedEvent::HistoryPrepended(dropped)) =
-            tokio::time::timeout(Duration::from_secs(5), feed.events.recv())
+            tokio::time::timeout(Duration::from_secs(5), tape_event(&mut feed.events))
                 .await
                 .expect("the dropped click was never answered: the spinner would never stop")
         else {
@@ -2416,7 +2523,7 @@ mod tests {
         sock.write_all(script.as_bytes()).await.unwrap();
         sock.flush().await.unwrap();
         let Some(FeedEvent::HistoryPrepended(page)) =
-            tokio::time::timeout(Duration::from_secs(5), feed.events.recv())
+            tokio::time::timeout(Duration::from_secs(5), tape_event(&mut feed.events))
                 .await
                 .expect("timed out waiting for the page")
         else {
@@ -2439,7 +2546,7 @@ mod tests {
             ..MetaTraderSettings::default()
         };
         let mut feed = spawn("WIN$N", &settings, None);
-        let Some(FeedEvent::Backfilled(_)) = feed.events.recv().await else {
+        let Some(FeedEvent::Backfilled(_)) = tape_event(&mut feed.events).await else {
             panic!("expected the immediate empty backfill");
         };
 
@@ -2474,7 +2581,7 @@ mod tests {
         sock.write_all(script.as_bytes()).await.unwrap();
         sock.flush().await.unwrap();
         let Some(FeedEvent::HistoryPrepended(_)) =
-            tokio::time::timeout(Duration::from_secs(5), feed.events.recv())
+            tokio::time::timeout(Duration::from_secs(5), tape_event(&mut feed.events))
                 .await
                 .expect("timed out waiting for the opening block")
         else {
@@ -2499,7 +2606,7 @@ mod tests {
         .unwrap();
         sock.flush().await.unwrap();
         let Some(FeedEvent::HistoryPrepended(empty)) =
-            tokio::time::timeout(Duration::from_secs(5), feed.events.recv())
+            tokio::time::timeout(Duration::from_secs(5), tape_event(&mut feed.events))
                 .await
                 .expect("timed out waiting for the empty page")
         else {
@@ -2531,7 +2638,7 @@ mod tests {
             ..MetaTraderSettings::default()
         };
         let mut feed = spawn("WIN$N", &settings, None);
-        let Some(FeedEvent::Backfilled(_)) = feed.events.recv().await else {
+        let Some(FeedEvent::Backfilled(_)) = tape_event(&mut feed.events).await else {
             panic!("expected the immediate empty backfill");
         };
         assert!(
@@ -2544,7 +2651,7 @@ mod tests {
             .await
             .unwrap();
         let Some(FeedEvent::HistoryPrepended(empty)) =
-            tokio::time::timeout(Duration::from_secs(5), feed.events.recv())
+            tokio::time::timeout(Duration::from_secs(5), tape_event(&mut feed.events))
                 .await
                 .expect("timed out: the request went unanswered")
         else {
@@ -2566,7 +2673,7 @@ mod tests {
             ..MetaTraderSettings::default()
         };
         let mut feed = spawn("WIN$N", &settings, None);
-        let Some(FeedEvent::Backfilled(_)) = feed.events.recv().await else {
+        let Some(FeedEvent::Backfilled(_)) = tape_event(&mut feed.events).await else {
             panic!("expected the immediate empty backfill");
         };
 
@@ -2604,7 +2711,7 @@ mod tests {
         sock.flush().await.unwrap();
 
         let Some(FeedEvent::HistoryPrepended(history)) =
-            tokio::time::timeout(Duration::from_secs(5), feed.events.recv())
+            tokio::time::timeout(Duration::from_secs(5), tape_event(&mut feed.events))
                 .await
                 .expect("timed out waiting for history")
         else {
@@ -2612,7 +2719,7 @@ mod tests {
         };
         assert_eq!(history.len(), 1);
         let Some(FeedEvent::Live(live)) =
-            tokio::time::timeout(Duration::from_secs(5), feed.events.recv())
+            tokio::time::timeout(Duration::from_secs(5), tape_event(&mut feed.events))
                 .await
                 .expect("timed out waiting for the live trade")
         else {
@@ -2648,7 +2755,7 @@ mod tests {
         // so there is no hole: no refill opens, none is reported, and the
         // unseen tail goes out on the history path, never as live.
         let Some(FeedEvent::Refilled(fresh)) =
-            tokio::time::timeout(Duration::from_secs(5), feed.events.recv())
+            tokio::time::timeout(Duration::from_secs(5), tape_event(&mut feed.events))
                 .await
                 .expect("timed out waiting for the unseen tail")
         else {
@@ -2688,7 +2795,7 @@ mod tests {
             ..MetaTraderSettings::default()
         };
         let mut feed = spawn("WIN$N", &settings, None);
-        let Some(FeedEvent::Backfilled(_)) = feed.events.recv().await else {
+        let Some(FeedEvent::Backfilled(_)) = tape_event(&mut feed.events).await else {
             panic!("expected the immediate empty backfill");
         };
         assert!(
@@ -2708,7 +2815,7 @@ mod tests {
             .expect("the feed is listening");
         let early = tokio::time::timeout(Duration::from_secs(5), async {
             loop {
-                match feed.events.recv().await {
+                match tape_event(&mut feed.events).await {
                     Some(FeedEvent::OhlcvHistory { bars, .. }) => return bars,
                     Some(_) => {}
                     None => panic!("feed closed"),
@@ -2759,7 +2866,7 @@ mod tests {
         // that the candles have been absorbed and held.
         let live = tokio::time::timeout(Duration::from_secs(5), async {
             loop {
-                match feed.events.recv().await {
+                match tape_event(&mut feed.events).await {
                     Some(FeedEvent::Live(trade)) => return trade,
                     Some(_) => {}
                     None => panic!("feed closed"),
@@ -2793,7 +2900,7 @@ mod tests {
 
         let reply = tokio::time::timeout(Duration::from_secs(5), async {
             loop {
-                match feed.events.recv().await {
+                match tape_event(&mut feed.events).await {
                     Some(FeedEvent::OhlcvHistory {
                         interval_ms,
                         bars,
@@ -2841,7 +2948,7 @@ mod tests {
             ..MetaTraderSettings::default()
         };
         let mut feed = spawn("WIN$N", &settings, None);
-        let Some(FeedEvent::Backfilled(_)) = feed.events.recv().await else {
+        let Some(FeedEvent::Backfilled(_)) = tape_event(&mut feed.events).await else {
             panic!("expected the immediate empty backfill");
         };
 
@@ -2857,7 +2964,7 @@ mod tests {
 
         let reply = tokio::time::timeout(Duration::from_secs(5), async {
             loop {
-                match feed.events.recv().await {
+                match tape_event(&mut feed.events).await {
                     Some(FeedEvent::OhlcvHistory { bars, .. }) => return bars,
                     Some(_) => {}
                     None => panic!("feed closed"),
@@ -2890,7 +2997,7 @@ mod tests {
             ..MetaTraderSettings::default()
         };
         let mut feed = spawn("WIN$N", &settings, None);
-        let Some(FeedEvent::Backfilled(_)) = feed.events.recv().await else {
+        let Some(FeedEvent::Backfilled(_)) = tape_event(&mut feed.events).await else {
             panic!("expected the immediate empty backfill");
         };
 
@@ -2922,7 +3029,7 @@ mod tests {
         async fn next_live(feed: &mut FeedHandle) {
             tokio::time::timeout(Duration::from_secs(5), async {
                 loop {
-                    match feed.events.recv().await {
+                    match tape_event(&mut feed.events).await {
                         Some(FeedEvent::Live(_)) => return,
                         Some(_) => {}
                         None => panic!("feed closed"),
@@ -2945,7 +3052,7 @@ mod tests {
                 .expect("the feed is listening");
             tokio::time::timeout(Duration::from_secs(5), async {
                 loop {
-                    match feed.events.recv().await {
+                    match tape_event(&mut feed.events).await {
                         Some(FeedEvent::OhlcvHistory { bars, .. }) => return bars,
                         Some(_) => {}
                         None => panic!("feed closed"),

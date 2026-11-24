@@ -22,12 +22,11 @@ pub enum DayReferenceKind {
 pub struct DayReference {
     pub price: Decimal,
     pub kind: DayReferenceKind,
-    /// The first market millisecond it holds for; `None` from a venue that
-    /// does not say when its session began.
-    pub from_ms: Option<i64>,
-    /// The first market millisecond it no longer holds for; `None` while the
-    /// venue sends no end, as a settlement read at connect does.
-    pub until_ms: Option<i64>,
+    /// The first market millisecond it holds for.
+    pub from_ms: i64,
+    /// The first market millisecond it no longer holds for: a print outside
+    /// the window gets no change, never one against another session's price.
+    pub until_ms: i64,
 }
 
 impl DayReference {
@@ -37,28 +36,27 @@ impl DayReference {
         Self {
             price,
             kind: DayReferenceKind::DailyOpen,
-            from_ms: Some(day_start_ms),
-            until_ms: Some(day_start_ms.saturating_add(UTC_DAY_MS)),
+            from_ms: day_start_ms,
+            until_ms: day_start_ms.saturating_add(UTC_DAY_MS),
         }
     }
 
-    /// The previous session's settlement, holding until the venue sends
-    /// another.
+    /// The previous session's settlement, holding for prints from `from_ms`
+    /// until `until_ms`: the span the venue vouches it for.
     #[must_use]
-    pub fn previous_settlement(price: Decimal) -> Self {
+    pub fn previous_settlement(price: Decimal, from_ms: i64, until_ms: i64) -> Self {
         Self {
             price,
             kind: DayReferenceKind::PreviousSettlement,
-            from_ms: None,
-            until_ms: None,
+            from_ms,
+            until_ms,
         }
     }
 
     /// Whether the reference holds for a print at `at_ms`.
     #[must_use]
     pub fn covers(&self, at_ms: i64) -> bool {
-        self.from_ms.is_none_or(|from| at_ms >= from)
-            && self.until_ms.is_none_or(|until| at_ms < until)
+        (self.from_ms..self.until_ms).contains(&at_ms)
     }
 
     /// The change from the reference to `last`, printed at `at_ms`, in
@@ -68,6 +66,43 @@ impl DayReference {
     pub fn change_percent(&self, last: Decimal, at_ms: i64) -> Option<Decimal> {
         (self.covers(at_ms) && self.price > Decimal::ZERO)
             .then(|| (last - self.price) / self.price * Decimal::ONE_HUNDRED)
+    }
+}
+
+/// What a feed has said about its market's price: the venue's day
+/// reference and decimals, and the most decimals its live prints have shown.
+/// A tab holds one per feed session.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct VenueQuote {
+    /// The newest day reference; `None` until the venue sends one, or after
+    /// it withdrew it.
+    pub day: Option<DayReference>,
+    /// The decimals the venue says it quotes the price in.
+    pub decimals: Option<u32>,
+    /// The most decimals a live print has shown, trailing zeros aside: what
+    /// a price is written in when the venue never said. Only ever grows.
+    pub tape_decimals: u32,
+}
+
+impl VenueQuote {
+    /// Fold one live print's price into [`Self::tape_decimals`].
+    pub fn observe_price(&mut self, price: Decimal) {
+        self.tape_decimals = self.tape_decimals_with(price);
+    }
+
+    /// [`Self::tape_decimals`] had `price` been folded too. One modulo on
+    /// the settled path: a price padded past the decimals already seen
+    /// (Binance's `76200.01000000`) normalizes only when the padding hides a
+    /// new digit.
+    #[must_use]
+    pub fn tape_decimals_with(&self, price: Decimal) -> u32 {
+        let (scale, seen) = (price.scale(), self.tape_decimals);
+        let unit = 10_i128.checked_pow(scale.saturating_sub(seen));
+        if scale > seen && unit.is_some_and(|unit| price.mantissa() % unit != 0) {
+            price.normalize().scale()
+        } else {
+            seen
+        }
     }
 }
 
@@ -109,10 +144,27 @@ mod tests {
     }
 
     #[test]
-    fn a_settlement_holds_until_the_venue_sends_another() {
-        let settled = DayReference::previous_settlement(dec("173170"));
+    fn a_settlement_holds_only_for_the_span_the_venue_vouches_it_for() {
+        let settled = DayReference::previous_settlement(dec("173170"), DAY, DAY + 10);
         assert_eq!(settled.kind, DayReferenceKind::PreviousSettlement);
-        assert!(settled.covers(0) && settled.covers(DAY));
+        assert!(settled.covers(DAY) && settled.covers(DAY + 9));
+        assert!(!settled.covers(DAY - 1), "a print before the reading");
+        assert!(!settled.covers(DAY + 10), "the next session's print");
+    }
+
+    #[test]
+    fn a_quote_keeps_the_most_decimals_its_prints_have_shown() {
+        let mut quote = VenueQuote::default();
+        quote.observe_price(dec("76200.01000000"));
+        assert_eq!(quote.tape_decimals, 2, "padding is no decimal");
+        for price in ["76200.00000000", "76200.10000000", "76200"] {
+            quote.observe_price(dec(price));
+        }
+        assert_eq!(quote.tape_decimals, 2, "never shrinks");
+        assert_eq!(quote.tape_decimals_with(dec("76200.125")), 3, "not folded");
+        assert_eq!(quote.tape_decimals, 2);
+        quote.observe_price(dec("76200.125"));
+        assert_eq!(quote.tape_decimals, 3);
     }
 
     #[test]
@@ -128,7 +180,7 @@ mod tests {
         );
         assert_eq!(open.change_percent(dec("80000"), DAY + 5), Some(dec("0")));
         assert_eq!(open.change_percent(dec("80896"), DAY + UTC_DAY_MS), None);
-        let zero = DayReference::previous_settlement(dec("0"));
+        let zero = DayReference::previous_settlement(dec("0"), 0, DAY + 1);
         assert_eq!(
             zero.change_percent(dec("1"), DAY),
             None,

@@ -35,6 +35,30 @@ pub fn next_read_ms(now_ms: i64) -> i64 {
     utc_day_start(now_ms) + UTC_DAY_MS + DAY_ROLL_GRACE_MS
 }
 
+/// What one read of the day's candles decides: the open to send, if the
+/// read found the day it asked for, and how long to wait before the next.
+///
+/// The read asked at `asked_ms` for the day starting `day_start_ms` and came
+/// back at `done_ms`. A read that straddled 00:00 UTC found yesterday's day:
+/// it sends nothing and reads the new day at once, rather than sending a
+/// stale open and sleeping a day on it.
+#[must_use]
+pub fn after_read(bars: &[Bar], asked_ms: i64, done_ms: i64) -> (Option<DayReference>, Duration) {
+    let day_start = utc_day_start(asked_ms);
+    if utc_day_start(done_ms) != day_start {
+        return (None, Duration::ZERO);
+    }
+    match open_of_day(bars, day_start) {
+        Some(open) => {
+            let until = next_read_ms(asked_ms);
+            let wait = until.saturating_sub(done_ms).max(0);
+            let wait = Duration::from_millis(u64::try_from(wait).unwrap_or_default());
+            (Some(DayReference::daily_open(day_start, open)), wait)
+        }
+        None => (None, DAY_OPEN_RETRY),
+    }
+}
+
 /// Keep the session's daily open current on a task of its own, reading the
 /// day's candles through `fetch(day_start_ms, now_ms)`. Ends when the
 /// session's consumer is gone.
@@ -46,19 +70,15 @@ where
     tokio::spawn(async move {
         loop {
             let now_ms = crate::clock::wall_clock_ms();
-            let day_start = utc_day_start(now_ms);
-            let wait = match open_of_day(&fetch(day_start, now_ms).await, day_start) {
-                Some(open) => {
-                    let reference = DayReference::daily_open(day_start, open);
-                    if tx.send(FeedEvent::DayReference(reference)).await.is_err() {
-                        return;
-                    }
-                    let until = next_read_ms(crate::clock::wall_clock_ms());
-                    Duration::from_millis(until.saturating_sub(now_ms).max(0) as u64)
+            let bars = fetch(utc_day_start(now_ms), now_ms).await;
+            let (open, wait) = after_read(&bars, now_ms, crate::clock::wall_clock_ms());
+            if let Some(open) = open {
+                if tx.send(FeedEvent::DayReference(Some(open))).await.is_err() {
+                    return;
                 }
-                None if tx.is_closed() => return,
-                None => DAY_OPEN_RETRY,
-            };
+            } else if tx.is_closed() {
+                return;
+            }
             tokio::time::sleep(wait).await;
         }
     })
@@ -95,6 +115,37 @@ mod tests {
             "yesterday's is no reference"
         );
         assert_eq!(open_of_day(&[], DAY), None);
+    }
+
+    #[test]
+    fn a_read_sends_the_days_open_and_waits_for_the_next_midnight() {
+        let bars = [daily(DAY, "76490.01")];
+        let (open, wait) = after_read(&bars, DAY + 1_000, DAY + 3_000);
+        assert_eq!(
+            open,
+            Some(DayReference::daily_open(DAY, "76490.01".parse().unwrap()))
+        );
+        let until = DAY + UTC_DAY_MS + DAY_ROLL_GRACE_MS;
+        assert_eq!(wait, Duration::from_millis((until - DAY - 3_000) as u64));
+        assert_eq!(
+            after_read(&[], DAY + 1_000, DAY + 3_000),
+            (None, DAY_OPEN_RETRY)
+        );
+    }
+
+    /// Asked at 23:59:59.900 UTC, answered at 00:00:00.400: the answer is
+    /// yesterday's open, and a day's sleep on it would leave the new day
+    /// without one.
+    #[test]
+    fn a_read_straddling_utc_midnight_sends_nothing_and_reads_again_at_once() {
+        let bars = [daily(DAY - UTC_DAY_MS, "75100.5"), daily(DAY, "76490.01")];
+        assert_eq!(
+            after_read(&bars, DAY - 100, DAY + 400),
+            (None, Duration::ZERO)
+        );
+        let (open, wait) = after_read(&bars, DAY + 401, DAY + 900);
+        assert_eq!(open.map(|day| day.from_ms), Some(DAY), "the new day's open");
+        assert!(wait > Duration::from_secs(86_000));
     }
 
     #[test]

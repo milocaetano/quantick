@@ -144,10 +144,10 @@ pub struct FeedLink {
     /// readout. The latency above is an observation frozen at arrival; this
     /// is what wall clock is compared against every frame.
     pub latest_trade_ms: Option<i64>,
-    /// The venue's newest day reference ([`FeedEvent::DayReference`]) for
-    /// this session's market; `None` until the venue sends one, and again
-    /// after an attach, which may change the market.
-    pub day_reference: Option<quantick_sources::day_reference::DayReference>,
+    /// What the venue said of this session's price
+    /// ([`FeedEvent::DayReference`], [`FeedEvent::PriceDecimals`]) and its
+    /// live prints' decimals; reset by an attach, which may change the market.
+    pub quote: quantick_sources::day_reference::VenueQuote,
     pub live_trades: u64,
     /// Drain-receipt-to-paper-trading delay of the newest live prints, never
     /// a recording's; reset by [`Self::attach`], so a new feed session starts
@@ -190,7 +190,7 @@ impl FeedLink {
             book: BookLink::default(),
             latest_trade_latency_ms: None,
             latest_trade_ms: None,
-            day_reference: None,
+            quote: Default::default(),
             live_trades: 0,
             intake_lag: Default::default(),
             auto_roll: AutoRoll::default(),
@@ -228,7 +228,7 @@ impl FeedLink {
         self.book.channel_closed_reported = false;
         self.intake_lag.clear();
         self.latest_arrival_ms = None;
-        self.day_reference = None;
+        self.quote = Default::default();
     }
 
     /// Forget what this link recorded about the timeline it fed — its gaps,
@@ -448,8 +448,10 @@ impl FeedLink {
     /// it to its owners: the arrival delay, the tape-age stamp, the count and,
     /// off a recording, one intake-lag sample read now — the moment paper
     /// trading, the first live-trade stage, runs.
-    pub fn observe_live_trade(&mut self, received_at_ms: i64, trade_ms: i64) {
-        self.observe_live_trade_at(received_at_ms, trade_ms, crate::clock::wall_clock_ms());
+    pub fn observe_live_trade(&mut self, received_at_ms: i64, trade: &quantick_engine::Trade) {
+        self.quote.observe_price(trade.price);
+        let now_ms = crate::clock::wall_clock_ms();
+        self.observe_live_trade_at(received_at_ms, trade.timestamp_ms, now_ms);
     }
 
     fn observe_live_trade_at(&mut self, received_at_ms: i64, trade_ms: i64, now_ms: i64) {

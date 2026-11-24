@@ -2,6 +2,9 @@
 //! icon, the last price in the instrument's decimals and the day's change
 //! against the reference its venue supplied. No reference, no change: the
 //! tab never derives one from the tape.
+//!
+//! The decimals hold still per tab ([`price_decimals`]), so a print that
+//! ends in a zero does not shorten the price and shift the strip.
 
 use std::cmp::Ordering;
 
@@ -56,38 +59,50 @@ pub struct TabQuote {
     pub change: Option<DayChange>,
 }
 
-/// The quote for a tab whose newest print is `last`, against the venue's
-/// `reference`, priced in the decimals of the instrument's `tick`.
+impl TabQuote {
+    /// What the scene says of the quote on a tab at `stage`: the price, the
+    /// day's change and the stage, each named even when missing.
+    #[must_use]
+    pub fn scene_words(&self, stage: crate::tab_chip::Squeeze) -> String {
+        let price = self.price.as_deref().unwrap_or("none");
+        let change = self.change.as_ref();
+        let change = change.map_or("no venue reference", |change| change.text.as_str());
+        format!("price {price}; day {change}; stage {}", stage.name())
+    }
+}
+
+/// The decimals a tab writes its market's price in, fixed for the tab: the
+/// configured `tick`'s, else the `venue`'s own, else the most the tape has
+/// printed in so far (`seen`, which never shrinks).
 #[must_use]
-pub fn quote(
-    last: Option<&Trade>,
-    reference: Option<&DayReference>,
-    tick: Option<Decimal>,
-) -> TabQuote {
+pub fn price_decimals(tick: Option<Decimal>, venue: Option<u32>, seen: u32) -> u32 {
+    let configured = tick.filter(|tick| *tick > Decimal::ZERO);
+    configured
+        .map(|tick| tick.scale())
+        .or(venue)
+        .unwrap_or(seen)
+}
+
+/// The quote for a tab whose newest print is `last`, against the venue's
+/// `reference`, priced in `decimals` ([`price_decimals`]).
+#[must_use]
+pub fn quote(last: Option<&Trade>, reference: Option<&DayReference>, decimals: u32) -> TabQuote {
     let Some(last) = last else {
         return TabQuote::default();
     };
     let change = reference.and_then(|day| day.change_percent(last.price, last.timestamp_ms));
     TabQuote {
-        price: Some(format_price(last.price, tick)),
+        price: Some(format_price(last.price, decimals)),
         change: change.map(format_change),
     }
 }
 
-/// `price` in the decimals of `tick`, without a thousands separator; with no
-/// tick known, as the venue printed it, trailing zeros dropped.
+/// `price` in `decimals`, without a thousands separator.
 #[must_use]
-pub fn format_price(price: Decimal, tick: Option<Decimal>) -> String {
-    match tick.filter(|tick| *tick > Decimal::ZERO) {
-        Some(tick) => {
-            let decimals = tick.scale();
-            let mut price =
-                price.round_dp_with_strategy(decimals, RoundingStrategy::MidpointAwayFromZero);
-            price.rescale(decimals);
-            price.to_string()
-        }
-        None => price.normalize().to_string(),
-    }
+pub fn format_price(price: Decimal, decimals: u32) -> String {
+    let mut price = price.round_dp_with_strategy(decimals, RoundingStrategy::MidpointAwayFromZero);
+    price.rescale(decimals);
+    price.to_string()
 }
 
 /// A change in percent, signed, in [`CHANGE_DECIMALS`].
@@ -141,13 +156,13 @@ mod tests {
             print(3, DAY + 3_000, "76200.00"),
         ];
         let open = DayReference::daily_open(DAY, dec("76490"));
-        let quote = quote(tape.last(), Some(&open), Some(dec("0.50")));
+        let quote = quote(tape.last(), Some(&open), 2);
         assert_eq!(quote.price.as_deref(), Some("76200.00"));
         let change = quote.change.expect("a reference");
         assert_eq!(change.text, "\u{2212}0.38%");
         assert_eq!(change.sign, Ordering::Less);
-        let settled = DayReference::previous_settlement(dec("171750"));
-        let up = super::quote(Some(&print(4, DAY, "172455")), Some(&settled), None);
+        let settled = DayReference::previous_settlement(dec("171750"), DAY, DAY + UTC_DAY_MS);
+        let up = super::quote(Some(&print(4, DAY, "172455")), Some(&settled), 0);
         assert_eq!(
             up.change.map(|c| (c.text, c.sign)),
             Some(("+0.41%".into(), Ordering::Greater))
@@ -157,31 +172,77 @@ mod tests {
     #[test]
     fn without_a_reference_the_tab_shows_its_price_and_no_change() {
         let last = print(1, DAY, "3241.5");
-        let quote = quote(Some(&last), None, None);
+        let quote = quote(Some(&last), None, 1);
         assert_eq!(quote.price.as_deref(), Some("3241.5"));
         assert_eq!(quote.change, None, "never computed from the tape");
         let yesterday = DayReference::daily_open(DAY - UTC_DAY_MS, dec("3200"));
-        assert_eq!(
-            super::quote(Some(&last), Some(&yesterday), None).change,
-            None
-        );
-        assert_eq!(
-            super::quote(None, Some(&yesterday), None),
-            TabQuote::default()
-        );
+        assert_eq!(super::quote(Some(&last), Some(&yesterday), 1).change, None);
+        assert_eq!(super::quote(None, Some(&yesterday), 1), TabQuote::default());
+    }
+
+    /// A settlement read after the session's last print is the next
+    /// session's reference, never this one's; the next server day waits for
+    /// its own reading.
+    #[test]
+    fn a_settlement_shows_no_change_for_a_print_outside_its_window() {
+        let settled = DayReference::previous_settlement(dec("171750"), DAY + 5_000, DAY + 9_000);
+        let at = |id, ms| super::quote(Some(&print(id, ms, "172455")), Some(&settled), 0);
+        assert_eq!(at(1, DAY + 4_999).change, None);
+        assert!(at(2, DAY + 5_000).change.is_some());
+        assert_eq!(at(3, DAY + 9_000).change, None);
     }
 
     #[test]
-    fn a_price_takes_the_ticks_decimals_and_no_thousands_separator() {
-        assert_eq!(format_price(dec("76200"), Some(dec("0.50"))), "76200.00");
+    fn a_price_takes_its_decimals_and_no_thousands_separator() {
+        assert_eq!(format_price(dec("76200"), 2), "76200.00");
+        assert_eq!(format_price(dec("76200.01000000"), 2), "76200.01");
+        assert_eq!(format_price(dec("172455"), 0), "172455");
+        assert_eq!(format_price(dec("5412.5"), 1), "5412.5");
+        assert_eq!(format_price(dec("1234567.5"), 1), "1234567.5");
+    }
+
+    /// The configured tick first, then the venue's own decimals, then the
+    /// most the tape has shown; each holds still while prints end in zeros.
+    #[test]
+    fn a_tabs_decimals_come_from_tick_then_venue_then_the_tape() {
         assert_eq!(
-            format_price(dec("76200.01000000"), Some(dec("0.01"))),
-            "76200.01"
+            price_decimals(Some(dec("0.50")), Some(1), 3),
+            2,
+            "configured"
         );
-        assert_eq!(format_price(dec("172455"), Some(dec("5"))), "172455");
-        assert_eq!(format_price(dec("5412.5"), Some(dec("0.5"))), "5412.5");
-        assert_eq!(format_price(dec("0.61420000"), None), "0.6142");
-        assert_eq!(format_price(dec("1234567.5"), None), "1234567.5");
+        assert_eq!(price_decimals(Some(dec("5")), Some(2), 3), 0);
+        assert_eq!(
+            price_decimals(Some(dec("0")), Some(1), 3),
+            1,
+            "no real tick"
+        );
+        assert_eq!(
+            price_decimals(None, Some(2), 0),
+            2,
+            "MT5 digits, Binance tick"
+        );
+        assert_eq!(price_decimals(None, None, 4), 4, "the tape's own");
+        let fixed = price_decimals(None, None, 2);
+        let prices = ["76200.10", "76200", "76200.25"].map(|p| format_price(dec(p), fixed));
+        assert_eq!(prices, ["76200.10", "76200.00", "76200.25"]);
+    }
+
+    #[test]
+    fn the_scene_names_price_change_and_stage() {
+        use crate::tab_chip::Squeeze;
+        let none = quote(None, None, 0);
+        assert_eq!(
+            none.scene_words(Squeeze::Stacked),
+            "price none; day no venue reference; stage stacked"
+        );
+        let quoted = TabQuote {
+            price: Some("172455".into()),
+            change: Some(format_change(dec("0.41"))),
+        };
+        assert_eq!(
+            quoted.scene_words(Squeeze::OneLine),
+            "price 172455; day +0.41%; stage one_line"
+        );
     }
 
     #[test]
