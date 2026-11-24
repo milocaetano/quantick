@@ -6,10 +6,10 @@ use quantick_control::{
 };
 use quantick_control_host::{admission::known_error, journal::NewEvent, wire::canonical_decimal};
 use quantick_control_schema::session_reports::{
-    EVENT_KIND, ReportInput, ReportOutput, ReportResult, descriptor,
+    EVENT_KIND, ReportInput, ReportOrigin as WireOrigin, ReportOutput, ReportResult, descriptor,
 };
 use quantick_paper::report::{
-    scope::{self, ReportRequest},
+    scope::{self, ReportOrigin, ReportRequest},
     session_edit::SessionEditError,
     sessions::SessionKey,
 };
@@ -94,11 +94,32 @@ fn open<H: PaperHost + ?Sized, A: NotifyAccess>(
                 symbol: (!symbol.is_empty()).then(|| symbol.to_owned()),
             }
         }
-        ReportInput::Session { session } => scoped(desk, &dir, tz, session, None)?,
+        ReportInput::Session { session } => {
+            let session = key(session)?;
+            scoped(
+                desk,
+                &dir,
+                tz,
+                ReportRequest::Session { session, day: None },
+            )?
+        }
         ReportInput::Day { session, day } => {
-            let day = quantick_civil::parse_iso_date(&day)
-                .ok_or_else(|| ControlError::invalid_request("day must be a valid YYYY-MM-DD"))?;
-            scoped(desk, &dir, tz, session, Some(day))?
+            let request = ReportRequest::Session {
+                session: key(session)?,
+                day: Some(civil_day(&day)?),
+            };
+            scoped(desk, &dir, tz, request)?
+        }
+        ReportInput::WholeDay { origin, day } => {
+            let request = ReportRequest::Day {
+                origin: report_origin(origin),
+                day: civil_day(&day)?,
+            };
+            scoped(desk, &dir, tz, request)?
+        }
+        ReportInput::Tag { origin, tag } => {
+            let origin = report_origin(origin);
+            scoped(desk, &dir, tz, ReportRequest::Tag { origin, tag })?
         }
     };
     let result = serde_json::to_value(output)
@@ -114,28 +135,46 @@ fn open<H: PaperHost + ?Sized, A: NotifyAccess>(
     Ok(result)
 }
 
+fn key(session: String) -> Result<SessionKey, ControlError> {
+    SessionKey::parse(&session)
+        .ok_or_else(|| crate::journal_sessions::refusal(SessionEditError::InvalidKey(session)))
+}
+
+fn civil_day(day: &str) -> Result<quantick_civil::CivilDate, ControlError> {
+    quantick_civil::parse_iso_date(day)
+        .ok_or_else(|| ControlError::invalid_request("day must be a valid YYYY-MM-DD"))
+}
+
+fn report_origin(origin: WireOrigin) -> ReportOrigin {
+    match origin {
+        WireOrigin::Simulator => ReportOrigin::Simulator,
+        WireOrigin::Broker => ReportOrigin::Broker,
+    }
+}
+
 fn scoped(
     desk: &mut dyn crate::trade::TradeDesk,
     dir: &std::path::Path,
     tz: quantick_civil::TzOffset,
-    session: String,
-    day: Option<quantick_civil::CivilDate>,
+    request: ReportRequest,
 ) -> Result<ReportOutput, ControlError> {
-    let session = SessionKey::parse(&session)
-        .ok_or_else(|| crate::journal_sessions::refusal(SessionEditError::InvalidKey(session)))?;
-    let prepared = scope::prepare(dir, ReportRequest { session, day }, tz)
-        .map_err(crate::journal_sessions::refusal)?;
+    let prepared = scope::prepare(dir, request, tz).map_err(crate::journal_sessions::refusal)?;
     let receipt = &prepared.receipt;
+    let (action, session, tag) = match &receipt.request {
+        ReportRequest::Session { session, day } => (
+            if day.is_some() { "day" } else { "session" },
+            Some(session.to_string()),
+            None,
+        ),
+        ReportRequest::Day { .. } => ("whole_day", None, None),
+        ReportRequest::Tag { tag, .. } => ("tag", None, Some(tag.clone())),
+    };
     let result = ReportResult {
-        action: if day.is_some() { "day" } else { "session" }.to_owned(),
-        session: receipt.request.session.to_string(),
-        origin: if receipt.request.session.is_broker() {
-            "broker"
-        } else {
-            "simulator"
-        }
-        .to_owned(),
-        day: day.map(|day| day.iso()),
+        action: action.to_owned(),
+        session,
+        origin: receipt.request.origin().token().to_owned(),
+        day: receipt.request.day().map(|day| day.iso()),
+        tag,
         title: receipt.title.clone(),
         trade_count: WireU64::new(receipt.trades as u64),
         unreadable_files: WireU64::new(prepared.history.unreadable_files as u64),

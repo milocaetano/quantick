@@ -9,7 +9,7 @@ use super::LedgerScope;
 use eframe::egui;
 use egui_phosphor::regular as icons;
 use quantick_paper::report::ledger_rows::{LedgerPage, RowNest, ledger_rows, nesting, saved_items};
-use quantick_paper::report::ledger_state::{LedgerEdit, SessionPress};
+use quantick_paper::report::ledger_state::LedgerEdit;
 use quantick_paper::report::readout::LedgerScopeTotals;
 use quantick_paper::report::sessions::{JournaledTrade, SessionKey, TradeRef, live_keys};
 use quantick_ui_model::paper_report::{Intent, LedgerIntent, RowInput};
@@ -18,17 +18,17 @@ use super::rows::{
     GroupView, Item, LedgerRow, TradeMeta, draw_day_header, draw_group_header, draw_ledger_row,
     draw_more_row, draw_open_row, framed,
 };
-use super::sessions::{draw_hidden_live, draw_inline, draw_session_head};
+use super::sessions::{draw_hidden_live, draw_inline, draw_session_head, report_buttons};
 use super::{
     LEDGER_ROW_HEIGHT_PX, LEDGER_SCOPE_COMBO_PX, LedgerAction, LedgerTotals, Paint, ReportEnv,
     TOTALS_STRIP_PX,
 };
-use crate::paper_calendar::CivilDate;
 use crate::paper_chrome::{caption, financial_text_on, points_color_on};
 use crate::theme;
 use crate::timezone::TzOffset;
 use quantick_appearance::panel_chrome::FOOTER;
 use quantick_appearance::paper::{CARD_GAP_PX, ledger_frame};
+use quantick_paper::report::scope::ReportRequest;
 
 impl Paint<'_, '_> {
     /// The Trades dock tab: broker and simulator round trips — the
@@ -178,16 +178,11 @@ impl Paint<'_, '_> {
             None
         };
         self.ledger(LedgerIntent::Rows(Box::new(RowInput {
-            select: presses.select,
-            select_saved: presses.select_saved,
-            navigate: presses.navigate,
-            reveal_more: presses.reveal_more,
-            fold: presses.fold,
-            session: presses.session,
             keyed,
             edit,
             focus_edit,
             inline_placed,
+            ..presses.input
         })));
 
         ui.separator();
@@ -358,19 +353,8 @@ struct RowList<'a, 'r> {
 /// What the ledger's rows were pressed for in one frame.
 #[derive(Default)]
 struct RowPresses {
-    /// A session row's selection changed: `Some(index)` selects, `None`
-    /// clears.
-    select: Option<Option<usize>>,
-    /// A saved row's selection changed.
-    select_saved: Option<Option<(SessionKey, TradeRef)>>,
-    /// Center the chart on a round trip.
-    navigate: Option<LedgerAction>,
-    /// Reveal one more page of saved history.
-    reveal_more: bool,
-    /// Fold (`true`) or unfold one day.
-    fold: Option<(CivilDate, bool)>,
-    /// A session row, its menu or an inline row asked for something.
-    session: Option<SessionPress>,
+    /// What the rows asked the model for; the frame adds the rest.
+    input: RowInput,
     /// A trade's menu asked for the tag strip.
     tag: bool,
     /// The pointer is over the list, so its keys are the ledger's.
@@ -488,21 +472,24 @@ impl RowList<'_, '_> {
         let rows = self.rows;
         match &rows[index] {
             LedgerRow::Header(label, count) => draw_group_header(ui, label, *count),
-            LedgerRow::Day(date, count, net, folded) => {
-                if draw_day_header(ui, *date, *count, net, *folded) {
-                    presses.fold = Some((*date, !*folded));
+            LedgerRow::Day(date, count, net, folded, origins) => {
+                let header = draw_day_header(ui, *date, *count, net, *folded);
+                if header.clicked() {
+                    presses.input.fold = Some((*date, !*folded));
                 }
+                let days = ReportRequest::days(*date, origins);
+                header.context_menu(|ui| report_buttons(ui, days, &mut presses.input.session));
             }
             LedgerRow::SessionHead(head) => {
                 if let Some(press) = draw_session_head(ui, head) {
-                    presses.session = Some(press);
+                    presses.input.session = Some(press);
                 }
             }
             LedgerRow::Inline => {
                 if let Some(edit) = self.edit.as_mut()
                     && let Some(press) = draw_inline(ui, edit, self.focus_edit)
                 {
-                    presses.session = Some(press);
+                    presses.input.session = Some(press);
                 }
             }
             LedgerRow::HiddenLive(hidden) => draw_hidden_live(ui, *hidden),
@@ -518,10 +505,10 @@ impl RowList<'_, '_> {
                     self.tz,
                 );
                 if response.navigate {
-                    presses.navigate =
+                    presses.input.navigate =
                         Some(LedgerAction::Navigate(trade.opened_ms, trade.closed_ms));
                 } else if response.clicked {
-                    presses.select = Some((!is_selected).then_some(*trade_index));
+                    presses.input.select = Some((!is_selected).then_some(*trade_index));
                 }
                 if let Some(row) = response.response {
                     self.trade_menu(&row, *meta, presses, || TradePick::Live(*trade_index));
@@ -534,19 +521,20 @@ impl RowList<'_, '_> {
                 let response =
                     draw_ledger_row(ui, trade, *meta, on_chart, is_selected, false, self.tz);
                 if response.clicked {
-                    presses.select_saved = Some(if is_selected { None } else { pick.clone() });
+                    presses.input.select_saved =
+                        Some(if is_selected { None } else { pick.clone() });
                 }
                 if let Some(row) = response.response {
                     self.trade_menu(&row, *meta, presses, || TradePick::Saved(pick.clone()));
                 }
             }
             LedgerRow::More(remaining) => {
-                presses.reveal_more |= draw_more_row(ui, *remaining);
+                presses.input.reveal_more |= draw_more_row(ui, *remaining);
             }
         }
     }
 
-    /// A trade's context menu: tag it. Rename and delete belong to the
+    /// A trade's context menu: its tag reports, and tag it. Rename and delete belong to the
     /// session row, never to one of its trades.
     fn trade_menu(
         &self,
@@ -555,14 +543,16 @@ impl RowList<'_, '_> {
         presses: &mut RowPresses,
         pick: impl Fn() -> TradePick,
     ) {
-        if meta.session.is_none() {
+        let Some(session) = meta.session else {
             return;
-        }
+        };
         row.context_menu(|ui| {
+            let tags = ReportRequest::tags(session, meta.tags);
+            report_buttons(ui, tags, &mut presses.input.session);
             if ui.button("Tag…").clicked() {
                 match pick() {
-                    TradePick::Live(index) => presses.select = Some(Some(index)),
-                    TradePick::Saved(saved) => presses.select_saved = Some(saved),
+                    TradePick::Live(index) => presses.input.select = Some(Some(index)),
+                    TradePick::Saved(saved) => presses.input.select_saved = Some(saved),
                 }
                 presses.tag = true;
                 ui.close_menu();

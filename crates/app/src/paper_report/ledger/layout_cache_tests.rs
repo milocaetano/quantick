@@ -18,13 +18,14 @@ fn measured_ledger_warm_frames_only_visit_the_viewport() {
                     LedgerRow::Header("Session", i)
                 } else {
                     LedgerRow::Day(
-                        CivilDate::from_ymd(2026, 10, 21),
+                        crate::paper_calendar::CivilDate::from_ymd(2026, 10, 21),
                         i,
                         (
                             Decimal::from(i),
                             format!("+{i} BRL and a complete long calculation with neutral units"),
                         ),
                         false,
+                        Vec::new(),
                     )
                 }
             })

@@ -45,7 +45,7 @@ fn scoped_open_replaces_stale_filters_and_reloads_keep_the_exact_session() {
     let scoped = |rows| {
         Intent::Scoped(Box::new(PreparedReport {
             receipt: ReportReceipt {
-                request: ReportRequest {
+                request: ReportRequest::Session {
                     session: key.clone(),
                     day: None,
                 },
@@ -102,7 +102,7 @@ fn scoped_open_replaces_stale_filters_and_reloads_keep_the_exact_session() {
 
 #[test]
 fn both_ledger_gesture_paths_request_the_same_scoped_load_and_closes_refresh_the_ledger() {
-    let request = ReportRequest {
+    let request = ReportRequest::Session {
         session: SessionKey::parse("WINZ26/a.csv").unwrap(),
         day: Some(quantick_civil::parse_iso_date("2026-11-18").unwrap()),
     };

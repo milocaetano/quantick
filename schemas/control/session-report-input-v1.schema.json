@@ -29,6 +29,14 @@
           "type": "string"
         }
       ]
+    },
+    "ReportOrigin": {
+      "description": "The book a whole-day or tag report reads; the two are never summed.",
+      "enum": [
+        "simulator",
+        "broker"
+      ],
+      "type": "string"
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -110,6 +118,54 @@
         "action",
         "session",
         "day"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "description": "Every trade of one origin closed on the civil day, in any session.",
+      "properties": {
+        "action": {
+          "const": "whole_day",
+          "type": "string"
+        },
+        "day": {
+          "maxLength": 10,
+          "minLength": 10,
+          "type": "string"
+        },
+        "origin": {
+          "$ref": "#/$defs/ReportOrigin"
+        }
+      },
+      "required": [
+        "action",
+        "origin",
+        "day"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "description": "Every trade of one origin carrying the tag, over all history.",
+      "properties": {
+        "action": {
+          "const": "tag",
+          "type": "string"
+        },
+        "origin": {
+          "$ref": "#/$defs/ReportOrigin"
+        },
+        "tag": {
+          "maxLength": 64,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "action",
+        "origin",
+        "tag"
       ],
       "type": "object"
     }

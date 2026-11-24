@@ -52,11 +52,22 @@
           "type": "string"
         },
         "session": {
-          "type": "string"
+          "description": "The session of a session or day action; absent for whole_day and tag.",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "skipped_rows": {
           "$ref": "#/$defs/WireU64",
           "description": "Malformed rows skipped in that history."
+        },
+        "tag": {
+          "description": "The normalized tag of a tag action, without `#`.",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "title": {
           "type": "string"
@@ -71,7 +82,6 @@
       },
       "required": [
         "action",
-        "session",
         "origin",
         "title",
         "trade_count",
