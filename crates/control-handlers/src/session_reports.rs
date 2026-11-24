@@ -172,7 +172,11 @@ fn scoped(
     let result = ReportResult {
         action: action.to_owned(),
         session,
-        origin: receipt.request.origin().token().to_owned(),
+        origin: match receipt.request.origin() {
+            ReportOrigin::Simulator => "simulator",
+            ReportOrigin::Broker => "broker",
+        }
+        .to_owned(),
         day: receipt.request.day().map(|day| day.iso()),
         tag,
         title: receipt.title.clone(),

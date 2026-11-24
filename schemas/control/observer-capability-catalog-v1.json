@@ -28400,7 +28400,7 @@
                 "$ref": "#/$defs/ReportOrigin"
               },
               "tag": {
-                "maxLength": 64,
+                "maxLength": 33,
                 "minLength": 1,
                 "type": "string"
               }
@@ -28470,7 +28470,7 @@
                 "type": "string"
               },
               "session": {
-                "description": "The session of a session or day action; absent for whole_day and tag.",
+                "description": "The session of a session or day action; null for whole_day and tag.",
                 "type": [
                   "string",
                   "null"

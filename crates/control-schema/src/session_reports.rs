@@ -38,7 +38,7 @@ pub enum ReportInput {
     /// Every trade of one origin carrying the tag, over all history.
     Tag {
         origin: ReportOrigin,
-        #[schemars(length(min = 1, max = 64))]
+        #[schemars(length(min = 1, max = 33))]
         tag: String,
     },
 }
@@ -54,7 +54,7 @@ pub enum ReportOrigin {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ReportResult {
     pub action: String,
-    /// The session of a session or day action; absent for whole_day and tag.
+    /// The session of a session or day action; null for whole_day and tag.
     pub session: Option<String>,
     pub origin: String,
     pub day: Option<String>,

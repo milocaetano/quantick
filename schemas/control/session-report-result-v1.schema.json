@@ -52,7 +52,7 @@
           "type": "string"
         },
         "session": {
-          "description": "The session of a session or day action; absent for whole_day and tag.",
+          "description": "The session of a session or day action; null for whole_day and tag.",
           "type": [
             "string",
             "null"

@@ -478,7 +478,9 @@ impl RowList<'_, '_> {
                     presses.input.fold = Some((*date, !*folded));
                 }
                 let days = ReportRequest::days(*date, origins);
-                header.context_menu(|ui| report_buttons(ui, days, &mut presses.input.session));
+                if !origins.is_empty() {
+                    header.context_menu(|ui| report_buttons(ui, days, &mut presses.input.session));
+                }
             }
             LedgerRow::SessionHead(head) => {
                 if let Some(press) = draw_session_head(ui, head) {

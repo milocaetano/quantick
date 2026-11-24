@@ -2,7 +2,7 @@
 use std::path::Path;
 
 use quantick_civil::{CivilDate, TzOffset};
-use quantick_sim::history::normalize_tag;
+use quantick_sim::history::normalize_tags;
 use rust_decimal::Decimal;
 
 use super::session_edit::{SessionEditError, resolve};
@@ -32,15 +32,6 @@ impl ReportOrigin {
         match self {
             Self::Simulator => SourceFilter::Simulator,
             Self::Broker => SourceFilter::Broker,
-        }
-    }
-
-    /// The stable wire token: `simulator` or `broker`.
-    #[must_use]
-    pub fn token(self) -> &'static str {
-        match self {
-            Self::Simulator => "simulator",
-            Self::Broker => "broker",
         }
     }
 }
@@ -76,7 +67,6 @@ impl ReportRequest {
         self.origin().source()
     }
 
-    /// The civil day the scope is pinned to, if any.
     #[must_use]
     pub fn day(&self) -> Option<CivilDate> {
         match self {
@@ -109,7 +99,6 @@ impl ReportRequest {
         })
     }
 
-    /// What a context menu's button for this scope reads.
     #[must_use]
     pub fn menu_label(&self) -> String {
         match self {
@@ -126,10 +115,11 @@ impl ReportRequest {
             Self::Session {
                 session,
                 day: Some(day),
-            } => {
-                of_origin(row, ReportOrigin::of(session))
-                    && CivilDate::from_ms(row.trade.closed_ms, tz) == *day
+            } => Self::Day {
+                origin: ReportOrigin::of(session),
+                day: *day,
             }
+            .admits(row, tz),
             Self::Day { origin, day } => {
                 of_origin(row, *origin) && CivilDate::from_ms(row.trade.closed_ms, tz) == *day
             }
@@ -187,8 +177,8 @@ pub fn prepare(
     match &mut request {
         ReportRequest::Session { session, .. } => *session = resolve(dir, session)?.0,
         ReportRequest::Tag { tag, .. } => {
-            *tag = normalize_tag(tag)
-                .ok_or_else(|| SessionEditError::InvalidTag(format!("`{tag}` is not one tag")))?;
+            let mut tags = normalize_tags([tag.as_str()]).map_err(SessionEditError::InvalidTag)?;
+            *tag = tags.pop().unwrap_or_default();
         }
         ReportRequest::Day { .. } => {}
     }

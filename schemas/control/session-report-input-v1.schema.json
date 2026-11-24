@@ -157,7 +157,7 @@
           "$ref": "#/$defs/ReportOrigin"
         },
         "tag": {
-          "maxLength": 64,
+          "maxLength": 33,
           "minLength": 1,
           "type": "string"
         }
