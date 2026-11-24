@@ -610,6 +610,11 @@ impl Mt5Feed {
             // Ahead of the prints it stamps, in the same channel, so the
             // consumer holds the reading before the print.
             Mt5Event::DealCounter(sample) => self.live_event(FeedEvent::DealCounter(sample)).await,
+            Mt5Event::Settlement(price) => {
+                let settled =
+                    quantick_sources::day_reference::DayReference::previous_settlement(price);
+                self.send(FeedEvent::DayReference(settled)).await
+            }
             Mt5Event::Live(trade) => self.live_event(FeedEvent::Live(trade)).await,
         }
     }

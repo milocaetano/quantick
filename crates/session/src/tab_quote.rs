@@ -7,7 +7,7 @@ use std::cmp::Ordering;
 
 use quantick_engine::Trade;
 use quantick_sources::day_reference::DayReference;
-use rust_decimal::Decimal;
+use rust_decimal::{Decimal, RoundingStrategy};
 
 /// The decimals a day's change is written in.
 pub const CHANGE_DECIMALS: u32 = 2;
@@ -25,7 +25,19 @@ impl TabIcon {
     /// neutral disc.
     #[must_use]
     pub fn of(symbol: &str, configured: Option<(&str, [u8; 3])>) -> Self {
-        todo!("{symbol} {configured:?}")
+        match configured {
+            Some((glyph, rgb)) => Self {
+                glyph: glyph.to_owned(),
+                rgb: Some(rgb),
+            },
+            None => Self {
+                glyph: symbol
+                    .chars()
+                    .next()
+                    .map_or_else(|| "?".to_owned(), |first| first.to_uppercase().collect()),
+                rgb: None,
+            },
+        }
     }
 }
 
@@ -52,20 +64,49 @@ pub fn quote(
     reference: Option<&DayReference>,
     tick: Option<Decimal>,
 ) -> TabQuote {
-    todo!("{last:?} {reference:?} {tick:?}")
+    let Some(last) = last else {
+        return TabQuote::default();
+    };
+    let change = reference.and_then(|day| day.change_percent(last.price, last.timestamp_ms));
+    TabQuote {
+        price: Some(format_price(last.price, tick)),
+        change: change.map(format_change),
+    }
 }
 
 /// `price` in the decimals of `tick`, without a thousands separator; with no
 /// tick known, as the venue printed it, trailing zeros dropped.
 #[must_use]
 pub fn format_price(price: Decimal, tick: Option<Decimal>) -> String {
-    todo!("{price} {tick:?}")
+    match tick.filter(|tick| *tick > Decimal::ZERO) {
+        Some(tick) => {
+            let decimals = tick.scale();
+            let mut price =
+                price.round_dp_with_strategy(decimals, RoundingStrategy::MidpointAwayFromZero);
+            price.rescale(decimals);
+            price.to_string()
+        }
+        None => price.normalize().to_string(),
+    }
 }
 
 /// A change in percent, signed, in [`CHANGE_DECIMALS`].
 #[must_use]
 pub fn format_change(percent: Decimal) -> DayChange {
-    todo!("{percent}")
+    let rounded =
+        percent.round_dp_with_strategy(CHANGE_DECIMALS, RoundingStrategy::MidpointAwayFromZero);
+    let sign = rounded.cmp(&Decimal::ZERO);
+    let mut size = rounded.abs();
+    size.rescale(CHANGE_DECIMALS);
+    let lead = match sign {
+        Ordering::Greater => "+",
+        Ordering::Less => "\u{2212}",
+        Ordering::Equal => "",
+    };
+    DayChange {
+        text: format!("{lead}{size}%"),
+        sign,
+    }
 }
 
 #[cfg(test)]

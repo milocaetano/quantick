@@ -24,13 +24,15 @@ pub const DAY_OPEN_RETRY: Duration = Duration::from_secs(60);
 /// venue's daily `bars`; `None` when the venue served no candle for that day.
 #[must_use]
 pub fn open_of_day(bars: &[Bar], day_start_ms: i64) -> Option<Decimal> {
-    todo!("{} {day_start_ms}", bars.len())
+    bars.iter()
+        .find(|bar| bar.open_time == day_start_ms)
+        .map(|bar| bar.open)
 }
 
 /// When the next day's open is asked for, at market time `now_ms`.
 #[must_use]
 pub fn next_read_ms(now_ms: i64) -> i64 {
-    todo!("{now_ms} {UTC_DAY_MS}")
+    utc_day_start(now_ms) + UTC_DAY_MS + DAY_ROLL_GRACE_MS
 }
 
 /// Keep the session's daily open current on a task of its own, reading the

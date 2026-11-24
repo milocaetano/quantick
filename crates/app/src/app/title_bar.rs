@@ -5,6 +5,7 @@ use eframe::egui;
 use super::workspace_runtime::WorkspaceRuntime;
 use crate::config::AppConfig;
 use quantick_control_schema::native_window::WindowState;
+use quantick_ui_model::chrome_tab_strip::market_face;
 mod resize;
 
 #[derive(Default)]
@@ -83,6 +84,9 @@ pub(super) fn chips_of(
         .map(|index| {
             let (tab, id) = (&tabs[*index], tabs.id_at(*index));
             let ink = |c| quantick_stores::workspaces::symbol_ink(c, theme);
+            let last = tab.flow_pane.series.state.trades().last();
+            let day = tab.link.day_reference.as_ref();
+            let (icon, quote) = market_face(config.feed(&tab.feed_id), &tab.symbol, last, day);
             crate::tabstrip::TabChip {
                 id,
                 label: tab.chip_label().to_owned(),
@@ -90,6 +94,8 @@ pub(super) fn chips_of(
                 venue_code: config.feed_code(&tab.feed_id).into_owned(),
                 symbol_ink: book.tab_colour(id).and_then(ink),
                 tag_fill: tab.paper.account.route_tone().rgb(),
+                icon,
+                quote,
                 feed: quantick_workspace::arrangement::strip::TabFeed::of(
                     tab.link.replay.is_some(),
                     tab.link.feed_connection == quantick_feed::FeedConnectionState::Connected,

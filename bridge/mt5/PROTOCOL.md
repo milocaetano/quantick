@@ -118,6 +118,11 @@ this as an ordinary disconnect and retries on its own schedule; the feed logs
   `"trades"` tape whose terminal reports `SYMBOL_SESSION_DEALS`; a quoted CFD
   prints no deals and never declares it. **Absent means no**, which is what
   every bridge written before the field says.
+- `settlement` — *optional*, the previous session's settlement
+  (`SYMBOL_SESSION_PRICE_SETTLEMENT`) as an exact decimal string: the day's
+  reference price a market tab measures its change from. **Absent means
+  none** — an older bridge, or a terminal that reports no settlement — and
+  quantick then shows no day's change rather than computing one.
 
 Depth and candle fields are all additive within schema 1: a bridge that predates
 any of them still connects and still streams ticks.

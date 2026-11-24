@@ -312,6 +312,12 @@ class Session(TransportMixin, TicksMixin, HistoryMixin, RatesMixin):
                     mt5_error=str(mt5.last_error()),
                     hint="this symbol may have no Depth of Market; ticks still stream",
                 )
+        # The previous session's settlement: the day's reference price a tab
+        # measures its change from. Omitted when the terminal reports none,
+        # and quantick then shows no change rather than computing one.
+        settlement = getattr(info, "session_price_settlement", 0.0) or 0.0
+        if settlement > 0:
+            hello["settlement"] = self.price(settlement)
         self.send(hello)
         # Out now, not at the bottom of the loop. The feed treats a silent
         # socket as a bridge that failed to start, and everything after this

@@ -403,6 +403,11 @@ async fn announce_session(
     {
         return Err(ConnEnd::UiGone);
     }
+    if let Some(price) = hello.settlement_price()
+        && tx.send(Mt5Event::Settlement(price)).await.is_err()
+    {
+        return Err(ConnEnd::UiGone);
+    }
     info!(
         target: "quantick::feed",
         schema_version = 1_u8,

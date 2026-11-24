@@ -363,6 +363,22 @@ pub struct Hello {
     /// counter — and a consumer must not wait for one.
     #[serde(default)]
     pub deal_counter: Option<bool>,
+    /// The previous session's settlement (`SYMBOL_SESSION_PRICE_SETTLEMENT`)
+    /// as an exact decimal string: the day's reference price a tab measures
+    /// its change from. Absent from a bridge older than the field and when
+    /// the terminal reports none; the feed then sends no reference and
+    /// computes none.
+    #[serde(default)]
+    pub settlement: Option<String>,
+}
+
+impl Hello {
+    /// The previous settlement, when the bridge sent a positive one.
+    #[must_use]
+    pub fn settlement_price(&self) -> Option<rust_decimal::Decimal> {
+        let price: rust_decimal::Decimal = self.settlement.as_deref()?.trim().parse().ok()?;
+        (price > rust_decimal::Decimal::ZERO).then_some(price)
+    }
 }
 
 /// One tick. `time_ms` is **server-time** epoch milliseconds (see [`Hello`]).
@@ -641,6 +657,23 @@ mod tests {
             scanned_to_ms, None,
             "absent must not read as 'the search reached the epoch'"
         );
+    }
+
+    #[test]
+    fn a_settlement_is_read_only_when_the_bridge_sends_a_positive_one() {
+        let hello = |extra: &str| {
+            let line = format!(
+                r#"{{"type":"hello","schema":1,"bridge":"b","bridge_version":"1","symbol":"WIN$N","broker_symbol":"WINZ26","digits":0,"server_utc_offset_s":-10800{extra}}}"#
+            );
+            match parse_line(&line).expect("a hello parses") {
+                BridgeMsg::Hello(hello) => hello.settlement_price(),
+                other => panic!("expected hello, got {other:?}"),
+            }
+        };
+        assert_eq!(hello(r#","settlement":"171750""#), Some(171_750.into()));
+        assert_eq!(hello(""), None, "an older bridge sends none");
+        assert_eq!(hello(r#","settlement":"0""#), None, "none reported");
+        assert_eq!(hello(r#","settlement":"n/a""#), None);
     }
 
     #[test]

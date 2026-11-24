@@ -203,20 +203,42 @@ pub const ICON_LIGHT_LUMA: f32 = 160.0;
 /// flat in the tab's ink; on a closed tab always the tab's ink.
 #[must_use]
 pub const fn change_token(sign: Ordering, open: bool, lit: bool) -> Token {
-    let _ = (sign, open, lit);
-    todo!()
+    match (open, sign) {
+        (true, Ordering::Greater) => Token::BuyInk,
+        (true, Ordering::Less) => Token::SellInk,
+        _ => tab_ink(lit),
+    }
+}
+
+/// An icon's disc and glyph: the asset's colour on the open tab, grey of the
+/// same lightness on the others; `None` is the [`ICON_NEUTRAL`] disc, under
+/// a white glyph.
+#[must_use]
+pub fn icon_inks(rgb: Option<[u8; 3]>, open: bool) -> (Option<[u8; 3]>, [u8; 3]) {
+    let disc = rgb.map(|rgb| if open { rgb } else { icon_grey(rgb) });
+    (disc, disc.map_or([0xFF; 3], icon_glyph_ink))
 }
 
 /// A closed tab's icon disc: `rgb` in grey of the same luma.
 #[must_use]
 pub fn icon_grey(rgb: [u8; 3]) -> [u8; 3] {
-    todo!("{rgb:?}")
+    let grey = luma(rgb).round().clamp(0.0, 255.0) as u8;
+    [grey; 3]
 }
 
 /// The glyph on a disc of `rgb`: white, or [`ICON_GLYPH_DARK`] on a light disc.
 #[must_use]
 pub fn icon_glyph_ink(rgb: [u8; 3]) -> [u8; 3] {
-    todo!("{rgb:?}")
+    if luma(rgb) >= ICON_LIGHT_LUMA {
+        ICON_GLYPH_DARK
+    } else {
+        [0xFF; 3]
+    }
+}
+
+/// Rec. 709 luma of straight sRGB, 0 to 255.
+fn luma([r, g, b]: [u8; 3]) -> f32 {
+    0.2126 * f32::from(r) + 0.7152 * f32::from(g) + 0.0722 * f32::from(b)
 }
 
 /// How much of the workspace's colour tints the toolbar capsule's fill; its
@@ -417,5 +439,9 @@ mod tests {
         assert_eq!(icon_glyph_ink([0x3B, 0x42, 0x50]), [255, 255, 255]);
         assert_eq!(icon_glyph_ink([0xF7, 0x93, 0x1A]), [255, 255, 255]);
         assert_eq!(icon_glyph_ink([200, 200, 200]), ICON_GLYPH_DARK);
+        let orange = Some([0xF7, 0x93, 0x1A]);
+        assert_eq!(icon_inks(orange, true), (orange, [0xFF; 3]));
+        assert_eq!(icon_inks(orange, false).0, Some([160, 160, 160]));
+        assert_eq!(icon_inks(None, true), (None, [0xFF; 3]));
     }
 }

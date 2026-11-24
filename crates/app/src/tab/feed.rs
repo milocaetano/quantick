@@ -155,10 +155,9 @@ impl Tab {
     /// Allocate a capture generation well above all reconnect generations from
     /// the previous UI capture epoch.
     pub fn next_book_generation(&mut self) -> u64 {
-        self.link.book_capture_epoch = self.link.book_capture_epoch.saturating_add(1);
-        self.link
-            .book_capture_epoch
-            .saturating_mul(BOOK_GENERATION_STRIDE)
+        let book = &mut self.link.book;
+        book.capture_epoch = book.capture_epoch.saturating_add(1);
+        book.capture_epoch.saturating_mul(BOOK_GENERATION_STRIDE)
     }
 
     /// Keep the recorder running for any feed that can stream depth.
@@ -927,7 +926,7 @@ impl Tab {
                 }
                 Err(mpsc::error::TryRecvError::Empty) => break,
                 Err(mpsc::error::TryRecvError::Disconnected) => {
-                    if self.tape().enabled() && !self.link.book_channel_closed_reported {
+                    if self.tape().enabled() && !self.link.book.channel_closed_reported {
                         tracing::warn!(
                             target: "quantick::app",
                             schema_version = 1_u8,
@@ -936,7 +935,7 @@ impl Tab {
                             action = "retain_last_book_and_wait_for_feed_switch",
                             "depth event channel closed"
                         );
-                        self.link.book_channel_closed_reported = true;
+                        self.link.book.channel_closed_reported = true;
                     }
                     break;
                 }

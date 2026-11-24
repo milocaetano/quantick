@@ -34,20 +34,31 @@ impl DayReference {
     /// The daily open of the UTC day starting at `day_start_ms`.
     #[must_use]
     pub fn daily_open(day_start_ms: i64, price: Decimal) -> Self {
-        todo!("{day_start_ms} {price}")
+        Self {
+            price,
+            kind: DayReferenceKind::DailyOpen,
+            from_ms: Some(day_start_ms),
+            until_ms: Some(day_start_ms.saturating_add(UTC_DAY_MS)),
+        }
     }
 
     /// The previous session's settlement, holding until the venue sends
     /// another.
     #[must_use]
     pub fn previous_settlement(price: Decimal) -> Self {
-        todo!("{price}")
+        Self {
+            price,
+            kind: DayReferenceKind::PreviousSettlement,
+            from_ms: None,
+            until_ms: None,
+        }
     }
 
     /// Whether the reference holds for a print at `at_ms`.
     #[must_use]
     pub fn covers(&self, at_ms: i64) -> bool {
-        todo!("{at_ms}")
+        self.from_ms.is_none_or(|from| at_ms >= from)
+            && self.until_ms.is_none_or(|until| at_ms < until)
     }
 
     /// The change from the reference to `last`, printed at `at_ms`, in
@@ -55,14 +66,15 @@ impl DayReference {
     /// positive price.
     #[must_use]
     pub fn change_percent(&self, last: Decimal, at_ms: i64) -> Option<Decimal> {
-        todo!("{last} {at_ms}")
+        (self.covers(at_ms) && self.price > Decimal::ZERO)
+            .then(|| (last - self.price) / self.price * Decimal::ONE_HUNDRED)
     }
 }
 
 /// The start of the UTC day holding `at_ms`.
 #[must_use]
 pub fn utc_day_start(at_ms: i64) -> i64 {
-    todo!("{at_ms}")
+    at_ms.div_euclid(UTC_DAY_MS) * UTC_DAY_MS
 }
 
 #[cfg(test)]

@@ -99,6 +99,11 @@ key_env = "OPENAI_API_KEY"
 #                                         the first preset).
 #                     merge_fills       — fold same-millisecond fills of one
 #                                         side into one row (default true).
+#   symbol_icons  — optional: per asset, keyed like symbol_bubble_presets,
+#                   the market tab's icon: { glyph = "B", colour = "#F7931A" },
+#                   one or two characters on a disc of that #RRGGBB colour
+#                   (grey on a closed tab). An asset without one wears its
+#                   first letter on a neutral disc.
 #   record_deals  — optional, MetaTrader feeds only: `true` starts writing the
 #                   venue's session deal counter to disk the moment a symbol on
 #                   this feed connects, so `trades` bars cover the whole day and
@@ -127,6 +132,7 @@ symbol_bubble_presets = { "BTCUSDT" = "Crypto default", "ETHUSDT" = "Crypto defa
 # Spot BTC keeps "BTCUSDT", the key its saved look has always used.
 symbol_asset_modes = { "BTCUSDT" = { quantity_unit = "BTC", look_key = "BTCUSDT" }, "ETHUSDT" = { quantity_unit = "ETH" } }
 symbol_widgets = { "BTCUSDT" = { tick = "0.50", notional_unit = "usd", big_trade_min = 250000 } }
+symbol_icons = { "BTCUSDT" = { glyph = "B", colour = "#F7931A" }, "ETHUSDT" = { glyph = "Ξ", colour = "#627EEA" } }
 # The default open: timeframe context beside the flow chart, side by side
 # (user decision 2026-08-06). Remove the key to open on the flow pane alone.
 default_layout = "time+flow"
@@ -149,6 +155,7 @@ symbols = ["BTCUSDT.p"]
 symbol_bubble_presets = { "BTCUSDT.p" = "Crypto default" }
 symbol_asset_modes = { "BTCUSDT.p" = { quantity_unit = "BTC" } }
 symbol_widgets = { "BTCUSDT.p" = { tick = "0.50", notional_unit = "usd", big_trade_min = 250000 } }
+symbol_icons = { "BTCUSDT.p" = { glyph = "B", colour = "#F7931A" } }
 default_layout = "time+flow"
 default_bars = "tick:50"
 
@@ -167,6 +174,7 @@ provider = "hyperliquid"
 symbols = ["BTC", "ETH", "HYPE", "SOL", "ZEC"]
 symbol_bubble_presets = { "BTC" = "Crypto default", "ETH" = "Crypto default", "HYPE" = "Crypto default", "SOL" = "Crypto default", "ZEC" = "Crypto default" }
 symbol_asset_modes = { "BTC" = { quantity_unit = "BTC" }, "ETH" = { quantity_unit = "ETH" }, "HYPE" = { quantity_unit = "HYPE" }, "SOL" = { quantity_unit = "SOL" }, "ZEC" = { quantity_unit = "ZEC" } }
+symbol_icons = { "BTC" = { glyph = "B", colour = "#F7931A" }, "ETH" = { glyph = "Ξ", colour = "#627EEA" }, "HYPE" = { glyph = "H", colour = "#0F6B5C" }, "SOL" = { glyph = "S", colour = "#9945FF" }, "ZEC" = { glyph = "Z", colour = "#F4B728" } }
 
 # MetaTrader 5, via the QuantickBridge EA (see bridge/mt5/README.md for the
 # one-time setup). The EA streams the chart it is attached to; the symbol
@@ -231,6 +239,7 @@ symbol_asset_modes = { "WIN*" = { quantity_unit = "contracts", look_key = "WIN*"
 # The mini index is quoted in points, so its notional is points times
 # contracts, not money; the chips sit near 10, 50 and 100 contracts.
 symbol_widgets = { "WIN*" = { tick = "5", big_trade_presets = [1600000, 8000000, 16000000] } }
+symbol_icons = { "WIN*" = { glyph = "W", colour = "#3B4250" }, "WDO*" = { glyph = "$", colour = "#3B4250" } }
 # MetaTrader folds several B3 deals into one tick and keeps no count per
 # tick, so a chart cut by deals — the Trades chart the trader reads on
 # ProfitChart — exists only for days somebody recorded the counter. Record

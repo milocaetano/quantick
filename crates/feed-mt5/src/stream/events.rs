@@ -81,6 +81,10 @@ pub enum Mt5Event {
     /// [`crate::DealSampler`] for the reduction and the engine's deal builder
     /// for the join.
     DealCounter(quantick_engine::DealSample),
+    /// The previous session's settlement the bridge read at hello: the
+    /// day's reference price. Sent once per session, and only when the
+    /// bridge reported a positive one.
+    Settlement(rust_decimal::Decimal),
     /// Where the tape's delay is being spent, measured at the socket.
     ///
     /// Sent at a bounded rate — at most once every

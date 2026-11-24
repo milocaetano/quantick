@@ -24,7 +24,12 @@ impl AssetIcon {
     /// The colour as RGB, when it is `#RRGGBB`.
     #[must_use]
     pub fn rgb(&self) -> Option<[u8; 3]> {
-        todo!("{}", self.colour)
+        let hex = self.colour.strip_prefix('#')?;
+        if hex.len() != 6 || !hex.is_ascii() {
+            return None;
+        }
+        let byte = |at: usize| u8::from_str_radix(&hex[at..at + 2], 16).ok();
+        Some([byte(0)?, byte(2)?, byte(4)?])
     }
 }
 
@@ -33,11 +38,38 @@ impl FeedConfig {
     /// longest family pattern; `None` when no key names it.
     #[must_use]
     pub fn asset_icon(&self, symbol: &str) -> Option<(&str, [u8; 3])> {
-        todo!("{symbol} {:?}", declared(&self.symbol_icons, symbol))
+        let (_, icon) = declared(&self.symbol_icons, symbol)?;
+        Some((icon.glyph.as_str(), icon.rgb()?))
     }
 
     pub(super) fn validate_icons(&self) -> Result<(), String> {
-        todo!("{}", self.id)
+        for (symbol, icon) in &self.symbol_icons {
+            let id = &self.id;
+            if !self
+                .symbols
+                .iter()
+                .any(|offered| super::key_matches(symbol, offered))
+            {
+                return Err(format!(
+                    "feed '{id}' sets an icon for symbol '{symbol}', which matches none of \
+                     the symbols it offers"
+                ));
+            }
+            let chars = icon.glyph.chars().count();
+            if !(1..=ICON_GLYPH_MAX_CHARS).contains(&chars) {
+                return Err(format!(
+                    "feed '{id}' gives '{symbol}' an icon glyph of {chars} characters; a glyph \
+                     is 1 to {ICON_GLYPH_MAX_CHARS}"
+                ));
+            }
+            if icon.rgb().is_none() {
+                return Err(format!(
+                    "feed '{id}' gives '{symbol}' the icon colour '{}', which is not #RRGGBB",
+                    icon.colour
+                ));
+            }
+        }
+        Ok(())
     }
 }
 

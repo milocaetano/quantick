@@ -15,7 +15,7 @@ use tracing::{error, info, warn};
 
 use quantick_engine::Trade;
 use quantick_feed_binance::{
-    Backoff, BinanceHttp, BinanceKlineHttp, BinanceMarket, agg_trade_url,
+    Backoff, BinanceHttp, BinanceKlineHttp, BinanceMarket, KLINE_INTERVAL_1D, agg_trade_url,
     backfill_before_with_boundary, backfill_with_boundary,
     depth::{
         BinanceDepthHttp, DepthEvent, DepthSessionConfig, MAX_DEPTH_LIMIT, run_depth_with_reconnect,
@@ -143,6 +143,17 @@ pub(crate) async fn feed_task(
     // websocket read loop behind it stalls, and pongs stop going out. The task
     // sends its result back here and the loop keeps turning meanwhile.
     let (ohlcv_tx, mut ohlcv_rx) = mpsc::channel::<OhlcvReply>(1);
+    let day_open = {
+        let (klines, symbol) = (BinanceKlineHttp::for_market(market), symbol.clone());
+        crate::day_reference::spawn_daily_open(tx.clone(), move |day_start, now| {
+            let (klines, symbol) = (klines.clone(), symbol.clone());
+            async move {
+                let daily = crate::OHLCV_DAILY_INTERVAL_MS;
+                let day = fetch_history(&klines, &symbol, KLINE_INTERVAL_1D, daily, day_start, now);
+                day.await.bars
+            }
+        })
+    };
     let mut feed = BinanceLoop {
         // Candles come off a different endpoint with a different paging rule,
         // so they get their own client rather than overloading the aggTrade one.
@@ -189,6 +200,7 @@ pub(crate) async fn feed_task(
         }
     }
     reconnect.abort();
+    day_open.abort();
     let _ = reconnect.await;
     feed.shutdown().await;
 }

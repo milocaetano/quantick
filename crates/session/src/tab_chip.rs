@@ -2,10 +2,12 @@
 //! and what its × slot shows. The strip paints; nothing here knows a pixel it
 //! did not get.
 //!
-//! A tab reads `WINZ26 [MT5] ×`: the symbol, in its workspace's colour on the
-//! active tab only, the venue's short code in an outlined tag and,
-//! only when the feed is not healthy and live, its mark and "Replay" on a
-//! recording. The tab hugs that content: no fixed width, no stretch gap.
+//! A tab reads `(W) WINZ26 [MT5] 172455 +0.41% ×`: the asset's icon, the
+//! symbol, in its workspace's colour on the active tab only, the venue's
+//! short code in an outlined tag, only when the feed is not healthy and live
+//! its mark and "Replay" on a recording, then the last price and the day's
+//! change. The tab hugs that content: no fixed width, no stretch gap. As the
+//! strip fills, the closed tabs squeeze ([`Squeeze`]).
 
 /// Where the symbol starts: the tab's left air.
 pub const TEXT_LEFT_PT: f32 = 10.0;
@@ -27,6 +29,36 @@ pub const MARK_RADIUS_PT: f32 = 3.0;
 pub const SYMBOL_TEXT_PT: f32 = 13.0;
 pub const TAG_TEXT_PT: f32 = 9.5;
 pub const WORD_TEXT_PT: f32 = 12.0;
+/// Between the venue tag (or the feed's state) and the price.
+pub const VALUE_GAP_PT: f32 = 9.0;
+/// Between the price and the day's change.
+pub const CHANGE_GAP_PT: f32 = 6.0;
+/// On a squeezed tab's lower line: between the icon and the tag, and the tag
+/// and the change.
+pub const SMALL_GAP_PT: f32 = 3.0;
+pub const LOW_GAP_PT: f32 = 5.0;
+/// How far a stacked line's middle sits above or below the tab's middle.
+pub const STACK_DY_PT: f32 = 6.5;
+/// How far the icon sits above, and the tag below, the middle at the last
+/// squeeze.
+pub const ICON_OVER_DY_PT: f32 = 6.0;
+/// The icon's glyph, as a share of its disc.
+pub const ICON_GLYPH_SHARE: f32 = 0.62;
+/// How much taller the venue tag stands than its code's text size.
+pub const TAG_RISE_PT: f32 = 3.5;
+
+/// The sizes a stage writes a tab's parts in, in points.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct StageSizes {
+    /// The icon disc's diameter.
+    pub icon: f32,
+    pub symbol: f32,
+    pub tag: f32,
+    /// The code's air either side inside its tag.
+    pub tag_padding: f32,
+    pub price: f32,
+    pub change: f32,
+}
 
 /// How far the closed tabs are squeezed: the open tab always reads on one
 /// line, the closed ones give up first the line, then the price, then the
@@ -53,13 +85,62 @@ impl Squeeze {
     /// The stage `tabs` market tabs take on a strip `strip_width` points wide.
     #[must_use]
     pub fn of_strip(tabs: usize, strip_width: f32) -> Self {
-        todo!("{tabs} {strip_width}")
+        let room = strip_width / tabs.max(1) as f32;
+        if room >= ONE_LINE_ROOM_PT {
+            Self::OneLine
+        } else if room >= STACKED_ROOM_PT {
+            Self::Stacked
+        } else if room >= NO_PRICE_ROOM_PT {
+            Self::NoPrice
+        } else {
+            Self::IconOverVenue
+        }
     }
 
     /// The stage one tab wears: the open one never squeezes.
     #[must_use]
     pub const fn for_tab(self, open: bool) -> Self {
         if open { Self::OneLine } else { self }
+    }
+
+    /// The sizes this stage writes in: one line at full size, the stacked
+    /// stages smaller so two lines fit the tab.
+    #[must_use]
+    pub const fn sizes(self) -> StageSizes {
+        match self {
+            Self::OneLine => StageSizes {
+                icon: 16.0,
+                symbol: SYMBOL_TEXT_PT,
+                tag: TAG_TEXT_PT,
+                tag_padding: TAG_PADDING_PT,
+                price: 12.0,
+                change: 11.0,
+            },
+            Self::Stacked | Self::NoPrice => StageSizes {
+                icon: 10.0,
+                symbol: 11.5,
+                tag: 8.0,
+                tag_padding: 3.0,
+                price: 11.0,
+                change: 10.0,
+            },
+            Self::IconOverVenue => StageSizes {
+                icon: 13.0,
+                symbol: 11.5,
+                tag: 7.5,
+                tag_padding: 2.0,
+                price: 11.0,
+                change: 10.0,
+            },
+        }
+    }
+
+    const fn shows_price(self) -> bool {
+        matches!(self, Self::OneLine | Self::Stacked)
+    }
+
+    const fn shows_symbol(self) -> bool {
+        !matches!(self, Self::IconOverVenue)
     }
 
     /// The stage's name on the control plane's scene.
@@ -82,6 +163,11 @@ pub struct FaceSource<'a> {
     /// The feed wears a mark, and "Replay" on a recording.
     pub marked: bool,
     pub word: Option<&'static str>,
+    /// The last price and the day's change, as written.
+    pub price: Option<&'a str>,
+    pub change: Option<&'a str>,
+    /// The stage this tab wears ([`Squeeze::for_tab`]).
+    pub stage: Squeeze,
     /// Physical pixels per point: text measures apart at another scale.
     pub scale: f32,
 }
@@ -100,6 +186,9 @@ struct Measured {
     code: String,
     marked: bool,
     word: Option<&'static str>,
+    price: Option<String>,
+    change: Option<String>,
+    stage: Squeeze,
     scale: u32,
 }
 
@@ -110,6 +199,9 @@ impl Measured {
             code: source.code.to_owned(),
             marked: source.marked,
             word: source.word,
+            price: source.price.map(str::to_owned),
+            change: source.change.map(str::to_owned),
+            stage: source.stage,
             scale: source.scale.to_bits(),
         }
     }
@@ -117,7 +209,8 @@ impl Measured {
     fn holds(&self, source: &FaceSource<'_>) -> bool {
         (self.symbol == source.symbol && self.code == source.code)
             && (self.marked, self.word) == (source.marked, source.word)
-            && self.scale == source.scale.to_bits()
+            && (self.price.as_deref(), self.change.as_deref()) == (source.price, source.change)
+            && (self.stage, self.scale) == (source.stage, source.scale.to_bits())
     }
 }
 
@@ -135,11 +228,21 @@ impl FaceCache {
         {
             return *layout;
         }
+        let (stage, sizes) = (source.stage, source.stage.sizes());
+        fn shown(text: Option<&str>, on: bool) -> Option<&str> {
+            text.filter(|_| on)
+        }
         let layout = lay_face(FaceParts {
-            symbol: width(source.symbol, SYMBOL_TEXT_PT),
-            code: width(source.code, TAG_TEXT_PT),
+            symbol: shown(Some(source.symbol), stage.shows_symbol())
+                .map_or(0.0, |symbol| width(symbol, sizes.symbol)),
+            code: width(source.code, sizes.tag),
             marked: source.marked,
-            word: source.word.map(|word| width(word, WORD_TEXT_PT)),
+            word: shown(source.word, stage == Squeeze::OneLine)
+                .map(|word| width(word, WORD_TEXT_PT)),
+            price: shown(source.price, stage.shows_price()).map(|price| width(price, sizes.price)),
+            change: shown(source.change, stage.shows_symbol())
+                .map(|change| width(change, sizes.change)),
+            stage,
         });
         self.faces.insert(id, (Measured::of(source), layout));
         layout
@@ -154,37 +257,170 @@ impl FaceCache {
     }
 }
 
-/// The parts of one tab's face as the painter measured them, in points.
+/// The parts of one tab's face as the painter measured them, in points, at
+/// its stage's sizes; a part the stage does not show is not measured.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct FaceParts {
     pub symbol: f32,
     pub code: f32,
     /// The feed wears a mark: it is not healthy and live.
     pub marked: bool,
-    /// "Replay", on a recording.
+    /// "Replay", on a recording, on one line only.
     pub word: Option<f32>,
+    pub price: Option<f32>,
+    pub change: Option<f32>,
+    pub stage: Squeeze,
 }
 
-/// Where each part starts from the tab's left edge, and the width the tab
-/// hugs, its close target aside.
+/// Where one part sits: its left edge from the tab's (an icon's: its
+/// centre), its middle's offset below the tab's middle, and its size.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Spot {
+    pub x: f32,
+    pub dy: f32,
+    pub pt: f32,
+}
+
+impl Spot {
+    /// The same spot `dx` points further right.
+    #[must_use]
+    pub fn right(self, dx: f32) -> Self {
+        Self {
+            x: self.x + dx,
+            ..self
+        }
+    }
+}
+
+/// Where each part sits, and the width the tab hugs, its close target aside.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct FaceLayout {
-    pub symbol: f32,
-    /// The tag's left edge and width; the code sits [`TAG_PADDING_PT`] in.
-    pub tag: f32,
+    /// The icon's disc: its centre, its diameter as `pt`.
+    pub icon: Spot,
+    /// `None` at the last squeeze.
+    pub symbol: Option<Spot>,
+    /// The tag's left edge and the code's size, as `pt`.
+    pub tag: Spot,
     pub tag_width: f32,
-    /// The mark's centre.
+    /// The code: its stage's padding inside the tag.
+    pub code: Spot,
+    /// The mark's centre, on the tab's middle, and "Replay" after it.
     pub mark: Option<f32>,
-    pub word: Option<f32>,
+    pub word: Option<Spot>,
+    pub price: Option<Spot>,
+    pub change: Option<Spot>,
     pub width: f32,
 }
 
-/// Lay one tab's face out left to right.
+impl FaceLayout {
+    /// Half the venue tag's height: its code's size and the tag's rise.
+    #[must_use]
+    pub fn tag_half_height(&self) -> f32 {
+        (self.tag.pt + TAG_RISE_PT) / 2.0
+    }
+}
+
+/// Lay one tab's face out left to right at its stage.
 #[must_use]
 pub fn lay_face(parts: FaceParts) -> FaceLayout {
-    let tag = TEXT_LEFT_PT + parts.symbol + PART_GAP_PT;
-    let tag_width = parts.code.min(TAG_CODE_MAX_PT) + 2.0 * TAG_PADDING_PT;
-    let mut end = tag + tag_width;
+    let sizes = parts.stage.sizes();
+    let tag_width = parts.code.min(TAG_CODE_MAX_PT) + 2.0 * sizes.tag_padding;
+    let at = |x: f32, dy: f32, pt: f32| Spot { x, dy, pt };
+    let (left, up, down) = (TEXT_LEFT_PT, -STACK_DY_PT, STACK_DY_PT);
+    let quiet = FaceParts {
+        word: None,
+        ..parts
+    };
+    match parts.stage {
+        Squeeze::OneLine => {
+            let symbol = left + sizes.icon + PART_GAP_PT;
+            let tag = symbol + parts.symbol + PART_GAP_PT;
+            let (mut end, mark, word) = feed_state(tag + tag_width, parts);
+            let price = parts.price.map(|width| {
+                let x = end + VALUE_GAP_PT;
+                end = x + width;
+                at(x, 0.0, sizes.price)
+            });
+            let gap = [VALUE_GAP_PT, CHANGE_GAP_PT][usize::from(price.is_some())];
+            let change = parts.change.map(|width| {
+                let x = end + gap;
+                end = x + width;
+                at(x, 0.0, sizes.change)
+            });
+            FaceLayout {
+                icon: at(left + sizes.icon / 2.0, 0.0, sizes.icon),
+                symbol: Some(at(symbol, 0.0, sizes.symbol)),
+                tag: at(tag, 0.0, sizes.tag),
+                tag_width,
+                code: at(tag + sizes.tag_padding, 0.0, sizes.tag),
+                mark,
+                word,
+                price,
+                change,
+                width: end + PADDING_RIGHT_PT,
+            }
+        }
+        Squeeze::Stacked | Squeeze::NoPrice => {
+            let tag = left + sizes.icon + SMALL_GAP_PT;
+            let mut low = tag + tag_width;
+            let low_change = (parts.stage == Squeeze::NoPrice)
+                .then_some(parts.change)
+                .flatten()
+                .map(|width| {
+                    let x = low + LOW_GAP_PT;
+                    low = x + width;
+                    at(x, down, sizes.change)
+                });
+            let mut end = (left + parts.symbol).max(low);
+            let (price, change) = match (parts.stage, parts.price.or(parts.change)) {
+                (Squeeze::Stacked, Some(_)) => {
+                    let column = parts.price.unwrap_or(0.0).max(parts.change.unwrap_or(0.0));
+                    end += VALUE_GAP_PT + column;
+                    let right = |width: f32, dy: f32, pt: f32| at(end - width, dy, pt);
+                    let price = parts.price.map(|width| right(width, up, sizes.price));
+                    (
+                        price,
+                        parts.change.map(|width| right(width, down, sizes.change)),
+                    )
+                }
+                _ => (None, low_change),
+            };
+            let (end, mark, _) = feed_state(end, quiet);
+            FaceLayout {
+                icon: at(left + sizes.icon / 2.0, down, sizes.icon),
+                symbol: Some(at(left, up, sizes.symbol)),
+                tag: at(tag, down, sizes.tag),
+                tag_width,
+                code: at(tag + sizes.tag_padding, down, sizes.tag),
+                mark,
+                word: None,
+                price,
+                change,
+                width: end + PADDING_RIGHT_PT,
+            }
+        }
+        Squeeze::IconOverVenue => {
+            let column = sizes.icon.max(tag_width);
+            let tag = left + (column - tag_width) / 2.0;
+            let (end, mark, _) = feed_state(left + column, quiet);
+            FaceLayout {
+                icon: at(left + column / 2.0, -ICON_OVER_DY_PT, sizes.icon),
+                symbol: None,
+                tag: at(tag, ICON_OVER_DY_PT, sizes.tag),
+                tag_width,
+                code: at(tag + sizes.tag_padding, ICON_OVER_DY_PT, sizes.tag),
+                mark,
+                word: None,
+                price: None,
+                change: None,
+                width: end + PADDING_RIGHT_PT,
+            }
+        }
+    }
+}
+
+/// The feed's mark and "Replay" after `end`, and where the face ends then.
+fn feed_state(mut end: f32, parts: FaceParts) -> (f32, Option<f32>, Option<Spot>) {
     let mark = parts.marked.then_some(end + PART_GAP_PT + MARK_RADIUS_PT);
     if let Some(mark) = mark {
         end = mark + MARK_RADIUS_PT;
@@ -197,16 +433,13 @@ pub fn lay_face(parts: FaceParts) -> FaceLayout {
                 PART_GAP_PT
             };
         end = at + width;
-        at
+        Spot {
+            x: at,
+            dy: 0.0,
+            pt: WORD_TEXT_PT,
+        }
     });
-    FaceLayout {
-        symbol: TEXT_LEFT_PT,
-        tag,
-        tag_width,
-        mark,
-        word,
-        width: end + PADDING_RIGHT_PT,
-    }
+    (end, mark, word)
 }
 
 /// What the slot right of a chip shows.
@@ -238,16 +471,117 @@ mod tests {
         code: 20.0,
         marked: false,
         word: None,
+        price: None,
+        change: None,
+        stage: Squeeze::OneLine,
+    };
+
+    /// The mock's BTCUSDT: a price and a change measured beside it.
+    const QUOTED: FaceParts = FaceParts {
+        price: Some(52.0),
+        change: Some(38.0),
+        ..HEALTHY
     };
 
     #[test]
-    fn a_healthy_tab_hugs_symbol_and_tag() {
+    fn a_healthy_tab_hugs_icon_symbol_and_tag() {
         let face = lay_face(HEALTHY);
-        assert_eq!(face.symbol, TEXT_LEFT_PT);
-        assert_eq!(face.tag, TEXT_LEFT_PT + 50.0 + PART_GAP_PT);
+        let icon = Squeeze::OneLine.sizes().icon;
+        assert_eq!(face.icon.x, TEXT_LEFT_PT + icon / 2.0);
+        let symbol = face.symbol.expect("one line names the symbol");
+        assert_eq!(symbol.x, TEXT_LEFT_PT + icon + PART_GAP_PT);
+        assert_eq!(face.tag.x, symbol.x + 50.0 + PART_GAP_PT);
         assert_eq!(face.tag_width, 20.0 + 2.0 * TAG_PADDING_PT);
-        assert_eq!((face.mark, face.word), (None, None));
-        assert_eq!(face.width, face.tag + face.tag_width + PADDING_RIGHT_PT);
+        assert_eq!(
+            (face.mark, face.word, face.price, face.change),
+            (None, None, None, None)
+        );
+        assert_eq!(face.width, face.tag.x + face.tag_width + PADDING_RIGHT_PT);
+    }
+
+    #[test]
+    fn one_line_reads_icon_symbol_venue_price_then_change() {
+        let face = lay_face(QUOTED);
+        let (price, change) = (face.price.unwrap(), face.change.unwrap());
+        let tag_end = face.tag.x + face.tag_width;
+        assert_eq!(price.x, tag_end + VALUE_GAP_PT);
+        assert_eq!(change.x, price.x + 52.0 + CHANGE_GAP_PT);
+        assert_eq!(face.width, change.x + 38.0 + PADDING_RIGHT_PT);
+        assert!(
+            [face.icon.dy, price.dy, change.dy]
+                .iter()
+                .all(|dy| *dy == 0.0)
+        );
+        let unpriced = lay_face(FaceParts {
+            price: None,
+            ..QUOTED
+        });
+        assert_eq!(unpriced.change.unwrap().x, tag_end + VALUE_GAP_PT);
+        let lost = lay_face(FaceParts {
+            marked: true,
+            ..QUOTED
+        });
+        assert!(
+            lost.price.unwrap().x > lost.mark.unwrap(),
+            "state sits by the venue"
+        );
+    }
+
+    #[test]
+    fn stacked_puts_symbol_over_venue_and_price_over_change_right_aligned() {
+        let face = lay_face(FaceParts {
+            stage: Squeeze::Stacked,
+            ..QUOTED
+        });
+        let (symbol, price, change) = (
+            face.symbol.unwrap(),
+            face.price.unwrap(),
+            face.change.unwrap(),
+        );
+        assert_eq!((symbol.dy, price.dy), (-STACK_DY_PT, -STACK_DY_PT));
+        assert_eq!(
+            (face.icon.dy, face.tag.dy, change.dy),
+            (STACK_DY_PT, STACK_DY_PT, STACK_DY_PT)
+        );
+        assert_eq!(price.x + 52.0, change.x + 38.0, "one right edge");
+        assert_eq!(face.width, price.x + 52.0 + PADDING_RIGHT_PT);
+        assert!(face.width < lay_face(QUOTED).width);
+    }
+
+    #[test]
+    fn no_price_moves_the_change_beside_the_venue() {
+        let face = lay_face(FaceParts {
+            stage: Squeeze::NoPrice,
+            ..QUOTED
+        });
+        assert_eq!(face.price, None);
+        let change = face.change.unwrap();
+        assert_eq!(change.x, face.tag.x + face.tag_width + LOW_GAP_PT);
+        assert_eq!((change.dy, face.tag.dy), (STACK_DY_PT, STACK_DY_PT));
+        let stacked = lay_face(FaceParts {
+            stage: Squeeze::Stacked,
+            ..QUOTED
+        });
+        assert!(face.width < stacked.width);
+    }
+
+    #[test]
+    fn the_last_squeeze_keeps_the_icon_over_the_venue_alone() {
+        let face = lay_face(FaceParts {
+            stage: Squeeze::IconOverVenue,
+            marked: true,
+            word: Some(30.0),
+            ..QUOTED
+        });
+        assert_eq!(
+            (face.symbol, face.price, face.change, face.word),
+            (None, None, None, None)
+        );
+        let column = face.tag_width.max(face.icon.pt);
+        assert_eq!(face.icon.x, TEXT_LEFT_PT + column / 2.0);
+        assert_eq!(face.tag.x + face.tag_width / 2.0, face.icon.x, "centred");
+        assert!(face.icon.dy < 0.0 && face.tag.dy > 0.0);
+        assert!(face.mark.is_some(), "a lost feed still says so");
     }
 
     #[test]
@@ -256,7 +590,7 @@ mod tests {
             marked: true,
             ..HEALTHY
         });
-        let tag_end = lost.tag + lost.tag_width;
+        let tag_end = lost.tag.x + lost.tag_width;
         assert_eq!(lost.mark, Some(tag_end + PART_GAP_PT + MARK_RADIUS_PT));
         let lost_end = tag_end + PART_GAP_PT + 2.0 * MARK_RADIUS_PT;
         assert_eq!(lost.width, lost_end + PADDING_RIGHT_PT);
@@ -265,7 +599,7 @@ mod tests {
             word: Some(30.0),
             ..HEALTHY
         });
-        let word = replay.word.unwrap();
+        let word = replay.word.unwrap().x;
         assert_eq!(word, replay.mark.unwrap() + MARK_RADIUS_PT + WORD_GAP_PT);
         assert_eq!(replay.width, word + 30.0 + PADDING_RIGHT_PT);
         assert!(replay.width > lost.width && lost.width > lay_face(HEALTHY).width);
@@ -295,6 +629,9 @@ mod tests {
             code: "MT5",
             marked: false,
             word: None,
+            price: None,
+            change: None,
+            stage: Squeeze::OneLine,
             scale: 1.0,
         };
         let first = cache.layout(1, &source, width);
@@ -321,6 +658,25 @@ mod tests {
         cache.keep([2]);
         cache.layout(1, &source, width);
         assert_eq!(measured.get(), 12, "tab 1 was forgotten");
+        let priced = FaceSource {
+            price: Some("172455"),
+            change: Some("+0.41%"),
+            ..source
+        };
+        cache.layout(1, &priced, width);
+        assert_eq!(measured.get(), 16, "a new price measures again");
+        cache.layout(1, &priced, width);
+        assert_eq!(measured.get(), 16);
+        let squeezed = FaceSource {
+            stage: Squeeze::IconOverVenue,
+            ..priced
+        };
+        cache.layout(1, &squeezed, width);
+        assert_eq!(
+            measured.get(),
+            17,
+            "the last squeeze measures the code alone"
+        );
     }
 
     /// The mock's strip, 1,620 points: up to 6 tabs on one line, 7 to 10
