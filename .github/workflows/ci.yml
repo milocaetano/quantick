@@ -9,6 +9,12 @@ on:
     # it with the `full-ci` label before that. See the `if:` on each job.
     types: [opened, synchronize, reopened, ready_for_review, labeled]
 
+# Only events that run validation supersede a PR run. Unrelated labels must
+# not cancel the full checks already running at that head.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && (github.event.action != 'labeled' || github.event.label.name == 'full-ci') && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' && (github.event.action != 'labeled' || github.event.label.name == 'full-ci') }}
+
 env:
   CARGO_TERM_COLOR: always
   # Debug info, not optimisation, is what the runners spend their time on.
