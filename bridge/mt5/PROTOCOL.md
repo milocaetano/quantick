@@ -340,12 +340,15 @@ opening backfill is out, then whenever the value **or the server day** changes
   **Absent means none**: the terminal reports no settlement.
 - `time_ms` — when the reading was taken, server time.
 
-quantick holds a reading as the reference for prints **from `time_ms` to the
-end of that server day**, and for no others. A print before the reading may
-belong to the session the settlement closed — B3 publishes it after the close —
-and the next server day waits for a reading of its own, which is why an
-unchanged price is said again on a new day. A reading without a price, and
-every new `hello`, withdraws the one held: the tab then shows no day's change
+quantick holds the first reading of a server day as the reference for prints
+**from `time_ms` to the end of that server day**, and for no others. A print
+before the reading may belong to the session the settlement closed — B3
+publishes it after the close. A value that changes later the same server day is
+that day's own settlement, so it holds for **the next server day** only, from
+its midnight, while the earlier reading keeps covering the rest of its day. An
+unchanged price said again on a new day keeps a window already held for that
+day, and otherwise holds from its reading. A reading without a price, and
+every new `hello`, withdraws every one held: the tab then shows no day's change
 rather than one against another session's price. A bridge older than the
 message sends none, and quantick shows no change.
 
