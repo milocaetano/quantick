@@ -40,7 +40,7 @@ pub use journal::{elide_path, export_csv};
 pub use orders::STRATEGIES_SIM_ONLY;
 pub use risk::{RiskEditor, RiskRefusal};
 pub use ticket_edit::{RiskEdit, RiskEditText};
-pub use venues::{BROKER_TRADES_FOLDER, PARKED_ENTRY_BLOCK};
+pub use venues::{BROKER_TRADES_FOLDER, PARKED_ENTRY_BLOCK, RECONNECTING_BLOCK};
 
 /// What the account is handed that only the ticket can know.
 ///

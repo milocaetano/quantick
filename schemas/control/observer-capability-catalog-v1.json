@@ -28230,7 +28230,7 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Open the same performance report as the Trades session context menu. action=session selects only that session; action=day requires YYYY-MM-DD in the display timezone and selects every instrument and session of that origin on the clicked day. The session must hold a trade on that day. action=ordinary restores the ordinary Sim live report for the chart symbol over all time; pass no session or day. action=sources with sources sets their union, exits session/day context scope and preserves visible symbol/date filters: broker, real (Sim live including legacy), replay, simulator (real + replay), both (all). An empty array selects none. Omitting sources reads the current report without opening it or emitting session.report.opened. Returns normalized sources, window, context, open/loaded status, trade count and net points. Retries set the same selection, never toggle. Session keys are <symbol>/<file>.csv for the simulator and broker/<symbol>/<file>.csv for real-trades, independent of custom names. Session, day and ordinary actions replace prior symbol, period, source and session filters. Returns the opened scope, trade count, net points and counts of unreadable files and skipped rows in the scanned history; events.read reconciles a lost open response through session.report.opened. Refusals: invalid_session, session_not_found, session_unreadable, day_not_in_session, no_ledger. Never places orders or writes history.",
+      "description": "Open the same performance report as the Trades session context menu. action=session selects only that session; action=day requires YYYY-MM-DD in the display timezone and selects every instrument and session of that origin on the clicked day. The session must hold a trade on that day. action=whole_day takes origin (simulator or broker) and day instead of a session and selects every trade of that origin closed that day, as the day header's context menu does. action=tag takes origin and a tag (with or without #, case ignored) and selects every trade of that origin carrying it over all history, as a trade's Report #tag menu does. Simulator and broker are never summed. action=ordinary restores the ordinary Sim live report for the chart symbol over all time; pass no session or day. action=sources with sources sets their union, exits session/day context scope and preserves visible symbol/date filters: broker, real (Sim live including legacy), replay, simulator (real + replay), both (all). An empty array selects none. Omitting sources reads the current report without opening it or emitting session.report.opened. Returns normalized sources, window, context, open/loaded status, trade count and net points. Retries set the same selection, never toggle. Session keys are <symbol>/<file>.csv for the simulator and broker/<symbol>/<file>.csv for real-trades, independent of custom names. Session, day and ordinary actions replace prior symbol, period, source and session filters. Returns the opened scope, trade count, net points and counts of unreadable files and skipped rows in the scanned history; events.read reconciles a lost open response through session.report.opened. Refusals: invalid_session, session_not_found, session_unreadable, day_not_in_session, invalid_tag, no_trades_in_scope, no_ledger. Never places orders or writes history.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "cockpit",
@@ -28272,6 +28272,14 @@
                 "type": "string"
               }
             ]
+          },
+          "ReportOrigin": {
+            "description": "The book a whole-day or tag report reads; the two are never summed.",
+            "enum": [
+              "simulator",
+              "broker"
+            ],
+            "type": "string"
           }
         },
         "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -28355,6 +28363,54 @@
               "day"
             ],
             "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Every trade of one origin closed on the civil day, in any session.",
+            "properties": {
+              "action": {
+                "const": "whole_day",
+                "type": "string"
+              },
+              "day": {
+                "maxLength": 10,
+                "minLength": 10,
+                "type": "string"
+              },
+              "origin": {
+                "$ref": "#/$defs/ReportOrigin"
+              }
+            },
+            "required": [
+              "action",
+              "origin",
+              "day"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Every trade of one origin carrying the tag, over all history.",
+            "properties": {
+              "action": {
+                "const": "tag",
+                "type": "string"
+              },
+              "origin": {
+                "$ref": "#/$defs/ReportOrigin"
+              },
+              "tag": {
+                "maxLength": 33,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "action",
+              "origin",
+              "tag"
+            ],
+            "type": "object"
           }
         ],
         "title": "ReportInput"
@@ -28414,11 +28470,22 @@
                 "type": "string"
               },
               "session": {
-                "type": "string"
+                "description": "The session of a session or day action; null for whole_day and tag.",
+                "type": [
+                  "string",
+                  "null"
+                ]
               },
               "skipped_rows": {
                 "$ref": "#/$defs/WireU64",
                 "description": "Malformed rows skipped in that history."
+              },
+              "tag": {
+                "description": "The normalized tag of a tag action, without `#`.",
+                "type": [
+                  "string",
+                  "null"
+                ]
               },
               "title": {
                 "type": "string"
@@ -28433,7 +28500,6 @@
             },
             "required": [
               "action",
-              "session",
               "origin",
               "title",
               "trade_count",

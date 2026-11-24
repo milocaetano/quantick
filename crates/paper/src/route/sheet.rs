@@ -194,6 +194,28 @@ pub(super) fn disarm_toast(disarmed: Route, reason: Disarm) -> String {
     )
 }
 
+/// The word the notice and the ticket's selector wear while an armed route
+/// waits for its link.
+pub(super) const RECONNECTING: &str = "RECONNECTING";
+
+/// The toast as an armed route loses its link or gets it back:
+/// `REAL: no link with the broker - reconnecting, orders refused for up to
+/// 30 s` and `REAL: reconnected to the broker, orders go there again`.
+pub(super) fn reconnect_toast(route: Route, reconnecting: bool) -> String {
+    if reconnecting {
+        format!(
+            "{}: no link with the broker - reconnecting, orders refused for up to {} s",
+            route.word(),
+            super::RECONNECT_GRACE_MS / 1_000
+        )
+    } else {
+        format!(
+            "{}: reconnected to the broker, orders go there again",
+            route.word()
+        )
+    }
+}
+
 /// The broker row's hint while the venue waits for the terminal's account.
 const CONNECTING: &str = "connecting…";
 /// The broker row while no venue could be built (the port was taken).
@@ -236,7 +258,22 @@ impl BrokerDesk {
             .is_some_and(crate::PaperAccount::broker_shown);
         let link_up = facts.link_up;
         let locked = source.broker_enabled && !source.source_routes;
+        let reconnecting = route.reconnecting_since();
         let (tone, face, dot) = match (route.route(), account) {
+            (Route::Demo | Route::Real, account) if reconnecting.is_some() => (
+                RouteTone::Lost,
+                account.map_or_else(
+                    || format!("{} · {RECONNECTING}", route.route().word()),
+                    |account| {
+                        format!(
+                            "{} · {} · {RECONNECTING}",
+                            account.short_name(),
+                            route.route().word()
+                        )
+                    },
+                ),
+                Dot::Hollow,
+            ),
             (Route::Demo | Route::Real, Some(account)) => (
                 if route.route() == Route::Real {
                     RouteTone::Real
@@ -276,6 +313,7 @@ impl BrokerDesk {
         };
         let title = match tone {
             RouteTone::Sim | RouteTone::Locked => SIM_TITLE.to_owned(),
+            _ if route.route().is_broker() => format!("TRADING · {}", route.route().word()),
             _ => format!(
                 "TRADING · {}",
                 account
@@ -283,10 +321,13 @@ impl BrokerDesk {
                     .word()
             ),
         };
-        let status = (tone == RouteTone::Lost)
-            .then(|| route.last_disarm())
-            .flatten()
-            .map(|(reason, at)| lost_status(reason, at, now_ms));
+        let status = match reconnecting {
+            Some(since) => Some(reconnecting_status(since, now_ms)),
+            None => (tone == RouteTone::Lost)
+                .then(|| route.last_disarm())
+                .flatten()
+                .map(|(reason, at)| lost_status(reason, at, now_ms)),
+        };
         let (rows, footer) = rows(route, &facts, source, venue, &ticket, now_ms);
         Sheet {
             title,
@@ -315,6 +356,13 @@ fn tone_of(route: Route) -> RouteTone {
         Route::Demo => RouteTone::Demo,
         Route::Real => RouteTone::Real,
     }
+}
+
+fn reconnecting_status(since_ms: i64, now_ms: i64) -> String {
+    let seconds = now_ms.saturating_sub(since_ms).max(0) / 1_000;
+    format!(
+        "no link with the broker for {seconds} s · {RECONNECTING} · orders refused · stop and target stay at the broker"
+    )
 }
 
 fn lost_status(reason: Disarm, at_ms: i64, now_ms: i64) -> String {

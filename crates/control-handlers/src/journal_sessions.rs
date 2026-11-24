@@ -361,6 +361,7 @@ pub(crate) fn refusal(error: SessionEditError) -> ControlError {
         | SessionEditError::WritesRefused(_)
         | SessionEditError::Io(_) => codes::CAPABILITY_UNAVAILABLE,
         SessionEditError::DayNotInSession(_)
+        | SessionEditError::EmptyScope(_)
         | SessionEditError::InvalidKey(_)
         | SessionEditError::TradeNotFound(..)
         | SessionEditError::InvalidTag(_)
@@ -369,6 +370,9 @@ pub(crate) fn refusal(error: SessionEditError) -> ControlError {
     let next_step = match &error {
         SessionEditError::DayNotInSession(_) => {
             "send a civil day shown under this session in the Trades ledger"
+        }
+        SessionEditError::EmptyScope(_) => {
+            "send a day or tag the Trades ledger shows under that origin"
         }
         SessionEditError::LiveSession(_) => {
             "a tab is still journaling to this session; it can be deleted once that tab moves to another feed, replay or symbol"

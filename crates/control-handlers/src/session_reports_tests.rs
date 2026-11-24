@@ -91,30 +91,7 @@ impl PaperOwner for Host {
 #[test]
 fn session_and_day_calls_show_the_report_return_scope_and_journal_readback() {
     let scratch = crate::scratch::ScratchDir::new("report-calls");
-    let dir = scratch.path().join("paper");
-    let day = quantick_civil::parse_iso_date("2026-11-18").unwrap();
-    let stamp = day.start_ms(TzOffset::new(-180)) + 60000;
-    for key in ["broker/WINZ26/a.csv", "broker/WDOZ26/b.csv", "WINZ26/a.csv"] {
-        let path = SessionKey::parse(key).unwrap().path(&dir);
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        let text = format!(
-            "# quantick-trades 2\n# symbol=WINZ26\n# source=live\n{}\n{},{stamp},long,1,100,105,5,manual,,,,\n",
-            quantick_sim::history::HEADER,
-            stamp - 1000
-        );
-        let text = if key == "broker/WINZ26/a.csv" {
-            text + "torn exit row\n"
-        } else {
-            text
-        };
-        std::fs::write(path, text).unwrap();
-    }
-    let mut host = Host {
-        desk: Some(PaperDesk::new(
-            quantick_paper::PaperAccount::with_trades_dir(dir.clone()),
-        )),
-        dir,
-    };
+    let mut host = day_of_trades(&scratch);
     let mut access = FakeAccess::with_budget(0);
     for (input, count) in [
         (
@@ -181,4 +158,130 @@ fn session_and_day_calls_show_the_report_return_scope_and_journal_readback() {
         5,
         "refusals do not emit successful opens"
     );
+}
+
+/// One trade a minute into 2026-11-18 in each of two broker sessions and a
+/// simulator one; the first broker file ends in a torn row.
+fn day_of_trades(scratch: &crate::scratch::ScratchDir) -> Host {
+    let dir = scratch.path().join("paper");
+    for key in ["broker/WINZ26/a.csv", "broker/WDOZ26/b.csv", "WINZ26/a.csv"] {
+        let path = SessionKey::parse(key).unwrap().path(&dir);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let text = format!(
+            "# quantick-trades 2\n# symbol=WINZ26\n# source=live\n{}\n{},{STAMP},long,1,100,105,5,manual,,,,\n",
+            quantick_sim::history::HEADER,
+            STAMP - 1000
+        );
+        let text = if key == "broker/WINZ26/a.csv" {
+            text + "torn exit row\n"
+        } else {
+            text
+        };
+        std::fs::write(path, text).unwrap();
+    }
+    Host {
+        desk: Some(PaperDesk::new(
+            quantick_paper::PaperAccount::with_trades_dir(dir.clone()),
+        )),
+        dir,
+    }
+}
+
+/// 2026-11-18 00:01 at UTC-3, the journal timezone of [`Host`].
+const STAMP: i64 = 1_794_970_860_000;
+
+#[test]
+fn whole_day_and_tag_calls_open_one_origin_and_refuse_empty_or_invalid_scopes() {
+    let scratch = crate::scratch::ScratchDir::new("report-day-tag");
+    let mut host = day_of_trades(&scratch);
+    let trade = quantick_sim::history::TradeRef {
+        opened_ms: STAMP - 1000,
+        closed_ms: STAMP,
+        nth: 0,
+    };
+    for key in ["WINZ26/a.csv", "broker/WDOZ26/b.csv"] {
+        let key = SessionKey::parse(key).unwrap();
+        quantick_paper::report::session_edit::tag_trade(&host.dir, &key, trade, &["#Setup"])
+            .unwrap();
+    }
+    let mut access = FakeAccess::with_budget(0);
+    for (input, action, origin, count) in [
+        (
+            json!({"action":"whole_day", "origin":"broker", "day":"2026-11-18"}),
+            "whole_day",
+            "broker",
+            2,
+        ),
+        (
+            json!({"action":"whole_day", "origin":"simulator", "day":"2026-11-18"}),
+            "whole_day",
+            "simulator",
+            1,
+        ),
+        (
+            json!({"action":"tag", "origin":"simulator", "tag":"#SETUP"}),
+            "tag",
+            "simulator",
+            1,
+        ),
+        (
+            json!({"action":"tag", "origin":"broker", "tag":"setup"}),
+            "tag",
+            "broker",
+            1,
+        ),
+    ] {
+        let result = open(&mut host, &mut access, &FakeWindow::assistant(), &input).unwrap();
+        assert_eq!(result["action"], action);
+        assert_eq!(result["origin"], origin);
+        assert_eq!(
+            result["session"],
+            Value::Null,
+            "no one session is the scope"
+        );
+        assert_eq!(result["trade_count"], count.to_string());
+        if action == "tag" {
+            assert_eq!(result["tag"], "setup");
+            assert_eq!(result["day"], Value::Null);
+        } else {
+            assert_eq!(result["day"], "2026-11-18");
+        }
+        assert_eq!(
+            host.desk.as_ref().unwrap().reports.last().unwrap().trades,
+            count as usize
+        );
+        assert_eq!(access.events.last().unwrap().payload["report"], result);
+        let repeated = open(&mut host, &mut access, &FakeWindow::assistant(), &input).unwrap();
+        assert_eq!(repeated, result, "a retry selects the same scope");
+    }
+    let reports = host.desk.as_ref().unwrap().reports.len();
+    let events = access.events.len();
+    for (input, code) in [
+        (
+            json!({"action":"whole_day", "origin":"broker", "day":"2026-11-19"}),
+            Some("no_trades_in_scope"),
+        ),
+        (
+            json!({"action":"tag", "origin":"broker", "tag":"fade"}),
+            Some("no_trades_in_scope"),
+        ),
+        (
+            json!({"action":"tag", "origin":"simulator", "tag":"two words"}),
+            Some("invalid_tag"),
+        ),
+        (
+            json!({"action":"whole_day", "origin":"both", "day":"2026-11-18"}),
+            None,
+        ),
+        (json!({"action":"tag", "tag":"setup"}), None),
+    ] {
+        let error = open(&mut host, &mut access, &FakeWindow::assistant(), &input).unwrap_err();
+        assert_eq!(
+            error.context.details.map(|details| details["code"].clone()),
+            code.map(Value::from),
+            "{input}"
+        );
+    }
+    assert_eq!(host.desk.as_ref().unwrap().reports.len(), reports);
+    assert_eq!(access.events.len(), events, "refusals emit no opens");
 }

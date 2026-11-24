@@ -1,11 +1,17 @@
 #!/usr/bin/env python3
 """Offline tests for the read-cost ledger: rows, the median, the ceiling."""
 
+import copy
+import contextlib
+import io
 import importlib.util
 import os
 import sys
 import tempfile
 import unittest
+from unittest import mock
+
+from test_measure import Repository, commit, run, write
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SPEC = importlib.util.spec_from_file_location(
@@ -119,98 +125,108 @@ class Derivation(unittest.TestCase):
         self.assertEqual(row["top"], "`crates/core/src/big.rs` (400)")
 
 
-class MergeCommits(unittest.TestCase):
-    def fetch(self, associated):
-        def fake(*args):
-            self.asked = args
-            return associated
+class MainHistory(unittest.TestCase):
+    def setUp(self):
+        self.repo = Repository()
+        self.addCleanup(self.repo.close)
+        self.repo.base_crate()
+        write(self.repo.root, "crates/core/src/lib.rs", "pub fn old() {}\n")
+        self.base = commit(self.repo.root, "base")
+        write(self.repo.root, "crates/core/src/lib.rs", "pub fn first() {}\n")
+        self.first = commit(self.repo.root, "first merged change")
+        write(self.repo.root, "crates/core/src/lib.rs", "pub fn second() {}\n")
+        self.second = commit(self.repo.root, "second merged change")
+        run(self.repo.root, "git", "update-ref", "refs/remotes/origin/main", self.second)
+        write(self.repo.root, "crates/core/src/lib.rs", "pub fn pending() {}\npub fn pending_too() {}\n")
+        self.pending = commit(self.repo.root, "unmerged branch")
+        self.path = os.path.join(self.repo.root, "ledger.md")
+        header = HEADER + "<!-- read-cost-ceiling:v1 18000 -->\n"
+        with open(self.path, "w", encoding="utf-8", newline="\n") as stream:
+            stream.write(header)
+        self.pulls = {
+            self.first: [self.pull(1, self.base, self.first)],
+            self.second: [self.pull(2, self.first, self.second)],
+            self.pending: [self.pull(3, self.second, self.pending)],
+        }
+        self.requests = []
+        patch = mock.patch.object(ledger, "gh_json", side_effect=self.fetch)
+        patch.start()
+        self.addCleanup(patch.stop)
 
-        return fake
+    def pull(self, number, base, head):
+        return {"number": number, "merge_commit_sha": head,
+                "merged_at": "2026-09-19T12:00:00Z",
+                "base": {"ref": "main", "sha": base},
+                "head": {"ref": f"feat/change-{number}", "sha": head}}
 
-    def test_the_pull_request_this_commit_merged_is_the_one_recorded(self):
-        sha = "c" * 40
-        associated = [
-            {"number": 1, "merge_commit_sha": "d" * 40, "merged_at": "2026-09-01"},
-            {"number": 2, "merge_commit_sha": sha, "merged_at": "2026-09-19"},
-        ]
+    def fetch(self, repo, *args):
+        self.assertEqual(repo, self.repo.root)
+        sha = args[-1].split("/")[-2]
+        self.requests.append(sha)
+        return self.pulls.get(sha, [])
 
-        self.assertEqual(ledger.merged_pull_for_commit(sha, self.fetch(associated)), 2)
+    def execute(self, limit=30):
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            return ledger.main(["--ledger", self.path, "backfill", "--repo",
+                                self.repo.root, "--limit", str(limit)])
 
-    def test_a_commit_that_merged_nothing_gains_no_row(self):
-        sha = "c" * 40
-        open_pull = [{"number": 3, "merge_commit_sha": None, "merged_at": None}]
-        # A pull request that merely contains the commit, merged elsewhere.
-        containing = [{"number": 4, "merge_commit_sha": "e" * 40, "merged_at": "x"}]
+    def test_only_main_history_is_recorded_and_a_repeat_is_byte_identical(self):
+        self.assertEqual(self.execute(), 0)
+        rows = ledger.parse_rows(ledger.read(self.path))
+        self.assertEqual([row["pr"] for row in rows], [1, 2])
+        self.assertEqual([row["read_cost"] for row in rows], [1, 1])
+        self.assertEqual(rows[0]["date"], "2026-09-19")
+        self.assertNotIn(self.pending, self.requests)
+        self.assertEqual(ledger.ceiling_or_none(self.path), 18000)
+        before = ledger.read(self.path)
+        with mock.patch.object(ledger.MEASURE, "measure", side_effect=AssertionError):
+            self.assertEqual(self.execute(), 0)
+        self.assertEqual(ledger.read(self.path), before)
 
-        self.assertIsNone(ledger.merged_pull_for_commit(sha, self.fetch([])))
-        self.assertIsNone(ledger.merged_pull_for_commit(sha, self.fetch(open_pull)))
-        self.assertIsNone(ledger.merged_pull_for_commit(sha, self.fetch(containing)))
+    def test_limit_bounds_main_commits_and_uses_the_recorded_pr_range(self):
+        # A squash's PR head need not be its merge commit. Its entire range
+        # must be measured, rather than the final individual rebased commit.
+        self.pulls[self.second][0]["head"]["sha"] = self.pending
+        self.assertEqual(self.execute(limit=1), 0)
+        self.assertEqual(self.requests, [self.second])
+        rows = ledger.parse_rows(ledger.read(self.path))
+        self.assertEqual([row["pr"] for row in rows], [2])
+        self.assertEqual(rows[0]["read_cost"], 2)
 
+    def test_open_integration_and_merely_containing_prs_do_not_gain_rows(self):
+        valid = self.pulls[self.first][0]
+        wrong_merge = dict(valid, number=4, merge_commit_sha=self.pending)
+        unmerged = dict(valid, number=5, merged_at=None)
+        integration = copy.deepcopy(valid)
+        integration["number"], integration["base"]["ref"] = 6, "feature/integration"
+        self.pulls[self.first] = [wrong_merge, unmerged, integration, valid]
+        self.pulls[self.second] = [integration]
+        self.assertEqual(self.execute(), 0)
+        self.assertEqual([r["pr"] for r in ledger.parse_rows(ledger.read(self.path))], [1])
 
-class RowsOnTheRecord(unittest.TestCase):
-    def ledger(self):
-        return written(
-            HEADER
-            + ledger.format_row(
-                {
-                    "pr": 11,
-                    "date": "2026-09-19",
-                    "branch": "feat/recorded",
-                    "base": "main",
-                    "read_cost": 5,
-                    "changed": 1,
-                    "top": "",
-                }
-            )
-            + "\n"
-        )
+    def test_lookup_and_measurement_failures_leave_the_entire_batch_unwritten(self):
+        before = ledger.read(self.path)
+        for failure in (OSError("offline"), ledger.MEASURE.ReadCostError("missing object")):
+            with self.subTest(failure=failure):
+                with mock.patch.object(ledger, "merged_pull_for_commit",
+                                       side_effect=[self.pulls[self.first][0], failure]):
+                    self.assertEqual(self.execute(), 1)
+                self.assertEqual(ledger.read(self.path), before)
+        with mock.patch.object(ledger.MEASURE, "measure", side_effect=[
+                report([]), ledger.MEASURE.ReadCostError("bad measurement")]):
+            self.assertEqual(self.execute(), 1)
+        self.assertEqual(ledger.read(self.path), before)
+        with mock.patch.object(ledger, "fetch_pull", return_value=False):
+            self.assertEqual(self.execute(), 1)
+        self.assertEqual(ledger.read(self.path), before)
 
-    def test_a_recorded_pull_request_is_found_and_an_absent_one_is_not(self):
-        path = self.ledger()
-
-        self.assertEqual(ledger.row_for(path, 11)["branch"], "feat/recorded")
-        self.assertIsNone(ledger.row_for(path, 12))
-        self.assertIsNone(ledger.row_for(os.path.join(HERE, "absent.md"), 11))
-
-    def test_the_merge_check_answers_three_ways(self):
-        path = self.ledger()
-        merged = {}
-
-        def stub(sha, fetch=None):
-            return merged.get(sha)
-
-        held, ledger.merged_pull_for_commit = ledger.merged_pull_for_commit, stub
-        try:
-            merged["recorded"] = 11
-            merged["unrecorded"] = 12
-            # An ordinary push that merged nothing owes no row, which is not
-            # the same answer as a merge that left none.
-            self.assertIsNone(ledger.verify(path, "plain"))
-            self.assertTrue(ledger.verify(path, "recorded"))
-            self.assertFalse(ledger.verify(path, "unrecorded"))
-        finally:
-            ledger.merged_pull_for_commit = held
-
-
-class RecordOutcome(unittest.TestCase):
-    """The one command here that acts rather than advises says what it did."""
-
-    def run_with(self, outcome):
-        held = ledger.record
-        ledger.record = lambda repo, path, number: outcome
-        try:
-            return ledger.main(["--ledger", "unused.md", "record", "--repo", ".", "--pr", "1"])
-        finally:
-            ledger.record = held
-
-    def test_a_recorded_row_and_an_already_recorded_one_both_succeed(self):
-        # Idempotent on the pull-request number, so a second run is not a
-        # failure - the row it would have written is already there.
-        self.assertEqual(self.run_with(ledger.APPENDED), 0)
-        self.assertEqual(self.run_with(ledger.ALREADY_RECORDED), 0)
-
-    def test_a_row_that_could_not_be_written_exits_non_zero(self):
-        self.assertEqual(self.run_with(ledger.FAILED), 1)
+    def test_missing_main_and_invalid_limits_do_not_write(self):
+        before = ledger.read(self.path)
+        run(self.repo.root, "git", "update-ref", "-d", "refs/remotes/origin/main")
+        self.assertEqual(self.execute(), 1)
+        with self.assertRaises(SystemExit):
+            self.execute(limit=0)
+        self.assertEqual(ledger.read(self.path), before)
 
 
 class Ceiling(unittest.TestCase):

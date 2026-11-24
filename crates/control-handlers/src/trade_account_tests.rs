@@ -273,3 +273,39 @@ fn the_calls_reach_the_route_session_through_its_call() {
             .is_some_and(|call| call.write_block(Actor::Agent).is_none())
     );
 }
+
+#[test]
+fn a_reconnecting_route_refuses_every_broker_order() {
+    let mut window = RouteWindow::demo();
+    window.allow_agent_orders = true;
+    let mut access = FakeAccess::with_budget(0);
+    select(
+        &mut window,
+        &mut access,
+        &FakeWindow::trader(),
+        &json!({ "route": "demo" }),
+    )
+    .expect("armed");
+    window.facts.link_up = false;
+    window.route.observe(&window.facts, 1_000);
+
+    let mut registry =
+        quantick_control_host::actions::ActionRegistry::<RouteWindow, FakeAccess>::new();
+    crate::trade::register(&mut registry).expect("the family docks");
+    let place = registry.lookup(PLACE_CAPABILITY_ID, 1).unwrap();
+    for actor in [FakeWindow::assistant(), FakeWindow::trader()] {
+        let refused = (place.handler)(
+            &mut window,
+            &mut access,
+            &actor,
+            &json!({ "side": "buy", "kind": "market", "quantity": "1" }),
+        )
+        .expect_err("nothing reaches the broker while it reconnects");
+        assert_eq!(route_code(&refused), Some("route.reconnecting"));
+        assert_eq!(refused.code.as_str(), codes::CAPABILITY_UNAVAILABLE);
+        assert!(
+            !refused.retryable,
+            "a retry past the grace would fill on the simulator"
+        );
+    }
+}
