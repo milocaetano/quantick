@@ -84,7 +84,12 @@ jobs:
           # The affected set diffs the PR's base against its head, and both
           # must be in the clone.
           fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
       - uses: ./.github/actions/rust-setup
+      - name: Aggregate ratchet delta
+        env:
+          RATCHET_BASE: ${{ github.event.pull_request.base.sha }}
+        run: python3 tools/ci/ratchet_delta.py --base "$RATCHET_BASE" --export-env "$GITHUB_ENV"
       - name: Affected crates
         # Derived from `cargo metadata` and the diff, never a list kept here;
         # the script's stderr says why each crate was selected.
@@ -265,6 +270,8 @@ jobs:
         # against fixtures instead: the boundary rule, the prose exemption, and
         # both failure directions.
         run: python3 tools/ci/test_binary_hook_scan.py
+      - name: Ratchet delta runner tests
+        run: python3 tools/ci/test_ratchet_delta.py
       - name: Edit-loop safety fixtures
         run: python3 -m unittest discover -s tools/edit_loop -p 'test_*.py'
       - name: Bridge tests
@@ -352,7 +359,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: ./.github/actions/rust-setup
+      - name: Aggregate ratchet delta
+        env:
+          RATCHET_BASE: ${{ github.event.pull_request.base.sha || 'HEAD^' }}
+        run: python3 tools/ci/ratchet_delta.py --base "$RATCHET_BASE" --export-env "$GITHUB_ENV"
       - name: Test
         run: cargo test --workspace
 
@@ -486,10 +500,19 @@ jobs:
       QUANTICK_BUBBLES: ${{ github.workspace }}/crates/app/config/bubbles.toml
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: ./.github/actions/rust-setup
         with:
           desktop-deps: "false"
           cache-key: windows
+      - name: Ratchet delta runner tests
+        run: python tools/ci/test_ratchet_delta.py
+      - name: Aggregate ratchet delta
+        env:
+          RATCHET_BASE: ${{ github.event.pull_request.base.sha || 'HEAD^' }}
+        run: python tools/ci/ratchet_delta.py --base "$env:RATCHET_BASE" --export-env "$env:GITHUB_ENV"
       - name: Test
         run: cargo test -p quantick-indicators -p quantick-workspace -p quantick-guards -p quantick-feed -p quantick-feed-binance -p quantick-feed-hyperliquid -p quantick-feed-mt5
 

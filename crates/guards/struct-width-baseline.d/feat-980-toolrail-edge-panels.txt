@@ -1,3 +1,0 @@
-# Retire the root-owned rail after its catalog model/view move (#980).
-app::ToolRail -32
-!budget -32

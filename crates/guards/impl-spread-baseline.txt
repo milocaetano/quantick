@@ -14,5 +14,5 @@
 # Recorded at main 70f75ca1 when the guard landed: `app` was the only crate
 # over 20,000 lines (65,339), and `app::ChartPane` the widest type, at 10
 # files.
-!budget 10
-impl-spread 10
+!budget 4
+impl-spread 4

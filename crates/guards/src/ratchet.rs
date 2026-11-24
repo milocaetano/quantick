@@ -31,8 +31,7 @@
 //! two lines from every branch that grew `app` — nine of fifteen merged pull
 //! requests in a row — so any two open at once conflicted. A new file per
 //! branch cannot conflict with another branch's new file. `--tighten` writes
-//! its cuts the same way, so after a ratchet lands its baseline is never
-//! rewritten.
+//! its cuts the same way; `--tighten --fold` consolidates them into the baseline.
 
 use std::fs;
 use std::path::Path;
@@ -363,7 +362,7 @@ impl Policy {
                     .map_err(|e| format!("{at}: `{delta}` is not a count: {e}"))?;
                 let shift = |from: usize| {
                     if raise.is_some() {
-                        Some(from + amount)
+                        from.checked_add(amount)
                     } else {
                         from.checked_sub(amount)
                     }
@@ -424,14 +423,17 @@ impl Policy {
                 ),
                 self.remedy,
             )),
-            Some(entry) if entry.ceiling.saturating_sub(actual) > self.slack => Some(Finding::new(
-                format!(
-                    "  {path}: down to {actual} from {} — good news, tighten the entry to \
+            Some(entry) if entry.ceiling.saturating_sub(actual) > self.slack => Some(
+                Finding::new(
+                    format!(
+                        "  {path}: down to {actual} from {} — good news, tighten the entry to \
                          {actual}",
-                    entry.ceiling
-                ),
-                self.remedy,
-            )),
+                        entry.ceiling
+                    ),
+                    self.remedy,
+                )
+                .cleanup(),
+            ),
             None if actual > self.threshold => Some(Finding::new(
                 format!(
                     "  {path}: {actual} {unit}, over the {} threshold and absent from the \
@@ -455,6 +457,7 @@ impl Policy {
             ),
             self.remedy,
         )
+        .cleanup()
     }
 
     /// How the total stands against the budget.
@@ -503,15 +506,18 @@ impl Policy {
             ));
         }
         if budget.allowed.saturating_sub(total) > self.budget_slack {
-            return Some(Finding::new(
-                format!(
-                    "  {}: the tracked total is {total}, down from the \
+            return Some(
+                Finding::new(
+                    format!(
+                        "  {}: the tracked total is {total}, down from the \
                      {BUDGET_DIRECTIVE} of {} — good news, tighten the budget to {total}",
-                    self.budget_source(recorded, budget),
-                    budget.allowed
-                ),
-                self.budget_slack_remedy,
-            ));
+                        self.budget_source(recorded, budget),
+                        budget.allowed
+                    ),
+                    self.budget_slack_remedy,
+                )
+                .cleanup(),
+            );
         }
         None
     }
