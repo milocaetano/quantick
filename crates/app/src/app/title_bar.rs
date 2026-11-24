@@ -90,6 +90,7 @@ pub(super) fn chips_of(
                 venue_code: config.feed_code(&tab.feed_id).into_owned(),
                 symbol_ink: book.tab_colour(id).and_then(ink),
                 tag_fill: tab.paper.account.route_tone().rgb(),
+                corner: book.tab_colour(id).map(|colour| colour.rgb(theme.dark)),
                 feed: quantick_workspace::arrangement::strip::TabFeed::of(
                     tab.link.replay.is_some(),
                     tab.link.feed_connection == quantick_feed::FeedConnectionState::Connected,

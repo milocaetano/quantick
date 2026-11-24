@@ -13,17 +13,19 @@ const LAYER_SWITCH: Mapping = capability!("layers.visibility.set");
 pub(super) const ROWS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "dock.tab.open",
-        title: "Open a panel — session, trading or trades",
+        title: "Open a panel — session, trading, trades or strategies",
         reach: "window menu, Panels, the dock's own strip",
         keys: &[
             (Source::DockTab, "session"),
             (Source::DockTab, "trading"),
             (Source::DockTab, "trades"),
+            (Source::DockTab, "strategies"),
             (Source::MenuEntry, "L2"),
             (Source::MenuEntry, "Bubbles"),
             (Source::MenuEntry, "Session"),
             (Source::MenuEntry, "Paper trading"),
             (Source::MenuEntry, "Trades"),
+            (Source::MenuEntry, "Strategies"),
         ],
         mapping: PENDING_SURFACE,
     },

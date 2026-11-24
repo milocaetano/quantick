@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "One asset across every open tab, as `strategy.desk.list` groups it.",
+  "properties": {
+    "bar_type": {
+      "maxLength": 64,
+      "minLength": 1,
+      "type": "string"
+    },
+    "symbol": {
+      "maxLength": 64,
+      "minLength": 1,
+      "type": "string"
+    }
+  },
+  "required": [
+    "symbol",
+    "bar_type"
+  ],
+  "title": "AssetInput",
+  "type": "object"
+}

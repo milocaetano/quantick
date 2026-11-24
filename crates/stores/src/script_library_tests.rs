@@ -191,3 +191,38 @@ fn a_saved_name_loads_its_index_and_text_or_names_what_is_missing() {
     assert_eq!(gone.index(), library.index_of("gone.pine"));
     assert!(gone.index().is_some());
 }
+
+#[test]
+fn save_as_keeps_a_running_source_under_a_new_name_and_never_over_one() {
+    let dir = scratch("save-as");
+    let mut library = ScriptLibrary::scan_dir(&dir);
+    let source = "//@version=5\nindicator(\"edited\")\nplot(close)\n";
+
+    let saved = library
+        .save_as("edited.pine", source)
+        .expect("a free name saves");
+
+    assert_eq!(saved.source, source);
+    assert_eq!(
+        std::fs::read_to_string(dir.join("edited.pine")).unwrap(),
+        source
+    );
+    let index = library.index_of("edited.pine").expect("listed at once");
+    let text = source.to_owned();
+    assert_eq!(
+        library.load("edited.pine"),
+        LoadedScript::Read { index, text }
+    );
+    assert!(
+        library.save_as("edited.pine", "plot(open)").is_err(),
+        "taken"
+    );
+    assert!(
+        library.save_as("no spaces.pine", source).is_err(),
+        "named badly"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.join("edited.pine")).unwrap(),
+        source
+    );
+}

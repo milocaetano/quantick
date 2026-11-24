@@ -14,6 +14,7 @@ pub mod paper_report;
 mod scratch;
 pub mod store_home;
 pub mod strategy_describe_contract;
+pub mod strategy_desk;
 pub mod workspace_menu;
 
 /// A deterministic transition over cached presentation state.

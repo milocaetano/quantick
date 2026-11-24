@@ -66,6 +66,16 @@ impl ScriptLibrary {
         id: &str,
         new_id: &str,
     ) -> Result<ScriptDocument, String> {
+        let original = ScriptLibraryPort::read(self, id)?;
+        self.create_document(new_id, &original.source)
+    }
+
+    /// Write `source` as the new library file `new_id`, never over one.
+    pub(super) fn create_document(
+        &mut self,
+        new_id: &str,
+        source: &str,
+    ) -> Result<ScriptDocument, String> {
         validate_id(new_id)?;
         if self
             .entries
@@ -74,10 +84,9 @@ impl ScriptLibrary {
         {
             return Err("a script with that name already exists".into());
         }
-        let original = ScriptLibraryPort::read(self, id)?;
         std::fs::create_dir_all(&self.directory).map_err(|e| e.to_string())?;
         let path = self.directory.join(new_id);
-        write_source(&path, &original.source, true)?;
+        write_source(&path, source, true)?;
         self.entries.push(ScriptEntry {
             name: new_id.into(),
             origin: ScriptOrigin::File(path),

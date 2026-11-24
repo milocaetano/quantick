@@ -73,6 +73,7 @@ impl FrameTailOwners<'_> {
                     paper: &mut tab.paper,
                     timezone: input.tz,
                     route: None,
+                    strategies: None,
                 });
                 return self.surfaces.draw_slot_unscoped_with_env(
                     quantick_ui_model::Slot::FrameTailPaperPanels,

@@ -87,6 +87,7 @@ mod scratch;
 mod statusbar;
 mod store_home;
 mod strategy_anchors;
+mod strategy_desk;
 mod strategy_presets;
 #[cfg(any(feature = "scenario-harness", test))]
 mod stress_input;
