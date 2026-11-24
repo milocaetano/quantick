@@ -281,12 +281,13 @@ fn market(app: &QuantickApp) -> crate::app::title_bar::Market<'_> {
 }
 
 /// Two tabs on two workspaces, whatever market they show: each chip carries
-/// its own workspace's colour as the resolver gives it for the theme, and
-/// the venue's code from config.
+/// its own workspace's colour as the resolver gives it for the theme, on the
+/// symbol and in the corner of open and closed tabs alike, and the venue's
+/// code from config.
 #[test]
 fn two_workspaces_on_one_market_wear_two_colours() {
     let layouts = crate::scratch::ScratchFile::new("workspace-two-colours", "layouts.toml");
-    let (mut app, first, _second) = two_tabs(&layouts);
+    let (mut app, first, second) = two_tabs(&layouts);
     let book = app.runtime.workspace.book.book_mut();
     book.save_as(first, "Scalp").unwrap();
     let dark = quantick_appearance::ResolvedTheme::default();
@@ -298,6 +299,14 @@ fn two_workspaces_on_one_market_wear_two_colours() {
     assert_eq!(chips[0].symbol_ink, resolved(first));
     assert!(chips[1].symbol_ink.is_some());
     assert_ne!(chips[0].symbol_ink, chips[1].symbol_ink);
+    let light = quantick_appearance::ResolvedTheme::parse(quantick_appearance::LIGHT).unwrap();
+    let lit = crate::app::title_bar::chips_of(market(&app), &[0, 1], &light);
+    for (chips, dark) in [(&chips, true), (&lit, false)] {
+        let corner = |tab| book.tab_colour(tab).map(|colour| colour.rgb(dark));
+        assert_eq!(chips[0].corner, corner(first), "dark {dark}");
+        assert_eq!(chips[1].corner, corner(second), "dark {dark}");
+        assert!(chips[1].corner.is_some() && chips[0].corner != chips[1].corner);
+    }
     assert_eq!(
         chips[0].venue_code,
         app.config.feed_code(&app.runtime.tabs[0].feed_id)
@@ -2423,6 +2432,8 @@ fn a_colour_set_by_call_reads_alike_on_every_surface() {
         let said = said(id).unwrap_or_else(|| panic!("{id}"));
         assert!(said.ends_with("Custom #3A7BD5"), "{id}: {said}");
     }
+    let corner = said(&quantick_control_schema::scene::tab_control_id(first));
+    assert_eq!(corner.as_deref(), Some("Workspace corner #3A7BD5"));
 
     let mut registry = crate::control::standard_registry().unwrap();
     let scope = observer_scope("workspace.summary");
