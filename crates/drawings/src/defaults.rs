@@ -10,7 +10,15 @@ use crate::{Drawing, DrawingStyle, NewDrawing, ToolCatalog};
 /// built-in look on the ground of the painted canvas, else the light bank,
 /// the bank every default lived in before grounds.
 fn opening_on(host: &dyn PresetHost, canvas: PaneCanvas) -> (Option<&ResolvedTheme>, Ground) {
-    match host.theme() {
+    palette_on(host.theme(), canvas)
+}
+
+/// [`opening_on`] for a theme already in hand.
+pub(crate) fn palette_on(
+    theme: Option<&ResolvedTheme>,
+    canvas: PaneCanvas,
+) -> (Option<&ResolvedTheme>, Ground) {
+    match theme {
         Some(theme) => {
             let (palette, ground) = theme.drawing_palette(canvas);
             (Some(palette), ground)
@@ -19,6 +27,25 @@ fn opening_on(host: &dyn PresetHost, canvas: PaneCanvas) -> (Option<&ResolvedThe
             None,
             canvas.background.map_or(Ground::Light, Ground::of_canvas),
         ),
+    }
+}
+
+/// The factory look of `tool` in `palette`: its themed style and its
+/// payload's theme defaults, nothing the trader saved. What a mark that keeps
+/// it ([`Inheritance::Theme`]) wears on any pane, so it is a pure function of
+/// the tool and the pane's palette.
+pub(crate) fn factory_opening<T: ToolCatalog>(
+    palette: Option<&ResolvedTheme>,
+    tool: T,
+) -> NewDrawing {
+    let mut payload = tool.default_payload();
+    if let Some(palette) = palette {
+        payload.apply_theme_defaults(palette);
+    }
+    NewDrawing {
+        style: tool.themed_style(palette),
+        payload,
+        look: Inheritance::Theme,
     }
 }
 
@@ -88,7 +115,9 @@ pub trait PresetHost {
 ///
 /// Order is precedence, weakest first: the built-in look, then the saved
 /// default configuration, then the explicitly *named* default preset — a
-/// name the trader chose beats one they saved by pressing a button.
+/// name the trader chose beats one they saved by pressing a button. Only an
+/// object nothing saved reached keeps the factory look ([`Inheritance::Theme`]);
+/// any saved style, configuration or named default makes it `Explicit`.
 #[must_use]
 pub fn new_drawing_from_defaults<T: ToolCatalog>(
     host: &dyn PresetHost,
@@ -96,26 +125,22 @@ pub fn new_drawing_from_defaults<T: ToolCatalog>(
     tool: T,
 ) -> NewDrawing {
     let (theme, ground) = opening_on(host, canvas);
-    let style = host
-        .default_style(tool.id(), ground)
-        .unwrap_or_else(|| tool.themed_style(theme));
-    let mut payload = tool.default_payload();
-    if let Some(theme) = theme {
-        payload.apply_theme_defaults(theme);
+    let mut opening = factory_opening(theme, tool);
+    if let Some(style) = host.default_style(tool.id(), ground) {
+        opening.style = style;
+        opening.look = Inheritance::Explicit;
     }
     if let Some(value) = host.default_config(tool.id(), ground) {
-        payload.import_preset(&value);
+        opening.payload.import_preset(&value);
+        opening.look = Inheritance::Explicit;
     }
     if let Some(name) = host.default_preset(tool.id())
         && let Some(value) = host.load_custom_preset(tool.id(), &name)
     {
-        payload.import_preset(&value);
+        opening.payload.import_preset(&value);
+        opening.look = Inheritance::Explicit;
     }
-    NewDrawing {
-        style,
-        payload,
-        look: Inheritance::Theme,
-    }
+    opening
 }
 
 /// Remember this object's whole configuration as what new objects of its tool
@@ -124,9 +149,9 @@ pub fn new_drawing_from_defaults<T: ToolCatalog>(
 ///
 /// Objects already on the chart are never touched: a default is a statement
 /// about the *next* object, and repainting the marks a trader has placed is a
-/// bulk edit nobody asked for. A mark that follows its ground
-/// ([`Drawing::look`] `Theme`) re-resolves only when its pane's ground or the
-/// theme changes ([`crate::Drawings::follow_ground`]).
+/// bulk edit nobody asked for. A mark that keeps the factory look
+/// ([`Drawing::look`] `Theme`) only ever takes the factory ink of its pane's
+/// ground ([`crate::Drawings::follow_ground`]), never a saved default.
 pub fn save_tool_default<T: ToolCatalog>(
     host: &mut dyn PresetHost,
     canvas: PaneCanvas,

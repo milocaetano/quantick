@@ -76,8 +76,6 @@ impl<T: Clone + PartialEq> Drawings<T> {
         for entry in self.undo.iter_mut().chain(self.redo.iter_mut()) {
             entry.items = rewrite(&entry.items);
         }
-        // The set carries the writing chart's look: resolve it on this one.
-        self.arrived.extend(set);
         let now = self.snapshot();
         drop_still_steps(&mut self.undo, &now);
         drop_still_steps(&mut self.redo, &now);
@@ -163,7 +161,8 @@ fn drop_still_steps<T: PartialEq>(stack: &mut Vec<UndoEntry<T>>, now: &UndoEntry
     }
 }
 
-/// The all-timeframes marks a pane holds, as its next write's base.
+/// The all-timeframes marks a pane holds, as its next write's base: read
+/// before the pane dresses them in its ground's ink.
 fn shared_base(drawings: &Drawings<DrawingTool>) -> Vec<SavedDrawing> {
     let shared = drawings
         .items()
@@ -185,6 +184,8 @@ pub fn adopt_pane(
     drawings.reserve_names(&key.market, &settings.name_floors(&key.market));
     drawings.adopt(crate::pane_marks(settings, key, bars));
     *base = shared_base(drawings);
+    // The file's look is the base; this pane wears its own ground's ink.
+    drawings.wear_ground();
 }
 
 /// Bring a pane's copy of its market's all-timeframes marks up to the store,
@@ -202,6 +203,7 @@ pub fn refresh_shared(
     let shared = crate::saved::live(&settings.shared_drawings(&key.market), key);
     drawings.replace_shared(shared);
     *base = shared_base(drawings);
+    drawings.wear_ground();
 }
 
 /// Write what a pane holding `key`, cut at `bars`, holds, against what it last
@@ -214,12 +216,13 @@ pub fn persist_pane(
     key: &DrawingKey,
     bars: &str,
 ) -> PaneWrite {
-    let write = crate::store_marks(settings, key, bars, drawings.items(), base);
+    let (write, written) = crate::saved::write_marks(settings, key, bars, drawings.items(), base);
     keep_name_floors(drawings, settings, key);
     if write.merged {
         refresh_shared(drawings, base, settings, key, bars);
     } else {
-        *base = shared_base(drawings);
+        // What was written, never this pane's ground ink: see `store_marks`.
+        *base = written;
     }
     drawings.reserve_ids(settings.max_drawing_id(&key.market));
     drawings.reserve_names(&key.market, &settings.name_floors(&key.market));

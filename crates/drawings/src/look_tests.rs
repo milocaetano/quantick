@@ -7,9 +7,10 @@ use quantick_appearance::{
 
 use crate::presets::{PRESETS_FILE, PresetStore};
 use crate::{
-    ChartPoint, DRAWING_TOOLS, DrawingBand, DrawingStyle, DrawingTool, Drawings, PresetHost,
-    TextPayload, ToolCatalog, new_drawing_from_defaults,
+    ChartPoint, DRAWING_TOOLS, DrawingBand, DrawingId, DrawingStyle, DrawingTool, Drawings,
+    PresetHost, SavedDrawingExt, TextPayload, ToolCatalog, new_drawing_from_defaults,
 };
+use quantick_workspace::layout_document::SavedDrawing;
 
 fn tool(id: &str) -> DrawingTool {
     DRAWING_TOOLS
@@ -49,6 +50,13 @@ fn open(
 
 fn style_on(host: &dyn PresetHost, canvas: PaneCanvas, tool: DrawingTool) -> DrawingStyle {
     new_drawing_from_defaults(host, canvas, tool).style
+}
+
+/// The factory ink of `tool` on `canvas`: what a factory-look mark wears
+/// there, whatever the bank holds.
+fn factory(host: &dyn PresetHost, canvas: PaneCanvas, tool: DrawingTool) -> DrawingStyle {
+    let palette = crate::defaults::palette_on(host.theme(), canvas).0;
+    crate::defaults::factory_opening(palette, tool).style
 }
 
 fn red() -> DrawingStyle {
@@ -106,20 +114,26 @@ fn a_theme_switch_repaints_the_marks_that_follow_their_ground_both_ways() {
     assert_eq!(back, light);
 }
 
-/// Saving a default, by any door, leaves the marks on the chart as they are,
-/// following ones too; a ground switch then dresses them in that ground's
-/// saved default.
+/// Saving a default, by any door (the inspector's save, the pencil
+/// remembering a stroke, a note's repeat), never reaches a mark on the
+/// chart: a reload, a paste and a theme switch move only the factory-look
+/// marks, and only to their pane's factory ink. A mark opened from a saved
+/// default is the trader's.
 #[test]
-fn a_saved_default_waits_for_a_ground_switch_to_reach_a_following_mark() {
-    let mut store = store("look-save-waits");
+fn a_saved_default_never_reaches_a_mark_on_the_chart() {
+    use crate::{adopt_pane, put_away_pane};
+    use quantick_workspace::market_settings::{DrawingKey, MarketSettings};
+
+    let mut store = store("look-save-never");
     let mut appearance = Appearance::default();
     theme(&mut appearance, &mut store, LIGHT);
     let paper: PaneCanvas = ChartSurface::Paper.into();
-    let line = tool("trend-line");
+    let (line, note, pencil) = (tool("trend-line"), tool("text"), tool("brush"));
     let mut drawings = Drawings::default();
     drawings.follow_ground(&store, paper);
     open(&mut drawings, &store, paper, line);
-    let factory = drawings.items()[0].style;
+    open(&mut drawings, &store, paper, note);
+    let light = [factory(&store, paper, line), factory(&store, paper, note)];
     let blue = DrawingStyle {
         color: PremultipliedRgba::from_rgb(30, 60, 220),
         ..red()
@@ -128,17 +142,56 @@ fn a_saved_default_waits_for_a_ground_switch_to_reach_a_following_mark() {
     let mut saved = drawings.items()[0].clone();
     saved.style = blue;
     crate::save_tool_default(&mut store, paper, &saved);
+    let mut stroke = drawings.items()[0].clone();
+    stroke.tool = pencil;
+    let mut restroked = stroke.clone();
+    restroked.style = red();
+    assert!(crate::remember_last_style(
+        &mut store, paper, &stroke, &restroked
+    ));
+    let mut repeated = drawings.items()[1].clone();
+    repeated.style = red();
+    crate::prepare_repeat(&mut store, paper, &repeated);
     store.set_default_style(line.id(), Ground::Dark, Some(red()));
     assert!(!drawings.follow_ground(&store, paper), "a save is no move");
-    assert_eq!(drawings.items()[0].style, factory);
-    assert_eq!(drawings.items()[0].look, Inheritance::Theme);
+    for (mark, ink) in drawings.items().iter().zip(light) {
+        assert_eq!((mark.style, mark.look), (ink, Inheritance::Theme));
+    }
+    for tool in [line, note, pencil] {
+        let opening = new_drawing_from_defaults(&store, paper, tool);
+        assert_eq!(opening.look, Inheritance::Explicit, "{}", tool.id());
+    }
+    open(&mut drawings, &store, paper, line);
+    assert_eq!(drawings.items()[2].style, blue);
+    let copy = drawings.items()[0].clone();
+    let _ = drawings.paste(&copy, 2.0);
+    assert_eq!(
+        drawings.items()[3].style,
+        light[0],
+        "a paste keeps factory ink"
+    );
 
+    // A reload brings every mark back as it was.
+    let key = DrawingKey::of_pane("binance", "BTCUSDT".to_owned(), None);
+    let (mut settings, mut base) = (MarketSettings::default(), Vec::new());
+    let _ = put_away_pane(&mut drawings, &mut base, &mut settings, &key, "tick:100");
+    let mut reloaded = Drawings::on_canvas(paper);
+    reloaded.follow_ground(&store, paper);
+    adopt_pane(&mut reloaded, &mut base, &settings, &key, "tick:100");
+    let styles = |drawings: &Drawings<DrawingTool>| -> Vec<_> {
+        drawings.items().iter().map(|mark| mark.style).collect()
+    };
+    assert_eq!(styles(&reloaded), [light[0], light[1], blue, light[0]]);
+
+    // A switch takes the factory marks to the dark factory ink, not the bank.
     theme(&mut appearance, &mut store, DARK);
-    assert!(drawings.follow_ground(&store, paper));
-    assert_eq!(drawings.items()[0].style, red(), "the dark bank");
+    assert!(reloaded.follow_ground(&store, paper));
+    let dark = [factory(&store, paper, line), factory(&store, paper, note)];
+    assert_ne!(dark[0], red());
+    assert_eq!(styles(&reloaded), [dark[0], dark[1], blue, dark[0]]);
     theme(&mut appearance, &mut store, LIGHT);
-    assert!(drawings.follow_ground(&store, paper));
-    assert_eq!(drawings.items()[0].style, blue, "the light bank");
+    assert!(reloaded.follow_ground(&store, paper));
+    assert_eq!(styles(&reloaded), [light[0], light[1], blue, light[0]]);
 }
 
 /// An edit of the look is the trader's, through any door that records it;
@@ -230,22 +283,32 @@ fn a_time_chart_made_dark_reads_the_dark_bank_and_the_dark_ink() {
     let mut drawings = Drawings::default();
     drawings.follow_ground(&store, ChartSurface::Paper.into());
     open(&mut drawings, &store, ChartSurface::Paper.into(), profile);
-    let light = drawings.items()[0].style;
-    // The trader darkens the chart: the profile follows the canvas.
+    open(&mut drawings, &store, ChartSurface::Paper.into(), line);
+    let light = [drawings.items()[0].style, drawings.items()[1].style];
+    // The trader darkens the chart: the factory marks wear the dark factory
+    // ink, never the dark bank.
     assert!(drawings.follow_ground(&store, made_dark));
     assert_eq!(drawings.canvas(), made_dark);
-    assert_ne!(drawings.items()[0].style, light);
-    assert_eq!(
-        drawings.items()[0].style,
-        style_on(&store, made_dark, profile)
-    );
+    let dark = [
+        factory(&store, made_dark, profile),
+        factory(&store, made_dark, line),
+    ];
+    for (index, mark) in drawings.items().iter().enumerate() {
+        assert_ne!(mark.style, light[index], "{}", mark.tool.id());
+        assert_eq!(mark.style, dark[index], "{}", mark.tool.id());
+    }
+    assert_ne!(dark[1], red());
+    // A line opened there reads the dark bank, and is the trader's.
+    open(&mut drawings, &store, made_dark, line);
+    assert_eq!(drawings.items()[2].style, red());
+    assert_eq!(drawings.items()[2].look, Inheritance::Explicit);
 }
 
-/// Marks arriving from elsewhere were resolved on another canvas: the next
-/// call resolves them again, though nothing it is keyed on moved.
+/// A pasted mark was dressed for another canvas: it wears this pane's ink at
+/// once, before the pane paints it.
 #[test]
-fn adopted_and_pasted_marks_resolve_on_this_pane_s_canvas() {
-    let mut store = store("look-adopt");
+fn a_pasted_mark_wears_this_pane_s_ink_at_once() {
+    let mut store = store("look-paste");
     let mut appearance = Appearance::default();
     theme(&mut appearance, &mut store, LIGHT);
     let (paper, island) = (ChartSurface::Paper.into(), ChartSurface::Flow.into());
@@ -257,11 +320,12 @@ fn adopted_and_pasted_marks_resolve_on_this_pane_s_canvas() {
     let mut drawings = Drawings::default();
     drawings.follow_ground(&store, island);
     let _ = drawings.paste(&mark, 2.0);
-    assert!(drawings.follow_ground(&store, island));
-    assert_eq!(drawings.items()[0].style, style_on(&store, island, line));
-    drawings.adopt([mark]);
-    assert!(drawings.follow_ground(&store, island));
-    assert_eq!(drawings.items()[1].style, style_on(&store, island, line));
+    assert_eq!(drawings.items()[0].style, factory(&store, island, line));
+    assert_ne!(drawings.items()[0].style, mark.style);
+    assert!(
+        !drawings.follow_ground(&store, island),
+        "nothing left to do"
+    );
 }
 
 /// One market, a light time chart and a dark flow chart sharing a mark with
@@ -308,11 +372,14 @@ fn a_shared_mark_wears_each_chart_s_ground_and_never_flips_the_set() {
     );
     assert_ne!(light, dark);
 
-    refresh_shared(&mut flow, &mut flow_base, &settings, &flow_key, "tick:100");
+    // A default saved on either ground never reaches the shared mark.
+    store.set_default_style(line.id(), Ground::Light, Some(red()));
+    store.set_default_style(line.id(), Ground::Dark, Some(red()));
     let revision = flow.revision();
-    assert!(flow.follow_ground(&store, island), "the arrival resolves");
-    assert_eq!(flow.items()[0].style, dark);
-    assert_eq!(flow.revision(), revision, "a resolve is not an edit");
+    refresh_shared(&mut flow, &mut flow_base, &settings, &flow_key, "tick:100");
+    assert_eq!(flow.items()[0].style, dark, "the arrival wears it at once");
+    assert_eq!(flow.revision(), revision + 1, "one refresh, no edit");
+    assert!(!flow.follow_ground(&store, island));
     assert!(!time.follow_ground(&store, paper));
     assert_eq!(time.items()[0].style, light);
 
@@ -325,12 +392,40 @@ fn a_shared_mark_wears_each_chart_s_ground_and_never_flips_the_set() {
         &flow_key,
         "tick:100",
     );
-    assert!(write.own && !write.all_timeframes, "{write:?}");
-    let stored = settings.shared_drawings(&time_key.market);
-    assert_eq!(stored.len(), 1);
-    assert!(stored[0].follows_ground);
+    assert!(
+        write.own && !write.all_timeframes && !write.merged,
+        "{write:?}"
+    );
+    let stored = |settings: &MarketSettings| settings.shared_drawings(&time_key.market);
+    assert_eq!(stored(&settings).len(), 1);
+    assert!(stored(&settings)[0].follows_ground);
+    let ink = |entry: &SavedDrawing| entry.to_drawing(DrawingId(1)).unwrap().style;
+    assert_eq!(ink(&stored(&settings)[0]), light);
+
+    // A second write from it, the shared mark moved there: the file keeps the
+    // writer-neutral look, and nothing merges.
+    let before = flow.items()[0].clone();
+    flow.items_mut()[0].points[0].price += 5.0;
+    flow.record_edit_of(0, before);
+    assert_eq!(
+        flow.items()[0].look,
+        Inheritance::Theme,
+        "a move is no look"
+    );
+    let write = persist_pane(
+        &mut flow,
+        &mut flow_base,
+        &mut settings,
+        &flow_key,
+        "tick:100",
+    );
+    assert!(write.all_timeframes && !write.merged, "{write:?}");
+    assert_eq!(ink(&stored(&settings)[0]), light);
+    assert!(stored(&settings)[0].follows_ground);
     refresh_shared(&mut time, &mut time_base, &settings, &time_key, "time:5m");
-    time.follow_ground(&store, paper);
+    assert!(!time.follow_ground(&store, paper));
+    let price = |drawings: &Drawings<DrawingTool>| drawings.items()[0].points[0].price;
+    assert_eq!(price(&time), price(&flow));
     assert_eq!(time.items()[0].style, light);
     assert_eq!(flow.items()[0].style, dark);
 }

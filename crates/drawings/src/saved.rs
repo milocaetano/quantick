@@ -160,7 +160,19 @@ pub fn store_marks(
     marks: &[Drawing<DrawingTool>],
     base: &[SavedDrawing],
 ) -> PaneWrite {
-    let items = marks
+    write_marks(settings, key, bars, marks, base).0
+}
+
+/// [`store_marks`], and the all-timeframes entries it wrote: the base of the
+/// pane's next write.
+pub(crate) fn write_marks(
+    settings: &mut MarketSettings,
+    key: &DrawingKey,
+    bars: &str,
+    marks: &[Drawing<DrawingTool>],
+    base: &[SavedDrawing],
+) -> (PaneWrite, Vec<SavedDrawing>) {
+    let items: Vec<SavedDrawing> = marks
         .iter()
         .map(|mark| {
             let mut entry = SavedDrawing::from_drawing(&as_loaded(mark, base));
@@ -170,8 +182,13 @@ pub fn store_marks(
             entry
         })
         .collect();
+    let written = items
+        .iter()
+        .filter(|entry| entry.all_timeframes())
+        .cloned()
+        .collect();
     let known = |tool: &str| DrawingTool::by_id(tool).is_some();
-    settings.store_pane(key, bars, items, base, known)
+    (settings.store_pane(key, bars, items, base, known), written)
 }
 
 /// `mark` with the look `base` loaded it with, when it followed its ground

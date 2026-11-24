@@ -31,8 +31,8 @@ impl<T: ToolCatalog> Drawings<T> {
 
     /// [`Self::place`] with a caller-chosen look for a new draft — how the
     /// app applies the trader's saved defaults to newly created objects only.
-    /// Existing objects change with a default only while their look follows
-    /// their ground ([`Drawings::follow_ground`]).
+    /// Objects that already exist are never touched by a default changing;
+    /// see [`Drawings::follow_ground`].
     pub fn place_with(
         &mut self,
         tool: T,

@@ -117,7 +117,7 @@
         },
         "follows_ground": {
           "default": false,
-          "description": "Its look follows the ground of the pane it sits on: that ground's\nsaved default for the tool, else the built-in ink, repainted when the\ntheme, the pane's background or the default changes. False once its\nlook is the trader's own (any edit of colour, width, fill or a tool's\nlook), and for a mark saved before marks recorded it. Optional in the\nschema only so v1 readers stay compatible.",
+          "description": "Its look is the tool's factory look, worn in the factory ink of the\nground of the pane it sits on and repainted when the theme or the\npane's background changes; a saved default never reaches it. False\nwhen it opened from a saved default, once its look is the trader's own\n(any edit of colour, width, fill or a tool's look), and for a mark\nsaved before marks recorded it. Optional in the schema only so v1\nreaders stay compatible.",
           "type": "boolean"
         },
         "foreign_market": {

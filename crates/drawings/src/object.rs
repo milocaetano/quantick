@@ -33,10 +33,11 @@ pub struct Drawing<T> {
     pub band: DrawingBand,
     pub style: DrawingStyle,
     /// Where its look (style and the payload's preset export) comes from.
-    /// `Theme` follows its pane's ground: that ground's saved default for the
-    /// tool, else the built-in ink, repainted when the ground, the theme or
-    /// the default changes. `Explicit` is the trader's own and never
-    /// repainted. Any edit of the look makes it `Explicit` (`crate::look`).
+    /// `Theme` is the tool's factory look, worn in the factory ink of its
+    /// pane's ground, repainted when the ground or the theme changes; no
+    /// saved default ever reaches it. `Explicit` (opened from a saved
+    /// default, or edited) is never repainted. Any edit of the look makes it
+    /// `Explicit` (`crate::look`).
     pub look: quantick_appearance::Inheritance,
     /// A locked drawing keeps rejecting geometry edits and unforced deletes;
     /// its style stays editable.
@@ -257,8 +258,8 @@ impl<T: PartialEq> PartialEq for Drawing<T> {
 pub struct NewDrawing {
     pub style: DrawingStyle,
     pub payload: Box<dyn DrawingPayload>,
-    /// `Theme` when the look is the pane ground's default, so the mark keeps
-    /// following it; see [`Drawing::look`].
+    /// `Theme` when the look is the factory one, so the mark keeps wearing
+    /// its pane ground's factory ink; see [`Drawing::look`].
     pub look: quantick_appearance::Inheritance,
 }
 

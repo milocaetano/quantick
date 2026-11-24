@@ -74,15 +74,11 @@ pub struct Drawings<T> {
     /// The name a placement call brought, given to the mark it completes in
     /// place of a generated one, so it spends no number.
     pub(crate) pending_name: Option<String>,
-    /// The canvas the marks following their ground were last resolved on;
-    /// see [`Self::follow_ground`].
+    /// The canvas the factory-look marks were last dressed for; see
+    /// [`Self::follow_ground`].
     pub(crate) canvas: quantick_appearance::PaneCanvas,
-    /// The theme revision they were resolved at; `None` before the first
-    /// call and once the store is emptied.
-    pub(crate) look_revision: Option<u64>,
-    /// Marks that arrived from elsewhere since (a load, a paste, another
-    /// chart's write), resolved on another canvas: the next call resolves them.
-    pub(crate) arrived: Vec<crate::DrawingId>,
+    /// The palette they were dressed from; `None` before the first call.
+    pub(crate) ground_ink: Option<crate::look::GroundInk>,
 }
 
 // By hand: a derive would ask the tool handle for a `Default` it has no
@@ -109,8 +105,7 @@ impl<T> Default for Drawings<T> {
             name_market: None,
             pending_name: None,
             canvas: quantick_appearance::PaneCanvas::default(),
-            look_revision: None,
-            arrived: Vec::new(),
+            ground_ink: None,
         }
     }
 }

@@ -155,9 +155,9 @@ pub struct SavedDrawing {
     pub color: [u8; 4],
     pub width_px: f64,
     pub fill_alpha: u8,
-    /// The look follows the ground of the pane it sits on: that ground's
-    /// saved default, else the built-in ink. Absent is the trader's own look,
-    /// which a mark from before the flag keeps, so nothing repaints it.
+    /// The look is the tool's factory look, worn in the factory ink of the
+    /// ground of the pane it sits on. Absent is a saved or the trader's own
+    /// look, which a mark from before the flag keeps, so nothing repaints it.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub follows_ground: bool,
     #[serde(default)]

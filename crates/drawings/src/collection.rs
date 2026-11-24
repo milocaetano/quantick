@@ -44,7 +44,6 @@ impl<T: Clone + PartialEq> Drawings<T> {
         self.undo.clear();
         self.redo.clear();
         self.gesture_baseline = None;
-        self.look_revision = None;
         std::mem::take(&mut self.items)
     }
 
@@ -68,7 +67,6 @@ impl<T: Clone + PartialEq> Drawings<T> {
             } else {
                 self.next_id = self.next_id.max(wanted);
             }
-            self.arrived.push(drawing.id);
             self.items.push(drawing);
         }
     }
