@@ -7,9 +7,10 @@
 use eframe::egui;
 use quantick_appearance::Token;
 use quantick_appearance::tab_strip::{
-    FeedMark, MarkShape, feed_shape, feed_token, glow_mesh, home_glow_strength, tab_ink, tab_layers,
+    FeedMark, MarkShape, corner_mark, feed_shape, feed_token, glow_mesh, home_glow_strength,
+    tab_ink, tab_layers,
 };
-use quantick_session::tab_chip::{self as face_layout, CloseSlot, FaceLayout, FaceSource};
+use quantick_session::tab_chip::{self as face_layout, CloseSlot, FaceLayout};
 use quantick_workspace::arrangement::strip::{
     StripRoom, StripSurface, TabFeed, chip_parts, fit_tabs, tab_hover,
 };
@@ -43,7 +44,7 @@ pub(crate) const HOME_PADDING_RIGHT_PX: f32 = 14.0;
 /// The Q alone, centred in its own height with the labelled form's margin.
 pub(crate) const HOME_MIN_WIDTH_PX: f32 = HOME_PADDING_LEFT_PX * 2.0 + HOME_Q.y;
 
-pub use quantick_ui_model::chrome_tab_strip::{Action as TabAction, Chip as TabChip};
+pub use quantick_ui_model::chrome_tab_strip::{Action as TabAction, Chip as TabChip, feed_mark};
 
 /// Draw the strip and report the one action it produced.
 ///
@@ -60,6 +61,8 @@ pub(crate) struct StripDrawn {
     pub(crate) home: Option<egui::Rect>,
     pub(crate) tabs: Vec<(usize, egui::Rect)>,
     pub(crate) tab_ids: Vec<(u64, egui::Rect)>,
+    /// The workspace colour each drawn tab painted in its corner.
+    pub(crate) corners: Vec<(u64, [u8; 3])>,
     pub(crate) add: Option<egui::Rect>,
     pub(crate) overflow: Option<egui::Rect>,
     /// Each tab's face, measured once while its words hold.
@@ -79,6 +82,7 @@ pub(crate) fn draw(
     drawn.close.clear();
     drawn.tabs.clear();
     drawn.tab_ids.clear();
+    drawn.corners.clear();
     drawn.add = None;
     drawn.overflow = None;
     let compact = ui.available_width() < 240.0;
@@ -92,7 +96,7 @@ pub(crate) fn draw(
     let labelled = HOME_PADDING_LEFT_PX + HOME_Q.x + after_q + HOME_PADDING_RIGHT_PX;
     let (gap, scale) = (ui.spacing().item_spacing.x, ui.ctx().pixels_per_point());
     let width = |text: &str, pt: f32| laid(ui, text, pt).size().x;
-    let face = |chip: &TabChip| drawn.faces.layout(chip.id, &source(chip, scale), width);
+    let face = |chip: &TabChip| drawn.faces.layout(chip.id, &chip.face_source(scale), width);
     let faces: Vec<FaceLayout> = chips.iter().map(face).collect();
     drawn.faces.keep(chips.iter().map(|chip| chip.id));
     let natural: Vec<f32> = faces.iter().map(|f| f.width + close_reserve).collect();
@@ -181,10 +185,12 @@ pub(crate) fn draw(
                 let chip_bounds = sheet.intersect(ui.clip_rect());
                 if chip_bounds.is_positive() {
                     drawn.tab_ids.push((chip.id, chip_bounds));
+                    drawn.corners.extend(chip.corner.map(|rgb| (chip.id, rgb)));
                 }
                 let hovered = response.hovered() || close.hovered();
                 let pointer = (hovered, response.has_focus() || close.has_focus());
-                let lit = paint_tab_surface(ui, root, surface, sheet, selected, pointer);
+                let lit =
+                    paint_tab_surface(ui, root, surface, (sheet, chip.corner), selected, pointer);
                 // The face reads lit whenever its sheet is: body, × or focus;
                 // only the open tab wears its workspace's colour, on the symbol.
                 let own = (chip.symbol_ink.filter(|_| selected))
@@ -240,19 +246,6 @@ pub(crate) fn draw(
         action = Some(TabAction::New);
     }
     action
-}
-
-/// What a tab's face is measured from.
-fn source(chip: &TabChip, scale: f32) -> FaceSource<'_> {
-    let (symbol, code) = (chip_parts(&chip.label).0, chip.venue_code.as_str());
-    let (marked, word) = (chip.feed.marked(), chip.feed.word());
-    FaceSource {
-        symbol,
-        code,
-        marked,
-        word,
-        scale,
-    }
 }
 
 /// One line of text at `pt` points.
@@ -313,17 +306,6 @@ fn paint_chip_face(
             x,
             feed_ink,
         );
-    }
-}
-
-/// The workspace's feed state as the theme's mark.
-pub(crate) const fn feed_mark(feed: TabFeed) -> FeedMark {
-    match feed {
-        TabFeed::Live => FeedMark::Live,
-        TabFeed::Attention => FeedMark::Attention,
-        TabFeed::Replay => FeedMark::Replay,
-        TabFeed::Disconnected => FeedMark::Lost,
-        TabFeed::Stopped => FeedMark::Stopped,
     }
 }
 
@@ -420,12 +402,13 @@ fn draw_home_tab(
 }
 
 /// A market tab's [`tab_layers`], its base past the strip's floor, where the
-/// clip opens it onto the toolbar. Returns whether the tab is lit.
+/// clip opens it onto the toolbar, and `corner`, its workspace's colour, on the
+/// top layer's corner: under the open tab's band. Returns whether the tab is lit.
 fn paint_tab_surface(
     ui: &egui::Ui,
     palette: &Palette,
     slot: egui::layers::ShapeIdx,
-    bounds: egui::Rect,
+    (bounds, corner): (egui::Rect, Option<[u8; 3]>),
     selected: bool,
     (hovered, focused): (bool, bool),
 ) -> bool {
@@ -448,7 +431,15 @@ fn paint_tab_surface(
             .map_or(at, |height| at.with_max_y(at.top() + height));
         egui::epaint::RectShape::new(at, rounding, fill, edge.unwrap_or_default()).into()
     };
-    let shapes: Vec<egui::Shape> = tab_layers(selected).into_iter().map(layer).collect();
+    let layers = tab_layers(selected);
+    let mut shapes: Vec<egui::Shape> = layers.iter().copied().map(layer).collect();
+    if let (Some([r, g, b]), Some(top)) = (corner, layers.last()) {
+        let origin = sheet.left_top() + egui::vec2(0.0, top.inset);
+        let points = corner_mark(CHIP_ROUNDING_PX - top.corner_inset).into_iter();
+        let points = points.map(|[x, y]| origin + egui::vec2(x, y)).collect();
+        let ink = egui::Color32::from_rgb(r, g, b);
+        shapes.push(egui::Shape::convex_polygon(points, ink, egui::Stroke::NONE));
+    }
     ui.painter().set(slot, egui::Shape::Vec(shapes));
     if focused {
         let ring = (2.0_f32, palette.accent());

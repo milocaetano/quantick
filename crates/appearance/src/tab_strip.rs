@@ -204,6 +204,29 @@ pub const WORKSPACE_CAPSULE_BAR_PT: f32 = 4.0;
 /// 13 pt symbol. Below it the symbol keeps the tab's normal ink.
 pub const WORKSPACE_SYMBOL_CONTRAST: f32 = 3.0;
 
+/// The legs of the filled triangle every market tab paints in its workspace's
+/// colour at its top-left corner (the trader's pick of 2026-11-23, "Canto
+/// cheio"); the tab's face starts past it.
+pub const WORKSPACE_CORNER_PT: f32 = 17.0;
+/// How many straight pieces stand for the corner's quarter circle.
+const CORNER_ARC_STEPS: u16 = 6;
+
+/// The corner mark's outline from the sheet's top-left, clockwise: down the
+/// left leg's end, round the sheet's corner of `radius`, out along the top to
+/// the other leg's end; the hypotenuse closes it. Convex, so one fill.
+#[must_use]
+pub fn corner_mark(radius: f32) -> Vec<[f32; 2]> {
+    let radius = radius.clamp(0.0, WORKSPACE_CORNER_PT);
+    let arc = (0..=CORNER_ARC_STEPS).map(|step| {
+        let turn = std::f32::consts::FRAC_PI_2 * f32::from(step) / f32::from(CORNER_ARC_STEPS);
+        [radius * (1.0 - turn.cos()), radius * (1.0 - turn.sin())]
+    });
+    std::iter::once([0.0, WORKSPACE_CORNER_PT])
+        .chain(arc)
+        .chain(std::iter::once([WORKSPACE_CORNER_PT, 0.0]))
+        .collect()
+}
+
 /// A workspace button's fill, `base`, tinted `share` of the way toward the
 /// workspace's `colour`; both straight sRGB, the base's alpha kept.
 #[must_use]
@@ -224,6 +247,24 @@ pub fn workspace_tint(base: [u8; 4], colour: [u8; 3], share: f32) -> [u8; 4] {
 mod tests {
     use super::*;
     use crate::{LIGHT, ResolvedTheme, contrast::contrast_ratio};
+
+    /// The mark spans both legs, never leaves the triangle, and never crosses
+    /// the sheet's rounded corner.
+    #[test]
+    fn the_corner_mark_fills_the_triangle_inside_the_rounded_corner() {
+        let radius = TAB_CORNER_PT;
+        let points = corner_mark(radius);
+        assert_eq!(points.first(), Some(&[0.0, WORKSPACE_CORNER_PT]));
+        assert_eq!(points.last(), Some(&[WORKSPACE_CORNER_PT, 0.0]));
+        for &[x, y] in &points {
+            assert!(x >= 0.0 && y >= 0.0 && x + y <= WORKSPACE_CORNER_PT + 1e-4);
+            if x < radius && y < radius {
+                let off = ((x - radius).powi(2) + (y - radius).powi(2)).sqrt();
+                assert!((off - radius).abs() < 1e-4, "{x},{y} leaves the corner");
+            }
+        }
+        assert_eq!(corner_mark(0.0)[1], [0.0, 0.0]);
+    }
 
     /// The tint moves the fill a fixed share toward the colour, alpha kept.
     #[test]

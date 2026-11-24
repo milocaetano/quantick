@@ -1,5 +1,9 @@
-//! Cached tab identities and intent validation. The arrangement remains authoritative.
-use quantick_workspace::arrangement::strip::{StripSurface, TabFeed};
+//! Cached tab identities and intent validation, and what a chip paints from:
+//! its face's source, its feed's mark and its corner's words. The arrangement
+//! remains authoritative.
+use quantick_appearance::tab_strip::FeedMark;
+use quantick_session::tab_chip::FaceSource;
+use quantick_workspace::arrangement::strip::{StripSurface, TabFeed, chip_parts};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TabAction {
     Activate(usize),
@@ -27,7 +31,42 @@ pub struct Chip {
     /// The venue tag filled in the route's colour while this tab's orders go
     /// to (or are open at) a broker account; `None` keeps the outline.
     pub tag_fill: Option<[u8; 3]>,
+    /// The workspace's colour for the theme, painted in every tab's top-left
+    /// corner, open or closed; `None` only before the book has settled one.
+    pub corner: Option<[u8; 3]>,
 }
+impl Chip {
+    /// What the tab's face is measured from at `scale` pixels per point.
+    #[must_use]
+    pub fn face_source(&self, scale: f32) -> FaceSource<'_> {
+        FaceSource {
+            symbol: chip_parts(&self.label).0,
+            code: &self.venue_code,
+            marked: self.feed.marked(),
+            word: self.feed.word(),
+            scale,
+        }
+    }
+}
+
+/// The workspace's feed state as the theme's mark.
+#[must_use]
+pub const fn feed_mark(feed: TabFeed) -> FeedMark {
+    match feed {
+        TabFeed::Live => FeedMark::Live,
+        TabFeed::Attention => FeedMark::Attention,
+        TabFeed::Replay => FeedMark::Replay,
+        TabFeed::Disconnected => FeedMark::Lost,
+        TabFeed::Stopped => FeedMark::Stopped,
+    }
+}
+
+/// The scene's words for the colour a tab painted in its corner.
+#[must_use]
+pub fn corner_description(rgb: [u8; 3]) -> String {
+    format!("Workspace corner {}", quantick_stores::workspaces::hex(rgb))
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Snapshot {
     pub chips: Vec<Chip>,
@@ -79,6 +118,24 @@ impl crate::Model for Model {
 mod tests {
     use super::*;
     use crate::Model as _;
+
+    /// The face starts where the workspace's corner mark ends.
+    #[test]
+    fn the_face_starts_past_the_corner_mark() {
+        assert_eq!(
+            quantick_session::tab_chip::TEXT_LEFT_PT,
+            quantick_appearance::tab_strip::WORKSPACE_CORNER_PT
+        );
+    }
+
+    /// The corner's words name the colour as the workspace menu writes it.
+    #[test]
+    fn the_corner_description_names_the_colour_in_hex() {
+        assert_eq!(
+            corner_description([0x3A, 0x7B, 0xD5]),
+            "Workspace corner #3A7BD5"
+        );
+    }
     #[test]
     fn tab_actions_reject_stale_indices_and_last_tab_close() {
         let mut state = State::default();
@@ -91,6 +148,7 @@ mod tests {
                 venue_code: "BIN".into(),
                 symbol_ink: None,
                 tag_fill: None,
+                corner: Some([163, 179, 204]),
             }],
             active: 0,
             surface: StripSurface::default(),

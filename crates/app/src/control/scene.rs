@@ -406,7 +406,7 @@ fn push_tab_strip(
             // assistant that named a tab something the trader cannot see
             // would be describing a different screen.
             label: tab.chip_label().to_owned(),
-            description: None,
+            description: corner_of(title, tab_id),
             role: SceneRoleDto::Tab,
             owner: SceneOwnerSnapshot {
                 kind: SceneOwnerKindDto::TabStrip,
@@ -420,6 +420,14 @@ fn push_tab_strip(
         });
     }
     true
+}
+
+/// The workspace colour the strip painted in the tab's corner, as its hex.
+fn corner_of(title: Option<&crate::app::title_bar::TitleBarState>, tab: u64) -> Option<String> {
+    let (_, rgb) = title?.strip.corners.iter().find(|(id, _)| *id == tab)?;
+    Some(quantick_ui_model::chrome_tab_strip::corner_description(
+        *rgb,
+    ))
 }
 
 fn push_title_bar<P: ChromePort + ?Sized>(controls: &mut Vec<SceneControlSnapshot>, app: &P) {
