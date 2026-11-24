@@ -108,11 +108,8 @@ pub fn width(ui: &egui::Ui, model: &CapsuleModel<'_>) -> f32 {
 fn link(ui: &mut egui::Ui, colour: egui::Color32) {
     let (rect, _) = ui.allocate_exact_size(egui::vec2(LINK_PX, HEIGHT_PX), egui::Sense::hover());
     let y = rect.center().y.round();
-    let line = egui::Rect::from_min_max(
-        egui::pos2(rect.left(), y - LINK_WIDTH_PX / 2.0),
-        egui::pos2(rect.right(), y + LINK_WIDTH_PX / 2.0),
-    );
-    ui.painter().rect_filled(line, 0.0, colour);
+    ui.painter()
+        .hline(rect.x_range(), y, (LINK_WIDTH_PX, colour));
 }
 
 /// Draw the chain right to left (the toolbar's right run grows inwards):
@@ -124,33 +121,31 @@ pub fn draw(
     actions: &mut Vec<ToolbarAction>,
 ) -> CapsuleRects {
     let palette = theme::get(ui.ctx());
+    let theme = &palette.resolved;
     let font = egui::TextStyle::Button.resolve(ui.style());
-    let caret = |ui: &egui::Ui| {
-        ui.painter().layout_no_wrap(
-            icons::CARET_DOWN.to_owned(),
-            font.clone(),
-            palette.text_muted(),
-        )
+    let caret = |ui: &egui::Ui, rect: egui::Rect| {
+        let at = egui::pos2(rect.right() - PAD_PX, rect.center().y);
+        let (anchor, ink) = (egui::Align2::RIGHT_CENTER, palette.text_muted());
+        ui.painter()
+            .text(at, anchor, icons::CARET_DOWN, font.clone(), ink);
     };
     let stroke = ui.visuals().widgets.inactive.bg_stroke;
     let hovered = ui.visuals().widgets.hovered.weak_bg_fill;
     // A workspace's colour tints the two fills and takes every border and link.
     let fill = |lit: bool| match model.colour {
         Some(colour) => {
-            let [r, g, b, a] =
-                quantick_stores::workspaces::capsule_fill(colour, &palette.resolved, lit);
+            let [r, g, b, a] = quantick_stores::workspaces::capsule_fill(colour, theme, lit);
             egui::Color32::from_rgba_premultiplied(r, g, b, a)
         }
         None if lit => hovered,
         None => palette.control(),
     };
     let edge: Option<egui::Stroke> = model.colour.map(|colour| {
-        let [r, g, b] = colour.rgb(palette.resolved.dark);
+        let [r, g, b] = colour.rgb(theme.dark);
         (stroke.width, egui::Color32::from_rgb(r, g, b)).into()
     });
     let border = edge.unwrap_or(stroke);
     let (layout_w, name_w) = widths(ui, model);
-
     let (name_rect, menu) =
         ui.allocate_exact_size(egui::vec2(name_w, HEIGHT_PX), egui::Sense::click());
     let lit = model.menu_open || menu.hovered();
@@ -169,19 +164,13 @@ pub fn draw(
     let mid = name_rect.center().y;
     let text_at = egui::pos2(name_rect.left() + PAD_PX, mid - name.size().y / 2.0);
     ui.painter().galley(text_at, name, palette.text_primary());
-    let shape = caret(ui);
-    let caret_at = egui::pos2(
-        name_rect.right() - PAD_PX - shape.size().x,
-        mid - shape.size().y / 2.0,
-    );
-    ui.painter().galley(caret_at, shape, palette.text_muted());
+    caret(ui, name_rect);
     if menu
         .on_hover_text(format!("Workspace \u{201c}{}\u{201d}", model.workspace))
         .clicked()
     {
         actions.push(ToolbarAction::ToggleWorkspaceMenu);
     }
-
     link(ui, border.color);
     let (miniature, layout) =
         ui.allocate_exact_size(egui::vec2(layout_w, HEIGHT_PX), egui::Sense::click());
@@ -190,34 +179,21 @@ pub fn draw(
     let face = egui::pos2(miniature.left() + PAD_PX, mid - MINIATURE.y / 2.0);
     let face = egui::Rect::from_min_size(face.round(), MINIATURE);
     let at = picker::Rect::new(face.left(), face.top(), face.width(), face.height());
-    let tree = picker::miniature(
-        model.tree,
-        at,
-        model.colour,
-        ground.to_array(),
-        &palette.resolved,
-    );
+    let tree = picker::miniature(model.tree, at, model.colour, ground.to_array(), theme);
     super::layout_popover::paint(ui.painter(), egui::Pos2::ZERO, &tree);
     if model.layout_unsaved {
         ui.painter()
             .circle_filled(face.right_top(), DOT_RADIUS_PX, palette.accent());
     }
-    let shape = caret(ui);
-    let caret_at = egui::pos2(
-        miniature.right() - PAD_PX - shape.size().x,
-        mid - shape.size().y / 2.0,
-    );
-    ui.painter().galley(caret_at, shape, palette.text_muted());
+    caret(ui, miniature);
     if layout.on_hover_text("Layout (Ctrl+Shift+1…)").clicked() {
         actions.push(ToolbarAction::ToggleLayoutPopover);
     }
-
     link(ui, border.color);
     let add = crate::add_widget::button(ui, model.add_open, edge);
     if add.clicked() {
         actions.push(ToolbarAction::ToggleAddMenu);
     }
-
     let floppy = model.unsaved.then(|| {
         link(ui, border.color);
         let (rect, response) =
