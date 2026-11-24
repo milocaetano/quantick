@@ -74,3 +74,11 @@ pub struct DrawContext<'a> {
     /// How big a label sets, asked of the renderer that owns the fonts.
     pub text: &'a dyn TextMetrics,
 }
+
+impl DrawContext<'_> {
+    /// Both axes' scales where this object is painted, for a note's size.
+    #[must_use]
+    pub fn text_spacing(&self) -> crate::TextSpacing {
+        crate::TextSpacing::at(self.px_per_bar, Some(self.scale))
+    }
+}
