@@ -121,3 +121,4 @@ a bound.
 | 1172 | 2026-11-23 | feat/1126-strategies-rail | feature/strategies-panel | 28209 | 18 | `crates/ui-model/src/manage_workspaces.rs` (1041) |
 | 1175 | 2026-11-23 | chore/1173-sync-main | feature/strategies-panel | 78837 | 79 | `crates/app/src/control/gateway/server.rs` (1083) |
 | 1182 | 2026-11-24 | feat/script-alarm-noise | main | 12280 | 11 | `crates/control-handlers/src/workspace_book.rs` (1170) |
+| 1198 | 2026-11-24 | fix/workspace-discard-and-persist | main | 20199 | 22 | `crates/ui-model/src/layout_picker.rs` (790) |
