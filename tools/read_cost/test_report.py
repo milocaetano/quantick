@@ -125,21 +125,6 @@ class CeilingWarning(unittest.TestCase):
         self.assertIsNotNone(report.ceiling_warning(self.over, 409, "fix/thing"))
 
 
-class RowReminder(unittest.TestCase):
-    def test_the_reminder_names_the_pull_request_and_the_command(self):
-        text = report.row_reminder(42)
-
-        self.assertIn("#42", text)
-        self.assertIn(f"{report.ROW_COMMAND} 42", text)
-
-    def test_two_notes_arrive_as_one_payload_and_none_as_nothing(self):
-        joined = report.advisory(["first", None, "second"])
-
-        self.assertEqual(joined, "first\n\nsecond")
-        self.assertIsNone(report.advisory([None, None]))
-        self.assertIsNone(report.advisory([]))
-
-
 class Command(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -219,7 +204,7 @@ class Command(unittest.TestCase):
         self.assertEqual(status, 0)
         self.assertIn("Feature-branch ceiling: 1000", body)
 
-    def test_comment_mode_asks_for_the_row_only_while_it_is_missing(self):
+    def test_comment_does_not_depend_on_a_branch_ledger_row(self):
         path = self.json_report(
             measured([("crates/core/src/lib.rs", 10, ["touched"])])
         )
@@ -230,16 +215,16 @@ class Command(unittest.TestCase):
         )
 
         _, missing = captured(
-            ["comment", "--json", path, "--pr", "42", "--ledger", self.ledger()]
+            ["comment", "--json", path, "--ledger", self.ledger()]
         )
         _, present = captured(
-            ["comment", "--json", path, "--pr", "42", "--ledger", recorded]
+            ["comment", "--json", path, "--ledger", recorded]
         )
 
-        self.assertIn(f"{report.ROW_COMMAND} 42", missing)
-        self.assertNotIn(report.ROW_COMMAND, present)
+        self.assertEqual(missing, present)
+        self.assertNotIn("Add it on the branch", missing)
 
-    def test_warn_mode_asks_for_a_missing_row_without_measuring_anything(self):
+    def test_warn_mode_has_no_missing_row_advice(self):
         base, head = self.repository()
 
         status, printed = captured(
@@ -253,15 +238,13 @@ class Command(unittest.TestCase):
                 head,
                 "--branch",
                 "docs/thing",
-                "--pr",
-                "42",
                 "--ledger",
                 self.ledger(),
             ]
         )
 
         self.assertEqual(status, 0)
-        self.assertIn("#42 has no row", json.loads(printed))
+        self.assertEqual(printed, "")
 
     def test_warn_mode_prints_a_json_string_a_hook_can_paste(self):
         base, head = self.repository()

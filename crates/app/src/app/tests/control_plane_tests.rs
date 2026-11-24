@@ -5056,41 +5056,15 @@ fn observer_schemas_are_versioned_valid_and_ui_framework_free() {
 
 fn observer_schemas(update: bool) {
     let documents = crate::control::schema_catalog::documents();
-    // Every published wire type has a committed document, so a breaking
-    // change shows up as a diff in review (contract §6). The count is
-    // here to make an accidental *removal* visible too.
-    assert_eq!(documents.len(), 209);
-    for file_name in [
-        "session-report-input-v1.schema.json",
-        "session-report-result-v1.schema.json",
-        "session-journal-delete-input-v1.schema.json",
-        "session-journal-input-v1.schema.json",
-        "session-journal-result-v1.schema.json",
-        "feed-history-load-input-v1.schema.json",
-        "feed-history-load-result-v1.schema.json",
-        "feed-history-cancel-input-v1.schema.json",
-        "feed-history-cancel-result-v1.schema.json",
-        "chart-price-axis-input-v1.schema.json",
-        "chart-price-axis-result-v1.schema.json",
-        "chart-price-tag-progress-input-v1.schema.json",
-        "chart-price-tag-progress-result-v1.schema.json",
-        "chart-settings-input-v1.schema.json",
-        "chart-settings-result-v1.schema.json",
-        "chart-tape-view-input-v1.schema.json",
-        "chart-tape-view-result-v1.schema.json",
-        "chart-time-axis-reset-input-v1.schema.json",
-        "chart-time-axis-reset-result-v1.schema.json",
-        "orderflow-opening-scale-input-v1.schema.json",
-        "orderflow-opening-scale-result-v1.schema.json",
-        "orderflow-bubble-scale-input-v1.schema.json",
-        "orderflow-bubble-scale-result-v1.schema.json",
-        "orderflow-bubbles-save-changes-input-v1.schema.json",
-        "orderflow-bubbles-save-changes-result-v1.schema.json",
-    ] {
+    let mut registered = std::collections::BTreeSet::new();
+    for name in documents.iter().map(|document| document.file_name).chain(
+        quantick_control::schema_catalog::public_schema_documents()
+            .iter()
+            .map(|document| document.file_name),
+    ) {
         assert!(
-            documents
-                .iter()
-                .any(|document| document.file_name == file_name)
+            registered.insert(name.to_owned()),
+            "duplicate schema {name}"
         );
     }
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -5128,6 +5102,14 @@ fn observer_schemas(update: bool) {
             document.file_name
         );
     }
+    // Both registries share this directory. Compare names so additions need
+    // no counter edit, while missing documents and unregistered files fail.
+    let committed: std::collections::BTreeSet<_> = std::fs::read_dir(&root)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+        .filter(|name| name.ends_with(".schema.json"))
+        .collect();
+    assert_eq!(registered, committed, "schema registry differs from disk");
 }
 
 #[test]

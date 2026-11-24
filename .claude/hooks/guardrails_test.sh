@@ -583,12 +583,8 @@ set_tier "$root/wt" ""
 run "a code-review and full CI make the branch ready" \
     pr-gate "$(json_bash "$root/wt" "gh pr ready 42")" silent
 
-# The advisory rides a pass rather than replacing a decision, and the pull
-# request it asks about is the one the command named. A stub calculator here
-# on purpose: what is under test is the wiring — that `gh pr ready 42` arrives
-# as `--pr 42` and a creation arrives without one — and the real calculator
-# answers about a diff instead of about its arguments. The cases above cover
-# what it says.
+# Ready and create use the same branch measurement. Neither asks the PR
+# to append a ledger row, so the stub's final argument is always the branch.
 mkdir -p "$root/wt/tools/read_cost"
 cat > "$root/wt/tools/read_cost/report.py" <<'STUB'
 import json
@@ -596,9 +592,8 @@ import sys
 
 print(json.dumps("read-cost stub saw " + " ".join(sys.argv[1:])))
 STUB
-run "the advisory rides a passing gate and names the pull request" \
-    pr-gate "$(json_bash "$root/wt" "gh pr ready 42")" context "--pr 42"
-# No `--pr` at all, not an empty one: the argument ends the stub's line.
+run "readiness advises without a per-PR ledger argument" \
+    pr-gate "$(json_bash "$root/wt" "gh pr ready 42")" context '--branch feat/x"'
 run "a creation names no pull request to the advisory" \
     pr-gate "$(json_bash "$root/wt" "gh pr create --draft --fill")" context '--branch feat/x"'
 rm -rf "$root/wt/tools"
