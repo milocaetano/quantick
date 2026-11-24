@@ -1,3 +1,0 @@
-# #1047: the layout indicator-mirroring and materialisation decisions moved into `quantick_workspace::indicator_mirror`.
-crates/app -102
-!budget -102

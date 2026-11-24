@@ -44,7 +44,12 @@ fn assert_clean(name: &str) {
         .iter()
         .find(|guard| guard.name == name)
         .unwrap_or_else(|| panic!("`{name}` is a registered guard"));
-    let violations = (guard.check)(&workspace_root());
+    let violations = match std::env::var_os("QUANTICK_GUARDS_BASE_ROOT") {
+        Some(base) => {
+            quantick_guards::delta::check(&workspace_root(), std::path::Path::new(&base), guard)
+        }
+        None => (guard.check)(&workspace_root()),
+    };
     assert!(
         violations.is_empty(),
         "{name} guard: {} finding(s)\n{}\n\n{}",
@@ -438,6 +443,52 @@ fn the_report_mode_refuses_extra_arguments() {
         complaint.contains("--report"),
         "the usage string offers the mode that was asked for: {complaint}"
     );
+}
+
+#[test]
+fn delta_and_fold_flags_reject_incomplete_or_mixed_modes() {
+    let root = scratch_dir::ScratchDir::new("ratchet-cli-arguments");
+    for args in [
+        vec!["--base-root"],
+        vec!["--base-root", ""],
+        vec!["--base-root", ".", "--report"],
+        vec!["--base-root", ".", "--tighten", "--fold"],
+        vec!["--fold"],
+        vec!["--tighten", "--fold", "unexpected"],
+    ] {
+        let output = Command::new(env!("CARGO_BIN_EXE_quantick-guards"))
+            .env("QUANTICK_GUARDS_ROOT", root.path())
+            .env_remove("QUANTICK_GUARDS_BASE_ROOT")
+            .args(&args)
+            .output()
+            .unwrap();
+        assert!(!output.status.success(), "{args:?}");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("usage:"),
+            "{args:?}"
+        );
+    }
+    assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0);
+}
+
+#[test]
+fn delta_validates_aggregates_even_for_an_unrelated_file() {
+    let root = workspace_root();
+    for explicit in [true, false] {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_quantick-guards"));
+        command
+            .env("QUANTICK_GUARDS_ROOT", &root)
+            .env("QUANTICK_GUARDS_BASE_ROOT", &root);
+        if explicit {
+            command.arg("--base-root").arg(&root);
+        }
+        let output = command.args(["--file", "unrelated.txt"]).output().unwrap();
+        assert!(!output.status.success());
+        assert!(
+            String::from_utf8_lossy(&output.stderr)
+                .contains("base root must be a separate checkout")
+        );
+    }
 }
 
 #[path = "../src/scratch_dir.rs"]

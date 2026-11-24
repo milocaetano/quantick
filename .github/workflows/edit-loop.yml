@@ -75,19 +75,35 @@ jobs:
             ${{ runner.temp }}/edit-loop-targets
           key: edit-loop-v2-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml') }}-${{ github.sha }}
           restore-keys: edit-loop-v2-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml') }}-
+      # Only refs/heads/main can publish this cache. Main runs share the
+      # uncancelled concurrency group above, so history updates are serialized.
+      - name: Restore main timing history
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/edit-loop-history
+          key: edit-loop-history-v1-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: edit-loop-history-v1-
       - name: Mark the measurement start
         id: start
         run: echo "epoch=$(date +%s)" >> "$GITHUB_OUTPUT"
-      - name: Measure and enforce fixed edit-loop budgets
+      - name: Measure validated edit loops and report timing policy
         shell: bash
         env:
           SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          TIMING_CONTEXT: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && 'main' || 'pr' }}
         run: |
           python tools/edit_loop/measure.py run --repo . --sha "$SOURCE_SHA" \
             --worktree "$RUNNER_TEMP/edit-loop-worktree" \
             --target "$RUNNER_TEMP/edit-loop-targets" \
             --output "$RUNNER_TEMP/edit-loop-evidence" \
-            --budgets tools/edit_loop/budgets.json
+            --budgets tools/edit_loop/budgets.json --context "$TIMING_CONTEXT" \
+            --history "$RUNNER_TEMP/edit-loop-history/reports.json"
+      - name: Publish main timing history
+        if: ${{ !cancelled() && github.ref == 'refs/heads/main' && github.event_name != 'pull_request' }}
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/edit-loop-history
+          key: edit-loop-history-v1-${{ github.run_id }}-${{ github.run_attempt }}
       - name: Retain raw timing and failure evidence
         if: always()
         uses: actions/upload-artifact@v4

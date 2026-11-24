@@ -2,7 +2,7 @@ use super::*;
 use crate::scratch::ScratchDir;
 use history::SessionSource;
 use quantick_trading::{TradeMode, VenueEvent};
-use scope::{ReportRequest, prepare};
+use scope::{ReportOrigin, ReportRequest, prepare};
 use sessions::SessionKey;
 
 fn write_session(dir: &Path, key: &SessionKey, name: Option<&str>, closes: &[i64]) {
@@ -127,7 +127,7 @@ fn context_reports_replace_scope_for_named_and_unnamed_sessions_across_origins()
             write_session(&dir, &opposite, name, &[midnight + 2000]);
             let exact = prepare(
                 &dir,
-                ReportRequest {
+                ReportRequest::Session {
                     session: session.clone(),
                     day: None,
                 },
@@ -153,7 +153,7 @@ fn context_reports_replace_scope_for_named_and_unnamed_sessions_across_origins()
             );
             let whole_day = prepare(
                 &dir,
-                ReportRequest {
+                ReportRequest::Session {
                     session: session.clone(),
                     day: Some(day),
                 },
@@ -186,7 +186,7 @@ fn context_reports_replace_scope_for_named_and_unnamed_sessions_across_origins()
             assert!(matches!(
                 prepare(
                     &dir,
-                    ReportRequest {
+                    ReportRequest::Session {
                         session,
                         day: Some(invalid_day)
                     },
@@ -232,4 +232,186 @@ fn broker_session_edits_and_live_protection_address_only_the_broker_file() {
         !SessionKey::parse("broker/a.csv").unwrap().is_broker(),
         "broker may be a simulator symbol"
     );
+}
+
+#[test]
+fn a_whole_day_report_reads_every_session_of_one_origin_and_never_the_other() {
+    let tz = TzOffset::new(-180);
+    let day = quantick_civil::parse_iso_date("2026-11-18").unwrap();
+    let midnight = day.start_ms(tz);
+    let scratch = ScratchDir::new("whole-day-report");
+    let dir = scratch.join("paper");
+    let morning = SessionKey::parse("WINZ26/morning.csv").unwrap();
+    let afternoon = SessionKey::parse("WDOZ26/afternoon.csv").unwrap();
+    write_session(
+        &dir,
+        &morning,
+        None,
+        &[midnight - 1, midnight, midnight + 1000],
+    );
+    write_session(
+        &dir,
+        &afternoon,
+        None,
+        &[midnight + 2000, midnight + DAY_MS],
+    );
+    write_session(&dir, &morning.for_broker(), None, &[midnight + 3000]);
+    for (origin, trades, title) in [
+        (ReportOrigin::Simulator, 3, "Simulator · 2026-11-18"),
+        (ReportOrigin::Broker, 1, "Broker · 2026-11-18"),
+    ] {
+        let prepared = prepare(&dir, ReportRequest::Day { origin, day }, tz).unwrap();
+        assert_eq!(
+            prepared.receipt.trades, trades,
+            "{origin:?}: both sessions, one day"
+        );
+        assert_eq!(prepared.receipt.title, title);
+        assert_eq!(
+            prepared.receipt.net_points,
+            Decimal::from(5 * trades as i64)
+        );
+        let cut = ReportView::cut_scoped(
+            &prepared.history,
+            ReportPeriod::All,
+            SourceFilter::All,
+            None,
+            tz,
+            Some(&prepared.receipt.request),
+        );
+        assert_eq!(cut.rows.len(), trades);
+        assert!(cut.rows.iter().all(|row| {
+            row.session.as_ref().map(ReportOrigin::of) == Some(origin)
+                && CivilDate::from_ms(row.trade.closed_ms, tz) == day
+        }));
+    }
+    let empty = CivilDate::from_day_number(day.day_number() + 5);
+    assert_eq!(
+        prepare(
+            &dir,
+            ReportRequest::Day {
+                origin: ReportOrigin::Simulator,
+                day: empty
+            },
+            tz
+        )
+        .err()
+        .map(|error| error.code()),
+        Some("no_trades_in_scope"),
+        "an empty day is refused, never an empty report"
+    );
+}
+
+#[test]
+fn a_tag_report_sums_one_origin_across_days_and_sessions() {
+    let tz = TzOffset::new(-180);
+    let midnight = quantick_civil::parse_iso_date("2026-11-18")
+        .unwrap()
+        .start_ms(tz);
+    let scratch = ScratchDir::new("tag-report");
+    let dir = scratch.join("paper");
+    let first = SessionKey::parse("WINZ26/first.csv").unwrap();
+    let second = SessionKey::parse("WDOZ26/second.csv").unwrap();
+    let broker = first.for_broker();
+    write_session(
+        &dir,
+        &first,
+        None,
+        &[midnight + 1000, midnight + DAY_MS + 1000],
+    );
+    write_session(&dir, &second, None, &[midnight + 2000, midnight + 3000]);
+    write_session(&dir, &broker, None, &[midnight + 4000]);
+    let history = journals::load(&dir, None, &[]);
+    let tagged = [
+        (midnight + 1000, "#Breakout"),
+        (midnight + DAY_MS + 1000, "breakout"),
+        (midnight + 2000, "#BREAKOUT"),
+        (midnight + 3000, "#fade"),
+        (midnight + 4000, "#breakout"),
+    ];
+    for (closed, tag) in tagged {
+        let row = history
+            .rows
+            .iter()
+            .find(|row| row.trade.closed_ms == closed)
+            .unwrap();
+        let key = row.session.as_ref().unwrap();
+        session_edit::tag_trade(&dir, key, row.trade_ref, &[tag]).unwrap();
+    }
+    let open = |origin, tag: &str| {
+        prepare(
+            &dir,
+            ReportRequest::Tag {
+                origin,
+                tag: tag.to_owned(),
+            },
+            tz,
+        )
+    };
+    let simulator = open(ReportOrigin::Simulator, "#Breakout").unwrap();
+    assert_eq!(simulator.receipt.trades, 3, "two days, two sessions");
+    assert_eq!(simulator.receipt.net_points, Decimal::from(15));
+    assert_eq!(simulator.receipt.title, "Simulator · #breakout");
+    assert_eq!(
+        simulator.receipt.request.menu_label(),
+        "Report #breakout",
+        "the tag is held as the journal stores it"
+    );
+    let cut = ReportView::cut_scoped(
+        &simulator.history,
+        ReportPeriod::All,
+        SourceFilter::All,
+        None,
+        tz,
+        Some(&simulator.receipt.request),
+    );
+    assert_eq!(cut.rows.len(), 3);
+    assert!(
+        cut.rows
+            .iter()
+            .all(|row| { !row.session.as_ref().unwrap().is_broker() && row.tags == ["breakout"] })
+    );
+    assert_eq!(
+        open(ReportOrigin::Broker, "breakout")
+            .unwrap()
+            .receipt
+            .trades,
+        1
+    );
+    let refused = |origin, tag| open(origin, tag).err().map(|error| error.code());
+    assert_eq!(
+        refused(ReportOrigin::Broker, "fade"),
+        Some("no_trades_in_scope")
+    );
+    assert_eq!(
+        refused(ReportOrigin::Simulator, "two words"),
+        Some("invalid_tag")
+    );
+}
+
+#[test]
+fn report_menus_offer_one_scope_per_button_with_its_label() {
+    let day = quantick_civil::parse_iso_date("2026-11-18").unwrap();
+    let broker = SessionKey::parse("broker/WINZ26/a.csv").unwrap();
+    let labels = |requests: Vec<ReportRequest>| {
+        requests
+            .iter()
+            .map(ReportRequest::menu_label)
+            .collect::<Vec<_>>()
+    };
+    let session = ReportRequest::sessions(&broker, day);
+    assert_eq!(session[1].day(), Some(day));
+    assert_eq!(labels(session.to_vec()), ["Session report", "Day report"]);
+    let origins = [ReportOrigin::Simulator, ReportOrigin::Broker];
+    assert_eq!(
+        labels(ReportRequest::days(day, &origins).collect()),
+        ["Day report · Simulator", "Day report · Broker"]
+    );
+    let tags = ["breakout".to_owned(), "fade".to_owned()];
+    let tagged: Vec<_> = ReportRequest::tags(&broker, &tags).collect();
+    assert!(
+        tagged
+            .iter()
+            .all(|request| request.origin() == ReportOrigin::Broker)
+    );
+    assert_eq!(labels(tagged), ["Report #breakout", "Report #fade"]);
 }

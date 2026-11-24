@@ -1,4 +1,4 @@
-//! Opening a Trades report by stable session identity or a clicked civil day.
+//! Opening a Trades report by stable session identity, a civil day or a tag.
 use quantick_control::{
     registry::{CapabilityDescriptor, EffectPersistence},
     schema::generated_schema,
@@ -29,14 +29,37 @@ pub enum ReportInput {
         #[schemars(length(min = 10, max = 10))]
         day: String,
     },
+    /// Every trade of one origin closed on the civil day, in any session.
+    WholeDay {
+        origin: ReportOrigin,
+        #[schemars(length(min = 10, max = 10))]
+        day: String,
+    },
+    /// Every trade of one origin carrying the tag, over all history.
+    Tag {
+        origin: ReportOrigin,
+        #[schemars(length(min = 1, max = 33))]
+        tag: String,
+    },
+}
+
+/// The book a whole-day or tag report reads; the two are never summed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ReportOrigin {
+    Simulator,
+    Broker,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ReportResult {
     pub action: String,
-    pub session: String,
+    /// The session of a session or day action; null for whole_day and tag.
+    pub session: Option<String>,
     pub origin: String,
     pub day: Option<String>,
+    /// The normalized tag of a tag action, without `#`.
+    pub tag: Option<String>,
     pub title: String,
     pub trade_count: quantick_control::wire::WireU64,
     /// Files unreadable in the history scanned for this report.
@@ -74,7 +97,7 @@ pub fn descriptor() -> CapabilityDescriptor {
     let mut descriptor = crate::recovery::descriptor(
         REPORT_OPEN_CAPABILITY_ID,
         "Open or filter a performance report",
-        "Open the same performance report as the Trades session context menu. action=session selects only that session; action=day requires YYYY-MM-DD in the display timezone and selects every instrument and session of that origin on the clicked day. The session must hold a trade on that day. action=ordinary restores the ordinary Sim live report for the chart symbol over all time; pass no session or day. action=sources with sources sets their union, exits session/day context scope and preserves visible symbol/date filters: broker, real (Sim live including legacy), replay, simulator (real + replay), both (all). An empty array selects none. Omitting sources reads the current report without opening it or emitting session.report.opened. Returns normalized sources, window, context, open/loaded status, trade count and net points. Retries set the same selection, never toggle. Session keys are <symbol>/<file>.csv for the simulator and broker/<symbol>/<file>.csv for real-trades, independent of custom names. Session, day and ordinary actions replace prior symbol, period, source and session filters. Returns the opened scope, trade count, net points and counts of unreadable files and skipped rows in the scanned history; events.read reconciles a lost open response through session.report.opened. Refusals: invalid_session, session_not_found, session_unreadable, day_not_in_session, no_ledger. Never places orders or writes history.",
+        "Open the same performance report as the Trades session context menu. action=session selects only that session; action=day requires YYYY-MM-DD in the display timezone and selects every instrument and session of that origin on the clicked day. The session must hold a trade on that day. action=whole_day takes origin (simulator or broker) and day instead of a session and selects every trade of that origin closed that day, as the day header's context menu does. action=tag takes origin and a tag (with or without #, case ignored) and selects every trade of that origin carrying it over all history, as a trade's Report #tag menu does. Simulator and broker are never summed. action=ordinary restores the ordinary Sim live report for the chart symbol over all time; pass no session or day. action=sources with sources sets their union, exits session/day context scope and preserves visible symbol/date filters: broker, real (Sim live including legacy), replay, simulator (real + replay), both (all). An empty array selects none. Omitting sources reads the current report without opening it or emitting session.report.opened. Returns normalized sources, window, context, open/loaded status, trade count and net points. Retries set the same selection, never toggle. Session keys are <symbol>/<file>.csv for the simulator and broker/<symbol>/<file>.csv for real-trades, independent of custom names. Session, day and ordinary actions replace prior symbol, period, source and session filters. Returns the opened scope, trade count, net points and counts of unreadable files and skipped rows in the scanned history; events.read reconciles a lost open response through session.report.opened. Refusals: invalid_session, session_not_found, session_unreadable, day_not_in_session, invalid_tag, no_trades_in_scope, no_ledger. Never places orders or writes history.",
         false,
         generated_schema::<ReportInput>(),
     );

@@ -1,3 +1,0 @@
-# +20: the generated hook-registry row for QUANTICK_WIDGETS, the capture hook
-# that opens the widget panes (#876); its prose is already one clause.
-.claude/skills/ui-harness/ +20
