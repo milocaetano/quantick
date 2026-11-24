@@ -414,6 +414,53 @@ fn duplicate_and_save_as() {
 }
 
 #[test]
+fn a_draft_committed_script_can_be_duplicated_and_saved() {
+    let mut strategies = TabStrategies::default();
+    let line = ScriptPlacement::Line {
+        level: Decimal::from(100),
+        rising: true,
+    };
+    let prepared = crate::script_draft::prepare(crate::script_draft::DraftInput {
+        id: "drafted.pine",
+        source: ALWAYS_RINGS,
+        placement: line,
+        history: &[],
+    })
+    .expect("the draft compiles");
+    let readings = crate::script_draft::commit(&mut strategies, TICK, prepared);
+    assert_eq!(readings.len(), 1, "the script declares one side");
+    let drafted = InstanceRef::Script(readings[0].id);
+
+    let copy = command(&mut strategies, StrategyDeskCommand::Duplicate(drafted));
+
+    let copy_id = readings[0].id + 1;
+    assert_eq!(
+        copy,
+        Ok(DeskOutcome::Duplicated(InstanceRef::Script(copy_id)))
+    );
+    let rows = &view(&strategies)[0].rows;
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[1].name, "drafted.pine");
+    assert_eq!(rows[1].state, DeskState::Paused, "a copy is armed paused");
+    assert_eq!(strategies.script_readings()[1].place, line);
+
+    let saved = command(
+        &mut strategies,
+        StrategyDeskCommand::SaveAs {
+            instance: drafted,
+            name: "drafted_copy.pine".to_owned(),
+        },
+    );
+    assert_eq!(
+        saved,
+        Ok(DeskOutcome::Save {
+            name: "drafted_copy.pine".to_owned(),
+            source: ALWAYS_RINGS.to_owned(),
+        })
+    );
+}
+
+#[test]
 fn detail_reports_inputs_and_fires_today() {
     let mut strategies = TabStrategies::default();
     let id = InstanceRef::Script(arm_script(
