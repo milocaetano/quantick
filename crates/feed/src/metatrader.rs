@@ -650,8 +650,11 @@ impl Mt5Feed {
         self.send(FeedEvent::PriceDecimals(digits)).await
     }
 
-    /// A settlement reading as the tab's day reference. A reading with no
-    /// price withdraws the one sent, and is not sent when none was.
+    /// A settlement reading as a day reference, windowed by the bridge
+    /// session ([`quantick_feed_mt5::SettlementReadings`]); the tab holds it
+    /// beside the ones it does not overlap, so a settlement published after
+    /// the close leaves the close's own reference in place. A reading with
+    /// no price withdraws them, and is not sent when none was.
     async fn on_settlement(&mut self, reading: Option<quantick_feed_mt5::Settlement>) -> EventFlow {
         let reference = reading.map(|settled| {
             use quantick_sources::day_reference::DayReference;

@@ -70,13 +70,13 @@ impl DayReference {
 }
 
 /// What a feed has said about its market's price: the venue's day
-/// reference and decimals, and the most decimals its live prints have shown.
-/// A tab holds one per feed session.
+/// references and decimals, and the most decimals its live prints have
+/// shown. A tab holds one per feed session.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct VenueQuote {
-    /// The newest day reference; `None` until the venue sends one, or after
-    /// it withdrew it.
-    pub day: Option<DayReference>,
+    /// The two latest day references by window, which never overlap: a
+    /// session's and the next one's, sent before the first is done with.
+    days: [Option<DayReference>; 2],
     /// The decimals the venue says it quotes the price in.
     pub decimals: Option<u32>,
     /// The most decimals a live print has shown, trailing zeros aside: what
@@ -85,6 +85,30 @@ pub struct VenueQuote {
 }
 
 impl VenueQuote {
+    /// Hold a day reference the venue sent beside the ones held, dropping
+    /// any its window overlaps — the newer word on that span — and all but
+    /// the two latest; `None` withdraws them all.
+    pub fn hold_day(&mut self, reference: Option<DayReference>) {
+        let Some(new) = reference else {
+            self.days = [None; 2];
+            return;
+        };
+        let apart =
+            |held: &DayReference| held.until_ms <= new.from_ms || new.until_ms <= held.from_ms;
+        let mut held: Vec<DayReference> = self.days.into_iter().flatten().filter(apart).collect();
+        held.push(new);
+        held.sort_by_key(|day| day.from_ms);
+        let mut latest = held.into_iter().rev();
+        let (later, earlier) = (latest.next(), latest.next());
+        self.days = [earlier, later];
+    }
+
+    /// The day reference whose window covers a print at `at_ms`, if any.
+    #[must_use]
+    pub fn day_at(&self, at_ms: i64) -> Option<&DayReference> {
+        self.days.iter().flatten().find(|day| day.covers(at_ms))
+    }
+
     /// Fold one live print's price into [`Self::tape_decimals`].
     pub fn observe_price(&mut self, price: Decimal) {
         self.tape_decimals = self.tape_decimals_with(price);
@@ -150,6 +174,58 @@ mod tests {
         assert!(settled.covers(DAY) && settled.covers(DAY + 9));
         assert!(!settled.covers(DAY - 1), "a print before the reading");
         assert!(!settled.covers(DAY + 10), "the next session's print");
+    }
+
+    /// WIN on day N holds the N-1 settlement from its morning reading; B3
+    /// publishes day N's after the close, windowed for day N+1. The close
+    /// print keeps its change against the reference held for it.
+    #[test]
+    fn a_next_sessions_reference_leaves_the_held_one_covering_its_prints() {
+        let (morning, close, next_day) = (DAY + 100, DAY + 900, DAY + UTC_DAY_MS);
+        let mut quote = VenueQuote::default();
+        quote.hold_day(Some(DayReference::previous_settlement(
+            dec("171750"),
+            morning,
+            next_day,
+        )));
+        let tomorrow = next_day + UTC_DAY_MS;
+        quote.hold_day(Some(DayReference::previous_settlement(
+            dec("172000"),
+            next_day,
+            tomorrow,
+        )));
+        let held_at = |quote: &VenueQuote, at| quote.day_at(at).map(|day| day.price);
+        assert_eq!(
+            held_at(&quote, close),
+            Some(dec("171750")),
+            "the close print"
+        );
+        assert_eq!(held_at(&quote, next_day), Some(dec("172000")));
+        assert_eq!(held_at(&quote, morning - 1), None, "before the reading");
+        assert_eq!(held_at(&quote, tomorrow), None, "the day after waits");
+
+        quote.hold_day(Some(DayReference::previous_settlement(
+            dec("172005"),
+            next_day,
+            tomorrow,
+        )));
+        assert_eq!(
+            held_at(&quote, next_day),
+            Some(dec("172005")),
+            "a correction replaces"
+        );
+        assert_eq!(held_at(&quote, close), Some(dec("171750")));
+        let after = tomorrow + UTC_DAY_MS;
+        quote.hold_day(Some(DayReference::previous_settlement(
+            dec("172300"),
+            tomorrow,
+            after,
+        )));
+        assert_eq!(held_at(&quote, close), None, "two held at most");
+        assert_eq!(held_at(&quote, next_day), Some(dec("172005")));
+        assert_eq!(held_at(&quote, tomorrow), Some(dec("172300")));
+        quote.hold_day(None);
+        assert_eq!(quote, VenueQuote::default(), "a withdrawal clears them all");
     }
 
     #[test]

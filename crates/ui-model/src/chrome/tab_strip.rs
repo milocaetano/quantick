@@ -63,8 +63,8 @@ pub type MarketFace = (TabIcon, TabQuote);
 /// A tab's icon and quote: `symbol`'s icon on its `feed`, and its newest
 /// print `last` priced in the decimals
 /// [`price_decimals`](quantick_session::tab_quote::price_decimals) picks and
-/// read against the `venue`'s day reference. The chip and the scene both
-/// read a tab through this.
+/// read against the `venue`'s day reference whose window covers it. The chip
+/// and the scene both read a tab through this.
 #[must_use]
 pub fn market_face(
     feed: Option<&quantick_stores::config::FeedConfig>,
@@ -80,7 +80,8 @@ pub fn market_face(
         venue.tape_decimals_with(last.price)
     });
     let decimals = price_decimals(tick, venue.decimals, seen);
-    (icon, quote(last, venue.day.as_ref(), decimals))
+    let day = last.and_then(|last| venue.day_at(last.timestamp_ms));
+    (icon, quote(last, day, decimals))
 }
 
 /// How far the strip squeezes, and each chip's face at that stage, the open

@@ -187,8 +187,9 @@ pub enum FeedEvent {
     /// The price the venue says this market's day is measured from: a
     /// crypto venue's 00:00 UTC daily open, an exchange's previous
     /// settlement, each windowed to the prints it holds for. Sent when the
-    /// venue supplies one and again when it changes; `None` withdraws the
-    /// last one. A feed whose venue supplies none never sends it, and a
+    /// venue supplies one and again when it changes; a consumer holds it
+    /// beside the earlier ones it does not overlap
+    /// ([`VenueQuote::hold_day`]), and `None` withdraws them all. A feed whose venue supplies none never sends it, and a
     /// consumer derives none from the tape.
     DayReference(Option<quantick_sources::day_reference::DayReference>),
     /// The decimals the venue quotes this market's price in (MT5's `digits`,

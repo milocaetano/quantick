@@ -107,8 +107,8 @@ fn tick(seq: u64, last: &str, volume: u64) -> String {
 }
 
 /// A fixture session: the hello's digits ride on the connected status, and
-/// each settlement reading reaches the consumer windowed in UTC, a reading
-/// with no price as none.
+/// each settlement reading reaches the consumer windowed in UTC against the
+/// session's readings before it, a reading with no price as none.
 #[tokio::test]
 async fn settlement_readings_arrive_windowed_and_a_missing_one_says_so() {
     let (addr, mut rx) = start_server("WIN$N").await;
@@ -120,9 +120,14 @@ async fn settlement_readings_arrive_windowed_and_a_missing_one_says_so() {
 "
         )
         + &format!(
-            "{{\"type\":\"settlement\",\"time_ms\":{}}}
+            "{{\"type\":\"settlement\",\"price\":\"172000\",\"time_ms\":{}}}
 ",
             at + 1
+        )
+        + &format!(
+            "{{\"type\":\"settlement\",\"time_ms\":{}}}
+",
+            at + 2
         );
     socket.write_all(script.as_bytes()).await.unwrap();
     assert!(matches!(
@@ -140,6 +145,14 @@ async fn settlement_readings_arrive_windowed_and_a_missing_one_says_so() {
     );
     let server_midnight = (at / 86_400_000 + 1) * 86_400_000;
     assert_eq!(settled.until_ms, server_midnight + 10_800_000);
+    let Mt5Event::Settlement(Some(next)) = next_event(&mut rx).await else {
+        panic!("expected the changed reading");
+    };
+    assert_eq!(
+        (next.from_ms, next.until_ms),
+        (settled.until_ms, settled.until_ms + 86_400_000),
+        "a value changed the same server day holds for the next one"
+    );
     assert!(matches!(
         next_event(&mut rx).await,
         Mt5Event::Settlement(None)

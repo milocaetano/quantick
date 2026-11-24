@@ -111,7 +111,8 @@ pub use latency::{LatencyHop, LatencySample, LatencyTracker};
 pub use map::{DropReason, MapOutcome, MapStats, PriceContext, SideMode, SideSource, TickMapper};
 pub use protocol::{
     BridgeMsg, FeedMsg, Hello, MAX_BARS_PER_RATE_LINE, ParseError, RateChunk, RateRow,
-    SCHEMA_VERSION, Settlement, SettlementMsg, TapeKind, Tick, encode_line, parse_line,
+    SCHEMA_VERSION, Settlement, SettlementMsg, SettlementReadings, TapeKind, Tick, encode_line,
+    parse_line,
 };
 pub use rates::{RateMapper, RateStats};
 pub use session::{SeqAnomaly, SeqTracker};

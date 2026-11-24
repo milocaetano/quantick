@@ -461,6 +461,8 @@ struct Connection<'a> {
     highest_tick_ms: Option<i64>,
     latency: LatencyTracker,
     deals: crate::deals::DealSampler,
+    /// This session's settlement readings, which window each new one.
+    settlements: protocol::SettlementReadings,
     /// Whether the tape has already been reported late. Edge-triggered, so a
     /// session that stays behind logs the diagnosis once instead of once per
     /// sample, and its recovery is logged too — a report with no matching
@@ -507,6 +509,7 @@ impl<'a> Connection<'a> {
             highest_tick_ms: None,
             latency: LatencyTracker::new(),
             deals,
+            settlements: protocol::SettlementReadings::default(),
             lag_reported: false,
             backpressure_reported: false,
             backfill: None,
@@ -725,7 +728,8 @@ impl<'a> Connection<'a> {
             }
             BridgeMsg::RatesEnd { partial } => self.on_rates_end(partial).await,
             BridgeMsg::Settlement(reading) => {
-                let settled = reading.settlement(|server_ms| self.mapper.to_utc_ms(server_ms));
+                let mapper = &self.mapper;
+                let settled = self.settlements.read(&reading, |ms| mapper.to_utc_ms(ms));
                 delivered(self.tx.send(Mt5Event::Settlement(settled)).await)
             }
             BridgeMsg::Bye { reason } => {

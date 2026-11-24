@@ -381,9 +381,7 @@ pub struct SettlementMsg {
 }
 
 /// A settlement and the prints it is the reference for, in UTC epoch
-/// milliseconds: from the reading to the end of the server day it was taken
-/// in. A print before the reading may belong to the session that settlement
-/// closed, and the next server day's prints wait for the next reading.
+/// milliseconds, as [`SettlementReadings`] windows it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Settlement {
     pub price: rust_decimal::Decimal,
@@ -395,16 +393,56 @@ pub struct Settlement {
 pub const SERVER_DAY_MS: i64 = 86_400_000;
 
 impl SettlementMsg {
-    /// The reading as a windowed settlement, its server times turned to UTC
-    /// by `to_utc_ms`; `None` when it carries no positive price.
-    #[must_use]
-    pub fn settlement(&self, to_utc_ms: impl Fn(i64) -> i64) -> Option<Settlement> {
+    /// The reading's price, when it carries a positive one.
+    fn positive_price(&self) -> Option<rust_decimal::Decimal> {
         let price: rust_decimal::Decimal = self.price.as_deref()?.trim().parse().ok()?;
-        let day_end = (self.time_ms.div_euclid(SERVER_DAY_MS) + 1) * SERVER_DAY_MS;
-        (price > rust_decimal::Decimal::ZERO).then(|| Settlement {
+        (price > rust_decimal::Decimal::ZERO).then_some(price)
+    }
+}
+
+/// One bridge session's settlement readings, each given the prints it holds
+/// for. The first reading of a server day holds from the reading to the end
+/// of that day: a print before it may belong to the session the settlement
+/// closed. A value that changes later the same day is the settlement B3
+/// published after the close — the next session's reference — so it holds
+/// for the whole next server day, and the reading already held keeps its own
+/// window. A reading that repeats the price inside the window held for its
+/// time keeps that window, so the next morning's reading of a settlement
+/// published overnight does not narrow it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SettlementReadings {
+    /// The server day of the last priced reading, its price, and the window
+    /// it was given in server time.
+    last: Option<(i64, rust_decimal::Decimal, (i64, i64))>,
+}
+
+impl SettlementReadings {
+    /// `reading` windowed against the readings before it, server times
+    /// turned to UTC by `to_utc_ms`; `None`, forgetting them, when it
+    /// carries no positive price.
+    pub fn read(
+        &mut self,
+        reading: &SettlementMsg,
+        to_utc_ms: impl Fn(i64) -> i64,
+    ) -> Option<Settlement> {
+        let Some(price) = reading.positive_price() else {
+            self.last = None;
+            return None;
+        };
+        let (at, day) = (reading.time_ms, reading.time_ms.div_euclid(SERVER_DAY_MS));
+        let day_end = |day: i64| (day + 1) * SERVER_DAY_MS;
+        let window = match self.last {
+            Some((_, held, (from, until))) if held == price && (from..until).contains(&at) => {
+                (from, until)
+            }
+            Some((held_day, ..)) if held_day == day => (day_end(day), day_end(day + 1)),
+            _ => (at, day_end(day)),
+        };
+        self.last = Some((day, price, window));
+        Some(Settlement {
             price,
-            from_ms: to_utc_ms(self.time_ms),
-            until_ms: to_utc_ms(day_end),
+            from_ms: to_utc_ms(window.0),
+            until_ms: to_utc_ms(window.1),
         })
     }
 }
@@ -687,29 +725,104 @@ mod tests {
         );
     }
 
-    /// B3 at UTC-3: a reading at 10:30 server time holds from then to the
-    /// next server midnight, 03:00 UTC.
+    /// B3 at UTC-3: server time to UTC adds three hours.
+    const B3_TO_UTC_MS: i64 = 10_800_000;
+    const SETTLED_DAY: i64 = 20_416 * SERVER_DAY_MS;
+    const HOUR_MS: i64 = 3_600_000;
+
+    /// `fields` read as one settlement line by `readings`, windowed in UTC.
+    fn read_settlement(readings: &mut SettlementReadings, fields: &str) -> Option<Settlement> {
+        let line = format!(r#"{{"type":"settlement"{fields}}}"#);
+        match parse_line(&line).expect("a settlement parses") {
+            BridgeMsg::Settlement(msg) => readings.read(&msg, |server| server + B3_TO_UTC_MS),
+            other => panic!("expected a settlement, got {other:?}"),
+        }
+    }
+
+    fn priced(price: &str, at: i64) -> String {
+        format!(r#","price":"{price}","time_ms":{at}"#)
+    }
+
+    /// The first reading of a server day, at 10:30, holds from then to the
+    /// next server midnight, 03:00 UTC; a priceless one withdraws it.
     #[test]
     fn a_settlement_holds_from_its_reading_to_the_end_of_that_server_day() {
-        const OFFSET_MS: i64 = -10_800_000;
-        let day = 20_416 * SERVER_DAY_MS;
-        let reading = |fields: &str| {
-            let line = format!(r#"{{"type":"settlement"{fields}}}"#);
-            match parse_line(&line).expect("a settlement parses") {
-                BridgeMsg::Settlement(msg) => msg.settlement(|server| server - OFFSET_MS),
-                other => panic!("expected a settlement, got {other:?}"),
-            }
-        };
+        let day = SETTLED_DAY;
+        let mut readings = SettlementReadings::default();
         let at = day + 37_800_000;
         let settled =
-            reading(&format!(r#","price":"171750.25","time_ms":{at}"#)).expect("a positive price");
+            read_settlement(&mut readings, &priced("171750.25", at)).expect("a positive price");
         assert_eq!(settled.price, "171750.25".parse().unwrap());
-        assert_eq!(settled.from_ms, at + 10_800_000);
-        assert_eq!(settled.until_ms, day + SERVER_DAY_MS + 10_800_000);
-        let none = |fields: &str| reading(&format!(r#"{fields},"time_ms":{at}"#));
+        assert_eq!(settled.from_ms, at + B3_TO_UTC_MS);
+        assert_eq!(settled.until_ms, day + SERVER_DAY_MS + B3_TO_UTC_MS);
+        let mut none =
+            |fields: &str| read_settlement(&mut readings, &format!(r#"{fields},"time_ms":{at}"#));
         assert_eq!(none(""), None, "the terminal reports none");
         assert_eq!(none(r#","price":"0""#), None);
         assert_eq!(none(r#","price":"n/a""#), None);
+        let again = read_settlement(&mut readings, &priced("171750.25", at + HOUR_MS));
+        assert_eq!(
+            again.map(|again| again.from_ms),
+            Some(at + HOUR_MS + B3_TO_UTC_MS),
+            "a withdrawal forgets the window held"
+        );
+    }
+
+    /// WIN on day N reads the N-1 settlement in the morning; B3 publishes
+    /// day N's at 18:31, after the 18:25 close. The new value holds for the
+    /// whole next server day, never for the evening of the day it closed, and
+    /// the next morning's reading of the same value keeps that full day.
+    #[test]
+    fn a_value_published_after_the_close_holds_for_the_next_server_day() {
+        let day = SETTLED_DAY;
+        let utc = |server: i64| server + B3_TO_UTC_MS;
+        let mut readings = SettlementReadings::default();
+        let morning = day + 9 * HOUR_MS;
+        let held = read_settlement(&mut readings, &priced("171750", morning)).unwrap();
+        assert_eq!(
+            (held.from_ms, held.until_ms),
+            (utc(morning), utc(day + SERVER_DAY_MS))
+        );
+        let published = day + 18 * HOUR_MS + 31 * 60_000;
+        let next = read_settlement(&mut readings, &priced("172000", published)).unwrap();
+        assert_eq!(next.price, "172000".parse().unwrap());
+        assert_eq!(
+            (next.from_ms, next.until_ms),
+            (utc(day + SERVER_DAY_MS), utc(day + 2 * SERVER_DAY_MS)),
+            "the next session's reference, never this evening's"
+        );
+        let corrected = read_settlement(&mut readings, &priced("172005", published + 1)).unwrap();
+        assert_eq!(
+            (corrected.from_ms, corrected.until_ms),
+            (next.from_ms, next.until_ms)
+        );
+
+        let next_morning = day + SERVER_DAY_MS + 9 * HOUR_MS;
+        let kept = read_settlement(&mut readings, &priced("172005", next_morning)).unwrap();
+        assert_eq!(
+            kept, corrected,
+            "the next morning's reading does not narrow it"
+        );
+        let after_close = next_morning + 9 * HOUR_MS + 31 * 60_000;
+        let day_after = read_settlement(&mut readings, &priced("172300", after_close)).unwrap();
+        assert_eq!(
+            day_after.from_ms,
+            utc(day + 2 * SERVER_DAY_MS),
+            "a change on the day it was read as first is that day's own publication"
+        );
+    }
+
+    /// A first reading of a new day at a value nobody vouched for that day
+    /// holds from the reading, as any first reading does.
+    #[test]
+    fn a_new_days_reading_of_another_value_holds_from_the_reading() {
+        let day = SETTLED_DAY;
+        let mut readings = SettlementReadings::default();
+        read_settlement(&mut readings, &priced("171750", day + 9 * HOUR_MS)).unwrap();
+        let next_morning = day + SERVER_DAY_MS + 9 * HOUR_MS;
+        let fresh = read_settlement(&mut readings, &priced("171760", next_morning)).unwrap();
+        assert_eq!(fresh.from_ms, next_morning + B3_TO_UTC_MS);
+        assert_eq!(fresh.until_ms, day + 2 * SERVER_DAY_MS + B3_TO_UTC_MS);
     }
 
     #[test]
