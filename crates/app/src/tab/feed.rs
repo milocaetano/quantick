@@ -47,8 +47,8 @@ struct LiveTradeOwners<'a> {
     context: &'a mut [crate::pane::ChartPane],
     observer: &'a mut dyn super::alerts::Observer,
     received_at_ms: i64,
-    /// The tag of the market this print closes bars on.
-    alarm_tag: u64,
+    /// Tags each pane's closes with this print's market and that pane's bars.
+    alarms: quantick_stores::script_alarms::Tagger<'a>,
 }
 
 /// The effect sink for [`quantick_session::market::TabMarket::execute_live_trade`].
@@ -66,7 +66,7 @@ impl live_trade::LiveTradeOwners for LiveTradeOwners<'_> {
             Some(at) => &mut self.context[at],
         };
         let mut fold = PaneFold::new(pane.id);
-        let tag = self.alarm_tag;
+        let tag = self.alarms.tag(*pane.series.state.spec());
         pane.ingest_live_trade_observed(trade, tag, &mut |_, closed, slot| {
             fold.close(&closed.bar, closed.poc, slot);
         });
@@ -896,7 +896,7 @@ impl Tab {
         // against its own tape.
         let source = Self::alert_source(&self.link, &self.active);
         let mut owners = LiveTradeOwners {
-            alarm_tag: self.alarm_labels.tag(source, &self.symbol),
+            alarms: self.alarm_labels.on(source, &self.symbol),
             paper: &mut self.paper,
             flow: &mut self.flow_pane,
             context: &mut self.time_panes,
@@ -1203,15 +1203,19 @@ impl Tab {
         };
         self.history_trades += trades.len();
         self.link.latest_trade_ms = Some(last.timestamp_ms);
-        let source = Self::alert_source(&self.link, &self.active);
-        let tag = self.alarm_labels.tag(source, &self.symbol);
         let Self {
             flow_pane,
             time_panes,
             market: crate::strategy_anchors::TabMarket { strategies, .. },
+            alarm_labels,
+            link,
+            active,
+            symbol,
             ..
         } = self;
+        let mut alarms = alarm_labels.on(Self::alert_source(link, active), symbol);
         for pane in std::iter::once(flow_pane).chain(time_panes.iter_mut()) {
+            let tag = alarms.tag(*pane.series.state.spec());
             for trade in trades {
                 pane.ingest_live_trade_observed(trade, tag, &mut |pane, closed, slot| {
                     strategies.queue_closed(pane.id, &closed.bar, closed.poc, slot, to_strategies);

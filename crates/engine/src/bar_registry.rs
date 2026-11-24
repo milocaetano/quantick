@@ -182,6 +182,21 @@ impl BarConfiguration {
             None => format!("{}({value})", self.id()),
         }
     }
+    /// The kind's label capitalised, as a chart's header names it: `Renko`.
+    pub fn kind_name(self) -> String {
+        let mut letters = self.definition.label().chars();
+        letters.next().map_or_else(String::new, |first| {
+            first.to_uppercase().chain(letters).collect()
+        })
+    }
+    /// The chart's bars in a few words, e.g. `Renko 6`; a time chart by
+    /// its interval alone, `1m`, as traders name one.
+    pub fn caption(self) -> String {
+        if self.definition.fixed_time_interval {
+            return self.parameter_summary();
+        }
+        format!("{} {}", self.kind_name(), self.parameter_summary())
+    }
     pub fn parameter_summary(self) -> String {
         let value = match self.definition.parameter.editor.decimals {
             Some(places) => format!("{:.*}", places, self.parameter.to_f64().unwrap_or_default()),

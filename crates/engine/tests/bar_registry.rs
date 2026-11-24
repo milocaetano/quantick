@@ -473,3 +473,11 @@ fn a_seventh_definition_uses_the_production_selection_projection_and_factory() {
         None
     );
 }
+
+#[test]
+fn a_caption_names_the_kind_and_its_parameter() {
+    let caption = |config: &str| BUILTIN_BARS.parse(config).unwrap().caption();
+    assert_eq!(caption("renko:6"), "Renko 6");
+    assert_eq!(caption("time:1m"), "1m", "a time chart by its interval");
+    assert_eq!(caption("tick:50"), "Tick 50");
+}

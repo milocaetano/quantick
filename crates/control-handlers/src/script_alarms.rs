@@ -51,12 +51,14 @@ fn history(log: &ScriptAlarmLog, input: &wire::Input) -> History {
 }
 
 /// Journal each delivered alarm as `alerts.script.fired` under the actor
-/// `journal` names (a window with no journal journals nothing), and answer
-/// one toast for them all, so a burst does not bury the chart.
+/// `journal` names (a window with no journal journals nothing). Every alarm
+/// is journaled as it arrives, whether or not the ring gate lets it sound.
+/// Answers no toast, as the window's hand call expects notes: the window
+/// toasts what [`ScriptAlarmLog::ring`] answers instead.
 pub fn journal<A: JournalAccess>(
     journal: Journal<'_, A>,
     delivered: &[ScriptAlarmEntry],
-) -> Vec<String> {
+) -> std::iter::Empty<String> {
     if let Some((access, actor)) = journal {
         for entry in delivered {
             let payload =
@@ -64,11 +66,7 @@ pub fn journal<A: JournalAccess>(
             access.record_event(NewEvent::by(MODULE_ID, FIRED_EVENT_KIND, actor, payload));
         }
     }
-    match delivered {
-        [] => Vec::new(),
-        [one] => vec![one.notice()],
-        [first, rest @ ..] => vec![format!("{} (+{} more)", first.notice(), rest.len())],
-    }
+    std::iter::empty()
 }
 
 #[cfg(test)]
