@@ -16,7 +16,7 @@ fn diagnostic(fault: ScriptFault) -> Diagnostic {
 
 fn instances<D: Copy>(
     input: &DraftInput<'_, D>,
-) -> Result<Vec<ScriptInstance<D>>, Vec<Diagnostic>> {
+) -> Result<(Script, Vec<ScriptInstance<D>>), Vec<Diagnostic>> {
     let script = Script::load(input.id, input.source).map_err(|error| {
         vec![match error {
             ArmRefusal::Compile(fault) => diagnostic(fault),
@@ -30,15 +30,16 @@ fn instances<D: Copy>(
             },
         }]
     })?;
-    Ok([Side::Buy, Side::Sell]
+    let alarms = [Side::Buy, Side::Sell]
         .into_iter()
         .filter(|side| script.sides().iter().any(|(_, declared)| declared == side))
         .map(|side| ScriptInstance::arm(0, &script, side, input.placement, &[]))
-        .collect())
+        .collect();
+    Ok((script, alarms))
 }
 
 pub fn preview<D: Copy>(input: DraftInput<'_, D>) -> Result<Vec<Marker>, Vec<Diagnostic>> {
-    let mut alarms = instances(&input)?;
+    let (_, mut alarms) = instances(&input)?;
     let mut markers = Vec::new();
     for sample in input.history {
         let close = &sample.close;
@@ -69,7 +70,7 @@ pub fn preview<D: Copy>(input: DraftInput<'_, D>) -> Result<Vec<Marker>, Vec<Dia
 }
 
 pub fn prepare<D: Copy>(input: DraftInput<'_, D>) -> Result<PreparedAlarm<D>, Vec<Diagnostic>> {
-    let mut alarms = instances(&input)?;
+    let (script, mut alarms) = instances(&input)?;
     for alarm in &mut alarms {
         for sample in &input.history[input.history.len().saturating_sub(WARMUP_BARS)..] {
             alarm.warm(&sample.close.bar, sample.close.poc);
@@ -78,18 +79,18 @@ pub fn prepare<D: Copy>(input: DraftInput<'_, D>) -> Result<PreparedAlarm<D>, Ve
             }
         }
     }
-    Ok(PreparedAlarm(alarms))
+    Ok(PreparedAlarm { script, alarms })
 }
 
 pub fn commit<D: Copy + PartialEq>(
     tab: &mut TabStrategies<D>,
     pane_id: u64,
-    alarms: PreparedAlarm<D>,
+    prepared: PreparedAlarm<D>,
 ) -> Vec<ScriptReading<D>> {
+    let PreparedAlarm { script, alarms } = prepared;
     alarms
-        .0
         .into_iter()
-        .map(|instance| tab.publish_script(pane_id, instance))
+        .map(|instance| tab.publish_script(pane_id, instance, script.clone()))
         .collect()
 }
 

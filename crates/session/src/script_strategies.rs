@@ -97,20 +97,23 @@ impl<D: Copy + PartialEq> TabStrategies<D> {
             request.place,
             &warm,
         );
-        let reading = self.publish_script(request.pane_id, instance);
-        self.desk.record_script(reading.id, script);
-        Ok(reading)
+        Ok(self.publish_script(request.pane_id, instance, script))
     }
 
+    /// Number `instance`, put it on chart `pane_id` and record its compiled
+    /// `script` in the desk, so every published script can be read, duplicated
+    /// and saved there.
     pub(crate) fn publish_script(
         &mut self,
         pane_id: u64,
         mut instance: ScriptInstance<D>,
+        script: Script,
     ) -> ScriptReading<D> {
         instance.id = self.next_script_id;
         self.next_script_id += 1;
         let reading = ScriptReading::of(pane_id, &instance);
         self.pane_mut(pane_id).scripts.push(instance);
+        self.desk.record_script(reading.id, script);
         reading
     }
 
