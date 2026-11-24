@@ -1,3 +1,0 @@
-# The chart dialog, provider transport and desktop chart adapters require app.
-crates/app +771
-!budget +771

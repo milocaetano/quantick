@@ -1,3 +1,0 @@
-# Only app can resolve provider credentials and bind its worker to the window and gateway.
-crates/app +249
-!budget +249
