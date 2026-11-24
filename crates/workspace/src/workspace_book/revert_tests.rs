@@ -192,11 +192,59 @@ fn a_held_timeframe_edit_survives_a_relaunch_on_a_workspace_naming_none() {
     let mut book = on_legacy();
     let edit = on_bars("tick:2000", "time:300000");
     book.observe(1, &edit).unwrap();
-    let (workspace, copy) = book.saved_fields(1);
-    book.close_tab(1);
-    book.restore_tab(1, &workspace.unwrap(), copy);
-    book.settle_tab(1, &edit);
+    relaunch(&mut book, &edit);
     assert!(book.differs(1));
+    assert!(book.layout_changes(1).contains(&"timeframe".to_owned()));
+    assert!(book.revert(1).unwrap().changed);
+    let copy = book.tab_copy(1).unwrap();
+    assert_eq!(copy.flow_bars.as_deref(), Some("tick:500"), "as it opened");
+}
+
+/// Close the desk on tab 1 and bring it back, its panes settling on `shown`.
+fn relaunch(book: &mut WorkspaceBook, shown: &WorkspaceRecipe) {
+    let mut saved: SavedTab = toml::from_str(concat!(
+        "feed = \"mt5\"\nsymbol = \"WINV26\"\nlayout = \"time+flow\"\n",
+        "flow_bars = \"tick:500\"\ncontext_bars = [\"time:60000\"]\n",
+    ))
+    .unwrap();
+    book.stamp_saved_tab(1, &mut saved);
+    let text = toml::to_string(&saved).unwrap();
+    let saved: SavedTab = toml::from_str(&text).unwrap();
+    book.close_tab(1);
+    let workspace = book.restore_saved_workspace(1, &saved).unwrap();
+    book.restore_tab(1, &workspace, saved.workspace_copy.clone());
+    book.settle_tab(1, shown);
+}
+
+/// A relaunch with a held edit that is not a bar rule shows no timeframe
+/// edit, and a revert reads clean.
+#[test]
+fn a_relaunch_with_a_split_edit_reads_no_timeframe_edit() {
+    let mut book = on_legacy();
+    let mut edit = on_bars("tick:500", "time:60000");
+    edit.split_fraction = Some(0.7);
+    book.observe(1, &edit).unwrap();
+    relaunch(&mut book, &edit);
+    assert!(book.differs(1));
+    assert!(!book.layout_changes(1).contains(&"timeframe".to_owned()));
+    assert!(book.revert(1).unwrap().changed);
+    book.settle_tab(1, &on_bars("tick:500", "time:60000"));
+    assert!(!book.differs(1));
+}
+
+/// A revert on the factory `Default` keeps the timeframes the tab shows.
+#[test]
+fn a_revert_on_the_factory_default_keeps_the_shown_timeframes() {
+    let mut book = WorkspaceBook::default();
+    book.set_autosave(false);
+    book.open_tab(1);
+    let shown = on_bars("tick:2000", "time:60000");
+    book.settle_tab(1, &shown);
+    let mut edit = shown.clone();
+    edit.split_fraction = Some(0.7);
+    book.observe(1, &edit).unwrap();
+    assert!(book.revert(1).unwrap().changed);
+    assert_eq!(book.tab_copy(1), Some(&shown));
 }
 
 /// The factory `Default` names no bar rule and refuses Save to: a modified

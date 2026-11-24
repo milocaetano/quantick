@@ -345,6 +345,10 @@ pub struct WorkspaceBook {
     /// The edits each tab's last revert dropped: the window's, never a file's.
     #[serde(skip)]
     reverted: BTreeMap<u64, revert::Reverted>,
+    /// Each restored tab's settled reading, as its desk kept it, until the
+    /// tab is brought back ([`Self::restore_tab`]).
+    #[serde(skip)]
+    restored_settled: BTreeMap<u64, WorkspaceRecipe>,
 }
 
 /// Why a tab's copy differs from its workspace with autosave on. Either way
@@ -407,6 +411,7 @@ impl Default for WorkspaceBook {
             active: None,
             deleted: BTreeMap::new(),
             reverted: BTreeMap::new(),
+            restored_settled: BTreeMap::new(),
         }
     }
 }
@@ -925,8 +930,15 @@ impl WorkspaceBook {
     fn saved_copy(&self, tab: u64) -> Option<WorkspaceRecipe> {
         let state = self.tabs.get(&tab)?;
         let mut copy = self.baseline(state)?.clone();
-        if let Some(settled) = &state.settled {
-            copy.take_inherited_bars(settled);
+        // The factory `Default` names no bar rule and tells none as an edit:
+        // its tab keeps the ones it shows.
+        let factory = self
+            .recipes
+            .get(&state.workspace)
+            .is_some_and(WorkspaceRecipe::is_factory);
+        let own = (factory && state.settled.is_none()).then_some(&state.copy);
+        if let Some(rules) = state.settled.as_ref().or(own) {
+            copy.take_inherited_bars(rules);
         }
         Some(copy)
     }
@@ -1071,39 +1083,10 @@ impl WorkspaceBook {
     pub fn close_tab(&mut self, tab: u64) {
         self.tabs.remove(&tab);
         self.reverted.remove(&tab);
+        self.restored_settled.remove(&tab);
         self.forget_parked_tab(tab);
         self.drawings.remove(&tab);
         self.unsynced.remove(&tab);
-    }
-
-    /// A tab the desk brought back, following a rename since. A workspace the
-    /// book no longer has hands it to `Default`, keeping the copy it is given,
-    /// marked; the window gives what the tab shows when the desk kept none, so
-    /// a lost workspace never lays `Default` over the tab. With autosave on a
-    /// copy that differs did not reach its workspace before the restart: it
-    /// is [`Unsynced::Outvoted`], marked and never written unasked.
-    pub fn restore_tab(&mut self, tab: u64, workspace: &str, copy: Option<WorkspaceRecipe>) {
-        let name = self
-            .resolve(workspace)
-            .unwrap_or(DEFAULT_WORKSPACE)
-            .to_owned();
-        let held_copy = copy.is_some();
-        let mut copy = copy.unwrap_or_else(|| self.recipes.get(&name).cloned().unwrap_or_default());
-        copy.adopt_legacy_bars();
-        let mut state = TabWorkspace::on(&name, copy);
-        // A kept copy's bar rules are edits the last session held: told from
-        // the workspace's own, which name none, so a relaunch keeps them.
-        let recipe = self
-            .recipes
-            .get(&name)
-            .filter(|recipe| !recipe.is_factory());
-        state.settled = recipe.filter(|_| held_copy).cloned();
-        self.tabs.insert(tab, state);
-        self.unsynced.remove(&tab);
-        if self.autosave && (self.differs(tab) || (held_copy && self.captures_inherited_bars(tab)))
-        {
-            self.unsynced.insert(tab, Unsynced::Outvoted);
-        }
     }
 
     /// The first run: one workspace per open tab, named after the layout the
