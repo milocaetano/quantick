@@ -2,6 +2,7 @@
 use super::LoadedHistory;
 use super::fit::TradeRowText;
 use super::ledger_state::LiveTrade;
+use super::scope::ReportOrigin;
 use super::sessions::{
     SessionKey, SessionLabel, SessionRow, TradeRef, clock_second, group_by_day_and_session,
     place_session_rows, session_title, source_word, span_of,
@@ -22,8 +23,9 @@ pub enum LedgerRow<'a> {
     /// closed on that day, what they netted, and whether it is folded
     /// shut. A ledger of bare clock times cannot answer "which session was
     /// that" — the day header is where the answer lives, it carries the
-    /// day's result for free, and clicking it folds the day away.
-    Day(CivilDate, usize, (Decimal, String), bool),
+    /// day's result for free, and clicking it folds the day away. Last,
+    /// the origins its listed sessions hold, which its report menu offers.
+    Day(CivilDate, usize, (Decimal, String), bool, Vec<ReportOrigin>),
     /// A session's own row inside its day — every session a file holds.
     SessionHead(SessionHead),
     /// The rename or delete row standing where its session's row was.
@@ -39,6 +41,15 @@ pub enum LedgerRow<'a> {
     /// The control that reveals the next page of saved history, carrying
     /// how many trades are still held back.
     More(usize),
+}
+
+/// The origins a day's sessions hold, simulator first.
+fn day_origins(sessions: &[super::sessions::SessionGroup]) -> Vec<ReportOrigin> {
+    let held: BTreeSet<ReportOrigin> = sessions
+        .iter()
+        .filter_map(|session| session.key.as_ref().map(ReportOrigin::of))
+        .collect();
+    held.into_iter().collect()
 }
 
 /// What the session layer knows of one trade row.
@@ -300,6 +311,7 @@ pub fn push_groups<'a>(
             day.count,
             (day.tint, day.net_text),
             folded,
+            day_origins(&day.sessions),
         ));
         // A folded day builds no trade rows at all — the header keeps the
         // date, the count and the net, so the day is summarised rather

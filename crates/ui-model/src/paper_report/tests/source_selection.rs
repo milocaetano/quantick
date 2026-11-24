@@ -111,7 +111,7 @@ fn source_edits_leave_context_and_all_readouts_follow_the_union_across_reloads()
             &mut state,
             Intent::Scoped(Box::new(PreparedReport {
                 receipt: ReportReceipt {
-                    request: ReportRequest {
+                    request: ReportRequest::Session {
                         session: SessionKey::parse("X/live.csv").unwrap(),
                         day: context_day,
                     },
@@ -213,7 +213,7 @@ fn leaving_scope_with_the_same_sources_invalidates_the_day_index() {
         &mut state,
         Intent::Scoped(Box::new(PreparedReport {
             receipt: ReportReceipt {
-                request: ReportRequest {
+                request: ReportRequest::Session {
                     session: SessionKey::parse("X/live.csv").unwrap(),
                     day: Some(day),
                 },
