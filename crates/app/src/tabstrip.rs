@@ -122,6 +122,7 @@ pub(crate) fn draw(
             let selected = active_chip == Some(index);
             let surface = ui.painter().add(egui::Shape::Noop);
             ui.spacing_mut().item_spacing.x = 0.0;
+            ui.spacing_mut().button_padding = egui::Vec2::ZERO; // × exactly its target
             let (body, response) = ui.allocate_exact_size(
                 egui::vec2((chip_width - target.width()).max(0.0), CHIP_HEIGHT),
                 egui::Sense::click_and_drag(),
@@ -154,7 +155,7 @@ pub(crate) fn draw(
                     egui::vec2(target.width(), CHIP_HEIGHT),
                 );
                 let close_hot = ui.rect_contains_pointer(close_target);
-                let slot = face_layout::close_slot(selected, response.hovered() || close_hot);
+                let slot = target.slot(selected, response.hovered() || close_hot);
                 let hot = close_hot && closable && slot == CloseSlot::Close;
                 if hot {
                     let (center, radius) = (close_target.center(), CLOSE_HIT_WIDTH_PX / 2.0 - 2.0);

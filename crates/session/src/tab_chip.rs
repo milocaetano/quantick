@@ -538,6 +538,18 @@ impl CloseTarget {
         }
     }
 
+    /// The × on the active chip or under the pointer; elsewhere, and on a
+    /// tab with no target, nothing. No chip wears an edited mark: that is the
+    /// status bar cell's.
+    #[must_use]
+    pub fn slot(self, active: bool, hovered: bool) -> CloseSlot {
+        if (active || hovered) && !matches!(self, Self::None) {
+            CloseSlot::Close
+        } else {
+            CloseSlot::Empty
+        }
+    }
+
     /// The glyph the target shows: none where there is no target.
     #[must_use]
     pub const fn glyph(self) -> &'static str {
@@ -564,17 +576,6 @@ pub enum CloseSlot {
     Close,
     /// Nothing, the target still reserved.
     Empty,
-}
-
-/// The × on the active chip or under the pointer; elsewhere nothing. No chip
-/// wears an edited mark: that is the status bar cell's.
-#[must_use]
-pub fn close_slot(active: bool, hovered: bool) -> CloseSlot {
-    if active || hovered {
-        CloseSlot::Close
-    } else {
-        CloseSlot::Empty
-    }
 }
 
 #[cfg(test)]
@@ -904,8 +905,17 @@ mod tests {
 
     #[test]
     fn the_close_slot_shows_the_cross_on_the_active_or_hovered_chip_only() {
-        assert_eq!(close_slot(false, false), CloseSlot::Empty);
-        assert_eq!(close_slot(false, true), CloseSlot::Close, "hover");
-        assert_eq!(close_slot(true, false), CloseSlot::Close, "active");
+        let over = CloseTarget::Over;
+        assert_eq!(over.slot(false, false), CloseSlot::Empty);
+        assert_eq!(over.slot(false, true), CloseSlot::Close, "hover");
+        assert_eq!(
+            CloseTarget::Beside.slot(true, false),
+            CloseSlot::Close,
+            "active"
+        );
+        for (active, hovered) in [(false, false), (false, true), (true, false)] {
+            let slot = CloseTarget::None.slot(active, hovered);
+            assert_eq!(slot, CloseSlot::Empty, "no target, no × to hit");
+        }
     }
 }
