@@ -78,10 +78,10 @@ impl Paint<'_, '_> {
                     self.update(Intent::ReloadReport);
                 }
                 self.draw_report_calendar(ui, tz);
-                if let Some(scope) = self.report_scope() {
+                if let Some(scope) = self.report_scope_label() {
                     let reset = ui
                         .horizontal(|ui| {
-                            ui.label(&scope.title);
+                            ui.label(scope);
                             ui.button("Back to ordinary report").clicked()
                         })
                         .inner;

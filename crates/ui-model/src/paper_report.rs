@@ -31,6 +31,11 @@ struct ReportFilter {
     scope: Option<ReportReceipt>,
 }
 
+enum ReportSymbol {
+    FirstOpen,
+    Selected(Option<String>),
+}
+
 /// Cached presentation can be read by a host, but changes enter as intents.
 ///
 /// Filter writes cannot bypass the revision that protects projection receipts.
@@ -57,7 +62,7 @@ pub struct State {
     revision: u64,
     toast: Option<String>,
     report_open: bool,
-    report_symbol: Option<String>,
+    report_symbol: ReportSymbol,
     report_symbols: Vec<String>,
     report: Option<LoadedHistory>,
     report_generation: u64,
@@ -96,7 +101,7 @@ impl Default for State {
             revision: 0,
             toast: None,
             report_open: false,
-            report_symbol: None,
+            report_symbol: ReportSymbol::FirstOpen,
             report_symbols: Vec::new(),
             report: None,
             report_generation: 0,
@@ -277,14 +282,30 @@ pub struct DayFolds {
     days: BTreeSet<i64>,
 }
 impl State {
+    /// The opening receipt applies only while its requested day is still selected.
     pub fn report_scope(&self) -> Option<&ReportReceipt> {
-        self.filter.scope.as_ref()
+        self.filter.scope.as_ref().filter(|scope| {
+            scope
+                .request
+                .day()
+                .is_none_or(|day| self.applied_dates() == Some(DateRange::new(day, day)))
+        })
+    }
+    pub fn report_scope_label(&self) -> Option<&str> {
+        self.report_scope()
+            .map(|scope| scope.title.as_str())
+            .or_else(|| {
+                self.filter
+                    .scope
+                    .as_ref()
+                    .map(|scope| scope.request.source().label())
+            })
     }
 
     fn clear_filters(&mut self, symbol: String) {
         self.filter.scope = None;
         self.report_days_key = None;
-        self.report_symbol = (!symbol.is_empty()).then_some(symbol);
+        self.report_symbol = ReportSymbol::Selected((!symbol.is_empty()).then_some(symbol));
         self.set_period(ReportPeriod::All);
         self.filter.source = SourceFilter::Real.into();
     }
@@ -292,17 +313,15 @@ impl State {
     fn install_scoped(&mut self, prepared: PreparedReport) {
         let request = &prepared.receipt.request;
         self.report_open = true;
-        self.report_symbol = None;
+        self.report_symbol = ReportSymbol::Selected(None);
         self.filter.period = ReportPeriod::All;
         self.filter.source = request.source().into();
         self.filter.custom_text.clear();
         self.filter.custom_edited = false;
         self.calendar = CalendarState::default();
-        self.set_dates(
-            request
-                .day()
-                .map_or(DaySelection::None, DaySelection::Anchor),
-        );
+        self.set_dates(request.day().map_or(DaySelection::None, |day| {
+            DaySelection::Range(DateRange::new(day, day))
+        }));
         if let Some(day) = request.day() {
             self.calendar.month = Some(day.month_start());
         }
@@ -348,17 +367,6 @@ impl State {
             self.filter.applied_dates = range;
             self.report_view = None;
         }
-        // Day context names an origin plus a date. Its source mask keeps
-        // the origin when the trader replaces that date.
-        if self
-            .filter
-            .scope
-            .as_ref()
-            .and_then(|scope| scope.request.day())
-            .is_some_and(|day| range != DaySelection::Anchor(day).range())
-        {
-            self.filter.scope = None;
-        }
     }
     fn set_period(&mut self, period: ReportPeriod) {
         self.set_dates(DaySelection::None);
@@ -370,18 +378,14 @@ impl State {
         };
         self.report_view = None;
     }
-    fn context_request(&self) -> Option<&ReportRequest> {
-        self.filter
-            .scope
-            .as_ref()
-            .map(|scope| &scope.request)
-            .filter(|request| request.day().is_none())
-    }
     pub fn report_open(&self) -> bool {
         self.report_open
     }
     pub fn report_symbol(&self) -> &Option<String> {
-        &self.report_symbol
+        match &self.report_symbol {
+            ReportSymbol::FirstOpen => &None,
+            ReportSymbol::Selected(symbol) => symbol,
+        }
     }
     pub fn report_period(&self) -> ReportPeriod {
         self.filter.period
@@ -409,7 +413,7 @@ impl State {
         if self.filter.source == SourceSelection::default() {
             return "Select one or more sources to see their saved trades.".to_owned();
         }
-        let scope = self.report_symbol.as_deref().unwrap_or("any symbol");
+        let scope = self.report_symbol().as_deref().unwrap_or("any symbol");
         let hidden = (self.report_view.as_ref()).map_or(0, |view| view.hidden_by_source_or_scope);
         if let Some(range) = self.filter.applied_dates {
             format!(
@@ -433,7 +437,7 @@ impl State {
         let default_symbol = (!symbol.is_empty()).then(|| symbol.to_owned());
         self.filter.source != SourceFilter::Real.into()
             || self.filter.period != ReportPeriod::All
-            || self.report_symbol != default_symbol
+            || *self.report_symbol() != default_symbol
             || self.filter.applied_dates.is_some()
     }
     pub fn report_layout_revision(&self) -> u64 {
@@ -484,7 +488,7 @@ impl State {
 
     pub fn snapshot(&self) -> Option<ReportSnapshot<'_>> {
         Some(ReportSnapshot::new(
-            self.report_symbol.as_deref(),
+            self.report_symbol().as_deref(),
             self.report_view.as_ref()?,
         ))
     }
@@ -509,6 +513,12 @@ impl State {
             });
         };
         let key = (self.report_generation, self.filter.source, tz);
+        let in_journal = |row: &_| {
+            self.filter
+                .scope
+                .as_ref()
+                .is_none_or(|scope| scope.request.admits_journal_row(row))
+        };
         let days = (self.report_days_key != Some(key)).then(|| {
             (
                 DayIndex::build(
@@ -516,10 +526,7 @@ impl State {
                         .rows
                         .iter()
                         .filter(|row| self.filter.source.admits(row.source))
-                        .filter(|row| {
-                            self.context_request()
-                                .is_none_or(|scope| scope.admits(row, tz))
-                        })
+                        .filter(|row| in_journal(row))
                         .map(|row| &row.trade),
                     tz,
                 ),
@@ -529,13 +536,13 @@ impl State {
         Some(ReportProjection {
             revision: self.revision,
             view: Some(Box::new(
-                ReportView::cut_scoped(
+                ReportView::cut_matching(
                     history,
                     self.filter.period,
                     self.filter.source,
                     range,
                     tz,
-                    self.context_request(),
+                    in_journal,
                 )
                 .with_pnl(pnl),
             )),
@@ -601,14 +608,14 @@ impl State {
     }
     fn reveal(&mut self, symbol: String) -> Effects {
         self.report_open = true;
-        if self.report.is_none() && self.report_symbol.is_none() && !symbol.is_empty() {
-            self.report_symbol = Some(symbol);
+        if matches!(self.report_symbol, ReportSymbol::FirstOpen) {
+            self.report_symbol = ReportSymbol::Selected((!symbol.is_empty()).then_some(symbol));
         }
         self.report_load()
     }
     fn report_load(&self) -> Effects {
         Effects {
-            load: Some(Load::Report(self.report_symbol.clone())),
+            load: Some(Load::Report(self.report_symbol().clone())),
             ..Default::default()
         }
     }
@@ -707,7 +714,7 @@ impl crate::Model for Model {
                 }
             }
             Intent::InstallReport(_) | Intent::InstallLedger(_) => {}
-            Intent::Symbol(symbol) => state.report_symbol = symbol,
+            Intent::Symbol(symbol) => state.report_symbol = ReportSymbol::Selected(symbol),
             Intent::Source(source) => {
                 state.filter.source = source;
                 state.filter.scope = None;

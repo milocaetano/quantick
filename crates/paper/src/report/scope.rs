@@ -110,19 +110,18 @@ impl ReportRequest {
     }
 
     pub fn admits(&self, row: &HistoryRow, tz: TzOffset) -> bool {
+        self.source().admits(row.source)
+            && self.admits_journal_row(row)
+            && self
+                .day()
+                .is_none_or(|day| CivilDate::from_ms(row.trade.closed_ms, tz) == day)
+    }
+
+    /// The journal restriction survives replacing or clearing the requested day.
+    pub fn admits_journal_row(&self, row: &HistoryRow) -> bool {
         match self {
             Self::Session { session, day: None } => row.session.as_ref() == Some(session),
-            Self::Session {
-                session,
-                day: Some(day),
-            } => Self::Day {
-                origin: ReportOrigin::of(session),
-                day: *day,
-            }
-            .admits(row, tz),
-            Self::Day { origin, day } => {
-                of_origin(row, *origin) && CivilDate::from_ms(row.trade.closed_ms, tz) == *day
-            }
+            Self::Session { day: Some(_), .. } | Self::Day { .. } => of_origin(row, self.origin()),
             Self::Tag { origin, tag } => of_origin(row, *origin) && row.tags.contains(tag),
         }
     }

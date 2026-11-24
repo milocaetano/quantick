@@ -12,6 +12,7 @@ use quantick_sim::history;
 use quantick_trading::{ClosedTrade, ExitReason};
 use rust_decimal::Decimal;
 
+mod date_context;
 mod source_selection;
 
 #[test]
@@ -337,7 +338,10 @@ fn the_report_reports_itself_as_data() {
         problem_rows: 0,
         sessions: Default::default(),
     });
-    paper.report_state_mut().report_symbol = Some("WINV26".to_owned());
+    Model::update(
+        paper.report_state_mut(),
+        Intent::Symbol(Some("WINV26".to_owned())),
+    );
 
     // The pills in force, no dates picked.
     paper.report_state_mut().filter.period = ReportPeriod::All;

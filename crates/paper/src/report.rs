@@ -459,12 +459,26 @@ impl ReportView {
         tz: TzOffset,
         scope: Option<&scope::ReportRequest>,
     ) -> Self {
+        Self::cut_matching(history, period, source, range, tz, |row| {
+            scope.is_none_or(|scope| scope.admits(row, tz))
+        })
+    }
+
+    /// Apply a journal restriction independently of the currently selected dates.
+    pub fn cut_matching(
+        history: &LoadedHistory,
+        period: ReportPeriod,
+        source: impl Into<SourceSelection>,
+        range: Option<DateRange>,
+        tz: TzOffset,
+        admits: impl Fn(&HistoryRow) -> bool,
+    ) -> Self {
         let source = source.into();
         let in_scope: Vec<&HistoryRow> = history
             .rows
             .iter()
             .filter(|row| source.admits(row.source))
-            .filter(|row| scope.is_none_or(|scope| scope.admits(row, tz)))
+            .filter(|row| admits(row))
             .collect();
         let hidden_by_source_or_scope = history.rows.len().saturating_sub(in_scope.len());
         let anchor_ms = in_scope.last().map(|row| row.trade.closed_ms);

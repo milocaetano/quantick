@@ -45,7 +45,7 @@ pub fn report(
         window: state
             .applied_dates()
             .map_or_else(|| state.report_period().phrase(), |range| range.label()),
-        scope: state.report_scope().map(|scope| scope.title.clone()),
+        scope: state.report_scope_label().map(str::to_owned),
         trade_count: view.map_or(0, |view| view.rows.len()),
         unreadable_files: state
             .report()
