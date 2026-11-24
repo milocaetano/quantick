@@ -351,10 +351,25 @@ impl BrokerDesk {
         account.park_broker();
     }
 
+    /// Keep the venue where the route wants it, held while it reconnects.
+    fn place(&mut self, port: &mut dyn AccountsPort) {
+        self.place_venue(port);
+        let held = self.route.reconnecting_since().is_some();
+        if let Some(account) = self.home.and_then(|home| port.account_mut(home)) {
+            account.hold_broker(held);
+        }
+    }
+
+    /// The account the venue sits in, if it sits in one.
+    #[must_use]
+    pub fn home_account<'a>(&self, port: &'a dyn AccountsPort) -> Option<&'a PaperAccount> {
+        port.account(self.home?)
+    }
+
     /// Keep the venue where the route wants it: inside the active chart's
     /// account while armed; parked where it was while exposure stays open;
     /// unattached once that account is idle.
-    fn place(&mut self, port: &mut dyn AccountsPort) {
+    fn place_venue(&mut self, port: &mut dyn AccountsPort) {
         let active = port.active_tab();
         if self.route.route().is_broker() {
             if self.home == Some(active) {

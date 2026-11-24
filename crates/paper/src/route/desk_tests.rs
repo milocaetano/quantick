@@ -183,10 +183,30 @@ fn a_reconnecting_route_says_so_and_refuses_every_order() {
             );
         }
     }
+    let account = tabs.active();
     assert!(
-        tabs.active().broker_routed(),
+        account.broker_routed(),
         "the venue stays where the route is"
     );
+    assert_eq!(
+        account.entry_block(),
+        Some(crate::account::RECONNECTING_BLOCK)
+    );
+    assert!(
+        !account.entry_ready(),
+        "the toolbar and the ticket both refuse"
+    );
+    let blocked = [VenueEvent::Rejected(RejectReason::Blocked(
+        crate::account::RECONNECTING_BLOCK,
+    ))];
+    let venue = account.venue_mut();
+    assert_eq!(
+        venue.submit(OrderIntent::market(Side::Buy, Decimal::ONE)),
+        blocked,
+        "the window's order meets the route's words"
+    );
+    assert_eq!(venue.flatten(), blocked);
+    assert_eq!(venue.cancel(OrderId(1)), blocked);
 }
 
 #[test]
@@ -204,6 +224,7 @@ fn a_link_back_on_the_same_account_resumes_the_route_with_a_toast() {
         Some("DEMO: reconnected to the broker, orders go there again")
     );
     assert!(tabs.active().broker_routed());
+    assert_eq!(tabs.active().entry_block(), None, "orders flow again");
     assert_eq!(desk.write_block(&tabs, Actor::Trader, false), None);
     let sheet = desk.sheet(&tabs, LIVE, None, 40_000);
     assert_eq!(sheet.notice.text, "XP 51234567 · DEMO");

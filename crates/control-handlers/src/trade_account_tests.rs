@@ -275,7 +275,7 @@ fn the_calls_reach_the_route_session_through_its_call() {
 }
 
 #[test]
-fn a_reconnecting_route_refuses_every_broker_order_as_retryable() {
+fn a_reconnecting_route_refuses_every_broker_order() {
     let mut window = RouteWindow::demo();
     window.allow_agent_orders = true;
     let mut access = FakeAccess::with_budget(0);
@@ -303,6 +303,9 @@ fn a_reconnecting_route_refuses_every_broker_order_as_retryable() {
         .expect_err("nothing reaches the broker while it reconnects");
         assert_eq!(route_code(&refused), Some("route.reconnecting"));
         assert_eq!(refused.code.as_str(), codes::CAPABILITY_UNAVAILABLE);
-        assert!(refused.retryable, "nothing was sent, so a retry is safe");
+        assert!(
+            !refused.retryable,
+            "a retry past the grace would fill on the simulator"
+        );
     }
 }

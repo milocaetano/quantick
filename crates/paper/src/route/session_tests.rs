@@ -55,6 +55,7 @@ impl RouteHost for Host {
 struct Wiring {
     built: usize,
     revived: usize,
+    revived_for: Option<String>,
     severed: bool,
     script: Option<Rc<RefCell<Script>>>,
 }
@@ -79,8 +80,10 @@ impl quantick_trading::BrokerConnector for Connector {
     fn sever(&mut self) {
         self.wiring.borrow_mut().severed = true;
     }
-    fn revive(&mut self, _symbol: &str) {
-        self.wiring.borrow_mut().revived += 1;
+    fn revive(&mut self, symbol: &str) {
+        let mut wiring = self.wiring.borrow_mut();
+        wiring.revived += 1;
+        wiring.revived_for = Some(symbol.to_owned());
     }
 }
 
@@ -354,4 +357,26 @@ fn a_broker_request_after_the_link_is_lost_revives_what_runs_beside_the_venue() 
     session.press(&mut host, RoutePress::OpenList);
     assert_eq!(wiring.borrow().revived, 4, "so does opening the list");
     assert_eq!(wiring.borrow().built, 1, "the same venue, waiting");
+}
+
+#[test]
+fn a_reconnecting_route_revives_for_the_chart_its_venue_sits_in() {
+    let (mut session, wiring) = session(Some(TradeMode::Demo), None);
+    let mut host = Host::new(LIVE);
+    session
+        .request(
+            &mut host,
+            RouteRequest::new(Route::Demo, Actor::Trader, None),
+        )
+        .expect("DEMO arms for the trader");
+    let script = wiring.borrow().script.clone().expect("built");
+    script.borrow_mut().link = Some(LinkState::Lost);
+    session.frame(&mut host);
+    assert_eq!(wiring.borrow().revived_for.as_deref(), Some("WINZ26"));
+    // The trader switches to a tab with no chart: the venue is unattached
+    // until a chart takes it again, and nothing names a symbol to relaunch.
+    host.tabs.active = 3;
+    host.now_ms = session::REVIVE_EVERY_MS;
+    session.frame(&mut host);
+    assert_eq!(wiring.borrow().revived, 1, "no chart, no relaunch");
 }

@@ -135,7 +135,17 @@ impl BrokerSession {
             return;
         }
         self.revived_ms = Some(now_ms);
-        self.ensure_venue(host);
+        // The venue's own account, not the active chart's: the trader may
+        // have switched tabs while the link was down.
+        let Some(account) = self.desk.home_account(host) else {
+            return;
+        };
+        if account
+            .broker()
+            .is_some_and(|venue| venue.link_state() != LinkState::Up)
+        {
+            self.connector.revive(account.symbol());
+        }
     }
 
     /// Carry out a press on the route block or the toolbar notice. Opening

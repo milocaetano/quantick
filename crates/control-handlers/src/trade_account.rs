@@ -45,9 +45,7 @@ pub fn refusal_error(refusal: Refusal) -> ControlError {
         Refusal::ExposureNeedsChoice => codes::INVALID_REQUEST,
         _ => codes::CAPABILITY_UNAVAILABLE,
     };
-    // Nothing was sent while reconnecting: the same call is safe to retry.
-    let retryable = refusal == Refusal::Reconnecting;
-    let mut error = known_error(code, refusal.sentence(), retryable);
+    let mut error = known_error(code, refusal.sentence(), false);
     error.context.details = Some(json!({ "route_code": refusal.code() }));
     error
 }

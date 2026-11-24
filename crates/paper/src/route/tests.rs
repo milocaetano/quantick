@@ -229,6 +229,27 @@ fn a_link_lost_past_the_grace_disarms_without_closing_anything() {
 }
 
 #[test]
+fn leaving_while_reconnecting_never_flattens_on_a_dead_link() {
+    let (mut route, facts) = armed_real();
+    route.on_notice(&VenueNotice::LinkLost, 9_000);
+    let exposed = RouteFacts {
+        link_up: false,
+        exposure: true,
+        ..facts
+    };
+    assert_eq!(
+        route.select_sim(&exposed, Some(Leave::FlattenFirst)),
+        Err(Refusal::Reconnecting)
+    );
+    assert_eq!(route.route(), Route::Real, "still reconnecting");
+    assert_eq!(
+        route.select_sim(&exposed, Some(Leave::LeaveAtBroker)),
+        Ok(RouteChange::ToSim { flatten: false })
+    );
+    assert_eq!(route.reconnecting_since(), None);
+}
+
+#[test]
 fn a_link_back_on_another_account_disarms() {
     let (mut route, facts) = armed_real();
     route.on_notice(&VenueNotice::LinkLost, 9_000);

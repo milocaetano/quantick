@@ -220,7 +220,7 @@ impl Refusal {
                 "orders left at the broker answer only the trader's own hand - close them in the window, or arm the account again"
             }
             Self::Reconnecting => {
-                "the link with the broker is down - reconnecting; nothing was sent, retry once it is back"
+                "the link with the broker is down - reconnecting; nothing was sent"
             }
         }
     }
@@ -327,7 +327,6 @@ impl AccountRoute {
         self.disarmed
     }
 
-    /// When the armed route's link was lost, while it is reconnecting.
     #[must_use]
     pub fn reconnecting_since(&self) -> Option<i64> {
         self.reconnecting_since
@@ -396,6 +395,11 @@ impl AccountRoute {
             (true, None) => {
                 self.leaving = true;
                 return Err(Refusal::ExposureNeedsChoice);
+            }
+            // A flatten on a dead link would be refused and the route left
+            // anyway, with the position still open at the broker.
+            (true, Some(Leave::FlattenFirst)) if self.reconnecting_since.is_some() => {
+                return Err(Refusal::Reconnecting);
             }
             (true, Some(Leave::FlattenFirst)) => true,
             _ => false,
