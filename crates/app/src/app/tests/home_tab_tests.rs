@@ -737,8 +737,10 @@ fn home_runs_feeds_stands_chart_keys_down_and_restores_the_same_canvas() {
     assert!(scene_control_ids(&scene).contains(&flow));
 }
 
+/// Squeezed tabs fit nine markets at 1400 beside the label; twenty-four at
+/// the last squeeze still overflow it.
 #[test]
-fn nine_markets_at_1400_leave_only_the_logo_and_few_bring_the_label_back() {
+fn a_full_strip_at_1400_leaves_only_the_logo_and_few_bring_the_label_back() {
     let (mut app, _, _, _) = test_app();
     let ctx = egui::Context::default();
     frame(&mut app, &ctx);
@@ -751,7 +753,17 @@ fn nine_markets_at_1400_leave_only_the_logo_and_few_bring_the_label_back() {
     for symbol in ["ETHUSDT"; 8] {
         ends.push(open_second_tab(&mut app, &ctx, symbol));
     }
-    assert_eq!(app.runtime.tabs.len(), 9);
+    frame(&mut app, &ctx);
+    let squeezed = frame(&mut app, &ctx);
+    assert!(
+        painted_text_center(&squeezed, "uan").is_some(),
+        "nine squeezed tabs fit"
+    );
+    assert!(app.chrome.title_bar.strip.overflow.is_none());
+    for symbol in ["ETHUSDT"; 15] {
+        ends.push(open_second_tab(&mut app, &ctx, symbol));
+    }
+    assert_eq!(app.runtime.tabs.len(), 24);
     let output = frame(&mut app, &ctx);
     let output_again = frame(&mut app, &ctx);
     assert_eq!(home_rect(&app).width(), crate::tabstrip::HOME_MIN_WIDTH_PX);
@@ -769,7 +781,7 @@ fn nine_markets_at_1400_leave_only_the_logo_and_few_bring_the_label_back() {
     let at = home_rect(&app).center();
     click_sized(&mut app, &ctx, WINDOW, at);
     assert!(on_home(&app));
-    assert_eq!(app.runtime.tabs.len(), 9);
+    assert_eq!(app.runtime.tabs.len(), 24);
     app.chrome.title_bar.surface.show_market();
 
     // Closing markets, and a wider window, recompute it.
