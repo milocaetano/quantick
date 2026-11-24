@@ -190,21 +190,21 @@ pub const fn tab_ink(lit: bool) -> Token {
     }
 }
 
-/// How much of the workspace's colour tints the toolbar capsule's fill; its
-/// border takes the colour whole (the trader's pick of 2026-11-12, option 7).
+/// How much of the workspace's colour tints the toolbar workspace buttons'
+/// fill; their borders take the colour whole (the trader's pick of 2026-11-12, option 7).
 pub const WORKSPACE_TINT: f32 = 0.12;
 /// The tint a toolbar workspace button takes under the pointer or while its
 /// popover is open (design A-3 of 2026-11-23).
 pub const WORKSPACE_HOVER_TINT: f32 = 0.28;
-/// The bar in the workspace's colour at the capsule's left edge, cut by its
-/// corner (the trader's ask of 2026-11-13).
+/// The bar in the workspace's colour at the workspace button's left edge, cut
+/// by its corner (the trader's ask of 2026-11-13).
 pub const WORKSPACE_CAPSULE_BAR_PT: f32 = 4.0;
 /// The least the open tab's symbol, inked in its workspace's colour, keeps
 /// against the tab's sheet: the graphics floor of WCAG 1.4.11 for a heavy
 /// 13 pt symbol. Below it the symbol keeps the tab's normal ink.
 pub const WORKSPACE_SYMBOL_CONTRAST: f32 = 3.0;
 
-/// The capsule's fill, `base`, tinted `share` of the way toward the
+/// A workspace button's fill, `base`, tinted `share` of the way toward the
 /// workspace's `colour`; both straight sRGB, the base's alpha kept.
 #[must_use]
 pub fn workspace_tint(base: [u8; 4], colour: [u8; 3], share: f32) -> [u8; 4] {

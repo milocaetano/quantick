@@ -140,9 +140,9 @@ pub fn draw(
         None if lit => hovered,
         None => palette.control(),
     };
-    let edge: Option<egui::Stroke> = model.colour.map(|colour| {
+    let edge = model.colour.map(|colour| {
         let [r, g, b] = colour.rgb(theme.dark);
-        (stroke.width, egui::Color32::from_rgb(r, g, b)).into()
+        egui::Stroke::new(stroke.width, egui::Color32::from_rgb(r, g, b))
     });
     let border = edge.unwrap_or(stroke);
     let (layout_w, name_w) = widths(ui, model);

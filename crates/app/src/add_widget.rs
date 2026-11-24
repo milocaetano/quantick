@@ -12,7 +12,6 @@ use quantick_workspace::canvas::{AddRow, WidgetSpec};
 use crate::theme;
 use crate::toolbar::DrawnControl;
 
-/// The + button's side.
 pub(crate) const BUTTON_PX: f32 = 30.0;
 /// The menu's width, a row's height and a miniature's size.
 const MENU_PX: f32 = 280.0;

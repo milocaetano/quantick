@@ -682,10 +682,5 @@ fn a_lone_chart_miniature_wears_a_title_bar() {
     assert_eq!(drawn.iter().filter(|mark| bar(mark)).count(), 1);
     let short = Rect::new(10.0, 20.0, 40.0, TITLE_BAR_MIN_PT - 1.0);
     let bare = miniature(tree, short, None, [0, 0, 0, 255], theme);
-    let inks = colour_inks(
-        [128; 3],
-        PremultipliedRgba::from_premultiplied([0, 0, 0, 255]),
-        true,
-    );
-    assert_eq!(bare.len(), thumbnail(tree, short, &inks).len());
+    assert!(!bare.iter().any(bar));
 }
