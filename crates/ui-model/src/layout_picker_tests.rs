@@ -665,3 +665,27 @@ fn the_read_names_every_cell_with_its_marks() {
     assert_eq!(read.current_id.as_deref(), Some("time+flow"));
     assert_eq!(read.undo_id, None);
 }
+
+/// A lone chart in the toolbar miniature reads as a window, not a plain
+/// rectangle: its frame carries a title-bar line under the top edge; a pane
+/// too short for one goes without.
+#[test]
+fn a_lone_chart_miniature_wears_a_title_bar() {
+    let theme = ResolvedTheme::bundled(true);
+    let at = Rect::new(10.0, 20.0, 40.0, 14.0);
+    let tree = preset("time").unwrap().tree;
+    let drawn = miniature(tree, at, None, [0, 0, 0, 255], theme);
+    let bar = |mark: &Mark| {
+        matches!(mark, Mark::Fill(Plate { at: line, .. })
+            if *line == Rect::new(10.0, 23.0, 40.0, 1.0))
+    };
+    assert_eq!(drawn.iter().filter(|mark| bar(mark)).count(), 1);
+    let short = Rect::new(10.0, 20.0, 40.0, TITLE_BAR_MIN_PT - 1.0);
+    let bare = miniature(tree, short, None, [0, 0, 0, 255], theme);
+    let inks = colour_inks(
+        [128; 3],
+        PremultipliedRgba::from_premultiplied([0, 0, 0, 255]),
+        true,
+    );
+    assert_eq!(bare.len(), thumbnail(tree, short, &inks).len());
+}

@@ -140,7 +140,6 @@ pub fn draw(ctx: &egui::Context, model: &mut ToolbarModel) -> Vec<ToolbarAction>
                 0.0
             };
             let fixed = ui.available_width() - rec_width - WINDOW_MENU_RUN_PX + W_PICKER;
-            let fixed = fixed - crate::add_widget::BUTTON_PX - crate::add_widget::GAP_PX;
             let mut plan = collapse_plan(fixed - capsule::width(ui, &model.capsule), W_TRADE);
             if !plan.trade_inline {
                 model.capsule.compact = true;
@@ -197,12 +196,6 @@ pub fn draw(ctx: &egui::Context, model: &mut ToolbarModel) -> Vec<ToolbarAction>
                     }
                     row_separator(ui, SEPARATOR_AIR_PX - DOCK_INSET_PX, SEPARATOR_AIR_PX);
                     *model.capsule_rects = capsule::draw(ui, &model.capsule, &mut actions);
-                    ui.add_space(crate::add_widget::GAP_PX);
-                    let add = crate::add_widget::button(ui, model.capsule.add_open);
-                    model.capsule_rects.add = Some(add.rect);
-                    if add.clicked() {
-                        actions.push(ToolbarAction::ToggleAddMenu);
-                    }
                 });
             });
         });

@@ -904,7 +904,31 @@ pub fn miniature(
     let rgb = colour.map(|colour| colour.rgb(theme.dark));
     let rgb = rgb.unwrap_or([grey[0], grey[1], grey[2]]);
     let ground = PremultipliedRgba::from_premultiplied(ground);
-    thumbnail(tree, at, &colour_inks(rgb, ground, theme.dark))
+    let inks = colour_inks(rgb, ground, theme.dark);
+    let mut marks = thumbnail(tree, at, &inks);
+    marks.extend(title_bars(tree, at, &inks));
+    marks
+}
+
+/// A miniature pane at least this tall wears a title bar.
+pub const TITLE_BAR_MIN_PT: f32 = 9.0;
+/// The title bar's line, this far under the pane's top.
+const TITLE_BAR_DROP_PT: f32 = 3.0;
+
+/// One title-bar line per pane tall enough, in the pane's edge ink, so each
+/// pane reads as a window, a lone chart included.
+fn title_bars(tree: &PaneTree, at: Rect, inks: &ColourInks) -> Vec<Mark> {
+    let kinds = tree.panes();
+    let area = CanvasRect::new(at.x, at.y, at.w, at.h);
+    let window = |(slot, pane): (_, CanvasRect)| {
+        let (x0, y0) = (pane.x.round(), pane.y.round());
+        let (x1, y1) = ((pane.x + pane.w).round(), (pane.y + pane.h).round());
+        let flow = (kinds.iter()).any(|(held, kind)| *held == slot && *kind == PaneKind::Flow);
+        let ink = if flow { inks.ring } else { inks.time_edge };
+        let line = Rect::new(x0, y0 + TITLE_BAR_DROP_PT, x1 - x0, 1.0);
+        (y1 - y0 >= TITLE_BAR_MIN_PT).then(|| fill(line, 0.0, ink))
+    };
+    tree.rects(area).into_iter().filter_map(window).collect()
 }
 
 /// The picker as the `canvas.layout.picker` read says it.
