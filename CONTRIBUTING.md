@@ -32,12 +32,14 @@ Every change follows the same loop — including changes by the maintainer:
 
 ## Verification loop (mandatory)
 
-Code commits require all four below. For prose-only changes and evidence reuse,
+Code commits require formatting, linting, building and testing. For prose-only changes and evidence reuse,
 follow [the delivery contract](docs/workflow/delivery.md#validation-follows-changed-inputs).
 Full final-head CI remains mandatory for every PR:
 
 ```sh
 cargo fmt --all -- --check
+# Macro-generated module declarations require explicit rustfmt inputs.
+find crates/control-schema/src crates/control-handlers/src -name '*.rs' -type f -exec rustfmt --edition 2024 --check {} +
 cargo clippy --workspace --all-targets
 cargo build --workspace
 cargo test --workspace
