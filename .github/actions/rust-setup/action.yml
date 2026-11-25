@@ -81,12 +81,12 @@ runs:
     - uses: Swatinem/rust-cache@v2
       with:
         shared-key: ${{ inputs.cache-key }}
-        save-if: ${{ inputs.save-cache == 'true' }}
-        # A red job still saves what it compiled. One serial job could afford
-        # not to: a cold cache cost it one dependency build. Several parallel
-        # jobs cannot — each pays that build in full, so a failure that saved
-        # nothing would leave every job on the next run cold as well, and a
-        # branch that went red once would stay slow until it went green. The
-        # dependency graph a red run compiled is the same graph the next run
-        # needs; nothing about a failing test makes those artifacts wrong.
-        cache-on-failure: ${{ inputs.save-cache }}
+        # Only a push to main writes a cache. A pull request restores main's
+        # by key prefix and never saves: a PR that changed a manifest and went
+        # red before its build once saved a 107 MB shell under its own key,
+        # every later run hit that shell exactly, never re-saved, and rebuilt
+        # ~300 dependencies cold (#1224: windows-app-tests 19 min against 7).
+        # A red job never saves either, for the same reason on main: what it
+        # pruned and wrote is whatever it reached before failing.
+        save-if: ${{ inputs.save-cache == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+        cache-on-failure: "false"

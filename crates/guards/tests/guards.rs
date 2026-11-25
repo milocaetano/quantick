@@ -528,6 +528,7 @@ fn every_ratchet_fails_to_measure_a_tree_it_cannot_scan() {
 fn the_report_says_failed_rather_than_zero_when_a_scan_fails() {
     let missing = scratch_dir::ScratchDir::new("report-failed-scan");
     let output = Command::new(env!("CARGO_BIN_EXE_quantick-guards"))
+        .env_remove("QUANTICK_GUARDS_BASE_ROOT")
         .env("QUANTICK_GUARDS_ROOT", missing.path())
         .arg("--report")
         .output()
