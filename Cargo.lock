@@ -3089,6 +3089,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "toml 0.8.20",
 ]
 
 [[package]]

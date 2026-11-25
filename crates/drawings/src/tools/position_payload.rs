@@ -324,7 +324,11 @@ impl DrawingPayload for PositionPayload {
         let finite_span = data
             .span_bars
             .is_none_or(|[left, right]| left.is_finite() && right - left >= MIN_WIDTH_BARS);
-        if data.projected_offset.is_some_and(|offset| !offset.is_finite()) || !finite_span {
+        if data
+            .projected_offset
+            .is_some_and(|offset| !offset.is_finite())
+            || !finite_span
+        {
             return false;
         }
         self.take_look(look);

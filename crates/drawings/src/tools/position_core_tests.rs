@@ -1,8 +1,8 @@
 use super::*;
-use crate::tools::position_payload::{DEFAULT_RATIO, PositionPayload, set_plan_ratio};
-use crate::tools::position_text::plan_plate;
 use crate::ChartPoint;
 use crate::chart::PriceScale;
+use crate::tools::position_payload::{DEFAULT_RATIO, PositionPayload, set_plan_ratio};
+use crate::tools::position_text::plan_plate;
 
 /// The plans these geometry tests measure were drawn at 1 : 2.
 fn two_to_one() -> PositionPayload {
@@ -125,7 +125,10 @@ fn dragging_the_projected_leg_pins_it_and_leaves_the_rest() {
     let dragged = dragged.as_any().downcast_ref::<PositionPayload>().unwrap();
     assert!((dragged.projected_offset.unwrap() - 25.0).abs() < 1e-9);
     // Stop 90, entry 100, target pinned at 125: the plan now reads 1 : 2.5.
-    assert!((dragged.ratio - 2.5).abs() < 1e-9, "the ratio follows the pin");
+    assert!(
+        (dragged.ratio - 2.5).abs() < 1e-9,
+        "the ratio follows the pin"
+    );
     assert!(dragged.custom());
     // Pulled across the entry, the target stays where it was.
     let crossed = drag_payload(
@@ -193,10 +196,7 @@ fn placed_plan() -> crate::Drawings<crate::DrawingTool> {
         tool,
         points: vec![ChartPoint::at(10.0, 100.0), ChartPoint::at(30.0, 95.0)],
         band: crate::DrawingBand::Price,
-        opening: crate::NewDrawing::explicit(
-            DrawingStyle::default(),
-            Box::new(two_to_one()),
-        ),
+        opening: crate::NewDrawing::explicit(DrawingStyle::default(), Box::new(two_to_one())),
         author: None,
         name: None,
         text: None,
@@ -258,12 +258,7 @@ fn a_flat_plan_is_refused_before_it_is_placed() {
 fn the_content_bounds_reserve_the_projected_zone_on_both_sides() {
     let anchors = PxRect::from_min_max(pos2(100.0, 200.0), pos2(300.0, 250.0));
     let chart = PxRect::from_min_max(pos2(0.0, 0.0), pos2(1000.0, 1000.0));
-    let bounds = LONG.content_bounds(
-        &two_to_one(),
-        anchors,
-        chart,
-        crate::TextSpacing::default(),
-    );
+    let bounds = LONG.content_bounds(&two_to_one(), anchors, chart, crate::TextSpacing::default());
     assert_eq!((bounds.min.y, bounds.max.y), (100.0, 350.0));
 }
 
@@ -277,10 +272,7 @@ fn a_plan_names_its_legs_for_a_readback() {
         (110.0, 80.0, Measured::Target)
     );
     let rectangle = crate::DrawingTool::by_id("rectangle").unwrap();
-    assert_eq!(
-        position_plan(rectangle, &anchors, &two_to_one()),
-        None
-    );
+    assert_eq!(position_plan(rectangle, &anchors, &two_to_one()), None);
 }
 
 #[test]
@@ -556,7 +548,10 @@ fn an_edge_drag_changes_the_width_and_no_leg_price() {
         Side::Long,
     )
     .unwrap();
-    let narrowest = narrowest.as_any().downcast_ref::<PositionPayload>().unwrap();
+    let narrowest = narrowest
+        .as_any()
+        .downcast_ref::<PositionPayload>()
+        .unwrap();
     assert_eq!(narrowest.span_bars, Some([40.0 - MIN_WIDTH_BARS, 40.0]));
     assert_eq!(plan_of(Side::Long, &anchors, narrowest), Some(before));
 }

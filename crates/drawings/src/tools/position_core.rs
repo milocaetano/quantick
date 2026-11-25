@@ -1,4 +1,4 @@
-﻿//! The position drawing the long and short tools share: an entry, a stop
+//! The position drawing the long and short tools share: an entry, a stop
 //! zone and a target zone, planned on the chart and never sent.
 //!
 //! Two anchors hold the trader's measurement — the entry where the drag
@@ -367,9 +367,15 @@ fn paint_leg_plates(
     let center = (frame.left + frame.right) / 2.0;
     let beyond = |y: f32| {
         if y < frame.entry_y {
-            (pos2(center, (y - LABEL_INSET_PX).max(top)), Align2::CENTER_BOTTOM)
+            (
+                pos2(center, (y - LABEL_INSET_PX).max(top)),
+                Align2::CENTER_BOTTOM,
+            )
         } else {
-            (pos2(center, (y + LABEL_INSET_PX).min(bottom)), Align2::CENTER_TOP)
+            (
+                pos2(center, (y + LABEL_INSET_PX).min(bottom)),
+                Align2::CENTER_TOP,
+            )
         }
     };
     let price = quantick_engine::display::display_f64;

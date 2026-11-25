@@ -1,4 +1,5 @@
 use super::*;
+use quantick_drawings::bar_placement::POPOVER_GAP_PX;
 
 const PLAIN: Capabilities = Capabilities {
     stroke_width: true,
@@ -7,6 +8,7 @@ const PLAIN: Capabilities = Capabilities {
     settings: true,
     sharing: true,
     magnet: true,
+    position: false,
     draw_again: false,
 };
 
@@ -35,16 +37,18 @@ fn the_bar_has_no_overflow_menu() {
     // Every bar `capabilities` can ask for: width and glyph size are one
     // or the other, everything else may come or go. The fullest is an
     // assistant's pointer-anchored object, author chip and all.
-    let functional = (0..64_u8)
+    let functional = (0..128_u8)
         .map(|bits| {
             let caps = Capabilities {
                 stroke_width: bits & 1 != 0,
-                glyph_size: bits & 1 == 0,
+                // A position is drawn with strokes: it has no type size.
+                glyph_size: bits & 1 == 0 && bits & 64 == 0,
                 authored: bits & 2 != 0,
                 settings: bits & 4 != 0,
                 sharing: bits & 8 != 0,
                 magnet: bits & 16 != 0,
                 draw_again: bits & 32 != 0,
+                position: bits & 64 != 0,
             };
             slots(caps)
                 .into_iter()
@@ -91,6 +95,7 @@ fn an_unsupported_property_is_absent_not_disabled() {
         settings: true,
         sharing: true,
         magnet: true,
+        position: false,
         draw_again: false,
     });
     assert!(!glyph_tool.contains(&Slot::Width));
@@ -141,6 +146,7 @@ fn the_bar_is_one_row_of_touch_targets() {
             settings: false,
             sharing: true,
             magnet: true,
+            position: false,
             draw_again: true,
         },
     ] {

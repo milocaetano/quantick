@@ -101,7 +101,7 @@ pub use position_core::{
 pub use position_payload::{
     DEFAULT_RATIO as POSITION_DEFAULT_RATIO, FACTORY_STOP_RGB, FACTORY_TARGET_RGB,
     FACTORY_ZONE_OPACITY_PCT, MAX_ZONE_OPACITY_PCT, PositionPayload, PositionRefusal,
-    RATIO_PRESETS as POSITION_RATIO_PRESETS, parse_rgb_hex, preset_of as position_preset_of,
+    RATIO_PRESETS as POSITION_RATIO_PRESETS, Rgb, parse_rgb_hex, preset_of as position_preset_of,
     rgb_hex, set_plan_ratio,
 };
 pub use rectangle::{RectanglePayload, TOOL_ID as RECTANGLE_TOOL_ID};
