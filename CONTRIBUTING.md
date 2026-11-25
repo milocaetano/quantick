@@ -74,8 +74,10 @@ Shrinking aggregates need no baseline edit. Existing fragments cannot be edited;
 downward baselines and deletes the consumed fragments. Folding is a plain rewrite;
 restore affected baseline and fragment files from Git after an interrupted write.
 The per-file size ceiling and context budget remain absolute. Update a branch with
-`sh tools/merge_main.sh`: it regenerates the hook registry instead of leaving
-it for a hand merge.
+`sh tools/merge_main.sh`: it regenerates every generated file (hook registry,
+control-plane inventory and matrices, `schemas/control`) instead of leaving
+them for a hand merge. `sh tools/verify.sh` runs guards, the affected tests and
+the PR's CI in the foreground and prints one verdict.
 
 ## Commit style
 
