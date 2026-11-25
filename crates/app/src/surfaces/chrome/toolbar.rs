@@ -35,6 +35,7 @@ impl crate::surfaces::View<Model> for View {
                 colour: capsule.colour,
                 unsaved: capsule.unsaved,
                 layout_unsaved: capsule.marks.layout_unsaved,
+                revert: &capsule.revert,
                 menu_open: capsule.menu_open,
                 popover_open: popovers.layout_open,
                 add_open: popovers.add_open,

@@ -196,10 +196,14 @@ snapshot reads it as `auto_save`.
   auto save on, journals the setting and each save that landed, and answers
   `workspace.write_failed` naming them (`auto_save`, `saved`), the failed tab
   marked and retried.
-- There is no Revert: `workspace.revert` answers `workspace.revert_removed`,
-  naming `workspace.save_to` and `workspace.autosave.set`. A workspace switch
-  with edits held asks first; Switch without saving keeps the "changes
-  dropped" toast.
+- Revert: while the tab holds layout edits, an arrow right of the floppy
+  (`workspace.revert`) puts it back on its workspace as saved, timeframes the
+  workspace names none for back to the ones the tab opened with; its hover
+  lists what comes back. Nothing is written and drawings stay. The slot then
+  shows a restore arrow in the accent (`workspace.revert.undo`) until a save
+  or a switch. No key does it: Esc and Ctrl+Z stay the trader's reflexes
+  (trader and UX vote, 2026-11-24). A workspace switch with edits held asks
+  first; Switch without saving keeps the "changes dropped" toast.
 - Closing a tab, a torn-off window or the app with edits held asks, one tab at
   a time: "Close WINZ26" — "This tab changed its layout since Scalp was last
   saved (RSI, CVD, 3 drawings). Saving also changes WDOZ26." — Cancel /

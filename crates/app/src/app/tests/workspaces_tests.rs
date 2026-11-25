@@ -146,6 +146,7 @@ fn opening_a_workspace_replaces_the_tab_strip_instead_of_growing_it() {
                 protected_default: false,
                 workspace_parked: Default::default(),
                 workspace_copy: None,
+                workspace_settled: None,
                 orderflow_panel: Default::default(),
             }],
             None,
@@ -678,6 +679,7 @@ fn a_restored_workspace_puts_the_window_back() {
                 protected_default: false,
                 workspace_parked: Default::default(),
                 workspace_copy: None,
+                workspace_settled: None,
                 orderflow_panel: Default::default(),
             }],
             Some(ui_state::SavedChrome {

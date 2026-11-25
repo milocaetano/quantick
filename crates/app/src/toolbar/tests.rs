@@ -6,6 +6,7 @@ fn test_capsule() -> quantick_ui_model::chrome_toolbar::Capsule {
         workspace: "Default".into(),
         colour: None,
         unsaved: false,
+        revert: quantick_ui_model::chrome_toolbar::RevertSlot::Empty,
         marks: Default::default(),
         menu_open: false,
         door_open: false,

@@ -28,8 +28,8 @@ use quantick_control_schema::workspace_book::{
     WorkspaceTabInput, tab_close_descriptor, tab_workspace_set_descriptor,
     workspace_autosave_set_descriptor, workspace_colour_set_descriptor,
     workspace_delete_descriptor, workspace_list_descriptor, workspace_new_descriptor,
-    workspace_rename_descriptor, workspace_revert_descriptor, workspace_save_as_descriptor,
-    workspace_save_to_descriptor,
+    workspace_rename_descriptor, workspace_revert_descriptor, workspace_revert_undo_descriptor,
+    workspace_save_as_descriptor, workspace_save_to_descriptor,
 };
 use quantick_control_schema::workspace_colour::{
     ColourWarningDto, workspace_colour_palette_descriptor, workspace_colour_popover_descriptor,
@@ -58,6 +58,7 @@ use crate::tabs::TabDirectory;
 pub mod cell_menu;
 pub mod colour_popover;
 pub mod manage;
+mod revert;
 pub mod switch;
 pub use switch::{menu_prompt, prompt_answer};
 
@@ -286,6 +287,8 @@ pub fn apply_row_command<H: WorkspaceOwner + ?Sized, A: NotifyAccess>(
                 text::saved_toast(&saved.workspace, &host.tab_symbols(&saved.tabs_changed))
             })
         }),
+        WorkspaceCommand::Revert => revert::revert_journaled(host, &mut to, tab).map(|_| None),
+        WorkspaceCommand::UndoRevert => revert::undo_journaled(host, &mut to, tab).map(|_| None),
         WorkspaceCommand::SetAutosave(on) => {
             autosave_journaled(host, &mut to, on, tab).map(|(_, saved)| saved_notes(host, &saved))
         }
@@ -358,7 +361,14 @@ where
     registry
         .register_outside_replay(workspace_save_as_descriptor(), through_workspaces!(save_as))?;
     registry.register_outside_replay(workspace_new_descriptor(), through_workspaces!(new))?;
-    registry.register_outside_replay(workspace_revert_descriptor(), through_workspaces!(revert))?;
+    registry.register_outside_replay(
+        workspace_revert_descriptor(),
+        through_workspaces!(revert::revert),
+    )?;
+    registry.register_outside_replay(
+        workspace_revert_undo_descriptor(),
+        through_workspaces!(revert::undo),
+    )?;
     registry.register_outside_replay(
         workspace_autosave_set_descriptor(),
         through_workspaces!(autosave_set),
@@ -1286,17 +1296,6 @@ fn colour_word(word: Option<&str>) -> Result<Option<WorkspaceColour>, ControlErr
     let Some(word) = word else { return Ok(None) };
     let invalid = || refused(&WorkspaceRefusal::ColourInvalid(word.to_owned()));
     WorkspaceColour::parse(word).ok_or_else(invalid).map(Some)
-}
-
-/// Revert is gone; the refusal names the calls that keep edits instead.
-fn revert<H: WorkspaceOwner + ?Sized, A>(
-    _: &mut H,
-    _: &mut A,
-    _: &ActorContext,
-    value: &Value,
-) -> Result<Value, ControlError> {
-    let WorkspaceTabInput { .. } = input(value)?;
-    Err(refused(&WorkspaceRefusal::RevertRemoved))
 }
 
 fn save_result(saved: SaveOutcome) -> WorkspaceSaveResult {

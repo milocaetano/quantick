@@ -516,6 +516,7 @@ mod tests {
                     protected_default: false,
                     workspace_parked: Default::default(),
                     workspace_copy: None,
+                    workspace_settled: None,
                     orderflow_panel: Default::default(),
                 },
                 SavedTab {
@@ -541,6 +542,7 @@ mod tests {
                     protected_default: false,
                     workspace_parked: Default::default(),
                     workspace_copy: None,
+                    workspace_settled: None,
                     orderflow_panel: Default::default(),
                 },
             ],
@@ -1038,6 +1040,7 @@ mod tests {
             protected_default: false,
             workspace_parked: Default::default(),
             workspace_copy: None,
+            workspace_settled: None,
             orderflow_panel: Default::default(),
         });
         workspace.tabs.push(SavedTab {
@@ -1063,6 +1066,7 @@ mod tests {
             protected_default: false,
             workspace_parked: Default::default(),
             workspace_copy: None,
+            workspace_settled: None,
             orderflow_panel: Default::default(),
         });
         let restored = restore(workspace, &catalogue(), clamp);
@@ -1203,6 +1207,7 @@ mod tests {
                     protected_default: false,
                     workspace_parked: Default::default(),
                     workspace_copy: None,
+                    workspace_settled: None,
                     orderflow_panel: Default::default(),
                 },
                 SavedTab {
@@ -1228,6 +1233,7 @@ mod tests {
                     protected_default: false,
                     workspace_parked: Default::default(),
                     workspace_copy: None,
+                    workspace_settled: None,
                     orderflow_panel: Default::default(),
                 },
             ],
@@ -1272,6 +1278,7 @@ mod tests {
                 protected_default: false,
                 workspace_parked: Default::default(),
                 workspace_copy: None,
+                workspace_settled: None,
                 orderflow_panel: Default::default(),
             }],
             chrome: None,
@@ -1467,6 +1474,7 @@ time_bars = "time:60000"
             protected_default: false,
             workspace_parked: Default::default(),
             workspace_copy: None,
+            workspace_settled: None,
             orderflow_panel: Default::default(),
         }];
         workspace

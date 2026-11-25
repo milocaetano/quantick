@@ -6,7 +6,6 @@ use eframe::egui;
 use quantick_control_schema::canvas::{
     LAYOUT_PICKER_CAPABILITY_ID, OPEN_WINDOW_MENU_CAPABILITY_ID, PICK_LAYOUT_CAPABILITY_ID,
 };
-use quantick_session::workspace_menu::WorkspaceCommand;
 use quantick_ui_model::canvas_popovers::picked;
 use quantick_workspace::canvas::LayoutMarks;
 
@@ -15,7 +14,7 @@ use crate::app::{GatewayPort as _, QuantickApp};
 use crate::toolbar::capsule::CapsuleRects;
 use crate::toolbar::layout_popover;
 use crate::toolbar::{DrawnControl, ToolbarAction};
-use quantick_ui_model::chrome_toolbar::Capsule as CapsuleState;
+use quantick_ui_model::chrome_toolbar::{Capsule as CapsuleState, RevertSlot};
 
 /// The active tab's workspace, whether it holds edits, and its layout marks.
 pub(in crate::app) fn layout_of(app: &QuantickApp) -> (String, bool, LayoutMarks) {
@@ -33,6 +32,7 @@ pub(in crate::app) fn snapshot(app: &QuantickApp, ctx: &egui::Context) -> Capsul
         tree: app.active_tab().canvas.state.tree().clone(),
         unsaved,
         marks,
+        revert: RevertSlot::for_tab(book.book(), tab, &workspace),
         menu_open: app.chrome.window_menu.tab_workspace.chip_menu_on(tab),
         colour: book.book().tab_colour(tab),
         workspace,
@@ -79,10 +79,10 @@ pub(in crate::app) fn settle(
                 menu.toggle_from(viewport, MenuDoor::Toolbar, false);
             }
             ToolbarAction::ToggleWorkspaceMenu => workspace_clicked = true,
-            ToolbarAction::SaveWorkspace => {
-                (app.workspace_calls()).apply_workspace_command(WorkspaceCommand::SaveTo);
-            }
-            action => rest.push(action),
+            action => match action.workspace_command() {
+                Some(command) => (app.workspace_calls()).apply_workspace_command(command),
+                None => rest.push(action),
+            },
         }
     }
     let shown = (state.workspace.as_str(), state.colour, state.marks);
@@ -165,6 +165,10 @@ fn publish(
             false,
             save,
         ));
+    }
+    if let (Some(rect), Some(press)) = (rects.revert, state.revert.press()) {
+        let call = Some(press.capability);
+        controls.push(control("capsule.revert", press.hover, rect, false, call));
     }
     if let Some((rect, label)) = &drawn.header {
         let read = Some(LAYOUT_PICKER_CAPABILITY_ID);
