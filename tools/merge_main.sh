@@ -87,16 +87,30 @@ if ! git rev-parse -q --verify MERGE_HEAD >/dev/null; then
     exit 1
 fi
 
+# One path per line, unexpanded, whatever characters a name holds.
 others=""
-for path in $(git diff --name-only --diff-filter=U); do
-    if generated "$path"; then
-        # Any parseable side will do: regeneration overwrites it.
-        git checkout --theirs -- "$path" 2>/dev/null || git rm -q -- "$path"
-    else
+unmerged=$(git diff --name-only --diff-filter=U)
+set -f
+old_ifs=$IFS
+IFS='
+'
+for path in $unmerged; do
+    # Index stages present: 2 is this branch's side, 3 is main's.
+    stages=$(git ls-files -u -- "$path" | cut -f1 | cut -d' ' -f3 | tr -d '\n')
+    if ! generated "$path"; then
         others="$others
 $path"
+    elif [ "$stages" = 123 ] || [ "$stages" = 23 ]; then
+        # Both sides edited it: either parses, and regeneration overwrites it.
+        git checkout --theirs -- "$path"
+    else
+        # One side deleted it with its registry entry; a file the merged
+        # registry still names is written again by regeneration.
+        git rm -q -- "$path"
     fi
 done
+IFS=$old_ifs
+set +f
 if [ -n "$others" ]; then
     echo "Resolve and stage these by hand, then run: sh tools/merge_main.sh --continue" >&2
     echo "$others" >&2
