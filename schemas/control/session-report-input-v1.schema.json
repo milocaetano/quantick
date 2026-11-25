@@ -69,38 +69,23 @@
     },
     {
       "additionalProperties": false,
-      "description": "Stage both fields, including a partial value while editing.",
+      "description": "Set the picked days outright: YYYY-MM-DD civil days in the display\ntimezone, any order, contiguous or not. An empty list clears them.",
       "properties": {
         "action": {
-          "const": "draft_dates",
+          "const": "days",
           "type": "string"
         },
-        "end": {
-          "maxLength": 10,
-          "type": "string"
-        },
-        "start": {
-          "maxLength": 10,
-          "type": "string"
+        "days": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 92,
+          "type": "array"
         }
       },
       "required": [
         "action",
-        "start",
-        "end"
-      ],
-      "type": "object"
-    },
-    {
-      "additionalProperties": false,
-      "properties": {
-        "action": {
-          "const": "generate",
-          "type": "string"
-        }
-      },
-      "required": [
-        "action"
+        "days"
       ],
       "type": "object"
     },

@@ -127,23 +127,16 @@
         "action": {
           "type": "string"
         },
-        "applied_end": {
-          "type": [
-            "string",
-            "null"
-          ]
+        "applied_day_count": {
+          "$ref": "#/$defs/WireU64",
+          "description": "How many days are picked, including any past the listed 92."
         },
-        "applied_start": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "draft_end": {
-          "type": "string"
-        },
-        "draft_start": {
-          "type": "string"
+        "applied_days": {
+          "description": "The picked days in force, oldest first, at most 92 of them;\nempty while the period is in force.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         },
         "loaded": {
           "type": "boolean"
@@ -184,12 +177,6 @@
         "unreadable_files": {
           "$ref": "#/$defs/WireU64"
         },
-        "validation_error": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
         "window": {
           "type": "string"
         }
@@ -200,8 +187,8 @@
         "open",
         "loaded",
         "window",
-        "draft_start",
-        "draft_end",
+        "applied_days",
+        "applied_day_count",
         "timezone",
         "trade_count",
         "unreadable_files",
