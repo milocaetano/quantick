@@ -148,7 +148,14 @@ step decides the head's mode, which every Rust job reads:
   that no crate names: the same path search the draft `fast` job uses to pick
   crates, so a doc a test opens builds;
 - `reused`, on the flip to ready of a draft labelled `full-ci`, when every job
-  in `FULL_CI_CHECKS` already finished green at this exact head.
+  in `FULL_CI_CHECKS` already finished green at this exact head in real runs.
+
+The prose search covers the crates of both the PR head and the merge revision,
+since a test newer on the base reads its doc once merged. An unrelated label,
+or an edit that leaves the base alone, skips `gate` and therefore everything:
+it must not post a newer verdict over the real one. A retargeted base is the
+one edit that runs (`edited` with a base change), because every verdict was
+about the old merge revision; GitHub retargets a stacked PR by itself.
 
 Anything but `build` skips every Rust job and runs `rust-skip`, whose log says
 which. `tools/ci/test_workflow_policy.py` evaluates the workflow's own `if:` and
@@ -194,6 +201,8 @@ counts as coverage without counting as a share. It runs in `ci`.
 | Draft flipped to ready | `gate`, then the nine full jobs, unless `gate` finds them already green at this head |
 | Push to a ready PR, push to `main` | `gate`, then the nine full jobs |
 | Any of these on a prose-only pull request | `gate`, then `rust-skip` |
+| Base retargeted | as a push to a draft or a ready PR |
+| An unrelated label, any other edit | nothing |
 
 `fast` runs `cargo clippy --all-targets` and `cargo test` over the crates `tools/ci/affected_crates.py` selects: the
 crates owning a changed file or naming it by path, every crate depending on
@@ -210,9 +219,10 @@ green at that head. Skipping it silently was tried once: the flip's run posted
 skipped `ci` and `windows`, and GitHub's check list showed only those, hiding
 the green run from whoever merges. So the skip is never silent: the flip's run
 still runs `gate`, and `rust-skip` posts a green check saying the full run at
-this head was reused. `gate` asks with `QUANTICK_FULL_CI_COMPLETED_ONLY=1`, so
-its own run's pending jobs read as missing rather than as the latest; a run
-still going, red or cancelled is not reused, and the flip builds.
+this head was reused. `gate` asks with `QUANTICK_FULL_CI_FOR_REUSE=1`, so
+its own run's pending jobs read as missing rather than as the latest and no
+`rust-skip` excuse counts; a run still going, red or cancelled is not reused,
+a prose head reports `prose`, and the flip builds.
 
 **The verdict.** `full_ci.sh verify <worktree> [<sha>]` is the one definition.
 It reads the check runs GitHub Actions posted for the exact commit, drops
@@ -222,9 +232,10 @@ so splitting the work across runners cannot quietly drop a check: a job
 nothing requires is a job that can disappear without anyone noticing, and
 `guardrails_test.sh` fails when a name in that list has no job in `ci.yml`.
 Skipped is no verdict: a head with nothing but skipped full jobs has no full
-CI, with one exception the gate owns. A green `rust-skip` at the head lets a
-job after `gate` have no verdict; it excuses no red, running or cancelled job,
-and never a missing `gate`. It reads per commit, not through `gh pr checks`,
+CI, with one exception the gate owns. A green `rust-skip` from the same run as
+the latest `gate` lets a job after `gate` have no verdict; it excuses no red,
+running or cancelled job, never a missing `gate`, and never a newer run whose
+`gate` built Rust. It reads per commit, not through `gh pr checks`,
 because a later skipped run for the same head (adding an unrelated label
 posts one) must not hide the green one. Exit 2 means GitHub could not answer, and the
 gate turns that into `ask`, never a pass. A commit GitHub has never seen was

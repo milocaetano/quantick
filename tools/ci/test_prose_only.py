@@ -69,6 +69,13 @@ class Synthetic(unittest.TestCase):
         referrers = referrers_from({"docs/quality": ["crates/pine/src/lib.rs"]})
         self.assertEqual("build", prose_only.decide(["docs/quality/x/y.md"], PACKAGES, referrers)[0])
 
+    def test_a_reader_in_any_searched_revision_builds(self):
+        head = referrers_from({})
+        merge = referrers_from({"docs/foo.md": ["crates/pine/tests/doc.rs"]})
+        either = prose_only.union_referrers([head, merge])
+        self.assertEqual("prose", prose_only.decide(["docs/foo.md"], PACKAGES, head)[0])
+        self.assertEqual("build", prose_only.decide(["docs/foo.md"], PACKAGES, either)[0])
+
     def test_an_empty_diff_builds(self):
         self.assertEqual(("build", ["the diff is empty"]), prose_only.decide([], PACKAGES, NOBODY))
 
@@ -90,16 +97,16 @@ class Workspace(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertEqual("build", self.decide(path))
 
-    def test_docs_no_crate_reads_are_prose(self):
-        for path in ("docs/agentic-development.md", "CONTRIBUTING.md"):
-            with self.subTest(path=path):
-                self.assertEqual("prose", self.decide(path))
+    def test_a_doc_no_crate_names_is_prose(self):
+        # A path made up for this test, so a crate citing a real doc in a
+        # comment can never turn it red.
+        self.assertEqual("prose", self.decide("docs/prose-only-fixture/nothing-names-this.md"))
 
     def test_the_cli_prints_the_verdict(self):
         head = subprocess.run(("git", "rev-parse", "HEAD"), cwd=self.root, check=True,
                               capture_output=True, text=True).stdout.strip()
         result = subprocess.run((sys.executable, os.path.join(HERE, "prose_only.py"),
-                                 "--base", head, "--head", head),
+                                 "--base", head, "--head", head, "--search", "HEAD"),
                                 cwd=self.root, check=True, capture_output=True, text=True)
         self.assertEqual("build", result.stdout.strip())
         self.assertIn("the diff is empty", result.stderr)

@@ -1459,10 +1459,22 @@ for full_ci_rust_skip in missing completed:failure in_progress:none; do
     printf '%s\n' "$full_ci_rust_skip" > "$full_ci_root/rust-skip"
     full_ci_case "a $full_ci_rust_skip rust-skip excuses nothing" missing completed:success 1 "No ci run has a verdict"
 done
+# Only the latest gate's own run may excuse: an older prose run's rust-skip
+# says nothing about a newer run that built Rust for a new base.
+printf 'completed:success 41\n' > "$full_ci_root/rust-skip"
+full_ci_case "a rust-skip from another run excuses nothing" missing completed:success 1 "No ci run has a verdict"
+printf 'completed:success\n' > "$full_ci_root/rust-skip"
 
-# Completed-only reads drop queued and running runs in the filter itself.
+# The gate's reuse question takes no excuse: only real green runs are reused.
+export QUANTICK_FULL_CI_FOR_REUSE=1
+full_ci_case "a reuse read takes no rust-skip excuse" missing completed:success 1 "No ci run has a verdict"
+full_ci_case "a reuse read passes on real green runs" completed:success completed:success 0 ""
+unset QUANTICK_FULL_CI_FOR_REUSE
+printf 'missing\n' > "$full_ci_root/rust-skip"
+
+# Reuse reads drop queued and running runs in the filter itself.
 full_ci_completed() {
-    QUANTICK_FULL_CI_COMPLETED_ONLY=$1 QUANTICK_FULL_CI_FIXTURE="$full_ci_root" \
+    QUANTICK_FULL_CI_FOR_REUSE=$1 QUANTICK_FULL_CI_FIXTURE="$full_ci_root" \
         PATH="$full_ci_root/bin:$PATH" sh "$script_dir/full_ci.sh" verify "$root/wt" >/dev/null 2>&1
     grep -c '.status == "completed"' "$full_ci_root/last-args"
 }
@@ -1470,7 +1482,7 @@ full_ci_case "reset" completed:success completed:success 0 ""
 if [ "$(full_ci_completed 1)" = 1 ] && [ "$(full_ci_completed '')" = 0 ]; then
     passed=$((passed + 1))
 else
-    printf 'FAIL full_ci.sh QUANTICK_FULL_CI_COMPLETED_ONLY does not filter on status\n'
+    printf 'FAIL full_ci.sh QUANTICK_FULL_CI_FOR_REUSE does not filter on status\n'
     failed=$((failed + 1))
 fi
 

@@ -29,14 +29,16 @@
 #
 # One exception, and it is the gate's own: when `gate` decided the head needs
 # no Rust build (a prose-only diff, or full CI already green at this head), it
-# runs the `rust-skip` job. A successful `rust-skip` at <sha> lets a job after
-# `gate` have no verdict at all; it never excuses a red, cancelled or running
-# one, and never a missing `gate`.
+# runs the `rust-skip` job. A successful `rust-skip` from the same workflow run
+# (check suite) as the latest `gate` lets a job after `gate` have no verdict at
+# all. It never excuses a red, cancelled or running job, never a missing
+# `gate`, and never one from an older run: a later run whose `gate` built Rust,
+# for a new base, owes its own verdicts.
 #
-# QUANTICK_FULL_CI_COMPLETED_ONLY=1 reads only completed runs, so a run still
-# queued or in progress counts as missing rather than as the latest. The gate
-# uses it to ask whether an earlier workflow run already finished green while
-# its own run's jobs are pending at the same head.
+# QUANTICK_FULL_CI_FOR_REUSE=1 is the gate asking whether an earlier run already
+# finished the full verification at this head. It reads completed runs only, so
+# its own run's pending jobs count as missing rather than as the latest, and it
+# takes no `rust-skip` excuse: only real green runs are reused.
 
 set -u
 
@@ -54,22 +56,25 @@ sha=${3:-$(git -C "$worktree" rev-parse HEAD 2>/dev/null)} || {
     exit 2
 }
 
-if [ "${QUANTICK_FULL_CI_COMPLETED_ONLY:-}" = 1 ]; then
+if [ "${QUANTICK_FULL_CI_FOR_REUSE:-}" = 1 ]; then
     finished='and .status == "completed"'
+    excuse=''
 else
     finished=''
+    excuse=yes
 fi
 
 errors=$(mktemp) || exit 2
 trap 'rm -f "$errors"' EXIT HUP INT TERM
 
-# Sets `verdict` for one check name, or exits when GitHub cannot answer.
+# Sets `verdict` (status:conclusion) and `suite` (the run it belongs to) for
+# one check name, or exits when GitHub cannot answer.
 read_verdict() {
-    verdict=$(cd "$worktree" && gh api \
+    answer=$(cd "$worktree" && gh api \
         "repos/{owner}/{repo}/commits/$sha/check-runs?check_name=$1&per_page=100" \
         --jq "[.check_runs[] | select(.app.slug == \"github-actions\" and .conclusion != \"skipped\" $finished)]
               | sort_by(.id) | last
-              | if . == null then \"missing\" else \"\(.status):\(.conclusion // \"none\")\" end" 2>"$errors") || {
+              | if . == null then \"missing\" else \"\(.status):\(.conclusion // \"none\") \(.check_suite.id // \"\")\" end" 2>"$errors") || {
         # A commit GitHub has never seen was never pushed, so it has no CI:
         # that is a known answer, not an unreadable one.
         if grep -q 'No commit found' "$errors"; then
@@ -79,17 +84,25 @@ read_verdict() {
         echo "GitHub could not list the $1 check runs at $sha." >&2
         exit 2
     }
+    verdict=${answer%% *}
+    case "$answer" in
+        *' '*) suite=${answer#* } ;;
+        *) suite='' ;;
+    esac
 }
 
+gate_suite=''
 rust_skipped=''
 for check in $FULL_CI_CHECKS; do
     read_verdict "$check"
+    [ "$check" = gate ] && gate_suite=$suite
     case "$verdict" in
         completed:success) ;;
         missing)
-            if [ "$check" != gate ] && [ -z "$rust_skipped" ]; then
+            if [ "$check" != gate ] && [ -n "$excuse" ] && [ -z "$rust_skipped" ]; then
                 read_verdict "$RUST_SKIP_CHECK"
                 rust_skipped=$verdict
+                [ "$suite" = "$gate_suite" ] || rust_skipped="$verdict from another run"
             fi
             if [ "$check" != gate ] && [ "$rust_skipped" = completed:success ]; then
                 continue

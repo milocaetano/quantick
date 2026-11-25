@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Whether a pull request's diff is prose that no Rust job can judge.
 
-    python tools/ci/prose_only.py --base <rev> [--head <rev>]
+    python tools/ci/prose_only.py --base <rev> [--head <rev>] [--search <rev>]...
 
 Prints `prose` or `build` and explains the answer on stderr. The CI `gate`
 job turns `prose` into skipped Rust jobs; see .claude/hooks/README.md.
@@ -49,15 +49,30 @@ def decide(changed, packages, referrers):
     return "prose", [f"{path} is prose no crate reads" for path in changed]
 
 
+def union_referrers(searches):
+    """One `referrers` answering what any of `searches` finds.
+
+    A crate on the base that the head predates still reads its docs once
+    merged, so the head's crates alone can call a read doc prose.
+    """
+    def referrers(wanted):
+        return sorted({hit for search in searches for hit in search(wanted)})
+    return referrers
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--base", required=True, help="the PR's base commit")
     parser.add_argument("--head", default="HEAD")
+    parser.add_argument("--search", action="append", default=[], metavar="REV",
+                        help="also look for crates naming a path at REV (repeatable); "
+                             "CI passes the merge revision the skipped jobs would test")
     args = parser.parse_args(argv)
 
     root, packages = affected_crates.metadata_workspace()
     changed = affected_crates.changed_paths(root, args.base, args.head)
-    verdict, reasons = decide(changed, packages, affected_crates.git_referrers(root, args.head))
+    verdict, reasons = decide(changed, packages, union_referrers(
+        [affected_crates.git_referrers(root, rev) for rev in [args.head] + args.search]))
     for reason in reasons:
         print(reason, file=sys.stderr)
     print(verdict)

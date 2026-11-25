@@ -20,6 +20,7 @@ JOBS = WORKFLOW.split("\njobs:\n", 1)[1]
 def expression(source, event):
     """Evaluate the workflow's small expression subset against an event fixture."""
     source = re.sub(r"(?:github|needs)\.[\w.*-]+", lambda m: repr(event[m[0]]), source)
+    source = re.sub(r"\bnull\b", "None", source)
     source = source.replace("&&", " and ").replace("||", " or ")
     source = re.sub(r"!(?!=)", " not ", source)
     return eval(" ".join(source.splitlines()), {"__builtins__": {}, "format": str.format,
@@ -27,13 +28,14 @@ def expression(source, event):
 
 
 def event(name="pull_request", number=7, run=100, draft=False, action="synchronize",
-          labels=(), label="", mode="build"):
+          labels=(), label="", mode="build", base_changed=False):
     return {"github.workflow": "CI", "github.event_name": name,
             "github.event.pull_request.number": number, "github.run_id": run,
             "github.event.pull_request.draft": draft, "github.event.action": action,
             "github.event.pull_request.labels.*.name": labels,
             "github.event.label.name": label,
             "github.event.pull_request.base.sha": "base-sha" if name == "pull_request" else None,
+            "github.event.changes.base": {"ref": {"from": "feature/x"}} if base_changed else None,
             "needs.gate.outputs.mode": mode}
 
 
@@ -77,6 +79,12 @@ class WorkflowPolicy(unittest.TestCase):
         self.assertFalse(expression(cancel, unrelated))
         self.assertNotEqual(evaluated(event()), evaluated(unrelated))
         self.assertTrue(expression(cancel, event(action="labeled", label="full-ci")))
+        edit = event(action="edited")
+        self.assertFalse(expression(cancel, edit))
+        self.assertNotEqual(evaluated(event()), evaluated(edit))
+        retarget = event(action="edited", base_changed=True)
+        self.assertTrue(expression(cancel, retarget))
+        self.assertEqual(evaluated(event()), evaluated(retarget))
         for name in ("push", "workflow_dispatch", "schedule"):
             with self.subTest(event=name):
                 self.assertFalse(expression(cancel, event(name=name)))
@@ -100,9 +108,25 @@ class WorkflowPolicy(unittest.TestCase):
             with self.subTest(job=name):
                 self.assertEqual("*full-ci", scalar(JOB_BODIES[name], "if"))
 
-    def test_the_gate_runs_on_every_event_and_carries_the_fast_checks(self):
+    def test_the_gate_runs_on_every_validating_event(self):
+        gate = folded_if(JOB_BODIES["gate"])
+        for fixture, expected in [(event(name="push"), True), (event(), True),
+                                  (event(draft=True), True),
+                                  (event(action="ready_for_review"), True),
+                                  (event(action="labeled", label="full-ci"), True),
+                                  (event(action="edited", base_changed=True), True),
+                                  (event(action="labeled", label="unrelated"), False),
+                                  (event(action="edited"), False)]:
+            with self.subTest(event=fixture):
+                self.assertEqual(expected, expression(gate, fixture))
+
+    def test_a_retarget_reruns_full_ci_on_a_ready_pr(self):
+        self.assertTrue(expression(FULL_PREDICATE, event(action="edited", base_changed=True)))
+        self.assertFalse(expression(FULL_PREDICATE, event(action="edited", base_changed=True, draft=True)))
+
+    def test_the_gate_carries_the_fast_checks(self):
         gate = JOB_BODIES["gate"]
-        self.assertNotRegex(gate, r"(?m)^    (?:if|needs|continue-on-error):")
+        self.assertNotRegex(gate, r"(?m)^    (?:needs|continue-on-error):")
         self.assertIn("fetch-depth: 0", gate)
         for step in ("cargo fmt --all -- --check",
                      'git worktree add --detach "$RUNNER_TEMP/head" "$HEAD_SHA"',
@@ -113,7 +137,7 @@ class WorkflowPolicy(unittest.TestCase):
                      "sh .claude/hooks/guardrails_test.sh",
                      "python3 tools/ci/test_workflow_policy.py",
                      "python3 tools/ci/test_prose_only.py",
-                     "python3 tools/ci/prose_only.py"):
+                     'python3 tools/ci/prose_only.py --base "$BASE_SHA" --head "$HEAD_SHA" --search HEAD'):
             with self.subTest(step=step):
                 self.assertTrue(step in gate, step)
         base = scalar(gate, "RATCHET_BASE")[3:-3]
@@ -121,6 +145,10 @@ class WorkflowPolicy(unittest.TestCase):
         self.assertEqual("HEAD^", expression(base, event(name="push")))
         # The guard and drift steps fail before the slower suites start.
         self.assertLess(gate.index("cargo test -p quantick-guards"), gate.index("guardrails_test.sh"))
+
+    def test_no_network_fetch_holds_the_rust_jobs(self):
+        self.assertNotIn("pipx", JOB_BODIES["gate"])
+        self.assertIn("pipx run ruff check --select F tools/ bridge/mt5/", JOB_BODIES["ci"])
 
     def test_fmt_runs_once_on_linux(self):
         linux_fmt = [name for name, body in JOB_BODIES.items()
@@ -160,7 +188,7 @@ class WorkflowPolicy(unittest.TestCase):
     def test_ready_after_a_full_ci_label_reuses_only_a_finished_green_run(self):
         decide = JOB_BODIES["gate"].split("name: Decide what this head needs", 1)[1]
         self.assertIn('[ "$ACTION" = ready_for_review ] && [ "$FULL_CI_LABELLED" = true ]', decide)
-        self.assertIn('QUANTICK_FULL_CI_COMPLETED_ONLY=1 sh .claude/hooks/full_ci.sh verify . "$HEAD_SHA"',
+        self.assertIn('QUANTICK_FULL_CI_FOR_REUSE=1 sh .claude/hooks/full_ci.sh verify . "$HEAD_SHA"',
                       decide)
         self.assertIn("contains(github.event.pull_request.labels.*.name, 'full-ci')",
                       scalar(decide, "FULL_CI_LABELLED"))

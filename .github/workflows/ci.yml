@@ -6,14 +6,18 @@ on:
   pull_request:
     # `ready_for_review` and `labeled` are not in the default set. The first
     # runs full CI when a draft becomes ready; the second lets a draft ask for
-    # it with the `full-ci` label before that. See the `if:` on each job.
-    types: [opened, synchronize, reopened, ready_for_review, labeled]
+    # it with the `full-ci` label before that. `edited` exists for one edit:
+    # a retargeted base changes the merge revision every verdict was about,
+    # and GitHub retargets a stacked PR by itself when its base merges.
+    # See the `if:` on each job.
+    types: [opened, synchronize, reopened, ready_for_review, labeled, edited]
 
-# Only events that run validation supersede a PR run. Unrelated labels must
-# not cancel the full checks already running at that head.
+# Only events that run validation supersede a PR run. Unrelated labels and
+# edits that leave the base alone must not cancel, or even repeat, the checks
+# already running at that head; `gate` skips on them and everything needs it.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && (github.event.action != 'labeled' || github.event.label.name == 'full-ci') && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' && (github.event.action != 'labeled' || github.event.label.name == 'full-ci') }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && (github.event.action != 'labeled' || github.event.label.name == 'full-ci') && (github.event.action != 'edited' || github.event.changes.base != null) && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' && (github.event.action != 'labeled' || github.event.label.name == 'full-ci') && (github.event.action != 'edited' || github.event.changes.base != null) }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -88,10 +92,16 @@ jobs:
   # and no Rust job has started. Ordered cheapest-to-fail first: a red step
   # ends the job, so what fails most often runs before what costs most.
   #
-  # It has no `if:` and no `needs:`: every event runs it, and the jobs that
-  # build Rust wait on it with `needs: gate`. Its `mode` output is the only
+  # It has no `needs:`, and its `if:` drops only the events that validate
+  # nothing (an unrelated label, an edit that keeps the base): those must not
+  # post a newer `gate` verdict over the real one at the same head. The jobs
+  # that build Rust wait on it with `needs: gate`. Its `mode` output is the only
   # input those jobs read from it; see the header above.
   gate:
+    if: >-
+      github.event_name != 'pull_request' ||
+      ((github.event.action != 'labeled' || github.event.label.name == 'full-ci') &&
+       (github.event.action != 'edited' || github.event.changes.base != null))
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -155,19 +165,6 @@ jobs:
         # docs-only PR that renames a marker on one side, which is the point,
         # and why it runs here rather than in a Rust job a prose diff skips.
         run: sh .claude/hooks/guardrails_test.sh
-      - name: Python tooling lint
-        # The MetaTrader bridge and the session exporter are Python, so not one
-        # of the cargo steps below can see them. An undefined name reached main
-        # on 2026-08-13 and killed every replay download for a day, because
-        # Python resolves names only when the line runs and that line runs on a
-        # logged-in terminal nobody has in CI. `--select F` is pyflakes' rule
-        # set — the one that catches a name that cannot resolve — and it runs
-        # before the slow steps so this class of bug fails in seconds.
-        # The glob is `tools/`, not `tools/mt5/`: a Python file that lands
-        # anywhere under tools/ is linted the moment it exists, rather than when
-        # somebody remembers to widen this line. `tools/heatmap-lab/` arrived
-        # that way.
-        run: pipx run ruff check --select F tools/ bridge/mt5/
       - name: Exporter tests
         # Drives export_session.py end to end against a fake terminal: no
         # MetaTrader, no network, no credentials, nothing to install.
@@ -229,17 +226,20 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         # A push always builds. The flip to ready of a `full-ci` draft reuses
-        # the full run its label started, when that run finished green at this
-        # exact head: a second one would test the same commit again. Otherwise
-        # a pull request builds unless its diff is prose.
+        # the full run its label started, when every full job finished green
+        # at this exact head: a second one would test the same commit again.
+        # The reuse read takes completed runs only and no `rust-skip` excuse,
+        # so only real green runs are reused. Otherwise a pull request builds
+        # unless its diff is prose, judged against the crates of both the head
+        # and the merge revision this checkout holds.
         run: |
           mode=build
           if [ "$EVENT" = pull_request ]; then
             if [ "$ACTION" = ready_for_review ] && [ "$FULL_CI_LABELLED" = true ] &&
-              QUANTICK_FULL_CI_COMPLETED_ONLY=1 sh .claude/hooks/full_ci.sh verify . "$HEAD_SHA"; then
+              QUANTICK_FULL_CI_FOR_REUSE=1 sh .claude/hooks/full_ci.sh verify . "$HEAD_SHA"; then
               mode=reused
             else
-              mode=$(python3 tools/ci/prose_only.py --base "$BASE_SHA" --head "$HEAD_SHA")
+              mode=$(python3 tools/ci/prose_only.py --base "$BASE_SHA" --head "$HEAD_SHA" --search HEAD)
             fi
           fi
           echo "mode=$mode" | tee -a "$GITHUB_OUTPUT"
@@ -418,6 +418,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Python tooling lint
+        # The MetaTrader bridge and the session exporter are Python, so not one
+        # of the cargo steps below can see them. An undefined name reached main
+        # on 2026-08-13 and killed every replay download for a day, because
+        # Python resolves names only when the line runs and that line runs on a
+        # logged-in terminal nobody has in CI. `--select F` is pyflakes' rule
+        # set — the one that catches a name that cannot resolve — and it runs
+        # before the slow steps so this class of bug fails in seconds. It
+        # stays out of `gate` because it downloads ruff, and a registry
+        # hiccup must not hold every Rust job; a prose diff cannot reach it.
+        # The glob is `tools/`, not `tools/mt5/`: a Python file that lands
+        # anywhere under tools/ is linted the moment it exists, rather than when
+        # somebody remembers to widen this line. `tools/heatmap-lab/` arrived
+        # that way.
+        run: pipx run ruff check --select F tools/ bridge/mt5/
       - name: Supply chain (bans, licenses)
         # Deliberately not `advisories`. These two checks are pure functions of
         # the committed `Cargo.lock`: they can only change when a commit
