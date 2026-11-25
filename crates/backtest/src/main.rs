@@ -32,6 +32,7 @@ use quantick_backtest::bars::{self, BarSpec};
 use quantick_backtest::diagnostics::Event;
 use quantick_backtest::report::render_run;
 use quantick_backtest::run::{RunOutcome, SessionRun, run_session};
+use quantick_backtest::script_orders::ScriptOrders;
 use quantick_backtest::strategies::{EmaCross, ForceRegion, PlotSignal, Protection};
 use quantick_backtest::strategy::Strategy;
 use quantick_engine::Side;
@@ -75,7 +76,7 @@ const STRATEGIES: &[(&str, &str)] = &[
     ),
     (
         "script",
-        "signal from a compiled .pine plot column (needs --script)",
+        "signal from a compiled .pine plot column, or its alerts with --alerts (needs --script)",
     ),
     (
         "force-region",
@@ -151,6 +152,9 @@ struct Args {
     confirm_flow: bool,
     script: Option<PathBuf>,
     plot: usize,
+    /// Script only: trade the script's `alertcondition`s naming this side,
+    /// through the chart's script instance, instead of a plot column.
+    alerts: Option<Side>,
     region: Option<RegionSpec>,
     /// Force-region only: on a bar cutting through the region, rest a limit
     /// at the cut edge (cancelled at the bar's target) instead of holding
@@ -214,6 +218,9 @@ fn usage() -> String {
   --confirm-flow           require CVD to agree with the cross
   --script <file.pine>     the script the `script` strategy reads
   --plot <n>               which plot column of that script (default 0)
+  --alerts <buy|sell>      script: trade its alertconditions naming that side
+                           as the chart's script instance does, --quantity
+                           per order and --stop/--target from the entry
   --region <low:high:side> the force-region strategy's price band and the
                            side it hunts (buy|sell); auto re-arms so every
                            qualifying bar in the recording is measured
@@ -247,6 +254,7 @@ fn parse_args() -> Result<Args, String> {
         confirm_flow: false,
         script: None,
         plot: 0,
+        alerts: None,
         region: None,
         retest_limit: false,
         quantity: DEFAULT_QUANTITY,
@@ -288,6 +296,13 @@ fn parse_args() -> Result<Args, String> {
             "--script" => args.script = Some(PathBuf::from(value()?)),
             "--region" => args.region = Some(RegionSpec::parse(&value()?)?),
             "--retest-limit" => args.retest_limit = true,
+            "--alerts" => {
+                args.alerts = Some(match value()?.as_str() {
+                    "buy" => Side::Buy,
+                    "sell" => Side::Sell,
+                    other => return Err(format!("--alerts `{other}` is not buy or sell")),
+                });
+            }
             "--plot" => {
                 let text = value()?;
                 args.plot = text
@@ -325,6 +340,11 @@ fn parse_args() -> Result<Args, String> {
         return Err(
             "--retest-limit belongs to the force-region strategy — pass --region <low:high:side>"
                 .to_owned(),
+        );
+    }
+    if args.alerts.is_some() && args.strategy != Some(StrategyKind::Script) {
+        return Err(
+            "--alerts belongs to the script strategy — pass --script <file.pine>".to_owned(),
         );
     }
     if let (Some(from), Some(to)) = (args.from, args.to)
@@ -615,6 +635,7 @@ fn build_strategy(args: &Args) -> Result<Box<dyn Strategy>, String> {
                     // The harness exists to measure orders; an alarm-only
                     // instance would report a run in which nothing traded.
                     execution: quantick_strategy::Execution::Paper,
+                    bracket: None,
                 },
                 quantick_strategy::ForceParams::default_band(),
             )))
@@ -635,6 +656,16 @@ fn build_script_strategy(args: &Args) -> Result<Box<dyn Strategy>, String> {
         || path.display().to_string(),
         |s| s.to_string_lossy().into(),
     );
+    if let Some(side) = args.alerts {
+        let script = quantick_script_trigger::Script::load(&name, &source)
+            .map_err(|refusal| format!("{} cannot trade its alerts: {refusal}", path.display()))?;
+        let order = quantick_strategy::SignalOrder {
+            quantity: quantick_strategy::OrderQuantity::Fixed(args.quantity),
+            stop: args.protection.stop_points.unwrap_or_default(),
+            gain: args.protection.target_points.unwrap_or_default(),
+        };
+        return Ok(Box::new(ScriptOrders::new(script, side, order)));
+    }
     match PlotSignal::compile(&name, &source, args.plot, args.quantity, args.protection) {
         Ok(strategy) => Ok(Box::new(strategy)),
         Err(errors) => {

@@ -36,7 +36,7 @@ use quantick_strategy::runner::placement_or_hold;
 use quantick_strategy::{ArmedStrategy, ForceTrigger, Region};
 use rust_decimal::Decimal;
 
-use crate::script_strategies::ScriptPlacement;
+use crate::script_strategies::{NoAccount, ScriptPlacement, SignalAction};
 use crate::strategies::{PaneStrategies, TabStrategies, rearm_instance};
 use crate::strategy_desk_book::drawn_ref;
 pub use crate::strategy_desk_book::{DAY_MS, InstanceRef};
@@ -88,6 +88,12 @@ pub enum StrategyDeskCommand<D> {
     },
     /// Arm a copy beside the instance, paused.
     Duplicate(InstanceRef<D>),
+    /// What a script instance does when it fires, from its next close; a
+    /// live order or position keeps its course.
+    SetAction {
+        id: InstanceRef<D>,
+        action: SignalAction,
+    },
 }
 
 /// What a desk command did.
@@ -220,6 +226,8 @@ const NO_SUCH: &str = "no armed strategy on this tab has that id; read strategy.
 const STILL_WATCHING: &str = "the strategy is still watching; arm reaches only an ended one";
 const ENDED: &str = "the strategy has ended; arm it again before pausing or resuming it";
 const NO_SCRIPT: &str = "a strategy on a drawing has no script to save";
+const DRAWN_ACTION: &str =
+    "a strategy on a drawing takes its action from its preset; edit the preset instead";
 const STARTS_ORDERS: &str =
     "this strategy places paper orders; only the trader resumes, arms or duplicates it";
 
@@ -342,7 +350,11 @@ impl<D: Copy + PartialEq> TabStrategies<D> {
                         },
                         None => DeskLink::Chart,
                     },
-                    action: DeskAction::Alarm,
+                    action: if script.places_orders() {
+                        DeskAction::Order
+                    } else {
+                        DeskAction::Alarm
+                    },
                     status,
                 }
             }
@@ -398,24 +410,39 @@ impl<D: Copy + PartialEq> TabStrategies<D> {
             StrategyDeskCommand::Duplicate(id) => self
                 .duplicate(id, &check, warmup)
                 .map(DeskOutcome::Duplicated),
+            StrategyDeskCommand::SetAction { id, action } => {
+                let Located::Script { pane_id, index } = self.locate(id).ok_or(NO_SUCH)? else {
+                    return Err(DRAWN_ACTION.to_owned());
+                };
+                let script = &mut self.pane_at(pane_id).scripts[index];
+                let changed = script.action() != action;
+                script.set_action(action);
+                Ok(DeskOutcome::Changed(usize::from(changed)))
+            }
         }
     }
 
-    /// Whether `command` lets a drawn instance that places paper orders
-    /// start placing them again.
+    /// Whether `command` lets an instance that places paper orders start
+    /// placing them again, or turns a script into one that does.
     fn starts_orders(&self, command: &StrategyDeskCommand<D>) -> bool {
-        let (StrategyDeskCommand::Resume(id)
-        | StrategyDeskCommand::Arm(id)
-        | StrategyDeskCommand::Duplicate(id)) = command
-        else {
-            return false;
+        let id = match command {
+            StrategyDeskCommand::Resume(id)
+            | StrategyDeskCommand::Arm(id)
+            | StrategyDeskCommand::Duplicate(id) => id,
+            StrategyDeskCommand::SetAction { action, .. } => {
+                return matches!(action, SignalAction::Order(_));
+            }
+            _ => return false,
         };
         match self.locate(*id) {
             Some(Located::Drawn { pane_id, index }) => {
                 let instances = &self.pane(pane_id).expect("located").anchors.instances;
                 !instances[index].alarm_only()
             }
-            Some(Located::Script { .. }) | None => false,
+            Some(Located::Script { pane_id, index }) => {
+                self.pane(pane_id).expect("located").scripts[index].places_orders()
+            }
+            None => false,
         }
     }
 
@@ -467,7 +494,9 @@ impl<D: Copy + PartialEq> TabStrategies<D> {
                     changed += usize::from(pause_drawn(instance, paused));
                 }
             }
-            let watching = pane.scripts.iter().filter(|script| script.watching());
+            let watching = (pane.scripts.iter()).filter(|script| {
+                script.watching() && (paused || may_start_orders || !script.places_orders())
+            });
             scripts.extend(watching.map(|script| script.id));
         }
         for script in scripts {
@@ -531,9 +560,10 @@ impl<D: Copy + PartialEq> TabStrategies<D> {
             Located::Script { pane_id, index } => {
                 let held = &self.pane(pane_id).expect("located").scripts[index];
                 let (script, side, placement) = (held.id, held.side(), held.placement);
+                let action = held.action();
                 let source = self.desk.scripts.get(&script).ok_or(NO_SUCH)?;
                 let warm = warmup(pane_id, WARMUP_BARS);
-                let armed = ScriptInstance::arm(script, source, side, placement, &warm);
+                let armed = ScriptInstance::arm(script, source, side, placement, &warm, action);
                 self.pane_at(pane_id).scripts[index] = armed;
                 self.desk.paused_scripts.remove(&script);
             }
@@ -559,12 +589,12 @@ impl<D: Copy + PartialEq> TabStrategies<D> {
         match located {
             Located::Script { pane_id, index } => {
                 let held = &self.pane(pane_id).expect("located").scripts[index];
-                let (side, placement) = (held.side(), held.placement);
+                let (side, placement, action) = (held.side(), held.placement, held.action());
                 let source = self.desk.scripts.get(&held.id).ok_or(NO_SUCH)?.clone();
                 let copy = self.next_script_id;
                 self.next_script_id += 1;
                 let warm = warmup(pane_id, WARMUP_BARS);
-                let armed = ScriptInstance::arm(copy, &source, side, placement, &warm);
+                let armed = ScriptInstance::arm(copy, &source, side, placement, &warm, action);
                 self.pane_at(pane_id).scripts.push(armed);
                 self.desk.record_script(copy, source);
                 self.desk.paused_scripts.insert(copy);
@@ -659,12 +689,16 @@ impl<D: Copy + PartialEq> TabStrategies<D> {
             Located::Script { pane_id, index } => {
                 let held = &self.pane(pane_id)?.scripts[index];
                 let script = self.desk.scripts.get(&held.id)?;
-                let mut copy = ScriptInstance::arm(0, script, held.side(), held.placement, &[]);
+                // Alarm-only whatever the instance does: a marker is where
+                // the signal fired, and a replay places nothing.
+                let (side, placement) = (held.side(), held.placement);
+                let mut copy =
+                    ScriptInstance::arm(0, script, side, placement, &[], SignalAction::Alarm);
                 for (slot, (bar, poc)) in bars.iter().enumerate() {
                     let resolved = held.placement.resolve(|drawing| band(drawing, slot));
                     let now_ms = u64::try_from(bar.close_time).unwrap_or_default();
                     if copy
-                        .on_closed_bar(bar, *poc, resolved.as_ref(), now_ms)
+                        .on_closed_bar(bar, *poc, resolved.as_ref(), &mut NoAccount, now_ms)
                         .is_some()
                     {
                         fired.push(slot);

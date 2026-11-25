@@ -2,10 +2,14 @@
 //! through the same sweep as the drawn instances.
 
 use quantick_engine::{Bar, Side};
+use quantick_sim::{Command, VenueEvent};
 use quantick_strategy::Region;
+use quantick_strategy::runner::StrategyPort;
 use rust_decimal::Decimal;
 
-use crate::script_strategies::{ScriptArm, ScriptPlacement, ScriptReading};
+use crate::script_strategies::{
+    OrderQuantity, ScriptArm, ScriptPlacement, ScriptReading, SignalAction, SignalOrder,
+};
 use crate::strategies::{DRAWING_REMOVED, LiveClose, Print, TabStrategies};
 use crate::strategies_tests::{DrawingId, RecordingPort};
 
@@ -63,6 +67,7 @@ fn arm_side(
         source,
         side,
         place,
+        action: SignalAction::Alarm,
     };
     strategies.arm_script(request, |_| warmup)
 }
@@ -300,4 +305,122 @@ fn a_refilled_close_reaches_no_drawn_instance_and_is_not_queued_without_a_script
     strategies.queue_closed(PANE, &down.bar, down.poc, down.slot, false);
     let pending = strategies.pane(PANE).map(|pane| pane.pending().len());
     assert_eq!(pending, Some(0), "only a watching script hears a refill");
+}
+
+/// A flat account whose ticket enters with `ticket`, keeping every command.
+struct Ticketed {
+    ticket: Option<Decimal>,
+    applied: Vec<Command>,
+}
+
+impl StrategyPort for Ticketed {
+    fn apply(&mut self, command: Command) -> Vec<VenueEvent> {
+        self.applied.push(command);
+        Vec::new()
+    }
+
+    fn is_flat(&self) -> bool {
+        true
+    }
+
+    fn ticket_quantity(&self) -> Option<Decimal> {
+        self.ticket
+    }
+}
+
+#[test]
+fn script_order_quantity_follows_its_setting() {
+    let mut strategies = TabStrategies::<DrawingId>::default();
+    for quantity in [OrderQuantity::Fixed(dec("3")), OrderQuantity::Ticket] {
+        let order = SignalOrder {
+            quantity,
+            stop: Decimal::ZERO,
+            gain: Decimal::ZERO,
+        };
+        let request = ScriptArm {
+            pane_id: PANE,
+            script: "steady.pine",
+            source: ALWAYS_RINGS,
+            side: Side::Buy,
+            place: ScriptPlacement::Anywhere,
+            action: SignalAction::Order(order),
+        };
+        let reading = strategies.arm_script(request, |_| Vec::new());
+        assert_eq!(
+            reading.map(|reading| reading.action),
+            Ok(SignalAction::Order(order))
+        );
+    }
+    let up = close(0, "100", "101", None);
+    strategies.queue_closed(PANE, &up.bar, up.poc, up.slot, true);
+    let mut account = Ticketed {
+        ticket: Some(dec("2")),
+        applied: Vec::new(),
+    };
+    let print = Print {
+        events: &[],
+        now_ms: 0,
+    };
+    let answer = strategies.evaluate(
+        &[PANE],
+        &mut account,
+        print,
+        |_, _| true,
+        |_, _, _| None,
+        |_| None,
+    );
+    let sizes: Vec<_> = (account.applied.iter())
+        .map(|command| match command {
+            Command::PlaceMarket { side, quantity, .. } => (*side, *quantity),
+            other => panic!("a script order enters at the market, got {other:?}"),
+        })
+        .collect();
+    assert_eq!(
+        sizes,
+        [(Side::Buy, dec("3")), (Side::Buy, dec("2"))],
+        "the fixed order is 3, the ticket's is what the ticket says"
+    );
+    assert_eq!(answer.watching, 2, "both listen for their fills");
+}
+
+#[test]
+fn a_ticket_order_holds_while_the_ticket_says_nothing() {
+    let mut strategies = TabStrategies::<DrawingId>::default();
+    let order = SignalOrder {
+        quantity: OrderQuantity::Ticket,
+        stop: Decimal::ZERO,
+        gain: Decimal::ZERO,
+    };
+    let request = ScriptArm {
+        pane_id: PANE,
+        script: "steady.pine",
+        source: ALWAYS_RINGS,
+        side: Side::Buy,
+        place: ScriptPlacement::Anywhere,
+        action: SignalAction::Order(order),
+    };
+    strategies
+        .arm_script(request, |_| Vec::new())
+        .expect("arms");
+    let up = close(0, "100", "101", None);
+    strategies.queue_closed(PANE, &up.bar, up.poc, up.slot, true);
+    let mut account = Ticketed {
+        ticket: None,
+        applied: Vec::new(),
+    };
+    let print = Print {
+        events: &[],
+        now_ms: 0,
+    };
+    let _ = strategies.evaluate(
+        &[PANE],
+        &mut account,
+        print,
+        |_, _| true,
+        |_, _, _| None,
+        |_| None,
+    );
+    assert!(account.applied.is_empty(), "{:?}", account.applied);
+    let status = &strategies.script_readings()[0].status;
+    assert!(status.contains("no order quantity"), "{status}");
 }

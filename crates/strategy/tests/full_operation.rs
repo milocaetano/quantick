@@ -4,9 +4,10 @@
 //! in the workspace keeps.
 
 use quantick_engine::{BarBuilder as _, Side, TickBarBuilder, Trade};
-use quantick_sim::{ClosedTrade, Command, ExitReason, Simulator};
+use quantick_sim::{ClosedTrade, Command, ExitReason, Position, Simulator};
 use quantick_strategy::{
-    ArmedState, ArmedStrategy, ForceParams, ForceTrigger, Rearm, Region, StrategyParams,
+    ArmedState, ArmedStrategy, ForceParams, ForceTrigger, PriceBracket, Rearm, Region,
+    StrategyParams,
 };
 use rust_decimal::Decimal;
 
@@ -64,6 +65,7 @@ fn run() -> RunOutcome {
             rearm: Rearm::OneShot,
             on_break: quantick_strategy::BreakPolicy::Ignore,
             execution: quantick_strategy::Execution::Paper,
+            bracket: None,
         },
         Box::new(ForceTrigger::new(ForceParams {
             window: 3,
@@ -162,6 +164,7 @@ fn run_retest(after_cut: &[&str]) -> RunOutcome {
             rearm: Rearm::OneShot,
             on_break: quantick_strategy::BreakPolicy::RetestLimit,
             execution: quantick_strategy::Execution::Paper,
+            bracket: None,
         },
         Box::new(ForceTrigger::new(ForceParams {
             window: 3,
@@ -259,4 +262,85 @@ fn the_retest_tape_produces_the_same_run_twice() {
         assert_eq!(first.final_state, second.final_state);
         assert_eq!(first.status, second.status);
     }
+}
+
+/// Walk `prints` — two per tick bar, three body-1 bars and then a body-4
+/// force bar closing inside `region`, then the print the entry fills at —
+/// through an instance bracketed by fixed distances; answers the position
+/// the entry left open.
+fn bracketed_entry(side: Side, region: Region, legs: PriceBracket, prints: &[&str]) -> Position {
+    let mut instance = ArmedStrategy::new(
+        StrategyParams {
+            side,
+            quantity: Decimal::ONE,
+            tp_mult: Decimal::ONE,
+            sl_mult: Decimal::ONE,
+            bracket: Some(legs),
+            rearm: Rearm::OneShot,
+            on_break: quantick_strategy::BreakPolicy::Ignore,
+            execution: quantick_strategy::Execution::Paper,
+        },
+        Box::new(ForceTrigger::new(ForceParams {
+            window: 3,
+            min_factor: dec("1.5"),
+            max_factor: dec("2.5"),
+            min_range: Decimal::ZERO,
+        })),
+    );
+    let mut sim = Simulator::new();
+    let mut builder = TickBarBuilder::new(2);
+    for (i, price) in prints.iter().enumerate() {
+        let print = trade(i as u64, price);
+        let events = sim.on_trade(&print);
+        for command in instance.on_sim_events(&events) {
+            let _ = instance.on_sim_events(&sim.apply(command));
+        }
+        if let Some(bar) = builder.push(&print) {
+            let flat = sim.position().is_none();
+            for command in instance.on_closed_bar(&bar, &region, true, flat) {
+                let events = sim.apply(command);
+                let _ = instance.on_sim_events(&events);
+            }
+        }
+    }
+    assert_eq!(
+        instance.state(),
+        &ArmedState::InPosition,
+        "{}",
+        instance.status_line()
+    );
+    sim.position().expect("the entry filled").clone()
+}
+
+#[test]
+fn price_bracket_places_stop_and_gain_from_entry() {
+    let legs = |stop: &str, gain: &str| PriceBracket {
+        stop: dec(stop),
+        gain: dec(gain),
+    };
+    let rising = [
+        "100", "101", "101", "102", "102", "103", "103", "107", "108",
+    ];
+    let falling = [
+        "300", "299", "299", "298", "298", "297", "297", "293", "292",
+    ];
+    let long = Region::new(dec("100"), dec("110"));
+    let short = Region::new(dec("290"), dec("310"));
+
+    let bought = bracketed_entry(Side::Buy, long, legs("100", "200"), &rising);
+    assert_eq!(bought.avg_price, dec("108"));
+    assert_eq!(bought.stop_loss, Some(dec("8")), "fill - 100");
+    assert_eq!(bought.take_profit, Some(dec("308")), "fill + 200");
+
+    let sold = bracketed_entry(Side::Sell, short, legs("100", "200"), &falling);
+    assert_eq!(sold.avg_price, dec("292"));
+    assert_eq!(sold.stop_loss, Some(dec("392")), "fill + 100");
+    assert_eq!(sold.take_profit, Some(dec("92")), "fill - 200");
+
+    let no_stop = bracketed_entry(Side::Buy, long, legs("0", "200"), &rising);
+    assert_eq!(no_stop.stop_loss, None, "a zero stop places none");
+    assert_eq!(no_stop.take_profit, Some(dec("308")));
+    let no_gain = bracketed_entry(Side::Sell, short, legs("100", "0"), &falling);
+    assert_eq!(no_gain.stop_loss, Some(dec("392")));
+    assert_eq!(no_gain.take_profit, None, "a zero gain places none");
 }

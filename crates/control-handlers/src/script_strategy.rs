@@ -22,7 +22,9 @@ use quantick_control_schema::script_strategy::{
 use quantick_control_schema::trade::ActionSide;
 use quantick_drawings::{DrawingId, DrawingTool, Drawings};
 use quantick_engine::{Bar, Side};
-use quantick_session::script_strategies::{ScriptArm, ScriptPlacement, ScriptReading};
+use quantick_session::script_strategies::{
+    ScriptArm, ScriptPlacement, ScriptReading, SignalAction,
+};
 use quantick_session::strategies::TabStrategies;
 use quantick_stores::script_library::{LoadedScript, ScriptLibrary};
 use rust_decimal::Decimal;
@@ -148,6 +150,7 @@ fn arm<H: ScriptStrategyHost + ?Sized, A: JournalAccess>(
         source: &source,
         side: input.side.into_engine(),
         place,
+        action: SignalAction::Alarm,
     };
     let reading = strategies
         .arm_script(request, |depth| footprint_warmup(&pane.series, depth))

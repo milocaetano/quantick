@@ -403,4 +403,9 @@ impl<A: BorrowMut<PaperAccount>> quantick_strategy::runner::StrategyPort for Tab
     fn is_flat(&self) -> bool {
         self.core().is_flat()
     }
+
+    /// What a market press on the ticket would enter with now.
+    fn ticket_quantity(&self) -> Option<Decimal> {
+        self.desk.entry_quantity(self.core())
+    }
 }
