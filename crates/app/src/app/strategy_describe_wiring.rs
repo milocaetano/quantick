@@ -1,15 +1,16 @@
-//! Capture the focused chart and apply the conversation owner's admitted effects.
+//! The focused chart the strategy conversation reads and saves onto; the
+//! conversation's decisions live in `quantick_ui_model::strategy_describe::conversation`.
 use super::arrangement_host::ArrangementHost;
 use crate::control::strategy_describe_contract::DescribeHost;
+use crate::drawings::DrawingId;
 use crate::surfaces::Surfaces;
 use quantick_control::error::ControlError;
 use quantick_session::{
-    script_draft::{self, DraftInput},
-    script_strategies::ScriptPlacement,
+    script_draft, script_strategies::ScriptPlacement, strategies::TabStrategies,
 };
 use quantick_ui_model::strategy_describe::{
-    self as model, Command, Context, Draft, Effects, HistoricalClose, Intent, MAX_BARS,
-    MAX_CONTEXT_ITEMS, Phase, Status,
+    Context, Effects, HistoricalClose, Intent, MAX_BARS, MAX_CONTEXT_ITEMS, Status,
+    conversation::{self, Chart, Provider as _},
 };
 
 impl<T: super::control_host::TabsMutPort + ?Sized> DescribeHost for T {
@@ -17,6 +18,13 @@ impl<T: super::control_host::TabsMutPort + ?Sized> DescribeHost for T {
         let (surfaces, tabs) = self.describe_owners();
         dispatch(surfaces, tabs, intent)
     }
+}
+
+/// The focused chart port, borrowed for one dispatch.
+struct Focused<'a> {
+    tabs: &'a mut ArrangementHost,
+    library: Option<&'a std::path::Path>,
+    opened: bool,
 }
 
 fn focused_tab(tabs: &ArrangementHost) -> u64 {
@@ -28,21 +36,9 @@ fn focused_tab(tabs: &ArrangementHost) -> u64 {
         .0
 }
 
-fn current(tabs: &ArrangementHost, context: &Context) -> bool {
-    let id = focused_tab(tabs);
-    let tab = tabs.by_id(id).expect("focused tab");
-    let pane = tab.focused_pane();
-    context.matches_chart(
-        tabs.owner(),
-        id,
-        pane.id,
-        (&tab.active.0, &tab.active.1),
-        &pane.series.bar_config(),
-    )
-}
 fn history(
     pane: &crate::pane::ChartPane,
-    placement: ScriptPlacement<crate::drawings::DrawingId>,
+    placement: ScriptPlacement<DrawingId>,
     live_only: bool,
 ) -> Vec<HistoricalClose> {
     let series = pane.series_read();
@@ -53,47 +49,100 @@ fn history(
             .and_then(|id| crate::pane::strategies::drawing_region(&pane.drawings, id, slot))
     })
 }
-fn capture(tabs: &ArrangementHost) -> Context {
-    let id = focused_tab(tabs);
-    let tab = tabs.by_id(id).expect("focused tab");
-    let pane = tab.focused_pane();
-    let placement = pane
-        .drawings
-        .selected_id()
-        .filter(|id| {
-            quantick_drawings::alert_geometry::check_arm(&pane.drawings, *id, pane.closed_slots())
-                .is_ok()
-        })
-        .map_or(ScriptPlacement::Anywhere, ScriptPlacement::Region);
-    let history = history(pane, placement, false);
-    let with_poc = history.iter().filter(|s| s.close.poc.is_some()).count();
-    Context {
-        workspace: tabs.owner(),
-        tab: id,
-        pane: pane.id,
-        feed: tab.active.0.clone(),
-        symbol: tab.active.1.clone(),
-        bars: pane.series.bar_config(),
-        indicators: pane
-            .indicators
-            .all()
-            .iter()
-            .take(MAX_CONTEXT_ITEMS)
-            .map(|v| v.label.chars().take(128).collect())
-            .collect(),
-        drawings: pane
+
+impl Focused<'_> {
+    fn pinned(&self, context: &Context) -> &crate::pane::ChartPane {
+        self.tabs
+            .by_id(context.tab)
+            .expect("validated pinned tab")
+            .focused_pane()
+    }
+}
+
+impl Chart for Focused<'_> {
+    fn capture(&mut self) -> Context {
+        let tabs = &*self.tabs;
+        let id = focused_tab(tabs);
+        let tab = tabs.by_id(id).expect("focused tab");
+        let pane = tab.focused_pane();
+        let placement = pane
             .drawings
-            .items()
-            .iter()
-            .take(MAX_CONTEXT_ITEMS)
-            .map(|d| format!("{} #{}", d.tool.name(), d.id.0))
-            .collect(),
-        availability: vec![format!(
-            "Footprint POC on {with_poc} of {} captured closes",
-            history.len()
-        )],
-        placement,
-        history,
+            .selected_id()
+            .filter(|id| {
+                quantick_drawings::alert_geometry::check_arm(
+                    &pane.drawings,
+                    *id,
+                    pane.closed_slots(),
+                )
+                .is_ok()
+            })
+            .map_or(ScriptPlacement::Anywhere, ScriptPlacement::Region);
+        let history = history(pane, placement, false);
+        let with_poc = history.iter().filter(|s| s.close.poc.is_some()).count();
+        Context {
+            workspace: tabs.owner(),
+            tab: id,
+            pane: pane.id,
+            feed: tab.active.0.clone(),
+            symbol: tab.active.1.clone(),
+            bars: pane.series.bar_config(),
+            indicators: pane
+                .indicators
+                .all()
+                .iter()
+                .take(MAX_CONTEXT_ITEMS)
+                .map(|v| v.label.chars().take(128).collect())
+                .collect(),
+            drawings: pane
+                .drawings
+                .items()
+                .iter()
+                .take(MAX_CONTEXT_ITEMS)
+                .map(|d| format!("{} #{}", d.tool.name(), d.id.0))
+                .collect(),
+            availability: vec![format!(
+                "Footprint POC on {with_poc} of {} captured closes",
+                history.len()
+            )],
+            placement,
+            history,
+        }
+    }
+    fn shows(&self, context: &Context) -> bool {
+        let id = focused_tab(self.tabs);
+        let tab = self.tabs.by_id(id).expect("focused tab");
+        let pane = tab.focused_pane();
+        context.matches_chart(
+            self.tabs.owner(),
+            id,
+            pane.id,
+            (&tab.active.0, &tab.active.1),
+            &pane.series.bar_config(),
+        )
+    }
+    fn opened(&mut self) {
+        self.opened = true;
+    }
+    fn check_region(&self, context: &Context, drawing: DrawingId) -> Result<(), String> {
+        let pane = self.pinned(context);
+        quantick_drawings::alert_geometry::check_arm(&pane.drawings, drawing, pane.closed_slots())
+            .map_err(|err| err.to_string())
+    }
+    fn warm_history(&self, context: &Context) -> Vec<HistoricalClose> {
+        history(self.pinned(context), context.placement, true)
+    }
+    fn store(&mut self, id: &str, source: &str) -> Result<(), String> {
+        let paths = crate::launch::operator_paths();
+        let folder = self.library.unwrap_or_else(|| {
+            std::path::Path::new(paths.strategies_dir.as_deref().unwrap_or("strategies"))
+        });
+        quantick_stores::script_library::ScriptLibrary::open(folder)
+            .create_source(id, source)
+            .map(drop)
+    }
+    fn strategies(&mut self, context: &Context) -> &mut TabStrategies<DrawingId> {
+        let tab = self.tabs.by_id_mut(context.tab);
+        &mut tab.expect("validated pinned tab").market.strategies
     }
 }
 
@@ -103,153 +152,19 @@ pub(super) fn dispatch(
     intent: Intent,
 ) -> Result<Status, ControlError> {
     let surface = &mut surfaces.strategy_describe;
-    if !surface.view.worker.available() {
-        if matches!(intent, Intent::Command(Command::Read)) {
-            return Ok(surface.model_state.status.clone());
-        }
-        return Err(quantick_control_schema::strategy_describe::unavailable_error());
-    }
-    let opened = match &intent {
-        Intent::Command(Command::Open) => {
-            let context = capture(tabs);
-            surface
-                .view
-                .worker
-                .validate_chart(&context)
-                .map_err(ControlError::invalid_request)?;
-            Some(context)
-        }
-        Intent::Command(Command::Submit { text, .. } | Command::Save { id: text, .. }) => {
-            surface
-                .view
-                .worker
-                .validate_input(text)
-                .map_err(ControlError::invalid_request)?;
-            None
-        }
-        _ => None,
+    let library = surface.view.library.as_deref();
+    let mut chart = Focused {
+        tabs,
+        library,
+        opened: false,
     };
-    let state = &mut surface.model_state;
-    if state.status.phase == Phase::Unavailable {
-        state.status.phase = Phase::Closed;
+    let worker = &mut surface.view.worker;
+    let status = conversation::dispatch(&mut surface.model_state, worker, &mut chart, intent);
+    if chart.opened {
+        let focused = chart.tabs.windows().focused();
+        surface.view.open(super::native_windows::viewport(focused));
     }
-    if state
-        .context()
-        .is_some_and(|context| !current(tabs, context))
-    {
-        surface.view.worker.invalidate();
-        model::update(state, Intent::TargetChanged);
-    }
-    if let Intent::Command(command) = &intent {
-        state
-            .admit(command)
-            .map_err(ControlError::invalid_request)?;
-        if matches!(command, Command::Open | Command::Cancel { .. }) {
-            surface.view.worker.invalidate();
-        }
-    }
-    let intent = if let Some(context) = opened {
-        surface
-            .view
-            .open(super::native_windows::viewport(tabs.windows().focused()));
-        Intent::Opened(context.into())
-    } else {
-        intent
-    };
-    let response = surfaces.update(crate::surfaces::HostIntent::StrategyDescribe(Box::new(
-        intent,
-    )));
-    let mut effect = response
-        .model_effects
-        .into_iter()
-        .find_map(|effect| match effect {
-            quantick_ui_model::HostEffect::StrategyDescribe(effect) => Some(effect),
-            _ => None,
-        })
-        .unwrap_or_default();
-    let surface = &mut surfaces.strategy_describe;
-    let state = &mut surface.model_state;
-    loop {
-        let intent = match effect {
-            Effects::Request(request) => {
-                let revision = request.revision;
-                match surface.view.worker.submit(request) {
-                    Ok(()) => break,
-                    Err(message) => Intent::Replied {
-                        revision,
-                        reply: Err(message),
-                    },
-                }
-            }
-            Effects::Preview {
-                revision,
-                context,
-                source,
-                summary,
-            } => {
-                let result = script_draft::preview(DraftInput {
-                    id: "preview.pine",
-                    source: &source,
-                    placement: context.placement,
-                    history: &context.history,
-                })
-                .map(|markers| Draft {
-                    source,
-                    summary,
-                    markers,
-                });
-                Intent::Previewed { revision, result }
-            }
-            Effects::Save { revision, id } => {
-                let context = state.context().expect("save requires pinned context");
-                let source = &state
-                    .status
-                    .draft
-                    .as_ref()
-                    .expect("save requires preview")
-                    .source;
-                let tab = tabs.by_id_mut(context.tab).expect("validated pinned tab");
-                let result = (|| {
-                    let pane = tab.focused_pane();
-                    if let Some(id) = context.placement.drawing() {
-                        quantick_drawings::alert_geometry::check_arm(
-                            &pane.drawings,
-                            id,
-                            pane.closed_slots(),
-                        )
-                        .map_err(|err| err.to_string())?;
-                    }
-                    let warm = history(pane, context.placement, true);
-                    let prepared = script_draft::prepare(DraftInput {
-                        id: &id,
-                        source,
-                        placement: context.placement,
-                        history: &warm,
-                    })
-                    .map_err(|errors| {
-                        errors.first().map_or_else(
-                            || "Warmup failed".into(),
-                            |d| format!("Warmup failed: {} {}", d.code, d.message),
-                        )
-                    })?;
-                    let paths = crate::launch::operator_paths();
-                    let folder = surface.view.library.as_deref().unwrap_or_else(|| {
-                        std::path::Path::new(
-                            paths.strategies_dir.as_deref().unwrap_or("strategies"),
-                        )
-                    });
-                    quantick_stores::script_library::ScriptLibrary::open(folder)
-                        .create_source(&id, source)?;
-                    script_draft::commit(&mut tab.market.strategies, context.pane, prepared);
-                    Ok(id)
-                })();
-                Intent::Saved { revision, result }
-            }
-            Effects::None | Effects::Dispatch(_) => break,
-        };
-        effect = model::update(state, intent);
-    }
-    Ok(state.status.clone())
+    status
 }
 
 pub(super) fn frame(surfaces: &mut Surfaces, tabs: &mut ArrangementHost, effect: Option<Effects>) {
@@ -257,28 +172,22 @@ pub(super) fn frame(surfaces: &mut Surfaces, tabs: &mut ArrangementHost, effect:
     if !surface.view.worker.available() || tabs.windows().presented() != tabs.windows().focused() {
         return;
     }
-    if surface
-        .model_state
-        .context()
-        .is_some_and(|context| !current(tabs, context))
-    {
-        surface.view.worker.invalidate();
-        model::update(&mut surface.model_state, Intent::TargetChanged);
+    let command = surface.view.command.take();
+    let library = surface.view.library.as_deref();
+    let mut chart = Focused {
+        tabs,
+        library,
+        opened: false,
+    };
+    let worker = &mut surface.view.worker;
+    let state = &mut surface.model_state;
+    let result = conversation::frame(state, worker, &mut chart, command, effect);
+    if chart.opened {
+        let focused = chart.tabs.windows().focused();
+        surface.view.open(super::native_windows::viewport(focused));
     }
-    let command = surface.view.command.take().or(match effect {
-        Some(Effects::Dispatch(c)) => Some(c),
-        _ => None,
-    });
-    if let Some(command) = command
-        && let Err(error) = dispatch(surfaces, tabs, Intent::Command(command))
-    {
-        crate::surfaces::toast::note(
-            &mut surfaces.toast,
-            error.message,
-            std::time::Instant::now(),
-        );
-    }
-    if let Some((revision, reply)) = surfaces.strategy_describe.view.worker.poll() {
-        let _ = dispatch(surfaces, tabs, Intent::Replied { revision, reply });
+    if let Err(error) = result {
+        let now = std::time::Instant::now();
+        crate::surfaces::toast::note(&mut surfaces.toast, error.message, now);
     }
 }

@@ -1,5 +1,11 @@
 //! Admission, revision identity and bounded progress for one chart conversation.
 pub use crate::strategy_describe_contract::*;
+#[path = "strategy_describe/conversation.rs"]
+pub mod conversation;
+#[path = "strategy_describe/credential.rs"]
+pub mod credential;
+#[path = "strategy_describe/protocol.rs"]
+pub mod protocol;
 use std::sync::Arc;
 
 #[derive(Default)]

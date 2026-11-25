@@ -31,7 +31,7 @@ macro_rules! surface_catalog {
                 [] []
                 feed_notice: FeedNotice => feed_notice = "feed_notice.rs", feed_notice = "feed_notice.rs", feed_notice::effects, Overlay, Local;
                 [] []
-                strategy_describe: StrategyDescribe => strategy_describe = "strategy_describe.rs", strategy_describe = "strategy_describe/mod.rs", strategy_describe::effects, Overlay, Host;
+                strategy_describe: StrategyDescribe => strategy_describe = "strategy_describe.rs", strategy_describe = "strategy_describe/mod.rs", strategy_describe::effects, Overlay, Local;
                 [] []
                 strategy_popup: StrategyPopup => strategy_popup = "strategy_popup.rs", strategy_popup = "strategy_popup.rs", strategy_popup::effects, LeadingOverlay, Local;
                 [] []

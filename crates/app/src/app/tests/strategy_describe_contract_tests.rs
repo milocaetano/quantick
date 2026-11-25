@@ -3,18 +3,17 @@ use crate::control::{ControlAccess, strategy_describe};
 use quantick_control_host::actions::ActionRegistry;
 use quantick_control_schema::strategy_describe as wire;
 use quantick_ui_model::Slot;
+use quantick_ui_model::strategy_describe::conversation::Provider as _;
 use serde_json::json;
 
 #[test]
 fn registered_contracts_are_inert() {
     let mut host = FakeWindow::new();
-    let effect = host
-        .surfaces
-        .update(crate::surfaces::HostIntent::StrategyDescribe(Box::new(
-            quantick_ui_model::strategy_describe::Intent::Command(
-                quantick_ui_model::strategy_describe::Command::Open,
-            ),
-        )));
+    let effect = host.surfaces.strategy_describe.update(
+        quantick_ui_model::strategy_describe::Intent::Command(
+            quantick_ui_model::strategy_describe::Command::Open,
+        ),
+    );
     assert!(effect.model_effects.is_empty());
     let surface = &host.surfaces.strategy_describe;
     assert!(surface.supports_pass(Slot::Overlay));

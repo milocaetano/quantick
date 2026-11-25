@@ -7,6 +7,7 @@ use eframe::egui;
 use quantick_control_handlers::{desk::DeskAct, notify::AttentionHost};
 use quantick_control_schema::window_menu::{self as menu, RowId};
 use quantick_ui_model::chrome_menu_bar::{Action, Snapshot, Workspace};
+use quantick_ui_model::strategy_describe::conversation::Provider as _;
 
 use crate::toolrail::ToolRailExt as _;
 pub(in crate::app) fn draw(
