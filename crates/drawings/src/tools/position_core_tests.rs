@@ -72,7 +72,7 @@ fn the_tag_steps_through_the_presets_and_wraps() {
 fn a_preset_carries_the_ratio_and_a_saved_plan_its_pin() {
     let saved = PositionPayload {
         ratio: 3.0,
-        projected: Some(131.5),
+        projected_offset: Some(31.5),
     };
     let mut preset = PositionPayload::default();
     assert!(preset.import_preset(&saved.export_preset().unwrap()));
@@ -80,7 +80,7 @@ fn a_preset_carries_the_ratio_and_a_saved_plan_its_pin() {
         preset,
         PositionPayload {
             ratio: 3.0,
-            projected: None
+            projected_offset: None
         }
     );
     let mut restored = PositionPayload::default();
@@ -154,7 +154,7 @@ fn dragging_the_projected_leg_pins_it_and_leaves_the_rest() {
     )
     .expect("the projected leg takes the drag");
     let dragged = dragged.as_any().downcast_ref::<PositionPayload>().unwrap();
-    assert!((dragged.projected.unwrap() - 125.0).abs() < 1e-9);
+    assert!((dragged.projected_offset.unwrap() - 25.0).abs() < 1e-9);
     assert_eq!(dragged.ratio, DEFAULT_RATIO, "the chosen ratio is kept");
     // Pulled across the entry, the target stays where it was.
     let crossed = drag_projected(
@@ -166,7 +166,7 @@ fn dragging_the_projected_leg_pins_it_and_leaves_the_rest() {
     )
     .unwrap();
     let crossed = crossed.as_any().downcast_ref::<PositionPayload>().unwrap();
-    assert_eq!(crossed.projected, Some(120.0));
+    assert_eq!(crossed.projected_offset, Some(20.0));
 }
 
 #[test]
@@ -184,7 +184,7 @@ fn a_click_on_the_plan_tag_steps_the_ratio_and_releases_the_pin() {
     let points = [pos2(100.0, 200.0), pos2(300.0, 300.0)];
     let mut payload = PositionPayload {
         ratio: 2.0,
-        projected: Some(124.0),
+        projected_offset: Some(24.0),
     };
     assert!(
         !click(&points, pos2(250.0, 260.0), &mut payload),
@@ -195,7 +195,7 @@ fn a_click_on_the_plan_tag_steps_the_ratio_and_releases_the_pin() {
         payload,
         PositionPayload {
             ratio: 3.0,
-            projected: None
+            projected_offset: None
         }
     );
 }
@@ -235,22 +235,65 @@ fn a_position_paints_both_zones_and_says_it_is_a_plan() {
     );
 }
 
+/// A long plan entered at 100 with its stop measured at 95: target 110.
+fn placed_plan() -> crate::Drawings<crate::DrawingTool> {
+    let tool = crate::DrawingTool::by_id("long-position").unwrap();
+    let mut drawings = crate::Drawings::default();
+    let placement = crate::Placement {
+        tool,
+        points: vec![ChartPoint::at(10.0, 100.0), ChartPoint::at(30.0, 95.0)],
+        band: crate::DrawingBand::Price,
+        opening: crate::NewDrawing {
+            style: DrawingStyle::default(),
+            payload: Box::new(PositionPayload::default()),
+        },
+        author: None,
+        name: None,
+        text: None,
+    };
+    crate::update(&mut drawings, crate::DrawingIntent::Place(placement));
+    drawings
+}
+
+fn plan_of(drawings: &crate::Drawings<crate::DrawingTool>) -> (f64, f64, f64) {
+    let drawing = &drawings.items()[0];
+    let plan = position_plan(drawing.tool, &drawing.points, drawing.payload.as_ref()).unwrap();
+    (plan.entry, plan.stop, plan.target)
+}
+
+/// Every anchor move passes through the store, whichever surface made it:
+/// a handle, a nudge or a linked pane's edit.
 #[test]
-fn grabbing_the_entry_pins_the_projected_leg_so_one_line_moves() {
-    let scale = scale();
-    let anchors = [ChartPoint::at(10.0, 100.0), ChartPoint::at(30.0, 95.0)];
-    let payload = PositionPayload::default();
-    let pinned = pin_projected(&context(&payload, &anchors, &scale), Side::Long)
-        .expect("an unpinned leg is pinned before the drag");
-    let pinned = pinned.as_any().downcast_ref::<PositionPayload>().unwrap();
-    assert_eq!(pinned.projected, Some(110.0));
-    // The entry then moves to 102: the target stays at 110, not 116.
-    let moved = legs(Side::Long, 102.0, 95.0, pinned.ratio, pinned.projected).unwrap();
-    assert_eq!((moved.stop, moved.target), (95.0, 110.0));
-    assert!(
-        pin_projected(&context(pinned, &anchors, &scale), Side::Long).is_none(),
-        "a pinned leg stays pinned"
-    );
+fn moving_one_line_leaves_the_other_two_and_moving_the_plan_moves_all_three() {
+    let mut drawings = placed_plan();
+    assert_eq!(plan_of(&drawings), (100.0, 95.0, 110.0));
+    // The entry alone moves to 102: the target stays at 110, not 116.
+    assert!(drawings.move_anchor(0, 0, ChartPoint::at(10.0, 102.0)));
+    assert_eq!(plan_of(&drawings), (102.0, 95.0, 110.0));
+    // The stop alone moves to 96.
+    assert!(drawings.set_points(
+        0,
+        &[ChartPoint::at(10.0, 102.0), ChartPoint::at(30.0, 96.0)]
+    ));
+    assert_eq!(plan_of(&drawings), (102.0, 96.0, 110.0));
+    // The whole plan moves up 5: every leg goes with it.
+    drawings.select(Some(0));
+    drawings.translate_selected(0.0, 5.0);
+    assert_eq!(plan_of(&drawings), (107.0, 101.0, 115.0));
+}
+
+#[test]
+fn an_unpinned_plan_moved_whole_keeps_following_its_ratio() {
+    let mut drawings = placed_plan();
+    drawings.select(Some(0));
+    drawings.translate_selected(0.0, 5.0);
+    assert_eq!(plan_of(&drawings), (105.0, 100.0, 115.0));
+    let payload = drawings.items()[0]
+        .payload
+        .as_any()
+        .downcast_ref::<PositionPayload>()
+        .unwrap();
+    assert_eq!(payload.projected_offset, None, "a rigid move pins nothing");
 }
 
 #[test]
@@ -318,4 +361,46 @@ fn a_target_projected_off_the_chart_keeps_its_chip_on_it() {
         })
         .unwrap();
     assert!(target_at.y >= 400.0, "{target_at:?}");
+}
+
+#[test]
+fn a_plan_entirely_off_the_chart_paints_no_chip() {
+    let scale = scale();
+    // Entry 100 at y 1000 and every leg below a chart that ends at y 500.
+    let anchors = [ChartPoint::at(10.0, 100.0), ChartPoint::at(30.0, 95.0)];
+    let points = screen(&scale, &anchors);
+    let payload = PositionPayload::default();
+    let ctxt = context(&payload, &anchors, &scale);
+    let mut scene = MarkScene::default();
+    let chart = PxRect::from_min_max(pos2(0.0, 0.0), pos2(1000.0, 500.0));
+    paint(
+        &mut scene,
+        chart,
+        DrawingStyle::default(),
+        &points,
+        &ctxt,
+        Side::Long,
+    );
+    assert!(!scene.shapes.iter().any(|shape| matches!(
+        shape,
+        crate::MarkShape::Text { text, .. } if text.starts_with("TP") || text.starts_with("SL")
+    )));
+}
+
+#[test]
+fn a_pinned_leg_reserves_its_own_reach_and_the_painted_width() {
+    let anchors = PxRect::from_min_max(pos2(100.0, 200.0), pos2(100.0, 250.0));
+    let chart = PxRect::from_min_max(pos2(0.0, 0.0), pos2(1000.0, 1000.0));
+    let payload = PositionPayload {
+        ratio: 2.0,
+        projected_offset: Some(30.0),
+    };
+    let bounds = LONG.content_bounds(
+        &payload,
+        anchors,
+        chart,
+        crate::TextSpacing::new(10.0, 10.0),
+    );
+    assert_eq!((bounds.min.y, bounds.max.y), (-100.0, 550.0));
+    assert_eq!(bounds.max.x, 100.0 + MIN_WIDTH_BARS * 10.0);
 }

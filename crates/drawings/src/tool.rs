@@ -382,11 +382,16 @@ pub trait MarkTool: Sync {
     ) -> Option<Box<dyn DrawingPayload>> {
         None
     }
-    /// The payload an anchor or line drag leaves behind, set in the same
-    /// frame as the moved anchors: a position pins its projected leg, so
-    /// moving the entry moves the entry alone. `None` (the default) keeps
-    /// the payload as it is.
-    fn anchor_drag_payload(&self, _ctxt: &DrawContext<'_>) -> Option<Box<dyn DrawingPayload>> {
+    /// The payload anchors moving from `before` to `after` leave behind,
+    /// whatever moved them — a handle, a body drag, a nudge, a linked pane:
+    /// a position keeps its projected leg where the trader left it. `None`
+    /// (the default) keeps the payload as it is.
+    fn reanchored_payload(
+        &self,
+        _payload: &dyn DrawingPayload,
+        _before: &[crate::ChartPoint],
+        _after: &[crate::ChartPoint],
+    ) -> Option<Box<dyn DrawingPayload>> {
         None
     }
     /// Why these anchors make no object of this tool, for a placement that
@@ -867,12 +872,6 @@ impl DrawingTool {
             .drag_payload_handle(chart_rect, points, handle, to, ctxt)
     }
 
-    /// See [`MarkTool::anchor_drag_payload`].
-    #[must_use]
-    pub fn anchor_drag_payload(self, ctxt: &DrawContext<'_>) -> Option<Box<dyn DrawingPayload>> {
-        self.0.anchor_drag_payload(ctxt)
-    }
-
     /// See [`MarkTool::placement_refusal`].
     #[must_use]
     pub fn placement_refusal(self, anchors: &[crate::ChartPoint]) -> Option<&'static str> {
@@ -983,5 +982,13 @@ impl crate::ToolCatalog for DrawingTool {
     }
     fn band_for(self, band: &DrawingBand) -> DrawingBand {
         Self::band_for(self, band)
+    }
+    fn reanchored_payload(
+        self,
+        payload: &dyn DrawingPayload,
+        before: &[crate::ChartPoint],
+        after: &[crate::ChartPoint],
+    ) -> Option<Box<dyn DrawingPayload>> {
+        self.0.reanchored_payload(payload, before, after)
     }
 }

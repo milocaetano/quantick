@@ -686,14 +686,6 @@ impl DrawingProjection<'_> {
         total: usize,
         constrain: Constrain,
     ) {
-        let pinned = band.scale.as_ref().and_then(|scale| {
-            let drawing = drawings.items().get(drawing_index)?;
-            let ctxt = self.draw_context(drawing, scale, band, true);
-            drawing.tool.anchor_drag_payload(&ctxt)
-        });
-        if let Some(payload) = pinned {
-            drawings.set_payload(drawing_index, payload);
-        }
         let moved = band.scale.as_ref().and_then(|scale| {
             let drawing = drawings.items().get(drawing_index)?;
             let projected = self.projected_drawing_points(drawing, history_right, total, scale);

@@ -124,6 +124,16 @@ pub trait ToolCatalog: Copy + PartialEq + std::fmt::Debug {
     }
     /// The band a mark whose first anchor landed in `band` belongs to.
     fn band_for(self, band: &DrawingBand) -> DrawingBand;
+    /// The payload a mark's anchors moving from `before` to `after` leave
+    /// behind; `None` keeps it.
+    fn reanchored_payload(
+        self,
+        _payload: &dyn DrawingPayload,
+        _before: &[ChartPoint],
+        _after: &[ChartPoint],
+    ) -> Option<Box<dyn DrawingPayload>> {
+        None
+    }
 }
 
 /// A point (or an offset) in screen pixels, `x` rightwards and `y`
