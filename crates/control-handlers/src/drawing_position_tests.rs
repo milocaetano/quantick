@@ -29,7 +29,11 @@ impl PresetHost for MemoryBank {
         None
     }
     fn set_default_preset(&mut self, _: &str, _: Option<String>) {}
-    fn default_style(&self, tool: &str, _: quantick_drawings::position_edit::Ground) -> Option<DrawingStyle> {
+    fn default_style(
+        &self,
+        tool: &str,
+        _: quantick_drawings::position_edit::Ground,
+    ) -> Option<DrawingStyle> {
         self.styles.get(tool).copied()
     }
     fn set_default_style(
@@ -43,7 +47,11 @@ impl PresetHost for MemoryBank {
             None => self.styles.remove(tool),
         };
     }
-    fn default_config(&self, tool: &str, _: quantick_drawings::position_edit::Ground) -> Option<toml::Value> {
+    fn default_config(
+        &self,
+        tool: &str,
+        _: quantick_drawings::position_edit::Ground,
+    ) -> Option<toml::Value> {
         self.configs.get(tool).cloned()
     }
     fn set_default_config(
@@ -107,7 +115,11 @@ fn an_inspection_reads_the_look_legs_and_width_and_changes_nothing() {
     assert!(!read.changed);
     assert_eq!(read.side, PositionSideDto::Long);
     assert_eq!(
-        (read.entry.as_str(), read.stop.as_str(), read.target.as_str()),
+        (
+            read.entry.as_str(),
+            read.stop.as_str(),
+            read.target.as_str()
+        ),
         ("100", "90", "120")
     );
     assert_eq!(read.look.target_color, "#2EA064");
@@ -131,7 +143,11 @@ fn a_set_lands_every_edit_as_one_undo_step_and_reads_it_back() {
     let read = set(&mut marks, &input(id, edits)).unwrap();
     assert!(read.changed);
     assert_eq!(
-        (read.entry.as_str(), read.stop.as_str(), read.target.as_str()),
+        (
+            read.entry.as_str(),
+            read.stop.as_str(),
+            read.target.as_str()
+        ),
         ("100", "90", "130"),
         "entry and stop hold; the target moves"
     );
@@ -179,7 +195,10 @@ fn malformed_or_out_of_range_input_changes_nothing() {
         json!({"target_color": "#112233", "ratio": "25"}),
         json!({"width_bars": "3"}),
     ] {
-        assert!(set(&mut marks, &input(id, edits.clone())).is_err(), "{edits}");
+        assert!(
+            set(&mut marks, &input(id, edits.clone())).is_err(),
+            "{edits}"
+        );
         assert_eq!(marks.items()[0], before, "{edits}");
     }
     assert!(set(&mut marks, &input(id + 99, json!({}))).is_err());
@@ -212,7 +231,10 @@ fn the_default_call_saves_resets_and_reads_per_tool() {
     let drawing = marks.items()[0].clone();
     let fresh = default(&mut bank, canvas, &drawing, DefaultAction::Inspect).unwrap();
     assert!(!fresh.saved);
-    assert_eq!(fresh.opening.ratio_text, "R/R 1:1", "factory risk 1 : reward 1");
+    assert_eq!(
+        fresh.opening.ratio_text, "R/R 1:1",
+        "factory risk 1 : reward 1"
+    );
     let saved = default(&mut bank, canvas, &drawing, DefaultAction::Save).unwrap();
     assert!(saved.saved);
     assert_eq!(saved.tool_id, "long-position");

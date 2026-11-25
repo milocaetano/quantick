@@ -55,7 +55,13 @@ where
         let marks = host.addressed_pane(input.tab_id, input.pane_id)?.marks();
         let (drawing, canvas) = (drawing(marks, &input.drawing_id)?.clone(), marks.canvas());
         let result = default(host.drawing_defaults(), canvas, &drawing, input.action)?;
-        journal(access, actor, DEFAULT_EVENT_KIND, "position_default", &result)
+        journal(
+            access,
+            actor,
+            DEFAULT_EVENT_KIND,
+            "position_default",
+            &result,
+        )
     })
 }
 
@@ -203,9 +209,8 @@ pub fn default(
     drawing: &Drawing<DrawingTool>,
     action: DefaultAction,
 ) -> Result<PositionDefaultResult, ControlError> {
-    let refused = |refusal: quantick_drawings::position_edit::PositionEditRefusal| {
-        invalid(refusal.reason())
-    };
+    let refused =
+        |refusal: quantick_drawings::position_edit::PositionEditRefusal| invalid(refusal.reason());
     position_of(drawing).map_err(refused)?;
     let action = match action {
         DefaultAction::Save => Some(PositionDefault::Save),
