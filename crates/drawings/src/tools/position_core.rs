@@ -353,8 +353,8 @@ pub(super) fn paint(
     paint_leg_plates(painter, chart_rect, &frame, &legs, ctxt, &payload);
     let tag = plan_plate(side, Some(legs.ratio()), legs.entry);
     // Outside the box, clear of the width handles at the entry line's ends:
-    // to its left, else to its right, else inside past the left handle when
-    // the pane has room on neither side — readable before unobstructed.
+    // to its left, else to its right, else inside, resting on the entry line
+    // above the handles centred on it, when the pane has room on neither side.
     let font = FontSpec::themed(ctxt.appearance, FontRole::Monospace, LABEL_TEXT_PX);
     let width = ctxt.text.size(&tag, font).x + 2.0 * LABEL_PAD_X_PX;
     let gap = LABEL_INSET_PX + crate::SELECTED_ANCHOR_RADIUS_PX;
@@ -363,7 +363,8 @@ pub(super) fn paint(
     } else if right + gap + width <= chart_rect.right() {
         (pos2(right + gap, frame.entry_y), Align2::LEFT_CENTER)
     } else {
-        (pos2(left + gap, frame.entry_y), Align2::LEFT_CENTER)
+        let above = frame.entry_y - crate::SELECTED_ANCHOR_RADIUS_PX - 1.0;
+        (pos2(left + gap, above), Align2::LEFT_BOTTOM)
     };
     label(painter, ctxt, at, anchor, &tag, plate);
 }
