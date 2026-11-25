@@ -290,6 +290,7 @@ impl StoredPreset {
             quantity,
             tp_mult: Decimal::from_str(&self.tp_mult).ok()?,
             sl_mult: Decimal::from_str(&self.sl_mult).ok()?,
+            bracket: None,
             rearm,
             on_break,
             execution: if self.alarm_only {

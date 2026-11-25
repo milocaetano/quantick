@@ -1,6 +1,6 @@
 //! Compile, preview and prepare alarm-only runtime instances on actual closes.
 mod contract;
-use crate::script_strategies::ScriptReading;
+use crate::script_strategies::{NoAccount, ScriptReading, SignalAction};
 use crate::strategies::TabStrategies;
 pub use contract::{Diagnostic, DraftInput, HistoricalClose, Marker, PreparedAlarm};
 use quantick_engine::Side;
@@ -33,7 +33,9 @@ fn instances<D: Copy>(
     let alarms = [Side::Buy, Side::Sell]
         .into_iter()
         .filter(|side| script.sides().iter().any(|(_, declared)| declared == side))
-        .map(|side| ScriptInstance::arm(0, &script, side, input.placement, &[]))
+        .map(|side| {
+            ScriptInstance::arm(0, &script, side, input.placement, &[], SignalAction::Alarm)
+        })
         .collect();
     Ok((script, alarms))
 }
@@ -51,6 +53,7 @@ pub fn preview<D: Copy>(input: DraftInput<'_, D>) -> Result<Vec<Marker>, Vec<Dia
                     &close.bar,
                     close.poc,
                     placement.as_ref(),
+                    &mut NoAccount,
                     u64::try_from(time).unwrap_or_default(),
                 )
                 .is_some()

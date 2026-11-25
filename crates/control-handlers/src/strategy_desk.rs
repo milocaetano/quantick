@@ -300,6 +300,7 @@ const fn capability(command: &StrategyDeskCommand<DrawingId>) -> &'static str {
         StrategyDeskCommand::Arm(_) => wire::ARM_CAPABILITY_ID,
         StrategyDeskCommand::SaveAs { .. } => wire::SAVE_AS_CAPABILITY_ID,
         StrategyDeskCommand::Duplicate(_) => wire::DUPLICATE_CAPABILITY_ID,
+        StrategyDeskCommand::SetAction { .. } => "strategy.script.action.set",
     }
 }
 

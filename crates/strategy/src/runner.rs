@@ -28,6 +28,7 @@
 
 use quantick_engine::Bar;
 use quantick_sim::{Command, VenueEvent};
+use rust_decimal::Decimal;
 
 use crate::anchors::AnchoredInstance;
 use crate::placement::Unresolved;
@@ -44,6 +45,13 @@ pub trait StrategyPort {
     /// Whether the account holds no position and nothing working — the
     /// kernel's flat gate, read fresh before each instance judges a bar.
     fn is_flat(&self) -> bool;
+
+    /// The quantity the trader's ticket enters with now, for an instance
+    /// sized by it; `None` when there is no ticket to read, which holds
+    /// such an instance's entry.
+    fn ticket_quantity(&self) -> Option<Decimal> {
+        None
+    }
 }
 
 /// One armed instance as the runner steps it: the anchor its region is
@@ -315,6 +323,7 @@ mod tests {
                 rearm: Rearm::OneShot,
                 on_break: BreakPolicy::Ignore,
                 execution: Execution::Paper,
+                bracket: None,
             },
             Box::new(ForceTrigger::new(ForceParams {
                 window: 3,

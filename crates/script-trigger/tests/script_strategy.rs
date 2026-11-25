@@ -6,7 +6,9 @@ use quantick_engine::{Bar, Side};
 use quantick_script_trigger::{
     ArmRefusal, ResolvedPlacement, Script, ScriptInstance, ScriptPlacement, ScriptState,
 };
-use quantick_strategy::{DisarmReason, Region};
+use quantick_sim::{Command, VenueEvent};
+use quantick_strategy::runner::StrategyPort;
+use quantick_strategy::{DisarmReason, Region, SignalAction};
 use rust_decimal::Decimal;
 
 const RENKO_POC_FLIP: &str = include_str!("../../app/scripts/renko_poc_flip.pine");
@@ -45,7 +47,7 @@ fn bull_flip() -> [(Bar, Option<Decimal>); 2] {
 
 fn arm(source: &str, side: Side, placement: ScriptPlacement<Drawing>) -> ScriptInstance<Drawing> {
     let script = Script::load("test.pine", source).expect("the script arms");
-    ScriptInstance::arm(1, &script, side, placement, &[])
+    ScriptInstance::arm(1, &script, side, placement, &[], SignalAction::Alarm)
 }
 
 /// Feed one closed bar, resolving a region placement to `region`; answers
@@ -57,8 +59,54 @@ fn ring(
 ) -> bool {
     let resolved = instance.placement.resolve(|_| Some((region, true)));
     instance
-        .on_closed_bar(bar, *poc, resolved.as_ref(), 0)
+        .on_closed_bar(bar, *poc, resolved.as_ref(), &mut Account::default(), 0)
         .is_some()
+}
+
+/// A flat account that keeps every command it is handed.
+#[derive(Default)]
+struct Account {
+    applied: Vec<Command>,
+}
+
+impl StrategyPort for Account {
+    fn apply(&mut self, command: Command) -> Vec<VenueEvent> {
+        self.applied.push(command);
+        Vec::new()
+    }
+
+    fn is_flat(&self) -> bool {
+        true
+    }
+}
+
+#[test]
+fn script_instance_defaults_to_alarm_only() {
+    let script = Script::load("steady.pine", ALWAYS_RINGS).expect("the script arms");
+    let mut instance: ScriptInstance<Drawing> = ScriptInstance::arm(
+        1,
+        &script,
+        Side::Buy,
+        ScriptPlacement::Anywhere,
+        &[],
+        SignalAction::default(),
+    );
+    assert_eq!(instance.action(), SignalAction::Alarm);
+    let mut account = Account::default();
+    let resolved = instance.placement.resolve(|_| None);
+    let rang = instance.on_closed_bar(
+        &brick(0, "100", "101"),
+        None,
+        resolved.as_ref(),
+        &mut account,
+        0,
+    );
+    assert!(rang.is_some(), "the signal rings the alarm");
+    assert!(
+        account.applied.is_empty(),
+        "and places nothing: {:?}",
+        account.applied
+    );
 }
 
 #[test]
@@ -276,8 +324,14 @@ fn an_error_during_warmup_disarms_at_arm_time() {
     let history: Vec<_> = (0..4)
         .map(|index| (brick(index, "100", "101"), None))
         .collect();
-    let instance: ScriptInstance<Drawing> =
-        ScriptInstance::arm(1, &script, Side::Buy, ScriptPlacement::Anywhere, &history);
+    let instance: ScriptInstance<Drawing> = ScriptInstance::arm(
+        1,
+        &script,
+        Side::Buy,
+        ScriptPlacement::Anywhere,
+        &history,
+        SignalAction::Alarm,
+    );
     assert!(
         matches!(instance.state(), ScriptState::Disarmed { reason } if reason.starts_with("line 6:")),
         "{:?}",
@@ -291,8 +345,14 @@ fn warmup_feeds_the_script_without_ringing_for_history() {
     let history: Vec<_> = (0..3)
         .map(|index| (brick(index, "100", "101"), None))
         .collect();
-    let mut instance: ScriptInstance<Drawing> =
-        ScriptInstance::arm(1, &script, Side::Buy, ScriptPlacement::Anywhere, &history);
+    let mut instance: ScriptInstance<Drawing> = ScriptInstance::arm(
+        1,
+        &script,
+        Side::Buy,
+        ScriptPlacement::Anywhere,
+        &history,
+        SignalAction::Alarm,
+    );
     let unused = Region::new(Decimal::ZERO, Decimal::ONE);
     assert!(ring(&mut instance, &(brick(3, "100", "101"), None), unused));
 }
@@ -300,7 +360,7 @@ fn warmup_feeds_the_script_without_ringing_for_history() {
 #[test]
 fn a_user_disarm_silences_the_instance_and_says_so() {
     let mut instance = arm(ALWAYS_RINGS, Side::Buy, ScriptPlacement::Anywhere);
-    instance.disarm(DisarmReason::User);
+    let _ = instance.disarm(DisarmReason::User);
     let unused = Region::new(Decimal::ZERO, Decimal::ONE);
     assert!(!ring(
         &mut instance,
@@ -339,6 +399,7 @@ fn a_warmup_with_footprints_lets_the_first_live_brick_flip() {
         Side::Buy,
         ScriptPlacement::Anywhere,
         std::slice::from_ref(&down),
+        SignalAction::Alarm,
     );
     assert!(
         !warmed.armed().status_line().contains("Bull flip"),
@@ -356,6 +417,7 @@ fn a_warmup_with_footprints_lets_the_first_live_brick_flip() {
         Side::Buy,
         ScriptPlacement::Anywhere,
         &[(down.0.clone(), None)],
+        SignalAction::Alarm,
     );
     assert!(
         !ring(&mut blind, &up, unused),
@@ -372,6 +434,7 @@ fn a_flip_during_warmup_is_not_the_status() {
         Side::Buy,
         ScriptPlacement::Anywhere,
         &bull_flip(),
+        SignalAction::Alarm,
     );
     let status = instance.armed().status_line();
     assert!(status.contains("waiting for bars"), "{status}");
@@ -380,8 +443,8 @@ fn a_flip_during_warmup_is_not_the_status() {
 #[test]
 fn a_halted_instance_names_its_reason_and_stays_quiet() {
     let mut instance = arm(ALWAYS_RINGS, Side::Buy, ScriptPlacement::Anywhere);
-    instance.halt("its region drawing was removed");
-    instance.halt("a later reason");
+    let _ = instance.halt("its region drawing was removed");
+    let _ = instance.halt("a later reason");
     let unused = Region::new(Decimal::ZERO, Decimal::ONE);
     assert!(!ring(
         &mut instance,

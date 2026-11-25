@@ -105,6 +105,7 @@ fn every_run() -> String {
                         rearm,
                         on_break,
                         execution: Execution::Paper,
+                        bracket: None,
                     },
                     ForceParams {
                         window: 5,

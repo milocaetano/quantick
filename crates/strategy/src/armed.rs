@@ -14,6 +14,7 @@ use quantick_sim::{Bracket, Command, OrderId, RejectReason, VenueEvent};
 use rust_decimal::Decimal;
 
 use crate::placement::{Placement, Reach};
+use crate::signal_action::PriceBracket;
 use crate::trigger::{ClosedBars, Signal, Trigger};
 
 /// What the instance does after its operation closes.
@@ -59,6 +60,9 @@ pub struct StrategyParams {
     /// Stop loss = reference − `sl_mult` × projection, against the trade.
     /// Zero or negative means "no stop leg".
     pub sl_mult: Decimal,
+    /// Fixed distances from the entry in place of the two multiples; `None`
+    /// projects the legs off the signal as above.
+    pub bracket: Option<PriceBracket>,
     pub rearm: Rearm,
     /// What a region-cutting trigger bar does. See [`BreakPolicy`].
     pub on_break: BreakPolicy,
@@ -405,6 +409,20 @@ impl ArmedStrategy {
         &self.params
     }
 
+    /// What the next setup does: trade or only watch, sized `quantity`,
+    /// protected by `bracket`. Side, ruler and state stay as they are, and a
+    /// live operation keeps the order it was placed with.
+    pub fn set_execution(
+        &mut self,
+        execution: Execution,
+        quantity: Decimal,
+        bracket: Option<PriceBracket>,
+    ) {
+        self.params.execution = execution;
+        self.params.quantity = quantity;
+        self.params.bracket = bracket;
+    }
+
     /// Whether the last closed bar presented this instance's setup.
     ///
     /// This is the *opportunity*, not the trade: the account, the state
@@ -555,9 +573,15 @@ impl ArmedStrategy {
             self.hold("account not flat");
             return Vec::new();
         }
+        // A size the consumer could not read — a ticket that says nothing —
+        // holds rather than sending an order the simulator would refuse.
+        if self.params.quantity <= Decimal::ZERO {
+            self.hold("no order quantity");
+            return Vec::new();
+        }
         let edge = match opportunity {
             Opportunity::Market => {
-                let Some(bracket) = self.project(&signal) else {
+                let Some(bracket) = self.project(&signal, signal.reference) else {
                     return Vec::new();
                 };
                 self.clear_notes();
@@ -573,7 +597,7 @@ impl ArmedStrategy {
             }
             Opportunity::Retest { edge } => edge,
         };
-        let Some(bracket) = self.project(&signal) else {
+        let Some(bracket) = self.project(&signal, edge) else {
             return Vec::new();
         };
         // The projected legs anchor on the trigger bar, but the entry now
@@ -621,15 +645,21 @@ impl ArmedStrategy {
     /// already on the badge. A promised leg that cannot be priced is a
     /// reason not to fire, never a reason to fire unprotected — and one
     /// definition of that refusal serves both the market entry and the
-    /// retest limit.
-    fn project(&mut self, signal: &Signal) -> Option<Bracket> {
-        let bracket = project_bracket(
-            self.params.side,
-            signal.reference,
-            signal.projection,
-            self.params.tp_mult,
-            self.params.sl_mult,
-        );
+    /// retest limit. Fixed distances price off `entry`, where the order
+    /// enters; the multiples off the signal's reference.
+    fn project(&mut self, signal: &Signal, entry: Decimal) -> Option<Bracket> {
+        let side = self.params.side;
+        let bracket = match self.params.bracket {
+            // A distance is a multiple of a unit projection.
+            Some(legs) => project_bracket(side, entry, Decimal::ONE, legs.gain, legs.stop),
+            None => project_bracket(
+                side,
+                signal.reference,
+                signal.projection,
+                self.params.tp_mult,
+                self.params.sl_mult,
+            ),
+        };
         if bracket.is_none() {
             self.hold("the projection is not priceable");
         }
@@ -652,6 +682,13 @@ impl ArmedStrategy {
     /// honest, and the instance disarms as [`DisarmReason::ProtectionDropped`].
     /// Applying a returned `ClosePosition` emits no events of its own, so
     /// feeding its (empty) apply-result back is a no-op by construction.
+    ///
+    /// An instance bracketed by fixed distances ([`StrategyParams::bracket`])
+    /// answers a clean entry fill with a `SetBracket` pricing both legs off
+    /// the fill itself, before any later print, so the distances hold from
+    /// the price actually paid. Refused, it leaves the legs the order
+    /// carried. A fill that dropped a leg is closed as above instead: the
+    /// re-price is withdrawn, so no answer can leave the position bare.
     #[must_use]
     pub fn on_sim_events(&mut self, events: &[VenueEvent]) -> Vec<Command> {
         // Whether this batch contains this instance's own entry fill: the
@@ -685,6 +722,21 @@ impl ArmedStrategy {
                 ) if fill.role == quantick_sim::FillRole::Entry(*id) => {
                     self.state = ArmedState::InPosition;
                     my_fill_in_batch = true;
+                    let at_fill = (self.params.bracket).and_then(|legs| {
+                        project_bracket(
+                            self.params.side,
+                            fill.price,
+                            Decimal::ONE,
+                            legs.gain,
+                            legs.stop,
+                        )
+                    });
+                    if let Some(bracket) = at_fill.filter(|bracket| !bracket.is_empty()) {
+                        commands.push(Command::SetBracket {
+                            stop_loss: bracket.stop_loss(),
+                            take_profit: bracket.take_profit(),
+                        });
+                    }
                 }
                 (
                     ArmedState::Fired {
@@ -725,6 +777,7 @@ impl ArmedStrategy {
                     // "Never fire unprotected" extends past the fill: an
                     // operation whose promised leg could not be priced is
                     // closed, not ridden bare.
+                    commands.retain(|command| !matches!(command, Command::SetBracket { .. }));
                     self.state = ArmedState::Disarmed {
                         reason: DisarmReason::ProtectionDropped,
                     };
@@ -888,7 +941,11 @@ impl ArmedStrategy {
             // Only promise the self-cancel when the order actually carries
             // one: without a take-profit leg there is no target level.
             ArmedState::Fired { retest: true, .. } => {
-                if self.params.tp_mult > Decimal::ZERO {
+                let wants_target = self
+                    .params
+                    .bracket
+                    .map_or(self.params.tp_mult, |legs| legs.gain);
+                if wants_target > Decimal::ZERO {
                     "retest limit resting at the edge · cancels at target".to_owned()
                 } else {
                     "retest limit resting at the edge · until filled or disarmed".to_owned()
@@ -994,6 +1051,7 @@ mod tests {
             rearm: Rearm::OneShot,
             on_break: BreakPolicy::Ignore,
             execution: Execution::Paper,
+            bracket: None,
         }
     }
 

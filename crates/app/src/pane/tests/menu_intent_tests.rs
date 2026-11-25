@@ -127,6 +127,7 @@ fn arm_strategy(pane: &mut ChartPane, drawing: DrawingId) {
                 rearm: quantick_strategy::Rearm::OneShot,
                 on_break: quantick_strategy::BreakPolicy::Ignore,
                 execution: quantick_strategy::Execution::Paper,
+                bracket: None,
             },
             Box::new(quantick_strategy::ForceTrigger::new(
                 quantick_strategy::ForceParams::default_band(),

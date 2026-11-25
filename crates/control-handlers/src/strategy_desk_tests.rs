@@ -4,7 +4,7 @@ use crate::tabs::TabDirectory;
 use crate::test_support::{FakeAccess, FakeTab, FakeWindow};
 use quantick_chart::state::{ChartState, SpecSelector};
 use quantick_engine::BarSpec;
-use quantick_session::script_strategies::{ScriptArm, ScriptPlacement};
+use quantick_session::script_strategies::{ScriptArm, ScriptPlacement, SignalAction};
 use quantick_session::strategies::TabStrategies;
 use serde_json::json;
 
@@ -90,6 +90,7 @@ fn arm_steady(window: &mut Window, pane_id: u64) {
         source: STEADY,
         side: Side::Buy,
         place: ScriptPlacement::Anywhere,
+        action: SignalAction::Alarm,
     };
     let armed = window.strategies.arm_script(request, |_| Vec::new());
     armed.expect("the fixture arms");
@@ -219,7 +220,8 @@ fn an_ended_script_is_armed_again_through_its_call() {
     };
     let mut access = FakeAccess::default();
     arm_steady(&mut window, FLOW);
-    window.strategies.pane_mut(FLOW).scripts[0].halt(quantick_session::strategies::DRAWING_REMOVED);
+    let _ = window.strategies.pane_mut(FLOW).scripts[0]
+        .halt(quantick_session::strategies::DRAWING_REMOVED);
 
     let armed = call(
         arm::<Window, FakeAccess>,
