@@ -571,6 +571,12 @@ impl StrategyBank {
         self.presets.get(name)
     }
 
+    /// Every preset with its name, in name order: what a picker lists.
+    #[must_use]
+    pub fn rows(&self) -> Vec<(String, StoredPreset)> {
+        self.presets.clone().into_iter().collect()
+    }
+
     /// Save (or overwrite) a named preset and write the file back.
     pub fn save(&mut self, name: &str, preset: StoredPreset) {
         self.presets.insert(name.trim().to_owned(), preset);
@@ -638,6 +644,20 @@ mod tests {
             Decimal::from(100),
             "the form's starting point carries the elephant floor"
         );
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn rows_list_every_preset_in_name_order() {
+        let path = scratch("rows");
+        let _ = std::fs::remove_file(&path);
+        let mut bank = StrategyBank::load_from(&path);
+        bank.save("sell", StoredPreset::starting_point(Side::Sell));
+        bank.save("buy", StoredPreset::starting_point(Side::Buy));
+        let rows = bank.rows();
+        let names: Vec<&str> = rows.iter().map(|(name, _)| name.as_str()).collect();
+        assert_eq!(names, ["buy", "sell"]);
+        assert_eq!(Some(&rows[1].1), bank.get("sell"));
         std::fs::remove_file(&path).ok();
     }
 

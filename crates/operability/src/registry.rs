@@ -55,6 +55,7 @@ mod layers;
 mod replay;
 mod script_editor;
 mod strategy_describe;
+mod strategy_desk;
 mod trading;
 mod workspace;
 
@@ -73,6 +74,7 @@ pub const FAMILIES: &[&[UiBehaviour]] = &[
     indicators::ROWS,
     script_editor::ROWS,
     strategy_describe::ROWS,
+    strategy_desk::ROWS,
     trading::ROWS,
     control::FEED_RECOVERY,
     drawings::TOOL_RAIL,

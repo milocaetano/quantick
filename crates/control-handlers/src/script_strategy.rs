@@ -1,5 +1,6 @@
-//! `strategy.script.arm`, `.list` and `.disarm`: Pine scripts armed
-//! alarm-only on a tab's charts, read and removed by id.
+//! `strategy.script.arm`, `.list` and `.disarm`: Pine scripts armed on a
+//! tab's charts, read and removed by id. `strategy.script.action.set` runs
+//! through the desk (`crate::strategy_desk`) and parses here.
 //!
 //! The tab's strategies decide (`quantick_session::script_strategies`):
 //! whether a script's titles name sides, what each instance is doing. What
@@ -16,14 +17,14 @@ use quantick_control_host::authority::STRATEGY_MODULE_ID;
 use quantick_control_host::journal::NewEvent;
 use quantick_control_schema::script_strategy::{
     self as wire, ARMED_EVENT_KIND, ArmInput, ArmResult, CrossDirection, DISARMED_EVENT_KIND,
-    DisarmInput, DisarmResult, LibraryListing, ListInput, ListResult, Placement, ScriptStrategy,
-    ScriptStrategyState,
+    DisarmInput, DisarmResult, FireAction, LibraryListing, ListInput, ListResult, Placement,
+    ScriptStrategy, ScriptStrategyState, TICKET_QUANTITY,
 };
 use quantick_control_schema::trade::ActionSide;
 use quantick_drawings::{DrawingId, DrawingTool, Drawings};
 use quantick_engine::{Bar, Side};
 use quantick_session::script_strategies::{
-    ScriptArm, ScriptPlacement, ScriptReading, SignalAction,
+    OrderQuantity, ScriptArm, ScriptPlacement, ScriptReading, SignalAction, SignalOrder,
 };
 use quantick_session::strategies::TabStrategies;
 use quantick_stores::script_library::{LoadedScript, ScriptLibrary};
@@ -115,6 +116,9 @@ fn arm<H: ScriptStrategyHost + ?Sized, A: JournalAccess>(
     input: &Value,
 ) -> Result<Value, ControlError> {
     let input: ArmInput = serde_json::from_value(input.clone()).map_err(invalid)?;
+    if input.action == Some(FireAction::Order) {
+        return Err(invalid(ORDER_ARM));
+    }
     let index = tab_index(host, input.tab_id)?;
     let tab_id = host.tab_id_at(index);
     let place = place_of(&input.placement)?;
@@ -169,7 +173,10 @@ fn arm<H: ScriptStrategyHost + ?Sized, A: JournalAccess>(
     Ok(answer)
 }
 
-fn list<H: ScriptStrategyHost + ?Sized, A>(
+/// Placing orders is the trade tier's; this call sits in the script tier.
+const ORDER_ARM: &str = "strategy.script.arm arms alarms only: arm it, then switch it to orders with strategy.script.action.set";
+
+pub(crate) fn list<H: ScriptStrategyHost + ?Sized, A>(
     host: &mut H,
     _access: &mut A,
     _actor: &ActorContext,
@@ -273,6 +280,69 @@ pub(crate) fn footprint_warmup(
         .collect()
 }
 
+/// The action `strategy.script.action.set` names, as the session takes it.
+///
+/// # Errors
+/// An order with no quantity, a quantity that is neither a number nor
+/// `ticket`, a distance that is not a decimal, or quantity, stop or gain
+/// sent with an alarm. Sizes and signs are the session's to refuse.
+pub fn signal_action(
+    action: FireAction,
+    quantity: Option<&str>,
+    stop: Option<&str>,
+    gain: Option<&str>,
+) -> Result<SignalAction, ControlError> {
+    if action == FireAction::Alarm {
+        return match (quantity, stop, gain) {
+            (None, None, None) => Ok(SignalAction::Alarm),
+            _ => Err(invalid(
+                "quantity, stop and gain size an order; an alarm takes none",
+            )),
+        };
+    }
+    let quantity = quantity.ok_or_else(|| {
+        invalid(format!(
+            "an order needs a quantity: a size or `{TICKET_QUANTITY}`"
+        ))
+    })?;
+    let quantity = if quantity.trim().eq_ignore_ascii_case(TICKET_QUANTITY) {
+        OrderQuantity::Ticket
+    } else {
+        OrderQuantity::Fixed(quantity.trim().parse().map_err(|_| {
+            invalid(format!(
+                "`quantity` must be a size or `{TICKET_QUANTITY}`, got `{quantity}`"
+            ))
+        })?)
+    };
+    let distance = |field, text: Option<&str>| text.map_or(Ok(Decimal::ZERO), |t| price(field, t));
+    Ok(SignalAction::Order(SignalOrder {
+        quantity,
+        stop: distance("stop", stop)?,
+        gain: distance("gain", gain)?,
+    }))
+}
+
+/// `action` as the wire words it: what fires, then an order's quantity,
+/// stop and gain.
+pub(crate) fn action_words(
+    action: SignalAction,
+) -> (FireAction, Option<String>, Option<String>, Option<String>) {
+    let SignalAction::Order(order) = action else {
+        return (FireAction::Alarm, None, None, None);
+    };
+    let quantity = match order.quantity {
+        OrderQuantity::Fixed(count) => count.normalize().to_string(),
+        OrderQuantity::Ticket => TICKET_QUANTITY.to_owned(),
+    };
+    let word = |distance: Decimal| Some(distance.normalize().to_string());
+    (
+        FireAction::Order,
+        Some(quantity),
+        word(order.stop),
+        word(order.gain),
+    )
+}
+
 fn price(field: &str, text: &str) -> Result<Decimal, ControlError> {
     text.trim()
         .parse()
@@ -316,6 +386,7 @@ pub(crate) fn placement(place: ScriptPlacement<DrawingId>) -> Placement {
 }
 
 fn strategy(reading: &ScriptReading<DrawingId>) -> ScriptStrategy {
+    let (action, quantity, stop, gain) = action_words(reading.action);
     ScriptStrategy {
         id: WireU64::new(reading.id),
         pane_id: WireU64::new(reading.pane_id),
@@ -332,7 +403,11 @@ fn strategy(reading: &ScriptReading<DrawingId>) -> ScriptStrategy {
         },
         disarm_reason: reading.disarm_reason.clone(),
         status: reading.status.clone(),
-        alarm_only: true,
+        alarm_only: action == FireAction::Alarm,
+        action,
+        quantity,
+        stop,
+        gain,
     }
 }
 

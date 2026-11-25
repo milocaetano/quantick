@@ -691,7 +691,7 @@ pub fn modules() -> Vec<ModuleDescriptor> {
         ModuleDescriptor {
             id: module(STRATEGY_MODULE_ID),
             title: "Strategy".to_owned(),
-            description: "Strategies armed on charts: Pine scripts that ring an alarm and place nothing, and the strategy desk that lists, pauses and resumes them beside the drawn ones."
+            description: "Strategies armed on charts: Pine scripts that ring an alarm or, once the trade tier sets it, place paper orders, and the strategy desk that lists, pauses and resumes them beside the drawn ones."
                 .to_owned(),
         },
         ModuleDescriptor {

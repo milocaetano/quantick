@@ -372,3 +372,25 @@ fn the_warmup_carries_each_closed_bar_s_footprint_poc() {
         "{poc}"
     );
 }
+
+#[test]
+fn arm_takes_an_alarm_and_leaves_orders_to_the_trade_tier() {
+    let mut window = window();
+    let mut access = FakeAccess::default();
+    let alarm = arm_renko(&mut window, &mut access, json!({"action": "alarm"})).expect("arms");
+    assert_eq!(alarm["strategy"]["action"], "alarm");
+    assert_eq!(alarm["strategy"]["quantity"], Value::Null);
+
+    let refused = arm_renko(&mut window, &mut access, json!({"action": "order"}))
+        .expect_err("orders are the trade tier's");
+    assert!(
+        refused.message.contains("strategy.script.action.set"),
+        "{}",
+        refused.message
+    );
+    assert_eq!(
+        window.strategies.script_readings().len(),
+        1,
+        "nothing armed"
+    );
+}

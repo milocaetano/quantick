@@ -15,6 +15,22 @@
       ],
       "type": "string"
     },
+    "FireAction": {
+      "description": "What a firing does.",
+      "oneOf": [
+        {
+          "enum": [
+            "alarm"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "order",
+          "description": "A paper market order.",
+          "type": "string"
+        }
+      ]
+    },
     "Placement": {
       "description": "Where a script may ring. Prices are decimal strings.",
       "oneOf": [
@@ -104,6 +120,18 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "properties": {
+    "action": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/FireAction"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "What a firing does; absent rings. This call arms alarms only: an\n`order` is refused, since placing orders is the trade tier's — set it\nwith `strategy.script.action.set`."
+    },
     "pane_id": {
       "anyOf": [
         {

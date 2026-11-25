@@ -2,7 +2,7 @@
 use quantick_chart_interaction::pane::PaneSide;
 use quantick_drawings::DrawingId;
 use quantick_strategy::{
-    presets::StoredPreset,
+    presets::{StoredPreset, StrategyBank},
     sound::{AlertSound, Cue},
 };
 
@@ -44,6 +44,20 @@ impl State {
     }
     pub fn sound_picker_pending(&self) -> bool {
         self.pending_sound_picker
+    }
+    /// The observation the host owes when the active tab, the open side's
+    /// share support or the alert failure moved; `None` when nothing did.
+    pub fn observe(&self, seen: (u64, &[PaneSide], Option<&str>)) -> Option<Intent> {
+        let (active_tab, counted_bar_sides, alert_failure) = seen;
+        let moved = self.popup.as_ref().is_some_and(|popup| {
+            popup.tab != active_tab
+                || self.shares_available != counted_bar_sides.contains(&popup.side)
+        });
+        (moved || self.alert_failure.as_deref() != alert_failure).then(|| Intent::Observe {
+            active_tab,
+            counted_bar_sides: counted_bar_sides.to_vec(),
+            alert_failure: alert_failure.map(str::to_owned),
+        })
     }
 }
 
@@ -133,6 +147,16 @@ pub enum BankEffect {
         form: Box<StoredPreset>,
     },
     Remove(String),
+}
+impl BankEffect {
+    /// Run the requested write through the authoritative bank; its rows after.
+    pub fn apply(self, bank: &mut StrategyBank) -> Intent {
+        match self {
+            Self::Save { name, form } => bank.save(&name, *form),
+            Self::Remove(name) => bank.remove(&name),
+        }
+        Intent::BankSnapshot(bank.rows())
+    }
 }
 #[derive(Default, Debug, PartialEq)]
 pub struct Effects {

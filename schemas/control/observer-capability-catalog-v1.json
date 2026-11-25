@@ -30620,7 +30620,7 @@
               },
               {
                 "const": "order",
-                "description": "A paper order: drawn strategies only, never a script.",
+                "description": "A paper market order.",
                 "type": "string"
               }
             ]
@@ -30819,6 +30819,12 @@
             "minimum": 0,
             "type": "integer"
           },
+          "gain": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "history_slots": {
             "description": "The chart's closed slots (from zero, the oldest loaded bar) a fresh\ncopy armed on the oldest fires on, through the live kernel.",
             "items": {
@@ -30839,8 +30845,21 @@
             "$ref": "#/$defs/Placement",
             "description": "Where it may fire; a drawn instance always rides its region."
           },
+          "quantity": {
+            "description": "A script order's size, stop and gain, as `strategy.script.list` words\nthem; absent for an alarm and for a drawn instance, whose preset\nsizes and protects its orders.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "side": {
             "$ref": "#/$defs/ActionSide"
+          },
+          "stop": {
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "strategy": {
             "$ref": "#/$defs/DeskRow"
@@ -31224,7 +31243,7 @@
               },
               {
                 "const": "order",
-                "description": "A paper order: drawn strategies only, never a script.",
+                "description": "A paper market order.",
                 "type": "string"
               }
             ]
@@ -32218,7 +32237,222 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Loads a .pine file from the strategy library and arms it alarm-only on one chart's closed bars: an alertcondition that holds rings the alarm when the bar's body meets the placement (a drawn rectangle, a fixed range, a line crossed one way, or anywhere). The title's first word is the side (bull, buy or long; bear, sell or short; any case); a script with a title naming no side, a computed title, no alertcondition, no title naming the side asked for, or a compile error is refused with the reason, compile errors as `line N: <CODE> <message>`. Never places an order. A runtime error later disarms that instance alone; strategy.script.list shows the reason. Journaled as strategy.script.armed. Lives for the session.",
+      "description": "Sets what one armed script strategy does from its next close: `alarm` rings and places nothing; `order` places a paper market order of `quantity` (a size above zero in the instrument's units, or `ticket` for the ticket's quantity when the bar closes) with a stop `stop` and a target `gain` away from the entry, in price (absent or 0: no leg). A resting order or an open position keeps its course. A drawn strategy takes its action from its preset and is refused, as are an order with no quantity, a quantity of zero or less, a distance below zero, and quantity, stop or gain sent with `alarm`. strategy.script.list and strategy.desk.detail read it back. Journaled as strategy.desk.changed.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "trade",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "strategy.script.action.set",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "FireAction": {
+            "description": "What a firing does.",
+            "oneOf": [
+              {
+                "enum": [
+                  "alarm"
+                ],
+                "type": "string"
+              },
+              {
+                "const": "order",
+                "description": "A paper market order.",
+                "type": "string"
+              }
+            ]
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "What one armed script does when it fires, from its next close.",
+        "properties": {
+          "action": {
+            "$ref": "#/$defs/FireAction"
+          },
+          "gain": {
+            "default": null,
+            "description": "An order's target distance from the entry, in price; absent or `0`\nplaces none, never below zero. Refused for an alarm.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "$ref": "#/$defs/WireU64",
+            "description": "The id `strategy.script.arm` answered."
+          },
+          "quantity": {
+            "default": null,
+            "description": "An order's size above zero, in the instrument's units (contracts on\na future), or `ticket` for the ticket's quantity when the bar closes. Required for an order, refused\nfor an alarm.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "stop": {
+            "default": null,
+            "description": "An order's stop distance from the entry, in price; absent or `0`\nplaces none, never below zero. Refused for an alarm.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tab_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "The tab; absent for the one on screen."
+          }
+        },
+        "required": [
+          "id",
+          "action"
+        ],
+        "title": "ActionSetInput",
+        "type": "object"
+      },
+      "module": "strategy",
+      "output_schema": {
+        "$defs": {
+          "InstanceId": {
+            "description": "Which instance of a tab a call names.",
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "description": "A script, by the id `strategy.script.arm` answered.",
+                "properties": {
+                  "id": {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  "kind": {
+                    "const": "script",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "id"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "description": "Instance `id` riding drawing `drawing_id` on chart `pane_id`, as\n`strategy.desk.list` reports it; never reused in the tab's session.",
+                "properties": {
+                  "drawing_id": {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  "id": {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  "kind": {
+                    "const": "drawing",
+                    "type": "string"
+                  },
+                  "pane_id": {
+                    "$ref": "#/$defs/WireU64"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "pane_id",
+                  "drawing_id",
+                  "id"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "What a desk command did.",
+        "properties": {
+          "capability": {
+            "description": "The call that ran.",
+            "type": "string"
+          },
+          "changed": {
+            "description": "How many instances changed: zero when each already stood as asked.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "created": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/InstanceId"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The copy a duplicate armed, paused."
+          },
+          "saved_as": {
+            "description": "The library file a save wrote.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tab_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The tab, absent for an asset call that spans every tab."
+          }
+        },
+        "required": [
+          "capability",
+          "changed"
+        ],
+        "title": "CommandResult",
+        "type": "object"
+      },
+      "persistence": "transient",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "trade"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "The instance is named by an id never reused in the tab's session, and the call states the whole action, so a repeat leaves the instance as the first call did; an id that has since been removed is refused.",
+      "title": "Set what a script strategy does when it fires",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Loads a .pine file from the strategy library and arms it as an alarm on one chart's closed bars: an alertcondition that holds rings the alarm when the bar's body meets the placement (a drawn rectangle, a fixed range, a line crossed one way, or anywhere). The title's first word is the side (bull, buy or long; bear, sell or short; any case); a script with a title naming no side, a computed title, no alertcondition, no title naming the side asked for, or a compile error is refused with the reason, compile errors as `line N: <CODE> <message>`. Places no order: an `action` of `order` is refused, and strategy.script.action.set, in the trade tier, switches an armed instance to orders. A runtime error later disarms that instance alone; strategy.script.list shows the reason. Journaled as strategy.script.armed. Lives for the session.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "annotate",
@@ -32245,6 +32479,22 @@
               "down"
             ],
             "type": "string"
+          },
+          "FireAction": {
+            "description": "What a firing does.",
+            "oneOf": [
+              {
+                "enum": [
+                  "alarm"
+                ],
+                "type": "string"
+              },
+              {
+                "const": "order",
+                "description": "A paper market order.",
+                "type": "string"
+              }
+            ]
           },
           "Placement": {
             "description": "Where a script may ring. Prices are decimal strings.",
@@ -32335,6 +32585,18 @@
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
         "properties": {
+          "action": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/FireAction"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "What a firing does; absent rings. This call arms alarms only: an\n`order` is refused, since placing orders is the trade tier's — set it\nwith `strategy.script.action.set`."
+          },
           "pane_id": {
             "anyOf": [
               {
@@ -32398,6 +32660,22 @@
               "down"
             ],
             "type": "string"
+          },
+          "FireAction": {
+            "description": "What a firing does.",
+            "oneOf": [
+              {
+                "enum": [
+                  "alarm"
+                ],
+                "type": "string"
+              },
+              {
+                "const": "order",
+                "description": "A paper market order.",
+                "type": "string"
+              }
+            ]
           },
           "Placement": {
             "description": "Where a script may ring. Prices are decimal strings.",
@@ -32483,12 +32761,22 @@
           "ScriptStrategy": {
             "description": "One armed script.",
             "properties": {
+              "action": {
+                "$ref": "#/$defs/FireAction"
+              },
               "alarm_only": {
-                "description": "Always true: a script strategy never places an order.",
+                "description": "True while `action` is `alarm`: it rings and places nothing.",
                 "type": "boolean"
               },
               "disarm_reason": {
                 "description": "Why it stopped: `line N: <CODE> <message>` when its script failed at\nruntime, otherwise the disarm reason in the badge's words.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "gain": {
+                "description": "An order's target distance from the entry, in price; `0` places none.\nAbsent for an alarm.",
                 "type": [
                   "string",
                   "null"
@@ -32504,6 +32792,13 @@
               "placement": {
                 "$ref": "#/$defs/Placement"
               },
+              "quantity": {
+                "description": "An order's size in the instrument's units, or `ticket` for the\nticket's quantity when the bar closes. Absent for an alarm.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
               "script": {
                 "type": "string"
               },
@@ -32516,6 +32811,13 @@
               "status": {
                 "description": "What the last closed bar did, as the instance's badge line says it.",
                 "type": "string"
+              },
+              "stop": {
+                "description": "An order's stop distance from the entry, in price; `0` places none.\nAbsent for an alarm.",
+                "type": [
+                  "string",
+                  "null"
+                ]
               }
             },
             "required": [
@@ -32526,7 +32828,8 @@
               "placement",
               "state",
               "status",
-              "alarm_only"
+              "alarm_only",
+              "action"
             ],
             "type": "object"
           },
@@ -32639,6 +32942,22 @@
             ],
             "type": "string"
           },
+          "FireAction": {
+            "description": "What a firing does.",
+            "oneOf": [
+              {
+                "enum": [
+                  "alarm"
+                ],
+                "type": "string"
+              },
+              {
+                "const": "order",
+                "description": "A paper market order.",
+                "type": "string"
+              }
+            ]
+          },
           "Placement": {
             "description": "Where a script may ring. Prices are decimal strings.",
             "oneOf": [
@@ -32723,12 +33042,22 @@
           "ScriptStrategy": {
             "description": "One armed script.",
             "properties": {
+              "action": {
+                "$ref": "#/$defs/FireAction"
+              },
               "alarm_only": {
-                "description": "Always true: a script strategy never places an order.",
+                "description": "True while `action` is `alarm`: it rings and places nothing.",
                 "type": "boolean"
               },
               "disarm_reason": {
                 "description": "Why it stopped: `line N: <CODE> <message>` when its script failed at\nruntime, otherwise the disarm reason in the badge's words.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "gain": {
+                "description": "An order's target distance from the entry, in price; `0` places none.\nAbsent for an alarm.",
                 "type": [
                   "string",
                   "null"
@@ -32744,6 +33073,13 @@
               "placement": {
                 "$ref": "#/$defs/Placement"
               },
+              "quantity": {
+                "description": "An order's size in the instrument's units, or `ticket` for the\nticket's quantity when the bar closes. Absent for an alarm.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
               "script": {
                 "type": "string"
               },
@@ -32756,6 +33092,13 @@
               "status": {
                 "description": "What the last closed bar did, as the instance's badge line says it.",
                 "type": "string"
+              },
+              "stop": {
+                "description": "An order's stop distance from the entry, in price; `0` places none.\nAbsent for an alarm.",
+                "type": [
+                  "string",
+                  "null"
+                ]
               }
             },
             "required": [
@@ -32766,7 +33109,8 @@
               "placement",
               "state",
               "status",
-              "alarm_only"
+              "alarm_only",
+              "action"
             ],
             "type": "object"
           },
@@ -32834,7 +33178,7 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Reads the strategy library (the bundled scripts, then the folder's .pine files, sorted: what strategy.script.arm accepts) and every script strategy armed on the tab: its id, chart, script, side, placement, whether it is watching or disarmed and why, and its badge line. Changes nothing.",
+      "description": "Reads the strategy library (the bundled scripts, then the folder's .pine files, sorted: what strategy.script.arm accepts) and every script strategy armed on the tab: its id, chart, script, side, placement, whether it is watching or disarmed and why, its badge line, and what a firing does — an alarm, or an order with its quantity, stop and gain. Changes nothing.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "observe",
@@ -32887,6 +33231,22 @@
               "down"
             ],
             "type": "string"
+          },
+          "FireAction": {
+            "description": "What a firing does.",
+            "oneOf": [
+              {
+                "enum": [
+                  "alarm"
+                ],
+                "type": "string"
+              },
+              {
+                "const": "order",
+                "description": "A paper market order.",
+                "type": "string"
+              }
+            ]
           },
           "LibraryListing": {
             "description": "The strategy library as the call found it.",
@@ -33005,12 +33365,22 @@
           "ScriptStrategy": {
             "description": "One armed script.",
             "properties": {
+              "action": {
+                "$ref": "#/$defs/FireAction"
+              },
               "alarm_only": {
-                "description": "Always true: a script strategy never places an order.",
+                "description": "True while `action` is `alarm`: it rings and places nothing.",
                 "type": "boolean"
               },
               "disarm_reason": {
                 "description": "Why it stopped: `line N: <CODE> <message>` when its script failed at\nruntime, otherwise the disarm reason in the badge's words.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "gain": {
+                "description": "An order's target distance from the entry, in price; `0` places none.\nAbsent for an alarm.",
                 "type": [
                   "string",
                   "null"
@@ -33026,6 +33396,13 @@
               "placement": {
                 "$ref": "#/$defs/Placement"
               },
+              "quantity": {
+                "description": "An order's size in the instrument's units, or `ticket` for the\nticket's quantity when the bar closes. Absent for an alarm.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
               "script": {
                 "type": "string"
               },
@@ -33038,6 +33415,13 @@
               "status": {
                 "description": "What the last closed bar did, as the instance's badge line says it.",
                 "type": "string"
+              },
+              "stop": {
+                "description": "An order's stop distance from the entry, in price; `0` places none.\nAbsent for an alarm.",
+                "type": [
+                  "string",
+                  "null"
+                ]
               }
             },
             "required": [
@@ -33048,7 +33432,8 @@
               "placement",
               "state",
               "status",
-              "alarm_only"
+              "alarm_only",
+              "action"
             ],
             "type": "object"
           },
@@ -37845,7 +38230,7 @@
       "title": "Snapshot"
     },
     {
-      "description": "Strategies armed on charts: Pine scripts that ring an alarm and place nothing, and the strategy desk that lists, pauses and resumes them beside the drawn ones.",
+      "description": "Strategies armed on charts: Pine scripts that ring an alarm or, once the trade tier sets it, place paper orders, and the strategy desk that lists, pauses and resumes them beside the drawn ones.",
       "id": "strategy",
       "title": "Strategy"
     },
