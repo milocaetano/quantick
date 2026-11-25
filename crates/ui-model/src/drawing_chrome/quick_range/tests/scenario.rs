@@ -33,11 +33,7 @@ fn queued_launch_waits_retries_and_consumes_once() {
                     ChartPoint::at_time(1.5, 100.0, Some(1)),
                     ChartPoint::at_time(10.5, 101.0, None),
                 ],
-                look: NewDrawing {
-                    style: tool.default_style(),
-                    payload: tool.default_payload(),
-                    look: Default::default(),
-                },
+                look: NewDrawing::explicit(tool.default_style(), tool.default_payload()),
             }),
         );
         assert!(state.demo_requested().is_none());

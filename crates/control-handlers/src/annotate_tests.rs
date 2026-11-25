@@ -124,11 +124,7 @@ impl AnnotatePort for FakeWindow {
         vec![PaneSide::Flow]
     }
     fn new_drawing(&self, _index: usize, _side: PaneSide, tool: DrawingTool) -> NewDrawing {
-        NewDrawing {
-            style: tool.default_style(),
-            payload: tool.default_payload(),
-            look: Default::default(),
-        }
+        NewDrawing::explicit(tool.default_style(), tool.default_payload())
     }
     fn pane_mut(&mut self, _index: usize, _side: PaneSide) -> &mut dyn AnnotatedPane {
         &mut self.flow

@@ -1,5 +1,4 @@
 use super::*;
-use crate::layout_document::{SavedBand, SavedPoint};
 
 const MERGED: &str = include_str!("../../fixtures/market-settings/merged.toml");
 
@@ -22,30 +21,8 @@ fn context(asset: &str, bars: &str) -> DrawingKey {
 fn level(id: u64, price: f64, shared: bool) -> SavedDrawing {
     SavedDrawing {
         id: Some(id),
-        tool: "horizontal-line".to_owned(),
-        name: None,
-        author: None,
-        points: vec![SavedPoint {
-            time_ms: Some(1_000),
-            price,
-            bar: 3.0,
-        }],
-        band: SavedBand::Price,
-        color: [255, 200, 0, 255],
-        width_px: 1.5,
-        fill_alpha: 0,
-        follows_ground: false,
-        locked: false,
-        hidden: false,
-        magnet: false,
         shared,
-        layout: None,
-        all_windows: false,
-        payload: None,
-        text: None,
-        durable_identity: None,
-        origin: None,
-        bars: None,
+        ..SavedDrawing::level(price)
     }
 }
 

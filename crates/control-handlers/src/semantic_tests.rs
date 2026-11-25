@@ -288,11 +288,8 @@ fn the_journal_sees_only_the_marks_a_panes_layout_shows() {
         .into_iter()
         .find(|tool| tool.id() == "horizontal-line");
     let point = ChartPoint::at_time(3.0, 100.0, Some(NOW));
-    let fresh = |tool: DrawingTool| NewDrawing {
-        style: DrawingStyle::default(),
-        payload: tool.default_payload(),
-        look: Default::default(),
-    };
+    let fresh =
+        |tool: DrawingTool| NewDrawing::explicit(DrawingStyle::default(), tool.default_payload());
     drawings.set_layout(Some(LayoutId(2)));
     assert!(drawings.place_with(tool.unwrap(), &DrawingBand::Price, point, fresh));
     let before = drawings.items()[0].clone();
@@ -339,10 +336,8 @@ fn every_rename_records_an_edit_and_says_only_whether_the_name_was_typed() {
         .unwrap();
     let point = ChartPoint::at_time(3.0, 100.0, Some(NOW));
     assert!(
-        drawings.place_with(tool, &DrawingBand::Price, point, |tool| NewDrawing {
-            style: DrawingStyle::default(),
-            payload: tool.default_payload(),
-            look: Default::default(),
+        drawings.place_with(tool, &DrawingBand::Price, point, |tool| {
+            NewDrawing::explicit(DrawingStyle::default(), tool.default_payload())
         })
     );
     let mut baseline = SemanticBaseline::capture(&source);

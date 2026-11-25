@@ -23,35 +23,14 @@ pub fn reconcile_startup(
             let feed = config
                 .feed(&config.default_feed)
                 .expect("validated startup feed");
-            SavedTab {
-                candle_styles: Vec::new(),
-                feed: config.default_feed.clone(),
-                symbol: config.default_symbol.clone(),
-                layout: feed.default_layout.unwrap_or(DeclaredLayout::Flow),
-                split_fraction: None,
-                context_collapsed: false,
-                flow_collapsed: false,
-                context_heights: Vec::new(),
-                context_panes_collapsed: Vec::new(),
-                focus: None,
-                focus_slot: 0,
-                flow_bars: feed
-                    .default_bars
+            SavedTab::new(
+                config.default_feed.clone(),
+                config.default_symbol.clone(),
+                feed.default_layout.unwrap_or(DeclaredLayout::Flow),
+                feed.default_bars
                     .clone()
                     .unwrap_or_else(|| crate::config::factory_flow_spec().to_config_string()),
-                time_bars: None,
-                context_bars: Vec::new(),
-                flow_layout: None,
-                context_layouts: Vec::new(),
-                flow_legend_collapsed: false,
-                time_legend_collapsed: false,
-                workspace: None,
-                protected_default: false,
-                workspace_parked: Default::default(),
-                workspace_copy: None,
-                workspace_settled: None,
-                orderflow_panel: Default::default(),
-            }
+            )
         },
         |index| workspace.tabs.remove(index),
     );
