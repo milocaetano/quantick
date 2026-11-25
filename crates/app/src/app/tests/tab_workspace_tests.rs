@@ -97,6 +97,245 @@ fn a_first_run_on_a_two_context_desk_seeds_after_every_pane_stands() {
     assert_eq!(Some(recipe), live_recipe(&app.runtime, tab).as_ref());
 }
 
+#[test]
+fn opening_drawing_ownership_keeps_the_annotation_hook_pending_until_adoption() {
+    let launch = AppLaunch {
+        control: super::super::control_host::ControlLaunch::capture(fixed_env(&[(
+            "QUANTICK_CONTROL_ANNOTATE",
+            "owned after arrival",
+        )])),
+        ..Default::default()
+    };
+    let (mut app, _commands) = app_with_history_and_launch(8, launch);
+    let tab = app.runtime.tabs.active_id();
+    app.active_tab_mut()
+        .set_layout(CanvasLayout::TimeTimeAndFlow);
+    app.active_tab_mut().focus = PaneSide::Flow;
+    frames(&mut app, 1);
+    assert_eq!(
+        app.active_tab().time_panes.len(),
+        1,
+        "one pane arrives per frame"
+    );
+    assert!(app.runtime.workspace.book.book().tab_state(tab).is_none());
+    assert_eq!(
+        app.control.scenarios.pending().annotation,
+        Some("owned after arrival"),
+        "the hook must wait for authoritative drawing ownership",
+    );
+    assert!(app.active_tab().flow_pane.drawings.items().is_empty());
+    frames(&mut app, 4);
+    assert!(app.control.scenarios.pending().annotation.is_none());
+    let pane = &app.active_tab().flow_pane;
+    assert_eq!(pane.drawings.items().len(), 1);
+    let key = pane.layout.drawings_key.clone().unwrap();
+    let book = app.runtime.workspace.book.book();
+    let owner = book.tab_state(tab).unwrap().workspace;
+    assert_ne!(owner, "Default");
+    assert_eq!(
+        key.scope.unwrap().workspace,
+        book.workspace_id(owner).unwrap()
+    );
+    app.layout_adapter().flush_layouts();
+    let saved = quantick_stores::market_settings::parse_settings(
+        &std::fs::read_to_string(app.runtime.workspace.layouts().market().path()).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(saved.pane_drawings(&key, "tick:1").len(), 1);
+    assert!(saved.keys().all(|held| held.scope == key.scope));
+}
+
+#[test]
+fn opening_drawing_ownership_refuses_preferences_until_adoption_without_changing_default() {
+    let (mut app, _commands) = app_with_history(8);
+    app.active_tab_mut()
+        .set_layout(CanvasLayout::TimeTimeAndFlow);
+    frames(&mut app, 1);
+    let tab = app.runtime.tabs.active_id();
+    let pane = app.active_tab().flow_pane.id;
+    assert!(app.runtime.workspace.book.book().tab_state(tab).is_none());
+    for on in [None, Some(false)] {
+        let mut input =
+            serde_json::json!({ "tab_id": tab.to_string(), "pane_id": pane.to_string() });
+        if let Some(on) = on {
+            input["on"] = on.into();
+        }
+        let error = app
+            .control_action(
+                "chart.drawings.autosave.set",
+                1,
+                crate::control::ActionOrigin::Human,
+                input,
+            )
+            .expect_err("an arriving pane has no drawing owner yet");
+        assert!(error.retryable);
+    }
+    app.active_tab_mut().focus = PaneSide::Flow;
+    let error = app.control_action(
+        "annotate.label.create",
+        1,
+        crate::control::ActionOrigin::Human,
+        serde_json::json!({ "anchors": [{"time_unix_ms": 1500, "price": "100.5"}], "text": "too early" }),
+    ).expect_err("annotation creation also waits for the adopted owner");
+    assert!(error.retryable);
+    assert!(app.active_tab().flow_pane.drawings.items().is_empty());
+    frames(&mut app, 4);
+    let key = app
+        .active_tab()
+        .flow_pane
+        .layout
+        .drawings_key
+        .clone()
+        .unwrap();
+    let default = key
+        .clone()
+        .in_scope(quantick_workspace::market_settings::DrawingScope {
+            workspace: app
+                .runtime
+                .workspace
+                .book
+                .book()
+                .workspace_id("Default")
+                .unwrap(),
+            layout: key.scope.unwrap().layout,
+        });
+    assert_ne!(key.scope, default.scope);
+    assert!(
+        app.runtime
+            .workspace
+            .layouts()
+            .market()
+            .drawing_autosave(&default)
+    );
+    app.control_action(
+        "chart.drawings.autosave.set",
+        1,
+        crate::control::ActionOrigin::Human,
+        serde_json::json!({ "tab_id": tab.to_string(), "pane_id": pane.to_string(), "on": false }),
+    )
+    .unwrap();
+    let saved = quantick_stores::market_settings::parse_settings(
+        &std::fs::read_to_string(app.runtime.workspace.layouts().market().path()).unwrap(),
+    )
+    .unwrap();
+    assert!(!saved.drawing_autosave(&key));
+    assert!(saved.drawing_autosave(&default));
+}
+
+#[test]
+fn opening_drawing_ownership_defers_native_placement_until_adoption() {
+    let (mut app, _commands) = super::bare_canvas::app_with_history(200);
+    let ctx = egui::Context::default();
+    let tab = app.runtime.tabs.active_id();
+    app.active_tab_mut()
+        .set_layout(CanvasLayout::TimeTimeAndFlow);
+    app.active_tab_mut().focus = PaneSide::Flow;
+    app.surfaces
+        .toolrail
+        .arm(Tool::Drawing(drawing_tool("horizontal-line")));
+    let position = egui::pos2(1100.0, 300.0);
+    run_frame_with_events(
+        &mut app,
+        &ctx,
+        vec![
+            egui::Event::PointerMoved(position),
+            pointer_button(position, true),
+        ],
+    );
+    assert!(
+        app.active_tab()
+            .flow_pane
+            .frame
+            .chart_area
+            .unwrap()
+            .contains(position)
+    );
+    assert!(app.runtime.workspace.book.book().tab_state(tab).is_none());
+    assert!(app.active_tab().flow_pane.drawings.items().is_empty());
+    run_frame_with_events(&mut app, &ctx, vec![pointer_button(position, false)]);
+    run_frame(&mut app, &ctx);
+    let position = app
+        .active_tab()
+        .flow_pane
+        .frame
+        .chart_area
+        .unwrap()
+        .center();
+    click_chart(&mut app, &ctx, position);
+    assert_eq!(app.active_tab().flow_pane.drawings.items().len(), 1);
+    let key = app
+        .active_tab()
+        .flow_pane
+        .layout
+        .drawings_key
+        .clone()
+        .unwrap();
+    assert_ne!(
+        key.scope.unwrap().workspace,
+        app.runtime
+            .workspace
+            .book
+            .book()
+            .workspace_id("Default")
+            .unwrap()
+    );
+    app.layout_adapter().flush_layouts();
+    let saved = quantick_stores::market_settings::parse_settings(
+        &std::fs::read_to_string(app.runtime.workspace.layouts().market().path()).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(saved.pane_drawings(&key, "tick:1").len(), 1);
+    assert!(saved.keys().all(|held| held.scope == key.scope));
+}
+
+#[test]
+fn opening_drawing_ownership_defers_native_paste_without_advancing_its_offset() {
+    let (mut app, _commands) = app_with_history(8);
+    let ctx = egui::Context::default();
+    let tab = app.runtime.tabs.active_id();
+    app.active_tab_mut()
+        .set_layout(CanvasLayout::TimeTimeAndFlow);
+    app.active_tab_mut().focus = PaneSide::Flow;
+    let mut source = drawings::Drawings::default();
+    source.place(
+        drawing_tool("horizontal-line"),
+        ChartPoint::at_time(1.5, 100.5, Some(1200)),
+    );
+    app.surfaces.drawing_chrome.copy_drawing(&source.items()[0]);
+    // Windows delivers a drawing paste on the V release; a Paste event
+    // while Ctrl is held is deliberately ignored to avoid a duplicate.
+    run_frame_with_modifiers(
+        &mut app,
+        &ctx,
+        vec![key_release_with(egui::Key::V, egui::Modifiers::COMMAND)],
+        egui::Modifiers::COMMAND,
+    );
+    assert!(app.runtime.workspace.book.book().tab_state(tab).is_none());
+    assert!(app.active_tab().flow_pane.drawings.items().is_empty());
+    run_frame(&mut app, &ctx);
+    run_frame(&mut app, &ctx);
+    run_frame_with_modifiers(
+        &mut app,
+        &ctx,
+        vec![key_release_with(egui::Key::V, egui::Modifiers::COMMAND)],
+        egui::Modifiers::COMMAND,
+    );
+    let pane = &app.active_tab().flow_pane;
+    assert_eq!(pane.drawings.items().len(), 1);
+    assert_eq!(
+        pane.drawings.items()[0].points[0].bar,
+        1.5 + DUPLICATE_OFFSET_BARS
+    );
+    let key = pane.layout.drawings_key.clone().unwrap();
+    app.layout_adapter().flush_layouts();
+    let saved = quantick_stores::market_settings::parse_settings(
+        &std::fs::read_to_string(app.runtime.workspace.layouts().market().path()).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(saved.pane_drawings(&key, "tick:1").len(), 1);
+    assert!(saved.keys().all(|held| held.scope == key.scope));
+}
+
 /// A recipe of two context panes reaches the second pane too, which is built a
 /// frame after the first. Its panes share one strip layout, so the fuller set
 /// lands on all three; that heal is no edit, so the tab reads clean.

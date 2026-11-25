@@ -18,6 +18,7 @@ pub(crate) struct WorkspaceRead<'a> {
 pub(crate) struct WorkspaceSaveAdapter<'a> {
     pub(super) arrangement: ArrangementRead<'a>,
     pub(super) session: &'a mut WorkspaceCommitSession,
+    pub(super) layouts: &'a mut quantick_workspace::layout_store::LayoutStore,
     pub(super) path: &'a Path,
     pub(super) replay_view: &'a crate::surfaces::replay_browser::ReplayBrowser,
     pub(super) toast: &'a mut crate::surfaces::ToastSurface,
@@ -83,19 +84,8 @@ impl WorkspaceSaveAdapter<'_> {
     /// engineering against.
     pub(super) fn save_workspace(&mut self, reason: &'static str) -> bool {
         let workspace = self.read().capture_workspace();
-        let saved = ui_state::save(self.path, &workspace);
+        let saved = ui_state::save_cockpit(self.path, &workspace, self.layouts, reason);
         self.session.note_write(WritePurpose::Full, saved);
-        tracing::info!(
-            target: "quantick::app",
-            schema_version = 1_u8,
-            event_code = "UI_STATE_SAVED",
-            path = %self.path.display(),
-            tabs = workspace.tabs.len(),
-            saved,
-            reason,
-            action = if saved { "workspace_written" } else { "workspace_not_written" },
-            "workspace save"
-        );
         self.note_workspace(if saved {
             format!(
                 "Workspace saved — quantick opens on {} {}",
@@ -440,7 +430,7 @@ impl<'a> super::arrangement_adapter::ArrangementAdapter<'a> {
         self,
         replay_view: &'a crate::surfaces::replay_browser::ReplayBrowser,
     ) -> WorkspaceSaveAdapter<'a> {
-        let (session, path, workspace_book) = self.workspace.commit_parts();
+        let (session, path, workspace_book, layouts) = self.workspace.commit_parts();
         WorkspaceSaveAdapter {
             arrangement: super::arrangement_adapter::ArrangementRead {
                 tabs: self.tabs,
@@ -455,6 +445,7 @@ impl<'a> super::arrangement_adapter::ArrangementAdapter<'a> {
                 workspace_book,
             },
             session,
+            layouts,
             path,
             replay_view,
             toast: self.toast,

@@ -1,5 +1,5 @@
 //! Persisted workspace identities; labels and tab-local copies are not owners.
-use super::{DEFAULT_WORKSPACE, WorkspaceBook};
+use super::WorkspaceBook;
 use crate::{layout_document::LayoutId, market_settings::DrawingScope};
 use std::collections::BTreeSet;
 
@@ -44,10 +44,7 @@ impl WorkspaceBook {
 
     #[must_use]
     pub fn drawing_scope(&self, tab: u64, layout: LayoutId) -> Option<DrawingScope> {
-        let name = self
-            .tabs
-            .get(&tab)
-            .map_or(DEFAULT_WORKSPACE, |tab| &tab.workspace);
+        let name = &self.tabs.get(&tab)?.workspace;
         Some(DrawingScope {
             workspace: self.workspace_id(name)?,
             layout,
@@ -59,6 +56,17 @@ impl WorkspaceBook {
 mod tests {
     use super::*;
     use crate::workspace_book::parse_book;
+
+    #[test]
+    fn an_arriving_tab_has_no_drawing_scope_until_adopted() {
+        let mut book = WorkspaceBook::default();
+        assert_eq!(book.drawing_scope(7, LayoutId(3)), None);
+        book.open_tab(7);
+        assert_eq!(
+            book.drawing_scope(7, LayoutId(3)).unwrap().workspace,
+            book.workspace_id("Default").unwrap()
+        );
+    }
 
     #[test]
     fn identities_follow_renames_restart_and_delete_undo_without_reuse() {

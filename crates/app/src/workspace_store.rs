@@ -176,8 +176,14 @@ impl WorkspaceStore {
         &mut WorkspaceCommitSession,
         &Path,
         &quantick_stores::workspaces::WorkspaceBook,
+        &mut LayoutStore,
     ) {
-        (&mut self.session, &self.paths.ui_state, self.book.book())
+        (
+            &mut self.session,
+            &self.paths.ui_state,
+            self.book.book(),
+            &mut self.layouts,
+        )
     }
 
     #[cfg(test)]

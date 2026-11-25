@@ -203,6 +203,7 @@ impl WorkspaceBookStore {
         layouts: &mut quantick_workspace::layout_store::LayoutStore,
         now: Instant,
     ) -> Result<(), String> {
+        self.sync_layout_policy(layouts, now);
         if self.ensure_drawing_identities(now)? {
             crate::market_settings::migrate_workspace_scopes(layouts, &self.book, now);
         }
@@ -249,9 +250,7 @@ impl WorkspaceBookStore {
         now: Instant,
         immediate: bool,
     ) {
-        if layouts.set_configuration_autosave(self.autosave()) && layouts.configuration_changed() {
-            layouts.mark_changed(now);
-        }
+        self.sync_layout_policy(layouts, now);
         let retry_waits = self.drawing_reservation.get().1.is_some_and(|failed| {
             now.saturating_duration_since(failed)
                 < quantick_workspace::layout_commit::LAYOUTS_SAVE_DEBOUNCE
@@ -268,6 +267,16 @@ impl WorkspaceBookStore {
             crate::market_settings::flush(layouts, now);
         } else {
             crate::market_settings::save_settled(layouts, now);
+        }
+    }
+
+    fn sync_layout_policy(
+        &self,
+        layouts: &mut quantick_workspace::layout_store::LayoutStore,
+        now: Instant,
+    ) {
+        if layouts.set_configuration_autosave(self.autosave()) && layouts.configuration_changed() {
+            layouts.mark_changed(now);
         }
     }
 
@@ -494,7 +503,8 @@ mod tests {
         let dir = ScratchDir::new("workspace-drawing-identity-retry");
         let path = dir.join("layouts.toml");
         let mut layouts = LayoutStore::new(LayoutBook::default(), path.clone(), false);
-        let book = WorkspaceBookStore::open_beside(&path);
+        let mut book = WorkspaceBookStore::open_beside(&path);
+        book.book_mut().open_tab(1);
         let obstacle = book.path().with_extension("toml.tmp");
         std::fs::create_dir(&obstacle).unwrap();
         let now = Instant::now();

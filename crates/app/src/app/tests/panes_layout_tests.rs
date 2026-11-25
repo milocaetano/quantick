@@ -2520,14 +2520,12 @@ fn pane_local_strip_actions_target_the_footer_that_raised_them() {
         "shared"
     );
 }
-/// The strip and the file record the layout per pane: a workspace
-/// captured with two panes on two layouts names both, and a pane told
-/// its layout before seeding opens on it.
+/// Desk Save keeps each pane's named layout while configuration autosave is off.
 #[test]
-fn per_pane_layouts_are_recorded_and_restored() {
+fn desk_save_restores_per_pane_layouts_in_manual_mode() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = split_app(&ctx, 200);
-    app.runtime.workspace.book.book_mut().set_autosave(true);
+    assert!(!app.runtime.workspace.book.book().autosave());
     let first = app.runtime.layout_state().layouts().active_id();
     let point = pane_point(&app, PaneSide::Time(0));
     click_chart(&mut app, &ctx, point);
@@ -2537,9 +2535,19 @@ fn per_pane_layouts_are_recorded_and_restored() {
         .expect("second");
     app.apply_toolbar_action(ToolbarAction::AddNative("native.cvd"));
     settle_indicators(&mut app);
+    place_level(&mut app, PaneSide::Time(0), 100.0);
+    run_frame(&mut app, &ctx);
     app.layout_adapter().flush_layouts();
-
-    let (tabs, _chrome) = app.arrangement_state().capture_arrangement();
+    let answer = app
+        .control_action(
+            "desk.save",
+            1,
+            crate::control::ActionOrigin::Human,
+            serde_json::json!({}),
+        )
+        .unwrap();
+    assert_eq!(answer["written"], true);
+    let tabs = ui_state::load(app.runtime.workspace.ui_state_path()).tabs;
     // The desk names the tab's own copies, so its edits come back as its own.
     let flow = crate::layouts::LayoutId(tabs[0].flow_layout.expect("named"));
     let context = crate::layouts::LayoutId(tabs[0].context_layouts[0]);
@@ -2568,7 +2576,7 @@ fn per_pane_layouts_are_recorded_and_restored() {
         again.surfaces.layout_dialogs.model_state.pending_delete(),
         Some(editing)
     );
-    again.layout_adapter().reload_layouts(&[]);
+    again.layout_adapter().reload_layouts(&["market_settings"]);
     assert!(again.surfaces.layout_dialogs.model_state.rename().is_none());
     assert!(
         again
@@ -2604,6 +2612,7 @@ fn per_pane_layouts_are_recorded_and_restored() {
         again.active_tab().pane(PaneSide::Time(0)).layout.label,
         "levels"
     );
+    assert_eq!(drawings_on(&again, PaneSide::Time(0)), vec![100.0]);
 }
 
 /// With configuration autosave enabled the whole book survives a restart:

@@ -53,6 +53,13 @@ impl<Bars> PaneLayout<Bars> {
     pub fn seeded(&self) -> bool {
         self.view.seeded()
     }
+    /// An adopted workspace and named layout own every new drawing.
+    #[must_use]
+    pub fn drawing_scope_ready(&self) -> bool {
+        self.drawings_key
+            .as_ref()
+            .is_some_and(|key| key.scope.is_some())
+    }
     /// Whether the held drawings no longer belong on this pane: the tab left
     /// the feed and symbol they were resolved from, or a context chart
     /// (`context_bars`) left their bars. Compares; allocates nothing.

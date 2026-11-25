@@ -1,5 +1,5 @@
 //! Disk-level independence of drawing persistence and workspace configuration.
-use quantick_stores::{layouts, market_settings};
+use quantick_stores::{layouts, market_settings, ui_state, workspaces::WorkspaceBookStore};
 use quantick_workspace::indicator_document::{SavedIndicator, SavedKind};
 use quantick_workspace::layout_commit::LAYOUTS_SAVE_DEBOUNCE;
 use quantick_workspace::layout_document::{LayoutBook, LayoutId, SavedDrawing};
@@ -64,6 +64,140 @@ fn replace(store: &mut LayoutStore, key: &DrawingKey, items: Vec<SavedDrawing>, 
         .settings_mut()
         .replace(key, items, |_| true);
     store.market_mut().mark_changed(now);
+}
+
+fn select(store: &mut LayoutStore, id: LayoutId) {
+    let session = store.session_mut();
+    session.register(1, Some(session.book().active_id()));
+    let selection = session.select(1, id, Default::default()).unwrap();
+    let committed = session.commit_selection(selection).unwrap();
+    session.finish_selection(committed).unwrap();
+}
+
+#[test]
+fn cockpit_save_commits_manual_layout_choices_without_committing_drawings() {
+    let (dir, mut store) = fixture("cockpit-save-manual");
+    let now = Instant::now();
+    let original = store.book().active_id();
+    let removed = store.session_mut().create(Some("Remove")).unwrap();
+    market_settings::commit_layouts(&mut store).unwrap();
+    let own = key(1, original);
+    replace(&mut store, &own, vec![level(100.0)], now);
+    market_settings::drawing_autosave(&mut store, &own, Some(true), now).unwrap();
+    market_settings::drawing_autosave(&mut store, &own, Some(false), now).unwrap();
+    let drawing_file = std::fs::read(store.market().path()).unwrap();
+    replace(&mut store, &own, vec![level(200.0)], now);
+    let research = store.session_mut().create(Some("Research")).unwrap();
+    store.session_mut().rename(original, "Renamed").unwrap();
+    store.session_mut().finish_delete(removed).unwrap();
+    select(&mut store, research);
+    let tab = toml::from_str(&format!(
+        "feed='binance'\nsymbol='BTCUSDT'\nlayout='flow'\nflow_bars='tick:500'\nflow_layout={}\n",
+        research.0
+    ))
+    .unwrap();
+    let document = ui_state::Workspace::new(false, None, 0, vec![tab], None);
+    assert!(!document.auto_save && !document.save_on_exit);
+    let desk = dir.join("ui-state.toml");
+
+    assert!(ui_state::save_cockpit(&desk, &document, &mut store, "test"));
+    let reopened = read_layouts(&dir);
+    assert_eq!(reopened, *store.book());
+    assert_eq!(reopened.active_id(), research);
+    assert_eq!(reopened.get(original).unwrap().name, "Renamed");
+    assert!(reopened.get(removed).is_none());
+    assert_eq!(ui_state::load(&desk).tabs[0].flow_layout, Some(research.0));
+    assert_eq!(std::fs::read(store.market().path()).unwrap(), drawing_file);
+    assert!(store.market().is_dirty());
+}
+
+#[test]
+fn cockpit_save_reports_layout_and_desk_failures_and_retries() {
+    let (dir, mut store) = fixture("cockpit-save-retry");
+    let desk = dir.join("ui-state.toml");
+    let before = ui_state::Workspace::default();
+    assert!(ui_state::save(&desk, &before));
+    let original = store.book().active_id();
+    let original_name = store.book().active().name.clone();
+    store.session_mut().rename(original, "Pending").unwrap();
+    let mut document = before.clone();
+    document.window = Some([900.0, 600.0]);
+    let layout_obstacle = store.path().with_extension("toml.tmp");
+    std::fs::create_dir(&layout_obstacle).unwrap();
+    assert!(!ui_state::save_cockpit(
+        &desk, &document, &mut store, "test"
+    ));
+    assert_eq!(ui_state::load(&desk), before);
+    assert_eq!(read_layouts(&dir).active().name, original_name);
+    assert!(store.configuration_changed());
+    std::fs::remove_dir(layout_obstacle).unwrap();
+    assert!(ui_state::save_cockpit(&desk, &document, &mut store, "test"));
+    assert_eq!(ui_state::load(&desk), document);
+    assert_eq!(read_layouts(&dir).active().name, "Pending");
+
+    let saved = document.clone();
+    document.window = Some([1000.0, 700.0]);
+    store.session_mut().rename(original, "Next").unwrap();
+    let desk_obstacle = desk.with_extension("toml.tmp");
+    std::fs::create_dir(&desk_obstacle).unwrap();
+    assert!(!ui_state::save_cockpit(
+        &desk, &document, &mut store, "test"
+    ));
+    assert_eq!(ui_state::load(&desk), saved);
+    std::fs::remove_dir(desk_obstacle).unwrap();
+    assert!(ui_state::save_cockpit(&desk, &document, &mut store, "test"));
+    assert_eq!(ui_state::load(&desk), document);
+    assert_eq!(read_layouts(&dir).active().name, "Next");
+}
+
+#[test]
+fn immediate_drawing_writes_use_current_configuration_policy_without_a_frame() {
+    use quantick_workspace::drawing_identity;
+    for entry in ["reserve", "preference", "identity"] {
+        for enabled in [false, true] {
+            let (dir, mut store) = fixture(&format!("current-policy-{entry}-{enabled}"));
+            let now = Instant::now();
+            let mut book = WorkspaceBookStore::open_beside(store.path());
+            book.set_autosave(!enabled);
+            book.persist_drawings(&mut store, now, true);
+            book.set_autosave(enabled);
+            let before = read_layouts(&dir);
+            store
+                .session_mut()
+                .rename(before.active_id(), "Pending rename")
+                .unwrap();
+            let research = store.session_mut().create(Some("Research")).unwrap();
+            select(&mut store, research);
+            store.mark_changed(now);
+            let own = key(book.book().workspace_id("Default").unwrap(), research);
+            let identity = drawing_identity::issue("document", &own, 1, "entropy").unwrap();
+            let mut mark = level(100.0);
+            mark.durable_identity = Some(identity.clone());
+            replace(&mut store, &own, vec![mark], now);
+            match entry {
+                "reserve" => book.reserve_drawing_identities(&mut store, now).unwrap(),
+                "preference" => {
+                    book.drawing_autosave(&mut store, &own, Some(true), now)
+                        .unwrap();
+                }
+                "identity" => book
+                    .commit_drawing_identity(&mut store, &own, &identity, now)
+                    .unwrap(),
+                _ => unreachable!(),
+            }
+            let mut reopened = read_layouts(&dir);
+            let expected = if enabled { store.book() } else { &before };
+            assert_eq!(reopened.layouts(), expected.layouts(), "{entry}, {enabled}");
+            assert_eq!(reopened.active_id(), expected.active_id());
+            assert!(reopened.create(None).unwrap().0 > research.0);
+            if entry != "reserve" {
+                assert_eq!(
+                    read_drawings(&dir).drawings(&own)[0].durable_identity,
+                    Some(identity)
+                );
+            }
+        }
+    }
 }
 
 #[test]

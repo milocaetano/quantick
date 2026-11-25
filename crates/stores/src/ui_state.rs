@@ -451,6 +451,42 @@ pub fn save(path: &Path, workspace: &Workspace) -> bool {
     }
 }
 
+/// Save a captured desk together with the layout catalogue it references.
+/// Drawing writes retain their independent policy. If either configuration
+/// document fails, report failure; a retry can safely write both again.
+pub fn save_cockpit(
+    path: &Path,
+    document: &Workspace,
+    layouts: &mut quantick_workspace::layout_store::LayoutStore,
+    reason: &'static str,
+) -> bool {
+    let saved = match crate::market_settings::commit_layouts(layouts) {
+        Ok(_) => save(path, document),
+        Err(error) => {
+            tracing::warn!(
+                target: "quantick::app", schema_version = 1_u8,
+                event_code = "UI_STATE_LAYOUTS_WRITE_FAILED",
+                path = %path.display(), layouts_path = %layouts.path().display(),
+                %error, action = "workspace_not_saved",
+                "could not save the workspace's layout catalogue"
+            );
+            false
+        }
+    };
+    tracing::info!(
+        target: "quantick::app",
+        schema_version = 1_u8,
+        event_code = "UI_STATE_SAVED",
+        path = %path.display(),
+        tabs = document.tabs.len(),
+        saved,
+        reason,
+        action = if saved { "workspace_written" } else { "workspace_not_written" },
+        "workspace save"
+    );
+    saved
+}
+
 /// Forget the saved workspace: the next launch opens on the configured
 /// defaults. `true` when nothing is left on disk — a file that was never
 /// written is already forgotten, so a missing file is a success.

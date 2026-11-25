@@ -17,6 +17,7 @@ use crate::test_support::FakeWindow as Actors;
 /// One pane over three one-second bars opening at 1 s, 2 s and 3 s.
 struct FakePane {
     id: u64,
+    scope_ready: bool,
     opens: Vec<i64>,
     drawings: Drawings<DrawingTool>,
     sweeps: usize,
@@ -28,6 +29,7 @@ impl FakePane {
     fn new(id: u64) -> Self {
         Self {
             id,
+            scope_ready: true,
             opens: vec![1_000, 2_000, 3_000],
             drawings: Drawings::default(),
             sweeps: 0,
@@ -37,6 +39,9 @@ impl FakePane {
 }
 
 impl AnnotatedPane for FakePane {
+    fn drawing_scope_ready(&self) -> bool {
+        self.scope_ready
+    }
     fn pane_id(&self) -> u64 {
         self.id
     }
@@ -161,6 +166,26 @@ fn assistant_author() -> Option<DrawingAuthor> {
         actor_kind: "agent".to_owned(),
         client_name: "fake assistant".to_owned(),
     })
+}
+
+#[test]
+fn creation_waits_for_drawing_ownership_and_can_retry_without_side_effects() {
+    let mut window = FakeWindow::new();
+    let mut access = FakeAccess::default();
+    window.flow.scope_ready = false;
+    let input = json!({
+        "anchors": [{ "time_unix_ms": 2_500, "price": "101.5" }],
+        "text": "owned note",
+    });
+    let error = call(&mut window, &mut access, LABEL_CAPABILITY_ID, input.clone()).unwrap_err();
+    assert_eq!(error.code.as_str(), codes::CAPABILITY_UNAVAILABLE);
+    assert!(error.retryable);
+    assert!(window.flow.drawings.items().is_empty());
+    assert!(access.events.is_empty());
+    window.flow.scope_ready = true;
+    call(&mut window, &mut access, LABEL_CAPABILITY_ID, input).unwrap();
+    assert_eq!(window.flow.drawings.items().len(), 1);
+    assert_eq!(access.events.len(), 1);
 }
 
 #[test]

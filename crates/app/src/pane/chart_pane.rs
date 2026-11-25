@@ -750,7 +750,11 @@ impl ChartPane {
         #[cfg(not(any(feature = "drawing-harness", test)))]
         let hand: Option<(drawings::Constrain, quantick_drawings::Px)> = None;
         let options = gesture::PlacementOptions {
-            tool: chrome.toolrail.tool().drawing_tool(),
+            tool: chrome
+                .toolrail
+                .tool()
+                .drawing_tool()
+                .filter(|_| self.layout.drawing_scope_ready()),
             magnet: chrome.toolrail.magnet(),
             constrain: if ui.input(|input| input.modifiers.shift) {
                 drawings::Constrain::Level
