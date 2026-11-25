@@ -142,12 +142,6 @@ pub struct Tab {
     // crate::loading) while the tab is on screen.
     pub loading: LoadingTracker,
 
-    /// Paper trading for this market: the deterministic simulator plus its
-    /// journal, chart layer, dock tab and report.
-    ///
-    /// Per tab, because a simulated position belongs to a tape. Two tabs on
-    /// two markets hold two independent positions, and a position can never
-    /// be marked against prints it was not opened against — the invariant
     /// Which pane the order-entry gesture belonged to last frame.
     ///
     /// Only consulted while a paper drag is in progress: the pointer may
@@ -180,12 +174,7 @@ pub struct Tab {
     /// or not, which is what keeps them in step. The cost is the market's
     /// trades retained once per pane: one tape, N `ChartState`s, and still
     /// only one bar-building path. `MAX_CONTEXT_PANES` is what bounds that
-    /// cost.
-    ///
-    /// On the heap, never inline: a `ChartPane` is ~12 KB, and holding
-    /// `MAX_CONTEXT_PANES` of them inside `Tab` made every `Tab` moved through
-    /// a frame on the main thread cost ~116 KB of stack. Opening a tab at
-    /// startup then overflowed Windows' 1 MiB main-thread stack.
+    /// cost. On the heap, never inline: 8 inline panes overflowed the stack.
     pub time_panes: Vec<ChartPane>,
     /// The strategies armed on the panes' drawings and the alarm sounds
     /// they raised, walked through each live print; the app plays the
