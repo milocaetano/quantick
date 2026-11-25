@@ -2257,7 +2257,6 @@ fn a_positions_saved_default_carries_its_look_and_its_custom_ratio_per_tool() {
         target_rgb: [0x11, 0x22, 0x33],
         stop_rgb: [0x44, 0x55, 0x66],
         zone_opacity_pct: 35,
-        span: Some([0.0, 30.0]),
     };
     placed.payload = Box::new(mine.clone());
     let mut drawings = Drawings::default();
@@ -2284,7 +2283,6 @@ fn a_positions_saved_default_carries_its_look_and_its_custom_ratio_per_tool() {
         *opened,
         PositionPayload {
             projected_offset: None,
-            span: None,
             ..mine
         },
         "the look and the ratio, never one chart's pin or width"

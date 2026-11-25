@@ -22,7 +22,7 @@ use quantick_chart::style::PremultipliedRgba;
 
 use crate::{Align2, FontSpec, MarkScene, Px, PxRect, Stroke, pos2, vec2};
 
-use super::position_payload::{PositionPayload, Rgb, SAME_BAR};
+use super::position_payload::{PositionPayload, Rgb};
 use super::position_text::plan_plate;
 use super::{
     Constrain, DrawContext, DrawingPayload, DrawingStyle, Handles, MarkTool, PointerHint,
@@ -239,29 +239,15 @@ impl Frame {
     }
 }
 
-/// One span unit on screen: the anchors' projected distance, or one bar
-/// when they share a bar ([`PositionPayload::span`]).
-fn span_unit_px(a: Px, b: Px, px_per_bar: f32) -> f32 {
-    let apart = (b.x - a.x).abs();
-    if apart > SAME_BAR * px_per_bar.max(f32::EPSILON) {
-        apart
-    } else {
-        px_per_bar
-    }
-}
-
-/// The columns a position spans: its resized span from the entry anchor,
-/// else the anchors', never narrower than [`MIN_WIDTH_BARS`].
-fn columns(a: Px, b: Px, payload: &PositionPayload, px_per_bar: f32) -> (f32, f32) {
-    let px_per_bar = px_per_bar.max(0.0);
-    let (left, right) = match payload.span {
-        Some([left, right]) => {
-            let unit = span_unit_px(a, b, px_per_bar);
-            (a.x + left * unit, a.x + right * unit)
-        }
-        None => (a.x.min(b.x), a.x.max(b.x)),
-    };
-    (left, right.max(left + MIN_WIDTH_BARS * px_per_bar))
+/// The columns a position spans: its anchors', never narrower than
+/// [`MIN_WIDTH_BARS`].
+fn columns(a: Px, b: Px, px_per_bar: f32) -> (f32, f32) {
+    let left = a.x.min(b.x);
+    (
+        left,
+        a.x.max(b.x)
+            .max(left + MIN_WIDTH_BARS * px_per_bar.max(0.0)),
+    )
 }
 
 fn frame(points: &[Px], ctxt: &DrawContext<'_>, side: Side) -> Option<Frame> {
@@ -270,7 +256,7 @@ fn frame(points: &[Px], ctxt: &DrawContext<'_>, side: Side) -> Option<Frame> {
     };
     let payload = payload_of(ctxt);
     let legs = plan_of(side, ctxt.anchors, &payload);
-    let (left, right) = columns(*a, *b, &payload, ctxt.px_per_bar);
+    let (left, right) = columns(*a, *b, ctxt.px_per_bar);
     let y = |price: f64| ctxt.scale.y(price);
     Some(Frame {
         legs,
@@ -508,22 +494,33 @@ pub(super) fn line_hint(handle: usize) -> Option<PointerHint> {
 
 /// A line grab moves that line's price and nothing else: the entry and the
 /// measured edge keep their bars, so a press mid-line never jumps an anchor
-/// sideways to the pointer. The anchor dots keep the plain move.
-fn drag_line(points: &[Px], handle: usize, to: Px) -> Option<Handles> {
-    let anchor = match handle {
-        ENTRY_LINE_HANDLE => 0,
-        MEASURED_LINE_HANDLE => 1,
-        _ => return None,
+/// sideways to the pointer.
+///
+/// A width handle moves the anchor on its side in time and nothing else:
+/// the width lives in the anchors, so it keeps its length in market time on
+/// any timeframe and on a pane mirroring the drawing. The other edge holds,
+/// never closer than [`MIN_WIDTH_BARS`].
+fn drag_line(points: &[Px], handle: usize, to: Px, px_per_bar: f32) -> Option<Handles> {
+    let [a, b, ..] = points else {
+        return None;
     };
     let mut moved: Handles = points.iter().copied().collect();
-    moved.get_mut(anchor)?.y = to.y;
+    let (left, right) = columns(*a, *b, px_per_bar);
+    let floor = MIN_WIDTH_BARS * px_per_bar.max(0.0);
+    let (left_anchor, right_anchor) = if a.x <= b.x { (0, 1) } else { (1, 0) };
+    match handle {
+        ENTRY_LINE_HANDLE => moved.get_mut(0)?.y = to.y,
+        MEASURED_LINE_HANDLE => moved.get_mut(1)?.y = to.y,
+        LEFT_EDGE_HANDLE => moved.get_mut(left_anchor)?.x = to.x.min(right - floor),
+        RIGHT_EDGE_HANDLE => moved.get_mut(right_anchor)?.x = to.x.max(left + floor),
+        _ => return None,
+    }
     Some(moved)
 }
 
 /// Dragging the projected leg pins it at the price under the pointer, on
 /// its own side of the entry, and the ratio becomes the one the three
-/// prices make. Dragging a width handle moves that edge and no price, never
-/// closer than [`MIN_WIDTH_BARS`] to the other.
+/// prices make.
 pub(super) fn drag_payload(
     points: &[Px],
     handle: usize,
@@ -533,7 +530,6 @@ pub(super) fn drag_payload(
 ) -> Option<Box<dyn DrawingPayload>> {
     match handle {
         PROJECTED_HANDLE => drag_projected(points, to, ctxt, side),
-        LEFT_EDGE_HANDLE | RIGHT_EDGE_HANDLE => drag_edge(points, handle, to, ctxt),
         _ => None,
     }
 }
@@ -564,35 +560,6 @@ fn drag_projected(
     if let Some(plan) = plan(Some(projected)) {
         payload.follow(&plan);
     }
-    Some(Box::new(payload))
-}
-
-fn drag_edge(
-    points: &[Px],
-    handle: usize,
-    to: Px,
-    ctxt: &DrawContext<'_>,
-) -> Option<Box<dyn DrawingPayload>> {
-    let [a, b, ..] = points else {
-        return None;
-    };
-    let px_per_bar = ctxt.px_per_bar;
-    let mut payload = payload_of(ctxt);
-    // No bar width to measure in: the drag holds, and never falls back to a
-    // plain anchor move, which a width handle is not.
-    if px_per_bar <= 0.0 {
-        return Some(Box::new(payload));
-    }
-    let (left, right) = columns(*a, *b, &payload, px_per_bar);
-    let unit = span_unit_px(*a, *b, px_per_bar);
-    let units = |x: f32| (x - a.x) / unit;
-    let (left, right, at) = (units(left), units(right), units(to.x));
-    let floor = MIN_WIDTH_BARS * px_per_bar / unit;
-    payload.span = Some(if handle == LEFT_EDGE_HANDLE {
-        [at.min(right - floor), right]
-    } else {
-        [left, at.max(left + floor)]
-    });
     Some(Box::new(payload))
 }
 
@@ -743,27 +710,13 @@ impl MarkTool for PositionTool {
             None => anchors.height() * payload.ratio.max(1.0 / payload.ratio) as f32,
         };
         let px_per_bar = spacing.px_per_bar.max(0.0);
-        // The entry is one of the box's two columns; reserve from either.
-        let (left, right) = match payload.span {
-            Some([left, right]) => {
-                let unit = if anchors.width() > 0.0 {
-                    anchors.width()
-                } else {
-                    px_per_bar
-                };
-                (
-                    anchors.min.x + left.min(0.0) * unit,
-                    anchors.max.x + right.max(0.0) * unit,
-                )
-            }
-            None => (
-                anchors.min.x,
-                anchors
-                    .max
-                    .x
-                    .max(anchors.min.x + MIN_WIDTH_BARS * px_per_bar),
-            ),
-        };
+        let (left, right) = (
+            anchors.min.x,
+            anchors
+                .max
+                .x
+                .max(anchors.min.x + MIN_WIDTH_BARS * px_per_bar),
+        );
         // The Target and Stop plates hang outside the zones' far edges; a
         // flat measurement is no plan and shows none.
         let plate = if anchors.height() > 0.0 || payload.projected_offset.is_some() {
@@ -814,10 +767,10 @@ impl MarkTool for PositionTool {
         points: &[Px],
         handle: usize,
         to: Px,
-        _ctxt: &DrawContext<'_>,
+        ctxt: &DrawContext<'_>,
         _constrain: Constrain,
     ) -> Option<Handles> {
-        drag_line(points, handle, to)
+        drag_line(points, handle, to, ctxt.px_per_bar)
     }
     fn drag_payload_handle(
         &self,

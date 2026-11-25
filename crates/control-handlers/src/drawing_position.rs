@@ -197,7 +197,9 @@ fn read_back(
         entry: price(plan.entry)?,
         stop: price(plan.stop)?,
         target: price(plan.target)?,
-        width_bars: measure(f64::from(payload.width_bars(&drawing.points)))?,
+        width_bars: measure(f64::from(quantick_drawings::position_width_bars(
+            &drawing.points,
+        )))?,
         changed,
     })
 }

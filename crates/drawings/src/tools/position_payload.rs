@@ -44,12 +44,6 @@ pub struct PositionPayload {
     pub target_rgb: Rgb,
     pub stop_rgb: Rgb,
     pub zone_opacity_pct: u8,
-    /// The drawn columns once the trader resized the width: `[left, right]`
-    /// from the entry anchor, in units of the anchors' own span (one bar
-    /// when they share a bar). A unit of the anchors projects with them, so
-    /// the box keeps its length in time across a timeframe switch and on a
-    /// pane mirroring it. `None` spans the anchors.
-    pub span: Option<[f32; 2]>,
 }
 
 impl Default for PositionPayload {
@@ -60,7 +54,6 @@ impl Default for PositionPayload {
             target_rgb: FACTORY_TARGET_RGB,
             stop_rgb: FACTORY_STOP_RGB,
             zone_opacity_pct: FACTORY_ZONE_OPACITY_PCT,
-            span: None,
         }
     }
 }
@@ -71,6 +64,9 @@ pub enum PositionRefusal {
     RatioOutOfRange,
     OpacityOutOfRange,
     WidthOutOfRange,
+    /// The anchors share a bar or carry no market time, so a width in bars
+    /// cannot be turned into the time an anchor moves to.
+    WidthNeedsTime,
     /// The anchors make no plan: entry and edge at one price.
     NoPlan,
 }
@@ -82,6 +78,9 @@ impl PositionRefusal {
             Self::RatioOutOfRange => "ratio must be between 0.1 and 20 reward per unit of risk",
             Self::OpacityOutOfRange => "zone opacity must be between 0 and 100 percent",
             Self::WidthOutOfRange => "width must be between 14 and 100000 bars",
+            Self::WidthNeedsTime => {
+                "the position's anchors share a bar or have no market time; drag a width handle"
+            }
             Self::NoPlan => "the position's entry and edge are at one price",
         }
     }
@@ -128,52 +127,48 @@ impl PositionPayload {
         self.zone_opacity_pct = pct;
         Ok(())
     }
-    /// The drawn width in bars on the anchors' own chart.
-    #[must_use]
-    pub fn width_bars(&self, anchors: &[ChartPoint]) -> f32 {
-        let width = match (self.span, anchors) {
-            (Some([left, right]), _) => (right - left) * span_unit_bars(anchors),
-            (None, [entry, edge, ..]) => (edge.bar - entry.bar).abs(),
-            (None, _) => 0.0,
-        };
-        width.max(MIN_WIDTH_BARS)
-    }
-    /// Make the position `bars` wide, its left edge where it is.
-    ///
-    /// # Errors
-    /// A width that is not finite or narrower than [`MIN_WIDTH_BARS`].
-    pub fn set_width_bars(
-        &mut self,
-        anchors: &[ChartPoint],
-        bars: f32,
-    ) -> Result<(), PositionRefusal> {
-        if !(MIN_WIDTH_BARS..=MAX_WIDTH_BARS).contains(&bars) {
-            return Err(PositionRefusal::WidthOutOfRange);
-        }
-        let unit = span_unit_bars(anchors);
-        let left = match (self.span, anchors) {
-            (Some([left, _]), _) => left,
-            (None, [entry, edge, ..]) => (edge.bar - entry.bar).min(0.0) / unit,
-            (None, _) => 0.0,
-        };
-        self.span = Some([left, left + bars / unit]);
-        Ok(())
+}
+
+/// The widest a position is set by a call, in bars.
+pub const MAX_WIDTH_BARS: f32 = 100_000.0;
+
+/// The drawn width in bars on the anchors' own chart: the anchors' span,
+/// never under [`MIN_WIDTH_BARS`].
+#[must_use]
+pub fn width_bars(anchors: &[ChartPoint]) -> f32 {
+    match anchors {
+        [entry, edge, ..] => (edge.bar - entry.bar).abs().max(MIN_WIDTH_BARS),
+        _ => MIN_WIDTH_BARS,
     }
 }
 
-/// The widest a position is drawn, in bars.
-pub const MAX_WIDTH_BARS: f32 = 100_000.0;
-/// Below this the anchors share a bar, and a span unit is one bar.
-pub(super) const SAME_BAR: f32 = 1e-3;
-
-/// One unit of [`PositionPayload::span`], in bars of the anchors' chart.
-pub(super) fn span_unit_bars(anchors: &[ChartPoint]) -> f32 {
-    match anchors {
-        [entry, edge, ..] if (edge.bar - entry.bar).abs() > SAME_BAR => {
-            (edge.bar - entry.bar).abs()
-        }
-        _ => 1.0,
+/// Make the position `bars` wide by moving its right-hand anchor in market
+/// time; the left one, and every price, stay. The width lives in the
+/// anchors, so it keeps its length in time on any timeframe and on a pane
+/// mirroring the drawing.
+///
+/// # Errors
+/// A width out of range, or anchors that share a bar or carry no market
+/// time to measure a bar in.
+pub fn set_width_bars(anchors: &mut [ChartPoint], bars: f32) -> Result<(), PositionRefusal> {
+    if !(MIN_WIDTH_BARS..=MAX_WIDTH_BARS).contains(&bars) {
+        return Err(PositionRefusal::WidthOutOfRange);
     }
+    let [a, b, ..] = anchors else {
+        return Err(PositionRefusal::NoPlan);
+    };
+    let (left, right) = if a.bar <= b.bar { (a, b) } else { (b, a) };
+    let span = right.bar - left.bar;
+    let (Some(start), Some(end)) = (left.time_ms, right.time_ms) else {
+        return Err(PositionRefusal::WidthNeedsTime);
+    };
+    if span <= 0.0 || end <= start {
+        return Err(PositionRefusal::WidthNeedsTime);
+    }
+    let ms_per_bar = (end - start) as f64 / f64::from(span);
+    right.bar = left.bar + bars;
+    right.time_ms = Some(start + (ms_per_bar * f64::from(bars)).round() as i64);
+    Ok(())
 }
 
 /// Set the plan's ratio: the target moves, the entry and the stop never do,
@@ -245,8 +240,6 @@ struct SavedData {
     look: PresetData,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     projected_offset: Option<f64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    span: Option<[f32; 2]>,
 }
 
 impl PositionPayload {
@@ -320,7 +313,6 @@ impl DrawingPayload for PositionPayload {
         toml::Value::try_from(SavedData {
             look: self.look(),
             projected_offset: self.projected_offset,
-            span: self.span,
         })
         .ok()
     }
@@ -331,21 +323,14 @@ impl DrawingPayload for PositionPayload {
         let Some(look) = Self::read_look(&data.look) else {
             return false;
         };
-        // The width floor is the painter's: in span units it depends on the
-        // anchors, which a payload does not hold.
-        let finite_span = data
-            .span
-            .is_none_or(|[left, right]| left.is_finite() && right.is_finite() && right > left);
         if data
             .projected_offset
             .is_some_and(|offset| !offset.is_finite())
-            || !finite_span
         {
             return false;
         }
         self.take_look(look);
         self.projected_offset = data.projected_offset;
-        self.span = data.span;
         true
     }
 }

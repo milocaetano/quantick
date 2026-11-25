@@ -101,6 +101,7 @@ pub use position_core::{
 pub use position_payload::{
     FACTORY_ZONE_OPACITY_PCT, MAX_ZONE_OPACITY_PCT, PositionPayload, PositionRefusal, Rgb,
     parse_rgb_hex, preset_of as position_preset_of, rgb_hex, set_plan_ratio,
+    set_width_bars as set_position_width, width_bars as position_width_bars,
 };
 pub use rectangle::{RectanglePayload, TOOL_ID as RECTANGLE_TOOL_ID};
 pub use text::{MAX_TEXT_PX, MIN_TEXT_PX, PLACEHOLDER as TEXT_PLACEHOLDER, TextPayload};

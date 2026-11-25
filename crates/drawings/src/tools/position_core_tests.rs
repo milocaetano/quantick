@@ -146,11 +146,11 @@ fn dragging_the_projected_leg_pins_it_and_leaves_the_rest() {
 #[test]
 fn a_line_grab_moves_only_that_lines_price() {
     let points = [pos2(100.0, 200.0), pos2(300.0, 300.0)];
-    let moved = drag_line(&points, MEASURED_LINE_HANDLE, pos2(180.0, 320.0)).unwrap();
+    let moved = drag_line(&points, MEASURED_LINE_HANDLE, pos2(180.0, 320.0), 10.0).unwrap();
     assert_eq!(moved.as_slice(), &[pos2(100.0, 200.0), pos2(300.0, 320.0)]);
-    let moved = drag_line(&points, ENTRY_LINE_HANDLE, pos2(180.0, 190.0)).unwrap();
+    let moved = drag_line(&points, ENTRY_LINE_HANDLE, pos2(180.0, 190.0), 10.0).unwrap();
     assert_eq!(moved.as_slice(), &[pos2(100.0, 190.0), pos2(300.0, 300.0)]);
-    assert_eq!(drag_line(&points, 0, pos2(0.0, 0.0)), None);
+    assert_eq!(drag_line(&points, 9, pos2(0.0, 0.0), 10.0), None);
 }
 
 #[test]
@@ -513,47 +513,6 @@ fn the_width_handles_sit_at_the_entry_lines_ends() {
     );
 }
 
-/// An edge drag resizes the columns and leaves every price where it was;
-/// the other edge holds, and the width never drops under the floor.
-#[test]
-fn an_edge_drag_changes_the_width_and_no_leg_price() {
-    let scale = scale();
-    let anchors = [ChartPoint::at(10.0, 100.0), ChartPoint::at(30.0, 90.0)];
-    let points = screen(&scale, &anchors);
-    let payload = two_to_one();
-    let ctxt = context(&payload, &anchors, &scale);
-    let before = plan_of(Side::Long, &anchors, &payload).unwrap();
-    let wider = drag_payload(
-        &points,
-        RIGHT_EDGE_HANDLE,
-        pos2(500.0, 0.0),
-        &ctxt,
-        Side::Long,
-    )
-    .unwrap();
-    let wider = wider.as_any().downcast_ref::<PositionPayload>().unwrap();
-    // The anchors are 20 bars apart: one span unit. 400 px is two units.
-    assert_eq!(wider.span, Some([0.0, 2.0]));
-    assert_eq!(wider.width_bars(&anchors), 40.0);
-    assert_eq!(plan_of(Side::Long, &anchors, wider), Some(before));
-    let ctxt = context(wider, &anchors, &scale);
-    let narrowest = drag_payload(
-        &points,
-        LEFT_EDGE_HANDLE,
-        pos2(450.0, 900.0),
-        &ctxt,
-        Side::Long,
-    )
-    .unwrap();
-    let narrowest = narrowest
-        .as_any()
-        .downcast_ref::<PositionPayload>()
-        .unwrap();
-    // The 14-bar floor is 0.7 of a 20-bar unit.
-    assert_eq!(narrowest.span, Some([1.3, 2.0]));
-    assert_eq!(plan_of(Side::Long, &anchors, narrowest), Some(before));
-}
-
 #[test]
 fn a_dragged_measured_edge_makes_the_plan_custom_at_the_ratio_it_shows() {
     let mut drawings = placed_plan();
@@ -674,40 +633,61 @@ fn a_press_on_the_entry_corner_grabs_the_width_handle() {
     );
 }
 
-/// A width stored at the floor reads back a hair under it in `f32`; the
-/// saved drawing still loads with its look.
+/// A width handle moves the anchor on its side in time and nothing else:
+/// both prices hold, the other edge holds, and the width never drops under
+/// the floor.
 #[test]
-fn a_position_saved_at_its_narrowest_still_loads() {
-    let mut narrow = PositionPayload {
-        target_rgb: [1, 2, 3],
-        ..two_to_one()
-    };
-    narrow.span = Some([0.0, 0.7 - 1e-6]);
-    let mut restored = PositionPayload::default();
-    assert!(restored.import_saved(&narrow.export_saved().unwrap()));
-    assert_eq!(restored, narrow);
+fn an_edge_drag_moves_one_anchor_in_time_and_no_price() {
+    // Entry at x 100, edge at x 300: 20 bars at 10 px a bar.
+    let points = [pos2(100.0, 200.0), pos2(300.0, 300.0)];
+    let wider = drag_line(&points, RIGHT_EDGE_HANDLE, pos2(500.0, 0.0), 10.0).unwrap();
+    assert_eq!(wider.as_slice(), &[pos2(100.0, 200.0), pos2(500.0, 300.0)]);
+    let narrowest = drag_line(&points, LEFT_EDGE_HANDLE, pos2(290.0, 900.0), 10.0).unwrap();
+    assert_eq!(
+        narrowest.as_slice(),
+        &[
+            pos2(300.0 - MIN_WIDTH_BARS * 10.0, 200.0),
+            pos2(300.0, 300.0)
+        ],
+        "the floor holds the left edge 14 bars from the right"
+    );
+    // Drawn right to left, the entry is the right-hand anchor.
+    let mirrored = [pos2(300.0, 200.0), pos2(100.0, 300.0)];
+    let wider = drag_line(&mirrored, RIGHT_EDGE_HANDLE, pos2(450.0, 0.0), 10.0).unwrap();
+    assert_eq!(wider.as_slice(), &[pos2(450.0, 200.0), pos2(100.0, 300.0)]);
 }
 
-/// A resized width is held in units of the anchors' span, so when the
-/// anchors re-project onto a coarser timeframe the box keeps its length in
-/// time instead of its count of bars.
+/// The width is the anchors' span in market time: set in bars, it moves the
+/// right-hand anchor's bar and time together, at the anchors' own pace.
 #[test]
-fn a_resized_width_keeps_its_time_across_a_timeframe_switch() {
-    let payload = PositionPayload {
-        span: Some([0.0, 3.0]),
-        ..two_to_one()
-    };
-    // One-minute bars: anchors 20 bars apart at 10 px a bar.
-    let minute = columns(pos2(100.0, 0.0), pos2(300.0, 0.0), &payload, 10.0);
-    assert_eq!(minute, (100.0, 700.0));
-    // The same anchors on five-minute bars sit 4 bars apart; the floor is
-    // 14 bars, so three spans of 4 bars round up to it.
-    let five = columns(pos2(100.0, 0.0), pos2(140.0, 0.0), &payload, 10.0);
-    assert_eq!(five, (100.0, 240.0), "fourteen bars, the floor");
-    let wide = PositionPayload {
-        span: Some([0.0, 6.0]),
-        ..two_to_one()
-    };
-    let five = columns(pos2(100.0, 0.0), pos2(140.0, 0.0), &wide, 10.0);
-    assert_eq!(five, (100.0, 340.0), "six spans of four bars");
+fn a_width_set_in_bars_moves_the_right_anchor_in_time() {
+    let mut anchors = [
+        ChartPoint::at_time(10.0, 100.0, Some(600_000)),
+        ChartPoint::at_time(30.0, 90.0, Some(1_800_000)),
+    ];
+    crate::set_position_width(&mut anchors, 40.0).unwrap();
+    assert_eq!(anchors[1].bar, 50.0);
+    assert_eq!(
+        anchors[1].time_ms,
+        Some(3_000_000),
+        "60 s a bar, 40 bars on"
+    );
+    assert_eq!((anchors[0].price, anchors[1].price), (100.0, 90.0));
+    assert_eq!(crate::position_width_bars(&anchors), 40.0);
+    let mut timeless = [ChartPoint::at(10.0, 100.0), ChartPoint::at(30.0, 90.0)];
+    assert_eq!(
+        crate::set_position_width(&mut timeless, 40.0),
+        Err(crate::PositionRefusal::WidthNeedsTime)
+    );
+    for bars in [
+        13.0,
+        f32::NAN,
+        f32::INFINITY,
+        crate::tools::position_payload::MAX_WIDTH_BARS + 1.0,
+    ] {
+        assert_eq!(
+            crate::set_position_width(&mut anchors, bars),
+            Err(crate::PositionRefusal::WidthOutOfRange)
+        );
+    }
 }

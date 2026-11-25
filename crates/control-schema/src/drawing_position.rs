@@ -43,7 +43,9 @@ pub struct PositionSetInput {
     /// `"2"` is risk 1 : reward 2. Only the target moves.
     #[serde(default)]
     pub ratio: Option<CanonicalDecimal>,
-    /// Drawn width in bars, at least 14; the left edge holds. No price moves.
+    /// Drawn width in bars, 14 through 100000. The right-hand anchor moves
+    /// in market time at the anchors' own pace; the left edge and every price
+    /// hold. Refused when the anchors share a bar or carry no market time.
     #[serde(default)]
     pub width_bars: Option<CanonicalDecimal>,
 }
@@ -121,7 +123,7 @@ pub fn set_descriptor() -> CapabilityDescriptor {
     descriptor::<PositionSetInput, PositionSetResult>(
         SET_CAPABILITY_ID,
         "Edit or inspect a long or short position",
-        "Reads and optionally edits one long or short position drawing, named by the `tab_id`, `pane_id` and `drawing_id` analysis.drawings lists: target and stop zone colours (`#RRGGBB`), zone opacity (0-100 %), risk/reward as reward per unit of risk (0.1-20; only the target moves, entry and stop never do) and width in bars (at least 14; no price moves). The same edits as the position's floating bar. Omit every optional field to inspect. A locked position refuses ratio and width but takes colours. Invalid input changes nothing. One undo step; saved with the drawings. The result reads the look, legs and width back.",
+        "Reads and optionally edits one long or short position drawing, named by the `tab_id`, `pane_id` and `drawing_id` analysis.drawings lists: target and stop zone colours (`#RRGGBB`), zone opacity (0-100 %), risk/reward as reward per unit of risk (0.1-20; only the target moves, entry and stop never do) and width in bars (14 through 100000: the right-hand anchor moves in market time; no price moves). The same edits as the position's floating bar. Omit every optional field to inspect. A locked position refuses ratio and width but takes colours. Invalid input changes nothing. One undo step; saved with the drawings. The result reads the look, legs and width back.",
         "Explicit values make retries harmless; the result reads the drawing back.",
     )
 }

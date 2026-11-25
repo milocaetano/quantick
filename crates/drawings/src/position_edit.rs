@@ -96,7 +96,7 @@ pub fn edited_position(
         }
         PositionEdit::ZoneOpacity(pct) => payload.set_zone_opacity(pct),
         PositionEdit::Ratio(ratio) => set_plan_ratio(side, &mut points, &mut payload, ratio),
-        PositionEdit::WidthBars(bars) => payload.set_width_bars(&points, bars),
+        PositionEdit::WidthBars(bars) => crate::set_position_width(&mut points, bars),
     }
     .map_err(PositionEditRefusal::Invalid)?;
     let mut edited = drawing.clone();

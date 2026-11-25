@@ -70,8 +70,9 @@ impl PresetHost for MemoryBank {
     }
 }
 
+/// An anchor at `bar` on a one-minute chart, so a width in bars has a time.
 fn at(bar: f32, price: f64) -> ChartPoint {
-    ChartPoint::at_time(bar, price, None)
+    ChartPoint::at_time(bar, price, Some((bar * 60_000.0) as i64))
 }
 
 /// A store holding a long entered at 100 with its target measured at 120,

@@ -7142,7 +7142,7 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Reads and optionally edits one long or short position drawing, named by the `tab_id`, `pane_id` and `drawing_id` analysis.drawings lists: target and stop zone colours (`#RRGGBB`), zone opacity (0-100 %), risk/reward as reward per unit of risk (0.1-20; only the target moves, entry and stop never do) and width in bars (at least 14; no price moves). The same edits as the position's floating bar. Omit every optional field to inspect. A locked position refuses ratio and width but takes colours. Invalid input changes nothing. One undo step; saved with the drawings. The result reads the look, legs and width back.",
+      "description": "Reads and optionally edits one long or short position drawing, named by the `tab_id`, `pane_id` and `drawing_id` analysis.drawings lists: target and stop zone colours (`#RRGGBB`), zone opacity (0-100 %), risk/reward as reward per unit of risk (0.1-20; only the target moves, entry and stop never do) and width in bars (14 through 100000: the right-hand anchor moves in market time; no price moves). The same edits as the position's floating bar. Omit every optional field to inspect. A locked position refuses ratio and width but takes colours. Invalid input changes nothing. One undo step; saved with the drawings. The result reads the look, legs and width back.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "cockpit",
@@ -7217,7 +7217,7 @@
               }
             ],
             "default": null,
-            "description": "Drawn width in bars, at least 14; the left edge holds. No price moves."
+            "description": "Drawn width in bars, 14 through 100000. The right-hand anchor moves\nin market time at the anchors' own pace; the left edge and every price\nhold. Refused when the anchors share a bar or carry no market time."
           },
           "zone_opacity_pct": {
             "default": null,
