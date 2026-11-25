@@ -62,14 +62,7 @@ fn receipt_view_and_replacement_day_share_journal_origin() {
             Decimal::from(4)
         );
 
-        Model::update(
-            &mut state,
-            Intent::Draft(DateDraft {
-                start: next.iso(),
-                end: next.iso(),
-            }),
-        );
-        Model::update(&mut state, Intent::GenerateDates);
+        Model::update(&mut state, Intent::Days(DaySet::single(next)));
         state.ensure_report_view(tz, PnlReader::plain());
         let replaced = state.snapshot().unwrap();
         assert_eq!(
@@ -81,7 +74,7 @@ fn receipt_view_and_replacement_day_share_journal_origin() {
             "X/second.csv"
         );
         assert_eq!(state.report_scope_label(), Some("Simulator"));
-        Model::update(&mut state, Intent::Dates(DaySelection::None));
+        Model::update(&mut state, Intent::Days(DaySet::default()));
         state.ensure_report_view(tz, PnlReader::plain());
         assert_eq!(
             state.snapshot().unwrap().report.net_points,
@@ -91,8 +84,10 @@ fn receipt_view_and_replacement_day_share_journal_origin() {
     }
 }
 
+/// A click after a ledger day report adds to that day and applies at once;
+/// a Shift+click grows from the last clicked day, not from the ledger's.
 #[test]
-fn a_new_calendar_gesture_starts_after_an_applied_ledger_day() {
+fn grid_clicks_after_a_ledger_day_apply_at_once_and_leave_its_context() {
     let scratch = crate::scratch::ScratchDir::new("report-date-pick");
     let dir = scratch.join("paper");
     let tz = TzOffset::new(-180);
@@ -106,23 +101,36 @@ fn a_new_calendar_gesture_starts_after_an_applied_ledger_day() {
             &mut state,
             Intent::Scoped(Box::new(prepare(&dir, request, tz).unwrap())),
         );
-        let calendar = CalendarState {
-            open: true,
-            ..state.calendar()
-        };
-        Model::update(&mut state, Intent::Calendar(calendar));
-        Model::update(&mut state, Intent::PickDate(first_pick));
-        assert_eq!(
-            state.date_draft().range().unwrap(),
-            DateRange::new(first_pick, first_pick)
+        assert_eq!(state.picked_days(), &DaySet::single(day));
+        assert!(state.report_scope().is_some());
+        Model::update(&mut state, Intent::DatesOpen(true));
+        assert_eq!(state.calendar().month, Some(day.month_start()));
+        Model::update(
+            &mut state,
+            Intent::PickDay {
+                day: first_pick,
+                extend: false,
+            },
         );
-        assert_eq!(state.applied_dates(), Some(DateRange::new(day, day)));
-        Model::update(&mut state, Intent::PickDate(second_pick));
-        let range = DateRange::new(first_pick, second_pick);
-        assert_eq!(state.date_draft().range().unwrap(), range);
-        assert_eq!(state.applied_dates(), Some(DateRange::new(day, day)));
-        Model::update(&mut state, Intent::GenerateDates);
-        assert_eq!(state.applied_dates(), Some(range));
+        let mut expected = DaySet::single(day);
+        expected.toggle(first_pick);
+        assert_eq!(state.picked_days(), &expected, "no Generate step");
+        assert!(
+            state.report_scope().is_none(),
+            "the ledger's day is no longer the question"
+        );
+        Model::update(
+            &mut state,
+            Intent::PickDay {
+                day: second_pick,
+                extend: true,
+            },
+        );
+        expected.add_span(first_pick, second_pick);
+        assert_eq!(state.picked_days(), &expected);
+        assert_eq!(state.picked_days().len(), 4);
+        state.ensure_report_view(tz, PnlReader::plain());
+        assert_eq!(state.report_view().as_ref().unwrap().days, expected);
     }
 }
 
@@ -152,39 +160,26 @@ fn date_only_reveal_preserves_all_symbols_after_closed_cache_eviction() {
             updates.with_local_effects(
                 &mut |effects| io::local_effects(effects, &env),
                 |session| {
-                    let draft = DateDraft {
-                        start: day.iso(),
-                        end: day.iso(),
-                    };
+                    let picked = DaySet::single(day);
                     let first =
-                        io::report(session, Some(ReportChange::Draft(draft.clone())), tz, &env)
-                            .unwrap();
+                        io::report(session, Some(ReportChange::Days(picked.clone())), tz, &env);
                     assert_eq!(first.symbol.as_deref(), Some("X"));
                     assert_eq!(first.trade_count, 1);
                     session.update(Intent::Symbol(None));
                     session.update(Intent::ReloadReport);
-                    let all = io::report(session, None, tz, &env).unwrap();
+                    let all = io::report(session, None, tz, &env);
                     assert_eq!((all.symbol, all.trade_count), (None, 2));
                     session.update(Intent::Close);
                     session.update(Intent::DirectoryChanged);
-                    let evicted = io::report(session, None, tz, &env).unwrap();
+                    let evicted = io::report(session, None, tz, &env);
                     assert!(!evicted.loaded && !evicted.open);
                     assert_eq!(evicted.symbol, None);
-                    let staged =
-                        io::report(session, Some(ReportChange::Draft(draft)), tz, &env).unwrap();
-                    assert!(staged.open && staged.loaded && staged.applied.is_none());
+                    let reopened =
+                        io::report(session, Some(ReportChange::Days(picked.clone())), tz, &env);
+                    assert!(reopened.open && reopened.loaded);
+                    assert_eq!(reopened.days, picked);
                     assert_eq!(
-                        (staged.symbol, staged.trade_count, staged.net_points),
-                        (None, 2, Decimal::from(7))
-                    );
-                    let generated =
-                        io::report(session, Some(ReportChange::Generate), tz, &env).unwrap();
-                    assert_eq!(
-                        (
-                            generated.symbol,
-                            generated.trade_count,
-                            generated.net_points
-                        ),
+                        (reopened.symbol, reopened.trade_count, reopened.net_points),
                         (None, 2, Decimal::from(7))
                     );
                 },
@@ -220,10 +215,7 @@ fn picked_dates_widen_a_whole_session_report_to_its_origin() {
     state.ensure_report_view(tz, PnlReader::plain());
     assert_eq!(state.snapshot().unwrap().rows.len(), 1, "the session alone");
 
-    Model::update(
-        &mut state,
-        Intent::Dates(DaySelection::Range(DateRange::new(yesterday, today))),
-    );
+    Model::update(&mut state, Intent::Days(DaySet::span(yesterday, today)));
     state.ensure_report_view(tz, PnlReader::plain());
     let picked = state.snapshot().unwrap();
     assert_eq!(

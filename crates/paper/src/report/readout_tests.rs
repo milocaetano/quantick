@@ -321,7 +321,15 @@ fn a_worded_view_leads_each_row_and_the_net_with_the_chosen_figure() {
         sessions: BTreeMap::new(),
     };
     let utc = TzOffset::new(0);
-    let cut = || ReportView::cut(&history, ReportPeriod::All, SourceFilter::All, None, utc);
+    let cut = || {
+        ReportView::cut(
+            &history,
+            ReportPeriod::All,
+            SourceFilter::All,
+            &Default::default(),
+            utc,
+        )
+    };
     assert_eq!(cut().trade_text(0), "", "a bare cut words nothing");
 
     let world = World::new(None);

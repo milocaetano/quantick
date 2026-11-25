@@ -104,6 +104,8 @@ impl<T: PaperOwner + ?Sized> PaperOwner for &mut T {
 /// parity test to hold against the tab's own surfaces.
 pub(crate) struct PaperDesk {
     pub reports: Vec<quantick_paper::report::scope::ReportReceipt>,
+    /// The days the last `ReportChange::Days` set, read back as applied.
+    pub report_days: quantick_paper::report::calendar::DaySet,
     pub paper: TabPaper,
     pub view: LedgerView,
     pub outcomes: Vec<TradeOutcome>,
@@ -113,6 +115,7 @@ impl PaperDesk {
     pub fn new(account: PaperAccount) -> Self {
         Self {
             reports: Vec::new(),
+            report_days: Default::default(),
             paper: TabPaper::new(account),
             view: LedgerView::default(),
             outcomes: Vec::new(),
@@ -138,14 +141,18 @@ impl TradeDesk for PaperDesk {
         &mut self,
         change: Option<quantick_paper::report::snapshot::ReportChange>,
         _: TzOffset,
-    ) -> Result<quantick_paper::report::snapshot::ReportReadout, &'static str> {
+    ) -> quantick_paper::report::snapshot::ReportReadout {
+        use quantick_paper::report::snapshot::ReportChange;
         let sources = match change {
-            Some(quantick_paper::report::snapshot::ReportChange::Sources(sources)) => Some(sources),
+            Some(ReportChange::Sources(sources)) => Some(sources),
+            Some(ReportChange::Days(days)) => {
+                self.report_days = days;
+                None
+            }
             _ => None,
         };
-        Ok(quantick_paper::report::snapshot::ReportReadout {
-            draft: Default::default(),
-            applied: None,
+        quantick_paper::report::snapshot::ReportReadout {
+            days: self.report_days.clone(),
             open: sources.is_some(),
             loaded: false,
             source: sources.unwrap_or_default(),
@@ -156,7 +163,7 @@ impl TradeDesk for PaperDesk {
             unreadable_files: 0,
             skipped_rows: 0,
             net_points: Decimal::ZERO,
-        })
+        }
     }
     fn reset_report(&mut self) {
         self.reports.clear();

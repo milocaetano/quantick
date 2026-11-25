@@ -9,7 +9,7 @@ use quantick_control_schema::{
 };
 use quantick_orderflow::LaneWindow;
 use quantick_paper::report::{
-    calendar::{self, DaySelection},
+    calendar::{self, DaySet},
     ledger_rows::LedgerScope,
 };
 use quantick_sources::history_reach;
@@ -49,7 +49,7 @@ pub enum Op {
     Dock(DockTab),
     Report,
     ReportScroll(String),
-    Calendar(DaySelection),
+    Calendar(DaySet),
     LedgerScope(LedgerScope),
     LedgerPages(usize),
     FoldLedger,
@@ -373,15 +373,15 @@ impl Scenario<'_> {
             apply(Op::ReportScroll(value));
         }
         if let Some(spec) = self.var("QUANTICK_PAPER_CALENDAR") {
-            match calendar::parse_selection(&spec) {
-                Some(selection) => apply(Op::Calendar(selection)),
+            match calendar::parse_days(&spec) {
+                Some(days) => apply(Op::Calendar(days)),
                 None => tracing::warn!(
                     target: "quantick::app",
                     schema_version = 1_u8,
                     event_code = "PAPER_CALENDAR_AUTOSTART_UNKNOWN",
                     spec = %spec,
                     action = "calendar_left_closed",
-                    "QUANTICK_PAPER_CALENDAR is not 1, YYYY-MM-DD or YYYY-MM-DD..YYYY-MM-DD"
+                    "QUANTICK_PAPER_CALENDAR is not 1 or a comma list of YYYY-MM-DD days and YYYY-MM-DD..YYYY-MM-DD spans"
                 ),
             }
         }

@@ -1,9 +1,9 @@
 //! Native IO and painting for the one report model owned by each paper account.
-#[cfg(any(feature = "scenario-harness", test))]
-use crate::paper_calendar::DaySelection;
 use crate::timezone::TzOffset;
 use eframe::egui;
 use quantick_paper::pnl::PnlReader;
+#[cfg(any(feature = "scenario-harness", test))]
+use quantick_paper::report::calendar::DaySet;
 use quantick_paper::report::layout::*;
 use quantick_paper::report::readout::LedgerTotals;
 #[cfg(test)]
@@ -114,7 +114,7 @@ impl ReportAdapter {
         change: Option<quantick_paper::report::snapshot::ReportChange>,
         tz: TzOffset,
         env: &ReportEnv<'_>,
-    ) -> Result<quantick_paper::report::snapshot::ReportReadout, &'static str> {
+    ) -> quantick_paper::report::snapshot::ReportReadout {
         self.with(env, |paint| {
             quantick_ui_model::paper_report::io::report(paint.updates, change, tz, env)
         })
@@ -220,16 +220,10 @@ impl ReportAdapter {
         self.update(Intent::Symbol(None));
         self.open(env);
     }
-    pub(crate) fn autostart_calendar(&mut self, selection: DaySelection, env: &ReportEnv<'_>) {
+    pub(crate) fn autostart_calendar(&mut self, days: DaySet, env: &ReportEnv<'_>) {
         self.autostart_report(env);
-        let mut calendar = self.calendar();
-        calendar.open = true;
-        calendar.selection = selection;
-        if let Some(range) = selection.range() {
-            calendar.month = Some(range.start.month_start());
-        }
-        self.update(Intent::Calendar(calendar));
-        self.update(Intent::Dates(selection));
+        self.update(Intent::Days(days));
+        self.update(Intent::DatesOpen(true));
     }
     pub(crate) fn set_ledger_scope(&mut self, scope: LedgerScope) {
         self.update(Intent::Ledger(LedgerIntent::Scope(scope)));

@@ -53,38 +53,32 @@ fn sources_api_helper_loads_real_journals_retries_and_inspects_without_writes() 
                 |session| {
                     use quantick_paper::report::snapshot::ReportChange;
                     let revision = session.state().revision;
-                    let before = io::report(session, None, tz, &env).unwrap();
+                    let before = io::report(session, None, tz, &env);
                     assert!(!before.open && !before.loaded);
                     assert_eq!(session.state().revision, revision);
-                    assert!(io::report(session, Some(ReportChange::Generate), tz, &env).is_err());
-                    assert_eq!(session.state().revision, revision);
-                    let draft = DateDraft {
-                        start: day.iso(),
-                        end: day.iso(),
-                    };
-                    let staged =
-                        io::report(session, Some(ReportChange::Draft(draft.clone())), tz, &env)
-                            .unwrap();
-                    assert!(staged.applied.is_none());
+                    let picked = DaySet::single(day);
                     for _ in 0..2 {
-                        let generated =
-                            io::report(session, Some(ReportChange::Generate), tz, &env).unwrap();
-                        assert_eq!(generated.applied, draft.range().ok());
-                        assert_eq!(generated.trade_count, 2);
-                        assert_eq!(generated.net_points, Decimal::from(7));
+                        let set =
+                            io::report(session, Some(ReportChange::Days(picked.clone())), tz, &env);
+                        assert_eq!(set.days, picked, "a retry sets, never toggles");
+                        assert_eq!(set.trade_count, 2);
+                        assert_eq!(set.net_points, Decimal::from(7));
                     }
-                    io::report(session, Some(ReportChange::ClearDates), tz, &env).unwrap();
-                    let inspected = io::report(session, None, tz, &env).unwrap();
-                    assert!(inspected.applied.is_none());
-                    assert_eq!(inspected.draft, DateDraft::default());
+                    io::report(
+                        session,
+                        Some(ReportChange::Days(DaySet::default())),
+                        tz,
+                        &env,
+                    );
+                    let inspected = io::report(session, None, tz, &env);
+                    assert!(inspected.days.is_empty());
                     for sources in [Some(selection), Some(selection), None] {
                         let view = io::report(
                             session,
                             sources.map(quantick_paper::report::snapshot::ReportChange::Sources),
                             tz,
                             &env,
-                        )
-                        .unwrap();
+                        );
                         assert!(view.open && view.loaded);
                         assert_eq!(view.source, selection);
                         assert_eq!(view.trade_count, 3);
@@ -155,7 +149,7 @@ fn source_edits_leave_context_and_all_readouts_follow_the_union_across_reloads()
         );
         state.ensure_report_view(tz, PnlReader::plain());
         Model::update(&mut state, Intent::Symbol(Some("X".to_owned())));
-        Model::update(&mut state, Intent::Dates(DaySelection::Anchor(day)));
+        Model::update(&mut state, Intent::Days(DaySet::single(day)));
         for (selection, count, net) in [
             (SourceFilter::Broker.into(), 1, 3),
             (SourceFilter::Real.into(), 2, 7),
@@ -172,7 +166,7 @@ fn source_edits_leave_context_and_all_readouts_follow_the_union_across_reloads()
             Model::update(&mut state, Intent::Source(selection));
             assert!(state.report_scope().is_none());
             assert_eq!(state.report_symbol().as_deref(), Some("X"));
-            assert_eq!(state.calendar().selection, DaySelection::Anchor(day));
+            assert_eq!(state.picked_days(), &DaySet::single(day));
             for reload in [
                 Intent::ReloadReport,
                 Intent::JournalChanged,
@@ -199,7 +193,7 @@ fn source_edits_leave_context_and_all_readouts_follow_the_union_across_reloads()
                 );
                 if count == 0 {
                     assert!(view.scope_line().contains("No sources selected"));
-                    assert!(view.scope_line().contains("2026-11-19"));
+                    assert!(view.scope_line().contains("Nov 19 · 1 day"));
                     assert!(view.scope_line().contains("UTC-03:00"));
                     assert!(state.filters_narrowed("X"));
                     assert_eq!(
@@ -273,7 +267,7 @@ fn context_dates_cut_the_view_but_leave_other_days_available_for_selection() {
 }
 
 #[test]
-fn generated_dates_replace_session_context_and_keep_tags_through_period_changes() {
+fn picked_days_replace_session_context_and_keep_tags_through_period_changes() {
     let tz = TzOffset::new(-180);
     let first = CivilDate::from_ymd(2026, 11, 30);
     let last = first.offset_days(2);
@@ -335,37 +329,17 @@ fn generated_dates_replace_session_context_and_keep_tags_through_period_changes(
             })),
         );
         state.ensure_report_view(tz, PnlReader::plain());
-        let initial = state.applied_dates();
-        let original_net = state.snapshot().unwrap().report.net_points;
-        for (start, end) in [
-            ("", ""),
-            ("2026-11", "2026-11-30"),
-            ("2026-11-31", "2026-12-02"),
-            ("2026-11-30", ""),
-            ("2026-12-02", "2026-11-30"),
-        ] {
-            Model::update(
-                &mut state,
-                Intent::Draft(DateDraft {
-                    start: start.to_owned(),
-                    end: end.to_owned(),
-                }),
-            );
-            assert!(state.date_draft().range().is_err());
-            Model::update(&mut state, Intent::GenerateDates);
-            assert_eq!(state.applied_dates(), initial);
-            assert_eq!(state.snapshot().unwrap().report.net_points, original_net);
-        }
-        Model::update(&mut state, Intent::PickDate(first));
-        Model::update(&mut state, Intent::PickDate(first));
-        assert_eq!(state.date_draft().range().unwrap().days(), 1);
-        Model::update(&mut state, Intent::PickDate(last));
-        assert_eq!(state.applied_dates(), initial);
+        let pick = |state: &mut State, day, extend| {
+            Model::update(state, Intent::PickDay { day, extend });
+        };
+        // A set replaces the context's day and anchors the next Shift+click.
+        Model::update(&mut state, Intent::Days(DaySet::single(first)));
+        pick(&mut state, last, true);
+        assert_eq!(state.picked_days(), &DaySet::span(first, last));
         for _ in 0..2 {
-            Model::update(&mut state, Intent::GenerateDates);
             state.ensure_report_view(tz, PnlReader::plain());
             let view = state.report_view().as_ref().unwrap();
-            assert_eq!(view.range.unwrap().days(), 3);
+            assert_eq!(view.days.len(), 3);
             assert_eq!(view.rows.len(), count);
             assert_eq!(view.report.net_points, Decimal::from(count));
             assert_eq!(view.equity.points.last(), Some(&view.report.net_points));
@@ -373,18 +347,16 @@ fn generated_dates_replace_session_context_and_keep_tags_through_period_changes(
         }
         Model::update(&mut state, Intent::CustomText("2h".to_owned()));
         Model::update(&mut state, Intent::SubmitCustom { enter: true });
-        assert_eq!(state.applied_dates(), None);
-        assert_eq!(state.date_draft(), &DateDraft::default());
+        assert!(state.picked_days().is_empty(), "a period clears the days");
         assert_eq!(state.report_period(), ReportPeriod::Custom(7_200_000));
-        Model::update(&mut state, Intent::PickDate(last));
-        Model::update(&mut state, Intent::GenerateDates);
+        pick(&mut state, last, false);
         Model::update(&mut state, Intent::SubmitCustom { enter: false });
         assert_eq!(
-            state.applied_dates().unwrap().start,
-            last,
-            "tabbing through an unchanged custom field preserves the generated report"
+            state.picked_days(),
+            &DaySet::single(last),
+            "tabbing through an unchanged custom field preserves the picked days"
         );
-        Model::update(&mut state, Intent::Dates(DaySelection::None));
+        Model::update(&mut state, Intent::Days(DaySet::default()));
         assert_eq!(state.report_period(), ReportPeriod::Custom(7_200_000));
         assert_eq!(state.report_scope().is_none(), day_context);
         assert_eq!(state.report_source(), SourceFilter::Simulator.into());

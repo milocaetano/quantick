@@ -1,7 +1,7 @@
 //! Renderer-independent readback of a filtered performance report.
+use super::calendar::DaySet;
 use super::{HistoryRow, ReportPeriod, ReportView, SourceSelection};
 use crate::format::PositionSummary;
-use quantick_civil::DateRange;
 use quantick_sim::ClosedTrade;
 use quantick_sim::PerformanceReport;
 use rust_decimal::Decimal;
@@ -20,16 +20,15 @@ pub struct ReportSnapshot<'a> {
 /// Edits available to report hosts. Inspection passes no change.
 pub enum ReportChange {
     Sources(SourceSelection),
-    Draft(super::calendar::DateDraft),
-    Generate,
-    ClearDates,
+    /// Set the picked days outright; an empty set clears them.
+    Days(DaySet),
     Period(ReportPeriod),
 }
 
 /// Owned inspection of the current report without exposing its trade rows.
 pub struct ReportReadout {
-    pub draft: super::calendar::DateDraft,
-    pub applied: Option<DateRange>,
+    /// The picked days in force; empty when the period is.
+    pub days: DaySet,
     pub open: bool,
     pub loaded: bool,
     pub source: SourceSelection,
@@ -47,9 +46,11 @@ impl<'a> ReportSnapshot<'a> {
         Self {
             symbol,
             source: view.source,
-            window: view
-                .range
-                .map_or(ReportWindow::Period(view.period), ReportWindow::Dates),
+            window: if view.days.is_empty() {
+                ReportWindow::Period(view.period)
+            } else {
+                ReportWindow::Dates(view.days.clone())
+            },
             hidden_outside: view.hidden_outside,
             hidden_by_source_or_scope: view.hidden_by_source_or_scope,
             rows: &view.rows,
@@ -58,14 +59,14 @@ impl<'a> ReportSnapshot<'a> {
     }
 }
 
-/// The selected dates supersede the relative period; both cannot apply together.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// The picked days supersede the relative period; both cannot apply together.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReportWindow {
-    Dates(DateRange),
+    Dates(DaySet),
     Period(ReportPeriod),
 }
 impl ReportWindow {
-    pub fn label(self) -> String {
+    pub fn label(&self) -> String {
         match self {
             Self::Dates(range) => range.label(),
             Self::Period(period) => period.phrase(),

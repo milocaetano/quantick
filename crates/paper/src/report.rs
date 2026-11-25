@@ -18,7 +18,7 @@ use quantick_sim::{PerformanceReport, history};
 use quantick_trading::ClosedTrade;
 
 use crate::format::sanitize_symbol;
-use quantick_civil::{CivilDate, DAY_MS, DateRange, TzOffset};
+use quantick_civil::{CivilDate, DAY_MS, TzOffset};
 
 pub mod fit;
 pub mod journals;
@@ -396,11 +396,11 @@ pub fn fmt_period_ms(period_ms: i64) -> String {
 pub struct ReportView {
     pub period: ReportPeriod,
     pub source: SourceSelection,
-    /// The calendar span in force. `Some` puts the report on absolute
-    /// dates and takes the anchor-relative pills out of the cut; `None`
-    /// leaves them in charge, which is exactly what the report did before
-    /// a calendar existed.
-    pub range: Option<DateRange>,
+    /// The picked days in force. Any day puts the report on absolute dates
+    /// and takes the anchor-relative pills out of the cut; none leaves them
+    /// in charge, which is exactly what the report did before a calendar
+    /// existed.
+    pub days: calendar::DaySet,
     /// The display timezone the view was cut with — "Today" moves with it,
     /// and so does which civil day a trade closed on.
     pub tz: TzOffset,
@@ -432,10 +432,10 @@ pub struct ReportView {
 
 impl ReportView {
     /// Cut `history` to one view: the rows the Source filter admits, then
-    /// the rows inside `range` when a span of days is picked, or inside
+    /// the rows that closed on a picked day when any is picked, or inside
     /// `period` measured back from the newest admitted trade when none is.
     ///
-    /// A picked range is an explicit answer to "which days"; it takes over
+    /// Picked days are an explicit answer to "which days"; it takes over
     /// from the period rather than intersecting with it, so a chosen date
     /// can never come back empty because a pill the trader had forgotten
     /// about was cutting too. The anchor is the newest trade in scope —
@@ -445,21 +445,21 @@ impl ReportView {
         history: &LoadedHistory,
         period: ReportPeriod,
         source: impl Into<SourceSelection>,
-        range: Option<DateRange>,
+        days: &calendar::DaySet,
         tz: TzOffset,
     ) -> Self {
-        Self::cut_scoped(history, period, source, range, tz, None)
+        Self::cut_scoped(history, period, source, days, tz, None)
     }
 
     pub fn cut_scoped(
         history: &LoadedHistory,
         period: ReportPeriod,
         source: impl Into<SourceSelection>,
-        range: Option<DateRange>,
+        days: &calendar::DaySet,
         tz: TzOffset,
         scope: Option<&scope::ReportRequest>,
     ) -> Self {
-        Self::cut_matching(history, period, source, range, tz, |row| {
+        Self::cut_matching(history, period, source, days, tz, |row| {
             scope.is_none_or(|scope| scope.admits(row, tz))
         })
     }
@@ -469,7 +469,7 @@ impl ReportView {
         history: &LoadedHistory,
         period: ReportPeriod,
         source: impl Into<SourceSelection>,
-        range: Option<DateRange>,
+        days: &calendar::DaySet,
         tz: TzOffset,
         admits: impl Fn(&HistoryRow) -> bool,
     ) -> Self {
@@ -482,14 +482,15 @@ impl ReportView {
             .collect();
         let hidden_by_source_or_scope = history.rows.len().saturating_sub(in_scope.len());
         let anchor_ms = in_scope.last().map(|row| row.trade.closed_ms);
-        let cutoff = match range {
-            Some(_) => None,
-            None => anchor_ms.and_then(|anchor| period.cutoff_ms(anchor, tz)),
+        let cutoff = if days.is_empty() {
+            anchor_ms.and_then(|anchor| period.cutoff_ms(anchor, tz))
+        } else {
+            None
         };
         let rows: Vec<HistoryRow> = in_scope
             .iter()
             .filter(|row| {
-                range.is_none_or(|range| range.contains_ms(row.trade.closed_ms, tz))
+                (days.is_empty() || days.contains_ms(row.trade.closed_ms, tz))
                     && cutoff.is_none_or(|cutoff| row.trade.closed_ms >= cutoff)
             })
             .map(|row| (*row).clone())
@@ -501,7 +502,7 @@ impl ReportView {
         Self {
             period,
             source,
-            range,
+            days: days.clone(),
             tz,
             anchor_ms,
             hidden_outside,
@@ -522,14 +523,14 @@ impl ReportView {
     /// keeps out — "where did my old trades go" gets a literal answer.
     #[must_use]
     pub fn scope_line(&self) -> String {
-        let window = match (self.range, self.anchor_ms) {
-            (Some(range), _) => format!("{} ({} days inclusive)", range.label(), range.days()),
-            (None, Some(anchor)) => format!(
+        let window = match (self.days.is_empty(), self.anchor_ms) {
+            (false, _) => self.days.label(),
+            (true, Some(anchor)) => format!(
                 "{} up to {} (newest saved trade)",
                 self.period.phrase(),
                 CivilDate::from_ms(anchor, self.tz).iso()
             ),
-            (None, None) => self.period.phrase(),
+            (true, None) => self.period.phrase(),
         };
         let mut text = format!(
             "Applied: {window} · closes in {} · {} · {} trade(s)",
@@ -538,9 +539,10 @@ impl ReportView {
             self.rows.len()
         );
         if self.hidden_outside > 0 {
-            let place = match self.range {
-                Some(_) => "saved trade(s) outside these dates",
-                None => "older saved trade(s) before this window",
+            let place = if self.days.is_empty() {
+                "older saved trade(s) before this window"
+            } else {
+                "saved trade(s) outside these dates"
             };
             text.push_str(&format!(" - {} {place}", self.hidden_outside));
         }

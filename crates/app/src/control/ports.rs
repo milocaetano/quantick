@@ -16,7 +16,7 @@ impl TradeDesk for PaperTrading {
         &mut self,
         change: Option<quantick_paper::report::snapshot::ReportChange>,
         tz: crate::timezone::TzOffset,
-    ) -> Result<quantick_paper::report::snapshot::ReportReadout, &'static str> {
+    ) -> quantick_paper::report::snapshot::ReportReadout {
         let (report, env) = (**self).account_mut().report_parts();
         report.change(change, tz, &env)
     }

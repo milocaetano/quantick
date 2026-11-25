@@ -8,11 +8,11 @@
 
 use super::PaperAccount;
 #[cfg(any(feature = "scenario-harness", test))]
-use crate::paper_calendar::DaySelection;
-#[cfg(any(feature = "scenario-harness", test))]
 use crate::paper_report::LedgerScope;
 #[cfg(any(feature = "scenario-harness", test))]
 use crate::timezone::TzOffset;
+#[cfg(any(feature = "scenario-harness", test))]
+use quantick_paper::report::calendar::DaySet;
 
 impl PaperAccount {
     // ------------------------------------------------------------------
@@ -85,9 +85,9 @@ impl PaperAccount {
 
     /// Open the report with its month grid expanded (`QUANTICK_PAPER_CALENDAR`).
     #[cfg(any(feature = "scenario-harness", test))]
-    pub(crate) fn autostart_calendar(&mut self, selection: DaySelection) {
+    pub(crate) fn autostart_calendar(&mut self, days: DaySet) {
         let (report, env) = self.report_parts();
-        report.autostart_calendar(selection, &env);
+        report.autostart_calendar(days, &env);
     }
 
     /// Point the ledger at one instrument's saved history, or all of them.

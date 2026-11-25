@@ -31,12 +31,22 @@ fn sources_call_normalizes_unions_and_rejects_invalid_input_without_success_even
     .unwrap();
     assert_eq!(dates["open"], false);
     assert_eq!(dates["timezone"], "UTC-03:00");
-    assert_eq!(dates["applied_start"], Value::Null);
+    assert_eq!(dates["applied_days"], json!([]));
+    assert_eq!(dates["applied_day_count"], "0");
+    let too_many: Vec<String> = (1..=30)
+        .flat_map(|day| [format!("2026-11-{day:02}"), format!("2026-12-{day:02}")])
+        .chain((1..=40).map(|day| format!("2027-01-{:02}", day.min(31))))
+        .collect();
     for (input, code) in [
         (
-            json!({"action":"draft_dates", "start":"2026-11-300", "end":""}),
+            json!({"action":"days", "days":["2026-11-24", "2026-11-300"]}),
             "invalid_dates",
         ),
+        (
+            json!({"action":"days", "days":["2026-11-31"]}),
+            "invalid_dates",
+        ),
+        (json!({"action":"days", "days":too_many}), "invalid_dates"),
         (
             json!({"action":"period", "period":"2years"}),
             "invalid_period",
@@ -307,4 +317,50 @@ fn whole_day_and_tag_calls_open_one_origin_and_refuse_empty_or_invalid_scopes() 
     }
     assert_eq!(host.desk.as_ref().unwrap().reports.len(), reports);
     assert_eq!(access.events.len(), events, "refusals emit no opens");
+}
+
+#[test]
+fn days_call_sets_the_picked_days_idempotently_and_clear_dates_empties_them() {
+    let scratch = crate::scratch::ScratchDir::new("report-days");
+    let mut host = Host {
+        desk: Some(PaperDesk::new(
+            quantick_paper::PaperAccount::with_trades_dir(scratch.path().to_owned()),
+        )),
+        dir: scratch.path().to_owned(),
+    };
+    let mut access = FakeAccess::with_budget(0);
+    let input =
+        json!({"action":"days", "days":["2026-11-25", "2026-11-12", "2026-11-24", "2026-11-25"]});
+    let set = open(&mut host, &mut access, &FakeWindow::assistant(), &input).unwrap();
+    assert_eq!(set["action"], "days");
+    assert_eq!(
+        set["applied_days"],
+        json!(["2026-11-12", "2026-11-24", "2026-11-25"]),
+        "oldest first, duplicates collapsed"
+    );
+    assert_eq!(set["applied_day_count"], "3");
+    assert_eq!(set["timezone"], "UTC-03:00");
+    assert_eq!(access.events.last().unwrap().payload["report"], set);
+    assert_eq!(
+        open(&mut host, &mut access, &FakeWindow::assistant(), &input).unwrap(),
+        set,
+        "a retry sets the same days, never toggles them"
+    );
+    let cleared = open(
+        &mut host,
+        &mut access,
+        &FakeWindow::assistant(),
+        &json!({"action":"clear_dates"}),
+    )
+    .unwrap();
+    assert_eq!(cleared["applied_days"], json!([]));
+    assert_eq!(cleared["applied_day_count"], "0");
+    let emptied = open(
+        &mut host,
+        &mut access,
+        &FakeWindow::assistant(),
+        &json!({"action":"days", "days":[]}),
+    )
+    .unwrap();
+    assert_eq!(emptied["applied_days"], json!([]));
 }

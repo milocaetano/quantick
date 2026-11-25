@@ -240,7 +240,7 @@ fn paper_report_filter_input_recuts_before_dependent_paint() {
                 ],
             );
         }
-        let readback = report.change(None, TzOffset::new(0), &env).unwrap();
+        let readback = report.change(None, TzOffset::new(0), &env);
         assert_eq!(
             readback.source, expected,
             "control readback observes the clicked selection"
@@ -259,18 +259,26 @@ fn paper_report_filter_input_recuts_before_dependent_paint() {
     }
 }
 
+/// The popover's egui wiring: a click picks a day, Shift held on the next
+/// click adds the span from it, and a press outside closes the popover.
 #[test]
-fn tab_from_start_through_end_and_generate_applies_the_typed_dates() {
+fn shift_click_in_the_dates_popover_picks_a_span_and_an_outside_press_closes_it() {
     let ctx = egui::Context::default();
     let mut paper = PaperTrading::new();
+    let november = CivilDate::from_ymd(2026, 11, 1);
     paper.report_state_mut().update(Intent::Open(String::new()));
-    let frame = |paper: &mut PaperTrading, events| {
+    paper.report_state_mut().update(Intent::DatesOpen(true));
+    paper
+        .report_state_mut()
+        .update(Intent::ShowMonth(Some(november)));
+    let frame = |paper: &mut PaperTrading, modifiers, events| {
         ctx.run(
             egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(
                     egui::Pos2::ZERO,
                     egui::vec2(900.0, 850.0),
                 )),
+                modifiers,
                 events,
                 ..Default::default()
             },
@@ -279,47 +287,54 @@ fn tab_from_start_through_end_and_generate_applies_the_typed_dates() {
             },
         )
     };
-    let key = |key| {
-        vec![true, false]
-            .into_iter()
-            .map(|pressed| egui::Event::Key {
-                key,
-                physical_key: None,
-                pressed,
-                repeat: false,
-                modifiers: egui::Modifiers::NONE,
-            })
-            .collect()
-    };
+    let mut output = frame(&mut paper, egui::Modifiers::NONE, vec![]);
     for _ in 0..3 {
-        frame(&mut paper, vec![]);
+        output = frame(&mut paper, egui::Modifiers::NONE, vec![]);
     }
-    let start = egui::Id::new(("report date", "Start date"));
-    for _ in 0..40 {
-        frame(&mut paper, key(egui::Key::Tab));
-        if ctx.memory(|memory| memory.has_focus(start)) {
-            break;
+    let cell = |output: &egui::FullOutput, label: &str| {
+        output
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) if text.galley.text() == label => {
+                    Some(text.pos + text.galley.rect.center().to_vec2())
+                }
+                _ => None,
+            })
+            .expect("day cell painted")
+    };
+    let click = |paper: &mut PaperTrading, pos, modifiers| {
+        for pressed in [true, false] {
+            frame(
+                paper,
+                modifiers,
+                vec![
+                    egui::Event::PointerMoved(pos),
+                    egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers,
+                    },
+                ],
+            );
         }
-    }
-    assert!(
-        ctx.memory(|memory| memory.has_focus(start)),
-        "Start is reachable by Tab"
-    );
-    frame(&mut paper, vec![egui::Event::Text("2026-11-30".to_owned())]);
-    frame(&mut paper, key(egui::Key::Tab));
-    assert!(ctx.memory(|memory| memory.has_focus(egui::Id::new(("report date", "End date")))));
-    frame(&mut paper, vec![egui::Event::Text("2026-12-02".to_owned())]);
-    assert!(paper.report_state_mut().applied_dates().is_none());
-    frame(&mut paper, key(egui::Key::Tab));
-    frame(&mut paper, key(egui::Key::Enter));
+    };
+    let (first, last) = (cell(&output, "20"), cell(&output, "24"));
+    click(&mut paper, first, egui::Modifiers::NONE);
+    click(&mut paper, last, egui::Modifiers::SHIFT);
+    let state = paper.report_state_mut();
     assert_eq!(
-        paper
-            .report_state_mut()
-            .applied_dates()
-            .map(|range| range.label())
-            .as_deref(),
-        Some("2026-11-30 to 2026-12-02")
+        state.picked_days(),
+        &quantick_paper::report::calendar::DaySet::span(
+            november.offset_days(19),
+            november.offset_days(23)
+        )
     );
+    assert!(state.calendar().open, "picking keeps the popover open");
+    click(&mut paper, egui::pos2(880.0, 830.0), egui::Modifiers::NONE);
+    assert!(!paper.report_state_mut().calendar().open);
+    assert_eq!(paper.report_state_mut().picked_days().len(), 5);
 }
 
 #[test]

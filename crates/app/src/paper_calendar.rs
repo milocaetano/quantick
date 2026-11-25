@@ -43,15 +43,15 @@ pub(crate) fn today(tz: TzOffset) -> CivilDate {
     CivilDate::from_ms(now_ms, tz)
 }
 
-pub(crate) use quantick_paper::report::calendar::{
-    CalendarState, DayIndex, DaySelection, month_name,
-};
+pub(crate) use quantick_paper::report::calendar::{DayIndex, month_name};
 
-/// Paint the month's trade counts and return the clicked civil day.
+/// Paint the month's daily nets and return the clicked civil day. `month`
+/// is the month on screen, paged here; `picked` says which days to fill.
 pub(crate) fn draw_month(
     ui: &mut egui::Ui,
     index: &DayIndex,
-    state: &mut CalendarState,
+    month: &mut Option<CivilDate>,
+    picked: &dyn Fn(CivilDate) -> bool,
     cell: egui::Vec2,
     fallback: CivilDate,
 ) -> Option<CivilDate> {
@@ -60,12 +60,11 @@ pub(crate) fn draw_month(
     // `fallback` comes from the caller because this module is deliberately
     // clock-free. Without it an empty index fell back to epoch zero and
     // opened the grid on January 1970 — a month nobody asked about.
-    let anchor = state
-        .month
+    let anchor = month
         .or_else(|| index.last().map(CivilDate::month_start))
         .unwrap_or_else(|| fallback.month_start());
-    state.month = Some(anchor);
-    let (year, month, _) = anchor.ymd();
+    *month = Some(anchor);
+    let (year, month_number, _) = anchor.ymd();
     let mut action = None;
 
     ui.horizontal(|ui| {
@@ -74,10 +73,10 @@ pub(crate) fn draw_month(
             .on_hover_text("previous month")
             .clicked()
         {
-            state.month = Some(anchor.offset_months(-1));
+            *month = Some(anchor.offset_months(-1));
         }
         ui.label(
-            egui::RichText::new(format!("{} {year:04}", month_name(month)))
+            egui::RichText::new(format!("{} {year:04}", month_name(month_number)))
                 .color(palette.text_primary())
                 .monospace(),
         );
@@ -86,7 +85,7 @@ pub(crate) fn draw_month(
             .on_hover_text("next month")
             .clicked()
         {
-            state.month = Some(anchor.offset_months(1));
+            *month = Some(anchor.offset_months(1));
         }
         ui.separator();
         if let Some(newest) = index.last()
@@ -95,7 +94,7 @@ pub(crate) fn draw_month(
                 .on_hover_text("jump to the newest day that holds a trade")
                 .clicked()
         {
-            state.month = Some(newest.month_start());
+            *month = Some(newest.month_start());
         }
         // No clear button here: the row above the grid already carries one,
         // and two identical controls a hand-width apart invite the wrong
@@ -130,7 +129,7 @@ pub(crate) fn draw_month(
                 ui.horizontal(|ui| {
                     for column in 0..WEEK_DAYS {
                         let date = first_cell.offset_days(row as i64 * WEEK_DAYS + column);
-                        if draw_day_cell(ui, date, anchor, index, state, cell) {
+                        if draw_day_cell(ui, date, anchor, index, picked(date), cell) {
                             action = Some(date);
                         }
                     }
@@ -150,7 +149,7 @@ fn draw_day_cell(
     date: CivilDate,
     month_anchor: CivilDate,
     index: &DayIndex,
-    state: &CalendarState,
+    picked: bool,
     cell: egui::Vec2,
 ) -> bool {
     let palette = theme::get(ui.ctx());
@@ -160,15 +159,11 @@ fn draw_day_cell(
     }
     let in_month = date.same_month(month_anchor);
     let stat = index.stat(date);
-    let picked = state.selection.contains(date);
     let body = rect.shrink(1.0);
 
     if picked {
-        ui.painter().rect_filled(
-            body,
-            egui::Rounding::same(3.0),
-            theme::active_tint(palette.accent()),
-        );
+        ui.painter()
+            .rect_filled(body, egui::Rounding::same(3.0), palette.accent());
     } else if let Some(stat) = stat {
         // Tinted by the day's outcome: a month's shape is readable before
         // a single number is. A day that netted exactly zero is neither —
@@ -199,7 +194,9 @@ fn draw_day_cell(
     }
 
     let (_, _, day) = date.ymd();
-    let ink = if picked || (in_month && stat.is_some()) {
+    let ink = if picked {
+        palette.ink_on(palette.accent())
+    } else if in_month && stat.is_some() {
         palette.text_primary()
     } else if in_month {
         palette.text_muted()
@@ -223,9 +220,13 @@ fn draw_day_cell(
                 body.bottom() - palette.layout(DAY_COUNT_BASELINE_PX),
             ),
             egui::Align2::CENTER_CENTER,
-            format!("{}", stat.trades),
+            fmt_signed_points(stat.net),
             palette.mono_font(8.0),
-            palette.text_faint(),
+            if picked {
+                palette.ink_on(palette.accent())
+            } else {
+                points_color(&palette, stat.net)
+            },
         );
     }
     // Built only for the cell under the pointer. Formatting all forty-two
@@ -256,7 +257,7 @@ fn day_tint(palette: &theme::Palette, net: rust_decimal::Decimal) -> egui::Color
 }
 /// Where the day number sits inside its cell.
 const DAY_NUMBER_BASELINE_PX: f32 = 11.0;
-/// Where the trade count sits, measured up from the cell's bottom.
+/// Where the day's net sits, measured up from the cell's bottom.
 const DAY_COUNT_BASELINE_PX: f32 = 7.0;
 
 #[cfg(test)]

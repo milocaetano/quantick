@@ -142,7 +142,7 @@ fn context_reports_replace_scope_for_named_and_unnamed_sessions_across_origins()
                 &exact.history,
                 ReportPeriod::All,
                 SourceFilter::All,
-                None,
+                &Default::default(),
                 tz,
                 Some(&exact.receipt.request),
             );
@@ -168,7 +168,7 @@ fn context_reports_replace_scope_for_named_and_unnamed_sessions_across_origins()
                 &whole_day.history,
                 ReportPeriod::All,
                 SourceFilter::All,
-                None,
+                &Default::default(),
                 tz,
                 Some(&whole_day.receipt.request),
             );
@@ -274,7 +274,7 @@ fn a_whole_day_report_reads_every_session_of_one_origin_and_never_the_other() {
             &prepared.history,
             ReportPeriod::All,
             SourceFilter::All,
-            None,
+            &Default::default(),
             tz,
             Some(&prepared.receipt.request),
         );
@@ -360,7 +360,7 @@ fn a_tag_report_sums_one_origin_across_days_and_sessions() {
         &simulator.history,
         ReportPeriod::All,
         SourceFilter::All,
-        None,
+        &Default::default(),
         tz,
         Some(&simulator.receipt.request),
     );

@@ -14,14 +14,12 @@ pub const EVENT_KIND: &str = "session.report.opened";
 pub enum ReportInput {
     Ordinary {},
     Inspect {},
-    /// Stage both fields, including a partial value while editing.
-    DraftDates {
-        #[schemars(length(max = 10))]
-        start: String,
-        #[schemars(length(max = 10))]
-        end: String,
+    /// Set the picked days outright: YYYY-MM-DD civil days in the display
+    /// timezone, any order, contiguous or not. An empty list clears them.
+    Days {
+        #[schemars(length(max = 92))]
+        days: Vec<String>,
     },
-    Generate {},
     ClearDates {},
     Period {
         #[schemars(length(min = 1, max = 16))]
@@ -99,11 +97,11 @@ pub enum ReportOutput {
         loaded: bool,
         symbol: Option<String>,
         window: String,
-        draft_start: String,
-        draft_end: String,
-        validation_error: Option<String>,
-        applied_start: Option<String>,
-        applied_end: Option<String>,
+        /// The picked days in force, oldest first, at most 92 of them;
+        /// empty while the period is in force.
+        applied_days: Vec<String>,
+        /// How many days are picked, including any past the listed 92.
+        applied_day_count: quantick_control::wire::WireU64,
         timezone: String,
         scope: Option<String>,
         trade_count: quantick_control::wire::WireU64,
@@ -117,7 +115,7 @@ pub fn descriptor() -> CapabilityDescriptor {
     let mut descriptor = crate::recovery::descriptor(
         REPORT_OPEN_CAPABILITY_ID,
         "Open or filter a performance report",
-        "Open the same performance report as the Trades session context menu. action=session selects only that session; action=day requires YYYY-MM-DD in the display timezone and selects every instrument and session of that origin on the clicked day. The session must hold a trade on that day. action=whole_day takes origin (simulator or broker) and day instead of a session and selects every trade of that origin closed that day, as the day header's context menu does. action=tag takes origin and a tag (with or without #, case ignored) and selects every trade of that origin carrying it over all history, as a trade's Report #tag menu does. Simulator and broker are never summed. action=ordinary restores the ordinary Sim live report for the chart symbol over all time; pass no session or day. action=sources with sources sets their union, exits session/day context scope and preserves visible symbol/date filters: broker, real (Sim live including legacy), replay, simulator (real + replay), both (all). An empty array selects none. Omitting sources reads the current report without opening it or emitting session.report.opened. action=inspect also reads without opening or emitting. action=draft_dates stages start and end (YYYY-MM-DD, up to 10 characters each); partial or reversed endpoints return validation_error and preserve results. action=generate applies valid draft dates inclusively to trade closing times in the display timezone. action=clear_dates clears both draft and applied dates, restoring the selected period. action=period sets Today, 7d, 30d, 90d, All or a custom duration such as 12h anchored to the newest close. Date and period edits retain symbol, sources and independent session or tag restrictions. These actions return draft and applied endpoints, timezone and validation_error. Refusals carry details.code invalid_dates or invalid_period. Returns normalized sources, window, context, open/loaded status, trade count and net points. Retries set the same selection, never toggle. Session keys are <symbol>/<file>.csv for the simulator and broker/<symbol>/<file>.csv for real-trades, independent of custom names. Session, day and ordinary actions replace prior symbol, period, source and session filters. Returns the opened scope, trade count, net points and counts of unreadable files and skipped rows in the scanned history; events.read reconciles a lost open response through session.report.opened. Refusals: invalid_session, session_not_found, session_unreadable, day_not_in_session, invalid_tag, no_trades_in_scope, no_ledger. Never places orders or writes history.",
+        "Open the same performance report as the Trades session context menu. action=session selects only that session; action=day requires YYYY-MM-DD in the display timezone and selects every instrument and session of that origin on the clicked day. The session must hold a trade on that day. action=whole_day takes origin (simulator or broker) and day instead of a session and selects every trade of that origin closed that day, as the day header's context menu does. action=tag takes origin and a tag (with or without #, case ignored) and selects every trade of that origin carrying it over all history, as a trade's Report #tag menu does. Simulator and broker are never summed. action=ordinary restores the ordinary Sim live report for the chart symbol over all time; pass no session or day. action=sources with sources sets their union, exits session/day context scope and preserves visible symbol/date filters: broker, real (Sim live including legacy), replay, simulator (real + replay), both (all). An empty array selects none. Omitting sources reads the current report without opening it or emitting session.report.opened. action=inspect also reads without opening or emitting. action=days sets the picked days outright, as the report's Dates popover does: days is a list of up to 92 YYYY-MM-DD civil days in the display timezone, any order, contiguous or not; a trade is in when the day it closed on is listed. Repeating the call sets the same days; an empty list clears them. A day that is not a real YYYY-MM-DD date refuses the whole call. action=clear_dates clears the picked days, restoring the selected period. action=period sets Today, 7d, 30d, 90d, All or a custom duration such as 12h anchored to the newest close, and clears picked days. Date and period edits retain symbol, sources and tag restrictions; picked days other than a day context's own day take a whole-session or day context out of force and keep its origin. These actions return applied_days (oldest first, at most 92), applied_day_count and timezone. Refusals carry details.code invalid_dates or invalid_period. Returns normalized sources, window, context, open/loaded status, trade count and net points. Retries set the same selection, never toggle. Session keys are <symbol>/<file>.csv for the simulator and broker/<symbol>/<file>.csv for real-trades, independent of custom names. Session, day and ordinary actions replace prior symbol, period, source and session filters. Returns the opened scope, trade count, net points and counts of unreadable files and skipped rows in the scanned history; events.read reconciles a lost open response through session.report.opened. Refusals: invalid_session, session_not_found, session_unreadable, day_not_in_session, invalid_tag, no_trades_in_scope, no_ledger. Never places orders or writes history.",
         false,
         generated_schema::<ReportInput>(),
     );

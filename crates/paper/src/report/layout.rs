@@ -27,12 +27,6 @@ pub const DAY_HEADER_INSET_PX: f32 = 6.0;
 
 /// Where a day header's date starts, clear of its fold caret.
 pub const DAY_HEADER_TEXT_X_PX: f32 = 20.0;
-/// The report's floor while the month grid is expanded: the grid's own
-/// six rows plus a weekday rule, on top of what the collapsed report had
-/// to fit. Kept under the app's own 560 px minimum height so the report
-/// can never be taller than the window it lives in.
-pub const REPORT_MIN_HEIGHT_CALENDAR_PX: f32 = 540.0;
-
 /// The size the report opens at. The trade list is eleven columns wide and
 /// the curve wants room above it; opening cramped and making the trader
 /// drag the corner every session is not a default.
@@ -40,19 +34,13 @@ pub const REPORT_DEFAULT_W_PX: f32 = 900.0;
 /// See [`REPORT_DEFAULT_W_PX`].
 pub const REPORT_DEFAULT_H_PX: f32 = 720.0;
 
-/// The floor the equity curve shrinks to while the month grid is open. The
-/// curve is a shape to glance at; the list under it is the answer to
-/// "which trades", so when the two compete for a short window the curve is
-/// what gives way.
-pub const CURVE_MIN_H_CALENDAR_PX: f32 = 104.0;
-
 /// One calendar day cell. Seven of them plus the report's own margins fit
 /// inside `REPORT_MIN_WIDTH_PX`, so the grid never forces the window wider
 /// than the trader sized it.
 pub const CALENDAR_CELL_W_PX: f32 = 34.0;
 
 /// See [`CALENDAR_CELL_W_PX`]. Tall enough for the day number and the
-/// trade count under it.
+/// day's net under it.
 pub const CALENDAR_CELL_H_PX: f32 = 28.0;
 
 /// The tallest the report's trade list grows before it scrolls inside
