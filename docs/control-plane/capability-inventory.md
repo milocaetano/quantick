@@ -47,10 +47,12 @@ capability that cannot change application state.
 | `annotate.fixed_range_profile.create` | 2 | `annotate` | no | `annotate`, `annotate.chart` |
 | `annotate.horizontal_levels.create` | 1 | `annotate` | no | `annotate`, `annotate.chart` |
 | `annotate.label.create` | 1 | `annotate` | no | `annotate`, `annotate.chart` |
+| `annotate.long_position.create` | 1 | `annotate` | no | `annotate`, `annotate.chart` |
 | `annotate.magnet.set` | 1 | `annotate` | no | `cockpit` |
 | `annotate.parallel_channel.create` | 1 | `annotate` | no | `annotate`, `annotate.chart` |
 | `annotate.rectangle.create` | 1 | `annotate` | no | `annotate`, `annotate.chart` |
 | `annotate.remove` | 1 | `annotate` | no | `annotate`, `annotate.chart` |
+| `annotate.short_position.create` | 1 | `annotate` | no | `annotate`, `annotate.chart` |
 | `annotate.text.repeat` | 1 | `annotate` | no | `cockpit`, `cockpit.layout` |
 | `annotate.text.set` | 1 | `annotate` | no | `cockpit`, `cockpit.layout` |
 | `annotate.trend_line.create` | 1 | `annotate` | no | `annotate`, `annotate.chart` |
@@ -220,4 +222,4 @@ capability that cannot change application state.
 | `workspace.save_as` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
 | `workspace.save_to` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
 
-195 capabilities registered.
+197 capabilities registered.

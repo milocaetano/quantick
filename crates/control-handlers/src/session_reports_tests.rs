@@ -22,6 +22,29 @@ fn sources_call_normalizes_unions_and_rejects_invalid_input_without_success_even
     )
     .unwrap();
     assert_eq!(inspected["open"], false);
+    let dates = open(
+        &mut host,
+        &mut access,
+        &FakeWindow::assistant(),
+        &json!({"action":"inspect"}),
+    )
+    .unwrap();
+    assert_eq!(dates["open"], false);
+    assert_eq!(dates["timezone"], "UTC-03:00");
+    assert_eq!(dates["applied_start"], Value::Null);
+    for (input, code) in [
+        (
+            json!({"action":"draft_dates", "start":"2026-11-300", "end":""}),
+            "invalid_dates",
+        ),
+        (
+            json!({"action":"period", "period":"2years"}),
+            "invalid_period",
+        ),
+    ] {
+        let error = open(&mut host, &mut access, &FakeWindow::assistant(), &input).unwrap_err();
+        assert_eq!(error.context.details.unwrap()["code"], code);
+    }
     assert!(access.events.is_empty());
     for (sources, expected) in [
         (json!(["broker", "real"]), json!(["broker", "real"])),

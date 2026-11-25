@@ -134,12 +134,18 @@ impl std::ops::DerefMut for PaperDesk {
 }
 
 impl TradeDesk for PaperDesk {
-    fn report_sources(
+    fn report_change(
         &mut self,
-        sources: Option<quantick_paper::report::SourceSelection>,
+        change: Option<quantick_paper::report::snapshot::ReportChange>,
         _: TzOffset,
-    ) -> quantick_paper::report::snapshot::ReportReadout {
-        quantick_paper::report::snapshot::ReportReadout {
+    ) -> Result<quantick_paper::report::snapshot::ReportReadout, &'static str> {
+        let sources = match change {
+            Some(quantick_paper::report::snapshot::ReportChange::Sources(sources)) => Some(sources),
+            _ => None,
+        };
+        Ok(quantick_paper::report::snapshot::ReportReadout {
+            draft: Default::default(),
+            applied: None,
             open: sources.is_some(),
             loaded: false,
             source: sources.unwrap_or_default(),
@@ -150,7 +156,7 @@ impl TradeDesk for PaperDesk {
             unreadable_files: 0,
             skipped_rows: 0,
             net_points: Decimal::ZERO,
-        }
+        })
     }
     fn reset_report(&mut self) {
         self.reports.clear();

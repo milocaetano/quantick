@@ -61,7 +61,8 @@ fn enlarged_populated_report_footer_is_reached_by_wheel_input() {
     let mut final_footer = None;
     state.arm_scroll_probe("report:-20,rows:-24");
     let mut saw_last_row = false;
-    let mut wheel_events = 0;
+    let mut report_wheels = 0;
+    let mut row_wheels = 0;
     for frame in 0..1000 {
         let mut input = egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(
@@ -72,11 +73,22 @@ fn enlarged_populated_report_footer_is_reached_by_wheel_input() {
             ..Default::default()
         };
         state.push_scroll_probe(&mut input);
-        wheel_events += input
+        if input
             .events
             .iter()
-            .filter(|event| matches!(event, egui::Event::MouseWheel { .. }))
-            .count();
+            .any(|event| matches!(event, egui::Event::MouseWheel { .. }))
+        {
+            let rows = ctx
+                .data(|data| data.get_temp::<egui::Rect>(egui::Id::new("report_trade_viewport")));
+            // A stage can end early when its target scrolls out of view.
+            // Check where each ordinary wheel landed, independent of that count.
+            if input.events.iter().any(|event| matches!(event, egui::Event::PointerMoved(at)
+                if rows.is_some_and(|rect| rect.is_positive() && rect.center().distance(*at) < 0.01))) {
+                row_wheels += 1;
+            } else {
+                report_wheels += 1;
+            }
+        }
         let output = ctx.run(input, |ctx| {
             state.draw_window(ctx, TzOffset::new(0), &env);
         });
@@ -95,7 +107,7 @@ fn enlarged_populated_report_footer_is_reached_by_wheel_input() {
             .scroll_probe
             .1
             .is_some_and(|(rect, clip)| clip.contains_rect(rect)),
-        "wheel path must expose footer: before={initial:?} after={:?}, events={wheel_events}",
+        "wheel path must expose footer: before={initial:?} after={:?}, outer={report_wheels}, rows={row_wheels}",
         state.adapter.view.scroll_probe.1
     );
     let (after, clip_after) = final_footer.expect("footer remains painted");
@@ -108,8 +120,8 @@ fn enlarged_populated_report_footer_is_reached_by_wheel_input() {
         "normal wheel input must expose the complete footer: {after:?} in {clip_after:?}"
     );
     assert!(
-        wheel_events <= 44 && wheel_events > 20,
-        "bounded sequential wheel delivery: {wheel_events}"
+        (1..=20).contains(&report_wheels) && (1..=24).contains(&row_wheels),
+        "bounded sequential wheel delivery: outer={report_wheels}, rows={row_wheels}"
     );
     assert!(
         saw_last_row,

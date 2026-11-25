@@ -12,13 +12,13 @@ use crate::paper_trading::PaperTrading;
 
 // `**self` is the tab's paper (`quantick_session::paper`), never this trait.
 impl TradeDesk for PaperTrading {
-    fn report_sources(
+    fn report_change(
         &mut self,
-        sources: Option<quantick_paper::report::SourceSelection>,
+        change: Option<quantick_paper::report::snapshot::ReportChange>,
         tz: crate::timezone::TzOffset,
-    ) -> quantick_paper::report::snapshot::ReportReadout {
+    ) -> Result<quantick_paper::report::snapshot::ReportReadout, &'static str> {
         let (report, env) = (**self).account_mut().report_parts();
-        report.sources(sources, tz, &env)
+        report.change(change, tz, &env)
     }
     fn reset_report(&mut self) {
         let (report, env) = (**self).account_mut().report_parts();

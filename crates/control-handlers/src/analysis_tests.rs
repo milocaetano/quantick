@@ -44,11 +44,8 @@ fn level(drawings: &mut Drawings<DrawingTool>, price: f64) {
         .find(|tool| tool.id() == "horizontal-line")
         .unwrap();
     let point = ChartPoint::at_time(3.0, price, Some(1_700_000_000_000));
-    let fresh = |tool: DrawingTool| NewDrawing {
-        style: DrawingStyle::default(),
-        payload: tool.default_payload(),
-        look: Default::default(),
-    };
+    let fresh =
+        |tool: DrawingTool| NewDrawing::explicit(DrawingStyle::default(), tool.default_payload());
     assert!(drawings.place_with(tool, &DrawingBand::Price, point, fresh));
     let index = drawings.items().len() - 1;
     let before = drawings.items()[index].clone();

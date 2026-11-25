@@ -315,10 +315,12 @@ impl<T: ToolCatalog> Drawings<T> {
         if drawing.locked {
             return;
         }
+        let before = drawing.points.clone();
         for point in &mut drawing.points {
             point.bar += delta_bar;
             point.price += delta_price;
         }
+        reanchor_payload(drawing, &before);
     }
 
     /// Move one anchor of one object. Locked geometry stays put.
@@ -334,10 +336,12 @@ impl<T: ToolCatalog> Drawings<T> {
         if drawing.locked {
             return false;
         }
+        let before = drawing.points.clone();
         let Some(anchor) = drawing.points.get_mut(point_index) else {
             return false;
         };
         *anchor = point;
+        reanchor_payload(drawing, &before);
         true
     }
 
@@ -366,9 +370,22 @@ impl<T: ToolCatalog> Drawings<T> {
         if drawing.locked || drawing.points.len() != points.len() {
             return false;
         }
-        drawing.points.clear();
+        let before = std::mem::take(&mut drawing.points);
         drawing.points.extend_from_slice(points);
+        reanchor_payload(drawing, &before);
         true
+    }
+}
+
+/// Let the tool carry its payload across an anchor move — the one place
+/// every move (handle, body, nudge, linked pane) passes through.
+fn reanchor_payload<T: ToolCatalog>(drawing: &mut crate::Drawing<T>, before: &[ChartPoint]) {
+    if let Some(payload) =
+        drawing
+            .tool
+            .reanchored_payload(drawing.payload.as_ref(), before, &drawing.points)
+    {
+        drawing.payload = payload;
     }
 }
 

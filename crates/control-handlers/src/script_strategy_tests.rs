@@ -242,10 +242,8 @@ fn a_region_placement_must_name_a_rectangle_on_that_chart() {
         let point = ChartPoint::at_time(f32::from(bar), price, Some(1_000 + i64::from(bar)));
         window.panes[0]
             .drawings
-            .place_with(rectangle, &DrawingBand::Price, point, |tool| NewDrawing {
-                style: DrawingStyle::default(),
-                payload: tool.default_payload(),
-                look: Default::default(),
+            .place_with(rectangle, &DrawingBand::Price, point, |tool| {
+                NewDrawing::explicit(DrawingStyle::default(), tool.default_payload())
             });
     }
     let drawn = window.panes[0].drawings.items()[0].id;

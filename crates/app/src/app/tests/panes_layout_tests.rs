@@ -815,10 +815,11 @@ fn unsharing_removes_the_copy_from_the_other_pane() {
         drawing_tool("horizontal-line"),
         &drawings::DrawingBand::Price,
         anchored,
-        |tool| drawings::NewDrawing {
-            style: drawings::DrawingStyle::default(),
-            payload: tool.default_payload(),
-            look: Default::default(),
+        |tool| {
+            drawings::NewDrawing::explicit(
+                drawings::DrawingStyle::default(),
+                tool.default_payload(),
+            )
         },
     );
     app.active_tab_mut()

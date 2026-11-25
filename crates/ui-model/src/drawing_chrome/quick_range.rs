@@ -26,6 +26,8 @@ impl ActionUi for Action {
             Self::TrendLine => ids::TREND_LINE_TOOL_ID,
             Self::Horizontal => ids::HORIZONTAL_LINE_TOOL_ID,
             Self::Channel => ids::PARALLEL_CHANNEL_TOOL_ID,
+            Self::LongPosition => ids::LONG_POSITION_TOOL_ID,
+            Self::ShortPosition => ids::SHORT_POSITION_TOOL_ID,
         }
     }
 
@@ -38,6 +40,8 @@ impl ActionUi for Action {
             Self::TrendLine => ids::TREND_LINE_CAPABILITY_ID,
             Self::Horizontal => ids::HORIZONTAL_LEVELS_CAPABILITY_ID,
             Self::Channel => ids::PARALLEL_CHANNEL_CAPABILITY_ID,
+            Self::LongPosition => ids::LONG_POSITION_CAPABILITY_ID,
+            Self::ShortPosition => ids::SHORT_POSITION_CAPABILITY_ID,
         }
     }
 
@@ -49,6 +53,7 @@ impl ActionUi for Action {
             Self::TrendLine => ids::TREND_LINE_CAPABILITY_VERSION,
             Self::Horizontal => ids::HORIZONTAL_LEVELS_CAPABILITY_VERSION,
             Self::Channel => ids::PARALLEL_CHANNEL_CAPABILITY_VERSION,
+            Self::LongPosition | Self::ShortPosition => ids::POSITION_CAPABILITY_VERSION,
         }
     }
 }
