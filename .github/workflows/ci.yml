@@ -232,7 +232,7 @@ jobs:
           FULL_CI_LABELLED: ${{ contains(github.event.pull_request.labels.*.name, 'full-ci') }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           BASE_REF: ${{ github.event.pull_request.base.ref }}
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          DEFAULT_BRANCH: tmp/probe-prose-base  # PROBE ONLY: stands in for main
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         # A push always builds. The flip to ready of a `full-ci` draft reuses
         # the full run its label started, when every full job finished green
