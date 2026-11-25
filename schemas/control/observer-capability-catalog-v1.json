@@ -4042,6 +4042,44 @@
             ],
             "type": "string"
           },
+          "PositionLeg": {
+            "enum": [
+              "stop",
+              "target"
+            ],
+            "type": "string"
+          },
+          "PositionPlanResult": {
+            "additionalProperties": false,
+            "description": "Where a position plan's legs landed: the projected one follows the\ntrader's saved target:stop ratio, which the call cannot otherwise see.",
+            "properties": {
+              "entry": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "measured": {
+                "$ref": "#/$defs/PositionLeg",
+                "description": "The leg the second anchor set; the other one was projected."
+              },
+              "ratio": {
+                "$ref": "#/$defs/CanonicalDecimal",
+                "description": "Target distance over stop distance from the entry."
+              },
+              "stop": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "target": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              }
+            },
+            "required": [
+              "entry",
+              "stop",
+              "target",
+              "ratio",
+              "measured"
+            ],
+            "type": "object"
+          },
           "ResolvedAnchor": {
             "properties": {
               "price": {
@@ -4094,6 +4132,17 @@
           },
           "pane_side": {
             "$ref": "#/$defs/PaneSideDto"
+          },
+          "position": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PositionPlanResult"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "A position plan's three prices, as placed. Omitted for every other\ntool."
           },
           "tab_id": {
             "$ref": "#/$defs/WireU64"
@@ -4436,6 +4485,44 @@
             ],
             "type": "string"
           },
+          "PositionLeg": {
+            "enum": [
+              "stop",
+              "target"
+            ],
+            "type": "string"
+          },
+          "PositionPlanResult": {
+            "additionalProperties": false,
+            "description": "Where a position plan's legs landed: the projected one follows the\ntrader's saved target:stop ratio, which the call cannot otherwise see.",
+            "properties": {
+              "entry": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "measured": {
+                "$ref": "#/$defs/PositionLeg",
+                "description": "The leg the second anchor set; the other one was projected."
+              },
+              "ratio": {
+                "$ref": "#/$defs/CanonicalDecimal",
+                "description": "Target distance over stop distance from the entry."
+              },
+              "stop": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "target": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              }
+            },
+            "required": [
+              "entry",
+              "stop",
+              "target",
+              "ratio",
+              "measured"
+            ],
+            "type": "object"
+          },
           "ResolvedAnchor": {
             "properties": {
               "price": {
@@ -4488,6 +4575,17 @@
           },
           "pane_side": {
             "$ref": "#/$defs/PaneSideDto"
+          },
+          "position": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PositionPlanResult"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "A position plan's three prices, as placed. Omitted for every other\ntool."
           },
           "tab_id": {
             "$ref": "#/$defs/WireU64"
@@ -5086,6 +5184,44 @@
             ],
             "type": "string"
           },
+          "PositionLeg": {
+            "enum": [
+              "stop",
+              "target"
+            ],
+            "type": "string"
+          },
+          "PositionPlanResult": {
+            "additionalProperties": false,
+            "description": "Where a position plan's legs landed: the projected one follows the\ntrader's saved target:stop ratio, which the call cannot otherwise see.",
+            "properties": {
+              "entry": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "measured": {
+                "$ref": "#/$defs/PositionLeg",
+                "description": "The leg the second anchor set; the other one was projected."
+              },
+              "ratio": {
+                "$ref": "#/$defs/CanonicalDecimal",
+                "description": "Target distance over stop distance from the entry."
+              },
+              "stop": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "target": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              }
+            },
+            "required": [
+              "entry",
+              "stop",
+              "target",
+              "ratio",
+              "measured"
+            ],
+            "type": "object"
+          },
           "ResolvedAnchor": {
             "properties": {
               "price": {
@@ -5138,6 +5274,17 @@
           },
           "pane_side": {
             "$ref": "#/$defs/PaneSideDto"
+          },
+          "position": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PositionPlanResult"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "A position plan's three prices, as placed. Omitted for every other\ntool."
           },
           "tab_id": {
             "$ref": "#/$defs/WireU64"
@@ -5478,6 +5625,17 @@
               "pane_side": {
                 "$ref": "#/$defs/PaneSideDto"
               },
+              "position": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/PositionPlanResult"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "A position plan's three prices, as placed. Omitted for every other\ntool."
+              },
               "tab_id": {
                 "$ref": "#/$defs/WireU64"
               },
@@ -5525,6 +5683,44 @@
               "time"
             ],
             "type": "string"
+          },
+          "PositionLeg": {
+            "enum": [
+              "stop",
+              "target"
+            ],
+            "type": "string"
+          },
+          "PositionPlanResult": {
+            "additionalProperties": false,
+            "description": "Where a position plan's legs landed: the projected one follows the\ntrader's saved target:stop ratio, which the call cannot otherwise see.",
+            "properties": {
+              "entry": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "measured": {
+                "$ref": "#/$defs/PositionLeg",
+                "description": "The leg the second anchor set; the other one was projected."
+              },
+              "ratio": {
+                "$ref": "#/$defs/CanonicalDecimal",
+                "description": "Target distance over stop distance from the entry."
+              },
+              "stop": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "target": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              }
+            },
+            "required": [
+              "entry",
+              "stop",
+              "target",
+              "ratio",
+              "measured"
+            ],
+            "type": "object"
           },
           "ResolvedAnchor": {
             "properties": {
@@ -5837,6 +6033,449 @@
       "risk_reducing": false,
       "stale_input_safety": "An annotation adds one object and edits nothing; a stale caller places an object that is visibly attributed and removed in one action.",
       "title": "Place a label",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Draws a long plan: the first chart coordinate is the entry, the second the stop below it or the target above it; the other leg is projected by the default target:stop ratio. A drawing, never an order.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "annotate",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "annotate.long_position.create",
+      "idempotency": "forbidden",
+      "input_schema": {
+        "$defs": {
+          "AnnotationBand": {
+            "description": "Which value axis of the pane an annotation's anchor prices are read on.\nOmitted: the candles' price axis, so every call written before indicator\nbands existed means what it always meant.",
+            "oneOf": [
+              {
+                "const": "price",
+                "description": "The candles' price axis.",
+                "type": "string"
+              },
+              {
+                "additionalProperties": false,
+                "description": "One indicator pane's own value axis, named by the `kind` and `ordinal`\nthe pane's indicators snapshot reports (`native.cvd`, `0`). Anchor\n`price` is then that indicator's value: a CVD level, not a price.",
+                "properties": {
+                  "indicator": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "kind": {
+                        "type": "string"
+                      },
+                      "ordinal": {
+                        "format": "uint32",
+                        "minimum": 0,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "ordinal"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "indicator"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "AnnotationTarget": {
+            "additionalProperties": false,
+            "description": "Where an annotation goes. Omitting both halves means the chart the trader\nis looking at — the same default the toolbar's own placement uses.",
+            "properties": {
+              "pane_side": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/PaneSideDto"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "The pane within that tab. Omitted: the pane drawings go to."
+              },
+              "pane_slot": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Which context chart `pane_side = \"time\"` means, top to bottom from\n`0`. Omitted: the top one. Ignored for the flow pane, which has no\nstack to pick from."
+              },
+              "tab_id": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "The tab, by the id every snapshot reports. Omitted: the active tab."
+              }
+            },
+            "type": "object"
+          },
+          "CanonicalDecimal": {
+            "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+            "type": "string"
+          },
+          "ChartAnnotationAnchor": {
+            "additionalProperties": false,
+            "description": "One coordinate from a chart gesture. Market time is retained when a bar\nexists; `bar_position` keeps future chart space expressible without\ninventing a timestamp.",
+            "properties": {
+              "bar_position": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "price": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "time_unix_ms": {
+                "format": "int64",
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "x-unit": "unix_milliseconds"
+              }
+            },
+            "required": [
+              "bar_position",
+              "price"
+            ],
+            "type": "object"
+          },
+          "ChartReference": {
+            "additionalProperties": false,
+            "properties": {
+              "layout_id": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "pane_id": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "series_revision": {
+                "$ref": "#/$defs/WireU64"
+              }
+            },
+            "required": [
+              "pane_id",
+              "series_revision"
+            ],
+            "type": "object"
+          },
+          "PaneSideDto": {
+            "enum": [
+              "flow",
+              "time"
+            ],
+            "type": "string"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "Ranged drawings share this future-aware input; the selected tool still\nowns whether exactly two or three anchors complete it.",
+        "properties": {
+          "anchors": {
+            "items": {
+              "$ref": "#/$defs/ChartAnnotationAnchor"
+            },
+            "maxItems": 3,
+            "minItems": 2,
+            "type": "array"
+          },
+          "band": {
+            "$ref": "#/$defs/AnnotationBand",
+            "description": "The value axis the anchors' prices are on. Omitted: the price band.\nAn indicator band must be an indicator pane the target pane shows."
+          },
+          "chart_reference": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ChartReference"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional exact series identity. Absent: the original timestamp/future\nbehavior. Present: bar positions and supplied times must agree with\nthis pane's current series and active layout before anything is placed."
+          },
+          "name": {
+            "maxLength": 120,
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "target": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/AnnotationTarget"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "anchors"
+        ],
+        "title": "ChartAnnotationInput",
+        "type": "object"
+      },
+      "module": "annotate",
+      "output_schema": {
+        "$defs": {
+          "AnnotationAuthor": {
+            "description": "Who placed an object, as the interface shows it.",
+            "properties": {
+              "actor_kind": {
+                "description": "The actor kind on the wire: `agent`, `automation`, `human_ui`.",
+                "type": "string"
+              },
+              "client_name": {
+                "description": "The client's own name from its handshake.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "actor_kind",
+              "client_name"
+            ],
+            "type": "object"
+          },
+          "AnnotationBand": {
+            "description": "Which value axis of the pane an annotation's anchor prices are read on.\nOmitted: the candles' price axis, so every call written before indicator\nbands existed means what it always meant.",
+            "oneOf": [
+              {
+                "const": "price",
+                "description": "The candles' price axis.",
+                "type": "string"
+              },
+              {
+                "additionalProperties": false,
+                "description": "One indicator pane's own value axis, named by the `kind` and `ordinal`\nthe pane's indicators snapshot reports (`native.cvd`, `0`). Anchor\n`price` is then that indicator's value: a CVD level, not a price.",
+                "properties": {
+                  "indicator": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "kind": {
+                        "type": "string"
+                      },
+                      "ordinal": {
+                        "format": "uint32",
+                        "minimum": 0,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "ordinal"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "indicator"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "CanonicalDecimal": {
+            "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+            "type": "string"
+          },
+          "ChartResolvedAnchor": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ResolvedAnchor"
+              },
+              {
+                "properties": {
+                  "bar_position": {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  },
+                  "price": {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  }
+                },
+                "required": [
+                  "bar_position",
+                  "price"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "PaneSideDto": {
+            "enum": [
+              "flow",
+              "time"
+            ],
+            "type": "string"
+          },
+          "PositionLeg": {
+            "enum": [
+              "stop",
+              "target"
+            ],
+            "type": "string"
+          },
+          "PositionPlanResult": {
+            "additionalProperties": false,
+            "description": "Where a position plan's legs landed: the projected one follows the\ntrader's saved target:stop ratio, which the call cannot otherwise see.",
+            "properties": {
+              "entry": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "measured": {
+                "$ref": "#/$defs/PositionLeg",
+                "description": "The leg the second anchor set; the other one was projected."
+              },
+              "ratio": {
+                "$ref": "#/$defs/CanonicalDecimal",
+                "description": "Target distance over stop distance from the entry."
+              },
+              "stop": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "target": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              }
+            },
+            "required": [
+              "entry",
+              "stop",
+              "target",
+              "ratio",
+              "measured"
+            ],
+            "type": "object"
+          },
+          "ResolvedAnchor": {
+            "properties": {
+              "price": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "slot": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "time_unix_ms": {
+                "format": "int64",
+                "type": "integer",
+                "x-unit": "unix_milliseconds"
+              }
+            },
+            "required": [
+              "slot",
+              "time_unix_ms",
+              "price"
+            ],
+            "type": "object"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "anchors": {
+            "items": {
+              "$ref": "#/$defs/ChartResolvedAnchor"
+            },
+            "type": "array"
+          },
+          "annotation_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "author": {
+            "$ref": "#/$defs/AnnotationAuthor"
+          },
+          "band": {
+            "$ref": "#/$defs/AnnotationBand",
+            "description": "The band the object landed on. Omitted: the price band."
+          },
+          "label": {
+            "type": "string"
+          },
+          "pane_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "pane_side": {
+            "$ref": "#/$defs/PaneSideDto"
+          },
+          "position": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PositionPlanResult"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "A position plan's three prices, as placed. Omitted for every other\ntool."
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "tool_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "annotation_id",
+          "tab_id",
+          "pane_id",
+          "pane_side",
+          "tool_id",
+          "anchors",
+          "author",
+          "label"
+        ],
+        "title": "ChartAnnotationResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "annotate",
+        "annotate.chart"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "An annotation adds one object and edits nothing; a stale caller places an object that is visibly attributed and removed in one action.",
+      "title": "Place a long position plan",
       "version": 1
     },
     {
@@ -6210,6 +6849,44 @@
             ],
             "type": "string"
           },
+          "PositionLeg": {
+            "enum": [
+              "stop",
+              "target"
+            ],
+            "type": "string"
+          },
+          "PositionPlanResult": {
+            "additionalProperties": false,
+            "description": "Where a position plan's legs landed: the projected one follows the\ntrader's saved target:stop ratio, which the call cannot otherwise see.",
+            "properties": {
+              "entry": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "measured": {
+                "$ref": "#/$defs/PositionLeg",
+                "description": "The leg the second anchor set; the other one was projected."
+              },
+              "ratio": {
+                "$ref": "#/$defs/CanonicalDecimal",
+                "description": "Target distance over stop distance from the entry."
+              },
+              "stop": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "target": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              }
+            },
+            "required": [
+              "entry",
+              "stop",
+              "target",
+              "ratio",
+              "measured"
+            ],
+            "type": "object"
+          },
           "ResolvedAnchor": {
             "properties": {
               "price": {
@@ -6262,6 +6939,17 @@
           },
           "pane_side": {
             "$ref": "#/$defs/PaneSideDto"
+          },
+          "position": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PositionPlanResult"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "A position plan's three prices, as placed. Omitted for every other\ntool."
           },
           "tab_id": {
             "$ref": "#/$defs/WireU64"
@@ -6604,6 +7292,44 @@
             ],
             "type": "string"
           },
+          "PositionLeg": {
+            "enum": [
+              "stop",
+              "target"
+            ],
+            "type": "string"
+          },
+          "PositionPlanResult": {
+            "additionalProperties": false,
+            "description": "Where a position plan's legs landed: the projected one follows the\ntrader's saved target:stop ratio, which the call cannot otherwise see.",
+            "properties": {
+              "entry": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "measured": {
+                "$ref": "#/$defs/PositionLeg",
+                "description": "The leg the second anchor set; the other one was projected."
+              },
+              "ratio": {
+                "$ref": "#/$defs/CanonicalDecimal",
+                "description": "Target distance over stop distance from the entry."
+              },
+              "stop": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "target": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              }
+            },
+            "required": [
+              "entry",
+              "stop",
+              "target",
+              "ratio",
+              "measured"
+            ],
+            "type": "object"
+          },
           "ResolvedAnchor": {
             "properties": {
               "price": {
@@ -6656,6 +7382,17 @@
           },
           "pane_side": {
             "$ref": "#/$defs/PaneSideDto"
+          },
+          "position": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PositionPlanResult"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "A position plan's three prices, as placed. Omitted for every other\ntool."
           },
           "tab_id": {
             "$ref": "#/$defs/WireU64"
@@ -6774,6 +7511,449 @@
       "risk_reducing": false,
       "stale_input_safety": "Removing an already-removed annotation reports that it was not there; no other object can be reached.",
       "title": "Remove an annotation",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Draws a short plan: the first chart coordinate is the entry, the second the stop above it or the target below it; the other leg is projected by the default target:stop ratio. A drawing, never an order.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "annotate",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "annotate.short_position.create",
+      "idempotency": "forbidden",
+      "input_schema": {
+        "$defs": {
+          "AnnotationBand": {
+            "description": "Which value axis of the pane an annotation's anchor prices are read on.\nOmitted: the candles' price axis, so every call written before indicator\nbands existed means what it always meant.",
+            "oneOf": [
+              {
+                "const": "price",
+                "description": "The candles' price axis.",
+                "type": "string"
+              },
+              {
+                "additionalProperties": false,
+                "description": "One indicator pane's own value axis, named by the `kind` and `ordinal`\nthe pane's indicators snapshot reports (`native.cvd`, `0`). Anchor\n`price` is then that indicator's value: a CVD level, not a price.",
+                "properties": {
+                  "indicator": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "kind": {
+                        "type": "string"
+                      },
+                      "ordinal": {
+                        "format": "uint32",
+                        "minimum": 0,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "ordinal"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "indicator"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "AnnotationTarget": {
+            "additionalProperties": false,
+            "description": "Where an annotation goes. Omitting both halves means the chart the trader\nis looking at — the same default the toolbar's own placement uses.",
+            "properties": {
+              "pane_side": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/PaneSideDto"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "The pane within that tab. Omitted: the pane drawings go to."
+              },
+              "pane_slot": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Which context chart `pane_side = \"time\"` means, top to bottom from\n`0`. Omitted: the top one. Ignored for the flow pane, which has no\nstack to pick from."
+              },
+              "tab_id": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "The tab, by the id every snapshot reports. Omitted: the active tab."
+              }
+            },
+            "type": "object"
+          },
+          "CanonicalDecimal": {
+            "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+            "type": "string"
+          },
+          "ChartAnnotationAnchor": {
+            "additionalProperties": false,
+            "description": "One coordinate from a chart gesture. Market time is retained when a bar\nexists; `bar_position` keeps future chart space expressible without\ninventing a timestamp.",
+            "properties": {
+              "bar_position": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "price": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "time_unix_ms": {
+                "format": "int64",
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "x-unit": "unix_milliseconds"
+              }
+            },
+            "required": [
+              "bar_position",
+              "price"
+            ],
+            "type": "object"
+          },
+          "ChartReference": {
+            "additionalProperties": false,
+            "properties": {
+              "layout_id": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "pane_id": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "series_revision": {
+                "$ref": "#/$defs/WireU64"
+              }
+            },
+            "required": [
+              "pane_id",
+              "series_revision"
+            ],
+            "type": "object"
+          },
+          "PaneSideDto": {
+            "enum": [
+              "flow",
+              "time"
+            ],
+            "type": "string"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "Ranged drawings share this future-aware input; the selected tool still\nowns whether exactly two or three anchors complete it.",
+        "properties": {
+          "anchors": {
+            "items": {
+              "$ref": "#/$defs/ChartAnnotationAnchor"
+            },
+            "maxItems": 3,
+            "minItems": 2,
+            "type": "array"
+          },
+          "band": {
+            "$ref": "#/$defs/AnnotationBand",
+            "description": "The value axis the anchors' prices are on. Omitted: the price band.\nAn indicator band must be an indicator pane the target pane shows."
+          },
+          "chart_reference": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ChartReference"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional exact series identity. Absent: the original timestamp/future\nbehavior. Present: bar positions and supplied times must agree with\nthis pane's current series and active layout before anything is placed."
+          },
+          "name": {
+            "maxLength": 120,
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "target": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/AnnotationTarget"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "anchors"
+        ],
+        "title": "ChartAnnotationInput",
+        "type": "object"
+      },
+      "module": "annotate",
+      "output_schema": {
+        "$defs": {
+          "AnnotationAuthor": {
+            "description": "Who placed an object, as the interface shows it.",
+            "properties": {
+              "actor_kind": {
+                "description": "The actor kind on the wire: `agent`, `automation`, `human_ui`.",
+                "type": "string"
+              },
+              "client_name": {
+                "description": "The client's own name from its handshake.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "actor_kind",
+              "client_name"
+            ],
+            "type": "object"
+          },
+          "AnnotationBand": {
+            "description": "Which value axis of the pane an annotation's anchor prices are read on.\nOmitted: the candles' price axis, so every call written before indicator\nbands existed means what it always meant.",
+            "oneOf": [
+              {
+                "const": "price",
+                "description": "The candles' price axis.",
+                "type": "string"
+              },
+              {
+                "additionalProperties": false,
+                "description": "One indicator pane's own value axis, named by the `kind` and `ordinal`\nthe pane's indicators snapshot reports (`native.cvd`, `0`). Anchor\n`price` is then that indicator's value: a CVD level, not a price.",
+                "properties": {
+                  "indicator": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "kind": {
+                        "type": "string"
+                      },
+                      "ordinal": {
+                        "format": "uint32",
+                        "minimum": 0,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "ordinal"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "indicator"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "CanonicalDecimal": {
+            "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+            "type": "string"
+          },
+          "ChartResolvedAnchor": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ResolvedAnchor"
+              },
+              {
+                "properties": {
+                  "bar_position": {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  },
+                  "price": {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  }
+                },
+                "required": [
+                  "bar_position",
+                  "price"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "PaneSideDto": {
+            "enum": [
+              "flow",
+              "time"
+            ],
+            "type": "string"
+          },
+          "PositionLeg": {
+            "enum": [
+              "stop",
+              "target"
+            ],
+            "type": "string"
+          },
+          "PositionPlanResult": {
+            "additionalProperties": false,
+            "description": "Where a position plan's legs landed: the projected one follows the\ntrader's saved target:stop ratio, which the call cannot otherwise see.",
+            "properties": {
+              "entry": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "measured": {
+                "$ref": "#/$defs/PositionLeg",
+                "description": "The leg the second anchor set; the other one was projected."
+              },
+              "ratio": {
+                "$ref": "#/$defs/CanonicalDecimal",
+                "description": "Target distance over stop distance from the entry."
+              },
+              "stop": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "target": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              }
+            },
+            "required": [
+              "entry",
+              "stop",
+              "target",
+              "ratio",
+              "measured"
+            ],
+            "type": "object"
+          },
+          "ResolvedAnchor": {
+            "properties": {
+              "price": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "slot": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "time_unix_ms": {
+                "format": "int64",
+                "type": "integer",
+                "x-unit": "unix_milliseconds"
+              }
+            },
+            "required": [
+              "slot",
+              "time_unix_ms",
+              "price"
+            ],
+            "type": "object"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "anchors": {
+            "items": {
+              "$ref": "#/$defs/ChartResolvedAnchor"
+            },
+            "type": "array"
+          },
+          "annotation_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "author": {
+            "$ref": "#/$defs/AnnotationAuthor"
+          },
+          "band": {
+            "$ref": "#/$defs/AnnotationBand",
+            "description": "The band the object landed on. Omitted: the price band."
+          },
+          "label": {
+            "type": "string"
+          },
+          "pane_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "pane_side": {
+            "$ref": "#/$defs/PaneSideDto"
+          },
+          "position": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PositionPlanResult"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "A position plan's three prices, as placed. Omitted for every other\ntool."
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "tool_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "annotation_id",
+          "tab_id",
+          "pane_id",
+          "pane_side",
+          "tool_id",
+          "anchors",
+          "author",
+          "label"
+        ],
+        "title": "ChartAnnotationResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "annotate",
+        "annotate.chart"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "An annotation adds one object and edits nothing; a stale caller places an object that is visibly attributed and removed in one action.",
+      "title": "Place a short position plan",
       "version": 1
     },
     {
@@ -7671,6 +8851,44 @@
             ],
             "type": "string"
           },
+          "PositionLeg": {
+            "enum": [
+              "stop",
+              "target"
+            ],
+            "type": "string"
+          },
+          "PositionPlanResult": {
+            "additionalProperties": false,
+            "description": "Where a position plan's legs landed: the projected one follows the\ntrader's saved target:stop ratio, which the call cannot otherwise see.",
+            "properties": {
+              "entry": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "measured": {
+                "$ref": "#/$defs/PositionLeg",
+                "description": "The leg the second anchor set; the other one was projected."
+              },
+              "ratio": {
+                "$ref": "#/$defs/CanonicalDecimal",
+                "description": "Target distance over stop distance from the entry."
+              },
+              "stop": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "target": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              }
+            },
+            "required": [
+              "entry",
+              "stop",
+              "target",
+              "ratio",
+              "measured"
+            ],
+            "type": "object"
+          },
           "ResolvedAnchor": {
             "properties": {
               "price": {
@@ -7723,6 +8941,17 @@
           },
           "pane_side": {
             "$ref": "#/$defs/PaneSideDto"
+          },
+          "position": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PositionPlanResult"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "A position plan's three prices, as placed. Omitted for every other\ntool."
           },
           "tab_id": {
             "$ref": "#/$defs/WireU64"
@@ -28230,7 +29459,7 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Open the same performance report as the Trades session context menu. action=session selects only that session; action=day requires YYYY-MM-DD in the display timezone and selects every instrument and session of that origin on the clicked day. The session must hold a trade on that day. action=whole_day takes origin (simulator or broker) and day instead of a session and selects every trade of that origin closed that day, as the day header's context menu does. action=tag takes origin and a tag (with or without #, case ignored) and selects every trade of that origin carrying it over all history, as a trade's Report #tag menu does. Simulator and broker are never summed. action=ordinary restores the ordinary Sim live report for the chart symbol over all time; pass no session or day. action=sources with sources sets their union, exits session/day context scope and preserves visible symbol/date filters: broker, real (Sim live including legacy), replay, simulator (real + replay), both (all). An empty array selects none. Omitting sources reads the current report without opening it or emitting session.report.opened. Returns normalized sources, window, context, open/loaded status, trade count and net points. Retries set the same selection, never toggle. Session keys are <symbol>/<file>.csv for the simulator and broker/<symbol>/<file>.csv for real-trades, independent of custom names. Session, day and ordinary actions replace prior symbol, period, source and session filters. Returns the opened scope, trade count, net points and counts of unreadable files and skipped rows in the scanned history; events.read reconciles a lost open response through session.report.opened. Refusals: invalid_session, session_not_found, session_unreadable, day_not_in_session, invalid_tag, no_trades_in_scope, no_ledger. Never places orders or writes history.",
+      "description": "Open the same performance report as the Trades session context menu. action=session selects only that session; action=day requires YYYY-MM-DD in the display timezone and selects every instrument and session of that origin on the clicked day. The session must hold a trade on that day. action=whole_day takes origin (simulator or broker) and day instead of a session and selects every trade of that origin closed that day, as the day header's context menu does. action=tag takes origin and a tag (with or without #, case ignored) and selects every trade of that origin carrying it over all history, as a trade's Report #tag menu does. Simulator and broker are never summed. action=ordinary restores the ordinary Sim live report for the chart symbol over all time; pass no session or day. action=sources with sources sets their union, exits session/day context scope and preserves visible symbol/date filters: broker, real (Sim live including legacy), replay, simulator (real + replay), both (all). An empty array selects none. Omitting sources reads the current report without opening it or emitting session.report.opened. action=inspect also reads without opening or emitting. action=draft_dates stages start and end (YYYY-MM-DD, up to 10 characters each); partial or reversed endpoints return validation_error and preserve results. action=generate applies valid draft dates inclusively to trade closing times in the display timezone. action=clear_dates clears both draft and applied dates, restoring the selected period. action=period sets Today, 7d, 30d, 90d, All or a custom duration such as 12h anchored to the newest close. Date and period edits retain symbol, sources and independent session or tag restrictions. These actions return draft and applied endpoints, timezone and validation_error. Refusals carry details.code invalid_dates or invalid_period. Returns normalized sources, window, context, open/loaded status, trade count and net points. Retries set the same selection, never toggle. Session keys are <symbol>/<file>.csv for the simulator and broker/<symbol>/<file>.csv for real-trades, independent of custom names. Session, day and ordinary actions replace prior symbol, period, source and session filters. Returns the opened scope, trade count, net points and counts of unreadable files and skipped rows in the scanned history; events.read reconciles a lost open response through session.report.opened. Refusals: invalid_session, session_not_found, session_unreadable, day_not_in_session, invalid_tag, no_trades_in_scope, no_ledger. Never places orders or writes history.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "cockpit",
@@ -28294,6 +29523,88 @@
             },
             "required": [
               "action"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "const": "inspect",
+                "type": "string"
+              }
+            },
+            "required": [
+              "action"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Stage both fields, including a partial value while editing.",
+            "properties": {
+              "action": {
+                "const": "draft_dates",
+                "type": "string"
+              },
+              "end": {
+                "maxLength": 10,
+                "type": "string"
+              },
+              "start": {
+                "maxLength": 10,
+                "type": "string"
+              }
+            },
+            "required": [
+              "action",
+              "start",
+              "end"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "const": "generate",
+                "type": "string"
+              }
+            },
+            "required": [
+              "action"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "const": "clear_dates",
+                "type": "string"
+              }
+            },
+            "required": [
+              "action"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "const": "period",
+                "type": "string"
+              },
+              "period": {
+                "maxLength": 16,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "action",
+              "period"
             ],
             "type": "object"
           },
@@ -28545,6 +29856,24 @@
               "action": {
                 "type": "string"
               },
+              "applied_end": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "applied_start": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "draft_end": {
+                "type": "string"
+              },
+              "draft_start": {
+                "type": "string"
+              },
               "loaded": {
                 "type": "boolean"
               },
@@ -28575,11 +29904,20 @@
                   "null"
                 ]
               },
+              "timezone": {
+                "type": "string"
+              },
               "trade_count": {
                 "$ref": "#/$defs/WireU64"
               },
               "unreadable_files": {
                 "$ref": "#/$defs/WireU64"
+              },
+              "validation_error": {
+                "type": [
+                  "string",
+                  "null"
+                ]
               },
               "window": {
                 "type": "string"
@@ -28591,6 +29929,9 @@
               "open",
               "loaded",
               "window",
+              "draft_start",
+              "draft_end",
+              "timezone",
               "trade_count",
               "unreadable_files",
               "skipped_rows",

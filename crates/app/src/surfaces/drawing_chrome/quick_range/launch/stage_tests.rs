@@ -40,11 +40,7 @@ fn each_captured_mode_stages_the_real_owner_and_is_consumed_once() {
             let tool = drawings::DrawingTool::by_id("measure").unwrap();
             Ok(Some((
                 [ChartPoint::at(1.5, 100.0), ChartPoint::at(10.5, 101.0)],
-                NewDrawing {
-                    style: tool.default_style(),
-                    payload: tool.default_payload(),
-                    look: Default::default(),
-                },
+                NewDrawing::explicit(tool.default_style(), tool.default_payload()),
             )))
         });
         assert_eq!(quick.model().view().unwrap().actionable(), ready);

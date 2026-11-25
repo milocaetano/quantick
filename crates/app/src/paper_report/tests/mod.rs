@@ -240,7 +240,7 @@ fn paper_report_filter_input_recuts_before_dependent_paint() {
                 ],
             );
         }
-        let readback = report.sources(None, TzOffset::new(0), &env);
+        let readback = report.change(None, TzOffset::new(0), &env).unwrap();
         assert_eq!(
             readback.source, expected,
             "control readback observes the clicked selection"
@@ -257,6 +257,69 @@ fn paper_report_filter_input_recuts_before_dependent_paint() {
             "the release frame paints the current cut, including explicit empty selections"
         );
     }
+}
+
+#[test]
+fn tab_from_start_through_end_and_generate_applies_the_typed_dates() {
+    let ctx = egui::Context::default();
+    let mut paper = PaperTrading::new();
+    paper.report_state_mut().update(Intent::Open(String::new()));
+    let frame = |paper: &mut PaperTrading, events| {
+        ctx.run(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(900.0, 850.0),
+                )),
+                events,
+                ..Default::default()
+            },
+            |ctx| {
+                paper.draw_report_window(ctx, TzOffset::new(-180));
+            },
+        )
+    };
+    let key = |key| {
+        vec![true, false]
+            .into_iter()
+            .map(|pressed| egui::Event::Key {
+                key,
+                physical_key: None,
+                pressed,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            })
+            .collect()
+    };
+    for _ in 0..3 {
+        frame(&mut paper, vec![]);
+    }
+    let start = egui::Id::new(("report date", "Start date"));
+    for _ in 0..40 {
+        frame(&mut paper, key(egui::Key::Tab));
+        if ctx.memory(|memory| memory.has_focus(start)) {
+            break;
+        }
+    }
+    assert!(
+        ctx.memory(|memory| memory.has_focus(start)),
+        "Start is reachable by Tab"
+    );
+    frame(&mut paper, vec![egui::Event::Text("2026-11-30".to_owned())]);
+    frame(&mut paper, key(egui::Key::Tab));
+    assert!(ctx.memory(|memory| memory.has_focus(egui::Id::new(("report date", "End date")))));
+    frame(&mut paper, vec![egui::Event::Text("2026-12-02".to_owned())]);
+    assert!(paper.report_state_mut().applied_dates().is_none());
+    frame(&mut paper, key(egui::Key::Tab));
+    frame(&mut paper, key(egui::Key::Enter));
+    assert_eq!(
+        paper
+            .report_state_mut()
+            .applied_dates()
+            .map(|range| range.label())
+            .as_deref(),
+        Some("2026-11-30 to 2026-12-02")
+    );
 }
 
 #[test]

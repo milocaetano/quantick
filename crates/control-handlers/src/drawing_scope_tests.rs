@@ -12,11 +12,8 @@ fn level(drawings: &mut Drawings<DrawingTool>, time_ms: Option<i64>) -> DrawingI
         .find(|tool| tool.id() == "horizontal-line")
         .unwrap();
     let point = ChartPoint::at_time(3.0, 100.0, time_ms);
-    let fresh = |tool: DrawingTool| NewDrawing {
-        style: DrawingStyle::default(),
-        payload: tool.default_payload(),
-        look: Default::default(),
-    };
+    let fresh =
+        |tool: DrawingTool| NewDrawing::explicit(DrawingStyle::default(), tool.default_payload());
     assert!(drawings.place_with(tool, &DrawingBand::Price, point, fresh));
     drawings.items().last().unwrap().id
 }

@@ -102,7 +102,9 @@ impl Paint<'_, '_> {
             &button,
             egui::PopupCloseBehavior::CloseOnClickOutside,
             |ui| {
-                let _action = draw_month(ui, days, &mut calendar, PICKER_CELL_PX, today(tz));
+                if let Some(day) = draw_month(ui, days, &mut calendar, PICKER_CELL_PX, today(tz)) {
+                    calendar.selection = calendar.selection.click(day);
+                }
             },
         );
         if (calendar.month, calendar.selection, calendar.open)

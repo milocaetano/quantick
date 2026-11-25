@@ -1,6 +1,20 @@
 {
   "description": "Quantick repository guardrails shared with Claude Code.",
   "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh -lc 'root=$(git rev-parse --show-toplevel) || exit 0; exec sh \"$root/.claude/hooks/guardrails.sh\" machine-check'",
+            "commandWindows": "$hookRepoRoot = git rev-parse --show-toplevel; if ($LASTEXITCODE -ne 0) { exit 0 }; $hookGitRoot = Split-Path -Parent (Split-Path -Parent (Get-Command git.exe).Source); $hookShell = Join-Path -Path $hookGitRoot -ChildPath 'bin\\sh.exe'; [Console]::In.ReadToEnd() | & $hookShell --login (Join-Path -Path $hookRepoRoot -ChildPath '.claude/hooks/guardrails.sh') machine-check; exit $LASTEXITCODE",
+            "timeout": 10,
+            "statusMessage": "Checking this machine's cargo jobs cap"
+          }
+        ]
+      }
+    ],
     "PreToolUse": [
       {
         "matcher": "Edit|Write",

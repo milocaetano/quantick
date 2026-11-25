@@ -1706,7 +1706,9 @@ fn every_reachable_forbidden_row_refuses_a_key_before_the_application() {
             | "annotate.fib_projection.create"
             | "annotate.rectangle.create"
             | "annotate.trend_line.create"
-            | "annotate.horizontal_levels.create" => json!({ "anchors": fib_anchors }),
+            | "annotate.horizontal_levels.create"
+            | "annotate.long_position.create"
+            | "annotate.short_position.create" => json!({ "anchors": fib_anchors }),
             "annotate.parallel_channel.create" => {
                 json!({ "anchors": [fib_anchors[0].clone(), fib_anchors[1].clone(), fib_anchors[0].clone()] })
             }

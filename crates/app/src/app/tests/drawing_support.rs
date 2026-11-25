@@ -166,10 +166,11 @@ pub(super) fn split_with_a_shared_line(
         drawing_tool("horizontal-line"),
         &drawings::DrawingBand::Price,
         drawings::ChartPoint::at_time(slot as f32 + 0.5, price, Some(time)),
-        |tool| drawings::NewDrawing {
-            style: drawings::DrawingStyle::default(),
-            payload: tool.default_payload(),
-            look: Default::default(),
+        |tool| {
+            drawings::NewDrawing::explicit(
+                drawings::DrawingStyle::default(),
+                tool.default_payload(),
+            )
         },
     );
     app.active_tab_mut()

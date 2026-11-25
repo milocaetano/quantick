@@ -109,14 +109,14 @@ impl Paint<'_, '_> {
 }
 
 impl ReportAdapter {
-    pub(crate) fn sources(
+    pub(crate) fn change(
         &mut self,
-        sources: Option<quantick_paper::report::SourceSelection>,
+        change: Option<quantick_paper::report::snapshot::ReportChange>,
         tz: TzOffset,
         env: &ReportEnv<'_>,
-    ) -> quantick_paper::report::snapshot::ReportReadout {
+    ) -> Result<quantick_paper::report::snapshot::ReportReadout, &'static str> {
         self.with(env, |paint| {
-            quantick_ui_model::paper_report::io::sources(paint.updates, sources, tz, env)
+            quantick_ui_model::paper_report::io::report(paint.updates, change, tz, env)
         })
         .0
     }
@@ -229,6 +229,7 @@ impl ReportAdapter {
             calendar.month = Some(range.start.month_start());
         }
         self.update(Intent::Calendar(calendar));
+        self.update(Intent::Dates(selection));
     }
     pub(crate) fn set_ledger_scope(&mut self, scope: LedgerScope) {
         self.update(Intent::Ledger(LedgerIntent::Scope(scope)));
