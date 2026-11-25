@@ -143,6 +143,11 @@ class WorkflowPolicy(unittest.TestCase):
         # The guard and drift steps fail before the slower suites start.
         self.assertLess(gate.index("cargo test -p quantick-guards"), gate.index("guardrails_test.sh"))
 
+    def test_the_gate_owns_its_cache_alone(self):
+        owners = [name for name, body in JOB_BODIES.items() if "cache-key: gate" in body]
+        self.assertEqual(["gate"], owners)
+        self.assertIn('save-cache: "true"', JOB_BODIES["gate"])
+
     def test_no_network_fetch_holds_the_rust_jobs(self):
         self.assertNotIn("pipx", JOB_BODIES["gate"])
         self.assertIn("pipx run ruff check --select F tools/ bridge/mt5/", JOB_BODIES["ci"])

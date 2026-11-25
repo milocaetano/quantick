@@ -116,6 +116,12 @@ jobs:
       - uses: ./.github/actions/rust-setup
         with:
           desktop-deps: "false"
+          # Its own key, which it alone saves. `cargo test -p` resolves the
+          # dependencies' features for those crates only, so the workspace
+          # build `ci` caches matches none of them and every gate recompiled
+          # its whole graph; this small cache is what keeps it fast.
+          cache-key: gate
+          save-cache: "true"
       - name: Format
         run: cargo fmt --all -- --check
       - &format-control-families
