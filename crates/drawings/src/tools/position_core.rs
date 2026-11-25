@@ -1,34 +1,34 @@
-//! The position drawing the long and short tools share: an entry line, a
-//! stop zone and a target zone, planned on the chart and never sent.
+﻿//! The position drawing the long and short tools share: an entry, a stop
+//! zone and a target zone, planned on the chart and never sent.
 //!
 //! Two anchors hold the trader's measurement — the entry where the drag
 //! started and the edge where it ended. Which leg that edge is follows from
 //! the side alone: on the trade's profit side it is the target, on its loss
 //! side the stop. The other leg is projected by the payload's ratio
-//! (target : stop) until the trader drags it, which pins it at its price.
+//! (reward per unit of risk) until the trader drags it, which pins it.
+//!
+//! Unselected, a position is its two zones and their thin edges. Selected,
+//! it adds the Target plate beyond the target edge, the Stop plate beyond
+//! the stop edge, the plan plate at the entry and the width handles at the
+//! entry line's ends. Every colour is the drawing's own
+//! ([`PositionPayload`]), never the theme's buy and sell ink.
 //!
 //! No tick count and no tick snap: a drawing does not know the instrument's
 //! tick size (`measure_core.rs` states the same honesty rule), so legs read
 //! in points and the projected price is the exact ratio.
 
-use std::any::Any;
-
 use quantick_appearance::{FontRole, ResolvedTheme, Token};
 use quantick_chart::style::PremultipliedRgba;
-use serde::{Deserialize, Serialize};
 
-use crate::{Align2, FontSpec, MarkScene, Px, PxRect, RgbaExt as _, Stroke, pos2, vec2};
+use crate::{Align2, FontSpec, MarkScene, Px, PxRect, Stroke, pos2, vec2};
 
+use super::position_payload::{PositionPayload, Rgb};
+use super::position_text::plan_plate;
 use super::{
     Constrain, DrawContext, DrawingPayload, DrawingStyle, Handles, MarkTool, PointerHint,
-    ToolFamily, dashed_segment_within,
+    ToolFamily,
 };
 
-/// The ratios one click on the plan tag steps through, in order.
-pub const RATIO_PRESETS: [f64; 4] = [1.0, 1.5, 2.0, 3.0];
-/// The ratio a fresh position opens with, until the trader saves another
-/// as the tool's default.
-pub const DEFAULT_RATIO: f64 = 2.0;
 /// The ratios a saved or imported payload may hold. Outside them a plan is
 /// unreadable on screen — one leg collapses onto the entry line.
 pub const MIN_RATIO: f64 = 0.1;
@@ -37,25 +37,22 @@ pub const MAX_RATIO: f64 = 20.0;
 /// leaves zones wide enough to read.
 pub const MIN_WIDTH_BARS: f32 = 14.0;
 
-/// The projected leg's handle; the entry and measured edge lines follow.
-pub(super) const PROJECTED_HANDLE: usize = 2;
-pub(super) const ENTRY_LINE_HANDLE: usize = 3;
-pub(super) const MEASURED_LINE_HANDLE: usize = 4;
+/// The entry line's two ends: each resizes the width and nothing else.
+pub(super) const LEFT_EDGE_HANDLE: usize = 2;
+pub(super) const RIGHT_EDGE_HANDLE: usize = 3;
+/// The projected leg's line; the entry and measured edge lines follow.
+pub(super) const PROJECTED_HANDLE: usize = 4;
+pub(super) const ENTRY_LINE_HANDLE: usize = 5;
+pub(super) const MEASURED_LINE_HANDLE: usize = 6;
 
 const GRAB_PX: f32 = 5.0;
+/// The zones' edges and the entry line: thin, so the bars stay the subject.
+const EDGE_PX: f32 = 1.0;
 const LABEL_TEXT_PX: f32 = 10.0;
 const LABEL_PAD_X_PX: f32 = 5.0;
 const LABEL_PAD_Y_PX: f32 = 2.0;
 const LABEL_RADIUS_PX: f32 = 3.0;
 const LABEL_INSET_PX: f32 = 4.0;
-/// The plan tag's click target, from the position's left edge: wide enough
-/// for `Plan short · 2.38:1` at the label size, so a click on the side or
-/// the ratio lands without measuring the words (`click` has no metrics).
-const TAG_HIT_WIDTH_PX: f32 = 140.0;
-const TAG_HIT_HALF_HEIGHT_PX: f32 = 9.0;
-const PROJECTED_DASH_PX: f32 = 5.0;
-const PROJECTED_GAP_PX: f32 = 4.0;
-const PRESET_FORMAT_VERSION: u32 = 1;
 /// Relative difference under which two anchors' price shifts are one move.
 const RIGID_TOLERANCE: f64 = 1e-9;
 
@@ -108,12 +105,6 @@ impl Side {
             Self::Short => -1.0,
         }
     }
-    fn word(self) -> &'static str {
-        match self {
-            Self::Long => "long",
-            Self::Short => "short",
-        }
-    }
 }
 
 /// Which leg the trader measured; the other one is projected.
@@ -140,8 +131,8 @@ impl Legs {
     pub fn reward(&self) -> f64 {
         (self.target - self.entry).abs()
     }
-    /// Target : stop, as the plan stands — the chosen ratio, or the one a
-    /// dragged leg left behind.
+    /// Reward per unit of risk, as the plan stands — the chosen ratio, or
+    /// the one a dragged leg left behind.
     #[must_use]
     pub fn ratio(&self) -> f64 {
         self.reward() / self.risk()
@@ -193,143 +184,26 @@ pub fn legs(side: Side, entry: f64, edge: f64, ratio: f64, pinned: Option<f64>) 
     })
 }
 
-/// The preset after `current`, wrapping to the first past the last.
-#[must_use]
-pub fn next_ratio(current: f64) -> f64 {
-    RATIO_PRESETS
-        .into_iter()
-        .find(|preset| *preset > current + 1e-9)
-        .unwrap_or(RATIO_PRESETS[0])
-}
-
-/// `2:1`, `1.5:1`, `2.37:1` — at most two decimals, none when whole.
-#[must_use]
-pub fn ratio_label(ratio: f64) -> String {
-    let mut digits = format!("{ratio:.2}");
-    while digits.ends_with('0') {
-        digits.pop();
-    }
-    if digits.ends_with('.') {
-        digits.pop();
-    }
-    format!("{digits}:1")
-}
-
-fn valid_ratio(ratio: f64) -> bool {
-    (MIN_RATIO..=MAX_RATIO).contains(&ratio)
-}
-
-/// The position's own state: the ratio its projected leg follows, and,
-/// once the trader drags a line, that leg's distance from the entry — an
-/// offset, so moving the whole plan carries the leg with it.
-#[derive(Debug, Clone, PartialEq)]
-pub struct PositionPayload {
-    pub ratio: f64,
-    pub projected_offset: Option<f64>,
-}
-
-impl Default for PositionPayload {
-    fn default() -> Self {
-        Self {
-            ratio: DEFAULT_RATIO,
-            projected_offset: None,
-        }
-    }
-}
-
-impl PositionPayload {
-    /// The pinned projected price, for a plan entered at `entry`.
-    #[must_use]
-    pub fn pinned(&self, entry: f64) -> Option<f64> {
-        self.projected_offset.map(|offset| entry + offset)
-    }
-    /// Step to the next ratio preset and let the projected leg follow it.
-    pub fn cycle_ratio(&mut self) {
-        self.ratio = next_ratio(self.ratio);
-        self.projected_offset = None;
-    }
-}
-
-#[derive(Serialize, Deserialize)]
-struct PresetData {
-    version: u32,
-    ratio: f64,
-}
-
-#[derive(Serialize, Deserialize)]
-struct SavedData {
-    version: u32,
-    ratio: f64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    projected_offset: Option<f64>,
-}
-
-impl DrawingPayload for PositionPayload {
-    fn clone_box(&self) -> Box<dyn DrawingPayload> {
-        Box::new(self.clone())
-    }
-    fn eq_dyn(&self, other: &dyn DrawingPayload) -> bool {
-        other
-            .as_any()
-            .downcast_ref::<Self>()
-            .is_some_and(|other| self == other)
-    }
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
-    }
-    /// A preset is the ratio only: a pinned leg is a price on one chart.
-    fn export_preset(&self) -> Option<toml::Value> {
-        toml::Value::try_from(PresetData {
-            version: PRESET_FORMAT_VERSION,
-            ratio: self.ratio,
-        })
-        .ok()
-    }
-    fn import_preset(&mut self, value: &toml::Value) -> bool {
-        let Ok(data) = PresetData::deserialize(value.clone()) else {
-            return false;
-        };
-        if data.version != PRESET_FORMAT_VERSION || !valid_ratio(data.ratio) {
-            return false;
-        }
-        self.ratio = data.ratio;
-        true
-    }
-    fn export_saved(&self) -> Option<toml::Value> {
-        toml::Value::try_from(SavedData {
-            version: PRESET_FORMAT_VERSION,
-            ratio: self.ratio,
-            projected_offset: self.projected_offset,
-        })
-        .ok()
-    }
-    fn import_saved(&mut self, value: &toml::Value) -> bool {
-        let Ok(data) = SavedData::deserialize(value.clone()) else {
-            return false;
-        };
-        if data.version != PRESET_FORMAT_VERSION
-            || !valid_ratio(data.ratio)
-            || data
-                .projected_offset
-                .is_some_and(|offset| !offset.is_finite())
-        {
-            return false;
-        }
-        self.ratio = data.ratio;
-        self.projected_offset = data.projected_offset;
-        true
-    }
-}
-
 fn payload_of(ctxt: &DrawContext<'_>) -> PositionPayload {
     ctxt.payload
         .as_any()
         .downcast_ref::<PositionPayload>()
         .cloned()
         .unwrap_or_default()
+}
+
+/// The plan `payload` and `anchors` make on `side`.
+fn plan_of(side: Side, anchors: &[crate::ChartPoint], payload: &PositionPayload) -> Option<Legs> {
+    let [entry, edge, ..] = anchors else {
+        return None;
+    };
+    legs(
+        side,
+        entry.price,
+        edge.price,
+        payload.ratio,
+        payload.pinned(entry.price),
+    )
 }
 
 /// One position as it stands on screen.
@@ -362,22 +236,26 @@ impl Frame {
     }
 }
 
+/// The columns a position spans: its resized span from the entry anchor,
+/// else the anchors', never narrower than [`MIN_WIDTH_BARS`].
+fn columns(a: Px, b: Px, payload: &PositionPayload, px_per_bar: f32) -> (f32, f32) {
+    let px_per_bar = px_per_bar.max(0.0);
+    match payload.span_bars {
+        Some([left, right]) => (a.x + left * px_per_bar, a.x + right * px_per_bar),
+        None => {
+            let left = a.x.min(b.x);
+            (left, a.x.max(b.x).max(left + MIN_WIDTH_BARS * px_per_bar))
+        }
+    }
+}
+
 fn frame(points: &[Px], ctxt: &DrawContext<'_>, side: Side) -> Option<Frame> {
-    let ([a, b, ..], [entry, edge, ..]) = (points, ctxt.anchors) else {
+    let [a, b, ..] = points else {
         return None;
     };
     let payload = payload_of(ctxt);
-    let legs = legs(
-        side,
-        entry.price,
-        edge.price,
-        payload.ratio,
-        payload.pinned(entry.price),
-    );
-    let left = a.x.min(b.x);
-    let right =
-        a.x.max(b.x)
-            .max(left + MIN_WIDTH_BARS * ctxt.px_per_bar.max(0.0));
+    let legs = plan_of(side, ctxt.anchors, &payload);
+    let (left, right) = columns(*a, *b, &payload, ctxt.px_per_bar);
     let y = |price: f64| ctxt.scale.y(price);
     Some(Frame {
         legs,
@@ -389,8 +267,8 @@ fn frame(points: &[Px], ctxt: &DrawContext<'_>, side: Side) -> Option<Frame> {
     })
 }
 
-fn tinted(color: PremultipliedRgba, alpha: u8) -> PremultipliedRgba {
-    crate::rgba_unmultiplied(color.r(), color.g(), color.b(), alpha)
+fn ink([r, g, b]: Rgb, alpha: u8) -> PremultipliedRgba {
+    crate::rgba_unmultiplied(r, g, b, alpha)
 }
 
 fn points_text(delta: f64) -> String {
@@ -398,21 +276,6 @@ fn points_text(delta: f64) -> String {
         "{} pts",
         quantick_engine::display::display_signed_f64(delta)
     )
-}
-
-/// What the plan tag says: the side, the ratio and the entry — `Plan`
-/// first, so a drawing is never read as an open position, and the ratio
-/// inside the tag's click target.
-fn plan_tag(side: Side, legs: Option<&Legs>) -> String {
-    match legs {
-        Some(legs) => format!(
-            "Plan {} · {} · entry {}",
-            side.word(),
-            ratio_label(legs.ratio()),
-            quantick_engine::display::display_f64(legs.entry)
-        ),
-        None => format!("Plan {} · drag a stop or a target", side.word()),
-    }
 }
 
 fn label(
@@ -451,102 +314,95 @@ pub(super) fn paint(
         }
         return;
     };
-    let stop_ink = ctxt.appearance.color(Token::Sell);
-    let target_ink = ctxt.appearance.color(Token::Buy);
+    let payload = payload_of(ctxt);
     let (left, right) = (frame.left, frame.right);
     let zone = |y: f32| PxRect::from_two_pos(pos2(left, frame.entry_y), pos2(right, y));
-    if !ctxt.halo && frame.legs.is_some() {
-        painter.rect_filled(zone(frame.stop_y), 0.0, tinted(stop_ink, style.fill_alpha));
-        painter.rect_filled(
-            zone(frame.target_y),
-            0.0,
-            tinted(target_ink, style.fill_alpha),
+    let Some(legs) = frame.legs else {
+        painter.line_segment(
+            [pos2(left, frame.entry_y), pos2(right, frame.entry_y)],
+            crate::drawing_stroke(style),
         );
-    }
-    if let Some(legs) = frame.legs {
-        for (y, ink, measured) in [
-            (frame.stop_y, stop_ink, legs.measured == Measured::Stop),
-            (
-                frame.target_y,
-                target_ink,
-                legs.measured == Measured::Target,
-            ),
-        ] {
-            let stroke = Stroke::new(style.width_px, ink);
-            let ends = [pos2(left, y), pos2(right, y)];
-            if measured {
-                painter.line_segment(ends, stroke);
-            } else {
-                dashed_segment_within(
-                    painter,
-                    chart_rect,
-                    ends[0],
-                    ends[1],
-                    stroke,
-                    PROJECTED_DASH_PX,
-                    PROJECTED_GAP_PX,
-                );
-            }
+        return;
+    };
+    let zones = [
+        (frame.stop_y, payload.stop_rgb),
+        (frame.target_y, payload.target_rgb),
+    ];
+    if !ctxt.halo {
+        for (y, rgb) in zones {
+            painter.rect_filled(zone(y), 0.0, ink(rgb, payload.zone_alpha()));
         }
     }
-    let entry = [pos2(left, frame.entry_y), pos2(right, frame.entry_y)];
-    painter.line_segment(entry, crate::drawing_stroke(style));
-    if ctxt.halo || !ctxt.primary_band {
+    for (y, rgb) in zones {
+        let edge = Stroke::new(EDGE_PX, ink(rgb, u8::MAX));
+        painter.line_segment([pos2(left, y), pos2(right, y)], edge);
+    }
+    if ctxt.halo || !ctxt.primary_band || !ctxt.selected {
         return;
     }
     let plate = ctxt.appearance.color(Token::DrawingReadoutPlate);
-    if let Some(legs) = frame.legs {
-        // Inside the zone's far edge, held on the chart when that edge is off
-        // it — a target projected past the top still reads — and absent when
-        // the whole zone is: no chip for a level that is not in view.
-        let (top, bottom) = (chart_rect.top(), chart_rect.bottom());
-        let shown = |y: f32| y.max(frame.entry_y) >= top && y.min(frame.entry_y) <= bottom;
-        let inside = |y: f32, other: f32| {
-            let below = y > other;
-            let offset = if below {
-                -LABEL_INSET_PX
-            } else {
-                LABEL_INSET_PX
-            };
-            let y = (y + offset).clamp(top, bottom.max(top));
-            let anchor = if y <= top {
-                Align2::RIGHT_TOP
-            } else if y >= bottom || below {
-                Align2::RIGHT_BOTTOM
-            } else {
-                Align2::RIGHT_TOP
-            };
-            (pos2(right - LABEL_INSET_PX, y), anchor)
-        };
-        let (at, anchor) = inside(frame.target_y, frame.entry_y);
-        if shown(frame.target_y) {
-            let target = format!(
-                "TP {} · {}",
-                quantick_engine::display::display_f64(legs.target),
-                points_text(legs.reward())
-            );
-            label(
-                painter,
-                ctxt,
-                at,
-                anchor,
-                &target,
-                tinted(target_ink, u8::MAX),
-            );
-        }
-        if shown(frame.stop_y) {
-            let (at, anchor) = inside(frame.stop_y, frame.entry_y);
-            let stop = format!(
-                "SL {} · {}",
-                quantick_engine::display::display_f64(legs.stop),
-                points_text(-legs.risk())
-            );
-            label(painter, ctxt, at, anchor, &stop, tinted(stop_ink, u8::MAX));
-        }
-    }
-    let tag = plan_tag(side, frame.legs.as_ref());
+    painter.line_segment(
+        [pos2(left, frame.entry_y), pos2(right, frame.entry_y)],
+        Stroke::new(EDGE_PX, plate),
+    );
+    paint_leg_plates(painter, chart_rect, &frame, &legs, ctxt, &payload);
+    let tag = plan_plate(side, Some(legs.ratio()), legs.entry);
     let at = pos2(left + LABEL_INSET_PX, frame.entry_y);
     label(painter, ctxt, at, Align2::LEFT_CENTER, &tag, plate);
+}
+
+/// The Target plate beyond the target edge and the Stop plate beyond the
+/// stop edge, outside the box, held on the chart when that edge is off it
+/// and absent when the whole zone is: no plate for a level not in view.
+fn paint_leg_plates(
+    painter: &mut MarkScene,
+    chart_rect: PxRect,
+    frame: &Frame,
+    legs: &Legs,
+    ctxt: &DrawContext<'_>,
+    payload: &PositionPayload,
+) {
+    let (top, bottom) = (chart_rect.top(), chart_rect.bottom());
+    let shown = |y: f32| y.max(frame.entry_y) >= top && y.min(frame.entry_y) <= bottom;
+    let center = (frame.left + frame.right) / 2.0;
+    let beyond = |y: f32| {
+        if y < frame.entry_y {
+            (pos2(center, (y - LABEL_INSET_PX).max(top)), Align2::CENTER_BOTTOM)
+        } else {
+            (pos2(center, (y + LABEL_INSET_PX).min(bottom)), Align2::CENTER_TOP)
+        }
+    };
+    let price = quantick_engine::display::display_f64;
+    let plates = [
+        (
+            frame.target_y,
+            format!(
+                "Target {} · {}",
+                price(legs.target),
+                points_text(legs.reward())
+            ),
+            payload.target_rgb,
+        ),
+        (
+            frame.stop_y,
+            format!("Stop {} · {}", price(legs.stop), points_text(-legs.risk())),
+            payload.stop_rgb,
+        ),
+    ];
+    for (y, text, rgb) in plates {
+        if shown(y) {
+            let (at, anchor) = beyond(y);
+            // Pushed back onto the chart, the plate hangs inside it instead.
+            let anchor = if at.y <= top {
+                Align2::CENTER_TOP
+            } else if at.y >= bottom {
+                Align2::CENTER_BOTTOM
+            } else {
+                anchor
+            };
+            label(painter, ctxt, at, anchor, &text, ink(rgb, u8::MAX));
+        }
+    }
 }
 
 pub(super) fn hit_test(
@@ -564,6 +420,15 @@ pub(super) fn hit_test(
     PxRect::from_min_max(pos2(frame.left, top), pos2(frame.right, bottom))
         .expand(radius_px)
         .contains(position)
+}
+
+/// The anchors, then the entry line's two ends, where the width handles sit.
+pub(super) fn handles(points: &[Px], ctxt: &DrawContext<'_>, side: Side) -> Option<Handles> {
+    let frame = frame(points, ctxt, side)?;
+    let mut handles: Handles = points.iter().copied().take(2).collect();
+    handles.push(pos2(frame.left, frame.entry_y));
+    handles.push(pos2(frame.right, frame.entry_y));
+    Some(handles)
 }
 
 /// The line under `position`, as the handle a press there grabs: the
@@ -595,13 +460,11 @@ pub(super) fn pointer_hint(
     line_at(points, position, ctxt, side).map(|handle| PointerHint::ResizeSide { handle })
 }
 
-/// A press on one of the three lines announces the line it grabs.
+/// A press on a line or a width handle announces what it grabs.
 pub(super) fn line_hint(handle: usize) -> Option<PointerHint> {
-    matches!(
-        handle,
-        PROJECTED_HANDLE | ENTRY_LINE_HANDLE | MEASURED_LINE_HANDLE
-    )
-    .then_some(PointerHint::ResizeSide { handle })
+    (LEFT_EDGE_HANDLE..=MEASURED_LINE_HANDLE)
+        .contains(&handle)
+        .then_some(PointerHint::ResizeSide { handle })
 }
 
 /// A line grab moves that line's price and nothing else: the entry and the
@@ -619,18 +482,29 @@ fn drag_line(points: &[Px], handle: usize, to: Px) -> Option<Handles> {
 }
 
 /// Dragging the projected leg pins it at the price under the pointer, on
-/// its own side of the entry; the ratio the tag shows becomes the one the
-/// three prices make.
-pub(super) fn drag_projected(
+/// its own side of the entry, and the ratio becomes the one the three
+/// prices make. Dragging a width handle moves that edge and no price, never
+/// closer than [`MIN_WIDTH_BARS`] to the other.
+pub(super) fn drag_payload(
     points: &[Px],
     handle: usize,
     to: Px,
     ctxt: &DrawContext<'_>,
     side: Side,
 ) -> Option<Box<dyn DrawingPayload>> {
-    if handle != PROJECTED_HANDLE {
-        return None;
+    match handle {
+        PROJECTED_HANDLE => drag_projected(points, to, ctxt, side),
+        LEFT_EDGE_HANDLE | RIGHT_EDGE_HANDLE => drag_edge(points, handle, to, ctxt),
+        _ => None,
     }
+}
+
+fn drag_projected(
+    points: &[Px],
+    to: Px,
+    ctxt: &DrawContext<'_>,
+    side: Side,
+) -> Option<Box<dyn DrawingPayload>> {
     frame(points, ctxt, side)?;
     let [entry, edge, ..] = ctxt.anchors else {
         return None;
@@ -641,16 +515,49 @@ pub(super) fn drag_projected(
     let price = ctxt.scale.price_at(to.y);
     // `legs` keeps a pin only on its own side of the entry; past it, the
     // leg stays where it was.
-    let dragged = plan(Some(price))?.projected();
-    let projected = if dragged == price { price } else { held };
+    let dragged = plan(Some(price))?;
+    let projected = if dragged.projected() == price {
+        price
+    } else {
+        held
+    };
     payload.projected_offset = Some(projected - entry.price);
+    if let Some(plan) = plan(Some(projected)) {
+        payload.follow(&plan);
+    }
+    Some(Box::new(payload))
+}
+
+fn drag_edge(
+    points: &[Px],
+    handle: usize,
+    to: Px,
+    ctxt: &DrawContext<'_>,
+) -> Option<Box<dyn DrawingPayload>> {
+    let [a, b, ..] = points else {
+        return None;
+    };
+    let px_per_bar = ctxt.px_per_bar;
+    if px_per_bar <= 0.0 {
+        return None;
+    }
+    let mut payload = payload_of(ctxt);
+    let (left, right) = columns(*a, *b, &payload, px_per_bar);
+    let bars = |x: f32| (x - a.x) / px_per_bar;
+    let (left, right) = (bars(left), bars(right));
+    let at = bars(to.x);
+    payload.span_bars = Some(if handle == LEFT_EDGE_HANDLE {
+        [at.min(right - MIN_WIDTH_BARS), right]
+    } else {
+        [left, at.max(left + MIN_WIDTH_BARS)]
+    });
     Some(Box::new(payload))
 }
 
 /// The projected leg across an anchor move. A rigid move (both anchors by
 /// the same price) carries it along by construction, its offset being from
 /// the entry. A reshape pins it where it stood, so the line the trader
-/// grabbed is the only one that moves.
+/// grabbed is the only one that moves, and the ratio follows.
 fn reanchored(
     payload: &dyn DrawingPayload,
     before: &[crate::ChartPoint],
@@ -671,16 +578,21 @@ fn reanchored(
     if (entry_shift - edge_shift).abs() <= RIGID_TOLERANCE * scale {
         return None;
     }
-    let held = legs(
-        side,
-        entry.price,
-        edge.price,
-        payload.ratio,
-        payload.pinned(entry.price),
-    )?
-    .projected();
+    let held = plan_of(side, before, &payload)?.projected();
     payload.projected_offset = Some(held - moved_entry.price);
+    if let Some(plan) = plan_of(side, after, &payload) {
+        payload.follow(&plan);
+    }
     Some(Box::new(payload))
+}
+
+/// The side a position tool's objects take; `None` for any other tool.
+#[must_use]
+pub fn position_side(tool: crate::DrawingTool) -> Option<Side> {
+    POSITION_TOOLS
+        .iter()
+        .find(|position| position.id == tool.id())
+        .map(|position| position.side)
 }
 
 /// The plan an object of a position tool states, for a readback.
@@ -690,40 +602,8 @@ pub fn position_plan(
     anchors: &[crate::ChartPoint],
     payload: &dyn DrawingPayload,
 ) -> Option<Legs> {
-    let side = POSITION_TOOLS
-        .iter()
-        .find(|position| position.id == tool.id())?
-        .side;
     let payload = payload.as_any().downcast_ref::<PositionPayload>()?;
-    let [entry, edge, ..] = anchors else {
-        return None;
-    };
-    legs(
-        side,
-        entry.price,
-        edge.price,
-        payload.ratio,
-        payload.pinned(entry.price),
-    )
-}
-
-/// One click on the plan tag steps the ratio to the next preset.
-pub(super) fn click(points: &[Px], position: Px, payload: &mut dyn DrawingPayload) -> bool {
-    let ([a, b, ..], Some(payload)) = (
-        points,
-        payload.as_any_mut().downcast_mut::<PositionPayload>(),
-    ) else {
-        return false;
-    };
-    let left = a.x.min(b.x);
-    let on_tag = position.x >= left
-        && position.x <= left + TAG_HIT_WIDTH_PX
-        && (position.y - a.y).abs() <= TAG_HIT_HALF_HEIGHT_PX;
-    if !on_tag {
-        return false;
-    }
-    payload.cycle_ratio();
-    true
+    plan_of(position_side(tool)?, anchors, payload)
 }
 
 /// One side's position tool. Both sides are this one implementation; the
@@ -746,7 +626,7 @@ pub(super) const LONG: PositionTool = PositionTool {
     settings_title: "Long position settings",
     icon: crate::icons::ARROW_FAT_UP,
     icon_strokes: LONG_ICON,
-    hover_text: "Long position - click the entry, then the stop or the target; the other leg follows the ratio",
+    hover_text: "Long position - click the entry, then the stop or the target; the other leg follows the risk/reward",
     placement_hint: "Click the stop (below) or the target (above)",
 };
 
@@ -757,7 +637,7 @@ pub(super) const SHORT: PositionTool = PositionTool {
     settings_title: "Short position settings",
     icon: crate::icons::ARROW_FAT_DOWN,
     icon_strokes: SHORT_ICON,
-    hover_text: "Short position - click the entry, then the stop or the target; the other leg follows the ratio",
+    hover_text: "Short position - click the entry, then the stop or the target; the other leg follows the risk/reward",
     placement_hint: "Click the stop (above) or the target (below)",
 };
 
@@ -791,9 +671,6 @@ impl MarkTool for PositionTool {
     fn family(&self) -> Option<ToolFamily> {
         Some(POSITION_FAMILY)
     }
-    fn supports_fill(&self) -> bool {
-        true
-    }
     fn price_band_only(&self) -> bool {
         true
     }
@@ -802,8 +679,8 @@ impl MarkTool for PositionTool {
     }
     /// The projected zone reaches past the anchors by the pinned offset,
     /// or `ratio` (or `1 / ratio`) times the measured height, on a side the
-    /// anchors alone do not say: both sides are reserved, and the width the
-    /// plan is painted at, so no popup lands on it.
+    /// anchors alone do not say: both sides are reserved, and the columns
+    /// the plan is painted across, so no popup lands on it.
     fn content_bounds(
         &self,
         payload: &dyn DrawingPayload,
@@ -820,12 +697,23 @@ impl MarkTool for PositionTool {
             Some(offset) => (offset.abs() * spacing.px_per_value) as f32,
             None => anchors.height() * payload.ratio.max(1.0 / payload.ratio) as f32,
         };
-        let right = anchors
-            .max
-            .x
-            .max(anchors.min.x + MIN_WIDTH_BARS * spacing.px_per_bar.max(0.0));
+        let px_per_bar = spacing.px_per_bar.max(0.0);
+        // The entry is one of the box's two columns; reserve from either.
+        let (left, right) = match payload.span_bars {
+            Some([left, right]) => (
+                anchors.min.x + left.min(0.0) * px_per_bar,
+                anchors.max.x + right.max(0.0) * px_per_bar,
+            ),
+            None => (
+                anchors.min.x,
+                anchors
+                    .max
+                    .x
+                    .max(anchors.min.x + MIN_WIDTH_BARS * px_per_bar),
+            ),
+        };
         PxRect::from_min_max(
-            pos2(anchors.min.x, anchors.min.y - reach),
+            pos2(left, anchors.min.y - reach),
             pos2(right, anchors.max.y + reach),
         )
     }
@@ -853,6 +741,14 @@ impl MarkTool for PositionTool {
     ) -> bool {
         hit_test(points, position, radius_px, ctxt, self.side)
     }
+    fn handles(
+        &self,
+        _chart_rect: PxRect,
+        points: &[Px],
+        ctxt: &DrawContext<'_>,
+    ) -> Option<Handles> {
+        handles(points, ctxt, self.side)
+    }
     fn drag_handle(
         &self,
         _chart_rect: PxRect,
@@ -872,7 +768,7 @@ impl MarkTool for PositionTool {
         to: Px,
         ctxt: &DrawContext<'_>,
     ) -> Option<Box<dyn DrawingPayload>> {
-        drag_projected(points, handle, to, ctxt, self.side)
+        drag_payload(points, handle, to, ctxt, self.side)
     }
     fn reanchored_payload(
         &self,
@@ -893,15 +789,6 @@ impl MarkTool for PositionTool {
         ctxt: &DrawContext<'_>,
     ) -> Option<PointerHint> {
         pointer_hint(points, position, ctxt, self.side)
-    }
-    fn click(
-        &self,
-        _chart_rect: PxRect,
-        points: &[Px],
-        position: Px,
-        payload: &mut dyn DrawingPayload,
-    ) -> bool {
-        click(points, position, payload)
     }
 
     #[cfg(test)]

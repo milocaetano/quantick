@@ -1855,6 +1855,15 @@ fn a_tool_that_declares_no_handles_is_still_grabbed_by_its_anchors() {
             );
             continue;
         }
+        if drawing_tool.id().ends_with("-position") {
+            assert_eq!(
+                &handles[..2],
+                &points[..2],
+                "a position is still grabbed by its entry and its edge"
+            );
+            assert_eq!(handles.len(), 4, "and resized by its entry line's ends");
+            continue;
+        }
         if drawing_tool.id() == "brush" {
             // The one tool that answers "none", on purpose: a ring on
             // every captured point is a cloud nobody can aim at, over a
