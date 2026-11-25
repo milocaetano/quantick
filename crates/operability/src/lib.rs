@@ -144,7 +144,7 @@ pub enum Source {
 }
 
 impl Source {
-    /// Every source, so the matrix can report per-source counts without a
+    /// Every source, so the matrix can list the sources it walks without a
     /// second list going stale beside this one.
     pub const ALL: [Self; 14] = [
         Self::ToolbarAction,
@@ -228,13 +228,6 @@ pub enum ExclusionClass {
 }
 
 impl ExclusionClass {
-    /// Every class, for the matrix's summary.
-    pub const ALL: [Self; 3] = [
-        Self::Authority,
-        Self::UiOnlyByDecision,
-        Self::PendingCapability,
-    ];
-
     /// The name the matrix prints and a reviewer greps for.
     pub fn as_str(self) -> &'static str {
         match self {

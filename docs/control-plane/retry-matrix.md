@@ -109,16 +109,6 @@ Real post-start deadline and post-execution socket-loss proofs live in
 `crates/app/src/app/tests/mutation_uncertainty_tests.rs`; adapter-to-wire
 key and lost-reply proofs live in `crates/mcp/tests/fake_gateway.rs`.
 
-## Coverage
-
-| Enforced | Capabilities |
-| --- | --- |
-| deduplicated per connection | 99 |
-| key refused; not retryable, read back | 29 |
-| key required; deduplicated per connection | 23 |
-| refused before dispatch: no grant reaches it | 11 |
-| **Total** | **162** |
-
 ## Capabilities
 
 | Capability | Versions | Policy | Enforced | Reach | Readback | Field | Applied when | Proven by |
@@ -285,5 +275,3 @@ key and lost-reply proofs live in `crates/mcp/tests/fake_gateway.rs`.
 | `workspace.revert.undo` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `workspace.revert_undone` | `payload.workspace` | an event after the pre-call cursor names the tab's workspace | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `workspace.save_as` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `workspace.saved` | `payload.workspace` | an event after the pre-call cursor names the new workspace | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `workspace.save_to` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `workspace.saved` | `payload.workspace` | an event after the pre-call cursor names the tab's workspace | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
-
-162 mutable capabilities registered, 162 with a readback.

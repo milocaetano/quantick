@@ -38,18 +38,6 @@ The three exclusion classes are closed:
   only class that is a debt, and every row in it is tracked in
   https://github.com/milocaetano/quantick/issues/401.
 
-## Coverage
-
-| Outcome | Behaviours |
-| --- | --- |
-| Reachable by capability | 156 |
-| Excluded: `authority` | 4 |
-| Excluded: `ui_only_by_decision` | 7 |
-| Excluded: `pending_capability` | 35 |
-| **Total** | **202** |
-
-104 of the 202 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 98 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
-
 ## Behaviours
 
 | Behaviour | What it does | Reach | Capability | Exclusion |
@@ -259,26 +247,24 @@ The three exclusion classes are closed:
 
 ## Appendix: sources the guard walks
 
-Which registry each row is held up by, and how many rows it holds. A
-source with rows is a place where adding an entry and forgetting the
-matrix fails the build.
+Each registry the guard walks: adding an entry to one and forgetting
+the matrix fails the build. `authored` is not a registry but the
+declared marker of a row no registry stands behind.
 
-| Source | Claims |
-| --- | --- |
-| `toolbar_action` | 24 |
-| `strip_action` | 6 |
-| `tab_action` | 4 |
-| `dock_tab` | 4 |
-| `layer_toggle` | 6 |
-| `drawing_tool` | 24 |
-| `rail_tool` | 2 |
-| `toolbox_dock` | 3 |
-| `layout_preset` | 16 |
-| `notice_action` | 3 |
-| `hotkey` | 25 |
-| `menu_entry` | 49 |
-| `scripted_menu` | 0 |
-| `authored` | 100 |
+- `toolbar_action`
+- `strip_action`
+- `tab_action`
+- `dock_tab`
+- `layer_toggle`
+- `drawing_tool`
+- `rail_tool`
+- `toolbox_dock`
+- `layout_preset`
+- `notice_action`
+- `hotkey`
+- `menu_entry`
+- `scripted_menu`
+- `authored`
 
 ## Appendix: rows no registry stands behind
 
@@ -410,5 +396,3 @@ disagree with.
 | `scripted_menu` | `theme` | a capture hook opening the native Theme menu; appearance.apply owns its choices |
 | `scripted_menu` | `theme-dark` | a scripted native Dark click; appearance.apply owns the same publication |
 | `scripted_menu` | `theme-light` | a scripted native Light click; appearance.apply owns the same publication |
-
-11 entries.

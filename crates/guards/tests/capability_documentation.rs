@@ -9,7 +9,7 @@ use std::{fs, path::Path};
 use quantick_guards::{generated, workspace_root};
 use scratch_dir::ScratchDir;
 
-// Expected IDs, rows, counts and diagnostics are authored independently of the
+// Expected IDs, rows and diagnostics are authored independently of the
 // production scanner and renderer. Each declaration uses the documented
 // one-line *_CAPABILITY_ID grammar; inline registrations are outside this test.
 const ONE_CAPABILITY: &str = "\
@@ -17,8 +17,6 @@ const ONE_CAPABILITY: &str = "\
 | Capability | Version | Module | Read-only | Permissions |
 | --- | --- | --- | --- | --- |
 | `chart.summary.read` | 1 | `chart` | yes | `observe.chart` |
-
-1 capabilities registered.
 ";
 
 const TWO_CAPABILITIES: &str = "\
@@ -27,8 +25,6 @@ const TWO_CAPABILITIES: &str = "\
 | --- | --- | --- | --- | --- |
 | `chart.summary.read` | 1 | `chart` | yes | `observe.chart` |
 | `orderflow.l2.read` | 1 | `orderflow` | yes | `observe.orderflow` |
-
-2 capabilities registered.
 ";
 
 // A behaviour matrix naming the one capability the inventory above carries,
@@ -63,13 +59,11 @@ fn with_a_mutable_capability(root: &Path) {
     .unwrap();
     fs::write(
         root.join(generated::INVENTORY_PATH),
-        ONE_CAPABILITY
-            .replace(
-                "| `chart.summary.read` | 1 | `chart` | yes | `observe.chart` |\n",
-                "| `chart.summary.read` | 1 | `chart` | yes | `observe.chart` |\n\
-                 | `notify.toast` | 1 | `notify` | no | `annotate` |\n",
-            )
-            .replace("1 capabilities registered.", "2 capabilities registered."),
+        ONE_CAPABILITY.replace(
+            "| `chart.summary.read` | 1 | `chart` | yes | `observe.chart` |\n",
+            "| `chart.summary.read` | 1 | `chart` | yes | `observe.chart` |\n\
+             | `notify.toast` | 1 | `notify` | no | `annotate` |\n",
+        ),
     )
     .unwrap();
 }
@@ -136,7 +130,7 @@ fn the_next_owner_requires_documentation_and_removal_leaves_an_orphan() {
     fs::write(root.join(generated::INVENTORY_PATH), TWO_CAPABILITIES).unwrap();
     assert!(
         generated::check(&root).is_empty(),
-        "the literal second row and footer repair the documentation"
+        "the literal second row repairs the documentation"
     );
 
     fs::write(&owner, "").unwrap();
@@ -158,17 +152,30 @@ fn missing_generated_marker_is_reported() {
 }
 
 #[test]
-fn stale_footer_is_reported() {
+fn duplicated_row_is_reported() {
     let root = fixture();
+    let row = "| `chart.summary.read` | 1 | `chart` | yes | `observe.chart` |\n";
     fs::write(
         root.join(generated::INVENTORY_PATH),
-        ONE_CAPABILITY.replace("1 capabilities registered.", "2 capabilities registered."),
+        ONE_CAPABILITY.replace(row, &row.repeat(2)),
     )
     .unwrap();
     assert_only_finding(
         &root,
-        "docs/control-plane/capability-inventory.md: the footer claims 2 capabilities but the table has 1 rows",
+        "docs/control-plane/capability-inventory.md:5: `chart.summary.read` version 1 has a second row",
     );
+}
+
+#[test]
+fn a_second_version_is_its_own_row() {
+    let root = fixture();
+    let row = "| `chart.summary.read` | 1 | `chart` | yes | `observe.chart` |\n";
+    fs::write(
+        root.join(generated::INVENTORY_PATH),
+        ONE_CAPABILITY.replace(row, &format!("{row}{}", row.replace("| 1 |", "| 2 |"))),
+    )
+    .unwrap();
+    assert!(generated::check(&root).is_empty());
 }
 
 #[test]
