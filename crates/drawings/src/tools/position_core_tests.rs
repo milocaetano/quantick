@@ -627,3 +627,29 @@ fn a_selected_position_shows_square_handles_and_a_halo_in_selection_ink() {
         .count();
     assert_eq!(halo_edges, 2);
 }
+
+/// The plan plate sits outside the box, so no width handle at the entry
+/// line's ends covers its words: left of the box, or right of it when the
+/// pane has no room on the left.
+#[test]
+fn the_plan_plate_never_sits_under_a_width_handle() {
+    let payload = two_to_one();
+    let scene = painted(&payload, true);
+    let plan_at = |scene: &MarkScene| {
+        scene
+            .shapes
+            .iter()
+            .find_map(|shape| match shape {
+                crate::MarkShape::Text { text, at, .. } if text.starts_with("Long") => Some(*at),
+                _ => None,
+            })
+            .unwrap()
+    };
+    // The box spans x 100 to 300; its handles sit on those two columns.
+    let x = plan_at(&scene).x;
+    let handle = crate::SELECTED_ANCHOR_RADIUS_PX;
+    assert!(
+        x < 100.0 - handle || x > 300.0 + handle,
+        "the plate's words start outside the box and its handles: {x}"
+    );
+}

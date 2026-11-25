@@ -16,7 +16,7 @@ fn position(tool_id: &str) -> Drawing {
         &mut drawings,
         DrawingIntent::Place(Placement {
             tool,
-            points: vec![ChartPoint::at(1.0, 100.0), ChartPoint::at(9.0, 95.0)],
+            points: vec![ChartPoint::at_time(1.0, 100.0, None), ChartPoint::at_time(9.0, 95.0, None)],
             band: DrawingBand::Price,
             opening: NewDrawing::explicit(DrawingStyle::default(), Box::new(payload)),
             author: None,

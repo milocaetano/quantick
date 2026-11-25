@@ -352,8 +352,20 @@ pub(super) fn paint(
     );
     paint_leg_plates(painter, chart_rect, &frame, &legs, ctxt, &payload);
     let tag = plan_plate(side, Some(legs.ratio()), legs.entry);
-    let at = pos2(left + LABEL_INSET_PX, frame.entry_y);
-    label(painter, ctxt, at, Align2::LEFT_CENTER, &tag, plate);
+    // Outside the box, clear of the width handles at the entry line's ends:
+    // to its left, else to its right, else inside past the left handle when
+    // the pane has room on neither side — readable before unobstructed.
+    let font = FontSpec::themed(ctxt.appearance, FontRole::Monospace, LABEL_TEXT_PX);
+    let width = ctxt.text.size(&tag, font).x + 2.0 * LABEL_PAD_X_PX;
+    let gap = LABEL_INSET_PX + crate::SELECTED_ANCHOR_RADIUS_PX;
+    let (at, anchor) = if left - gap - width >= chart_rect.left() {
+        (pos2(left - gap, frame.entry_y), Align2::RIGHT_CENTER)
+    } else if right + gap + width <= chart_rect.right() {
+        (pos2(right + gap, frame.entry_y), Align2::LEFT_CENTER)
+    } else {
+        (pos2(left + gap, frame.entry_y), Align2::LEFT_CENTER)
+    };
+    label(painter, ctxt, at, anchor, &tag, plate);
 }
 
 /// The Target plate beyond the target edge and the Stop plate beyond the
