@@ -289,9 +289,13 @@ class WorkflowTests(Fixture):
         self.assertIn("cargo test -p quantick-control-local -- --nocapture", windows)
         self.assertNotIn("continue-on-error", windows)
 
-    def test_schedule_and_pr_share_failing_checker_and_always_upload(self):
+    def test_schedule_and_dispatch_share_failing_checker_and_always_upload(self):
         source = (inputs.ROOT / ".github/workflows/edit-loop.yml").read_text(encoding="utf-8")
-        for required in ("schedule:", "pull_request:", "workflow_dispatch:", "if: always()",
+        triggers = source.split("\non:\n", 1)[1].split("\npermissions:", 1)[0]
+        # A pull request never starts it: on PRs it was a second workspace
+        # build the PR flow waited on. workflow_dispatch measures a branch.
+        self.assertNotRegex(triggers, r"(?m)^  pull_request:")
+        for required in ("schedule:", "workflow_dispatch:", "if: always()",
                          "if-no-files-found: error", "--budgets tools/edit_loop/budgets.json",
                          "cancel-in-progress: false", "persist-credentials: false"):
             self.assertIn(required, source)

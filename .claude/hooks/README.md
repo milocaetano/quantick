@@ -127,10 +127,11 @@ denial is reported to the coordinator, never routed around.
 
 ## Full CI at the exact head
 
-One full CI run is ten jobs in `.github/workflows/ci.yml`: `gate` first, then
-`ci`, `linux-tests`, `harness-app`, `harness-combined` and `harness-scenario` on
+One full CI run is ten jobs in `.github/workflows/ci.yml`: `gate`, `ci`,
+`linux-tests`, `harness-app`, `harness-combined` and `harness-scenario` on
 Linux, `windows`, `windows-tests`, `windows-heavy-tests` and
-`windows-app-tests` on Windows, in parallel once `gate` is green. An agent
+`windows-app-tests` on Windows, all in parallel once the ~20 s `classify` job
+has decided the head's mode. An agent
 iterating on a draft still needs a signal sooner than the full verdict, and
 readiness needs the full verdict anyway, so the two are separated rather than
 one being traded for the other.
@@ -139,9 +140,11 @@ one being traded for the other.
 ratchets, the generated-file drift tests of the control schemas and the UI
 behaviour matrix, this hook suite, the workflow policy and every cargo-free
 Python suite. It builds nothing but the guards and two small owner crates, so a
-broken rule is red in minutes, and every job that builds Rust has
-`needs: gate`, so none of them starts on a head that already failed. Its last
-step decides the head's mode, which every Rust job reads:
+broken rule is red in minutes. It runs beside the Rust jobs rather than in
+front of them: in front, its ~2.3 minutes sat on every run's critical path. A
+red `gate` still blocks readiness, since `FULL_CI_CHECKS` requires it.
+`classify`, a checkout and no cargo, decides the head's mode, which every Rust
+job reads through `needs: classify`:
 
 - `build`, the default, and always on a push to `main`;
 - `prose`, when `tools/ci/prose_only.py` finds only Markdown or `docs/` paths
@@ -155,7 +158,8 @@ since a test newer on the base reads its doc once merged. Only a PR into the
 default branch can be `prose`: GitHub retargets a stacked PR by itself when its
 base merges and fires no event, and a diff that was prose against a feature
 branch can hold code against `main`. An unrelated label skips `gate` and
-therefore everything, so no newer `gate` verdict lands over the real one.
+`classify` and therefore everything, so no newer `gate` verdict lands over the
+real one.
 `edited` is not a trigger: every title or body edit would post skipped checks.
 
 Anything but `build` skips every Rust job and runs `rust-skip`, whose log says

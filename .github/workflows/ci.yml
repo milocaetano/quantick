@@ -13,7 +13,7 @@ on:
 
 # Only events that run validation supersede a PR run. Unrelated labels must
 # not cancel, or even repeat, the checks already running at that head; `gate`
-# skips on them and everything needs it.
+# and `classify` skip on them, and everything else needs `classify`.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && (github.event.action != 'labeled' || github.event.label.name == 'full-ci') && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' && (github.event.action != 'labeled' || github.event.label.name == 'full-ci') }}
@@ -41,10 +41,10 @@ env:
   # units too, so the override reaches every unit every job compiles.
   CARGO_PROFILE_DEV_DEBUG: line-tables-only
 
-# Which jobs run where. Every event runs `gate` first: fmt, the guard tests,
-# the generated-file drift tests, the aggregate ratchets and the cargo-free
-# suites, so a broken rule turns red in minutes and no job that builds Rust
-# starts before it is green. `gate` also decides the head's mode: `build`,
+# Which jobs run where. Every event runs `gate`: fmt, the guard tests, the
+# generated-file drift tests, the aggregate ratchets and the cargo-free
+# suites, so a broken rule turns red in minutes. It runs beside the Rust jobs.
+# `classify`, about 20 s, decides the head's mode first: `build`,
 # `prose` (a diff no Rust job can judge; tools/ci/prose_only.py) or `reused`
 # (the flip to ready of a `full-ci` draft whose full run is already green at
 # this head). Anything but `build` skips every Rust job and runs `rust-skip`.
@@ -80,23 +80,21 @@ env:
 # None of that changes a command or its arguments.
 #
 # One cache per platform, written by the job that builds the whole workspace on
-# it — `ci` on Linux, `windows` on Windows — and restored by the rest. The
+# it — `ci` on Linux, `windows` on Windows — on a green push to main only, and
+# restored by every other job and every pull request. The
 # cache action prunes the workspace's own artifacts before saving, so a job
 # recompiles this repository's crates either way; what it restores is the
 # dependency graph, which is why a second test job costs a relink and not a
 # cold build.
 jobs:
-  # The one fast gate. Nothing here builds more than the guards and two small
-  # owner crates, so a guard, ratchet or drift failure is red within minutes
-  # and no Rust job has started. Ordered cheapest-to-fail first: a red step
-  # ends the job, so what fails most often runs before what costs most.
+  # Decides the head's mode and nothing else: a checkout and a Python or
+  # shell call, no cargo, about 20 s. Every job that builds Rust waits on this
+  # rather than on `gate`, which runs beside them: with `gate` in front, its
+  # ~2.3 minutes sat before every Rust job on every run.
   #
-  # It has no `needs:`, and its `if:` drops only an unrelated label, which
-  # validates nothing and must not post a newer `gate` verdict over the real
-  # one at the same head. The jobs
-  # that build Rust wait on it with `needs: gate`. Its `mode` output is the only
-  # input those jobs read from it; see the header above.
-  gate:
+  # Its `if:` is `gate`'s, for the same reason: an unrelated label validates
+  # nothing and must not post a newer verdict over the real one.
+  classify:
     if: >-
       github.event_name != 'pull_request' ||
       github.event.action != 'labeled' || github.event.label.name == 'full-ci'
@@ -110,8 +108,65 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # The ratchets and the prose classifier diff the PR base against its
-          # head, and both must be in the clone.
+          # The prose classifier diffs the PR base against its head, and both
+          # must be in the clone.
+          fetch-depth: 0
+      - name: Decide what this head needs
+        id: mode
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          ACTION: ${{ github.event.action }}
+          FULL_CI_LABELLED: ${{ contains(github.event.pull_request.labels.*.name, 'full-ci') }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        # A push always builds. The flip to ready of a `full-ci` draft reuses
+        # the full run its label started, when every full job finished green
+        # at this exact head: a second one would test the same commit again.
+        # The reuse read takes completed runs only and no `rust-skip` excuse,
+        # so only real green runs are reused. Otherwise a pull request builds
+        # unless its diff is prose, judged against the crates of both the head
+        # and the merge revision this checkout holds. Only a PR into the
+        # default branch may be prose: GitHub retargets a stacked PR when its
+        # base merges, firing no event, and a diff judged prose against a
+        # feature branch can hold code against the new base.
+        run: |
+          mode=build
+          if [ "$EVENT" = pull_request ]; then
+            if [ "$ACTION" = ready_for_review ] && [ "$FULL_CI_LABELLED" = true ] &&
+              QUANTICK_FULL_CI_FOR_REUSE=1 sh .claude/hooks/full_ci.sh verify . "$HEAD_SHA"; then
+              mode=reused
+            elif [ "$BASE_REF" = "$DEFAULT_BRANCH" ]; then
+              mode=$(python3 tools/ci/prose_only.py --base "$BASE_SHA" --head "$HEAD_SHA" --search HEAD)
+            fi
+          fi
+          echo "mode=$mode" | tee -a "$GITHUB_OUTPUT"
+
+  # The fast checks. Nothing here builds more than the guards and two small
+  # owner crates, so a guard, ratchet or drift failure is red within minutes.
+  # It runs beside the Rust jobs, not before them, and `full_ci.sh` requires
+  # it green at the head like any of them, so a red `gate` still blocks the
+  # merge. Ordered cheapest-to-fail first: a red step ends the job, so what
+  # fails most often runs before what costs most.
+  #
+  # It has no `needs:`, and its `if:` drops only an unrelated label, which
+  # validates nothing and must not post a newer `gate` verdict over the real
+  # one at the same head.
+  gate:
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.action != 'labeled' || github.event.label.name == 'full-ci'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The ratchets diff the PR base against its head, and both must be
+          # in the clone.
           fetch-depth: 0
       - uses: ./.github/actions/rust-setup
         with:
@@ -222,39 +277,6 @@ jobs:
             python3 "$suite" || failed=1
           done
           exit "$failed"
-      - name: Decide what this head needs
-        id: mode
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          EVENT: ${{ github.event_name }}
-          ACTION: ${{ github.event.action }}
-          FULL_CI_LABELLED: ${{ contains(github.event.pull_request.labels.*.name, 'full-ci') }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          BASE_REF: ${{ github.event.pull_request.base.ref }}
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        # A push always builds. The flip to ready of a `full-ci` draft reuses
-        # the full run its label started, when every full job finished green
-        # at this exact head: a second one would test the same commit again.
-        # The reuse read takes completed runs only and no `rust-skip` excuse,
-        # so only real green runs are reused. Otherwise a pull request builds
-        # unless its diff is prose, judged against the crates of both the head
-        # and the merge revision this checkout holds. Only a PR into the
-        # default branch may be prose: GitHub retargets a stacked PR when its
-        # base merges, firing no event, and a diff judged prose against a
-        # feature branch can hold code against the new base.
-        run: |
-          mode=build
-          if [ "$EVENT" = pull_request ]; then
-            if [ "$ACTION" = ready_for_review ] && [ "$FULL_CI_LABELLED" = true ] &&
-              QUANTICK_FULL_CI_FOR_REUSE=1 sh .claude/hooks/full_ci.sh verify . "$HEAD_SHA"; then
-              mode=reused
-            elif [ "$BASE_REF" = "$DEFAULT_BRANCH" ]; then
-              mode=$(python3 tools/ci/prose_only.py --base "$BASE_SHA" --head "$HEAD_SHA" --search HEAD)
-            fi
-          fi
-          echo "mode=$mode" | tee -a "$GITHUB_OUTPUT"
       - name: Keep ratchet checkouts out of the cache
         # ratchet_delta.py checks the base out under target/, and this job
         # saves target/ to its own cache. A restored copy is a stale worktree
@@ -264,18 +286,18 @@ jobs:
         shell: bash
         run: rm -rf target/ratchet-delta && git worktree prune
 
-  # The visible half of a skipped build: `gate` decided this head needs no
+  # The visible half of a skipped build: `classify` decided this head needs no
   # Rust job, and this run says which reason on the pull request's check list,
   # where skipped jobs alone would read as untested. `full_ci.sh` accepts the
   # skipped jobs only beside a green run of this one.
   rust-skip:
-    needs: gate
-    if: needs.gate.outputs.mode != 'build'
+    needs: classify
+    if: needs.classify.outputs.mode != 'build'
     runs-on: ubuntu-latest
     steps:
       - name: Why no Rust job ran
         env:
-          MODE: ${{ needs.gate.outputs.mode }}
+          MODE: ${{ needs.classify.outputs.mode }}
         run: |
           case "$MODE" in
             prose) echo "Prose-only diff: gate ran every check that reads it; no Rust job can judge it." ;;
@@ -284,9 +306,9 @@ jobs:
           esac
 
   fast:
-    needs: gate
+    needs: classify
     if: >-
-      needs.gate.outputs.mode == 'build' &&
+      needs.classify.outputs.mode == 'build' &&
       github.event_name == 'pull_request' &&
       github.event.pull_request.draft &&
       (github.event.action != 'labeled' || github.event.label.name == 'full-ci')
@@ -427,9 +449,9 @@ jobs:
           path: docs/quality/read-cost/ledger.md
 
   ci:
-    needs: gate
+    needs: classify
     if: &full-ci >-
-      needs.gate.outputs.mode == 'build' &&
+      needs.classify.outputs.mode == 'build' &&
       (github.event_name != 'pull_request' ||
        (github.event.action == 'labeled' && github.event.label.name == 'full-ci') ||
        (github.event.action != 'labeled' &&
@@ -510,7 +532,7 @@ jobs:
   # `--workspace`, so a crate added on Monday is tested on Monday with no guard
   # needed; the Windows side has three selectors and therefore has one.
   linux-tests:
-    needs: gate
+    needs: classify
     if: *full-ci
     runs-on: ubuntu-latest
     steps:
@@ -538,7 +560,7 @@ jobs:
   # job sat at 251s. Each job now owns two long relinks and some change, which
   # is why a set sometimes sits beside a family it is not named after.
   harness-app:
-    needs: gate
+    needs: classify
     if: *full-ci
     runs-on: ubuntu-latest
     steps:
@@ -554,7 +576,7 @@ jobs:
         run: cargo check -p quantick-app --all-targets --features control-harness,drawing-harness
 
   harness-combined:
-    needs: gate
+    needs: classify
     if: *full-ci
     runs-on: ubuntu-latest
     steps:
@@ -572,7 +594,7 @@ jobs:
         run: cargo build -p quantick-app --features harness
 
   harness-scenario:
-    needs: gate
+    needs: classify
     if: *full-ci
     runs-on: ubuntu-latest
     steps:
@@ -598,7 +620,7 @@ jobs:
   # named control-local diagnostic for real Windows owner/ACL/junction cases.
   # These tests need no GPU, window or MetaTrader terminal.
   windows:
-    needs: gate
+    needs: classify
     if: *full-ci
     runs-on: windows-latest
     env:
@@ -654,7 +676,7 @@ jobs:
   # the share that compiles no network at all. Rebalancing is a one-line edit
   # on each side, which the guard re-proves.
   windows-heavy-tests:
-    needs: gate
+    needs: classify
     if: *full-ci
     runs-on: windows-latest
     env:
@@ -677,7 +699,7 @@ jobs:
         run: cargo test -p quantick-indicators -p quantick-workspace -p quantick-guards -p quantick-feed -p quantick-feed-binance -p quantick-feed-hyperliquid -p quantick-feed-mt5
 
   windows-tests:
-    needs: gate
+    needs: classify
     if: *full-ci
     runs-on: windows-latest
     env:
@@ -692,7 +714,7 @@ jobs:
         run: cargo test --workspace --exclude quantick-app --exclude quantick-indicators --exclude quantick-workspace --exclude quantick-guards --exclude quantick-feed --exclude quantick-feed-binance --exclude quantick-feed-hyperliquid --exclude quantick-feed-mt5
 
   windows-app-tests:
-    needs: gate
+    needs: classify
     if: *full-ci
     runs-on: windows-latest
     env:
