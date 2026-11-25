@@ -225,6 +225,7 @@ impl super::View<Model> for View {
     }
     #[cfg(any(feature = "scenario-harness", test))]
     fn apply_env_hook(&mut self, _env: &SurfaceEnv<'_>) -> Option<Intent> {
+        use quantick_ui_model::strategy_describe::conversation::Provider as _;
         if self.worker.available()
             && crate::hooks::captured::var("QUANTICK_STRATEGY_DESCRIBE").as_deref() == Some("1")
         {

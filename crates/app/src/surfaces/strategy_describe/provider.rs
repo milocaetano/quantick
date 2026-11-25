@@ -164,14 +164,11 @@ impl Worker {
             }),
         })
     }
-    pub(crate) fn available(&self) -> bool {
-        self.mailbox.is_some()
-    }
 }
 
 impl Provider for Worker {
     fn available(&self) -> bool {
-        Worker::available(self)
+        self.mailbox.is_some()
     }
     fn validate_input(&self, text: &str) -> Result<(), &'static str> {
         self.mailbox

@@ -54,6 +54,8 @@ struct FakeChart {
     store_fault: Option<String>,
     stored: Vec<(String, String)>,
     strategies: TabStrategies<DrawingId>,
+    history: Vec<HistoricalClose>,
+    warm: Vec<HistoricalClose>,
 }
 impl Default for FakeChart {
     fn default() -> Self {
@@ -64,6 +66,8 @@ impl Default for FakeChart {
             store_fault: None,
             stored: vec![],
             strategies: TabStrategies::default(),
+            history: vec![close(4, 10, 11), close(5, 11, 10), close(6, 10, 12)],
+            warm: vec![close(6, 10, 12)],
         }
     }
 }
@@ -101,7 +105,7 @@ impl Chart for FakeChart {
             indicators: vec![],
             drawings: vec![],
             availability: vec![],
-            history: vec![close(4, 10, 11), close(5, 11, 10), close(6, 10, 12)],
+            history: self.history.clone(),
         }
     }
     fn shows(&self, context: &Context) -> bool {
@@ -114,7 +118,7 @@ impl Chart for FakeChart {
         self.region_fault.clone().map_or(Ok(()), Err)
     }
     fn warm_history(&self, _: &Context) -> Vec<HistoricalClose> {
-        vec![close(6, 10, 12)]
+        self.warm.clone()
     }
     fn store(&mut self, id: &str, source: &str) -> Result<(), String> {
         if let Some(fault) = &self.store_fault {
@@ -137,12 +141,26 @@ fn open(state: &mut State, provider: &mut FakeProvider, chart: &mut FakeChart) -
 fn submit(state: &mut State, provider: &mut FakeProvider, chart: &mut FakeChart) -> Status {
     let revision = state.status.revision;
     let text = "Alert when a bar closes up".into();
-    dispatch(state, provider, chart, command(Command::Submit { revision, text })).unwrap()
+    dispatch(
+        state,
+        provider,
+        chart,
+        command(Command::Submit { revision, text }),
+    )
+    .unwrap()
 }
 fn reply(state: &mut State, provider: &mut FakeProvider, chart: &mut FakeChart) -> Status {
+    reply_with(state, provider, chart, SOURCE)
+}
+fn reply_with(
+    state: &mut State,
+    provider: &mut FakeProvider,
+    chart: &mut FakeChart,
+    source: &str,
+) -> Status {
     let revision = state.status.revision;
     let reply = Ok(Reply::Candidate {
-        source: SOURCE.into(),
+        source: source.into(),
         summary: "Buys on an up close".into(),
     });
     dispatch(state, provider, chart, Intent::Replied { revision, reply }).unwrap()
@@ -154,7 +172,12 @@ fn save(
 ) -> Result<Status, ControlError> {
     let revision = state.status.revision;
     let id = "up_close.pine".to_string();
-    dispatch(state, provider, chart, command(Command::Save { revision, id }))
+    dispatch(
+        state,
+        provider,
+        chart,
+        command(Command::Save { revision, id }),
+    )
 }
 
 #[test]
@@ -164,10 +187,23 @@ fn an_unavailable_provider_answers_only_read() {
         off: true,
         ..FakeProvider::default()
     };
-    let read = dispatch(&mut state, &mut provider, &mut chart, command(Command::Read));
+    let read = dispatch(
+        &mut state,
+        &mut provider,
+        &mut chart,
+        command(Command::Read),
+    );
     assert_eq!(read.unwrap().phase, Phase::Unavailable);
-    let refused = dispatch(&mut state, &mut provider, &mut chart, command(Command::Open));
-    assert_eq!(refused.unwrap_err().message, "Strategy description is unavailable");
+    let refused = dispatch(
+        &mut state,
+        &mut provider,
+        &mut chart,
+        command(Command::Open),
+    );
+    assert_eq!(
+        refused.unwrap_err().message,
+        "Strategy description is unavailable"
+    );
     assert_eq!(chart.opened, 0);
 }
 
@@ -178,8 +214,16 @@ fn open_pins_the_captured_chart_only_after_the_provider_accepts_it() {
         refuse_chart: true,
         ..FakeProvider::default()
     };
-    let refused = dispatch(&mut state, &mut provider, &mut chart, command(Command::Open));
-    assert_eq!(refused.unwrap_err().message, "Input contains the provider credential");
+    let refused = dispatch(
+        &mut state,
+        &mut provider,
+        &mut chart,
+        command(Command::Open),
+    );
+    assert_eq!(
+        refused.unwrap_err().message,
+        "Input contains the provider credential"
+    );
     assert!(state.context().is_none());
     assert_eq!(chart.opened, 0);
 
@@ -192,36 +236,61 @@ fn open_pins_the_captured_chart_only_after_the_provider_accepts_it() {
 
 #[test]
 fn input_carrying_the_credential_is_refused_before_admission() {
-    let (mut state, mut provider, mut chart) =
-        (State::default(), FakeProvider::default(), FakeChart::default());
+    let (mut state, mut provider, mut chart) = (
+        State::default(),
+        FakeProvider::default(),
+        FakeChart::default(),
+    );
     open(&mut state, &mut provider, &mut chart);
     let revision = state.status.revision;
     let text = "use secret".into();
-    let refused =
-        dispatch(&mut state, &mut provider, &mut chart, command(Command::Submit { revision, text }));
-    assert_eq!(refused.unwrap_err().message, "Input contains the provider credential");
+    let refused = dispatch(
+        &mut state,
+        &mut provider,
+        &mut chart,
+        command(Command::Submit { revision, text }),
+    );
+    assert_eq!(
+        refused.unwrap_err().message,
+        "Input contains the provider credential"
+    );
     assert!(state.status.transcript.is_empty());
     assert!(provider.sent.is_empty());
 }
 
 #[test]
 fn a_changed_focused_chart_cancels_the_pinned_conversation() {
-    let (mut state, mut provider, mut chart) =
-        (State::default(), FakeProvider::default(), FakeChart::default());
+    let (mut state, mut provider, mut chart) = (
+        State::default(),
+        FakeProvider::default(),
+        FakeChart::default(),
+    );
     open(&mut state, &mut provider, &mut chart);
     let before = provider.invalidated.get();
     chart.tab = 12;
-    let status = dispatch(&mut state, &mut provider, &mut chart, command(Command::Read)).unwrap();
+    let status = dispatch(
+        &mut state,
+        &mut provider,
+        &mut chart,
+        command(Command::Read),
+    )
+    .unwrap();
     assert_eq!(status.phase, Phase::Cancelled);
-    assert_eq!(status.message, "Chart changed. Open a new conversation on this chart.");
+    assert_eq!(
+        status.message,
+        "Chart changed. Open a new conversation on this chart."
+    );
     assert!(state.context().is_none());
     assert!(provider.invalidated.get() > before);
 }
 
 #[test]
 fn a_refused_submission_fails_its_revision() {
-    let (mut state, mut provider, mut chart) =
-        (State::default(), FakeProvider::default(), FakeChart::default());
+    let (mut state, mut provider, mut chart) = (
+        State::default(),
+        FakeProvider::default(),
+        FakeChart::default(),
+    );
     open(&mut state, &mut provider, &mut chart);
     provider.refuse_submit = true;
     let status = submit(&mut state, &mut provider, &mut chart);
@@ -231,24 +300,36 @@ fn a_refused_submission_fails_its_revision() {
 
 #[test]
 fn a_candidate_is_previewed_on_the_pinned_history() {
-    let (mut state, mut provider, mut chart) =
-        (State::default(), FakeProvider::default(), FakeChart::default());
+    let (mut state, mut provider, mut chart) = (
+        State::default(),
+        FakeProvider::default(),
+        FakeChart::default(),
+    );
     open(&mut state, &mut provider, &mut chart);
     let waiting = submit(&mut state, &mut provider, &mut chart);
     assert_eq!(waiting.phase, Phase::Waiting);
     assert_eq!(provider.sent.len(), 1);
-    assert!(matches!(&provider.sent[0].transcript[..], [Turn::Trader(_)]));
+    assert!(matches!(
+        &provider.sent[0].transcript[..],
+        [Turn::Trader(_)]
+    ));
     let status = reply(&mut state, &mut provider, &mut chart);
     assert_eq!(status.phase, Phase::Preview);
     let draft = status.draft.expect("previewed draft");
     assert_eq!(draft.source, SOURCE);
-    assert_eq!(draft.markers.iter().map(|m| m.slot).collect::<Vec<_>>(), [4, 6]);
+    assert_eq!(
+        draft.markers.iter().map(|m| m.slot).collect::<Vec<_>>(),
+        [4, 6]
+    );
 }
 
 #[test]
 fn an_invalid_candidate_is_sent_back_for_repair() {
-    let (mut state, mut provider, mut chart) =
-        (State::default(), FakeProvider::default(), FakeChart::default());
+    let (mut state, mut provider, mut chart) = (
+        State::default(),
+        FakeProvider::default(),
+        FakeChart::default(),
+    );
     open(&mut state, &mut provider, &mut chart);
     submit(&mut state, &mut provider, &mut chart);
     let revision = state.status.revision;
@@ -256,9 +337,13 @@ fn an_invalid_candidate_is_sent_back_for_repair() {
         source: "indicator(\"bad\")\nx = missing_symbol".into(),
         summary: "Broken".into(),
     });
-    let status =
-        dispatch(&mut state, &mut provider, &mut chart, Intent::Replied { revision, reply })
-            .unwrap();
+    let status = dispatch(
+        &mut state,
+        &mut provider,
+        &mut chart,
+        Intent::Replied { revision, reply },
+    )
+    .unwrap();
     assert_eq!(status.phase, Phase::Waiting);
     let repair = provider.sent.last().and_then(|r| r.repair.as_ref());
     assert!(repair.is_some_and(|(_, diagnostics)| !diagnostics.is_empty()));
@@ -266,22 +351,36 @@ fn an_invalid_candidate_is_sent_back_for_repair() {
 
 #[test]
 fn save_stores_the_source_before_arming_it() {
-    let (mut state, mut provider, mut chart) =
-        (State::default(), FakeProvider::default(), FakeChart::default());
+    let (mut state, mut provider, mut chart) = (
+        State::default(),
+        FakeProvider::default(),
+        FakeChart::default(),
+    );
     open(&mut state, &mut provider, &mut chart);
     submit(&mut state, &mut provider, &mut chart);
     reply(&mut state, &mut provider, &mut chart);
     let status = save(&mut state, &mut provider, &mut chart).unwrap();
     assert_eq!(status.phase, Phase::Saved);
     assert_eq!(status.message, "Saved up_close.pine and armed its alarms");
-    assert_eq!(chart.stored, [("up_close.pine".to_string(), SOURCE.to_string())]);
-    assert!(chart.strategies.pane(24).is_some_and(|pane| !pane.is_empty()));
+    assert_eq!(
+        chart.stored,
+        [("up_close.pine".to_string(), SOURCE.to_string())]
+    );
+    assert!(
+        chart
+            .strategies
+            .pane(24)
+            .is_some_and(|pane| !pane.is_empty())
+    );
 }
 
 #[test]
 fn a_failed_store_arms_nothing() {
-    let (mut state, mut provider, mut chart) =
-        (State::default(), FakeProvider::default(), FakeChart::default());
+    let (mut state, mut provider, mut chart) = (
+        State::default(),
+        FakeProvider::default(),
+        FakeChart::default(),
+    );
     chart.store_fault = Some("A script with this name exists".into());
     open(&mut state, &mut provider, &mut chart);
     submit(&mut state, &mut provider, &mut chart);
@@ -294,14 +393,20 @@ fn a_failed_store_arms_nothing() {
 
 #[test]
 fn a_region_that_can_no_longer_arm_stops_the_save_before_the_store() {
-    let (mut state, mut provider, mut chart) =
-        (State::default(), FakeProvider::default(), FakeChart::default());
+    let (mut state, mut provider, mut chart) = (
+        State::default(),
+        FakeProvider::default(),
+        FakeChart::default(),
+    );
     chart.region_fault = Some("Region was deleted".into());
     let mut context = chart.capture();
     context.placement = ScriptPlacement::Region(DrawingId(3));
     update(&mut state, Intent::Opened(context.into()));
     submit(&mut state, &mut provider, &mut chart);
-    assert_eq!(reply(&mut state, &mut provider, &mut chart).phase, Phase::Preview);
+    assert_eq!(
+        reply(&mut state, &mut provider, &mut chart).phase,
+        Phase::Preview
+    );
     let status = save(&mut state, &mut provider, &mut chart).unwrap();
     assert_eq!(status.phase, Phase::Failed);
     assert_eq!(status.message, "Region was deleted");
@@ -310,18 +415,116 @@ fn a_region_that_can_no_longer_arm_stops_the_save_before_the_store() {
 
 #[test]
 fn frame_runs_the_queued_command_then_delivers_a_finished_reply() {
-    let (mut state, mut provider, mut chart) =
-        (State::default(), FakeProvider::default(), FakeChart::default());
-    let opened = frame(&mut state, &mut provider, &mut chart, Some(Command::Open), None);
+    let (mut state, mut provider, mut chart) = (
+        State::default(),
+        FakeProvider::default(),
+        FakeChart::default(),
+    );
+    let opened = frame(
+        &mut state,
+        &mut provider,
+        &mut chart,
+        Some(Command::Open),
+        None,
+    );
     assert!(opened.is_ok());
     assert_eq!(chart.opened, 1);
     submit(&mut state, &mut provider, &mut chart);
     let revision = state.status.revision;
-    provider.replies.push((revision, Ok(Reply::Question("Which side?".into()))));
+    provider
+        .replies
+        .push((revision, Ok(Reply::Question("Which side?".into()))));
     frame(&mut state, &mut provider, &mut chart, None, None).unwrap();
     assert_eq!(state.status.phase, Phase::Question);
 
     let stale = Command::Cancel { revision: 0 };
-    let refused = frame(&mut state, &mut provider, &mut chart, None, Some(Effects::Dispatch(stale)));
-    assert_eq!(refused.unwrap_err().message, "This conversation revision has expired");
+    let refused = frame(
+        &mut state,
+        &mut provider,
+        &mut chart,
+        None,
+        Some(Effects::Dispatch(stale)),
+    );
+    assert_eq!(
+        refused.unwrap_err().message,
+        "This conversation revision has expired"
+    );
+}
+
+#[test]
+fn only_an_admitted_open_or_cancel_drops_the_reply_in_flight() {
+    let (mut state, mut provider, mut chart) = (
+        State::default(),
+        FakeProvider::default(),
+        FakeChart::default(),
+    );
+    open(&mut state, &mut provider, &mut chart);
+    assert_eq!(provider.invalidated.get(), 1);
+    submit(&mut state, &mut provider, &mut chart);
+    dispatch(
+        &mut state,
+        &mut provider,
+        &mut chart,
+        command(Command::Read),
+    )
+    .unwrap();
+    assert_eq!(provider.invalidated.get(), 1);
+    let stale = Command::Cancel { revision: 0 };
+    assert!(dispatch(&mut state, &mut provider, &mut chart, command(stale)).is_err());
+    assert_eq!(provider.invalidated.get(), 1);
+    let revision = state.status.revision;
+    let cancel = command(Command::Cancel { revision });
+    let status = dispatch(&mut state, &mut provider, &mut chart, cancel).unwrap();
+    assert_eq!(status.phase, Phase::Cancelled);
+    assert_eq!(provider.invalidated.get(), 2);
+}
+
+#[test]
+fn a_provider_that_becomes_available_closes_the_unavailable_phase() {
+    let (mut state, mut chart) = (State::default(), FakeChart::default());
+    let mut provider = FakeProvider {
+        off: true,
+        ..FakeProvider::default()
+    };
+    let read = |state: &mut State, provider: &mut FakeProvider, chart: &mut FakeChart| {
+        dispatch(state, provider, chart, command(Command::Read))
+            .unwrap()
+            .phase
+    };
+    assert_eq!(
+        read(&mut state, &mut provider, &mut chart),
+        Phase::Unavailable
+    );
+    provider.off = false;
+    assert_eq!(read(&mut state, &mut provider, &mut chart), Phase::Closed);
+}
+
+#[test]
+fn a_warmup_fault_fails_the_save_before_the_store() {
+    let (mut state, mut provider, mut chart) = (
+        State::default(),
+        FakeProvider::default(),
+        FakeChart::default(),
+    );
+    chart.history = vec![close(4, 10, 11)];
+    chart.warm = vec![close(5, 11, 10), close(6, 10, 12)];
+    let fault = "indicator(\"loop\")
+alertcondition(true,title=\"Buy signal\")
+x = 0.0
+if bar_index == 1
+    while x >= 0
+        x := x + 1
+plot(x)";
+    open(&mut state, &mut provider, &mut chart);
+    submit(&mut state, &mut provider, &mut chart);
+    let previewed = reply_with(&mut state, &mut provider, &mut chart, fault);
+    assert_eq!(previewed.phase, Phase::Preview);
+    let status = save(&mut state, &mut provider, &mut chart).unwrap();
+    assert_eq!(status.phase, Phase::Failed);
+    assert!(
+        status
+            .message
+            .starts_with("Warmup failed: PINE_LOOP_BUDGET ")
+    );
+    assert!(chart.stored.is_empty());
 }

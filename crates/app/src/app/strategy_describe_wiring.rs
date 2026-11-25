@@ -10,7 +10,7 @@ use quantick_session::{
 };
 use quantick_ui_model::strategy_describe::{
     Context, Effects, HistoricalClose, Intent, MAX_BARS, MAX_CONTEXT_ITEMS, Status,
-    conversation::{self, Chart},
+    conversation::{self, Chart, Provider as _},
 };
 
 impl<T: super::control_host::TabsMutPort + ?Sized> DescribeHost for T {
@@ -24,7 +24,7 @@ impl<T: super::control_host::TabsMutPort + ?Sized> DescribeHost for T {
 struct Focused<'a> {
     tabs: &'a mut ArrangementHost,
     library: Option<&'a std::path::Path>,
-    opened: bool,
+    opened: Option<eframe::egui::ViewportId>,
 }
 
 fn focused_tab(tabs: &ArrangementHost) -> u64 {
@@ -121,7 +121,8 @@ impl Chart for Focused<'_> {
         )
     }
     fn opened(&mut self) {
-        self.opened = true;
+        let focused = self.tabs.windows().focused();
+        self.opened = Some(super::native_windows::viewport(focused));
     }
     fn check_region(&self, context: &Context, drawing: DrawingId) -> Result<(), String> {
         let pane = self.pinned(context);
@@ -152,16 +153,15 @@ pub(super) fn dispatch(
     intent: Intent,
 ) -> Result<Status, ControlError> {
     let surface = &mut surfaces.strategy_describe;
-    let viewport = super::native_windows::viewport(tabs.windows().focused());
     let library = surface.view.library.as_deref();
     let mut chart = Focused {
         tabs,
         library,
-        opened: false,
+        opened: None,
     };
     let worker = &mut surface.view.worker;
     let status = conversation::dispatch(&mut surface.model_state, worker, &mut chart, intent);
-    if chart.opened {
+    if let Some(viewport) = chart.opened {
         surface.view.open(viewport);
     }
     status
@@ -172,18 +172,17 @@ pub(super) fn frame(surfaces: &mut Surfaces, tabs: &mut ArrangementHost, effect:
     if !surface.view.worker.available() || tabs.windows().presented() != tabs.windows().focused() {
         return;
     }
-    let viewport = super::native_windows::viewport(tabs.windows().focused());
     let command = surface.view.command.take();
     let library = surface.view.library.as_deref();
     let mut chart = Focused {
         tabs,
         library,
-        opened: false,
+        opened: None,
     };
     let worker = &mut surface.view.worker;
     let state = &mut surface.model_state;
     let result = conversation::frame(state, worker, &mut chart, command, effect);
-    if chart.opened {
+    if let Some(viewport) = chart.opened {
         surface.view.open(viewport);
     }
     if let Err(error) = result {
