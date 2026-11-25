@@ -100,10 +100,7 @@ pub fn edited_position(
     }
     .map_err(PositionEditRefusal::Invalid)?;
     let mut edited = drawing.clone();
-    // A preset that matches the plan already standing moves nothing.
-    if points != drawing.points {
-        edited.points = points;
-    }
+    edited.points = points;
     edited.payload = Box::new(payload);
     Ok(edited)
 }
@@ -185,9 +182,19 @@ pub fn apply_position_default(
     drawing: &Drawing<DrawingTool>,
     action: PositionDefault,
 ) -> Result<(), PositionEditRefusal> {
-    position_of(drawing)?;
+    let (_, payload) = position_of(drawing)?;
     match action {
-        PositionDefault::Save => save_tool_default(host, canvas, drawing),
+        // The ratio the bar shows — the plan's prices — not a stored one an
+        // older pinned plan or a drag past the range left behind.
+        PositionDefault::Save => {
+            let mut shown = drawing.clone();
+            let mut payload = payload.clone();
+            if let Some(ratio) = plan_ratio(drawing) {
+                payload.ratio = ratio.clamp(crate::POSITION_MIN_RATIO, crate::POSITION_MAX_RATIO);
+            }
+            shown.payload = Box::new(payload);
+            save_tool_default(host, canvas, &shown);
+        }
         PositionDefault::Reset => reset_tool_default(host, canvas, drawing.tool),
     }
     Ok(())

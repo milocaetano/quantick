@@ -112,7 +112,7 @@ fn an_inspection_reads_the_look_legs_and_width_and_changes_nothing() {
     );
     assert_eq!(read.look.target_color, "#2EA064");
     assert_eq!(read.look.stop_color, "#D63031");
-    assert_eq!(read.look.zone_opacity_pct, 22);
+    assert_eq!(read.look.zone_opacity_pct, 10);
     assert_eq!(read.look.ratio.as_str(), "2");
     assert_eq!(read.look.ratio_text, "R/R 1:2");
     assert_eq!(read.width_bars.as_str(), "20");

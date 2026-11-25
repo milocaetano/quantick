@@ -9,6 +9,8 @@ use quantick_control::error::ControlError;
 use quantick_control::registry::RegistryError;
 use quantick_control::wire::{ActorContext, CanonicalDecimal, WireU64};
 use quantick_control_host::journal::NewEvent;
+use quantick_control_host::wire::canonical_f64;
+use quantick_control_schema::chart::PRICE_DECIMAL_PLACES;
 pub use quantick_control_schema::drawing_position::*;
 use quantick_drawings::position_edit::{
     PositionDefault, PositionEdit, PositionLeg, apply_position_default, edited_position,
@@ -80,18 +82,18 @@ fn drawing<'a>(
     Ok(&marks.items()[index])
 }
 
-fn decimal(value: f64) -> Result<CanonicalDecimal, ControlError> {
-    // Six places hold any price or ratio a trader reads, and keep a ratio
-    // such as 2.4999999999999996 from leaking float noise.
-    let mut text = format!("{value:.6}");
-    while text.ends_with('0') {
-        text.pop();
-    }
-    if text.ends_with('.') {
-        text.pop();
-    }
-    CanonicalDecimal::new(text).map_err(invalid)
+/// Prices at the chart contract's precision.
+fn price(value: f64) -> Result<CanonicalDecimal, ControlError> {
+    canonical_f64(value, PRICE_DECIMAL_PLACES).ok_or_else(|| invalid("a leg price is not finite"))
 }
+
+/// A ratio or a width: six places keep float noise such as
+/// 2.4999999999999996 out of the readback.
+fn measure(value: f64) -> Result<CanonicalDecimal, ControlError> {
+    canonical_f64(value, MEASURE_DECIMAL_PLACES).ok_or_else(|| invalid("a measure is not finite"))
+}
+
+const MEASURE_DECIMAL_PLACES: u32 = 6;
 
 fn number(value: &CanonicalDecimal) -> Result<f64, ControlError> {
     value.as_str().parse::<f64>().map_err(invalid)
@@ -160,7 +162,7 @@ fn look(payload: &PositionPayload, ratio: f64) -> Result<PositionLook, ControlEr
         target_color: rgb_hex(payload.target_rgb),
         stop_color: rgb_hex(payload.stop_rgb),
         zone_opacity_pct: payload.zone_opacity_pct,
-        ratio: decimal(ratio)?,
+        ratio: measure(ratio)?,
         custom,
         ratio_text: ratio_button(ratio, custom).text(),
     })
@@ -183,10 +185,10 @@ fn read_back(
             PositionSide::Short => PositionSideDto::Short,
         },
         look: look(payload, plan.ratio())?,
-        entry: decimal(plan.entry)?,
-        stop: decimal(plan.stop)?,
-        target: decimal(plan.target)?,
-        width_bars: decimal(f64::from(payload.width_bars(&drawing.points)))?,
+        entry: price(plan.entry)?,
+        stop: price(plan.stop)?,
+        target: price(plan.target)?,
+        width_bars: measure(f64::from(payload.width_bars(&drawing.points)))?,
         changed,
     })
 }

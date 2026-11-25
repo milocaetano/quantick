@@ -30,8 +30,8 @@ fn no_surface_prints_a_bare_ratio() {
             custom_row(ratio),
             ratio_button(ratio, false).text(),
             ratio_button(ratio, true).text(),
-            plan_plate(Side::Long, Some(ratio), 100.0),
-            plan_plate(Side::Short, Some(ratio), 100.0),
+            plan_plate(Side::Long, ratio, 100.0),
+            plan_plate(Side::Short, ratio, 100.0),
         ];
         for text in surfaces {
             assert!(!bare_ratio(&text), "{text}");
@@ -63,7 +63,7 @@ fn each_surface_reads_as_the_spec_writes_it() {
     assert_eq!((button.risk, button.reward.as_str()), ("1", "2"));
     assert_eq!(custom_row(1.3), "Custom 1:1.3");
     assert_eq!(
-        plan_plate(Side::Long, Some(2.0), 165_461.58),
+        plan_plate(Side::Long, 2.0, 165_461.58),
         "Long · risk 1 : reward 2 · entry 165461.58"
     );
     assert_eq!(ratio_number(2.375), "2.38");

@@ -67,19 +67,16 @@ pub fn ratio_button(ratio: f64, custom: bool) -> RatioButton {
 
 /// The plate at the entry: `Long · risk 1 : reward 2 · entry 165461.58`.
 #[must_use]
-pub fn plan_plate(side: Side, ratio: Option<f64>, entry: f64) -> String {
+pub fn plan_plate(side: Side, ratio: f64, entry: f64) -> String {
     let side = match side {
         Side::Long => "Long",
         Side::Short => "Short",
     };
-    match ratio {
-        Some(ratio) => format!(
-            "{side} · risk 1 : reward {} · entry {}",
-            ratio_number(ratio),
-            quantick_engine::display::display_f64(entry)
-        ),
-        None => format!("{side} · drag a stop or a target"),
-    }
+    format!(
+        "{side} · risk 1 : reward {} · entry {}",
+        ratio_number(ratio),
+        quantick_engine::display::display_f64(entry)
+    )
 }
 
 /// The menu's preset rows, in order.

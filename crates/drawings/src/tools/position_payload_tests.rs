@@ -94,7 +94,7 @@ fn a_preset_ratio_is_no_custom_plan_and_any_other_is() {
         ratio: 1.3,
         ..PositionPayload::default()
     };
-    assert!(custom.custom());
+    assert!(crate::position_preset_of(custom.ratio).is_none());
     assert_eq!(preset_of(1.5), None, "1.5 left the menu");
 }
 

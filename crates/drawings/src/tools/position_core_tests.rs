@@ -129,7 +129,7 @@ fn dragging_the_projected_leg_pins_it_and_leaves_the_rest() {
         (dragged.ratio - 2.5).abs() < 1e-9,
         "the ratio follows the pin"
     );
-    assert!(dragged.custom());
+    assert!(crate::position_preset_of(dragged.ratio).is_none());
     // Pulled across the entry, the target stays where it was.
     let crossed = drag_payload(
         &points,
@@ -259,7 +259,8 @@ fn the_content_bounds_reserve_the_projected_zone_on_both_sides() {
     let anchors = PxRect::from_min_max(pos2(100.0, 200.0), pos2(300.0, 250.0));
     let chart = PxRect::from_min_max(pos2(0.0, 0.0), pos2(1000.0, 1000.0));
     let bounds = LONG.content_bounds(&two_to_one(), anchors, chart, crate::TextSpacing::default());
-    assert_eq!((bounds.min.y, bounds.max.y), (100.0, 350.0));
+    // The zones reach 100 to 350; the plates hang 18 px beyond each.
+    assert_eq!((bounds.min.y, bounds.max.y), (82.0, 368.0));
 }
 
 #[test]
@@ -344,7 +345,7 @@ fn a_pinned_leg_reserves_its_own_reach_and_the_painted_width() {
         chart,
         crate::TextSpacing::new(10.0, 10.0),
     );
-    assert_eq!((bounds.min.y, bounds.max.y), (-100.0, 550.0));
+    assert_eq!((bounds.min.y, bounds.max.y), (-118.0, 568.0));
     assert_eq!(bounds.max.x, 100.0 + MIN_WIDTH_BARS * 10.0);
 }
 
@@ -408,7 +409,7 @@ fn an_unselected_position_is_two_zones_in_its_own_colours_and_no_words() {
         [zone(payload.stop_rgb), zone(payload.target_rgb)],
         "the zones take the drawing's colours, never the theme's buy and sell ink"
     );
-    assert_eq!(payload.zone_alpha(), 56, "22 % opacity");
+    assert_eq!(payload.zone_alpha(), 25, "10 % opacity");
     let edges = scene
         .shapes
         .iter()
@@ -446,8 +447,8 @@ fn a_fresh_position_opens_at_one_to_one_in_the_factory_colours() {
     assert_eq!(DEFAULT_RATIO, 1.0);
     assert_eq!(payload.target_rgb, [0x2E, 0xA0, 0x64]);
     assert_eq!(payload.stop_rgb, [0xD6, 0x30, 0x31]);
-    assert_eq!(payload.zone_opacity_pct, 22);
-    assert!(!payload.custom());
+    assert_eq!(payload.zone_opacity_pct, 10);
+    assert!(crate::position_preset_of(payload.ratio).is_some());
     let anchors = [ChartPoint::at(10.0, 100.0), ChartPoint::at(30.0, 95.0)];
     let plan = plan_of(Side::Long, &anchors, payload).unwrap();
     assert_eq!((plan.stop, plan.target), (95.0, 105.0));
@@ -479,7 +480,7 @@ fn a_preset_moves_only_the_target() {
             (after.ratio() - 3.0).abs() < 1e-12,
             "{side:?} {edge}: target"
         );
-        assert!(!payload.custom());
+        assert!(crate::position_preset_of(payload.ratio).is_some());
         assert_eq!(anchors[0], ChartPoint::at(10.0, 100.0));
     }
 }
@@ -508,12 +509,7 @@ fn the_width_handles_sit_at_the_entry_lines_ends() {
     let entry_y = scale.y(100.0);
     assert_eq!(
         handles.as_slice(),
-        &[
-            points[0],
-            points[1],
-            pos2(100.0, entry_y),
-            pos2(300.0, entry_y)
-        ]
+        &[pos2(100.0, entry_y), pos2(300.0, entry_y)]
     );
 }
 
@@ -570,19 +566,19 @@ fn a_dragged_measured_edge_makes_the_plan_custom_at_the_ratio_it_shows() {
         .downcast_ref::<PositionPayload>()
         .unwrap();
     assert!((payload.ratio - 2.5).abs() < 1e-9);
-    assert!(payload.custom());
+    assert!(crate::position_preset_of(payload.ratio).is_none());
 }
 
 #[test]
 fn the_plan_plate_names_the_side_and_the_ratio_risk_first() {
     assert_eq!(
-        plan_plate(Side::Short, Some(1.5), 165_461.58),
+        plan_plate(Side::Short, 1.5, 165_461.58),
         "Short · risk 1 : reward 1.5 · entry 165461.58"
     );
 }
 
-/// The handles a selected position shows are squares — its two anchors and
-/// the entry line's two width ends — and the halo traces its edges in the
+/// The handles a selected position shows are squares — the entry line's two
+/// width ends — and the halo traces its edges in the
 /// selection's ink, never in a zone colour.
 #[test]
 fn a_selected_position_shows_square_handles_and_a_halo_in_selection_ink() {
@@ -610,7 +606,7 @@ fn a_selected_position_shows_square_handles_and_a_halo_in_selection_ink() {
             |shape| matches!(shape, crate::MarkShape::Rect { stroke, .. } if stroke.width == ring),
         )
         .count();
-    assert_eq!(squares, 4);
+    assert_eq!(squares, 2);
     assert!(
         !scene
             .shapes
@@ -652,4 +648,40 @@ fn the_plan_plate_never_sits_under_a_width_handle() {
         x < 100.0 - handle || x > 300.0 + handle,
         "the plate's words start outside the box and its handles: {x}"
     );
+}
+
+/// A press on the entry anchor's corner grabs the width handle there: the
+/// anchor has no dot of its own to take the press instead.
+#[test]
+fn a_press_on_the_entry_corner_grabs_the_width_handle() {
+    let scale = scale();
+    let anchors = [ChartPoint::at(10.0, 100.0), ChartPoint::at(30.0, 90.0)];
+    let points = screen(&scale, &anchors);
+    let payload = two_to_one();
+    let ctxt = context(&payload, &anchors, &scale);
+    let chart = PxRect::from_min_max(pos2(0.0, 0.0), pos2(1000.0, 2000.0));
+    let tool = crate::DrawingTool::by_id("long-position").unwrap();
+    assert_eq!(
+        tool.hit_handle(chart, &points, points[0], 6.0, &ctxt),
+        Some(LEFT_EDGE_HANDLE)
+    );
+    let right = pos2(300.0, scale.y(100.0));
+    assert_eq!(
+        tool.hit_handle(chart, &points, right, 6.0, &ctxt),
+        Some(RIGHT_EDGE_HANDLE)
+    );
+}
+
+/// A width stored at the floor reads back a hair under it in `f32`; the
+/// saved drawing still loads with its look.
+#[test]
+fn a_position_saved_at_its_narrowest_still_loads() {
+    let mut narrow = PositionPayload {
+        target_rgb: [1, 2, 3],
+        ..two_to_one()
+    };
+    narrow.span_bars = Some([0.0, MIN_WIDTH_BARS - 1e-4]);
+    let mut restored = PositionPayload::default();
+    assert!(restored.import_saved(&narrow.export_saved().unwrap()));
+    assert_eq!(restored, narrow);
 }

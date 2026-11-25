@@ -187,7 +187,6 @@ impl BarState {
     pub fn owns_press(
         &mut self,
         press: Option<(Px, f64)>,
-        current: Option<PxRect>,
         on_popover: bool,
     ) -> bool {
         let Some((origin, started)) = press else {
@@ -198,7 +197,7 @@ impl BarState {
         {
             return owned;
         }
-        let owned = on_popover || current.is_some_and(|rect| rect.contains(origin));
+        let owned = on_popover || self.rect.is_some_and(|rect| rect.contains(origin));
         self.press_owned = Some((started, owned));
         owned
     }

@@ -51,20 +51,23 @@ fn a_press_is_owned_once_and_never_inherited_by_the_next() {
     let rect = PxRect::from_min_size(Px::new(0.0, 0.0), Px::new(100.0, 30.0));
     let moved = rect.translate(Px::new(300.0, 0.0));
     let on_bar = Some((Px::new(10.0, 10.0), 1.0));
-    assert!(bar.owns_press(on_bar, Some(rect), false));
+    bar.set_rect(rect);
+    assert!(bar.owns_press(on_bar, false));
+    bar.set_rect(moved);
     assert!(
-        bar.owns_press(on_bar, Some(moved), false),
+        bar.owns_press(on_bar, false),
         "a grip drag keeps the press it began with"
     );
     // The release this never saw: the next press is decided afresh.
-    assert!(!bar.owns_press(Some((Px::new(10.0, 10.0), 2.0)), Some(moved), false));
-    assert!(!bar.owns_press(None, Some(moved), false));
+    assert!(!bar.owns_press(Some((Px::new(10.0, 10.0), 2.0)), false));
+    assert!(!bar.owns_press(None, false));
 
+    bar.set_rect(rect);
     let elsewhere = Some((Px::new(500.0, 500.0), 3.0));
-    assert!(!bar.owns_press(elsewhere, Some(rect), false));
-    assert!(bar.owns_press(Some((Px::new(500.0, 500.0), 4.0)), Some(rect), true));
+    assert!(!bar.owns_press(elsewhere, false));
+    assert!(bar.owns_press(Some((Px::new(500.0, 500.0), 4.0)), true));
     assert!(
-        bar.owns_press(None, Some(rect), false),
+        bar.owns_press(None, false),
         "the release frame is still owned"
     );
     assert!(bar.press_owned.is_none());

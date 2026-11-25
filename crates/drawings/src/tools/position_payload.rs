@@ -24,12 +24,15 @@ pub const DEFAULT_RATIO: f64 = 1.0;
 pub const FACTORY_TARGET_RGB: Rgb = [0x2E, 0xA0, 0x64];
 pub const FACTORY_STOP_RGB: Rgb = [0xD6, 0x30, 0x31];
 /// Factory zone opacity, in percent.
-pub const FACTORY_ZONE_OPACITY_PCT: u8 = 22;
+pub const FACTORY_ZONE_OPACITY_PCT: u8 = 10;
 /// The most a zone may be filled, in percent: a solid zone hides the bars.
 pub const MAX_ZONE_OPACITY_PCT: u8 = 100;
 /// Two ratios this close are one preset.
 const PRESET_TOLERANCE: f64 = 1e-6;
 const FORMAT_VERSION: u32 = 1;
+/// What `f32` rounding takes off a width stored at the floor: `(left + 14)
+/// - left` can read back a hair under 14.
+const WIDTH_ROUNDING: f32 = 1e-3;
 
 /// Straight sRGB bytes.
 pub type Rgb = [u8; 3];
@@ -101,12 +104,6 @@ impl PositionPayload {
     #[must_use]
     pub fn pinned(&self, entry: f64) -> Option<f64> {
         self.projected_offset.map(|offset| entry + offset)
-    }
-    /// Whether the plan's ratio is none of the menu's presets: a dragged
-    /// leg, or a saved default that stored one.
-    #[must_use]
-    pub fn custom(&self) -> bool {
-        preset_of(self.ratio).is_none()
     }
     /// The zone fill alpha its opacity makes.
     #[must_use]
@@ -321,9 +318,9 @@ impl DrawingPayload for PositionPayload {
         let Some(look) = Self::read_look(&data.look) else {
             return false;
         };
-        let finite_span = data
-            .span_bars
-            .is_none_or(|[left, right]| left.is_finite() && right - left >= MIN_WIDTH_BARS);
+        let finite_span = data.span_bars.is_none_or(|[left, right]| {
+            left.is_finite() && right - left >= MIN_WIDTH_BARS - WIDTH_ROUNDING
+        });
         if data
             .projected_offset
             .is_some_and(|offset| !offset.is_finite())

@@ -131,7 +131,7 @@ pub fn default_descriptor() -> CapabilityDescriptor {
     descriptor::<PositionDefaultInput, PositionDefaultResult>(
         DEFAULT_CAPABILITY_ID,
         "Save, reset or read a position tool's default",
-        "The `Save as default` and `Reset` rows that end a position's floating-bar menus. `save` makes new positions of the named drawing's side (long and short keep separate defaults) open with its colours, opacity and ratio, a custom ratio as its prices make it; `reset` returns them to the factory look (target #2EA064, stop #D63031, 22 %, risk 1 : reward 1); `inspect` changes nothing. Per chart ground, like every drawing default. Drawings already placed never change. The result reads back what a new position opens with.",
+        "The `Save as default` and `Reset` rows that end a position's floating-bar menus. `save` makes new positions of the named drawing's side (long and short keep separate defaults) open with its colours, opacity and ratio, a custom ratio as its prices make it; `reset` returns them to the factory look (target #2EA064, stop #D63031, 10 %, risk 1 : reward 1); `inspect` changes nothing. Per chart ground, like every drawing default. Drawings already placed never change. The result reads back what a new position opens with.",
         "Save and reset name the state they want; repeating either is harmless.",
     )
 }

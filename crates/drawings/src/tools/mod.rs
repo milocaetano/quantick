@@ -95,14 +95,12 @@ pub use fixed_range_profile::{
 };
 pub use parallel_channel::ChannelPayload;
 pub use position_core::{
-    Legs as PositionLegs, MIN_WIDTH_BARS as POSITION_MIN_WIDTH_BARS, Measured as PositionMeasured,
-    Side as PositionSide, position_plan, position_side,
+    Legs as PositionLegs, MAX_RATIO as POSITION_MAX_RATIO, MIN_RATIO as POSITION_MIN_RATIO,
+    Measured as PositionMeasured, Side as PositionSide, position_plan, position_side,
 };
 pub use position_payload::{
-    DEFAULT_RATIO as POSITION_DEFAULT_RATIO, FACTORY_STOP_RGB, FACTORY_TARGET_RGB,
-    FACTORY_ZONE_OPACITY_PCT, MAX_ZONE_OPACITY_PCT, PositionPayload, PositionRefusal,
-    RATIO_PRESETS as POSITION_RATIO_PRESETS, Rgb, parse_rgb_hex, preset_of as position_preset_of,
-    rgb_hex, set_plan_ratio,
+    FACTORY_ZONE_OPACITY_PCT, MAX_ZONE_OPACITY_PCT, PositionPayload, PositionRefusal, Rgb,
+    parse_rgb_hex, preset_of as position_preset_of, rgb_hex, set_plan_ratio,
 };
 pub use rectangle::{RectanglePayload, TOOL_ID as RECTANGLE_TOOL_ID};
 pub use text::{MAX_TEXT_PX, MIN_TEXT_PX, PLACEHOLDER as TEXT_PLACEHOLDER, TextPayload};

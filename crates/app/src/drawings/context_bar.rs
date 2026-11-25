@@ -261,8 +261,7 @@ impl ContextBar {
     ) -> bool {
         let popover = self.popover_layer.filter(|_| self.open != Popover::None);
         let on_popover = layer.is_some_and(|layer| Some(layer.id) == popover);
-        let current = self.state.last_rect();
-        (self.state).owns_press(press.map(|(at, t)| (px(at), t)), current, on_popover)
+        (self.state).owns_press(press.map(|(at, t)| (px(at), t)), on_popover)
     }
 
     fn toggle(&mut self, popover: Popover, anchor: egui::Rect) {
@@ -1088,7 +1087,10 @@ fn draw_ratio_popover(ui: &mut egui::Ui, object: &BarObject<'_>, intent: &mut Co
     };
     for row in &face.ratio.rows {
         let label = egui::SelectableLabel::new(row.checked, row.label.as_str());
-        if ui.add_enabled(row.pick.is_some(), label).clicked()
+        // A lock keeps the prices: the presets move the target.
+        if ui
+            .add_enabled(row.pick.is_some() && !object.locked, label)
+            .clicked()
             && let Some(ratio) = row.pick
         {
             intent.position = Some(PositionAsk::Edit(PositionEdit::Ratio(ratio)));

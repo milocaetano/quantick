@@ -37,13 +37,16 @@ pub const MAX_RATIO: f64 = 20.0;
 /// leaves zones wide enough to read.
 pub const MIN_WIDTH_BARS: f32 = 14.0;
 
-/// The entry line's two ends: each resizes the width and nothing else.
-pub(super) const LEFT_EDGE_HANDLE: usize = 2;
-pub(super) const RIGHT_EDGE_HANDLE: usize = 3;
+/// The grab points are the entry line's two ends, which resize the width and
+/// nothing else. The anchors have no dot of their own: the entry anchor sits
+/// on one of those ends, so a dot there would take the press, and every
+/// price moves by its line instead.
+pub(super) const LEFT_EDGE_HANDLE: usize = 0;
+pub(super) const RIGHT_EDGE_HANDLE: usize = 1;
 /// The projected leg's line; the entry and measured edge lines follow.
-pub(super) const PROJECTED_HANDLE: usize = 4;
-pub(super) const ENTRY_LINE_HANDLE: usize = 5;
-pub(super) const MEASURED_LINE_HANDLE: usize = 6;
+pub(super) const PROJECTED_HANDLE: usize = 2;
+pub(super) const ENTRY_LINE_HANDLE: usize = 3;
+pub(super) const MEASURED_LINE_HANDLE: usize = 4;
 
 const GRAB_PX: f32 = 5.0;
 /// The zones' edges and the entry line: thin, so the bars stay the subject.
@@ -351,7 +354,7 @@ pub(super) fn paint(
         Stroke::new(EDGE_PX, plate),
     );
     paint_leg_plates(painter, chart_rect, &frame, &legs, ctxt, &payload);
-    let tag = plan_plate(side, Some(legs.ratio()), legs.entry);
+    let tag = plan_plate(side, legs.ratio(), legs.entry);
     // Outside the box, clear of the width handles at the entry line's ends:
     // to its left, else to its right, else inside, resting on the entry line
     // above the handles centred on it, when the pane has room on neither side.
@@ -446,13 +449,13 @@ pub(super) fn hit_test(
         .contains(position)
 }
 
-/// The anchors, then the entry line's two ends, where the width handles sit.
+/// The entry line's two ends, where the width handles sit.
 pub(super) fn handles(points: &[Px], ctxt: &DrawContext<'_>, side: Side) -> Option<Handles> {
     let frame = frame(points, ctxt, side)?;
-    let mut handles: Handles = points.iter().copied().take(2).collect();
-    handles.push(pos2(frame.left, frame.entry_y));
-    handles.push(pos2(frame.right, frame.entry_y));
-    Some(handles)
+    Some(Handles::from_slice(&[
+        pos2(frame.left, frame.entry_y),
+        pos2(frame.right, frame.entry_y),
+    ]))
 }
 
 /// The line under `position`, as the handle a press there grabs: the
@@ -562,10 +565,12 @@ fn drag_edge(
         return None;
     };
     let px_per_bar = ctxt.px_per_bar;
-    if px_per_bar <= 0.0 {
-        return None;
-    }
     let mut payload = payload_of(ctxt);
+    // No bar width to measure in: the drag holds, and never falls back to a
+    // plain anchor move, which a width handle is not.
+    if px_per_bar <= 0.0 {
+        return Some(Box::new(payload));
+    }
     let (left, right) = columns(*a, *b, &payload, px_per_bar);
     let bars = |x: f32| (x - a.x) / px_per_bar;
     let (left, right) = (bars(left), bars(right));
@@ -739,9 +744,16 @@ impl MarkTool for PositionTool {
                     .max(anchors.min.x + MIN_WIDTH_BARS * px_per_bar),
             ),
         };
+        // The Target and Stop plates hang outside the zones' far edges; a
+        // flat measurement is no plan and shows none.
+        let plate = if anchors.height() > 0.0 || payload.projected_offset.is_some() {
+            LABEL_TEXT_PX + 2.0 * LABEL_PAD_Y_PX + LABEL_INSET_PX
+        } else {
+            0.0
+        };
         PxRect::from_min_max(
-            pos2(left, anchors.min.y - reach),
-            pos2(right, anchors.max.y + reach),
+            pos2(left, anchors.min.y - reach - plate),
+            pos2(right, anchors.max.y + reach + plate),
         )
     }
     fn placement_refusal(&self, anchors: &[crate::ChartPoint]) -> Option<&'static str> {
