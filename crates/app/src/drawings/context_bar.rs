@@ -24,12 +24,18 @@ use crate::drawings::StyleColor32;
 use eframe::egui;
 use egui_phosphor::regular as icons;
 pub use quantick_drawings::context_bar::{Capabilities, Slot, slots};
-use quantick_ui_model::drawing_chrome::bar_dismissal::{BarDismissal, BarTarget, Press};
+use quantick_drawings::position_edit::{
+    PositionAsk, PositionDefault, PositionEdit, PositionFace, PositionLeg,
+};
+use quantick_ui_model::drawing_chrome::bar_dismissal::{BarTarget, Press};
+use quantick_ui_model::drawing_chrome::bar_state::BarState;
 
 use super::action_bar::ActionBarIntent;
+use super::geometry::{pos, px, px_rect};
 use super::{DrawingStyle, GlyphSize, MAX_DRAWING_FILL_ALPHA};
 use crate::theme;
 use crate::widgets::{IconButton, TOOLRAIL_ICON};
+use quantick_drawings::bar_placement as placement;
 
 /// Height of the bar: the rail's 32 px touch target with 4 px of air.
 pub const BAR_HEIGHT_PX: f32 = 2.0 * BAR_PAD_Y_PX + TOOLRAIL_ICON.hit;
@@ -48,10 +54,7 @@ const GRIP_GLYPH_PX: f32 = 14.0;
 /// Corner radius — one step rounder than the rail's flyout, because this
 /// surface floats free instead of hanging off an edge.
 const CORNER_RADIUS_PX: f32 = 8.0;
-/// Gap between the object's bounding box and the bar.
-pub const OBJECT_GAP_PX: f32 = 6.0;
-/// Gap between the bar and a popover hanging off one of its slots.
-const POPOVER_GAP_PX: f32 = 6.0;
+pub use quantick_drawings::bar_placement::OBJECT_GAP_PX;
 /// Side of the colour swatch painted inside its 32 px slot.
 const SWATCH_SIDE_PX: f32 = 20.0;
 /// Side of one swatch inside the colour popover.
@@ -70,6 +73,8 @@ const WIDTH_PREVIEW_LEN_PX: f32 = 18.0;
 const POPOVER_ROW_WIDTH_PX: f32 = 132.0;
 /// Height of one row inside the width and size popovers.
 const POPOVER_ROW_HEIGHT_PX: f32 = 26.0;
+/// Room for the widest risk/reward button, `Custom · R/R 1:12.5`.
+const RISK_REWARD_WIDTH_PX: f32 = 124.0;
 
 /// Opacity while the pointer is elsewhere. It never reaches zero: the object
 /// is selected, and this bar is the proof of that on screen.
@@ -78,10 +83,6 @@ const IDLE_OPACITY: f32 = 0.55;
 const WAKE_RADIUS_PX: f32 = 24.0;
 /// Seconds of the opacity cross-fade, both directions.
 const FADE_SECONDS: f32 = 0.12;
-
-/// How long a gesture with no release event — wheel zoom, window resize —
-/// keeps the bar suppressed after its last event.
-pub const TRANSIENT_SUPPRESS_MS: u64 = 200;
 
 /// The stroke widths the bar offers. Four discrete steps, not the
 /// inspector's continuous slider: nobody wants to dial 0.1 px during the
@@ -94,6 +95,7 @@ pub fn slot_width(slot: Slot) -> f32 {
     match slot {
         Slot::Grip => GRIP_WIDTH_PX,
         Slot::Separator => SEPARATOR_WIDTH_PX,
+        Slot::RiskReward => RISK_REWARD_WIDTH_PX,
         _ => TOOLRAIL_ICON.hit,
     }
 }
@@ -133,17 +135,7 @@ pub(crate) fn floating_frame(palette: &crate::theme::Palette) -> egui::Frame {
         .inner_margin(egui::Margin::symmetric(BAR_PAD_X_PX, BAR_PAD_Y_PX))
 }
 
-/// Where the bar opens for an object whose screen bounding box is `bbox`.
-///
-/// Above the object and aligned to the *left* of its box — not centred.
-/// Centring looks tidier and is wrong: the bar's width changes with the
-/// object's capabilities, so a centred bar puts the colour swatch in a
-/// different place for every tool. Left-aligned, slot one is always in the
-/// same place relative to the thing it edits.
-///
-/// `right_limit` is where the live lane starts, when the pane has one. The
-/// bar never covers the live region: that is where the price the trader is
-/// reading is being formed.
+/// [`quantick_drawings::bar_placement::place`], in egui's types.
 #[must_use]
 pub fn place(
     chart: egui::Rect,
@@ -151,118 +143,42 @@ pub fn place(
     bbox: egui::Rect,
     size: egui::Vec2,
 ) -> egui::Pos2 {
-    let above = bbox.top() - OBJECT_GAP_PX - size.y;
-    let below = bbox.bottom() + OBJECT_GAP_PX;
-    if above < chart.top() && below + size.y > chart.bottom() {
-        // Taller than the pane leaves no room above or below — a volume
-        // profile spanning the price axis, a channel across the whole view.
-        // The top edge of a full-height object *is* the object, and the bar
-        // must never sit on the figure it edits.
-        //
-        // Beside it instead, on whichever side has room. Vertically it keeps
-        // to the object's top, so the controls stay where the eye left them.
-        let gap = OBJECT_GAP_PX;
-        let y = (bbox.top()).clamp(chart.top(), (chart.bottom() - size.y).max(chart.top()));
-        let right_of = bbox.right() + gap;
-        let left_of = bbox.left() - gap - size.x;
-        if right_of + size.x <= right_limit.min(chart.right()) {
-            return egui::pos2(right_of, y);
-        }
-        if left_of >= chart.left() {
-            return egui::pos2(left_of, y);
-        }
-        // The object leaves no strip on either side either. Nothing can be
-        // placed clear of it; the top edge is the least-bad answer, and this
-        // is now the only case that reaches it.
-        return egui::pos2(
-            bbox.left()
-                .clamp(chart.left(), (chart.right() - size.x).max(chart.left())),
-            chart.top() + gap,
-        );
-    }
-    let y = if above >= chart.top() { above } else { below };
-    // Prefer to stay clear of the live lane; if the bar is wider than the
-    // history area itself, the chart's own edge wins over the preference.
-    let right = right_limit.min(chart.right()).max(chart.left() + size.x);
-    let max_x = (right - size.x).max(chart.left());
-    let x = bbox.left().clamp(chart.left(), max_x);
-    let max_y = (chart.bottom() - size.y).max(chart.top());
-    egui::pos2(x, y.clamp(chart.top(), max_y))
+    let (chart, bbox) = (px_rect(chart), px_rect(bbox));
+    pos(placement::place(
+        chart,
+        right_limit,
+        bbox,
+        px(size.to_pos2()),
+    ))
 }
 
 /// Which popover the bar has open. Kept here rather than in egui memory so
 /// the state machine below can close it as one step of a transition.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]
 enum Popover {
     #[default]
     None,
     Color,
     Width,
     GlyphSize,
+    Leg(PositionLeg),
+    RiskReward,
 }
 
-/// Why the bar is currently not on screen.
-///
-/// Suppression exists to protect the bar from *gestures*, not from the
-/// market moving. A drawing that drifts with the auto-scroll simply carries
-/// the bar along, smoothly; suppressing that would make the bar blink all
-/// session on a live tape. What must never happen is the bar measuring a
-/// world the same gesture is still moving.
-#[derive(Debug, Default)]
-pub struct Suppression {
-    /// A gesture with a release event — dragging the object, a handle, the
-    /// canvas, a pane divider — is holding the bar down.
-    gesture: bool,
-    /// A gesture with no release — wheel zoom, window resize — expires.
-    until_ms: Option<u64>,
-}
-
-/// The bar's own state: everything that must outlive a frame.
+/// The bar's own state: the headless [`BarState`] plus what egui needs.
 #[derive(Debug, Default)]
 pub struct ContextBar {
     open: Popover,
-    /// Where the trader dragged the bar. Absolute screen position, and it
-    /// outlives the selection it was chosen under.
-    ///
-    /// Nobody drags this bar to a corner *for one object*: they drag it off
-    /// the price action they are reading, and the next object is on the same
-    /// chart with the same thing behind it.
-    ///
-    /// So the hand outranks the placement here exactly as it does for the
-    /// properties popup, and by the same argument: a trader who chose where
-    /// this goes has already answered the question the rule exists to guess.
-    /// The way back is the grip's double-click, named in its own tooltip and
-    /// aimed at the bar and nothing else — see [`Self::clear_manual`].
-    ///
-    /// The host clamps it into the chart before drawing — see
-    /// `QuantickApp::draw_drawing_context_bar` — so a position parked under a
-    /// wide layout can never leave the view under a narrow one.
-    ///
-    /// Session-only, and deliberately: the properties popup records its parked
-    /// point in the workspace (`SavedChrome::inspector_position`) because it is
-    /// a window of settings, while a *context* bar reappearing in a corner at
-    /// the next launch, far from any object and with nothing to explain it,
-    /// is a different decision and not one this change makes. The argument
-    /// below is about which of hand and rule wins within a session.
-    manual: Option<egui::Pos2>,
-    suppression: Suppression,
-    dismissal: BarDismissal,
-    last_selection: Option<usize>,
+    pub state: BarState,
     /// Screen rect of the slot each popover hangs from.
     anchor: Option<egui::Rect>,
-    /// Last window size seen, so a resize can suppress like a zoom does.
-    last_screen: Option<egui::Rect>,
     /// The delete tooltip, which names the object. Cached rather than
     /// formatted per frame: the bar is up for as long as something is
     /// selected, and this sentence only changes when the tool does.
     delete_hover: String,
     delete_hover_for: &'static str,
-    /// Last resolved rect, for the wake radius and for tests.
-    rect: Option<egui::Rect>,
     /// The open popover's Area — see [`Self::owns_press`].
     popover_layer: Option<egui::Id>,
-    /// What [`Self::owns_press`] decided, keyed by the press's start time.
-    press_owned: Option<(f64, bool)>,
     /// The colour popover shows the full picker inline: egui's own picker
     /// popup is a second Area, and a press inside it closed this popover.
     custom_open: bool,
@@ -294,134 +210,58 @@ struct ColorProbe {
 }
 
 impl ContextBar {
-    /// A gesture that has a release event starts here.
+    /// [`BarState::suppress_gesture`]; a popover cannot outlive its bar.
     pub fn suppress_gesture(&mut self) {
-        self.suppression.gesture = true;
+        self.state.suppress_gesture();
         self.open = Popover::None;
     }
 
-    /// …and ends here. The bar comes back on the next frame, measuring the
-    /// world *after* the gesture settled.
-    pub fn release_gesture(&mut self) {
-        self.suppression.gesture = false;
-    }
-
-    /// Watch the window for a resize, which is a gesture with no release of
-    /// its own — the pointer is on a border the OS owns.
+    /// [`BarState::note_screen`]; a resize closes the popover.
     pub fn note_screen(&mut self, screen: egui::Rect, now_ms: u64) {
-        if self.last_screen.is_some_and(|last| last != screen) {
-            self.suppress_transient(now_ms);
+        if self.state.note_screen(px_rect(screen), now_ms) {
+            self.open = Popover::None;
         }
-        self.last_screen = Some(screen);
     }
 
-    /// A gesture with no release — wheel zoom, resize — renews a deadline.
+    /// [`BarState::suppress_transient`], closing the popover.
     pub fn suppress_transient(&mut self, now_ms: u64) {
-        self.suppression.until_ms = Some(now_ms + TRANSIENT_SUPPRESS_MS);
+        self.state.suppress_transient(now_ms);
         self.open = Popover::None;
     }
 
-    #[must_use]
-    pub fn suppressed(&self, now_ms: u64) -> bool {
-        self.suppression.gesture
-            || self
-                .suppression
-                .until_ms
-                .is_some_and(|deadline| now_ms < deadline)
-    }
-
-    /// Called every frame with the current selection. Answers whether the
-    /// selection changed.
-    ///
-    /// What a new object drops is what belongs to the *old* one: an open
-    /// popover (a colour palette hanging off a bar that is about to move is
-    /// pointing at nothing) and the last rect (the wake radius must not
-    /// measure against geometry from the previous object). A hand-placed
-    /// position is not one of those — see [`Self::manual`].
+    /// [`BarState::note_selection`]; a new object closes the popover.
     pub fn note_selection(&mut self, selection: Option<usize>) -> bool {
-        if self.last_selection == selection {
-            return false;
+        let changed = self.state.note_selection(selection);
+        if changed {
+            self.open = Popover::None;
         }
-        self.last_selection = selection;
-        self.open = Popover::None;
-        self.rect = None;
-        true
+        changed
     }
 
-    /// Step [`BarDismissal`] with this frame, answering whether the bar stands
-    /// dismissed. Dismissing drops the popover and the rect, so a later press
-    /// where the bar was is not read as one on it.
+    /// [`BarState::step_dismissal`], answering whether the bar stands
+    /// dismissed; dismissing closes the popover.
     pub fn step_dismissal(
         &mut self,
         target: Option<BarTarget>,
         focused: bool,
         press: Option<Press>,
     ) -> bool {
-        if self.dismissal.step(target, focused, press) {
+        if self.state.step_dismissal(target, focused, press) {
             self.open = Popover::None;
-            self.rect = None;
         }
-        self.dismissal.dismissed()
+        self.state.dismissed()
     }
 
-    #[must_use]
-    pub fn manual_position(&self) -> Option<egui::Pos2> {
-        self.manual
-    }
-
-    /// The trader dragged the bar by the grip: it stops following the object
-    /// and stays where they put it, across the selections that come after —
-    /// see [`Self::manual`].
-    ///
-    /// It still hides through a pan, zoom or canvas drag like a following bar:
-    /// suppression is what lets a drag reach the canvas underneath it.
-    pub fn set_manual(&mut self, position: egui::Pos2) {
-        self.manual = Some(position);
-    }
-
-    /// Give the placement back to the rule, reporting whether there was
-    /// anything to give.
-    ///
-    /// The named door out of the parked state, for a hand and for an operator
-    /// without one: the grip's double-click *calls* this rather than clearing
-    /// the field itself, so there is one way back and not two.
-    ///
-    /// Not Escape: a key a trader presses many times an hour would quietly
-    /// undo where they put the bar — see the escape stack in
-    /// `QuantickApp::drawing_keys`.
-    pub fn clear_manual(&mut self) -> bool {
-        self.manual.take().is_some()
-    }
-
-    #[must_use]
-    pub fn last_rect(&self) -> Option<egui::Rect> {
-        self.rect
-    }
-
-    /// Whether the press (origin, start time) began on the bar or its open
-    /// popover's layer — a drag there is not a chart drag. Decided once per
-    /// press and held to the release: a grip drag moves the bar, and egui
-    /// calls the release a drag. Keyed by start time, so a release this never
-    /// saw cannot hand its answer to the next press.
+    /// [`BarState::owns_press`] against the last rect, or the open popover's
+    /// `layer`.
     pub fn owns_press(
         &mut self,
         press: Option<(egui::Pos2, f64)>,
-        current: Option<egui::Rect>,
         layer: Option<egui::LayerId>,
     ) -> bool {
-        let Some((origin, started)) = press else {
-            return self.press_owned.take().is_some_and(|(_, owned)| owned);
-        };
-        if let Some((at, owned)) = self.press_owned
-            && at == started
-        {
-            return owned;
-        }
         let popover = self.popover_layer.filter(|_| self.open != Popover::None);
-        let owned = layer.is_some_and(|layer| Some(layer.id) == popover)
-            || current.is_some_and(|rect| rect.contains(origin));
-        self.press_owned = Some((started, owned));
-        owned
+        let on_popover = layer.is_some_and(|layer| Some(layer.id) == popover);
+        (self.state).owns_press(press.map(|(at, t)| (px(at), t)), on_popover)
     }
 
     fn toggle(&mut self, popover: Popover, anchor: egui::Rect) {
@@ -451,6 +291,8 @@ pub struct ContextBarIntent {
     pub force_delete: bool,
     /// …or abandoned.
     pub cancel_delete: bool,
+    /// A position's colour, opacity, ratio or default, from its own menus.
+    pub position: Option<PositionAsk>,
     /// The style or glyph size changed this frame — the caller folds it into
     /// its undo coalescing, exactly as it does for the inspector.
     pub edited: bool,
@@ -492,6 +334,8 @@ pub struct BarObject<'a> {
     /// The tool that drew this object, offered again on the bar as its own
     /// rail glyph and hover text; `None` for a tool drawn once at a time.
     pub draw_again: Option<DrawAgain>,
+    /// A long or short position's colours and risk/reward menu.
+    pub position: Option<PositionFace>,
 }
 
 /// The rail's own face for the tool the bar offers again, so the bar and
@@ -521,6 +365,7 @@ pub fn capabilities(object: &BarObject<'_>) -> Capabilities {
         sharing: object.shareable,
         magnet: object.magnet.is_some(),
         draw_again: object.draw_again.is_some(),
+        position: object.position.is_some(),
     }
 }
 
@@ -540,7 +385,7 @@ pub fn show(
     let cells = slots(capabilities(object));
     let size = bar_size(&cells);
     let rect = egui::Rect::from_min_size(position, size);
-    bar.rect = Some(rect);
+    bar.state.set_rect(px_rect(rect));
     #[cfg(test)]
     {
         bar.probe.draw_again = None;
@@ -619,6 +464,9 @@ fn draw_slot(
             intent.draw_again |= pencil.clicked();
         }
         Slot::Color => draw_color_slot(ui, bar, object),
+        Slot::TargetColor => leg_slot(ui, bar, object, PositionLeg::Target, "Target colour"),
+        Slot::StopColor => leg_slot(ui, bar, object, PositionLeg::Stop, "Stop colour"),
+        Slot::RiskReward => draw_ratio_slot(ui, bar, object),
         Slot::Width => draw_width_slot(ui, bar, object),
         Slot::GlyphSize => draw_glyph_size_slot(ui, bar),
         Slot::Duplicate => {
@@ -805,6 +653,21 @@ fn draw_separator(ui: &mut egui::Ui) {
 /// the control *is* the current value, which is what lets it answer "what
 /// colour is this?" without being clicked.
 fn draw_color_slot(ui: &mut egui::Ui, bar: &mut ContextBar, object: &BarObject<'_>) {
+    let hover = hover_text(
+        object,
+        "Colour",
+        "Colour - the lock protects position, not style",
+    );
+    swatch_slot(ui, bar, object.style.color32(), Popover::Color, hover);
+}
+
+fn swatch_slot(
+    ui: &mut egui::Ui,
+    bar: &mut ContextBar,
+    color: egui::Color32,
+    popover: Popover,
+    hover: &'static str,
+) {
     let palette = theme::get(ui.ctx());
     let (rect, response) = ui.allocate_exact_size(
         egui::vec2(TOOLRAIL_ICON.hit, TOOLRAIL_ICON.hit),
@@ -814,7 +677,7 @@ fn draw_color_slot(ui: &mut egui::Ui, bar: &mut ContextBar, object: &BarObject<'
         let swatch =
             egui::Rect::from_center_size(rect.center(), egui::vec2(SWATCH_SIDE_PX, SWATCH_SIDE_PX));
         let painter = ui.painter();
-        painter.rect_filled(swatch, egui::Rounding::same(4.0), object.style.color32());
+        painter.rect_filled(swatch, egui::Rounding::same(4.0), color);
         painter.rect_stroke(
             swatch,
             egui::Rounding::same(4.0),
@@ -822,16 +685,66 @@ fn draw_color_slot(ui: &mut egui::Ui, bar: &mut ContextBar, object: &BarObject<'
         );
     }
     #[cfg(test)]
-    {
+    if popover == Popover::Color {
         bar.probe.color = Some(rect);
     }
-    let response = response.on_hover_text(hover_text(
-        object,
-        "Colour",
-        "Colour - the lock protects position, not style",
-    ));
+    if response.on_hover_text(hover).clicked() {
+        bar.toggle(popover, rect);
+    }
+}
+
+fn leg_slot(
+    ui: &mut egui::Ui,
+    bar: &mut ContextBar,
+    object: &BarObject<'_>,
+    leg: PositionLeg,
+    hover: &'static str,
+) {
+    if let Some(face) = object.position.as_ref() {
+        swatch_slot(ui, bar, leg_color(face, leg), Popover::Leg(leg), hover);
+    }
+}
+
+fn leg_color(face: &PositionFace, leg: PositionLeg) -> egui::Color32 {
+    let [r, g, b] = match leg {
+        PositionLeg::Target => face.target_rgb,
+        PositionLeg::Stop => face.stop_rgb,
+    };
+    egui::Color32::from_rgb(r, g, b)
+}
+
+/// `R/R 1:2`, the risk digit in the stop colour and the reward digit in the
+/// target colour, led by `Custom · ` when the plan is no preset.
+fn draw_ratio_slot(ui: &mut egui::Ui, bar: &mut ContextBar, object: &BarObject<'_>) {
+    let Some(face) = object.position.as_ref() else {
+        return;
+    };
+    let palette = theme::get(ui.ctx());
+    let size = egui::vec2(RISK_REWARD_WIDTH_PX, TOOLRAIL_ICON.hit);
+    let Some(button) = face.ratio.as_ref().map(|menu| &menu.button) else {
+        ui.add_sized(size, egui::Label::new("R/R –"))
+            .on_hover_text("A flat plan states no risk/reward");
+        return;
+    };
+    let mut job = egui::text::LayoutJob::default();
+    for (text, color) in [
+        (button.lead, palette.text_muted()),
+        (button.prefix, palette.text_muted()),
+        (button.risk, leg_color(face, PositionLeg::Stop)),
+        (button.colon, palette.text_muted()),
+        (button.reward.as_str(), leg_color(face, PositionLeg::Target)),
+    ] {
+        job.append(
+            text,
+            0.0,
+            egui::TextFormat::simple(palette.body_font(12.0), color),
+        );
+    }
+    let response = ui
+        .add_sized(size, egui::Button::new(job).frame(false))
+        .on_hover_text("Risk/reward");
     if response.clicked() {
-        bar.toggle(Popover::Color, rect);
+        bar.toggle(Popover::RiskReward, response.rect);
     }
 }
 
@@ -893,53 +806,13 @@ fn hover_text(object: &BarObject<'_>, idle: &'static str, locked: &'static str) 
     if object.locked { locked } else { idle }
 }
 
-/// Where a popover opens: hanging off the slot it belongs to — under it,
-/// flipped above when there is no room, right-aligned on it rather than
-/// pushed off it — and never outside `bounds`.
-///
-/// Downward is the default because that is where the eye goes from a control
-/// it just pressed. It cannot be the only answer: the bar can sit one bar's
-/// height off the bottom of the pane — automatic placement reaches that for
-/// an object at the bottom, and a *parked* bar stays there for every object
-/// after it — while the colour palette and the width rows are several times
-/// that tall. A palette painted past the pane lands on the time axis, on the
-/// neighbouring chart of a split, or off the window, and rows a trader cannot
-/// reach read as rows that do not exist.
-///
-/// `size` is what egui measured last time this popover was open — zero the
-/// first time, so that frame goes downward and the flip lands on the next
-/// one. That is one frame of a surface the trader just clicked open, and the
-/// alternative is measuring a panel before laying it out.
-///
-/// egui keeps the last word, against the *window*: its constraint rectangle
-/// is also the clip rectangle, so handing it the pane would silently cut the
-/// lower rows of a popover taller than the pane. Covering the bar is the
-/// better failure, and the one this rule tries hardest to avoid.
 fn popover_position(anchor: egui::Rect, size: egui::Vec2, bounds: egui::Rect) -> egui::Pos2 {
-    let below = anchor.left_bottom() + egui::vec2(0.0, POPOVER_GAP_PX);
-    let y = if below.y + size.y > bounds.bottom()
-        && anchor.top() - POPOVER_GAP_PX - size.y >= bounds.top()
-    {
-        anchor.top() - POPOVER_GAP_PX - size.y
-    } else if size.y <= bounds.height() {
-        // Fits the pane, but on neither side of the slot: covering the bar
-        // beats rows on the time axis or a neighbouring pane.
-        below.y.min(bounds.bottom() - size.y)
-    } else {
-        below.y
-    };
-    // Horizontally it hangs from the slot's left edge, and when that would run
-    // past the pane it right-aligns on the slot instead of being clamped to an
-    // arbitrary column: a palette that no longer touches the control that
-    // opened it reads as a panel that belongs to nothing. The clamp stays as
-    // the last word, for a popover wider than the pane itself.
-    let x = if below.x + size.x > bounds.right() {
-        anchor.right() - size.x
-    } else {
-        below.x
-    };
-    let max_x = (bounds.right() - size.x).max(bounds.left());
-    egui::pos2(x.clamp(bounds.left(), max_x), y)
+    let (anchor, bounds) = (px_rect(anchor), px_rect(bounds));
+    pos(placement::popover_position(
+        anchor,
+        px(size.to_pos2()),
+        bounds,
+    ))
 }
 
 /// The Area id a popover is laid out under.
@@ -953,7 +826,7 @@ fn popover_id(popover: Popover, fill: bool, custom: bool) -> egui::Id {
     let color = matches!(popover, Popover::Color);
     egui::Id::new((
         "drawing_context_bar_popover",
-        popover as u8,
+        popover,
         fill && color,
         custom && color,
     ))
@@ -1003,6 +876,8 @@ fn draw_popover(
                     ),
                     Popover::Width => draw_width_popover(ui, object, intent),
                     Popover::GlyphSize => draw_glyph_size_popover(ui, object, intent),
+                    Popover::Leg(leg) => draw_leg_popover(ui, object, leg, intent),
+                    Popover::RiskReward => draw_ratio_popover(ui, object, intent),
                     Popover::None => {}
                 });
         })
@@ -1019,9 +894,8 @@ fn draw_popover(
         && !response
             .rect
             .contains(ctx.pointer_latest_pos().unwrap_or_default())
-        && !bar
-            .rect
-            .is_some_and(|rect| rect.contains(ctx.pointer_latest_pos().unwrap_or_default()))
+        && !(bar.state.last_rect())
+            .is_some_and(|rect| rect.contains(px(ctx.pointer_latest_pos().unwrap_or_default())))
     {
         bar.open = Popover::None;
     }
@@ -1035,18 +909,15 @@ fn draw_color_popover(
     #[cfg(test)] probe: &mut ColorProbe,
 ) {
     let palette = theme::get(ui.ctx());
-    // Both axes: the selected ring sits outside its swatch.
-    ui.spacing_mut().item_spacing = egui::vec2(ITEM_GAP_PX, ITEM_GAP_PX);
-    let primaries = quantick_appearance::palette::DRAWING_PRIMARIES.map(super::to_color32);
-    for row in [&palette.drawing_swatches()[..], &primaries[..]] {
-        draw_swatch_row(
-            ui,
-            row,
-            object,
-            intent,
-            #[cfg(test)]
-            &mut probe.swatches,
-        );
+    let current = object.style.color32();
+    if let Some(swatch) = draw_palette(
+        ui,
+        current,
+        #[cfg(test)]
+        &mut probe.swatches,
+    ) {
+        object.style.set_color32(swatch);
+        intent.edited = true;
     }
     ui.separator();
     // The full picker stays one row away rather than one panel away: sending
@@ -1112,14 +983,38 @@ fn draw_color_popover(
     }
 }
 
+/// The theme's swatches over the primaries, answering the one clicked.
+fn draw_palette(
+    ui: &mut egui::Ui,
+    current: egui::Color32,
+    #[cfg(test)] rects: &mut Vec<egui::Rect>,
+) -> Option<egui::Color32> {
+    let palette = theme::get(ui.ctx());
+    // Both axes: the selected ring sits outside its swatch.
+    ui.spacing_mut().item_spacing = egui::vec2(ITEM_GAP_PX, ITEM_GAP_PX);
+    let primaries = quantick_appearance::palette::DRAWING_PRIMARIES.map(super::to_color32);
+    let rows = [&palette.drawing_swatches()[..], &primaries[..]];
+    rows.into_iter().fold(None, |picked, row| {
+        let clicked = draw_swatch_row(
+            ui,
+            row,
+            current,
+            #[cfg(test)]
+            rects,
+        );
+        clicked.or(picked)
+    })
+}
+
+/// One row of swatches, answering the one clicked.
 fn draw_swatch_row(
     ui: &mut egui::Ui,
     swatches: &[egui::Color32],
-    object: &mut BarObject<'_>,
-    intent: &mut ContextBarIntent,
+    current: egui::Color32,
     #[cfg(test)] rects: &mut Vec<egui::Rect>,
-) {
+) -> Option<egui::Color32> {
     let palette = theme::get(ui.ctx());
+    let mut picked = None;
     ui.horizontal(|ui| {
         for &swatch in swatches {
             let (rect, response) = ui.allocate_exact_size(
@@ -1129,7 +1024,7 @@ fn draw_swatch_row(
             if ui.is_rect_visible(rect) {
                 let painter = ui.painter();
                 painter.rect_filled(rect, egui::Rounding::same(4.0), swatch);
-                if object.style.color32() == swatch {
+                if current == swatch {
                     // The ring is TEXT_PRIMARY, not ACCENT: ACCENT is itself
                     // one of the swatches. It sits just outside the swatch,
                     // on the popover's own fill, so white keeps it too.
@@ -1151,11 +1046,81 @@ fn draw_swatch_row(
                 rects.push(rect);
             }
             if response.clicked() {
-                object.style.set_color32(swatch);
-                intent.edited = true;
+                picked = Some(swatch);
             }
         }
     });
+    picked
+}
+
+/// A position zone's palette and opacity, then the tool's default.
+fn draw_leg_popover(
+    ui: &mut egui::Ui,
+    object: &BarObject<'_>,
+    leg: PositionLeg,
+    intent: &mut ContextBarIntent,
+) {
+    let Some(face) = object.position.as_ref() else {
+        return;
+    };
+    if let Some(swatch) = draw_palette(
+        ui,
+        leg_color(face, leg),
+        #[cfg(test)]
+        &mut Vec::new(),
+    ) {
+        let [r, g, b, _] = swatch.to_srgba_unmultiplied();
+        intent.position = Some(PositionAsk::Edit(PositionEdit::Colour(leg, [r, g, b])));
+    }
+    let mut pct = face.zone_opacity_pct;
+    let max = quantick_drawings::MAX_ZONE_OPACITY_PCT;
+    let opacity = egui::Slider::new(&mut pct, 0..=max)
+        .suffix(" %")
+        .text("Opacity");
+    if ui.add(opacity).changed() {
+        intent.position = Some(PositionAsk::Edit(PositionEdit::ZoneOpacity(pct)));
+    }
+    draw_default_rows(ui, intent);
+}
+
+/// The risk/reward rows: a checked, read-only custom row on top while the
+/// plan is no preset, then the presets.
+fn draw_ratio_popover(ui: &mut egui::Ui, object: &BarObject<'_>, intent: &mut ContextBarIntent) {
+    let Some(face) = object.position.as_ref() else {
+        return;
+    };
+    for row in face.ratio.iter().flat_map(|menu| &menu.rows) {
+        let label = egui::SelectableLabel::new(row.checked, row.label.as_str());
+        // A lock keeps the prices: the presets move the target.
+        if ui
+            .add_enabled(row.pick.is_some() && !object.locked, label)
+            .clicked()
+            && let Some(ratio) = row.pick
+        {
+            intent.position = Some(PositionAsk::Edit(PositionEdit::Ratio(ratio)));
+        }
+    }
+    draw_default_rows(ui, intent);
+}
+
+fn draw_default_rows(ui: &mut egui::Ui, intent: &mut ContextBarIntent) {
+    ui.separator();
+    for (label, hover, action) in [
+        (
+            "Save as default",
+            "New positions of this side open with these colours, opacity and risk/reward",
+            PositionDefault::Save,
+        ),
+        (
+            "Reset",
+            "New positions of this side open with the factory look again",
+            PositionDefault::Reset,
+        ),
+    ] {
+        if ui.button(label).on_hover_text(hover).clicked() {
+            intent.position = Some(PositionAsk::Default(action));
+        }
+    }
 }
 
 fn draw_width_popover(
@@ -1301,6 +1266,24 @@ impl ContextBar {
 
     pub fn popover_open(&self) -> bool {
         self.open != Popover::None
+    }
+
+    #[must_use]
+    pub fn manual_position(&self) -> Option<egui::Pos2> {
+        self.state.manual().map(pos)
+    }
+
+    pub fn set_manual(&mut self, position: egui::Pos2) {
+        self.state.set_manual(px(position));
+    }
+
+    pub fn clear_manual(&mut self) -> bool {
+        self.state.clear_manual()
+    }
+
+    #[must_use]
+    pub fn last_rect(&self) -> Option<egui::Rect> {
+        self.state.last_rect().map(super::geometry::egui_rect)
     }
 }
 

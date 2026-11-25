@@ -78,7 +78,7 @@ impl Chrome<'_> {
                 self.view.inspector.max_width = None;
             }
             if let Some([x, y]) = bar_position {
-                self.view.bar.bar.set_manual(egui::pos2(x, y));
+                self.view.bar.bar.state.set_manual(quantick_drawings::Px::new(x, y));
             }
         }
         if let Some(tab) = self.view.rejected_tab.take() {
@@ -129,6 +129,8 @@ impl DrawingDemoLaunch {
                     .filter(|value| value == "0" || value == "1")
                     .map(|value| value == "1"),
                 select_tool: read("QUANTICK_DRAWINGS_DEMO_SELECT"),
+                only: read("QUANTICK_DRAWINGS_DEMO_ONLY")
+                    .map(|ids| ids.split(',').map(|id| id.trim().to_owned()).collect()),
             });
         let recut = read("QUANTICK_DRAWINGS_DEMO_RECUT").is_some_and(|value| value == "1");
         let profile = read("QUANTICK_FRVP_DEMO")
