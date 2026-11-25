@@ -5,7 +5,9 @@ use quantick_appearance::{
 };
 use quantick_workspace::book_upkeep::UpkeepSave;
 use quantick_workspace::write_refusal::guard_write;
+use std::cell::Cell;
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 pub use quantick_workspace::workspace_book::{
     BookParseError, CreateOutcome, DEFAULT_WORKSPACE, DeleteOutcome, MAX_WORKSPACE_NAME,
@@ -134,6 +136,7 @@ pub struct WorkspaceBookStore {
     path: PathBuf,
     blocked: bool,
     sync: TabRecipeSync,
+    drawing_reservation: Cell<(u64, Option<Instant>)>,
 }
 
 impl WorkspaceBookStore {
@@ -152,6 +155,7 @@ impl WorkspaceBookStore {
             path,
             blocked,
             sync: TabRecipeSync::default(),
+            drawing_reservation: Cell::new((0, None)),
         }
     }
 
@@ -160,8 +164,111 @@ impl WorkspaceBookStore {
         &self.book
     }
 
+    #[must_use]
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
     pub fn book_mut(&mut self) -> &mut WorkspaceBook {
         &mut self.book
+    }
+
+    /// Upgrade stable identities before moving legacy drawings into those scopes.
+    pub fn bind_drawings(
+        &self,
+        layouts: &mut quantick_workspace::layout_store::LayoutStore,
+        now: Instant,
+    ) {
+        if self.ensure_drawing_identities(now).is_ok() {
+            crate::market_settings::migrate_workspace_scopes(layouts, &self.book, now);
+        }
+    }
+
+    fn ensure_drawing_identities(&self, now: Instant) -> Result<bool, String> {
+        if self.drawing_reservation.get().0 >= self.book.workspace_id_highwater() {
+            return Ok(false);
+        }
+        self.persist().inspect_err(|_| {
+            self.drawing_reservation.set((0, Some(now)));
+        })?;
+        Ok(true)
+    }
+
+    /// Reserve workspace identities and layout IDs before publishing a scoped drawing identity.
+    ///
+    /// # Errors
+    /// A workspace or layout identity could not be made durable.
+    pub fn reserve_drawing_identities(
+        &self,
+        layouts: &mut quantick_workspace::layout_store::LayoutStore,
+        now: Instant,
+    ) -> Result<(), String> {
+        if self.ensure_drawing_identities(now)? {
+            crate::market_settings::migrate_workspace_scopes(layouts, &self.book, now);
+        }
+        crate::market_settings::reserve_layout_identities(layouts, now)
+    }
+
+    /// Read or change a scoped drawing preference after reserving its owners.
+    ///
+    /// # Errors
+    /// A required identity or drawing preference write failed.
+    pub fn drawing_autosave(
+        &self,
+        layouts: &mut quantick_workspace::layout_store::LayoutStore,
+        key: &crate::market_settings::DrawingKey,
+        on: Option<bool>,
+        now: Instant,
+    ) -> Result<(bool, bool), String> {
+        if on.is_some() {
+            self.reserve_drawing_identities(layouts, now)?;
+        }
+        crate::market_settings::drawing_autosave(layouts, key, on, now)
+    }
+
+    /// Publish an alert target only after its complete owner chain is durable.
+    ///
+    /// # Errors
+    /// An owner reservation, drawing write or exact identity verification failed.
+    pub fn commit_drawing_identity(
+        &self,
+        layouts: &mut quantick_workspace::layout_store::LayoutStore,
+        key: &crate::market_settings::DrawingKey,
+        identity: &quantick_workspace::drawing_identity::DurableDrawingRef,
+        now: Instant,
+    ) -> Result<(), crate::market_settings::TargetResolveError> {
+        self.reserve_drawing_identities(layouts, now)
+            .map_err(crate::market_settings::TargetResolveError::WriteFailed)?;
+        crate::market_settings::commit_identity(layouts, key, identity, now)
+    }
+
+    /// Write drawings under the independent configuration and identity gates.
+    pub fn persist_drawings(
+        &self,
+        layouts: &mut quantick_workspace::layout_store::LayoutStore,
+        now: Instant,
+        immediate: bool,
+    ) {
+        if layouts.set_configuration_autosave(self.autosave()) && layouts.configuration_changed() {
+            layouts.mark_changed(now);
+        }
+        let retry_waits = self.drawing_reservation.get().1.is_some_and(|failed| {
+            now.saturating_duration_since(failed)
+                < quantick_workspace::layout_commit::LAYOUTS_SAVE_DEBOUNCE
+        });
+        if !immediate && retry_waits {
+            return;
+        }
+        match self.ensure_drawing_identities(now) {
+            Ok(true) => crate::market_settings::migrate_workspace_scopes(layouts, &self.book, now),
+            Ok(false) => {}
+            Err(_) => return,
+        }
+        if immediate {
+            crate::market_settings::flush(layouts, now);
+        } else {
+            crate::market_settings::save_settled(layouts, now);
+        }
     }
 
     /// Whether layout edits are written through as they are made.
@@ -259,11 +366,13 @@ impl WorkspaceBookStore {
         (self.book, self.blocked) = load(&self.path);
         self.book.set_autosave(autosave);
         self.sync.restart();
+        self.drawing_reservation.set((0, None));
     }
 
     /// Follow a layouts file moved to another folder.
     pub fn move_beside(&mut self, layouts: &Path) {
         self.path = path_beside(layouts);
+        self.drawing_reservation.set((0, None));
     }
 
     /// Write the recipes.
@@ -278,7 +387,10 @@ impl WorkspaceBookStore {
                 self.path.display()
             ));
         }
-        save(&self.path, &self.book)
+        save(&self.path, &self.book)?;
+        self.drawing_reservation
+            .set((self.book.workspace_id_highwater(), None));
+        Ok(())
     }
 
     /// Write what the frame's upkeep asked for. A refused write leaves the
@@ -375,6 +487,47 @@ mod tests {
     }
 
     #[test]
+    fn drawing_writes_wait_for_workspace_identity_reservation_and_retry() {
+        use quantick_workspace::layout_document::LayoutBook;
+        use quantick_workspace::layout_store::LayoutStore;
+        use quantick_workspace::market_settings::DrawingKey;
+        let dir = ScratchDir::new("workspace-drawing-identity-retry");
+        let path = dir.join("layouts.toml");
+        let mut layouts = LayoutStore::new(LayoutBook::default(), path.clone(), false);
+        let book = WorkspaceBookStore::open_beside(&path);
+        let obstacle = book.path().with_extension("toml.tmp");
+        std::fs::create_dir(&obstacle).unwrap();
+        let now = Instant::now();
+        book.bind_drawings(&mut layouts, now);
+        let scope = book
+            .book()
+            .drawing_scope(1, layouts.book().active_id())
+            .unwrap();
+        let key = DrawingKey::of_pane("binance", "BTCUSDT".to_owned(), None).in_scope(scope);
+        layouts.market_mut().set_drawing_autosave(&key, false, now);
+        book.persist_drawings(&mut layouts, now, true);
+        assert!(!layouts.market().path().exists());
+        assert!(layouts.market().is_dirty());
+        assert!(book.reserve_drawing_identities(&mut layouts, now).is_err());
+        std::fs::remove_dir(obstacle).unwrap();
+        book.persist_drawings(
+            &mut layouts,
+            now + quantick_workspace::layout_commit::LAYOUTS_SAVE_DEBOUNCE,
+            false,
+        );
+        let saved = crate::market_settings::parse_settings(
+            &std::fs::read_to_string(layouts.market().path()).unwrap(),
+        )
+        .unwrap();
+        assert!(!saved.drawing_autosave(&key));
+        assert_eq!(
+            load(book.path()).0.workspace_id("Default"),
+            Some(scope.workspace)
+        );
+        assert!(!layouts.market().is_dirty());
+    }
+
+    #[test]
     fn a_blocked_store_refuses_with_the_reason_and_writes_nothing() {
         let dir = ScratchDir::new("workspaces-store-blocked");
         let path = dir.join(WORKSPACES_FILE);
@@ -383,6 +536,7 @@ mod tests {
             path: path.clone(),
             blocked: true,
             sync: TabRecipeSync::default(),
+            drawing_reservation: Cell::new((0, None)),
         };
         assert!(store.persist().unwrap_err().contains("left untouched"));
         assert!(!path.exists());

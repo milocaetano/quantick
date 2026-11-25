@@ -965,7 +965,8 @@ fn the_drawing_section_of_the_menu_acts_on_the_clicked_object() {
             "Delete",
             "configure footprint",
             "configure L2",
-            "configure bubbles"
+            "configure bubbles",
+            "Save drawing"
         ],
         "the clicked object owns its section of the menu — rename, the \
              strategy seat, and the guarded actions — above the chart's \
@@ -3277,10 +3278,8 @@ fn switching_tabs_closes_the_editor_and_leaves_the_note_on_its_own_tab() {
         None,
         "the editor does not follow the trader to another tab"
     );
-    // The new tab is on the same market, so the layout puts the same note
-    // on it — a drawing belongs to a market on a pane, not to a tab. The
-    // words were committed when the editor closed, and the mirror follows
-    // a commit on the next frame.
+    // The new tab starts on Default, a different workspace. The words stay
+    // with the original scope even though both tabs show the same market.
     run_frame(&mut app, &ctx);
     let mirrored = app
         .runtime
@@ -3292,10 +3291,9 @@ fn switching_tabs_closes_the_editor_and_leaves_the_note_on_its_own_tab() {
         .flow_pane
         .drawings
         .items();
-    assert_eq!(mirrored.len(), 1, "the market's note came with the market");
-    assert_eq!(
-        mirrored[0].tool.inline_text(mirrored[0].payload.as_ref()),
-        Some("mine")
+    assert!(
+        mirrored.is_empty(),
+        "a different workspace has its own drawings"
     );
 
     let owner = app.runtime.tabs.by_id(home).expect("home tab");
@@ -4150,12 +4148,31 @@ fn a_selection_on_a_twin_does_not_cost_the_other_chart_its_drawing() {
     place_level(&mut app, PaneSide::Flow, 100.0);
     run_frame(&mut app, &ctx);
 
-    // A second tab on the same market: one drawing key, two panes.
+    let workspace = app.runtime.workspace.book.tab_row(home).0;
+    let key = app
+        .active_tab()
+        .flow_pane
+        .layout
+        .drawings_key
+        .clone()
+        .unwrap();
+    // A second tab on the same market, workspace and named layout: one key, two panes.
     app.arrangement_adapter()
         .open_tab("binance".to_owned(), "TESTUSDT".to_owned(), None);
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
     let twin = app.runtime.tabs.active_id();
+    quantick_control_handlers::workspace_book::set_tab_workspace(
+        &mut app.workspace_calls(),
+        twin,
+        &workspace,
+    )
+    .unwrap();
+    app.layout_adapter()
+        .switch_pane_layout(twin, PaneSide::Flow, key.scope.unwrap().layout)
+        .unwrap();
+    run_frame(&mut app, &ctx);
+    assert_eq!(app.active_tab().flow_pane.layout.drawings_key, Some(key));
     assert_ne!(twin, home, "a second tab opened");
     assert_eq!(
         drawings_on(&app, PaneSide::Flow),
@@ -4403,10 +4420,10 @@ fn two_context_charts_on_one_bar_rule_mirror_a_shared_mark_once() {
     assert!(owners(bottom).is_empty());
 }
 
-/// Two context charts on one bar rule claim two legacy slots into one set: both
-/// end up holding all of it, so an edit on either loses nothing.
+/// Missing legacy workspace ownership stays quarantined when two context
+/// charts open it; a new scoped edit leaves both legacy slots intact.
 #[test]
-fn twin_context_charts_claiming_two_slots_keep_both_through_an_edit() {
+fn twin_context_charts_keep_unowned_legacy_slots_through_a_scoped_edit() {
     const OLD_LAYOUTS: &str = r#"
 version = 1
 active = 1
@@ -4463,16 +4480,22 @@ points = [{ time_ms = 1000, price = 200.0, bar = 3.0 }]
 
     app.layout_adapter().reload_layouts(&["layouts"]);
     run_frame(&mut app, &ctx);
-    let both = vec![100.0, 200.0];
-    assert_eq!(drawings_on(&app, PaneSide::Time(0)), both);
-    assert_eq!(drawings_on(&app, PaneSide::Time(1)), both);
+    let legacy = app.runtime.workspace.layouts().market().settings().clone();
+    assert_eq!(legacy.drawing_count(), 2);
+    assert!(legacy.keys().all(|key| key.scope.is_none()));
+    assert!(drawings_on(&app, PaneSide::Time(0)).is_empty());
+    assert!(drawings_on(&app, PaneSide::Time(1)).is_empty());
 
     place_level(&mut app, PaneSide::Time(0), 300.0);
     set_scope_on(&mut app, PaneSide::Time(0), DrawingScope::ThisChart);
     run_frame(&mut app, &ctx);
-    let all = vec![100.0, 200.0, 300.0];
+    let all = vec![300.0];
     assert_eq!(drawings_on(&app, PaneSide::Time(0)), all);
     assert_eq!(drawings_on(&app, PaneSide::Time(1)), all);
+    let current = app.runtime.workspace.layouts().market().settings();
+    for key in legacy.keys() {
+        assert_eq!(current.drawings(&key), legacy.drawings(&key));
+    }
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -4621,10 +4644,10 @@ fn a_chart_whose_strategy_stopped_follows_its_bars() {
     );
 }
 
-/// An export from before the market store still imports: its drawings land on
-/// their markets, labelled, and a context pane claims what its address held.
+/// An export without workspace ownership preserves its labelled drawings in
+/// quarantine while the active scoped charts remain empty.
 #[test]
-fn an_old_export_lands_on_the_markets_labelled_and_claimed_by_its_panes() {
+fn an_old_export_keeps_its_labelled_drawings_without_guessing_workspace_ownership() {
     const OLD_LAYOUTS: &str = r#"
 version = 1
 active = 1
@@ -4672,9 +4695,17 @@ points = [{ time_ms = 1000, price = 100.0, bar = 3.0 }]
     app.layout_adapter().reload_layouts(&["layouts"]);
     run_frame(&mut app, &ctx);
 
-    assert_eq!(drawings_on(&app, PaneSide::Flow), vec![50.0]);
-    assert_eq!(drawings_on(&app, PaneSide::Time(0)), vec![100.0]);
-    let label = app.active_tab().pane(PaneSide::Time(0)).drawings.items()[0]
+    assert!(drawings_on(&app, PaneSide::Flow).is_empty());
+    assert!(drawings_on(&app, PaneSide::Time(0)).is_empty());
+    let legacy = app.runtime.workspace.layouts().market().settings();
+    assert_eq!(legacy.drawing_count(), 2);
+    assert!(legacy.keys().all(|key| key.scope.is_none()));
+    let drawing = legacy
+        .keys()
+        .flat_map(|key| legacy.drawings(&key))
+        .find(|drawing| drawing.points[0].price == 100.0)
+        .unwrap();
+    let label = drawing
         .origin
         .as_ref()
         .map(crate::layouts::SavedOrigin::label);
@@ -4684,11 +4715,10 @@ points = [{ time_ms = 1000, price = 100.0, bar = 3.0 }]
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// A drawing belongs to the market and the role it was drawn on, whichever
-/// layout shows it: a layout switch leaves it where it is, and it never
-/// appears on the pane beside it.
+/// A layout switch leaves drawings in their original market/workspace/layout
+/// scope, and returning restores that scope's complete drawing set.
 #[test]
-fn drawings_stay_with_their_market_when_the_layout_changes() {
+fn drawings_stay_with_their_named_layout_when_the_layout_changes() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = split_app(&ctx, 200);
     place_level(&mut app, PaneSide::Time(0), 100.0);
@@ -4704,22 +4734,18 @@ fn drawings_stay_with_their_market_when_the_layout_changes() {
         .layout_adapter()
         .create_layout(None)
         .expect("a second layout");
-    assert_eq!(
-        drawings_on(&app, PaneSide::Time(0)),
-        vec![100.0],
-        "the new layout shows the market's level"
-    );
+    assert!(drawings_on(&app, PaneSide::Time(0)).is_empty());
     place_level(&mut app, PaneSide::Time(0), 200.0);
     run_frame(&mut app, &ctx);
 
     app.layout_adapter().switch_layout(first).expect("back");
     assert_eq!(
         drawings_on(&app, PaneSide::Time(0)),
-        vec![100.0, 200.0],
-        "one set, whichever layout it was drawn under"
+        vec![100.0],
+        "the original layout keeps only the level drawn there"
     );
     app.layout_adapter().switch_layout(second).expect("forth");
-    assert_eq!(drawings_on(&app, PaneSide::Time(0)), vec![100.0, 200.0]);
+    assert_eq!(drawings_on(&app, PaneSide::Time(0)), vec![200.0]);
     let key = (app.active_tab().pane(PaneSide::Time(0)).layout)
         .drawings_key
         .clone()
@@ -4732,8 +4758,8 @@ fn drawings_stay_with_their_market_when_the_layout_changes() {
             .settings()
             .drawings(&key)
             .len(),
-        2,
-        "the market store holds them once, under the chart they were drawn on"
+        1,
+        "the store holds each layout's level under its own scope"
     );
 }
 

@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 
 fn key(venue: &str, role: PaneRole) -> DrawingKey {
     DrawingKey {
+        scope: None,
         market: MarketKey {
             venue: venue.to_owned(),
             asset: "WIN*".to_owned(),
@@ -75,6 +76,55 @@ fn draw(store: &mut MarketSettingsStore, key: &DrawingKey) {
         known,
     );
     store.mark_changed(now);
+}
+
+#[test]
+fn paused_scope_preserves_snapshot_while_other_scopes_and_preferences_save() {
+    use crate::{layout_document::LayoutId, market_settings::DrawingScope};
+    let scope = DrawingScope {
+        workspace: 7,
+        layout: LayoutId(1),
+    };
+    let key = key("mt5", PaneRole::Flow).in_scope(scope);
+    let twin = DrawingKey {
+        role: context("time:5m"),
+        ..key.clone()
+    };
+    let other = key.clone().in_scope(DrawingScope {
+        workspace: 8,
+        ..scope
+    });
+    let mut store = store();
+    let now = Instant::now();
+    draw(&mut store, &key);
+    store.note_saved(store.persistence_document());
+    assert!(store.set_drawing_autosave(&key, false, now));
+    assert!(!store.drawing_autosave(&twin));
+    store.settings_mut().replace(&key, vec![], known);
+    draw(&mut store, &other);
+    let written = store.persistence_document();
+    assert_eq!(written.drawings(&key).len(), 2, "pause keeps saved objects");
+    assert_eq!(written.drawings(&other).len(), 2);
+    assert!(!written.drawing_autosave(&twin));
+    store.note_saved(written);
+    assert!(
+        !store.owes_write(),
+        "paused live differences do not trigger retries"
+    );
+    assert!(store.set_drawing_autosave(&twin, true, now));
+    assert!(store.persistence_document().drawings(&key).is_empty());
+    assert_eq!(store.take_flush(), LayoutSave::Write);
+    store.note_write_failed(now);
+    assert!(store.owes_write(), "failure preserves the owed deletion");
+    assert_eq!(
+        store.take_save(now + Duration::from_secs(2)),
+        LayoutSave::Write
+    );
+    store.note_saved(store.persistence_document());
+    assert!(!store.owes_write());
+    let reopened = MarketSettingsStore::new(store.persistence_document(), PathBuf::new(), false);
+    assert!(reopened.settings().drawings(&key).is_empty());
+    assert!(reopened.drawing_autosave(&key));
 }
 
 /// Autosave off: a drawing waits for Save, is counted for its tab, and Save

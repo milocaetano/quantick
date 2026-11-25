@@ -1,9 +1,9 @@
 //! Which charts of a market show a mark on all timeframes.
 //!
-//! Every chart of a market holds that market's all-timeframes marks itself
+//! Every chart holding one market/workspace/layout scope holds its marks itself
 //! (`pane_sync`), because a merge needs the whole set. What it *shows* is
-//! narrower: the marks of the layout it shows, the ones the trader asked to
-//! show in "All windows", and the ones read from before layouts were
+//! additionally filtered by legacy display metadata: the layout it shows and marks
+//! marked "All windows", plus marks read from before layouts were
 //! recorded, or whose layout the book no longer holds ([`Drawing::home`]). A
 //! layout is a strip layout; a pane's own copy counts as the one it came
 //! from. Everything that paints, hit-tests, lists, selects, clears or edits
@@ -325,10 +325,9 @@ fn owned_in<T>(drawing: &Drawing<T>, layout: Option<LayoutId>, live: &[LayoutId]
     !lent && drawing.shows_in(layout, live)
 }
 
-/// Strip layout `from` was deleted and its charts moved to `to`: its marks
-/// belong to `to` from now on, in the store and in every pane of `panes`,
-/// whose last-loaded sets follow so each stays level with the store. Answers
-/// whether the store changed.
+/// Retarget legacy unscoped marks after a strip layout is deleted. Scoped
+/// panes keep their current drawing owner until the normal scope transition
+/// puts those marks away and adopts the next layout's independent marks.
 pub fn retarget_layout<'a, B: 'a>(
     settings: &mut MarketSettings,
     from: LayoutId,
@@ -336,6 +335,14 @@ pub fn retarget_layout<'a, B: 'a>(
     panes: impl IntoIterator<Item = PaneMarks<'a, B>>,
 ) -> bool {
     for pane in panes {
+        if pane
+            .layout
+            .drawings_key
+            .as_ref()
+            .is_some_and(|key| key.scope.is_some())
+        {
+            continue;
+        }
         pane.drawings.retarget_layout(from, to);
         for entry in &mut pane.layout.shared_base {
             if entry.layout == Some(from) {

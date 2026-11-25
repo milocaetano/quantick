@@ -1,6 +1,6 @@
 //! A pane's drawings kept in step with its market's store.
 //!
-//! Every chart of a market holds that market's all-timeframes marks itself.
+//! Charts with the same market/workspace/layout key hold its all-timeframes marks.
 //! When another chart writes them, this one takes the new set in place of its
 //! own copy and keeps everything that is its own: its chart-only marks, their
 //! ids, its selection and its undo and redo history
@@ -200,7 +200,7 @@ pub fn refresh_shared(
 ) {
     drawings.reserve_ids(settings.max_drawing_id(&key.market));
     drawings.reserve_names(&key.market, &settings.name_floors(&key.market));
-    let shared = crate::saved::live(&settings.shared_drawings(&key.market), key);
+    let shared = crate::saved::live(&settings.shared_drawings(key), key);
     drawings.replace_shared(shared);
     *base = shared_base(drawings);
     drawings.wear_ground();
@@ -383,7 +383,15 @@ impl<B: Copy + PartialEq> PaneMarks<'_, B> {
     /// quiet re-cut moves only bars (`PaneLayout::recut_in_place`), asked
     /// again whenever the store has moved.
     pub fn follow_store(self, store: &MarketSettingsStore, session: &LayoutSession) {
-        let layout = session.strip_layout_of(self.layout.layout_id());
+        let layout = self
+            .layout
+            .drawings_key
+            .as_ref()
+            .and_then(|key| key.scope)
+            .map_or_else(
+                || session.strip_layout_of(self.layout.layout_id()),
+                |scope| scope.layout,
+            );
         self.drawings.set_layout(Some(layout));
         let live = session.book().layouts().iter().map(|layout| layout.id);
         self.drawings.set_live_layouts(live);

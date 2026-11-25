@@ -145,8 +145,8 @@ impl ScopeToggle<'_> {
         );
         actions.toggle_all_windows = windows.changed();
         windows
-            .on_hover_text("Every chart of this market draws it, whatever layout it shows")
-            .on_disabled_hover_text("Turn on Show on all timeframes to show it in all windows");
+            .on_hover_text("Charts of this market share it within this workspace and named layout")
+            .on_disabled_hover_text("Turn on Show on all timeframes to show it on charts in this workspace and named layout");
         actions
     }
 }

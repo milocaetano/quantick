@@ -335,7 +335,7 @@ fn a_pasted_mark_wears_this_pane_s_ink_at_once() {
     );
 }
 
-/// One market, a light time chart and a dark flow chart sharing a mark with
+/// One workspace/layout, a light time chart and a dark flow chart sharing a mark with
 /// the factory look: each shows its own ground's ink once the other writes,
 /// and resolving it is no edit, so neither chart writes its ink back.
 #[test]
@@ -348,13 +348,20 @@ fn a_shared_mark_wears_each_chart_s_ground_and_never_flips_the_set() {
     theme(&mut appearance, &mut store, LIGHT);
     let (paper, island) = (ChartSurface::Paper.into(), ChartSurface::Flow.into());
     let line = tool("horizontal-line");
+    let owner = quantick_workspace::market_settings::DrawingScope {
+        workspace: 7,
+        layout: quantick_workspace::layout_document::LayoutId(1),
+    };
     let market = |role: Option<&str>| {
         DrawingKey::of_pane("binance", "BTCUSDT".to_owned(), role.map(str::to_owned))
+            .in_scope(owner)
     };
     let (time_key, flow_key) = (market(Some("time:5m")), market(None));
     let mut settings = MarketSettings::default();
     let (mut time, mut time_base) = (Drawings::on_canvas(paper), Vec::new());
     let (mut flow, mut flow_base) = (Drawings::on_canvas(island), Vec::new());
+    time.set_layout(Some(owner.layout));
+    flow.set_layout(Some(owner.layout));
     adopt_pane(&mut time, &mut time_base, &settings, &time_key, "time:5m");
     adopt_pane(&mut flow, &mut flow_base, &settings, &flow_key, "tick:100");
     time.follow_ground(&store, paper);
@@ -403,7 +410,7 @@ fn a_shared_mark_wears_each_chart_s_ground_and_never_flips_the_set() {
         write.own && !write.all_timeframes && !write.merged,
         "{write:?}"
     );
-    let stored = |settings: &MarketSettings| settings.shared_drawings(&time_key.market);
+    let stored = |settings: &MarketSettings| settings.shared_drawings(&time_key);
     assert_eq!(stored(&settings).len(), 1);
     assert!(stored(&settings)[0].follows_ground);
     let ink = |entry: &SavedDrawing| entry.to_drawing(DrawingId(1)).unwrap().style;

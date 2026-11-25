@@ -637,6 +637,12 @@ fn replay_plan() -> Vec<(&'static str, u32, Value, Readback)> {
             Readback::Moves,
         ),
         ("chart.settings.set", 1, Value::Null, Readback::Moves),
+        (
+            "chart.drawings.autosave.set",
+            1,
+            Value::Null,
+            Readback::Moves,
+        ),
         ("indicator.picker.set", 1, Value::Null, Readback::Moves),
         ("indicator.library.edit", 1, Value::Null, Readback::Moves),
         // A listing changes nothing, so no `session.journal.changed` is
@@ -806,7 +812,7 @@ fn replay_plan() -> Vec<(&'static str, u32, Value, Readback)> {
         (
             "desk.reopen_on_launch.set",
             1,
-            json!({ "reopen": false }),
+            json!({ "reopen": true }),
             Readback::Moves,
         ),
         ("home.leave", 1, json!({}), Readback::Moves),
@@ -879,7 +885,7 @@ fn replay_plan() -> Vec<(&'static str, u32, Value, Readback)> {
         (
             "workspace.autosave.set",
             1,
-            json!({ "on": false }),
+            json!({ "on": true }),
             Readback::Moves,
         ),
         (
@@ -1110,7 +1116,7 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
                 "pane_id": app.active_tab().flow_pane.id.to_string(),
                 "mode": { "kind": "manual", "low": "80", "high": "120" },
             }),
-            "chart.price_tag.progress.set" => json!({
+            "chart.price_tag.progress.set" | "chart.drawings.autosave.set" => json!({
                 "tab_id": app.runtime.tabs.active_id().to_string(),
                 "pane_id": app.active_tab().flow_pane.id.to_string(),
                 "on": false,

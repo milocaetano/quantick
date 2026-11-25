@@ -78,7 +78,7 @@
     "DrawingSnapshot": {
       "properties": {
         "all_windows": {
-          "description": "Whether every chart of its market shows it whatever layout it shows\n(\"All windows\"): only for `all_charts`, and true for one saved before\ndrawings recorded their layout. A pane lists only the drawings its\nlayout shows. Written only when true; optional in the schema so v1\nreaders stay compatible.",
+          "description": "Whether every chart window of the same market, workspace and named\nlayout shows it (\"All windows\"). Legacy unscoped entries retain their\nprior flag. Written only when true for compatibility with v1 readers.",
           "type": "boolean"
         },
         "anchor_count": {
@@ -164,7 +164,7 @@
           "description": "The layout and contract a migration merged this object from, when one\ndid. A merged market is labelled, never passed off as one history.\nOptional in the schema only so v1 readers stay compatible."
         },
         "scope": {
-          "description": "`all_charts` when every chart of its market showing its layout shows\nit at any timeframe; `this_chart` (a new drawing's default) when only\nits own chart does, at the bars it was kept to.",
+          "description": "`all_charts` when every chart of its market, workspace and named\nlayout shows it at any timeframe; `this_chart` pins it to its bars.",
           "type": "string"
         },
         "tool_id": {

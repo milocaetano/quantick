@@ -586,7 +586,7 @@ mod tests {
         let literal = concat!(
             "version = 1\n",
             "save_on_exit = false\n",
-            "auto_save = true\n",
+            "auto_save = false\n",
             "window = [\n    1200.0,\n    800.0,\n]\n",
             "active_tab = 2\n",
             "tabs = []\n",
@@ -892,7 +892,8 @@ mod tests {
         let workspace = load(&temp_path("never-written"));
         assert_eq!(workspace, Workspace::default());
         assert!(workspace.is_empty());
-        assert!(workspace.save_on_exit, "autosave is the opening default");
+        assert!(!workspace.save_on_exit);
+        assert!(!workspace.auto_save);
     }
 
     #[test]
@@ -1508,4 +1509,44 @@ pub fn saved_context_intervals(
     bars.iter()
         .map(|text| saved_time_interval(Some(text)).unwrap_or(default_interval_ms))
         .collect()
+}
+
+/// Update the popup position without committing the live workspace arrangement.
+pub fn write_inspector_position(
+    path: &Path,
+    session: &quantick_workspace::workspace_commit::WorkspaceCommitSession,
+    position: Option<[f32; 2]>,
+) -> bool {
+    let Some(file) = session.prepare_inspector(load(path), position) else {
+        return false;
+    };
+    let saved = save(path, &file);
+    tracing::info!(
+        target: "quantick::app", schema_version = 1_u8,
+        event_code = "UI_STATE_POPUP_POSITION_SAVED", path = %path.display(),
+        parked = position.is_some(), saved,
+        action = if saved { "position_written" } else { "position_not_written" },
+        "properties popup position"
+    );
+    saved
+}
+
+/// Apply a standing choice to the saved document, preserving its arrangement.
+///
+/// Returns `None` when the saved document could not be read safely.
+pub fn edit_session_file(
+    path: &Path,
+    session: &quantick_workspace::workspace_commit::WorkspaceCommitSession,
+    edit: quantick_workspace::workspace_commit::DocumentEdit,
+    event_code: &'static str,
+) -> Option<bool> {
+    let file = session.prepare_edit(load_for_edit(path), edit)?;
+    let written = save(path, &file);
+    tracing::info!(
+        target: "quantick::app", schema_version = 1_u8,
+        event_code, path = %path.display(), written,
+        action = if written { "file_updated" } else { "file_not_written" },
+        "a standing choice was written to the workspace file"
+    );
+    Some(written)
 }

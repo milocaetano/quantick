@@ -133,8 +133,11 @@ fn a_known_mirror_is_not_ambiguous_and_the_focused_copy_wins() {
 
 #[test]
 fn an_all_timeframes_copy_belongs_under_its_market_key() {
-    let pane_key = key("A");
-    let target = identity(&DrawingKey::all_timeframes(pane_key.market.clone()), 3);
+    let pane_key = key("A").in_scope(quantick_workspace::market_settings::DrawingScope {
+        workspace: 17,
+        layout: quantick_workspace::layout_document::LayoutId(5),
+    });
+    let target = identity(&pane_key.all_timeframes_key(), 3);
     let mut holder = pane(0, 7, Some(pane_key), true);
     holder.drawings = vec![ShownDrawing {
         index: 1,

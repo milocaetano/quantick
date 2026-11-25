@@ -52,7 +52,10 @@ pub struct CanvasChrome<'a> {
     /// The footprint layer's signal tunables (see [`PaneChrome::footprint`]).
     pub footprint: &'a mut crate::footprint_config::FootprintConfig,
     /// Where a pane's layer menu leaves the switches it does not own.
-    pub layers: &'a mut quantick_layers::LayerActions,
+    pub settings: (
+        &'a mut quantick_stores::market_settings::MarketSettingsStore,
+        &'a mut quantick_layers::LayerActions,
+    ),
     /// Which order-flow panel sections are open, per asset.
     pub panel_folds: &'a mut crate::ui_state::AssetFolds,
 }
@@ -444,7 +447,7 @@ impl Tab {
                 focus = Some(side);
             }
             if let Some(request) = intent.request {
-                pane.apply_header_intent(request, chrome.layers);
+                pane.apply_header_intent(request, chrome.settings.1);
             }
         }
         if let Some(side) = focus {
@@ -557,7 +560,8 @@ impl Tab {
             self.focus = PaneSide::Flow;
         }
         if let Some(request) = effect.request {
-            self.flow_pane.apply_header_intent(request, chrome.layers);
+            self.flow_pane
+                .apply_header_intent(request, chrome.settings.1);
         }
     }
 
@@ -737,6 +741,7 @@ impl Tab {
         );
         let chart_style = chrome.style;
         let mut chrome = PaneChrome {
+            market: chrome.settings.0,
             tab: tab_id,
             side: PaneSide::Flow,
             toolrail: &mut chrome.surfaces.toolrail,
@@ -759,7 +764,7 @@ impl Tab {
                 clock_ms,
             },
             footprint: chrome.footprint,
-            layers: chrome.layers,
+            layers: chrome.settings.1,
         };
         // The paper input pane first, then time panes, then flow. Every pane
         // takes the same two steps in the same order — which is what keeps

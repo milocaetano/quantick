@@ -29,9 +29,9 @@
 //! by the agent, and were never part of what a trader keeps.
 //!
 //! **Drawings: put away and brought out.** Each pane holds what one
-//! [`DrawingKey`] shows at its bars (`market_settings::pane_marks`), and no
-//! layout. A layout switch leaves it on the pane; a tab moving market, or a
-//! chart to other bars, stores it and adopts the new key's, ids kept. A pane's
+//! [`DrawingKey`] shows at its bars (`market_settings::pane_marks`). A workspace,
+//! named layout or market switch stores the old scope and adopts the new one's
+//! marks; a chart moving to other bars follows its timeframe visibility. A pane's
 //! revision counter is compared each frame; when it moved, the set goes to the
 //! market store, the panes it reaches are rebuilt and the save follows.
 //!
@@ -153,16 +153,34 @@ pub(crate) struct LayoutAdapter<'a> {
 /// The layouts and the market store this cockpit opens with, the drawings an
 /// older file left in its layouts already moved to their markets.
 pub(super) fn open_layout_store(config: &crate::config::AppConfig) -> LayoutStore {
-    let path = layouts::default_path();
-    let (book, blocked) =
-        layouts::load_or_starter(&path, &crate::indicators::state_file::default_path());
-    let config = config.clone();
-    let assets =
-        std::rc::Rc::new(move |venue: &str, symbol: &str| config.market_asset(venue, symbol));
-    market_settings::open_layout_store(book, path, blocked, layouts::market_settings_path(), assets)
+    market_settings::open_cockpit(
+        config.clone(),
+        layouts::default_path(),
+        crate::indicators::state_file::default_path(),
+        layouts::market_settings_path(),
+    )
 }
 
 impl LayoutAdapter<'_> {
+    pub(crate) fn drawing_autosave(
+        &mut self,
+        tab: u64,
+        pane: u64,
+        on: Option<bool>,
+    ) -> Result<(bool, bool), String> {
+        if on.is_some() {
+            self.follow_market_changes();
+            self.persist_changed_drawings();
+        }
+        let key = self
+            .tabs
+            .by_id(tab)
+            .and_then(|tab| tab.panes().find(|(held, _)| held.id == pane))
+            .and_then(|(_, side)| self.drawing_key(tab, side))
+            .ok_or_else(|| "the drawing scope is not available for this pane".to_owned())?;
+        self.book
+            .drawing_autosave(self.store, &key, on, Instant::now())
+    }
     /// Promote exactly the selected live object, then verify its committed copy.
     pub(crate) fn resolve_alert_target(
         &mut self,
@@ -172,7 +190,6 @@ impl LayoutAdapter<'_> {
         quantick_control_schema::alerts::TargetResolveError,
     > {
         use quantick_control_schema::alerts::TargetResolveError as Error;
-        use quantick_workspace::drawing_identity;
         self.persist_changed_drawings();
         let tab = self.tabs.by_id(selector.tab_id).ok_or(Error::Missing)?;
         let (pane, side) = tab
@@ -192,16 +209,9 @@ impl LayoutAdapter<'_> {
         // Ids are unique in a store; one this pane does not show is not its to name.
         let drawing = pane.drawings.shown_by_id(id).ok_or(Error::Missing)?;
         if drawing.all_timeframes() {
-            key = DrawingKey::all_timeframes(key.market);
+            key = key.all_timeframes_key();
         }
         let existing = drawing.durable_identity.clone();
-        let workspace = self.store.market().path().to_string_lossy().into_owned();
-        if existing
-            .as_ref()
-            .is_some_and(|identity| !drawing_identity::belongs_to(identity, &key))
-        {
-            return Err(Error::SourceChanged);
-        }
         // Known mirrors may hold stale undo state while a gesture is active.
         if self
             .tabs
@@ -211,25 +221,19 @@ impl LayoutAdapter<'_> {
                 pane.layout
                     .drawings_key
                     .as_ref()
-                    .is_some_and(|held| held.market == key.market)
+                    .is_some_and(|held| held.same_scope(&key))
                     && facts_of(pane).gesture_in_flight
             })
         {
             return Err(Error::Busy);
         }
-        let proposed = match existing {
-            Some(identity) => identity,
-            None => {
-                let mut bytes = [0_u8; 32];
-                getrandom::fill(&mut bytes).map_err(|_| Error::Unavailable)?;
-                let entropy = bytes
-                    .iter()
-                    .map(|byte| format!("{byte:02x}"))
-                    .collect::<String>();
-                drawing_identity::issue(&workspace, &key, id.0, &entropy)
-                    .map_err(|_| Error::Unavailable)?
-            }
-        };
+        let proposed = market_settings::propose_identity(
+            self.store.market().path(),
+            &key,
+            id.0,
+            existing,
+            |bytes| getrandom::fill(bytes).map_err(|_| ()),
+        )?;
         let identity = self
             .pane_mut_at(selector.tab_id, side)
             .ok_or(Error::Missing)?
@@ -237,20 +241,8 @@ impl LayoutAdapter<'_> {
             .ensure_identity(id, proposed)
             .map_err(|_| Error::Ambiguous)?;
         self.persist_changed_drawings();
-        market_settings::commit(self.store.market_mut(), std::slice::from_ref(&key))
-            .map_err(Error::WriteFailed)?;
-        let text = std::fs::read_to_string(self.store.market().path())
-            .map_err(|error| Error::WriteFailed(error.to_string()))?;
-        let document = market_settings::parse_settings(&text)
-            .map_err(|error| Error::WriteFailed(error.to_string()))?;
-        drawing_identity::resolve(
-            &identity,
-            document
-                .drawings(&key)
-                .iter()
-                .filter_map(|item| item.durable_identity.as_ref()),
-        )
-        .map_err(|_| Error::Ambiguous)?;
+        self.book
+            .commit_drawing_identity(self.store, &key, &identity, Instant::now())?;
         Ok(identity)
     }
 
@@ -312,10 +304,6 @@ impl LayoutAdapter<'_> {
         self.store.mark_changed(Instant::now());
     }
 
-    fn mark_market_dirty(&mut self) {
-        self.store.market_mut().mark_changed(Instant::now());
-    }
-
     /// Everything the frame owes the layouts: seed panes that just appeared,
     /// follow tabs that changed market, notice drawings that changed, and
     /// write the file once the last change has settled.
@@ -325,14 +313,15 @@ impl LayoutAdapter<'_> {
         self.seed_new_panes();
         self.follow_market_changes();
         self.persist_changed_drawings();
-        market_settings::save_settled(self.store, Instant::now());
+        self.book
+            .persist_drawings(self.store, Instant::now(), false);
     }
 
     /// Write the file now, whatever the debounce says — the way out on exit,
     /// and the moment before a bundle export reads it.
     pub(super) fn flush_layouts(&mut self) {
         self.persist_changed_drawings();
-        market_settings::flush(self.store, Instant::now());
+        self.book.persist_drawings(self.store, Instant::now(), true);
     }
 
     // ------------------------------------------------------------------
@@ -438,8 +427,8 @@ impl LayoutAdapter<'_> {
 
     /// Make `id` the layout one pane shows.
     ///
-    /// Its layout slots are taken off and the new layout's set is put on. Its
-    /// drawings stay: they are the market's. Panes on other layouts are
+    /// Its layout slots and scoped drawings are replaced by the new layout's.
+    /// Panes on other layouts are
     /// untouched; the book's default moves to `id`, so the next pane to open
     /// takes what the trader last picked.
     pub(crate) fn switch_pane_layout(
@@ -459,10 +448,7 @@ impl LayoutAdapter<'_> {
         }
         // Onto the tab's copy now, so an edit before the next frame is the tab's.
         self.own_indicator_copies();
-        let (store, held) = (&self.store, self.tabs.by_id_mut(tab));
-        if let Some(pane) = held.and_then(|held| held.pane_at_mut(side.index())) {
-            marks_of(pane).follow_store(store.market(), store.session());
-        }
+        self.follow_market_changes();
         let from = selection.from();
         tracing::info!(
             target: "quantick::app",
@@ -566,7 +552,7 @@ impl LayoutAdapter<'_> {
         let panes = self.tabs.iter_mut().flat_map(|tab| tab.panes_mut());
         let settings = self.store.market_mut().settings_mut();
         if retarget_layout(settings, id, to, panes.map(marks_of)) {
-            self.mark_market_dirty();
+            self.store.market_mut().mark_changed(Instant::now());
         }
         self.mark_layouts_dirty();
         Ok(())
@@ -795,7 +781,9 @@ impl LayoutAdapter<'_> {
         let (venue, symbol) = Self::market_of(self.tabs.by_id(tab)?);
         let bars = (side != PaneSide::Flow).then(|| pane.series.bar_config());
         let asset = self.store.market().asset(venue, symbol);
-        Some(DrawingKey::of_pane(venue, asset, bars))
+        let layout = self.store.session().strip_layout_of(pane.layout_id());
+        let scope = self.book.book().drawing_scope(tab, layout)?;
+        Some(DrawingKey::of_pane(venue, asset, bars).in_scope(scope))
     }
 
     /// A pane and the market store beside it, borrowed apart.
@@ -835,7 +823,7 @@ impl LayoutAdapter<'_> {
         let market = self.store.market_mut();
         let claimed = !busy && market.settings_mut().claim_for(&key, side.index());
         if claimed {
-            self.mark_market_dirty();
+            self.store.market_mut().mark_changed(Instant::now());
         }
         let grown = claimed.then(|| key.clone());
         let source = self.tabs.by_id(tab).map(Self::market_of);
@@ -887,7 +875,7 @@ impl LayoutAdapter<'_> {
         for (tab, side, key) in holding {
             self.adopt_marks(tab, side, &key, PaneSync::Readopt);
         }
-        self.mark_market_dirty();
+        self.store.market_mut().mark_changed(Instant::now());
         carried
     }
 
@@ -898,6 +886,8 @@ impl LayoutAdapter<'_> {
     /// strategy stops: it names one of these drawings, and a re-cut is no reason
     /// to kill it. Moving the tab to another market still does, as it always has.
     pub(super) fn follow_market_changes(&mut self) {
+        let book = self.book.book();
+        let session = self.store.session();
         let moved: Vec<(u64, PaneSide)> = self
             .tabs
             .iter_with_ids()
@@ -907,7 +897,10 @@ impl LayoutAdapter<'_> {
                     .filter(move |(pane, _)| {
                         let recuttable = tab.market.strategies.watching(pane.id) == 0;
                         let bars = recuttable.then(|| pane.series.state.spec());
+                        let scope =
+                            book.drawing_scope(tab_id, session.strip_layout_of(pane.layout_id()));
                         pane.layout.needs_rekey(feed, symbol, bars)
+                            || pane.layout.needs_scope(scope)
                     })
                     .map(move |(_, side)| (tab_id, side))
             })
@@ -921,7 +914,7 @@ impl LayoutAdapter<'_> {
             self.bring_out_drawings(tab, side);
             if let Some(left) = left.filter(|_| write.changed()) {
                 self.refresh_twins(Some((tab, side, &left, write)));
-                self.mark_market_dirty();
+                self.store.market_mut().mark_changed(Instant::now());
             }
         }
     }
@@ -954,7 +947,7 @@ impl LayoutAdapter<'_> {
                 settle_marks(pane);
             }
             if write.changed() {
-                self.mark_market_dirty();
+                self.store.market_mut().mark_changed(Instant::now());
                 self.refresh_twins(Some((tab, side, &key, write)));
             }
         }

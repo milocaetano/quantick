@@ -180,7 +180,7 @@ fn a_main_era_file_without_colours_gets_them_in_book_order_then_keeps_them() {
 }
 
 /// A preset is written as its index, a custom colour as upper-case hex, and
-/// the file's version does not move, so an older build still opens it.
+/// the current file format retains each stored colour on reload.
 #[test]
 fn the_stored_form_is_an_index_or_a_hex_string_and_round_trips() {
     let mut book = book();
@@ -192,7 +192,7 @@ fn the_stored_form_is_an_index_or_a_hex_string_and_round_trips() {
     assert!(text.contains("Default = 4"), "{text}");
     assert!(text.contains("Scalp = \"#3A7BD5\""), "{text}");
     assert!(text.contains(&format!("version = {FORMAT_VERSION}")));
-    assert_eq!(FORMAT_VERSION, 1);
+    assert_eq!(FORMAT_VERSION, 2);
     assert_eq!(colours(&parse_book(&text).unwrap()), colours(&book));
 }
 

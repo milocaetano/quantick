@@ -1,6 +1,6 @@
 //! Which charts of a market show a mark: kept to its chart by default; on all
-//! timeframes, every chart showing its layout; with "All windows" on, every
-//! chart of its market whatever layout it shows; never another market.
+//! timeframes, every chart showing its workspace/layout. Legacy unscoped
+//! documents retain their old layout-marker behavior during migration.
 use crate::{
     ChartPoint, DRAWING_TOOLS, DeleteOutcome, DrawingAuthor, DrawingScope, DrawingTool, Drawings,
     PaneMarks, SavedDrawingExt, adopt_pane, persist_pane, put_away_pane, refresh_shared,
@@ -321,7 +321,7 @@ fn a_legacy_entry_round_trips_byte_for_byte_through_a_write() {
     assert!(chart.drawings.in_all_windows(0));
     level_on_all_timeframes(&mut chart.drawings, 3.0, 80.0);
     chart.persist(&mut settings);
-    let shared = settings.shared_drawings(&chart.key.market);
+    let shared = settings.shared_drawings(&chart.key);
     assert_eq!(shared.len(), 2, "the set was written");
     let back = shared.iter().find(|entry| entry.id == legacy.id).unwrap();
     assert_eq!(*back, legacy);
@@ -505,9 +505,7 @@ fn the_assistant_sweep_takes_marks_another_layout_owns() {
     assert!(other.items().is_empty());
 }
 
-/// A deleted layout hands its marks to the layout its charts move to, in the
-/// store and in every chart holding them, so no mark is left on a layout no
-/// chart can show.
+/// Legacy unscoped marks follow their pre-scope layout-marker behavior.
 #[test]
 fn a_deleted_layouts_marks_follow_its_charts_to_the_next_layout() {
     let mut settings = MarketSettings::default();
@@ -542,13 +540,50 @@ fn a_deleted_layouts_marks_follow_its_charts_to_the_next_layout() {
     assert_eq!(owner.shown(), [90.0]);
     assert_eq!(other.shown(), [90.0]);
     let market = &owner.key.market;
-    assert_eq!(settings.shared_drawings(market)[0].layout, Some(LEVELS));
+    assert_eq!(
+        settings.shared_drawings(&DrawingKey::all_timeframes(market.clone()))[0].layout,
+        Some(LEVELS)
+    );
 
     // Level with the store: a write from either changes nothing.
     let before = settings.clone();
     owner.persist(&mut settings);
     other.persist(&mut settings);
     assert_eq!(settings, before);
+}
+
+#[test]
+fn deleting_a_scoped_layout_keeps_pane_marks_under_the_held_key_until_rekeyed() {
+    let mut settings = MarketSettings::default();
+    let key = flow("BTCUSDT").in_scope(quantick_workspace::market_settings::DrawingScope {
+        workspace: 7,
+        layout: FLOWS,
+    });
+    let mut owner = Chart::open(&settings, FLOWS, key.clone(), "time:5m");
+    level_on_all_timeframes(&mut owner.drawings, 2.0, 90.0);
+    owner.persist(&mut settings);
+    let before = settings.clone();
+    let mut layout = PaneLayout::<()> {
+        drawings_key: Some(key.clone()),
+        shared_base: owner.base.clone(),
+        ..PaneLayout::default()
+    };
+    assert!(!retarget_layout(
+        &mut settings,
+        FLOWS,
+        LEVELS,
+        [PaneMarks {
+            drawings: &mut owner.drawings,
+            layout: &mut layout,
+            now: (),
+            rule: |()| "time:5m".to_owned(),
+        }]
+    ));
+    assert_eq!(settings, before);
+    assert_eq!(layout.drawings_key, Some(key));
+    assert_eq!(layout.shared_base, owner.base);
+    assert_eq!(owner.drawings.layout(), Some(FLOWS));
+    assert_eq!(owner.drawings.items()[0].layout, Some(FLOWS));
 }
 
 #[test]

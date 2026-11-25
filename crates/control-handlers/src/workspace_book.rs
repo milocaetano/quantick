@@ -42,7 +42,6 @@ use quantick_session::close_queue::{
 };
 use quantick_session::prompt::Prompt;
 use quantick_session::workspace_menu::{NameDialogMode, WorkspaceCommand, WorkspaceMenuState};
-use quantick_stores::market_settings::{self, DrawingKey, MarketSettingsStore};
 use quantick_stores::workspaces::{
     ColourOutcome, ColourTaken, CreateOutcome, DeleteOutcome, RenameOutcome, SaveOutcome,
     SetOutcome, UnsavedEdits, Unsynced, WorkspaceBook, WorkspaceBookStore, WorkspaceColour,
@@ -100,24 +99,9 @@ pub trait WorkspaceOwner: TabDirectory {
     fn workspace_book_ref(&self) -> Option<&WorkspaceBook> {
         self.workspace_store_ref().map(WorkspaceBookStore::book)
     }
-    /// The drawings and anchored studies a Save writes with the recipe.
-    fn workspace_market(&mut self) -> Option<&mut MarketSettingsStore> {
-        None
-    }
-    /// Write what [`Self::workspace_market`] holds back for `keys` now, every
-    /// other set left as the file has it; `None` writes every set. `Ok(true)`
-    /// when the file was written, `Ok(false)` when it already held them.
-    ///
-    /// # Errors
-    /// Why nothing reached the disk; the held sets stay counted.
-    fn commit_workspace_market(&mut self, keys: Option<&[DrawingKey]>) -> Result<bool, String> {
-        let Some(market) = self.workspace_market() else {
-            return Ok(false);
-        };
-        match keys {
-            Some(keys) => market_settings::commit(market, keys),
-            None => market_settings::commit_all(market),
-        }
+    /// Commit layout configuration independently of drawing persistence.
+    fn persist_workspace_layouts(&mut self) -> Result<bool, String> {
+        Ok(false)
     }
     /// The symbols of these tabs, in the order asked.
     fn tab_symbols(&self, _tabs: &[u64]) -> Vec<String> {
@@ -545,11 +529,9 @@ pub fn set_tab_workspace<H: WorkspaceOwner + ?Sized>(
 }
 
 /// Write a tab's edits into its workspace and redraw the tabs that follow.
-/// The recipe is written first, then the tab's held drawings: a recipe write
-/// that fails writes no drawing, and a market write that fails puts the
-/// recipe back, so a Save lands whole or not at all and the mark stays. A
-/// recipe write that fails with autosave on marks the tab, which the frame
-/// retries.
+/// The recipe and layout configuration are saved together. Drawing persistence
+/// is independent. A failed layout write restores the recipe; a failed recipe
+/// write with autosave on marks the tab for retry.
 ///
 /// # Errors
 /// No such tab, no book, or a write failed and the book was restored.
@@ -567,7 +549,7 @@ pub fn save_tab_to<H: WorkspaceOwner + ?Sized>(
         note_failed(app, tab);
     }
     let mut outcome = saved?;
-    let wrote = commit_market_whole(app, tab, before, outcome.changed)?;
+    let wrote = commit_layouts_whole(app, before, outcome.changed)?;
     if outcome.changed {
         show(app, &outcome.tabs_changed)?;
     }
@@ -575,19 +557,13 @@ pub fn save_tab_to<H: WorkspaceOwner + ?Sized>(
     Ok(outcome)
 }
 
-/// A Save's second half, once its recipe landed: the tab's held drawings. A
-/// market write that fails puts the book back as it stood `before` the save,
-/// in memory and, when the recipe was written, on disk.
-///
-/// # Errors
-/// The market file was not written.
-fn commit_market_whole<H: WorkspaceOwner + ?Sized>(
+/// A failed layout write restores the recipe already written by this Save.
+fn commit_layouts_whole<H: WorkspaceOwner + ?Sized>(
     app: &mut H,
-    tab: u64,
     before: WorkspaceBook,
     recipe_written: bool,
 ) -> Result<bool, ControlError> {
-    let mut error = match commit_market(app, tab) {
+    let mut error = match app.persist_workspace_layouts().map_err(write_failed) {
         Ok(wrote) => return Ok(wrote),
         Err(error) => error,
     };
@@ -620,57 +596,7 @@ fn note_failed<H: WorkspaceOwner + ?Sized>(app: &mut H, tab: u64) {
     }
 }
 
-/// Save's other half: the drawings and anchored studies autosave off held
-/// back on `tab`'s panes reach their file, and only those: another tab's held
-/// set stays its own to save or drop. With autosave on nothing is held, and
-/// the market's own debounce writes. Answers whether the file was written.
-///
-/// # Errors
-/// The market file was not written; every held set stays counted.
-fn commit_market<H: WorkspaceOwner + ?Sized>(app: &mut H, tab: u64) -> Result<bool, ControlError> {
-    if !app
-        .workspace_market()
-        .is_some_and(|market| market.is_held())
-    {
-        return Ok(false);
-    }
-    let keys = book(app)?.drawing_keys(tab).to_vec();
-    let wrote = app
-        .commit_workspace_market(Some(&keys))
-        .map_err(write_failed)?;
-    recount_held(app);
-    Ok(wrote)
-}
-
-/// The book counts again what each tab's sets hold back, as the store reads.
-fn recount_held<H: WorkspaceOwner + ?Sized>(app: &mut H) {
-    let sets = app.workspace_book().map(|book| book.drawing_sets());
-    let (Some(sets), Some(market)) = (sets, app.workspace_market()) else {
-        return;
-    };
-    let counted: Vec<_> = (sets.into_iter())
-        .map(|(tab, keys)| (tab, market.held_changes(&keys), keys))
-        .collect();
-    if let Some(book) = app.workspace_book() {
-        for (tab, held, keys) in counted {
-            book.note_drawings(tab, keys, held);
-        }
-    }
-}
-
-/// Close without saving: the closed tab's held drawings go back to the file's
-/// version, unless another open tab still shows that set.
-fn discard_market<H: WorkspaceOwner + ?Sized>(app: &mut H, closed: &[DrawingKey], tab: u64) {
-    let open = book(app)
-        .map(|book| book.drawing_keys_except(tab))
-        .unwrap_or_default();
-    if let Some(market) = app.workspace_market() {
-        market.discard(closed, &open);
-    }
-}
-
-/// Make a new workspace of a tab's copy, then write its held drawings, whole
-/// or not at all as [`save_tab_to`] does.
+/// Save a new workspace and the current layout configuration.
 ///
 /// # Errors
 /// The name is refused, no such tab, no book, or a write failed.
@@ -679,7 +605,7 @@ pub fn save_tab_as<H: WorkspaceOwner + ?Sized>(
     tab: u64,
     (name, colour): (&str, Option<WorkspaceColour>),
 ) -> Result<SaveOutcome, ControlError> {
-    // Asked of a copy first: a refused name or colour writes no drawing either.
+    // Validate the name and colour before either configuration file is written.
     let before = book(app)?.clone();
     before
         .clone()
@@ -691,7 +617,7 @@ pub fn save_tab_as<H: WorkspaceOwner + ?Sized>(
     }
     let save = |book: &mut WorkspaceBook| book.save_as_coloured(tab, name, colour);
     let mut outcome = written(app, save, |saved| saved.changed)?;
-    outcome.changed |= commit_market_whole(app, tab, before, outcome.changed)?;
+    outcome.changed |= commit_layouts_whole(app, before, outcome.changed)?;
     Ok(outcome)
 }
 
@@ -805,9 +731,6 @@ pub fn set_autosave<H: WorkspaceOwner + ?Sized>(
         book(app)?.set_autosave(!on);
         return Err(write_failed(reason));
     }
-    if let Some(market) = app.workspace_market() {
-        market.set_held(!on);
-    }
     let mut outcome = AutosaveOutcome {
         changed,
         saved: Vec::new(),
@@ -825,11 +748,9 @@ pub fn set_autosave<H: WorkspaceOwner + ?Sized>(
             }
         }
     }
-    let market = app.commit_workspace_market(None).map(drop);
-    if let Err(reason) = market {
+    if let Err(reason) = app.persist_workspace_layouts() {
         outcome.failed.get_or_insert(write_failed(reason));
     }
-    recount_held(app);
     Ok(outcome)
 }
 
@@ -855,15 +776,8 @@ pub fn close_tab<H: WorkspaceOwner + ?Sized, A: NotifyAccess>(
         (Some(_), Some(true)) => Some(save_to_journaled(app, to, tab)?),
         _ => None,
     };
-    let (drop_held, keys) = (
-        !book(app)?.autosave() && saved.is_none(),
-        book(app)?.drawing_keys(tab).to_vec(),
-    );
     if !app.close_market_tab(tab, true) {
         return Err(last_tab());
-    }
-    if drop_held {
-        discard_market(app, &keys, tab);
     }
     journal(
         to,
@@ -983,13 +897,6 @@ fn settle_in_place<H: WorkspaceOwner + ?Sized, A: NotifyAccess>(
         Some(false) => {
             if book(app)?.discard_edits(tab) {
                 show(app, &[tab])?;
-            }
-            // With autosave on nothing is held: the market's own debounce
-            // writes what the panes show.
-            if !book(app)?.autosave() {
-                let keys = book(app)?.drawing_keys(tab).to_vec();
-                discard_market(app, &keys, tab);
-                recount_held(app);
             }
             Ok(())
         }

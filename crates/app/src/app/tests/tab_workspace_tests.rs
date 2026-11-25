@@ -16,8 +16,8 @@ pub(super) fn two_tabs(layouts: &crate::scratch::ScratchFile) -> (QuantickApp, u
         .open_tab("binance".to_owned(), "OTHERUSDT".to_owned(), None);
     let (first, second) = (app.runtime.tabs.id_at(0), app.runtime.tabs.id_at(1));
     run_frame(&mut app, &egui::Context::default());
-    // Held edits are what these tests read: autosave off, as the trader who
-    // unticks it. `autosave_on_never_marks_an_edit` covers the default.
+    // Held configuration edits are what these tests read; the opt-in
+    // autosave path is covered by `autosave_on_never_marks_an_edit`.
     app.runtime.workspace.book.book_mut().set_autosave(false);
     (app, first, second)
 }
@@ -343,7 +343,7 @@ fn chip_and_snapshot_read_one_state() {
     );
 }
 
-/// Autosave on, the default: an edit is written through, never held, so
+/// Autosave explicitly on: an edit is written through, never held, so
 /// neither the book nor the status cell ever marks it.
 #[test]
 fn autosave_on_never_marks_an_edit() {
@@ -1123,44 +1123,346 @@ fn a_new_workspace_reads_clean_after_real_frames() {
     assert_eq!(returned.footprint_style, before.footprint_style);
 }
 
-/// Autosave off: a level drawn on the chart marks the tab and waits in memory;
-/// Save writes the market file with the recipe and the mark clears.
+/// Drawing writes use the frame/close wiring even while workspace configuration waits.
 #[test]
-fn autosave_off_holds_a_drawing_until_save_writes_it() {
+fn drawing_autosave_survives_layout_and_workspace_switches_without_save() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = split_app(&ctx, 200);
-    let layouts = crate::scratch::ScratchFile::new("workspace-held-drawing", "layouts.toml");
-    app.runtime
-        .workspace
-        .set_layouts_path(layouts.to_path_buf());
-    app.runtime.workspace.layouts_mut().set_blocked(false);
-    (app.runtime.workspace.layouts_mut().market_mut()).set_blocked(false);
-    frames(&mut app, 2);
     app.runtime.workspace.book.book_mut().set_autosave(false);
+    app.runtime.workspace.session_mut().set_save_on_exit(false);
     let tab = app.runtime.tabs.active_id();
-    save_tab_to(&mut app.workspace_calls(), tab).expect("the canvas saved first");
-    frames(&mut app, 1);
-    let state = app.runtime.workspace.book.book().tab_state(tab);
-    assert!(!state.expect("adopted").modified, "nothing held yet");
-    place_level(&mut app, PaneSide::Flow, 100.0);
-    frames(&mut app, 2);
-    let market = app
+    let workspace = app.runtime.workspace.book.tab_row(tab).0;
+    let layout = app.layout_adapter().pane_layout(tab, PaneSide::Flow);
+    let scope = app
         .runtime
         .workspace
-        .layouts()
-        .market()
-        .path()
-        .to_path_buf();
-    let book = app.runtime.workspace.book.book();
-    assert!(book.tab_state(tab).expect("adopted").modified, "the mark");
-    let held = book.unsaved_edits(tab).expect("closing asks").changes;
-    assert_eq!(held, ["1 drawing"]);
-    assert!(!market.exists(), "held: nothing reached the disk");
-    save_tab_to(&mut app.workspace_calls(), tab).expect("saved");
-    let state = app.runtime.workspace.book.book().tab_state(tab);
-    assert!(!state.expect("adopted").modified, "Save clears the mark");
-    let written = std::fs::read_to_string(&market).expect("Save wrote the market file");
-    assert!(written.contains("horizontal-line"), "{written}");
+        .book
+        .book()
+        .drawing_scope(tab, layout)
+        .unwrap();
+    let before = app.runtime.workspace.book.book().unsaved_edits(tab);
+    place_level(&mut app, PaneSide::Flow, 100.0);
+    frames(&mut app, 2);
+    assert_eq!(app.runtime.workspace.book.book().unsaved_edits(tab), before);
+    let other = app
+        .layout_adapter()
+        .create_layout_at(tab, PaneSide::Flow, Some("Another"))
+        .unwrap();
+    frames(&mut app, 2);
+    assert!(drawings_on(&app, PaneSide::Flow).is_empty());
+    place_level(&mut app, PaneSide::Flow, 200.0);
+    frames(&mut app, 2);
+    app.layout_adapter()
+        .switch_pane_layout(tab, PaneSide::Flow, layout)
+        .unwrap();
+    assert_eq!(drawings_on(&app, PaneSide::Flow), vec![100.0]);
+    set_tab_workspace(&mut app.workspace_calls(), tab, "Default").unwrap();
+    assert_eq!(
+        app.active_tab()
+            .flow_pane
+            .layout
+            .drawings_key
+            .as_ref()
+            .unwrap()
+            .scope
+            .unwrap()
+            .workspace,
+        app.runtime
+            .workspace
+            .book
+            .book()
+            .workspace_id("Default")
+            .unwrap(),
+        "the command settles drawing ownership before returning",
+    );
+    assert!(drawings_on(&app, PaneSide::Flow).is_empty());
+    frames(&mut app, 2);
+    assert!(drawings_on(&app, PaneSide::Flow).is_empty());
+    set_tab_workspace(&mut app.workspace_calls(), tab, &workspace).unwrap();
+    frames(&mut app, 2);
+    assert_eq!(drawings_on(&app, PaneSide::Flow), vec![100.0]);
+    app.layout_adapter().flush_layouts();
+    let market = app.runtime.workspace.layouts().market().path().to_owned();
+    let document =
+        quantick_stores::market_settings::parse_settings(&std::fs::read_to_string(market).unwrap())
+            .unwrap();
+    let key = app
+        .active_tab()
+        .flow_pane
+        .layout
+        .drawings_key
+        .as_ref()
+        .unwrap();
+    assert_eq!(key.scope, Some(scope));
+    assert_eq!(document.drawings(key).len(), 1);
+    let reopened = quantick_stores::workspaces::WorkspaceBookStore::open_at(
+        app.runtime.workspace.book.path().to_owned(),
+    );
+    assert_eq!(
+        reopened.book().workspace_id(&workspace),
+        Some(scope.workspace)
+    );
+    app.layout_adapter()
+        .switch_pane_layout(tab, PaneSide::Flow, other)
+        .unwrap();
+    assert_eq!(drawings_on(&app, PaneSide::Flow), vec![200.0]);
+    let path = app.runtime.workspace.layouts().path().to_owned();
+    let quantick_stores::layouts::Loaded::Book(book) = quantick_stores::layouts::load(&path) else {
+        panic!("layout identities persisted")
+    };
+    let (mut app, _) = app_with_history(200);
+    app.runtime.workspace.layouts = quantick_stores::market_settings::open_layout_store(
+        book,
+        path.clone(),
+        false,
+        path.with_file_name("market-settings.toml"),
+        std::rc::Rc::new(|_, symbol| symbol.to_owned()),
+    );
+    app.runtime.workspace.book = reopened;
+    frames(&mut app, 2);
+    let tab = app.runtime.tabs.active_id();
+    set_tab_workspace(&mut app.workspace_calls(), tab, &workspace).unwrap();
+    frames(&mut app, 2);
+    app.layout_adapter()
+        .switch_pane_layout(tab, PaneSide::Flow, layout)
+        .unwrap();
+    assert_eq!(drawings_on(&app, PaneSide::Flow), vec![100.0]);
+}
+
+#[test]
+fn a_default_drawing_reopens_when_no_configuration_was_saved() {
+    let (mut app, _) = app_with_history(200);
+    let workspace_path = app.runtime.workspace.book.path().to_owned();
+    let startup = quantick_stores::workspaces::load(&workspace_path).0;
+    assert_eq!(startup.workspace_id("Default"), Some(1));
+    assert!(!app.runtime.workspace.session().save_on_exit());
+    assert!(!app.runtime.workspace.book.autosave());
+    frames(&mut app, 2);
+    let tab = app.runtime.tabs.active_id();
+    set_tab_workspace(&mut app.workspace_calls(), tab, "Default").unwrap();
+    frames(&mut app, 2);
+    place_level(&mut app, PaneSide::Flow, 137.0);
+    app.layout_adapter().flush_layouts();
+    assert!(!app.runtime.workspace.ui_state_path().exists());
+    let layouts = app.runtime.workspace.layouts().path().to_owned();
+    let market = app.runtime.workspace.layouts().market().path().to_owned();
+    let book = app.runtime.workspace.layouts().persistence_document();
+    let key = app
+        .active_tab()
+        .flow_pane
+        .layout
+        .drawings_key
+        .clone()
+        .unwrap();
+    let (mut reopened, _) = app_with_history(200);
+    reopened.runtime.workspace.layouts = quantick_stores::market_settings::open_layout_store(
+        book,
+        layouts,
+        false,
+        market,
+        std::rc::Rc::new(|_, symbol| symbol.to_owned()),
+    );
+    reopened.runtime.workspace.book =
+        quantick_stores::workspaces::WorkspaceBookStore::open_at(workspace_path);
+    frames(&mut reopened, 2);
+    let tab = reopened.runtime.tabs.active_id();
+    set_tab_workspace(&mut reopened.workspace_calls(), tab, "Default").unwrap();
+    frames(&mut reopened, 2);
+    assert_eq!(
+        reopened.active_tab().flow_pane.layout.drawings_key,
+        Some(key)
+    );
+    assert_eq!(drawings_on(&reopened, PaneSide::Flow), vec![137.0]);
+}
+
+#[test]
+fn repeated_ctrl_z_writes_each_scoped_drawing_removal_without_workspace_save() {
+    let (mut app, _) = app_with_history(200);
+    let ctx = egui::Context::default();
+    frames(&mut app, 2);
+    assert!(!app.runtime.workspace.book.autosave());
+    assert!(!app.runtime.workspace.session().save_on_exit());
+    for price in [100.0, 110.0, 120.0] {
+        place_level(&mut app, PaneSide::Flow, price);
+        run_frame(&mut app, &ctx);
+    }
+    app.layout_adapter().flush_layouts();
+    let path = app.runtime.workspace.layouts().market().path().to_owned();
+    let key = app
+        .active_tab()
+        .flow_pane
+        .layout
+        .drawings_key
+        .clone()
+        .unwrap();
+    assert!(key.scope.is_some());
+    let saved_count = || {
+        let saved = quantick_stores::market_settings::parse_settings(
+            &std::fs::read_to_string(&path).unwrap(),
+        )
+        .unwrap();
+        saved.drawings(&key).len() + saved.drawings(&key.all_timeframes_key()).len()
+    };
+    assert_eq!(saved_count(), 3);
+    for left in [2, 1, 0] {
+        run_frame_with_modifiers(
+            &mut app,
+            &ctx,
+            vec![key_press_with(egui::Key::Z, egui::Modifiers::COMMAND)],
+            egui::Modifiers::COMMAND,
+        );
+        run_frame_with_modifiers(
+            &mut app,
+            &ctx,
+            vec![key_release_with(egui::Key::Z, egui::Modifiers::COMMAND)],
+            egui::Modifiers::COMMAND,
+        );
+        app.layout_adapter().flush_layouts();
+        assert_eq!(drawings_on(&app, PaneSide::Flow).len(), left);
+        assert_eq!(
+            saved_count(),
+            left,
+            "the next process reads the undo result"
+        );
+    }
+}
+
+/// Revert and its undo may rebuild canvas seats before the next frame can
+/// collect a completed drawing from the extra pane.
+#[test]
+fn workspace_revert_and_undo_keep_a_pending_drawing_on_an_extra_pane() {
+    let (mut app, _) = app_with_history(200);
+    frames(&mut app, 2);
+    let tab = app.runtime.tabs.active_id();
+    app.active_tab_mut().set_layout(CanvasLayout::Single);
+    frames(&mut app, 2);
+    save_tab_to(&mut app.workspace_calls(), tab).unwrap();
+    app.active_tab_mut()
+        .set_layout(CanvasLayout::TimeTimeAndFlow);
+    frames(&mut app, 5);
+    app.active_tab_mut()
+        .set_pane_bar_spec(2, crate::state::BarSpec::Time(1_000))
+        .unwrap();
+    frames(&mut app, 3);
+    let side = PaneSide::Time(1);
+    let key = app
+        .active_tab()
+        .pane(side)
+        .layout
+        .drawings_key
+        .clone()
+        .unwrap();
+    place_level(&mut app, side, 137.0);
+    set_scope_on(&mut app, side, DrawingScope::ThisChart);
+    assert!(
+        app.runtime
+            .workspace
+            .layouts()
+            .market()
+            .settings()
+            .drawings(&key)
+            .is_empty(),
+        "the frame has not collected this drawing",
+    );
+    for capability in ["workspace.revert", "workspace.revert.undo"] {
+        app.control_action(
+            capability,
+            1,
+            crate::control::ActionOrigin::Human,
+            serde_json::json!({ "tab_id": tab.to_string() }),
+        )
+        .unwrap();
+    }
+    frames(&mut app, 5);
+    assert_eq!(
+        app.active_tab().canvas.layout,
+        CanvasLayout::TimeTimeAndFlow
+    );
+    assert_eq!(
+        app.active_tab().pane(side).layout.drawings_key,
+        Some(key.clone())
+    );
+    assert_eq!(drawings_on(&app, side), vec![137.0]);
+    app.layout_adapter().flush_layouts();
+    let saved = quantick_stores::market_settings::parse_settings(
+        &std::fs::read_to_string(app.runtime.workspace.layouts().market().path()).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(saved.pane_drawings(&key, "time:1s").len(), 1);
+    assert_eq!(saved.drawings(&key)[0].bars.as_deref(), Some("time:1s"));
+}
+
+/// A pending timeframe-only mark follows the held drawing key when Revert
+/// lands the saved bar rule; Undo Revert brings that same key back.
+#[test]
+fn workspace_revert_and_undo_keep_a_pending_drawing_on_its_timeframe() {
+    let ctx = egui::Context::default();
+    let (mut app, _) = split_app(&ctx, 200);
+    let tab = app.runtime.tabs.active_id();
+    let side = PaneSide::Time(0);
+    app.active_tab_mut()
+        .set_pane_bar_spec(1, crate::state::BarSpec::Time(1_000))
+        .unwrap();
+    frames(&mut app, 3);
+    save_tab_to(&mut app.workspace_calls(), tab).unwrap();
+    let saved_key = app
+        .active_tab()
+        .pane(side)
+        .layout
+        .drawings_key
+        .clone()
+        .unwrap();
+    app.active_tab_mut()
+        .set_pane_bar_spec(1, crate::state::BarSpec::Time(2_000))
+        .unwrap();
+    frames(&mut app, 3);
+    let edited_key = app
+        .active_tab()
+        .pane(side)
+        .layout
+        .drawings_key
+        .clone()
+        .unwrap();
+    assert_ne!(edited_key, saved_key);
+    place_level(&mut app, side, 149.0);
+    set_scope_on(&mut app, side, DrawingScope::ThisChart);
+    app.control_action(
+        "workspace.revert",
+        1,
+        crate::control::ActionOrigin::Human,
+        serde_json::json!({ "tab_id": tab.to_string() }),
+    )
+    .unwrap();
+    frames(&mut app, 3);
+    assert_eq!(
+        app.active_tab().pane(side).layout.drawings_key,
+        Some(saved_key.clone())
+    );
+    assert!(drawings_on(&app, side).is_empty());
+    app.control_action(
+        "workspace.revert.undo",
+        1,
+        crate::control::ActionOrigin::Human,
+        serde_json::json!({ "tab_id": tab.to_string() }),
+    )
+    .unwrap();
+    frames(&mut app, 3);
+    assert_eq!(
+        app.active_tab().pane(side).layout.drawings_key,
+        Some(edited_key.clone())
+    );
+    assert_eq!(drawings_on(&app, side), vec![149.0]);
+    app.layout_adapter().flush_layouts();
+    let saved = quantick_stores::market_settings::parse_settings(
+        &std::fs::read_to_string(app.runtime.workspace.layouts().market().path()).unwrap(),
+    )
+    .unwrap();
+    assert!(saved.pane_drawings(&saved_key, "time:1s").is_empty());
+    assert_eq!(saved.pane_drawings(&edited_key, "time:2s").len(), 1);
+    assert_eq!(
+        saved.drawings(&edited_key)[0].bars.as_deref(),
+        Some("time:2s")
+    );
 }
 
 /// A flow bar-size change re-cuts the series, so a saved level's bar offset
@@ -1226,12 +1528,8 @@ fn a_flow_bar_size_change_never_counts_as_a_drawing_edit() {
     // it: only the new level is the trader's.
     place_level(&mut app, PaneSide::Flow, 101.0);
     frames(&mut app, 2);
-    let changes = held(&app).expect("the new level is held").changes;
-    assert_eq!(
-        changes,
-        ["timeframe", "1 drawing"],
-        "the re-cut level is not counted"
-    );
+    let changes = held(&app).expect("the timeframe is still unsaved").changes;
+    assert_eq!(changes, ["timeframe"], "the re-cut level is not counted");
 }
 
 /// Golden: a workspace remembers its timeframes. A saved on 5m and Tick 2000,
@@ -1258,8 +1556,12 @@ fn a_workspace_switch_restores_the_timeframes_it_saved() {
     };
     put(&mut app, "tick:2000", "time:300000");
     let a = shown(&app);
-    let book = app.runtime.workspace.book.book_mut();
-    book.save_as(tab, "A").expect("a free name");
+    quantick_control_handlers::workspace_book::save_tab_as(
+        &mut app.workspace_calls(),
+        tab,
+        ("A", None),
+    )
+    .expect("A saved to disk");
     put(&mut app, "tick:500", "time:60000");
     let state = app.runtime.workspace.book.book().tab_state(tab);
     assert!(
@@ -1267,9 +1569,15 @@ fn a_workspace_switch_restores_the_timeframes_it_saved() {
         "a timeframe change marks A"
     );
     let b = shown(&app);
-    let book = app.runtime.workspace.book.book_mut();
-    book.save_as(tab, "B").expect("a free name");
+    quantick_control_handlers::workspace_book::save_tab_as(
+        &mut app.workspace_calls(),
+        tab,
+        ("B", None),
+    )
+    .expect("B saved to disk");
     assert_ne!(a, b);
+    app.runtime.workspace.book.reload();
+    frames(&mut app, 2);
     set_tab_workspace(&mut app.workspace_calls(), tab, "A").expect("a known workspace");
     frames(&mut app, 4);
     assert_eq!(shown(&app), a, "A reopens on its own timeframes");

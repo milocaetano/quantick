@@ -56,6 +56,7 @@ pub(super) fn actions_for_strategy_describe(
     quantick_control_handlers::time_axis::register(&mut registry)?;
     quantick_control_handlers::opening_scale::register(&mut registry)?;
     quantick_control_handlers::price_tag_progress::register(&mut registry)?;
+    quantick_control_handlers::drawing_autosave::register(&mut registry)?;
     quantick_control_handlers::bubble_preset::register_tick(&mut registry)?;
     quantick_control_handlers::bubble_preset::register(&mut registry)?;
     quantick_control_handlers::bubble_save::register(&mut registry)?;

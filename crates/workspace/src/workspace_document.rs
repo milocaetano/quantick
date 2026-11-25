@@ -13,17 +13,15 @@ pub const FORMAT_VERSION: u32 = 1;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Workspace {
     version: u32,
-    /// Whether closing the window writes this file. On by default: the trader
-    /// who never opens the Workspace menu should still reopen where they left
-    /// off. Persisted here rather than in a settings file of its own, because
-    /// it is a fact *about this file*.
-    #[serde(default = "yes")]
+    /// Whether closing the window writes configuration. Off unless explicitly
+    /// enabled; drawing persistence has its own policy.
+    #[serde(default)]
     pub save_on_exit: bool,
     /// Whether a tab's layout edits are written into its workspace as they are
-    /// made ("auto save layout changes"). On unless the trader turned it off;
-    /// a file from before the field means on. A fact about this desk, beside
+    /// made ("auto save layout changes"). Off when absent; explicit stored
+    /// values survive upgrades. A fact about this desk, beside
     /// `save_on_exit`.
-    #[serde(default = "yes")]
+    #[serde(default)]
     pub auto_save: bool,
     /// The window's inner size in points, as it was last saved.
     #[serde(default)]
@@ -169,18 +167,12 @@ pub fn clean_workspace_name(raw: &str) -> Option<String> {
     Some(collapsed.chars().take(MAX_WORKSPACE_NAME).collect())
 }
 
-/// serde's default for [`Workspace::save_on_exit`] — a file written before the
-/// field existed still means "yes", which is what the app has always done.
-const fn yes() -> bool {
-    true
-}
-
 impl Default for Workspace {
     fn default() -> Self {
         Self {
             version: FORMAT_VERSION,
-            save_on_exit: true,
-            auto_save: true,
+            save_on_exit: false,
+            auto_save: false,
             window: None,
             active_tab: 0,
             tabs: Vec::new(),
@@ -225,7 +217,7 @@ impl Workspace {
         Self {
             version: FORMAT_VERSION,
             save_on_exit,
-            auto_save: true,
+            auto_save: false,
             window,
             active_tab,
             tabs,
@@ -344,7 +336,7 @@ mod tests {
         let literal = concat!(
             "version = 1\n",
             "save_on_exit = false\n",
-            "auto_save = true\n",
+            "auto_save = false\n",
             "window = [\n    1200.0,\n    800.0,\n]\n",
             "active_tab = 2\n",
             "tabs = []\n",
@@ -377,8 +369,17 @@ mod tests {
         );
         let old: Workspace = toml::from_str("version = 1\n").unwrap();
         assert_eq!(old, Workspace::default());
-        assert!(old.save_on_exit);
+        assert!(!old.save_on_exit);
         assert_eq!(old.replay_day_before, None);
         assert_eq!(old.first_market(), None);
+    }
+
+    #[test]
+    fn configuration_save_is_manual_by_default_and_preserves_explicit_opt_in() {
+        let new = Workspace::default();
+        assert!(!new.auto_save && !new.save_on_exit);
+        let old: Workspace =
+            toml::from_str("version=1\nauto_save=true\nsave_on_exit=true\n").unwrap();
+        assert!(old.auto_save && old.save_on_exit);
     }
 }

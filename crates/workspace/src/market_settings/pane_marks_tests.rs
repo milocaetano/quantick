@@ -1,5 +1,5 @@
 use super::*;
-use crate::layout_document::{SavedBand, SavedPoint};
+use crate::layout_document::{LayoutId, SavedBand, SavedPoint};
 
 const MERGED: &str = include_str!("../../fixtures/market-settings/merged.toml");
 
@@ -62,6 +62,189 @@ fn known(tool: &str) -> bool {
 
 fn prices(items: &[SavedDrawing]) -> Vec<f64> {
     items.iter().map(|item| item.points[0].price).collect()
+}
+
+#[test]
+fn scoped_all_timeframes_never_widen_workspace_layout_market_or_venue() {
+    let scope = DrawingScope {
+        workspace: 7,
+        layout: LayoutId(3),
+    };
+    let key = flow("BTCUSDT").in_scope(scope);
+    let mut settings = MarketSettings::default();
+    let mut mark = level(1, 100.0, true);
+    mark.all_windows = true;
+    let write = settings.store_pane(&key, "time:1m", vec![mark], &[], known);
+    let same = context("BTCUSDT", "time:5m").in_scope(scope);
+    assert_eq!(prices(&settings.pane_drawings(&same, "time:5m")), [100.0]);
+    assert!(write.reaches(&key, &same));
+    let foreign = [
+        flow("BTCUSDT").in_scope(DrawingScope {
+            workspace: 8,
+            ..scope
+        }),
+        flow("BTCUSDT").in_scope(DrawingScope {
+            layout: LayoutId(4),
+            ..scope
+        }),
+        flow("ETHUSDT").in_scope(scope),
+        DrawingKey::of_pane("other", "BTCUSDT".to_owned(), None).in_scope(scope),
+        flow("BTCUSDT"),
+    ];
+    for other in foreign {
+        assert!(settings.pane_drawings(&other, "time:1m").is_empty());
+        assert!(!write.reaches(&key, &other));
+    }
+    settings.store_pane(
+        &key,
+        "time:1m",
+        vec![pinned(2, 90.0, "time:1m")],
+        &settings.pane_drawings(&key, "time:1m"),
+        known,
+    );
+    assert!(settings.pane_drawings(&key, "time:5m").is_empty());
+    assert_eq!(prices(&settings.pane_drawings(&key, "time:1m")), [90.0]);
+}
+
+#[test]
+fn legacy_scope_migration_preserves_unresolved_marks_and_existing_alert_identity() {
+    let layouts = LayoutBook::default();
+    let scope = DrawingScope {
+        workspace: 7,
+        layout: layouts.active_id(),
+    };
+    let key = flow("BTCUSDT");
+    let scoped = key.clone().in_scope(scope);
+    let mut mark = level(1, 100.0, false);
+    mark.layout = Some(layouts.active_id());
+    let identity = crate::drawing_identity::issue("document", &key, 1, "unique").unwrap();
+    mark.durable_identity = Some(identity.clone());
+    let mut unresolved = level(2, 90.0, true);
+    unresolved.tool = "future-tool".to_owned();
+    unresolved.layout = Some(LayoutId(999));
+    let mut missing_origin = level(3, 80.0, true);
+    missing_origin.origin = Some(crate::layout_document::SavedOrigin {
+        layout: "removed layout".to_owned(),
+        feed: "binance".to_owned(),
+        symbol: "BTCUSDT".to_owned(),
+        pane: 0,
+        id: Some(3),
+        fingerprint: 0,
+    });
+    let mut settings = MarketSettings::default();
+    settings.replace(
+        &key,
+        vec![mark, unresolved.clone(), missing_origin.clone()],
+        |_| true,
+    );
+    let other = key.clone().in_scope(DrawingScope {
+        workspace: 8,
+        ..scope
+    });
+    assert_eq!(
+        settings.migrate_scopes(&[scoped.clone(), other], &layouts),
+        0
+    );
+    assert_eq!(
+        settings.migrate_scopes(std::slice::from_ref(&scoped), &layouts),
+        1
+    );
+    assert_eq!(settings.drawings(&key), [unresolved, missing_origin]);
+    assert_eq!(
+        settings.drawings(&scoped)[0].durable_identity,
+        Some(identity.clone())
+    );
+    assert!(crate::drawing_identity::belongs_to(&identity, &scoped));
+    assert_eq!(settings.migrate_scopes(&[scoped], &layouts), 0);
+    assert_eq!(
+        parse_settings(&to_text(&settings).unwrap())
+            .unwrap()
+            .drawing_count(),
+        3
+    );
+}
+
+#[test]
+fn legacy_without_owner_metadata_claims_only_a_sole_complete_candidate() {
+    let layouts = LayoutBook::default();
+    let key = flow("BTCUSDT");
+    let scope = DrawingScope {
+        workspace: 1,
+        layout: layouts.active_id(),
+    };
+    let owner = key.clone().in_scope(scope);
+    let other = key.clone().in_scope(DrawingScope {
+        workspace: 2,
+        ..scope
+    });
+    let mut settings = parse_settings(
+        "version = 1\n[[drawings]]\nvenue = 'future'\nasset = 'unknown'\nrole = 'future-role'\n",
+    )
+    .unwrap();
+    settings.replace(&key, vec![level(1, 100.0, false)], known);
+    assert_eq!(
+        settings.migrate_scopes(&[owner.clone(), other], &layouts),
+        0
+    );
+    assert_eq!(settings.drawings(&key).len(), 1);
+    settings.set_drawing_autosave(&owner, false);
+    assert_eq!(
+        settings.migrate_scopes(std::slice::from_ref(&owner), &layouts),
+        0
+    );
+    settings.set_drawing_autosave(&owner, true);
+    assert_eq!(
+        settings.migrate_scopes(std::slice::from_ref(&owner), &layouts),
+        1
+    );
+    assert_eq!(settings.drawings(&owner).len(), 1);
+    assert!(
+        settings
+            .keys()
+            .any(|key| key.role == PaneRole::Other("future-role".to_owned()))
+    );
+}
+
+#[test]
+fn deleting_a_layout_keeps_scoped_drawings_preferences_and_alert_identity_at_the_original_owner() {
+    let mut layouts = LayoutBook::default();
+    let original = layouts.active_id();
+    let label = layouts.get(original).unwrap().name.clone();
+    let neighbor = layouts.create(Some("Neighbor")).unwrap();
+    let scope = DrawingScope {
+        workspace: 7,
+        layout: original,
+    };
+    let key = flow("BTCUSDT").in_scope(scope);
+    let identity = crate::drawing_identity::issue("document", &key, 1, "unique").unwrap();
+    let mut mark = level(1, 100.0, true);
+    mark.layout = Some(original);
+    mark.durable_identity = Some(identity.clone());
+    let mut settings = MarketSettings::default();
+    settings.replace(&key, vec![mark], known);
+    settings.set_drawing_autosave(&key, false);
+    let before = settings.clone();
+
+    layouts.delete(original).unwrap();
+    assert!(!settings.retarget_layout(original, neighbor));
+    assert_eq!(settings, before);
+    assert!(crate::drawing_identity::belongs_to(&identity, &key));
+    let neighbor_key = key.clone().in_scope(DrawingScope {
+        layout: neighbor,
+        ..scope
+    });
+    assert!(settings.pane_drawings(&neighbor_key, "time:5m").is_empty());
+    assert!(settings.drawing_autosave(&neighbor_key));
+
+    let mut reopened = crate::layout_document::parse(&toml::to_string(&layouts).unwrap()).unwrap();
+    let recreated = reopened.create(Some(&label)).unwrap();
+    assert_ne!(recreated, original);
+    let recreated_key = key.in_scope(DrawingScope {
+        layout: recreated,
+        ..scope
+    });
+    assert!(settings.pane_drawings(&recreated_key, "time:5m").is_empty());
+    assert!(settings.drawing_autosave(&recreated_key));
 }
 
 #[test]

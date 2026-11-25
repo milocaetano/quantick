@@ -595,7 +595,7 @@ impl QuantickApp {
                     side_inferred,
                     bar_progress,
                     footprint: &mut self.runtime.footprint_config,
-                    layers: &mut self.runtime.workspace.layers_mut().actions,
+                    settings: self.runtime.workspace.canvas_settings(),
                     panel_folds,
                 };
                 tab.draw_canvas(popup_tab, ui, area, &mut chrome);

@@ -26,6 +26,7 @@ fn a_pane_holds_the_marks_of_its_feed_at_either_symbol() {
 fn only_the_flow_chart_moves_its_bars_in_place_and_only_when_alike() {
     let keyed = |role| PaneLayout::<u32> {
         drawings_key: Some(DrawingKey {
+            scope: None,
             market: crate::market_settings::MarketKey {
                 venue: "v".to_owned(),
                 asset: "a".to_owned(),

@@ -37,6 +37,7 @@ pub mod deal_recorder;
 pub mod deal_recording;
 pub mod desk;
 pub mod dock;
+pub mod drawing_autosave;
 pub mod drawing_magnet;
 pub mod drawing_scope;
 pub mod drawing_text;

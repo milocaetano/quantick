@@ -21,6 +21,7 @@ pub mod chart_settings;
 pub mod contract_roll;
 pub mod deal_recording;
 pub mod desk;
+pub mod drawing_autosave;
 pub mod drawing_magnet;
 pub mod drawing_scope;
 pub mod drawing_text;

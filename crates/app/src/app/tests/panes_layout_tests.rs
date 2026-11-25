@@ -2157,17 +2157,17 @@ fn the_status_bar_follows_the_focused_pane() {
     assert_eq!(flow_status.venue, time_status.venue);
 }
 
-/// Each pane's marks learn the layout it shows: a mark on all timeframes
-/// placed on the time pane stays off the flow pane, which shows another
-/// layout, until the inspector's All windows reaches the time pane's store.
+/// The inspector's All windows switch keeps layout ownership; a pane picks
+/// up the shared mark only after its layout switch has settled.
 #[test]
-fn a_mark_shows_on_a_pane_of_another_layout_only_with_all_windows_on() {
+fn all_windows_keeps_a_mark_within_its_named_layout() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = split_app(&ctx, 200);
     let time = PaneSide::Time(0);
     let point = pane_point(&app, time);
     click_chart(&mut app, &ctx, point);
-    app.layout_adapter()
+    let levels = app
+        .layout_adapter()
         .create_layout(Some("levels"))
         .expect("second");
     place_level(&mut app, time, 100.0);
@@ -2186,14 +2186,18 @@ fn a_mark_shows_on_a_pane_of_another_layout_only_with_all_windows_on() {
     };
     app.resolve_drawing_response(ask, std::time::Instant::now());
     run_frame(&mut app, &ctx);
-    assert_eq!(shown(&app), 1, "All windows reached the store");
+    assert_eq!(shown(&app), 0, "All windows retains the layout boundary");
+    let tab = app.runtime.tabs.active_id();
+    app.layout_adapter()
+        .switch_pane_layout(tab, PaneSide::Flow, levels)
+        .unwrap();
+    assert_eq!(shown(&app), 1, "the pane now shows the owning layout");
 }
 
-/// Deleting the layout a pane shows moves the pane and its marks together,
-/// so the mark selected there stays selected: the marks follow once the
-/// layout is gone, and take back the selection the switch let go of.
+/// Deleting a layout settles the pane onto its neighbour without carrying
+/// a selection or drawing that belongs to the retired layout.
 #[test]
-fn deleting_a_panes_layout_keeps_the_mark_it_has_selected() {
+fn deleting_a_panes_layout_clears_its_old_selection_and_visible_marks() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = split_app(&ctx, 200);
     let time = PaneSide::Time(0);
@@ -2211,8 +2215,14 @@ fn deleting_a_panes_layout_keeps_the_mark_it_has_selected() {
     app.layout_adapter().delete_layout(levels).expect("deleted");
     run_frame(&mut app, &ctx);
     let drawings = &app.active_tab().pane(time).drawings;
-    assert_eq!(drawings.selected(), Some(0), "the selection held");
-    assert_ne!(drawings.items()[0].layout, Some(levels));
+    assert_eq!(drawings.selected(), None);
+    assert!(drawings.items().is_empty());
+    assert_ne!(
+        app.runtime
+            .layout_state()
+            .pane_layout(app.runtime.tabs.active_id(), time),
+        levels,
+    );
 }
 
 /// Each pane shows its own layout: creating a layout on the focused pane
@@ -2517,6 +2527,7 @@ fn pane_local_strip_actions_target_the_footer_that_raised_them() {
 fn per_pane_layouts_are_recorded_and_restored() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = split_app(&ctx, 200);
+    app.runtime.workspace.book.book_mut().set_autosave(true);
     let first = app.runtime.layout_state().layouts().active_id();
     let point = pane_point(&app, PaneSide::Time(0));
     click_chart(&mut app, &ctx, point);
@@ -2595,13 +2606,14 @@ fn per_pane_layouts_are_recorded_and_restored() {
     );
 }
 
-/// The whole book survives a restart: layouts, the active one, each
-/// layout's indicators and each market's drawings. A fresh app on the
-/// same cockpit home opens on it.
+/// With configuration autosave enabled the whole book survives a restart:
+/// layouts, the active one, each layout's indicators and each market's
+/// drawings. A fresh app on the same cockpit home opens on it.
 #[test]
-fn layouts_come_back_after_a_restart() {
+fn layouts_come_back_after_a_restart_with_configuration_autosave() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = split_app(&ctx, 200);
+    app.runtime.workspace.book.book_mut().set_autosave(true);
     app.apply_toolbar_action(ToolbarAction::AddNative("native.ema"));
     settle_indicators(&mut app);
     app.layout_adapter().apply_pending_indicator_state();
@@ -3352,6 +3364,11 @@ fn closing_a_tab_activates_a_neighbour_and_drops_its_market() {
     );
 
     app.apply_tab_action(TabAction::Close(1));
+    app.workspace_calls().apply_workspace_command(
+        quantick_session::workspace_menu::WorkspaceCommand::AnswerClose(
+            quantick_session::close_queue::CloseAnswer::CloseWithoutSaving,
+        ),
+    );
 
     // Which neighbour takes over is the arrangement's
     // `close_preserves_position_instead_of_selected_identity`.
