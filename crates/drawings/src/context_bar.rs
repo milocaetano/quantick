@@ -16,6 +16,12 @@ pub enum Slot {
     DrawAgain,
     Color,
     Width,
+    /// A position's target zone colour and opacity, ending in its default.
+    TargetColor,
+    /// A position's stop zone colour and opacity, ending in its default.
+    StopColor,
+    /// A position's risk/reward, named risk first.
+    RiskReward,
     /// Type/glyph size, for the tools drawn as glyphs rather than strokes.
     GlyphSize,
     Separator,
@@ -48,6 +54,10 @@ pub struct Capabilities {
     /// Whether the OHLC magnet moves this object's anchors: a tool that
     /// snaps by its own rule has no magnet to switch.
     pub magnet: bool,
+    /// A long or short position: its two zone colours and its risk/reward
+    /// take the colour and width cells, and every setting lives on the bar,
+    /// so it has no gear.
+    pub position: bool,
     /// Whether this object's tool is one the trader keeps drawing with —
     /// a freehand stroke — so the bar offers to arm it again.
     pub draw_again: bool,
@@ -68,8 +78,12 @@ pub fn slots(caps: Capabilities) -> SmallVec<[Slot; 14]> {
         slots.push(Slot::DrawAgain);
         slots.push(Slot::Separator);
     }
-    slots.push(Slot::Color);
-    if caps.stroke_width {
+    if caps.position {
+        slots.extend([Slot::TargetColor, Slot::StopColor, Slot::RiskReward]);
+    } else {
+        slots.push(Slot::Color);
+    }
+    if caps.stroke_width && !caps.position {
         slots.push(Slot::Width);
     }
     if caps.glyph_size {
@@ -85,7 +99,7 @@ pub fn slots(caps: Capabilities) -> SmallVec<[Slot; 14]> {
     if caps.sharing {
         slots.push(Slot::Sharing);
     }
-    if caps.settings {
+    if caps.settings && !caps.position {
         slots.push(Slot::Settings);
     }
     // The hairline before the trash is not decoration. It turns the 4 px gap
@@ -94,4 +108,39 @@ pub fn slots(caps: Capabilities) -> SmallVec<[Slot; 14]> {
     slots.push(Slot::Separator);
     slots.push(Slot::Delete);
     slots
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn caps(position: bool) -> Capabilities {
+        Capabilities {
+            stroke_width: true,
+            glyph_size: false,
+            authored: false,
+            settings: true,
+            sharing: true,
+            magnet: true,
+            position,
+            draw_again: false,
+        }
+    }
+
+    /// A position's bar is its two colours and its risk/reward, and no gear:
+    /// every setting it has lives on the bar.
+    #[test]
+    fn a_position_trades_colour_width_and_gear_for_its_own_three_cells() {
+        let position = slots(caps(true));
+        assert_eq!(
+            &position[1..4],
+            &[Slot::TargetColor, Slot::StopColor, Slot::RiskReward]
+        );
+        for gone in [Slot::Color, Slot::Width, Slot::Settings] {
+            assert!(!position.contains(&gone), "{gone:?}");
+        }
+        let other = slots(caps(false));
+        assert!(other.contains(&Slot::Settings) && other.contains(&Slot::Color));
+        assert!(!other.contains(&Slot::RiskReward));
+    }
 }

@@ -161,6 +161,7 @@ fn assert_rejected(source: &str, evidence: &str) {
 fn assert_cli_rejected(root: &std::path::Path, relative: &str, evidence: &str) {
     sign_window_reach(root);
     let output = Command::new(env!("CARGO_BIN_EXE_quantick-guards"))
+        .env_remove("QUANTICK_GUARDS_BASE_ROOT")
         .env("QUANTICK_GUARDS_ROOT", root)
         .args(["--file", relative])
         .output()
@@ -262,6 +263,7 @@ fn const_expression_blocks_cannot_hide_root_deposits() {
     assert!(findings(&root).is_empty());
     sign_window_reach(root.path());
     let output = Command::new(env!("CARGO_BIN_EXE_quantick-guards"))
+        .env_remove("QUANTICK_GUARDS_BASE_ROOT")
         .env("QUANTICK_GUARDS_ROOT", root.path())
         .args(["--file", "crates/app/src/app.rs"])
         .output()
@@ -340,6 +342,7 @@ fn realistic_native_owner_grows_in_same_or_new_file_but_root_deposit_fails() {
         assert!(findings(&root).is_empty());
         sign_window_reach(root.path());
         let output = Command::new(env!("CARGO_BIN_EXE_quantick-guards"))
+            .env_remove("QUANTICK_GUARDS_BASE_ROOT")
             .env("QUANTICK_GUARDS_ROOT", root.path())
             .args([
                 "--file",
@@ -389,6 +392,7 @@ fn skipped_directory_modules_require_test_classification_or_scanned_inline_bodie
         assert!(findings(&root).is_empty());
         sign_window_reach(root.path());
         let output = Command::new(env!("CARGO_BIN_EXE_quantick-guards"))
+            .env_remove("QUANTICK_GUARDS_BASE_ROOT")
             .env("QUANTICK_GUARDS_ROOT", root.path())
             .args(["--file", "crates/app/src/app.rs"])
             .output()
@@ -529,6 +533,7 @@ fn a_failed_scan_is_not_measured_as_zero() {
     );
     sign_window_reach(root.path());
     let output = Command::new(env!("CARGO_BIN_EXE_quantick-guards"))
+        .env_remove("QUANTICK_GUARDS_BASE_ROOT")
         .env("QUANTICK_GUARDS_ROOT", root.path())
         .arg("--report")
         .output()

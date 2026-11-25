@@ -10,8 +10,8 @@
 # same answer as "red".
 #
 # The list is every job that carries part of the full verification, not a
-# summary of it. `gate` runs first and every other job waits on it. Linux runs
-# as five parallel jobs so the app's harness feature builds and its workspace
+# summary of it. `gate` runs beside the rest; `classify` decides the mode.
+# Linux runs as five parallel jobs so the app's harness feature builds and its workspace
 # test run overlap instead of queueing, and Windows as four so its workspace
 # test run is dealt across two; each one is named here, because a job nothing
 # requires is a job that can be dropped without anyone noticing.
@@ -27,10 +27,10 @@
 # must not hide the green one.
 # Only runs posted by GitHub Actions count: a check name is not an identity.
 #
-# One exception, and it is the gate's own: when `gate` decided the head needs
+# One exception, and it is the gate's own: when `classify` decided the head needs
 # no Rust build (a prose-only diff, or full CI already green at this head), it
 # runs the `rust-skip` job. A successful `rust-skip` from the same workflow run
-# (check suite) as the latest `gate` lets a job after `gate` have no verdict at
+# (check suite) as the latest `gate` lets a job beside `gate` have no verdict at
 # all, or a verdict of `cancelled` from an older run that a newer one
 # superseded at this head (a prose run's own jobs are skipped, so an older
 # cancelled run would otherwise stay the latest forever). It never excuses a
@@ -39,7 +39,7 @@
 # never matches. Full jobs are still read as the newest non-skipped run per
 # name.
 #
-# QUANTICK_FULL_CI_FOR_REUSE=1 is the gate asking whether an earlier run already
+# QUANTICK_FULL_CI_FOR_REUSE=1 is `classify` asking whether an earlier run already
 # finished the full verification at this head. It reads completed runs only, so
 # its own run's pending jobs count as missing rather than as the latest, and it
 # takes no `rust-skip` excuse: only real green runs are reused.

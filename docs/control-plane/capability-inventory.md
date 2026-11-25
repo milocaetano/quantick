@@ -50,6 +50,8 @@ capability that cannot change application state.
 | `annotate.long_position.create` | 1 | `annotate` | no | `annotate`, `annotate.chart` |
 | `annotate.magnet.set` | 1 | `annotate` | no | `cockpit` |
 | `annotate.parallel_channel.create` | 1 | `annotate` | no | `annotate`, `annotate.chart` |
+| `annotate.position.default` | 1 | `annotate` | no | `cockpit` |
+| `annotate.position.set` | 1 | `annotate` | no | `cockpit` |
 | `annotate.rectangle.create` | 1 | `annotate` | no | `annotate`, `annotate.chart` |
 | `annotate.remove` | 1 | `annotate` | no | `annotate`, `annotate.chart` |
 | `annotate.short_position.create` | 1 | `annotate` | no | `annotate`, `annotate.chart` |

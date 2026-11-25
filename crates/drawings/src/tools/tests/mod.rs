@@ -1855,6 +1855,14 @@ fn a_tool_that_declares_no_handles_is_still_grabbed_by_its_anchors() {
             );
             continue;
         }
+        if drawing_tool.id().ends_with("-position") {
+            assert_eq!(
+                handles.len(),
+                2,
+                "a position is resized by its entry line's ends"
+            );
+            continue;
+        }
         if drawing_tool.id() == "brush" {
             // The one tool that answers "none", on purpose: a ring on
             // every captured point is a cloud nobody can aim at, over a
@@ -2232,3 +2240,107 @@ fn set_own_magnet_refuses_what_the_bar_would_not_offer() {
 }
 
 mod appearance;
+
+/// Save as default on a position stores its colours, opacity and ratio
+/// together, per tool — a custom ratio as the prices make it — and reset
+/// gives the factory look back.
+#[test]
+fn a_positions_saved_default_carries_its_look_and_its_custom_ratio_per_tool() {
+    let mut host = MemoryPresetHost::default();
+    let paper = ChartSurface::Paper.into();
+    let long = tool("long-position");
+    let short = tool("short-position");
+    let mut placed = new_drawing_from_defaults(&host, paper, long);
+    let mine = PositionPayload {
+        ratio: 1.3,
+        projected_offset: Some(13.0),
+        target_rgb: [0x11, 0x22, 0x33],
+        stop_rgb: [0x44, 0x55, 0x66],
+        zone_opacity_pct: 35,
+    };
+    placed.payload = Box::new(mine.clone());
+    let mut drawings = Drawings::default();
+    update(
+        &mut drawings,
+        DrawingIntent::Place(Placement {
+            tool: long,
+            points: vec![ChartPoint::at(1.0, 100.0), ChartPoint::at(9.0, 90.0)],
+            band: DrawingBand::Price,
+            opening: placed,
+            author: None,
+            name: None,
+            text: None,
+        }),
+    );
+    save_tool_default(&mut host, paper, &drawings.items()[0].clone());
+    let opened = new_drawing_from_defaults(&host, paper, long);
+    let opened = opened
+        .payload
+        .as_any()
+        .downcast_ref::<PositionPayload>()
+        .unwrap();
+    assert_eq!(
+        *opened,
+        PositionPayload {
+            projected_offset: None,
+            ..mine
+        },
+        "the look and the ratio, never one chart's pin or width"
+    );
+    let other = new_drawing_from_defaults(&host, paper, short);
+    let other = other
+        .payload
+        .as_any()
+        .downcast_ref::<PositionPayload>()
+        .unwrap();
+    assert_eq!(*other, PositionPayload::default(), "short keeps its own");
+    reset_tool_default(&mut host, paper, long);
+    let reset = new_drawing_from_defaults(&host, paper, long);
+    let reset = reset
+        .payload
+        .as_any()
+        .downcast_ref::<PositionPayload>()
+        .unwrap();
+    assert_eq!(*reset, PositionPayload::default());
+}
+
+/// Save as default stores the ratio the plan's prices make, which is what
+/// the bar shows, even for a plan saved before the stored ratio followed a
+/// pinned leg.
+#[test]
+fn a_saved_position_default_stores_the_ratio_its_prices_make() {
+    let mut host = MemoryPresetHost::default();
+    let paper = ChartSurface::Paper.into();
+    let long = tool("long-position");
+    let mut drawings = Drawings::default();
+    let mut opening = new_drawing_from_defaults(&host, paper, long);
+    // Entry 100, stop 90, target pinned at 115: 1 : 1.5, while the stored
+    // ratio still says 2.
+    opening.payload = Box::new(PositionPayload {
+        ratio: 2.0,
+        projected_offset: Some(15.0),
+        ..PositionPayload::default()
+    });
+    update(
+        &mut drawings,
+        DrawingIntent::Place(Placement {
+            tool: long,
+            points: vec![ChartPoint::at(1.0, 100.0), ChartPoint::at(9.0, 90.0)],
+            band: DrawingBand::Price,
+            opening,
+            author: None,
+            name: None,
+            text: None,
+        }),
+    );
+    let drawing = drawings.items()[0].clone();
+    crate::position_edit::apply_position_default(
+        &mut host,
+        paper,
+        &drawing,
+        crate::position_edit::PositionDefault::Save,
+    )
+    .unwrap();
+    let opened = crate::position_edit::opening_position(&host, paper, long).unwrap();
+    assert!((opened.ratio - 1.5).abs() < 1e-9, "{}", opened.ratio);
+}

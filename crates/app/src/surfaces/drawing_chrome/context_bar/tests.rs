@@ -1,4 +1,5 @@
 use super::*;
+use crate::surfaces::drawing_chrome::clamp_into_chart;
 
 #[test]
 fn full_action_footprint_keeps_the_inspector_title_reachable() {

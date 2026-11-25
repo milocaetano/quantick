@@ -381,7 +381,7 @@ pub(super) const OBJECTS: &[UiBehaviour] = &[
         reach: "a secondary-button drag on the price band with the Pointer tool, then the range's Long position action; the drag's start is the entry and its end the stop (below) or the target (above)",
         keys: &[(
             Source::Authored,
-            "the quick-range action bar places the registered long position tool on the leg's two anchors; the other leg follows the default target:stop ratio",
+            "the quick-range action bar places the registered long position tool on the leg's two anchors; the other leg follows the default risk/reward (risk 1 : reward N, 1:1 out of the box)",
         )],
         mapping: capability!("annotate.long_position.create"),
     },
@@ -391,7 +391,7 @@ pub(super) const OBJECTS: &[UiBehaviour] = &[
         reach: "a secondary-button drag on the price band with the Pointer tool, then the range's Short position action; the drag's start is the entry and its end the stop (above) or the target (below)",
         keys: &[(
             Source::Authored,
-            "the quick-range action bar places the registered short position tool on the leg's two anchors; the other leg follows the default target:stop ratio",
+            "the quick-range action bar places the registered short position tool on the leg's two anchors; the other leg follows the default risk/reward (risk 1 : reward N, 1:1 out of the box)",
         )],
         mapping: capability!("annotate.short_position.create"),
     },
