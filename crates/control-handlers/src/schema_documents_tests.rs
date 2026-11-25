@@ -42,3 +42,14 @@ fn a_catalog_without_capabilities_is_left_alone() {
     fold_schema_refs(&mut catalog, [("a.schema.json", &schema)]);
     assert_eq!(catalog, json!({ "profiles": [] }));
 }
+
+#[test]
+fn a_capability_without_an_input_schema_gains_none() {
+    let schema = json!({ "type": "object" });
+    let mut folded = json!({ "capabilities": [{ "id": "a.read", "output_schema": schema }] });
+    fold_schema_refs(&mut folded, [("a.schema.json", &schema)]);
+    assert_eq!(
+        folded,
+        json!({ "capabilities": [{ "id": "a.read", "output_schema": { "$ref": "a.schema.json" } }] })
+    );
+}

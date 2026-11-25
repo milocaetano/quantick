@@ -122,12 +122,12 @@ pub fn documents() -> Vec<SchemaDocument> {
     documents
 }
 
-/// The capability fields a catalog entry may point at a published file with.
 const REFERENCED_SCHEMA_FIELDS: [&str; 2] = ["input_schema", "output_schema"];
 
 /// Replaces every capability schema in `catalog` that equals a published
-/// document with `{"$ref": "<file_name>"}`, a reference relative to the
-/// catalog's own directory, so each such schema is committed in one file.
+/// document with `{"$ref": "<file_name>"}`, so each such schema is committed
+/// in one file. The reference is a bare file name: callers write the
+/// documents beside the catalog, as `schemas/control` holds both.
 ///
 /// A schema no document matches stays inline. When several documents carry
 /// the same schema, the lowest file name is referenced, so the result does
