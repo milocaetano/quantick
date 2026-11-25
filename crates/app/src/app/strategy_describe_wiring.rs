@@ -24,7 +24,7 @@ impl<T: super::control_host::TabsMutPort + ?Sized> DescribeHost for T {
 struct Focused<'a> {
     tabs: &'a mut ArrangementHost,
     library: Option<&'a std::path::Path>,
-    opened: Option<eframe::egui::ViewportId>,
+    opened: bool,
 }
 
 fn focused_tab(tabs: &ArrangementHost) -> u64 {
@@ -121,8 +121,7 @@ impl Chart for Focused<'_> {
         )
     }
     fn opened(&mut self) {
-        let focused = self.tabs.windows().focused();
-        self.opened = Some(super::native_windows::viewport(focused));
+        self.opened = true;
     }
     fn check_region(&self, context: &Context, drawing: DrawingId) -> Result<(), String> {
         let pane = self.pinned(context);
@@ -157,12 +156,13 @@ pub(super) fn dispatch(
     let mut chart = Focused {
         tabs,
         library,
-        opened: None,
+        opened: false,
     };
     let worker = &mut surface.view.worker;
     let status = conversation::dispatch(&mut surface.model_state, worker, &mut chart, intent);
-    if let Some(viewport) = chart.opened {
-        surface.view.open(viewport);
+    if chart.opened {
+        let focused = chart.tabs.windows().focused();
+        surface.view.open(super::native_windows::viewport(focused));
     }
     status
 }
@@ -177,13 +177,14 @@ pub(super) fn frame(surfaces: &mut Surfaces, tabs: &mut ArrangementHost, effect:
     let mut chart = Focused {
         tabs,
         library,
-        opened: None,
+        opened: false,
     };
     let worker = &mut surface.view.worker;
     let state = &mut surface.model_state;
     let result = conversation::frame(state, worker, &mut chart, command, effect);
-    if let Some(viewport) = chart.opened {
-        surface.view.open(viewport);
+    if chart.opened {
+        let focused = chart.tabs.windows().focused();
+        surface.view.open(super::native_windows::viewport(focused));
     }
     if let Err(error) = result {
         let now = std::time::Instant::now();
