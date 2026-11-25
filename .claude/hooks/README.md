@@ -127,13 +127,33 @@ denial is reported to the coordinator, never routed around.
 
 ## Full CI at the exact head
 
-One full CI run is nine jobs in `.github/workflows/ci.yml`: `ci`,
-`linux-tests`, `harness-app`, `harness-combined` and `harness-scenario` on
+One full CI run is ten jobs in `.github/workflows/ci.yml`: `gate` first, then
+`ci`, `linux-tests`, `harness-app`, `harness-combined` and `harness-scenario` on
 Linux, `windows`, `windows-tests`, `windows-heavy-tests` and
-`windows-app-tests` on Windows. They run in parallel. An agent iterating on a
-draft still needs a signal sooner than the full verdict, and readiness needs
-the full verdict anyway, so the two are separated rather than one being traded
-for the other.
+`windows-app-tests` on Windows, in parallel once `gate` is green. An agent
+iterating on a draft still needs a signal sooner than the full verdict, and
+readiness needs the full verdict anyway, so the two are separated rather than
+one being traded for the other.
+
+`gate` is the fast part of every run: fmt, the guard tests with the aggregate
+ratchets, the generated-file drift tests of the control schemas and the UI
+behaviour matrix, this hook suite, the workflow policy and every cargo-free
+Python suite. It builds nothing but the guards and two small owner crates, so a
+broken rule is red in minutes, and every job that builds Rust has
+`needs: gate`, so none of them starts on a head that already failed. Its last
+step decides the head's mode, which every Rust job reads:
+
+- `build`, the default, and always on a push to `main`;
+- `prose`, when `tools/ci/prose_only.py` finds only Markdown or `docs/` paths
+  that no crate names: the same path search the draft `fast` job uses to pick
+  crates, so a doc a test opens builds;
+- `reused`, on the flip to ready of a draft labelled `full-ci`, when every job
+  in `FULL_CI_CHECKS` already finished green at this exact head.
+
+Anything but `build` skips every Rust job and runs `rust-skip`, whose log says
+which. `tools/ci/test_workflow_policy.py` evaluates the workflow's own `if:` and
+`concurrency:` expressions against event fixtures, so the table below is
+tested, not only written.
 
 It was two serial jobs, 43 minutes on Linux and 15 on Windows, and the time sat
 in work nothing could overlap inside one runner. Eighteen Linux minutes were a
@@ -169,27 +189,30 @@ counts as coverage without counting as a share. It runs in `ci`.
 
 | Event | Runs |
 | --- | --- |
-| Push to a draft PR | `fast` only |
-| Push to a draft labelled `full-ci`, or adding that label | `fast` (push only) plus the nine full jobs |
-| Draft flipped to ready | the nine full jobs, always |
-| Push to a ready PR, push to `main` | the nine full jobs |
+| Push to a draft PR | `gate`, then `fast` |
+| Push to a draft labelled `full-ci`, or adding that label | `gate`, then `fast` (push only) plus the nine full jobs |
+| Draft flipped to ready | `gate`, then the nine full jobs, unless `gate` finds them already green at this head |
+| Push to a ready PR, push to `main` | `gate`, then the nine full jobs |
+| Any of these on a prose-only pull request | `gate`, then `rust-skip` |
 
-`fast` runs `cargo fmt --all -- --check`, then `cargo clippy --all-targets`
-and `cargo test` over the crates `tools/ci/affected_crates.py` selects: the
+`fast` runs `cargo clippy --all-targets` and `cargo test` over the crates `tools/ci/affected_crates.py` selects: the
 crates owning a changed file or naming it by path, every crate depending on
 those through normal, dev or build edges, and always `quantick-guards`. The
 graph is read from `cargo metadata`, never a hand list; a workspace-wide cargo
 input (root `Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml`, `.cargo/`)
 selects everything. The script's log line for each crate says why it ran. Its
 tests compare the closure for every crate with `cargo tree --invert`, and run
-in the `ci` job. `fast` covers no hook suite, Python tool or Windows build:
-those are the full jobs' work.
+in the `ci` job. The hook suite and the cargo-free Python tools run in `gate`
+before `fast` starts; no Windows build runs on a draft without the label.
 
-The flip re-runs full CI even when the labelled draft already has it at that
-head. Skipping it was tried: the flip's run then posted skipped `ci` and
-`windows`, and GitHub's check list showed only those, hiding the green run
-from whoever merges. One duplicate run is cheaper than a PR that reads as
-untested.
+The flip does not re-run full CI when the labelled draft already finished it
+green at that head. Skipping it silently was tried once: the flip's run posted
+skipped `ci` and `windows`, and GitHub's check list showed only those, hiding
+the green run from whoever merges. So the skip is never silent: the flip's run
+still runs `gate`, and `rust-skip` posts a green check saying the full run at
+this head was reused. `gate` asks with `QUANTICK_FULL_CI_COMPLETED_ONLY=1`, so
+its own run's pending jobs read as missing rather than as the latest; a run
+still going, red or cancelled is not reused, and the flip builds.
 
 **The verdict.** `full_ci.sh verify <worktree> [<sha>]` is the one definition.
 It reads the check runs GitHub Actions posted for the exact commit, drops
@@ -199,7 +222,9 @@ so splitting the work across runners cannot quietly drop a check: a job
 nothing requires is a job that can disappear without anyone noticing, and
 `guardrails_test.sh` fails when a name in that list has no job in `ci.yml`.
 Skipped is no verdict: a head with nothing but skipped full jobs has no full
-CI. It reads per commit, not through `gh pr checks`,
+CI, with one exception the gate owns. A green `rust-skip` at the head lets a
+job after `gate` have no verdict; it excuses no red, running or cancelled job,
+and never a missing `gate`. It reads per commit, not through `gh pr checks`,
 because a later skipped run for the same head (adding an unrelated label
 posts one) must not hide the green one. Exit 2 means GitHub could not answer, and the
 gate turns that into `ask`, never a pass. A commit GitHub has never seen was

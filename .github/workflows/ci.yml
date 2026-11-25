@@ -38,16 +38,24 @@ env:
   # units too, so the override reaches every unit every job compiles.
   CARGO_PROFILE_DEV_DEBUG: line-tables-only
 
-# Which jobs run where. A draft push runs `fast` and `aggregate-ratchets`:
-# fmt, clippy, affected tests and aggregate growth. Ratchets check the PR head;
-# the existing checks keep testing GitHub's merge revision. Nine build/test jobs — `ci`,
+# Which jobs run where. Every event runs `gate` first: fmt, the guard tests,
+# the generated-file drift tests, the aggregate ratchets and the cargo-free
+# suites, so a broken rule turns red in minutes and no job that builds Rust
+# starts before it is green. `gate` also decides the head's mode: `build`,
+# `prose` (a diff no Rust job can judge; tools/ci/prose_only.py) or `reused`
+# (the flip to ready of a `full-ci` draft whose full run is already green at
+# this head). Anything but `build` skips every Rust job and runs `rust-skip`.
+#
+# A draft push then runs `fast`: clippy and the affected tests. Nine
+# build/test jobs — `ci`,
 # `linux-tests`, `harness-app`, `harness-combined` and `harness-scenario` on
 # Linux, `windows`, `windows-tests`, `windows-heavy-tests` and
-# `windows-app-tests` on Windows — and they run on every push to main, every
+# `windows-app-tests` on Windows — run on every push to main, every
 # push to a ready PR, the flip to ready, and on a draft carrying the `full-ci`
-# label. `pr-gate` refuses `gh pr ready` until every one of them is green at
-# the exact head, and the final verifier requires the same, so a skipped full
-# job never stands in for a passing one. The names are `FULL_CI_CHECKS` in
+# label. `pr-gate` refuses `gh pr ready` until `gate` and every one of them is
+# green at the exact head, and the final verifier requires the same, so a
+# skipped full job never stands in for a passing one unless `rust-skip` says
+# why. The names are `FULL_CI_CHECKS` in
 # .claude/hooks/full_ci.sh, and guardrails_test.sh fails when a name there has
 # no job here. The rules live in .claude/hooks/README.md, "Full CI at the exact
 # head".
@@ -75,9 +83,190 @@ env:
 # dependency graph, which is why a second test job costs a relink and not a
 # cold build.
 jobs:
+  # The one fast gate. Nothing here builds more than the guards and two small
+  # owner crates, so a guard, ratchet or drift failure is red within minutes
+  # and no Rust job has started. Ordered cheapest-to-fail first: a red step
+  # ends the job, so what fails most often runs before what costs most.
+  #
+  # It has no `if:` and no `needs:`: every event runs it, and the jobs that
+  # build Rust wait on it with `needs: gate`. Its `mode` output is the only
+  # input those jobs read from it; see the header above.
+  gate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # `full_ci.sh` reads the check runs an earlier run posted at this head.
+      checks: read
+    outputs:
+      mode: ${{ steps.mode.outputs.mode }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The ratchets and the prose classifier diff the PR base against its
+          # head, and both must be in the clone.
+          fetch-depth: 0
+      - uses: ./.github/actions/rust-setup
+        with:
+          desktop-deps: "false"
+      - name: Format
+        run: cargo fmt --all -- --check
+      - &format-control-families
+        name: Format control families
+        shell: bash
+        # Macro-generated module declarations require explicit rustfmt inputs.
+        run: find crates/control-schema/src crates/control-handlers/src -name '*.rs' -type f -exec rustfmt --edition 2024 --check {} +
+      - name: PR head aggregate growth
+        # Ratchets check the PR head; every other step here tests GitHub's
+        # merge revision. The head gets its own worktree and its own copy of
+        # the runner, as the separate job it replaces checked it out.
+        shell: bash
+        env:
+          RATCHET_BASE: ${{ github.event.pull_request.base.sha || 'HEAD^' }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          git worktree add --detach "$RUNNER_TEMP/head" "$HEAD_SHA"
+          cd "$RUNNER_TEMP/head"
+          python3 tools/ci/ratchet_delta.py --base "$RATCHET_BASE"
+      - name: Aggregate ratchet delta
+        # The merge revision's run, which exports the base for the guard tests.
+        env:
+          RATCHET_BASE: ${{ github.event.pull_request.base.sha || 'HEAD^' }}
+        run: python3 tools/ci/ratchet_delta.py --base "$RATCHET_BASE" --export-env "$GITHUB_ENV"
+      - name: Guard tests
+        run: cargo test -p quantick-guards
+      - name: Generated-file drift
+        # The published control schemas and the UI behaviour matrix compare
+        # their committed files with what the generator emits today. The app's
+        # own generated files (capability inventory, retry matrix, hook
+        # registry) are compared byte for byte by its tests in the full jobs;
+        # the guard tests above see their drift first.
+        run: cargo test -p quantick-control -p quantick-operability
+      - name: Workflow policy
+        # Who runs when, evaluated from this file's own expressions.
+        run: python3 tools/ci/test_workflow_policy.py
+      - name: Agent guardrails
+        # The hooks in .claude/settings.json are what keep an agent session off
+        # the main checkout and off an un-reviewed PR. Nothing in cargo test
+        # touches them, so they get their own step. The suite builds its own
+        # throwaway repos for the hook cases, with one deliberate exception:
+        # its last block reads this checkout's CLAUDE.md and .claude/ prose to
+        # pin that the marker names the gate reads are the ones the
+        # instructions tell an agent to write. So this step can go red on a
+        # docs-only PR that renames a marker on one side, which is the point,
+        # and why it runs here rather than in a Rust job a prose diff skips.
+        run: sh .claude/hooks/guardrails_test.sh
+      - name: Python tooling lint
+        # The MetaTrader bridge and the session exporter are Python, so not one
+        # of the cargo steps below can see them. An undefined name reached main
+        # on 2026-08-13 and killed every replay download for a day, because
+        # Python resolves names only when the line runs and that line runs on a
+        # logged-in terminal nobody has in CI. `--select F` is pyflakes' rule
+        # set — the one that catches a name that cannot resolve — and it runs
+        # before the slow steps so this class of bug fails in seconds.
+        # The glob is `tools/`, not `tools/mt5/`: a Python file that lands
+        # anywhere under tools/ is linted the moment it exists, rather than when
+        # somebody remembers to widen this line. `tools/heatmap-lab/` arrived
+        # that way.
+        run: pipx run ruff check --select F tools/ bridge/mt5/
+      - name: Exporter tests
+        # Drives export_session.py end to end against a fake terminal: no
+        # MetaTrader, no network, no credentials, nothing to install.
+        run: python3 tools/mt5/test_export_session.py
+      - name: Outside-score measurement tests
+        # Every measured row the outside-score rubric grades comes from this
+        # lexer. A regression in it moves scores without any code changing, so
+        # its fixtures run here, beside the other offline tool suites.
+        run: python3 tools/outside_score/test_measure.py
+      - name: Read-cost tests
+        # The calculator: explicit Git revisions, Rust module layouts,
+        # direct-only reference scope, deduplication, and delete/rename
+        # pre-images. Then what is done with its answer - the sticky comment,
+        # the ledger rows, the median the ceiling came from, and the advisory
+        # `pr-gate` prints. Discovered rather than named, so a suite added
+        # beside these runs the moment it exists.
+        run: python3 -m unittest discover -s tools/read_cost -p 'test_*.py'
+      - name: Binary hook scan tests
+        # The scan below reads a half-gigabyte binary, so its own cases run
+        # against fixtures instead: the boundary rule, the prose exemption, and
+        # both failure directions.
+        run: python3 tools/ci/test_binary_hook_scan.py
+      - name: Ratchet delta runner tests
+        run: python3 tools/ci/test_ratchet_delta.py
+      - name: Prose classifier tests
+        run: python3 tools/ci/test_prose_only.py
+      - name: Edit-loop safety fixtures
+        run: python3 -m unittest discover -s tools/edit_loop -p 'test_*.py'
+      - name: Bridge tests
+        # Same shape, for the bridge itself: a fake terminal, no MetaTrader.
+        # It covers which ticks the live pump asks for, how "load older" walks
+        # backwards, and where the opening block starts — behaviour cargo
+        # cannot see and ruff cannot judge, so without this step a revert to
+        # COPY_TICKS_ALL, or to a clock-anchored backfill, ships green.
+        #
+        # The glob is deliberate: a suite added beside these is run the moment
+        # it exists, rather than when someone remembers to name it here. It is
+        # also what `cargo test -p quantick-feed-mt5 --test bridge_paging`
+        # does, so the two cannot disagree about which suites are covered.
+        #
+        # Every suite runs and the step fails if any did, rather than reporting
+        # whichever ran last: a loop whose exit code is its final command turns
+        # a red suite green the moment another one is added after it.
+        run: |
+          failed=0
+          for suite in bridge/mt5/tests/test_*.py; do
+            echo "== $suite"
+            python3 "$suite" || failed=1
+          done
+          exit "$failed"
+      - name: Decide what this head needs
+        id: mode
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          ACTION: ${{ github.event.action }}
+          FULL_CI_LABELLED: ${{ contains(github.event.pull_request.labels.*.name, 'full-ci') }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        # A push always builds. The flip to ready of a `full-ci` draft reuses
+        # the full run its label started, when that run finished green at this
+        # exact head: a second one would test the same commit again. Otherwise
+        # a pull request builds unless its diff is prose.
+        run: |
+          mode=build
+          if [ "$EVENT" = pull_request ]; then
+            if [ "$ACTION" = ready_for_review ] && [ "$FULL_CI_LABELLED" = true ] &&
+              QUANTICK_FULL_CI_COMPLETED_ONLY=1 sh .claude/hooks/full_ci.sh verify . "$HEAD_SHA"; then
+              mode=reused
+            else
+              mode=$(python3 tools/ci/prose_only.py --base "$BASE_SHA" --head "$HEAD_SHA")
+            fi
+          fi
+          echo "mode=$mode" | tee -a "$GITHUB_OUTPUT"
+
+  # The visible half of a skipped build: `gate` decided this head needs no
+  # Rust job, and this run says which reason on the pull request's check list,
+  # where skipped jobs alone would read as untested. `full_ci.sh` accepts the
+  # skipped jobs only beside a green run of this one.
+  rust-skip:
+    needs: gate
+    if: needs.gate.outputs.mode != 'build'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Why no Rust job ran
+        env:
+          MODE: ${{ needs.gate.outputs.mode }}
+        run: |
+          case "$MODE" in
+            prose) echo "Prose-only diff: gate ran every check that reads it; no Rust job can judge it." ;;
+            reused) echo "Full CI already finished green at this head in an earlier run; it is not repeated." ;;
+            *) echo "Unknown mode: $MODE"; exit 1 ;;
+          esac
+
   fast:
-    needs: aggregate-ratchets
+    needs: gate
     if: >-
+      needs.gate.outputs.mode == 'build' &&
       github.event_name == 'pull_request' &&
       github.event.pull_request.draft &&
       (github.event.action != 'labeled' || github.event.label.name == 'full-ci')
@@ -109,13 +298,6 @@ jobs:
         run: |
           python3 tools/ci/affected_crates.py --base "$BASE_SHA" --head "$HEAD_SHA" > affected.txt
           echo "packages=$(sed 's/^/-p /' affected.txt | tr '\n' ' ')" >> "$GITHUB_OUTPUT"
-      - name: Format
-        run: cargo fmt --all -- --check
-      - &format-control-families
-        name: Format control families
-        shell: bash
-        # Macro-generated module declarations require explicit rustfmt inputs.
-        run: find crates/control-schema/src crates/control-handlers/src -name '*.rs' -type f -exec rustfmt --edition 2024 --check {} +
       - name: Lint
         run: cargo clippy ${{ steps.affected.outputs.packages }} --all-targets
       - name: Test
@@ -225,86 +407,17 @@ jobs:
           path: docs/quality/read-cost/ledger.md
 
   ci:
+    needs: gate
     if: &full-ci >-
-      github.event_name != 'pull_request' ||
-      (github.event.action == 'labeled' && github.event.label.name == 'full-ci') ||
-      (github.event.action != 'labeled' &&
-       (!github.event.pull_request.draft ||
-        contains(github.event.pull_request.labels.*.name, 'full-ci')))
+      needs.gate.outputs.mode == 'build' &&
+      (github.event_name != 'pull_request' ||
+       (github.event.action == 'labeled' && github.event.label.name == 'full-ci') ||
+       (github.event.action != 'labeled' &&
+        (!github.event.pull_request.draft ||
+         contains(github.event.pull_request.labels.*.name, 'full-ci'))))
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Agent guardrails
-        # The hooks in .claude/settings.json are what keep an agent session off
-        # the main checkout and off an un-reviewed PR. Nothing in cargo test
-        # touches them, so they get their own step. The suite builds its own
-        # throwaway repos for the hook cases, with one deliberate exception:
-        # its last block reads this checkout's CLAUDE.md and .claude/ prose to
-        # pin that the marker names the gate reads are the ones the
-        # instructions tell an agent to write. So this step can go red on a
-        # docs-only PR that renames a marker on one side, which is the point.
-        run: sh .claude/hooks/guardrails_test.sh
-      - name: Python tooling lint
-        # The MetaTrader bridge and the session exporter are Python, so not one
-        # of the cargo steps below can see them. An undefined name reached main
-        # on 2026-08-13 and killed every replay download for a day, because
-        # Python resolves names only when the line runs and that line runs on a
-        # logged-in terminal nobody has in CI. `--select F` is pyflakes' rule
-        # set — the one that catches a name that cannot resolve — and it runs
-        # before the slow steps so this class of bug fails in seconds.
-        # The glob is `tools/`, not `tools/mt5/`: a Python file that lands
-        # anywhere under tools/ is linted the moment it exists, rather than when
-        # somebody remembers to widen this line. `tools/heatmap-lab/` arrived
-        # that way.
-        run: pipx run ruff check --select F tools/ bridge/mt5/
-      - name: Exporter tests
-        # Drives export_session.py end to end against a fake terminal: no
-        # MetaTrader, no network, no credentials, nothing to install.
-        run: python3 tools/mt5/test_export_session.py
-      - name: Outside-score measurement tests
-        # Every measured row the outside-score rubric grades comes from this
-        # lexer. A regression in it moves scores without any code changing, so
-        # its fixtures run here, beside the other offline tool suites.
-        run: python3 tools/outside_score/test_measure.py
-      - name: Read-cost tests
-        # The calculator: explicit Git revisions, Rust module layouts,
-        # direct-only reference scope, deduplication, and delete/rename
-        # pre-images. Then what is done with its answer - the sticky comment,
-        # the ledger rows, the median the ceiling came from, and the advisory
-        # `pr-gate` prints. Discovered rather than named, so a suite added
-        # beside these runs the moment it exists.
-        run: python3 -m unittest discover -s tools/read_cost -p 'test_*.py'
-      - name: Binary hook scan tests
-        # The scan below reads a half-gigabyte binary, so its own cases run
-        # against fixtures instead: the boundary rule, the prose exemption, and
-        # both failure directions.
-        run: python3 tools/ci/test_binary_hook_scan.py
-      - name: Ratchet delta runner tests
-        run: python3 tools/ci/test_ratchet_delta.py
-      - name: Edit-loop safety fixtures
-        run: python3 -m unittest discover -s tools/edit_loop -p 'test_*.py'
-      - name: Bridge tests
-        # Same shape, for the bridge itself: a fake terminal, no MetaTrader.
-        # It covers which ticks the live pump asks for, how "load older" walks
-        # backwards, and where the opening block starts — behaviour cargo
-        # cannot see and ruff cannot judge, so without this step a revert to
-        # COPY_TICKS_ALL, or to a clock-anchored backfill, ships green.
-        #
-        # The glob is deliberate: a suite added beside these is run the moment
-        # it exists, rather than when someone remembers to name it here. It is
-        # also what `cargo test -p quantick-feed-mt5 --test bridge_paging`
-        # does, so the two cannot disagree about which suites are covered.
-        #
-        # Every suite runs and the step fails if any did, rather than reporting
-        # whichever ran last: a loop whose exit code is its final command turns
-        # a red suite green the moment another one is added after it.
-        run: |
-          failed=0
-          for suite in bridge/mt5/tests/test_*.py; do
-            echo "== $suite"
-            python3 "$suite" || failed=1
-          done
-          exit "$failed"
       - name: Supply chain (bans, licenses)
         # Deliberately not `advisories`. These two checks are pure functions of
         # the committed `Cargo.lock`: they can only change when a commit
@@ -335,9 +448,6 @@ jobs:
         # reverse-dependency closure with `cargo tree --invert`, so they run
         # after the toolchain is installed.
         run: python3 tools/ci/test_affected_crates.py
-      - name: Format
-        run: cargo fmt --all -- --check
-      - *format-control-families
       - name: Lint
         # No `-D warnings` here any more. The levels live in the
         # `[workspace.lints]` table in the root `Cargo.toml`, which every crate
@@ -356,19 +466,6 @@ jobs:
         # registry name is a harness hook and must be absent.
         run: python3 tools/ci/binary_hook_scan.py
 
-  aggregate-ratchets:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
-      - uses: ./.github/actions/rust-setup
-      - name: PR head aggregate growth
-        env:
-          RATCHET_BASE: ${{ github.event.pull_request.base.sha || 'HEAD^' }}
-        run: python3 tools/ci/ratchet_delta.py --base "$RATCHET_BASE"
-
   # `cargo test --workspace` was 263s of the 508s `ci` took, and it is one
   # command: nothing inside `ci` could overlap with it, and everything else in
   # that job — the hook suite, the Python tool suites, the supply-chain check,
@@ -378,8 +475,8 @@ jobs:
   # `--workspace`, so a crate added on Monday is tested on Monday with no guard
   # needed; the Windows side has three selectors and therefore has one.
   linux-tests:
+    needs: gate
     if: *full-ci
-    needs: aggregate-ratchets
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -406,6 +503,7 @@ jobs:
   # job sat at 251s. Each job now owns two long relinks and some change, which
   # is why a set sometimes sits beside a family it is not named after.
   harness-app:
+    needs: gate
     if: *full-ci
     runs-on: ubuntu-latest
     steps:
@@ -421,6 +519,7 @@ jobs:
         run: cargo check -p quantick-app --all-targets --features control-harness,drawing-harness
 
   harness-combined:
+    needs: gate
     if: *full-ci
     runs-on: ubuntu-latest
     steps:
@@ -438,6 +537,7 @@ jobs:
         run: cargo build -p quantick-app --features harness
 
   harness-scenario:
+    needs: gate
     if: *full-ci
     runs-on: ubuntu-latest
     steps:
@@ -463,6 +563,7 @@ jobs:
   # named control-local diagnostic for real Windows owner/ACL/junction cases.
   # These tests need no GPU, window or MetaTrader terminal.
   windows:
+    needs: gate
     if: *full-ci
     runs-on: windows-latest
     env:
@@ -518,8 +619,8 @@ jobs:
   # the share that compiles no network at all. Rebalancing is a one-line edit
   # on each side, which the guard re-proves.
   windows-heavy-tests:
+    needs: gate
     if: *full-ci
-    needs: aggregate-ratchets
     runs-on: windows-latest
     env:
       QUANTICK_BUBBLES: ${{ github.workspace }}/crates/app/config/bubbles.toml
@@ -541,6 +642,7 @@ jobs:
         run: cargo test -p quantick-indicators -p quantick-workspace -p quantick-guards -p quantick-feed -p quantick-feed-binance -p quantick-feed-hyperliquid -p quantick-feed-mt5
 
   windows-tests:
+    needs: gate
     if: *full-ci
     runs-on: windows-latest
     env:
@@ -555,6 +657,7 @@ jobs:
         run: cargo test --workspace --exclude quantick-app --exclude quantick-indicators --exclude quantick-workspace --exclude quantick-guards --exclude quantick-feed --exclude quantick-feed-binance --exclude quantick-feed-hyperliquid --exclude quantick-feed-mt5
 
   windows-app-tests:
+    needs: gate
     if: *full-ci
     runs-on: windows-latest
     env:
