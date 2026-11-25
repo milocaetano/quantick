@@ -11,7 +11,7 @@
 use std::fmt::Write as _;
 
 use super::registry::{NOT_A_BEHAVIOUR, PENDING_ISSUE, UI_BEHAVIOURS};
-use super::{ExclusionClass, Mapping, Source};
+use super::{Mapping, Source};
 
 /// The banner the generated file opens with.
 ///
@@ -32,7 +32,6 @@ pub fn ui_behaviour_matrix_markdown() -> String {
     out.push_str(GENERATED_MARKER);
     out.push_str("\n\n");
     out.push_str(&preamble());
-    out.push_str(&summary());
     out.push_str(&rows());
     out.push_str(&appendix());
     out
@@ -77,42 +76,6 @@ fn preamble() -> String {
         "  only class that is a debt, and every row in it is tracked in\n",
     ));
     let _ = writeln!(out, "  {PENDING_ISSUE}.\n");
-    out
-}
-
-fn summary() -> String {
-    let mut out = String::new();
-    out.push_str("## Coverage\n\n");
-    let total = UI_BEHAVIOURS.len();
-    let mapped = UI_BEHAVIOURS
-        .iter()
-        .filter(|behaviour| matches!(behaviour.mapping, Mapping::Capabilities(_)))
-        .count();
-    let _ = writeln!(out, "| Outcome | Behaviours |");
-    let _ = writeln!(out, "| --- | --- |");
-    let _ = writeln!(out, "| Reachable by capability | {mapped} |");
-    for class in ExclusionClass::ALL {
-        let count = UI_BEHAVIOURS
-            .iter()
-            .filter(|behaviour| {
-                matches!(behaviour.mapping, Mapping::Excluded { class: found, .. } if found == class)
-            })
-            .count();
-        let _ = writeln!(out, "| Excluded: `{}` | {count} |", class.as_str());
-    }
-    let _ = writeln!(out, "| **Total** | **{total}** |");
-    out.push('\n');
-
-    let authored = authored_rows().len();
-    let _ = writeln!(
-        out,
-        "{} of the {total} rows claim at least one registry entry, so the drift guard fails when \
-         the interface changes under them. The other {authored} say in the table that no registry \
-         stands behind them — a drag on a splitter, a number typed into the ticket — each with \
-         the reason, listed in full below. A row that says neither is a guard failure, not a \
-         third category.\n",
-        total - authored
-    );
     out
 }
 
@@ -170,19 +133,11 @@ fn appendix() -> String {
     let mut out = String::new();
     out.push_str("## Appendix: sources the guard walks\n\n");
     out.push_str(concat!(
-        "Which registry each row is held up by, and how many rows it holds. A\n",
-        "source with rows is a place where adding an entry and forgetting the\n",
-        "matrix fails the build.\n\n",
+        "The registries a row can claim an entry in. A source rows claim is a\n",
+        "place where adding an entry and forgetting the matrix fails the build.\n\n",
     ));
-    let _ = writeln!(out, "| Source | Claims |");
-    let _ = writeln!(out, "| --- | --- |");
     for source in Source::ALL {
-        let claims = UI_BEHAVIOURS
-            .iter()
-            .flat_map(|behaviour| behaviour.keys.iter())
-            .filter(|(found, _)| *found == source)
-            .count();
-        let _ = writeln!(out, "| `{}` | {claims} |", source.as_str());
+        let _ = writeln!(out, "- `{}`", source.as_str());
     }
     out.push('\n');
 
@@ -214,7 +169,6 @@ fn appendix() -> String {
     for (source, key, reason) in NOT_A_BEHAVIOUR {
         let _ = writeln!(out, "| `{}` | `{key}` | {reason} |", source.as_str());
     }
-    let _ = writeln!(out, "\n{} entries.", NOT_A_BEHAVIOUR.len());
     out
 }
 
@@ -222,7 +176,7 @@ fn appendix() -> String {
 mod tests {
     use std::collections::BTreeSet;
 
-    use super::super::{Drift, Registered, drift};
+    use super::super::{Drift, ExclusionClass, Registered, drift};
     use super::*;
 
     fn committed_path() -> std::path::PathBuf {
