@@ -243,10 +243,10 @@ fn placed_plan() -> crate::Drawings<crate::DrawingTool> {
         tool,
         points: vec![ChartPoint::at(10.0, 100.0), ChartPoint::at(30.0, 95.0)],
         band: crate::DrawingBand::Price,
-        opening: crate::NewDrawing {
-            style: DrawingStyle::default(),
-            payload: Box::new(PositionPayload::default()),
-        },
+        opening: crate::NewDrawing::explicit(
+            DrawingStyle::default(),
+            Box::new(PositionPayload::default()),
+        ),
         author: None,
         name: None,
         text: None,
