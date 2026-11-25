@@ -79,6 +79,7 @@ pub(super) fn loaded_observer_workspace(bars: u64) -> (QuantickApp, mpsc::Receiv
             |tool| drawings::NewDrawing {
                 style: drawings::DrawingStyle::default(),
                 payload: tool.default_payload(),
+                look: Default::default(),
             },
         );
     }

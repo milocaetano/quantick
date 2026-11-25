@@ -47,8 +47,6 @@ pub struct PlacementOptions {
 #[derive(Clone, Copy)]
 pub struct PlacementDefaults<'a> {
     pub presets: &'a dyn PresetHost,
-    /// The surface the pane paints on, which picks the ground's saved look.
-    pub surface: quantick_appearance::ChartSurface,
     pub repeat: bool,
 }
 
@@ -305,9 +303,11 @@ impl PaneGestures {
         point: ChartPoint,
         defaults: PlacementDefaults<'_>,
     ) -> PlacementCompletion {
-        // Only a fresh draft constructs defaults; existing objects are untouched.
+        // Only a fresh draft constructs defaults, on the canvas the pane's
+        // marks follow; existing objects follow on their own.
+        let canvas = drawings.canvas();
         if !drawings.place_with(tool, band, point, |tool| {
-            new_drawing_from_defaults(defaults.presets, defaults.surface, tool)
+            new_drawing_from_defaults(defaults.presets, canvas, tool)
         }) {
             return PlacementCompletion::default();
         }

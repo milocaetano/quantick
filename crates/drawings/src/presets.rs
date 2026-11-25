@@ -270,6 +270,9 @@ impl PresetHost for PresetStore {
     fn theme(&self) -> Option<&quantick_appearance::ResolvedTheme> {
         self.theme.as_ref().map(|(_, theme)| theme)
     }
+    fn theme_revision(&self) -> u64 {
+        self.theme.as_ref().map_or(0, |(revision, _)| *revision)
+    }
     fn custom_preset_names(&self, tool_id: &str) -> Vec<String> {
         self.tools
             .get(tool_id)
@@ -584,12 +587,12 @@ mod appearance_tests {
         store.sync_theme(&appearance);
         let original: Vec<_> = crate::DRAWING_TOOLS
             .into_iter()
-            .map(|tool| new_drawing_from_defaults(&store, ChartSurface::Paper, tool))
+            .map(|tool| new_drawing_from_defaults(&store, ChartSurface::Paper.into(), tool))
             .collect();
         appearance.apply(quantick_appearance::LIGHT).unwrap();
         store.sync_theme(&appearance);
         for (tool, existing) in crate::DRAWING_TOOLS.into_iter().zip(original) {
-            let fresh = new_drawing_from_defaults(&store, ChartSurface::Paper, tool);
+            let fresh = new_drawing_from_defaults(&store, ChartSurface::Paper.into(), tool);
             // Every tool is born black on paper but those whose colour is
             // their meaning: the buy and sell marks and the profile. The
             // anchored VWAP keeps its own slate role colour.
@@ -616,7 +619,7 @@ mod appearance_tests {
         let mut loaded = PresetStore::load_from(&path);
         loaded.sync_theme(&appearance);
         assert_eq!(
-            new_drawing_from_defaults(&loaded, ChartSurface::Paper, line).style,
+            new_drawing_from_defaults(&loaded, ChartSurface::Paper.into(), line).style,
             authored
         );
         let profile = crate::DRAWING_TOOLS
@@ -627,7 +630,7 @@ mod appearance_tests {
         let mut restored = PresetStore::load_from(&path);
         restored.sync_theme(&appearance);
         assert_eq!(
-            new_drawing_from_defaults(&restored, ChartSurface::Paper, profile).style,
+            new_drawing_from_defaults(&restored, ChartSurface::Paper.into(), profile).style,
             authored
         );
         assert_ne!(
@@ -666,11 +669,11 @@ mod appearance_tests {
             .into_iter()
             .find(|tool| tool.id() == "text")
             .unwrap();
-        let original = new_drawing_from_defaults(&store, ChartSurface::Paper, text);
+        let original = new_drawing_from_defaults(&store, ChartSurface::Paper.into(), text);
         let source = "version = 1\nname = 'new defaults'\n[colors]\ndrawing_default = '#12345680'\n[typography.drawing]\nfamily = 'monospace'\nsize = 32.0";
         appearance.apply(source).unwrap();
         store.sync_theme(&appearance);
-        let themed = new_drawing_from_defaults(&store, ChartSurface::Paper, text);
+        let themed = new_drawing_from_defaults(&store, ChartSurface::Paper.into(), text);
         assert_ne!(themed.style.color, original.style.color);
         assert_eq!(original.style, text.default_style());
         let payload = themed
@@ -686,7 +689,7 @@ mod appearance_tests {
         store.set_default_config(text.id(), Ground::Dark, payload.export_preset());
         let mut loaded = PresetStore::load_from(&path);
         loaded.sync_theme(&quantick_appearance::Appearance::default());
-        let saved = new_drawing_from_defaults(&loaded, ChartSurface::Paper, text);
+        let saved = new_drawing_from_defaults(&loaded, ChartSurface::Paper.into(), text);
         assert_eq!(
             saved.style, themed.style,
             "translucent premultiplied bytes roundtrip exactly"
@@ -697,7 +700,7 @@ mod appearance_tests {
         let mut loaded = PresetStore::load_from(&path);
         loaded.sync_theme(&appearance);
         assert_eq!(
-            new_drawing_from_defaults(&loaded, ChartSurface::Paper, text).style,
+            new_drawing_from_defaults(&loaded, ChartSurface::Paper.into(), text).style,
             original.style
         );
         // Legacy config had only a size: it captures the historical proportional face.
@@ -706,7 +709,7 @@ mod appearance_tests {
             Ground::Dark,
             Some(toml::from_str("size_px = 18.0").unwrap()),
         );
-        let fresh = new_drawing_from_defaults(&loaded, ChartSurface::Paper, text);
+        let fresh = new_drawing_from_defaults(&loaded, ChartSurface::Paper.into(), text);
         let payload = fresh
             .payload
             .as_any()

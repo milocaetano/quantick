@@ -245,6 +245,7 @@ fn a_region_placement_must_name_a_rectangle_on_that_chart() {
             .place_with(rectangle, &DrawingBand::Price, point, |tool| NewDrawing {
                 style: DrawingStyle::default(),
                 payload: tool.default_payload(),
+                look: Default::default(),
             });
     }
     let drawn = window.panes[0].drawings.items()[0].id;

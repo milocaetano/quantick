@@ -36,6 +36,7 @@ fn queued_launch_waits_retries_and_consumes_once() {
                 look: NewDrawing {
                     style: tool.default_style(),
                     payload: tool.default_payload(),
+                    look: Default::default(),
                 },
             }),
         );

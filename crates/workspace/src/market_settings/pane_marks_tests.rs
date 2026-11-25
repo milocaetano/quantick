@@ -34,6 +34,7 @@ fn level(id: u64, price: f64, shared: bool) -> SavedDrawing {
         color: [255, 200, 0, 255],
         width_px: 1.5,
         fill_alpha: 0,
+        follows_ground: false,
         locked: false,
         hidden: false,
         magnet: false,

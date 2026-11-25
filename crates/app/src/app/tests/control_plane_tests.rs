@@ -1626,6 +1626,7 @@ fn observer_journals_indicator_and_drawing_changes_without_the_trader_text() {
             |tool| drawings::NewDrawing {
                 style: drawings::DrawingStyle::default(),
                 payload: tool.default_payload(),
+                look: Default::default(),
             },
         ));
         let selected = flow.drawings.selected().expect("placement selects");
@@ -3951,6 +3952,7 @@ fn observer_resolves_mirrored_drawings_without_leaking_user_text() {
         |tool| drawings::NewDrawing {
             style: drawings::DrawingStyle::default(),
             payload: tool.default_payload(),
+            look: Default::default(),
         },
     ));
     let selected = flow.drawings.selected().expect("placement selects");

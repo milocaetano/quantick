@@ -29,6 +29,7 @@ fn place_on(
         drawings.place_with(tool, band, point, |tool| NewDrawing {
             style: DrawingStyle::default(),
             payload: tool.default_payload(),
+            look: Default::default(),
         });
     }
 }

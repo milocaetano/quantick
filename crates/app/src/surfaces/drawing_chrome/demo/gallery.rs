@@ -167,13 +167,11 @@ impl DrawingRecipient for Drawings {
                 }
                 Look::Tool | Look::Default => {}
             }
-            drawings::NewDrawing {
-                style: match look {
-                    Look::Tool | Look::Avwap => tool.default_style(),
-                    Look::Default | Look::Profile { .. } => drawings::DrawingStyle::default(),
-                },
-                payload,
-            }
+            let style = match look {
+                Look::Tool | Look::Avwap => tool.default_style(),
+                Look::Default | Look::Profile { .. } => drawings::DrawingStyle::default(),
+            };
+            drawings::NewDrawing::explicit(style, payload)
         })
     }
     fn finish(&mut self) -> bool {

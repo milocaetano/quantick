@@ -67,7 +67,7 @@ fn inspect_long_text(pinned: bool) {
                     selected_band: None,
                     tab: 1,
                     side: PaneSide::Flow,
-                    surface: quantick_appearance::ChartSurface::Flow,
+                    canvas: quantick_appearance::ChartSurface::Flow.into(),
                     drawing_tool_armed: false,
                     toolbox_dock: ToolboxDock::default(),
                     authored_objects: 0,

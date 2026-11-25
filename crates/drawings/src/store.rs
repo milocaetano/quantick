@@ -74,6 +74,11 @@ pub struct Drawings<T> {
     /// The name a placement call brought, given to the mark it completes in
     /// place of a generated one, so it spends no number.
     pub(crate) pending_name: Option<String>,
+    /// The canvas the factory-look marks were last dressed for; see
+    /// [`Self::follow_ground`].
+    pub(crate) canvas: quantick_appearance::PaneCanvas,
+    /// The palette they were dressed from; `None` before the first call.
+    pub(crate) ground_ink: Option<crate::look::GroundInk>,
 }
 
 // By hand: a derive would ask the tool handle for a `Default` it has no
@@ -99,6 +104,8 @@ impl<T> Default for Drawings<T> {
             name_floors: quantick_workspace::drawing_names::NameFloors::new(),
             name_market: None,
             pending_name: None,
+            canvas: quantick_appearance::PaneCanvas::default(),
+            ground_ink: None,
         }
     }
 }
