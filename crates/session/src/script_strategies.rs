@@ -75,14 +75,17 @@ impl<D: Copy + PartialEq> TabStrategies<D> {
     ///
     /// # Errors
     ///
-    /// The sentence the caller reads: a script that does not compile, an
-    /// alert title that names no side, or none naming `request.side`.
+    /// The sentence the caller reads: an order with no size or a negative
+    /// distance, a script that does not compile, an alert title that names
+    /// no side, or none naming `request.side`.
     pub fn arm_script(
         &mut self,
         request: ScriptArm<'_, D>,
         warmup: impl FnOnce(usize) -> Vec<(Bar, Option<Decimal>)>,
     ) -> Result<ScriptReading<D>, String> {
         let name = request.script;
+        action_refusal(request.action)
+            .map_err(|refusal| format!("`{name}` cannot be armed: {refusal}"))?;
         let script = Script::load(name, request.source)
             .map_err(|refusal| format!("`{name}` cannot be armed: {refusal}"))?;
         if !script.sides().iter().any(|(_, side)| *side == request.side) {
@@ -146,6 +149,23 @@ impl<D: Copy + PartialEq> TabStrategies<D> {
             })
             .collect()
     }
+}
+
+/// Why `action` cannot be armed: an order of no size, or a stop or gain
+/// below zero, which would read as a leg and place none.
+pub(crate) fn action_refusal(action: SignalAction) -> Result<(), &'static str> {
+    let SignalAction::Order(order) = action else {
+        return Ok(());
+    };
+    if let OrderQuantity::Fixed(quantity) = order.quantity
+        && quantity <= Decimal::ZERO
+    {
+        return Err("an order's fixed quantity must be above zero");
+    }
+    if order.stop < Decimal::ZERO || order.gain < Decimal::ZERO {
+        return Err("stop and gain are distances from the entry: zero for no leg, never below");
+    }
+    Ok(())
 }
 
 /// The account a replayed copy of a script judges against: always flat, and

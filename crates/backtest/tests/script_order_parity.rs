@@ -18,7 +18,7 @@ use quantick_replay::session::Session;
 use quantick_script_trigger::{Script, ScriptInstance, ScriptPlacement};
 use quantick_sim::{ClosedTrade, Command, Simulator, VenueEvent};
 use quantick_strategy::runner::{self, StrategyPort};
-use quantick_strategy::{OrderQuantity, SignalAction, SignalOrder};
+use quantick_strategy::{OrderQuantity, PriceBracket, SignalAction, SignalOrder};
 use rust_decimal::Decimal;
 
 /// The harness run's fills, recorded when script orders landed.
@@ -82,11 +82,11 @@ fn session(trades: &[Trade]) -> Session {
     Session::from_text(path, &text, ParseOptions::default()).expect("the synthetic session parses")
 }
 
-fn order() -> SignalOrder {
-    SignalOrder {
-        quantity: OrderQuantity::Fixed(Decimal::TWO),
-        stop: Decimal::from(4),
-        gain: Decimal::from(6),
+/// Wider than the walk's largest single step, so no fill outruns a leg.
+fn bracket() -> PriceBracket {
+    PriceBracket {
+        stop: Decimal::from(8),
+        gain: Decimal::from(10),
     }
 }
 
@@ -112,7 +112,11 @@ impl StrategyPort for Venue<'_> {
 /// The chart's path: the account consumes each print, the instance hears
 /// its events, and a closed bar is judged through the runner.
 fn chart_run(trades: &[Trade]) -> Vec<ClosedTrade> {
-    let action = SignalAction::Order(order());
+    let action = SignalAction::Order(SignalOrder {
+        quantity: OrderQuantity::Fixed(Decimal::TWO),
+        stop: bracket().stop,
+        gain: bracket().gain,
+    });
     let placement = ScriptPlacement::<()>::Anywhere;
     let mut instance = ScriptInstance::arm(0, &script(), Side::Buy, placement, &[], action);
     let mut sim = Simulator::new();
@@ -135,7 +139,7 @@ fn chart_run(trades: &[Trade]) -> Vec<ClosedTrade> {
 #[test]
 fn script_order_backtest_matches_the_chart_run() {
     let trades = tape();
-    let mut strategy = ScriptOrders::new(script(), Side::Buy, order());
+    let mut strategy = ScriptOrders::new(script(), Side::Buy, Decimal::TWO, bracket());
     let run = run_session(&session(&trades), BarSpec::Tick(TICKS), &mut strategy);
 
     assert_eq!(

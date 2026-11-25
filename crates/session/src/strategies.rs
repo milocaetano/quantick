@@ -126,18 +126,21 @@ impl<D: Copy + PartialEq> PaneStrategies<D> {
         (self.anchors.instances.iter()).any(|instance| instance.alarm.is_some())
     }
 
-    /// Halt every script riding a drawing `exists` denies, naming why, and
-    /// queue what they owe.
-    fn halt_orphan_scripts(&mut self, exists: impl Fn(D) -> bool) {
+    /// Halt every script riding a drawing `exists` denies, naming why;
+    /// answers what they owe the account.
+    #[must_use = "apply or queue the cleanup the halted scripts owe"]
+    fn halt_orphan_scripts(&mut self, exists: impl Fn(D) -> bool) -> Vec<Command> {
+        let mut owed = Vec::new();
         for script in &mut self.scripts {
             if script
                 .placement
                 .drawing()
                 .is_some_and(|drawing| !exists(drawing))
             {
-                self.cleanup.extend(script.halt(DRAWING_REMOVED));
+                owed.extend(script.halt(DRAWING_REMOVED));
             }
         }
+        owed
     }
 
     /// The closed bars awaiting evaluation, drained, each with whether it
@@ -194,7 +197,8 @@ impl<D: Copy + PartialEq> PaneStrategies<D> {
     /// owe for the same-frame drain — for the deletion paths that have no
     /// id in hand (delete-all, undo, redo).
     pub fn sweep_orphans(&mut self, exists: impl Fn(D) -> bool) {
-        self.halt_orphan_scripts(&exists);
+        let owed = self.halt_orphan_scripts(&exists);
+        self.cleanup.extend(owed);
         if self.anchors.is_empty() {
             return;
         }
@@ -212,7 +216,8 @@ impl<D: Copy + PartialEq> PaneStrategies<D> {
     /// pending entries — every "the bot dies with its drawing" path funnels
     /// through here.
     pub fn remove_for_drawing(&mut self, drawing: D) {
-        self.halt_orphan_scripts(|riding| riding != drawing);
+        let owed = self.halt_orphan_scripts(|riding| riding != drawing);
+        self.cleanup.extend(owed);
         let cleanup = self.anchors.remove_for_drawing(drawing);
         self.cleanup.extend(cleanup);
     }
@@ -491,7 +496,9 @@ impl<D: Copy + PartialEq> TabStrategies<D> {
                     let _ = port.apply(command);
                 }
                 // A script riding a region stops with its drawing, and says so.
-                pane.halt_orphan_scripts(|drawing| exists(id, drawing));
+                for command in pane.halt_orphan_scripts(|drawing| exists(id, drawing)) {
+                    let _ = port.apply(command);
+                }
             }
             for (close, judged) in &bars {
                 if !judged {
@@ -555,10 +562,12 @@ impl<D: Copy + PartialEq> TabStrategies<D> {
                 }
             }
             answer.watching += pane.anchors.watching();
-            // A script placing orders hears its fills through the same
-            // stream the drawn instances do.
-            let trading = pane.scripts.iter().filter(|script| script.places_orders());
-            answer.watching += trading.filter(|script| script.watching()).count();
+            // A script hears its fills through the same stream the drawn
+            // instances do: one placing orders, or one whose order is still
+            // live after it was switched back to an alarm.
+            answer.watching += (pane.scripts.iter())
+                .filter(|script| script.watching() && (script.places_orders() || script.trading()))
+                .count();
         }
         answer
     }

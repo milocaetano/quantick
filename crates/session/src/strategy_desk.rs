@@ -36,7 +36,7 @@ use quantick_strategy::runner::placement_or_hold;
 use quantick_strategy::{ArmedStrategy, ForceTrigger, Region};
 use rust_decimal::Decimal;
 
-use crate::script_strategies::{NoAccount, ScriptPlacement, SignalAction};
+use crate::script_strategies::{NoAccount, ScriptPlacement, SignalAction, action_refusal};
 use crate::strategies::{PaneStrategies, TabStrategies, rearm_instance};
 use crate::strategy_desk_book::drawn_ref;
 pub use crate::strategy_desk_book::{DAY_MS, InstanceRef};
@@ -369,7 +369,8 @@ impl<D: Copy + PartialEq> TabStrategies<D> {
     /// # Errors
     ///
     /// The sentence the caller reads: an id no instance has, a pause of an
-    /// ended instance, an arm of a watching one, a save of a drawn one, or —
+    /// ended instance, an arm of a watching one, a save of a drawn one, an
+    /// action on a drawn one or an order [`action_refusal`] refuses, or —
     /// for a caller that `may_start_orders` not — a resume, arm or duplicate
     /// of a drawn instance that places paper orders. Such a caller's asset
     /// resume leaves those instances paused.
@@ -411,6 +412,7 @@ impl<D: Copy + PartialEq> TabStrategies<D> {
                 .duplicate(id, &check, warmup)
                 .map(DeskOutcome::Duplicated),
             StrategyDeskCommand::SetAction { id, action } => {
+                action_refusal(action)?;
                 let Located::Script { pane_id, index } = self.locate(id).ok_or(NO_SUCH)? else {
                     return Err(DRAWN_ACTION.to_owned());
                 };

@@ -116,16 +116,24 @@ impl<D: Copy> ScriptInstance<D> {
         self.armed.params().side
     }
 
-    /// What a fired signal does.
     #[must_use]
     pub fn action(&self) -> SignalAction {
         self.action
     }
 
-    /// Whether a fired signal places a paper order.
     #[must_use]
     pub fn places_orders(&self) -> bool {
         matches!(self.action, SignalAction::Order(_))
+    }
+
+    /// Whether an order it placed is still live: an entry awaiting its
+    /// fill, or the position it opened.
+    #[must_use]
+    pub fn trading(&self) -> bool {
+        matches!(
+            self.armed.state(),
+            ArmedState::Fired { .. } | ArmedState::InPosition
+        )
     }
 
     /// Do `action` from the next closed bar on. A live order or position

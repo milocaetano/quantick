@@ -12,12 +12,13 @@ use quantick_engine::{Bar, Side};
 use quantick_script_trigger::{Script, ScriptInstance, ScriptPlacement};
 use quantick_sim::VenueEvent;
 use quantick_strategy::runner;
-use quantick_strategy::{SignalAction, SignalOrder};
+use quantick_strategy::{OrderQuantity, PriceBracket, SignalAction, SignalOrder};
+use rust_decimal::Decimal;
 
 use crate::strategy::{Signals, SimPort, Strategy};
 
-/// One script, hunting one side, placing `order` on every signal a flat
-/// account can take.
+/// One script, hunting one side, placing its order on every signal a flat
+/// account can take. A recorded session has no ticket, so the size is fixed.
 pub struct ScriptOrders {
     name: String,
     script: Script,
@@ -27,9 +28,15 @@ pub struct ScriptOrders {
 }
 
 impl ScriptOrders {
-    /// Arm `script` to buy or sell on its alerts naming `side`.
+    /// Arm `script` to enter `quantity` on its alerts naming `side`,
+    /// protected by `bracket`.
     #[must_use]
-    pub fn new(script: Script, side: Side, order: SignalOrder) -> Self {
+    pub fn new(script: Script, side: Side, quantity: Decimal, bracket: PriceBracket) -> Self {
+        let order = SignalOrder {
+            quantity: OrderQuantity::Fixed(quantity),
+            stop: bracket.stop,
+            gain: bracket.gain,
+        };
         let instance = arm(&script, side, order);
         Self {
             name: format!("script-orders({})", script.title()),
@@ -62,8 +69,6 @@ impl Strategy for ScriptOrders {
         _signals: Signals<'_>,
         port: &mut dyn SimPort,
     ) {
-        // A recorded session has no ticket: an order sized by it holds.
-        self.instance.refresh_ticket(port.ticket_quantity());
         let resolved = ScriptPlacement::Anywhere.resolve(|()| None);
         // No alarm sounds in a backtest, so the clock it is told is moot.
         let _ = self

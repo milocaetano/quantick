@@ -659,12 +659,12 @@ fn build_script_strategy(args: &Args) -> Result<Box<dyn Strategy>, String> {
     if let Some(side) = args.alerts {
         let script = quantick_script_trigger::Script::load(&name, &source)
             .map_err(|refusal| format!("{} cannot trade its alerts: {refusal}", path.display()))?;
-        let order = quantick_strategy::SignalOrder {
-            quantity: quantick_strategy::OrderQuantity::Fixed(args.quantity),
+        let bracket = quantick_strategy::PriceBracket {
             stop: args.protection.stop_points.unwrap_or_default(),
             gain: args.protection.target_points.unwrap_or_default(),
         };
-        return Ok(Box::new(ScriptOrders::new(script, side, order)));
+        let strategy = ScriptOrders::new(script, side, args.quantity, bracket);
+        return Ok(Box::new(strategy));
     }
     match PlotSignal::compile(&name, &source, args.plot, args.quantity, args.protection) {
         Ok(strategy) => Ok(Box::new(strategy)),

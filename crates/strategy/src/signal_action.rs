@@ -10,7 +10,6 @@
 
 use rust_decimal::Decimal;
 
-/// What a fired signal does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SignalAction {
     /// Ring the alarm and place nothing. The default.
@@ -20,7 +19,6 @@ pub enum SignalAction {
     Order(SignalOrder),
 }
 
-/// The order a fired signal places.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SignalOrder {
     pub quantity: OrderQuantity,
@@ -31,7 +29,6 @@ pub struct SignalOrder {
 }
 
 impl SignalOrder {
-    /// The protective distances, as the kernel prices them.
     #[must_use]
     pub fn bracket(&self) -> PriceBracket {
         PriceBracket {
@@ -41,10 +38,8 @@ impl SignalOrder {
     }
 }
 
-/// How many contracts an order is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OrderQuantity {
-    /// Always this many.
     Fixed(Decimal),
     /// Whatever the trader's ticket enters with when the bar closes; the
     /// consumer refreshes it before each closed bar.

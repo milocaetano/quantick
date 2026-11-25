@@ -269,6 +269,24 @@ fn the_retest_tape_produces_the_same_run_twice() {
 /// through an instance bracketed by fixed distances; answers the position
 /// the entry left open.
 fn bracketed_entry(side: Side, region: Region, legs: PriceBracket, prints: &[&str]) -> Position {
+    let (instance, sim) = walk_bracketed(side, region, legs, prints);
+    assert_eq!(
+        instance.state(),
+        &ArmedState::InPosition,
+        "{}",
+        instance.status_line()
+    );
+    sim.position().expect("the entry filled").clone()
+}
+
+/// The walk behind [`bracketed_entry`], answering the instance and the
+/// account it left.
+fn walk_bracketed(
+    side: Side,
+    region: Region,
+    legs: PriceBracket,
+    prints: &[&str],
+) -> (ArmedStrategy, Simulator) {
     let mut instance = ArmedStrategy::new(
         StrategyParams {
             side,
@@ -303,13 +321,7 @@ fn bracketed_entry(side: Side, region: Region, legs: PriceBracket, prints: &[&st
             }
         }
     }
-    assert_eq!(
-        instance.state(),
-        &ArmedState::InPosition,
-        "{}",
-        instance.status_line()
-    );
-    sim.position().expect("the entry filled").clone()
+    (instance, sim)
 }
 
 #[test]
@@ -343,4 +355,30 @@ fn price_bracket_places_stop_and_gain_from_entry() {
     let no_gain = bracketed_entry(Side::Sell, short, legs("100", "0"), &falling);
     assert_eq!(no_gain.stop_loss, Some(dec("392")));
     assert_eq!(no_gain.take_profit, None, "a zero gain places none");
+}
+
+/// A fill that outruns a leg priced off the close is closed and disarmed,
+/// exactly as a projected bracket is: the re-price off the fill is withdrawn
+/// rather than left to rescue it.
+#[test]
+fn a_fill_that_drops_a_fixed_leg_closes_instead_of_repricing() {
+    let legs = PriceBracket {
+        stop: dec("3"),
+        gain: dec("200"),
+    };
+    // The force bar closes at 107, so the stop sits at 104; the entry fills
+    // at 103, under it, and the next print closes the position.
+    let prints = [
+        "100", "101", "101", "102", "102", "103", "103", "107", "103", "103",
+    ];
+    let long = Region::new(dec("100"), dec("110"));
+    let (instance, sim) = walk_bracketed(Side::Buy, long, legs, &prints);
+    assert_eq!(
+        instance.state(),
+        &ArmedState::Disarmed {
+            reason: quantick_strategy::DisarmReason::ProtectionDropped
+        }
+    );
+    assert!(sim.position().is_none(), "closed, not re-bracketed");
+    assert_eq!(sim.closed_trades()[0].exit_reason, ExitReason::Manual);
 }

@@ -2,7 +2,7 @@
 //! through the same sweep as the drawn instances.
 
 use quantick_engine::{Bar, Side};
-use quantick_sim::{Command, VenueEvent};
+use quantick_sim::{Command, EntryKind, Order, OrderId, OrderRole, VenueEvent};
 use quantick_strategy::Region;
 use quantick_strategy::runner::StrategyPort;
 use rust_decimal::Decimal;
@@ -423,4 +423,136 @@ fn a_ticket_order_holds_while_the_ticket_says_nothing() {
     assert!(account.applied.is_empty(), "{:?}", account.applied);
     let status = &strategies.script_readings()[0].status;
     assert!(status.contains("no order quantity"), "{status}");
+}
+
+/// A flat account that acknowledges each market entry under the next id.
+#[derive(Default)]
+struct Acknowledging {
+    placed: u64,
+}
+
+impl StrategyPort for Acknowledging {
+    fn apply(&mut self, command: Command) -> Vec<VenueEvent> {
+        let Command::PlaceMarket {
+            side,
+            quantity,
+            bracket,
+        } = command
+        else {
+            return Vec::new();
+        };
+        self.placed += 1;
+        vec![VenueEvent::Placed(Order {
+            id: OrderId(self.placed),
+            side,
+            kind: EntryKind::Market,
+            price: None,
+            quantity,
+            bracket,
+            cancel_at: None,
+            flat_only: false,
+            placed_ms: 0,
+            role: OrderRole::Entry,
+            oco: None,
+            reduce_only: false,
+        })]
+    }
+
+    fn is_flat(&self) -> bool {
+        true
+    }
+}
+
+#[test]
+fn every_way_an_order_script_ends_sweeps_its_pending_entry() {
+    let mut strategies = TabStrategies::<DrawingId>::default();
+    let order = SignalAction::Order(SignalOrder {
+        quantity: OrderQuantity::Fixed(Decimal::ONE),
+        stop: Decimal::ZERO,
+        gain: Decimal::ZERO,
+    });
+    for place in [
+        ScriptPlacement::Anywhere,
+        ScriptPlacement::Region(DrawingId(3)),
+        ScriptPlacement::Anywhere,
+    ] {
+        let request = ScriptArm {
+            pane_id: PANE,
+            script: "steady.pine",
+            source: ALWAYS_RINGS,
+            side: Side::Buy,
+            place,
+            action: order,
+        };
+        strategies
+            .arm_script(request, |_| Vec::new())
+            .expect("arms");
+    }
+    let up = close(0, "100", "101", None);
+    strategies.queue_closed(PANE, &up.bar, up.poc, up.slot, true);
+    let region = Region::new(dec("100"), dec("102"));
+    let mut account = Acknowledging::default();
+    let print = Print {
+        events: &[],
+        now_ms: 0,
+    };
+    let _ = strategies.evaluate(
+        &[PANE],
+        &mut account,
+        print,
+        |_, _| true,
+        |_, _, _| Some((region, true)),
+        |_| None,
+    );
+    assert_eq!(account.placed, 3, "each script entered");
+
+    // Switched back to an alarm with its entry unfilled, a script still
+    // keeps the account listening for that fill.
+    let pane = strategies.pane_mut(PANE);
+    for script in &mut pane.scripts {
+        script.set_action(SignalAction::Alarm);
+    }
+    let print = Print {
+        events: &[],
+        now_ms: 0,
+    };
+    let answer = strategies.evaluate(
+        &[PANE],
+        &mut account,
+        print,
+        |_, _| true,
+        |_, _, _| None,
+        |_| None,
+    );
+    assert_eq!(answer.watching, 3, "three entries await their fills");
+
+    let cancel = |id| Command::CancelOrder { id: OrderId(id) };
+    strategies.disarm_script(1).expect("armed");
+    assert_eq!(strategies.take_cleanup(&[PANE]), [cancel(1)], "a removal");
+    strategies.sweep_orphans(|_, drawing| drawing != DrawingId(3));
+    assert_eq!(strategies.take_cleanup(&[PANE]), [cancel(2)], "a halt");
+    let owed = strategies.disarm_all(quantick_strategy::DisarmReason::MarketChanged);
+    assert_eq!(owed, [cancel(3)], "a disarm of the tab");
+}
+
+#[test]
+fn an_order_with_no_size_or_a_negative_distance_is_refused() {
+    let mut strategies = TabStrategies::<DrawingId>::default();
+    for (quantity, stop) in [(Decimal::ZERO, Decimal::ONE), (Decimal::ONE, -Decimal::ONE)] {
+        let request = ScriptArm {
+            pane_id: PANE,
+            script: "steady.pine",
+            source: ALWAYS_RINGS,
+            side: Side::Buy,
+            place: ScriptPlacement::Anywhere,
+            action: SignalAction::Order(SignalOrder {
+                quantity: OrderQuantity::Fixed(quantity),
+                stop,
+                gain: Decimal::ONE,
+            }),
+        };
+        let refused = strategies.arm_script(request, |_| Vec::new());
+        assert!(refused.is_err(), "{quantity} / {stop}");
+    }
+    assert!(strategies.script_readings().is_empty());
 }

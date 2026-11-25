@@ -684,17 +684,16 @@ impl ArmedStrategy {
     /// feeding its (empty) apply-result back is a no-op by construction.
     ///
     /// An instance bracketed by fixed distances ([`StrategyParams::bracket`])
-    /// answers its entry fill with a `SetBracket` pricing both legs off the
-    /// fill itself, before any later print: the distances hold from the
-    /// price actually paid, and a leg the fill outran is re-placed rather
-    /// than closed over.
+    /// answers a clean entry fill with a `SetBracket` pricing both legs off
+    /// the fill itself, before any later print, so the distances hold from
+    /// the price actually paid. Refused, it leaves the legs the order
+    /// carried. A fill that dropped a leg is closed as above instead: the
+    /// re-price is withdrawn, so no answer can leave the position bare.
     #[must_use]
     pub fn on_sim_events(&mut self, events: &[VenueEvent]) -> Vec<Command> {
         // Whether this batch contains this instance's own entry fill: the
         // window in which a BracketDropped can only be about our bracket.
         let mut my_fill_in_batch = false;
-        // Whether that fill was re-bracketed off its own price.
-        let mut rebracketed = false;
         let mut commands = Vec::new();
         for event in events {
             match (&self.state, event) {
@@ -733,7 +732,6 @@ impl ArmedStrategy {
                         )
                     });
                     if let Some(bracket) = at_fill.filter(|bracket| !bracket.is_empty()) {
-                        rebracketed = true;
                         commands.push(Command::SetBracket {
                             stop_loss: bracket.stop_loss(),
                             take_profit: bracket.take_profit(),
@@ -775,12 +773,11 @@ impl ArmedStrategy {
                         },
                     };
                 }
-                (ArmedState::InPosition, VenueEvent::BracketDropped { .. })
-                    if my_fill_in_batch && !rebracketed =>
-                {
+                (ArmedState::InPosition, VenueEvent::BracketDropped { .. }) if my_fill_in_batch => {
                     // "Never fire unprotected" extends past the fill: an
                     // operation whose promised leg could not be priced is
                     // closed, not ridden bare.
+                    commands.retain(|command| !matches!(command, Command::SetBracket { .. }));
                     self.state = ArmedState::Disarmed {
                         reason: DisarmReason::ProtectionDropped,
                     };

@@ -404,8 +404,14 @@ impl<A: BorrowMut<PaperAccount>> quantick_strategy::runner::StrategyPort for Tab
         self.core().is_flat()
     }
 
-    /// What a market press on the ticket would enter with now.
+    /// What a market press on the ticket would enter with now — sized by
+    /// the ticket's own stop when risk sizing is on — and nothing while the
+    /// risk lock would refuse that press.
     fn ticket_quantity(&self) -> Option<Decimal> {
+        let (_, blocked) = self.desk.risk_report(self.core());
+        if blocked {
+            return None;
+        }
         self.desk.entry_quantity(self.core())
     }
 }
