@@ -76,10 +76,11 @@ pub(super) fn loaded_observer_workspace(bars: u64) -> (QuantickApp, mpsc::Receiv
             drawing_tool("horizontal-line"),
             &drawings::DrawingBand::Price,
             ChartPoint::at_time(slot as f32 + 0.5, price, time),
-            |tool| drawings::NewDrawing {
-                style: drawings::DrawingStyle::default(),
-                payload: tool.default_payload(),
-                look: Default::default(),
+            |tool| {
+                drawings::NewDrawing::explicit(
+                    drawings::DrawingStyle::default(),
+                    tool.default_payload(),
+                )
             },
         );
     }
