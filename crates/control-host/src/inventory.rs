@@ -71,6 +71,5 @@ pub fn render(capabilities: &[&CapabilityDescriptor]) -> String {
         );
     }
 
-    let _ = write!(out, "\n{} capabilities registered.\n", capabilities.len());
     out
 }

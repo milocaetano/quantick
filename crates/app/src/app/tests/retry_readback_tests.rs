@@ -862,6 +862,9 @@ fn replay_plan() -> Vec<(&'static str, u32, Value, Readback)> {
             Readback::Moves,
         ),
         ("annotate.text.set", 1, Value::Null, Readback::Moves),
+        // Filled in when it runs: a long position placed for the calls to act on.
+        ("annotate.position.set", 1, Value::Null, Readback::Moves),
+        ("annotate.position.default", 1, Value::Null, Readback::Moves),
         // Filled in when it runs: a dated line placed for the call to keep.
         (
             "annotate.drawing_scope.set",
@@ -1274,6 +1277,31 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
                 );
                 let target = drawing_text_control::target(&app);
                 json!({ "target": target, "text": "Retry-safe note" })
+            }
+            "annotate.position.set" | "annotate.position.default" => {
+                let pane = &mut app.active_tab_mut().flow_pane;
+                quantick_drawings::update(
+                    &mut pane.drawings,
+                    quantick_drawings::DrawingIntent::Place(quantick_drawings::Placement {
+                        tool: crate::drawings::DrawingTool::by_id("long-position").unwrap(),
+                        points: vec![ChartPoint::at(1.0, 100.0), ChartPoint::at(3.0, 95.0)],
+                        band: quantick_drawings::DrawingBand::Price,
+                        opening: quantick_drawings::NewDrawing::explicit(
+                            Default::default(),
+                            Box::new(quantick_drawings::PositionPayload::default()),
+                        ),
+                        author: None,
+                        name: None,
+                        text: None,
+                    }),
+                );
+                let mut target = drawing_text_control::target(&app);
+                if capability == "annotate.position.set" {
+                    target["ratio"] = json!("2");
+                } else {
+                    target["action"] = json!("save");
+                }
+                target
             }
             "annotate.drawing_scope.set" => {
                 app.surfaces.chart_settings.model_state.close();

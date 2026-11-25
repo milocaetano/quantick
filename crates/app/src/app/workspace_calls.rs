@@ -29,6 +29,10 @@ pub(crate) struct WorkspaceCalls<'a> {
 }
 
 impl<'a> WorkspaceCalls<'a> {
+    /// The bank of saved drawing defaults and named presets.
+    pub(crate) fn drawing_presets(self) -> &'a mut crate::drawings::presets::PresetStore {
+        &mut self.drawings.presets
+    }
     pub(crate) fn layout(&mut self) -> LayoutAdapter<'_> {
         IndicatorWiring {
             runtime: self.runtime.bound_mut(&self.presentation.binding),

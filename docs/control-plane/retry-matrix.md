@@ -109,16 +109,6 @@ Real post-start deadline and post-execution socket-loss proofs live in
 `crates/app/src/app/tests/mutation_uncertainty_tests.rs`; adapter-to-wire
 key and lost-reply proofs live in `crates/mcp/tests/fake_gateway.rs`.
 
-## Coverage
-
-| Enforced | Capabilities |
-| --- | --- |
-| deduplicated per connection | 97 |
-| key refused; not retryable, read back | 29 |
-| key required; deduplicated per connection | 23 |
-| refused before dispatch: no grant reaches it | 12 |
-| **Total** | **161** |
-
 ## Capabilities
 
 | Capability | Versions | Policy | Enforced | Reach | Readback | Field | Applied when | Proven by |
@@ -143,6 +133,8 @@ key and lost-reply proofs live in `crates/mcp/tests/fake_gateway.rs`.
 | `annotate.long_position.create` | 1 | forbidden | key refused; not retryable, read back | `annotator` | `snapshot.read` `analysis.drawings` | `tabs[].panes[].drawings[].author.client_name` | a drawing authored by the caller, of the call's `tool_id`, that the pre-call reading lacked; the author name is not authenticated, so keep one create per tool in flight. A pane lists at most 512 drawings: when its `drawings_truncated` is set, read `events.read` `annotate.object.created` from the pre-call cursor instead | `an_interrupted_annotation_is_resolved_by_its_readback`, `every_reachable_forbidden_row_refuses_a_key_before_the_application` |
 | `annotate.magnet.set` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `annotate.magnet.changed` | `payload.drawing_magnet.enabled` | an event after the pre-call cursor carries the requested boolean | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `annotate.parallel_channel.create` | 1 | forbidden | key refused; not retryable, read back | `annotator` | `snapshot.read` `analysis.drawings` | `tabs[].panes[].drawings[].author.client_name` | a drawing authored by the caller, of the call's `tool_id`, that the pre-call reading lacked; the author name is not authenticated, so keep one create per tool in flight. A pane lists at most 512 drawings: when its `drawings_truncated` is set, read `events.read` `annotate.object.created` from the pre-call cursor instead | `an_interrupted_annotation_is_resolved_by_its_readback`, `every_reachable_forbidden_row_refuses_a_key_before_the_application` |
+| `annotate.position.default` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `annotate.position.default_changed` | `payload.position_default` | an event after the pre-call cursor carries the tool's resulting opening look | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
+| `annotate.position.set` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `annotate.position.changed` | `payload.position` | an event after the pre-call cursor names the drawing with the requested look | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `annotate.rectangle.create` | 1 | forbidden | key refused; not retryable, read back | `annotator` | `snapshot.read` `analysis.drawings` | `tabs[].panes[].drawings[].author.client_name` | a drawing authored by the caller, of the call's `tool_id`, that the pre-call reading lacked; the author name is not authenticated, so keep one create per tool in flight. A pane lists at most 512 drawings: when its `drawings_truncated` is set, read `events.read` `annotate.object.created` from the pre-call cursor instead | `an_interrupted_annotation_is_resolved_by_its_readback`, `every_reachable_forbidden_row_refuses_a_key_before_the_application` |
 | `annotate.remove` | 1 | forbidden | key refused; not retryable, read back | `annotator` | `snapshot.read` `analysis.drawings` | `tabs[].panes[].drawings[].drawing_id` | the named `annotation_id` is no longer listed; when the pane's `drawings_truncated` is set an unlisted id proves nothing, so read `events.read` `annotate.object.removed` from the pre-call cursor, which is journaled only for a removal that happened | `an_interrupted_annotation_is_resolved_by_its_readback`, `every_reachable_forbidden_row_refuses_a_key_before_the_application` |
 | `annotate.short_position.create` | 1 | forbidden | key refused; not retryable, read back | `annotator` | `snapshot.read` `analysis.drawings` | `tabs[].panes[].drawings[].author.client_name` | a drawing authored by the caller, of the call's `tool_id`, that the pre-call reading lacked; the author name is not authenticated, so keep one create per tool in flight. A pane lists at most 512 drawings: when its `drawings_truncated` is set, read `events.read` `annotate.object.created` from the pre-call cursor instead | `an_interrupted_annotation_is_resolved_by_its_readback`, `every_reachable_forbidden_row_refuses_a_key_before_the_application` |
@@ -284,5 +276,3 @@ key and lost-reply proofs live in `crates/mcp/tests/fake_gateway.rs`.
 | `workspace.revert.undo` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `workspace.revert_undone` | `payload.workspace` | an event after the pre-call cursor names the tab's workspace | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `workspace.save_as` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `workspace.saved` | `payload.workspace` | an event after the pre-call cursor names the new workspace | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `workspace.save_to` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `workspace.saved` | `payload.workspace` | an event after the pre-call cursor names the tab's workspace | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
-
-161 mutable capabilities registered, 161 with a readback.

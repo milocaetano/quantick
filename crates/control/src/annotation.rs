@@ -230,7 +230,7 @@ pub struct ChartAnnotationResult {
 }
 
 /// Where a position plan's legs landed: the projected one follows the
-/// trader's saved target:stop ratio, which the call cannot otherwise see.
+/// trader's saved risk/reward, which the call cannot otherwise see.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PositionPlanResult {
@@ -406,13 +406,13 @@ pub fn position_descriptors() -> [CapabilityDescriptor; 2] {
             LONG_POSITION_CAPABILITY_ID,
             POSITION_CAPABILITY_VERSION,
             "Place a long position plan",
-            "Draws a long plan: the first chart coordinate is the entry, the second the stop below it or the target above it; the other leg is projected by the default target:stop ratio. A drawing, never an order.",
+            "Draws a long plan: the first chart coordinate is the entry, the second the stop below it or the target above it; the other leg is projected by the default risk/reward (risk 1 : reward N, 1:1 out of the box). A drawing, never an order.",
         ),
         chart_descriptor(
             SHORT_POSITION_CAPABILITY_ID,
             POSITION_CAPABILITY_VERSION,
             "Place a short position plan",
-            "Draws a short plan: the first chart coordinate is the entry, the second the stop above it or the target below it; the other leg is projected by the default target:stop ratio. A drawing, never an order.",
+            "Draws a short plan: the first chart coordinate is the entry, the second the stop above it or the target below it; the other leg is projected by the default risk/reward (risk 1 : reward N, 1:1 out of the box). A drawing, never an order.",
         ),
     ]
 }

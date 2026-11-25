@@ -5,7 +5,7 @@ on:
     - cron: '23 5 * * 1'
   workflow_dispatch:
   # A merge that changes what the measurement reads measures main again and
-  # saves the warm target that pull requests restore.
+  # saves the warm target a later main or dispatched run restores.
   push:
     branches: [main]
     paths:
@@ -16,15 +16,9 @@ on:
       - 'Cargo.lock'
       - 'rust-toolchain.toml'
       - 'crates/**/Cargo.toml'
-  pull_request:
-    paths:
-      - '.github/workflows/edit-loop.yml'
-      - 'tools/edit_loop/**'
-      - 'tools/outside_score/measure.py'
-      - 'Cargo.toml'
-      - 'Cargo.lock'
-      - 'rust-toolchain.toml'
-      - 'crates/**/Cargo.toml'
+  # No pull_request trigger. On a PR it was a second workspace build, 10-22
+  # minutes, that the PR flow waited on and that judged nothing a merge needs.
+  # Run it on a branch with workflow_dispatch when a measurement is wanted.
 
 permissions:
   contents: read

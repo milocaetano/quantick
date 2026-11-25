@@ -8,8 +8,12 @@
 
 use eframe::egui;
 
-use super::{Chrome, DrawingChromeAsk, DrawingEnv, InspectorActions, clamp_into_chart};
+use super::{Chrome, DrawingChromeAsk, DrawingEnv, InspectorActions};
+use crate::drawings::{egui_rect, pos, px, px_rect};
 use crate::drawings::{self, DrawingAuthor};
+use quantick_drawings::bar_placement as placement;
+use quantick_drawings::position_edit::{PositionAsk, edited_position};
+use quantick_ui_model::drawing_chrome::ask_position_default;
 use quantick_ui_model::drawing_chrome::bar_dismissal::{BarTarget, Press, PressOn};
 
 /// The bar's own state: the widget's, plus the rectangle a test reads back.
@@ -20,28 +24,12 @@ pub(crate) struct ContextBarState {
     pub last_drawn_rect: Option<egui::Rect>,
 }
 
-/// The rectangle the context bar may occupy: the pane, with the live lane
-/// taken off its right edge.
-///
-/// The lane is where the price the trader is reading is being formed, and
-/// losing sight of it is the trader's first veto — `context_bar::place` has
-/// kept clear of it since it was written. A *parked* bar is placed by a
-/// different rule and has to be held to the same one, so both go through this
-/// rectangle rather than through the pane's own.
-///
-/// Never narrower than the bar itself: a lane wider than the history area
-/// would otherwise leave nothing to place in, and a pane's own edge is a
-/// better answer than an empty rectangle.
+/// [`placement::bounds`], in egui's types.
 pub(crate) fn bounds(chart: egui::Rect, right_limit: f32, size: egui::Vec2) -> egui::Rect {
-    let right = right_limit
-        .min(chart.right())
-        .max(chart.left() + size.x)
-        .min(chart.right());
-    egui::Rect::from_min_max(chart.min, egui::pos2(right, chart.bottom()))
+    egui_rect(placement::bounds(px_rect(chart), right_limit, px(size.to_pos2())))
 }
 
-/// Repair automatic or parked placement around measured panels.
-/// Bounded candidates keep the lane constraint; no paint shapes are scanned.
+/// [`placement::avoid_panels`], in egui's types.
 fn avoid_panels(
     position: egui::Pos2,
     size: egui::Vec2,
@@ -49,44 +37,9 @@ fn avoid_panels(
     panels: [Option<egui::Rect>; 2],
     object: Option<egui::Rect>,
 ) -> egui::Pos2 {
-    let position = clamp_into_chart(position, size, reachable);
-    let gap = drawings::context_bar::OBJECT_GAP_PX;
-    if !panels
-        .into_iter()
-        .flatten()
-        .any(|rect| egui::Rect::from_min_size(position, size).intersects(rect.expand(gap)))
-    {
-        return position;
-    }
-    let around = |rect: egui::Rect| {
-        [
-            egui::pos2(position.x, rect.bottom()),
-            egui::pos2(rect.right(), position.y),
-            egui::pos2(position.x, rect.top() - size.y),
-            egui::pos2(rect.left() - size.x, position.y),
-        ]
-    };
-    panels
-        .into_iter()
-        .flatten()
-        .flat_map(|rect| around(rect.expand(gap)))
-        .chain(object.into_iter().flat_map(|rect| around(rect.expand(gap))))
-        .map(|candidate| clamp_into_chart(candidate, size, reachable))
-        .filter(|candidate| {
-            panels
-                .into_iter()
-                .flatten()
-                .all(|rect| !egui::Rect::from_min_size(*candidate, size).intersects(rect))
-        })
-        .min_by(|a, b| {
-            let covers_object = |point| {
-                object.is_some_and(|rect| egui::Rect::from_min_size(point, size).intersects(rect))
-            };
-            covers_object(*a)
-                .cmp(&covers_object(*b))
-                .then_with(|| a.distance_sq(position).total_cmp(&b.distance_sq(position)))
-        })
-        .unwrap_or(position)
+    let (size, reachable) = (px(size.to_pos2()), px_rect(reachable));
+    let panels = panels.map(|panel| panel.map(px_rect));
+    pos(placement::avoid_panels(px(position), size, reachable, panels, object.map(px_rect)))
 }
 
 /// Draw this frame.
@@ -102,7 +55,7 @@ pub(crate) fn draw(
     let input = GestureInput::read(ctx);
     // Decided once per press, before the dismissal drops the rect it reads.
     let bar = &mut chrome.view.bar.bar;
-    let on_bar = bar.owns_press(input.origin, bar.last_rect(), input.layer)
+    let on_bar = bar.owns_press(input.origin, input.layer)
         || (input.layer).is_some_and(|layer| layer.id == alert_area(env.pane_id));
     // Dismissed by a press elsewhere or a lost focus, until the object is
     // pressed again or another is selected.
@@ -146,7 +99,7 @@ pub(crate) fn draw(
     if suppressed {
         return ask;
     }
-    let chart_area = if chrome.view.bar.bar.manual_position().is_none() {
+    let chart_area = if chrome.view.bar.bar.state.manual().is_none() {
         env.automatic_bar_area.or(env.chart_area)
     } else {
         env.chart_area
@@ -184,6 +137,7 @@ pub(crate) fn draw(
         settings_available: !chrome.shared.pinned,
         confirming_delete: chrome.shared.delete_confirm && locked,
         tool_name: tool.name(),
+        position: quantick_drawings::position_edit::position_face(drawing),
         draw_again: (tool.freehand() || tool.holds_text()).then(|| {
             drawings::context_bar::DrawAgain {
                 glyph: tool.icon(),
@@ -263,13 +217,10 @@ pub(crate) fn draw(
     }
 
     if intent.reset_position {
-        chrome.view.bar.bar.clear_manual();
+        chrome.view.bar.bar.state.clear_manual();
     } else if intent.drag_delta != egui::Vec2::ZERO {
-        chrome
-            .view
-            .bar
-            .bar
-            .set_manual(placement.position + intent.drag_delta);
+        let parked = px(placement.position + intent.drag_delta);
+        chrome.view.bar.bar.state.set_manual(parked);
     }
     let actions = actions_of(&intent);
     if actions.edited {
@@ -281,6 +232,7 @@ pub(crate) fn draw(
             toggle_shared: intent.toggle_shared,
             toggle_magnet: intent.toggle_magnet,
             glyph_px: glyph_after.map(|size| size.px),
+            position: intent.position,
         };
         ask.edited = Some(Box::new(edit.applied_to(drawing)));
     }
@@ -288,6 +240,9 @@ pub(crate) fn draw(
         chrome.emit(super::Intent::OpenSettings);
         // Place against the object the way a fresh selection would.
         chrome.emit(super::Intent::SelectionChanged { changed: false });
+    }
+    if let Some(PositionAsk::Default(action)) = intent.position {
+        ask_position_default(&mut ask, env.presets, env.canvas, drawing, action);
     }
     ask.duplicate |= intent.duplicate;
     if intent.draw_again {
@@ -436,13 +391,13 @@ impl GestureInput {
         if self.dragging && !on_bar {
             bar.suppress_gesture();
         } else if !self.dragging {
-            bar.release_gesture();
+            bar.state.release_gesture();
         }
         if self.zoomed {
             bar.suppress_transient(self.now_ms);
         }
         bar.note_screen(self.screen, self.now_ms);
-        bar.suppressed(self.now_ms)
+        bar.state.suppressed(self.now_ms)
     }
 }
 
@@ -468,7 +423,7 @@ impl Placement {
         // one.
         let right_limit = env.candles_right.unwrap_or(chart.right());
         let reachable = bounds(chart, right_limit, size);
-        let position = match bar.manual_position() {
+        let position = match bar.state.manual().map(pos) {
             // Repair for drawing, never overwrite — the rule the properties
             // popup already follows, for the same reason. A bar parked out
             // near the right edge of a wide pane must stay reachable when the
@@ -495,7 +450,7 @@ impl Placement {
         // the bar ends up.
         // Automatic legend repair must keep the entire action footprint off
         // the drawing too; a manually parked bar keeps the trader's choice.
-        let object = bar.manual_position().is_none().then_some(bbox);
+        let object = bar.state.manual().is_none().then_some(bbox);
         let position = avoid_panels(position, size, reachable, [env.legends, inspector], object);
         // What the popovers are clamped into: the same rectangle *without*
         // the bar's width floor, but never narrower than the bar that was
@@ -530,7 +485,10 @@ fn actions_of(intent: &drawings::context_bar::ContextBarIntent) -> InspectorActi
         delete: intent.actions.delete,
         force_delete: intent.force_delete,
         cancel_delete: intent.cancel_delete,
-        edited: intent.edited || intent.toggle_shared || intent.toggle_magnet,
+        edited: intent.edited
+            || intent.toggle_shared
+            || intent.toggle_magnet
+            || matches!(intent.position, Some(PositionAsk::Edit(_))),
         ..InspectorActions::default()
     }
 }
@@ -543,6 +501,7 @@ struct BarEdit {
     toggle_magnet: bool,
     /// The glyph size the bar left, for a tool drawn as a glyph.
     glyph_px: Option<f32>,
+    position: Option<PositionAsk>,
 }
 
 impl BarEdit {
@@ -555,6 +514,10 @@ impl BarEdit {
         edited.magnet ^= self.toggle_magnet;
         if let Some(px) = self.glyph_px {
             drawing.tool.set_glyph_size(&mut edited, px);
+        }
+        // A refused edit (a locked plan's ratio) leaves the copy as it was.
+        if let Some(PositionAsk::Edit(edit)) = self.position {
+            edited = edited_position(&edited, edit).unwrap_or(edited);
         }
         edited
     }

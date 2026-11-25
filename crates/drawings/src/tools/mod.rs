@@ -13,6 +13,8 @@ mod line_core;
 mod mark_core;
 mod measure_core;
 mod position_core;
+mod position_payload;
+pub mod position_text;
 mod shape_core;
 
 // The names every tool file reaches through `super::`.
@@ -93,7 +95,13 @@ pub use fixed_range_profile::{
 };
 pub use parallel_channel::ChannelPayload;
 pub use position_core::{
-    Legs as PositionLegs, Measured as PositionMeasured, PositionPayload, position_plan,
+    Legs as PositionLegs, MAX_RATIO as POSITION_MAX_RATIO, MIN_RATIO as POSITION_MIN_RATIO,
+    Measured as PositionMeasured, Side as PositionSide, position_plan, position_side,
+};
+pub use position_payload::{
+    FACTORY_ZONE_OPACITY_PCT, MAX_ZONE_OPACITY_PCT, PositionPayload, PositionRefusal, Rgb,
+    parse_rgb_hex, preset_of as position_preset_of, rgb_hex, set_plan_ratio,
+    set_width_bars as set_position_width, width_bars as position_width_bars,
 };
 pub use rectangle::{RectanglePayload, TOOL_ID as RECTANGLE_TOOL_ID};
 pub use text::{MAX_TEXT_PX, MIN_TEXT_PX, PLACEHOLDER as TEXT_PLACEHOLDER, TextPayload};

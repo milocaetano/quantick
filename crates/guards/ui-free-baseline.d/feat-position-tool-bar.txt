@@ -1,0 +1,5 @@
+# annotate.position.default lends the window's drawing preset bank to the
+# handler: DrawingDefaultsPort on dyn ControlPort and the WorkspaceCalls
+# accessor it reads through. Signed growth against the merge base.
+crates/app +8
+!budget +8
