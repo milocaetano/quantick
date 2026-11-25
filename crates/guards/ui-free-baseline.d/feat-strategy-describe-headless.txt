@@ -1,3 +1,3 @@
-# Written by `cargo run -p quantick-guards -- --tighten`: these shrank.
-crates/app -236
-!budget -236
+# This branch moved strategy-describe logic into ui-model; signed growth against the merge base.
+crates/app -235
+!budget -235
