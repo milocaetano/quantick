@@ -248,3 +248,14 @@ fn the_default_call_saves_resets_and_reads_per_tool() {
     assert_eq!(reset.opening.target_color, "#2EA064");
     assert_eq!(reset.opening.ratio_text, "R/R 1:1");
 }
+
+/// A flat plan states no legs to read back, so even a colour edit is
+/// refused before it lands, with nothing changed.
+#[test]
+fn an_edit_on_a_flat_plan_is_refused_before_it_lands() {
+    let (mut marks, id) = marks();
+    marks.items_mut()[0].points = vec![at(10.0, 100.0), at(30.0, 100.0)];
+    let before = marks.items()[0].clone();
+    assert!(set(&mut marks, &input(id, json!({"target_color": "#00FF00"}))).is_err());
+    assert_eq!(marks.items()[0], before);
+}

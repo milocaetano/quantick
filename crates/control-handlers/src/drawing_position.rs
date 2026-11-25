@@ -152,6 +152,9 @@ pub fn set(
         after = edited_position(&after, edit).map_err(|refusal| invalid(refusal.reason()))?;
     }
     let changed = after != before;
+    // Read back before writing: an edit whose result cannot be read back
+    // (a flat plan) is refused with nothing changed.
+    let result = read_back(input, &after, changed)?;
     if changed {
         let index = marks
             .shown_index_of(before.id)
@@ -159,7 +162,7 @@ pub fn set(
         marks.items_mut()[index] = after.clone();
         marks.record_edit_of(index, before);
     }
-    read_back(input, &after, changed)
+    Ok(result)
 }
 
 fn look(payload: &PositionPayload, ratio: f64) -> Result<PositionLook, ControlError> {

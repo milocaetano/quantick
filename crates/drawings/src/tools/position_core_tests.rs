@@ -532,7 +532,8 @@ fn an_edge_drag_changes_the_width_and_no_leg_price() {
     )
     .unwrap();
     let wider = wider.as_any().downcast_ref::<PositionPayload>().unwrap();
-    assert_eq!(wider.span_bars, Some([0.0, 40.0]));
+    // The anchors are 20 bars apart: one span unit. 400 px is two units.
+    assert_eq!(wider.span, Some([0.0, 2.0]));
     assert_eq!(wider.width_bars(&anchors), 40.0);
     assert_eq!(plan_of(Side::Long, &anchors, wider), Some(before));
     let ctxt = context(wider, &anchors, &scale);
@@ -548,7 +549,8 @@ fn an_edge_drag_changes_the_width_and_no_leg_price() {
         .as_any()
         .downcast_ref::<PositionPayload>()
         .unwrap();
-    assert_eq!(narrowest.span_bars, Some([40.0 - MIN_WIDTH_BARS, 40.0]));
+    // The 14-bar floor is 0.7 of a 20-bar unit.
+    assert_eq!(narrowest.span, Some([1.3, 2.0]));
     assert_eq!(plan_of(Side::Long, &anchors, narrowest), Some(before));
 }
 
@@ -680,8 +682,32 @@ fn a_position_saved_at_its_narrowest_still_loads() {
         target_rgb: [1, 2, 3],
         ..two_to_one()
     };
-    narrow.span_bars = Some([0.0, MIN_WIDTH_BARS - 1e-4]);
+    narrow.span = Some([0.0, 0.7 - 1e-6]);
     let mut restored = PositionPayload::default();
     assert!(restored.import_saved(&narrow.export_saved().unwrap()));
     assert_eq!(restored, narrow);
+}
+
+/// A resized width is held in units of the anchors' span, so when the
+/// anchors re-project onto a coarser timeframe the box keeps its length in
+/// time instead of its count of bars.
+#[test]
+fn a_resized_width_keeps_its_time_across_a_timeframe_switch() {
+    let payload = PositionPayload {
+        span: Some([0.0, 3.0]),
+        ..two_to_one()
+    };
+    // One-minute bars: anchors 20 bars apart at 10 px a bar.
+    let minute = columns(pos2(100.0, 0.0), pos2(300.0, 0.0), &payload, 10.0);
+    assert_eq!(minute, (100.0, 700.0));
+    // The same anchors on five-minute bars sit 4 bars apart; the floor is
+    // 14 bars, so three spans of 4 bars round up to it.
+    let five = columns(pos2(100.0, 0.0), pos2(140.0, 0.0), &payload, 10.0);
+    assert_eq!(five, (100.0, 240.0), "fourteen bars, the floor");
+    let wide = PositionPayload {
+        span: Some([0.0, 6.0]),
+        ..two_to_one()
+    };
+    let five = columns(pos2(100.0, 0.0), pos2(140.0, 0.0), &wide, 10.0);
+    assert_eq!(five, (100.0, 340.0), "six spans of four bars");
 }

@@ -22,7 +22,7 @@ use quantick_chart::style::PremultipliedRgba;
 
 use crate::{Align2, FontSpec, MarkScene, Px, PxRect, Stroke, pos2, vec2};
 
-use super::position_payload::{PositionPayload, Rgb};
+use super::position_payload::{PositionPayload, Rgb, SAME_BAR};
 use super::position_text::plan_plate;
 use super::{
     Constrain, DrawContext, DrawingPayload, DrawingStyle, Handles, MarkTool, PointerHint,
@@ -239,17 +239,29 @@ impl Frame {
     }
 }
 
+/// One span unit on screen: the anchors' projected distance, or one bar
+/// when they share a bar ([`PositionPayload::span`]).
+fn span_unit_px(a: Px, b: Px, px_per_bar: f32) -> f32 {
+    let apart = (b.x - a.x).abs();
+    if apart > SAME_BAR * px_per_bar.max(f32::EPSILON) {
+        apart
+    } else {
+        px_per_bar
+    }
+}
+
 /// The columns a position spans: its resized span from the entry anchor,
 /// else the anchors', never narrower than [`MIN_WIDTH_BARS`].
 fn columns(a: Px, b: Px, payload: &PositionPayload, px_per_bar: f32) -> (f32, f32) {
     let px_per_bar = px_per_bar.max(0.0);
-    match payload.span_bars {
-        Some([left, right]) => (a.x + left * px_per_bar, a.x + right * px_per_bar),
-        None => {
-            let left = a.x.min(b.x);
-            (left, a.x.max(b.x).max(left + MIN_WIDTH_BARS * px_per_bar))
+    let (left, right) = match payload.span {
+        Some([left, right]) => {
+            let unit = span_unit_px(a, b, px_per_bar);
+            (a.x + left * unit, a.x + right * unit)
         }
-    }
+        None => (a.x.min(b.x), a.x.max(b.x)),
+    };
+    (left, right.max(left + MIN_WIDTH_BARS * px_per_bar))
 }
 
 fn frame(points: &[Px], ctxt: &DrawContext<'_>, side: Side) -> Option<Frame> {
@@ -572,13 +584,14 @@ fn drag_edge(
         return Some(Box::new(payload));
     }
     let (left, right) = columns(*a, *b, &payload, px_per_bar);
-    let bars = |x: f32| (x - a.x) / px_per_bar;
-    let (left, right) = (bars(left), bars(right));
-    let at = bars(to.x);
-    payload.span_bars = Some(if handle == LEFT_EDGE_HANDLE {
-        [at.min(right - MIN_WIDTH_BARS), right]
+    let unit = span_unit_px(*a, *b, px_per_bar);
+    let units = |x: f32| (x - a.x) / unit;
+    let (left, right, at) = (units(left), units(right), units(to.x));
+    let floor = MIN_WIDTH_BARS * px_per_bar / unit;
+    payload.span = Some(if handle == LEFT_EDGE_HANDLE {
+        [at.min(right - floor), right]
     } else {
-        [left, at.max(left + MIN_WIDTH_BARS)]
+        [left, at.max(left + floor)]
     });
     Some(Box::new(payload))
 }
@@ -731,11 +744,18 @@ impl MarkTool for PositionTool {
         };
         let px_per_bar = spacing.px_per_bar.max(0.0);
         // The entry is one of the box's two columns; reserve from either.
-        let (left, right) = match payload.span_bars {
-            Some([left, right]) => (
-                anchors.min.x + left.min(0.0) * px_per_bar,
-                anchors.max.x + right.max(0.0) * px_per_bar,
-            ),
+        let (left, right) = match payload.span {
+            Some([left, right]) => {
+                let unit = if anchors.width() > 0.0 {
+                    anchors.width()
+                } else {
+                    px_per_bar
+                };
+                (
+                    anchors.min.x + left.min(0.0) * unit,
+                    anchors.max.x + right.max(0.0) * unit,
+                )
+            }
             None => (
                 anchors.min.x,
                 anchors

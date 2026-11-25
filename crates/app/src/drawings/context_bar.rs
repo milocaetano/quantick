@@ -720,7 +720,12 @@ fn draw_ratio_slot(ui: &mut egui::Ui, bar: &mut ContextBar, object: &BarObject<'
         return;
     };
     let palette = theme::get(ui.ctx());
-    let button = &face.ratio.button;
+    let size = egui::vec2(RISK_REWARD_WIDTH_PX, TOOLRAIL_ICON.hit);
+    let Some(button) = face.ratio.as_ref().map(|menu| &menu.button) else {
+        ui.add_sized(size, egui::Label::new("R/R –"))
+            .on_hover_text("A flat plan states no risk/reward");
+        return;
+    };
     let mut job = egui::text::LayoutJob::default();
     for (text, color) in [
         (button.lead, palette.text_muted()),
@@ -735,7 +740,6 @@ fn draw_ratio_slot(ui: &mut egui::Ui, bar: &mut ContextBar, object: &BarObject<'
             egui::TextFormat::simple(palette.body_font(12.0), color),
         );
     }
-    let size = egui::vec2(RISK_REWARD_WIDTH_PX, TOOLRAIL_ICON.hit);
     let response = ui
         .add_sized(size, egui::Button::new(job).frame(false))
         .on_hover_text("Risk/reward");
@@ -1085,7 +1089,7 @@ fn draw_ratio_popover(ui: &mut egui::Ui, object: &BarObject<'_>, intent: &mut Co
     let Some(face) = object.position.as_ref() else {
         return;
     };
-    for row in &face.ratio.rows {
+    for row in face.ratio.iter().flat_map(|menu| &menu.rows) {
         let label = egui::SelectableLabel::new(row.checked, row.label.as_str());
         // A lock keeps the prices: the presets move the target.
         if ui

@@ -7,7 +7,7 @@ fn custom_look() -> PositionPayload {
         target_rgb: [0x12, 0x34, 0x56],
         stop_rgb: [0xAB, 0xCD, 0xEF],
         zone_opacity_pct: 40,
-        span_bars: Some([-2.0, 30.0]),
+        span: Some([-2.0, 30.0]),
     }
 }
 
@@ -22,7 +22,7 @@ fn colours_opacity_and_ratio_round_trip_through_a_preset_and_a_save() {
         preset,
         PositionPayload {
             projected_offset: None,
-            span_bars: None,
+            span: None,
             ..custom_look()
         }
     );
@@ -71,9 +71,11 @@ fn an_unreadable_look_is_refused_and_changes_nothing() {
         assert!(!payload.import_saved(&value), "{text}");
         assert_eq!(payload, PositionPayload::default(), "{text}");
     }
-    let narrow: toml::Value =
-        toml::from_str("version = 1\nratio = 1.0\nspan_bars = [0.0, 3.0]\n").unwrap();
-    assert!(!PositionPayload::default().import_saved(&narrow));
+    for span in ["[3.0, 0.0]", "[0.0, inf]", "[nan, 1.0]"] {
+        let text = format!("version = 1\nratio = 1.0\nspan = {span}\n");
+        let value: toml::Value = toml::from_str(&text).unwrap();
+        assert!(!PositionPayload::default().import_saved(&value), "{span}");
+    }
 }
 
 #[test]
@@ -110,7 +112,7 @@ fn opacity_and_width_refuse_what_cannot_be_drawn() {
         payload.set_zone_opacity(101),
         Err(PositionRefusal::OpacityOutOfRange)
     );
-    for bars in [13.0, f32::NAN, f32::INFINITY] {
+    for bars in [13.0, f32::NAN, f32::INFINITY, MAX_WIDTH_BARS + 1.0] {
         assert_eq!(
             payload.set_width_bars(&anchors, bars),
             Err(PositionRefusal::WidthOutOfRange)
@@ -118,7 +120,7 @@ fn opacity_and_width_refuse_what_cannot_be_drawn() {
     }
     assert_eq!(payload, PositionPayload::default());
     payload.set_width_bars(&anchors, 40.0).unwrap();
-    assert_eq!(payload.span_bars, Some([0.0, 40.0]));
+    assert_eq!(payload.span, Some([0.0, 2.0]), "two 20-bar anchor spans");
     assert_eq!(payload.width_bars(&anchors), 40.0);
     payload.set_zone_opacity(0).unwrap();
     assert_eq!(payload.zone_alpha(), 0);

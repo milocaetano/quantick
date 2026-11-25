@@ -218,10 +218,11 @@ pub struct PositionFace {
     pub target_rgb: Rgb,
     pub stop_rgb: Rgb,
     pub zone_opacity_pct: u8,
-    pub ratio: RatioMenu,
+    /// `None` for a flat plan, which states no ratio.
+    pub ratio: Option<RatioMenu>,
 }
 
-/// The bar's face for `drawing`, `None` for another tool or a flat plan.
+/// The bar's face for `drawing`, `None` for another tool.
 #[must_use]
 pub fn position_face(drawing: &Drawing<DrawingTool>) -> Option<PositionFace> {
     let (_, payload) = position_of(drawing).ok()?;
@@ -229,7 +230,7 @@ pub fn position_face(drawing: &Drawing<DrawingTool>) -> Option<PositionFace> {
         target_rgb: payload.target_rgb,
         stop_rgb: payload.stop_rgb,
         zone_opacity_pct: payload.zone_opacity_pct,
-        ratio: ratio_menu(drawing)?,
+        ratio: ratio_menu(drawing),
     })
 }
 

@@ -124,3 +124,13 @@ fn the_menu_checks_the_preset_or_shows_the_custom_row_on_top() {
     assert!(menu.rows[1..].iter().all(|row| !row.checked));
     assert_eq!(menu.rows.len(), 4);
 }
+
+/// A flat plan keeps its own bar: its colours, and no ratio to show.
+#[test]
+fn a_flat_plan_keeps_its_colour_cells_without_a_ratio() {
+    let mut drawing = target_measured_long();
+    drawing.points[1].price = drawing.points[0].price;
+    let face = position_face(&drawing).expect("a position's face");
+    assert_eq!(face.ratio, None);
+    assert_eq!(face.target_rgb, payload(&drawing).target_rgb);
+}
