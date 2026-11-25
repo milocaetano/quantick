@@ -192,3 +192,49 @@ fn date_only_reveal_preserves_all_symbols_after_closed_cache_eviction() {
         },
     );
 }
+
+/// The trader's 2026-11-25 report: a Session report opened from the ledger,
+/// then 2026-11-24 through today picked. The dates are the question now, so
+/// every trade of that origin closed on those days is in, not only the
+/// clicked session's, and the session title no longer claims the cut.
+#[test]
+fn picked_dates_widen_a_whole_session_report_to_its_origin() {
+    let scratch = crate::scratch::ScratchDir::new("report-session-dates");
+    let dir = scratch.join("paper");
+    let tz = TzOffset::new(-180);
+    let yesterday = CivilDate::from_ymd(2026, 11, 24);
+    let today = yesterday.offset_days(1);
+    write_journal(&dir, "X", "yesterday.csv", &[(yesterday.start_ms(tz), 2)]);
+    // The last minute of today, local: inside the picked span.
+    write_journal(&dir, "X", "today.csv", &[(today.end_ms(tz) - 60_000, 3)]);
+    write_journal(&dir, "X", "older.csv", &[(yesterday.start_ms(tz) - 1, 100)]);
+    let request = ReportRequest::Session {
+        session: SessionKey::parse("X/today.csv").unwrap(),
+        day: None,
+    };
+    let mut state = State::default();
+    Model::update(
+        &mut state,
+        Intent::Scoped(Box::new(prepare(&dir, request, tz).unwrap())),
+    );
+    state.ensure_report_view(tz, PnlReader::plain());
+    assert_eq!(state.snapshot().unwrap().rows.len(), 1, "the session alone");
+
+    Model::update(
+        &mut state,
+        Intent::Dates(DaySelection::Range(DateRange::new(yesterday, today))),
+    );
+    state.ensure_report_view(tz, PnlReader::plain());
+    let picked = state.snapshot().unwrap();
+    assert_eq!(
+        (picked.rows.len(), picked.report.net_points),
+        (2, Decimal::from(5)),
+        "both days' trades of the origin, nothing before the first day"
+    );
+    assert_eq!(state.report_scope_label(), Some("Simulator"));
+    assert_eq!(
+        state.report_days().stat(yesterday).map(|stat| stat.trades),
+        Some(1),
+        "the grid shows the day the cut now includes"
+    );
+}
