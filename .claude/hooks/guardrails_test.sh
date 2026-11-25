@@ -1398,10 +1398,12 @@ full_ci_case() {
     for full_ci_check in $full_ci_checks; do
         printf 'completed:success\n' > "$full_ci_root/$full_ci_check"
     done
+    # The latest gate belongs to run 41; a case's rust-skip names its own run.
+    printf 'completed:success 41\n' > "$full_ci_root/gate"
     printf '%s\n' "$2" > "$full_ci_root/ci"
     printf '%s\n' "$3" > "$full_ci_root/windows"
-    full_ci_out=$(QUANTICK_FULL_CI_FIXTURE="$full_ci_root" PATH="$full_ci_root/bin:$PATH" \
-        sh "$script_dir/full_ci.sh" verify "$root/wt" 2>&1)
+    full_ci_out=$(QUANTICK_FULL_CI_FOR_REUSE="${full_ci_reuse:-}" QUANTICK_FULL_CI_FIXTURE="$full_ci_root" \
+        PATH="$full_ci_root/bin:$PATH" sh "$script_dir/full_ci.sh" verify "$root/wt" 2>&1)
     full_ci_status=$?
     if [ "$full_ci_status" -eq "$4" ]; then
         case "$full_ci_out" in
@@ -1443,11 +1445,20 @@ for full_ci_check in $full_ci_checks; do
 done
 
 # A green `rust-skip` is the gate saying the head needs no Rust build. It lets
-# a job after `gate` have no verdict, and excuses nothing else.
-printf 'completed:success\n' > "$full_ci_root/rust-skip"
+# a job after `gate` have no verdict, or an older run's cancelled one, and
+# excuses nothing else.
+printf 'completed:success 41\n' > "$full_ci_root/rust-skip"
 full_ci_case "rust-skip lets skipped jobs pass" missing missing 0 ""
-full_ci_case "rust-skip does not excuse a red job" missing completed:failure 1 "windows run at"
-full_ci_case "rust-skip does not excuse a running job" in_progress:none missing 1 "still in_progress"
+full_ci_case "rust-skip does not excuse a red job" missing "completed:failure 40" 1 "windows run at"
+full_ci_case "rust-skip does not excuse a running job" "in_progress:none 40" missing 1 "still in_progress"
+# A run superseded at this head leaves cancelled jobs a prose run never
+# replaces (its own are skipped); they are no verdict either way.
+full_ci_case "rust-skip excuses an older run's cancelled job" "completed:cancelled 40" missing 0 ""
+full_ci_case "rust-skip does not excuse its own run's cancelled job" "completed:cancelled 41" missing 1 "concluded cancelled"
+printf 'missing\n' > "$full_ci_root/rust-skip"
+full_ci_case "an older cancelled job without rust-skip stays red" "completed:cancelled 40" completed:success 1 "concluded cancelled"
+printf 'completed:success 41\n' > "$full_ci_root/rust-skip"
+full_ci_case "reset" completed:success completed:success 0 ""
 printf 'missing\n' > "$full_ci_root/gate"
 full_ci_out=$(QUANTICK_FULL_CI_FIXTURE="$full_ci_root" PATH="$full_ci_root/bin:$PATH" \
     sh "$script_dir/full_ci.sh" verify "$root/wt" 2>&1)
@@ -1455,21 +1466,24 @@ case "$?:$full_ci_out" in
     1:*"No gate run has a verdict"*) passed=$((passed + 1)) ;;
     *) printf 'FAIL full_ci.sh rust-skip excused a missing gate: %s\n' "$full_ci_out"; failed=$((failed + 1)) ;;
 esac
-for full_ci_rust_skip in missing completed:failure in_progress:none; do
+for full_ci_rust_skip in missing "completed:failure 41" "in_progress:none 41"; do
     printf '%s\n' "$full_ci_rust_skip" > "$full_ci_root/rust-skip"
     full_ci_case "a $full_ci_rust_skip rust-skip excuses nothing" missing completed:success 1 "No ci run has a verdict"
 done
 # Only the latest gate's own run may excuse: an older prose run's rust-skip
-# says nothing about a newer run that built Rust for a new base.
+# says nothing about a newer run that built Rust for a new base. A run id
+# GitHub did not give never matches, not even another missing one.
+for full_ci_rust_skip in "completed:success 40" "completed:success"; do
+    printf '%s\n' "$full_ci_rust_skip" > "$full_ci_root/rust-skip"
+    full_ci_case "a rust-skip from run '$full_ci_rust_skip' excuses nothing" missing completed:success 1 "No ci run has a verdict"
+done
 printf 'completed:success 41\n' > "$full_ci_root/rust-skip"
-full_ci_case "a rust-skip from another run excuses nothing" missing completed:success 1 "No ci run has a verdict"
-printf 'completed:success\n' > "$full_ci_root/rust-skip"
 
 # The gate's reuse question takes no excuse: only real green runs are reused.
-export QUANTICK_FULL_CI_FOR_REUSE=1
+full_ci_reuse=1
 full_ci_case "a reuse read takes no rust-skip excuse" missing completed:success 1 "No ci run has a verdict"
 full_ci_case "a reuse read passes on real green runs" completed:success completed:success 0 ""
-unset QUANTICK_FULL_CI_FOR_REUSE
+full_ci_reuse=''
 printf 'missing\n' > "$full_ci_root/rust-skip"
 
 # Reuse reads drop queued and running runs in the filter itself.

@@ -233,9 +233,11 @@ nothing requires is a job that can disappear without anyone noticing, and
 `guardrails_test.sh` fails when a name in that list has no job in `ci.yml`.
 Skipped is no verdict: a head with nothing but skipped full jobs has no full
 CI, with one exception the gate owns. A green `rust-skip` from the same run as
-the latest `gate` lets a job after `gate` have no verdict; it excuses no red,
-running or cancelled job, never a missing `gate`, and never a newer run whose
-`gate` built Rust. It reads per commit, not through `gh pr checks`,
+the latest `gate` lets a job after `gate` have no verdict, or a `cancelled` one
+left by an older run that a newer one superseded at the head (the prose run's
+own jobs are skipped, so nothing else would replace it). It excuses no red or
+running job, no job cancelled in the gate's own run, never a missing `gate`,
+and never a newer run whose `gate` built Rust. It reads per commit, not through `gh pr checks`,
 because a later skipped run for the same head (adding an unrelated label
 posts one) must not hide the green one. Exit 2 means GitHub could not answer, and the
 gate turns that into `ask`, never a pass. A commit GitHub has never seen was

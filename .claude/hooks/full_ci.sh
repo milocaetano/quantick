@@ -31,9 +31,13 @@
 # no Rust build (a prose-only diff, or full CI already green at this head), it
 # runs the `rust-skip` job. A successful `rust-skip` from the same workflow run
 # (check suite) as the latest `gate` lets a job after `gate` have no verdict at
-# all. It never excuses a red, cancelled or running job, never a missing
-# `gate`, and never a job missing after a newer `gate` that built Rust. Full
-# jobs themselves are still read as the newest non-skipped run per name.
+# all, or a verdict of `cancelled` from an older run that a newer one
+# superseded at this head (a prose run's own jobs are skipped, so an older
+# cancelled run would otherwise stay the latest forever). It never excuses a
+# red or running job, a job cancelled in the gate's own run, a missing `gate`,
+# or a job missing after a newer `gate` that built Rust; an unknown run id
+# never matches. Full jobs are still read as the newest non-skipped run per
+# name.
 #
 # QUANTICK_FULL_CI_FOR_REUSE=1 is the gate asking whether an earlier run already
 # finished the full verification at this head. It reads completed runs only, so
@@ -91,22 +95,42 @@ read_verdict() {
     esac
 }
 
+# Whether a green `rust-skip` from the latest `gate`'s own run excuses the
+# full jobs. Read once; an unknown run id is never a match.
 gate_suite=''
 rust_skipped=''
+rust_skip_excuses() {
+    if [ -z "$rust_skipped" ]; then
+        rust_skipped=no
+        if [ -n "$excuse" ]; then
+            read_verdict "$RUST_SKIP_CHECK"
+            if [ "$verdict" = completed:success ] && [ -n "$suite" ] && [ "$suite" = "$gate_suite" ]; then
+                rust_skipped=yes
+            fi
+        fi
+    fi
+    [ "$rust_skipped" = yes ]
+}
+
 for check in $FULL_CI_CHECKS; do
     read_verdict "$check"
-    [ "$check" = gate ] && gate_suite=$suite
+    if [ "$check" = gate ]; then
+        gate_suite=$suite
+    else
+        # Missing, or cancelled by a run that superseded it at this head: no
+        # verdict either way, so a valid `rust-skip` excuses both. A run
+        # cancelled in the gate's own run is not excused.
+        check_verdict=$verdict
+        case "$check_verdict" in
+            missing) rust_skip_excuses && continue ;;
+            completed:cancelled) [ "$suite" != "$gate_suite" ] && rust_skip_excuses && continue ;;
+        esac
+        # rust_skip_excuses reads another check; keep this one's answer.
+        verdict=$check_verdict
+    fi
     case "$verdict" in
         completed:success) ;;
         missing)
-            if [ "$check" != gate ] && [ -n "$excuse" ] && [ -z "$rust_skipped" ]; then
-                read_verdict "$RUST_SKIP_CHECK"
-                rust_skipped=$verdict
-                [ "$suite" = "$gate_suite" ] || rust_skipped="$verdict from another run"
-            fi
-            if [ "$check" != gate ] && [ "$rust_skipped" = completed:success ]; then
-                continue
-            fi
             echo "No $check run has a verdict at $sha." >&2
             exit 1
             ;;
