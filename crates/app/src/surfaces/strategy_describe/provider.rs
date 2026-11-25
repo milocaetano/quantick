@@ -1,13 +1,16 @@
 //! The credential and HTTP client live on one worker with bounded mailboxes.
-use quantick_ui_model::strategy_describe::{Context, Reply, Request, Turn};
+use quantick_ui_model::strategy_describe::{
+    Context, Reply, Request,
+    conversation::{Completion, Provider},
+    credential::Credential,
+    protocol,
+};
 use serde::Deserialize;
 use std::{
     sync::Arc,
     sync::mpsc::{Receiver, SyncSender, sync_channel},
     time::Duration,
 };
-
-use super::protocol;
 
 #[derive(Deserialize, Default)]
 #[serde(default, deny_unknown_fields)]
@@ -18,113 +21,6 @@ pub(crate) struct Settings {
     endpoint: Option<String>,
     key: Option<String>,
     key_env: Option<String>,
-}
-
-/// A short local-provider token can also occur inside an ordinary word.
-fn includes_credential(text: &str, key: &str) -> bool {
-    const MIN_DISTINCT_TOKEN_BYTES: usize = 8;
-    if key.len() >= MIN_DISTINCT_TOKEN_BYTES {
-        return text.contains(key);
-    }
-    text.match_indices(key).any(|(at, _)| {
-        let before = text[..at].chars().next_back();
-        let after = text[at + key.len()..].chars().next();
-        !before.is_some_and(char::is_alphanumeric) && !after.is_some_and(char::is_alphanumeric)
-    })
-}
-
-struct Credential(Box<str>);
-
-impl Credential {
-    fn validate(&self, text: &str) -> Result<(), &'static str> {
-        if includes_credential(text, &self.0) {
-            return Err("Input contains the provider credential");
-        }
-        Ok(())
-    }
-
-    fn chart(&self, context: &Context) -> Result<(), &'static str> {
-        for text in [&context.feed, &context.symbol, &context.bars]
-            .into_iter()
-            .chain(&context.indicators)
-            .chain(&context.drawings)
-            .chain(&context.availability)
-        {
-            self.validate(text)?;
-        }
-        Ok(())
-    }
-
-    fn request(&self, request: &Request) -> Result<(), &'static str> {
-        self.chart(&request.context)?;
-        for turn in &request.transcript {
-            let (Turn::Trader(text) | Turn::Assistant(text)) = turn;
-            self.validate(text)?;
-        }
-        if let Some((source, diagnostics)) = &request.repair {
-            self.validate(source)?;
-            for diagnostic in diagnostics {
-                self.validate(&diagnostic.code)?;
-                self.validate(&diagnostic.message)?;
-            }
-        }
-        Ok(())
-    }
-}
-
-type Completion = (u64, Result<Reply, String>);
-
-#[cfg(test)]
-#[test]
-fn credential_echo_is_distinct_from_an_incidental_letter() {
-    assert!(!includes_credential("exit on reversal", "x"));
-    assert!(includes_credential("Bearer x.", "x"));
-    assert!(includes_credential(
-        "credential: (sk-test-only)",
-        "sk-test-only"
-    ));
-}
-
-#[cfg(test)]
-#[test]
-fn outbound_repair_and_chart_fields_are_checked_before_serialization() {
-    use quantick_session::script_strategies::ScriptPlacement;
-    use quantick_ui_model::strategy_describe::Diagnostic;
-    let credential = Credential(r#"fixture-"quoted"-secret"#.into());
-    let context = Context {
-        workspace: quantick_workspace::lifetime::WorkspaceId(1),
-        tab: 3,
-        pane: 7,
-        feed: "test".into(),
-        symbol: "TEST".into(),
-        bars: "renko:3".into(),
-        placement: ScriptPlacement::Anywhere,
-        indicators: vec![],
-        drawings: vec![],
-        availability: vec![],
-        history: vec![],
-    };
-    let mut request = Request {
-        revision: 1,
-        context: Arc::new(context),
-        transcript: vec![],
-        repair: None,
-    };
-    assert!(credential.request(&request).is_ok());
-    Arc::make_mut(&mut request.context)
-        .indicators
-        .push(credential.0.to_string());
-    assert!(credential.request(&request).is_err());
-    Arc::make_mut(&mut request.context).indicators.clear();
-    request.repair = Some((
-        "source".into(),
-        vec![Diagnostic {
-            line: Some(1),
-            code: "PINE_TEST".into(),
-            message: credential.0.to_string(),
-        }],
-    ));
-    assert!(credential.request(&request).is_err());
 }
 
 #[derive(Default)]
@@ -176,7 +72,7 @@ impl Worker {
             reqwest::header::HeaderValue::from_str(&format!("Bearer {}", key.trim()))
                 .map_err(|_| "Invalid strategy provider credential")?;
         authorization.set_sensitive(true);
-        let credential = Arc::new(Credential(key.trim().into()));
+        let credential = Arc::new(Credential::new(key.trim()));
         credential.validate(&settings.model)?;
         let transport = Arc::clone(&credential);
         let runtime = tokio::runtime::Builder::new_current_thread()
@@ -271,23 +167,27 @@ impl Worker {
     pub(crate) fn available(&self) -> bool {
         self.mailbox.is_some()
     }
-    pub(crate) fn validate_input(&self, text: &str) -> Result<(), &'static str> {
+}
+
+impl Provider for Worker {
+    fn available(&self) -> bool {
+        Worker::available(self)
+    }
+    fn validate_input(&self, text: &str) -> Result<(), &'static str> {
         self.mailbox
             .as_ref()
             .ok_or("Strategy description is unavailable")?
             .credential
             .validate(text)
     }
-
-    pub(crate) fn validate_chart(&self, context: &Context) -> Result<(), &'static str> {
+    fn validate_chart(&self, context: &Context) -> Result<(), &'static str> {
         self.mailbox
             .as_ref()
             .ok_or("Strategy description is unavailable")?
             .credential
             .chart(context)
     }
-
-    pub(crate) fn submit(&mut self, request: Request) -> Result<(), String> {
+    fn submit(&mut self, request: Request) -> Result<(), String> {
         let mailbox = self
             .mailbox
             .as_ref()
@@ -298,12 +198,12 @@ impl Worker {
             .try_send(request)
             .map_err(|_| "Strategy provider is busy or disconnected".into())
     }
-    pub(crate) fn invalidate(&self) {
+    fn invalidate(&self) {
         if let Some(mailbox) = &self.mailbox {
             mailbox.current.send_replace(None);
         }
     }
-    pub(crate) fn poll(&mut self) -> Option<Completion> {
+    fn poll(&mut self) -> Option<Completion> {
         self.mailbox.as_ref()?.receive.try_recv().ok()
     }
 }
