@@ -56,6 +56,8 @@ const TAG_HIT_HALF_HEIGHT_PX: f32 = 9.0;
 const PROJECTED_DASH_PX: f32 = 5.0;
 const PROJECTED_GAP_PX: f32 = 4.0;
 const PRESET_FORMAT_VERSION: u32 = 1;
+/// Relative difference under which two anchors' price shifts are one move.
+const RIGID_TOLERANCE: f64 = 1e-9;
 
 pub(super) const POSITION_FAMILY: ToolFamily = ToolFamily {
     id: "position",
@@ -659,8 +661,14 @@ fn reanchored(
     let ([entry, edge, ..], [moved_entry, moved_edge, ..]) = (before, after) else {
         return None;
     };
-    let shift = moved_entry.price - entry.price;
-    if shift == moved_edge.price - edge.price {
+    // Rounding makes `(price + d) - price` differ between two prices moved
+    // by the same `d`, so a rigid move is equal shifts within that noise.
+    let (entry_shift, edge_shift) = (
+        moved_entry.price - entry.price,
+        moved_edge.price - edge.price,
+    );
+    let scale = entry.price.abs().max(edge.price.abs()).max(1.0);
+    if (entry_shift - edge_shift).abs() <= RIGID_TOLERANCE * scale {
         return None;
     }
     let held = legs(

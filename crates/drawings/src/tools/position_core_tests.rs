@@ -404,3 +404,18 @@ fn a_pinned_leg_reserves_its_own_reach_and_the_painted_width() {
     assert_eq!((bounds.min.y, bounds.max.y), (-100.0, 550.0));
     assert_eq!(bounds.max.x, 100.0 + MIN_WIDTH_BARS * 10.0);
 }
+
+#[test]
+fn a_rigid_move_whose_shifts_round_apart_still_carries_the_pin() {
+    let payload = PositionPayload {
+        ratio: 2.0,
+        projected_offset: Some(-4.0),
+    };
+    let before = [ChartPoint::at(10.0, 2.675), ChartPoint::at(30.0, 1.005)];
+    let after = before.map(|point| ChartPoint::at(point.bar, point.price + 0.01));
+    assert_ne!(
+        after[0].price - before[0].price,
+        after[1].price - before[1].price
+    );
+    assert!(reanchored(&payload, &before, &after, Side::Short).is_none());
+}
