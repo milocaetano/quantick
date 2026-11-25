@@ -89,8 +89,8 @@ fn an_authored_declaration_is_not_a_claim() {
 /// `Source` is closed on purpose — a registry the enum does not know about
 /// is one nothing walks — but closing it puts the variant, its name and
 /// its walk in three places, and the failure that costs is silent: a
-/// variant added and never added to `registered`, reported in the
-/// document's appendix as a source holding rows while nothing checks it.
+/// variant added and never added to `registered`, listed in the
+/// document's appendix as a source the guard walks while nothing checks it.
 /// This is the assertion that makes that failure loud.
 #[test]
 fn every_walked_source_yields_at_least_one_registration() {
