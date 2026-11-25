@@ -1,0 +1,2 @@
+# Operability consumes control's family manifest, adding the intended allowed dependency edge.
+!measure-change graph.edges +1 5c0dd7f7b25ff1ed701c7e40dde6d62da3c052dc
