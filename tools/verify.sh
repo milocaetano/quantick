@@ -81,16 +81,29 @@ if [ "$local_stages" = 1 ]; then
     fi
 fi
 
+# Jobs .github/workflows/ci.yml skips on a ready PR by design: `fast` runs on
+# drafts, `read-cost-ledger` on pushes, `rust-skip` only when `gate` skips the
+# build. Any other skipped check is not green, unless `rust-skip` passed:
+# then `gate` found nothing to build and the build jobs skip by design.
+ALTERNATE_JOBS="fast|read-cost-ledger|rust-skip"
+
+check_states() {
+    gh pr checks --json name,bucket --jq '.[] | "\(.bucket) \(.name)"' 2>>"$logs/ci.log"
+}
+
 if [ "$ci_stage" = 1 ] && [ "$failed" = 0 ]; then
     head=$(git rev-parse HEAD)
-    pr=$(gh pr view --json headRefOid,isDraft --jq '"\(.headRefOid) \(.isDraft)"' 2>"$logs/ci.log")
+    # The second field is true for a draft without the `full-ci` label, whose
+    # full CI jobs skip.
+    pr=$(gh pr view --json headRefOid,isDraft,labels \
+        --jq '"\(.headRefOid) \(.isDraft and ([.labels[].name] | index("full-ci") | not))"' 2>"$logs/ci.log")
     remote=${pr% *}
     if [ -z "$pr" ]; then
         failed=1
         report "ci: FAIL (no PR for this branch)"
     elif [ "${pr#* }" = true ]; then
         failed=1
-        report "ci: FAIL (draft PR: the full CI jobs skip on drafts; mark it ready)"
+        report "ci: FAIL (draft PR without the full-ci label: its full CI jobs skip)"
     elif [ "$remote" != "$head" ]; then
         failed=1
         report "ci: FAIL (PR head $remote is not HEAD $head; push first)"
@@ -103,12 +116,28 @@ if [ "$ci_stage" = 1 ] && [ "$failed" = 0 ]; then
             tries=$((tries + 1))
             sleep 10
         done
-        timeout "${VERIFY_CI_TIMEOUT:-3600}" gh pr checks --watch --interval 30 >>"$logs/ci.log" 2>&1
-        watched=$?
-        states=$(gh pr checks --json name,bucket --jq '.[] | "\(.bucket) \(.name)"' 2>>"$logs/ci.log")
+        # A workflow can register its checks after the first ones finish, so
+        # watch again until a finished watch sees no new check.
+        watched=0
+        seen=-1
+        rounds=0
+        total=$(check_states | grep -c . || true)
+        while [ "$total" != "$seen" ] && [ "$watched" = 0 ] && [ "$rounds" -lt 5 ]; do
+            seen=$total
+            rounds=$((rounds + 1))
+            timeout "${VERIFY_CI_TIMEOUT:-3600}" gh pr checks --watch --interval 30 >>"$logs/ci.log" 2>&1
+            watched=$?
+            [ "$watched" = 124 ] || sleep 20
+            total=$(check_states | grep -c . || true)
+        done
+        states=$(check_states)
         bad=$(printf '%s\n' "$states" | grep -E '^(fail|cancel|pending) ' || true)
-        skipped=$(printf '%s\n' "$states" | grep -E '^skipping ' | cut -d' ' -f2- | paste -sd, - || true)
-        total=$(printf '%s\n' "$states" | grep -c . || true)
+        skipped=$(printf '%s\n' "$states" | grep -E '^skipping ' | cut -d' ' -f2- || true)
+        unexpected=""
+        if ! printf '%s\n' "$states" | grep -qx 'pass rust-skip'; then
+            unexpected=$(printf '%s\n' "$skipped" | grep -vxE "$ALTERNATE_JOBS" | grep . | paste -sd, - || true)
+        fi
+        skipped=$(printf '%s\n' "$skipped" | paste -sd, -)
         if [ "$watched" = 124 ]; then
             failed=1
             report "ci: FAIL (still running after ${VERIFY_CI_TIMEOUT:-3600}s: a hung job?)"
@@ -117,8 +146,11 @@ if [ "$ci_stage" = 1 ] && [ "$failed" = 0 ]; then
             failed=1
             report "ci: FAIL at $head"
             report "${bad:-no checks reported}"
+        elif [ -n "$unexpected" ]; then
+            failed=1
+            report "ci: FAIL at $head (skipped, not green: $unexpected)"
         else
-            report "ci: pass at $head ($total checks${skipped:+; skipped: $skipped})"
+            report "ci: pass at $head ($total checks${skipped:+; skipped by design: $skipped})"
         fi
     fi
 fi
