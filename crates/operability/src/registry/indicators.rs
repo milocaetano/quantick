@@ -6,7 +6,7 @@
 use super::{ExclusionClass, Mapping, PENDING_SURFACE, Source, UiBehaviour};
 
 /// Every row this family owns.
-pub(super) const ROWS: &[UiBehaviour] = &[
+pub const ROWS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "appearance.configuration",
         title: "Apply a complete appearance configuration",

@@ -10,7 +10,7 @@ use super::{Mapping, PENDING_SURFACE, Source, UiBehaviour};
 const LAYER_SWITCH: Mapping = capability!("layers.visibility.set");
 
 /// Every row this family owns.
-pub(super) const ROWS: &[UiBehaviour] = &[
+pub const ROWS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "dock.tab.open",
         title: "Open a panel — session, trading, trades or strategies",

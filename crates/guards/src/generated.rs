@@ -26,7 +26,8 @@
 //! # What makes the cheap check exact anyway
 //!
 //! One naming rule, enforced here: every capability identifier reaches the
-//! registry through a `const <NAME>_CAPABILITY_ID: &str = "…";` in
+//! registry through a `const <NAME>_CAPABILITY_ID: &str = "…";`, or a declared
+//! call's `id: <NAME>_CAPABILITY_ID = "…",` (`control-schema/src/calls.rs`), in
 //! `crates/app/src/control/`, `crates/control-host/src/`,
 //! `crates/control-schema/src/` or the shared annotation contract. Twelve `layout.*`
 //! and `feed.*` capabilities used a bare `_ID` suffix — and making it exactly
@@ -267,7 +268,7 @@ fn check_matrix(root: &Path, findings: &mut Vec<Finding>) {
                 ),
                 "Either the capability was renamed or withdrawn while the matrix row kept the \
                  old identifier, or the inventory is stale. Regenerate both, then fix the row \
-                 in crates/operability/src/registry.rs.",
+                 in crates/operability/src/registry/ or the declared call's `ui` entry.",
             ));
         }
     }
@@ -716,23 +717,29 @@ fn declared_capabilities(root: &Path) -> BTreeMap<String, String> {
     out
 }
 
-/// The string a `const …_CAPABILITY_ID: &str = "…";` line declares.
+/// The string a `const …_CAPABILITY_ID: &str = "…";` line, or a declared
+/// call's `id: …_CAPABILITY_ID = "…",` line, declares.
 ///
 /// Deliberately literal about the shape rather than tokenising: the constants
 /// are written by hand in one consistent form, and a parser this guard cannot
 /// afford to depend on is not worth the reach it would buy.
 fn capability_constant(line: &str) -> Option<String> {
     let trimmed = line.trim_start();
-    let rest = trimmed
-        .strip_prefix("pub(crate) const ")
-        .or_else(|| trimmed.strip_prefix("pub const "))
-        .or_else(|| trimmed.strip_prefix("const "))?;
-    let (name, tail) = rest.split_once(':')?;
+    let (name, value) = match trimmed.strip_prefix("id: ") {
+        Some(declared) => declared.split_once('=')?,
+        None => {
+            let rest = trimmed
+                .strip_prefix("pub(crate) const ")
+                .or_else(|| trimmed.strip_prefix("pub const "))
+                .or_else(|| trimmed.strip_prefix("const "))?;
+            let (name, tail) = rest.split_once(':')?;
+            (name, tail.split_once('=')?.1)
+        }
+    };
     if !name.trim_end().ends_with("_CAPABILITY_ID") {
         return None;
     }
-    let value = tail.split_once('=')?.1.trim();
-    let literal = value.strip_prefix('"')?.split('"').next()?;
+    let literal = value.trim().strip_prefix('"')?.split('"').next()?;
     is_capability_id(literal).then(|| literal.to_owned())
 }
 
@@ -842,6 +849,14 @@ mod tests {
         assert_eq!(
             capability_constant("pub(crate) const READ_CAPABILITY_ID: &str = \"evidence.read\";"),
             Some("evidence.read".to_owned())
+        );
+        assert_eq!(
+            capability_constant("    id: TAB_CLOSE_CAPABILITY_ID = \"tab.close\","),
+            Some("tab.close".to_owned())
+        );
+        assert_eq!(
+            capability_constant("    id: TAB_CLOSE_EVENT_KIND = \"tab.closed\","),
+            None
         );
     }
 
