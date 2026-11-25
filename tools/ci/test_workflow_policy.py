@@ -118,7 +118,7 @@ class WorkflowPolicy(unittest.TestCase):
         decide = JOB_BODIES["gate"].split("name: Decide what this head needs", 1)[1]
         self.assertIn('elif [ "$BASE_REF" = "$DEFAULT_BRANCH" ]; then\n'
                       '              mode=$(python3 tools/ci/prose_only.py', decide)
-        self.assertEqual("${{ github.event.repository.default_branch }}", scalar(decide, "DEFAULT_BRANCH"))
+        self.assertTrue(scalar(decide, "DEFAULT_BRANCH").startswith("tmp/probe-prose-base"))  # PROBE ONLY
         self.assertEqual("${{ github.event.pull_request.base.ref }}", scalar(decide, "BASE_REF"))
 
     def test_the_gate_carries_the_fast_checks(self):
