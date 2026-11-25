@@ -1,0 +1,33 @@
+{
+  "$defs": {
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Set the context column's share of the canvas.",
+  "properties": {
+    "fraction": {
+      "description": "The share, 0..1. Held inside the same floor a drag is held to, so a\ncall cannot reach a width a hand could not.",
+      "format": "double",
+      "type": "number"
+    },
+    "tab_id": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/WireU64"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "The tab's id, as `observe.workspace` reports it."
+    }
+  },
+  "required": [
+    "fraction"
+  ],
+  "title": "ResizeInput",
+  "type": "object"
+}

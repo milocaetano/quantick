@@ -1,0 +1,38 @@
+{
+  "$defs": {
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Set one context chart's timeframe.",
+  "properties": {
+    "interval_ms": {
+      "description": "The interval in milliseconds.",
+      "format": "int64",
+      "type": "integer"
+    },
+    "pane": {
+      "$ref": "#/$defs/WireU64",
+      "description": "The pane's address. `0` is the flow pane, which the toolbar governs."
+    },
+    "tab_id": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/WireU64"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "The tab's id, as `observe.workspace` reports it."
+    }
+  },
+  "required": [
+    "pane",
+    "interval_ms"
+  ],
+  "title": "IntervalInput",
+  "type": "object"
+}

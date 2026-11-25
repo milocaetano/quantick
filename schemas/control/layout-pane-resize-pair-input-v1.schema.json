@@ -1,0 +1,45 @@
+{
+  "$defs": {
+    "CanonicalDecimal": {
+      "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+      "type": "string"
+    },
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Which tab a call is about. Omitted means the one the trader is looking at —\nthe same default the chrome's own commands take.",
+  "properties": {
+    "fraction": {
+      "$ref": "#/$defs/CanonicalDecimal",
+      "description": "Divider position in the whole context column, top=0 and bottom=1.\nAt most six decimal places. The applied position obeys both neighbor floors."
+    },
+    "lower_pane_id": {
+      "$ref": "#/$defs/WireU64"
+    },
+    "tab_id": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/WireU64"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "The tab's id, as `observe.workspace` reports it."
+    },
+    "upper_pane_id": {
+      "$ref": "#/$defs/WireU64",
+      "description": "Stable pane IDs from workspace.summary, in upper/lower order."
+    }
+  },
+  "required": [
+    "upper_pane_id",
+    "lower_pane_id",
+    "fraction"
+  ],
+  "title": "ResizePairInput",
+  "type": "object"
+}

@@ -1,0 +1,74 @@
+{
+  "$defs": {
+    "ActionEntryKind": {
+      "description": "How an entry meets the market, stated rather than inferred.\n\nThe chart's aim infers the kind from where the pointer sits relative to\nthe last price. An action has no pointer, and an action whose meaning\ndepends on the market at the instant it lands is one nobody can replay —\nso here the caller says which order they mean, and a kind that cannot\nrest at the given price is refused with the venue's own words.",
+      "oneOf": [
+        {
+          "const": "market",
+          "description": "Fill at the next print, whatever it is. Takes no price.",
+          "type": "string"
+        },
+        {
+          "const": "limit",
+          "description": "Rest at `price` until the market trades at or through it.",
+          "type": "string"
+        },
+        {
+          "const": "stop",
+          "description": "Arm at `price` until the market trades at or through it.",
+          "type": "string"
+        }
+      ]
+    },
+    "ActionSide": {
+      "description": "Which way the order goes.",
+      "enum": [
+        "buy",
+        "sell"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "kind": {
+      "$ref": "#/$defs/ActionEntryKind"
+    },
+    "price": {
+      "description": "Limit price or stop trigger, as a decimal string. Required for\n`limit` and `stop`; refused for `market`, which has no price of its\nown by definition.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "quantity": {
+      "description": "Size, as a decimal string.",
+      "type": "string"
+    },
+    "side": {
+      "$ref": "#/$defs/ActionSide"
+    },
+    "stop_loss": {
+      "description": "Protective stop to attach to the fill, as a decimal string.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "take_profit": {
+      "description": "Protective target to attach to the fill, as a decimal string.",
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "side",
+    "kind",
+    "quantity"
+  ],
+  "title": "PlaceInput",
+  "type": "object"
+}
