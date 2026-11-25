@@ -77,17 +77,11 @@ impl Paint<'_, '_> {
                 if self.draw_report_filters(ui) {
                     self.update(Intent::ReloadReport);
                 }
-                self.ensure_report_view(tz, env.pnl);
-                if let Some(view) = self.report_view() {
-                    ui.label(
-                        egui::RichText::new(view.scope_line())
-                            .color(theme::get(ui.ctx()).text_support()),
-                    );
-                }
-                if let Some(scope) = self.report_scope() {
+                self.draw_report_calendar(ui, tz);
+                if let Some(scope) = self.report_scope_label() {
                     let reset = ui
                         .horizontal(|ui| {
-                            ui.label(&scope.title);
+                            ui.label(scope);
                             ui.button("Back to ordinary report").clicked()
                         })
                         .inner;
@@ -95,12 +89,13 @@ impl Paint<'_, '_> {
                         self.update(Intent::ClearFilters(env.symbol.to_owned()));
                     }
                 }
-                self.draw_report_calendar(ui, tz);
-                // The rows above can retire the view — a picked day, a
-                // pill, a cleared range. Re-cutting it here rather than
-                // next frame is what keeps a click from flashing the empty
-                // state and collapsing the window for one frame.
                 self.ensure_report_view(tz, env.pnl);
+                if let Some(view) = self.report_view() {
+                    ui.label(
+                        egui::RichText::new(view.scope_line())
+                            .color(theme::get(ui.ctx()).text_support()),
+                    );
+                }
                 ui.separator();
                 let list_open = self.report_list_open();
                 let calendar_open = self.calendar().open;
@@ -250,21 +245,17 @@ impl Paint<'_, '_> {
                     .color(palette.text_muted())
                     .small(),
             );
-            // A picked calendar range takes the cut over, so no pill may
-            // keep looking armed: a lit "Today" beside a date chip reads as
-            // the filter that produced the numbers, and it is not.
-            let ranged = self.calendar().selection.range().is_some();
+            let ranged = self.applied_dates().is_some();
             for period in ReportPeriod::PILLS {
                 let on = !ranged && self.report_period() == period;
-                let hover = if ranged {
-                    "standing down while a date range is picked - clear the dates to use the \
-                     period pills again"
-                } else {
-                    "measured back from the newest saved trade in scope, not the wall clock"
-                };
-                if pill_toggle(ui, period.label(), on, hover).clicked() && !on {
-                    // Reaching for a pill is a decision to stop filtering
-                    // by date, so it says so rather than doing nothing.
+                if pill_toggle(
+                    ui,
+                    period.label(),
+                    on,
+                    "Apply a period from the newest saved close in scope",
+                )
+                .clicked()
+                {
                     self.update(Intent::Period(period));
                 }
             }
@@ -306,88 +297,72 @@ impl Paint<'_, '_> {
         reload
     }
 
-    /// The calendar row: a toggle that names what is picked, and - when
-    /// expanded - the month grid itself. Collapsed, the report keeps the
-    /// layout it always had; expanded it answers "which days did I trade,
-    /// and what happened on the 12th" without a text field.
     fn draw_report_calendar(&mut self, ui: &mut egui::Ui, tz: TzOffset) {
-        let palette = theme::get(ui.ctx());
+        ui.strong("Report dates");
+        let mut draft = self.date_draft().clone();
         ui.horizontal_wrapped(|ui| {
-            let picked = self.calendar().selection.range();
-            let label = match picked {
-                Some(range) => format!("{} {}", icons::CALENDAR_BLANK, range.label()),
-                None => format!("{} Dates", icons::CALENDAR_BLANK),
-            };
-            if pill_toggle(
-                ui,
-                &label,
-                self.calendar().open || picked.is_some(),
-                "pick a day, or click a second day for a range - highlighted days hold trades",
-            )
-            .clicked()
+            for (label, text) in [
+                ("Start date", &mut draft.start),
+                ("End date", &mut draft.end),
+            ] {
+                ui.vertical(|ui| {
+                    let id = egui::Id::new(("report date", label));
+                    let label = ui.label(label);
+                    ui.add(
+                        egui::TextEdit::singleline(text)
+                            .id(id)
+                            .hint_text("YYYY-MM-DD")
+                            .char_limit(10)
+                            .desired_width(theme::get(ui.ctx()).layout(100.0)),
+                    )
+                    .labelled_by(label.id);
+                });
+            }
+            if &draft != self.date_draft() {
+                self.update(Intent::Draft(draft));
+            }
+            let valid = self.date_draft().range().is_ok();
+            let mut calendar = self.calendar();
+            if ui
+                .add_enabled(valid, egui::Button::new("Generate report"))
+                .clicked()
             {
-                let mut calendar = self.calendar();
-                calendar.open = !calendar.open;
+                self.update(Intent::GenerateDates);
+            }
+            if ui.toggle_value(&mut calendar.open, "Calendar").changed() {
                 self.update(Intent::Calendar(calendar));
             }
-            if let Some(range) = picked {
-                ui.label(
-                    egui::RichText::new(format!(
-                        "{} day(s) · {} trade(s)",
-                        range.days(),
-                        self.report_view()
-                            .as_ref()
-                            .map_or(0, |view| view.rows.len()),
-                    ))
-                    .color(palette.text_muted())
-                    .small(),
-                );
-                if ui
-                    .small_button(icons::X)
-                    .on_hover_text("clear the date filter and go back to the period pills")
-                    .clicked()
-                {
-                    self.update(Intent::Dates(DaySelection::None));
-                }
-            } else {
-                ui.label(
-                    egui::RichText::new(self.report_days().span_label())
-                        .color(palette.text_muted())
-                        .small(),
-                );
+            if ui
+                .button("Clear dates")
+                .on_hover_text(format!("Restore {}", self.report_period().phrase()))
+                .clicked()
+            {
+                self.update(Intent::Dates(DaySelection::None));
             }
         });
-        if !self.calendar().open {
-            return;
+        if let Some(feedback) = self.date_feedback() {
+            ui.label(feedback);
         }
-        // The grid is drawn from a cached day index, so an open calendar
-        // costs a fixed 42 cells per frame however long the history is.
         let mut calendar = self.calendar();
-        let _action = egui::ScrollArea::both()
-            .id_salt("report_calendar_grid")
-            .max_height(ui.available_height().max(0.0) * 0.45)
-            .show(ui, |ui| {
-                crate::paper_calendar::draw_month(
-                    ui,
-                    self.report_days(),
-                    &mut calendar,
-                    egui::vec2(CALENDAR_CELL_W_PX, CALENDAR_CELL_H_PX),
-                    // Only reached when nothing on disk names a month. The
-                    // calendar module is deliberately clock-free, so the host —
-                    // which may read a clock — says where "no history at all"
-                    // should open.
-                    today(tz),
-                )
-            })
-            .inner;
-        if (calendar.month, calendar.selection, calendar.open)
-            != (
-                self.calendar().month,
-                self.calendar().selection,
-                self.calendar().open,
-            )
-        {
-            self.update(Intent::Calendar(calendar));
+        if calendar.open {
+            let day = egui::ScrollArea::horizontal()
+                .id_salt("report_calendar_grid")
+                .show(ui, |ui| {
+                    crate::paper_calendar::draw_month(
+                        ui,
+                        self.report_days(),
+                        &mut calendar,
+                        egui::vec2(CALENDAR_CELL_W_PX, CALENDAR_CELL_H_PX),
+                        today(tz),
+                    )
+                })
+                .inner;
+            if calendar.month != self.calendar().month {
+                self.update(Intent::Calendar(calendar));
+            }
+            if let Some(day) = day {
+                self.update(Intent::PickDate(day));
+            }
         }
     }
 }

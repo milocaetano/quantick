@@ -164,6 +164,37 @@ impl DaySelection {
     }
 }
 
+/// Editable ISO endpoints. Only a validated range may reach the report cut.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct DateDraft {
+    pub start: String,
+    pub end: String,
+}
+
+impl DateDraft {
+    pub fn from_selection(selection: DaySelection) -> Self {
+        selection.range().map_or_else(Self::default, |range| Self {
+            start: range.start.iso(),
+            end: range.end.iso(),
+        })
+    }
+
+    pub fn range(&self) -> Result<DateRange, &'static str> {
+        fn endpoint(text: &str) -> Option<CivilDate> {
+            (text.len() == 10)
+                .then(|| parse_iso_date(text))
+                .flatten()
+                .filter(|day| day.iso() == text)
+        }
+        let start = endpoint(&self.start).ok_or("Enter a valid Start date (YYYY-MM-DD).")?;
+        let end = endpoint(&self.end).ok_or("Enter a valid End date (YYYY-MM-DD).")?;
+        if start > end {
+            return Err("End date must be on or after Start date.");
+        }
+        Ok(DateRange::new(start, end))
+    }
+}
+
 /// Everything the calendar widget remembers between frames: which month is
 /// on screen, what is picked, and whether the panel is expanded at all.
 #[derive(Debug, Clone, Copy, Default)]

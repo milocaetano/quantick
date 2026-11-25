@@ -17,8 +17,19 @@ pub struct ReportSnapshot<'a> {
     pub report: &'a PerformanceReport,
 }
 
+/// Edits available to report hosts. Inspection passes no change.
+pub enum ReportChange {
+    Sources(SourceSelection),
+    Draft(super::calendar::DateDraft),
+    Generate,
+    ClearDates,
+    Period(ReportPeriod),
+}
+
 /// Owned inspection of the current report without exposing its trade rows.
 pub struct ReportReadout {
+    pub draft: super::calendar::DateDraft,
+    pub applied: Option<DateRange>,
     pub open: bool,
     pub loaded: bool,
     pub source: SourceSelection,

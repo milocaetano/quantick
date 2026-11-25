@@ -56,6 +56,88 @@
     },
     {
       "additionalProperties": false,
+      "properties": {
+        "action": {
+          "const": "inspect",
+          "type": "string"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "description": "Stage both fields, including a partial value while editing.",
+      "properties": {
+        "action": {
+          "const": "draft_dates",
+          "type": "string"
+        },
+        "end": {
+          "maxLength": 10,
+          "type": "string"
+        },
+        "start": {
+          "maxLength": 10,
+          "type": "string"
+        }
+      },
+      "required": [
+        "action",
+        "start",
+        "end"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "const": "generate",
+          "type": "string"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "const": "clear_dates",
+          "type": "string"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "const": "period",
+          "type": "string"
+        },
+        "period": {
+          "maxLength": 16,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "action",
+        "period"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
       "description": "Set the union of sources, or omit sources to inspect the current report.",
       "properties": {
         "action": {

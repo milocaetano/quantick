@@ -9,9 +9,13 @@ use quantick_control_schema::session_reports::{
     EVENT_KIND, ReportInput, ReportOrigin as WireOrigin, ReportOutput, ReportResult, descriptor,
 };
 use quantick_paper::report::{
+    ReportPeriod,
+    calendar::DateDraft,
+    parse_period,
     scope::{self, ReportOrigin, ReportRequest},
     session_edit::SessionEditError,
     sessions::SessionKey,
+    snapshot::ReportChange,
 };
 use serde_json::{Value, json};
 
@@ -46,7 +50,10 @@ fn open<H: PaperHost + ?Sized, A: NotifyAccess>(
         error.context.details = Some(json!({"code": "no_ledger"}));
         error
     })?;
-    let inspect_only = matches!(input, ReportInput::Sources { sources: None });
+    let inspect_only = matches!(
+        input,
+        ReportInput::Sources { sources: None } | ReportInput::Inspect {}
+    );
     let output = match input {
         ReportInput::Sources { sources } => {
             if sources.as_ref().is_some_and(|sources| sources.len() > 5) {
@@ -62,28 +69,43 @@ fn open<H: PaperHost + ?Sized, A: NotifyAccess>(
                     },
                 )
             });
-            let view = desk.report_sources(sources, tz);
-            use quantick_control_schema::journal_sessions::JournalSourceFilter as WireSource;
-            let sources = [WireSource::Broker, WireSource::Real, WireSource::Replay]
-                .into_iter()
-                .filter(|source| {
-                    view.source
-                        .contains(crate::journal_sessions::source_filter(*source))
-                })
-                .collect();
-            ReportOutput::Sources {
-                action: "sources".to_owned(),
-                sources,
-                open: view.open,
-                loaded: view.loaded,
-                symbol: view.symbol,
-                window: view.window,
-                scope: view.scope,
-                trade_count: WireU64::new(view.trade_count as u64),
-                unreadable_files: WireU64::new(view.unreadable_files as u64),
-                skipped_rows: WireU64::new(view.skipped_rows as u64),
-                net_points: canonical_decimal(view.net_points),
+            report(desk, "sources", sources.map(ReportChange::Sources), tz)?
+        }
+        ReportInput::Inspect {} => report(desk, "inspect", None, tz)?,
+        ReportInput::DraftDates { start, end } => {
+            if start.chars().count() > 10 || end.chars().count() > 10 {
+                return Err(invalid(
+                    "invalid_dates",
+                    "Date fields allow up to ten characters.",
+                ));
             }
+            report(
+                desk,
+                "draft_dates",
+                Some(ReportChange::Draft(DateDraft { start, end })),
+                tz,
+            )?
+        }
+        ReportInput::Generate {} => report(desk, "generate", Some(ReportChange::Generate), tz)?,
+        ReportInput::ClearDates {} => {
+            report(desk, "clear_dates", Some(ReportChange::ClearDates), tz)?
+        }
+        ReportInput::Period { period } => {
+            let period = (period.len() <= 16)
+                .then(|| {
+                    ReportPeriod::PILLS
+                        .into_iter()
+                        .find(|preset| preset.label().eq_ignore_ascii_case(&period))
+                        .or_else(|| parse_period(&period).map(ReportPeriod::Custom))
+                })
+                .flatten()
+                .ok_or_else(|| {
+                    invalid(
+                        "invalid_period",
+                        "Choose a report preset or a positive duration.",
+                    )
+                })?;
+            report(desk, "period", Some(ReportChange::Period(period)), tz)?
         }
         ReportInput::Ordinary {} => {
             desk.reset_report();
@@ -133,6 +155,50 @@ fn open<H: PaperHost + ?Sized, A: NotifyAccess>(
         ));
     }
     Ok(result)
+}
+
+fn invalid(code: &str, message: &str) -> ControlError {
+    let mut error = ControlError::invalid_request(message);
+    error.context.details = Some(json!({ "code": code }));
+    error
+}
+
+fn report(
+    desk: &mut dyn crate::trade::TradeDesk,
+    action: &str,
+    change: Option<ReportChange>,
+    tz: quantick_civil::TzOffset,
+) -> Result<ReportOutput, ControlError> {
+    let view = desk
+        .report_change(change, tz)
+        .map_err(|error| invalid("invalid_dates", error))?;
+    use quantick_control_schema::journal_sessions::JournalSourceFilter as WireSource;
+    let sources = [WireSource::Broker, WireSource::Real, WireSource::Replay]
+        .into_iter()
+        .filter(|source| {
+            view.source
+                .contains(crate::journal_sessions::source_filter(*source))
+        })
+        .collect();
+    Ok(ReportOutput::Sources {
+        action: action.to_owned(),
+        validation_error: view.draft.range().err().map(str::to_owned),
+        draft_start: view.draft.start,
+        draft_end: view.draft.end,
+        applied_start: view.applied.map(|range| range.start.iso()),
+        applied_end: view.applied.map(|range| range.end.iso()),
+        timezone: tz.label(),
+        sources,
+        open: view.open,
+        loaded: view.loaded,
+        symbol: view.symbol,
+        window: view.window,
+        scope: view.scope,
+        trade_count: WireU64::new(view.trade_count as u64),
+        unreadable_files: WireU64::new(view.unreadable_files as u64),
+        skipped_rows: WireU64::new(view.skipped_rows as u64),
+        net_points: canonical_decimal(view.net_points),
+    })
 }
 
 fn key(session: String) -> Result<SessionKey, ControlError> {
