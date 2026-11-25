@@ -17,11 +17,11 @@
 use eframe::egui;
 use smallvec::SmallVec;
 
+use crate::canvas_layout::MAX_CANVAS_PANES;
 /// Only the tests below allocate pane ids directly; the panes a layout
 /// change adds now take theirs in [`layout`].
 #[cfg(test)]
 use crate::canvas_layout::PaneIdAllocator;
-use crate::canvas_layout::{MAX_CANVAS_PANES, MAX_CONTEXT_PANES};
 use crate::config::{AppConfig, FeedCapabilities};
 use crate::deal_recording::DealRecorder;
 use crate::loading::{LoadingTask, LoadingTracker};
@@ -142,12 +142,6 @@ pub struct Tab {
     // crate::loading) while the tab is on screen.
     pub loading: LoadingTracker,
 
-    /// Paper trading for this market: the deterministic simulator plus its
-    /// journal, chart layer, dock tab and report.
-    ///
-    /// Per tab, because a simulated position belongs to a tape. Two tabs on
-    /// two markets hold two independent positions, and a position can never
-    /// be marked against prints it was not opened against — the invariant
     /// Which pane the order-entry gesture belonged to last frame.
     ///
     /// Only consulted while a paper drag is in progress: the pointer may
@@ -180,8 +174,8 @@ pub struct Tab {
     /// or not, which is what keeps them in step. The cost is the market's
     /// trades retained once per pane: one tape, N `ChartState`s, and still
     /// only one bar-building path. `MAX_CONTEXT_PANES` is what bounds that
-    /// cost.
-    pub time_panes: SmallVec<[ChartPane; MAX_CONTEXT_PANES]>,
+    /// cost. On the heap, never inline: 8 inline panes overflowed the stack.
+    pub time_panes: Vec<ChartPane>,
     /// The strategies armed on the panes' drawings and the alarm sounds
     /// they raised, walked through each live print; the app plays the
     /// sounds through the [`AlertSink`](crate::audio::AlertSink) port.
@@ -203,7 +197,7 @@ pub struct Tab {
     #[cfg(test)]
     canvas_divider: Option<egui::Rect>,
     #[cfg(test)]
-    context_dividers: SmallVec<[egui::Rect; MAX_CONTEXT_PANES]>,
+    context_dividers: SmallVec<[egui::Rect; crate::canvas_layout::MAX_CONTEXT_PANES]>,
     #[cfg(test)]
     collapsed_rail: Option<egui::Rect>,
 }
@@ -254,7 +248,7 @@ impl Tab {
             paper_drag_pane: None,
             flow_pane: ChartPane::flow(flow_pane_id, spec, symbol.clone()),
             chip_label: String::new(),
-            time_panes: SmallVec::new(),
+            time_panes: Vec::new(),
             market: Default::default(),
             alarm_labels: Default::default(),
             canvas: layout::TabCanvas::default(),
