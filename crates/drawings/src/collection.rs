@@ -207,6 +207,15 @@ impl<T: Clone + PartialEq> Drawings<T> {
         self.gesture_baseline.is_some()
     }
 
+    /// Whether changing the pane's layout would interrupt a drawing edit.
+    /// The shell supplies only the native drag state; drafts and gestures live here.
+    #[must_use]
+    pub fn layout_facts(&self, dragging: bool) -> quantick_workspace::session::PaneFacts {
+        quantick_workspace::session::PaneFacts {
+            gesture_in_flight: self.in_gesture() || self.draft().is_some() || dragging,
+        }
+    }
+
     /// Start coalescing: the next [`Self::commit_gesture`] records everything
     /// mutated in between as a single undo entry. Idempotent within a gesture.
     pub fn begin_gesture(&mut self) {

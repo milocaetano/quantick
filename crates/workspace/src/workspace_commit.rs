@@ -46,6 +46,7 @@ pub enum DocumentEdit {
 /// let mut session = WorkspaceCommitSession::default();
 /// session.bookmarks().clear();
 /// ```
+#[derive(Default)]
 pub struct WorkspaceCommitSession {
     save_on_exit: bool,
     favorites_are_staged: bool,
@@ -54,20 +55,6 @@ pub struct WorkspaceCommitSession {
     recent: Vec<String>,
     window_size: Option<[f32; 2]>,
     inspector_dirty: bool,
-}
-
-impl Default for WorkspaceCommitSession {
-    fn default() -> Self {
-        Self {
-            save_on_exit: true,
-            favorites_are_staged: false,
-            bookmarks: vec![],
-            saved: false,
-            recent: vec![],
-            window_size: None,
-            inspector_dirty: false,
-        }
-    }
 }
 
 impl WorkspaceCommitSession {
@@ -153,9 +140,17 @@ impl WorkspaceCommitSession {
             self.saved |= written;
         }
     }
-    pub fn reset_keeps(&self, has_favorites: bool, has_stored_replay_pick: bool) -> bool {
+    /// Reset removes an otherwise empty file. Enabled save preferences must
+    /// remain explicit because a missing file defaults both choices to false.
+    pub fn reset_keeps(
+        &self,
+        has_favorites: bool,
+        has_stored_replay_pick: bool,
+        configuration_autosave: bool,
+    ) -> bool {
         !self.bookmarks.is_empty()
-            || !self.save_on_exit
+            || self.save_on_exit
+            || configuration_autosave
             || has_favorites
             || !self.recent.is_empty()
             || has_stored_replay_pick
@@ -224,6 +219,29 @@ impl WorkspaceCommitSession {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reset_removes_manual_defaults_but_preserves_enabled_save_preferences() {
+        let mut session = WorkspaceCommitSession::default();
+        assert!(!session.reset_keeps(false, false, false));
+        assert!(session.reset_keeps(false, false, true));
+        session.set_save_on_exit(true);
+        assert!(session.reset_keeps(false, false, false));
+        let mut saved = Workspace::default();
+        saved.auto_save = true;
+        saved.window = Some([800.0, 600.0]);
+        let cleared = session
+            .prepare_edit(
+                Some(saved),
+                DocumentEdit::ClearStartup { favorites: vec![] },
+            )
+            .unwrap();
+        assert!(cleared.auto_save && cleared.save_on_exit);
+        assert!(cleared.window.is_none());
+        session.set_save_on_exit(false);
+        assert!(!session.reset_keeps(false, false, false));
+    }
+
     #[test]
     fn revisiting_a_file_moves_it_up_instead_of_duplicating_it() {
         let mut session = WorkspaceCommitSession::default();

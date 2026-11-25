@@ -924,6 +924,9 @@ fn drive_navigation_asking(
     let _ = ctx.run(input, |ctx| {
         egui::CentralPanel::default().show(ctx, |ui| {
             let mut chrome = PaneChrome {
+                market: &mut quantick_stores::market_settings::MarketSettingsStore::beside(
+                    std::path::Path::new("fixture.toml"),
+                ),
                 tab: 1,
                 side: PaneSide::Flow,
                 toolrail: &mut toolrail,
@@ -984,6 +987,9 @@ fn with_chrome_over<R>(
     let mut layers = quantick_layers::LayerActions::default();
     let mut drawing_chrome = crate::surfaces::drawing_chrome::new_owner();
     body(&mut PaneChrome {
+        market: &mut quantick_stores::market_settings::MarketSettingsStore::beside(
+            std::path::Path::new("fixture.toml"),
+        ),
         tab: 1,
         side: PaneSide::Flow,
         toolrail: &mut toolrail,

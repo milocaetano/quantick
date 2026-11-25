@@ -229,6 +229,7 @@ pub struct ObjectFact {
     pub shared: bool,
 }
 pub struct Facts {
+    pub drawing_autosave: bool,
     pub layers: Vec<LayerFact>,
     pub flow_opening: Option<bool>,
     /// The pane carries the order-flow settings panel its header's gear opens.
@@ -452,7 +453,7 @@ fn object_chips(object: &ObjectFact) -> Vec<ChipFact> {
         chip(
             "all timeframes",
             Some(
-                "Drawn on every chart of this market, at any timeframe, at the same moment in \
+                "Drawn on every chart of this market, workspace and layout, at any timeframe, at the same moment in \
                  market time"
                     .into(),
             ),
@@ -589,9 +590,15 @@ pub fn describe(model: &Model, facts: &Facts) -> Vec<Entry> {
     let count = facts.objects.len();
     let empty = (count == 0).then(|| "nothing is drawn on this chart".into());
     out.push(Entry::new(format!("objects ({count})"), Kind::Submenu(vec![Entry::new("", Kind::Scroll { maximum_height: 320.0, children: object_entries(&facts.objects) })]))
-        .hint("objects drawn on this chart, its all-timeframes marks included (they leave every chart)").disabled(empty.clone()));
+        .hint("objects drawn on this chart, its all-timeframes marks included (they leave every chart in this workspace and layout)").disabled(empty.clone()));
     out.push(Entry::new("clear objects\u{2026}", Kind::Button { event: Event::AskClear { count }, close: true, small: false }).trace(Trace::Clear)
-        .hint("delete every object drawn on this chart, its all-timeframes marks from every chart too, after a confirmation; Ctrl+Z brings them back").disabled(empty));
+        .hint("delete every object drawn on this chart, its all-timeframes marks from every chart in this workspace and layout too, after a confirmation; Ctrl+Z brings them back").disabled(empty));
+    out.push(Entry::new("Save drawing", Kind::Check {
+        checked: facts.drawing_autosave,
+        choice: MenuIntent::SetDrawingAutosave(!facts.drawing_autosave),
+        shortcut: None,
+    }).hint("Save drawing changes for this market, workspace and layout across timeframes. Turning this off keeps the saved drawings; turning it on saves the drawings shown now.")
+        .trace(Trace::Button("Save drawing")));
     out.push(separator());
     if let Some(price) = model.menu.price {
         out.push(Entry::new("", Kind::Trade(price)));

@@ -1,6 +1,18 @@
 //! Durable drawing addresses, independent of runtime pane-local counters.
 use serde::{Deserialize, Serialize};
 
+/// Why an existing drawing cannot become a durable alert target.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TargetResolveError {
+    Unavailable,
+    Missing,
+    Ambiguous,
+    Busy,
+    SourceChanged,
+    WriteFailed(String),
+}
+
 /// Caller-issued identities travel with the drawing, including mirrored copies.
 /// `origin` is a unique document incarnation, not a mutable layout name.
 /// Hosts must persist it before permitting a new reference. Replacing or
@@ -42,6 +54,13 @@ pub fn resolve<'a>(
 /// Stable, unambiguous market/role spelling; mirrors share this address.
 #[must_use]
 pub fn scope(key: &crate::market_settings::DrawingKey) -> String {
+    let legacy = legacy_scope(key);
+    key.scope.map_or(legacy.clone(), |scope| {
+        format!("v2:{}:{}:{legacy}", scope.workspace, scope.layout.0)
+    })
+}
+
+fn legacy_scope(key: &crate::market_settings::DrawingKey) -> String {
     let role = String::from(key.role.clone());
     format!(
         "{}:{}{}:{}{}:{}",
@@ -81,5 +100,5 @@ pub fn belongs_to(target: &DurableDrawingRef, key: &crate::market_settings::Draw
         && !target.origin.is_empty()
         && !target.incarnation.is_empty()
         && target.drawing != 0
-        && target.pane == scope(key)
+        && (target.pane == scope(key) || target.pane == legacy_scope(key))
 }

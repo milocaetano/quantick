@@ -165,6 +165,81 @@ fn desk_save_writes_the_file_and_forget_removes_it() {
 }
 
 #[test]
+fn desk_save_reports_a_layout_write_failure_and_retries() {
+    let (mut app, ctx, directory) = granted("desk-save-layout-refusal");
+    app.layout_adapter()
+        .create_layout(Some("Research"))
+        .unwrap();
+    let path = app.runtime.workspace.ui_state_path().to_owned();
+    let before = std::fs::read(&path).ok();
+    let obstacle = app
+        .runtime
+        .workspace
+        .layouts()
+        .path()
+        .with_extension("toml.tmp");
+    std::fs::create_dir(&obstacle).unwrap();
+    let mut client = connect(&directory, &options("cockpit", DESK_SCOPES));
+    let (refused, _) = unkeyed_call(&mut app, &mut client, "desk.save", json!({}));
+    assert_eq!(success_result(&refused)["written"], false);
+    assert_eq!(std::fs::read(&path).ok(), before);
+    assert!(!app.runtime.workspace.session().saved());
+    assert!(
+        !journal_kinds(&app)
+            .iter()
+            .any(|kind| kind == DESK_SAVED_EVENT_KIND)
+    );
+    std::fs::remove_dir(obstacle).unwrap();
+    let (saved, _) = unkeyed_call(&mut app, &mut client, "desk.save", json!({}));
+    assert_eq!(success_result(&saved)["written"], true);
+    assert!(app.runtime.workspace.session().saved());
+    disable_test_gateway(&mut app, &ctx);
+}
+
+#[test]
+fn immediate_drawing_preference_uses_the_just_selected_manual_configuration_policy() {
+    let (mut app, ctx, _directory) = granted("drawing-policy-without-frame");
+    let call = |app: &mut QuantickApp, capability: &str, input| {
+        app.control_action(capability, 1, crate::control::ActionOrigin::Human, input)
+            .unwrap()
+    };
+    call(&mut app, "workspace.autosave.set", json!({ "on": true }));
+    run_frame(&mut app, &ctx);
+    app.layout_adapter().flush_layouts();
+    let path = app.runtime.workspace.layouts().path().to_owned();
+    let quantick_stores::layouts::Loaded::Book(before) = quantick_stores::layouts::load(&path)
+    else {
+        panic!("the automatic configuration was saved");
+    };
+    call(&mut app, "workspace.autosave.set", json!({ "on": false }));
+    call(
+        &mut app,
+        "layout.tab.create",
+        json!({ "name": "Pending manual" }),
+    );
+    let pending = app.runtime.workspace.layouts().book().active_id();
+    let tab = app.runtime.tabs.active_id();
+    let pane = app.active_tab().focused_pane().id;
+    let answer = call(
+        &mut app,
+        "chart.drawings.autosave.set",
+        json!({ "tab_id": tab.to_string(), "pane_id": pane.to_string(), "on": false }),
+    );
+    assert_eq!(answer["on"], false);
+    let quantick_stores::layouts::Loaded::Book(after) = quantick_stores::layouts::load(&path)
+    else {
+        panic!("the reserved configuration is readable");
+    };
+    assert!(
+        after.get(pending).is_none(),
+        "the drawing preference must not save the pending layout"
+    );
+    assert_eq!(after.layouts(), before.layouts());
+    assert_eq!(after.active_id(), before.active_id());
+    disable_test_gateway(&mut app, &ctx);
+}
+
+#[test]
 fn reopen_on_launch_moves_the_choice_writes_it_and_a_repeat_changes_nothing() {
     const CAPABILITY: &str = "desk.reopen_on_launch.set";
     let (mut app, ctx, directory) = granted("desk-reopen");

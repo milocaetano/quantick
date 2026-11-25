@@ -190,9 +190,14 @@ impl<'a> DrawingAccess<'a> {
     ) {
         chrome.sync_content_editing(self.tabs);
     }
+    pub(super) fn paste_ready(&self) -> bool {
+        self.tabs[self.tabs.active_index()]
+            .focused_pane()
+            .layout
+            .drawing_scope_ready()
+    }
     pub(super) fn paste(&mut self, drawing: &drawings::Drawing, offset: f32) {
-        let active = self.tabs.active_index();
-        let tab = self.tabs.runtime_mut(active);
+        let tab = self.tab_mut();
         let focused = tab.focused_side();
         for pane in tab.panes_mut() {
             pane.drawings.select(None);
@@ -226,7 +231,11 @@ impl<'a> DrawingAccess<'a> {
         let Some(tab) = self.tabs.by_id_mut(tab) else {
             return false;
         };
-        let drawings = &mut tab.pane_mut(side).drawings;
+        let pane = tab.pane_mut(side);
+        if !pane.layout.drawing_scope_ready() {
+            return false;
+        }
+        let drawings = &mut pane.drawings;
         if drawings.draft().is_some() || points.len() >= tool.required_points() {
             return false;
         }
@@ -335,7 +344,7 @@ impl DrawingAccess<'_> {
             .and_then(|bar| rust_decimal::prelude::ToPrimitive::to_f64(&bar.close));
         use quantick_ui_model::drawing_chrome::scenario::{Effect, Intent, SeriesFacts};
         let Some(Effect::Note(plan)) = chrome.scenario(Intent::PlanNote {
-            chart_available: pane.frame.chart_area.is_some(),
+            chart_available: pane.frame.chart_area.is_some() && pane.layout.drawing_scope_ready(),
             series: SeriesFacts {
                 slots,
                 last_close: close,

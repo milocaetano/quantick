@@ -37,7 +37,7 @@ it collides with the B3 trading session, the `session` crate and the
 |---|---|---|---|
 | Market tab | One feed + symbol. It does not change after opening; another market is another tab. A contract roll is an explicit "Roll to WINF27" action that keeps workspace and drawings | per market | tab |
 | Workspace | A named recipe for a tab: canvas (Flow / Timeframe / both), context panes and their intervals, indicators per pane, layer toggles, footprint style. Any tab can use any workspace | per workspace | the per-pane "Layouts" strip (Fluxo, Force Bar Only…) and View › Layout |
-| Market settings | Drawings and anchored studies, flow bar size (WIN tick 2000, BTC tick 50), bubble preset and thresholds, history reach, replay link, recording, paper position. They stay with the market when its workspace changes | per market, keyed by asset + venue, stable across rolls | spread over `layouts.toml` and `bubble-assets.toml` |
+| Market settings | Flow bar size (WIN tick 2000, BTC tick 50), bubble preset and thresholds, history reach, replay link, recording, paper position. They stay with the market when its workspace changes | per market, keyed by asset + venue, stable across rolls | spread over `layouts.toml` and `bubble-assets.toml` |
 | Desk | The open market tabs in order, each with its workspace and unsaved changes, plus panels, rail, timezone and window. Restored on launch, exported as a file | per window | Workspace › Save workspace, Save as, Open, Export |
 
 ## The window
@@ -139,8 +139,7 @@ THIS TAB  WINZ26 · MetaTrader 5 — B3 │ REC · History ▾ │ BUY 1  SELL 1
   A contract roll is "Roll to WINF27".
 - The workspace is not on this row nor on the toolbar: no "Save to" and no
   "Revert" there. It shows only in the status bar's cell, `⊞ Scalp ▴`, whose
-  menu switches this tab only. The toast reads "WINZ26 now on Tape · drawings
-  kept · Undo". A switch that would drop held edits asks first, as a close
+  menu switches this tab only. The toast names the new workspace. A switch that would drop held edits asks first, as a close
   does: "Switch WINZ26 to Tape" — what changed since Scalp was saved — Cancel /
   Switch without saving / Save to Scalp; Cancel changes nothing.
   `tab.workspace.set` refuses such a switch with `workspace.unsaved_edits`
@@ -150,118 +149,70 @@ THIS TAB  WINZ26 · MetaTrader 5 — B3 │ REC · History ▾ │ BUY 1  SELL 1
 - The tab chip and the status bar cell read one state; a test proves they
   agree.
 
-### Save model: auto save, or a held copy and an explicit save
+### Save model: configuration and drawings
 
-The desk setting `auto_save` ("Auto save layout changes", `ui-state.toml`
-beside `save_on_exit`) decides. It is on by default, shown as a muted
-"auto save" checkbox right after the status bar's workspace cell (hover:
-"Write this tab's layout changes into its workspace as you make them") and as
-a check row in the cell's menu; `workspace.autosave.set {on}` sets it and the
-snapshot reads it as `auto_save`.
+Workspace Save keeps the tab's configuration: indicators and their settings,
+pane timeframes and bar rules, positions, sizes, pane count, selected layouts
+and layout names. These changes are held until Save by default. The existing
+`auto_save` and `save_on_exit` choices remain opt-ins; explicitly stored choices
+are preserved. `workspace.autosave.set` controls configuration only.
 
-- **On:** a layout change is written into the tab's workspace after the 1 s
-  quiet the layouts file already waits; tabs on the same workspace follow. The
-  toast "Scalp saved · WDOZ26 follows" appears only when another tab followed.
-  Nothing is pending, so nothing is marked and closing never asks, except
-  for a tab whose copy is not in its workspace, which never reads saved:
-  a write that did not reach the disk (it toasts once and is retried each
-  quiet second, until another tab saves that workspace first); a second tab
-  on a workspace holding edits (one copy is written: of every tab there
-  holding edits, due or not, the active tab's, else the lowest tab id's); and
-  a copy a restart brought back differing. Such a tab holds its edits as with
-  auto save off: marked, never written unasked (not by a later edit, a
-  close, a switch or the exit), closing it, switching it or exiting asks, and
-  its Save is the trader's choice.
-- **Off:** the change is held on the tab. An indicator change is the
-  exception: every tab on the workspace whose panes show that strip layout
-  shows it at once and holds it too, so each is marked, a save from any of
-  them writes it, and it stays until the last of them switches away or
-  closes without saving; a switch away from one of them asks over, and
-  drops, only what that tab held alone. The cell wears the amber mark and a
-  blue "Save" chip (hover "Save to Scalp · Ctrl+S"); Ctrl+S and the menu's "Save to
-  Scalp" row (its hover names the tabs that follow) write it. Drawings and
-  anchored studies are held too, and Save writes the tab's own drawing sets
-  (the ones its panes show; every other set stays as the file has it, still
-  held for its own tab) after the workspace; the mark lights for either. A
-  Save lands whole or not at all: a failed workspace write writes no drawing,
-  and a failed drawing write puts the workspace back; it answers
-  `workspace.write_failed` and the mark stays: nothing reads as saved before
-  it is on disk. Close without saving puts a held set back to the file's
-  version unless another open tab shows it. A drawing counts as held when
-  the trader changed it; a dated anchor's bar offset is re-derived from its
-  market time on a flow bar-size or timeframe change and on a relaunch, and
-  an id is the pane's, so neither marks.
-  Turning auto save on with edits held saves them at once, one tab per
-  workspace as above, then every held drawing; a save that fails there leaves
-  auto save on, journals the setting and each save that landed, and answers
-  `workspace.write_failed` naming them (`auto_save`, `saved`), the failed tab
-  marked and retried.
-- Revert: while the tab holds layout edits, an arrow right of the floppy
-  (`workspace.revert`) puts it back on its workspace as saved, timeframes the
-  workspace names none for back to the ones the tab opened with; its hover
-  lists what comes back. Nothing is written and drawings stay. The slot then
-  shows a restore arrow in the accent (`workspace.revert.undo`) until a save
-  or a switch. No key does it: Esc and Ctrl+Z stay the trader's reflexes
-  (trader and UX vote, 2026-11-24). A workspace switch with edits held asks
-  first; Switch without saving keeps the "changes dropped" toast.
-- Closing a tab, a torn-off window or the app with edits held asks, one tab at
-  a time: "Close WINZ26" — "This tab changed its layout since Scalp was last
-  saved (RSI, CVD, 3 drawings). Saving also changes WDOZ26." — Cancel /
-  Close without saving / Save to Scalp, right-aligned, Save in the accent;
-  the question stands over every chart overlay and nothing under it takes a
-  click while it is up. Enter saves, Esc cancels the whole
-  close (a tab already answered stays closed, nothing after it closes).
-  `tab.close {tab_id, save}` is the named form and asks the same question:
-  without `save` it answers `workspace.unsaved_edits` (with the workspace,
-  followers and changes) and does not close; the window's last tab answers
-  `workspace.last_tab` before anything is saved or written. Closing a
-  torn-off window while another window stays asks nothing, because its tabs
-  move into that window; closing the last window is the exit, which asks for
-  every tab in strip order and keeps them all in the desk for the next
-  launch. The exit applies no answer until the last one is in: Cancel on any
-  tab leaves every tab, on screen and in the stores, as it stood. Once all
-  are answered the saves (and pending write-throughs) land first, in strip
-  order, then the discards, so a save that fails ends the exit before
-  anything is let go. Save writes the tab's workspace and drawing sets; Close
-  without saving leaves both as saved and lets the tab's held recipe go too,
-  so the next launch opens it on its workspace, not on the dropped edits.
-  With autosave on, or nothing held, no close asks: a pending write-through
-  is written first, on exit too, one copy per workspace by the rule above;
-  a tab autosave did not write asks like a held one. The window's last tab
-  stays open and its close asks nothing, so no answer is thrown away.
-- What counts as a change: indicators (add, remove, settings, style), panes
-  (add, remove, divider, kind), the layout strip (new, switch, rename,
-  delete), layers, footprint style, pane timeframes and the flow bar rule,
-  drawings, anchored studies. Never a change: bubbles, history reach, zoom,
-  scroll, selection. A workspace keeps each pane's bar rule (the context
-  charts' intervals, the flow bar such as Tick 2000 or Renko 30), and opening
-  or switching to it restores them. What a market remembers (its open tab's
-  timeframes, else the ones its tab closed on, and its flow bar) is only the
-  fallback: for a new tab, and for a workspace saved before workspaces kept
-  bar rules, which names none.
-- "Save as new…" names a workspace for this tab alone; the other tabs stay.
-- Delete lives only in the Manage workspaces dialog, the last row of the
-  workspace menus after New workspace: every workspace with its tab count,
-  a check on the tab's own, and per row Rename and Delete (greyed on Default,
-  with the reason). Deleting a workspace in use moves its tabs to Default and
-  the toast names them. Delete asks inside its row first, naming the tabs
-  that move.
+A held configuration marks the workspace cell. Ctrl+S and `workspace.save_to`
+commit it. Tabs following the same workspace receive the saved recipe. A failed
+write reports failure and keeps the pending configuration. Closing or switching
+with held configuration retains the existing Save / discard / cancel flow.
+Drawing edits do not mark configuration as modified or add a close prompt.
 
-### Market settings never travel with a workspace
+The capsule's Revert arrow (`workspace.revert`) restores the saved configuration
+without writing or changing drawings. A bar rule absent from the saved workspace
+returns to the rule the tab opened with. The slot then becomes Restore
+(`workspace.revert.undo`), which brings the discarded configuration back until a
+Save or workspace switch. Neither action takes over Ctrl+Z or Esc.
 
-Drawings and anchored studies belong to the market. Today `ChartLayout` keys
-drawings by feed + symbol + pane index; under per-tab workspaces, switching
-BTC from Scalp to Swing would hide its levels, and a pane index breaks when
-two workspaces have different pane stacks. The trader's own `layouts.toml`
-already shows the roll damage: WIN drawings split across WINV26 (13), WINZ26
-(5) and WIN$N (1). The key becomes asset + venue (the explicit `asset` key the
-Market Shelf brief already requires; BTCUSDT on Binance and on Hyperliquid
-trade at different prices), and panes are addressed by role (flow, context at
-an interval), not by index. Migration merges a market's drawings from several
-layouts and labels each with its source layout; nothing is dropped silently.
+"Save as new" creates a workspace for this tab alone; other tabs stay where they
+are. Manage workspaces retains Rename and Delete, with Default protected.
+Deleting an in-use workspace asks first and moves its tabs to Default.
 
-Panels (dock, rail), timezone and window belong to the desk. A workspace never
-opens or closes the paper panel.
+Drawings and anchored studies have their own automatic persistence. Creating,
+editing, undoing or deleting a drawing schedules a write without Workspace Save.
+Ctrl+Z undoes successive drawing actions; the chart context menu can clear the
+chart's objects. Both persist their resulting drawing state. Discarding workspace
+configuration cannot restore a deleted drawing or discard a newly saved one.
+
+The chart context menu's **Save drawing** checkbox is checked by default and
+remembered for the market and workspace/layout scope. Turning it off suspends
+drawing writes while preserving the last saved drawings. Turning it back on saves
+the current drawings. Workspace Save does not override this checkbox. The same
+state and transition are available through `chart.drawings.autosave.set`.
+
+### Drawing ownership
+
+A drawing belongs to **venue + asset + workspace identity + named layout
+identity**, and optionally to a specific timeframe. A drawing visible on all
+timeframes remains inside that workspace and layout; switching to another
+workspace or layout selects a different set. Private layout copies resolve to
+their named layout. Renaming a workspace or layout preserves drawing ownership,
+and a contract roll preserves the configured asset identity.
+Deleting a named layout does not transfer its drawings to the neighbouring layout.
+Its saved drawings retain the retired identity; a new layout with the same name
+receives a different identity.
+
+Drawing persistence reserves the layout ID allocator independently of
+configuration. New layout names, count and selection reach disk only with
+configuration Save, together with their indicators and arrangement. If a new
+layout was never saved, its drawings remain stored under the reserved ID; a
+later layout cannot reuse it. Closing and reopening restores saved drawings
+when their saved scope is opened; undo history itself is session-local.
+
+Existing drawings migrate only when their workspace/layout ownership is
+unambiguous. Unresolved entries remain stored without being shown across unrelated
+workspaces. Existing durable drawing identities used by alerts are preserved.
+Failed drawing writes remain pending and retry; they never report a successful
+save before the write succeeds.
+
+Other market settings, such as bubble choices and history reach, retain their
+existing market ownership. Panels, rail, timezone and window belong to the desk.
+A workspace never opens or closes the paper panel.
 
 ### "Open a market" palette
 
@@ -309,7 +260,7 @@ on today's model; phase 3 is the model change.
 |---|---|---|
 | 1 | Undecorated window; tab strip in the title bar with drawn window controls and drag region; `⋮` with today's entries regrouped (Workspace, Panels, Desk, Help); Agent pill; clickable clock; View stays until chart-identity ships | S |
 | 2 | Settings window with sections; one command registry behind menu, right-click and `>` palette | M |
-| 3 | Drawings and anchored studies move to a per-market store keyed by asset + venue, panes addressed by role; migration with golden fixtures; old bundle exports still import  Built: `market-settings.toml`, `crates/workspace/src/market_settings.rs`. A layout switch no longer touches drawings; two context charts on one bar rule show one set; a legacy context pane index waits as `context-slot:N` until the pane at that address claims it | L |
+| 3 | Drawings and anchored studies use `market-settings.toml`, scoped by venue/asset, stable workspace/layout and optional timeframe; automatic drawing writes are independent of configuration Save, with lossless migration of legacy entries | L |
 | 4 | Workspace per tab: `SavedTab` gains a workspace id and its own unsaved state; the "this tab" row control; tab title suffix; save bar; palette selectors; first-launch migration seeds one workspace per open tab, named after the tab's layout ("Fluxo") or its bare symbol and deduplicated with a number, so nothing changes on screen on day one | L |
 | 5 | Tab tear-off by drag into its own window; closing it returns the tab | M |
 

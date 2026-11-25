@@ -9,12 +9,13 @@
 //! differs is derived by comparing it to the recipe, never stored, so a flag
 //! and the truth cannot disagree.
 //!
-//! With [`WorkspaceBook::autosave`] on (the default) the window writes every
+//! With [`WorkspaceBook::autosave`] on the window writes every
 //! edit through after a quiet second, so no tab reads as holding edits unless
 //! autosave did not write it ([`Unsynced`]): such a copy is treated as held
 //! edits are with autosave off, never written unasked. With it off a tab holds
-//! them, marked, until Save to. There is no revert: a workspace switch drops
-//! held edits, and closing the tab asks first.
+//! them, marked, until Save to or Revert. Revert restores the saved recipe;
+//! drawings follow their independent persistence policy. A workspace switch
+//! drops held recipe edits, and closing the tab asks first.
 //!
 //! The recipes persist in their own file; the per-tab state persists on
 //! [`SavedTab`] in the desk, so an edited tab survives a restart still marked.
@@ -32,6 +33,8 @@ use std::collections::BTreeMap;
 mod bar_rules;
 mod revert;
 pub use revert::RevertOutcome;
+#[path = "workspace_identity.rs"]
+mod identity;
 
 #[path = "workspace_book_manage.rs"]
 mod manage;
@@ -49,7 +52,7 @@ pub const DEFAULT_WORKSPACE: &str = "Default";
 /// Longest a workspace name may be: it sits on a tab chip.
 pub const MAX_WORKSPACE_NAME: usize = 32;
 /// Bumped on breaking format changes; unknown versions are refused whole.
-const FORMAT_VERSION: u32 = 1;
+const FORMAT_VERSION: u32 = 2;
 
 /// Why a workspace call was refused. `code` is stable and `Display` is the
 /// sentence shown under the field.
@@ -303,6 +306,10 @@ pub struct WorkspaceBook {
     last_custom: Option<workspace_colour::Rgb>,
     #[serde(default)]
     recipes: BTreeMap<String, WorkspaceRecipe>,
+    #[serde(default)]
+    workspace_ids: BTreeMap<String, u64>,
+    #[serde(default)]
+    next_workspace_id: u64,
     /// Old name to current name. The desk names a tab's workspace and is
     /// written only on exit or save, while a rename reaches this file at once:
     /// a desk read after a rename still finds its workspace.
@@ -387,9 +394,9 @@ fn drawings_change(held: usize) -> String {
     }
 }
 
-/// Autosave is the opening default.
+/// Configuration requires Save unless the trader opted into autosave.
 const fn autosave_default() -> bool {
-    true
+    false
 }
 
 impl Default for WorkspaceBook {
@@ -398,6 +405,8 @@ impl Default for WorkspaceBook {
             version: FORMAT_VERSION,
             last_custom: None,
             recipes: BTreeMap::from([(DEFAULT_WORKSPACE.to_owned(), WorkspaceRecipe::default())]),
+            workspace_ids: BTreeMap::from([(DEFAULT_WORKSPACE.to_owned(), 1)]),
+            next_workspace_id: 2,
             renamed: BTreeMap::new(),
             colours: BTreeMap::from([(
                 DEFAULT_WORKSPACE.to_owned(),
@@ -492,9 +501,10 @@ where
 pub fn parse_book(text: &str) -> Result<WorkspaceBook, BookParseError> {
     let mut book: WorkspaceBook =
         toml::from_str(text).map_err(|error| BookParseError::Malformed(error.to_string()))?;
-    if book.version != FORMAT_VERSION {
+    if !matches!(book.version, 1 | FORMAT_VERSION) {
         return Err(BookParseError::Version(book.version));
     }
+    book.version = FORMAT_VERSION;
     book.recipes
         .entry(DEFAULT_WORKSPACE.to_owned())
         .or_default();
@@ -592,6 +602,7 @@ impl WorkspaceBook {
     }
 
     fn settle_colours(&mut self) {
+        self.settle_workspace_ids();
         let names: Vec<String> = self.names().into_iter().map(str::to_owned).collect();
         let order: Vec<&str> = names.iter().map(String::as_str).collect();
         workspace_colour::settle(&mut self.colours, &order);
@@ -1348,6 +1359,9 @@ impl WorkspaceBook {
             && held != name
         {
             return Err(WorkspaceRefusal::DuplicateName(held.to_owned()));
+        }
+        if let Some(id) = self.workspace_ids.remove(name) {
+            self.workspace_ids.insert(cleaned.clone(), id);
         }
         if let Some(recipe) = self.recipes.remove(name) {
             self.recipes.insert(cleaned.clone(), recipe);

@@ -80,9 +80,11 @@ impl WorkspaceStore {
     /// Every argument arrives resolved. Nothing in this module reads an
     /// environment variable or calls [`crate::store_home::resolve`], so a
     /// store pointed at a scratch file by `QUANTICK_*` still writes there.
-    pub(crate) fn new(paths: StorePaths, layouts: LayoutStore, trades_dir: PathBuf) -> Self {
+    pub(crate) fn new(paths: StorePaths, mut layouts: LayoutStore, trades_dir: PathBuf) -> Self {
+        let book = open_book(layouts.path());
+        book.bind_drawings(&mut layouts, std::time::Instant::now());
         Self {
-            book: open_book(layouts.path()),
+            book,
             layouts,
             layers: SavedLayers::default(),
             session: WorkspaceCommitSession::default(),
@@ -143,6 +145,15 @@ impl WorkspaceStore {
         &mut self.layers
     }
 
+    pub(crate) fn canvas_settings(
+        &mut self,
+    ) -> (
+        &mut quantick_stores::market_settings::MarketSettingsStore,
+        &mut quantick_layers::LayerActions,
+    ) {
+        (self.layouts.market_mut(), &mut self.layers.actions)
+    }
+
     /// What the Workspace menu knows without asking the filesystem.
     pub(crate) fn session(&self) -> &WorkspaceCommitSession {
         &self.session
@@ -165,8 +176,14 @@ impl WorkspaceStore {
         &mut WorkspaceCommitSession,
         &Path,
         &quantick_stores::workspaces::WorkspaceBook,
+        &mut LayoutStore,
     ) {
-        (&mut self.session, &self.paths.ui_state, self.book.book())
+        (
+            &mut self.session,
+            &self.paths.ui_state,
+            self.book.book(),
+            &mut self.layouts,
+        )
     }
 
     #[cfg(test)]

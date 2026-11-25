@@ -66,7 +66,6 @@ fn saving_a_legacy_workspace_captures_each_shown_timeframe() {
 }
 
 /// One tab, always settled, whose panes show whatever `shows` says.
-#[derive(Default)]
 struct OneTab {
     book: WorkspaceBook,
     sync: TabRecipeSync,
@@ -76,6 +75,22 @@ struct OneTab {
     builds: Cell<usize>,
     layout: Option<String>,
     market: Option<MarketSettingsStore>,
+}
+
+impl Default for OneTab {
+    fn default() -> Self {
+        let mut book = WorkspaceBook::default();
+        book.set_autosave(true);
+        Self {
+            book,
+            sync: TabRecipeSync::default(),
+            shows: WorkspaceRecipe::default(),
+            applied: 0,
+            builds: Cell::new(0),
+            layout: None,
+            market: None,
+        }
+    }
 }
 
 impl OneTab {
@@ -293,11 +308,15 @@ fn erased_level(saved: MarketSettings) -> OneTab {
 /// Autosave off holds the market store and the book counts what the tab's
 /// panes hold back; autosave on lets it through and nothing is counted.
 #[test]
-fn autosave_off_holds_the_market_store_and_counts_the_tab_s_drawings() {
+fn workspace_autosave_never_holds_drawings_or_counts_them_as_configuration() {
     let mut host = erased_level(parse_settings(DRAWN).unwrap());
     let _ = frame(&mut host);
-    assert!(host.market.as_ref().unwrap().is_held());
-    assert_eq!(host.book.held_drawings(7), 1, "the erased level");
+    assert!(!host.market.as_ref().unwrap().is_held());
+    assert_eq!(
+        host.book.held_drawings(7),
+        0,
+        "drawings have their own policy"
+    );
     assert_eq!(host.book.drawing_keys(7), [flow_key()]);
     host.book.set_autosave(true);
     let _ = frame(&mut host);
@@ -318,7 +337,7 @@ fn an_idle_frame_counts_no_held_drawing() {
     }
     let market = host.market.as_ref().unwrap();
     assert_eq!(market.held_counts(), counted, "five idle frames");
-    assert_eq!(host.book.held_drawings(7), 1);
+    assert_eq!(host.book.held_drawings(7), 0);
     let market = host.market.as_mut().unwrap();
     market.settings_mut().restore(&saved, &flow_key());
     let _ = frame(&mut host);

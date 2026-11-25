@@ -59,7 +59,9 @@ pub(super) fn with_flow_pane<R>(
     } = app;
     let tab_id = tabs.id_at(tabs.active_index());
     let tab = tabs.runtime_mut(tabs.active_index());
+    let (market, layers) = workspace.canvas_settings();
     let mut chrome = pane::PaneChrome {
+        market,
         tab: tab_id,
         side: pane::PaneSide::Flow,
         toolrail: &mut surfaces.toolrail,
@@ -81,7 +83,7 @@ pub(super) fn with_flow_pane<R>(
         side_inferred,
         price_tag: Default::default(),
         footprint: footprint_config,
-        layers: &mut workspace.layers_mut().actions,
+        layers,
     };
     body(&mut tab.flow_pane, &mut chrome)
 }

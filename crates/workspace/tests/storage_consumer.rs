@@ -107,7 +107,7 @@ impl Consumer {
         }
     }
     fn reset(&mut self, store: &mut Storage) -> bool {
-        let kept = self.session.reset_keeps(false, false);
+        let kept = self.session.reset_keeps(false, false, false);
         let forgotten = if kept {
             let file = self.session.prepare_edit(
                 store.read_for_edit(),
@@ -135,6 +135,7 @@ fn bookmark() -> NamedArrangement {
 #[test]
 fn unknown_standing_and_inspector_reads_never_attempt_a_write() {
     let mut host = Consumer::default();
+    host.session.set_save_on_exit(true);
     let mut store = Storage::new(Stored::Unknown, false);
     host.session.keep_bookmark(bookmark());
     assert!(!host.standing(&mut store, DocumentEdit::Bookmarks, WritePurpose::Bookmarks));
@@ -259,6 +260,7 @@ fn reset_with_kept_choices_writes_only_admitted_documents_and_keeps_saved_state(
 #[test]
 fn failed_inspector_write_is_consumed_without_an_implicit_retry() {
     let mut host = Consumer::default();
+    host.session.set_save_on_exit(true);
     let original: Workspace = toml::from_str(
         "version = 1\n[chrome]\ntimezone_minutes = 0\ndock_visible = true\nrail_visible = true\nrail_dock = \"left\"\nperf_readings = false\n",
     ).unwrap();

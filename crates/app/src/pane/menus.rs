@@ -45,6 +45,7 @@ pub(crate) struct TapeMenuView {
 
 /// The pane, read-only, as the layer menu sees it.
 pub(crate) struct PaneMenuView<'a> {
+    pub(crate) drawing_autosave: bool,
     pub(crate) drawings: &'a Drawings,
     pub(crate) indicators: &'a IndicatorViews,
     pub(crate) strategies: Option<&'a PaneStrategies>,
@@ -147,6 +148,7 @@ impl PaneMenuView<'_> {
                 }
             });
         Facts {
+            drawing_autosave: self.drawing_autosave,
             layers: self
                 .layers
                 .rows(false, self.capabilities, self.style)

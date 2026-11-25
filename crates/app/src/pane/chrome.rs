@@ -14,6 +14,7 @@ use super::{PaneSide, SharedInteraction, SharedPick};
 /// Window chrome borrowed by one pane for input and paint. Mutable because a
 /// tool or the tab-level simulator can change during the input pass.
 pub struct PaneChrome<'a> {
+    pub market: &'a mut quantick_stores::market_settings::MarketSettingsStore,
     pub tab: u64,
     pub side: PaneSide,
     pub toolrail: &'a mut ToolRail,

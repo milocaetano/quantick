@@ -71,6 +71,26 @@ fn commit_baseline_close_overwrites_unknown_and_consumes_inspector_dirty_each_ti
 }
 
 #[test]
+fn an_opted_in_exit_save_keeps_layout_configuration_in_manual_mode() {
+    let (mut app, _evt, _cmd, _book) = test_app();
+    run_frame(&mut app, &egui::Context::default());
+    assert!(!app.runtime.workspace.book.book().autosave());
+    app.runtime.workspace.session_mut().set_save_on_exit(true);
+    let layout = app
+        .layout_adapter()
+        .create_layout(Some("Exit layout"))
+        .unwrap();
+    maintain(&mut app, true);
+    let path = app.runtime.workspace.layouts().path();
+    let quantick_stores::layouts::Loaded::Book(saved) = quantick_stores::layouts::load(path) else {
+        panic!("the opted-in exit saved its layout catalogue");
+    };
+    assert_eq!(saved.get(layout).unwrap().name, "Exit layout");
+    assert_eq!(saved.active_id(), layout);
+    assert!(!ui_state::load(app.runtime.workspace.ui_state_path()).auto_save);
+}
+
+#[test]
 fn commit_baseline_autosave_off_consumes_inspector_without_later_retry() {
     let (mut app, _evt, _cmd, _book) = test_app();
     std::fs::write(app.runtime.workspace.ui_state_path(), FUTURE).unwrap();

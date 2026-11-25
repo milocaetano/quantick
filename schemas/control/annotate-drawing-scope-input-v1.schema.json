@@ -5,7 +5,7 @@
       "oneOf": [
         {
           "const": "all_charts",
-          "description": "Every chart of the drawing's market showing its layout, at any\ntimeframe; with `all_windows`, every chart of its market.",
+          "description": "Every chart of the drawing's market, workspace and named layout,\nat any timeframe.",
           "type": "string"
         },
         {
@@ -24,7 +24,7 @@
   "additionalProperties": false,
   "properties": {
     "all_windows": {
-      "description": "Whether every chart of its market shows it too, whatever layout that\nchart shows; only with `all_charts`. Absent leaves it as it stands.",
+      "description": "Whether every chart window in the same market, workspace and named\nlayout shows it; only with `all_charts`. Absent leaves it unchanged.",
       "type": [
         "boolean",
         "null"

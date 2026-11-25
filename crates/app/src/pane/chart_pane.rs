@@ -750,7 +750,11 @@ impl ChartPane {
         #[cfg(not(any(feature = "drawing-harness", test)))]
         let hand: Option<(drawings::Constrain, quantick_drawings::Px)> = None;
         let options = gesture::PlacementOptions {
-            tool: chrome.toolrail.tool().drawing_tool(),
+            tool: chrome
+                .toolrail
+                .tool()
+                .drawing_tool()
+                .filter(|_| self.layout.drawing_scope_ready()),
             magnet: chrome.toolrail.magnet(),
             constrain: if ui.input(|input| input.modifiers.shift) {
                 drawings::Constrain::Level
@@ -828,6 +832,7 @@ impl ChartPane {
         capabilities: FeedCapabilities,
         style: &'a crate::style::ChartStyle,
         strategies: Option<&'a crate::strategy_anchors::PaneStrategies>,
+        market: &quantick_stores::market_settings::MarketSettingsStore,
     ) -> (
         &'a mut PaneContextMenu,
         &'a mut quantick_chart_interaction::pane::Model,
@@ -850,6 +855,11 @@ impl ChartPane {
             })
             .map(|owner| owner.ignore_flow_opening());
         let view = PaneMenuView {
+            drawing_autosave: self
+                .layout
+                .drawings_key
+                .as_ref()
+                .is_none_or(|key| market.drawing_autosave(key)),
             drawings: &self.drawings,
             indicators: &self.indicators,
             strategies,
@@ -887,7 +897,7 @@ impl ChartPane {
         let intents = {
             let strategies = chrome.strategies.pane(self.id);
             let (menu, model, view) =
-                self.menu_parts(chrome.capabilities, chrome.style, strategies);
+                self.menu_parts(chrome.capabilities, chrome.style, strategies, chrome.market);
             let hosts = PaneMenuHosts {
                 paper: &mut *chrome.paper,
             };
@@ -1009,6 +1019,13 @@ impl ChartPane {
             }
             PaneMenuIntent::SetPriceInverted(inverted) => self.price_view.set_inverted(inverted),
             PaneMenuIntent::SetBarProgress(on) => chrome.layers.bar_progress = Some(on),
+            PaneMenuIntent::SetDrawingAutosave(on) => {
+                if let Some(key) = &self.layout.drawings_key {
+                    chrome
+                        .market
+                        .set_drawing_autosave(key, on, std::time::Instant::now());
+                }
+            }
             PaneMenuIntent::SetIgnoreFlowOpening(ignore) => {
                 if let Some(owner) = self.orderflow.as_mut() {
                     owner.set_ignore_flow_opening(ignore);

@@ -120,6 +120,7 @@ fn each_objects_row_acts_on_its_own_object_only() {
     let menu = egui::Context::default();
     let ctx = egui::Context::default();
     let (mut app, _events, _commands, _book) = test_app();
+    run_frame(&mut app, &ctx);
     place_rectangles(&mut app, 2);
 
     click_row(&mut app, &menu, 0, "Eye");
@@ -162,11 +163,25 @@ fn clear_objects_asks_first_and_one_ctrl_z_brings_everything_back() {
     let menu = egui::Context::default();
     let ctx = egui::Context::default();
     let (mut app, _events, _commands, _book) = test_app();
+    run_frame(&mut app, &ctx);
+    run_frame(&mut app, &ctx);
+    assert!(!app.runtime.workspace.book.autosave());
     place_rectangles(&mut app, 2);
     app.active_tab_mut()
         .flow_pane
         .drawings
         .set_locked_at(0, true);
+    app.layout_adapter().flush_layouts();
+    let path = app.runtime.workspace.layouts().market().path().to_owned();
+    let saved_count = || {
+        let saved = quantick_stores::market_settings::parse_settings(
+            &std::fs::read_to_string(&path).unwrap(),
+        )
+        .unwrap();
+        assert!(saved.keys().all(|key| key.scope.is_some()));
+        saved.drawing_count()
+    };
+    assert_eq!(saved_count(), 2);
 
     menu_frame(&mut app, &menu, Vec::new());
     let clear = app
@@ -191,6 +206,12 @@ fn clear_objects_asks_first_and_one_ctrl_z_brings_everything_back() {
     run_frame(&mut app, &ctx);
     assert!(!app.active_tab().flow_pane.model.menu.confirm_clear);
     assert_eq!(count(&app), 0, "every object goes, locked too");
+    app.layout_adapter().flush_layouts();
+    assert_eq!(
+        saved_count(),
+        0,
+        "the clear survives reopening the market file"
+    );
     assert_eq!(
         app.surfaces.toast.model_state.message(),
         Some("All drawings deleted."),
@@ -204,6 +225,8 @@ fn clear_objects_asks_first_and_one_ctrl_z_brings_everything_back() {
         egui::Modifiers::COMMAND,
     );
     assert_eq!(count(&app), 2, "one undo brings them all back");
+    app.layout_adapter().flush_layouts();
+    assert_eq!(saved_count(), 2, "undoing the clear also reaches disk");
 }
 
 /// An ask tagged with a chart the drawing chrome is not speaking for is
@@ -212,6 +235,7 @@ fn clear_objects_asks_first_and_one_ctrl_z_brings_everything_back() {
 fn a_menu_ask_for_another_chart_is_dropped() {
     let ctx = egui::Context::default();
     let (mut app, _events, _commands, _book) = test_app();
+    run_frame(&mut app, &ctx);
     place_rectangles(&mut app, 2);
     let other = app.active_tab().flow_pane.id + 1;
     app.surfaces.drawing_chrome.ask_from_menu(
