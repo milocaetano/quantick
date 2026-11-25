@@ -29,10 +29,11 @@ use quantick_control::{
         AnnotationInput, AnnotationResult, AnnotationTarget, ChartAnnotationAnchor,
         ChartAnnotationInput, ChartAnnotationResult, ChartAnnotationSetResult, ChartReference,
         FIB_PROJECTION_CAPABILITY_ID, FIB_RETRACEMENT_CAPABILITY_ID, HORIZONTAL_LINE_TOOL_ID,
-        LABEL_CAPABILITY_ID, LABEL_TOOL_ID, PARALLEL_CHANNEL_TOOL_ID, PROFILE_CAPABILITY_ID,
-        PROFILE_CAPABILITY_VERSION, RemoveInput, RemoveResult, ResolvedAnchor, TREND_LINE_TOOL_ID,
-        ZONE_CAPABILITY_ID, ZONE_TOOL_ID, annotation_descriptor, canonical_bar_position,
-        chart_descriptor, fib_descriptor, horizontal_levels_descriptor, parse_price,
+        LABEL_CAPABILITY_ID, LABEL_TOOL_ID, LONG_POSITION_TOOL_ID, PARALLEL_CHANNEL_TOOL_ID,
+        PROFILE_CAPABILITY_ID, PROFILE_CAPABILITY_VERSION, RemoveInput, RemoveResult,
+        ResolvedAnchor, SHORT_POSITION_TOOL_ID, TREND_LINE_TOOL_ID, ZONE_CAPABILITY_ID,
+        ZONE_TOOL_ID, annotation_descriptor, canonical_bar_position, chart_descriptor,
+        fib_descriptor, horizontal_levels_descriptor, parse_price, position_descriptors,
         remove_descriptor, shape_descriptors,
     },
     error::{ControlError, codes},
@@ -208,6 +209,14 @@ where
         },
     ];
     for (descriptor, handler) in shape_descriptors().into_iter().zip(shapes) {
+        registry.register(descriptor, handler)?;
+    }
+    // In `position_descriptors` order: long, short.
+    let positions: [ActionHandler<H, A>; 2] = [
+        |app, access, actor, input| place_chart(app, access, actor, input, LONG_POSITION_TOOL_ID),
+        |app, access, actor, input| place_chart(app, access, actor, input, SHORT_POSITION_TOOL_ID),
+    ];
+    for (descriptor, handler) in position_descriptors().into_iter().zip(positions) {
         registry.register(descriptor, handler)?;
     }
     registry.register(horizontal_levels_descriptor(), place_horizontal_levels)?;

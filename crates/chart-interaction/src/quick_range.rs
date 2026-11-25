@@ -29,10 +29,15 @@ pub enum Action {
     Horizontal,
     /// The leg becomes a channel's base; the trader's next click sets its width.
     Channel,
+    /// A long plan: the leg's start is the entry, its end the stop below or
+    /// the target above; the other leg follows the ratio.
+    LongPosition,
+    /// A short plan, mirrored: the end is the stop above or the target below.
+    ShortPosition,
 }
 
 impl Action {
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 9] = [
         Self::Profile,
         Self::Retracement,
         Self::Projection,
@@ -40,6 +45,8 @@ impl Action {
         Self::TrendLine,
         Self::Horizontal,
         Self::Channel,
+        Self::LongPosition,
+        Self::ShortPosition,
     ];
 
     /// This action's position in [`Action::ALL`]: its button's slot on the bar.
@@ -57,6 +64,8 @@ impl Action {
             Self::TrendLine => "quick_range.trend_line",
             Self::Horizontal => "quick_range.horizontal_levels",
             Self::Channel => "quick_range.parallel_channel",
+            Self::LongPosition => "quick_range.long_position",
+            Self::ShortPosition => "quick_range.short_position",
         }
     }
 
@@ -70,6 +79,8 @@ impl Action {
             Self::TrendLine => "Trend line",
             Self::Horizontal => "Horizontal lines at the range's high and low",
             Self::Channel => "Parallel channel - click to set its width",
+            Self::LongPosition => "Long position - the range's start is the entry",
+            Self::ShortPosition => "Short position - the range's start is the entry",
         }
     }
 

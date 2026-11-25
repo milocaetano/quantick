@@ -165,6 +165,13 @@ pub(super) const TOOL_RAIL: &[UiBehaviour] = &[
         mapping: PENDING_DRAWING_TOOL,
     },
     UiBehaviour {
+        id: "tool.long-position",
+        title: "Arm the long position",
+        reach: "tool rail, family flyout, canvas right-click",
+        keys: &[(Source::DrawingTool, "long-position")],
+        mapping: capability!("annotate.long_position.create"),
+    },
+    UiBehaviour {
         id: "tool.measure",
         title: "Arm the measure",
         reach: "tool rail, family flyout, canvas right-click",
@@ -198,6 +205,13 @@ pub(super) const TOOL_RAIL: &[UiBehaviour] = &[
         reach: "tool rail, family flyout, canvas right-click",
         keys: &[(Source::DrawingTool, "rectangle")],
         mapping: capability!("annotate.zone.create", "annotate.rectangle.create"),
+    },
+    UiBehaviour {
+        id: "tool.short-position",
+        title: "Arm the short position",
+        reach: "tool rail, family flyout, canvas right-click",
+        keys: &[(Source::DrawingTool, "short-position")],
+        mapping: capability!("annotate.short_position.create"),
     },
     UiBehaviour {
         id: "tool.text",
@@ -360,6 +374,26 @@ pub(super) const OBJECTS: &[UiBehaviour] = &[
              as its first two anchors; the third is the trader's click",
         )],
         mapping: capability!("annotate.parallel_channel.create"),
+    },
+    UiBehaviour {
+        id: "drawing.quick_range_long_position",
+        title: "Measure a range with a right-drag and turn it into a long position plan",
+        reach: "a secondary-button drag on the price band with the Pointer tool, then the range's                 Long position action; the drag's start is the entry and its end the stop                 (below) or the target (above)",
+        keys: &[(
+            Source::Authored,
+            "the quick-range action bar places the registered long position tool on the leg's              two anchors; the other leg follows the default target:stop ratio",
+        )],
+        mapping: capability!("annotate.long_position.create"),
+    },
+    UiBehaviour {
+        id: "drawing.quick_range_short_position",
+        title: "Measure a range with a right-drag and turn it into a short position plan",
+        reach: "a secondary-button drag on the price band with the Pointer tool, then the range's                 Short position action; the drag's start is the entry and its end the stop                 (above) or the target (below)",
+        keys: &[(
+            Source::Authored,
+            "the quick-range action bar places the registered short position tool on the leg's              two anchors; the other leg follows the default target:stop ratio",
+        )],
+        mapping: capability!("annotate.short_position.create"),
     },
     UiBehaviour {
         id: "drawing.rename",

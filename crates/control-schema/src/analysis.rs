@@ -462,6 +462,14 @@ pub const READBACKS: &[Readback] = &[
         &[ANNOTATION_TEST, EVERY_FORBIDDEN_TEST],
     ),
     snapshot(
+        "annotate.long_position.create",
+        Forbidden,
+        DRAWINGS_SCOPE_ID,
+        "tabs[].panes[].drawings[].author.client_name",
+        CREATED_BY_CALLER,
+        &[ANNOTATION_TEST, EVERY_FORBIDDEN_TEST],
+    ),
+    snapshot(
         "annotate.parallel_channel.create",
         Forbidden,
         DRAWINGS_SCOPE_ID,
@@ -483,6 +491,14 @@ pub const READBACKS: &[Readback] = &[
         DRAWINGS_SCOPE_ID,
         "tabs[].panes[].drawings[].drawing_id",
         "the named `annotation_id` is no longer listed; when the pane's `drawings_truncated` is set an unlisted id proves nothing, so read `events.read` `annotate.object.removed` from the pre-call cursor, which is journaled only for a removal that happened",
+        &[ANNOTATION_TEST, EVERY_FORBIDDEN_TEST],
+    ),
+    snapshot(
+        "annotate.short_position.create",
+        Forbidden,
+        DRAWINGS_SCOPE_ID,
+        "tabs[].panes[].drawings[].author.client_name",
+        CREATED_BY_CALLER,
         &[ANNOTATION_TEST, EVERY_FORBIDDEN_TEST],
     ),
     snapshot(

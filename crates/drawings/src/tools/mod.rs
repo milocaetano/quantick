@@ -12,6 +12,7 @@ mod fib;
 mod line_core;
 mod mark_core;
 mod measure_core;
+mod position_core;
 mod shape_core;
 
 // The names every tool file reaches through `super::`.
@@ -66,6 +67,9 @@ register_drawing_tools!(
     price_range,
     date_range,
     fixed_range_profile,
+    // Position
+    long_position,
+    short_position,
     // Series
     anchored_vwap,
     // Annotation

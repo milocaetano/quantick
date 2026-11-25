@@ -47,6 +47,9 @@ pub const PROFILE_CAPABILITY_VERSION: u32 = 2;
 pub const FIB_RETRACEMENT_CAPABILITY_ID: &str = "annotate.fib_retracement.create";
 pub const FIB_PROJECTION_CAPABILITY_ID: &str = "annotate.fib_projection.create";
 pub const FIB_CAPABILITY_VERSION: u32 = CAPABILITY_VERSION;
+pub const LONG_POSITION_CAPABILITY_ID: &str = "annotate.long_position.create";
+pub const SHORT_POSITION_CAPABILITY_ID: &str = "annotate.short_position.create";
+pub const POSITION_CAPABILITY_VERSION: u32 = CAPABILITY_VERSION;
 pub const REMOVE_CAPABILITY_ID: &str = "annotate.remove";
 
 pub const ANNOTATION_CREATED_EVENT_KIND: &str = "annotate.object.created";
@@ -66,6 +69,8 @@ pub const ZONE_TOOL_ID: &str = "rectangle";
 pub const TREND_LINE_TOOL_ID: &str = "trend-line";
 pub const HORIZONTAL_LINE_TOOL_ID: &str = "horizontal-line";
 pub const PARALLEL_CHANNEL_TOOL_ID: &str = "parallel-channel";
+pub const LONG_POSITION_TOOL_ID: &str = "long-position";
+pub const SHORT_POSITION_TOOL_ID: &str = "short-position";
 
 /// The longest label an annotation may carry. A note is a sentence on a
 /// chart, not a document; the bound is what keeps one call from covering the
@@ -363,6 +368,26 @@ pub fn shape_descriptors() -> [CapabilityDescriptor; 3] {
             PARALLEL_CHANNEL_CAPABILITY_VERSION,
             "Place a parallel channel",
             "Draws a channel whose base joins the first two chart coordinates and whose width reaches the third.",
+        ),
+    ]
+}
+
+/// The two position plans, long then short: the first anchor is the entry,
+/// the second the measured stop or target; the other leg follows the
+/// trader's default ratio.
+pub fn position_descriptors() -> [CapabilityDescriptor; 2] {
+    [
+        chart_descriptor(
+            LONG_POSITION_CAPABILITY_ID,
+            POSITION_CAPABILITY_VERSION,
+            "Place a long position plan",
+            "Draws a long plan: the first chart coordinate is the entry, the second the stop below it or the target above it; the other leg is projected by the default target:stop ratio. A drawing, never an order.",
+        ),
+        chart_descriptor(
+            SHORT_POSITION_CAPABILITY_ID,
+            POSITION_CAPABILITY_VERSION,
+            "Place a short position plan",
+            "Draws a short plan: the first chart coordinate is the entry, the second the stop above it or the target below it; the other leg is projected by the default target:stop ratio. A drawing, never an order.",
         ),
     ]
 }
