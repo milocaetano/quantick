@@ -5,7 +5,7 @@ on:
     - cron: '23 5 * * 1'
   workflow_dispatch:
   # A merge that changes what the measurement reads measures main again and
-  # saves the warm target that pull requests restore.
+  # saves the warm target a later main or dispatched run restores.
   push:
     branches: [main]
     paths:

@@ -99,6 +99,9 @@ jobs:
       github.event_name != 'pull_request' ||
       github.event.action != 'labeled' || github.event.label.name == 'full-ci'
     runs-on: ubuntu-latest
+    # Every Rust job waits on this one; a stalled GitHub API read must not
+    # hold them for the runner's six-hour default.
+    timeout-minutes: 5
     permissions:
       contents: read
       # `full_ci.sh` reads the check runs an earlier run posted at this head.
