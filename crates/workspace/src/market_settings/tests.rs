@@ -23,6 +23,7 @@ fn win(venue: &str) -> MarketKey {
 
 fn key(venue: &str, role: PaneRole) -> DrawingKey {
     DrawingKey {
+        scope: None,
         market: win(venue),
         role,
     }
@@ -165,6 +166,7 @@ fn two_equal_entries_without_ids_are_both_kept_once() {
         "[[layouts.drawings.items]]\ntool = \"horizontal-line\"\nband = { axis = \"price\" }\ncolor = [255, 200, 0, 255]\nwidth_px = 1.5\nfill_alpha = 0\npoints = [{ time_ms = 1000, price = 67000.5, bar = 3.0 }]\n\n[[layouts.drawings]]\nfeed = \"metatrader-b3\"\nsymbol = \"WIN$N\"",
     );
     let btc = DrawingKey {
+        scope: None,
         market: MarketKey {
             venue: "binance".to_owned(),
             asset: "BTCUSDT".to_owned(),
@@ -206,6 +208,7 @@ fn a_roll_onto_another_asset_copies_each_role_and_never_duplicates() {
         asset: asset.to_owned(),
     };
     let on = |asset: &str, role: PaneRole| DrawingKey {
+        scope: None,
         market: market(asset),
         role,
     };
@@ -314,7 +317,7 @@ fn replacing_a_set_keeps_unknown_tools_and_an_empty_set_leaves_no_entry() {
     );
     settings.replace(&key, Vec::new(), |_| true);
     assert!(settings.drawings(&key).is_empty());
-    assert_eq!(to_text(&settings).unwrap(), "version = 1\n");
+    assert_eq!(to_text(&settings).unwrap(), "version = 2\n");
 }
 
 #[test]
@@ -381,6 +384,20 @@ fn a_file_from_a_newer_format_is_refused_for_its_version() {
         parse_settings("not toml ["),
         Err(SettingsError::Malformed(_))
     ));
+}
+
+#[test]
+fn a_v1_document_upgrades_before_serializing_scoped_ownership() {
+    let mut settings = parse_settings("version = 1\n").unwrap();
+    let key = key("venue", PaneRole::Flow).in_scope(DrawingScope {
+        workspace: 1,
+        layout: crate::layout_document::LayoutId(7),
+    });
+    settings.replace(&key, vec![level(Some(1), 100.0)], known);
+    let text = to_text(&settings).unwrap();
+    assert!(text.starts_with("version = 2\n"));
+    let reread = parse_settings(&text).unwrap();
+    assert_eq!(reread.keys().collect::<Vec<_>>(), [key]);
 }
 
 #[test]

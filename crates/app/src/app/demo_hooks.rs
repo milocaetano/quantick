@@ -163,7 +163,7 @@ pub(super) fn apply_control_annotate_hooks<D: OwnersDesk + super::GatewayPort>(d
                 "price": rust_decimal::prelude::ToPrimitive::to_f64(&bar.close).unwrap_or(1.0).to_string(),
             })),
             _ => None,
-        };
+        }.filter(|_| pane.layout.drawing_scope_ready());
         if let Some(input) = owners.control.scenarios.annotation(anchor) {
             desk.run_hook_action("annotate.label.create", input, remote);
         }

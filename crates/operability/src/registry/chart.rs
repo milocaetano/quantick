@@ -17,6 +17,16 @@ const PENDING_HISTORY: Mapping = Mapping::Excluded {
 /// The canvas.
 pub(super) const CANVAS: &[UiBehaviour] = &[
     UiBehaviour {
+        id: "chart.drawings.autosave.set",
+        title: "Save drawing changes independently of workspace configuration",
+        reach: "Save drawing checkbox in the chart context menu",
+        keys: &[(
+            Source::Authored,
+            "the chart menu's SetDrawingAutosave intent",
+        )],
+        mapping: capability!("chart.drawings.autosave.set"),
+    },
+    UiBehaviour {
         id: "chart.bars.set_spec",
         title: "Change what one bar is — kind and size",
         reach: "each pane header's bars control, typing a number over the chart",

@@ -1,5 +1,6 @@
 //! Market settings persistence and the one-way move of drawings out of layouts.
 use crate::layouts;
+pub use quantick_workspace::drawing_identity::TargetResolveError;
 use quantick_workspace::layout_commit::LayoutSave;
 use quantick_workspace::layout_document::LayoutBook;
 use quantick_workspace::layout_store::LayoutStore;
@@ -156,6 +157,20 @@ pub fn open_layout_store(
     LayoutStore::new(book, layouts_path, blocked || opened.layouts_blocked).with_market(market)
 }
 
+/// Open the drawing and layout documents using the configured asset resolver.
+#[must_use]
+pub fn open_cockpit(
+    config: crate::config::AppConfig,
+    layouts_path: PathBuf,
+    legacy_path: PathBuf,
+    market_path: PathBuf,
+) -> LayoutStore {
+    let (book, blocked) = layouts::load_or_starter(&layouts_path, &legacy_path);
+    let assets =
+        std::rc::Rc::new(move |venue: &str, symbol: &str| config.market_asset(venue, symbol));
+    open_layout_store(book, layouts_path, blocked, market_path, assets)
+}
+
 /// A workspace import landed. Take the market file it brought, when it brought
 /// one, then whatever drawings the book it brought still holds, as an old
 /// export's do. Returns whether the layouts file must stay as it is.
@@ -188,32 +203,214 @@ pub fn reload(
 }
 
 /// The frame's write: the layouts file and the market file, each once its own
-/// debounce has settled. A held market store waits for Save.
+/// debounce has settled. Drawing preferences and configuration gates are independent.
 pub fn save_settled(store: &mut LayoutStore, now: Instant) {
     let layouts = store.take_save(now);
-    layouts::act_on(store.path(), store.book(), layouts);
+    write_layouts(store, layouts, now);
+    if !store.identities_reserved() {
+        return;
+    }
     let market = store.market_mut().take_save(now);
     act_on(store.market_mut(), market, now);
 }
 
 /// Both files now, whatever the debounce says: the way out on exit and the
-/// moment before an export reads them. A held market store still waits; a
-/// market write that fails is owed again from `now`.
+/// moment before an export reads them. Paused drawing scopes retain their disk
+/// snapshot; a market write that fails is owed again from `now`.
 pub fn flush(store: &mut LayoutStore, now: Instant) {
     let layouts = store.take_flush();
-    layouts::act_on(store.path(), store.book(), layouts);
+    write_layouts(store, layouts, now);
+    if !store.identities_reserved() {
+        return;
+    }
     let market = store.market_mut().take_flush();
     act_on(store.market_mut(), market, now);
 }
 
-/// Save's other half for one tab: the sets in `keys` reach the file now, held
-/// or not, and every other set stays as the file has it, so a set another tab
-/// holds back is still that tab's to save or drop. `Ok(true)` when the file
-/// was written, `Ok(false)` when it already held them.
+fn write_layouts(store: &mut LayoutStore, decision: LayoutSave, now: Instant) {
+    if decision != LayoutSave::Write {
+        layouts::act_on(store.path(), store.book(), decision);
+        return;
+    }
+    let document = store.persistence_document();
+    if layouts::save(store.path(), &document) {
+        store.note_saved(document);
+    } else {
+        store.note_write_failed(now);
+    }
+}
+
+/// Reserve layout identities before an immediate drawing write can name them.
+///
+/// # Errors
+/// The identity catalogue could not be written; pending drawings stay owed.
+pub fn reserve_layout_identities(store: &mut LayoutStore, now: Instant) -> Result<(), String> {
+    if store.identities_reserved() {
+        return Ok(());
+    }
+    let document = store.persistence_document();
+    if !store.is_blocked() && layouts::save(store.path(), &document) {
+        store.note_saved(document);
+        return Ok(());
+    }
+    store.note_write_failed(now);
+    Err(format!(
+        "{} identities could not be written",
+        store.path().display()
+    ))
+}
+
+/// Explicit workspace Save commits the layout configuration independently of drawings.
+///
+/// # Errors
+/// The layout file is blocked or the write failed.
+pub fn commit_layouts(store: &mut LayoutStore) -> Result<bool, String> {
+    if store.is_blocked() {
+        return Err(format!(
+            "{} could not be read at launch and is left untouched",
+            store.path().display()
+        ));
+    }
+    let changed = store.configuration_changed();
+    let document = store.commit_document();
+    if !layouts::save(store.path(), &document) {
+        return Err(format!("{} could not be written", store.path().display()));
+    }
+    store.note_saved(document);
+    Ok(changed)
+}
+
+/// Read or change the drawing write preference through the same persistence owner.
+///
+/// # Errors
+/// A requested preference could not reach the market file.
+pub fn drawing_autosave(
+    store: &mut LayoutStore,
+    key: &DrawingKey,
+    on: Option<bool>,
+    now: Instant,
+) -> Result<(bool, bool), String> {
+    if on.is_some() {
+        reserve_layout_identities(store, now)?;
+    }
+    let market = store.market_mut();
+    let changed = on.is_some_and(|on| market.set_drawing_autosave(key, on, now));
+    if on.is_some() {
+        commit_all(market)?;
+    }
+    Ok((market.drawing_autosave(key), changed))
+}
+
+/// Reuse a scope-compatible durable identity or issue one using host entropy.
+///
+/// # Errors
+/// The existing identity belongs elsewhere, or fresh entropy is unavailable.
+pub fn propose_identity(
+    path: &Path,
+    key: &DrawingKey,
+    id: u64,
+    existing: Option<quantick_workspace::drawing_identity::DurableDrawingRef>,
+    entropy: impl FnOnce(&mut [u8]) -> Result<(), ()>,
+) -> Result<
+    quantick_workspace::drawing_identity::DurableDrawingRef,
+    quantick_workspace::drawing_identity::TargetResolveError,
+> {
+    use quantick_workspace::drawing_identity::{self, TargetResolveError as Error};
+    if let Some(identity) = existing {
+        return drawing_identity::belongs_to(&identity, key)
+            .then_some(identity)
+            .ok_or(Error::SourceChanged);
+    }
+    let mut bytes = [0_u8; 32];
+    entropy(&mut bytes).map_err(|()| Error::Unavailable)?;
+    let entropy = bytes
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    drawing_identity::issue(&path.to_string_lossy(), key, id, &entropy)
+        .map_err(|_| Error::Unavailable)
+}
+
+/// Commit and verify an exact durable identity before publishing an alert target.
+///
+/// # Errors
+/// The drawing could not be persisted or its stored identity is ambiguous.
+pub fn commit_identity(
+    store: &mut LayoutStore,
+    key: &DrawingKey,
+    identity: &quantick_workspace::drawing_identity::DurableDrawingRef,
+    now: Instant,
+) -> Result<(), quantick_workspace::drawing_identity::TargetResolveError> {
+    use quantick_workspace::drawing_identity::{self, TargetResolveError as Error};
+    reserve_layout_identities(store, now).map_err(Error::WriteFailed)?;
+    let market = store.market_mut();
+    commit(market, std::slice::from_ref(key)).map_err(Error::WriteFailed)?;
+    let text = std::fs::read_to_string(market.path())
+        .map_err(|error| Error::WriteFailed(error.to_string()))?;
+    let document = parse_settings(&text).map_err(|error| Error::WriteFailed(error.to_string()))?;
+    drawing_identity::resolve(
+        identity,
+        document
+            .drawings(key)
+            .iter()
+            .filter_map(|item| item.durable_identity.as_ref()),
+    )
+    .map(|_| ())
+    .map_err(|_| Error::Ambiguous)
+}
+
+/// Claim legacy ownership only when the complete workspace catalogue proves it.
+pub fn migrate_workspace_scopes(
+    store: &mut LayoutStore,
+    workspaces: &quantick_workspace::workspace_book::WorkspaceBook,
+    now: Instant,
+) {
+    use quantick_workspace::market_settings::DrawingScope;
+    if workspaces.is_unused() {
+        // First-run seeding can still add owners; Default alone proves nothing.
+        return;
+    }
+    let legacy: Vec<_> = store
+        .market()
+        .settings()
+        .keys()
+        .filter(|key| key.scope.is_none())
+        .collect();
+    if legacy.is_empty() {
+        return;
+    }
+    let mut candidates = Vec::new();
+    for row in workspaces.list() {
+        let Some(workspace) = workspaces.workspace_id(&row.name) else {
+            continue;
+        };
+        for layout in store.book().layouts() {
+            for key in &legacy {
+                candidates.push(key.clone().in_scope(DrawingScope {
+                    workspace,
+                    layout: layout.id,
+                }));
+            }
+        }
+    }
+    let layouts = store.book().clone();
+    if store
+        .market_mut()
+        .settings_mut()
+        .migrate_scopes(&candidates, &layouts)
+        > 0
+    {
+        store.market_mut().mark_changed(now);
+    }
+}
+
+/// Commit specific enabled drawing scopes for durable alert publication.
+/// Paused scopes and unrelated drawings retain their disk snapshots.
+/// `Ok(true)` means a write occurred; `Ok(false)` means the file already held them.
 ///
 /// # Errors
 /// Why the file was not written: the store is blocked, or the write failed.
-/// Nothing reads as saved then: the held sets stay counted.
+/// Nothing reads as saved until the write succeeds.
 pub fn commit(market: &mut MarketSettingsStore, keys: &[DrawingKey]) -> Result<bool, String> {
     let Some(document) = market.commit_document(keys) else {
         return Ok(false);
@@ -221,7 +418,7 @@ pub fn commit(market: &mut MarketSettingsStore, keys: &[DrawingKey]) -> Result<b
     write_committed(market, document)
 }
 
-/// [`commit`] for every set the store holds: turning autosave on.
+/// Persist current preferences and every scope whose drawing autosave is enabled.
 ///
 /// # Errors
 /// As [`commit`].
@@ -229,7 +426,7 @@ pub fn commit_all(market: &mut MarketSettingsStore) -> Result<bool, String> {
     if !market.owes_write() {
         return Ok(false);
     }
-    let document = market.settings().clone();
+    let document = market.persistence_document();
     write_committed(market, document)
 }
 
@@ -258,7 +455,7 @@ pub fn act_on(market: &mut MarketSettingsStore, decision: LayoutSave, now: Insta
     match decision {
         LayoutSave::Wait => {}
         LayoutSave::Write => {
-            let document = market.settings().clone();
+            let document = market.persistence_document();
             if save(market.path(), &document) {
                 market.note_saved(document);
             } else {
@@ -408,6 +605,36 @@ mod tests {
     }
 
     #[test]
+    fn first_run_workspace_seeding_never_claims_unknown_legacy_drawings() {
+        let home = home("market-first-workspace-scope");
+        let mut layouts = open_layout_store(
+            parse(LEGACY).unwrap(),
+            home.layouts.clone(),
+            false,
+            home.market.clone(),
+            std::rc::Rc::new(asset),
+        );
+        let original = layouts.market().settings().clone();
+        let mut workspaces = crate::workspaces::WorkspaceBookStore::open_beside(&home.layouts);
+        let now = Instant::now();
+        workspaces.bind_drawings(&mut layouts, now);
+        assert_eq!(layouts.market().settings(), &original);
+        workspaces
+            .book_mut()
+            .seed_first_run(vec![crate::workspaces::SeedTab {
+                tab: 1,
+                layout: Some("Desk".to_owned()),
+                symbol: "WIN*".to_owned(),
+                live: crate::workspaces::WorkspaceRecipe::default(),
+            }]);
+        workspaces.persist_drawings(&mut layouts, now, true);
+        assert_eq!(layouts.market().settings(), &original);
+        let saved = parse_settings(&std::fs::read_to_string(&home.market).unwrap()).unwrap();
+        assert_eq!(saved, original);
+        assert!(saved.keys().all(|key| key.scope.is_none()));
+    }
+
+    #[test]
     fn a_second_open_finds_nothing_to_move() {
         let home = home("market-second-open");
         let mut book = parse(LEGACY).unwrap();
@@ -471,6 +698,7 @@ mod tests {
         let home = home("market-old-export");
         let mut settings = MarketSettings::default();
         let key = DrawingKey {
+            scope: None,
             market: MarketKey {
                 venue: "binance".to_owned(),
                 asset: "ETHUSDT".to_owned(),
@@ -551,6 +779,7 @@ mod tests {
 
     fn win(role: PaneRole) -> DrawingKey {
         DrawingKey {
+            scope: None,
             market: MarketKey {
                 venue: "mt5".to_owned(),
                 asset: "WIN*".to_owned(),

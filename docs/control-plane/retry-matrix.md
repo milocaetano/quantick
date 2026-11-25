@@ -113,11 +113,11 @@ key and lost-reply proofs live in `crates/mcp/tests/fake_gateway.rs`.
 
 | Enforced | Capabilities |
 | --- | --- |
-| deduplicated per connection | 96 |
+| deduplicated per connection | 97 |
 | key refused; not retryable, read back | 29 |
 | key required; deduplicated per connection | 23 |
 | refused before dispatch: no grant reaches it | 12 |
-| **Total** | **160** |
+| **Total** | **161** |
 
 ## Capabilities
 
@@ -167,6 +167,7 @@ key and lost-reply proofs live in `crates/mcp/tests/fake_gateway.rs`.
 | `canvas.widget.add` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `workspace.summary` | `tabs[].canvas` | a new floating pane is listed | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `canvas.window_menu.open` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `scene.controls` | `controls[].selected` | the toolbar.window_menu control is listed and selected | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `catalog.remove` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `feed.status` | `sources[].symbols` | the feed's symbols no longer list the symbol | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
+| `chart.drawings.autosave.set` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `chart.drawings.autosave.changed` | `payload.drawing_autosave.on` | the event for the addressed tab and pane reports the requested value; calling again without on also reads the effective preference | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once`, `drawing_autosave_call_inspects_sets_and_retries` |
 | `chart.price_axis.set` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `chart.summary` | `panes[].viewport` | The target pane reports manual framing with the requested price_range, or automatic fitting after reset. | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once`, `the_price_axis_call_holds_manual_tape_framing_and_reads_it_back_without_moving_the_left_pane` |
 | `chart.price_tag.progress.set` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `chart.summary` | `panes[].price_tag_progress` | every pane of the addressed pane's market reports the requested price_tag_progress | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once`, `the_price_tag_progress_call_switches_the_market_and_reads_it_back` |
 | `chart.settings.set` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `chart.settings.changed` | `payload.chart_settings` | an event after the pre-call cursor carries the window and presets the call left | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
@@ -284,4 +285,4 @@ key and lost-reply proofs live in `crates/mcp/tests/fake_gateway.rs`.
 | `workspace.save_as` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `workspace.saved` | `payload.workspace` | an event after the pre-call cursor names the new workspace | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `workspace.save_to` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `workspace.saved` | `payload.workspace` | an event after the pre-call cursor names the tab's workspace | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 
-160 mutable capabilities registered, 160 with a readback.
+161 mutable capabilities registered, 161 with a readback.

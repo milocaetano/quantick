@@ -18,6 +18,7 @@ pub(crate) struct WorkspaceRead<'a> {
 pub(crate) struct WorkspaceSaveAdapter<'a> {
     pub(super) arrangement: ArrangementRead<'a>,
     pub(super) session: &'a mut WorkspaceCommitSession,
+    pub(super) layouts: &'a mut quantick_workspace::layout_store::LayoutStore,
     pub(super) path: &'a Path,
     pub(super) replay_view: &'a crate::surfaces::replay_browser::ReplayBrowser,
     pub(super) toast: &'a mut crate::surfaces::ToastSurface,
@@ -83,19 +84,8 @@ impl WorkspaceSaveAdapter<'_> {
     /// engineering against.
     pub(super) fn save_workspace(&mut self, reason: &'static str) -> bool {
         let workspace = self.read().capture_workspace();
-        let saved = ui_state::save(self.path, &workspace);
+        let saved = ui_state::save_cockpit(self.path, &workspace, self.layouts, reason);
         self.session.note_write(WritePurpose::Full, saved);
-        tracing::info!(
-            target: "quantick::app",
-            schema_version = 1_u8,
-            event_code = "UI_STATE_SAVED",
-            path = %self.path.display(),
-            tabs = workspace.tabs.len(),
-            saved,
-            reason,
-            action = if saved { "workspace_written" } else { "workspace_not_written" },
-            "workspace save"
-        );
         self.note_workspace(if saved {
             format!(
                 "Workspace saved — quantick opens on {} {}",
@@ -137,24 +127,7 @@ impl WorkspaceSaveAdapter<'_> {
             .arrangement
             .drawing_chrome
             .remembered_inspector_position();
-        let Some(file) = self
-            .session
-            .prepare_inspector(ui_state::load(self.path), position)
-        else {
-            return false;
-        };
-        let saved = ui_state::save(self.path, &file);
-        tracing::info!(
-            target: "quantick::app",
-            schema_version = 1_u8,
-            event_code = "UI_STATE_POPUP_POSITION_SAVED",
-            path = %self.path.display(),
-            parked = position.is_some(),
-            saved,
-            action = if saved { "position_written" } else { "position_not_written" },
-            "properties popup position"
-        );
-        saved
+        ui_state::write_inspector_position(self.path, self.session, position)
     }
     /// Write the desk's `auto_save` alone; `true` once it reached the disk.
     pub(super) fn write_auto_save(&mut self, on: bool) -> Result<(), String> {
@@ -202,27 +175,15 @@ impl WorkspaceSaveAdapter<'_> {
     /// touched: whether a startup *arrangement* exists is a different question
     /// from whether this file does, and the caller answers it.
     fn edit_workspace_file(&mut self, event_code: &'static str, edit: DocumentEdit) -> bool {
-        let Some(file) = self
-            .session
-            .prepare_edit(ui_state::load_for_edit(self.path), edit)
-        else {
-            self.note_workspace(
-                "The workspace file could not be read, so it was left alone — see the log"
-                    .to_owned(),
-            );
-            return false;
-        };
-        let written = ui_state::save(self.path, &file);
-        tracing::info!(
-            target: "quantick::app",
-            schema_version = 1_u8,
-            event_code,
-            path = %self.path.display(),
-            written,
-            action = if written { "file_updated" } else { "file_not_written" },
-            "a standing choice was written to the workspace file"
-        );
-        written
+        ui_state::edit_session_file(self.path, self.session, edit, event_code).unwrap_or_else(
+            || {
+                self.note_workspace(
+                    "The workspace file could not be read, so it was left alone; see the log"
+                        .to_owned(),
+                );
+                false
+            },
+        )
     }
     /// Write down the replay folder the trader just pointed the browser at,
     /// without disturbing anything else the workspace file holds.
@@ -344,9 +305,11 @@ impl WorkspaceSaveAdapter<'_> {
         // the Open-recent list are facts about this installation; the entry
         // resets a *layout* and must not quietly take them with it.
         let stars = self.read().starred_tool_ids();
-        let kept = self
-            .session
-            .reset_keeps(!stars.is_empty(), self.replay_view.stored_pick().is_some());
+        let kept = self.session.reset_keeps(
+            !stars.is_empty(),
+            self.replay_view.stored_pick().is_some(),
+            self.arrangement.workspace_book.autosave(),
+        );
         let stars_kept = !stars.is_empty();
         let forgotten = if kept {
             // Edited rather than rebuilt from the defaults: writing a fresh
@@ -467,7 +430,7 @@ impl<'a> super::arrangement_adapter::ArrangementAdapter<'a> {
         self,
         replay_view: &'a crate::surfaces::replay_browser::ReplayBrowser,
     ) -> WorkspaceSaveAdapter<'a> {
-        let (session, path, workspace_book) = self.workspace.commit_parts();
+        let (session, path, workspace_book, layouts) = self.workspace.commit_parts();
         WorkspaceSaveAdapter {
             arrangement: super::arrangement_adapter::ArrangementRead {
                 tabs: self.tabs,
@@ -482,6 +445,7 @@ impl<'a> super::arrangement_adapter::ArrangementAdapter<'a> {
                 workspace_book,
             },
             session,
+            layouts,
             path,
             replay_view,
             toast: self.toast,

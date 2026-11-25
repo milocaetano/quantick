@@ -76,6 +76,7 @@ capability that cannot change application state.
 | `canvas.window_menu.open` | 1 | `canvas` | no | `cockpit`, `cockpit.layout` |
 | `catalog.remove` | 1 | `catalog` | no | `cockpit`, `cockpit.desk` |
 | `chart.context.read` | 1 | `chart` | yes | `observe`, `observe.chart`, `observe.drawings`, `observe.indicators`, `observe.market`, `observe.paper`, `observe.user_text` |
+| `chart.drawings.autosave.set` | 1 | `chart` | no | `cockpit`, `cockpit.layout` |
 | `chart.price_axis.set` | 1 | `chart` | no | `cockpit`, `cockpit.layout` |
 | `chart.price_tag.progress.set` | 1 | `chart` | no | `cockpit`, `cockpit.layout` |
 | `chart.settings.set` | 1 | `chart` | no | `cockpit`, `cockpit.layout` |
@@ -222,4 +223,4 @@ capability that cannot change application state.
 | `workspace.save_as` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
 | `workspace.save_to` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
 
-197 capabilities registered.
+198 capabilities registered.

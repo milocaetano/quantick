@@ -48,8 +48,12 @@ fn menu_frame_over(
             |ctx| {
                 egui::CentralPanel::default().show(ctx, |ui| {
                     let strategies = chrome.strategies.pane(pane.id);
-                    let (menu, model, view) =
-                        pane.menu_parts(chrome.capabilities, chrome.style, strategies);
+                    let (menu, model, view) = pane.menu_parts(
+                        chrome.capabilities,
+                        chrome.style,
+                        strategies,
+                        chrome.market,
+                    );
                     let hosts = PaneMenuHosts {
                         paper: &mut *chrome.paper,
                     };
@@ -172,6 +176,40 @@ fn the_drawing_section_intents_write_the_drawing() {
     assert_eq!(drawing.name.as_deref(), Some("range high"));
     assert!(drawing.hidden);
     assert!(drawing.locked);
+}
+
+#[test]
+fn save_drawing_menu_click_and_readback_use_the_scoped_preference() {
+    let (mut pane, _) = pane_with_rectangle();
+    let key = quantick_stores::market_settings::DrawingKey::of_pane(
+        "binance",
+        "TESTUSDT".to_owned(),
+        None,
+    )
+    .in_scope(quantick_workspace::market_settings::DrawingScope {
+        workspace: 1,
+        layout: quantick_workspace::layout_document::LayoutId(1),
+    });
+    pane.layout.drawings_key = Some(key.clone());
+    let intents = click_entry(&mut pane, &egui::Context::default(), "Save drawing");
+    assert!(
+        intents
+            .iter()
+            .any(|intent| matches!(intent, PaneMenuIntent::SetDrawingAutosave(false)))
+    );
+    with_strategies(|strategies| {
+        with_chrome_over(Tool::Pointer, strategies, |chrome| {
+            pane.apply_menu_intents(intents, chrome);
+            assert!(!chrome.market.drawing_autosave(&key));
+            let (_, _, view) = pane.menu_parts(
+                chrome.capabilities,
+                chrome.style,
+                chrome.strategies.pane(pane.id),
+                chrome.market,
+            );
+            assert!(!view.drawing_autosave);
+        })
+    });
 }
 
 #[test]
@@ -303,7 +341,12 @@ fn a_drawing_deleted_under_the_open_menu_drops_its_section_and_name() {
         .collect();
     assert_eq!(
         left,
-        ["configure footprint", "configure L2", "configure bubbles"],
+        [
+            "configure footprint",
+            "configure L2",
+            "configure bubbles",
+            "Save drawing"
+        ],
         "no section for a ghost, only the chart's settings doors"
     );
 }

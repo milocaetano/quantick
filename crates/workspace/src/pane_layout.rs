@@ -1,6 +1,6 @@
 //! Pane-local layout binding and persistence bookkeeping; session owns membership.
 use crate::layout_document::{LayoutId, SavedDrawing};
-use crate::market_settings::{DrawingKey, PaneRole, PaneWrite};
+use crate::market_settings::{DrawingKey, DrawingScope, PaneRole, PaneWrite};
 use crate::session::LayoutView;
 
 /// `Bars` is the host's bar rule, compared and never read here.
@@ -53,6 +53,13 @@ impl<Bars> PaneLayout<Bars> {
     pub fn seeded(&self) -> bool {
         self.view.seeded()
     }
+    /// An adopted workspace and named layout own every new drawing.
+    #[must_use]
+    pub fn drawing_scope_ready(&self) -> bool {
+        self.drawings_key
+            .as_ref()
+            .is_some_and(|key| key.scope.is_some())
+    }
     /// Whether the held drawings no longer belong on this pane: the tab left
     /// the feed and symbol they were resolved from, or a context chart
     /// (`context_bars`) left their bars. Compares; allocates nothing.
@@ -67,6 +74,13 @@ impl<Bars> PaneLayout<Bars> {
         let recut = context_bars.is_some_and(|bars| self.drawings_spec.as_ref() != Some(bars));
         self.seeded() && self.drawings_key.is_some() && (moved || recut)
     }
+    #[must_use]
+    pub fn needs_scope(&self, scope: Option<DrawingScope>) -> bool {
+        self.seeded()
+            && scope.is_some()
+            && self.drawings_key.as_ref().and_then(|key| key.scope) != scope
+    }
+
     /// The flow chart cut to `now` keeps its key. When `alike` finds no mark
     /// pinned to either cut, only the held bars move: nothing is rebuilt, so
     /// selection and undo survive. Answers whether they moved. A refusal is

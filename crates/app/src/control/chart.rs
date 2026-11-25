@@ -78,6 +78,18 @@ impl ChartPort for dyn ControlPort {
 }
 
 impl ChartStylePort for dyn ControlPort {
+    fn drawing_autosave(
+        &mut self,
+        tab: u64,
+        pane: u64,
+        on: Option<bool>,
+    ) -> Result<(bool, bool), ControlError> {
+        super::addressed_pane::pane(self, WireU64::new(tab), WireU64::new(pane))?;
+        self.workspace_calls()
+            .layout()
+            .drawing_autosave(tab, pane, on)
+            .map_err(quantick_control_handlers::drawing_autosave::unavailable)
+    }
     fn apply_chart_settings(
         &mut self,
         input: ChartSettingsInput,

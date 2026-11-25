@@ -26,7 +26,7 @@
 //! `while` or hold an `else` to decide what ran where. Then it was three
 //! loops over the plan, each with its own `match` deciding which half of a
 //! stage it ran, and Home asked in four adapters. Now the order is 41 stages
-//! and 46 declared edges with every harness, 34 and 41 without, each with its
+//! and 52 declared edges with every harness, 34 and 45 without, each with its
 //! scope and Home visibility, pinned by the tests beside this file. Adding an
 //! independent stage costs one `Name after []` line here, one scope and one
 //! Home entry, and one executor arm in the application: no other declaration
@@ -97,24 +97,29 @@ macro_rules! frame_stages {
                 /// running first would let a note expire after the hook looked,
                 /// drawing one frame with an empty lane.
                 HistoryNoteHook when ($scenario) after [ExpireHistoryNotes],
+                /// Script reloads, pending indicator state and chart layers.
+                IndicatorMaintenance after [DrainSources],
+                /// Settle pending layouts and workspace ownership before input
+                /// or annotation hooks can create a drawing in that scope.
+                LayoutSwitches after [IndicatorMaintenance],
                 /// The harness asks for local agent access.
                 EnableControlAccess when ($control) after [],
                 /// A control trace beside a replayed session re-injects its actions.
-                ReplayTrace after [],
+                ReplayTrace after [LayoutSwitches],
                 /// The harness mark. After the trace: a mark taken before its
                 /// recording's trace loads is read back from the sidecar as a
                 /// recorded action and re-injected as a second, replayed mark.
                 TakeMark when ($control) after [ReplayTrace],
                 /// The harness writes its annotations.
-                AnnotateHooks when ($control) after [],
+                AnnotateHooks when ($control) after [LayoutSwitches],
                 /// The harness captures an evidence bundle. After the annotations:
                 /// the bundle describes the window an assistant already wrote on.
                 EvidenceHook when ($control) after [AnnotateHooks],
                 /// The control gateway services this frame's requests. After the
                 /// evidence hook, which must capture before the gateway drains.
-                GatewayService after [EvidenceHook when ($control)],
+                GatewayService after [LayoutSwitches, EvidenceHook when ($control)],
                 /// Scripted views, demos and pending history requests.
-                ScenarioHooks when ($scripted) after [],
+                ScenarioHooks when ($scripted) after [LayoutSwitches],
                 /// The health summary and workspace upkeep. After the drain: the
                 /// summary reports the trades it counted.
                 WindowHousekeeping after [DrainSources],
@@ -122,12 +127,6 @@ macro_rules! frame_stages {
                 IndicatorSurfaces after [],
                 /// Pane requests to arm a strategy, handed to the arming dialog.
                 StrategyPopupRequests after [],
-                /// Script reloads, pending indicator state and chart layers.
-                IndicatorMaintenance after [],
-                /// Pending layouts settle, a frame after the click that armed
-                /// them, so the frame carrying the change paints its overlay
-                /// first; then every tab's layout and workspace upkeep.
-                LayoutSwitches after [],
                 /// Waits owned by other components mirrored onto the loading
                 /// overlay. Once per tick, before the windows: it reflects the
                 /// load a replay browser started on the tick before.

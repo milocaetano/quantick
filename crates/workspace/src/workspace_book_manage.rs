@@ -27,6 +27,7 @@ pub(super) struct MovedTab {
 /// A delete that an Undo can take back until `until_ms`.
 #[derive(Debug, Clone, PartialEq)]
 pub(super) struct Deleted {
+    workspace_id: Option<u64>,
     recipe: WorkspaceRecipe,
     colour: WorkspaceColour,
     /// The old names that led to it, which a desk may still hold.
@@ -139,6 +140,7 @@ impl WorkspaceBook {
             return Err(refusal);
         }
         let recipe = self.recipes.remove(name).expect("delete_refusal found it");
+        self.workspace_ids.remove(name);
         for copies in self.parked.values_mut() {
             copies.remove(name);
         }
@@ -211,6 +213,7 @@ impl WorkspaceBook {
             .iter()
             .filter_map(|(tab, copies)| Some((*tab, copies.get(name)?.clone())))
             .collect();
+        let workspace_id = self.workspace_id(name);
         let outcome = self.delete(name)?;
         let tabs = (before.into_iter())
             .map(|(tab, before, unsynced)| MovedTab {
@@ -226,6 +229,7 @@ impl WorkspaceBook {
             .collect();
         self.deleted.retain(|_, record| record.until_ms > now_ms);
         let record = Deleted {
+            workspace_id,
             recipe,
             colour,
             renamed,
@@ -292,6 +296,9 @@ impl WorkspaceBook {
             return Err(WorkspaceRefusal::DuplicateName(held.to_owned()));
         }
         self.recipes.insert(name.to_owned(), record.recipe.clone());
+        if let Some(id) = record.workspace_id {
+            self.workspace_ids.insert(name.to_owned(), id);
+        }
         for (tab, copy) in record.parked {
             if self.tabs.contains_key(&tab) {
                 self.parked

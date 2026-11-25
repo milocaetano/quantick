@@ -1,16 +1,6 @@
-//! A pane's share of its market's drawings.
-//!
-//! A mark shown on all timeframes is kept once per market, under
-//! [`PaneRole::AllTimeframes`], and every chart of that market shows it at
-//! whatever bars it is cut to: market time and price place it, never a bar
-//! index. A mark kept to its chart stays under its pane role, pinned to the
-//! bar rule it was written at ([`SavedDrawing::bars`]), and shows only on a
-//! chart of that role cut that way.
-//!
-//! A file from before either rule is read as written and never rewritten to
-//! fit: an entry with no pinned bars shows at every bar rule of its role, and
-//! a shared entry still under a role reaches every chart of its market. Such
-//! an entry moves to the market's set only when a pane writes an edit to it.
+//! A pane's share of its ownership scope. All-timeframes marks widen only
+//! within the same market, workspace and named layout. Legacy unscoped marks
+//! retain their old representation until migration establishes their owner.
 use super::{DrawingKey, MarketKey, MarketSettings, PaneRole, settled};
 use crate::layout_document::{LayoutId, SavedDrawing};
 use std::collections::BTreeSet;
@@ -47,7 +37,7 @@ impl PaneWrite {
     /// `writer` changed.
     #[must_use]
     pub fn reaches(self, writer: &DrawingKey, other: &DrawingKey) -> bool {
-        (self.all_timeframes && writer.market == other.market) || (self.own && writer == other)
+        (self.all_timeframes && writer.same_scope(other)) || (self.own && writer == other)
     }
 }
 
@@ -55,7 +45,7 @@ impl PaneWrite {
 /// all-timeframes set once.
 pub fn shown_sets<'a>(keys: impl IntoIterator<Item = &'a DrawingKey>) -> BTreeSet<DrawingKey> {
     keys.into_iter()
-        .flat_map(|key| [key.clone(), DrawingKey::all_timeframes(key.market.clone())])
+        .flat_map(|key| [key.clone(), key.all_timeframes_key()])
         .collect()
 }
 
@@ -107,7 +97,7 @@ impl MarketSettings {
     /// them, and [`Self::store_pane`] keeps them.
     #[must_use]
     pub fn pane_drawings(&self, key: &DrawingKey, bars: &str) -> Vec<SavedDrawing> {
-        let mut shown: Vec<SavedDrawing> = self.all_timeframes_of(&key.market).cloned().collect();
+        let mut shown: Vec<SavedDrawing> = self.all_timeframes_of(key).cloned().collect();
         if key.role != PaneRole::AllTimeframes {
             let own = self
                 .drawings(key)
@@ -157,7 +147,7 @@ impl MarketSettings {
             self.put(key, next);
             write.own = true;
         }
-        let held = self.all_timeframes_of(&key.market);
+        let held = self.all_timeframes_of(key);
         let current: Vec<SavedDrawing> = held.filter(|e| known_tool(&e.tool)).cloned().collect();
         let base: Vec<&SavedDrawing> = base.iter().filter(|e| e.all_timeframes()).collect();
         let next = if same_marks(base.iter().copied(), &current) {
@@ -168,23 +158,24 @@ impl MarketSettings {
             next
         };
         if !same_marks(current.iter(), &next) {
-            self.retire_shared_before(&key.market, &known_tool);
-            let set = DrawingKey::all_timeframes(key.market.clone());
+            self.retire_shared_before(key, &known_tool);
+            let set = key.all_timeframes_key();
             self.replace(&set, next, known_tool);
             write.all_timeframes = true;
         }
         write
     }
 
-    /// Strip layout `from` was deleted and its charts moved to `to`: every
-    /// mark of every market that belonged to it belongs to `to`. Answers
-    /// whether any moved.
+    /// Retarget legacy unscoped layout markers after a layout is deleted.
+    /// Scoped drawings and preferences keep their original owner forever;
+    /// deleting a layout never lends its drawings to the neighboring layout.
     pub fn retarget_layout(&mut self, from: LayoutId, to: LayoutId) -> bool {
+        let mut changed = false;
         let entries = self
             .drawings
             .iter_mut()
+            .filter(|set| set.scope.is_none())
             .flat_map(|set| set.items.iter_mut());
-        let mut changed = false;
         for entry in entries.filter(|entry| entry.layout == Some(from)) {
             entry.layout = Some(to);
             changed = true;
@@ -194,8 +185,8 @@ impl MarketSettings {
 
     /// Every mark every chart of `market` shows at any bars.
     #[must_use]
-    pub fn shared_drawings(&self, market: &MarketKey) -> Vec<SavedDrawing> {
-        self.all_timeframes_of(market).cloned().collect()
+    pub fn shared_drawings(&self, key: &DrawingKey) -> Vec<SavedDrawing> {
+        self.all_timeframes_of(key).cloned().collect()
     }
 
     /// The highest id any set of `market` holds: a chart allocates above it,
@@ -210,9 +201,9 @@ impl MarketSettings {
     /// Make a document on its way to disk agree with `memory` on the old
     /// shared marks that left `market`'s roles for its all-timeframes set:
     /// a save that writes the set writes their leaving too.
-    pub fn carry_retirement(&mut self, memory: &Self, market: &MarketKey) {
+    pub fn carry_retirement(&mut self, memory: &Self, key: &DrawingKey) {
         self.drawings.retain_mut(|set| {
-            if !set.is_market(market) || !held_shared_before(&set.role) {
+            if !set.key().same_scope(key) || !held_shared_before(&set.role) {
                 return true;
             }
             let now = memory.drawings(&set.key());
@@ -226,9 +217,9 @@ impl MarketSettings {
 
     /// Put back, where `saved` had them, the old shared marks that left
     /// `market`'s roles since: a discard of the set discards their leaving.
-    pub fn undo_retirement(&mut self, saved: &Self, market: &MarketKey) {
+    pub fn undo_retirement(&mut self, saved: &Self, key: &DrawingKey) {
         for old in saved.drawings.iter() {
-            if !old.is_market(market) || !held_shared_before(&old.role) {
+            if !old.key().same_scope(key) || !held_shared_before(&old.role) {
                 continue;
             }
             let key = old.key();
@@ -246,13 +237,13 @@ impl MarketSettings {
     /// the shared marks an older build kept under a role.
     fn all_timeframes_of<'a>(
         &'a self,
-        market: &'a MarketKey,
+        key: &'a DrawingKey,
     ) -> impl Iterator<Item = &'a SavedDrawing> + 'a {
-        let set = DrawingKey::all_timeframes(market.clone());
+        let set = key.all_timeframes_key();
         let before = self
             .drawings
             .iter()
-            .filter(move |old| old.is_market(market) && held_shared_before(&old.role))
+            .filter(move |old| old.key().same_scope(key) && held_shared_before(&old.role))
             .flat_map(|old| old.items.iter().filter(|entry| entry.all_timeframes()));
         self.drawings(&set).iter().chain(before)
     }
@@ -260,10 +251,10 @@ impl MarketSettings {
     /// Take the shared marks an older build kept under `market`'s roles out of
     /// them: the pane that just wrote the market's set held them, so they are
     /// in what it wrote.
-    fn retire_shared_before(&mut self, market: &MarketKey, known_tool: &impl Fn(&str) -> bool) {
+    fn retire_shared_before(&mut self, key: &DrawingKey, known_tool: &impl Fn(&str) -> bool) {
         let retired = |entry: &SavedDrawing| known_tool(&entry.tool) && entry.all_timeframes();
         self.drawings.retain_mut(|set| {
-            if !set.is_market(market) || !held_shared_before(&set.role) {
+            if !set.key().same_scope(key) || !held_shared_before(&set.role) {
                 return true;
             }
             let before = set.items.len();

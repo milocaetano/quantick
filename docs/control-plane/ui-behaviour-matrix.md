@@ -42,13 +42,13 @@ The three exclusion classes are closed:
 
 | Outcome | Behaviours |
 | --- | --- |
-| Reachable by capability | 158 |
+| Reachable by capability | 159 |
 | Excluded: `authority` | 4 |
 | Excluded: `ui_only_by_decision` | 7 |
 | Excluded: `pending_capability` | 35 |
-| **Total** | **204** |
+| **Total** | **205** |
 
-104 of the 204 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 100 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
+104 of the 205 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 101 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
 
 ## Behaviours
 
@@ -79,6 +79,7 @@ The three exclusion classes are closed:
 | `layout.tab.rename` | Rename a layout tab | layout strip double-click, window menu, Workspace, Layouts | `layout.tab.rename` | — |
 | `layout.tab.rename.cancel` | Abandon a rename in progress | Escape, or clicking away from the strip's rename box | — | `ui_only_by_decision` — `layout.tab.rename` is atomic: a caller sends the new name or sends nothing, so there is no half-finished rename for it to abandon. The begin/cancel pair is the in-place editor's own state and has no remote counterpart by construction |
 | `layout.tab.switch` | Show another layout on the focused chart | layout strip, window menu, Workspace, Layouts, Alt+1 … Alt+9 | `layout.tab.switch` | — |
+| `chart.drawings.autosave.set` | Save drawing changes independently of workspace configuration | Save drawing checkbox in the chart context menu | `chart.drawings.autosave.set` | — |
 | `chart.bars.set_spec` | Change what one bar is — kind and size | each pane header's bars control, typing a number over the chart | `layout.pane.set_bar_spec`, `layout.pane.set_interval` | — |
 | `chart.pan` | Drag the chart horizontally through history | horizontal primary drag on the canvas | — | `pending_capability` — `chart.window.read` reports the visible time window; no capability pans that window. Price framing has its own capability below. Tracked in issue 401 |
 | `chart.price_axis.set` | Set a pane's price range or resume automatic fitting | drag or wheel on the price axis; double-click it to reset | `chart.price_axis.set` | — |
@@ -280,7 +281,7 @@ matrix fails the build.
 | `hotkey` | 25 |
 | `menu_entry` | 49 |
 | `scripted_menu` | 0 |
-| `authored` | 102 |
+| `authored` | 103 |
 
 ## Appendix: rows no registry stands behind
 
@@ -304,6 +305,7 @@ declares nothing here is a guard failure.
 | `market.palette.add` | the no-match row is drawn from the headless market list |
 | `market.palette.remove` | the row is drawn from the headless market list |
 | `tab.market.roll` | the roll row is drawn from the headless market list, not an action enum |
+| `chart.drawings.autosave.set` | the chart menu's SetDrawingAutosave intent |
 | `chart.bars.set_spec` | the bar-kind and size controls are pane header widgets, not entries in an action enum |
 | `chart.pan` | a pointer drag the canvas handles directly; no registry names it |
 | `chart.price_axis.set` | price-axis gestures update the pane's PriceView directly |
