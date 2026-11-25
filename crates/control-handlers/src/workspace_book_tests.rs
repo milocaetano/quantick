@@ -15,6 +15,7 @@ struct FakeHost {
     writes: usize,
     write_fails: bool,
     shown: Vec<u64>,
+    followed: Vec<u64>,
     desk_writes: Vec<bool>,
     closed: Vec<u64>,
     market: Option<MarketSettingsStore>,
@@ -58,6 +59,9 @@ impl WorkspaceOwner for FakeHost {
     }
     fn show_tab_recipe(&mut self, tab: u64, _recipe: &WorkspaceRecipe) {
         self.shown.push(tab);
+    }
+    fn follow_workspace_owner(&mut self, tab: u64) {
+        self.followed.push(tab);
     }
     fn tab_symbols(&self, tabs: &[u64]) -> Vec<String> {
         tabs.iter().map(|tab| format!("SYM{tab}")).collect()
@@ -111,6 +115,7 @@ fn autosaving() -> (FakeHost, FakeAccess, ActorContext) {
         writes: 0,
         write_fails: false,
         shown: Vec::new(),
+        followed: Vec::new(),
         desk_writes: Vec::new(),
         closed: Vec::new(),
         market: None,
@@ -318,9 +323,15 @@ fn save_as_then_set_moves_the_tabs_and_a_repeat_is_no_change() {
     assert_eq!(saved["changed"], true);
     assert_eq!(host.writes, 1);
     assert_eq!(access.events.len(), 1);
+    assert_eq!(host.followed, [1]);
+    assert!(
+        host.shown.is_empty(),
+        "Save As keeps the current pane choices"
+    );
     let again = save_as(&mut host, &mut access, &actor, &value).unwrap();
     assert_eq!(again["changed"], false);
     assert_eq!((host.writes, access.events.len()), (1, 1));
+    assert_eq!(host.followed, [1], "a repeat does not rebind drawings");
 
     let value = json!({ "tab_id": "2", "name": "Scalp" });
     let moved = set(&mut host, &mut access, &actor, &value).unwrap();
@@ -352,22 +363,35 @@ fn save_to_answers_the_tabs_it_changed_and_they_are_redrawn() {
 
 #[test]
 fn a_failed_write_restores_the_book_journals_nothing_and_says_why() {
-    let (mut host, mut access, actor) = parts();
-    host.write_fails = true;
-    let value = json!({ "name": "Scalp" });
-    let error = save_as(&mut host, &mut access, &actor, &value).unwrap_err();
-    assert_eq!(error.code.as_str(), codes::CAPABILITY_UNAVAILABLE);
-    assert_eq!(detail(&error), WRITE_FAILED_CODE);
-    assert!(error.message.contains("saving is off"));
-    assert!(access.events.is_empty());
-    assert!(
-        host.book.recipe("Scalp").is_none(),
-        "memory matches the file"
-    );
+    for layout_failure in [false, true] {
+        let (mut host, mut access, actor) = parts();
+        host.write_fails = !layout_failure;
+        host.layout_fails = layout_failure;
+        let value = json!({ "name": "Scalp" });
+        let error = save_as(&mut host, &mut access, &actor, &value).unwrap_err();
+        assert_eq!(error.code.as_str(), codes::CAPABILITY_UNAVAILABLE);
+        assert_eq!(detail(&error), WRITE_FAILED_CODE);
+        assert!(error.message.contains(if layout_failure {
+            "the disk is full"
+        } else {
+            "saving is off"
+        }));
+        assert!(access.events.is_empty());
+        assert!(
+            host.followed.is_empty(),
+            "the prior drawing owner is retained"
+        );
+        assert!(
+            host.book.recipe("Scalp").is_none(),
+            "memory matches the file"
+        );
 
-    host.write_fails = false;
-    let retried = save_as(&mut host, &mut access, &actor, &value).unwrap();
-    assert_eq!(retried["changed"], true);
+        host.write_fails = false;
+        host.layout_fails = false;
+        let retried = save_as(&mut host, &mut access, &actor, &value).unwrap();
+        assert_eq!(retried["changed"], true);
+        assert_eq!(host.followed, [1]);
+    }
 }
 
 #[test]

@@ -88,6 +88,8 @@ pub trait WorkspaceOwner: TabDirectory {
     }
     /// Put a recipe on a tab's charts.
     fn show_tab_recipe(&mut self, _tab: u64, _recipe: &WorkspaceRecipe) {}
+    /// Rebind drawings after an owner change without replacing the tab's live recipe.
+    fn follow_workspace_owner(&mut self, _tab: u64) {}
     /// Validate, then select a generic strip layout for a newly created workspace.
     fn creation_layout(&mut self, _tab: u64, _apply: bool) -> Result<(), String> {
         Ok(())
@@ -617,7 +619,11 @@ pub fn save_tab_as<H: WorkspaceOwner + ?Sized>(
     }
     let save = |book: &mut WorkspaceBook| book.save_as_coloured(tab, name, colour);
     let mut outcome = written(app, save, |saved| saved.changed)?;
-    outcome.changed |= commit_layouts_whole(app, before, outcome.changed)?;
+    let wrote = commit_layouts_whole(app, before, outcome.changed)?;
+    if outcome.changed {
+        app.follow_workspace_owner(tab);
+    }
+    outcome.changed |= wrote;
     Ok(outcome)
 }
 

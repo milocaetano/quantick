@@ -155,6 +155,9 @@ impl WorkspaceOwner for WorkspaceCalls<'_> {
         book_upkeep::show_recipe(self, tab, recipe);
         self.layout().follow_market_changes();
     }
+    fn follow_workspace_owner(&mut self, _tab: u64) {
+        self.layout().follow_market_changes();
+    }
     fn persist_workspace_autosave(&mut self, on: bool) -> Result<(), String> {
         self.save_adapter().write_auto_save(on)
     }

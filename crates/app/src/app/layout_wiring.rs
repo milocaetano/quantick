@@ -65,11 +65,8 @@ mod strip;
 /// an indicator the switch takes off. It is the trader's to finish first, and
 /// the refusal says so.
 fn facts_of(pane: &ChartPane) -> PaneFacts {
-    PaneFacts {
-        gesture_in_flight: pane.drawings.in_gesture()
-            || pane.drawings.draft().is_some()
-            || !matches!(pane.gestures.drag, DrawingDrag::None),
-    }
+    pane.drawings
+        .layout_facts(!matches!(pane.gestures.drag, DrawingDrag::None))
 }
 
 /// Re-anchor what a pane took from the store, once it has bars to anchor on.

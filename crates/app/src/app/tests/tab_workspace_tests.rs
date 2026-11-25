@@ -1362,6 +1362,97 @@ fn a_new_workspace_reads_clean_after_real_frames() {
     assert_eq!(returned.footprint_style, before.footprint_style);
 }
 
+#[test]
+fn save_as_rebinds_drawings_before_an_immediate_annotation() {
+    use crate::control::ActionOrigin;
+    use serde_json::json;
+
+    let (mut app, _) = app_with_history(8);
+    frames(&mut app, 2);
+    app.active_tab_mut().focus = PaneSide::Flow;
+    let tab = app.runtime.tabs.active_id();
+    let old_key = app
+        .active_tab()
+        .flow_pane
+        .layout
+        .drawings_key
+        .clone()
+        .unwrap();
+    place_level(&mut app, PaneSide::Flow, 137.0);
+    app.active_tab_mut().canvas.split_fraction = 0.37;
+    assert!(
+        app.runtime
+            .workspace
+            .layouts()
+            .market()
+            .settings()
+            .pane_drawings(&old_key, "tick:1")
+            .is_empty(),
+        "the old owner's drawing has not reached frame maintenance",
+    );
+    let saved_as = app
+        .control_action(
+            "workspace.save_as",
+            1,
+            ActionOrigin::Human,
+            json!({ "tab_id": tab.to_string(), "name": "Saved with drawings" }),
+        )
+        .unwrap();
+    assert_eq!(saved_as["workspace"], "Saved with drawings");
+    assert_eq!(saved_as["changed"], true);
+    assert_eq!(
+        app.active_tab().canvas.split_fraction,
+        0.37,
+        "saving under a new name preserves the current pane choices",
+    );
+    let new_key = old_key.clone().in_scope(
+        app.runtime
+            .workspace
+            .book
+            .book()
+            .drawing_scope(tab, old_key.scope.unwrap().layout)
+            .unwrap(),
+    );
+    assert_ne!(new_key.scope, old_key.scope);
+    // A second gateway request can land before the next frame settles the tab.
+    let created = app.control_action(
+        "annotate.label.create", 1, ActionOrigin::Human,
+        json!({ "anchors": [{ "time_unix_ms": 1500, "price": "100.5" }], "text": "new owner's note" }),
+    ).expect("Save As returns with the selected workspace ready for creation");
+    let annotation_id = created["annotation_id"]
+        .as_str()
+        .unwrap()
+        .parse::<u64>()
+        .unwrap();
+    frames(&mut app, 2);
+    app.layout_adapter().flush_layouts();
+    let document = quantick_stores::market_settings::parse_settings(
+        &std::fs::read_to_string(app.runtime.workspace.layouts().market().path()).unwrap(),
+    )
+    .unwrap();
+    let old = document.pane_drawings(&old_key, "tick:1");
+    assert_eq!(
+        old.len(),
+        1,
+        "only the pending old-owner drawing belongs here"
+    );
+    assert_eq!(old[0].tool, "horizontal-line");
+    assert_eq!(old[0].points[0].price, 137.0);
+    let new = document.pane_drawings(&new_key, "tick:1");
+    assert_eq!(
+        new.len(),
+        1,
+        "the accepted annotation stays in its new workspace"
+    );
+    assert_eq!(new[0].id, Some(annotation_id));
+    assert_eq!(new[0].text.as_deref(), Some("new owner's note"));
+    assert_eq!(app.active_tab().flow_pane.drawings.items().len(), 1);
+    assert_eq!(
+        app.active_tab().flow_pane.drawings.items()[0].id.0,
+        annotation_id
+    );
+}
+
 /// Drawing writes use the frame/close wiring even while workspace configuration waits.
 #[test]
 fn drawing_autosave_survives_layout_and_workspace_switches_without_save() {
