@@ -146,7 +146,16 @@ class WorkflowPolicy(unittest.TestCase):
     def test_the_gate_owns_its_cache_alone(self):
         owners = [name for name, body in JOB_BODIES.items() if "cache-key: gate" in body]
         self.assertEqual(["gate"], owners)
-        self.assertIn('save-cache: "true"', JOB_BODIES["gate"])
+        gate = JOB_BODIES["gate"]
+        self.assertIn('save-cache: "true"', gate)
+        # The ratchet's base worktree lives under target/; a cached copy is
+        # refused as not pristine, so it is dropped before use and before save.
+        drop = "rm -rf target/ratchet-delta && git worktree prune"
+        self.assertEqual(2, gate.count(drop))
+        self.assertLess(gate.index(drop), gate.index("tools/ci/ratchet_delta.py"))
+        last = gate.rindex(drop)
+        self.assertGreater(last, gate.rindex("tools/ci/ratchet_delta.py"))
+        self.assertIn("if: always()", gate[gate.rindex("- name:", 0, last):last])
 
     def test_no_network_fetch_holds_the_rust_jobs(self):
         self.assertNotIn("pipx", JOB_BODIES["gate"])

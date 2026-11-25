@@ -129,6 +129,9 @@ jobs:
         shell: bash
         # Macro-generated module declarations require explicit rustfmt inputs.
         run: find crates/control-schema/src crates/control-handlers/src -name '*.rs' -type f -exec rustfmt --edition 2024 --check {} +
+      - name: Drop ratchet checkouts a cache restored
+        shell: bash
+        run: rm -rf target/ratchet-delta && git worktree prune
       - name: PR head aggregate growth
         # Ratchets check the PR head; every other step here tests GitHub's
         # merge revision. The head gets its own worktree and its own copy of
@@ -252,6 +255,14 @@ jobs:
             fi
           fi
           echo "mode=$mode" | tee -a "$GITHUB_OUTPUT"
+      - name: Keep ratchet checkouts out of the cache
+        # ratchet_delta.py checks the base out under target/, and this job
+        # saves target/ to its own cache. A restored copy is a stale worktree
+        # the runner refuses as "not pristine", so it is removed before the
+        # ratchets run and again before the cache is saved, red run included.
+        if: always()
+        shell: bash
+        run: rm -rf target/ratchet-delta && git worktree prune
 
   # The visible half of a skipped build: `gate` decided this head needs no
   # Rust job, and this run says which reason on the pull request's check list,
