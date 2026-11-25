@@ -1,0 +1,28 @@
+{
+  "$defs": {
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "The new workspace as stored, and whether the tab's edits were dropped.",
+  "properties": {
+    "dropped_edits": {
+      "type": "boolean"
+    },
+    "tab_id": {
+      "$ref": "#/$defs/WireU64"
+    },
+    "workspace": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "tab_id",
+    "workspace",
+    "dropped_edits"
+  ],
+  "title": "WorkspaceNewResult",
+  "type": "object"
+}

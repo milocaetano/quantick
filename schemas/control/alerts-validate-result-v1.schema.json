@@ -1,0 +1,12 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "valid": {
+      "const": true
+    }
+  },
+  "required": [
+    "valid"
+  ],
+  "type": "object"
+}

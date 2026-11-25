@@ -5058,14 +5058,37 @@ fn observer_schemas_are_versioned_valid_and_ui_framework_free() {
     observer_schemas(false);
 }
 
-fn observer_schemas(update: bool) {
-    let documents = crate::control::schema_catalog::documents();
-    let mut registered = std::collections::BTreeSet::new();
-    for name in documents.iter().map(|document| document.file_name).chain(
-        quantick_control::schema_catalog::public_schema_documents()
+/// The capability catalog as committed, and every file it references: the
+/// registered documents, then one per call schema none of them carries.
+fn folded_catalog() -> (serde_json::Value, Vec<(String, serde_json::Value)>) {
+    let mut catalog = crate::control::schema_catalog::capability_catalog();
+    let mut documents: Vec<_> = crate::control::schema_catalog::documents()
+        .into_iter()
+        .map(|document| (document.file_name.to_owned(), document.schema))
+        .collect();
+    let calls = quantick_control_handlers::schema_documents::fold_schema_refs(
+        &mut catalog,
+        documents
             .iter()
-            .map(|document| document.file_name),
-    ) {
+            .map(|(file_name, schema)| (file_name.as_str(), schema)),
+    )
+    .unwrap_or_else(|error| panic!("the catalog cannot be committed as files: {error:?}"));
+    documents.extend(calls.into_iter().map(|call| (call.file_name, call.schema)));
+    (catalog, documents)
+}
+
+fn observer_schemas(update: bool) {
+    let (_, documents) = folded_catalog();
+    let mut registered = std::collections::BTreeSet::new();
+    for name in documents
+        .iter()
+        .map(|(file_name, _)| file_name.as_str())
+        .chain(
+            quantick_control::schema_catalog::public_schema_documents()
+                .iter()
+                .map(|document| document.file_name),
+        )
+    {
         assert!(
             registered.insert(name.to_owned()),
             "duplicate schema {name}"
@@ -5077,19 +5100,15 @@ fn observer_schemas(update: bool) {
     if update {
         std::fs::create_dir_all(&root).unwrap();
     }
-    for document in documents {
-        quantick_control::schema::validate_schema(&document.schema)
-            .unwrap_or_else(|error| panic!("{} is invalid: {error}", document.file_name));
-        let json = format!(
-            "{}\n",
-            serde_json::to_string_pretty(&document.schema).unwrap()
-        );
+    for (file_name, schema) in documents {
+        quantick_control::schema::validate_schema(&schema)
+            .unwrap_or_else(|error| panic!("{file_name} is invalid: {error}"));
+        let json = format!("{}\n", serde_json::to_string_pretty(&schema).unwrap());
         assert!(
             !json.to_ascii_lowercase().contains("egui"),
-            "{} leaks a UI implementation type",
-            document.file_name
+            "{file_name} leaks a UI implementation type"
         );
-        let path = root.join(document.file_name);
+        let path = root.join(&file_name);
         if update {
             std::fs::write(&path, &json).unwrap();
         }
@@ -5102,8 +5121,7 @@ fn observer_schemas(update: bool) {
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&json).unwrap(),
             serde_json::from_str::<serde_json::Value>(&committed).unwrap(),
-            "regenerate and review {}",
-            document.file_name
+            "regenerate and review {file_name}"
         );
     }
     // Both registries share this directory. Compare names so additions need
@@ -5176,15 +5194,9 @@ fn observer_catalog(update: bool) {
         .join("../..")
         .join("schemas/control");
     let path = root.join("observer-capability-catalog-v1.json");
-    // A schema committed as its own file is referenced, not copied.
-    let documents = crate::control::schema_catalog::documents();
-    let mut catalog = catalog;
-    quantick_control_handlers::schema_documents::fold_schema_refs(
-        &mut catalog,
-        documents
-            .iter()
-            .map(|document| (document.file_name, &document.schema)),
-    );
+    // Every schema is committed as its own file and referenced, not copied.
+    let (catalog, _) = folded_catalog();
+    assert_schemas_are_referenced(&catalog, &root, "generated");
     let json = format!("{}\n", serde_json::to_string_pretty(&catalog).unwrap());
     if update {
         std::fs::create_dir_all(&root).unwrap();
@@ -5196,12 +5208,37 @@ fn observer_catalog(update: bool) {
             path.display()
         )
     });
+    let committed = serde_json::from_str::<serde_json::Value>(&committed).unwrap();
+    assert_schemas_are_referenced(&committed, &root, "committed");
     assert_eq!(
         serde_json::from_str::<serde_json::Value>(&json).unwrap(),
-        serde_json::from_str::<serde_json::Value>(&committed).unwrap(),
+        committed,
         "regenerate and review {}",
         path.display()
     );
+}
+
+/// No capability in `catalog` inlines its input or result schema: each is a
+/// reference to a file committed beside the catalog.
+fn assert_schemas_are_referenced(catalog: &serde_json::Value, root: &std::path::Path, which: &str) {
+    for capability in catalog["capabilities"].as_array().unwrap() {
+        for field in ["input_schema", "output_schema"] {
+            let Some(schema) = capability.get(field) else {
+                continue;
+            };
+            let file_name = schema["$ref"].as_str().unwrap_or_else(|| {
+                panic!(
+                    "the {which} catalog inlines {}'s {field}; regenerate observer schemas with `{REGENERATE_OBSERVER_SCHEMAS}`",
+                    capability["id"]
+                )
+            });
+            assert!(
+                root.join(file_name).is_file(),
+                "the {which} catalog references {file_name} for {}'s {field}, which is not committed; regenerate observer schemas with `{REGENERATE_OBSERVER_SCHEMAS}`",
+                capability["id"]
+            );
+        }
+    }
 }
 
 /// Reproducible application-frame comparison for control-plane PRs.

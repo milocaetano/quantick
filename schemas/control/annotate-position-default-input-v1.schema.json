@@ -1,0 +1,52 @@
+{
+  "$defs": {
+    "DefaultAction": {
+      "oneOf": [
+        {
+          "const": "save",
+          "description": "New positions of the drawing's side open with its look and ratio.",
+          "type": "string"
+        },
+        {
+          "const": "reset",
+          "description": "New positions of the drawing's side open with the factory look.",
+          "type": "string"
+        },
+        {
+          "const": "inspect",
+          "description": "Read what new positions of the drawing's side open with.",
+          "type": "string"
+        }
+      ]
+    },
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "action": {
+      "$ref": "#/$defs/DefaultAction"
+    },
+    "drawing_id": {
+      "$ref": "#/$defs/WireU64",
+      "description": "The position whose tool, and for `save` whose look, the call uses."
+    },
+    "pane_id": {
+      "$ref": "#/$defs/WireU64"
+    },
+    "tab_id": {
+      "$ref": "#/$defs/WireU64"
+    }
+  },
+  "required": [
+    "tab_id",
+    "pane_id",
+    "drawing_id",
+    "action"
+  ],
+  "title": "PositionDefaultInput",
+  "type": "object"
+}

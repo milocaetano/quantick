@@ -1,0 +1,73 @@
+{
+  "$defs": {
+    "CanonicalDecimal": {
+      "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+      "type": "string"
+    },
+    "TextAnchor": {
+      "additionalProperties": false,
+      "properties": {
+        "price": {
+          "$ref": "#/$defs/CanonicalDecimal"
+        },
+        "time_unix_ms": {
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "time_unix_ms",
+        "price"
+      ],
+      "type": "object"
+    },
+    "TextTarget": {
+      "additionalProperties": false,
+      "properties": {
+        "drawing_id": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "pane_id": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "tab_id": {
+          "$ref": "#/$defs/WireU64"
+        }
+      },
+      "required": [
+        "tab_id",
+        "pane_id",
+        "drawing_id"
+      ],
+      "type": "object"
+    },
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "anchor": {
+      "$ref": "#/$defs/TextAnchor"
+    },
+    "source": {
+      "$ref": "#/$defs/TextTarget"
+    },
+    "text": {
+      "description": "New content only; omission creates an empty, independently editable note.",
+      "maxLength": 16384,
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "source",
+    "anchor"
+  ],
+  "title": "RepeatInput",
+  "type": "object"
+}

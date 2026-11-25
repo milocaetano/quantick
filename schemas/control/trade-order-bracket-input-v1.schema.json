@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "order_id": {
+      "description": "The working order to amend.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "stop_loss": {
+      "description": "New protective stop, as a decimal string. Absent clears that leg —\nthe amendment replaces both wholesale, exactly as the chart's drag\ndoes.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "take_profit": {
+      "description": "New protective target; see `stop_loss`.",
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "order_id"
+  ],
+  "title": "BracketInput",
+  "type": "object"
+}

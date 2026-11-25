@@ -1,0 +1,114 @@
+{
+  "$defs": {
+    "WorkingOrderView": {
+      "description": "One working order, as a caller reads it back.",
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "order_id": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "price": {
+          "description": "Resting price, absent only for an order that has none.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "quantity": {
+          "type": "string"
+        },
+        "side": {
+          "type": "string"
+        },
+        "stop_loss": {
+          "description": "The protective stop riding this order, armed on its fill.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "take_profit": {
+          "description": "The protective target riding this order; see `stop_loss`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "order_id",
+        "side",
+        "kind",
+        "quantity"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "What every `trade.*` action answers with.\n\n`accepted` is the one field a caller must read. A refusal is not an\nerror return here for the same reason it is not one in the venue port:\nthe venue's messages are written to teach, and a result that carried\nonly a status code would throw away the sentence that says what to do\ninstead.",
+  "properties": {
+    "accepted": {
+      "description": "Whether the venue took the request.",
+      "type": "boolean"
+    },
+    "mark_price": {
+      "description": "The last price the venue had been shown when this call landed.\n\nEvery refusal in this family is a statement about a price relative to\nthe market, so a caller that got one needs the market to understand\nit — and a caller that got an acceptance needs it to know what its\norder is resting away from. Absent before the first print, which is\nalso when nothing can be placed.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "order_id": {
+      "description": "The order this call is about, once the venue has named it.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "rejected_because": {
+      "description": "The venue's own words when it did not. Absent when it did.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "ruler_ticks": {
+      "description": "How far the aim's ruler stands from an entry, in ticks; zero when it\nis not in use.",
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "selected_strategy": {
+      "description": "The named exit ladder the ticket is set to, if any. Every call in\nthis family reports it, because it is what the *next* order will\ncarry and a caller that placed one needs to know which ladder it\njust armed.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "simulated": {
+      "description": "A reminder in every result: these fills are simulated.",
+      "type": "boolean"
+    },
+    "working_orders": {
+      "description": "Every order working after the call, so a caller never has to guess\nwhat the account looks like now.",
+      "items": {
+        "$ref": "#/$defs/WorkingOrderView"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "accepted",
+    "working_orders",
+    "ruler_ticks",
+    "simulated"
+  ],
+  "title": "TradeResult",
+  "type": "object"
+}

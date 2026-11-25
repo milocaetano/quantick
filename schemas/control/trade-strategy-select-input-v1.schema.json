@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Which named exit ladder the ticket arms next.",
+  "properties": {
+    "name": {
+      "description": "The strategy's name, exactly as `observe.session.paper` reports it.\nOmitted or null selects none, which is the bare order the trader\nbrackets by hand.",
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "title": "SelectStrategyInput",
+  "type": "object"
+}

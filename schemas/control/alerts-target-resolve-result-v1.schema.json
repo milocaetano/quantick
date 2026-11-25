@@ -1,0 +1,46 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "target": {
+      "additionalProperties": false,
+      "properties": {
+        "drawing": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "incarnation": {
+          "maxLength": 2048,
+          "minLength": 1,
+          "type": "string"
+        },
+        "origin": {
+          "maxLength": 2048,
+          "minLength": 1,
+          "type": "string"
+        },
+        "pane": {
+          "maxLength": 2048,
+          "minLength": 1,
+          "type": "string"
+        },
+        "workspace": {
+          "maxLength": 2048,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "workspace",
+        "origin",
+        "pane",
+        "drawing",
+        "incarnation"
+      ],
+      "type": "object"
+    }
+  },
+  "required": [
+    "target"
+  ],
+  "type": "object"
+}

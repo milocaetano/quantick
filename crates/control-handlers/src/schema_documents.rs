@@ -122,39 +122,90 @@ pub fn documents() -> Vec<SchemaDocument> {
     documents
 }
 
-const REFERENCED_SCHEMA_FIELDS: [&str; 2] = ["input_schema", "output_schema"];
+/// Each referenced capability field, and the word its own file is named with.
+const REFERENCED_SCHEMA_FIELDS: [(&str, &str); 2] =
+    [("input_schema", "input"), ("output_schema", "result")];
 
-/// Replaces every capability schema in `catalog` that equals a published
-/// document with `{"$ref": "<file_name>"}`, so each such schema is committed
-/// in one file. The reference is a bare file name: callers write the
-/// documents beside the catalog, as `schemas/control` holds both.
+/// A schema no published document carries, committed in a file named after
+/// the call that declares it.
+#[derive(Debug, PartialEq)]
+pub struct CallSchema {
+    pub file_name: String,
+    pub schema: Value,
+}
+
+/// Why a catalog's schemas could not all be committed as files.
+#[derive(Debug, PartialEq, Eq)]
+pub enum FoldError {
+    /// The capability at this position has no string `id` or integer
+    /// `version` to name its file after.
+    UnnamedCapability { index: usize },
+    /// Two different schemas would be committed under this one file name.
+    DuplicateFileName(String),
+}
+
+/// Replaces every capability schema in `catalog` with
+/// `{"$ref": "<file_name>"}`, so the catalog inlines none. The reference is a
+/// bare file name: callers write the files beside the catalog, as
+/// `schemas/control` holds both.
 ///
-/// A schema no document matches stays inline. When several documents carry
-/// the same schema, the lowest file name is referenced, so the result does
-/// not depend on registration order.
+/// A schema equal to a published document references it. When several
+/// documents carry the same schema, the lowest file name is referenced, so the
+/// result does not depend on registration order. Any other schema gets a file
+/// of its own, `<id>-input-v<version>.schema.json` or
+/// `<id>-result-v<version>.schema.json` with the id's `.` and `_` as `-`, and
+/// is returned so the caller commits it.
 pub fn fold_schema_refs<'a>(
     catalog: &mut Value,
     documents: impl IntoIterator<Item = (&'a str, &'a Value)>,
-) {
+) -> Result<Vec<CallSchema>, FoldError> {
     let mut documents: Vec<_> = documents.into_iter().collect();
     documents.sort_by_key(|(file_name, _)| *file_name);
+    let mut taken: std::collections::BTreeSet<String> = documents
+        .iter()
+        .map(|(file_name, _)| (*file_name).to_owned())
+        .collect();
+    let mut calls = Vec::new();
     let Some(capabilities) = catalog
         .get_mut("capabilities")
         .and_then(Value::as_array_mut)
     else {
-        return;
+        return Ok(calls);
     };
-    for capability in capabilities {
-        for field in REFERENCED_SCHEMA_FIELDS {
+    for (index, capability) in capabilities.iter_mut().enumerate() {
+        let stem = call_file_stem(capability);
+        for (field, kind) in REFERENCED_SCHEMA_FIELDS {
             let Some(schema) = capability.get_mut(field) else {
                 continue;
             };
-            if let Some((file_name, _)) = documents.iter().find(|(_, document)| *document == schema)
-            {
-                *schema = serde_json::json!({ "$ref": file_name });
-            }
+            let file_name = match documents.iter().find(|(_, document)| *document == schema) {
+                Some((file_name, _)) => (*file_name).to_owned(),
+                None => {
+                    let (id, version) = stem
+                        .as_ref()
+                        .ok_or(FoldError::UnnamedCapability { index })?;
+                    let file_name = format!("{id}-{kind}-{version}.schema.json");
+                    if !taken.insert(file_name.clone()) {
+                        return Err(FoldError::DuplicateFileName(file_name));
+                    }
+                    calls.push(CallSchema {
+                        file_name: file_name.clone(),
+                        schema: schema.take(),
+                    });
+                    file_name
+                }
+            };
+            *schema = serde_json::json!({ "$ref": file_name });
         }
     }
+    Ok(calls)
+}
+
+/// The id with `.` and `_` as `-`, and `v<version>`, for a call's own files.
+fn call_file_stem(capability: &Value) -> Option<(String, String)> {
+    let id = capability.get("id")?.as_str()?;
+    let version = capability.get("version")?.as_u64()?;
+    Some((id.replace(['.', '_'], "-"), format!("v{version}")))
 }
 
 fn document<T: schemars::JsonSchema>(file_name: &'static str) -> SchemaDocument {

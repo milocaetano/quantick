@@ -1,0 +1,37 @@
+{
+  "$defs": {
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Set any pane's complete alternative-bar rule.",
+  "properties": {
+    "pane": {
+      "$ref": "#/$defs/WireU64",
+      "description": "The pane's address (`0` is the flow pane)."
+    },
+    "spec": {
+      "description": "The same stable spelling configuration and workspace files use, such\nas `tick:50`, `time:60000`, or `trades:2000`.",
+      "type": "string"
+    },
+    "tab_id": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/WireU64"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "The tab's id, as `observe.workspace` reports it."
+    }
+  },
+  "required": [
+    "pane",
+    "spec"
+  ],
+  "title": "BarSpecInput",
+  "type": "object"
+}

@@ -1,0 +1,40 @@
+{
+  "$defs": {
+    "CanonicalDecimal": {
+      "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+      "type": "string"
+    },
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "changed": {
+      "type": "boolean"
+    },
+    "fraction": {
+      "$ref": "#/$defs/CanonicalDecimal",
+      "description": "Applied divider position, including any floor clamp."
+    },
+    "lower_pane_id": {
+      "$ref": "#/$defs/WireU64"
+    },
+    "tab_id": {
+      "$ref": "#/$defs/WireU64"
+    },
+    "upper_pane_id": {
+      "$ref": "#/$defs/WireU64"
+    }
+  },
+  "required": [
+    "tab_id",
+    "upper_pane_id",
+    "lower_pane_id",
+    "fraction",
+    "changed"
+  ],
+  "title": "ResizePairResult",
+  "type": "object"
+}

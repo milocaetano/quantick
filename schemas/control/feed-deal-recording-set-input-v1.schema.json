@@ -1,0 +1,46 @@
+{
+  "$defs": {
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Which tab, and whether to record. Omitted tab means the one the trader is\nlooking at — the same default every other cockpit call takes.",
+  "properties": {
+    "enabled": {
+      "description": "`true` starts recording (resuming today's file if there is one),\n`false` stops it and keeps what was written. Omitted leaves the\nrecorder as it is — for a call that only loads a day.",
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "load_day": {
+      "description": "A recorded day to load into the tab's panes, `YYYY-MM-DD` as\n`feed.status` lists it under `recorded_days` — the popover's own\nclick, as a call. A day that is not recorded is refused by name.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "record_by_default": {
+      "description": "The standing choice — record by default on every tab whose feed\ncarries a counter — the Tools menu's checkbox, as a call. Saved with\nthe workspace. Omitted leaves it as it is.",
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "tab_id": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/WireU64"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "The tab's id, as `observe.feed.status` reports it."
+    }
+  },
+  "title": "DealRecordingInput",
+  "type": "object"
+}
