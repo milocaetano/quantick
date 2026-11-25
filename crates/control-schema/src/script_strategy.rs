@@ -127,8 +127,8 @@ pub struct ScriptStrategy {
     /// True while `action` is `alarm`: it rings and places nothing.
     pub alarm_only: bool,
     pub action: FireAction,
-    /// An order's size: a contract count, or `ticket` for the ticket's
-    /// quantity when the bar closes. Absent for an alarm.
+    /// An order's size in the instrument's units, or `ticket` for the
+    /// ticket's quantity when the bar closes. Absent for an alarm.
     pub quantity: Option<String>,
     /// An order's stop distance from the entry, in price; `0` places none.
     /// Absent for an alarm.

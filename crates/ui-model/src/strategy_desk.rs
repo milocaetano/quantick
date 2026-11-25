@@ -73,17 +73,11 @@ pub struct Line {
     pub state: (&'static str, Ink),
     pub link: String,
     pub action: (&'static str, Ink),
-    /// A script order's size, `3 ct` or `Ticket`; `None` for an alarm and
-    /// for a drawn instance, whose preset sizes its orders.
-    pub quantity: Option<String>,
-    /// A script order's stop and gain, `SL 100 / TP 200`, or `—` with
-    /// neither; `None` where `quantity` is.
-    pub protection: Option<String>,
     /// What the action chip edits; `None` for a drawn instance, whose preset
     /// decides.
     pub draft: Option<ActionDraft>,
-    /// The action chip's words: the action, then an order's quantity and
-    /// protection.
+    /// The action chip's words: the action, then a script order's quantity
+    /// (`3 ct`, `Ticket`) and protection (`SL 100 / TP 200`, `—`).
     pub chip: String,
     /// Pause or resume; an ended instance arms again from its window.
     pub toggle: Option<(Toggle, Sent)>,
@@ -145,10 +139,11 @@ fn line(row: &DeskRow<DrawingId>, asset: &str, script: Option<(u64, SignalAction
         DeskState::Paused => ("PAUSED", Ink::Muted),
         DeskState::Ended { .. } => ("ENDED", Ink::Sell),
     };
-    let quantity = script.and_then(|(_, action)| quantity(action));
-    let protection = script.and_then(|(_, action)| protection(action));
-    let chip = [Some(action.0), quantity.as_deref(), protection.as_deref()];
-    let chip = chip.into_iter().flatten().collect::<Vec<_>>().join(" · ");
+    let order = script.and_then(|(_, action)| order_words(action));
+    let chip = order.map_or_else(
+        || action.0.to_owned(),
+        |words| format!("{} · {words}", action.0),
+    );
     let toggle = match row.state {
         DeskState::Watching => Some((Toggle::Pause, Command::Pause(row.id))),
         DeskState::Paused => Some((Toggle::Resume, Command::Resume(row.id))),
@@ -161,8 +156,6 @@ fn line(row: &DeskRow<DrawingId>, asset: &str, script: Option<(u64, SignalAction
         state,
         link: link(&row.link),
         action,
-        quantity,
-        protection,
         draft: script.map(|(id, action)| ActionDraft::of(row.tab_id, id, action)),
         chip,
         toggle: toggle.map(|(toggle, command)| (toggle, (row.tab_id, command))),
@@ -170,32 +163,27 @@ fn line(row: &DeskRow<DrawingId>, asset: &str, script: Option<(u64, SignalAction
     }
 }
 
-/// An order's size in the rail's words.
-fn quantity(action: SignalAction) -> Option<String> {
+/// A script order's size and legs in the rail's words; a zero distance
+/// places no leg.
+fn order_words(action: SignalAction) -> Option<String> {
     let SignalAction::Order(order) = action else {
         return None;
     };
-    Some(match order.quantity {
+    let size = match order.quantity {
         OrderQuantity::Fixed(count) => format!("{} ct", count.normalize()),
         OrderQuantity::Ticket => "Ticket".to_owned(),
-    })
-}
-
-/// An order's legs in the rail's words; a zero distance places none.
-fn protection(action: SignalAction) -> Option<String> {
-    let SignalAction::Order(order) = action else {
-        return None;
     };
     let legs: Vec<String> = [("SL", order.stop), ("TP", order.gain)]
         .into_iter()
         .filter(|(_, distance)| !distance.is_zero())
         .map(|(tag, distance)| format!("{tag} {}", distance.normalize()))
         .collect();
-    Some(if legs.is_empty() {
+    let legs = if legs.is_empty() {
         "—".to_owned()
     } else {
         legs.join(" / ")
-    })
+    };
+    Some(format!("{size} · {legs}"))
 }
 
 /// A script's action as the rail's action chip edits it: text until sent,

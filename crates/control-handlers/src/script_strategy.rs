@@ -302,7 +302,7 @@ pub fn signal_action(
     }
     let quantity = quantity.ok_or_else(|| {
         invalid(format!(
-            "an order needs a quantity: a contract count or `{TICKET_QUANTITY}`"
+            "an order needs a quantity: a size or `{TICKET_QUANTITY}`"
         ))
     })?;
     let quantity = if quantity.trim().eq_ignore_ascii_case(TICKET_QUANTITY) {
@@ -310,7 +310,7 @@ pub fn signal_action(
     } else {
         OrderQuantity::Fixed(quantity.trim().parse().map_err(|_| {
             invalid(format!(
-                "`quantity` must be a contract count or `{TICKET_QUANTITY}`, got `{quantity}`"
+                "`quantity` must be a size or `{TICKET_QUANTITY}`, got `{quantity}`"
             ))
         })?)
     };

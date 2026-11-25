@@ -108,8 +108,8 @@ pub struct ActionSetInput {
     /// The id `strategy.script.arm` answered.
     pub id: WireU64,
     pub action: FireAction,
-    /// An order's size: a contract count above zero, or `ticket` for the
-    /// ticket's quantity when the bar closes. Required for an order, refused
+    /// An order's size above zero, in the instrument's units (contracts on
+    /// a future), or `ticket` for the ticket's quantity when the bar closes. Required for an order, refused
     /// for an alarm.
     #[serde(default)]
     pub quantity: Option<String>,
@@ -312,7 +312,7 @@ pub fn action_set_descriptor() -> CapabilityDescriptor {
     let mut descriptor = crate::trade::descriptor(
         ACTION_SET_CAPABILITY_ID,
         "Set what a script strategy does when it fires",
-        "Sets what one armed script strategy does from its next close: `alarm` rings and places nothing; `order` places a paper market order of `quantity` (a contract count, or `ticket` for the ticket's quantity when the bar closes) with a stop `stop` and a target `gain` away from the entry, in price (absent or 0: no leg). A resting order or an open position keeps its course. A drawn strategy takes its action from its preset and is refused, as are an order with no quantity, a quantity of zero or less, a distance below zero, and quantity, stop or gain sent with `alarm`. strategy.script.list and strategy.desk.detail read it back. Journaled as strategy.desk.changed.",
+        "Sets what one armed script strategy does from its next close: `alarm` rings and places nothing; `order` places a paper market order of `quantity` (a size above zero in the instrument's units, or `ticket` for the ticket's quantity when the bar closes) with a stop `stop` and a target `gain` away from the entry, in price (absent or 0: no leg). A resting order or an open position keeps its course. A drawn strategy takes its action from its preset and is refused, as are an order with no quantity, a quantity of zero or less, a distance below zero, and quantity, stop or gain sent with `alarm`. strategy.script.list and strategy.desk.detail read it back. Journaled as strategy.desk.changed.",
         generated_schema::<ActionSetInput>(),
         false,
         "The instance is named by an id never reused in the tab's session, and the call states the whole action, so a repeat leaves the instance as the first call did; an id that has since been removed is refused.",
@@ -363,7 +363,7 @@ pub const READBACKS: &[Readback] = &[
         CHANGED_EVENT_KIND,
         "payload.capability",
         "an event after the pre-call cursor names the call; strategy.script.list shows the action, quantity, stop and gain",
-        &[ACTION_SET_TEST],
+        &[ACTION_SET_TEST, crate::trade::TRADE_UNREACHABLE_TEST],
     ),
 ];
 

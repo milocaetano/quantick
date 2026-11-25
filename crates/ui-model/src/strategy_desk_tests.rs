@@ -229,7 +229,6 @@ fn strategy_rail_shows_action_quantity_and_protection() {
 
     let alarm = line(&watching, "a", Some((1, SignalAction::Alarm)));
     assert_eq!(alarm.action, ("alarm", Ink::Violet));
-    assert_eq!((alarm.quantity, alarm.protection), (None, None));
     assert_eq!(alarm.chip, "alarm");
     let draft = alarm.draft.expect("a script row edits its action");
     assert!(
@@ -247,15 +246,12 @@ fn strategy_rail_shows_action_quantity_and_protection() {
         order(OrderQuantity::Fixed(Decimal::from(3)), 0, 0),
     );
     assert_eq!(fixed.action, ("order", Ink::Accent));
-    assert_eq!(fixed.quantity.as_deref(), Some("3 ct"));
-    assert_eq!(fixed.protection.as_deref(), Some("—"), "no leg either side");
+    assert_eq!(fixed.chip, "order · 3 ct · —", "no leg either side");
 
     let ticket = line(&ordering, "a", order(OrderQuantity::Ticket, 100, 200));
-    assert_eq!(ticket.quantity.as_deref(), Some("Ticket"));
-    assert_eq!(ticket.protection.as_deref(), Some("SL 100 / TP 200"));
     assert_eq!(ticket.chip, "order · Ticket · SL 100 / TP 200");
     let stop_only = line(&ordering, "a", order(OrderQuantity::Ticket, 100, 0));
-    assert_eq!(stop_only.protection.as_deref(), Some("SL 100"));
+    assert_eq!(stop_only.chip, "order · Ticket · SL 100");
 
     let drawn = DeskRow {
         id: InstanceRef::Drawing {
@@ -267,8 +263,8 @@ fn strategy_rail_shows_action_quantity_and_protection() {
     };
     let preset = line(&drawn, "a", None);
     assert_eq!(
-        (preset.quantity, preset.draft),
-        (None, None),
+        (preset.chip.as_str(), preset.draft),
+        ("order", None),
         "its preset decides"
     );
 }
