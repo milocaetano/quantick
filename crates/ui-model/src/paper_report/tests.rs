@@ -12,6 +12,7 @@ use quantick_sim::history;
 use quantick_trading::{ClosedTrade, ExitReason};
 use rust_decimal::Decimal;
 
+mod date_context;
 mod source_selection;
 
 #[test]
@@ -337,10 +338,13 @@ fn the_report_reports_itself_as_data() {
         problem_rows: 0,
         sessions: Default::default(),
     });
-    paper.report_state_mut().report_symbol = Some("WINV26".to_owned());
+    Model::update(
+        paper.report_state_mut(),
+        Intent::Symbol(Some("WINV26".to_owned())),
+    );
 
     // The pills in force, no dates picked.
-    paper.report_state_mut().report_period = ReportPeriod::All;
+    paper.report_state_mut().filter.period = ReportPeriod::All;
     paper
         .report_state_mut()
         .ensure_report_view(tz, PnlReader::plain());
@@ -485,7 +489,7 @@ fn a_picked_calendar_range_cuts_the_report_and_the_pills_stand_down() {
     });
     // A pill that would hide the older trades is deliberately left on:
     // the range must win outright, not intersect.
-    paper.report_state_mut().report_period = ReportPeriod::Today;
+    paper.report_state_mut().filter.period = ReportPeriod::Today;
 
     let picked = paper.report_state().calendar.selection.click(first);
     paper.report_state_mut().pick_report_dates(picked);
@@ -523,7 +527,7 @@ fn a_picked_calendar_range_cuts_the_report_and_the_pills_stand_down() {
     paper
         .report_state_mut()
         .pick_report_dates(DaySelection::None);
-    paper.report_state_mut().report_period = ReportPeriod::All;
+    paper.report_state_mut().filter.period = ReportPeriod::All;
     paper
         .report_state_mut()
         .ensure_report_view(tz, PnlReader::plain());
@@ -684,7 +688,7 @@ fn the_report_view_filters_by_period_from_the_newest_trade() {
         problem_rows: 0,
         sessions: Default::default(),
     });
-    paper.report_state_mut().report_period = ReportPeriod::Week;
+    paper.report_state_mut().filter.period = ReportPeriod::Week;
     paper
         .report_state_mut()
         .ensure_report_view(utc, PnlReader::plain());
@@ -702,7 +706,7 @@ fn the_report_view_filters_by_period_from_the_newest_trade() {
     assert_eq!(view.hidden_outside, 1, "and the view counts what it hides");
     assert_eq!(view.report.net_points, Decimal::from(5));
 
-    paper.report_state_mut().report_period = ReportPeriod::All;
+    paper.report_state_mut().filter.period = ReportPeriod::All;
     paper
         .report_state_mut()
         .ensure_report_view(utc, PnlReader::plain());
@@ -734,7 +738,7 @@ fn all_symbols_hides_older_markets_but_says_so_and_scope_restores_them() {
         problem_rows: 0,
         sessions: Default::default(),
     });
-    paper.report_state_mut().report_period = ReportPeriod::Month;
+    paper.report_state_mut().filter.period = ReportPeriod::Month;
     paper
         .report_state_mut()
         .ensure_report_view(utc, PnlReader::plain());
@@ -926,8 +930,8 @@ fn paper_report_projection_receipts_preserve_freshness_and_month() {
     state.ensure_report_view(TzOffset::new(-180), pnl);
     assert_eq!(
         state.calendar.month,
-        Some(august.month_start()),
-        "timezone changes rebuild the day index"
+        Some(january.month_start()),
+        "timezone changes preserve the month being browsed"
     );
     Model::update(
         &mut state,
@@ -938,7 +942,7 @@ fn paper_report_projection_receipts_preserve_freshness_and_month() {
     assert_eq!(
         state.calendar.month,
         Some(january.month_start()),
-        "new loaded data resets to its own newest month"
+        "new history preserves the month being browsed"
     );
 }
 

@@ -7,79 +7,13 @@
 //! Nothing here holds application state, reads a clock or names a renderer:
 //! every function is a total function of what it is handed.
 
-pub mod alerts;
-pub mod analysis;
-pub mod attention;
-pub mod bubble_preset;
-pub mod bubble_save;
-pub mod bubble_scale;
-pub mod canvas;
-pub mod catalog;
-pub mod chart;
-pub mod chart_context;
-pub mod chart_settings;
-pub mod contract_roll;
-pub mod deal_recording;
-pub mod desk;
-pub mod drawing_autosave;
-pub mod drawing_magnet;
-pub mod drawing_scope;
-pub mod drawing_text;
-pub mod evidence;
-pub mod feed;
-pub mod feed_source;
-pub mod health;
-pub mod history;
-pub mod home_tab;
-pub mod indicator_guide;
-pub mod interaction;
-pub mod journal_sessions;
-pub mod launch_calls;
-pub mod launch_values;
-pub mod layers;
-pub mod layout;
-pub mod layout_v2;
-pub mod market_palette;
-pub mod market_windows;
-pub mod native_window;
-pub mod notify;
-pub mod opening_scale;
-pub mod orderflow;
-pub mod orderflow_settings;
-pub mod pnl_display;
-pub mod price_axis;
-pub mod price_tag_progress;
-pub mod readback;
-pub mod recovery;
-pub mod retry_matrix;
-pub mod scene;
-pub mod script;
-pub mod script_alarms;
-pub mod script_strategy;
-pub mod session;
-pub mod session_reports;
-pub mod settings_sections;
-pub mod strategy_describe;
-pub mod strategy_desk;
-pub mod tape_fold;
-pub mod tape_market_fold;
-pub mod tape_view;
-pub mod tape_view_set;
-pub mod tick_bubbles;
-pub mod time_axis;
-pub mod trace_replay;
-pub mod trade;
-pub mod trade_account;
-pub mod widget;
-pub mod window_menu;
-pub mod workspace;
-pub mod workspace_book;
-pub mod workspace_colour;
-pub mod workspace_manage;
+macro_rules! schema_modules {
+    ($args:tt $($family:ident {
+        schemas: [$($schema:ident),*], catalog: $catalog:tt, readbacks: $readbacks:tt,
+        handlers: $handlers:tt, actions: $actions:tt
+    })*) => {
+        $($(pub mod $schema;)*)*
+    };
+}
 
-pub mod indicator_picker;
-pub mod native_indicator;
-
-pub mod appearance;
-
-pub mod script_editor;
+quantick_control::control_families!(schema_modules);

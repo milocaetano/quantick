@@ -9,10 +9,8 @@ fn note() -> (FakePane, TextTarget) {
         DrawingTool::by_id("text").unwrap(),
         &quantick_drawings::DrawingBand::Price,
         ChartPoint::at_time(0.5, 10.0, Some(1000)),
-        |tool| quantick_drawings::NewDrawing {
-            style: tool.default_style(),
-            payload: tool.default_payload(),
-            look: Default::default(),
+        |tool| {
+            quantick_drawings::NewDrawing::explicit(tool.default_style(), tool.default_payload())
         },
     );
     let id = pane.drawings.items()[0].id.0;

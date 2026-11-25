@@ -181,6 +181,44 @@ pub struct SavedTab {
 pub use crate::workspace_recipe::SavedPaneStyle;
 
 impl SavedTab {
+    /// A tab showing `symbol` on `feed`, every other field as a file that
+    /// omits it reads: the one full literal, so a new field lands here and in
+    /// the mappers, never in each caller.
+    #[must_use]
+    pub fn new(
+        feed: impl Into<String>,
+        symbol: impl Into<String>,
+        layout: DeclaredLayout,
+        flow_bars: impl Into<String>,
+    ) -> Self {
+        Self {
+            feed: feed.into(),
+            symbol: symbol.into(),
+            layout,
+            split_fraction: None,
+            context_collapsed: false,
+            flow_collapsed: false,
+            context_heights: Vec::new(),
+            context_panes_collapsed: Vec::new(),
+            focus: None,
+            focus_slot: 0,
+            flow_bars: flow_bars.into(),
+            time_bars: None,
+            context_bars: Vec::new(),
+            flow_layout: None,
+            context_layouts: Vec::new(),
+            flow_legend_collapsed: false,
+            time_legend_collapsed: false,
+            workspace: None,
+            protected_default: false,
+            workspace_parked: std::collections::BTreeMap::new(),
+            workspace_copy: None,
+            workspace_settled: None,
+            orderflow_panel: OrderFlowPanel::default(),
+            candle_styles: Vec::new(),
+        }
+    }
+
     /// Every layout id the tab's panes name.
     pub fn layout_ids(&self) -> impl Iterator<Item = crate::layout_document::LayoutId> + '_ {
         self.flow_layout
@@ -309,6 +347,16 @@ mod tests {
     fn legacy_tab_names_and_absent_fields_keep_their_original_defaults() {
         let literal = "feed = \"binance\"\nsymbol = \"TESTUSDT\"\nlayout = \"time+flow\"\nflow_bars = \"tick:50\"\n";
         let tab: SavedTab = toml::from_str(literal).unwrap();
+        assert_eq!(
+            tab,
+            SavedTab::new(
+                "binance",
+                "TESTUSDT",
+                DeclaredLayout::TimeAndFlow,
+                "tick:50"
+            ),
+            "the constructor is the tab a file naming only the required fields reads"
+        );
         assert_eq!(tab.layout, DeclaredLayout::TimeAndFlow);
         assert!(!tab.context_collapsed);
         assert!(!tab.flow_collapsed);
