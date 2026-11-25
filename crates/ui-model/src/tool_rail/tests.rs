@@ -334,11 +334,11 @@ fn stages_fold_the_shipped_registry_by_extent() {
     };
     let slots = tool_slots().len();
     assert_eq!(
-        slots, 9,
-        "Lines, Channels, Marks, Freehand, Shapes, Fib, Measure, Anchored VWAP and Text"
+        slots, 10,
+        "Lines, Channels, Marks, Freehand, Shapes, Fib, Measure, Position, Anchored VWAP and Text"
     );
     let lengths = (full_length(slots, 0), scroll_length(0), compact_length());
-    assert_eq!((lengths, minimal_length()), ((633.0, 489.0, 381.0), 191.0));
+    assert_eq!((lengths, minimal_length()), ((669.0, 489.0, 381.0), 191.0));
     assert!(
         full_length(slots, 2) > full_length(slots, 0),
         "pins cost length"
@@ -346,9 +346,9 @@ fn stages_fold_the_shipped_registry_by_extent() {
     // The band sits strictly between Full and Compact, and overflowing pins
     // hand the rail to the band, never to Compact.
     for (extent, pins, stage) in [
-        (633.0, 0, RailStage::Full),
-        (633.0, 2, RailStage::Scroll),
-        (632.9, 0, RailStage::Scroll),
+        (669.0, 0, RailStage::Full),
+        (669.0, 2, RailStage::Scroll),
+        (668.9, 0, RailStage::Scroll),
         (489.0, 0, RailStage::Scroll),
         (488.9, 0, RailStage::Compact),
         (381.0, 0, RailStage::Compact),
@@ -473,7 +473,8 @@ fn painted_controls_name_one_button_per_slot_at_each_stage() {
     #[rustfmt::skip]
     let run = [lines, (Tool, "parallel-channel", false), (Family, "marks", false),
         (Family, "brush", false), (Family, "shapes", false), (Family, "fib", false),
-        (Family, "measure", false), (Tool, "anchored-vwap", false), (Tool, "text", false)];
+        (Family, "measure", false), (Family, "position", false), (Tool, "anchored-vwap", false),
+        (Tool, "text", false)];
     let full = [vec![pointer, crosshair, star], run.to_vec()].concat();
     let window = |anchored, first| {
         Some(BandWindow {

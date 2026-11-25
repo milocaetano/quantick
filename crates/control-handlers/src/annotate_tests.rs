@@ -4,8 +4,9 @@
 use quantick_chart_interaction::annotation::slot_at_position;
 use quantick_chart_interaction::quick_range::Action;
 use quantick_control::annotation::{
-    CAPABILITY_VERSION, HORIZONTAL_LEVELS_CAPABILITY_ID, RECTANGLE_CAPABILITY_ID,
-    REMOVE_CAPABILITY_ID, TREND_LINE_CAPABILITY_ID,
+    CAPABILITY_VERSION, HORIZONTAL_LEVELS_CAPABILITY_ID, LONG_POSITION_CAPABILITY_ID,
+    RECTANGLE_CAPABILITY_ID, REMOVE_CAPABILITY_ID, SHORT_POSITION_CAPABILITY_ID,
+    TREND_LINE_CAPABILITY_ID,
 };
 use quantick_control_host::actions::ActionRegistry;
 use serde_json::json;
@@ -642,3 +643,48 @@ fn a_profile_anchor_past_the_last_bar_answers_without_a_time() {
 
 #[path = "drawing_text_tests.rs"]
 mod drawing_text_tests;
+
+#[test]
+fn a_position_plan_answers_the_legs_it_placed() {
+    let mut window = FakeWindow::new();
+    let mut access = FakeAccess::default();
+    let input = json!({
+        "anchors": [
+            { "time_unix_ms": 1_000, "bar_position": "0.5", "price": "100" },
+            { "time_unix_ms": 3_000, "bar_position": "2.5", "price": "95" },
+        ],
+    });
+    let result =
+        call(&mut window, &mut access, LONG_POSITION_CAPABILITY_ID, input).expect("placed");
+    assert_eq!(
+        result["position"],
+        json!({ "entry": "100", "stop": "95", "target": "110", "ratio": "2", "measured": "stop" })
+    );
+    assert_eq!(access.events.len(), 1, "journaled as one object");
+}
+
+#[test]
+fn a_flat_position_plan_is_refused_and_places_nothing() {
+    let mut window = FakeWindow::new();
+    let mut access = FakeAccess::default();
+    let input = json!({
+        "anchors": [
+            { "time_unix_ms": 1_000, "bar_position": "0.5", "price": "100" },
+            { "time_unix_ms": 3_000, "bar_position": "2.5", "price": "100" },
+        ],
+    });
+    let error = call(
+        &mut window,
+        &mut access,
+        SHORT_POSITION_CAPABILITY_ID,
+        input,
+    )
+    .expect_err("a plan with no stop or target");
+    assert!(
+        error.message.contains("stop or target"),
+        "{}",
+        error.message
+    );
+    assert!(window.flow.drawings.items().is_empty());
+    assert!(access.events.is_empty());
+}

@@ -223,6 +223,31 @@ pub struct ChartAnnotationResult {
     /// The band the object landed on. Omitted: the price band.
     #[serde(default, skip_serializing_if = "AnnotationBand::is_price")]
     pub band: AnnotationBand,
+    /// A position plan's three prices, as placed. Omitted for every other
+    /// tool.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub position: Option<PositionPlanResult>,
+}
+
+/// Where a position plan's legs landed: the projected one follows the
+/// trader's saved target:stop ratio, which the call cannot otherwise see.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PositionPlanResult {
+    pub entry: CanonicalDecimal,
+    pub stop: CanonicalDecimal,
+    pub target: CanonicalDecimal,
+    /// Target distance over stop distance from the entry.
+    pub ratio: CanonicalDecimal,
+    /// The leg the second anchor set; the other one was projected.
+    pub measured: PositionLeg,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PositionLeg {
+    Stop,
+    Target,
 }
 
 /// One call that places several objects, in placement order.

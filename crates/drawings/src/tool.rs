@@ -382,6 +382,19 @@ pub trait MarkTool: Sync {
     ) -> Option<Box<dyn DrawingPayload>> {
         None
     }
+    /// The payload an anchor or line drag leaves behind, set in the same
+    /// frame as the moved anchors: a position pins its projected leg, so
+    /// moving the entry moves the entry alone. `None` (the default) keeps
+    /// the payload as it is.
+    fn anchor_drag_payload(&self, _ctxt: &DrawContext<'_>) -> Option<Box<dyn DrawingPayload>> {
+        None
+    }
+    /// Why these anchors make no object of this tool, for a placement that
+    /// arrives whole (a named call, a quick-range action) to refuse before
+    /// anything is placed. `None` (the default) places them.
+    fn placement_refusal(&self, _anchors: &[crate::ChartPoint]) -> Option<&'static str> {
+        None
+    }
     /// The hint a grab on handle `handle` announces when it is narrower than
     /// a free reshape. `None` (the default) is the plain resize cursor.
     fn handle_hint(&self, _handle: usize) -> Option<PointerHint> {
@@ -852,6 +865,18 @@ impl DrawingTool {
     ) -> Option<Box<dyn DrawingPayload>> {
         self.0
             .drag_payload_handle(chart_rect, points, handle, to, ctxt)
+    }
+
+    /// See [`MarkTool::anchor_drag_payload`].
+    #[must_use]
+    pub fn anchor_drag_payload(self, ctxt: &DrawContext<'_>) -> Option<Box<dyn DrawingPayload>> {
+        self.0.anchor_drag_payload(ctxt)
+    }
+
+    /// See [`MarkTool::placement_refusal`].
+    #[must_use]
+    pub fn placement_refusal(self, anchors: &[crate::ChartPoint]) -> Option<&'static str> {
+        self.0.placement_refusal(anchors)
     }
 
     #[must_use]

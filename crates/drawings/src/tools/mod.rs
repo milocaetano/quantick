@@ -92,6 +92,9 @@ pub use fixed_range_profile::{
     DEFAULT_VALUE_AREA_PCT, FrvpPayload, MAX_WIDTH_FRAC, MIN_WIDTH_FRAC,
 };
 pub use parallel_channel::ChannelPayload;
+pub use position_core::{
+    Legs as PositionLegs, Measured as PositionMeasured, PositionPayload, position_plan,
+};
 pub use rectangle::{RectanglePayload, TOOL_ID as RECTANGLE_TOOL_ID};
 pub use text::{MAX_TEXT_PX, MIN_TEXT_PX, PLACEHOLDER as TEXT_PLACEHOLDER, TextPayload};
 

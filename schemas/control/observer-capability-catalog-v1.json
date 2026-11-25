@@ -4042,6 +4042,44 @@
             ],
             "type": "string"
           },
+          "PositionLeg": {
+            "enum": [
+              "stop",
+              "target"
+            ],
+            "type": "string"
+          },
+          "PositionPlanResult": {
+            "additionalProperties": false,
+            "description": "Where a position plan's legs landed: the projected one follows the\ntrader's saved target:stop ratio, which the call cannot otherwise see.",
+            "properties": {
+              "entry": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "measured": {
+                "$ref": "#/$defs/PositionLeg",
+                "description": "The leg the second anchor set; the other one was projected."
+              },
+              "ratio": {
+                "$ref": "#/$defs/CanonicalDecimal",
+                "description": "Target distance over stop distance from the entry."
+              },
+              "stop": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "target": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              }
+            },
+            "required": [
+              "entry",
+              "stop",
+              "target",
+              "ratio",
+              "measured"
+            ],
+            "type": "object"
+          },
           "ResolvedAnchor": {
             "properties": {
               "price": {
@@ -4094,6 +4132,17 @@
           },
           "pane_side": {
             "$ref": "#/$defs/PaneSideDto"
+          },
+          "position": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PositionPlanResult"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "A position plan's three prices, as placed. Omitted for every other\ntool."
           },
           "tab_id": {
             "$ref": "#/$defs/WireU64"
@@ -4436,6 +4485,44 @@
             ],
             "type": "string"
           },
+          "PositionLeg": {
+            "enum": [
+              "stop",
+              "target"
+            ],
+            "type": "string"
+          },
+          "PositionPlanResult": {
+            "additionalProperties": false,
+            "description": "Where a position plan's legs landed: the projected one follows the\ntrader's saved target:stop ratio, which the call cannot otherwise see.",
+            "properties": {
+              "entry": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "measured": {
+                "$ref": "#/$defs/PositionLeg",
+                "description": "The leg the second anchor set; the other one was projected."
+              },
+              "ratio": {
+                "$ref": "#/$defs/CanonicalDecimal",
+                "description": "Target distance over stop distance from the entry."
+              },
+              "stop": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "target": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              }
+            },
+            "required": [
+              "entry",
+              "stop",
+              "target",
+              "ratio",
+              "measured"
+            ],
+            "type": "object"
+          },
           "ResolvedAnchor": {
             "properties": {
               "price": {
@@ -4488,6 +4575,17 @@
           },
           "pane_side": {
             "$ref": "#/$defs/PaneSideDto"
+          },
+          "position": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PositionPlanResult"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "A position plan's three prices, as placed. Omitted for every other\ntool."
           },
           "tab_id": {
             "$ref": "#/$defs/WireU64"
@@ -5086,6 +5184,44 @@
             ],
             "type": "string"
           },
+          "PositionLeg": {
+            "enum": [
+              "stop",
+              "target"
+            ],
+            "type": "string"
+          },
+          "PositionPlanResult": {
+            "additionalProperties": false,
+            "description": "Where a position plan's legs landed: the projected one follows the\ntrader's saved target:stop ratio, which the call cannot otherwise see.",
+            "properties": {
+              "entry": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "measured": {
+                "$ref": "#/$defs/PositionLeg",
+                "description": "The leg the second anchor set; the other one was projected."
+              },
+              "ratio": {
+                "$ref": "#/$defs/CanonicalDecimal",
+                "description": "Target distance over stop distance from the entry."
+              },
+              "stop": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "target": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              }
+            },
+            "required": [
+              "entry",
+              "stop",
+              "target",
+              "ratio",
+              "measured"
+            ],
+            "type": "object"
+          },
           "ResolvedAnchor": {
             "properties": {
               "price": {
@@ -5138,6 +5274,17 @@
           },
           "pane_side": {
             "$ref": "#/$defs/PaneSideDto"
+          },
+          "position": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PositionPlanResult"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "A position plan's three prices, as placed. Omitted for every other\ntool."
           },
           "tab_id": {
             "$ref": "#/$defs/WireU64"
@@ -5478,6 +5625,17 @@
               "pane_side": {
                 "$ref": "#/$defs/PaneSideDto"
               },
+              "position": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/PositionPlanResult"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "A position plan's three prices, as placed. Omitted for every other\ntool."
+              },
               "tab_id": {
                 "$ref": "#/$defs/WireU64"
               },
@@ -5525,6 +5683,44 @@
               "time"
             ],
             "type": "string"
+          },
+          "PositionLeg": {
+            "enum": [
+              "stop",
+              "target"
+            ],
+            "type": "string"
+          },
+          "PositionPlanResult": {
+            "additionalProperties": false,
+            "description": "Where a position plan's legs landed: the projected one follows the\ntrader's saved target:stop ratio, which the call cannot otherwise see.",
+            "properties": {
+              "entry": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "measured": {
+                "$ref": "#/$defs/PositionLeg",
+                "description": "The leg the second anchor set; the other one was projected."
+              },
+              "ratio": {
+                "$ref": "#/$defs/CanonicalDecimal",
+                "description": "Target distance over stop distance from the entry."
+              },
+              "stop": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "target": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              }
+            },
+            "required": [
+              "entry",
+              "stop",
+              "target",
+              "ratio",
+              "measured"
+            ],
+            "type": "object"
           },
           "ResolvedAnchor": {
             "properties": {
@@ -6145,6 +6341,44 @@
             ],
             "type": "string"
           },
+          "PositionLeg": {
+            "enum": [
+              "stop",
+              "target"
+            ],
+            "type": "string"
+          },
+          "PositionPlanResult": {
+            "additionalProperties": false,
+            "description": "Where a position plan's legs landed: the projected one follows the\ntrader's saved target:stop ratio, which the call cannot otherwise see.",
+            "properties": {
+              "entry": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "measured": {
+                "$ref": "#/$defs/PositionLeg",
+                "description": "The leg the second anchor set; the other one was projected."
+              },
+              "ratio": {
+                "$ref": "#/$defs/CanonicalDecimal",
+                "description": "Target distance over stop distance from the entry."
+              },
+              "stop": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "target": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              }
+            },
+            "required": [
+              "entry",
+              "stop",
+              "target",
+              "ratio",
+              "measured"
+            ],
+            "type": "object"
+          },
           "ResolvedAnchor": {
             "properties": {
               "price": {
@@ -6197,6 +6431,17 @@
           },
           "pane_side": {
             "$ref": "#/$defs/PaneSideDto"
+          },
+          "position": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PositionPlanResult"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "A position plan's three prices, as placed. Omitted for every other\ntool."
           },
           "tab_id": {
             "$ref": "#/$defs/WireU64"
@@ -6604,6 +6849,44 @@
             ],
             "type": "string"
           },
+          "PositionLeg": {
+            "enum": [
+              "stop",
+              "target"
+            ],
+            "type": "string"
+          },
+          "PositionPlanResult": {
+            "additionalProperties": false,
+            "description": "Where a position plan's legs landed: the projected one follows the\ntrader's saved target:stop ratio, which the call cannot otherwise see.",
+            "properties": {
+              "entry": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "measured": {
+                "$ref": "#/$defs/PositionLeg",
+                "description": "The leg the second anchor set; the other one was projected."
+              },
+              "ratio": {
+                "$ref": "#/$defs/CanonicalDecimal",
+                "description": "Target distance over stop distance from the entry."
+              },
+              "stop": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "target": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              }
+            },
+            "required": [
+              "entry",
+              "stop",
+              "target",
+              "ratio",
+              "measured"
+            ],
+            "type": "object"
+          },
           "ResolvedAnchor": {
             "properties": {
               "price": {
@@ -6656,6 +6939,17 @@
           },
           "pane_side": {
             "$ref": "#/$defs/PaneSideDto"
+          },
+          "position": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PositionPlanResult"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "A position plan's three prices, as placed. Omitted for every other\ntool."
           },
           "tab_id": {
             "$ref": "#/$defs/WireU64"
@@ -6998,6 +7292,44 @@
             ],
             "type": "string"
           },
+          "PositionLeg": {
+            "enum": [
+              "stop",
+              "target"
+            ],
+            "type": "string"
+          },
+          "PositionPlanResult": {
+            "additionalProperties": false,
+            "description": "Where a position plan's legs landed: the projected one follows the\ntrader's saved target:stop ratio, which the call cannot otherwise see.",
+            "properties": {
+              "entry": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "measured": {
+                "$ref": "#/$defs/PositionLeg",
+                "description": "The leg the second anchor set; the other one was projected."
+              },
+              "ratio": {
+                "$ref": "#/$defs/CanonicalDecimal",
+                "description": "Target distance over stop distance from the entry."
+              },
+              "stop": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "target": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              }
+            },
+            "required": [
+              "entry",
+              "stop",
+              "target",
+              "ratio",
+              "measured"
+            ],
+            "type": "object"
+          },
           "ResolvedAnchor": {
             "properties": {
               "price": {
@@ -7050,6 +7382,17 @@
           },
           "pane_side": {
             "$ref": "#/$defs/PaneSideDto"
+          },
+          "position": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PositionPlanResult"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "A position plan's three prices, as placed. Omitted for every other\ntool."
           },
           "tab_id": {
             "$ref": "#/$defs/WireU64"
@@ -7476,6 +7819,44 @@
             ],
             "type": "string"
           },
+          "PositionLeg": {
+            "enum": [
+              "stop",
+              "target"
+            ],
+            "type": "string"
+          },
+          "PositionPlanResult": {
+            "additionalProperties": false,
+            "description": "Where a position plan's legs landed: the projected one follows the\ntrader's saved target:stop ratio, which the call cannot otherwise see.",
+            "properties": {
+              "entry": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "measured": {
+                "$ref": "#/$defs/PositionLeg",
+                "description": "The leg the second anchor set; the other one was projected."
+              },
+              "ratio": {
+                "$ref": "#/$defs/CanonicalDecimal",
+                "description": "Target distance over stop distance from the entry."
+              },
+              "stop": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "target": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              }
+            },
+            "required": [
+              "entry",
+              "stop",
+              "target",
+              "ratio",
+              "measured"
+            ],
+            "type": "object"
+          },
           "ResolvedAnchor": {
             "properties": {
               "price": {
@@ -7528,6 +7909,17 @@
           },
           "pane_side": {
             "$ref": "#/$defs/PaneSideDto"
+          },
+          "position": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PositionPlanResult"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "A position plan's three prices, as placed. Omitted for every other\ntool."
           },
           "tab_id": {
             "$ref": "#/$defs/WireU64"
@@ -8459,6 +8851,44 @@
             ],
             "type": "string"
           },
+          "PositionLeg": {
+            "enum": [
+              "stop",
+              "target"
+            ],
+            "type": "string"
+          },
+          "PositionPlanResult": {
+            "additionalProperties": false,
+            "description": "Where a position plan's legs landed: the projected one follows the\ntrader's saved target:stop ratio, which the call cannot otherwise see.",
+            "properties": {
+              "entry": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "measured": {
+                "$ref": "#/$defs/PositionLeg",
+                "description": "The leg the second anchor set; the other one was projected."
+              },
+              "ratio": {
+                "$ref": "#/$defs/CanonicalDecimal",
+                "description": "Target distance over stop distance from the entry."
+              },
+              "stop": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "target": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              }
+            },
+            "required": [
+              "entry",
+              "stop",
+              "target",
+              "ratio",
+              "measured"
+            ],
+            "type": "object"
+          },
           "ResolvedAnchor": {
             "properties": {
               "price": {
@@ -8511,6 +8941,17 @@
           },
           "pane_side": {
             "$ref": "#/$defs/PaneSideDto"
+          },
+          "position": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PositionPlanResult"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "A position plan's three prices, as placed. Omitted for every other\ntool."
           },
           "tab_id": {
             "$ref": "#/$defs/WireU64"
