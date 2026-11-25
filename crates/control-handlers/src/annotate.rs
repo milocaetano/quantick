@@ -29,11 +29,12 @@ use quantick_control::{
         AnnotationInput, AnnotationResult, AnnotationTarget, ChartAnnotationAnchor,
         ChartAnnotationInput, ChartAnnotationResult, ChartAnnotationSetResult, ChartReference,
         FIB_PROJECTION_CAPABILITY_ID, FIB_RETRACEMENT_CAPABILITY_ID, HORIZONTAL_LINE_TOOL_ID,
-        LABEL_CAPABILITY_ID, LABEL_TOOL_ID, PARALLEL_CHANNEL_TOOL_ID, PROFILE_CAPABILITY_ID,
-        PROFILE_CAPABILITY_VERSION, RemoveInput, RemoveResult, ResolvedAnchor, TREND_LINE_TOOL_ID,
+        LABEL_CAPABILITY_ID, LABEL_TOOL_ID, LONG_POSITION_TOOL_ID, PARALLEL_CHANNEL_TOOL_ID,
+        PROFILE_CAPABILITY_ID, PROFILE_CAPABILITY_VERSION, PositionLeg, PositionPlanResult,
+        RemoveInput, RemoveResult, ResolvedAnchor, SHORT_POSITION_TOOL_ID, TREND_LINE_TOOL_ID,
         ZONE_CAPABILITY_ID, ZONE_TOOL_ID, annotation_descriptor, canonical_bar_position,
         chart_descriptor, fib_descriptor, horizontal_levels_descriptor, parse_price,
-        remove_descriptor, shape_descriptors,
+        position_descriptors, remove_descriptor, shape_descriptors,
     },
     error::{ControlError, codes},
     registry::RegistryError,
@@ -50,7 +51,8 @@ use quantick_control_host::{
 };
 use quantick_drawings::{
     ChartPoint, DrawingAuthor, DrawingBand, DrawingEffect, DrawingId, DrawingIntent, DrawingTool,
-    Drawings, NewDrawing, PaneKey, Placement, PlacementFailure, update,
+    Drawings, NewDrawing, PaneKey, Placement, PlacementFailure, PositionMeasured, position_plan,
+    update,
 };
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
@@ -210,6 +212,14 @@ where
     for (descriptor, handler) in shape_descriptors().into_iter().zip(shapes) {
         registry.register(descriptor, handler)?;
     }
+    // In `position_descriptors` order: long, short.
+    let positions: [ActionHandler<H, A>; 2] = [
+        |app, access, actor, input| place_chart(app, access, actor, input, LONG_POSITION_TOOL_ID),
+        |app, access, actor, input| place_chart(app, access, actor, input, SHORT_POSITION_TOOL_ID),
+    ];
+    for (descriptor, handler) in position_descriptors().into_iter().zip(positions) {
+        registry.register(descriptor, handler)?;
+    }
     registry.register(horizontal_levels_descriptor(), place_horizontal_levels)?;
     registry.register(remove_descriptor(), remove)?;
     Ok(())
@@ -327,9 +337,13 @@ fn place_chart<H: AnnotatePort + ?Sized, A: AnnotateAccess>(
     let pane = target_pane(app, tab_id, side)?;
     let band = resolve_band(&*pane, tool, &input.band)?;
     let validated = resolve_chart(&*pane, tab_id, &input, required)?;
+    let points: Vec<_> = validated.iter().map(chart_point).collect();
+    if let Some(reason) = tool.placement_refusal(&points) {
+        return Err(ControlError::invalid_request(reason));
+    }
     let placement = Placement {
         tool,
-        points: validated.iter().map(chart_point).collect(),
+        points,
         band: band.clone(),
         opening,
         author,
@@ -338,8 +352,12 @@ fn place_chart<H: AnnotatePort + ?Sized, A: AnnotateAccess>(
     };
     let effects = update(pane.drawings_mut(), DrawingIntent::Place(placement));
     let placed = placed(effects, tool, required)?;
+    let position = position_readback(pane.drawings(), placed.0);
     let target = (tab_id, pane.pane_id(), side, &band);
-    let result = chart_result(placed, target, tool, &validated, actor);
+    let result = ChartAnnotationResult {
+        position,
+        ..chart_result(placed, target, tool, &validated, actor)
+    };
     journal(access, actor, ANNOTATION_CREATED_EVENT_KIND, &result)?;
     answer(&result, "annotation result")
 }
@@ -622,6 +640,23 @@ fn placed(
     Ok(placement)
 }
 
+/// The legs of the position plan `id` names, as it was placed.
+fn position_readback(drawings: &Drawings<DrawingTool>, id: u64) -> Option<PositionPlanResult> {
+    let drawing = drawings.items().iter().find(|drawing| drawing.id.0 == id)?;
+    let plan = position_plan(drawing.tool, &drawing.points, drawing.payload.as_ref())?;
+    let price = |value: f64| canonical_f64(value, ANNOTATION_PRICE_DECIMALS);
+    Some(PositionPlanResult {
+        entry: price(plan.entry)?,
+        stop: price(plan.stop)?,
+        target: price(plan.target)?,
+        ratio: price(plan.ratio())?,
+        measured: match plan.measured {
+            PositionMeasured::Stop => PositionLeg::Stop,
+            PositionMeasured::Target => PositionLeg::Target,
+        },
+    })
+}
+
 fn chart_result(
     (annotation_id, label): (u64, String),
     (tab_id, pane_id, side, band): (u64, u64, PaneSide, &DrawingBand),
@@ -647,6 +682,7 @@ fn chart_result(
         author: acting_author(actor),
         label,
         band: band_dto(band),
+        position: None,
     }
 }
 

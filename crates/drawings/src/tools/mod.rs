@@ -12,6 +12,7 @@ mod fib;
 mod line_core;
 mod mark_core;
 mod measure_core;
+mod position_core;
 mod shape_core;
 
 // The names every tool file reaches through `super::`.
@@ -66,6 +67,9 @@ register_drawing_tools!(
     price_range,
     date_range,
     fixed_range_profile,
+    // Position
+    long_position,
+    short_position,
     // Series
     anchored_vwap,
     // Annotation
@@ -88,6 +92,9 @@ pub use fixed_range_profile::{
     DEFAULT_VALUE_AREA_PCT, FrvpPayload, MAX_WIDTH_FRAC, MIN_WIDTH_FRAC,
 };
 pub use parallel_channel::ChannelPayload;
+pub use position_core::{
+    Legs as PositionLegs, Measured as PositionMeasured, PositionPayload, position_plan,
+};
 pub use rectangle::{RectanglePayload, TOOL_ID as RECTANGLE_TOOL_ID};
 pub use text::{MAX_TEXT_PX, MIN_TEXT_PX, PLACEHOLDER as TEXT_PLACEHOLDER, TextPayload};
 

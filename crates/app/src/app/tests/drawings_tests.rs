@@ -441,11 +441,7 @@ fn quick_range_serialization_failure_keeps_range_without_refusal_toast() {
         false,
         || {
             let tool = crate::drawings::DrawingTool::by_id("measure").unwrap();
-            crate::drawings::NewDrawing {
-                style: tool.default_style(),
-                payload: tool.default_payload(),
-                look: Default::default(),
-            }
+            crate::drawings::NewDrawing::explicit(tool.default_style(), tool.default_payload())
         },
     );
     quick.release(owner);
@@ -2167,11 +2163,10 @@ fn a_shared_drawing_is_painted_on_the_other_pane_of_the_tab() {
         &drawings::DrawingBand::Price,
         anchored,
         |tool| {
-            drawings::NewDrawing {
-                style: drawings::DrawingStyle::default(),
-                payload: tool.default_payload(),
-                look: Default::default(),
-            }
+            drawings::NewDrawing::explicit(
+                drawings::DrawingStyle::default(),
+                tool.default_payload(),
+            )
         },
     ));
     pane.drawings.selected_mut().expect("just placed").scope = DrawingScope::ThisChart;

@@ -111,6 +111,11 @@ jobs:
           echo "packages=$(sed 's/^/-p /' affected.txt | tr '\n' ' ')" >> "$GITHUB_OUTPUT"
       - name: Format
         run: cargo fmt --all -- --check
+      - &format-control-families
+        name: Format control families
+        shell: bash
+        # Macro-generated module declarations require explicit rustfmt inputs.
+        run: find crates/control-schema/src crates/control-handlers/src -name '*.rs' -type f -exec rustfmt --edition 2024 --check {} +
       - name: Lint
         run: cargo clippy ${{ steps.affected.outputs.packages }} --all-targets
       - name: Test
@@ -332,6 +337,7 @@ jobs:
         run: python3 tools/ci/test_affected_crates.py
       - name: Format
         run: cargo fmt --all -- --check
+      - *format-control-families
       - name: Lint
         # No `-D warnings` here any more. The levels live in the
         # `[workspace.lints]` table in the root `Cargo.toml`, which every crate
@@ -475,6 +481,7 @@ jobs:
           verbose-toolchain: "true"
       - name: Format
         run: cargo fmt --all -- --check
+      - *format-control-families
       - name: Lint
         run: cargo clippy --workspace --all-targets
       - name: Build

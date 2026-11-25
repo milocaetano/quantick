@@ -1,5 +1,5 @@
 use super::*;
-use crate::layout_document::{SavedBand, SavedPoint, parse};
+use crate::layout_document::parse;
 
 const LEGACY: &str = include_str!("../../fixtures/market-settings/legacy-layouts.toml");
 const MERGED: &str = include_str!("../../fixtures/market-settings/merged.toml");
@@ -37,30 +37,7 @@ fn context(bars: &str) -> PaneRole {
 fn level(id: Option<u64>, price: f64) -> SavedDrawing {
     SavedDrawing {
         id,
-        tool: "horizontal-line".to_owned(),
-        name: None,
-        author: None,
-        points: vec![SavedPoint {
-            time_ms: Some(1_000),
-            price,
-            bar: 3.0,
-        }],
-        band: SavedBand::Price,
-        color: [255, 200, 0, 255],
-        width_px: 1.5,
-        fill_alpha: 0,
-        follows_ground: false,
-        locked: false,
-        hidden: false,
-        magnet: false,
-        shared: false,
-        layout: None,
-        all_windows: false,
-        payload: None,
-        text: None,
-        durable_identity: None,
-        origin: None,
-        bars: None,
+        ..SavedDrawing::level(price)
     }
 }
 

@@ -354,7 +354,7 @@ fn a_headless_executor_consumes_the_same_effect_and_completion_event() {
 }
 
 #[test]
-fn the_shape_actions_follow_the_original_three() {
+fn the_shape_actions_follow_the_original_three_and_the_plans_close_the_bar() {
     assert_eq!(
         Action::ALL[3..],
         [
@@ -362,6 +362,8 @@ fn the_shape_actions_follow_the_original_three() {
             Action::TrendLine,
             Action::Horizontal,
             Action::Channel,
+            Action::LongPosition,
+            Action::ShortPosition,
         ]
     );
 }

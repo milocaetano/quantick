@@ -26,10 +26,8 @@ fn place_on(
         .unwrap();
     for (bar, price) in prices.iter().enumerate() {
         let point = ChartPoint::at_time(bar as f32, *price, Some(1_000 + bar as i64));
-        drawings.place_with(tool, band, point, |tool| NewDrawing {
-            style: DrawingStyle::default(),
-            payload: tool.default_payload(),
-            look: Default::default(),
+        drawings.place_with(tool, band, point, |tool| {
+            NewDrawing::explicit(DrawingStyle::default(), tool.default_payload())
         });
     }
 }

@@ -1623,11 +1623,10 @@ fn observer_journals_indicator_and_drawing_changes_without_the_trader_text() {
             drawing_tool("horizontal-line"),
             &drawings::DrawingBand::Price,
             ChartPoint::at_time(60.5, price, Some(time)),
-            |tool| drawings::NewDrawing {
-                style: drawings::DrawingStyle::default(),
-                payload: tool.default_payload(),
-                look: Default::default(),
-            },
+            |tool| drawings::NewDrawing::explicit(
+                drawings::DrawingStyle::default(),
+                tool.default_payload()
+            ),
         ));
         let selected = flow.drawings.selected().expect("placement selects");
         flow.drawings.rename_at(selected, CANARY);
@@ -3949,11 +3948,10 @@ fn observer_resolves_mirrored_drawings_without_leaking_user_text() {
         drawing_tool("horizontal-line"),
         &drawings::DrawingBand::Price,
         ChartPoint::at_time(slot as f32 + 0.5, price, Some(time)),
-        |tool| drawings::NewDrawing {
-            style: drawings::DrawingStyle::default(),
-            payload: tool.default_payload(),
-            look: Default::default(),
-        },
+        |tool| drawings::NewDrawing::explicit(
+            drawings::DrawingStyle::default(),
+            tool.default_payload()
+        ),
     ));
     let selected = flow.drawings.selected().expect("placement selects");
     flow.drawings.rename_at(selected, CANARY);

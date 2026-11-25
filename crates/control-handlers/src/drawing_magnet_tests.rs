@@ -18,11 +18,8 @@ fn window_with(tool_id: &str) -> (FakeWindow, u64) {
         .into_iter()
         .find(|tool| tool.id() == tool_id)
         .unwrap();
-    let fresh = |tool: DrawingTool| NewDrawing {
-        style: DrawingStyle::default(),
-        payload: tool.default_payload(),
-        look: Default::default(),
-    };
+    let fresh =
+        |tool: DrawingTool| NewDrawing::explicit(DrawingStyle::default(), tool.default_payload());
     let point = ChartPoint::at_time(3.0, 100.0, Some(1_000));
     assert!(
         pane.drawings
@@ -195,11 +192,8 @@ fn a_drawing_call_moves_only_the_named_panes_drawing_when_ids_collide() {
         .find(|tool| tool.id() == "horizontal-line")
         .unwrap();
     let mut other = FakePane::with_trades(3, 50, []);
-    let fresh = |tool: DrawingTool| NewDrawing {
-        style: DrawingStyle::default(),
-        payload: tool.default_payload(),
-        look: Default::default(),
-    };
+    let fresh =
+        |tool: DrawingTool| NewDrawing::explicit(DrawingStyle::default(), tool.default_payload());
     let point = ChartPoint::at_time(5.0, 100.0, Some(1_000));
     assert!(
         other
