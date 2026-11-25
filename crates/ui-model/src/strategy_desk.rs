@@ -5,13 +5,17 @@
 //! `quantick_control_handlers::strategy_desk::send`, which the
 //! `strategy.desk.*` calls share.
 
+use std::collections::BTreeMap;
+
 use quantick_control::error::ControlError;
 use quantick_control_handlers::notify::AttentionHost;
+use quantick_control_handlers::script_strategy::signal_action;
 use quantick_control_handlers::strategy_desk::{self as desk, StrategyDeskHost};
-use quantick_control_schema::strategy_desk::CommandResult;
+use quantick_control_schema::script_strategy::TICKET_QUANTITY;
+use quantick_control_schema::strategy_desk::{CommandResult, FireAction};
 use quantick_drawings::DrawingId;
 use quantick_engine::Side;
-use quantick_session::script_strategies::ScriptPlacement;
+use quantick_session::script_strategies::{OrderQuantity, ScriptPlacement, SignalAction};
 use quantick_session::strategy_desk::{
     Asset, DeskAction, DeskGroup, DeskLink, DeskRow, DeskState, InstanceRef, StrategyDeskCommand,
     StrategyDetail,
@@ -69,6 +73,18 @@ pub struct Line {
     pub state: (&'static str, Ink),
     pub link: String,
     pub action: (&'static str, Ink),
+    /// A script order's size, `3 ct` or `Ticket`; `None` for an alarm and
+    /// for a drawn instance, whose preset sizes its orders.
+    pub quantity: Option<String>,
+    /// A script order's stop and gain, `SL 100 / TP 200`, or `—` with
+    /// neither; `None` where `quantity` is.
+    pub protection: Option<String>,
+    /// What the action chip edits; `None` for a drawn instance, whose preset
+    /// decides.
+    pub draft: Option<ActionDraft>,
+    /// The action chip's words: the action, then an order's quantity and
+    /// protection.
+    pub chip: String,
     /// Pause or resume; an ended instance arms again from its window.
     pub toggle: Option<(Toggle, Sent)>,
     pub remove: Sent,
@@ -83,10 +99,17 @@ pub struct Group {
 
 /// Every open tab's instances as the Strategies tab paints them.
 pub fn rail<H: StrategyDeskHost + ?Sized>(host: &mut H) -> Vec<Group> {
-    desk::groups(host).iter().map(group).collect()
+    let actions = desk::script_actions(host);
+    desk::groups(host)
+        .iter()
+        .map(|each| group(each, &actions))
+        .collect()
 }
 
-fn group(group: &DeskGroup<DrawingId>) -> Group {
+/// Each script's action by tab and id, as [`desk::script_actions`] reads it.
+type Actions = BTreeMap<(u64, u64), SignalAction>;
+
+fn group(group: &DeskGroup<DrawingId>, actions: &Actions) -> Group {
     let label = asset_label(&group.asset);
     let (toggle, command) = if group.paused {
         (Toggle::Resume, Command::ResumeAsset(group.asset.clone()))
@@ -101,16 +124,31 @@ fn group(group: &DeskGroup<DrawingId>) -> Group {
         send: (tab_id, command),
         label: label.clone(),
     };
-    let lines = group.rows.iter().map(|row| line(row, &label)).collect();
+    let action = |row: &DeskRow<DrawingId>| match row.id {
+        InstanceRef::Script(id) => actions.get(&(row.tab_id, id)).map(|action| (id, *action)),
+        InstanceRef::Drawing { .. } => None,
+    };
+    let lines = (group.rows.iter())
+        .map(|row| line(row, &label, action(row)))
+        .collect();
     Group { header, lines }
 }
 
-fn line(row: &DeskRow<DrawingId>, asset: &str) -> Line {
+/// `row` as the tab paints it; `script` is a script row's id and action.
+fn line(row: &DeskRow<DrawingId>, asset: &str, script: Option<(u64, SignalAction)>) -> Line {
+    let action = match row.action {
+        DeskAction::Alarm => ("alarm", Ink::Violet),
+        DeskAction::Order => ("order", Ink::Accent),
+    };
     let state = match row.state {
         DeskState::Watching => ("WATCHING", Ink::Buy),
         DeskState::Paused => ("PAUSED", Ink::Muted),
         DeskState::Ended { .. } => ("ENDED", Ink::Sell),
     };
+    let quantity = script.and_then(|(_, action)| quantity(action));
+    let protection = script.and_then(|(_, action)| protection(action));
+    let chip = [Some(action.0), quantity.as_deref(), protection.as_deref()];
+    let chip = chip.into_iter().flatten().collect::<Vec<_>>().join(" · ");
     let toggle = match row.state {
         DeskState::Watching => Some((Toggle::Pause, Command::Pause(row.id))),
         DeskState::Paused => Some((Toggle::Resume, Command::Resume(row.id))),
@@ -122,13 +160,139 @@ fn line(row: &DeskRow<DrawingId>, asset: &str) -> Line {
         status: row.status.clone(),
         state,
         link: link(&row.link),
-        action: match row.action {
-            DeskAction::Alarm => ("alarm", Ink::Violet),
-            DeskAction::Order => ("order", Ink::Accent),
-        },
+        action,
+        quantity,
+        protection,
+        draft: script.map(|(id, action)| ActionDraft::of(row.tab_id, id, action)),
+        chip,
         toggle: toggle.map(|(toggle, command)| (toggle, (row.tab_id, command))),
         remove: (row.tab_id, Command::Remove(row.id)),
     }
+}
+
+/// An order's size in the rail's words.
+fn quantity(action: SignalAction) -> Option<String> {
+    let SignalAction::Order(order) = action else {
+        return None;
+    };
+    Some(match order.quantity {
+        OrderQuantity::Fixed(count) => format!("{} ct", count.normalize()),
+        OrderQuantity::Ticket => "Ticket".to_owned(),
+    })
+}
+
+/// An order's legs in the rail's words; a zero distance places none.
+fn protection(action: SignalAction) -> Option<String> {
+    let SignalAction::Order(order) = action else {
+        return None;
+    };
+    let legs: Vec<String> = [("SL", order.stop), ("TP", order.gain)]
+        .into_iter()
+        .filter(|(_, distance)| !distance.is_zero())
+        .map(|(tag, distance)| format!("{tag} {}", distance.normalize()))
+        .collect();
+    Some(if legs.is_empty() {
+        "—".to_owned()
+    } else {
+        legs.join(" / ")
+    })
+}
+
+/// A script's action as the rail's action chip edits it: text until sent,
+/// so a half-typed number is the trader's to finish. A painter keys its
+/// working copy by the draft it started from.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
+pub struct ActionDraft {
+    tab_id: u64,
+    script: u64,
+    /// Place a paper order; otherwise ring.
+    pub order: bool,
+    /// Size with the ticket's quantity rather than `quantity`.
+    pub ticket: bool,
+    pub quantity: String,
+    /// Distances from the entry, in price; blank or `0` places no leg.
+    pub stop: String,
+    pub gain: String,
+}
+
+impl ActionDraft {
+    /// The draft of script `script` of tab `tab_id` doing `action`; an
+    /// alarm drafts a ticket-sized order with no legs, for the trader to
+    /// fill in.
+    #[must_use]
+    pub fn of(tab_id: u64, script: u64, action: SignalAction) -> Self {
+        let SignalAction::Order(order) = action else {
+            return Self {
+                tab_id,
+                script,
+                ticket: true,
+                ..Self::default()
+            };
+        };
+        let (ticket, quantity) = match order.quantity {
+            OrderQuantity::Fixed(count) => (false, count.normalize().to_string()),
+            OrderQuantity::Ticket => (true, String::new()),
+        };
+        Self {
+            tab_id,
+            script,
+            order: true,
+            ticket,
+            quantity,
+            stop: order.stop.normalize().to_string(),
+            gain: order.gain.normalize().to_string(),
+        }
+    }
+
+    /// The chip's switches, labelled.
+    pub fn switches(&mut self) -> [(&'static str, &mut bool); 2] {
+        [
+            ("place a paper order", &mut self.order),
+            ("the ticket's quantity", &mut self.ticket),
+        ]
+    }
+
+    /// The chip's fields, labelled; the quantity is read without the
+    /// ticket's switch.
+    pub fn fields(&mut self) -> [(&'static str, &mut String); 3] {
+        [
+            ("quantity", &mut self.quantity),
+            ("stop", &mut self.stop),
+            ("gain", &mut self.gain),
+        ]
+    }
+
+    /// The command that sets the draft on its script, or why the draft
+    /// cannot be sent yet.
+    ///
+    /// # Errors
+    /// The sentence `strategy.script.action.set` would answer: no quantity,
+    /// or a quantity or distance that is not a number.
+    pub fn sent(&self) -> Result<Sent, String> {
+        let action = if self.order {
+            let quantity = if self.ticket {
+                Some(TICKET_QUANTITY)
+            } else {
+                typed(&self.quantity)
+            };
+            signal_action(
+                FireAction::Order,
+                quantity,
+                typed(&self.stop),
+                typed(&self.gain),
+            )
+            .map_err(|refused| refused.message)?
+        } else {
+            SignalAction::Alarm
+        };
+        let id = InstanceRef::Script(self.script);
+        Ok((self.tab_id, Command::SetAction { id, action }))
+    }
+}
+
+/// A field's text, `None` while blank.
+fn typed(text: &str) -> Option<&str> {
+    Some(text.trim()).filter(|text| !text.is_empty())
 }
 
 /// What a toggle says it does.

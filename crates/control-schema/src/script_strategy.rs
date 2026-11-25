@@ -1,9 +1,11 @@
 //! `strategy.script.arm`, `.list` and `.disarm`: a Pine script from the
-//! strategy library armed alarm-only on one chart's bars, as named calls.
+//! strategy library armed on one chart's bars, as named calls.
 //!
-//! A script rings when one of its `alertcondition`s holds on a closed bar
+//! A script fires when one of its `alertcondition`s holds on a closed bar
 //! whose body meets the placement; the title's first word is the side. It
-//! places nothing, ever. Instances live for the session only.
+//! rings, or — once `strategy.script.action.set` says so — places a paper
+//! order of a set quantity and protection. Instances live for the session
+//! only.
 
 use quantick_control::id::ModuleId;
 use quantick_control::registry::{CapabilityDescriptor, EffectPersistence, IdempotencyPolicy};
@@ -75,6 +77,20 @@ pub struct ArmInput {
     /// do not ring it.
     pub side: ActionSide,
     pub placement: Placement,
+    /// What a firing does; absent rings. This call arms alarms only: an
+    /// `order` is refused, since placing orders is the trade tier's — set it
+    /// with `strategy.script.action.set`.
+    #[serde(default)]
+    pub action: Option<FireAction>,
+}
+
+/// What a firing does.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum FireAction {
+    Alarm,
+    /// A paper market order.
+    Order,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -108,9 +124,22 @@ pub struct ScriptStrategy {
     pub disarm_reason: Option<String>,
     /// What the last closed bar did, as the instance's badge line says it.
     pub status: String,
-    /// Always true: a script strategy never places an order.
+    /// True while `action` is `alarm`: it rings and places nothing.
     pub alarm_only: bool,
+    pub action: FireAction,
+    /// An order's size: a contract count, or `ticket` for the ticket's
+    /// quantity when the bar closes. Absent for an alarm.
+    pub quantity: Option<String>,
+    /// An order's stop distance from the entry, in price; `0` places none.
+    /// Absent for an alarm.
+    pub stop: Option<String>,
+    /// An order's target distance from the entry, in price; `0` places none.
+    /// Absent for an alarm.
+    pub gain: Option<String>,
 }
+
+/// The word [`ScriptStrategy::quantity`] uses for the ticket's quantity.
+pub const TICKET_QUANTITY: &str = "ticket";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -187,7 +216,7 @@ pub fn arm_descriptor() -> CapabilityDescriptor {
     action::<ArmInput, ArmResult>(
         ARM_CAPABILITY_ID,
         "Arm a script strategy",
-        "Loads a .pine file from the strategy library and arms it alarm-only on one chart's closed bars: an alertcondition that holds rings the alarm when the bar's body meets the placement (a drawn rectangle, a fixed range, a line crossed one way, or anywhere). The title's first word is the side (bull, buy or long; bear, sell or short; any case); a script with a title naming no side, a computed title, no alertcondition, no title naming the side asked for, or a compile error is refused with the reason, compile errors as `line N: <CODE> <message>`. Never places an order. A runtime error later disarms that instance alone; strategy.script.list shows the reason. Journaled as strategy.script.armed. Lives for the session.",
+        "Loads a .pine file from the strategy library and arms it as an alarm on one chart's closed bars: an alertcondition that holds rings the alarm when the bar's body meets the placement (a drawn rectangle, a fixed range, a line crossed one way, or anywhere). The title's first word is the side (bull, buy or long; bear, sell or short; any case); a script with a title naming no side, a computed title, no alertcondition, no title naming the side asked for, or a compile error is refused with the reason, compile errors as `line N: <CODE> <message>`. Places no order: an `action` of `order` is refused, and strategy.script.action.set, in the trade tier, switches an armed instance to orders. A runtime error later disarms that instance alone; strategy.script.list shows the reason. Journaled as strategy.script.armed. Lives for the session.",
         "Each arm adds one instance with a new id, so arming twice rings twice; no retry key can make that safe. Read strategy.script.list, or the strategy.script.armed events after a cursor taken before the call, before retrying one whose answer was lost.",
     )
 }
@@ -228,7 +257,7 @@ pub fn list_descriptor() -> CapabilityDescriptor {
         id: LIST_CAPABILITY_ID,
         module: STRATEGY_MODULE_ID,
         title: "List script strategies",
-        description: "Reads the strategy library (the bundled scripts, then the folder's .pine files, sorted: what strategy.script.arm accepts) and every script strategy armed on the tab: its id, chart, script, side, placement, whether it is watching or disarmed and why, and its badge line. Changes nothing.",
+        description: "Reads the strategy library (the bundled scripts, then the folder's .pine files, sorted: what strategy.script.arm accepts) and every script strategy armed on the tab: its id, chart, script, side, placement, whether it is watching or disarmed and why, its badge line, and what a firing does — an alarm, or an order with its quantity, stop and gain. Changes nothing.",
         permissions: &["observe", "observe.indicators", "observe.user_text"],
         pagination: None,
     })

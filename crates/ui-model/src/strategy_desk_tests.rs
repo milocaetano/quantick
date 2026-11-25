@@ -1,4 +1,5 @@
 use super::*;
+use quantick_session::script_strategies::SignalOrder;
 use rust_decimal::Decimal;
 
 fn row(id: u64, state: DeskState, link: DeskLink<DrawingId>) -> DeskRow<DrawingId> {
@@ -47,7 +48,7 @@ fn a_header_pauses_a_watching_asset_and_resumes_a_paused_one() {
         paused: false,
         rows: vec![row(1, DeskState::Watching, DeskLink::Chart)],
     };
-    let header = group(&watching).header;
+    let header = group(&watching, &Actions::new()).header;
     assert_eq!(header.label, "WINZ26 · Renko 10");
     assert_eq!(header.count, "1");
     assert_eq!(header.toggle, Toggle::Pause);
@@ -59,7 +60,7 @@ fn a_header_pauses_a_watching_asset_and_resumes_a_paused_one() {
         ..watching
     };
     assert_eq!(
-        group(&paused).header.send,
+        group(&paused, &Actions::new()).header.send,
         (7, Command::ResumeAsset(asset()))
     );
 }
@@ -70,7 +71,7 @@ fn a_line_says_its_state_link_and_action_and_offers_its_toggle() {
         drawing: DrawingId(4),
         name: Some("zone-1".to_owned()),
     };
-    let watching = line(&row(1, DeskState::Watching, drawn), "a");
+    let watching = line(&row(1, DeskState::Watching, drawn), "a", None);
     assert_eq!(watching.state, ("WATCHING", Ink::Buy));
     assert_eq!(watching.link, "zone-1");
     assert_eq!(watching.action, ("alarm", Ink::Violet));
@@ -81,14 +82,18 @@ fn a_line_says_its_state_link_and_action_and_offers_its_toggle() {
         (7, Command::Remove(InstanceRef::Script(1)))
     );
 
-    let paused = line(&row(1, DeskState::Paused, DeskLink::Chart), "a");
+    let paused = line(&row(1, DeskState::Paused, DeskLink::Chart), "a", None);
     assert_eq!(paused.state, ("PAUSED", Ink::Muted));
     assert_eq!(paused.link, "chart");
     let resume = (7, Command::Resume(InstanceRef::Script(1)));
     assert_eq!(paused.toggle, Some((Toggle::Resume, resume)));
 
     let reason = "the chart closed".to_owned();
-    let ended = line(&row(1, DeskState::Ended { reason }, DeskLink::Chart), "a");
+    let ended = line(
+        &row(1, DeskState::Ended { reason }, DeskLink::Chart),
+        "a",
+        None,
+    );
     assert_eq!(ended.state, ("ENDED", Ink::Sell));
     assert_eq!(ended.toggle, None, "an ended instance arms from its window");
 
@@ -208,4 +213,94 @@ fn a_window_reads_again_once_its_listed_row_moves_on() {
     assert!(window.stale(Some(&listed)), "it is listed again");
     window.forget();
     assert!(window.stale(Some(&listed)), "never read");
+}
+
+#[test]
+fn strategy_rail_shows_action_quantity_and_protection() {
+    let order = |quantity, stop: i64, gain: i64| {
+        let order = SignalOrder {
+            quantity,
+            stop: Decimal::from(stop),
+            gain: Decimal::from(gain),
+        };
+        Some((1, SignalAction::Order(order)))
+    };
+    let watching = row(1, DeskState::Watching, DeskLink::Chart);
+
+    let alarm = line(&watching, "a", Some((1, SignalAction::Alarm)));
+    assert_eq!(alarm.action, ("alarm", Ink::Violet));
+    assert_eq!((alarm.quantity, alarm.protection), (None, None));
+    assert_eq!(alarm.chip, "alarm");
+    let draft = alarm.draft.expect("a script row edits its action");
+    assert!(
+        !draft.order && draft.ticket,
+        "an alarm drafts a ticket-sized order"
+    );
+
+    let ordering = DeskRow {
+        action: DeskAction::Order,
+        ..watching.clone()
+    };
+    let fixed = line(
+        &ordering,
+        "a",
+        order(OrderQuantity::Fixed(Decimal::from(3)), 0, 0),
+    );
+    assert_eq!(fixed.action, ("order", Ink::Accent));
+    assert_eq!(fixed.quantity.as_deref(), Some("3 ct"));
+    assert_eq!(fixed.protection.as_deref(), Some("—"), "no leg either side");
+
+    let ticket = line(&ordering, "a", order(OrderQuantity::Ticket, 100, 200));
+    assert_eq!(ticket.quantity.as_deref(), Some("Ticket"));
+    assert_eq!(ticket.protection.as_deref(), Some("SL 100 / TP 200"));
+    assert_eq!(ticket.chip, "order · Ticket · SL 100 / TP 200");
+    let stop_only = line(&ordering, "a", order(OrderQuantity::Ticket, 100, 0));
+    assert_eq!(stop_only.protection.as_deref(), Some("SL 100"));
+
+    let drawn = DeskRow {
+        id: InstanceRef::Drawing {
+            pane_id: 1,
+            drawing: DrawingId(4),
+            id: 2,
+        },
+        ..ordering
+    };
+    let preset = line(&drawn, "a", None);
+    assert_eq!(
+        (preset.quantity, preset.draft),
+        (None, None),
+        "its preset decides"
+    );
+}
+
+#[test]
+fn the_action_chip_sends_one_set_action_or_says_what_is_missing() {
+    let mut draft = ActionDraft::of(7, 3, SignalAction::Alarm);
+    let labels = draft.fields().map(|(label, _)| label);
+    assert_eq!(labels, ["quantity", "stop", "gain"]);
+    let set = |action| {
+        let id = InstanceRef::Script(3);
+        (7, Command::SetAction { id, action })
+    };
+    assert_eq!(draft.sent(), Ok(set(SignalAction::Alarm)));
+
+    *draft.switches()[0].1 = true;
+    *draft.fields()[1].1 = " 100 ".to_owned();
+    let ticket = SignalOrder {
+        quantity: OrderQuantity::Ticket,
+        stop: Decimal::from(100),
+        gain: Decimal::ZERO,
+    };
+    assert_eq!(draft.sent(), Ok(set(SignalAction::Order(ticket))));
+    assert_eq!(
+        ActionDraft::of(7, 3, SignalAction::Order(ticket)).stop,
+        "100"
+    );
+
+    draft.ticket = false;
+    let missing = draft.sent().expect_err("no quantity typed");
+    assert!(missing.contains("quantity"), "{missing}");
+    draft.quantity = "two".to_owned();
+    let refused = draft.sent().expect_err("not a number");
+    assert!(refused.contains("`two`"), "{refused}");
 }

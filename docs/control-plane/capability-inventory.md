@@ -183,6 +183,7 @@ capability that cannot change application state.
 | `strategy.desk.remove` | 1 | `strategy` | no | `annotate`, `annotate.script` |
 | `strategy.desk.resume` | 1 | `strategy` | no | `annotate`, `annotate.script` |
 | `strategy.desk.save_as` | 1 | `strategy` | no | `annotate`, `annotate.script` |
+| `strategy.script.action.set` | 1 | `strategy` | no | `trade` |
 | `strategy.script.arm` | 1 | `strategy` | no | `annotate`, `annotate.script` |
 | `strategy.script.disarm` | 1 | `strategy` | no | `annotate`, `annotate.script` |
 | `strategy.script.list` | 1 | `strategy` | yes | `observe`, `observe.indicators`, `observe.user_text` |
@@ -219,4 +220,4 @@ capability that cannot change application state.
 | `workspace.save_as` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
 | `workspace.save_to` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
 
-194 capabilities registered.
+195 capabilities registered.

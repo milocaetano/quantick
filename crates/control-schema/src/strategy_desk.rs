@@ -17,6 +17,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::readback::{EVERY_FORBIDDEN_TEST, Readback, journal};
+pub use crate::script_strategy::FireAction;
 use crate::script_strategy::{Placement, SCRIPT_NAME_MAX_BYTES};
 use crate::trade::ActionSide;
 
@@ -30,6 +31,9 @@ pub const ASSET_RESUME_CAPABILITY_ID: &str = "strategy.desk.asset.resume";
 pub const ARM_CAPABILITY_ID: &str = "strategy.desk.arm";
 pub const SAVE_AS_CAPABILITY_ID: &str = "strategy.desk.save_as";
 pub const DUPLICATE_CAPABILITY_ID: &str = "strategy.desk.duplicate";
+/// The script call that runs the desk's set-action command: it shares the
+/// desk's path and journal, and sits in the trade tier.
+pub const ACTION_SET_CAPABILITY_ID: &str = "strategy.script.action.set";
 
 /// Journaled by every desk command that went through; its payload is the
 /// [`CommandResult`].
@@ -37,6 +41,9 @@ pub const CHANGED_EVENT_KIND: &str = "strategy.desk.changed";
 
 /// The handler test that sends every desk command through a fake host.
 pub const EVERY_DESK_ACTION_TEST: &str = "every_desk_action_has_a_call";
+
+/// The handler test that sets a script's action and reads it back.
+pub const ACTION_SET_TEST: &str = "script_action_set_reads_back_through_list";
 
 /// The longest symbol or bar type an asset call may give.
 pub const ASSET_TEXT_MAX_BYTES: usize = 64;
@@ -91,6 +98,31 @@ pub struct SaveAsInput {
     pub name: String,
 }
 
+/// What one armed script does when it fires, from its next close.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ActionSetInput {
+    /// The tab; absent for the one on screen.
+    #[serde(default)]
+    pub tab_id: Option<WireU64>,
+    /// The id `strategy.script.arm` answered.
+    pub id: WireU64,
+    pub action: FireAction,
+    /// An order's size: a contract count above zero, or `ticket` for the
+    /// ticket's quantity when the bar closes. Required for an order, refused
+    /// for an alarm.
+    #[serde(default)]
+    pub quantity: Option<String>,
+    /// An order's stop distance from the entry, in price; absent or `0`
+    /// places none, never below zero. Refused for an alarm.
+    #[serde(default)]
+    pub stop: Option<String>,
+    /// An order's target distance from the entry, in price; absent or `0`
+    /// places none, never below zero. Refused for an alarm.
+    #[serde(default)]
+    pub gain: Option<String>,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Link {
@@ -101,15 +133,6 @@ pub enum Link {
     },
     /// A script on a fixed range, a line or anywhere on the chart.
     Chart,
-}
-
-/// What a firing does.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum FireAction {
-    Alarm,
-    /// A paper order: drawn strategies only, never a script.
-    Order,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -175,6 +198,12 @@ pub struct DetailResult {
     pub inputs: Vec<DeclaredInput>,
     /// Closes it fired on during the UTC day of the tab's latest print.
     pub fires_today: u32,
+    /// A script order's size, stop and gain, as `strategy.script.list` words
+    /// them; absent for an alarm and for a drawn instance, whose preset
+    /// sizes and protects its orders.
+    pub quantity: Option<String>,
+    pub stop: Option<String>,
+    pub gain: Option<String>,
     /// The script's source; none for a drawn instance.
     pub code: Option<String>,
     /// The chart's closed slots (from zero, the oldest loaded bar) a fresh
@@ -275,6 +304,25 @@ pub fn command_descriptors() -> Vec<CapabilityDescriptor> {
     ]
 }
 
+/// `strategy.script.action.set`: the trade tier's, because it can make a
+/// script place paper orders — the desk's own calls never start orders.
+/// Setting the same action twice leaves the same action.
+#[must_use]
+pub fn action_set_descriptor() -> CapabilityDescriptor {
+    let mut descriptor = crate::trade::descriptor(
+        ACTION_SET_CAPABILITY_ID,
+        "Set what a script strategy does when it fires",
+        "Sets what one armed script strategy does from its next close: `alarm` rings and places nothing; `order` places a paper market order of `quantity` (a contract count, or `ticket` for the ticket's quantity when the bar closes) with a stop `stop` and a target `gain` away from the entry, in price (absent or 0: no leg). A resting order or an open position keeps its course. A drawn strategy takes its action from its preset and is refused, as are an order with no quantity, a quantity of zero or less, a distance below zero, and quantity, stop or gain sent with `alarm`. strategy.script.list and strategy.desk.detail read it back. Journaled as strategy.desk.changed.",
+        generated_schema::<ActionSetInput>(),
+        false,
+        "The instance is named by an id never reused in the tab's session, and the call states the whole action, so a repeat leaves the instance as the first call did; an id that has since been removed is refused.",
+    );
+    descriptor.module = ModuleId::new(STRATEGY_MODULE_ID).expect("static module ID is valid");
+    descriptor.output_schema = generated_schema::<CommandResult>();
+    descriptor.idempotency = IdempotencyPolicy::Optional;
+    descriptor
+}
+
 #[must_use]
 pub fn list_descriptor() -> CapabilityDescriptor {
     read_descriptor::<ListInput, ListResult>(&ReadSpec {
@@ -309,6 +357,14 @@ pub const READBACKS: &[Readback] = &[
     changed(ARM_CAPABILITY_ID),
     changed(SAVE_AS_CAPABILITY_ID),
     changed(DUPLICATE_CAPABILITY_ID),
+    journal(
+        ACTION_SET_CAPABILITY_ID,
+        IdempotencyPolicy::Optional,
+        CHANGED_EVENT_KIND,
+        "payload.capability",
+        "an event after the pre-call cursor names the call; strategy.script.list shows the action, quantity, stop and gain",
+        &[ACTION_SET_TEST],
+    ),
 ];
 
 const fn changed(capability: &'static str) -> Readback {
@@ -347,6 +403,10 @@ pub fn documents() -> Vec<(&'static str, serde_json::Value)> {
         (
             "strategy-desk-save-as-input-v1.schema.json",
             generated_schema::<SaveAsInput>(),
+        ),
+        (
+            "strategy-script-action-set-input-v1.schema.json",
+            generated_schema::<ActionSetInput>(),
         ),
         (
             "strategy-desk-command-result-v1.schema.json",
