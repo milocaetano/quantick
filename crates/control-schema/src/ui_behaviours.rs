@@ -42,12 +42,17 @@ static JOINED: [UiBehaviour; TOTAL] = flatten(FAMILIES);
 /// Every supported UI behaviour, in the order the matrix renders.
 pub const UI_BEHAVIOURS: &[UiBehaviour] = &JOINED;
 
+/// The committed contents of `docs/control-plane/ui-behaviour-matrix.md`.
+pub fn ui_behaviour_matrix_markdown() -> String {
+    quantick_operability::matrix::ui_behaviour_matrix_markdown(UI_BEHAVIOURS)
+}
+
 #[cfg(test)]
 mod tests {
     use quantick_operability::Mapping;
-    use quantick_operability::matrix::{GENERATED_MARKER, ui_behaviour_matrix_markdown};
+    use quantick_operability::matrix::GENERATED_MARKER;
 
-    use super::UI_BEHAVIOURS;
+    use super::{UI_BEHAVIOURS, ui_behaviour_matrix_markdown};
 
     fn committed_path() -> std::path::PathBuf {
         std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -66,7 +71,7 @@ mod tests {
             .unwrap_or_else(|error| panic!("cannot read {}: {error}", path.display()));
         assert_eq!(
             committed,
-            ui_behaviour_matrix_markdown(UI_BEHAVIOURS),
+            ui_behaviour_matrix_markdown(),
             "the committed UI behaviour matrix is stale. Regenerate it:\n  \
              cargo run -p quantick-app -- --dump-ui-behaviour-matrix > \
              docs/control-plane/ui-behaviour-matrix.md"
@@ -107,7 +112,7 @@ mod tests {
     /// a row for every behaviour.
     #[test]
     fn the_rendered_matrix_carries_the_marker_and_every_row() {
-        let markdown = ui_behaviour_matrix_markdown(UI_BEHAVIOURS);
+        let markdown = ui_behaviour_matrix_markdown();
         assert!(markdown.contains(GENERATED_MARKER), "no generated marker");
         assert!(
             markdown.contains("--dump-ui-behaviour-matrix"),

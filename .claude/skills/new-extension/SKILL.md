@@ -18,6 +18,7 @@ line — holds by construction.
 | Chart layer / overlay | layer registry (`QUANTICK_CHART_LAYERS`) | new layer module in `app` |
 | Panel / dock tab | dock tab set | new `app` module, one tab registration |
 | Any UI surface (popup, toast, panel, chrome slot) — the default | `ui-model` `Model` + app `View` | model file in `crates/ui-model/src/`, view file in `crates/app/src/surfaces/`, one `surface_catalog!` line |
+| Control call | family call table (`workspace_book_calls!`) | one declaration plus its handler body ([references/control-call.md](references/control-call.md)) |
 | Look / preset | config (`bubbles.toml`, drawing presets) | data only |
 | Sim/backtest behaviour | `sim` fill model + metrics | `sim`, consumed by chart and runner alike |
 
