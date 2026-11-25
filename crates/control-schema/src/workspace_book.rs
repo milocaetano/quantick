@@ -289,7 +289,6 @@ pub struct WorkspaceListResult {
     pub workspaces: Vec<WorkspaceEntry>,
 }
 
-/// A call that answers at most [`RESULT_MAX_BYTES`].
 fn bounded(mut descriptor: CapabilityDescriptor) -> CapabilityDescriptor {
     descriptor.expected_cost.max_response_bytes = Some(RESULT_MAX_BYTES);
     descriptor
@@ -305,7 +304,8 @@ pub(crate) fn writes_the_book(mut descriptor: CapabilityDescriptor) -> Capabilit
     bounded(descriptor)
 }
 
-/// A call that writes no file.
+/// The builders `declare_calls!` calls as `<builder>::<Input, Output>(id, module, prose..)`.
+/// A transient call capped at [`RESULT_MAX_BYTES`].
 fn bounded_call<Input: JsonSchema, Output: JsonSchema>(
     id: &str,
     module: &str,

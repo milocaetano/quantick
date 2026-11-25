@@ -268,7 +268,7 @@ fn check_matrix(root: &Path, findings: &mut Vec<Finding>) {
                 ),
                 "Either the capability was renamed or withdrawn while the matrix row kept the \
                  old identifier, or the inventory is stale. Regenerate both, then fix the row \
-                 in crates/operability/src/registry.rs.",
+                 in crates/operability/src/registry/ or the declared call's `ui` entry.",
             ));
         }
     }

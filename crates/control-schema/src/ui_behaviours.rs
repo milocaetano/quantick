@@ -40,6 +40,10 @@ const TOTAL: usize = total(FAMILIES);
 static JOINED: [UiBehaviour; TOTAL] = flatten(FAMILIES);
 
 /// Every supported UI behaviour, in the order the matrix renders.
+///
+/// Grouped by what the trader is doing rather than by which registry
+/// registered it, because "what can I not do without a mouse" is the
+/// question this answers.
 pub const UI_BEHAVIOURS: &[UiBehaviour] = &JOINED;
 
 /// The committed contents of `docs/control-plane/ui-behaviour-matrix.md`.
