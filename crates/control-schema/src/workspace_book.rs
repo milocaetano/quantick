@@ -336,7 +336,7 @@ pub fn workspace_save_to_descriptor() -> CapabilityDescriptor {
             WORKSPACE_SAVE_TO_CAPABILITY_ID,
             MODULE_ID,
             "Save a tab's edits to its workspace",
-            "Writes the tab's edits into the workspace it uses and answers the other tabs that changed: the ones on that workspace without edits of their own. A tab with edits keeps them. Default refuses overwrite. Use workspace.save_as to keep its edits.",
+            "Writes the tab's edits into the workspace it uses and answers the other tabs that changed: the ones on that workspace without edits of their own. A tab with edits keeps them. Default refuses overwrite. Use workspace.save_as to keep its edits. Save also commits layout configuration (selection, count, names, pane geometry and timeframes). Drawing autosave and its saved snapshot are independent; Save never writes paused drawings.",
             "A repeat finds no edits, writes nothing and answers changed false.",
         ),
     )
@@ -350,7 +350,7 @@ pub fn workspace_save_as_descriptor() -> CapabilityDescriptor {
         WORKSPACE_SAVE_AS_CAPABILITY_ID,
         MODULE_ID,
         "Save a tab as a new workspace",
-        "Makes a workspace of what the tab shows and puts the tab on it, in colour (a preset's name or #RRGGBB; left out, the next free colour). No other tab changes. An empty or taken name is refused with the reason; a colour another workspace holds is refused with workspace.colour_taken, never swapped on create; one that is neither with workspace.colour_invalid. The Save as new workspace dialog's Save; open it with workspace.dialog.open.",
+        "Makes a workspace of what the tab shows and puts the tab on it, in colour (a preset's name or #RRGGBB; left out, the next free colour). No other tab changes. An empty or taken name is refused with the reason; a colour another workspace holds is refused with workspace.colour_taken, never swapped on create; one that is neither with workspace.colour_invalid. The Save as new workspace dialog's Save; open it with workspace.dialog.open. Layout configuration is committed independently of drawings; paused drawings remain paused.",
         "A repeat from the tab that made the name writes nothing and answers changed false.",
     ))
 }
@@ -401,7 +401,7 @@ pub fn workspace_autosave_set_descriptor() -> CapabilityDescriptor {
         WORKSPACE_AUTOSAVE_SET_CAPABILITY_ID,
         MODULE_ID,
         "Turn auto save layout changes on or off",
-        "On, every layout edit on a tab is written into its workspace a second after it stops, and the clean tabs on that workspace follow; a tab reads as modified only while its copy is not in its workspace: a write that failed (retried each quiet second until another tab saves that workspace), a second tab on that workspace holding edits (one copy is written: of every tab there holding edits, the active tab's, else the lowest id's), or a copy a restart brought back differing. Such a tab holds its edits as with autosave off: autosave never writes it, and closing it, switching it or exiting asks. Off, a tab holds its edits, marked, until workspace.save_to, and closing it asks. Turning it on saves every tab holding edits at once, one per workspace (never one marked as above), and answers each save; when one fails the setting stays on, the setting and the saves that landed are journaled, and the call refuses with workspace.write_failed whose details name auto_save and the workspaces saved. The desk keeps the choice; the workspace snapshot reads it as auto_save.",
+        "On, every layout edit on a tab is written into its workspace a second after it stops, and the clean tabs on that workspace follow; a tab reads as modified only while its copy is not in its workspace: a write that failed (retried each quiet second until another tab saves that workspace), a second tab on that workspace holding edits (one copy is written: of every tab there holding edits, the active tab's, else the lowest id's), or a copy a restart brought back differing. Such a tab holds its edits as with autosave off: autosave never writes it, and closing it, switching it or exiting asks. Off, a tab holds its edits, marked, until workspace.save_to, and closing it asks. Turning it on saves every tab holding edits at once, one per workspace (never one marked as above), and answers each save; when one fails the setting stays on, the setting and the saves that landed are journaled, and the call refuses with workspace.write_failed whose details name auto_save and the workspaces saved. The desk keeps the choice; the workspace snapshot reads it as auto_save. This choice controls workspace configuration only; drawing writes are controlled independently by chart.drawings.autosave.set.",
         "The call names the state it wants, so a repeat answers changed false and writes only a save still owed, as after a failure.",
     ))
 }

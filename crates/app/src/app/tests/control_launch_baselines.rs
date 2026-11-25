@@ -911,6 +911,8 @@ fn strategy_popup_host_routes_audition_refusal_and_successful_arm() {
         }
     }
     let (mut app, _commands) = app_with_history(30);
+    let ctx = egui::Context::default();
+    run_frame(&mut app, &ctx);
     let calls = Arc::new(Mutex::new(Vec::new()));
     app.audio.alerts = Box::new(RefusingSpeaker(calls.clone()));
     let rectangle = drawings::DRAWING_TOOLS
@@ -936,7 +938,6 @@ fn strategy_popup_host_routes_audition_refusal_and_successful_arm() {
         drawing,
         form: Box::new(form),
     });
-    let ctx = egui::Context::default();
     run_frame(&mut app, &ctx);
     let painted = run_frame(&mut app, &ctx);
     click_chart(

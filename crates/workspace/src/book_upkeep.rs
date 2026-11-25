@@ -118,40 +118,20 @@ pub fn watch_tab<H: TabRecipeHost + ?Sized>(host: &mut H, id: u64, now: Instant)
     changed
 }
 
-/// The market store waits for Save while autosave is off, and the book learns
-/// what each tab's drawings hold back, so its mark and close prompt count them.
-///
-/// Per frame, so autosave on reads no pane (nothing is held, nothing marks)
-/// and a tab whose sets and store revision stand as they were last counted
-/// compares no drawing.
+/// Remember ownership for observers without tying drawing writes or dirty marks
+/// to workspace configuration Save. The drawing store owns its own policy.
 pub fn note_drawings<H: TabRecipeHost + ?Sized>(host: &mut H) {
-    let held = !host.recipe_book().0.autosave();
     let Some(market) = host.recipe_market() else {
         return;
     };
-    market.set_held(held);
-    if !held {
-        return;
-    }
     let revision = market.revision();
-    let book = host.recipe_book().0;
-    let stale: Vec<(u64, Vec<DrawingKey>)> = (host.recipe_tabs().into_iter())
-        .map(|tab| (tab, host.tab_drawing_keys(tab)))
-        .filter(|(tab, keys)| !book.drawings_current(*tab, keys, revision))
-        .collect();
-    if stale.is_empty() {
-        return;
-    }
-    let Some(market) = host.recipe_market() else {
-        return;
-    };
-    let counts: Vec<usize> = stale
-        .iter()
-        .map(|(_, keys)| market.held_changes(keys))
-        .collect();
-    let book = host.recipe_book_mut().0;
-    for ((tab, keys), held) in stale.into_iter().zip(counts) {
-        book.note_drawings_at(tab, keys, held, revision);
+    for tab in host.recipe_tabs() {
+        let keys = host.tab_drawing_keys(tab);
+        if !host.recipe_book().0.drawings_current(tab, &keys, revision) {
+            host.recipe_book_mut()
+                .0
+                .note_drawings_at(tab, keys, 0, revision);
+        }
     }
 }
 

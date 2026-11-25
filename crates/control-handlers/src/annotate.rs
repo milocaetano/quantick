@@ -70,6 +70,20 @@ pub enum PaneSide {
     Time(usize),
 }
 
+pub fn annotated_side(side: quantick_chart_interaction::pane::PaneSide) -> PaneSide {
+    match side {
+        quantick_chart_interaction::pane::PaneSide::Flow => PaneSide::Flow,
+        quantick_chart_interaction::pane::PaneSide::Time(slot) => PaneSide::Time(slot),
+    }
+}
+
+pub fn pane_side(side: PaneSide) -> quantick_chart_interaction::pane::PaneSide {
+    match side {
+        PaneSide::Flow => quantick_chart_interaction::pane::PaneSide::Flow,
+        PaneSide::Time(slot) => quantick_chart_interaction::pane::PaneSide::Time(slot),
+    }
+}
+
 impl From<PaneSide> for PaneSideDto {
     fn from(side: PaneSide) -> Self {
         match side {
@@ -82,6 +96,8 @@ impl From<PaneSide> for PaneSideDto {
 /// One chart pane as an annotation lands on it: the series its anchors
 /// resolve against, and its marks.
 pub trait AnnotatedPane {
+    /// Whether an adopted workspace and named layout own new marks.
+    fn drawing_scope_ready(&self) -> bool;
     /// The pane's stable id.
     fn pane_id(&self) -> u64;
     /// The saved layout the pane belongs to, if any.
@@ -758,7 +774,11 @@ fn target_pane<H: AnnotatePort + ?Sized>(
     let index = app
         .tab_position(tab_id)
         .ok_or_else(|| ControlError::invalid_request("the target tab closed"))?;
-    Ok(app.pane_mut(index, side))
+    let pane = app.pane_mut(index, side);
+    if !pane.drawing_scope_ready() {
+        return Err(capability_unavailable("drawing ownership is not ready"));
+    }
+    Ok(pane)
 }
 
 fn annotation_author<A: AnnotateAccess>(access: &A, actor: &ActorContext) -> Option<DrawingAuthor> {

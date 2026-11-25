@@ -231,15 +231,12 @@ pub struct DrawingSnapshot {
     /// so v1 readers stay compatible.
     #[serde(default)]
     pub annotation_band: Option<quantick_control::annotation::AnnotationBand>,
-    /// `all_charts` when every chart of its market showing its layout shows
-    /// it at any timeframe; `this_chart` (a new drawing's default) when only
-    /// its own chart does, at the bars it was kept to.
+    /// `all_charts` when every chart of its market, workspace and named
+    /// layout shows it at any timeframe; `this_chart` pins it to its bars.
     pub scope: String,
-    /// Whether every chart of its market shows it whatever layout it shows
-    /// ("All windows"): only for `all_charts`, and true for one saved before
-    /// drawings recorded their layout. A pane lists only the drawings its
-    /// layout shows. Written only when true; optional in the schema so v1
-    /// readers stay compatible.
+    /// Whether every chart window of the same market, workspace and named
+    /// layout shows it ("All windows"). Legacy unscoped entries retain their
+    /// prior flag. Written only when true for compatibility with v1 readers.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub all_windows: bool,
     /// The strip layout it belongs to, the `layout_id` the layout-tab calls

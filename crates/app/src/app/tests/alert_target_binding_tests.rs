@@ -3,6 +3,7 @@ use quantick_control_handlers::alerts::AlertDefinitionsPort;
 use quantick_control_schema::alerts::{DrawingSelector, TargetResolveError};
 
 fn legacy(app: &mut QuantickApp) -> DrawingSelector {
+    run_frame(app, &egui::Context::default());
     app.layout_adapter().seed_new_panes();
     let tab_id = app.runtime.tabs.active_id();
     let pane = app

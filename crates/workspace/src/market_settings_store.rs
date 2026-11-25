@@ -16,11 +16,11 @@ pub type AssetResolver = Rc<dyn Fn(&str, &str) -> String>;
 
 /// The per-market document, and the one rule that decides when it reaches disk.
 ///
-/// With autosave off the store is *held*: drawings and anchored studies change
-/// in memory and wait for Save ([`Self::commit_document`]); `saved` is what the
-/// file holds, so a held change can be counted and dropped. `saved` moves only
-/// once a write has reached the disk ([`Self::note_saved`]): a failed write
-/// leaves every change counted and owed.
+/// Drawing autosave is per market and workspace/layout scope. Its persistence
+/// projection keeps paused scopes at their last saved snapshot while enabled
+/// scopes and preferences write independently of workspace configuration Save.
+/// The legacy whole-store hold API remains available to explicit consumers.
+/// `saved` moves only after a successful write; failures leave changes owed.
 pub struct MarketSettingsStore {
     settings: MarketSettings,
     saved: MarketSettings,
@@ -200,18 +200,41 @@ impl MarketSettingsStore {
     pub fn commit_document(&self, keys: &[DrawingKey]) -> Option<MarketSettings> {
         let mut document = self.saved.clone();
         for key in &shown_sets(keys) {
+            if !self.settings.drawing_autosave(key) {
+                continue;
+            }
             document.restore(&self.settings, key);
             if key.role == PaneRole::AllTimeframes {
-                document.carry_retirement(&self.settings, &key.market);
+                document.carry_retirement(&self.settings, key);
             }
         }
         (document != self.saved).then_some(document)
     }
 
+    /// The document this save is allowed to write; paused drawings retain disk state.
+    #[must_use]
+    pub fn persistence_document(&self) -> MarketSettings {
+        self.settings.persistence_document(&self.saved)
+    }
+
+    #[must_use]
+    pub fn drawing_autosave(&self, key: &DrawingKey) -> bool {
+        self.settings.drawing_autosave(key)
+    }
+
+    pub fn set_drawing_autosave(&mut self, key: &DrawingKey, on: bool, now: Instant) -> bool {
+        let changed = self.settings.set_drawing_autosave(key, on);
+        if changed {
+            self.revision += 1;
+            self.policy.mark_changed(now);
+        }
+        changed
+    }
+
     /// Whether memory holds anything the file lacks.
     #[must_use]
     pub fn owes_write(&self) -> bool {
-        self.settings != self.saved
+        self.persistence_document() != self.saved
     }
 
     /// `written` reached the disk: it is what the file holds now. Once memory
@@ -219,7 +242,7 @@ impl MarketSettingsStore {
     pub fn note_saved(&mut self, written: MarketSettings) {
         self.revision += 1;
         self.saved = written;
-        if self.settings == self.saved {
+        if self.persistence_document() == self.saved {
             // The pending change is consumed: the file holds it.
             let _ = self.policy.take_flush();
         }
@@ -267,10 +290,10 @@ impl MarketSettingsStore {
             dropped |= self.settings.drawing_changes(&self.saved, key) > 0;
             self.settings.restore(&self.saved, key);
             if key.role == PaneRole::AllTimeframes {
-                self.settings.undo_retirement(&self.saved, &key.market);
+                self.settings.undo_retirement(&self.saved, key);
             }
         }
-        if self.settings == self.saved {
+        if self.persistence_document() == self.saved {
             // The pending change is consumed unwritten: the file already holds this.
             let _ = self.policy.take_flush();
         }

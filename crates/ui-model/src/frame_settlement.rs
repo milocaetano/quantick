@@ -21,6 +21,7 @@ pub fn apply_layout_switches(host: &mut impl Host) {
     host.pending_layouts();
     host.maintain_layouts();
     host.maintain_workspaces();
+    host.follow_market();
 }
 
 #[cfg(test)]
@@ -63,9 +64,9 @@ mod tests {
         assert_eq!(host.calls, ["switch", "spec", "follow"]);
     }
     #[test]
-    fn new_panes_are_seeded_before_the_workspace_is_saved() {
+    fn seeded_workspace_ownership_is_settled_before_chart_input() {
         let mut host = FakeHost::default();
         apply_layout_switches(&mut host);
-        assert_eq!(host.calls, ["pending", "layouts", "workspaces"]);
+        assert_eq!(host.calls, ["pending", "layouts", "workspaces", "follow"]);
     }
 }

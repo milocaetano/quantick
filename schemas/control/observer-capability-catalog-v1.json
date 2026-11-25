@@ -3115,7 +3115,7 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Sets one drawing's scope, named by the `tab_id`, `pane_id` and `drawing_id` analysis.drawings lists (a drawing id is unique only within its pane, and a pane lists only what its layout shows): `all_charts` shows it at any timeframe on every chart of its market (feed and asset) showing the named pane's layout, placed by market time and price; `this_chart`, a new drawing's default, keeps it to its chart, pinned to the bars that chart is cut to now. Optional `all_windows` also shows an `all_charts` drawing on that market's charts on any other layout, never on another market; absent leaves it as it stands. The inspector's \"Show on all timeframes\" and \"All windows\"; saved with the market's drawings and read back as `scope`, `all_windows` and `layout_id`. Refused with control.invalid_request: `all_charts` on a drawing with an anchor past the newest bar (`reason` `anchor_without_market_time`), `all_windows: true` beside `this_chart` (`reason` `all_windows_needs_all_charts`), and an id the named pane does not show.",
+      "description": "Sets one drawing's scope, named by the `tab_id`, `pane_id` and `drawing_id` analysis.drawings lists (a drawing id is unique only within its pane, and a pane lists only what its layout shows): `all_charts` shows it at any timeframe on every chart of its market (feed and asset), workspace and named layout, placed by market time and price; `this_chart`, a new drawing's default, keeps it to its chart, pinned to the bars that chart is cut to now. Optional `all_windows` also shows an `all_charts` drawing in every chart window of the same market, workspace and named layout, never across those boundaries; absent leaves it as it stands. The inspector's \"Show on all timeframes\" and \"All windows\"; saved with the market's drawings and read back as `scope`, `all_windows` and `layout_id`. Refused with control.invalid_request: `all_charts` on a drawing with an anchor past the newest bar (`reason` `anchor_without_market_time`), `all_windows: true` beside `this_chart` (`reason` `all_windows_needs_all_charts`), and an id the named pane does not show.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "cockpit",
@@ -8650,6 +8650,44 @@
       "risk_flags": [],
       "risk_reducing": false,
       "title": "Read one chart's context",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Reads or sets the chart context menu's Save drawing checkbox. Omit on to inspect. On by default, persisted per venue/asset and stable workspace/layout across timeframes. False suspends drawing writes and keeps the saved snapshot; true saves current drawings and resumes autosave. Drawing writes never save pending workspace configuration. Workspace Save and discard never change saved drawings or this preference. Unknown tab or pane and malformed input are refused before changing state. A scope not ready or failed write returns retryable control.capability_unavailable with reason drawing_autosave_not_written; the same explicit value can be retried.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "chart.drawings.autosave.set",
+      "idempotency": "optional",
+      "input_schema": {
+        "$ref": "chart-drawings-autosave-input-v1.schema.json"
+      },
+      "module": "chart",
+      "output_schema": {
+        "$ref": "chart-drawings-autosave-result-v1.schema.json"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "The call names the desired value; repeating it is harmless. Omit on to read the effective checkbox state after a lost answer.",
+      "title": "Set drawing autosave",
       "version": 1
     },
     {
@@ -17690,7 +17728,7 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "On, every layout edit on a tab is written into its workspace a second after it stops, and the clean tabs on that workspace follow; a tab reads as modified only while its copy is not in its workspace: a write that failed (retried each quiet second until another tab saves that workspace), a second tab on that workspace holding edits (one copy is written: of every tab there holding edits, the active tab's, else the lowest id's), or a copy a restart brought back differing. Such a tab holds its edits as with autosave off: autosave never writes it, and closing it, switching it or exiting asks. Off, a tab holds its edits, marked, until workspace.save_to, and closing it asks. Turning it on saves every tab holding edits at once, one per workspace (never one marked as above), and answers each save; when one fails the setting stays on, the setting and the saves that landed are journaled, and the call refuses with workspace.write_failed whose details name auto_save and the workspaces saved. The desk keeps the choice; the workspace snapshot reads it as auto_save.",
+      "description": "On, every layout edit on a tab is written into its workspace a second after it stops, and the clean tabs on that workspace follow; a tab reads as modified only while its copy is not in its workspace: a write that failed (retried each quiet second until another tab saves that workspace), a second tab on that workspace holding edits (one copy is written: of every tab there holding edits, the active tab's, else the lowest id's), or a copy a restart brought back differing. Such a tab holds its edits as with autosave off: autosave never writes it, and closing it, switching it or exiting asks. Off, a tab holds its edits, marked, until workspace.save_to, and closing it asks. Turning it on saves every tab holding edits at once, one per workspace (never one marked as above), and answers each save; when one fails the setting stays on, the setting and the saves that landed are journaled, and the call refuses with workspace.write_failed whose details name auto_save and the workspaces saved. The desk keeps the choice; the workspace snapshot reads it as auto_save. This choice controls workspace configuration only; drawing writes are controlled independently by chart.drawings.autosave.set.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "cockpit",
@@ -18225,7 +18263,7 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Makes a workspace of what the tab shows and puts the tab on it, in colour (a preset's name or #RRGGBB; left out, the next free colour). No other tab changes. An empty or taken name is refused with the reason; a colour another workspace holds is refused with workspace.colour_taken, never swapped on create; one that is neither with workspace.colour_invalid. The Save as new workspace dialog's Save; open it with workspace.dialog.open.",
+      "description": "Makes a workspace of what the tab shows and puts the tab on it, in colour (a preset's name or #RRGGBB; left out, the next free colour). No other tab changes. An empty or taken name is refused with the reason; a colour another workspace holds is refused with workspace.colour_taken, never swapped on create; one that is neither with workspace.colour_invalid. The Save as new workspace dialog's Save; open it with workspace.dialog.open. Layout configuration is committed independently of drawings; paused drawings remain paused.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "cockpit",
@@ -18263,7 +18301,7 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Writes the tab's edits into the workspace it uses and answers the other tabs that changed: the ones on that workspace without edits of their own. A tab with edits keeps them. Default refuses overwrite. Use workspace.save_as to keep its edits.",
+      "description": "Writes the tab's edits into the workspace it uses and answers the other tabs that changed: the ones on that workspace without edits of their own. A tab with edits keeps them. Default refuses overwrite. Use workspace.save_as to keep its edits. Save also commits layout configuration (selection, count, names, pane geometry and timeframes). Drawing autosave and its saved snapshot are independent; Save never writes paused drawings.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "cockpit",
@@ -18926,7 +18964,7 @@
           "DrawingSnapshot": {
             "properties": {
               "all_windows": {
-                "description": "Whether every chart of its market shows it whatever layout it shows\n(\"All windows\"): only for `all_charts`, and true for one saved before\ndrawings recorded their layout. A pane lists only the drawings its\nlayout shows. Written only when true; optional in the schema so v1\nreaders stay compatible.",
+                "description": "Whether every chart window of the same market, workspace and named\nlayout shows it (\"All windows\"). Legacy unscoped entries retain their\nprior flag. Written only when true for compatibility with v1 readers.",
                 "type": "boolean"
               },
               "anchor_count": {
@@ -19012,7 +19050,7 @@
                 "description": "The layout and contract a migration merged this object from, when one\ndid. A merged market is labelled, never passed off as one history.\nOptional in the schema only so v1 readers stay compatible."
               },
               "scope": {
-                "description": "`all_charts` when every chart of its market showing its layout shows\nit at any timeframe; `this_chart` (a new drawing's default) when only\nits own chart does, at the bars it was kept to.",
+                "description": "`all_charts` when every chart of its market, workspace and named\nlayout shows it at any timeframe; `this_chart` pins it to its bars.",
                 "type": "string"
               },
               "tool_id": {

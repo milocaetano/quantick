@@ -89,7 +89,7 @@ pub fn locate(target: &DurableDrawingRef, panes: &[ShownPane]) -> Located {
             count += 1;
             let known_mirror = pane.key.as_ref().is_some_and(|key| {
                 let key = if drawing.all_timeframes {
-                    DrawingKey::all_timeframes(key.market.clone())
+                    key.all_timeframes_key()
                 } else {
                     key.clone()
                 };

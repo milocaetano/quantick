@@ -8,7 +8,7 @@ use eframe::egui;
 use quantick_control_handlers::desk::{DeskAct, DeskOwner};
 use quantick_control_handlers::workspace_book::{self as ops, WorkspaceOwner};
 use quantick_session::workspace_menu::{WorkspaceCommand, WorkspaceMenuState};
-use quantick_stores::{market_settings::MarketSettingsStore, workspaces::WorkspaceBookStore};
+use quantick_stores::workspaces::WorkspaceBookStore;
 use quantick_workspace::book_upkeep;
 
 use super::indicator_wiring::IndicatorWiring;
@@ -128,6 +128,9 @@ impl DeskOwner for WorkspaceCalls<'_> {
 }
 
 impl WorkspaceOwner for WorkspaceCalls<'_> {
+    fn persist_workspace_layouts(&mut self) -> Result<bool, String> {
+        quantick_stores::market_settings::commit_layouts(self.runtime.workspace.layouts_mut())
+    }
     fn creation_timeframe_ms(&self, tab: u64) -> Option<u64> {
         let pane = self.runtime.tabs.by_id(tab)?.focused_pane();
         let interval = pane.series.state.spec().time_interval_ms()?;
@@ -148,11 +151,12 @@ impl WorkspaceOwner for WorkspaceCalls<'_> {
     fn workspace_store_ref(&self) -> Option<&WorkspaceBookStore> {
         Some(&self.runtime.workspace.book)
     }
-    fn workspace_market(&mut self) -> Option<&mut MarketSettingsStore> {
-        Some(self.runtime.workspace.layouts_mut().market_mut())
-    }
     fn show_tab_recipe(&mut self, tab: u64, recipe: &quantick_stores::workspaces::WorkspaceRecipe) {
         book_upkeep::show_recipe(self, tab, recipe);
+        self.layout().follow_market_changes();
+    }
+    fn follow_workspace_owner(&mut self, _tab: u64) {
+        self.layout().follow_market_changes();
     }
     fn persist_workspace_autosave(&mut self, on: bool) -> Result<(), String> {
         self.save_adapter().write_auto_save(on)

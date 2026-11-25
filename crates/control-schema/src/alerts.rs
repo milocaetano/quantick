@@ -55,16 +55,7 @@ pub struct DrawingSelector {
     pub pane_id: u64,
     pub drawing_id: u64,
 }
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum TargetResolveError {
-    Unavailable,
-    Missing,
-    Ambiguous,
-    Busy,
-    SourceChanged,
-    WriteFailed(String),
-}
+pub use quantick_stores::market_settings::TargetResolveError;
 
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]

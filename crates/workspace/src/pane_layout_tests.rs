@@ -1,5 +1,18 @@
 use super::*;
 #[test]
+fn drawing_creation_waits_for_scoped_ownership() {
+    let mut pane = PaneLayout::<()>::default();
+    assert!(!pane.drawing_scope_ready());
+    pane.drawings_key = Some(DrawingKey::of_pane("venue", "asset".into(), None));
+    assert!(!pane.drawing_scope_ready(), "legacy data is quarantined");
+    pane.drawings_key.as_mut().unwrap().scope = Some(DrawingScope {
+        workspace: 1,
+        layout: LayoutId(3),
+    });
+    assert!(pane.drawing_scope_ready());
+}
+
+#[test]
 fn requested_default_is_distinct_from_no_request() {
     let mut pane = PaneLayout::<()>::default();
     pane.request_opening(Some(LayoutId(9)));
@@ -26,6 +39,7 @@ fn a_pane_holds_the_marks_of_its_feed_at_either_symbol() {
 fn only_the_flow_chart_moves_its_bars_in_place_and_only_when_alike() {
     let keyed = |role| PaneLayout::<u32> {
         drawings_key: Some(DrawingKey {
+            scope: None,
             market: crate::market_settings::MarketKey {
                 venue: "v".to_owned(),
                 asset: "a".to_owned(),

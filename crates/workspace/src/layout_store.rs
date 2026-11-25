@@ -16,6 +16,8 @@ pub struct LayoutStore {
     /// The workspace's layouts: the strip's tabs and their indicator sets.
     /// See [`crate::layout_document`].
     session: LayoutSession,
+    saved: LayoutBook,
+    configuration_autosave: bool,
     /// Where the layouts persist. Handed in, never resolved here.
     path: PathBuf,
     policy: LayoutCommitPolicy,
@@ -34,6 +36,8 @@ impl LayoutStore {
     pub fn new(book: LayoutBook, path: PathBuf, blocked: bool) -> Self {
         let market = MarketSettingsStore::beside(&path);
         Self {
+            saved: book.clone(),
+            configuration_autosave: false,
             session: LayoutSession::new(book),
             path,
             policy: LayoutCommitPolicy::new(blocked),
@@ -94,6 +98,7 @@ impl LayoutStore {
     /// panes, which marks changes of its own), so the pending state is stated
     /// afterwards by [`Self::settle`] rather than guessed at here.
     pub fn set_book(&mut self, book: LayoutBook) {
+        self.saved = book.clone();
         self.session.replace_book(book);
         self.revision += 1;
     }
@@ -117,6 +122,54 @@ impl LayoutStore {
             self.mark_changed(now);
         }
     }
+    pub fn set_configuration_autosave(&mut self, on: bool) -> bool {
+        let changed = self.configuration_autosave != on;
+        self.configuration_autosave = on;
+        changed
+    }
+
+    #[must_use]
+    pub fn persistence_document(&self) -> LayoutBook {
+        if self.configuration_autosave {
+            self.book().clone()
+        } else {
+            self.saved.with_reserved_identities(self.book())
+        }
+    }
+
+    #[must_use]
+    pub fn commit_document(&self) -> LayoutBook {
+        self.book().clone()
+    }
+
+    #[must_use]
+    pub fn configuration_changed(&self) -> bool {
+        self.book() != &self.saved
+    }
+
+    /// Drawing writes must wait until newly allocated layout identities and
+    /// their allocator high-water mark have reached the layout file.
+    #[must_use]
+    pub fn identities_reserved(&self) -> bool {
+        self.saved.has_reserved_identities(self.book())
+    }
+
+    pub fn note_saved(&mut self, written: LayoutBook) {
+        self.saved = written;
+        if self.persistence_document() == self.saved {
+            let _ = self.policy.take_flush();
+        }
+    }
+
+    #[must_use]
+    pub fn is_blocked(&self) -> bool {
+        self.policy.is_blocked()
+    }
+
+    pub fn note_write_failed(&mut self, now: Instant) {
+        self.policy.mark_changed(now);
+    }
+
     pub fn take_save(&mut self, now: Instant) -> LayoutSave {
         self.policy.take_save(now)
     }

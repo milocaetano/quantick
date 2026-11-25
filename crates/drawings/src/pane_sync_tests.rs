@@ -86,6 +86,50 @@ fn context() -> DrawingKey {
 }
 
 #[test]
+fn scoped_sequential_undo_and_clear_persist_without_touching_another_workspace() {
+    use quantick_workspace::{layout_document::LayoutId, market_settings::DrawingScope as Owner};
+    let scope = Owner {
+        workspace: 7,
+        layout: LayoutId(1),
+    };
+    let key = flow().in_scope(scope);
+    let other_key = flow().in_scope(Owner {
+        workspace: 8,
+        ..scope
+    });
+    let mut settings = MarketSettings::default();
+    let mut pane = Pane::open(&settings, key.clone(), "time:1m");
+    let mut other = Pane::open(&settings, other_key.clone(), "time:1m");
+    level_at(&mut other.drawings, 1.0, 200.0);
+    other.persist(&mut settings);
+    for price in [100.0, 90.0, 80.0] {
+        level_at(&mut pane.drawings, 1.0, price);
+        pane.persist(&mut settings);
+    }
+    for expected in [2, 1, 0] {
+        assert!(pane.drawings.undo());
+        pane.persist(&mut settings);
+        let reloaded = quantick_workspace::market_settings::parse_settings(
+            &quantick_workspace::market_settings::to_text(&settings).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(reloaded.pane_drawings(&key, "time:1m").len(), expected);
+        assert_eq!(reloaded.pane_drawings(&other_key, "time:1m").len(), 1);
+    }
+    level_at(&mut pane.drawings, 1.0, 70.0);
+    pane.persist(&mut settings);
+    assert_eq!(pane.drawings.delete_all(), 1);
+    pane.persist(&mut settings);
+    assert!(
+        Pane::open(&settings, key, "time:1m")
+            .drawings
+            .items()
+            .is_empty()
+    );
+    assert_eq!(prices(&other.drawings), [200.0]);
+}
+
+#[test]
 fn a_drawing_without_a_market_instant_opens_on_its_chart_only() {
     let mut drawings = Drawings::default();
     assert!(drawings.place(tool("horizontal-line"), ChartPoint::at(1.0, 100.0)));
@@ -121,13 +165,13 @@ fn a_copy_of_a_mark_on_all_timeframes_joins_them_once_dated() {
     let index = pane.drawings.index_of(copy).unwrap();
     assert!(!pane.drawings.items()[index].all_timeframes(), "undated");
     pane.persist(&mut settings);
-    assert_eq!(settings.shared_drawings(&flow().market).len(), 1);
+    assert_eq!(settings.shared_drawings(&flow()).len(), 1);
     assert_eq!(settings.drawings(&flow()).len(), 1, "it waits on its chart");
 
     pane.drawings.set_times(index, &[Some(T0 + 5 * 60_000)]);
     assert!(pane.drawings.items()[index].all_timeframes(), "dated");
     pane.persist(&mut settings);
-    assert_eq!(settings.shared_drawings(&flow().market).len(), 2);
+    assert_eq!(settings.shared_drawings(&flow()).len(), 2);
     assert!(settings.drawings(&flow()).is_empty(), "and left its chart");
 }
 
@@ -443,7 +487,7 @@ fn two_charts_with_unwritten_edits_in_one_frame_keep_both() {
     context_chart.drawings.record_edit_of(1, before);
     write_all(&mut [&mut flow_chart, &mut context_chart], &mut settings);
 
-    let shared = settings.shared_drawings(&flow().market);
+    let shared = settings.shared_drawings(&flow());
     assert_eq!(saved_prices(&shared), [101.0, 300.0], "move and new mark");
     let own = settings.drawings(&context());
     assert_eq!(saved_prices(own), [200.0], "kept to the context chart");

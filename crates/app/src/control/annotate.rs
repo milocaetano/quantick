@@ -4,8 +4,9 @@
 //! call parses, resolves, places, refuses and answers is decided there.
 
 use quantick_control::wire::ActorKind;
+pub(crate) use quantick_control_handlers::annotate::annotated_side;
 use quantick_control_handlers::annotate::{
-    AnnotateAccess, AnnotatePort, AnnotatedPane, PaneSide as AnnotatedSide,
+    AnnotateAccess, AnnotatePort, AnnotatedPane, PaneSide as AnnotatedSide, pane_side,
 };
 use quantick_control_host::journal::NewEvent;
 
@@ -13,7 +14,7 @@ use super::gateway::ControlAccess;
 use crate::{
     app::control_host::ControlPort,
     drawings::{self, DrawingTool, Drawings, NewDrawing},
-    pane::{ChartPane, PaneSide},
+    pane::ChartPane,
 };
 
 impl AnnotatePort for dyn ControlPort {
@@ -41,6 +42,9 @@ impl AnnotatePort for dyn ControlPort {
 }
 
 impl AnnotatedPane for ChartPane {
+    fn drawing_scope_ready(&self) -> bool {
+        self.layout.drawing_scope_ready()
+    }
     fn pane_id(&self) -> u64 {
         self.id
     }
@@ -85,19 +89,5 @@ impl AnnotateAccess for ControlAccess {
     }
     fn record_event(&mut self, event: NewEvent) {
         self.append_event(event);
-    }
-}
-
-pub(crate) fn annotated_side(side: PaneSide) -> AnnotatedSide {
-    match side {
-        PaneSide::Flow => AnnotatedSide::Flow,
-        PaneSide::Time(slot) => AnnotatedSide::Time(slot),
-    }
-}
-
-fn pane_side(side: AnnotatedSide) -> PaneSide {
-    match side {
-        AnnotatedSide::Flow => PaneSide::Flow,
-        AnnotatedSide::Time(slot) => PaneSide::Time(slot),
     }
 }

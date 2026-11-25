@@ -204,6 +204,7 @@ impl DrawingControllerAccess<'_> {
             effects.note("Drawing copied. Press Ctrl+V to paste.", Instant::now());
         }
         if keys.paste
+            && host.paste_ready()
             && let Some((drawing, count)) = self.chrome.next_drawing_paste()
         {
             host.paste(&drawing, DUPLICATE_OFFSET_BARS * count as f32);
