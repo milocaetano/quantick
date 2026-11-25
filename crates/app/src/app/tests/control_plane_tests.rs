@@ -5178,6 +5178,21 @@ fn observer_catalog(update: bool) {
         .join("../..")
         .join("schemas/control");
     let path = root.join("observer-capability-catalog-v1.json");
+    // A schema committed as its own file is referenced, not copied.
+    let documents = crate::control::schema_catalog::documents();
+    let public = quantick_control::schema_catalog::public_schema_documents();
+    let mut catalog = catalog;
+    quantick_control_handlers::schema_documents::fold_schema_refs(
+        &mut catalog,
+        documents
+            .iter()
+            .map(|document| (document.file_name, &document.schema))
+            .chain(
+                public
+                    .iter()
+                    .map(|document| (document.file_name, &document.schema)),
+            ),
+    );
     let json = format!("{}\n", serde_json::to_string_pretty(&catalog).unwrap());
     if update {
         std::fs::create_dir_all(&root).unwrap();

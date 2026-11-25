@@ -122,9 +122,48 @@ pub fn documents() -> Vec<SchemaDocument> {
     documents
 }
 
+/// The capability fields a catalog entry may point at a published file with.
+const REFERENCED_SCHEMA_FIELDS: [&str; 2] = ["input_schema", "output_schema"];
+
+/// Replaces every capability schema in `catalog` that equals a published
+/// document with `{"$ref": "<file_name>"}`, a reference relative to the
+/// catalog's own directory, so each such schema is committed in one file.
+///
+/// A schema no document matches stays inline. When several documents carry
+/// the same schema, the lowest file name is referenced, so the result does
+/// not depend on registration order.
+pub fn fold_schema_refs<'a>(
+    catalog: &mut Value,
+    documents: impl IntoIterator<Item = (&'a str, &'a Value)>,
+) {
+    let mut documents: Vec<_> = documents.into_iter().collect();
+    documents.sort_by_key(|(file_name, _)| *file_name);
+    let Some(capabilities) = catalog
+        .get_mut("capabilities")
+        .and_then(Value::as_array_mut)
+    else {
+        return;
+    };
+    for capability in capabilities {
+        for field in REFERENCED_SCHEMA_FIELDS {
+            let Some(schema) = capability.get_mut(field) else {
+                continue;
+            };
+            if let Some((file_name, _)) = documents.iter().find(|(_, document)| *document == schema)
+            {
+                *schema = serde_json::json!({ "$ref": file_name });
+            }
+        }
+    }
+}
+
 fn document<T: schemars::JsonSchema>(file_name: &'static str) -> SchemaDocument {
     SchemaDocument {
         file_name,
         schema: generated_schema::<T>(),
     }
 }
+
+#[cfg(test)]
+#[path = "schema_documents_tests.rs"]
+mod tests;
