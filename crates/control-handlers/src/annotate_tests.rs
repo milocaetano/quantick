@@ -680,7 +680,7 @@ fn a_position_plan_answers_the_legs_it_placed() {
         call(&mut window, &mut access, LONG_POSITION_CAPABILITY_ID, input).expect("placed");
     assert_eq!(
         result["position"],
-        json!({ "entry": "100", "stop": "95", "target": "110", "ratio": "2", "measured": "stop" })
+        json!({ "entry": "100", "stop": "95", "target": "105", "ratio": "1", "measured": "stop" })
     );
     assert_eq!(access.events.len(), 1, "journaled as one object");
 }

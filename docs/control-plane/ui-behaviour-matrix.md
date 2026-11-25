@@ -359,8 +359,8 @@ declares nothing here is a guard failure.
 | `drawing.quick_range_trend_line` | the quick-range action bar delegates to the registered trend line tool |
 | `drawing.quick_range_horizontal_levels` | the quick-range action bar places one registered horizontal line per distinct price |
 | `drawing.quick_range_parallel_channel` | the quick-range action bar arms the registered parallel channel tool with the leg as its first two anchors; the third is the trader's click |
-| `drawing.quick_range_long_position` | the quick-range action bar places the registered long position tool on the leg's two anchors; the other leg follows the default target:stop ratio |
-| `drawing.quick_range_short_position` | the quick-range action bar places the registered short position tool on the leg's two anchors; the other leg follows the default target:stop ratio |
+| `drawing.quick_range_long_position` | the quick-range action bar places the registered long position tool on the leg's two anchors; the other leg follows the default risk/reward (risk 1 : reward N, 1:1 out of the box) |
+| `drawing.quick_range_short_position` | the quick-range action bar places the registered short position tool on the leg's two anchors; the other leg follows the default risk/reward (risk 1 : reward N, 1:1 out of the box) |
 | `drawing.rename` | the rename box inside the canvas right-click menu |
 | `drawing.select_and_move` | a primary click and drag on the canvas |
 | `drawing.magnet.toggle` | the context bar's magnet button is a widget, not a registry entry |

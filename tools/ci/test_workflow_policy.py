@@ -34,7 +34,7 @@ def event(name="pull_request", number=7, run=100, draft=False, action="synchroni
             "github.event.pull_request.labels.*.name": labels,
             "github.event.label.name": label,
             "github.event.pull_request.base.sha": "base-sha" if name == "pull_request" else None,
-            "needs.gate.outputs.mode": mode}
+            "needs.classify.outputs.mode": mode}
 
 
 def scalar(body, key):
@@ -85,22 +85,23 @@ class WorkflowPolicy(unittest.TestCase):
 
     def test_required_jobs_are_every_gated_job(self):
         self.assertEqual("gate", REQUIRED[0])
-        self.assertEqual(set(REQUIRED) | {"fast", "rust-skip", "read-cost", "read-cost-ledger"},
+        self.assertEqual(set(REQUIRED) | {"classify", "fast", "rust-skip", "read-cost", "read-cost-ledger"},
                          set(JOB_BODIES))
         self.assertIn("RUST_SKIP_CHECK='rust-skip'", FULL)
 
-    def test_every_rust_job_waits_on_a_green_gate(self):
+    def test_every_rust_job_waits_on_the_mode_alone(self):
         for name in RUST_JOBS:
             with self.subTest(job=name):
                 body = JOB_BODIES[name]
-                self.assertEqual("gate", scalar(body, "needs"))
+                self.assertEqual("classify", scalar(body, "needs"))
                 self.assertNotRegex(body, r"(?:always|failure|cancelled)\s*\(")
                 self.assertNotIn("continue-on-error:", body)
         for name in set(REQUIRED) - {"gate", "ci"}:
             with self.subTest(job=name):
                 self.assertEqual("*full-ci", scalar(JOB_BODIES[name], "if"))
 
-    def test_the_gate_runs_on_every_validating_event(self):
+    def test_the_gate_and_classify_run_on_every_validating_event(self):
+        self.assertEqual(folded_if(JOB_BODIES["gate"]), folded_if(JOB_BODIES["classify"]))
         gate = folded_if(JOB_BODIES["gate"])
         for fixture, expected in [(event(name="push"), True), (event(), True),
                                   (event(draft=True), True),
@@ -115,7 +116,7 @@ class WorkflowPolicy(unittest.TestCase):
         self.assertNotIn("edited", types)
 
     def test_only_a_pr_into_the_default_branch_can_be_prose(self):
-        decide = JOB_BODIES["gate"].split("name: Decide what this head needs", 1)[1]
+        decide = JOB_BODIES["classify"].split("name: Decide what this head needs", 1)[1]
         self.assertIn('elif [ "$BASE_REF" = "$DEFAULT_BRANCH" ]; then\n'
                       '              mode=$(python3 tools/ci/prose_only.py', decide)
         self.assertEqual("${{ github.event.repository.default_branch }}", scalar(decide, "DEFAULT_BRANCH"))
@@ -133,8 +134,7 @@ class WorkflowPolicy(unittest.TestCase):
                      "cargo test -p quantick-control -p quantick-operability",
                      "sh .claude/hooks/guardrails_test.sh",
                      "python3 tools/ci/test_workflow_policy.py",
-                     "python3 tools/ci/test_prose_only.py",
-                     'python3 tools/ci/prose_only.py --base "$BASE_SHA" --head "$HEAD_SHA" --search HEAD'):
+                     "python3 tools/ci/test_prose_only.py"):
             with self.subTest(step=step):
                 self.assertTrue(step in gate, step)
         base = scalar(gate, "RATCHET_BASE")[3:-3]
@@ -142,6 +142,19 @@ class WorkflowPolicy(unittest.TestCase):
         self.assertEqual("HEAD^", expression(base, event(name="push")))
         # The guard and drift steps fail before the slower suites start.
         self.assertLess(gate.index("cargo test -p quantick-guards"), gate.index("guardrails_test.sh"))
+
+    def test_classify_decides_the_mode_without_cargo_and_nothing_waits_on_gate(self):
+        classify = JOB_BODIES["classify"]
+        self.assertNotRegex(classify, r"(?m)^    (?:needs|continue-on-error):")
+        self.assertIn("fetch-depth: 0", classify)
+        self.assertIn('python3 tools/ci/prose_only.py --base "$BASE_SHA" --head "$HEAD_SHA" --search HEAD',
+                      classify)
+        self.assertNotIn("cargo", classify)
+        self.assertNotIn("rust-setup", classify)
+        self.assertNotIn("Decide what this head needs", JOB_BODIES["gate"])
+        for name, body in JOB_BODIES.items():
+            with self.subTest(job=name):
+                self.assertNotRegex(body, r"(?m)^    needs: .*\bgate\b")
 
     def test_the_gate_owns_its_cache_alone(self):
         owners = [name for name, body in JOB_BODIES.items() if "cache-key: gate" in body]
@@ -187,7 +200,7 @@ class WorkflowPolicy(unittest.TestCase):
                         self.assertFalse(expression(folded_if(JOB_BODIES[name]), fixture), name)
                     self.assertTrue(expression(folded_if(JOB_BODIES["rust-skip"]), fixture))
         self.assertFalse(expression(folded_if(JOB_BODIES["rust-skip"]), event()))
-        self.assertEqual("gate", scalar(JOB_BODIES["rust-skip"], "needs"))
+        self.assertEqual("classify", scalar(JOB_BODIES["rust-skip"], "needs"))
 
     def test_draft_fast_signal(self):
         fast = folded_if(JOB_BODIES["fast"])
@@ -197,13 +210,13 @@ class WorkflowPolicy(unittest.TestCase):
         self.assertFalse(expression(fast, event(name="push")))
 
     def test_ready_after_a_full_ci_label_reuses_only_a_finished_green_run(self):
-        decide = JOB_BODIES["gate"].split("name: Decide what this head needs", 1)[1]
+        decide = JOB_BODIES["classify"].split("name: Decide what this head needs", 1)[1]
         self.assertIn('[ "$ACTION" = ready_for_review ] && [ "$FULL_CI_LABELLED" = true ]', decide)
         self.assertIn('QUANTICK_FULL_CI_FOR_REUSE=1 sh .claude/hooks/full_ci.sh verify . "$HEAD_SHA"',
                       decide)
         self.assertIn("contains(github.event.pull_request.labels.*.name, 'full-ci')",
                       scalar(decide, "FULL_CI_LABELLED"))
-        self.assertIn("checks: read", JOB_BODIES["gate"])
+        self.assertIn("checks: read", JOB_BODIES["classify"])
 
 
 if __name__ == "__main__":

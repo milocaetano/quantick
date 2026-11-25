@@ -13,6 +13,8 @@ pub struct DrawingsDemo {
     /// `QUANTICK_DRAWINGS_DEMO_SHARED`: `1` splits the canvas, `0` keeps them to their chart.
     pub shared: Option<bool>,
     pub select_tool: Option<String>,
+    /// `QUANTICK_DRAWINGS_DEMO_ONLY`: the tool ids to place, every tool when unset.
+    pub only: Option<Vec<String>>,
 }
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct FrvpDemo {
@@ -104,6 +106,8 @@ impl State {
         self.input.gallery.is_some()
     }
     pub fn gallery_ready(&self, slots: usize, tool_count: usize) -> bool {
+        let only = self.input.gallery.as_ref().and_then(|g| g.only.as_ref());
+        let tool_count = only.map_or(tool_count, |only| only.len().min(tool_count));
         self.gallery_requested() && tool_count > 0 && slots >= 8 * tool_count
     }
     pub fn gallery_sample_slot(&self, slots: usize) -> Option<usize> {
@@ -231,9 +235,12 @@ pub(super) fn update(state: &mut super::State, intent: Intent) -> super::Drawing
         }
         Intent::GalleryReady {
             series,
-            tools,
+            mut tools,
             samples,
         } => {
+            if let Some(only) = scenario.input.gallery.as_ref().and_then(|g| g.only.as_ref()) {
+                tools.retain(|tool| only.iter().any(|id| id == tool.id()));
+            }
             if !scenario.gallery_ready(series.slots, tools.len()) {
                 None
             } else {

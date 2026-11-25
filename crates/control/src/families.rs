@@ -37,6 +37,7 @@ macro_rules! control_families {
             dock { schemas: [], catalog: [], readbacks: [], handlers: [pub dock], actions: [] }
             drawing_autosave { schemas: [drawing_autosave], catalog: [drawing_autosave], readbacks: [drawing_autosave], handlers: [pub drawing_autosave], actions: [register] }
             drawing_magnet { schemas: [drawing_magnet], catalog: [], readbacks: [drawing_magnet], handlers: [pub drawing_magnet], actions: [register] }
+            drawing_position { schemas: [drawing_position], catalog: [], readbacks: [drawing_position], handlers: [pub drawing_position], actions: [register] }
             drawing_scope { schemas: [drawing_scope], catalog: [], readbacks: [drawing_scope], handlers: [pub drawing_scope], actions: [] }
             drawing_text { schemas: [drawing_text], catalog: [], readbacks: [drawing_text], handlers: [pub drawing_text], actions: [register] }
             evidence { schemas: [evidence], catalog: [], readbacks: [], handlers: [], actions: [] }

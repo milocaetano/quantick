@@ -3,12 +3,16 @@
 mod actions;
 #[path = "drawing_chrome/bar_dismissal.rs"]
 pub mod bar_dismissal;
+#[path = "drawing_chrome/bar_state.rs"]
+pub mod bar_state;
 #[path = "drawing_chrome/effects.rs"]
 mod effects;
 #[path = "drawing_chrome/inline.rs"]
 mod inline;
 #[path = "drawing_chrome/inspector.rs"]
 pub mod inspector;
+#[path = "drawing_chrome/position.rs"]
+mod position;
 #[path = "drawing_chrome/presets.rs"]
 mod presets;
 #[path = "drawing_chrome/quick_range.rs"]
@@ -20,6 +24,7 @@ mod types;
 pub use actions::{ActionInput, apply as apply_actions};
 pub use effects::{DrawingChromeAsk, SelectionToggles};
 pub use inline::InlineEditor;
+pub use position::ask_position_default;
 pub use presets::{PresetWrite, RecordingPresetHost};
 pub use types::{DrawingEdit, InspectorActions, InspectorTab, SavedDefault};
 pub type Drawing = quantick_drawings::Drawing<quantick_drawings::DrawingTool>;
