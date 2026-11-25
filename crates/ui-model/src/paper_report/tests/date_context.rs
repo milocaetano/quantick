@@ -131,6 +131,11 @@ fn grid_clicks_after_a_ledger_day_apply_at_once_and_leave_its_context() {
         assert_eq!(state.picked_days().len(), 4);
         state.ensure_report_view(tz, PnlReader::plain());
         assert_eq!(state.report_view().as_ref().unwrap().days, expected);
+        Model::update(&mut state, Intent::Close);
+        assert!(
+            !state.calendar().open,
+            "closing the report closes its popover"
+        );
     }
 }
 
@@ -214,6 +219,11 @@ fn picked_dates_widen_a_whole_session_report_to_its_origin() {
     );
     state.ensure_report_view(tz, PnlReader::plain());
     assert_eq!(state.snapshot().unwrap().rows.len(), 1, "the session alone");
+    assert_eq!(
+        state.report_days().stat(yesterday).map(|stat| stat.trades),
+        Some(1),
+        "before any pick, the grid shows the origin's days a pick would report"
+    );
 
     Model::update(&mut state, Intent::Days(DaySet::span(yesterday, today)));
     state.ensure_report_view(tz, PnlReader::plain());

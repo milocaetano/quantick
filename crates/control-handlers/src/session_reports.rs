@@ -173,10 +173,12 @@ fn report(
         .collect();
     Ok(ReportOutput::Sources {
         action: action.to_owned(),
+        // The newest days, still oldest first: the edge of a long pick is
+        // the one a caller acts on, and the count says how many came before.
         applied_days: view
             .days
             .iter()
-            .take(MAX_LISTED_DAYS)
+            .skip(view.days.len().saturating_sub(MAX_LISTED_DAYS))
             .map(|day| day.iso())
             .collect(),
         applied_day_count: WireU64::new(view.days.len() as u64),

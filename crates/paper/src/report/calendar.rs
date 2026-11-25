@@ -311,28 +311,36 @@ impl DaySet {
 
     /// Read a list of `YYYY-MM-DD` days. A day that is not a real date in
     /// exactly that spelling refuses the whole list — a typo must never
-    /// select the wrong day — and so does a list longer than
-    /// [`MAX_LISTED_DAYS`]. Duplicates collapse; order does not matter.
+    /// select the wrong day — and so do more than [`MAX_LISTED_DAYS`]
+    /// distinct days. Duplicates collapse; order does not matter.
     pub fn parse_list<S: AsRef<str>>(days: &[S]) -> Result<Self, DayListError> {
-        if days.len() > MAX_LISTED_DAYS {
-            return Err(DayListError::TooMany(days.len()));
-        }
         let mut set = Self::default();
         for text in days {
             let text = text.as_ref();
+            if text.len() > ISO_DATE_LEN {
+                return Err(DayListError::TooLong(text.len()));
+            }
             let day = parse_iso_date(text)
                 .filter(|day| day.iso() == text)
                 .ok_or_else(|| DayListError::NotADate(text.to_owned()))?;
             set.days.insert(day.day_number());
         }
+        if set.len() > MAX_LISTED_DAYS {
+            return Err(DayListError::TooMany(set.len()));
+        }
         Ok(set)
     }
 }
 
-/// Why a day list was refused.
+/// `YYYY-MM-DD`: the longest entry a day list reads, and so the longest
+/// one a refusal ever echoes.
+pub const ISO_DATE_LEN: usize = 10;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DayListError {
     NotADate(String),
+    /// An entry longer than [`ISO_DATE_LEN`] bytes, by its length alone.
+    TooLong(usize),
     TooMany(usize),
 }
 
@@ -340,6 +348,10 @@ impl std::fmt::Display for DayListError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::NotADate(text) => write!(f, "`{text}` is not a YYYY-MM-DD date"),
+            Self::TooLong(bytes) => write!(
+                f,
+                "an entry of {bytes} bytes is not a YYYY-MM-DD date (at most {ISO_DATE_LEN})"
+            ),
             Self::TooMany(count) => write!(
                 f,
                 "{count} days named; at most {MAX_LISTED_DAYS} - use a period for a longer window"
@@ -734,6 +746,33 @@ mod tests {
             Err(DayListError::TooMany(MAX_LISTED_DAYS + 1))
         );
         assert!(DaySet::parse_list(&many[..MAX_LISTED_DAYS]).is_ok());
+    }
+
+    /// The cap counts days, not entries: a retry that names a day twice
+    /// is still the same quarter.
+    #[test]
+    fn the_day_cap_counts_distinct_days() {
+        let mut repeated: Vec<String> = (0..MAX_LISTED_DAYS as i64)
+            .map(|i| nov(1).offset_days(i).iso())
+            .collect();
+        repeated.extend(repeated.clone());
+        let set = DaySet::parse_list(&repeated).unwrap();
+        assert_eq!(set.len(), MAX_LISTED_DAYS);
+    }
+
+    /// An over-long entry is refused by its length and never echoed whole.
+    #[test]
+    fn an_over_long_entry_is_refused_without_its_text() {
+        let long = format!("2026-11-24{}", "x".repeat(10_000));
+        let error = DaySet::parse_list(&["2026-11-25", long.as_str()]).unwrap_err();
+        assert_eq!(error, DayListError::TooLong(long.len()));
+        let message = error.to_string();
+        assert!(!message.contains("xxxx"), "{message}");
+        assert!(message.len() < 80, "{message}");
+        assert_eq!(
+            DaySet::parse_list(&["2026-11-24 "]),
+            Err(DayListError::TooLong(11))
+        );
     }
 
     #[test]

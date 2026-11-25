@@ -132,7 +132,7 @@
           "description": "How many days are picked, including any past the listed 92."
         },
         "applied_days": {
-          "description": "The picked days in force, oldest first, at most 92 of them;\nempty while the period is in force.",
+          "description": "The picked days in force, oldest first; past 92, only the\nnewest 92. Empty while the period is in force.",
           "items": {
             "type": "string"
           },

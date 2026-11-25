@@ -68,7 +68,7 @@ pub enum ReportWindow {
 impl ReportWindow {
     pub fn label(&self) -> String {
         match self {
-            Self::Dates(range) => range.label(),
+            Self::Dates(days) => days.label(),
             Self::Period(period) => period.phrase(),
         }
     }

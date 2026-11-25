@@ -21,7 +21,7 @@ use quantick_sim::history::SessionSource;
 
 use super::rows::{Bold, draw_header};
 use super::{LEDGER_ROW_HEIGHT_PX, Paint, SourceFilter};
-use crate::paper_calendar::{draw_month, today};
+use crate::paper_calendar::{DayFace, draw_month, today};
 use crate::paper_chrome::pill_toggle;
 use crate::theme;
 use crate::timezone::TzOffset;
@@ -110,6 +110,7 @@ impl Paint<'_, '_> {
                     days,
                     &mut calendar.month,
                     &picked,
+                    DayFace::Trades,
                     PICKER_CELL_PX,
                     fallback,
                 ) {

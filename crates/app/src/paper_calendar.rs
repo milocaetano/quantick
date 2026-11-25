@@ -21,6 +21,7 @@ use egui_phosphor::regular as icons;
 use crate::paper_chrome::{fmt_signed_points, points_color};
 use crate::theme;
 use crate::timezone::TzOffset;
+use quantick_paper::format::fmt_compact_signed_points;
 
 // Re-export the shared civil-date types and formatting for app consumers.
 // Selection parsing lives with the calendar policy in `quantick-paper`.
@@ -45,13 +46,23 @@ pub(crate) fn today(tz: TzOffset) -> CivilDate {
 
 pub(crate) use quantick_paper::report::calendar::{DayIndex, month_name};
 
-/// Paint the month's daily nets and return the clicked civil day. `month`
-/// is the month on screen, paged here; `picked` says which days to fill.
+/// What a day cell says under its number, and how a picked day is filled.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DayFace {
+    /// The ledger's Dates picker: the day's trade count, picked days tinted.
+    Trades,
+    /// The report's popover: the day's net, picked days filled solid.
+    Net,
+}
+
+/// Paint the month and return the clicked civil day. `month` is the month
+/// on screen, paged here; `picked` says which days to fill.
 pub(crate) fn draw_month(
     ui: &mut egui::Ui,
     index: &DayIndex,
     month: &mut Option<CivilDate>,
     picked: &dyn Fn(CivilDate) -> bool,
+    face: DayFace,
     cell: egui::Vec2,
     fallback: CivilDate,
 ) -> Option<CivilDate> {
@@ -129,7 +140,7 @@ pub(crate) fn draw_month(
                 ui.horizontal(|ui| {
                     for column in 0..WEEK_DAYS {
                         let date = first_cell.offset_days(row as i64 * WEEK_DAYS + column);
-                        if draw_day_cell(ui, date, anchor, index, picked(date), cell) {
+                        if draw_day_cell(ui, date, anchor, index, picked(date), face, cell) {
                             action = Some(date);
                         }
                     }
@@ -150,6 +161,7 @@ fn draw_day_cell(
     month_anchor: CivilDate,
     index: &DayIndex,
     picked: bool,
+    face: DayFace,
     cell: egui::Vec2,
 ) -> bool {
     let palette = theme::get(ui.ctx());
@@ -160,10 +172,16 @@ fn draw_day_cell(
     let in_month = date.same_month(month_anchor);
     let stat = index.stat(date);
     let body = rect.shrink(1.0);
+    let solid = picked && face == DayFace::Net;
 
     if picked {
+        let fill = if solid {
+            palette.accent()
+        } else {
+            theme::active_tint(palette.accent())
+        };
         ui.painter()
-            .rect_filled(body, egui::Rounding::same(3.0), palette.accent());
+            .rect_filled(body, egui::Rounding::same(3.0), fill);
     } else if let Some(stat) = stat {
         // Tinted by the day's outcome: a month's shape is readable before
         // a single number is. A day that netted exactly zero is neither —
@@ -194,9 +212,9 @@ fn draw_day_cell(
     }
 
     let (_, _, day) = date.ymd();
-    let ink = if picked {
+    let ink = if solid {
         palette.ink_on(palette.accent())
-    } else if in_month && stat.is_some() {
+    } else if picked || (in_month && stat.is_some()) {
         palette.text_primary()
     } else if in_month {
         palette.text_muted()
@@ -214,19 +232,27 @@ fn draw_day_cell(
         ink,
     );
     if let Some(stat) = stat {
-        ui.painter().text(
+        let (text, color) = match face {
+            DayFace::Trades => (format!("{}", stat.trades), palette.text_faint()),
+            DayFace::Net if solid => (
+                fmt_compact_signed_points(stat.net),
+                palette.ink_on(palette.accent()),
+            ),
+            DayFace::Net => (
+                fmt_compact_signed_points(stat.net),
+                points_color(&palette, stat.net),
+            ),
+        };
+        // Clipped to the cell: a wide figure never prints into its neighbour.
+        ui.painter().with_clip_rect(body).text(
             egui::pos2(
                 body.center().x,
                 body.bottom() - palette.layout(DAY_COUNT_BASELINE_PX),
             ),
             egui::Align2::CENTER_CENTER,
-            fmt_signed_points(stat.net),
+            text,
             palette.mono_font(8.0),
-            if picked {
-                palette.ink_on(palette.accent())
-            } else {
-                points_color(&palette, stat.net)
-            },
+            color,
         );
     }
     // Built only for the cell under the pointer. Formatting all forty-two
@@ -257,7 +283,7 @@ fn day_tint(palette: &theme::Palette, net: rust_decimal::Decimal) -> egui::Color
 }
 /// Where the day number sits inside its cell.
 const DAY_NUMBER_BASELINE_PX: f32 = 11.0;
-/// Where the day's net sits, measured up from the cell's bottom.
+/// Where the day's figure sits, measured up from the cell's bottom.
 const DAY_COUNT_BASELINE_PX: f32 = 7.0;
 
 #[cfg(test)]

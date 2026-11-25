@@ -20,7 +20,7 @@ use super::{
     REPORT_DEFAULT_H_PX, REPORT_DEFAULT_W_PX, REPORT_FOOTER_RESERVE_PX, REPORT_GRID_MIN_H_PX,
     REPORT_MIN_HEIGHT_PX, REPORT_MIN_WIDTH_PX, ReportEnv, SourceFilter,
 };
-use crate::paper_calendar::{draw_month, today};
+use crate::paper_calendar::{DayFace, draw_month, today};
 use crate::paper_chrome::pill_toggle;
 use crate::theme;
 use crate::timezone::TzOffset;
@@ -283,7 +283,7 @@ impl Paint<'_, '_> {
     /// applies at once; a press outside the popover closes it.
     fn draw_report_dates(&mut self, ui: &mut egui::Ui, tz: TzOffset) {
         let open = self.calendar().open;
-        let (button, clear) = ui
+        let (button, chip, clear) = ui
             .horizontal(|ui| {
                 let button = pill_toggle(
                     ui,
@@ -291,20 +291,24 @@ impl Paint<'_, '_> {
                     open,
                     "pick the days to report: click = day, Shift+click = range",
                 );
+                if self.picked_days().is_empty() {
+                    return (button, None, false);
+                }
+                // The chip's label opens the picker; only its x clears.
+                let label = self.picked_days().label();
+                let chip = pill_toggle(ui, &label, true, "open the date picker");
                 let back = format!(
                     "clear the dates - back to {}",
                     self.report_period().phrase()
                 );
-                let chip = format!("{}  {}", self.picked_days().label(), icons::X);
-                let clear =
-                    !self.picked_days().is_empty() && pill_toggle(ui, &chip, true, &back).clicked();
-                (button, clear)
+                let clear = ui.small_button(icons::X).on_hover_text(back).clicked();
+                (button, Some(chip), clear)
             })
             .inner;
         if clear {
             self.update(Intent::Days(DaySet::default()));
         }
-        if button.clicked() {
+        if button.clicked() || chip.as_ref().is_some_and(egui::Response::clicked) {
             self.update(Intent::DatesOpen(!open));
         }
         if !self.calendar().open {
@@ -330,6 +334,7 @@ impl Paint<'_, '_> {
                         self.report_days(),
                         &mut month,
                         &|day| picked.contains(day),
+                        DayFace::Net,
                         egui::vec2(CALENDAR_CELL_W_PX, CALENDAR_CELL_H_PX),
                         today,
                     );
@@ -344,12 +349,13 @@ impl Paint<'_, '_> {
                 });
             })
             .response;
+        let toggles = [Some(button.rect), chip.map(|chip| chip.rect)];
         let outside = ui.input(|input| {
             input.pointer.any_pressed()
-                && input
-                    .pointer
-                    .interact_pos()
-                    .is_some_and(|pos| !popover.rect.contains(pos) && !button.rect.contains(pos))
+                && input.pointer.interact_pos().is_some_and(|pos| {
+                    !popover.rect.contains(pos)
+                        && !toggles.iter().flatten().any(|r| r.contains(pos))
+                })
         });
         if outside {
             self.update(Intent::DatesOpen(false));

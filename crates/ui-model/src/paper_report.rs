@@ -20,7 +20,7 @@ use quantick_paper::report::{
     LoadedHistory, ReportPeriod, ReportView, SourceFilter, SourceSelection, parse_period,
 };
 
-/// History generation, sources, timezone and whether the opening scope is in force.
+/// History generation, sources, timezone and whether the grid reads the scope's journal rows.
 type ReportDaysKey = (u64, SourceSelection, TzOffset, bool);
 pub mod io;
 
@@ -223,7 +223,6 @@ pub enum Intent {
     },
     /// Open or close the Dates popover; opening pages to the newest picked day.
     DatesOpen(bool),
-    /// Page the popover's grid to a month.
     ShowMonth(Option<CivilDate>),
     ListOpen(bool),
     ClearFilters(String),
@@ -502,19 +501,30 @@ impl State {
                 days: Some((DayIndex::default(), None)),
             });
         };
-        let in_force = self.report_scope().is_some();
-        let key = (self.report_generation, self.filter.source, tz, in_force);
         // Out of force, a scope keeps only its origin: the source pills
         // were set to it, and the day and tag reports never read one file.
-        let in_journal = |row: &_| {
+        let in_force = self.report_scope().is_some();
+        let admits = |by_journal: bool, row: &_| {
             self.filter.scope.as_ref().is_none_or(|scope| {
-                if in_force {
+                if by_journal {
                     scope.request.admits_journal_row(row)
                 } else {
                     scope.request.admits_origin(row)
                 }
             })
         };
+        // A whole-session report's grid is its origin's even in force: those
+        // are the days a pick reports, so the grid must not hide them.
+        let grid_by_journal = in_force
+            && !self.filter.scope.as_ref().is_some_and(|scope| {
+                matches!(scope.request, ReportRequest::Session { day: None, .. })
+            });
+        let key = (
+            self.report_generation,
+            self.filter.source,
+            tz,
+            grid_by_journal,
+        );
         let index = (self.report_days_key != Some(key)).then(|| {
             (
                 DayIndex::build(
@@ -522,7 +532,7 @@ impl State {
                         .rows
                         .iter()
                         .filter(|row| self.filter.source.admits(row.source))
-                        .filter(|row| in_journal(row))
+                        .filter(|row| admits(grid_by_journal, row))
                         .map(|row| &row.trade),
                     tz,
                 ),
@@ -538,7 +548,7 @@ impl State {
                     self.filter.source,
                     days,
                     tz,
-                    in_journal,
+                    |row| admits(in_force, row),
                 )
                 .with_pnl(pnl),
             )),
@@ -640,7 +650,10 @@ impl crate::Model for Model {
                 }
                 return state.reveal(symbol);
             }
-            Intent::Close => state.report_open = false,
+            Intent::Close => {
+                state.report_open = false;
+                state.calendar.open = false;
+            }
             Intent::ReloadReport => return state.report_load(),
             Intent::JournalChanged => {
                 state.history_cache = None;

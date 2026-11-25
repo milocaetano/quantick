@@ -33,9 +33,9 @@ fn sources_call_normalizes_unions_and_rejects_invalid_input_without_success_even
     assert_eq!(dates["timezone"], "UTC-03:00");
     assert_eq!(dates["applied_days"], json!([]));
     assert_eq!(dates["applied_day_count"], "0");
-    let too_many: Vec<String> = (1..=30)
-        .flat_map(|day| [format!("2026-11-{day:02}"), format!("2026-12-{day:02}")])
-        .chain((1..=40).map(|day| format!("2027-01-{:02}", day.min(31))))
+    let first = quantick_civil::CivilDate::from_ymd(2026, 11, 1);
+    let too_many: Vec<String> = (0..=MAX_LISTED_DAYS as i64)
+        .map(|offset| first.offset_days(offset).iso())
         .collect();
     for (input, code) in [
         (
@@ -47,6 +47,10 @@ fn sources_call_normalizes_unions_and_rejects_invalid_input_without_success_even
             "invalid_dates",
         ),
         (json!({"action":"days", "days":too_many}), "invalid_dates"),
+        (
+            json!({"action":"days", "days":[format!("2026-11-24{}", "9".repeat(4096))]}),
+            "invalid_dates",
+        ),
         (
             json!({"action":"period", "period":"2years"}),
             "invalid_period",
@@ -363,4 +367,34 @@ fn days_call_sets_the_picked_days_idempotently_and_clear_dates_empties_them() {
     )
     .unwrap();
     assert_eq!(emptied["applied_days"], json!([]));
+}
+
+/// A pick longer than the readback lists its newest days; the count
+/// carries the rest.
+#[test]
+fn a_long_pick_reads_back_its_newest_days() {
+    let scratch = crate::scratch::ScratchDir::new("report-days-newest");
+    let mut desk = PaperDesk::new(quantick_paper::PaperAccount::with_trades_dir(
+        scratch.path().to_owned(),
+    ));
+    let first = quantick_civil::CivilDate::from_ymd(2026, 8, 1);
+    let last = first.offset_days(99);
+    desk.report_days = DaySet::span(first, last);
+    let mut host = Host {
+        desk: Some(desk),
+        dir: scratch.path().to_owned(),
+    };
+    let mut access = FakeAccess::with_budget(0);
+    let read = open(
+        &mut host,
+        &mut access,
+        &FakeWindow::assistant(),
+        &json!({"action":"inspect"}),
+    )
+    .unwrap();
+    let listed = read["applied_days"].as_array().unwrap();
+    assert_eq!(listed.len(), MAX_LISTED_DAYS);
+    assert_eq!(listed[0], first.offset_days(8).iso());
+    assert_eq!(listed[MAX_LISTED_DAYS - 1], last.iso());
+    assert_eq!(read["applied_day_count"], "100");
 }
