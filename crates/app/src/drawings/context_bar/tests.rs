@@ -1,4 +1,5 @@
 use super::*;
+use quantick_drawings::bar_placement::POPOVER_GAP_PX;
 
 const PLAIN: Capabilities = Capabilities {
     stroke_width: true,
@@ -7,6 +8,7 @@ const PLAIN: Capabilities = Capabilities {
     settings: true,
     sharing: true,
     magnet: true,
+    position: false,
     draw_again: false,
 };
 
@@ -35,16 +37,18 @@ fn the_bar_has_no_overflow_menu() {
     // Every bar `capabilities` can ask for: width and glyph size are one
     // or the other, everything else may come or go. The fullest is an
     // assistant's pointer-anchored object, author chip and all.
-    let functional = (0..64_u8)
+    let functional = (0..128_u8)
         .map(|bits| {
             let caps = Capabilities {
                 stroke_width: bits & 1 != 0,
-                glyph_size: bits & 1 == 0,
+                // A position is drawn with strokes: it has no type size.
+                glyph_size: bits & 1 == 0 && bits & 64 == 0,
                 authored: bits & 2 != 0,
                 settings: bits & 4 != 0,
                 sharing: bits & 8 != 0,
                 magnet: bits & 16 != 0,
                 draw_again: bits & 32 != 0,
+                position: bits & 64 != 0,
             };
             slots(caps)
                 .into_iter()
@@ -91,6 +95,7 @@ fn an_unsupported_property_is_absent_not_disabled() {
         settings: true,
         sharing: true,
         magnet: true,
+        position: false,
         draw_again: false,
     });
     assert!(!glyph_tool.contains(&Slot::Width));
@@ -141,6 +146,7 @@ fn the_bar_is_one_row_of_touch_targets() {
             settings: false,
             sharing: true,
             magnet: true,
+            position: false,
             draw_again: true,
         },
     ] {
@@ -341,39 +347,6 @@ fn the_bar_stays_inside_the_pane_on_every_edge() {
 }
 
 #[test]
-fn a_gesture_suppresses_the_bar_until_it_is_released() {
-    let mut bar = ContextBar::default();
-    assert!(!bar.suppressed(0));
-    bar.suppress_gesture();
-    assert!(bar.suppressed(0));
-    assert!(bar.suppressed(10_000), "a held gesture never times out");
-    bar.release_gesture();
-    assert!(!bar.suppressed(0), "the bar returns on release");
-}
-
-#[test]
-fn a_gesture_without_a_release_expires_on_its_own() {
-    // Wheel zoom and window resize have no button to let go of.
-    let mut bar = ContextBar::default();
-    bar.suppress_transient(1_000);
-    assert!(bar.suppressed(1_000));
-    assert!(bar.suppressed(1_000 + TRANSIENT_SUPPRESS_MS - 1));
-    assert!(!bar.suppressed(1_000 + TRANSIENT_SUPPRESS_MS));
-}
-
-#[test]
-fn a_renewed_transient_gesture_pushes_its_own_deadline() {
-    let mut bar = ContextBar::default();
-    bar.suppress_transient(1_000);
-    bar.suppress_transient(1_150);
-    assert!(
-        bar.suppressed(1_000 + TRANSIENT_SUPPRESS_MS),
-        "a continuing zoom keeps the bar down"
-    );
-    assert!(!bar.suppressed(1_150 + TRANSIENT_SUPPRESS_MS));
-}
-
-#[test]
 fn suppression_closes_any_open_popover() {
     let mut bar = ContextBar::default();
     bar.toggle(Popover::Color, egui::Rect::ZERO);
@@ -435,35 +408,22 @@ fn a_popover_with_no_room_either_way_still_opens_downward() {
 }
 
 #[test]
-fn a_press_is_owned_once_and_never_inherited_by_the_next() {
+fn only_an_open_popover_owns_a_press_on_its_layer() {
     let mut bar = ContextBar::default();
-    let rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(100.0, 30.0));
-    let moved = rect.translate(egui::vec2(300.0, 0.0));
-    let on_bar = Some((egui::pos2(10.0, 10.0), 1.0));
-    assert!(bar.owns_press(on_bar, Some(rect), None));
-    assert!(
-        bar.owns_press(on_bar, Some(moved), None),
-        "a grip drag keeps the press it began with"
-    );
-    // The release this never saw: the next press is decided afresh.
-    assert!(!bar.owns_press(Some((egui::pos2(10.0, 10.0), 2.0)), Some(moved), None));
-    assert!(!bar.owns_press(None, Some(moved), None));
-
     let id = egui::Id::new("popover");
     let layer = Some(egui::LayerId::new(egui::Order::Foreground, id));
     bar.popover_layer = Some(id);
     let elsewhere = Some((egui::pos2(500.0, 500.0), 3.0));
     assert!(
-        !bar.owns_press(elsewhere, Some(rect), layer),
+        !bar.owns_press(elsewhere, layer),
         "a closed popover owns nothing"
     );
     bar.open = Popover::Color;
-    assert!(bar.owns_press(Some((egui::pos2(500.0, 500.0), 4.0)), Some(rect), layer));
+    assert!(bar.owns_press(Some((egui::pos2(500.0, 500.0), 4.0)), layer));
     assert!(
-        bar.owns_press(None, Some(rect), None),
+        bar.owns_press(None, None),
         "the release frame is still owned"
     );
-    assert!(bar.press_owned.is_none());
 }
 
 #[test]
@@ -538,18 +498,6 @@ fn each_popover_remembers_only_a_size_that_is_its_own() {
 }
 
 #[test]
-fn a_new_selection_keeps_the_hand_placed_position() {
-    // The bar a trader moved out of the way stays out of the way. It is
-    // the same chart behind the next object, so snapping back would hand
-    // them the covered price action again, once per click.
-    let mut bar = ContextBar::default();
-    bar.note_selection(Some(0));
-    bar.set_manual(egui::pos2(120.0, 40.0));
-    assert!(bar.note_selection(Some(1)));
-    assert_eq!(bar.manual_position(), Some(egui::pos2(120.0, 40.0)));
-}
-
-#[test]
 fn a_new_selection_still_drops_what_belonged_to_the_old_object() {
     // The popover hangs off a slot of the bar as it stood for the object
     // that is no longer selected, and the rect is what the wake radius
@@ -560,31 +508,4 @@ fn a_new_selection_still_drops_what_belonged_to_the_old_object() {
     assert!(bar.popover_open());
     assert!(bar.note_selection(Some(1)));
     assert!(!bar.popover_open(), "a popover cannot outlive its object");
-    assert_eq!(
-        bar.last_rect(),
-        None,
-        "nor can the geometry it was drawn at"
-    );
-}
-
-#[test]
-fn the_double_click_is_still_the_way_back() {
-    let mut bar = ContextBar::default();
-    bar.note_selection(Some(0));
-    bar.set_manual(egui::pos2(120.0, 40.0));
-    bar.clear_manual();
-    assert_eq!(
-        bar.manual_position(),
-        None,
-        "the grip's double-click hands placement back to the rule"
-    );
-}
-
-#[test]
-fn the_same_selection_keeps_the_hand_placed_position() {
-    let mut bar = ContextBar::default();
-    bar.note_selection(Some(0));
-    bar.set_manual(egui::pos2(120.0, 40.0));
-    assert!(!bar.note_selection(Some(0)));
-    assert_eq!(bar.manual_position(), Some(egui::pos2(120.0, 40.0)));
 }

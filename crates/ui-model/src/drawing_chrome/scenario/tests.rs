@@ -447,3 +447,33 @@ fn scenario_effect_merge_keeps_the_first_plan_without_idle_allocation() {
     ask.merge(DrawingChromeAsk::scenario(Some(Effect::KeepSelectedLocal)));
     assert_eq!(ask.take_scenario(), Some(Effect::GallerySelection(Some(3))));
 }
+
+/// `QUANTICK_DRAWINGS_DEMO_ONLY` narrows the gallery to the named tools, so
+/// it is ready as soon as there are slots for those alone.
+#[test]
+fn a_gallery_narrowed_to_named_tools_plans_only_those() {
+    let mut state = installed(DrawingDemoLaunch {
+        gallery: Some(DrawingsDemo {
+            only: Some(vec!["long-position".into(), "short-position".into()]),
+            ..Default::default()
+        }),
+        ..Default::default()
+    });
+    let ready = Intent::GalleryReady {
+        series: SeriesFacts {
+            slots: 16,
+            ..facts()
+        },
+        tools: DRAWING_TOOLS.to_vec(),
+        samples: vec![],
+    };
+    let Some(Effect::Gallery(plan)) = step(&mut state, ready) else {
+        panic!("two tools fit sixteen slots")
+    };
+    assert!(
+        plan.anchors
+            .iter()
+            .all(|anchor| anchor.tool.id().ends_with("-position"))
+    );
+    assert!(!plan.anchors.is_empty());
+}

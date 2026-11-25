@@ -16,7 +16,8 @@
 #                     included. Ready and merge also want full CI (every
 #                     job in FULL_CI_CHECKS) green at the exact HEAD, read
 #                     by the sibling `full_ci.sh`: draft pushes run only
-#                     the fast job, so readiness is where it is owed.
+#                     `gate` and the fast job, so readiness is where it is
+#                     owed (a prose-only head owes `gate` and `rust-skip`).
 #   commit-reminder   PostToolUse on Bash. Cannot block (the commit
 #                     already landed); says the gate is coming and how to
 #                     satisfy it.
@@ -697,9 +698,10 @@ pr_gate() {
     gate_pr=$(pr_number "$(gh_statement "$command" "gh pr $gate_action")")
     [ -n "$gate_pr" ] || deny '"Name the PR number explicitly."'
 
-    # Draft pushes run only the fast job, so readiness is where full CI is
-    # owed: every FULL_CI_CHECKS verdict at the exact reviewed HEAD, read
-    # from the sibling script that owns the list.
+    # Draft pushes run only `gate` and the fast job, so readiness is where
+    # full CI is owed: every FULL_CI_CHECKS verdict at the exact reviewed HEAD
+    # (or, for a prose-only head, `gate` with its `rust-skip`), read from the
+    # sibling script that owns the list.
     full_ci_script="$(dirname "$0")/full_ci.sh"
     [ -f "$full_ci_script" ] ||
         ask '"Full CI at the exact head cannot be verified because full_ci.sh is not beside the gate; the fast draft job is not readiness evidence."'

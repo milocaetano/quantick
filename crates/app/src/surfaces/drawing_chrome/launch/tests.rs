@@ -27,6 +27,7 @@ fn six_values_are_captured_once_and_applied_at_the_owner_phase() {
             "QUANTICK_DRAWINGS_DEMO",
             "QUANTICK_DRAWINGS_DEMO_SHARED",
             "QUANTICK_DRAWINGS_DEMO_SELECT",
+            "QUANTICK_DRAWINGS_DEMO_ONLY",
             "QUANTICK_DRAWINGS_DEMO_RECUT",
             "QUANTICK_FRVP_DEMO",
             "QUANTICK_FRVP_DEMO_SELECT",

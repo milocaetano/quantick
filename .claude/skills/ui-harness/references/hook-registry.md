@@ -129,6 +129,7 @@ Owner keys (other paths appear in full):
 | `QUANTICK_DRAWINGS_DEMO_SHARED=<1\|0>` | chrome | `drawing-harness` opt-in. demo objects show on all timeframes by default; `1` also splits the canvas so the other chart shows them, `0` keeps every demo object to its chart (the "Show only on this chart" state) |
 | `QUANTICK_DRAWINGS_DEMO_RECUT=1` | chrome | `drawing-harness` opt-in. re-cuts the bars under the demo objects after placing them, and adds one mark anchored before the loaded history — the two states a timeframe switch produces: every mark re-anchored onto the new bars, and one faded "off series" |
 | `QUANTICK_DRAWINGS_MANAGER=1` | chrome | `drawing-harness` opt-in. opens the object manager, which is where the "off series" and "other market" badges are read — and the only place a mark clamped off the visible window can be found at all |
+| `QUANTICK_DRAWINGS_DEMO_ONLY=<tool ids>` | chrome | `drawing-harness` opt-in. comma-separated tool ids: the gallery places only those, so one tool can be photographed without the other demo objects crowding it (`long-position,short-position`). Unknown ids place nothing; unset places every tool |
 | `QUANTICK_DRAWINGS_DEMO_SELECT=<tool id>` | chrome | `drawing-harness` opt-in. selects that tool's demo object and centres the viewport on it. Selection is what puts an object's handles on screen, so this is the only way to photograph the grab points of a tool that is not last in the registry (`parallel-channel` for its corner and rail handles) |
 | `QUANTICK_FRVP_DEMO=1` | chrome | `drawing-harness` opt-in. one fixed-range volume profile placed on the flow pane once it has bars. When the pane carries a venue history prefix the range straddles the seam, so the partial-coverage label ("profile from N of M bars") is on screen — the honesty surface this hook photographs |
 | `QUANTICK_FRVP_DEMO=compare` | chrome | `drawing-harness` opt-in. two adjacent profiles over the same stretch of liquidity map, one per over-heatmap mode (outline vs always-fill) — the silhouette decision's before/after in a single frame |
@@ -241,4 +242,4 @@ For a screen that represents the user's real setup, enable the trio:
 | `QUANTICK_CANVAS_ACTS=<acts>` | wiring | `;`-separated canvas acts on the first drawn frame, each through its `canvas.*` capability: `add:<widget>`, `dock:<slot>:<edge>`, `park:<slot>:<corner>`, `resize:<slot>:width\|height:<share>`, `<verb>:<slot>` for float, pop_out, return, minimize, maximize, restore, remove |
 | `QUANTICK_CANVAS_HOLD=<slot>:<x>,<y>` | `tab/layout.rs` | Hold a floating pane by its title at canvas fractions x,y to show guides and preview |
 
-159 hooks registered.
+160 hooks registered.

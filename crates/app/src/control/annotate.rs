@@ -91,3 +91,11 @@ impl AnnotateAccess for ControlAccess {
         self.append_event(event);
     }
 }
+
+impl quantick_control_handlers::drawing_position::DrawingDefaultsPort
+    for dyn crate::app::control_host::ControlPort
+{
+    fn drawing_defaults(&mut self) -> &mut dyn quantick_drawings::PresetHost {
+        self.workspace_calls().drawing_presets()
+    }
+}

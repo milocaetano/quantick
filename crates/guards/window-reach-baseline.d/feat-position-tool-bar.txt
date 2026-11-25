@@ -1,0 +1,6 @@
+# annotate.position.default saves and resets a position tool's default in the
+# window's preset bank. No existing port hands that bank over, so the window
+# lends it once, through GatewayPort::workspace_calls, as DrawingDefaultsPort
+# on dyn ControlPort; QuantickApp gains no impl and no root line.
+window-reach +1
+!budget +1

@@ -660,19 +660,15 @@ pub(crate) fn apply_launch_hooks(owner: &mut Owner) {
     chrome.apply_launch();
 }
 
-/// Clamp a window of `size` at `position` into `chart`, top-left biased when
-/// the window is larger than the pane.
+/// [`quantick_drawings::bar_placement::clamp_into`], in egui's types.
 pub(crate) fn clamp_into_chart(
     position: egui::Pos2,
     size: egui::Vec2,
     chart: egui::Rect,
 ) -> egui::Pos2 {
-    let max_x = (chart.right() - size.x).max(chart.left());
-    let max_y = (chart.bottom() - size.y).max(chart.top());
-    egui::pos2(
-        position.x.clamp(chart.left(), max_x),
-        position.y.clamp(chart.top(), max_y),
-    )
+    use crate::drawings::{pos, px, px_rect};
+    let size = px(size.to_pos2());
+    pos(quantick_drawings::bar_placement::clamp_into(px(position), size, px_rect(chart)))
 }
 
 #[cfg(any(feature = "drawing-harness", test))]
@@ -681,6 +677,7 @@ crate::hooks::declare_hooks![
     "QUANTICK_DRAWINGS_DEMO",
     "QUANTICK_DRAWINGS_DEMO_RECUT",
     "QUANTICK_DRAWINGS_DEMO_SELECT",
+    "QUANTICK_DRAWINGS_DEMO_ONLY",
     "QUANTICK_DRAWINGS_DEMO_SHARED",
     "QUANTICK_DRAWING_CONSTRAIN",
     "QUANTICK_DRAWING_DRAFT",

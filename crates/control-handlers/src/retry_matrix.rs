@@ -14,4 +14,4 @@ mod render;
 pub use drift::{
     Drift, MAX_SCHEMA_HOPS, branches, drift, read_needs, readable, row_drift, schema_has_path,
 };
-pub use render::{PREAMBLE, RenderedRow, enforced, policy_name, render, summary};
+pub use render::{PREAMBLE, RenderedRow, enforced, policy_name, render};

@@ -61,7 +61,6 @@ pub fn render<P>(contract: &CapabilityContract<P>) -> String {
         entry.0 = descriptor;
         entry.1.push(descriptor.version);
     }
-    let registered = newest.len();
     let rows: Vec<RenderedRow<'_>> = newest
         .into_values()
         .filter_map(|(descriptor, versions)| {
@@ -78,13 +77,7 @@ pub fn render<P>(contract: &CapabilityContract<P>) -> String {
     out.push_str(GENERATED_MARKER);
     out.push_str("\n\n");
     out.push_str(PREAMBLE);
-    out.push_str(&summary(&rows));
     out.push_str(&table(contract, &rows));
-    let _ = write!(
-        out,
-        "\n{registered} mutable capabilities registered, {} with a readback.\n",
-        rows.len()
-    );
     out
 }
 
@@ -197,24 +190,6 @@ pub const PREAMBLE: &str = concat!(
     "key and lost-reply proofs live in `crates/mcp/tests/fake_gateway.rs`.\n",
     "\n",
 );
-
-pub fn summary(rows: &[RenderedRow<'_>]) -> String {
-    let mut out = String::new();
-    out.push_str("## Coverage\n\n");
-    let mut classes = BTreeMap::<&str, usize>::new();
-    for row in rows {
-        *classes
-            .entry(enforced(row.descriptor.idempotency, row.holder.grantable))
-            .or_default() += 1;
-    }
-    let _ = writeln!(out, "| Enforced | Capabilities |");
-    let _ = writeln!(out, "| --- | --- |");
-    for (class, count) in &classes {
-        let _ = writeln!(out, "| {class} | {count} |");
-    }
-    let _ = writeln!(out, "| **Total** | **{}** |\n", rows.len());
-    out
-}
 
 fn table<P>(contract: &CapabilityContract<P>, rows: &[RenderedRow<'_>]) -> String {
     let mut out = String::new();
