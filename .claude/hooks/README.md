@@ -21,6 +21,7 @@ its `/hooks` screen, as required by the
 | `commit-reminder` | `PostToolUse` | `Bash` | Cannot block (the commit already landed). After a `git commit` on a branch ahead of `origin/main`, says the gate is coming: a draft opens freely, and leaving draft wants `code-review-ok` (an `implement` branch owes it before any PR). |
 | `guard-watch` | `PostToolUse` | `Edit`, `Write`, `apply_patch` | Cannot block, and is not meant to. Runs the already-built `quantick-guards` binary over each file just written and reports what the repository guards found. Silent when nothing was found, when the binary has not been built, or when the file is outside a repository. |
 | `review-verdict` | `PostToolUse`, `SubagentStop` | `SubagentHandback` | Cannot block. Records `code-review-ok` from a review subagent's `REVIEW-VERDICT` line; see the `implement` tier. Claude Code only. |
+| `machine-check` | `SessionStart` | the machine's cargo config | Cannot block. When cargo has no `build.jobs` cap, tells the session to bring [the machine setup](../../docs/dev-machine.md) to the user and run it only with their consent; silent once a cap exists. Fires on `startup` only. |
 
 ## Non-main bases: `mission-base`
 
