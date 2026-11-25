@@ -273,7 +273,7 @@ fn context_dates_cut_the_view_but_leave_other_days_available_for_selection() {
 }
 
 #[test]
-fn generated_dates_replace_day_context_and_keep_restrictions_through_period_changes() {
+fn generated_dates_replace_session_context_and_keep_tags_through_period_changes() {
     let tz = TzOffset::new(-180);
     let first = CivilDate::from_ymd(2026, 11, 30);
     let last = first.offset_days(2);
@@ -281,11 +281,12 @@ fn generated_dates_replace_day_context_and_keep_restrictions_through_period_chan
     let other = SessionKey::parse("X/other.csv").unwrap();
     for (request, count) in [
         (
+            // Picked dates widen a whole-session report to its origin.
             ReportRequest::Session {
                 session: key.clone(),
                 day: None,
             },
-            2,
+            3,
         ),
         (
             ReportRequest::Tag {
@@ -319,6 +320,7 @@ fn generated_dates_replace_day_context_and_keep_restrictions_through_period_chan
         });
         let mut state = State::default();
         let day_context = request.day().is_some();
+        let widened = matches!(request, ReportRequest::Session { .. });
         Model::update(
             &mut state,
             Intent::Scoped(Box::new(PreparedReport {
@@ -367,7 +369,7 @@ fn generated_dates_replace_day_context_and_keep_restrictions_through_period_chan
             assert_eq!(view.rows.len(), count);
             assert_eq!(view.report.net_points, Decimal::from(count));
             assert_eq!(view.equity.points.last(), Some(&view.report.net_points));
-            assert_eq!(state.report_scope().is_none(), day_context);
+            assert_eq!(state.report_scope().is_none(), widened);
         }
         Model::update(&mut state, Intent::CustomText("2h".to_owned()));
         Model::update(&mut state, Intent::SubmitCustom { enter: true });

@@ -18,7 +18,8 @@ use quantick_paper::report::{
     LoadedHistory, ReportPeriod, ReportView, SourceFilter, SourceSelection, parse_period,
 };
 
-type ReportDaysKey = (u64, SourceSelection, TzOffset);
+/// History generation, sources, timezone and whether the opening scope is in force.
+type ReportDaysKey = (u64, SourceSelection, TzOffset, bool);
 pub mod io;
 
 struct ReportFilter {
@@ -282,14 +283,21 @@ pub struct DayFolds {
     days: BTreeSet<i64>,
 }
 impl State {
-    /// The opening receipt applies only while its requested day is still selected.
+    /// The opening receipt applies only while its requested day is still
+    /// selected. A whole-session report applies only while no dates are
+    /// picked: picked dates ask about days, and one session file cut to
+    /// other days is empty by construction.
     pub fn report_scope(&self) -> Option<&ReportReceipt> {
-        self.filter.scope.as_ref().filter(|scope| {
-            scope
-                .request
-                .day()
-                .is_none_or(|day| self.applied_dates() == Some(DateRange::new(day, day)))
-        })
+        self.filter
+            .scope
+            .as_ref()
+            .filter(|scope| match scope.request.day() {
+                Some(day) => self.applied_dates() == Some(DateRange::new(day, day)),
+                None => {
+                    !matches!(scope.request, ReportRequest::Session { .. })
+                        || self.applied_dates().is_none()
+                }
+            })
     }
     pub fn report_scope_label(&self) -> Option<&str> {
         self.report_scope()
@@ -512,12 +520,18 @@ impl State {
                 days: Some((DayIndex::default(), None)),
             });
         };
-        let key = (self.report_generation, self.filter.source, tz);
+        let in_force = self.report_scope().is_some();
+        let key = (self.report_generation, self.filter.source, tz, in_force);
+        // Out of force, a scope keeps only its origin: the source pills
+        // were set to it, and the day and tag reports never read one file.
         let in_journal = |row: &_| {
-            self.filter
-                .scope
-                .as_ref()
-                .is_none_or(|scope| scope.request.admits_journal_row(row))
+            self.filter.scope.as_ref().is_none_or(|scope| {
+                if in_force {
+                    scope.request.admits_journal_row(row)
+                } else {
+                    scope.request.admits_origin(row)
+                }
+            })
         };
         let days = (self.report_days_key != Some(key)).then(|| {
             (
