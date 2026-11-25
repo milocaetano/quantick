@@ -145,6 +145,7 @@ mod tests {
                 colour: None,
                 unsaved: false,
                 marks: Default::default(),
+                revert: toolbar::RevertSlot::Empty,
                 menu_open: false,
                 door_open: false,
                 door_hover: String::new(),

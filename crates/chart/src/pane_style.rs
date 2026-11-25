@@ -1,7 +1,7 @@
 //! Per-pane appearance and stable editor addressing, independent of focus.
 use crate::style::ChartStyle;
 pub use quantick_appearance::ChartSurface;
-use quantick_appearance::{Inheritance, ResolvedTheme};
+use quantick_appearance::{Inheritance, PaneCanvas, PremultipliedRgba, ResolvedTheme};
 
 /// Runtime identity, never a mutable pane position or the active tab.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -78,6 +78,23 @@ impl PaneStyle {
         surface: ChartSurface,
     ) -> ChartStyle {
         self.resolve(legacy, theme.surface(surface))
+    }
+    /// The canvas this pane's drawings sit on: the plot background it paints,
+    /// the trader's own or its theme's, on `surface`.
+    pub fn canvas(
+        &self,
+        legacy: &ChartStyle,
+        theme: &ResolvedTheme,
+        surface: ChartSurface,
+    ) -> PaneCanvas {
+        let canvas = self.resolve_surface(legacy, theme, surface).canvas;
+        let [r, g, b] = canvas.background;
+        PaneCanvas {
+            surface,
+            background: canvas
+                .background_enabled
+                .then_some(PremultipliedRgba::from_rgb(r, g, b)),
+        }
     }
     pub fn grid(&self, legacy: &ChartStyle) -> bool {
         self.authored.unwrap_or(*legacy).canvas.grid_enabled
@@ -186,6 +203,35 @@ mod tests {
             panes[1].resolve(&legacy, &dark).candles.bear_fill,
             panes[1].resolve(&legacy, &light).candles.bear_fill
         );
+    }
+    #[test]
+    fn a_pane_s_canvas_is_the_background_it_paints_explicit_or_themed() {
+        use quantick_appearance::Ground;
+        let light = ResolvedTheme::parse(quantick_appearance::LIGHT).unwrap();
+        let legacy = ChartStyle::default();
+        let themed = PaneStyle::default();
+        let ground = |pane: &PaneStyle, surface| {
+            light
+                .drawing_palette(pane.canvas(&legacy, &light, surface))
+                .1
+        };
+        assert_eq!(ground(&themed, ChartSurface::Paper), Ground::Light);
+        assert_eq!(ground(&themed, ChartSurface::Flow), Ground::Dark);
+        let mut dark = themed.resolve(&legacy, &light);
+        dark.canvas.background = [16, 18, 24];
+        dark.ownership.background = Inheritance::Explicit;
+        let made_dark = PaneStyle::new(Some(dark));
+        assert_eq!(ground(&made_dark, ChartSurface::Paper), Ground::Dark);
+        let mut none = dark;
+        none.canvas.background_enabled = false;
+        let unpainted = PaneStyle::new(Some(none));
+        assert_eq!(
+            unpainted
+                .canvas(&legacy, &light, ChartSurface::Paper)
+                .background,
+            None
+        );
+        assert_eq!(ground(&unpainted, ChartSurface::Paper), Ground::Light);
     }
     #[test]
     fn the_light_time_grid_reads_as_it_paints_whatever_the_seed_holds() {

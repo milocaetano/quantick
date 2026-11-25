@@ -166,6 +166,10 @@ pub struct SavedTab {
     /// an edited tab comes back still marked.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace_copy: Option<WorkspaceRecipe>,
+    /// What the tab's panes settled on, kept beside a held copy: the bar
+    /// rules its workspace names none for are told from it after a relaunch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_settled: Option<WorkspaceRecipe>,
     /// The tab's order-flow panel: open or not, and how wide.
     #[serde(default, skip_serializing_if = "OrderFlowPanel::is_default")]
     pub orderflow_panel: OrderFlowPanel,

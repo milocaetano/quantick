@@ -127,3 +127,4 @@ a bound.
 | 1175 | 2026-11-23 | chore/1173-sync-main | feature/strategies-panel | 78837 | 79 | `crates/app/src/control/gateway/server.rs` (1083) |
 | 1182 | 2026-11-24 | feat/script-alarm-noise | main | 12280 | 11 | `crates/control-handlers/src/workspace_book.rs` (1170) |
 | 1188 | 2026-11-24 | feat/day-and-tag-reports | main | 8376 | 10 | `crates/paper/src/pnl.rs` (560) |
+| 1198 | 2026-11-24 | fix/workspace-discard-and-persist | main | 20199 | 22 | `crates/ui-model/src/layout_picker.rs` (790) |

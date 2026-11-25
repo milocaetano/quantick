@@ -1001,6 +1001,7 @@ fn a_restored_bar_rule_moves_the_selector_that_edits_it() {
                 protected_default: false,
                 workspace_parked: Default::default(),
                 workspace_copy: None,
+                workspace_settled: None,
                 orderflow_panel: Default::default(),
             }],
             None,

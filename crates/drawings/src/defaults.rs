@@ -1,16 +1,52 @@
 //! What a new object opens with, and the store that remembers it.
 
-use quantick_appearance::{ChartSurface, Ground, ResolvedTheme};
+use quantick_appearance::{Ground, Inheritance, PaneCanvas, ResolvedTheme};
 
 use crate::{Drawing, DrawingStyle, NewDrawing, ToolCatalog};
 
-/// Where a new object opens: the palette the pane paints with and the bank of
-/// saved defaults its ground reads. A host without a theme is the light bank
-/// on the built-in look, the bank every default lived in before grounds.
-fn opening_on(host: &dyn PresetHost, surface: ChartSurface) -> (Option<&ResolvedTheme>, Ground) {
-    let theme = host.theme();
-    let ground = theme.map_or(Ground::Light, |theme| theme.ground(surface));
-    (theme.map(|theme| theme.surface(surface)), ground)
+/// Where a new object opens: the palette its pane's drawings take ink from
+/// and the bank of saved defaults its ground reads
+/// ([`ResolvedTheme::drawing_palette`]). A host without a theme opens the
+/// built-in look on the ground of the painted canvas, else the light bank,
+/// the bank every default lived in before grounds.
+fn opening_on(host: &dyn PresetHost, canvas: PaneCanvas) -> (Option<&ResolvedTheme>, Ground) {
+    palette_on(host.theme(), canvas)
+}
+
+/// [`opening_on`] for a theme already in hand.
+pub(crate) fn palette_on(
+    theme: Option<&ResolvedTheme>,
+    canvas: PaneCanvas,
+) -> (Option<&ResolvedTheme>, Ground) {
+    match theme {
+        Some(theme) => {
+            let (palette, ground) = theme.drawing_palette(canvas);
+            (Some(palette), ground)
+        }
+        None => (
+            None,
+            canvas.background.map_or(Ground::Light, Ground::of_canvas),
+        ),
+    }
+}
+
+/// The factory look of `tool` in `palette`: its themed style and its
+/// payload's theme defaults, nothing the trader saved. What a mark that keeps
+/// it ([`Inheritance::Theme`]) wears on any pane, so it is a pure function of
+/// the tool and the pane's palette.
+pub(crate) fn factory_opening<T: ToolCatalog>(
+    palette: Option<&ResolvedTheme>,
+    tool: T,
+) -> NewDrawing {
+    let mut payload = tool.default_payload();
+    if let Some(palette) = palette {
+        payload.apply_theme_defaults(palette);
+    }
+    NewDrawing {
+        style: tool.themed_style(palette),
+        payload,
+        look: Inheritance::Theme,
+    }
 }
 
 /// Named-preset storage a tool's inspector tab can talk to without knowing
@@ -21,6 +57,12 @@ pub trait PresetHost {
     /// pane's surface; saved styles and payloads still win.
     fn theme(&self) -> Option<&ResolvedTheme> {
         None
+    }
+    /// Moves whenever [`Self::theme`] does: the marks that follow their
+    /// ground re-resolve when it moves ([`crate::Drawings::follow_ground`]).
+    /// A saved default does not move it. A host without a theme keeps 0.
+    fn theme_revision(&self) -> u64 {
+        0
     }
     fn custom_preset_names(&self, tool_id: &str) -> Vec<String>;
     fn load_custom_preset(&self, tool_id: &str, name: &str) -> Option<toml::Value>;
@@ -65,103 +107,103 @@ pub trait PresetHost {
     fn has_default_config(&self, tool_id: &str, ground: Ground) -> bool;
 }
 
-/// What a new object of `tool` placed on `surface` should open with, given
-/// everything the trader has told the app to remember for that surface's
+/// What a new object of `tool` placed on `canvas` should open with, given
+/// everything the trader has told the app to remember for that canvas's
 /// ground. The one place that answer is assembled, so
 /// the click path, the scripted hooks and the tests can never open different
 /// objects from the same saved defaults.
 ///
 /// Order is precedence, weakest first: the built-in look, then the saved
 /// default configuration, then the explicitly *named* default preset — a
-/// name the trader chose beats one they saved by pressing a button.
+/// name the trader chose beats one they saved by pressing a button. Only an
+/// object nothing saved reached keeps the factory look ([`Inheritance::Theme`]);
+/// any saved style, configuration or named default makes it `Explicit`.
 #[must_use]
 pub fn new_drawing_from_defaults<T: ToolCatalog>(
     host: &dyn PresetHost,
-    surface: ChartSurface,
+    canvas: PaneCanvas,
     tool: T,
 ) -> NewDrawing {
-    let (theme, ground) = opening_on(host, surface);
-    let style = host
-        .default_style(tool.id(), ground)
-        .unwrap_or_else(|| tool.themed_style(theme));
-    let mut payload = tool.default_payload();
-    if let Some(theme) = theme {
-        payload.apply_theme_defaults(theme);
+    let (theme, ground) = opening_on(host, canvas);
+    let mut opening = factory_opening(theme, tool);
+    if let Some(style) = host.default_style(tool.id(), ground) {
+        opening.style = style;
+        opening.look = Inheritance::Explicit;
     }
     if let Some(value) = host.default_config(tool.id(), ground) {
-        payload.import_preset(&value);
+        opening.payload.import_preset(&value);
+        opening.look = Inheritance::Explicit;
     }
     if let Some(name) = host.default_preset(tool.id())
         && let Some(value) = host.load_custom_preset(tool.id(), &name)
     {
-        payload.import_preset(&value);
+        opening.payload.import_preset(&value);
+        opening.look = Inheritance::Explicit;
     }
-    NewDrawing { style, payload }
+    opening
 }
 
 /// Remember this object's whole configuration as what new objects of its tool
-/// open with on `surface`'s ground (the other ground keeps its own) — the named call behind the inspector's "save as default", so a
+/// open with on `canvas`'s ground (the other ground keeps its own) — the named call behind the inspector's "save as default", so a
 /// script or the future assistant can do it without the button.
 ///
 /// Objects already on the chart are never touched: a default is a statement
 /// about the *next* object, and repainting the marks a trader has placed is a
-/// bulk edit nobody asked for.
+/// bulk edit nobody asked for. A mark that keeps the factory look
+/// ([`Drawing::look`] `Theme`) only ever takes the factory ink of its pane's
+/// ground ([`crate::Drawings::follow_ground`]), never a saved default.
 pub fn save_tool_default<T: ToolCatalog>(
     host: &mut dyn PresetHost,
-    surface: ChartSurface,
+    canvas: PaneCanvas,
     drawing: &Drawing<T>,
 ) {
-    let (_, ground) = opening_on(host, surface);
+    let (_, ground) = opening_on(host, canvas);
     let tool_id = drawing.tool.id();
     host.set_default_style(tool_id, ground, Some(drawing.style));
     host.set_default_config(tool_id, ground, drawing.payload.export_preset());
 }
 
 /// Remember only the colour, width and fill every new drawing opens with on
-/// `surface`'s ground, whatever its tool — the named call behind "colour on
+/// `canvas`'s ground, whatever its tool — the named call behind "colour on
 /// all tools", which carries the one property every tool shares.
 pub fn save_style_on_every_tool(
     host: &mut dyn PresetHost,
-    surface: ChartSurface,
+    canvas: PaneCanvas,
     style: DrawingStyle,
 ) {
-    let (_, ground) = opening_on(host, surface);
+    let (_, ground) = opening_on(host, canvas);
     for tool in crate::DRAWING_TOOLS {
         host.set_default_style(tool.id(), ground, Some(style));
     }
 }
 
-/// The ground whose saved defaults a new object on `surface` reads and writes.
+/// The ground whose saved defaults a new object on `canvas` reads and writes.
 #[must_use]
-pub fn defaults_ground(host: &dyn PresetHost, surface: ChartSurface) -> Ground {
-    opening_on(host, surface).1
+pub fn defaults_ground(host: &dyn PresetHost, canvas: PaneCanvas) -> Ground {
+    opening_on(host, canvas).1
 }
 
-/// Forget the style and configuration saved for this tool on `surface`'s
+/// Forget the style and configuration saved for this tool on `canvas`'s
 /// ground, so new objects there open the way they did out of the box. The
 /// other ground's defaults stay, and so do the named presets and the named
 /// default preset: both grounds share those, and a reset on one must not
 /// change what the other opens with.
-pub fn reset_tool_default<T: ToolCatalog>(
-    host: &mut dyn PresetHost,
-    surface: ChartSurface,
-    tool: T,
-) {
-    let (_, ground) = opening_on(host, surface);
+pub fn reset_tool_default<T: ToolCatalog>(host: &mut dyn PresetHost, canvas: PaneCanvas, tool: T) {
+    let (_, ground) = opening_on(host, canvas);
     let tool_id = tool.id();
     host.set_default_style(tool_id, ground, None);
     host.set_default_config(tool_id, ground, None);
 }
 
-/// Whether this tool has anything saved to forget on `surface`'s ground — what the reset control
+/// Whether this tool has anything saved to forget on `canvas`'s ground — what the reset control
 /// reads, so it is absent rather than inert when there is nothing to undo.
 #[must_use]
 pub fn has_saved_default<T: ToolCatalog>(
     host: &dyn PresetHost,
-    surface: ChartSurface,
+    canvas: PaneCanvas,
     tool: T,
 ) -> bool {
-    let (_, ground) = opening_on(host, surface);
+    let (_, ground) = opening_on(host, canvas);
     let tool_id = tool.id();
     host.default_style(tool_id, ground).is_some() || host.has_default_config(tool_id, ground)
 }
@@ -174,7 +216,7 @@ pub fn has_saved_default<T: ToolCatalog>(
 /// default write persists the bank. Answers whether it wrote.
 pub fn remember_last_style<T: ToolCatalog>(
     host: &mut dyn PresetHost,
-    surface: ChartSurface,
+    canvas: PaneCanvas,
     before: &Drawing<T>,
     after: &Drawing<T>,
 ) -> bool {
@@ -183,12 +225,12 @@ pub fn remember_last_style<T: ToolCatalog>(
     // sake; it says nothing about the trader's own pencil.
     before.id == after.id
         && before.author.is_none()
-        && remember_style(host, surface, after.tool, before.style, after.style)
+        && remember_style(host, canvas, after.tool, before.style, after.style)
 }
 
 fn remember_style<T: ToolCatalog>(
     host: &mut dyn PresetHost,
-    surface: ChartSurface,
+    canvas: PaneCanvas,
     tool: T,
     before: DrawingStyle,
     after: DrawingStyle,
@@ -199,7 +241,7 @@ fn remember_style<T: ToolCatalog>(
         return false;
     }
     // The built-in look is stored as nothing, so it keeps following the theme.
-    let (theme, ground) = opening_on(host, surface);
+    let (theme, ground) = opening_on(host, canvas);
     let wanted = (after != tool.themed_style(theme)).then_some(after);
     if host.default_style(tool.id(), ground) == wanted {
         return false;
@@ -259,12 +301,12 @@ impl PresetHost for NullPresetHost {
 /// A named default cannot override the appearance the trader just chose.
 pub fn prepare_repeat(
     host: &mut dyn PresetHost,
-    surface: ChartSurface,
+    canvas: PaneCanvas,
     drawing: &Drawing<crate::DrawingTool>,
 ) {
     if drawing.tool.holds_text() {
         host.set_default_preset(drawing.tool.id(), None);
-        save_tool_default(host, surface, drawing);
+        save_tool_default(host, canvas, drawing);
     }
 }
 
@@ -277,5 +319,6 @@ pub fn repeat_opening<T: ToolCatalog>(drawing: &Drawing<T>) -> NewDrawing {
     NewDrawing {
         style: drawing.style,
         payload,
+        look: drawing.look,
     }
 }

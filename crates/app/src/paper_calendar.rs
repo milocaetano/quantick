@@ -47,24 +47,14 @@ pub(crate) use quantick_paper::report::calendar::{
     CalendarState, DayIndex, DaySelection, month_name,
 };
 
-/// What a drawn calendar reports back to its host.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum CalendarAction {
-    /// The selection changed — the view must be recut.
-    SelectionChanged,
-}
-
-/// The month grid: a header with month paging, a weekday rule, and six
-/// rows of day cells. Days holding trades are tinted by their net and
-/// carry their trade count; days holding none are inert text, so "which
-/// days did I trade" is answered by colour before it is read.
+/// Paint the month's trade counts and return the clicked civil day.
 pub(crate) fn draw_month(
     ui: &mut egui::Ui,
     index: &DayIndex,
     state: &mut CalendarState,
     cell: egui::Vec2,
     fallback: CivilDate,
-) -> Option<CalendarAction> {
+) -> Option<CivilDate> {
     let palette = theme::get(ui.ctx());
     let cell = cell * palette.resolved.typography.layout_scale();
     // `fallback` comes from the caller because this module is deliberately
@@ -141,8 +131,7 @@ pub(crate) fn draw_month(
                     for column in 0..WEEK_DAYS {
                         let date = first_cell.offset_days(row as i64 * WEEK_DAYS + column);
                         if draw_day_cell(ui, date, anchor, index, state, cell) {
-                            state.selection = state.selection.click(date);
-                            action = Some(CalendarAction::SelectionChanged);
+                            action = Some(date);
                         }
                     }
                 });
@@ -210,10 +199,12 @@ fn draw_day_cell(
     }
 
     let (_, _, day) = date.ymd();
-    let ink = match (in_month, stat.is_some()) {
-        (true, true) => palette.text_primary(),
-        (true, false) => palette.text_muted(),
-        (false, _) => palette.text_faint(),
+    let ink = if picked || (in_month && stat.is_some()) {
+        palette.text_primary()
+    } else if in_month {
+        palette.text_muted()
+    } else {
+        palette.text_faint()
     };
     ui.painter().text(
         egui::pos2(

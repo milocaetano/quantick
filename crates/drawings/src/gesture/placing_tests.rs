@@ -94,7 +94,6 @@ fn update(
         },
         PlacementDefaults {
             presets: &NullPresetHost,
-            surface: quantick_appearance::ChartSurface::Paper,
             repeat: false,
         },
     )
@@ -219,7 +218,6 @@ fn the_magnet_previews_and_commits_a_snap_on_the_forming_bar() {
                 },
                 PlacementDefaults {
                     presets: &NullPresetHost,
-                    surface: quantick_appearance::ChartSurface::Paper,
                     repeat: false,
                 },
             );
@@ -258,7 +256,6 @@ fn a_magnetic_mark_on_the_forming_bar_hangs_from_its_extreme() {
                 },
                 PlacementDefaults {
                     presets: &NullPresetHost,
-                    surface: quantick_appearance::ChartSurface::Paper,
                     repeat: false,
                 },
             );
@@ -369,7 +366,6 @@ fn a_levelled_ruler_copies_its_near_price_under_the_magnet() {
                 },
                 PlacementDefaults {
                     presets: &NullPresetHost,
-                    surface: quantick_appearance::ChartSurface::Paper,
                     repeat: false,
                 },
             );

@@ -20,6 +20,9 @@ cargo build --workspace
 cargo test --workspace
 ```
 
+Running several agents or builds at once? Cap cargo's jobs on your machine
+first: [docs/dev-machine.md](docs/dev-machine.md).
+
 ## Workflow
 
 Every change follows the same loop — including changes by the maintainer:

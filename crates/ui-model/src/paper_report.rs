@@ -2,9 +2,9 @@
 //! IO returns moved terminal receipts; projections borrow the real account facts.
 use std::collections::BTreeSet;
 
-use quantick_civil::{CivilDate, TzOffset};
+use quantick_civil::{CivilDate, DateRange, TzOffset};
 use quantick_paper::pnl::{PnlKey, PnlReader};
-use quantick_paper::report::calendar::{CalendarState, DayIndex, DaySelection};
+use quantick_paper::report::calendar::{CalendarState, DateDraft, DayIndex, DaySelection};
 use quantick_paper::report::ledger_rows::LedgerScope;
 use quantick_paper::report::ledger_state::{
     LedgerCut, LedgerEdit, LedgerState, LedgerViewChange, LiveCloses, SessionPress,
@@ -22,8 +22,18 @@ type ReportDaysKey = (u64, SourceSelection, TzOffset);
 pub mod io;
 
 struct ReportFilter {
+    draft: DateDraft,
+    applied_dates: Option<DateRange>,
+    custom_edited: bool,
+    custom_text: String,
+    period: ReportPeriod,
     source: SourceSelection,
     scope: Option<ReportReceipt>,
+}
+
+enum ReportSymbol {
+    FirstOpen,
+    Selected(Option<String>),
 }
 
 /// Cached presentation can be read by a host, but changes enter as intents.
@@ -52,9 +62,7 @@ pub struct State {
     revision: u64,
     toast: Option<String>,
     report_open: bool,
-    report_symbol: Option<String>,
-    report_period: ReportPeriod,
-    report_custom_text: String,
+    report_symbol: ReportSymbol,
     report_symbols: Vec<String>,
     report: Option<LoadedHistory>,
     report_generation: u64,
@@ -82,15 +90,18 @@ impl Default for State {
     fn default() -> Self {
         Self {
             filter: ReportFilter {
+                draft: DateDraft::default(),
+                applied_dates: None,
+                custom_edited: false,
+                custom_text: String::new(),
+                period: ReportPeriod::All,
                 source: SourceFilter::Real.into(),
                 scope: None,
             },
             revision: 0,
             toast: None,
             report_open: false,
-            report_symbol: None,
-            report_period: ReportPeriod::All,
-            report_custom_text: String::new(),
+            report_symbol: ReportSymbol::FirstOpen,
             report_symbols: Vec::new(),
             report: None,
             report_generation: 0,
@@ -182,6 +193,7 @@ impl LoadedLedger {
 pub enum Intent {
     Scoped(Box<PreparedReport>),
     Open(String),
+    Reveal(String),
     Close,
     ReloadReport,
     DirectoryChanged,
@@ -199,6 +211,9 @@ pub enum Intent {
     CustomText(String),
     SubmitCustom { enter: bool },
     Dates(DaySelection),
+    Draft(DateDraft),
+    GenerateDates,
+    PickDate(CivilDate),
     Calendar(CalendarState),
     ListOpen(bool),
     ClearFilters(String),
@@ -267,30 +282,47 @@ pub struct DayFolds {
     days: BTreeSet<i64>,
 }
 impl State {
+    /// The opening receipt applies only while its requested day is still selected.
     pub fn report_scope(&self) -> Option<&ReportReceipt> {
-        self.filter.scope.as_ref()
+        self.filter.scope.as_ref().filter(|scope| {
+            scope
+                .request
+                .day()
+                .is_none_or(|day| self.applied_dates() == Some(DateRange::new(day, day)))
+        })
+    }
+    pub fn report_scope_label(&self) -> Option<&str> {
+        self.report_scope()
+            .map(|scope| scope.title.as_str())
+            .or_else(|| {
+                self.filter
+                    .scope
+                    .as_ref()
+                    .map(|scope| scope.request.source().label())
+            })
     }
 
     fn clear_filters(&mut self, symbol: String) {
         self.filter.scope = None;
         self.report_days_key = None;
-        self.report_symbol = (!symbol.is_empty()).then_some(symbol);
-        self.report_period = ReportPeriod::All;
+        self.report_symbol = ReportSymbol::Selected((!symbol.is_empty()).then_some(symbol));
+        self.set_period(ReportPeriod::All);
         self.filter.source = SourceFilter::Real.into();
-        self.calendar.selection = DaySelection::None;
-        self.report_view = None;
     }
 
     fn install_scoped(&mut self, prepared: PreparedReport) {
         let request = &prepared.receipt.request;
         self.report_open = true;
-        self.report_symbol = None;
-        self.report_period = ReportPeriod::All;
+        self.report_symbol = ReportSymbol::Selected(None);
+        self.filter.period = ReportPeriod::All;
         self.filter.source = request.source().into();
-        self.report_custom_text.clear();
+        self.filter.custom_text.clear();
+        self.filter.custom_edited = false;
         self.calendar = CalendarState::default();
+        self.set_dates(request.day().map_or(DaySelection::None, |day| {
+            DaySelection::Range(DateRange::new(day, day))
+        }));
         if let Some(day) = request.day() {
-            self.calendar.selection = DaySelection::Anchor(day);
             self.calendar.month = Some(day.month_start());
         }
         self.filter.scope = Some(prepared.receipt);
@@ -299,20 +331,70 @@ impl State {
         self.report_generation = self.report_generation.wrapping_add(1);
         self.report_view = None;
     }
+    pub fn applied_dates(&self) -> Option<DateRange> {
+        self.filter.applied_dates
+    }
+    pub fn date_draft(&self) -> &DateDraft {
+        &self.filter.draft
+    }
+    pub fn date_feedback(&self) -> Option<&'static str> {
+        if self.filter.draft.start.is_empty() && self.filter.draft.end.is_empty() {
+            return Some(if self.calendar.open {
+                "Pick the first day of your report, or enter both dates."
+            } else {
+                "Enter both dates or pick a day in the calendar."
+            });
+        }
+        match self.filter.draft.range() {
+            Err(error) => Some(error),
+            Ok(_)
+                if self.calendar.open
+                    && matches!(self.calendar.selection, DaySelection::Anchor(_)) =>
+            {
+                Some("Generate this day, or pick the other end of the range.")
+            }
+            Ok(range) if Some(range) != self.filter.applied_dates => {
+                Some("Draft dates · Generate report to apply.")
+            }
+            _ => None,
+        }
+    }
+    fn set_dates(&mut self, selection: DaySelection) {
+        self.calendar.selection = selection;
+        self.filter.draft = DateDraft::from_selection(selection);
+        let range = selection.range();
+        if self.filter.applied_dates != range {
+            self.filter.applied_dates = range;
+            self.report_view = None;
+        }
+    }
+    fn set_period(&mut self, period: ReportPeriod) {
+        self.set_dates(DaySelection::None);
+        self.filter.period = period;
+        self.filter.custom_edited = false;
+        self.filter.custom_text = match period {
+            ReportPeriod::Custom(ms) => quantick_paper::report::fmt_period_ms(ms),
+            _ => String::new(),
+        };
+        self.report_view = None;
+    }
     pub fn report_open(&self) -> bool {
         self.report_open
     }
     pub fn report_symbol(&self) -> &Option<String> {
-        &self.report_symbol
+        match &self.report_symbol {
+            ReportSymbol::FirstOpen => &None,
+            ReportSymbol::Selected(symbol) => symbol,
+        }
     }
     pub fn report_period(&self) -> ReportPeriod {
-        self.report_period
+        self.filter.period
     }
     pub fn report_source(&self) -> SourceSelection {
         self.filter.source
     }
     pub fn report_custom_text(&self) -> &str {
-        &self.report_custom_text
+        &self.filter.custom_text
     }
     pub fn report_symbols(&self) -> &[String] {
         &self.report_symbols
@@ -331,9 +413,9 @@ impl State {
         if self.filter.source == SourceSelection::default() {
             return "Select one or more sources to see their saved trades.".to_owned();
         }
-        let scope = self.report_symbol.as_deref().unwrap_or("any symbol");
+        let scope = self.report_symbol().as_deref().unwrap_or("any symbol");
         let hidden = (self.report_view.as_ref()).map_or(0, |view| view.hidden_by_source_or_scope);
-        if let Some(range) = self.calendar.selection.range() {
+        if let Some(range) = self.filter.applied_dates {
             format!(
                 "{scope} closed no trades in {} - pick another day, or clear \
                  the date filter to go back to the period pills.",
@@ -344,7 +426,7 @@ impl State {
         } else {
             format!(
                 "{scope} has no trades in {}. Try \"All\", or another symbol.",
-                self.report_period.phrase(),
+                self.filter.period.phrase(),
             )
         }
     }
@@ -354,9 +436,9 @@ impl State {
     pub fn filters_narrowed(&self, symbol: &str) -> bool {
         let default_symbol = (!symbol.is_empty()).then(|| symbol.to_owned());
         self.filter.source != SourceFilter::Real.into()
-            || self.report_period != ReportPeriod::All
-            || self.report_symbol != default_symbol
-            || self.calendar.selection.range().is_some()
+            || self.filter.period != ReportPeriod::All
+            || *self.report_symbol() != default_symbol
+            || self.filter.applied_dates.is_some()
     }
     pub fn report_layout_revision(&self) -> u64 {
         self.report_layout_revision
@@ -406,16 +488,16 @@ impl State {
 
     pub fn snapshot(&self) -> Option<ReportSnapshot<'_>> {
         Some(ReportSnapshot::new(
-            self.report_symbol.as_deref(),
+            self.report_symbol().as_deref(),
             self.report_view.as_ref()?,
         ))
     }
 
     /// No history or account clone on a warm frame; PnlReader compares borrowed data.
     pub fn project_report(&self, tz: TzOffset, pnl: PnlReader<'_>) -> Option<ReportProjection> {
-        let range = self.calendar.selection.range();
+        let range = self.filter.applied_dates;
         if self.report_view.as_ref().is_some_and(|view| {
-            view.period == self.report_period
+            view.period == self.filter.period
                 && view.source == self.filter.source
                 && view.range == range
                 && view.tz == tz
@@ -431,6 +513,12 @@ impl State {
             });
         };
         let key = (self.report_generation, self.filter.source, tz);
+        let in_journal = |row: &_| {
+            self.filter
+                .scope
+                .as_ref()
+                .is_none_or(|scope| scope.request.admits_journal_row(row))
+        };
         let days = (self.report_days_key != Some(key)).then(|| {
             (
                 DayIndex::build(
@@ -438,12 +526,7 @@ impl State {
                         .rows
                         .iter()
                         .filter(|row| self.filter.source.admits(row.source))
-                        .filter(|row| {
-                            self.filter
-                                .scope
-                                .as_ref()
-                                .is_none_or(|scope| scope.request.admits(row, tz))
-                        })
+                        .filter(|row| in_journal(row))
                         .map(|row| &row.trade),
                     tz,
                 ),
@@ -453,13 +536,13 @@ impl State {
         Some(ReportProjection {
             revision: self.revision,
             view: Some(Box::new(
-                ReportView::cut_scoped(
+                ReportView::cut_matching(
                     history,
-                    self.report_period,
+                    self.filter.period,
                     self.filter.source,
                     range,
                     tz,
-                    self.filter.scope.as_ref().map(|scope| &scope.request),
+                    in_journal,
                 )
                 .with_pnl(pnl),
             )),
@@ -523,9 +606,16 @@ impl State {
             },
         }
     }
+    fn reveal(&mut self, symbol: String) -> Effects {
+        self.report_open = true;
+        if matches!(self.report_symbol, ReportSymbol::FirstOpen) {
+            self.report_symbol = ReportSymbol::Selected((!symbol.is_empty()).then_some(symbol));
+        }
+        self.report_load()
+    }
     fn report_load(&self) -> Effects {
         Effects {
-            load: Some(Load::Report(self.report_symbol.clone())),
+            load: Some(Load::Report(self.report_symbol().clone())),
             ..Default::default()
         }
     }
@@ -547,14 +637,12 @@ impl crate::Model for Model {
         state.revision = state.revision.wrapping_add(1);
         match intent {
             Intent::Scoped(prepared) => state.install_scoped(*prepared),
+            Intent::Reveal(symbol) => return state.reveal(symbol),
             Intent::Open(symbol) => {
-                state.report_open = true;
                 if state.filter.scope.is_some() {
-                    state.clear_filters(symbol);
-                } else if state.report.is_none() && !symbol.is_empty() {
-                    state.report_symbol = Some(symbol);
+                    state.clear_filters(symbol.clone());
                 }
-                return state.report_load();
+                return state.reveal(symbol);
             }
             Intent::Close => state.report_open = false,
             Intent::ReloadReport => return state.report_load(),
@@ -606,7 +694,7 @@ impl crate::Model for Model {
                 state.report_layout_revision = state.report_layout_revision.wrapping_add(1);
                 if let Some((days, key)) = receipt.days {
                     // No history clears the day index without moving an explicitly shown month.
-                    if key.is_some() {
+                    if key.is_some() && state.calendar.month.is_none() {
                         state.calendar.month = days.last().map(CivilDate::month_start);
                     }
                     state.report_days = days;
@@ -626,39 +714,59 @@ impl crate::Model for Model {
                 }
             }
             Intent::InstallReport(_) | Intent::InstallLedger(_) => {}
-            Intent::Symbol(symbol) => state.report_symbol = symbol,
+            Intent::Symbol(symbol) => state.report_symbol = ReportSymbol::Selected(symbol),
             Intent::Source(source) => {
                 state.filter.source = source;
                 state.filter.scope = None;
                 state.report_days_key = None;
                 state.report_view = None;
             }
-            Intent::Period(period) => {
-                state.calendar.selection = DaySelection::None;
-                state.report_period = period;
-                state.report_view = None;
+            Intent::Period(period) => state.set_period(period),
+            Intent::CustomText(text) => {
+                state.filter.custom_text = text;
+                state.filter.custom_edited = true;
             }
-            Intent::CustomText(text) => state.report_custom_text = text,
-            Intent::SubmitCustom { enter } => match parse_period(&state.report_custom_text) {
+            Intent::SubmitCustom { enter: false } if !state.filter.custom_edited => {}
+            Intent::SubmitCustom { enter } => match parse_period(&state.filter.custom_text) {
                 Some(ms) => {
-                    state.report_period = ReportPeriod::Custom(ms);
-                    state.report_view = None;
+                    state.set_period(ReportPeriod::Custom(ms));
                 }
                 None if enter => {
                     state.toast = Some(format!(
                         "SIM: could not read `{}` as a period - use 45m, 12h, 2d or 1w",
-                        state.report_custom_text.trim()
+                        state.filter.custom_text.trim()
                     ))
                 }
                 None => {}
             },
-            Intent::Dates(selection) => {
-                state.calendar.selection = selection;
-                state.report_view = None;
+            Intent::Dates(selection) => state.set_dates(selection),
+            Intent::Draft(draft) => {
+                state.calendar.selection = draft
+                    .range()
+                    .map_or(DaySelection::None, DaySelection::Range);
+                state.filter.draft = draft;
             }
-            Intent::Calendar(calendar) => {
-                if state.calendar.selection != calendar.selection {
-                    state.report_view = None;
+            Intent::GenerateDates => {
+                if let Ok(range) = state.filter.draft.range() {
+                    state.set_dates(DaySelection::Range(range));
+                }
+            }
+            Intent::PickDate(day) => {
+                state.calendar.selection = match state.calendar.selection {
+                    DaySelection::Anchor(anchor) if day == anchor => DaySelection::Anchor(day),
+                    DaySelection::Anchor(anchor) => {
+                        DaySelection::Range(DateRange::new(anchor, day))
+                    }
+                    _ => DaySelection::Anchor(day),
+                };
+                state.filter.draft = DateDraft::from_selection(state.calendar.selection);
+            }
+            Intent::Calendar(mut calendar) => {
+                if calendar.open
+                    && !state.calendar.open
+                    && let Ok(range) = state.filter.draft.range()
+                {
+                    calendar.month = Some(range.start.month_start());
                 }
                 state.calendar = calendar;
             }

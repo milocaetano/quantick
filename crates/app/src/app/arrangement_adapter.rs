@@ -537,6 +537,7 @@ pub(super) fn saved_tab_of(tab: &Tab) -> ui_state::SavedTab {
         protected_default: false,
         workspace_parked: Default::default(),
         workspace_copy: None,
+        workspace_settled: None,
         orderflow_panel: tab.tape().settings_panel.clone(),
     }
 }

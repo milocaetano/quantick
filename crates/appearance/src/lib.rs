@@ -26,7 +26,7 @@ pub mod workspace_menu;
 pub use color::PremultipliedRgba;
 pub use document::{
     AXIS_RESERVATION_RANGE, BookmapOverride, CANDLE_OUTLINE_WIDTH_RANGE, ChartAxes, ChartSurface,
-    ColorValue, DARK_GROUND_MAX_LUMINANCE, Ground, LitFlowOverride, PremultipliedValue,
+    ColorValue, DARK_GROUND_MAX_LUMINANCE, Ground, LitFlowOverride, PaneCanvas, PremultipliedValue,
     ResolvedTheme, ThemeDocument, TitleStripOverride,
 };
 pub use error::ThemeError;

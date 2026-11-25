@@ -113,6 +113,20 @@ pub(super) const ROWS: &[UiBehaviour] = &[
         mapping: Mapping::Capabilities(&["workspace.save_to"]),
     },
     UiBehaviour {
+        id: "workspace.revert",
+        title: "Discard a tab's unsaved layout edits, back to its workspace as saved",
+        reach: "the capsule's revert arrow, right of the floppy, while the tab holds edits",
+        keys: &[(Source::ToolbarAction, "RevertWorkspace")],
+        mapping: Mapping::Capabilities(&["workspace.revert"]),
+    },
+    UiBehaviour {
+        id: "workspace.revert.undo",
+        title: "Bring back the edits a revert dropped, until a save or a switch",
+        reach: "the capsule's restore arrow, in the revert's slot after a revert",
+        keys: &[(Source::ToolbarAction, "UndoRevertWorkspace")],
+        mapping: Mapping::Capabilities(&["workspace.revert.undo"]),
+    },
+    UiBehaviour {
         id: "workspace.save_as",
         title: "Save a tab as a new workspace",
         reach: "window menu, Workspace, Save as new, or the capsule's workspace menu, Save as\u{2026}: \

@@ -1,5 +1,8 @@
 //! Preserve legacy templates while keeping the built-in recipe immutable.
-use super::{DEFAULT_WORKSPACE, SavedTab, WorkspaceBook, WorkspaceRecipe, workspace_colour};
+use super::{
+    DEFAULT_WORKSPACE, SavedTab, TabWorkspace, Unsynced, WorkspaceBook, WorkspaceRecipe,
+    workspace_colour,
+};
 use crate::workspace_colour::WorkspaceColour;
 
 impl WorkspaceBook {
@@ -32,6 +35,10 @@ impl WorkspaceBook {
         if !saved.workspace_parked.is_empty() {
             self.parked.insert(tab, saved.workspace_parked.clone());
         }
+        self.restored_settled.remove(&tab);
+        if let Some(settled) = &saved.workspace_settled {
+            self.restored_settled.insert(tab, settled.clone());
+        }
         let name = saved.workspace.as_deref()?;
         if name == DEFAULT_WORKSPACE && !saved.protected_default {
             return Some(
@@ -44,9 +51,42 @@ impl WorkspaceBook {
         Some(name.to_owned())
     }
 
+    /// A tab the desk brought back, following a rename since. A workspace the
+    /// book no longer has hands it to `Default`, keeping the copy it is given,
+    /// marked; the window gives what the tab shows when the desk kept none, so
+    /// a lost workspace never lays `Default` over the tab. A held copy takes
+    /// the settled reading its desk kept, so its bar rules read as they did.
+    /// With autosave on a copy that differs did not reach its workspace
+    /// before the restart: it is [`Unsynced::Outvoted`], marked and never
+    /// written unasked.
+    pub fn restore_tab(&mut self, tab: u64, workspace: &str, copy: Option<WorkspaceRecipe>) {
+        let name = self
+            .resolve(workspace)
+            .unwrap_or(DEFAULT_WORKSPACE)
+            .to_owned();
+        let held_copy = copy.is_some();
+        let mut copy = copy.unwrap_or_else(|| self.recipes.get(&name).cloned().unwrap_or_default());
+        copy.adopt_legacy_bars();
+        let mut state = TabWorkspace::on(&name, copy);
+        let named = self
+            .recipes
+            .get(&name)
+            .is_some_and(|recipe| !recipe.is_factory());
+        let settled = self.restored_settled.remove(&tab);
+        state.settled = settled.filter(|_| held_copy && named);
+        self.tabs.insert(tab, state);
+        self.unsynced.remove(&tab);
+        if self.autosave && (self.differs(tab) || (held_copy && self.captures_inherited_bars(tab)))
+        {
+            self.unsynced.insert(tab, Unsynced::Outvoted);
+        }
+    }
+
     /// Capture the workspace reference and any held edits together.
     pub fn stamp_saved_tab(&self, tab: u64, saved: &mut SavedTab) {
         (saved.workspace, saved.workspace_copy) = self.saved_fields(tab);
+        let settled = self.tabs.get(&tab).and_then(|state| state.settled.clone());
+        saved.workspace_settled = settled.filter(|_| saved.workspace_copy.is_some());
         saved.protected_default = saved.workspace.as_deref() == Some(DEFAULT_WORKSPACE);
         saved.workspace_parked = self.parked.get(&tab).cloned().unwrap_or_default();
     }

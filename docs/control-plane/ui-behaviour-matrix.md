@@ -42,13 +42,13 @@ The three exclusion classes are closed:
 
 | Outcome | Behaviours |
 | --- | --- |
-| Reachable by capability | 153 |
+| Reachable by capability | 155 |
 | Excluded: `authority` | 4 |
 | Excluded: `ui_only_by_decision` | 7 |
 | Excluded: `pending_capability` | 35 |
-| **Total** | **199** |
+| **Total** | **201** |
 
-102 of the 199 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 97 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
+104 of the 201 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 97 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
 
 ## Behaviours
 
@@ -233,6 +233,8 @@ The three exclusion classes are closed:
 | `desk.forget` | Forget the saved workspace and open on the configured default | window menu, Desk, Reset startup desk | `desk.forget` | — |
 | `tab.workspace.set` | Put a tab on a saved workspace | the capsule's workspace name, Ctrl+Shift+O | `tab.workspace.set` | — |
 | `workspace.save_to` | Save a tab's edits to its workspace | the capsule's floppy, its workspace menu, window menu, Save to, Ctrl+S | `workspace.save_to` | — |
+| `workspace.revert` | Discard a tab's unsaved layout edits, back to its workspace as saved | the capsule's revert arrow, right of the floppy, while the tab holds edits | `workspace.revert` | — |
+| `workspace.revert.undo` | Bring back the edits a revert dropped, until a save or a switch | the capsule's restore arrow, in the revert's slot after a revert | `workspace.revert.undo` | — |
 | `workspace.save_as` | Save a tab as a new workspace | window menu, Workspace, Save as new, or the capsule's workspace menu, Save as…: its dialog suggests a name and holds the palette on the next free colour | `workspace.dialog.open`, `workspace.save_as` | — |
 | `workspace.new` | Make a new, empty workspace for a tab | the capsule's workspace menu, New workspace…, or Manage workspaces' footer: its dialog suggests a name and holds the palette on the next free colour | `workspace.dialog.open`, `workspace.new` | — |
 | `workspace.autosave.set` | Turn auto save layout changes on or off | the capsule's workspace menu, Auto save | `workspace.autosave.set` | — |
@@ -262,7 +264,7 @@ matrix fails the build.
 
 | Source | Claims |
 | --- | --- |
-| `toolbar_action` | 22 |
+| `toolbar_action` | 24 |
 | `strip_action` | 6 |
 | `tab_action` | 4 |
 | `dock_tab` | 4 |

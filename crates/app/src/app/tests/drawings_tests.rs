@@ -444,6 +444,7 @@ fn quick_range_serialization_failure_keeps_range_without_refusal_toast() {
             crate::drawings::NewDrawing {
                 style: tool.default_style(),
                 payload: tool.default_payload(),
+                look: Default::default(),
             }
         },
     );
@@ -1917,6 +1918,43 @@ fn a_click_on_the_flow_pane_opens_with_the_dark_ground_s_default() {
     assert_eq!(items[0].style, dark);
 }
 
+/// Wiring only (the repaint rule is `quantick_drawings::look`'s): each frame
+/// hands every pane's drawings the canvas its plot paints, so a theme switch
+/// reaches a mark already on the chart.
+#[test]
+fn a_theme_switch_reaches_the_marks_through_the_painted_canvas() {
+    let (mut app, _commands) = app_with_history(200);
+    let ctx = egui::Context::default();
+    let presets = crate::scratch::ScratchFile::new("ground-follow", "presets.toml");
+    app.drawings.presets = drawings::presets::PresetStore::load_from(presets.path().to_path_buf());
+    app.runtime
+        .appearance
+        .apply_candidate(quantick_appearance::LIGHT, false)
+        .unwrap();
+    run_frame(&mut app, &ctx);
+    arm_drawing_from_toolbox(&mut app, &ctx, "horizontal-line");
+    click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
+    run_frame(&mut app, &ctx);
+    let light = app.active_tab().flow_pane.drawings.items()[0].style;
+
+    app.runtime
+        .appearance
+        .apply_candidate(quantick_appearance::DARK, false)
+        .unwrap();
+    run_frame(&mut app, &ctx);
+    let pane = &app.active_tab().flow_pane;
+    let theme = app.runtime.appearance.resolved();
+    let painted = pane
+        .presentation
+        .candles
+        .canvas(&app.runtime.style, theme, pane.surface());
+    assert_eq!(pane.drawings.canvas(), painted);
+    let tool = pane.drawings.items()[0].tool;
+    let dark = drawings::new_drawing_from_defaults(&app.drawings.presets, painted, tool).style;
+    assert_eq!(pane.drawings.items()[0].style, dark);
+    assert_ne!(dark, light, "the two themes ink a line differently");
+}
+
 /// The chore this removes: re-picking the same colour on every object.
 /// Saving a default must reach the *next* drawing and leave the ones
 /// already on the chart exactly as the trader drew them.
@@ -2132,6 +2170,7 @@ fn a_shared_drawing_is_painted_on_the_other_pane_of_the_tab() {
             drawings::NewDrawing {
                 style: drawings::DrawingStyle::default(),
                 payload: tool.default_payload(),
+                look: Default::default(),
             }
         },
     ));

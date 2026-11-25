@@ -20,6 +20,9 @@ quantick-indicators = { path = "../indicators" }
 quantick-drawings = { path = "../drawings" }
 quantick-appearance = { path = "../appearance" }
 toml.workspace = true
+# The provider's chat exchange (`strategy_describe::protocol`).
+serde.workspace = true
+serde_json.workspace = true
 quantick-control-handlers = { path = "../control-handlers" }
 quantick-chart-interaction = { path = "../chart-interaction" }
 quantick-stores = { path = "../stores" }

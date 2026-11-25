@@ -873,8 +873,9 @@ fn replay_plan() -> Vec<(&'static str, u32, Value, Readback)> {
             Readback::Moves,
         ),
         ("workspace.save_to", 1, json!({}), Readback::Stays),
-        // Refused since revert left the menus: nothing moves.
+        // A clean tab has nothing to revert or undo: nothing moves.
         ("workspace.revert", 1, json!({}), Readback::Stays),
+        ("workspace.revert.undo", 1, json!({}), Readback::Stays),
         (
             "workspace.autosave.set",
             1,

@@ -3459,6 +3459,8 @@ dependencies = [
  "quantick-trading",
  "quantick-workspace",
  "rust_decimal",
+ "serde",
+ "serde_json",
  "toml 0.8.20",
  "tracing",
 ]

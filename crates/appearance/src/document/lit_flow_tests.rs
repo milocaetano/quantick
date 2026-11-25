@@ -274,3 +274,29 @@ fn a_ground_follows_the_surface_canvas_not_the_theme_s_dark_flag() {
     assert_eq!(light.ground(ChartSurface::Flow), Ground::Dark);
     assert_eq!(light.ground(ChartSurface::LitFlow), Ground::Light);
 }
+
+#[test]
+fn a_pane_s_painted_background_decides_its_ground_and_its_drawing_ink() {
+    use super::{Ground, PaneCanvas};
+    let (dark, light) = (ResolvedTheme::parse(DARK).unwrap(), light());
+    let painted = |surface, rgb: [u8; 3]| PaneCanvas {
+        surface,
+        background: Some(PremultipliedRgba::from_rgb(rgb[0], rgb[1], rgb[2])),
+    };
+    // A time chart the trader made dark on a light theme reads the dark
+    // ground and the bundled dark theme's ink, as the island beside it does.
+    let made_dark = light.drawing_palette(painted(ChartSurface::Paper, [16, 18, 24]));
+    assert_eq!(made_dark.1, Ground::Dark);
+    assert!(std::ptr::eq(made_dark.0, ResolvedTheme::bundled(true)));
+    // A canvas of its surface's own ground keeps that surface's palette.
+    let island = light.drawing_palette(painted(ChartSurface::Flow, [10, 10, 10]));
+    assert_eq!(island.1, Ground::Dark);
+    assert!(std::ptr::eq(island.0, light.surface(ChartSurface::Flow)));
+    let paper = light.drawing_palette(ChartSurface::Paper.into());
+    assert_eq!(paper.1, Ground::Light);
+    assert!(std::ptr::eq(paper.0, &light));
+    // And a light chart on a dark theme reads the light ground.
+    let made_light = dark.drawing_palette(painted(ChartSurface::Paper, [250, 250, 250]));
+    assert_eq!(made_light.1, Ground::Light);
+    assert!(std::ptr::eq(made_light.0, ResolvedTheme::bundled(false)));
+}

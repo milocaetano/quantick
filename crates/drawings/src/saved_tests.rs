@@ -176,3 +176,31 @@ fn both_kinds_survive_a_save_and_a_load() {
         [100.0]
     );
 }
+
+/// Whether a mark's look follows its pane's ground survives the file, and a
+/// mark written before the flag reads back as the trader's own look.
+#[test]
+fn a_mark_s_look_provenance_round_trips_and_a_legacy_mark_is_explicit() {
+    use quantick_appearance::Inheritance;
+    let mut pane = drawn(100.0);
+    pane.items_mut()[0].look = Inheritance::Theme;
+    let saved = SavedDrawing::from_drawing(&pane.items()[0]);
+    assert!(saved.follows_ground);
+    let text = toml::to_string(&saved).unwrap();
+    assert!(text.contains("follows_ground = true"), "{text}");
+    let read: SavedDrawing = toml::from_str(&text).unwrap();
+    assert_eq!(
+        read.to_drawing(DrawingId(1)).unwrap().look,
+        Inheritance::Theme
+    );
+
+    pane.items_mut()[0].look = Inheritance::Explicit;
+    let saved = SavedDrawing::from_drawing(&pane.items()[0]);
+    let legacy = toml::to_string(&saved).unwrap();
+    assert!(!legacy.contains("follows_ground"), "{legacy}");
+    let read: SavedDrawing = toml::from_str(&legacy).unwrap();
+    assert_eq!(
+        read.to_drawing(DrawingId(1)).unwrap().look,
+        Inheritance::Explicit
+    );
+}
