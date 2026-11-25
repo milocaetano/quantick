@@ -123,7 +123,7 @@ pub fn documents() -> Vec<SchemaDocument> {
 }
 
 /// Each referenced capability field, and the word its own file is named with.
-const REFERENCED_SCHEMA_FIELDS: [(&str, &str); 2] =
+pub const REFERENCED_SCHEMA_FIELDS: [(&str, &str); 2] =
     [("input_schema", "input"), ("output_schema", "result")];
 
 /// A schema no published document carries, committed in a file named after
@@ -141,6 +141,8 @@ pub enum FoldError {
     /// `version` to name its file after.
     UnnamedCapability { index: usize },
     /// Two different schemas would be committed under this one file name.
+    /// Only the names of the documents passed to [`fold_schema_refs`] are
+    /// known here; the caller checks any other file sharing the directory.
     DuplicateFileName(String),
 }
 

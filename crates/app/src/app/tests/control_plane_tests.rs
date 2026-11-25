@@ -5126,12 +5126,27 @@ fn observer_schemas(update: bool) {
     }
     // Both registries share this directory. Compare names so additions need
     // no counter edit, while missing documents and unregistered files fail.
-    let committed: std::collections::BTreeSet<_> = std::fs::read_dir(&root)
-        .unwrap()
-        .map(|entry| entry.unwrap().file_name().into_string().unwrap())
-        .filter(|name| name.ends_with(".schema.json"))
-        .collect();
-    assert_eq!(registered, committed, "schema registry differs from disk");
+    // A per-call file is named after its call's id and version, so a renamed
+    // or retired call leaves one behind: regenerating removes it.
+    let committed = || -> std::collections::BTreeSet<String> {
+        std::fs::read_dir(&root)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+            .filter(|name| name.ends_with(".schema.json"))
+            .collect()
+    };
+    if update {
+        for stale in committed().difference(&registered) {
+            std::fs::remove_file(root.join(stale)).unwrap();
+        }
+    }
+    let committed = committed();
+    let missing: Vec<_> = registered.difference(&committed).collect();
+    let unregistered: Vec<_> = committed.difference(&registered).collect();
+    assert!(
+        missing.is_empty() && unregistered.is_empty(),
+        "schema registry differs from disk: missing {missing:?}, unregistered {unregistered:?}; regenerate observer schemas with `{REGENERATE_OBSERVER_SCHEMAS}`"
+    );
 }
 
 #[test]
@@ -5222,7 +5237,7 @@ fn observer_catalog(update: bool) {
 /// reference to a file committed beside the catalog.
 fn assert_schemas_are_referenced(catalog: &serde_json::Value, root: &std::path::Path, which: &str) {
     for capability in catalog["capabilities"].as_array().unwrap() {
-        for field in ["input_schema", "output_schema"] {
+        for (field, _) in quantick_control_handlers::schema_documents::REFERENCED_SCHEMA_FIELDS {
             let Some(schema) = capability.get(field) else {
                 continue;
             };
