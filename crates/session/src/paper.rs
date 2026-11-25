@@ -404,14 +404,14 @@ impl<A: BorrowMut<PaperAccount>> quantick_strategy::runner::StrategyPort for Tab
         self.core().is_flat()
     }
 
-    /// What a market press on the ticket would enter with now — sized by
-    /// the ticket's own stop when risk sizing is on — and nothing while the
-    /// risk lock would refuse that press.
+    /// The quantity typed on the ticket, while fixed risk is off. With it
+    /// on, the ticket sizes by its own stop, which a script's order does not
+    /// carry, so there is no size to lend and the script's entry holds.
     fn ticket_quantity(&self) -> Option<Decimal> {
-        let (_, blocked) = self.desk.risk_report(self.core());
-        if blocked {
+        let (risk, _) = self.desk.risk_report(self.core());
+        if !matches!(risk, RiskState::Off) {
             return None;
         }
-        self.desk.entry_quantity(self.core())
+        self.desk.ticket.quantity_preview()
     }
 }
