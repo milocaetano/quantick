@@ -764,3 +764,17 @@ mod trading_pane_tests {
         );
     }
 }
+
+/// A `Tab` is moved by value through the main thread's frames when a tab
+/// opens. Holding its context charts inline made one weigh 116 KB, and
+/// startup overflowed Windows' 1 MiB main-thread stack. Charts beyond the
+/// flow pane belong on the heap.
+#[test]
+fn a_tab_keeps_its_context_charts_off_the_stack() {
+    const BUDGET_BYTES: usize = 32 * 1024;
+    let size = std::mem::size_of::<Tab>();
+    assert!(
+        size <= BUDGET_BYTES,
+        "Tab is {size} bytes, over its {BUDGET_BYTES}-byte budget; box the field that grew"
+    );
+}

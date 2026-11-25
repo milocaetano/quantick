@@ -1,10 +1,13 @@
 //! Embeds `assets/icon.ico` as the Windows executable's resource icon (the one
 //! Explorer, the taskbar and Alt+Tab show), and gives the Windows main thread
-//! the stack the other desktops already give it. No-op on other targets.
+//! the stack reserve the other desktops already give it. No-op on other
+//! targets.
 
-/// The main thread's stack reserve on Windows: 8 MiB, what Linux and macOS
-/// give a main thread by default. Windows reserves only 1 MiB, so the UI
-/// thread overflowed there first while CI on Linux stayed green.
+/// The executable's default stack reserve on Windows: 8 MiB, what Linux and
+/// macOS give a main thread. Windows reserves only 1 MiB, so the UI thread
+/// overflowed there first while CI on Linux stayed green. The reserve covers
+/// the main thread and any native thread created without a size; Rust's own
+/// threads set theirs. It is address space, committed only as it is touched.
 const MAIN_STACK_BYTES: u64 = 8 * 1024 * 1024;
 
 fn main() {
