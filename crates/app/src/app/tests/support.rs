@@ -380,13 +380,13 @@ pub(super) fn recording_at(dir: &std::path::Path) -> quantick_replay::Session {
         .expect("the recording this test just wrote parses")
 }
 
-/// A cockpit already on disk, which is what every session after the first
-/// one starts from. The autosave updates a workspace; it does not invent
-/// one.
+/// A saved cockpit with configuration autosave explicitly enabled, so popup
+/// movement can update its position without creating a new arrangement.
 pub(super) fn with_a_saved_workspace(app: &mut QuantickApp, ctx: &egui::Context, name: &str) {
     app.runtime
         .workspace
         .set_ui_state_path(scratch_ui_state(name));
+    app.runtime.workspace.session_mut().set_save_on_exit(true);
     run_frame(app, ctx);
     app.workspace_save_adapter().save_workspace("test");
     app.surfaces.toast.model_state = Default::default();

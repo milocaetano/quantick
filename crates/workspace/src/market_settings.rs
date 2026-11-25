@@ -1,21 +1,13 @@
-//! Per-market settings: what stays with a market whichever layout shows it.
-//!
-//! A level belongs to the market it was drawn on, so drawings and anchored
-//! studies (both are drawing tools) are keyed by venue + asset, never by a
-//! layout or a dated contract: WINV26, WINZ26 and WIN$N are one market, and
-//! BTCUSDT on two venues is two. Inside a market a set belongs to a pane role
-//! — the flow chart, or a context chart at its bar rule — because a pane index
-//! means nothing once two stacks differ.
-//!
-//! A legacy file records only the index of a context pane, not its bars. Such a
-//! set waits under [`PaneRole::ContextSlot`] until a pane at that address
-//! claims it: guessing an interval would misfile the mark, dropping it would
-//! lose it.
+//! Drawing documents scoped by venue/asset, stable workspace and named layout.
+//! Pane roles and optional saved bar rules restrict timeframe visibility.
+//! Unscoped legacy entries are retained until ownership can be resolved.
 use crate::layout_document::{LayoutBook, LegacyDrawings, SavedDrawing, SavedOrigin};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
 mod names;
+mod scoped;
+pub use scoped::DrawingScope;
 pub mod pane_marks;
 pub use pane_marks::PaneWrite;
 
@@ -23,7 +15,7 @@ pub use pane_marks::PaneWrite;
 pub const MARKET_SETTINGS_FILE: &str = "market-settings.toml";
 
 /// Bumped on breaking format changes; unknown versions are refused whole.
-const FORMAT_VERSION: u32 = 1;
+const FORMAT_VERSION: u32 = 2;
 
 const ROLE_FLOW: &str = "flow";
 const ROLE_CONTEXT: &str = "context:";
@@ -117,6 +109,7 @@ impl From<PaneRole> for String {
 pub struct DrawingKey {
     pub market: MarketKey,
     pub role: PaneRole,
+    pub scope: Option<DrawingScope>,
 }
 
 impl DrawingKey {
@@ -124,6 +117,7 @@ impl DrawingKey {
     #[must_use]
     pub fn of_pane(venue: &str, asset: String, context_bars: Option<String>) -> Self {
         Self {
+            scope: None,
             market: MarketKey {
                 venue: venue.to_owned(),
                 asset,
@@ -136,6 +130,7 @@ impl DrawingKey {
     #[must_use]
     pub fn all_timeframes(market: MarketKey) -> Self {
         Self {
+            scope: None,
             market,
             role: PaneRole::AllTimeframes,
         }
@@ -147,6 +142,8 @@ struct DrawingSet {
     venue: String,
     asset: String,
     role: PaneRole,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    scope: Option<DrawingScope>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     items: Vec<SavedDrawing>,
 }
@@ -154,6 +151,7 @@ struct DrawingSet {
 impl DrawingSet {
     fn key(&self) -> DrawingKey {
         DrawingKey {
+            scope: self.scope,
             market: MarketKey {
                 venue: self.venue.clone(),
                 asset: self.asset.clone(),
@@ -163,7 +161,7 @@ impl DrawingSet {
     }
 
     fn is(&self, key: &DrawingKey) -> bool {
-        self.is_market(&key.market) && self.role == key.role
+        self.is_market(&key.market) && self.scope == key.scope && self.role == key.role
     }
 
     fn is_market(&self, market: &MarketKey) -> bool {
@@ -197,6 +195,8 @@ pub struct MarketSettings {
     /// out again after a restart. See [`names`].
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     name_floors: Vec<names::MarketNameFloors>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    drawing_autosave_off: Vec<scoped::DrawingPreference>,
 }
 
 impl Default for MarketSettings {
@@ -206,6 +206,7 @@ impl Default for MarketSettings {
             drawings: Vec::new(),
             bar_progress_off: BTreeSet::new(),
             name_floors: Vec::new(),
+            drawing_autosave_off: Vec::new(),
         }
     }
 }
@@ -325,22 +326,27 @@ impl MarketSettings {
     /// Move a legacy slot's drawings to the context chart standing at that
     /// address, under its bar rule. Returns whether anything moved.
     pub fn claim_slot(&mut self, market: &MarketKey, slot: usize, bars: &str) -> bool {
-        let waiting = DrawingKey {
+        let key = DrawingKey {
             market: market.clone(),
+            role: PaneRole::Context {
+                bars: bars.to_owned(),
+            },
+            scope: None,
+        };
+        self.claim_scoped_slot(&key, slot)
+    }
+
+    fn claim_scoped_slot(&mut self, key: &DrawingKey, slot: usize) -> bool {
+        let waiting = DrawingKey {
             role: PaneRole::ContextSlot(slot),
+            ..key.clone()
         };
         let Some(index) = self.drawings.iter().position(|set| set.is(&waiting)) else {
             return false;
         };
         let items = self.drawings.remove(index).items;
-        let claimed = DrawingKey {
-            market: market.clone(),
-            role: PaneRole::Context {
-                bars: bars.to_owned(),
-            },
-        };
         for item in items {
-            self.push_renumbered(&claimed, item);
+            self.push_renumbered(key, item);
         }
         true
     }
@@ -348,7 +354,7 @@ impl MarketSettings {
     /// [`Self::claim_slot`] for the pane about to show `key` from address `slot`.
     pub fn claim_for(&mut self, key: &DrawingKey, slot: usize) -> bool {
         match &key.role {
-            PaneRole::Context { bars } => self.claim_slot(&key.market, slot, bars),
+            PaneRole::Context { .. } => self.claim_scoped_slot(key, slot),
             _ => false,
         }
     }
@@ -363,15 +369,16 @@ impl MarketSettings {
         if from == to {
             return 0;
         }
-        let leaving: Vec<(PaneRole, Vec<SavedDrawing>)> = self
+        let leaving: Vec<(Option<DrawingScope>, PaneRole, Vec<SavedDrawing>)> = self
             .drawings
             .iter()
             .filter(|set| set.venue == from.venue && set.asset == from.asset)
-            .map(|set| (set.role.clone(), set.items.clone()))
+            .map(|set| (set.scope, set.role.clone(), set.items.clone()))
             .collect();
         let mut carried = 0;
-        for (role, items) in leaving {
+        for (scope, role, items) in leaving {
             let key = DrawingKey {
+                scope,
                 market: to.clone(),
                 role,
             };
@@ -419,6 +426,7 @@ impl MarketSettings {
                 items,
             } = legacy;
             let key = DrawingKey {
+                scope: None,
                 market: MarketKey {
                     asset: asset(&feed, &symbol),
                     venue: feed.clone(),
@@ -470,6 +478,7 @@ impl MarketSettings {
             venue: key.market.venue.clone(),
             asset: key.market.asset.clone(),
             role: key.role.clone(),
+            scope: key.scope,
             items,
         });
         // Keyed order, so the file diffs cleanly whatever order the markets
@@ -566,9 +575,10 @@ impl std::error::Error for SettingsError {}
 pub fn parse_settings(text: &str) -> Result<MarketSettings, SettingsError> {
     let mut settings: MarketSettings =
         toml::from_str(text).map_err(|error| SettingsError::Malformed(error.to_string()))?;
-    if settings.version != FORMAT_VERSION {
+    if !matches!(settings.version, 1 | FORMAT_VERSION) {
         return Err(SettingsError::Version(settings.version));
     }
+    settings.version = FORMAT_VERSION;
     settings.name_unnamed_drawings();
     Ok(settings)
 }

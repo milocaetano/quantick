@@ -41,6 +41,8 @@ pub enum MenuIntent {
     SetPriceInverted(bool),
     /// Switch the forming bar's progress on the market's last-price tag.
     SetBarProgress(bool),
+    /// Persist drawings independently of workspace configuration.
+    SetDrawingAutosave(bool),
     SetIgnoreFlowOpening(bool),
     OpenFootprintSettings,
     /// Open the flow pane's settings panel on the section that configures

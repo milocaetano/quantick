@@ -3,6 +3,7 @@ use crate::pane::{ContextPress, Effect, Intent, update};
 use quantick_orderflow::LANE_WINDOW_PRESETS_MS;
 fn facts() -> Facts {
     Facts {
+        drawing_autosave: true,
         layers: vec![],
         flow_opening: None,
         flow_settings: false,
@@ -53,6 +54,7 @@ fn descriptors_pin_empty_sections_utf8_and_captured_tape_order() {
             "chart layers",
             "objects (0)",
             "clear objects\u{2026}",
+            "Save drawing",
             "",
             "",
             "",
@@ -69,8 +71,8 @@ fn descriptors_pin_empty_sections_utf8_and_captured_tape_order() {
         entries[1].disabled.as_deref(),
         Some("nothing is drawn on this chart")
     );
-    assert!(matches!(entries[4].kind, Kind::Trade(123.0)));
-    let Kind::Submenu(windows) = &entries[7].kind else {
+    assert!(matches!(entries[5].kind, Kind::Trade(123.0)));
+    let Kind::Submenu(windows) = &entries[8].kind else {
         panic!("window submenu")
     };
     let choices: Vec<_> = windows
@@ -489,6 +491,7 @@ fn every_chart_offers_its_footprint_settings_beside_the_layers_not_inside() {
             "",
             "objects (0)",
             "clear objects\u{2026}",
+            "Save drawing",
             "",
         ]
     );
@@ -582,4 +585,40 @@ fn a_chart_without_the_flow_panel_offers_no_l2_or_bubbles_door() {
             .any(|e| matches!(choice(e), Some(MenuIntent::OpenLayerSettings(_)))),
         "the gear's panel lives on the flow pane only"
     );
+}
+
+#[test]
+fn save_drawing_checkbox_reads_the_preference_and_emits_an_explicit_choice() {
+    let mut model = Model::default();
+    let mut facts = facts();
+    for on in [true, false] {
+        facts.drawing_autosave = on;
+        let entries = describe(&model, &facts);
+        let entry = entries
+            .iter()
+            .find(|entry| entry.label == "Save drawing")
+            .unwrap();
+        assert!(
+            entry.disabled.is_none(),
+            "an empty chart still has its preference"
+        );
+        let Kind::Check {
+            checked, choice, ..
+        } = &entry.kind
+        else {
+            panic!("checkbox")
+        };
+        assert_eq!(*checked, on);
+        assert_eq!(*choice, MenuIntent::SetDrawingAutosave(!on));
+        assert_eq!(
+            update(
+                &mut model,
+                Intent::Menu {
+                    choice: choice.clone(),
+                    drawing: None
+                }
+            ),
+            [Effect::Menu(MenuIntent::SetDrawingAutosave(!on))]
+        );
+    }
 }

@@ -187,12 +187,34 @@ fn alert_target_binding_end_to_end() {
         saved.contains(&target.incarnation),
         "UI and host share the persisted target"
     );
-    // The window's side of a locate: with a mirror tab of the same source
-    // open, the real tabs report the focused copy and it gets selected.
+    // A mirror of the same source, workspace and layout carries the same target.
+    let workspace = app.runtime.workspace.book.tab_row(selector.tab_id).0;
+    let side = app.active_tab().drawing_side();
+    let key = app
+        .active_tab()
+        .drawing_pane()
+        .layout
+        .drawings_key
+        .clone()
+        .unwrap();
     let symbol = app.active_tab().active.1.clone();
     let _mirror = open_second_tab(&mut app, &ctx, &symbol);
     run_frame(&mut app, &ctx);
     let focused = app.runtime.tabs.active_id();
+    quantick_control_handlers::workspace_book::set_tab_workspace(
+        &mut app.workspace_calls(),
+        focused,
+        &workspace,
+    )
+    .unwrap();
+    app.layout_adapter()
+        .switch_pane_layout(focused, side, key.scope.unwrap().layout)
+        .unwrap();
+    run_frame(&mut app, &ctx);
+    assert_eq!(
+        app.active_tab().drawing_pane().layout.drawings_key,
+        Some(key)
+    );
     let pane = app.active_tab().drawing_pane();
     let mirror_index = (pane.drawings.items().iter())
         .position(|drawing| drawing.durable_identity.as_ref() == Some(&target))

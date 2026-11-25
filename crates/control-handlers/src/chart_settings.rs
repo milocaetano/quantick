@@ -186,6 +186,19 @@ pub fn apply(
 /// layer switches the pane's menu flips, and each market's price-tag
 /// progress.
 pub trait ChartStylePort {
+    /// Inspect (`None`) or persist the addressed chart's drawing autosave
+    /// preference. Returns the effective value and whether it changed.
+    /// The owner validates the pane and shares the setting across its scope.
+    fn drawing_autosave(
+        &mut self,
+        _tab_id: u64,
+        _pane_id: u64,
+        _on: Option<bool>,
+    ) -> Result<(bool, bool), ControlError> {
+        Err(ControlError::invalid_request(
+            "drawing autosave is unavailable",
+        ))
+    }
     /// The window's shared chart style, which holds the switches of the
     /// layers no pane owns alone, the grid among them.
     fn chart_style(&self) -> &ChartStyle;

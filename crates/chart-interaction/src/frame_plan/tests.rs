@@ -23,13 +23,13 @@ fn the_frame_executes_its_registered_order() {
 #[test]
 fn the_frame_refuses_every_hoisted_dependency_in_either_build() {
     let pairs: Vec<_> = dependency_pairs(&harness::FrameStage::NODES).collect();
-    assert_eq!(pairs.len(), 46, "{pairs:?}");
+    assert_eq!(pairs.len(), 52, "{pairs:?}");
     for (earlier, later) in pairs {
         let order = hoisted(harness::FrameStage::ORDER, earlier, later);
         assert!(!harness::FrameStage::is_valid_order(&order), "{order:?}");
     }
     let pairs: Vec<_> = dependency_pairs(&release::FrameStage::NODES).collect();
-    assert_eq!(pairs.len(), 41, "{pairs:?}");
+    assert_eq!(pairs.len(), 45, "{pairs:?}");
     for (earlier, later) in pairs {
         let order = hoisted(release::FrameStage::ORDER, earlier, later);
         assert!(!release::FrameStage::is_valid_order(&order), "{order:?}");
@@ -92,6 +92,8 @@ const DECLARED: [(&str, StageScope, HomeVisibility, bool); 41] = [
     ("DrainSources", Tick, Always, false),
     ("ExpireHistoryNotes", Tick, Always, false),
     ("HistoryNoteHook", Tick, Always, false),
+    ("IndicatorMaintenance", Tick, Always, false),
+    ("LayoutSwitches", Tick, Always, false),
     ("EnableControlAccess", Tick, Always, false),
     ("ReplayTrace", Tick, Always, false),
     ("TakeMark", Tick, Always, false),
@@ -102,8 +104,6 @@ const DECLARED: [(&str, StageScope, HomeVisibility, bool); 41] = [
     ("WindowHousekeeping", Tick, Always, false),
     ("IndicatorSurfaces", Tick, Always, false),
     ("StrategyPopupRequests", Tick, Always, false),
-    ("IndicatorMaintenance", Tick, Always, false),
-    ("LayoutSwitches", Tick, Always, false),
     ("MirrorLoadingWaits", Tick, Always, false),
     ("RequestRepaint", Tick, Always, false),
     ("WindowStartupHook", Window, Always, true),

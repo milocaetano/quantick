@@ -17,6 +17,9 @@ impl WorkspaceBook {
         if !recipe.is_factory() || colour != factory_colour {
             let name = self.suggested_name("Default copy", 1);
             self.recipes.insert(name.clone(), recipe);
+            if let Some(id) = self.workspace_ids.remove(DEFAULT_WORKSPACE) {
+                self.workspace_ids.insert(name.clone(), id);
+            }
             self.colours.insert(name.clone(), colour);
             // Desk and book writes are independent. Keep the redirect until an
             // old desk has been read, even across an intervening book save.

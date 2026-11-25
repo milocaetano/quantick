@@ -25,6 +25,9 @@ fn profile_app() -> (QuantickApp, mpsc::Receiver<FeedCommand>, egui::Context) {
     let tab_id = app.runtime.tabs.active_id();
     app.active_tab_mut().drain_feed(tab_id);
     assert_eq!(app.active_tab().flow_pane.series.state.bars().len(), 200);
+    let ctx = egui::Context::default();
+    pin_frame_clock(&ctx);
+    run_frame_at(&mut app, &ctx, TEST_WINDOW);
     let tool = crate::drawings::DRAWING_TOOLS
         .into_iter()
         .find(|tool| tool.id() == crate::frvp::TOOL_ID)
@@ -42,8 +45,6 @@ fn profile_app() -> (QuantickApp, mpsc::Receiver<FeedCommand>, egui::Context) {
     payload.show_value_area = false;
     payload.show_labels = false;
     pane.drawings.select(None);
-    let ctx = egui::Context::default();
-    pin_frame_clock(&ctx);
     for _ in 0..3 {
         run_frame_at(&mut app, &ctx, TEST_WINDOW);
     }

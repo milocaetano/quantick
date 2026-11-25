@@ -34,6 +34,8 @@
 //! indicators they had.
 //!
 use crate::indicator_document::SavedIndicator;
+#[path = "layout_persistence.rs"]
+mod persistence;
 use serde::{Deserialize, Serialize};
 
 /// Bumped on breaking format changes; unknown versions are refused whole.
@@ -168,9 +170,8 @@ pub struct SavedDrawing {
     /// when on, so a document from before the flag saves back unchanged.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub magnet: bool,
-    /// "Show on all timeframes": every chart of the market showing `layout`
-    /// shows it, at any bars, placed by market time and price; with
-    /// `all_windows`, every chart of the market whatever its layout.
+    /// "Show on all timeframes": charts holding the same market, workspace
+    /// and named-layout scope show it at any bars, using market time and price.
     #[serde(default)]
     pub shared: bool,
     /// The strip layout it belongs to: the one the chart it was drawn on, or
@@ -180,9 +181,8 @@ pub struct SavedDrawing {
     /// and on such a mark written back.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub layout: Option<LayoutId>,
-    /// "All windows": every chart of its market shows it, whatever layout it
-    /// shows. Written only when on, so a document from before the flag saves
-    /// back unchanged.
+    /// "All windows": every window holding the same ownership scope may show
+    /// it. Retained on legacy entries without widening scoped ownership.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub all_windows: bool,
     /// The tool's own state, as its preset export writes it.
@@ -297,7 +297,7 @@ pub struct LegacyDrawings {
 }
 
 /// One named layout: the indicators a pane shows while on it. Drawings belong
-/// to the market ([`crate::market_settings`]); `drawings` holds only what an
+/// to scoped market documents ([`crate::market_settings`]); `drawings` holds what an
 /// old file brought, until [`LayoutBook::take_legacy_drawings`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ChartLayout {

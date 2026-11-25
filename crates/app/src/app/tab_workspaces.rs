@@ -2,10 +2,7 @@
 //! putting a recipe on a tab, for [`WorkspaceCalls`]. The upkeep is
 //! `quantick_workspace::book_upkeep`'s; what a row does is
 //! `quantick_control_handlers::workspace_book`'s.
-use std::collections::BTreeMap;
-
-use quantick_layers::{ChartLayer, recipe_layers};
-use quantick_stores::market_settings::{DrawingKey, MarketSettingsStore};
+use quantick_layers::recipe_layers;
 use quantick_stores::workspaces::{TabRecipeSync, WorkspaceBook, WorkspaceRecipe, capture_recipe};
 use quantick_workspace::book_upkeep::TabRecipeHost;
 use quantick_workspace::canvas_layout::lay_recipe_canvas;
@@ -15,10 +12,6 @@ use super::workspace_runtime::WorkspaceRuntime as Runtime;
 use super::{ArrangementHost, layout_wiring::LayoutAdapter};
 use crate::pane::{ChartPane, PaneSide};
 use crate::tab::{CanvasCollapseRestore, LegendFold};
-
-fn layer_states(layers: &BTreeMap<String, bool>, reset: bool) -> BTreeMap<ChartLayer, bool> {
-    quantick_layers::recipe_states(crate::pane::registered_layers().layers(), layers, reset)
-}
 
 impl TabRecipeHost for WorkspaceCalls<'_> {
     fn recipe_book(&self) -> (&WorkspaceBook, &TabRecipeSync) {
@@ -106,14 +99,6 @@ impl TabRecipeHost for WorkspaceCalls<'_> {
     fn apply_recipe_indicators(&mut self, id: u64, recipe: &WorkspaceRecipe) {
         apply_recipe_indicators(self.layout(), id, recipe);
     }
-    fn tab_drawing_keys(&self, id: u64) -> Vec<DrawingKey> {
-        let panes = self.runtime.tabs.by_id(id).into_iter();
-        let keys = panes.flat_map(|tab| tab.panes().map(|(pane, _)| &pane.layout));
-        Vec::from_iter(keys.filter_map(|layout| layout.drawings_key.clone()))
-    }
-    fn recipe_market(&mut self) -> Option<&mut MarketSettingsStore> {
-        Some(self.runtime.workspace.layouts_mut().market_mut())
-    }
 }
 
 /// What the tab shows now, as a recipe.
@@ -197,10 +182,12 @@ fn apply_recipe_switches(runtime: &mut Runtime, id: u64, recipe: &WorkspaceRecip
         if recipe.reset_presentation {
             pane.presentation.footprint.config.set_own(None);
         }
-        pane.layer_write().apply_states(&layer_states(
-            recipe.for_pane(side.index()).1,
-            recipe.reset_presentation,
-        ));
+        pane.layer_write()
+            .apply_states(&quantick_layers::recipe_states(
+                crate::pane::registered_layers().layers(),
+                recipe.for_pane(side.index()).1,
+                recipe.reset_presentation,
+            ));
         if let Some(style) = style {
             pane.presentation.footprint.config.pin_style(style, window);
         }
