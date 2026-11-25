@@ -55,7 +55,7 @@ pub(crate) fn draw(
     let input = GestureInput::read(ctx);
     // Decided once per press, before the dismissal drops the rect it reads.
     let bar = &mut chrome.view.bar.bar;
-    let on_bar = bar.owns_press(input.origin, bar.last_rect(), input.layer)
+    let on_bar = bar.owns_press(input.origin, input.layer)
         || (input.layer).is_some_and(|layer| layer.id == alert_area(env.pane_id));
     // Dismissed by a press elsewhere or a lost focus, until the object is
     // pressed again or another is selected.
@@ -99,7 +99,7 @@ pub(crate) fn draw(
     if suppressed {
         return ask;
     }
-    let chart_area = if chrome.view.bar.bar.manual_position().is_none() {
+    let chart_area = if chrome.view.bar.bar.state.manual().is_none() {
         env.automatic_bar_area.or(env.chart_area)
     } else {
         env.chart_area
@@ -217,13 +217,10 @@ pub(crate) fn draw(
     }
 
     if intent.reset_position {
-        chrome.view.bar.bar.clear_manual();
+        chrome.view.bar.bar.state.clear_manual();
     } else if intent.drag_delta != egui::Vec2::ZERO {
-        chrome
-            .view
-            .bar
-            .bar
-            .set_manual(placement.position + intent.drag_delta);
+        let parked = px(placement.position + intent.drag_delta);
+        chrome.view.bar.bar.state.set_manual(parked);
     }
     let actions = actions_of(&intent);
     if actions.edited {
@@ -394,13 +391,13 @@ impl GestureInput {
         if self.dragging && !on_bar {
             bar.suppress_gesture();
         } else if !self.dragging {
-            bar.release_gesture();
+            bar.state.release_gesture();
         }
         if self.zoomed {
             bar.suppress_transient(self.now_ms);
         }
         bar.note_screen(self.screen, self.now_ms);
-        bar.suppressed(self.now_ms)
+        bar.state.suppressed(self.now_ms)
     }
 }
 
@@ -426,7 +423,7 @@ impl Placement {
         // one.
         let right_limit = env.candles_right.unwrap_or(chart.right());
         let reachable = bounds(chart, right_limit, size);
-        let position = match bar.manual_position() {
+        let position = match bar.state.manual().map(pos) {
             // Repair for drawing, never overwrite — the rule the properties
             // popup already follows, for the same reason. A bar parked out
             // near the right edge of a wide pane must stay reachable when the
@@ -453,7 +450,7 @@ impl Placement {
         // the bar ends up.
         // Automatic legend repair must keep the entire action footprint off
         // the drawing too; a manually parked bar keeps the trader's choice.
-        let object = bar.manual_position().is_none().then_some(bbox);
+        let object = bar.state.manual().is_none().then_some(bbox);
         let position = avoid_panels(position, size, reachable, [env.legends, inspector], object);
         // What the popovers are clamped into: the same rectangle *without*
         // the bar's width floor, but never narrower than the bar that was

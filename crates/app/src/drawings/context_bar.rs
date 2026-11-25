@@ -27,7 +27,8 @@ pub use quantick_drawings::context_bar::{Capabilities, Slot, slots};
 use quantick_drawings::position_edit::{
     PositionAsk, PositionDefault, PositionEdit, PositionFace, PositionLeg,
 };
-use quantick_ui_model::drawing_chrome::bar_dismissal::{BarDismissal, BarTarget, Press};
+use quantick_ui_model::drawing_chrome::bar_dismissal::{BarTarget, Press};
+use quantick_ui_model::drawing_chrome::bar_state::BarState;
 
 use super::action_bar::ActionBarIntent;
 use super::geometry::{pos, px, px_rect};
@@ -82,10 +83,6 @@ const IDLE_OPACITY: f32 = 0.55;
 const WAKE_RADIUS_PX: f32 = 24.0;
 /// Seconds of the opacity cross-fade, both directions.
 const FADE_SECONDS: f32 = 0.12;
-
-/// How long a gesture with no release event — wheel zoom, window resize —
-/// keeps the bar suppressed after its last event.
-pub const TRANSIENT_SUPPRESS_MS: u64 = 200;
 
 /// The stroke widths the bar offers. Four discrete steps, not the
 /// inspector's continuous slider: nobody wants to dial 0.1 px during the
@@ -168,68 +165,20 @@ enum Popover {
     RiskReward,
 }
 
-/// Why the bar is currently not on screen.
-///
-/// Suppression exists to protect the bar from *gestures*, not from the
-/// market moving. A drawing that drifts with the auto-scroll simply carries
-/// the bar along, smoothly; suppressing that would make the bar blink all
-/// session on a live tape. What must never happen is the bar measuring a
-/// world the same gesture is still moving.
-#[derive(Debug, Default)]
-pub struct Suppression {
-    /// A gesture with a release event — dragging the object, a handle, the
-    /// canvas, a pane divider — is holding the bar down.
-    gesture: bool,
-    /// A gesture with no release — wheel zoom, window resize — expires.
-    until_ms: Option<u64>,
-}
-
-/// The bar's own state: everything that must outlive a frame.
+/// The bar's own state: the headless [`BarState`] plus what egui needs.
 #[derive(Debug, Default)]
 pub struct ContextBar {
     open: Popover,
-    /// Where the trader dragged the bar. Absolute screen position, and it
-    /// outlives the selection it was chosen under.
-    ///
-    /// Nobody drags this bar to a corner *for one object*: they drag it off
-    /// the price action they are reading, and the next object is on the same
-    /// chart with the same thing behind it.
-    ///
-    /// So the hand outranks the placement here exactly as it does for the
-    /// properties popup, and by the same argument: a trader who chose where
-    /// this goes has already answered the question the rule exists to guess.
-    /// The way back is the grip's double-click, named in its own tooltip and
-    /// aimed at the bar and nothing else — see [`Self::clear_manual`].
-    ///
-    /// The host clamps it into the chart before drawing — see
-    /// `QuantickApp::draw_drawing_context_bar` — so a position parked under a
-    /// wide layout can never leave the view under a narrow one.
-    ///
-    /// Session-only, and deliberately: the properties popup records its parked
-    /// point in the workspace (`SavedChrome::inspector_position`) because it is
-    /// a window of settings, while a *context* bar reappearing in a corner at
-    /// the next launch, far from any object and with nothing to explain it,
-    /// is a different decision and not one this change makes. The argument
-    /// below is about which of hand and rule wins within a session.
-    manual: Option<egui::Pos2>,
-    suppression: Suppression,
-    dismissal: BarDismissal,
-    last_selection: Option<usize>,
+    pub state: BarState,
     /// Screen rect of the slot each popover hangs from.
     anchor: Option<egui::Rect>,
-    /// Last window size seen, so a resize can suppress like a zoom does.
-    last_screen: Option<egui::Rect>,
     /// The delete tooltip, which names the object. Cached rather than
     /// formatted per frame: the bar is up for as long as something is
     /// selected, and this sentence only changes when the tool does.
     delete_hover: String,
     delete_hover_for: &'static str,
-    /// Last resolved rect, for the wake radius and for tests.
-    rect: Option<egui::Rect>,
     /// The open popover's Area — see [`Self::owns_press`].
     popover_layer: Option<egui::Id>,
-    /// What [`Self::owns_press`] decided, keyed by the press's start time.
-    press_owned: Option<(f64, bool)>,
     /// The colour popover shows the full picker inline: egui's own picker
     /// popup is a second Area, and a press inside it closed this popover.
     custom_open: bool,
@@ -261,134 +210,59 @@ struct ColorProbe {
 }
 
 impl ContextBar {
-    /// A gesture that has a release event starts here.
+    /// [`BarState::suppress_gesture`]; a popover cannot outlive its bar.
     pub fn suppress_gesture(&mut self) {
-        self.suppression.gesture = true;
+        self.state.suppress_gesture();
         self.open = Popover::None;
     }
 
-    /// …and ends here. The bar comes back on the next frame, measuring the
-    /// world *after* the gesture settled.
-    pub fn release_gesture(&mut self) {
-        self.suppression.gesture = false;
-    }
-
-    /// Watch the window for a resize, which is a gesture with no release of
-    /// its own — the pointer is on a border the OS owns.
+    /// [`BarState::note_screen`]; a resize closes the popover.
     pub fn note_screen(&mut self, screen: egui::Rect, now_ms: u64) {
-        if self.last_screen.is_some_and(|last| last != screen) {
-            self.suppress_transient(now_ms);
+        if self.state.note_screen(px_rect(screen), now_ms) {
+            self.open = Popover::None;
         }
-        self.last_screen = Some(screen);
     }
 
-    /// A gesture with no release — wheel zoom, resize — renews a deadline.
+    /// [`BarState::suppress_transient`], closing the popover.
     pub fn suppress_transient(&mut self, now_ms: u64) {
-        self.suppression.until_ms = Some(now_ms + TRANSIENT_SUPPRESS_MS);
+        self.state.suppress_transient(now_ms);
         self.open = Popover::None;
     }
 
-    #[must_use]
-    pub fn suppressed(&self, now_ms: u64) -> bool {
-        self.suppression.gesture
-            || self
-                .suppression
-                .until_ms
-                .is_some_and(|deadline| now_ms < deadline)
-    }
-
-    /// Called every frame with the current selection. Answers whether the
-    /// selection changed.
-    ///
-    /// What a new object drops is what belongs to the *old* one: an open
-    /// popover (a colour palette hanging off a bar that is about to move is
-    /// pointing at nothing) and the last rect (the wake radius must not
-    /// measure against geometry from the previous object). A hand-placed
-    /// position is not one of those — see [`Self::manual`].
+    /// [`BarState::note_selection`]; a new object closes the popover.
     pub fn note_selection(&mut self, selection: Option<usize>) -> bool {
-        if self.last_selection == selection {
-            return false;
+        let changed = self.state.note_selection(selection);
+        if changed {
+            self.open = Popover::None;
         }
-        self.last_selection = selection;
-        self.open = Popover::None;
-        self.rect = None;
-        true
+        changed
     }
 
-    /// Step [`BarDismissal`] with this frame, answering whether the bar stands
-    /// dismissed. Dismissing drops the popover and the rect, so a later press
-    /// where the bar was is not read as one on it.
+    /// [`BarState::step_dismissal`], answering whether the bar stands
+    /// dismissed; dismissing closes the popover.
     pub fn step_dismissal(
         &mut self,
         target: Option<BarTarget>,
         focused: bool,
         press: Option<Press>,
     ) -> bool {
-        if self.dismissal.step(target, focused, press) {
+        if self.state.step_dismissal(target, focused, press) {
             self.open = Popover::None;
-            self.rect = None;
         }
-        self.dismissal.dismissed()
+        self.state.dismissed()
     }
 
-    #[must_use]
-    pub fn manual_position(&self) -> Option<egui::Pos2> {
-        self.manual
-    }
-
-    /// The trader dragged the bar by the grip: it stops following the object
-    /// and stays where they put it, across the selections that come after —
-    /// see [`Self::manual`].
-    ///
-    /// It still hides through a pan, zoom or canvas drag like a following bar:
-    /// suppression is what lets a drag reach the canvas underneath it.
-    pub fn set_manual(&mut self, position: egui::Pos2) {
-        self.manual = Some(position);
-    }
-
-    /// Give the placement back to the rule, reporting whether there was
-    /// anything to give.
-    ///
-    /// The named door out of the parked state, for a hand and for an operator
-    /// without one: the grip's double-click *calls* this rather than clearing
-    /// the field itself, so there is one way back and not two.
-    ///
-    /// Not Escape: a key a trader presses many times an hour would quietly
-    /// undo where they put the bar — see the escape stack in
-    /// `QuantickApp::drawing_keys`.
-    pub fn clear_manual(&mut self) -> bool {
-        self.manual.take().is_some()
-    }
-
-    #[must_use]
-    pub fn last_rect(&self) -> Option<egui::Rect> {
-        self.rect
-    }
-
-    /// Whether the press (origin, start time) began on the bar or its open
-    /// popover's layer — a drag there is not a chart drag. Decided once per
-    /// press and held to the release: a grip drag moves the bar, and egui
-    /// calls the release a drag. Keyed by start time, so a release this never
-    /// saw cannot hand its answer to the next press.
+    /// [`BarState::owns_press`] against the last rect, or the open popover's
+    /// `layer`.
     pub fn owns_press(
         &mut self,
         press: Option<(egui::Pos2, f64)>,
-        current: Option<egui::Rect>,
         layer: Option<egui::LayerId>,
     ) -> bool {
-        let Some((origin, started)) = press else {
-            return self.press_owned.take().is_some_and(|(_, owned)| owned);
-        };
-        if let Some((at, owned)) = self.press_owned
-            && at == started
-        {
-            return owned;
-        }
         let popover = self.popover_layer.filter(|_| self.open != Popover::None);
-        let owned = layer.is_some_and(|layer| Some(layer.id) == popover)
-            || current.is_some_and(|rect| rect.contains(origin));
-        self.press_owned = Some((started, owned));
-        owned
+        let on_popover = layer.is_some_and(|layer| Some(layer.id) == popover);
+        let current = self.state.last_rect();
+        (self.state).owns_press(press.map(|(at, t)| (px(at), t)), current, on_popover)
     }
 
     fn toggle(&mut self, popover: Popover, anchor: egui::Rect) {
@@ -512,7 +386,7 @@ pub fn show(
     let cells = slots(capabilities(object));
     let size = bar_size(&cells);
     let rect = egui::Rect::from_min_size(position, size);
-    bar.rect = Some(rect);
+    bar.state.set_rect(px_rect(rect));
     #[cfg(test)]
     {
         bar.probe.draw_again = None;
@@ -1017,9 +891,8 @@ fn draw_popover(
         && !response
             .rect
             .contains(ctx.pointer_latest_pos().unwrap_or_default())
-        && !bar
-            .rect
-            .is_some_and(|rect| rect.contains(ctx.pointer_latest_pos().unwrap_or_default()))
+        && !(bar.state.last_rect())
+            .is_some_and(|rect| rect.contains(px(ctx.pointer_latest_pos().unwrap_or_default())))
     {
         bar.open = Popover::None;
     }
@@ -1387,6 +1260,24 @@ impl ContextBar {
 
     pub fn popover_open(&self) -> bool {
         self.open != Popover::None
+    }
+
+    #[must_use]
+    pub fn manual_position(&self) -> Option<egui::Pos2> {
+        self.state.manual().map(pos)
+    }
+
+    pub fn set_manual(&mut self, position: egui::Pos2) {
+        self.state.set_manual(px(position));
+    }
+
+    pub fn clear_manual(&mut self) -> bool {
+        self.state.clear_manual()
+    }
+
+    #[must_use]
+    pub fn last_rect(&self) -> Option<egui::Rect> {
+        self.state.last_rect().map(super::geometry::egui_rect)
     }
 }
 

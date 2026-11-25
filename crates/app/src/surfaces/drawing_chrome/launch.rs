@@ -78,7 +78,7 @@ impl Chrome<'_> {
                 self.view.inspector.max_width = None;
             }
             if let Some([x, y]) = bar_position {
-                self.view.bar.bar.set_manual(egui::pos2(x, y));
+                self.view.bar.bar.state.set_manual(quantick_drawings::Px::new(x, y));
             }
         }
         if let Some(tab) = self.view.rejected_tab.take() {

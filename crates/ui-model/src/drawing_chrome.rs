@@ -3,6 +3,8 @@
 mod actions;
 #[path = "drawing_chrome/bar_dismissal.rs"]
 pub mod bar_dismissal;
+#[path = "drawing_chrome/bar_state.rs"]
+pub mod bar_state;
 #[path = "drawing_chrome/effects.rs"]
 mod effects;
 #[path = "drawing_chrome/inline.rs"]
