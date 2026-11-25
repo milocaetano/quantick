@@ -7,12 +7,10 @@ the feature-branch warning is measured against, as a marker line, because a
 number that lives in two places drifts and the first symptom is a warning
 nobody can reproduce.
 
-A pull request carries its own row: ``record --pr <n>`` appends it to the
-branch, in the diff, before the merge. The alternative was a workflow pushing
-straight to ``main``, which this repository's ruleset does not allow a bot to
-do and would not allow without a long-lived write credential in CI. The push
-side is therefore a check rather than a writer — ``verify`` says whether the
-pull request a merge commit closed left a row behind.
+Rows are generated from the first-parent history of ``origin/main`` after
+merging, never by feature pull requests. ``backfill`` preserves existing
+rows and the manually chosen ceiling; CI publishes the updated file as an
+artifact, and a separate maintenance PR can retain it in the repository.
 
 The ceiling is not computed here on every run. It was chosen once from the
 backfill — the median of the ``feat/`` and ``fix/`` rows, rounded to the
@@ -20,14 +18,11 @@ thousand — and ``median`` recomputes that suggestion on demand, for a person
 to decide with. A ceiling that moves by itself is not a bound; it is a
 description of whatever just happened.
 
-Subcommands: ``record`` this pull request's row, ``verify`` that a merge
-commit's pull request left one, ``backfill`` the last N merged pull requests
-through the calculator, ``median`` to see what the rows now suggest, and
-``ceiling`` to print the recorded one.
+Subcommands: ``backfill`` the last N main commits through the calculator,
+``median`` to see what the rows suggest, and ``ceiling`` to print the bound.
 """
 
 import argparse
-import datetime
 import importlib.util
 import json
 import os
@@ -45,11 +40,6 @@ ROW = re.compile(r"^\|\s*(\d+)\s*\|")
 COLUMNS = ("pr", "date", "branch", "base", "read_cost", "changed", "top")
 FEATURE_PREFIXES = ("feat/", "fix/")
 HEADING = "| PR | Date | Branch | Base | Read cost | Changed | Top referenced |"
-# What `record` did. "Already recorded" is a success: the command is
-# idempotent on the pull-request number, so a second run is not a failure.
-APPENDED = "appended"
-ALREADY_RECORDED = "already recorded"
-FAILED = "failed"
 RULE = "| ---: | --- | --- | --- | ---: | ---: | --- |"
 
 
@@ -176,9 +166,10 @@ def suggested_ceiling(rows):
     }
 
 
-def gh_json(*args):
+def gh_json(repo, *args):
     result = subprocess.run(
         ["gh", *args],
+        cwd=repo,
         check=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -213,134 +204,42 @@ def fetch_pull(repo, number, sha):
     return have_commit(repo, sha)
 
 
-def pull_facts(number):
-    """Base and head as the pull request itself recorded them.
-
-    Not the base branch's current tip: once the branch has merged, the merge
-    base of today's main and that head is the head itself, and the change
-    measures as empty.
-    """
-    data = gh_json("api", f"repos/{{owner}}/{{repo}}/pulls/{number}")
-    return {
-        "pr": data["number"],
-        "branch": data["head"]["ref"],
-        "base": data["base"]["ref"],
-        "merged": (data["merged_at"] or "")[:10],
-        "base_sha": data["base"]["sha"],
-        "head_sha": data["head"]["sha"],
-    }
-
-
-def merged_pull_for_commit(sha, fetch=None):
-    """The pull request this commit *is the merge of*, or ``None``.
-
-    ``fetch`` is the seam the tests replace. GitHub associates a commit with
-    every pull request that contains it, so the association is filtered down
-    to the one whose merge commit this is: a push that is not a merge, and a
-    merge of a branch that was never a pull request, both answer ``None`` and
-    the ledger gains no row.
-    """
-    fetch = fetch or gh_json
-    try:
-        associated = fetch("api", f"repos/{{owner}}/{{repo}}/commits/{sha}/pulls")
-    except (subprocess.CalledProcessError, json.JSONDecodeError):
-        return None
+def merged_pull_for_commit(repo, sha):
+    """Only the main PR merged by this commit, not PRs containing it."""
+    associated = gh_json(repo, "api", f"repos/{{owner}}/{{repo}}/commits/{sha}/pulls")
     for pull in associated:
-        if pull.get("merge_commit_sha") == sha and pull.get("merged_at"):
-            return pull["number"]
+        if (pull.get("merge_commit_sha") == sha and pull.get("merged_at")
+                and pull["base"]["ref"] == "main"):
+            return pull
     return None
-
-
-def row_for(path, pr):
-    """The recorded row for a pull request, or ``None``."""
-    try:
-        rows = parse_rows(read(path))
-    except OSError:
-        return None
-    for row in rows:
-        if row["pr"] == int(pr):
-            return row
-    return None
-
-
-def today():
-    return datetime.datetime.now(datetime.timezone.utc).date().isoformat()
-
-
-def record(repo, path, number):
-    """Append the row for pull request `number`, measured as GitHub sees it.
-
-    Answers which of the three things happened, because this is the one call
-    here that is an action rather than advice, and a caller that cannot tell
-    "recorded" from "could not record" commits nothing and finds out at the
-    merge. Works before the merge as well as after it, and measures the same
-    two objects either way: the base the pull request was opened against and
-    its current head. A row added on the branch and a row added from the merge
-    commit are therefore the same row.
-    """
-    facts = pull_facts(number)
-    for key in ("base_sha", "head_sha"):
-        if not fetch_pull(repo, number, facts[key]):
-            print(f"#{number}: objects unreachable, no row", file=sys.stderr)
-            return FAILED
-    try:
-        report = MEASURE.measure(repo, facts["base_sha"], facts["head_sha"])
-    except MEASURE.ReadCostError as problem:
-        print(f"#{number}: {problem}", file=sys.stderr)
-        return FAILED
-    row = row_from_report(
-        report,
-        number,
-        facts["branch"],
-        facts["base"],
-        facts["merged"] or today(),
-    )
-    outcome = APPENDED if append_row(path, row) else ALREADY_RECORDED
-    print(f"#{number}: {row['read_cost']} lines, {outcome}", file=sys.stderr)
-    return outcome
-
-
-def verify(path, sha):
-    """Whether the pull request this commit merged left a row behind.
-
-    ``None`` when the commit merged no pull request, which is not a finding:
-    an ordinary push has no row to carry.
-    """
-    number = merged_pull_for_commit(sha)
-    if number is None:
-        return None
-    return row_for(path, number) is not None
 
 
 def backfill(repo, path, limit):
-    merged = gh_json(
-        "pr", "list", "--state", "merged", "--limit", str(limit), "--json", "number"
-    )
-    numbers = sorted(entry["number"] for entry in merged)
-    written = 0
-    for number in numbers:
-        facts = pull_facts(number)
-        if not facts["merged"]:
-            print(f"#{number}: not merged, skipped", file=sys.stderr)
+    # Pin the history before consulting GitHub. Unmerged branches and merges
+    # into integration branches cannot add their own rows.
+    commits = MEASURE.git(
+        repo, "rev-list", "--first-parent", f"--max-count={limit}", "origin/main"
+    ).splitlines()
+    existing = {row["pr"] for row in parse_rows(read(path))}
+    rows = []
+    for sha in reversed(commits):
+        pull = merged_pull_for_commit(repo, sha)
+        if pull is None or pull["number"] in existing:
             continue
-        reachable = all(
-            fetch_pull(repo, number, facts[key]) for key in ("base_sha", "head_sha")
-        )
-        if not reachable:
-            print(f"#{number}: objects unreachable, skipped", file=sys.stderr)
-            continue
-        try:
-            report = MEASURE.measure(repo, facts["base_sha"], facts["head_sha"])
-        except MEASURE.ReadCostError as problem:
-            print(f"#{number}: {problem}", file=sys.stderr)
-            continue
-        row = row_from_report(
-            report, number, facts["branch"], facts["base"], facts["merged"]
-        )
-        if append_row(path, row):
-            written += 1
-        print(f"#{number}: {row['read_cost']} lines", file=sys.stderr)
-    return written
+        number = pull["number"]
+        for side in ("base", "head"):
+            if not fetch_pull(repo, number, pull[side]["sha"]):
+                raise MEASURE.ReadCostError(f"#{number}: {side} commit unreachable")
+        report = MEASURE.measure(repo, pull["base"]["sha"], pull["head"]["sha"])
+        rows.append(row_from_report(
+            report, number, pull["head"]["ref"], "main", pull["merged_at"][:10]
+        ))
+        existing.add(number)
+        print(f"#{number}: {report['production_lines']} lines measured", file=sys.stderr)
+    # A failed lookup or measurement leaves the ledger untouched.
+    for row in rows:
+        append_row(path, row)
+    return len(rows)
 
 
 def main(argv=None):
@@ -348,41 +247,23 @@ def main(argv=None):
     parser.add_argument("--ledger", default=DEFAULT_PATH, help="the ledger file")
     modes = parser.add_subparsers(dest="mode", required=True)
 
-    fill = modes.add_parser("backfill", help="measure the last N merged PRs")
+    fill = modes.add_parser("backfill", help="record merged PRs from the last N origin/main commits")
     fill.add_argument("--repo", required=True, help="path to the Git repository")
     fill.add_argument("--limit", type=int, default=30)
-
-    keep = modes.add_parser("record", help="append this pull request's row")
-    keep.add_argument("--repo", required=True, help="path to the Git repository")
-    keep.add_argument("--pr", required=True, type=int, help="the pull request")
-
-    check = modes.add_parser("verify", help="did the merged pull request leave a row")
-    check.add_argument("--commit", required=True, help="the pushed commit")
 
     modes.add_parser("median", help="what the rows now suggest as a ceiling")
     modes.add_parser("ceiling", help="print the recorded ceiling")
 
     args = parser.parse_args(argv)
     if args.mode == "backfill":
-        print(f"{backfill(args.repo, args.ledger, args.limit)} row(s) appended")
-        return 0
-    if args.mode == "record":
-        # The one non-zero exit here. A caller that is told nothing happened
-        # can stop and look; a caller told nothing at all commits an empty
-        # change and finds out at the merge.
-        return 0 if record(args.repo, args.ledger, args.pr) != FAILED else 1
-    if args.mode == "verify":
-        # Also always 0. This runs on `main`, after the merge, where the row
-        # can no longer be added by the pull request that owed it: reddening
-        # the default branch over a missing line of Markdown would be a worse
-        # trade than an annotation nobody has to act on today.
-        carried = verify(args.ledger, args.commit)
-        if carried is None:
-            print("no merged pull request, nothing to verify")
-        elif carried:
-            print("the merged pull request left its row")
-        else:
-            print("::warning::the merged pull request left no read-cost row")
+        if args.limit < 1:
+            parser.error("--limit must be positive")
+        try:
+            print(f"{backfill(args.repo, args.ledger, args.limit)} row(s) appended")
+        except (OSError, subprocess.CalledProcessError, json.JSONDecodeError,
+                MEASURE.ReadCostError) as problem:
+            print(f"error: {problem}", file=sys.stderr)
+            return 1
         return 0
     if args.mode == "median":
         suggestion = suggested_ceiling(parse_rows(read(args.ledger)))

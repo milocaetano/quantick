@@ -315,8 +315,8 @@ impl<'a> TabReads<'a> {
     /// What a freshly placed object of `tool` opens with on the pane at `side`
     /// of the tab at `index`, through the same door the click path uses.
     pub(crate) fn new_drawing(self, index: usize, side: PaneSide, tool: DrawingTool) -> NewDrawing {
-        let surface = self.tabs[index].pane(side).surface();
-        drawings::new_drawing_from_defaults(self.presets, surface, tool)
+        let canvas = self.tabs[index].pane(side).drawings.canvas();
+        drawings::new_drawing_from_defaults(self.presets, canvas, tool)
     }
 
     pub(crate) fn config(self) -> &'a AppConfig {
@@ -360,6 +360,12 @@ impl<'a> TabsMut<'a> {
         if let Some(lent) = self.lend_tab(index) {
             market_tab::run_history(lent, quantick_session::HistoryAct::Press(reach));
         }
+    }
+
+    /// The toolbar's History press, on the active tab.
+    pub(crate) fn press_active_history(self, reach: history_reach::HistoryReach) {
+        let active = self.tabs.active_index();
+        self.press_history(active, reach);
     }
 
     /// One tab beside the feed table and History default a call lends it.

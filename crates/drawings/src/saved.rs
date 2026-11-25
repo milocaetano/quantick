@@ -53,6 +53,7 @@ impl SavedDrawingExt for SavedDrawing {
             color: [r, g, b, a],
             width_px: f64::from(drawing.style.width_px),
             fill_alpha: drawing.style.fill_alpha,
+            follows_ground: drawing.follows_ground(),
             locked: drawing.locked,
             hidden: drawing.hidden,
             magnet: drawing.magnet,
@@ -116,6 +117,12 @@ impl SavedDrawingExt for SavedDrawing {
                     .clamp(crate::MIN_DRAWING_WIDTH_PX, crate::MAX_DRAWING_WIDTH_PX),
                 fill_alpha: self.fill_alpha.min(crate::MAX_DRAWING_FILL_ALPHA),
             },
+            // A mark without the flag is the trader's: nothing repaints it.
+            look: if self.follows_ground {
+                quantick_appearance::Inheritance::Theme
+            } else {
+                quantick_appearance::Inheritance::Explicit
+            },
             locked: self.locked,
             hidden: self.hidden,
             magnet: self.magnet,
@@ -140,7 +147,12 @@ impl SavedDrawingExt for SavedDrawing {
 /// `bars` unless it predates pinning. Entries of a tool this build lacks stay.
 ///
 /// `base` is the all-timeframes set the pane last loaded: see
-/// [`crate::persist_pane`], which keeps it.
+/// [`crate::persist_pane`], which keeps it. A mark that followed its ground
+/// there and still does is written with the look it loaded with: the pane
+/// resolving it on its own ground is no edit ([`Drawings::follow_ground`]),
+/// so the set never flips ink with whichever chart writes.
+///
+/// [`Drawings::follow_ground`]: crate::Drawings::follow_ground
 pub fn store_marks(
     settings: &mut MarketSettings,
     key: &DrawingKey,
@@ -148,18 +160,53 @@ pub fn store_marks(
     marks: &[Drawing<DrawingTool>],
     base: &[SavedDrawing],
 ) -> PaneWrite {
-    let items = marks
+    write_marks(settings, key, bars, marks, base).0
+}
+
+/// [`store_marks`], and the all-timeframes entries it wrote: the base of the
+/// pane's next write.
+pub(crate) fn write_marks(
+    settings: &mut MarketSettings,
+    key: &DrawingKey,
+    bars: &str,
+    marks: &[Drawing<DrawingTool>],
+    base: &[SavedDrawing],
+) -> (PaneWrite, Vec<SavedDrawing>) {
+    let items: Vec<SavedDrawing> = marks
         .iter()
         .map(|mark| {
-            let mut entry = SavedDrawing::from_drawing(mark);
+            let mut entry = SavedDrawing::from_drawing(&as_loaded(mark, base));
             if !entry.all_timeframes() && !mark.legacy_unpinned {
                 entry.bars = Some(bars.to_owned());
             }
             entry
         })
         .collect();
+    let written = items
+        .iter()
+        .filter(|entry| entry.all_timeframes())
+        .cloned()
+        .collect();
     let known = |tool: &str| DrawingTool::by_id(tool).is_some();
-    settings.store_pane(key, bars, items, base, known)
+    (settings.store_pane(key, bars, items, base, known), written)
+}
+
+/// `mark` with the look `base` loaded it with, when it followed its ground
+/// there and still does: see [`store_marks`].
+fn as_loaded(mark: &Drawing<DrawingTool>, base: &[SavedDrawing]) -> Drawing<DrawingTool> {
+    let mut kept = mark.clone();
+    let loaded = base
+        .iter()
+        .filter(|entry| entry.follows_ground && mark.follows_ground())
+        .find(|entry| entry.id == Some(mark.id.0))
+        .and_then(|entry| entry.to_drawing(mark.id));
+    if let Some(loaded) = loaded {
+        kept.style = loaded.style;
+        if let Some(look) = loaded.payload.export_preset() {
+            kept.payload.import_preset(&look);
+        }
+    }
+    kept
 }
 
 /// The live marks a pane holding `key`, cut at `bars`, shows: see

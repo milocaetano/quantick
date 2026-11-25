@@ -231,6 +231,7 @@ fn drawing_revision(drawings: &Drawings<DrawingTool>, index: usize) -> DrawingRe
             drawing.off_series,
             drawing.all_timeframes(),
             drawings.in_all_windows(index),
+            drawing.follows_ground(),
         ],
         layout: drawing.layout.map(|layout| layout.0),
         name: drawing.name.clone(),
@@ -269,8 +270,8 @@ struct PaneAnalysisRevisionKey {
 struct DrawingRevisionKey {
     id: u64,
     /// Locked, magnet, hidden, named, authored, foreign market, off series,
-    /// all timeframes, all windows.
-    flags: [bool; 9],
+    /// all timeframes, all windows, follows its pane's ground.
+    flags: [bool; 10],
     /// The layout it belongs to.
     layout: Option<u64>,
     /// Compared whole, so every rename moves the revision.
@@ -432,6 +433,7 @@ fn drawing_snapshot(drawings: &Drawings<DrawingTool>, index: usize) -> DrawingSn
         hidden: drawing.hidden,
         foreign_market: drawing.foreign_market,
         off_series: drawing.off_series,
+        follows_ground: drawing.follows_ground(),
         origin: drawing.origin.as_ref().map(|origin| DrawingOriginSnapshot {
             layout: origin.layout.clone(),
             symbol: origin.symbol.clone(),

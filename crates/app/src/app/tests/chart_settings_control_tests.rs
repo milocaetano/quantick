@@ -308,7 +308,7 @@ fn the_frame_publishes_chart_and_new_drawing_defaults_together() {
     let tool = crate::drawings::DrawingTool::by_id("text").unwrap();
     let old = crate::drawings::new_drawing_from_defaults(
         &app.drawings.presets,
-        quantick_appearance::ChartSurface::Paper,
+        quantick_appearance::ChartSurface::Paper.into(),
         tool,
     );
     let old_fill = app.runtime.style.candles.bull_fill;
@@ -329,7 +329,7 @@ fn the_frame_publishes_chart_and_new_drawing_defaults_together() {
     assert_eq!(app.runtime.style.candles.wick_width, 3.0);
     let new = crate::drawings::new_drawing_from_defaults(
         &app.drawings.presets,
-        quantick_appearance::ChartSurface::Paper,
+        quantick_appearance::ChartSurface::Paper.into(),
         tool,
     );
     assert_eq!(new.style.color, theme.color(Token::DrawingDefault));

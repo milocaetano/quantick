@@ -1,6 +1,6 @@
 //! Inputs shared by a historical preview and its explicit alarm publication.
 use quantick_engine::Side;
-use quantick_script_trigger::{ScriptInstance, ScriptPlacement};
+use quantick_script_trigger::{Script, ScriptInstance, ScriptPlacement};
 use quantick_strategy::Region;
 
 use crate::strategies::LiveClose;
@@ -26,8 +26,12 @@ pub struct Diagnostic {
     pub message: String,
 }
 
-/// Warming and admission finish before the store is touched.
-pub struct PreparedAlarm<D>(pub(super) Vec<ScriptInstance<D>>);
+/// Warming and admission finish before the store is touched. The compiled
+/// script travels with its instances so the desk can record it on commit.
+pub struct PreparedAlarm<D> {
+    pub(super) script: Script,
+    pub(super) alarms: Vec<ScriptInstance<D>>,
+}
 
 pub struct DraftInput<'a, D> {
     pub id: &'a str,

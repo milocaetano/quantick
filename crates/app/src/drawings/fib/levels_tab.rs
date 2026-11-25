@@ -23,7 +23,7 @@ pub(in crate::drawings) fn draw_levels_tab(
     ui: &mut egui::Ui,
     drawing: &mut Drawing,
     host: &mut dyn PresetHost,
-    surface: quantick_appearance::ChartSurface,
+    canvas: quantick_appearance::PaneCanvas,
 ) -> bool {
     let tool_id = drawing.tool.id();
     let anchor_prices: Vec<f64> = drawing.points.iter().map(|point| point.price).collect();
@@ -70,7 +70,7 @@ pub(in crate::drawings) fn draw_levels_tab(
     // asking; sending them to another tab for it is how this ended up being
     // redone every single session.
     ui.separator();
-    NewObjectDefaults { drawing, host }.show(ui, surface);
+    NewObjectDefaults { drawing, host }.show(ui, canvas);
 
     edited
 }
@@ -476,7 +476,7 @@ struct NewObjectDefaults<'a> {
 }
 
 impl NewObjectDefaults<'_> {
-    fn show(self, ui: &mut egui::Ui, surface: quantick_appearance::ChartSurface) {
+    fn show(self, ui: &mut egui::Ui, canvas: quantick_appearance::PaneCanvas) {
         let Self { drawing, host } = self;
         ui.horizontal(|ui| {
             // Named, because "Set as default" sits four rows up and means the
@@ -492,9 +492,9 @@ impl NewObjectDefaults<'_> {
                 )
                 .clicked()
             {
-                crate::drawings::save_tool_default(host, surface, drawing);
+                crate::drawings::save_tool_default(host, canvas, drawing);
             }
-            if crate::drawings::has_saved_default(host, surface, drawing.tool)
+            if crate::drawings::has_saved_default(host, canvas, drawing.tool)
                 && ui
                     .small_button("Reset to factory")
                     .on_hover_text(concat!(
@@ -503,7 +503,7 @@ impl NewObjectDefaults<'_> {
                     ))
                     .clicked()
             {
-                crate::drawings::reset_tool_default(host, surface, drawing.tool);
+                crate::drawings::reset_tool_default(host, canvas, drawing.tool);
             }
         });
     }

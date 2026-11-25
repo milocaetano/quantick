@@ -89,7 +89,7 @@ fn drawing_env<'a>(
         selected_band: read.selected_band,
         tab: facts.tab,
         side: facts.side,
-        surface: facts.surface,
+        canvas: facts.canvas,
         drawing_tool_armed: matches!(toolrail.tool(), Tool::Drawing(_)),
         toolbox_dock: toolrail.dock(),
         authored_objects: read.authored_objects,
@@ -288,7 +288,7 @@ impl DrawingControllerAccess<'_> {
         // editor opens on is the object this just placed.
         let (tab, side) = host.target();
         let fresh =
-            drawings::new_drawing_from_defaults(self.presets, host.surface_of(tab, side), tool);
+            drawings::new_drawing_from_defaults(self.presets, host.canvas_of(tab, side), tool);
         let placed =
             host.drawings_mut()
                 .place_with(tool, &drawings::DrawingBand::Price, point, |_| fresh);

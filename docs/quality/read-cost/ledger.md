@@ -6,20 +6,25 @@ directly reference. `tools/read_cost/measure.py` is the calculator and owns
 what counts; this file is only its record. Direct references, never a
 transitive closure.
 
-A pull request carries its own row. Before the merge, on the branch:
+Rows are written by the tool from merged `origin/main` history, never by the
+feature PR. Fetch main, then generate a batch for a separate maintenance PR:
 
 ```sh
-python tools/read_cost/ledger.py record --repo . --pr <number>
+git fetch origin
+python tools/read_cost/ledger.py backfill --repo . --limit 30
 ```
 
-It measures the same two objects CI measures — the base the pull request was
-opened against and its head — so the row is the same one a workflow would have
-written afterwards. The read-cost comment on the pull request asks for it when
-it is missing, `pr-gate` repeats the ask at `gh pr ready` and `gh pr merge`,
-and after the merge `ci.yml`'s `read-cost-ledger` job annotates the run when a
-merged pull request left none. Nothing writes here on the repository's behalf:
-`main` takes pull requests only, and a bot that could push to it would need a
-write credential living in CI.
+`--limit` bounds the number of first-parent main commits inspected; raise it
+to cover a longer gap. Only PRs whose merge commit is in that history and
+whose target was main are recorded. The calculator uses each merged PR's
+recorded base/head, so squash merges retain the full change. Existing rows
+and the ceiling are preserved; reruns do not duplicate rows. Lookup or
+measurement failures exit nonzero without appending a partial batch.
+
+On main pushes, `ci.yml`'s existing `read-cost-ledger` job publishes the
+updated file as `read-cost-ledger-<sha>`. Retain the artifact through a
+maintenance PR when needed; CI never pushes to main. Missing ledger rows
+produce no PR reminder or readiness check and require no post-review commit.
 
 The first 30 rows were backfilled through the same calculator, over the last
 30 merged pull requests at the time — campaign children included, which is why
@@ -28,8 +33,8 @@ the `Base` column exists.
 `Read cost` is `production_lines`. `Changed` is how many production Rust files
 the diff touched. `Top referenced` is the largest file the change pulls in by
 reference alone — one it never edits and a reader still has to open. `Date` is
-the day the row was written: the merge date for the backfilled rows, the day
-the pull request measured itself for the rows added since.
+the merge date for generated rows; historical branch-written rows retain
+the date they were originally measured.
 
 ## The ceiling
 
@@ -122,3 +127,4 @@ a bound.
 | 1175 | 2026-11-23 | chore/1173-sync-main | feature/strategies-panel | 78837 | 79 | `crates/app/src/control/gateway/server.rs` (1083) |
 | 1182 | 2026-11-24 | feat/script-alarm-noise | main | 12280 | 11 | `crates/control-handlers/src/workspace_book.rs` (1170) |
 | 1188 | 2026-11-24 | feat/day-and-tag-reports | main | 8376 | 10 | `crates/paper/src/pnl.rs` (560) |
+| 1198 | 2026-11-24 | fix/workspace-discard-and-persist | main | 20199 | 22 | `crates/ui-model/src/layout_picker.rs` (790) |

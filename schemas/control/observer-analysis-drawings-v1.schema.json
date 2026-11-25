@@ -115,6 +115,11 @@
           "$ref": "#/$defs/WireU64",
           "description": "Identity, stable while the object lives. Position in the list is not\nidentity: removing an earlier object renumbers positions and never\nthis."
         },
+        "follows_ground": {
+          "default": false,
+          "description": "Its look is the tool's factory look, worn in the factory ink of the\nground of the pane it sits on and repainted when the theme or the\npane's background changes; a saved default never reaches it. False\nwhen it opened from a saved default, once its look is the trader's own\n(any edit of colour, width, fill or a tool's look), and for a mark\nsaved before marks recorded it. Optional in the schema only so v1\nreaders stay compatible.",
+          "type": "boolean"
+        },
         "foreign_market": {
           "description": "The tab changed the instrument under this mark. Time survives a symbol\nswitch and price does not, so the anchors still resolve while the level\nmeans nothing on the chart it is now over. The object stays and says\nso, rather than pretending to be a level on this market.",
           "type": "boolean"

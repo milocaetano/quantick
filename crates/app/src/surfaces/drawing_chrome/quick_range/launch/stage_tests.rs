@@ -43,6 +43,7 @@ fn each_captured_mode_stages_the_real_owner_and_is_consumed_once() {
                 NewDrawing {
                     style: tool.default_style(),
                     payload: tool.default_payload(),
+                    look: Default::default(),
                 },
             )))
         });

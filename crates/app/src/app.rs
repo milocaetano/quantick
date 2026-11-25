@@ -15,6 +15,7 @@
 use crate::control::ControlAccess;
 #[cfg(any(feature = "drawing-harness", feature = "quick-range-harness", test))]
 use crate::surfaces::drawing_chrome::DrawingChromeExt as _;
+use quantick_ui_model::strategy_describe::conversation::Provider as _;
 use std::time::Instant;
 
 use eframe::egui;

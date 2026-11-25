@@ -265,6 +265,15 @@ pub struct DrawingSnapshot {
     /// placed at — the mark survived a re-cut, a rewind or a symbol switch,
     /// but no longer sits on the data it was drawn against.
     pub off_series: bool,
+    /// Its look is the tool's factory look, worn in the factory ink of the
+    /// ground of the pane it sits on and repainted when the theme or the
+    /// pane's background changes; a saved default never reaches it. False
+    /// when it opened from a saved default, once its look is the trader's own
+    /// (any edit of colour, width, fill or a tool's look), and for a mark
+    /// saved before marks recorded it. Optional in the schema only so v1
+    /// readers stay compatible.
+    #[serde(default)]
+    pub follows_ground: bool,
     /// The layout and contract a migration merged this object from, when one
     /// did. A merged market is labelled, never passed off as one history.
     /// Optional in the schema only so v1 readers stay compatible.

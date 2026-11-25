@@ -69,6 +69,7 @@ pub use family::{
 };
 pub use geometry::{distance_to_segment, level_with, off_line_by, pos2, unit_normal, vec2};
 mod layout_scope;
+mod look;
 mod pane_sync;
 mod saved;
 pub use layout_scope::retarget_layout;

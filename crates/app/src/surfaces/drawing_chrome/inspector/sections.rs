@@ -62,13 +62,13 @@ pub(super) fn body(
     match chrome.state().inspector.tab {
         InspectorTab::Extra => {
             actions.edited |=
-                crate::drawings::draw_extra_tab(tool, ui, edited, presets, env.surface);
+                crate::drawings::draw_extra_tab(tool, ui, edited, presets, env.canvas);
         }
         InspectorTab::Style => actions.merge(
             StyleTab {
                 edited,
                 presets,
-                surface: env.surface,
+                canvas: env.canvas,
             }
             .show(ui),
         ),
@@ -200,9 +200,9 @@ impl TabStrip<'_> {
 struct StyleTab<'a, 'p> {
     edited: &'a mut Drawing,
     presets: &'a mut RecordingPresetHost<'p>,
-    /// The surface of the pane the inspector edits: its ground is the one
+    /// The canvas of the pane the inspector edits: its ground is the one
     /// "save as default" and "reset" speak for.
-    surface: quantick_appearance::ChartSurface,
+    canvas: quantick_appearance::PaneCanvas,
 }
 
 impl StyleTab<'_, '_> {
@@ -210,10 +210,10 @@ impl StyleTab<'_, '_> {
         let Self {
             edited,
             presets,
-            surface,
+            canvas,
         } = self;
         let tool = edited.tool;
-        let ground = drawings::defaults_ground(presets, surface);
+        let ground = drawings::defaults_ground(presets, canvas);
         let name = tool.name().to_lowercase();
         let mut actions = InspectorActions::default();
         ui.label("Style");
@@ -264,7 +264,7 @@ impl StyleTab<'_, '_> {
                 .on_hover_text(saved.hint(&name))
                 .clicked()
             {
-                drawings::save_tool_default(presets, surface, edited);
+                drawings::save_tool_default(presets, canvas, edited);
                 actions.saved_default = Some(saved);
             }
             // Style only, and that is not a shortcut: a Fib's level list
@@ -276,17 +276,17 @@ impl StyleTab<'_, '_> {
                 .on_hover_text(saved.hint(&name))
                 .clicked()
             {
-                drawings::save_style_on_every_tool(presets, surface, style);
+                drawings::save_style_on_every_tool(presets, canvas, style);
                 actions.saved_default = Some(saved);
             }
             let saved = SavedDefault::Forgotten(ground);
-            if drawings::has_saved_default(presets, surface, tool)
+            if drawings::has_saved_default(presets, canvas, tool)
                 && ui
                     .button("Reset to factory")
                     .on_hover_text(saved.hint(&name))
                     .clicked()
             {
-                drawings::reset_tool_default(presets, surface, tool);
+                drawings::reset_tool_default(presets, canvas, tool);
                 actions.saved_default = Some(saved);
             }
         });

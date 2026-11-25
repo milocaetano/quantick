@@ -91,17 +91,6 @@ pub(crate) fn replay_trace_path_for(session_path: &std::path::Path) -> std::path
 
 use registry::{ProjectionRegistry, ProjectionRegistryError};
 
-/// How many actions this build registers — what the catalog test counts
-/// against the published surface, so adding one action is one line of code
-/// and no arithmetic in a test.
-#[cfg(test)]
-pub(crate) fn registered_action_count() -> usize {
-    actions::standard_actions()
-        .expect("built-in action registry must be valid")
-        .descriptors()
-        .count()
-}
-
 /// Run the registered action `id` on `window`, as the gateway does once a
 /// call is admitted.
 #[cfg(test)]

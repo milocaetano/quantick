@@ -215,7 +215,8 @@ capability that cannot change application state.
 | `workspace.new` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
 | `workspace.rename` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
 | `workspace.revert` | 1 | `workspace` | no | `cockpit`, `cockpit.layout` |
+| `workspace.revert.undo` | 1 | `workspace` | no | `cockpit`, `cockpit.layout` |
 | `workspace.save_as` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
 | `workspace.save_to` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
 
-193 capabilities registered.
+194 capabilities registered.

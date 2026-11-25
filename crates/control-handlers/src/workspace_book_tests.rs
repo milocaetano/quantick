@@ -457,7 +457,7 @@ fn delete_moves_tabs_to_default_keeps_edits_and_a_repeat_is_refused() {
 }
 
 #[test]
-fn rename_answers_the_cleaned_name_and_revert_is_refused() {
+fn rename_answers_the_cleaned_name() {
     let (mut host, mut access, actor) = parts();
     save_as(&mut host, &mut access, &actor, &json!({ "name": "Scalp" })).unwrap();
     let value = json!({ "name": "Scalp", "to": " The  open " });
@@ -467,24 +467,48 @@ fn rename_answers_the_cleaned_name_and_revert_is_refused() {
     let value = json!({ "name": "The open", "to": "The open" });
     let same = rename(&mut host, &mut access, &actor, &value).unwrap();
     assert_eq!(same["changed"], false);
+}
+
+#[test]
+fn revert_drops_the_edit_unsaved_and_its_undo_brings_it_back_once() {
+    let (mut host, mut access, actor) = parts();
+    save_as(&mut host, &mut access, &actor, &json!({ "name": "Scalp" })).unwrap();
+    let saved = host.book.tab_copy(1).cloned();
+    let journaled = access.events.len();
+    let clean = revert::revert(&mut host, &mut access, &actor, &json!({})).unwrap();
+    assert_eq!(clean["changed"], false, "nothing to revert");
+    assert_eq!(access.events.len(), journaled, "no change, no row");
 
     edit(&mut host, 1);
-    let before = host.book.clone();
-    let journaled = access.events.len();
-    let refused = revert(&mut host, &mut access, &actor, &json!({})).unwrap_err();
-    assert_eq!(detail(&refused), "workspace.revert_removed");
-    assert!(
-        refused.message.contains("workspace.save_to"),
-        "{}",
-        refused.message
+    let edited = host.book.tab_copy(1).cloned();
+    let written = host.writes;
+    let reverted = revert::revert(&mut host, &mut access, &actor, &json!({})).unwrap();
+    assert_eq!(
+        reverted,
+        json!({ "tab_id": "1", "workspace": "Scalp", "changed": true })
     );
-    assert!(
-        refused.message.contains("workspace.autosave.set"),
-        "{}",
-        refused.message
+    assert_eq!(host.book.tab_copy(1).cloned(), saved);
+    assert_eq!(host.writes, written, "a revert writes nothing");
+    let kinds = |access: &FakeAccess| {
+        (access.events.iter().skip(journaled))
+            .map(|event| event.kind.as_str().to_owned())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(kinds(&access), ["workspace.reverted"]);
+
+    let back = revert::undo(&mut host, &mut access, &actor, &json!({ "tab_id": "1" })).unwrap();
+    assert_eq!(back["changed"], true);
+    assert_eq!(host.book.tab_copy(1).cloned(), edited);
+    let again = revert::undo(&mut host, &mut access, &actor, &json!({})).unwrap();
+    assert_eq!(again["changed"], false, "taken once");
+    assert_eq!(
+        kinds(&access),
+        ["workspace.reverted", "workspace.revert_undone"]
     );
-    assert_eq!(host.book, before, "the edit stays held");
-    assert_eq!(access.events.len(), journaled);
+
+    let unknown = json!({ "tab_id": "99" });
+    let refused = revert::revert(&mut host, &mut access, &actor, &unknown).unwrap_err();
+    assert_eq!(detail(&refused), "workspace.unknown_tab");
 }
 
 #[test]
@@ -523,11 +547,10 @@ fn every_journal_row_reads_a_field_the_event_carries() {
     new(&mut host, &mut access, &actor, &json!({ "name": "Blank" })).unwrap();
     let value = json!({ "name": "Blank", "colour": "#3A7BD5" });
     colour_set(&mut host, &mut access, &actor, &value).unwrap();
-    // Revert only refuses now: its row names an event nothing journals.
-    for row in READBACKS
-        .iter()
-        .filter(|row| row.capability != "workspace.revert")
-    {
+    edit(&mut host, 1);
+    revert::revert(&mut host, &mut access, &actor, &json!({})).unwrap();
+    revert::undo(&mut host, &mut access, &actor, &json!({})).unwrap();
+    for row in READBACKS {
         let kind = row.event.unwrap();
         let field = row.field.strip_prefix("payload.").unwrap();
         assert!(
