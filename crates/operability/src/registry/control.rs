@@ -7,7 +7,7 @@
 use super::{ExclusionClass, Mapping, Source, UiBehaviour};
 
 /// The window and its market tabs.
-pub(super) const WINDOW_AND_TABS: &[UiBehaviour] = &[
+pub const WINDOW_AND_TABS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "layout.window.state.set",
         title: "Set native window presentation",
@@ -200,7 +200,7 @@ pub(super) const WINDOW_AND_TABS: &[UiBehaviour] = &[
 ];
 
 /// Layout tabs.
-pub(super) const LAYOUT_TABS: &[UiBehaviour] = &[
+pub const LAYOUT_TABS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "layout.tab.create",
         title: "Add a layout tab",
@@ -260,7 +260,7 @@ pub(super) const LAYOUT_TABS: &[UiBehaviour] = &[
 ];
 
 /// Feed recovery.
-pub(super) const FEED_RECOVERY: &[UiBehaviour] = &[
+pub const FEED_RECOVERY: &[UiBehaviour] = &[
     UiBehaviour {
         id: "feed.reconnect",
         title: "Respawn the transport and keep the timeline",
@@ -310,7 +310,7 @@ pub(super) const FEED_RECOVERY: &[UiBehaviour] = &[
 ];
 
 /// The rest of the chrome.
-pub(super) const CHROME: &[UiBehaviour] = &[
+pub const CHROME: &[UiBehaviour] = &[
     UiBehaviour {
         id: "window.menu.open",
         title: "Open the window menu",

@@ -22,6 +22,7 @@ macro_rules! control_families {
             bubble_preset { schemas: [bubble_preset], catalog: [bubble_preset], readbacks: [bubble_preset], handlers: [pub bubble_preset], actions: [register_tick, register] }
             bubble_save { schemas: [bubble_save], catalog: [], readbacks: [bubble_save], handlers: [pub bubble_save], actions: [register] }
             bubble_scale { schemas: [bubble_scale], catalog: [bubble_scale], readbacks: [bubble_scale], handlers: [pub bubble_scale], actions: [register] }
+            calls { schemas: [calls], catalog: [], readbacks: [], handlers: [], actions: [] }
             canvas { schemas: [canvas], catalog: [canvas], readbacks: [canvas], handlers: [pub canvas], actions: [register] }
             catalog { schemas: [catalog], catalog: [], readbacks: [], handlers: [], actions: [] }
             chart { schemas: [chart], catalog: [], readbacks: [], handlers: [pub chart], actions: [] }
@@ -98,6 +99,7 @@ macro_rules! control_families {
             trace_replay { schemas: [trace_replay], catalog: [], readbacks: [], handlers: [], actions: [] }
             trade { schemas: [trade], catalog: [], readbacks: [trade], handlers: [pub trade], actions: [register] }
             trade_account { schemas: [trade_account], catalog: [], readbacks: [trade_account], handlers: [pub trade_account], actions: [] }
+            ui_behaviours { schemas: [ui_behaviours], catalog: [], readbacks: [], handlers: [], actions: [] }
             widget { schemas: [widget], catalog: [widget], readbacks: [widget], handlers: [], actions: [] }
             widgets { schemas: [], catalog: [], readbacks: [], handlers: [pub widgets], actions: [register] }
             window_menu { schemas: [window_menu], catalog: [], readbacks: [], handlers: [], actions: [] }
