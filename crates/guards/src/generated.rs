@@ -209,7 +209,7 @@ fn check_retry_matrix(root: &Path, findings: &mut Vec<Finding>) {
 
 /// The rows of a generated table with exactly `width` columns whose first
 /// cell is a backticked identifier — the shape both generators write their
-/// capability rows in, and a shape no heading or summary row has.
+/// capability rows in, and a shape no heading row has.
 fn table_rows(document: &str, width: usize) -> impl Iterator<Item = Vec<&str>> {
     document.lines().filter_map(move |line| {
         let columns: Vec<&str> = line.trim_matches('|').split('|').collect();
@@ -367,7 +367,8 @@ fn check_inventory(root: &Path, findings: &mut Vec<Finding>) {
     // The set comparison above cannot see a row duplicated by hand: the
     // identifier is still documented once as far as a set is concerned. The
     // generator writes one row per capability and version — `layout.*` was the
-    // first to register two versions — so a repeated pair is a hand edit.
+    // first to register two versions — so a repeated pair is a hand edit. A
+    // deleted or invented version row is the app's byte-for-byte test's to find.
     let mut seen = BTreeSet::new();
     for (line, id, version) in documented_rows(&document) {
         if !seen.insert((id, version)) {
@@ -681,21 +682,10 @@ fn hook_names(text: &str) -> BTreeSet<String> {
 
 /// The identifiers the committed table claims, with the line each is on.
 fn documented_capabilities(document: &str) -> BTreeMap<String, usize> {
-    let mut out = BTreeMap::new();
-    for (index, line) in document.lines().enumerate() {
-        let trimmed = line.trim_start();
-        if !trimmed.starts_with("| `") {
-            continue;
-        }
-        if let Some(id) = trimmed
-            .strip_prefix("| `")
-            .and_then(|rest| rest.split('`').next())
-            && is_capability_id(id)
-        {
-            out.insert(id.to_owned(), index + 1);
-        }
-    }
-    out
+    documented_rows(document)
+        .into_iter()
+        .map(|(line, id, _)| (id.to_owned(), line))
+        .collect()
 }
 
 /// The identifiers the sources declare, with the `path:line` each sits at.

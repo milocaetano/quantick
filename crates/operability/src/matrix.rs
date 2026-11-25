@@ -133,8 +133,9 @@ fn appendix() -> String {
     let mut out = String::new();
     out.push_str("## Appendix: sources the guard walks\n\n");
     out.push_str(concat!(
-        "The registries a row can claim an entry in. A source rows claim is a\n",
-        "place where adding an entry and forgetting the matrix fails the build.\n\n",
+        "Each registry the guard walks: adding an entry to one and forgetting\n",
+        "the matrix fails the build. `authored` is not a registry but the\n",
+        "declared marker of a row no registry stands behind.\n\n",
     ));
     for source in Source::ALL {
         let _ = writeln!(out, "- `{}`", source.as_str());

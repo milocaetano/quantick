@@ -247,8 +247,9 @@ The three exclusion classes are closed:
 
 ## Appendix: sources the guard walks
 
-The registries a row can claim an entry in. A source rows claim is a
-place where adding an entry and forgetting the matrix fails the build.
+Each registry the guard walks: adding an entry to one and forgetting
+the matrix fails the build. `authored` is not a registry but the
+declared marker of a row no registry stands behind.
 
 - `toolbar_action`
 - `strip_action`
