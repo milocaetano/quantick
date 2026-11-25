@@ -1,55 +1,81 @@
 #!/bin/sh
-# Merge origin/main into the current branch and regenerate the hook registry
-# instead of hand-merging it.
+# Merge origin/main into the current branch and regenerate every generated
+# file instead of hand-merging it.
 #
 #   sh tools/merge_main.sh             fetch and merge origin/main
 #   sh tools/merge_main.sh --continue  after the hand-written conflicts are
 #                                      resolved and staged: regenerate, commit
 #
-# The registry is generated from `declare_hooks!` and
-# docs/ui-harness/hook-prose.md, so two branches that each document a hook
-# conflict on it even when their sources merge cleanly — and a clean text
-# merge of it can still differ from what the merged sources generate. So it
-# is regenerated whenever both sides changed it, last, because the generator
-# compiles the app from the merged sources.
+# Generated files are produced from the code: the hook registry, the
+# capability inventory, the UI behaviour and retry matrices, and every
+# document under schemas/control (public contracts, observer schemas and the
+# observer capability catalog). When the branch and main each add a
+# capability, each side generated them from its own code, so even a clean
+# text merge differs from what the merged code generates and the drift tests
+# fail. So after every merge they are all regenerated from the merged
+# sources, last, and staged into the merge commit. A conflict in one of them
+# is never resolved by hand: main's side is taken, then overwritten.
 #
 # Baseline raises need nothing here: they live one file per branch under
 # crates/guards/*-baseline.d/ and never conflict.
 set -eu
 
+cd "$(git rev-parse --show-toplevel)"
+
 registry=.claude/skills/ui-harness/references/hook-registry.md
+inventory=docs/control-plane/capability-inventory.md
+behaviour=docs/control-plane/ui-behaviour-matrix.md
+retry=docs/control-plane/retry-matrix.md
+schemas=schemas/control
 marker="$(git rev-parse --absolute-git-dir)/merge-main-regenerate"
 
-cd "$(git rev-parse --show-toplevel)"
+generated() {
+    case "$1" in
+    "$registry" | "$inventory" | "$behaviour" | "$retry" | "$schemas"/*) return 0 ;;
+    *) return 1 ;;
+    esac
+}
 
 if [ "${1:-}" != "--continue" ]; then
     git fetch origin
-    base=$(git merge-base HEAD origin/main)
-    rm -f "$marker"
-    if ! git diff --quiet "$base" HEAD -- "$registry" &&
-        ! git diff --quiet "$base" origin/main -- "$registry"; then
-        : >"$marker"
-    fi
     git merge --no-commit --no-ff origin/main || true
     # Up to date, or refused: nothing was merged, so nothing to regenerate.
-    git rev-parse -q --verify MERGE_HEAD >/dev/null || rm -f "$marker"
+    if git rev-parse -q --verify MERGE_HEAD >/dev/null; then
+        : >"$marker"
+    else
+        rm -f "$marker"
+    fi
 fi
 
+# A stale live bubbles file breaks the launch the generators run.
+# Written beside, then moved: a build failure must not truncate the file.
+dump() {
+    env -u QUANTICK_BUBBLES cargo run -q -p quantick-app --features harness -- "$1" >"$2.new"
+    mv "$2.new" "$2"
+}
+
 regenerate() {
-    # Written beside, then moved: a build failure must not leave the registry
-    # truncated. A stale live bubbles file breaks the launch the generator runs.
-    env -u QUANTICK_BUBBLES cargo run -q -p quantick-app --features harness -- \
-        --dump-hook-registry >"$registry.new"
-    mv "$registry.new" "$registry"
+    # The public-contract writer fails whenever it rewrote a file, by design;
+    # its verdict is the check after it, which must pass.
+    env -u QUANTICK_BUBBLES cargo test -q -p quantick-control --test schema_snapshots -- \
+        --ignored regenerate_public_contracts >/dev/null 2>&1 || true
+    env -u QUANTICK_BUBBLES cargo test -q -p quantick-control --test schema_snapshots -- \
+        generated_public_contracts_match_committed_files
+    env -u QUANTICK_BUBBLES cargo test -q -p quantick-app --features harness -- \
+        --ignored regenerate_observer_schemas
+    dump --dump-hook-registry "$registry"
+    dump --dump-capability-inventory "$inventory"
+    dump --dump-ui-behaviour-matrix "$behaviour"
+    dump --dump-retry-matrix "$retry"
     rm -f "$marker"
 }
 
 if ! git rev-parse -q --verify MERGE_HEAD >/dev/null; then
     if [ -f "$marker" ]; then
-        # The merge was committed by hand before the registry was regenerated.
+        # The merge was committed by hand before regeneration.
         regenerate
-        if ! git diff --quiet -- "$registry"; then
-            echo "The merge was committed with a stale $registry; it is regenerated now — commit it." >&2
+        if [ -n "$(git status --porcelain -- "$registry" "$inventory" "$behaviour" "$retry" "$schemas")" ]; then
+            echo "The merge was committed with stale generated files; they are regenerated now: commit them." >&2
             exit 1
         fi
         exit 0
@@ -58,20 +84,25 @@ if ! git rev-parse -q --verify MERGE_HEAD >/dev/null; then
         exit 0
     fi
     echo "No merge in progress: git refused the merge (see above)." >&2
-    rm -f "$marker"
     exit 1
 fi
 
-others=$(git diff --name-only --diff-filter=U | grep -vx "$registry" || true)
+others=""
+for path in $(git diff --name-only --diff-filter=U); do
+    if generated "$path"; then
+        # Any parseable side will do: regeneration overwrites it.
+        git checkout --theirs -- "$path" 2>/dev/null || git rm -q -- "$path"
+    else
+        others="$others
+$path"
+    fi
+done
 if [ -n "$others" ]; then
     echo "Resolve and stage these by hand, then run: sh tools/merge_main.sh --continue" >&2
     echo "$others" >&2
     exit 1
 fi
 
-if [ -f "$marker" ]; then
-    regenerate
-    git add "$registry"
-fi
-
+regenerate
+git add -A -- "$registry" "$inventory" "$behaviour" "$retry" "$schemas"
 git commit --no-edit
