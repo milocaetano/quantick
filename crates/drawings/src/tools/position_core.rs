@@ -334,7 +334,12 @@ pub(super) fn paint(
         }
     }
     for (y, rgb) in zones {
-        let edge = Stroke::new(EDGE_PX, ink(rgb, u8::MAX));
+        // The halo pass traces the edges in the selection's own ink.
+        let edge = if ctxt.halo {
+            Stroke::new(style.width_px, style.color)
+        } else {
+            Stroke::new(EDGE_PX, ink(rgb, u8::MAX))
+        };
         painter.line_segment([pos2(left, y), pos2(right, y)], edge);
     }
     if ctxt.halo || !ctxt.primary_band || !ctxt.selected {
@@ -678,6 +683,9 @@ impl MarkTool for PositionTool {
         Some(POSITION_FAMILY)
     }
     fn price_band_only(&self) -> bool {
+        true
+    }
+    fn square_handles(&self) -> bool {
         true
     }
     fn default_payload(&self) -> Box<dyn DrawingPayload> {

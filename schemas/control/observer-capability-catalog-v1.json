@@ -6991,6 +6991,379 @@
         "status": "available"
       },
       "confirmation_class": "none",
+      "description": "The `Save as default` and `Reset` rows that end a position's floating-bar menus. `save` makes new positions of the named drawing's side (long and short keep separate defaults) open with its colours, opacity and ratio, a custom ratio as its prices make it; `reset` returns them to the factory look (target #2EA064, stop #D63031, 22 %, risk 1 : reward 1); `inspect` changes nothing. Per chart ground, like every drawing default. Drawings already placed never change. The result reads back what a new position opens with.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "annotate.position.default",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "DefaultAction": {
+            "oneOf": [
+              {
+                "const": "save",
+                "description": "New positions of the drawing's side open with its look and ratio.",
+                "type": "string"
+              },
+              {
+                "const": "reset",
+                "description": "New positions of the drawing's side open with the factory look.",
+                "type": "string"
+              },
+              {
+                "const": "inspect",
+                "description": "Read what new positions of the drawing's side open with.",
+                "type": "string"
+              }
+            ]
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "$ref": "#/$defs/DefaultAction"
+          },
+          "drawing_id": {
+            "$ref": "#/$defs/WireU64",
+            "description": "The position whose tool, and for `save` whose look, the call uses."
+          },
+          "pane_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          }
+        },
+        "required": [
+          "tab_id",
+          "pane_id",
+          "drawing_id",
+          "action"
+        ],
+        "title": "PositionDefaultInput",
+        "type": "object"
+      },
+      "module": "annotate",
+      "output_schema": {
+        "$defs": {
+          "CanonicalDecimal": {
+            "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+            "type": "string"
+          },
+          "PositionLook": {
+            "description": "A position's look: what its bar shows and a saved default carries.",
+            "properties": {
+              "custom": {
+                "description": "Whether the ratio is none of the menu's presets (1, 2, 3).",
+                "type": "boolean"
+              },
+              "ratio": {
+                "$ref": "#/$defs/CanonicalDecimal",
+                "description": "Reward per unit of risk."
+              },
+              "ratio_text": {
+                "description": "The bar button's words, risk first: `R/R 1:2`, `Custom · R/R 1:1.3`.",
+                "type": "string"
+              },
+              "stop_color": {
+                "type": "string"
+              },
+              "target_color": {
+                "type": "string"
+              },
+              "zone_opacity_pct": {
+                "format": "uint8",
+                "maximum": 255,
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "target_color",
+              "stop_color",
+              "zone_opacity_pct",
+              "ratio",
+              "custom",
+              "ratio_text"
+            ],
+            "type": "object"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "opening": {
+            "$ref": "#/$defs/PositionLook",
+            "description": "What a new position of this tool opens with on this pane's ground."
+          },
+          "saved": {
+            "description": "Whether a saved default stands, rather than the factory look.",
+            "type": "boolean"
+          },
+          "tool_id": {
+            "description": "`long-position` or `short-position`: each keeps its own default.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tool_id",
+          "opening",
+          "saved"
+        ],
+        "title": "PositionDefaultResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "Save and reset name the state they want; repeating either is harmless.",
+      "title": "Save, reset or read a position tool's default",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Reads and optionally edits one long or short position drawing, named by the `tab_id`, `pane_id` and `drawing_id` analysis.drawings lists: target and stop zone colours (`#RRGGBB`), zone opacity (0-100 %), risk/reward as reward per unit of risk (0.1-20; only the target moves, entry and stop never do) and width in bars (at least 14; no price moves). The same edits as the position's floating bar. Omit every optional field to inspect. A locked position refuses ratio and width but takes colours. Invalid input changes nothing. One undo step; saved with the drawings. The result reads the look, legs and width back.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "annotate.position.set",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "CanonicalDecimal": {
+            "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+            "type": "string"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "Edit or inspect one position. Omit every optional field to inspect.",
+        "properties": {
+          "drawing_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "pane_id": {
+            "$ref": "#/$defs/WireU64",
+            "description": "The pane holding the drawing; a drawing id is unique only within it."
+          },
+          "ratio": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Reward per unit of risk, 0.1 through 20, as a canonical decimal:\n`\"2\"` is risk 1 : reward 2. Only the target moves."
+          },
+          "stop_color": {
+            "default": null,
+            "description": "Stop zone colour, `#RRGGBB`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64",
+            "description": "The tab holding the drawing, as `analysis.drawings` lists it."
+          },
+          "target_color": {
+            "default": null,
+            "description": "Target zone colour, `#RRGGBB`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "width_bars": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Drawn width in bars, at least 14; the left edge holds. No price moves."
+          },
+          "zone_opacity_pct": {
+            "default": null,
+            "description": "Both zones' fill opacity, 0 through 100 percent.",
+            "format": "uint8",
+            "maximum": 100,
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "tab_id",
+          "pane_id",
+          "drawing_id"
+        ],
+        "title": "PositionSetInput",
+        "type": "object"
+      },
+      "module": "annotate",
+      "output_schema": {
+        "$defs": {
+          "CanonicalDecimal": {
+            "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+            "type": "string"
+          },
+          "PositionLook": {
+            "description": "A position's look: what its bar shows and a saved default carries.",
+            "properties": {
+              "custom": {
+                "description": "Whether the ratio is none of the menu's presets (1, 2, 3).",
+                "type": "boolean"
+              },
+              "ratio": {
+                "$ref": "#/$defs/CanonicalDecimal",
+                "description": "Reward per unit of risk."
+              },
+              "ratio_text": {
+                "description": "The bar button's words, risk first: `R/R 1:2`, `Custom · R/R 1:1.3`.",
+                "type": "string"
+              },
+              "stop_color": {
+                "type": "string"
+              },
+              "target_color": {
+                "type": "string"
+              },
+              "zone_opacity_pct": {
+                "format": "uint8",
+                "maximum": 255,
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "target_color",
+              "stop_color",
+              "zone_opacity_pct",
+              "ratio",
+              "custom",
+              "ratio_text"
+            ],
+            "type": "object"
+          },
+          "PositionSideDto": {
+            "enum": [
+              "long",
+              "short"
+            ],
+            "type": "string"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "changed": {
+            "description": "Whether the call changed the drawing; `false` for an inspection or\nvalues already standing.",
+            "type": "boolean"
+          },
+          "drawing_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "entry": {
+            "$ref": "#/$defs/CanonicalDecimal"
+          },
+          "look": {
+            "$ref": "#/$defs/PositionLook"
+          },
+          "pane_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "side": {
+            "$ref": "#/$defs/PositionSideDto"
+          },
+          "stop": {
+            "$ref": "#/$defs/CanonicalDecimal"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "target": {
+            "$ref": "#/$defs/CanonicalDecimal"
+          },
+          "width_bars": {
+            "$ref": "#/$defs/CanonicalDecimal"
+          }
+        },
+        "required": [
+          "tab_id",
+          "pane_id",
+          "drawing_id",
+          "side",
+          "look",
+          "entry",
+          "stop",
+          "target",
+          "width_bars",
+          "changed"
+        ],
+        "title": "PositionSetResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "Explicit values make retries harmless; the result reads the drawing back.",
+      "title": "Edit or inspect a long or short position",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
       "description": "Draws a rectangle on two chart coordinates, including projected space beyond the latest bar.",
       "destructive": false,
       "dry_run_supported": false,

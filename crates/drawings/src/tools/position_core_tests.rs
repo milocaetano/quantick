@@ -580,3 +580,50 @@ fn the_plan_plate_names_the_side_and_the_ratio_risk_first() {
         "Short · risk 1 : reward 1.5 · entry 165461.58"
     );
 }
+
+/// The handles a selected position shows are squares — its two anchors and
+/// the entry line's two width ends — and the halo traces its edges in the
+/// selection's ink, never in a zone colour.
+#[test]
+fn a_selected_position_shows_square_handles_and_a_halo_in_selection_ink() {
+    let scale = scale();
+    let anchors = [ChartPoint::at(10.0, 100.0), ChartPoint::at(30.0, 90.0)];
+    let points = screen(&scale, &anchors);
+    let payload = two_to_one();
+    let ctxt = context(&payload, &anchors, &scale);
+    let mut scene = MarkScene::default();
+    let chart = PxRect::from_min_max(pos2(0.0, 0.0), pos2(1000.0, 2000.0));
+    let tool = crate::DrawingTool::by_id("long-position").unwrap();
+    tool.paint(
+        &mut scene,
+        chart,
+        DrawingStyle::default(),
+        &points,
+        &ctxt,
+        true,
+    );
+    let ring = crate::SELECTED_ANCHOR_RING_WIDTH_PX;
+    let squares = scene
+        .shapes
+        .iter()
+        .filter(
+            |shape| matches!(shape, crate::MarkShape::Rect { stroke, .. } if stroke.width == ring),
+        )
+        .count();
+    assert_eq!(squares, 4);
+    assert!(
+        !scene
+            .shapes
+            .iter()
+            .any(|shape| matches!(shape, crate::MarkShape::Circle { .. }))
+    );
+    let halo = ctxt.appearance.color(Token::DrawingSelectionHalo);
+    let halo_edges = scene
+        .shapes
+        .iter()
+        .filter(
+            |shape| matches!(shape, crate::MarkShape::Line { stroke, .. } if stroke.color == halo),
+        )
+        .count();
+    assert_eq!(halo_edges, 2);
+}
