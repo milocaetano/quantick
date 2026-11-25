@@ -32,8 +32,8 @@
 # runs the `rust-skip` job. A successful `rust-skip` from the same workflow run
 # (check suite) as the latest `gate` lets a job after `gate` have no verdict at
 # all. It never excuses a red, cancelled or running job, never a missing
-# `gate`, and never one from an older run: a later run whose `gate` built Rust,
-# for a new base, owes its own verdicts.
+# `gate`, and never a job missing after a newer `gate` that built Rust. Full
+# jobs themselves are still read as the newest non-skipped run per name.
 #
 # QUANTICK_FULL_CI_FOR_REUSE=1 is the gate asking whether an earlier run already
 # finished the full verification at this head. It reads completed runs only, so

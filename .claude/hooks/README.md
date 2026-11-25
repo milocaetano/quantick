@@ -151,11 +151,12 @@ step decides the head's mode, which every Rust job reads:
   in `FULL_CI_CHECKS` already finished green at this exact head in real runs.
 
 The prose search covers the crates of both the PR head and the merge revision,
-since a test newer on the base reads its doc once merged. An unrelated label,
-or an edit that leaves the base alone, skips `gate` and therefore everything:
-it must not post a newer verdict over the real one. A retargeted base is the
-one edit that runs (`edited` with a base change), because every verdict was
-about the old merge revision; GitHub retargets a stacked PR by itself.
+since a test newer on the base reads its doc once merged. Only a PR into the
+default branch can be `prose`: GitHub retargets a stacked PR by itself when its
+base merges and fires no event, and a diff that was prose against a feature
+branch can hold code against `main`. An unrelated label skips `gate` and
+therefore everything, so no newer `gate` verdict lands over the real one.
+`edited` is not a trigger: every title or body edit would post skipped checks.
 
 Anything but `build` skips every Rust job and runs `rust-skip`, whose log says
 which. `tools/ci/test_workflow_policy.py` evaluates the workflow's own `if:` and
@@ -201,8 +202,7 @@ counts as coverage without counting as a share. It runs in `ci`.
 | Draft flipped to ready | `gate`, then the nine full jobs, unless `gate` finds them already green at this head |
 | Push to a ready PR, push to `main` | `gate`, then the nine full jobs |
 | Any of these on a prose-only pull request | `gate`, then `rust-skip` |
-| Base retargeted | as a push to a draft or a ready PR |
-| An unrelated label, any other edit | nothing |
+| An unrelated label | `read-cost`; every other job posts skipped |
 
 `fast` runs `cargo clippy --all-targets` and `cargo test` over the crates `tools/ci/affected_crates.py` selects: the
 crates owning a changed file or naming it by path, every crate depending on

@@ -20,7 +20,6 @@ JOBS = WORKFLOW.split("\njobs:\n", 1)[1]
 def expression(source, event):
     """Evaluate the workflow's small expression subset against an event fixture."""
     source = re.sub(r"(?:github|needs)\.[\w.*-]+", lambda m: repr(event[m[0]]), source)
-    source = re.sub(r"\bnull\b", "None", source)
     source = source.replace("&&", " and ").replace("||", " or ")
     source = re.sub(r"!(?!=)", " not ", source)
     return eval(" ".join(source.splitlines()), {"__builtins__": {}, "format": str.format,
@@ -28,14 +27,13 @@ def expression(source, event):
 
 
 def event(name="pull_request", number=7, run=100, draft=False, action="synchronize",
-          labels=(), label="", mode="build", base_changed=False):
+          labels=(), label="", mode="build"):
     return {"github.workflow": "CI", "github.event_name": name,
             "github.event.pull_request.number": number, "github.run_id": run,
             "github.event.pull_request.draft": draft, "github.event.action": action,
             "github.event.pull_request.labels.*.name": labels,
             "github.event.label.name": label,
             "github.event.pull_request.base.sha": "base-sha" if name == "pull_request" else None,
-            "github.event.changes.base": {"ref": {"from": "feature/x"}} if base_changed else None,
             "needs.gate.outputs.mode": mode}
 
 
@@ -79,12 +77,6 @@ class WorkflowPolicy(unittest.TestCase):
         self.assertFalse(expression(cancel, unrelated))
         self.assertNotEqual(evaluated(event()), evaluated(unrelated))
         self.assertTrue(expression(cancel, event(action="labeled", label="full-ci")))
-        edit = event(action="edited")
-        self.assertFalse(expression(cancel, edit))
-        self.assertNotEqual(evaluated(event()), evaluated(edit))
-        retarget = event(action="edited", base_changed=True)
-        self.assertTrue(expression(cancel, retarget))
-        self.assertEqual(evaluated(event()), evaluated(retarget))
         for name in ("push", "workflow_dispatch", "schedule"):
             with self.subTest(event=name):
                 self.assertFalse(expression(cancel, event(name=name)))
@@ -114,15 +106,20 @@ class WorkflowPolicy(unittest.TestCase):
                                   (event(draft=True), True),
                                   (event(action="ready_for_review"), True),
                                   (event(action="labeled", label="full-ci"), True),
-                                  (event(action="edited", base_changed=True), True),
-                                  (event(action="labeled", label="unrelated"), False),
-                                  (event(action="edited"), False)]:
+                                  (event(action="labeled", label="unrelated"), False)]:
             with self.subTest(event=fixture):
                 self.assertEqual(expected, expression(gate, fixture))
 
-    def test_a_retarget_reruns_full_ci_on_a_ready_pr(self):
-        self.assertTrue(expression(FULL_PREDICATE, event(action="edited", base_changed=True)))
-        self.assertFalse(expression(FULL_PREDICATE, event(action="edited", base_changed=True, draft=True)))
+    def test_no_edit_event_starts_a_run(self):
+        types = re.search(r"^    types: \[(.*)\]$", WORKFLOW, re.MULTILINE)[1].split(", ")
+        self.assertNotIn("edited", types)
+
+    def test_only_a_pr_into_the_default_branch_can_be_prose(self):
+        decide = JOB_BODIES["gate"].split("name: Decide what this head needs", 1)[1]
+        self.assertIn('elif [ "$BASE_REF" = "$DEFAULT_BRANCH" ]; then\n'
+                      '              mode=$(python3 tools/ci/prose_only.py', decide)
+        self.assertEqual("${{ github.event.repository.default_branch }}", scalar(decide, "DEFAULT_BRANCH"))
+        self.assertEqual("${{ github.event.pull_request.base.ref }}", scalar(decide, "BASE_REF"))
 
     def test_the_gate_carries_the_fast_checks(self):
         gate = JOB_BODIES["gate"]
