@@ -21,6 +21,7 @@ fn window_with(tool_id: &str) -> (FakeWindow, u64) {
     let fresh = |tool: DrawingTool| NewDrawing {
         style: DrawingStyle::default(),
         payload: tool.default_payload(),
+        look: Default::default(),
     };
     let point = ChartPoint::at_time(3.0, 100.0, Some(1_000));
     assert!(
@@ -197,6 +198,7 @@ fn a_drawing_call_moves_only_the_named_panes_drawing_when_ids_collide() {
     let fresh = |tool: DrawingTool| NewDrawing {
         style: DrawingStyle::default(),
         payload: tool.default_payload(),
+        look: Default::default(),
     };
     let point = ChartPoint::at_time(5.0, 100.0, Some(1_000));
     assert!(

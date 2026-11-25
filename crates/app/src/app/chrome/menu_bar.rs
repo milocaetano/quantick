@@ -7,6 +7,7 @@ use eframe::egui;
 use quantick_control_handlers::{desk::DeskAct, notify::AttentionHost};
 use quantick_control_schema::window_menu::{self as menu, RowId};
 use quantick_ui_model::chrome_menu_bar::{Action, Snapshot, Workspace};
+use quantick_ui_model::strategy_describe::conversation::Provider as _;
 
 use crate::toolrail::ToolRailExt as _;
 pub(in crate::app) fn draw(
@@ -185,6 +186,7 @@ fn settle_row(id: RowId, commands: &mut Vec<MenuCommand>) {
         RowId::DockSession => MenuCommand::OpenDockTab(crate::dock::DockTab::Session),
         RowId::DockPaperTrading => MenuCommand::OpenDockTab(crate::dock::DockTab::Trading),
         RowId::DockTrades => MenuCommand::OpenDockTab(crate::dock::DockTab::Trades),
+        RowId::DockStrategies => MenuCommand::OpenDockTab(crate::dock::DockTab::Strategies),
         RowId::ToolbarLeft => MenuCommand::SetToolboxDock(crate::toolrail::ToolboxDock::Left),
         RowId::ToolbarTop => MenuCommand::SetToolboxDock(crate::toolrail::ToolboxDock::Top),
         RowId::ToolbarBottom => MenuCommand::SetToolboxDock(crate::toolrail::ToolboxDock::Bottom),

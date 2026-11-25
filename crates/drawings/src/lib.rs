@@ -30,6 +30,7 @@ pub mod presets;
 pub mod text;
 pub mod text_scale;
 mod text_zoom;
+pub use text_scale::TextSpacing;
 pub use text_zoom::NoteDisplay;
 
 mod clipboard;
@@ -68,6 +69,7 @@ pub use family::{
 };
 pub use geometry::{distance_to_segment, level_with, off_line_by, pos2, unit_normal, vec2};
 mod layout_scope;
+mod look;
 mod pane_sync;
 mod saved;
 pub use layout_scope::retarget_layout;

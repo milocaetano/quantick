@@ -152,10 +152,7 @@ impl QuantickApp {
     /// One toolbar side effect.
     pub(in crate::app) fn apply_toolbar_action(&mut self, action: ToolbarAction) {
         match action {
-            ToolbarAction::LoadHistory(reach) => {
-                let active = self.runtime.tabs.active_index();
-                self.tabs_mut().press_history(active, reach);
-            }
+            ToolbarAction::LoadHistory(reach) => self.tabs_mut().press_active_history(reach),
             ToolbarAction::CancelHistory => _ = self.active_tab_mut().cancel_history(),
             ToolbarAction::SwitchMarket => {
                 _ = market_palette::show(self as &mut super::super::ControlWindow, "", true);
@@ -170,7 +167,9 @@ impl QuantickApp {
             | ToolbarAction::ToggleLayoutPopover
             | ToolbarAction::ToggleAddMenu
             | ToolbarAction::ToggleWorkspaceMenu
-            | ToolbarAction::SaveWorkspace => {}
+            | ToolbarAction::SaveWorkspace
+            | ToolbarAction::RevertWorkspace
+            | ToolbarAction::UndoRevertWorkspace => {}
             ToolbarAction::ToggleDock => self.surfaces.dock.toggle_visible(),
             ToolbarAction::OpenAccountList => {
                 self.surfaces.dock.open_tab(crate::dock::DockTab::Trading);

@@ -1,0 +1,82 @@
+{
+  "$defs": {
+    "InstanceId": {
+      "description": "Which instance of a tab a call names.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "A script, by the id `strategy.script.arm` answered.",
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/WireU64"
+            },
+            "kind": {
+              "const": "script",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "id"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Instance `id` riding drawing `drawing_id` on chart `pane_id`, as\n`strategy.desk.list` reports it; never reused in the tab's session.",
+          "properties": {
+            "drawing_id": {
+              "$ref": "#/$defs/WireU64"
+            },
+            "id": {
+              "$ref": "#/$defs/WireU64"
+            },
+            "kind": {
+              "const": "drawing",
+              "type": "string"
+            },
+            "pane_id": {
+              "$ref": "#/$defs/WireU64"
+            }
+          },
+          "required": [
+            "kind",
+            "pane_id",
+            "drawing_id",
+            "id"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "instance": {
+      "$ref": "#/$defs/InstanceId",
+      "description": "A script instance."
+    },
+    "name": {
+      "description": "The new library file: letters, digits, `_` or `-`, then `.pine`.",
+      "maxLength": 128,
+      "minLength": 1,
+      "type": "string"
+    },
+    "tab_id": {
+      "$ref": "#/$defs/WireU64",
+      "description": "The tab the row came from: ids are numbered per tab."
+    }
+  },
+  "required": [
+    "tab_id",
+    "instance",
+    "name"
+  ],
+  "title": "SaveAsInput",
+  "type": "object"
+}

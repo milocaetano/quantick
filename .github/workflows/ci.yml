@@ -9,6 +9,12 @@ on:
     # it with the `full-ci` label before that. See the `if:` on each job.
     types: [opened, synchronize, reopened, ready_for_review, labeled]
 
+# Only events that run validation supersede a PR run. Unrelated labels must
+# not cancel the full checks already running at that head.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && (github.event.action != 'labeled' || github.event.label.name == 'full-ci') && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' && (github.event.action != 'labeled' || github.event.label.name == 'full-ci') }}
+
 env:
   CARGO_TERM_COLOR: always
   # Debug info, not optimisation, is what the runners spend their time on.
@@ -32,8 +38,9 @@ env:
   # units too, so the override reaches every unit every job compiles.
   CARGO_PROFILE_DEV_DEBUG: line-tables-only
 
-# Which jobs run where. A draft push runs `fast` alone: fmt, clippy and the
-# tests of the crates the diff reaches. The full verdict is nine jobs — `ci`,
+# Which jobs run where. A draft push runs `fast` and `aggregate-ratchets`:
+# fmt, clippy, affected tests and aggregate growth. Ratchets check the PR head;
+# the existing checks keep testing GitHub's merge revision. Nine build/test jobs — `ci`,
 # `linux-tests`, `harness-app`, `harness-combined` and `harness-scenario` on
 # Linux, `windows`, `windows-tests`, `windows-heavy-tests` and
 # `windows-app-tests` on Windows — and they run on every push to main, every
@@ -69,12 +76,15 @@ env:
 # cold build.
 jobs:
   fast:
+    needs: aggregate-ratchets
     if: >-
       github.event_name == 'pull_request' &&
       github.event.pull_request.draft &&
-      github.event.action != 'labeled'
+      (github.event.action != 'labeled' || github.event.label.name == 'full-ci')
     runs-on: ubuntu-latest
-    # A newer push to the same draft makes an older signal worthless.
+    # A newer push to the same draft makes an older signal worthless. A `full-ci`
+    # label cancels the run at its head (see `concurrency:` above), so it reruns
+    # `fast` rather than leave that head with a cancelled check.
     concurrency:
       group: fast-${{ github.event.pull_request.number }}
       cancel-in-progress: true
@@ -85,6 +95,10 @@ jobs:
           # must be in the clone.
           fetch-depth: 0
       - uses: ./.github/actions/rust-setup
+      - name: Aggregate ratchet delta
+        env:
+          RATCHET_BASE: ${{ github.event.pull_request.base.sha }}
+        run: python3 tools/ci/ratchet_delta.py --base "$RATCHET_BASE" --export-env "$GITHUB_ENV"
       - name: Affected crates
         # Derived from `cargo metadata` and the diff, never a list kept here;
         # the script's stderr says why each crate was selected.
@@ -150,7 +164,7 @@ jobs:
           PR: ${{ github.event.pull_request.number }}
         run: |
           python3 tools/read_cost/report.py comment \
-            --json artifacts/read-cost.json --pr "$PR" \
+            --json artifacts/read-cost.json \
             --ledger docs/quality/read-cost/ledger.md > artifacts/read-cost.md
           python3 - <<'PY' > artifacts/read-cost-comment.json
           import json, pathlib
@@ -181,16 +195,8 @@ jobs:
             echo "posted a new comment"
           fi
 
-  # The ledger is the half of this that outlives the pull request. A comment
-  # expires with the branch; `docs/quality/read-cost/ledger.md` is where the
-  # trend lives, and where the ceiling the warning cites comes from.
-  #
-  # Each pull request carries its own row, written on the branch before the
-  # merge, so this job checks rather than writes. Writing it here would mean a
-  # push to `main`, which the repository's ruleset allows no bot to do: the
-  # Actions app cannot be a bypass actor on a personal repository, and the
-  # alternative is a long-lived write credential in CI to work around a rule
-  # the repository chose on purpose.
+  # Main history owns the ledger. A maintenance PR can retain this artifact;
+  # capability branches never append rows or move their reviewed heads for it.
   read-cost-ledger:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
@@ -199,16 +205,19 @@ jobs:
       pull-requests: read
     steps:
       - uses: actions/checkout@v4
-      - name: Check the merged pull request left its row
-        # An annotation, never a failure. The row can no longer be added by
-        # the pull request that owed it, and reddening `main` over a line of
-        # Markdown would punish the next branch for the last one's omission.
+        with:
+          fetch-depth: 0
+      - name: Generate the ledger from main history
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          python3 tools/read_cost/ledger.py \
-            --ledger docs/quality/read-cost/ledger.md \
-            verify --commit "$GITHUB_SHA"
+          # A rerun stays bound to this push even after main advances.
+          git update-ref refs/remotes/origin/main "$GITHUB_SHA"
+          python3 tools/read_cost/ledger.py backfill --repo .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: read-cost-ledger-${{ github.sha }}
+          path: docs/quality/read-cost/ledger.md
 
   ci:
     if: &full-ci >-
@@ -265,6 +274,8 @@ jobs:
         # against fixtures instead: the boundary rule, the prose exemption, and
         # both failure directions.
         run: python3 tools/ci/test_binary_hook_scan.py
+      - name: Ratchet delta runner tests
+        run: python3 tools/ci/test_ratchet_delta.py
       - name: Edit-loop safety fixtures
         run: python3 -m unittest discover -s tools/edit_loop -p 'test_*.py'
       - name: Bridge tests
@@ -339,6 +350,19 @@ jobs:
         # registry name is a harness hook and must be absent.
         run: python3 tools/ci/binary_hook_scan.py
 
+  aggregate-ratchets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: ./.github/actions/rust-setup
+      - name: PR head aggregate growth
+        env:
+          RATCHET_BASE: ${{ github.event.pull_request.base.sha || 'HEAD^' }}
+        run: python3 tools/ci/ratchet_delta.py --base "$RATCHET_BASE"
+
   # `cargo test --workspace` was 263s of the 508s `ci` took, and it is one
   # command: nothing inside `ci` could overlap with it, and everything else in
   # that job — the hook suite, the Python tool suites, the supply-chain check,
@@ -349,10 +373,17 @@ jobs:
   # needed; the Windows side has three selectors and therefore has one.
   linux-tests:
     if: *full-ci
+    needs: aggregate-ratchets
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: ./.github/actions/rust-setup
+      - name: Aggregate ratchet delta
+        env:
+          RATCHET_BASE: ${{ github.event.pull_request.base.sha || 'HEAD^' }}
+        run: python3 tools/ci/ratchet_delta.py --base "$RATCHET_BASE" --export-env "$GITHUB_ENV"
       - name: Test
         run: cargo test --workspace
 
@@ -481,15 +512,24 @@ jobs:
   # on each side, which the guard re-proves.
   windows-heavy-tests:
     if: *full-ci
+    needs: aggregate-ratchets
     runs-on: windows-latest
     env:
       QUANTICK_BUBBLES: ${{ github.workspace }}/crates/app/config/bubbles.toml
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: ./.github/actions/rust-setup
         with:
           desktop-deps: "false"
           cache-key: windows
+      - name: Ratchet delta runner tests
+        run: python tools/ci/test_ratchet_delta.py
+      - name: Aggregate ratchet delta
+        env:
+          RATCHET_BASE: ${{ github.event.pull_request.base.sha || 'HEAD^' }}
+        run: python tools/ci/ratchet_delta.py --base "$env:RATCHET_BASE" --export-env "$env:GITHUB_ENV"
       - name: Test
         run: cargo test -p quantick-indicators -p quantick-workspace -p quantick-guards -p quantick-feed -p quantick-feed-binance -p quantick-feed-hyperliquid -p quantick-feed-mt5
 

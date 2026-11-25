@@ -575,10 +575,10 @@ fn closed_depth_channel_is_reported_once_per_feed_handle() {
     drop(book_tx);
 
     app.active_tab_mut().drain_book_feed();
-    assert!(app.active_tab().link.book_channel_closed_reported);
+    assert!(app.active_tab().link.book.channel_closed_reported);
     app.active_tab_mut().drain_book_feed();
     assert!(
-        app.active_tab().link.book_channel_closed_reported,
+        app.active_tab().link.book.channel_closed_reported,
         "subsequent frames keep the one-shot diagnostic latched"
     );
 }

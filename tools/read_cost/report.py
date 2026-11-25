@@ -10,8 +10,7 @@ evidence nobody downloads. This module renders that JSON twice:
     updates one comment rather than stacking a new one per push.
 ``warn``
     What ``pr-gate`` prints, as a JSON string ready to drop into a hook
-    payload: that a feature branch is over the ledger's ceiling, that the
-    pull request has not recorded its row yet, or nothing at all.
+    payload: that a feature branch is over the ledger's ceiling, or nothing.
 ``marker``
     The comment's key, for the workflow that has to find last build's comment
     before it can update it in place.
@@ -29,10 +28,6 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 MARKER = "<!-- quantick-read-cost:v1 -->"
-# How a pull request adds the row it owes. Written once, here, because the
-# comment and the hook both have to say it and a reader who is told two
-# different commands tries neither.
-ROW_COMMAND = "python tools/read_cost/ledger.py record --repo . --pr"
 
 
 def load(name, filename):
@@ -55,7 +50,7 @@ SHAPE = LEDGER.SHAPE
 MEASURE = LEDGER.MEASURE
 
 
-def comment(report, ceiling=None, row_missing_for=None):
+def comment(report, ceiling=None):
     """The sticky comment body, marker first."""
     touched = SHAPE.touched_files(report)
     referenced = SHAPE.referenced_files(report)
@@ -88,15 +83,6 @@ def comment(report, ceiling=None, row_missing_for=None):
         lines += [f"| `{entry['path']}` | {entry['lines']} |" for entry in top]
     else:
         lines.append("No file is pulled in by reference alone.")
-    if row_missing_for is not None:
-        lines += [
-            "",
-            "This pull request has no row in "
-            "`docs/quality/read-cost/ledger.md` yet. Add it on the branch, so "
-            "the merge carries its own measurement:",
-            "",
-            f"```sh\n{ROW_COMMAND} {row_missing_for}\n```",
-        ]
     lines += [
         "",
         f"<sub>base `{report['base'][:12]}` head `{report['head'][:12]}` "
@@ -130,29 +116,12 @@ def ceiling_warning(report, ceiling, branch):
     )
 
 
-def row_reminder(number):
-    """What to say to a pull request that has not recorded its row."""
-    return (
-        f"Read cost: pull request #{number} has no row in "
-        "docs/quality/read-cost/ledger.md. The row travels with the pull "
-        "request, so add it on the branch before the merge:\n\n  "
-        f"{ROW_COMMAND} {number}"
-    )
-
-
-def advisory(notes):
-    """One payload for the hook, or ``None`` when there is nothing to say."""
-    kept = [note for note in notes if note]
-    return "\n\n".join(kept) if kept else None
-
-
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     modes = parser.add_subparsers(dest="mode", required=True)
 
     body = modes.add_parser("comment", help="render the sticky PR comment")
     body.add_argument("--json", required=True, help="a measure.py report")
-    body.add_argument("--pr", type=int, help="the pull request this measures")
     body.add_argument("--ledger", help="ledger to read the ceiling from")
 
     warn = modes.add_parser("warn", help="the pr-gate advisory, as a JSON string")
@@ -160,7 +129,6 @@ def main(argv=None):
     warn.add_argument("--base", required=True, help="base revision")
     warn.add_argument("--head", required=True, help="head revision")
     warn.add_argument("--branch", required=True, help="the branch being shipped")
-    warn.add_argument("--pr", type=int, help="the pull request, when one is named")
     warn.add_argument("--ledger", help="ledger to read the ceiling from")
 
     modes.add_parser("marker", help="print the sticky comment's key")
@@ -179,12 +147,7 @@ def main(argv=None):
             report = json.load(stream)
         if ledger_path is None:
             ledger_path = LEDGER.DEFAULT_PATH
-        missing = None
-        if args.pr is not None and LEDGER.row_for(ledger_path, args.pr) is None:
-            missing = args.pr
-        sys.stdout.write(
-            comment(report, LEDGER.ceiling_or_none(ledger_path), missing)
-        )
+        sys.stdout.write(comment(report, LEDGER.ceiling_or_none(ledger_path)))
         return 0
 
     # Every failure here is silence. The advisory is advice, `pr-gate` fails
@@ -203,14 +166,8 @@ def main(argv=None):
             )
         except MEASURE.ReadCostError:
             over = None
-    # The row is owed by every pull request, not only by the feature branches
-    # the ceiling is about, and asking for it costs no measurement.
-    missing = None
-    if args.pr is not None and LEDGER.row_for(ledger_path, args.pr) is None:
-        missing = row_reminder(args.pr)
-    text = advisory([over, missing])
-    if text is not None:
-        sys.stdout.write(json.dumps(text) + "\n")
+    if over is not None:
+        sys.stdout.write(json.dumps(over) + "\n")
     return 0
 
 

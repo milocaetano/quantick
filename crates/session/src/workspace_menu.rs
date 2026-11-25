@@ -18,6 +18,10 @@ pub enum WorkspaceCommand {
     AnswerSwitch(SwitchAnswer),
     /// Write the active tab's edits into its workspace.
     SaveTo,
+    /// Drop the active tab's unsaved layout edits: `workspace.revert`.
+    Revert,
+    /// Bring back what the last revert dropped: `workspace.revert.undo`.
+    UndoRevert,
     /// Turn "auto save layout changes" on or off.
     SetAutosave(bool),
     BeginSaveAs,

@@ -45,7 +45,7 @@ pub struct ScriptPane<'a> {
 
 /// The folder the library scans when the launch named none, relative to the
 /// working directory.
-const DEFAULT_LIBRARY: &str = "strategies";
+pub(crate) const DEFAULT_LIBRARY: &str = "strategies";
 
 /// One open tab, lent for one call: its strategies, its charts with the
 /// flow chart first, and the library folder the launch named (`None`: the
@@ -257,7 +257,10 @@ fn listing(folder: Option<&str>) -> LibraryListing {
 /// The pane's last `depth` closed live bars with their footprint POC, oldest
 /// first: what the chart's own copy of a script read, so a strategy armed on
 /// it judges the next brick against the same history.
-fn footprint_warmup(series: &PaneSeriesRead<'_>, depth: usize) -> Vec<(Bar, Option<Decimal>)> {
+pub(crate) fn footprint_warmup(
+    series: &PaneSeriesRead<'_>,
+    depth: usize,
+) -> Vec<(Bar, Option<Decimal>)> {
     let live = series.state.bars().len();
     (live.saturating_sub(depth)..live)
         .map(|index| {
@@ -288,7 +291,7 @@ fn place_of(placement: &Placement) -> Result<ScriptPlacement<DrawingId>, Control
     })
 }
 
-fn placement(place: ScriptPlacement<DrawingId>) -> Placement {
+pub(crate) fn placement(place: ScriptPlacement<DrawingId>) -> Placement {
     match place {
         ScriptPlacement::Region(drawing) => Placement::Region {
             drawing_id: WireU64::new(drawing.0),

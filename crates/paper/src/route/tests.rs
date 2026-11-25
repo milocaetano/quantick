@@ -139,18 +139,134 @@ fn a_source_that_cannot_route_locks_and_disarms() {
     assert_eq!(route.last_disarm(), Some((Disarm::SourceCannotRoute, 7)));
 }
 
-#[test]
-fn a_lost_link_disarms_without_closing_anything() {
+const ACCOUNT_A: AccountKey = AccountKey {
+    login: 51_234_567,
+    server: 1,
+};
+
+/// A REAL route armed through the full hold on account A.
+fn armed_real() -> (AccountRoute, RouteFacts) {
     let mut route = AccountRoute::new();
-    let facts = armed_facts(Route::Real);
+    let facts = RouteFacts {
+        account_key: Some(ACCOUNT_A),
+        ..armed_facts(Route::Real)
+    };
     route.hold_start(0, &facts).expect("REAL is available");
     route.hold_update(HOLD_TO_ARM_MS, &facts);
+    assert_eq!(route.route(), Route::Real);
+    (route, facts)
+}
+
+#[test]
+fn a_lost_link_reconnects_and_resumes_on_the_same_account_within_the_grace() {
+    let (mut route, facts) = armed_real();
     assert_eq!(
         route.on_notice(&VenueNotice::LinkLost, 9_000),
+        RouteChange::None
+    );
+    assert_eq!(route.route(), Route::Real, "still armed");
+    assert_eq!(route.reconnecting_since(), Some(9_000));
+    let down = RouteFacts {
+        link_up: false,
+        ..facts
+    };
+    let last = 9_000 + RECONNECT_GRACE_MS - 1;
+    assert_eq!(route.observe(&down, last), RouteChange::None);
+    assert_eq!(
+        route.reconnecting_since(),
+        Some(9_000),
+        "counts from the loss"
+    );
+    assert_eq!(route.observe(&facts, last), RouteChange::None);
+    assert_eq!(route.route(), Route::Real, "the same route resumes");
+    assert_eq!(route.reconnecting_since(), None);
+    assert_eq!(route.last_disarm(), None);
+    assert_eq!(route.write_block(Actor::Trader, false), None);
+}
+
+#[test]
+fn every_order_is_refused_with_a_code_while_reconnecting() {
+    let (mut route, _facts) = armed_real();
+    route.on_notice(&VenueNotice::LinkLost, 9_000);
+    for (actor, allow) in [
+        (Actor::Trader, false),
+        (Actor::Agent, false),
+        (Actor::Agent, true),
+    ] {
+        assert_eq!(
+            route.write_block(actor, allow),
+            Some(Refusal::Reconnecting),
+            "{actor:?}, agent orders allowed: {allow}"
+        );
+    }
+    assert_eq!(Refusal::Reconnecting.code(), "route.reconnecting");
+}
+
+#[test]
+fn a_link_lost_past_the_grace_disarms_without_closing_anything() {
+    let (mut route, facts) = armed_real();
+    // No notice: the facts alone say the link is down.
+    let down = RouteFacts {
+        link_up: false,
+        ..facts
+    };
+    assert_eq!(route.observe(&down, 9_000), RouteChange::None);
+    assert_eq!(route.reconnecting_since(), Some(9_000));
+    assert_eq!(
+        route.observe(&down, 9_000 + RECONNECT_GRACE_MS),
         RouteChange::ToSim { flatten: false }
     );
     assert_eq!(route.route(), Route::Sim);
     assert_eq!(route.last_disarm(), Some((Disarm::LinkLost, 9_000)));
+    assert_eq!(route.reconnecting_since(), None);
+    assert_eq!(route.write_block(Actor::Trader, false), None);
+    assert_eq!(
+        route.observe(&facts, 9_000 + RECONNECT_GRACE_MS + 1),
+        RouteChange::None,
+        "a link back after the disarm never re-arms"
+    );
+    assert_eq!(route.route(), Route::Sim);
+}
+
+#[test]
+fn leaving_while_reconnecting_never_flattens_on_a_dead_link() {
+    let (mut route, facts) = armed_real();
+    route.on_notice(&VenueNotice::LinkLost, 9_000);
+    let exposed = RouteFacts {
+        link_up: false,
+        exposure: true,
+        ..facts
+    };
+    assert_eq!(
+        route.select_sim(&exposed, Some(Leave::FlattenFirst)),
+        Err(Refusal::Reconnecting)
+    );
+    assert_eq!(route.route(), Route::Real, "still reconnecting");
+    assert_eq!(
+        route.select_sim(&exposed, Some(Leave::LeaveAtBroker)),
+        Ok(RouteChange::ToSim { flatten: false })
+    );
+    assert_eq!(route.reconnecting_since(), None);
+}
+
+#[test]
+fn a_link_back_on_another_account_disarms() {
+    let (mut route, facts) = armed_real();
+    route.on_notice(&VenueNotice::LinkLost, 9_000);
+    let other = RouteFacts {
+        account_key: Some(AccountKey {
+            login: 51_999_999,
+            ..ACCOUNT_A
+        }),
+        ..facts
+    };
+    assert_eq!(
+        route.observe(&other, 10_000),
+        RouteChange::ToSim { flatten: false }
+    );
+    assert_eq!(route.route(), Route::Sim);
+    assert_eq!(route.last_disarm(), Some((Disarm::AccountChanged, 10_000)));
+    assert_eq!(route.reconnecting_since(), None);
 }
 
 #[test]

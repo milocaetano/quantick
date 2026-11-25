@@ -1,5 +1,7 @@
 //! The market tab strip's colour decisions, so every painter of a tab reads
 //! the same answer (`docs/ux/layout-appearance-2026-11-06`).
+use std::cmp::Ordering;
+
 use crate::Token;
 
 /// The mark beside a tab's symbol. Which one a tab wears is the caller's
@@ -190,24 +192,99 @@ pub const fn tab_ink(lit: bool) -> Token {
     }
 }
 
-/// How much of the workspace's colour tints the toolbar capsule's fill; its
-/// border takes the colour whole (the trader's pick of 2026-11-12, option 7).
+/// The disc an asset the config names no icon for wears.
+pub const ICON_NEUTRAL: Token = Token::TextFaint;
+/// The darker of an icon's two glyph inks, for a light disc.
+pub const ICON_GLYPH_DARK: [u8; 3] = [0x1E, 0x23, 0x29];
+/// A disc this light (Rec. 709 luma, 0 to 255) or lighter takes the dark glyph.
+pub const ICON_LIGHT_LUMA: f32 = 160.0;
+
+/// The day's change: on the open tab the theme's tab gain ink up and loss
+/// ink down, flat in the tab's ink; on a closed tab always the tab's ink.
+#[must_use]
+pub const fn change_token(sign: Ordering, open: bool, lit: bool) -> Token {
+    match (open, sign) {
+        (true, Ordering::Greater) => Token::TabChangeUp,
+        (true, Ordering::Less) => Token::TabChangeDown,
+        _ => tab_ink(lit),
+    }
+}
+
+/// An icon's disc and glyph: the asset's colour on the open tab, grey of the
+/// same lightness on the others; `None` is the [`ICON_NEUTRAL`] disc, under
+/// a white glyph.
+#[must_use]
+pub fn icon_inks(rgb: Option<[u8; 3]>, open: bool) -> (Option<[u8; 3]>, [u8; 3]) {
+    let disc = rgb.map(|rgb| if open { rgb } else { icon_grey(rgb) });
+    (disc, disc.map_or([0xFF; 3], icon_glyph_ink))
+}
+
+/// A closed tab's icon disc: `rgb` in grey of the same luma.
+#[must_use]
+pub fn icon_grey(rgb: [u8; 3]) -> [u8; 3] {
+    let grey = luma(rgb).round().clamp(0.0, 255.0) as u8;
+    [grey; 3]
+}
+
+/// The glyph on a disc of `rgb`: white, or [`ICON_GLYPH_DARK`] on a light disc.
+#[must_use]
+pub fn icon_glyph_ink(rgb: [u8; 3]) -> [u8; 3] {
+    if luma(rgb) >= ICON_LIGHT_LUMA {
+        ICON_GLYPH_DARK
+    } else {
+        [0xFF; 3]
+    }
+}
+
+/// Rec. 709 luma of straight sRGB, 0 to 255.
+fn luma([r, g, b]: [u8; 3]) -> f32 {
+    0.2126 * f32::from(r) + 0.7152 * f32::from(g) + 0.0722 * f32::from(b)
+}
+
+/// How much of the workspace's colour tints the toolbar workspace buttons'
+/// fill; their borders take the colour whole (the trader's pick of 2026-11-12, option 7).
 pub const WORKSPACE_TINT: f32 = 0.12;
-/// The bar in the workspace's colour at the capsule's left edge, cut by its
-/// corner (the trader's ask of 2026-11-13).
+/// The tint a toolbar workspace button takes under the pointer or while its
+/// popover is open (design A-3 of 2026-11-23).
+pub const WORKSPACE_HOVER_TINT: f32 = 0.28;
+/// The bar in the workspace's colour at the workspace button's left edge, cut
+/// by its corner (the trader's ask of 2026-11-13).
 pub const WORKSPACE_CAPSULE_BAR_PT: f32 = 4.0;
 /// The least the open tab's symbol, inked in its workspace's colour, keeps
 /// against the tab's sheet: the graphics floor of WCAG 1.4.11 for a heavy
 /// 13 pt symbol. Below it the symbol keeps the tab's normal ink.
 pub const WORKSPACE_SYMBOL_CONTRAST: f32 = 3.0;
 
-/// The capsule's fill, `base`, tinted toward the workspace's `colour`; both
-/// straight sRGB, the base's alpha kept.
+/// The legs of the filled triangle every market tab paints in its workspace's
+/// colour at its top-left corner (the trader's pick of 2026-11-23, "Canto
+/// cheio"); the tab's face starts past it.
+pub const WORKSPACE_CORNER_PT: f32 = 17.0;
+/// How many straight pieces stand for the corner's quarter circle.
+const CORNER_ARC_STEPS: u16 = 6;
+
+/// The corner mark's outline from the sheet's top-left, clockwise: down the
+/// left leg's end, round the sheet's corner of `radius`, out along the top to
+/// the other leg's end; the hypotenuse closes it. Convex, so one fill.
 #[must_use]
-pub fn workspace_tint(base: [u8; 4], colour: [u8; 3]) -> [u8; 4] {
+pub fn corner_mark(radius: f32) -> Vec<[f32; 2]> {
+    let radius = radius.clamp(0.0, WORKSPACE_CORNER_PT);
+    let arc = (0..=CORNER_ARC_STEPS).map(|step| {
+        let turn = std::f32::consts::FRAC_PI_2 * f32::from(step) / f32::from(CORNER_ARC_STEPS);
+        [radius * (1.0 - turn.cos()), radius * (1.0 - turn.sin())]
+    });
+    std::iter::once([0.0, WORKSPACE_CORNER_PT])
+        .chain(arc)
+        .chain(std::iter::once([WORKSPACE_CORNER_PT, 0.0]))
+        .collect()
+}
+
+/// A workspace button's fill, `base`, tinted `share` of the way toward the
+/// workspace's `colour`; both straight sRGB, the base's alpha kept.
+#[must_use]
+pub fn workspace_tint(base: [u8; 4], colour: [u8; 3], share: f32) -> [u8; 4] {
     let mix = |b: u8, c: u8| {
         let (b, c) = (f32::from(b), f32::from(c));
-        (b + (c - b) * WORKSPACE_TINT).round().clamp(0.0, 255.0) as u8
+        (b + (c - b) * share).round().clamp(0.0, 255.0) as u8
     };
     [
         mix(base[0], colour[0]),
@@ -222,13 +299,35 @@ mod tests {
     use super::*;
     use crate::{LIGHT, ResolvedTheme, contrast::contrast_ratio};
 
+    /// The mark spans both legs, never leaves the triangle, and never crosses
+    /// the sheet's rounded corner.
+    #[test]
+    fn the_corner_mark_fills_the_triangle_inside_the_rounded_corner() {
+        let radius = TAB_CORNER_PT;
+        let points = corner_mark(radius);
+        assert_eq!(points.first(), Some(&[0.0, WORKSPACE_CORNER_PT]));
+        assert_eq!(points.last(), Some(&[WORKSPACE_CORNER_PT, 0.0]));
+        for &[x, y] in &points {
+            assert!(x >= 0.0 && y >= 0.0 && x + y <= WORKSPACE_CORNER_PT + 1e-4);
+            if x < radius && y < radius {
+                let off = ((x - radius).powi(2) + (y - radius).powi(2)).sqrt();
+                assert!((off - radius).abs() < 1e-4, "{x},{y} leaves the corner");
+            }
+        }
+        assert_eq!(corner_mark(0.0)[1], [0.0, 0.0]);
+    }
+
     /// The tint moves the fill a fixed share toward the colour, alpha kept.
     #[test]
     fn the_capsule_tint_moves_a_fixed_share_toward_the_colour() {
-        assert_eq!(workspace_tint([255; 4], [255; 3]), [255; 4]);
+        assert_eq!(workspace_tint([255; 4], [255; 3], WORKSPACE_TINT), [255; 4]);
         assert_eq!(
-            workspace_tint([0, 0, 0, 200], [100, 200, 0]),
+            workspace_tint([0, 0, 0, 200], [100, 200, 0], WORKSPACE_TINT),
             [12, 24, 0, 200]
+        );
+        assert_eq!(
+            workspace_tint([0, 0, 0, 200], [100, 200, 0], WORKSPACE_HOVER_TINT),
+            [28, 56, 0, 200]
         );
     }
 
@@ -366,5 +465,55 @@ mod tests {
             samples.windows(2).all(|pair| pair[0] > pair[1]),
             "{samples:?}"
         );
+    }
+
+    #[test]
+    fn the_change_is_green_or_red_on_the_open_tab_only() {
+        use std::cmp::Ordering::{Equal, Greater, Less};
+        assert_eq!(change_token(Greater, true, true), Token::TabChangeUp);
+        assert_eq!(change_token(Less, true, true), Token::TabChangeDown);
+        assert_eq!(change_token(Equal, true, true), tab_ink(true));
+        for sign in [Greater, Less, Equal] {
+            assert_eq!(change_token(sign, false, false), tab_ink(false));
+            assert_eq!(change_token(sign, false, true), tab_ink(true));
+        }
+    }
+
+    /// The open tab's change wears the mock's green and red in both themes,
+    /// not the ladder's inks (Light's sell ink is near-black); a stored copy
+    /// frozen before the keys existed takes its own mode's pair.
+    #[test]
+    fn the_open_tabs_change_wears_the_mocks_gain_and_loss_inks() {
+        let mocks = [
+            ([0x3A, 0xF0, 0xB2], [0xFF, 0x6B, 0x78]),
+            ([0x0B, 0x8A, 0x5C], [0xC6, 0x2F, 0x3A]),
+        ];
+        let frozen = |source: &str| {
+            let lines = source
+                .lines()
+                .filter(|line| !line.starts_with("tab_change_"));
+            ResolvedTheme::parse(&lines.collect::<Vec<_>>().join("\n")).unwrap()
+        };
+        for (source, (up, down)) in [crate::DARK, LIGHT].into_iter().zip(mocks) {
+            for theme in [ResolvedTheme::parse(source).unwrap(), frozen(source)] {
+                let ink = |token| theme.title_strip().color(token).to_array()[..3].to_vec();
+                assert_eq!(ink(Token::TabChangeUp), up, "{}", theme.name);
+                assert_eq!(ink(Token::TabChangeDown), down, "{}", theme.name);
+            }
+        }
+    }
+
+    #[test]
+    fn a_closed_icon_is_grey_of_its_own_lightness_and_its_glyph_reads() {
+        assert_eq!(icon_grey([0xF7, 0x93, 0x1A]), [160, 160, 160]);
+        assert_eq!(icon_grey([0, 0, 0]), [0, 0, 0]);
+        assert_eq!(icon_grey([255, 255, 255]), [255, 255, 255]);
+        assert_eq!(icon_glyph_ink([0x3B, 0x42, 0x50]), [255, 255, 255]);
+        assert_eq!(icon_glyph_ink([0xF7, 0x93, 0x1A]), [255, 255, 255]);
+        assert_eq!(icon_glyph_ink([200, 200, 200]), ICON_GLYPH_DARK);
+        let orange = Some([0xF7, 0x93, 0x1A]);
+        assert_eq!(icon_inks(orange, true), (orange, [0xFF; 3]));
+        assert_eq!(icon_inks(orange, false).0, Some([160, 160, 160]));
+        assert_eq!(icon_inks(None, true), (None, [0xFF; 3]));
     }
 }

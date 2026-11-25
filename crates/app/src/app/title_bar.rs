@@ -5,6 +5,7 @@ use eframe::egui;
 use super::workspace_runtime::WorkspaceRuntime;
 use crate::config::AppConfig;
 use quantick_control_schema::native_window::WindowState;
+use quantick_ui_model::chrome_tab_strip::{MarketFace, market_face};
 mod resize;
 
 #[derive(Default)]
@@ -70,6 +71,12 @@ pub(super) use crate::surfaces::chrome_title_bar::{HEIGHT, WINDOW_BUTTON_WIDTH};
 /// The tabs and their workspace book, and the config the venues' codes come from.
 pub(super) type Market<'a> = (&'a WorkspaceRuntime, &'a AppConfig);
 
+/// A tab's icon and quote, as its chip paints them and the scene tells them.
+pub(crate) fn tab_face(tab: &crate::tab::Tab, config: &AppConfig) -> MarketFace {
+    let (state, feed) = (&tab.flow_pane.series.state, config.feed(&tab.feed_id));
+    market_face(feed, &tab.symbol, state.trades().last(), &tab.link.quote)
+}
+
 /// One chip per tab of this strip: symbol, venue code, the feed's mark when
 /// it is not healthy and live, and its workspace's colour for `theme`.
 pub(super) fn chips_of(
@@ -83,6 +90,7 @@ pub(super) fn chips_of(
         .map(|index| {
             let (tab, id) = (&tabs[*index], tabs.id_at(*index));
             let ink = |c| quantick_stores::workspaces::symbol_ink(c, theme);
+            let (icon, quote) = tab_face(tab, config);
             crate::tabstrip::TabChip {
                 id,
                 label: tab.chip_label().to_owned(),
@@ -90,6 +98,9 @@ pub(super) fn chips_of(
                 venue_code: config.feed_code(&tab.feed_id).into_owned(),
                 symbol_ink: book.tab_colour(id).and_then(ink),
                 tag_fill: tab.paper.account.route_tone().rgb(),
+                icon,
+                quote,
+                corner: book.tab_colour(id).map(|colour| colour.rgb(theme.dark)),
                 feed: quantick_workspace::arrangement::strip::TabFeed::of(
                     tab.link.replay.is_some(),
                     tab.link.feed_connection == quantick_feed::FeedConnectionState::Connected,

@@ -76,7 +76,7 @@ class EvidenceTests(Fixture):
         report = self.complete()
         loaded = evidence.load(self.output / "report.json", self.repo)
         self.assertEqual(loaded, report)
-        budgets.check(loaded, budgets.propose(loaded))
+        budgets.check(loaded)
 
     def test_corrupt_raw_output_is_rejected_without_resigning(self):
         self.complete()
@@ -298,6 +298,21 @@ class WorkflowTests(Fixture):
         self.assertEqual(source.count("measure.py run"), 1)
         self.assertNotIn("continue-on-error", source)
 
+    def test_history_is_main_only_and_missing_history_is_explicit(self):
+        source = (inputs.ROOT / ".github/workflows/edit-loop.yml").read_text(encoding="utf-8")
+        publish = source.split("- name: Publish main timing history", 1)[1].split("- name:", 1)[0]
+        self.assertIn("github.ref == 'refs/heads/main'", publish)
+        self.assertIn("github.event_name != 'pull_request'", publish)
+        self.assertIn("--context", source)
+        self.assertIn("--history", source)
+        self.assertEqual(measure.read_history(self.root / "absent.json"), [])
+        path = self.write("history.json", "{}")
+        with self.assertRaisesRegex(ValueError, "list"):
+            measure.read_history(path)
+        inputs.write_json(path, [{"source_sha": "a", "measured_utc": "1"}])
+        measure.save_history(path, {"source_sha": "a", "measured_utc": "2"})
+        self.assertEqual(measure.read_history(path), [{"source_sha": "a", "measured_utc": "2"}])
+
     def test_warm_target_is_restored_before_and_saved_after_the_measurement(self):
         source = (inputs.ROOT / ".github/workflows/edit-loop.yml").read_text(encoding="utf-8")
         positions = [source.index(step) for step in (
@@ -329,6 +344,28 @@ class ConfigurationTests(Fixture):
 
 
 class RunnerTests(Fixture):
+    def test_real_orchestrator_rejects_history_inside_measured_paths(self):
+        self.measurement_inputs()
+        sha = self.commit()
+        for number, container in enumerate((self.repo, self.root / "bench", self.root / "targets",
+                                            self.root / "run-output")):
+            args = SimpleNamespace(repo=str(self.repo), sha=sha, worktree=str(self.root / "bench"),
+                                   target=str(self.root / "targets"), output=str(self.root / "run-output"),
+                                   budgets=str(self.repo / "tools/edit_loop/budgets.json"), context="main",
+                                   history=str(container / "history.json"))
+            # Each rejected run still retains evidence in its own new directory.
+            args.output += "-" + str(number)
+            if container.name == "run-output":
+                args.history = str(Path(args.output) / "history.json")
+            error_output = io.StringIO()
+            with self.subTest(container=container), redirect_stderr(error_output):
+                self.assertEqual(measure.run(args), 1)
+            self.assertIn("timing history must be outside", error_output.getvalue())
+            self.assertFalse(Path(args.history).exists())
+            self.assertFalse(Path(args.worktree).exists())
+            self.assertFalse(Path(args.target).exists())
+            inputs.clean_head(self.repo, sha)
+
     def test_real_orchestrator_rejects_a_different_source_checkout(self):
         self.measurement_inputs()
         sha = self.commit()
@@ -336,7 +373,7 @@ class RunnerTests(Fixture):
         other.mkdir()
         args = SimpleNamespace(repo=str(self.repo), sha=sha, worktree=str(self.root / "bench"),
                                target=str(self.root / "targets"), output=str(self.root / "run-output"),
-                               budgets=str(self.repo / "tools/edit_loop/budgets.json"))
+                               budgets=str(self.repo / "tools/edit_loop/budgets.json"), context="pr", history=None)
         error_output = io.StringIO()
         with patch("inputs.ROOT", other.resolve()), redirect_stderr(error_output):
             self.assertEqual(measure.run(args), 1)
@@ -344,7 +381,7 @@ class RunnerTests(Fixture):
         self.assertFalse(Path(args.worktree).exists())
         self.assertFalse(Path(args.target).exists())
 
-    def test_uncalibrated_real_orchestrator_fails_with_complete_fake_raw_series(self):
+    def test_uncalibrated_real_orchestrator_reports_complete_fake_raw_series(self):
         self.measurement_inputs()
         for name in ("a", "b", "c"):
             self.write(f"crates/{name}/Cargo.toml", f'[package]\nname="quantick-{name}"\n')
@@ -354,7 +391,7 @@ class RunnerTests(Fixture):
         sha = self.commit()
         args = SimpleNamespace(repo=str(self.repo), sha=sha, worktree=str(self.root / "bench"),
                                target=str(self.root / "targets"), output=str(self.root / "run-output"),
-                               budgets=str(budget))
+                               budgets=str(budget), context="pr", history=None)
         actual_series = measure.series
 
         def fake_process(command, repo, env, output, timeout):
@@ -380,12 +417,12 @@ class RunnerTests(Fixture):
                   "crate.lines.a": 1, "crate.lines.b": 1, "crate.lines.c": 1}})):
             error_output = io.StringIO()
             with redirect_stderr(error_output):
-                self.assertEqual(measure.run(args), 1)
-            self.assertIn("budgets are uncalibrated", error_output.getvalue())
+                self.assertEqual(measure.run(args), 0)
+            self.assertEqual(error_output.getvalue(), "")
         report_path = Path(args.output) / "report.json"
         report = evidence.load(report_path, self.repo)
         self.assertEqual(report["status"], "complete")
-        self.assertEqual(report["budget_status"], "failed")
-        self.assertIn("uncalibrated", report["error"])
+        self.assertEqual(report["budget_status"], "advisory")
+        self.assertNotIn("error", report)
         self.assertEqual([len(row["samples"]) for row in report["crates"]], [5, 5, 5])
         self.assertEqual(budgets.propose(report)["status"], "calibrated")

@@ -340,6 +340,7 @@ fn both_panes_reopen_with_the_legend_the_trader_folded() {
                 protected_default: false,
                 workspace_parked: Default::default(),
                 workspace_copy: None,
+                workspace_settled: None,
                 orderflow_panel: Default::default(),
             }],
             None,

@@ -93,6 +93,15 @@ pub fn last_print_ms(state: &ChartState) -> Option<i64> {
     })
 }
 
+/// The price the chart stands at now: the forming bar's close, else the
+/// last closed bar's; none for an empty chart or a close `f64` cannot hold.
+#[must_use]
+pub fn last_price(state: &ChartState) -> Option<f64> {
+    use rust_decimal::prelude::ToPrimitive;
+    let bar = state.partial().or_else(|| state.bars().last())?;
+    bar.close.to_f64().filter(|price| price.is_finite())
+}
+
 /// Whether nothing is coming to the tape, by the link as it is spoken
 /// ([`crate::connection_state::ConnectionTracker::spoken_link`]): every link but
 /// one delivering, and a source with no transport, whose clock is its own. A blip

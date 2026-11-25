@@ -100,6 +100,7 @@ fn borrowed_domain_rows_reborrow_in_catalog_order() {
             replay: None,
             timezone: Default::default(),
             route: None,
+            strategies: None,
         });
         let (response, canvas) = pass(&mut registry, &ctx, Slot::LateEdgePanels, Some(&mut env));
         assert_eq!(
@@ -169,7 +170,7 @@ fn borrowed_domain_rows_reborrow_in_catalog_order() {
     let drawings = DrawingEnv {
         linked_alerts: 0,
         pane_id: 42,
-        px_per_bar: 10.0,
+        text_spacing: quantick_drawings::TextSpacing::horizontal(10.0),
         note_display: &Default::default(),
         selected: None,
         selected_all_windows: false,
@@ -184,7 +185,7 @@ fn borrowed_domain_rows_reborrow_in_catalog_order() {
         selected_band: None,
         tab: 0,
         side: crate::pane::PaneSide::Flow,
-        surface: quantick_appearance::ChartSurface::Flow,
+        canvas: quantick_appearance::ChartSurface::Flow.into(),
         drawing_tool_armed: false,
         toolbox_dock: Default::default(),
         authored_objects: 0,
@@ -201,6 +202,7 @@ fn borrowed_domain_rows_reborrow_in_catalog_order() {
             replay: None,
             timezone: Default::default(),
             route: None,
+            strategies: None,
         });
         pass(
             &mut registry,
@@ -261,6 +263,7 @@ fn borrowed_domain_rows_reborrow_in_catalog_order() {
         replay: None,
         timezone: Default::default(),
         route: None,
+        strategies: None,
     });
     let (response, canvas) = pass(&mut registry, &ctx, Slot::StatusLine, Some(&mut env));
     assert_eq!(response, SurfaceResponse::default());

@@ -511,12 +511,6 @@ pr_number() {
 # over it hears about it once, here, while detaching a reference is still
 # cheap, and hears it as news. Nothing on this path can refuse anything.
 #
-# It carries the ledger's other half too. A pull request records its own row,
-# because `main` takes pull requests only and no bot can push to it, so a
-# `gh pr ready` or `gh pr merge` naming a pull request with no row is told
-# which command writes it. That half is not about the ceiling and needs no
-# measurement, so it reaches every branch prefix.
-#
 # Silence answers everything it cannot determine - no interpreter, no
 # calculator in the worktree, no recorded ceiling, a measurement that fails, a
 # branch the ceiling was never about. That is not the file's fail-open rule
@@ -533,11 +527,6 @@ read_cost_advisory() {
     [ -f "$advisory_script" ] || return 0
     advisory_branch=$(git -C "$1" symbolic-ref --quiet --short HEAD 2>/dev/null) ||
         return 0
-    # The pull request, when the command named exactly one. A creation names
-    # none, which is the point: there is no row to ask for before the pull
-    # request exists.
-    advisory_pr=${3:-}
-
     # The interpreter is chosen before the measurement, not by attempting it.
     # Choosing by attempt gave every interpreter its own budget: a branch that
     # exhausted the first one was killed, read as "that interpreter did not
@@ -556,15 +545,9 @@ read_cost_advisory() {
     command -v timeout >/dev/null 2>&1 &&
         advisory_limit="timeout $READ_COST_ADVISORY_SECONDS"
 
-    if [ -n "$advisory_pr" ]; then
-        $advisory_limit "$advisory_python" "$advisory_script" warn \
-            --repo "$1" --base "$2" --head HEAD \
-            --branch "$advisory_branch" --pr "$advisory_pr" 2>/dev/null
-    else
-        $advisory_limit "$advisory_python" "$advisory_script" warn \
-            --repo "$1" --base "$2" --head HEAD \
-            --branch "$advisory_branch" 2>/dev/null
-    fi
+    $advisory_limit "$advisory_python" "$advisory_script" warn \
+        --repo "$1" --base "$2" --head HEAD \
+        --branch "$advisory_branch" 2>/dev/null
     return 0
 }
 
@@ -582,7 +565,7 @@ read_cost_advisory() {
 # nothing to measure against it simply says nothing.
 pass_pr_gate() {
     if pass_base=$(review_base "$1" 2>/dev/null); then
-        pass_note=$(read_cost_advisory "$1" "$pass_base" "${2:-}")
+        pass_note=$(read_cost_advisory "$1" "$pass_base")
         if [ -n "$pass_note" ]; then
             printf '{"systemMessage":%s,"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":%s}}\n' \
                 "$pass_note" "$pass_note"
@@ -753,7 +736,7 @@ pr_gate() {
         fi
     fi
 
-    pass_pr_gate "$dir" "$gate_pr"
+    pass_pr_gate "$dir"
 }
 
 # --- commit-reminder --------------------------------------------------------

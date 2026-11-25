@@ -7,7 +7,7 @@ mod plot_ink;
 mod title_strip;
 pub use bookmap::BookmapOverride;
 pub use chart::{AXIS_RESERVATION_RANGE, CANDLE_OUTLINE_WIDTH_RANGE, ChartAxes};
-pub use lit_flow::{ChartSurface, DARK_GROUND_MAX_LUMINANCE, Ground, LitFlowOverride};
+pub use lit_flow::{ChartSurface, DARK_GROUND_MAX_LUMINANCE, Ground, LitFlowOverride, PaneCanvas};
 pub use title_strip::TitleStripOverride;
 
 use std::{collections::BTreeMap, sync::OnceLock};
@@ -312,7 +312,7 @@ impl ThemeDocument {
 /// The tokens an older document takes from its own mode's bundled theme.
 /// Both bundled themes write every one, so resolving Light for
 /// [`ResolvedTheme::bundled`] never asks its own lock again.
-pub(crate) const MODE_TOKENS: [Token; 57] = [
+pub(crate) const MODE_TOKENS: [Token; 59] = [
     Token::TabStrip,
     Token::CapsuleMiniature,
     Token::RestingIcon,
@@ -324,6 +324,8 @@ pub(crate) const MODE_TOKENS: [Token; 57] = [
     Token::TabIdleOutline,
     Token::TabBand,
     Token::HomeGlow,
+    Token::TabChangeUp,
+    Token::TabChangeDown,
     Token::AxisInk,
     Token::PriceAxisRule,
     Token::TimeAxisRule,

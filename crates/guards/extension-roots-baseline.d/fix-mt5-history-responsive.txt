@@ -1,3 +1,0 @@
-# Written by `cargo run -p quantick-guards -- --tighten`: these shrank.
-ChartState -8
-!budget -8

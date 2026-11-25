@@ -231,11 +231,18 @@ pub enum LedgerIntent {
 /// A single native list transaction, preserving row, session, key precedence.
 #[derive(Default)]
 pub struct RowInput {
+    /// A session row's selection changed: `Some(index)` selects, `None`
+    /// clears.
     pub select: Option<Option<usize>>,
+    /// A saved row's selection changed.
     pub select_saved: Option<Option<(SessionKey, TradeRef)>>,
+    /// Center the chart on a round trip.
     pub navigate: Option<LedgerAction>,
+    /// Reveal one more page of saved history.
     pub reveal_more: bool,
+    /// Fold (`true`) or unfold one day.
     pub fold: Option<(CivilDate, bool)>,
+    /// A session row, its menu or an inline row asked for something.
     pub session: Option<SessionPress>,
     pub keyed: Option<SessionPress>,
     pub edit: Option<LedgerEdit>,
@@ -282,7 +289,7 @@ impl State {
         self.filter.source = request.source().into();
         self.report_custom_text.clear();
         self.calendar = CalendarState::default();
-        if let Some(day) = request.day {
+        if let Some(day) = request.day() {
             self.calendar.selection = DaySelection::Anchor(day);
             self.calendar.month = Some(day.month_start());
         }

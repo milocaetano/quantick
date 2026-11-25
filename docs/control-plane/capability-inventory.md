@@ -173,6 +173,16 @@ capability that cannot change application state.
 | `strategy.describe.read` | 1 | `strategy` | yes | `observe`, `observe.user_text` |
 | `strategy.describe.save` | 1 | `strategy` | no | `annotate`, `annotate.script`, `annotate.strategy_describe`, `observe.user_text` |
 | `strategy.describe.submit` | 1 | `strategy` | no | `annotate`, `annotate.script`, `annotate.strategy_describe`, `observe.user_text` |
+| `strategy.desk.arm` | 1 | `strategy` | no | `annotate`, `annotate.script` |
+| `strategy.desk.asset.pause` | 1 | `strategy` | no | `annotate`, `annotate.script` |
+| `strategy.desk.asset.resume` | 1 | `strategy` | no | `annotate`, `annotate.script` |
+| `strategy.desk.detail` | 1 | `strategy` | yes | `observe`, `observe.indicators`, `observe.user_text` |
+| `strategy.desk.duplicate` | 1 | `strategy` | no | `annotate`, `annotate.script` |
+| `strategy.desk.list` | 1 | `strategy` | yes | `observe`, `observe.indicators`, `observe.user_text` |
+| `strategy.desk.pause` | 1 | `strategy` | no | `annotate`, `annotate.script` |
+| `strategy.desk.remove` | 1 | `strategy` | no | `annotate`, `annotate.script` |
+| `strategy.desk.resume` | 1 | `strategy` | no | `annotate`, `annotate.script` |
+| `strategy.desk.save_as` | 1 | `strategy` | no | `annotate`, `annotate.script` |
 | `strategy.script.arm` | 1 | `strategy` | no | `annotate`, `annotate.script` |
 | `strategy.script.disarm` | 1 | `strategy` | no | `annotate`, `annotate.script` |
 | `strategy.script.list` | 1 | `strategy` | yes | `observe`, `observe.indicators`, `observe.user_text` |
@@ -205,7 +215,8 @@ capability that cannot change application state.
 | `workspace.new` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
 | `workspace.rename` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
 | `workspace.revert` | 1 | `workspace` | no | `cockpit`, `cockpit.layout` |
+| `workspace.revert.undo` | 1 | `workspace` | no | `cockpit`, `cockpit.layout` |
 | `workspace.save_as` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
 | `workspace.save_to` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
 
-183 capabilities registered.
+194 capabilities registered.

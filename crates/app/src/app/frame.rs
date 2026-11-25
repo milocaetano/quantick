@@ -14,6 +14,7 @@
 //! child modules, which never see the window.
 
 use super::LayersPort;
+use super::control_host::ControlWindow;
 use super::drawing_controller::{DrawingAccess, DrawingReadAccess};
 #[cfg(any(feature = "scenario-harness", feature = "drawing-harness", test))]
 use super::owners_desk::OwnersDesk as _;
@@ -21,6 +22,7 @@ use super::owners_desk::OwnersDesk as _;
 use super::paper_wiring::panel_effects::paper_panel_steps;
 use super::paper_wiring::panel_effects::{begin_paper_panel_effects, finish_paper_panel_effects};
 use super::{DrawingResponsePort as _, FrameCalls as _, GatewayPort as _};
+use crate::strategy_desk;
 use crate::surfaces::drawing_chrome::DrawingChromeExt as _;
 use crate::surfaces::replay_browser::ReplayBrowserExt as _;
 use crate::surfaces::{AccessPanelEnv, BorrowedSurfaceEnv, ViewContext};
@@ -520,8 +522,8 @@ impl QuantickApp {
     }
 
     fn draw_dock_stage(&mut self, ctx: &egui::Context) -> Option<crate::surfaces::SurfaceResponse> {
-        let alerts_open = self.surfaces.alerts.is_open();
-        let response = panels::draw_dock(ctx, &mut self.surfaces, &mut self.runtime, alerts_open);
+        let rail = strategy_desk::settle(self as &mut ControlWindow, ctx);
+        let response = panels::draw_dock(ctx, &mut self.surfaces, &mut self.runtime, rail.as_ref());
         let response = match begin_dock_effects(self, ctx, response) {
             Ok(response) => response,
             Err(response) => return Some(*response),
@@ -763,16 +765,18 @@ pub(super) fn sync_appearance(
         crate::theme::sync(ctx, &runtime.appearance);
     }
     presets.sync_theme(&runtime.appearance);
-    for pane in runtime.tabs.iter_mut().flat_map(|tab| tab.panes_mut()) {
-        let surface = pane.surface();
-        pane.presentation
-            .candles
-            .follow_theme(runtime.appearance.resolved(), surface);
-    }
     if runtime
         .chart_theme
         .sync(&mut runtime.style, &runtime.appearance)
     {
         runtime.style_revision = runtime.style_revision.saturating_add(1);
+    }
+    // After the window style: marks resolve on the canvas this frame paints.
+    let theme = runtime.appearance.resolved();
+    for pane in runtime.tabs.iter_mut().flat_map(|tab| tab.panes_mut()) {
+        let (surface, candles) = (pane.surface(), &mut pane.presentation.candles);
+        candles.follow_theme(theme, surface);
+        let canvas = candles.canvas(&runtime.style, theme, surface);
+        pane.drawings.follow_ground(&*presets, canvas);
     }
 }

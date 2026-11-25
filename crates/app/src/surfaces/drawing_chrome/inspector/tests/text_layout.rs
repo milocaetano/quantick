@@ -52,7 +52,7 @@ fn inspect_long_text(pinned: bool) {
                 let env = DrawingEnv {
                     linked_alerts: 0,
                     pane_id: 1,
-                    px_per_bar: 10.0,
+                    text_spacing: quantick_drawings::TextSpacing::horizontal(10.0),
                     note_display: &Default::default(),
                     selected: Some(SelectedDrawing { index: 0, drawing }),
                     selected_all_windows: false,
@@ -67,7 +67,7 @@ fn inspect_long_text(pinned: bool) {
                     selected_band: None,
                     tab: 1,
                     side: PaneSide::Flow,
-                    surface: quantick_appearance::ChartSurface::Flow,
+                    canvas: quantick_appearance::ChartSurface::Flow.into(),
                     drawing_tool_armed: false,
                     toolbox_dock: ToolboxDock::default(),
                     authored_objects: 0,

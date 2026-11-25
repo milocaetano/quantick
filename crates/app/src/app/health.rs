@@ -331,7 +331,7 @@ impl<'a> HealthSummary<'a> {
             book_updates_per_s = self.book_updates_per_s,
             book_updates_total = self.book.depth_updates,
             book_queue_len = self.tab.link.book_events.len(),
-            book_channel_closed = self.tab.link.book_channel_closed_reported,
+            book_channel_closed = self.tab.link.book.channel_closed_reported,
             book_bid_levels = self.book.bid_levels,
             book_ask_levels = self.book.ask_levels,
             heatmap_active_levels = self.book.active_levels,

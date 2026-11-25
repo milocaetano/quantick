@@ -88,14 +88,14 @@ fn a_pencil_restyle_reaches_the_next_stroke() {
     let style = restyled(brush);
     assert!(remember_style(
         &mut host,
-        ChartSurface::Paper,
+        ChartSurface::Paper.into(),
         brush,
         brush.default_style(),
         style
     ));
     assert_eq!(host.style_writes, 1);
     assert_eq!(
-        new_drawing_from_defaults(&host, ChartSurface::Paper, brush).style,
+        new_drawing_from_defaults(&host, ChartSurface::Paper.into(), brush).style,
         style
     );
 }
@@ -109,7 +109,7 @@ fn an_edit_that_leaves_the_style_alone_is_not_remembered() {
     let style = restyled(brush);
     assert!(!remember_style(
         &mut host,
-        ChartSurface::Paper,
+        ChartSurface::Paper.into(),
         brush,
         style,
         style
@@ -123,7 +123,7 @@ fn other_tools_keep_their_explicit_save_as_default() {
     let mut host = CountingHost::default();
     assert!(!remember_style(
         &mut host,
-        ChartSurface::Paper,
+        ChartSurface::Paper.into(),
         line,
         line.default_style(),
         restyled(line)
@@ -139,7 +139,7 @@ fn a_look_already_stored_is_not_written_again() {
     host.set_default_style(brush.id(), Ground::Light, Some(style));
     assert!(!remember_style(
         &mut host,
-        ChartSurface::Paper,
+        ChartSurface::Paper.into(),
         brush,
         brush.default_style(),
         style
@@ -156,7 +156,7 @@ fn going_back_to_the_built_in_look_forgets_the_default() {
     host.set_default_style(brush.id(), Ground::Light, Some(style));
     assert!(remember_style(
         &mut host,
-        ChartSurface::Paper,
+        ChartSurface::Paper.into(),
         brush,
         style,
         brush.default_style()
@@ -165,7 +165,7 @@ fn going_back_to_the_built_in_look_forgets_the_default() {
     assert!(
         !remember_style(
             &mut host,
-            ChartSurface::Paper,
+            ChartSurface::Paper.into(),
             brush,
             style,
             brush.default_style()
@@ -180,7 +180,7 @@ fn going_back_to_the_built_in_look_forgets_the_default() {
 fn a_colour_for_every_tool_reaches_every_tool_on_one_ground() {
     let mut host = CountingHost::default();
     let style = restyled(tool("trend-line"));
-    super::save_style_on_every_tool(&mut host, ChartSurface::Paper, style);
+    super::save_style_on_every_tool(&mut host, ChartSurface::Paper.into(), style);
     for each in DRAWING_TOOLS {
         assert_eq!(
             host.default_style(each.id(), Ground::Light),

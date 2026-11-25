@@ -1107,3 +1107,51 @@ fn a_summary_names_the_panes_of_the_canvas_it_shows() {
     let tree = crate::canvas::preset("time+flow").expect("a preset").tree;
     assert_eq!(saved.summary_of(tree), "Time · Flow · 1 ind");
 }
+
+/// A workspace saved before it kept bar rules names none: the tab's own
+/// timeframe is no edit, but one the trader moves is, so the save button
+/// lights and the save keeps it.
+#[test]
+fn a_timeframe_moved_on_a_workspace_naming_none_is_an_edit_the_save_keeps() {
+    let mut book = held_book();
+    book.open_tab(1);
+    book.observe(1, &on_bars("tick:500", "time:60000").without_bars())
+        .unwrap();
+    book.save_as(1, "Legacy").unwrap();
+    assert_eq!(book.recipe("Legacy").unwrap().flow_bars, None);
+    book.settle_tab(1, &on_bars("tick:500", "time:60000"));
+    assert!(!book.differs(1), "the tab's own timeframe is no edit");
+    book.observe(1, &on_bars("tick:2000", "time:60000"))
+        .unwrap();
+    assert!(book.differs(1), "a moved flow timeframe is an edit");
+    assert_eq!(book.layout_changes(1), ["timeframe"]);
+    book.observe(1, &on_bars("tick:500", "time:300000"))
+        .unwrap();
+    assert!(book.differs(1), "a moved context timeframe is an edit");
+    book.observe(1, &on_bars("tick:500", "time:60000")).unwrap();
+    assert!(!book.differs(1), "moved back by hand reads clean");
+    book.observe(1, &on_bars("tick:2000", "time:300000"))
+        .unwrap();
+    assert!(book.save_to(1).unwrap().changed);
+    let reopened = parse_book(&toml::to_string(&book).unwrap()).expect("reloads");
+    let saved = reopened.recipe("Legacy").unwrap();
+    assert_eq!(saved.flow_bars.as_deref(), Some("tick:2000"));
+    assert_eq!(saved.context_panes[0].bars.as_deref(), Some("time:300000"));
+}
+
+/// Golden: everything a pane shows comes back from the file: indicators,
+/// timeframes, chart style and the split.
+#[test]
+fn a_saved_workspace_reloads_each_pane_s_indicators_timeframe_and_style() {
+    let mut book = held_book();
+    book.open_tab(1);
+    let mut shown = on_bars("tick:2000", "time:120000");
+    shown.flow_indicators = vec![ema()];
+    shown.context_panes[0].indicators = vec![ema(), ema()];
+    shown.footprint_style = Some("candle".to_owned());
+    shown.split_fraction = Some(0.35);
+    book.observe(1, &shown).unwrap();
+    book.save_as(1, "Full").unwrap();
+    let reopened = parse_book(&toml::to_string(&book).unwrap()).expect("reloads");
+    assert_eq!(reopened.recipe("Full"), Some(&shown));
+}

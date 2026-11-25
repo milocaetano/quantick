@@ -18,15 +18,14 @@
 # rule.
 # Raised by one Tab field for the right pane's independent collapse state;
 # the existing context flag still controls the left rail and old workspaces.
-!budget 331
-app::ChartPane 35
-app::Tab 68
-app::ToolRail 32
 # Moved, not grown: #542 took `OrderflowHealthSnapshot` from `app` into
 # `control-schema` with the same 31 fields; the budget is unchanged.
+!budget 244
+app::ChartPane 23
+app::Tab 22
 control-schema::OrderflowHealthSnapshot 31
 orderflow::BookEngine 31
-orderflow::BubbleStyle 30
-orderflow::HeatmapConfig 34
+orderflow::BubbleStyle 32
+orderflow::HeatmapConfig 35
 orderflow::OrderflowHealth 34
 sim::PerformanceReport 36

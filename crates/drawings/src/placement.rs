@@ -24,15 +24,15 @@ impl<T: ToolCatalog> Drawings<T> {
     /// [`Self::place`] on a named band.
     #[cfg(any(test, feature = "test-support"))]
     pub fn place_on(&mut self, tool: T, band: &DrawingBand, point: ChartPoint) -> bool {
-        self.place_with(tool, band, point, |tool| NewDrawing {
-            style: DrawingStyle::default(),
-            payload: tool.default_payload(),
+        self.place_with(tool, band, point, |tool| {
+            NewDrawing::explicit(DrawingStyle::default(), tool.default_payload())
         })
     }
 
     /// [`Self::place`] with a caller-chosen look for a new draft — how the
     /// app applies the trader's saved defaults to newly created objects only.
-    /// Objects that already exist are never touched by a default changing.
+    /// Objects that already exist are never touched by a default changing;
+    /// see [`Drawings::follow_ground`].
     pub fn place_with(
         &mut self,
         tool: T,
@@ -55,6 +55,7 @@ impl<T: ToolCatalog> Drawings<T> {
                 // through would have anchors in two value spaces.
                 band: tool.band_for(band),
                 style: fresh.style,
+                look: fresh.look,
                 locked: false,
                 hidden: false,
                 scope: DrawingScope::default(),
@@ -70,7 +71,7 @@ impl<T: ToolCatalog> Drawings<T> {
             });
         }
         let draft = self.draft.as_mut().expect("draft was installed above");
-        draft.bind_text_zoom(self.text_px_per_bar);
+        draft.bind_text_zoom(self.text_spacing);
         draft.points.push(point);
         // A freehand tool declares no anchor count: its draft is finished by
         // the release, through `finish_draft`, never by arithmetic here.
@@ -212,7 +213,7 @@ impl<T: ToolCatalog> Drawings<T> {
     /// items, the draft, the undo and redo snapshots and a gesture's baseline.
     /// Undoing later must not resurrect coordinates from a series that no
     /// longer exists.
-    fn each_copy(&mut self, mut apply: impl FnMut(&mut [Drawing<T>])) {
+    pub(crate) fn each_copy(&mut self, mut apply: impl FnMut(&mut [Drawing<T>])) {
         apply(&mut self.items);
         if let Some(draft) = self.draft.as_mut() {
             apply(std::slice::from_mut(draft));

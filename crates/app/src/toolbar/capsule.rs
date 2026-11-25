@@ -1,6 +1,6 @@
-//! The capsule at the toolbar's right end: the live layout miniature and the
-//! tab's workspace in one bordered control, with the floppy glued to its left
-//! while the workspace holds unsaved edits (designer 01, idea 1).
+//! The chain at the toolbar's right end: the floppy (while the workspace holds
+//! unsaved edits), the +, the live layout miniature and the tab's workspace,
+//! each its own button, linked in the workspace's colour (design A-3).
 //!
 //! It draws what the app hands it and answers what was pressed; the dirty
 //! comparison, the saved layout and the tree it pictures are the headless
@@ -13,21 +13,27 @@ use quantick_workspace::canvas::PaneTree;
 
 use super::ToolbarAction;
 use crate::theme;
+use egui::Response;
 use quantick_appearance::{Token, tab_strip::WORKSPACE_CAPSULE_BAR_PT as BAR};
+use quantick_ui_model::chrome_toolbar::RevertSlot;
 use quantick_ui_model::layout_picker as picker;
 
-/// The capsule's height: History's.
-const HEIGHT_PX: f32 = 22.0;
-/// The live layout miniature, inside the capsule's left half.
+/// The chain's buttons' height: just under the +'s (the trader's ask of
+/// 2026-11-24).
+const HEIGHT_PX: f32 = 28.0;
+/// The live layout miniature, inside the layout button.
 const MINIATURE: egui::Vec2 = egui::vec2(40.0, 14.0);
-/// Air either side of the miniature and the name.
+/// Air around the miniature, the name and the carets.
 const PAD_PX: f32 = 7.0;
-/// Gap between the floppy and the capsule.
-const FLOPPY_GAP_PX: f32 = 4.0;
+/// The link between two buttons of the chain: its length and thickness.
+const LINK_PX: f32 = 8.0;
+const LINK_WIDTH_PX: f32 = 2.0;
 /// The unsaved dot's radius.
 const DOT_RADIUS_PX: f32 = 2.5;
-/// Rounding of the capsule and the floppy.
+/// Rounding of the chain's buttons.
 const ROUNDING_PX: f32 = 4.0;
+/// The revert's glyph, a fifth over the floppy's so its arrow reads.
+const REVERT_GLYPH_PX: f32 = 15.5;
 
 /// What the capsule shows this frame.
 pub struct CapsuleModel<'a> {
@@ -40,6 +46,7 @@ pub struct CapsuleModel<'a> {
     pub unsaved: bool,
     /// What differs is the layout: the miniature wears the dot too.
     pub layout_unsaved: bool,
+    pub revert: &'a RevertSlot,
     /// The workspace menu hangs from the name.
     pub menu_open: bool,
     /// The layout popover hangs from the miniature.
@@ -57,6 +64,7 @@ pub struct CapsuleModel<'a> {
 pub struct CapsuleRects {
     pub add: Option<egui::Rect>,
     pub floppy: Option<egui::Rect>,
+    pub revert: Option<egui::Rect>,
     pub miniature: egui::Rect,
     pub name: egui::Rect,
 }
@@ -66,6 +74,7 @@ impl Default for CapsuleRects {
         Self {
             add: None,
             floppy: None,
+            revert: None,
             miniature: egui::Rect::NOTHING,
             name: egui::Rect::NOTHING,
         }
@@ -77,8 +86,8 @@ fn shown_name<'a>(model: &CapsuleModel<'a>) -> &'a str {
     if model.compact { "" } else { model.workspace }
 }
 
-/// The width [`draw`] takes, floppy included, for the collapse plan.
-pub fn width(ui: &egui::Ui, model: &CapsuleModel<'_>) -> f32 {
+/// The layout and workspace buttons' widths: air, face and caret.
+fn widths(ui: &egui::Ui, model: &CapsuleModel<'_>) -> (f32, f32) {
     let font = egui::TextStyle::Button.resolve(ui.style());
     let text = |text: &str| {
         let galley =
@@ -86,131 +95,149 @@ pub fn width(ui: &egui::Ui, model: &CapsuleModel<'_>) -> f32 {
                 .layout_no_wrap(text.to_owned(), font.clone(), egui::Color32::WHITE);
         galley.size().x
     };
-    let floppy = if model.unsaved {
-        HEIGHT_PX + FLOPPY_GAP_PX
-    } else {
-        0.0
-    };
-    PAD_PX * 5.0 + MINIATURE.x + 1.0 + text(shown_name(model)) + text(icons::CARET_DOWN) + floppy
+    let caret = text(icons::CARET_DOWN);
+    let name = text(shown_name(model));
+    let layout = PAD_PX + MINIATURE.x + PAD_PX + caret + PAD_PX;
+    // The name stands clear of the colour bar; compact shows no name.
+    let lead = if name > 0.0 { BAR } else { 0.0 };
+    (layout, lead + PAD_PX + name + PAD_PX + caret + PAD_PX)
 }
 
-/// Draw the capsule right to left (the toolbar's right run grows inwards).
+/// The width [`draw`] takes, + and floppy included, for the collapse plan.
+pub fn width(ui: &egui::Ui, model: &CapsuleModel<'_>) -> f32 {
+    let (layout, workspace) = widths(ui, model);
+    let squares = u8::from(model.unsaved) + u8::from(model.revert.press().is_some());
+    let chain = LINK_PX + layout + LINK_PX + crate::add_widget::BUTTON_PX;
+    workspace + chain + f32::from(squares) * (LINK_PX + HEIGHT_PX)
+}
+
+/// A short line in `colour` across the row's middle, joining two buttons.
+fn link(ui: &mut egui::Ui, colour: egui::Color32) {
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(LINK_PX, HEIGHT_PX), egui::Sense::hover());
+    let y = rect.center().y.round();
+    ui.painter()
+        .hline(rect.x_range(), y, (LINK_WIDTH_PX, colour));
+}
+
+/// One square button of the chain, linked to the one before it.
+fn square(ui: &mut egui::Ui, edge: egui::Stroke, face: (&str, f32, egui::Color32)) -> Response {
+    link(ui, edge.color);
+    let (rect, response) =
+        ui.allocate_exact_size(egui::Vec2::splat(HEIGHT_PX), egui::Sense::click());
+    let fill = if response.hovered() {
+        theme::get(ui.ctx()).control()
+    } else {
+        ui.visuals().widgets.inactive.weak_bg_fill
+    };
+    let painter = ui.painter();
+    painter.rect(rect, ROUNDING_PX, fill, edge);
+    let (anchor, font) = (
+        egui::Align2::CENTER_CENTER,
+        egui::FontId::proportional(face.1),
+    );
+    painter.text(rect.center(), anchor, face.0, font, face.2);
+    response
+}
+
+/// Draw the chain right to left (the toolbar's right run grows inwards):
+/// workspace, layout, +, the revert slot, then the floppy while unsaved, each
+/// its own button, joined by short links in the workspace's colour.
 pub fn draw(
     ui: &mut egui::Ui,
     model: &CapsuleModel<'_>,
     actions: &mut Vec<ToolbarAction>,
 ) -> CapsuleRects {
     let palette = theme::get(ui.ctx());
+    let theme = &palette.resolved;
     let font = egui::TextStyle::Button.resolve(ui.style());
+    let caret = |ui: &egui::Ui, rect: egui::Rect| {
+        let at = egui::pos2(rect.right() - PAD_PX, rect.center().y);
+        let (anchor, ink) = (egui::Align2::RIGHT_CENTER, palette.text_muted());
+        ui.painter()
+            .text(at, anchor, icons::CARET_DOWN, font.clone(), ink);
+    };
+    let stroke = ui.visuals().widgets.inactive.bg_stroke;
+    let hovered = ui.visuals().widgets.hovered.weak_bg_fill;
+    // A workspace's colour tints the two fills and takes every border and link.
+    let fill = |lit: bool| match model.colour {
+        Some(colour) => {
+            let [r, g, b, a] = quantick_stores::workspaces::capsule_fill(colour, theme, lit);
+            egui::Color32::from_rgba_premultiplied(r, g, b, a)
+        }
+        None if lit => hovered,
+        None => palette.control(),
+    };
+    let edge = model.colour.map(|colour| {
+        let [r, g, b] = colour.rgb(theme.dark);
+        egui::Stroke::new(stroke.width, egui::Color32::from_rgb(r, g, b))
+    });
+    let border = edge.unwrap_or(stroke);
+    let (layout_w, name_w) = widths(ui, model);
+    let (name_rect, menu) =
+        ui.allocate_exact_size(egui::vec2(name_w, HEIGHT_PX), egui::Sense::click());
+    let lit = model.menu_open || menu.hovered();
+    ui.painter().rect(name_rect, ROUNDING_PX, fill(lit), border);
+    if let Some(edge) = edge {
+        let bar = ui
+            .painter()
+            .with_clip_rect(name_rect.with_max_x(name_rect.left() + BAR));
+        bar.rect_filled(name_rect, ROUNDING_PX, edge.color);
+    }
     let name = ui.painter().layout_no_wrap(
         shown_name(model).to_owned(),
         font.clone(),
         palette.text_primary(),
     );
-    let caret =
-        ui.painter()
-            .layout_no_wrap(icons::CARET_DOWN.to_owned(), font, palette.text_muted());
-    let name_w = PAD_PX + name.size().x + PAD_PX + caret.size().x + PAD_PX;
-    let mini_w = PAD_PX + MINIATURE.x + PAD_PX;
-    let (whole, _) = ui.allocate_exact_size(
-        egui::vec2(mini_w + 1.0 + name_w, HEIGHT_PX),
-        egui::Sense::hover(),
-    );
-    let miniature = egui::Rect::from_min_size(whole.min, egui::vec2(mini_w, HEIGHT_PX));
-    let name_rect =
-        egui::Rect::from_min_max(egui::pos2(miniature.right() + 1.0, whole.top()), whole.max);
-    let layout = ui.interact(
-        miniature,
-        ui.id().with("capsule_layout"),
-        egui::Sense::click(),
-    );
-    let menu = ui.interact(
-        name_rect,
-        ui.id().with("capsule_workspace"),
-        egui::Sense::click(),
-    );
-    let stroke = ui.visuals().widgets.inactive.bg_stroke;
-    let painter = ui.painter();
-    // A workspace's colour tints the fill and takes the border.
-    let (fill, edge) = match model.colour {
-        Some(colour) => {
-            let [r, g, b, a] = quantick_stores::workspaces::capsule_fill(colour, &palette.resolved);
-            let [ir, ig, ib] = colour.rgb(palette.resolved.dark);
-            let edge = (stroke.width, egui::Color32::from_rgb(ir, ig, ib)).into();
-            (egui::Color32::from_rgba_premultiplied(r, g, b, a), edge)
-        }
-        None => (palette.control(), stroke),
-    };
-    painter.rect(whole, ROUNDING_PX, fill, edge);
-    for (part, response, lit) in [
-        (miniature, &layout, model.popover_open),
-        (name_rect, &menu, model.menu_open),
-    ] {
-        if lit || response.hovered() {
-            painter.rect_filled(part.shrink(1.0), ROUNDING_PX, fill);
-        }
-    }
-    if model.colour.is_some() {
-        let bar = painter.with_clip_rect(whole.with_max_x(whole.left() + BAR));
-        bar.rect_filled(whole, ROUNDING_PX, edge.color);
-    }
-    painter.vline(miniature.right() + 0.5, whole.y_range().shrink(4.0), stroke);
-    let face = egui::Rect::from_center_size(miniature.center(), MINIATURE);
-    let face = egui::Rect::from_min_size(face.min.round(), MINIATURE);
-    let at = picker::Rect::new(face.left(), face.top(), face.width(), face.height());
-    let tree = picker::miniature(
-        model.tree,
-        at,
-        model.colour,
-        fill.to_array(),
-        &palette.resolved,
-    );
-    super::layout_popover::paint(painter, egui::Pos2::ZERO, &tree);
-    if model.layout_unsaved {
-        painter.circle_filled(face.right_top(), DOT_RADIUS_PX, palette.accent());
-    }
-    let text_left = name_rect.left() + PAD_PX;
-    painter.galley(
-        egui::pos2(text_left, whole.center().y - name.size().y / 2.0),
-        name,
-        palette.text_primary(),
-    );
-    painter.galley(
-        egui::pos2(
-            name_rect.right() - PAD_PX - caret.size().x,
-            whole.center().y - caret.size().y / 2.0,
-        ),
-        caret,
-        palette.text_muted(),
-    );
-    if layout.on_hover_text("Layout (Ctrl+Shift+1…)").clicked() {
-        actions.push(ToolbarAction::ToggleLayoutPopover);
-    }
+    let mid = name_rect.center().y;
+    let text_at = egui::pos2(name_rect.left() + BAR + PAD_PX, mid - name.size().y / 2.0);
+    ui.painter().galley(text_at, name, palette.text_primary());
+    caret(ui, name_rect);
     if menu
         .on_hover_text(format!("Workspace \u{201c}{}\u{201d}", model.workspace))
         .clicked()
     {
         actions.push(ToolbarAction::ToggleWorkspaceMenu);
     }
+    link(ui, border.color);
+    let (miniature, layout) =
+        ui.allocate_exact_size(egui::vec2(layout_w, HEIGHT_PX), egui::Sense::click());
+    let ground = fill(model.popover_open || layout.hovered());
+    ui.painter().rect(miniature, ROUNDING_PX, ground, border);
+    let face = egui::pos2(miniature.left() + PAD_PX, mid - MINIATURE.y / 2.0);
+    let face = egui::Rect::from_min_size(face.round(), MINIATURE);
+    let at = picker::Rect::new(face.left(), face.top(), face.width(), face.height());
+    let tree = picker::miniature(model.tree, at, model.colour, ground.to_array(), theme);
+    super::layout_popover::paint(ui.painter(), egui::Pos2::ZERO, &tree);
+    if model.layout_unsaved {
+        ui.painter()
+            .circle_filled(face.right_top(), DOT_RADIUS_PX, palette.accent());
+    }
+    caret(ui, miniature);
+    if layout.on_hover_text("Layout (Ctrl+Shift+1…)").clicked() {
+        actions.push(ToolbarAction::ToggleLayoutPopover);
+    }
+    link(ui, border.color);
+    let add = crate::add_widget::button(ui, model.add_open, edge);
+    if add.clicked() {
+        actions.push(ToolbarAction::ToggleAddMenu);
+    }
+    let revert = model.revert.press().map(|press| {
+        let undo = matches!(model.revert, RevertSlot::Undo);
+        let glyph = [icons::ARROW_U_UP_LEFT, icons::ARROW_U_UP_RIGHT][usize::from(undo)];
+        let ink = [palette.text_primary(), palette.accent()][usize::from(undo)];
+        let response = square(ui, border, (glyph, REVERT_GLYPH_PX, ink));
+        let rect = response.rect;
+        (response.on_hover_text(press.hover).clicked()).then(|| actions.push(press.action));
+        rect
+    });
     let floppy = model.unsaved.then(|| {
-        ui.add_space(FLOPPY_GAP_PX);
-        let (rect, response) =
-            ui.allocate_exact_size(egui::Vec2::splat(HEIGHT_PX), egui::Sense::click());
-        let painter = ui.painter();
-        let fill = if response.hovered() {
-            palette.control()
-        } else {
-            ui.visuals().widgets.inactive.weak_bg_fill
-        };
-        painter.rect(rect, ROUNDING_PX, fill, stroke);
-        painter.text(
-            rect.center(),
-            egui::Align2::CENTER_CENTER,
-            icons::FLOPPY_DISK,
-            egui::FontId::proportional(13.0),
-            palette.text_primary(),
+        let response = square(
+            ui,
+            border,
+            (icons::FLOPPY_DISK, 13.0, palette.text_primary()),
         );
-        painter.circle_filled(
+        let rect = response.rect;
+        ui.painter().circle_filled(
             rect.right_top() + egui::vec2(-3.0, 3.0),
             DOT_RADIUS_PX,
             palette.accent(),
@@ -224,8 +251,9 @@ pub fn draw(
         rect
     });
     CapsuleRects {
-        add: None,
+        add: Some(add.rect),
         floppy,
+        revert,
         miniature,
         name: name_rect,
     }
@@ -257,6 +285,7 @@ pub(crate) mod tests {
             colour: None,
             unsaved: false,
             layout_unsaved: false,
+            revert: &RevertSlot::Empty,
             menu_open: false,
             popover_open: false,
             add_open: false,

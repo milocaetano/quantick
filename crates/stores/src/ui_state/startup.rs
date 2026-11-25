@@ -49,6 +49,7 @@ pub fn reconcile_startup(
                 protected_default: false,
                 workspace_parked: Default::default(),
                 workspace_copy: None,
+                workspace_settled: None,
                 orderflow_panel: Default::default(),
             }
         },

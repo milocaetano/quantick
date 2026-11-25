@@ -191,12 +191,7 @@ pub(crate) fn scene_snapshot<P: TabsPort + ChromePort + ?Sized>(app: &P) -> Scen
     // stop. Cutting a finished list would still have built it: an implausible
     // number of open charts must cost a truncated answer, not an unbounded
     // allocation on the application thread.
-    let strip_complete = push_tab_strip(
-        &mut controls,
-        tabs,
-        active_chip,
-        app.chrome_reads().title_bar(),
-    );
+    let strip_complete = push_tab_strip(&mut controls, app, active_chip);
     push_title_bar(&mut controls, app);
 
     let coverage = if !strip_complete || controls.len() > CONTROL_SCENE_MAX_CONTROLS {
@@ -377,23 +372,18 @@ fn push_context_dividers(controls: &mut Vec<SceneControlSnapshot>, tab_id: u64, 
 /// Answers whether every open chart fitted. The last walk, and the only one
 /// the trader can grow, so this is where the ceiling is enforced rather than
 /// applied to a list that has already been built.
-fn push_tab_strip(
+fn push_tab_strip<P: TabsPort + ChromePort + ?Sized>(
     controls: &mut Vec<SceneControlSnapshot>,
-    tabs: &crate::app::arrangement_host::ArrangementHost,
+    app: &P,
     selected_id: Option<u64>,
-    title: Option<&crate::app::title_bar::TitleBarState>,
 ) -> bool {
+    let (tabs, config) = (app.tab_reads().tabs(), app.tab_reads().config());
+    let title = app.chrome_reads().title_bar();
     for index in tabs.window_indices(tabs.windows().presented()) {
         let tab_id = tabs.id_at(index);
         let tab = &tabs[index];
-        let rect = title.and_then(|title| {
-            title
-                .strip
-                .tab_ids
-                .iter()
-                .find(|(visible, _)| *visible == tab_id)
-                .map(|(_, rect)| *rect)
-        });
+        let drawn = title.and_then(|t| t.strip.tab_ids.iter().find(|d| d.0 == tab_id));
+        let rect = drawn.map(|(_, rect, ..)| *rect);
         if title.is_some() && rect.is_none() {
             continue;
         }
@@ -406,7 +396,10 @@ fn push_tab_strip(
             // assistant that named a tab something the trader cannot see
             // would be describing a different screen.
             label: tab.chip_label().to_owned(),
-            description: None,
+            description: drawn.map(|&(.., stage, corner)| {
+                let (_, quote) = crate::app::title_bar::tab_face(tab, config);
+                quantick_ui_model::chrome_tab_strip::tab_words(corner, quote.scene_words(stage))
+            }),
             role: SceneRoleDto::Tab,
             owner: SceneOwnerSnapshot {
                 kind: SceneOwnerKindDto::TabStrip,

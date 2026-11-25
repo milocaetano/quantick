@@ -326,7 +326,7 @@ fn observe_strip(app: &mut QuantickApp, ctx: &egui::Context, window: WindowId) {
             .strip
             .tab_ids
             .iter()
-            .filter_map(|(id, bounds)| {
+            .filter_map(|(id, bounds, ..)| {
                 Some((
                     quantick_workspace::arrangement::TabId(*id),
                     indices

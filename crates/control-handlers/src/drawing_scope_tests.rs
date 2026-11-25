@@ -15,6 +15,7 @@ fn level(drawings: &mut Drawings<DrawingTool>, time_ms: Option<i64>) -> DrawingI
     let fresh = |tool: DrawingTool| NewDrawing {
         style: DrawingStyle::default(),
         payload: tool.default_payload(),
+        look: Default::default(),
     };
     assert!(drawings.place_with(tool, &DrawingBand::Price, point, fresh));
     drawings.items().last().unwrap().id

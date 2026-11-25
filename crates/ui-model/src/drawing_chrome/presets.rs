@@ -140,6 +140,9 @@ impl PresetHost for RecordingPresetHost<'_> {
     fn theme(&self) -> Option<&quantick_appearance::ResolvedTheme> {
         self.bank.theme()
     }
+    fn theme_revision(&self) -> u64 {
+        self.bank.theme_revision()
+    }
     fn custom_preset_names(&self, tool_id: &str) -> Vec<String> {
         let mut names = self.bank.custom_preset_names(tool_id);
         for write in &self.writes {

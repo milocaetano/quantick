@@ -97,18 +97,23 @@ impl<D: Copy + PartialEq> TabStrategies<D> {
             request.place,
             &warm,
         );
-        Ok(self.publish_script(request.pane_id, instance))
+        Ok(self.publish_script(request.pane_id, instance, script))
     }
 
+    /// Number `instance`, put it on chart `pane_id` and record its compiled
+    /// `script` in the desk, so every published script can be read, duplicated
+    /// and saved there.
     pub(crate) fn publish_script(
         &mut self,
         pane_id: u64,
         mut instance: ScriptInstance<D>,
+        script: Script,
     ) -> ScriptReading<D> {
         instance.id = self.next_script_id;
         self.next_script_id += 1;
         let reading = ScriptReading::of(pane_id, &instance);
         self.pane_mut(pane_id).scripts.push(instance);
+        self.desk.record_script(reading.id, script);
         reading
     }
 
@@ -116,12 +121,14 @@ impl<D: Copy + PartialEq> TabStrategies<D> {
     /// disarmed; `None` when no pane holds it. Alarm-only, so nothing is
     /// owed on the way out.
     pub fn disarm_script(&mut self, id: u64) -> Option<ScriptReading<D>> {
-        self.panes_mut().find_map(|(pane_id, pane)| {
+        let removed = self.panes_mut().find_map(|(pane_id, pane)| {
             let at = pane.scripts.iter().position(|script| script.id == id)?;
             let mut instance = pane.scripts.remove(at);
             instance.disarm(DisarmReason::User);
             Some(ScriptReading::of(pane_id, &instance))
-        })
+        });
+        self.desk.forget_script(id);
+        removed
     }
 
     /// Every armed script, panes in id order, each pane's in arming order.

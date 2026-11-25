@@ -192,6 +192,10 @@ pub enum Token {
     TabIdleOutline,
     TabBand,
     HomeGlow,
+    /// The open tab's day change, up and down: the mock's gain and loss
+    /// (`docs/label/tabs-final`), apart from the ladder's buy and sell inks.
+    TabChangeUp,
+    TabChangeDown,
     /// Ink of a light theme's axis labels. Dark writes its axes in `text_muted`.
     AxisInk,
     /// A light theme's rule between the plot and the price axis; transparent
@@ -317,7 +321,7 @@ pub enum Token {
     RailGripHover,
 }
 impl Token {
-    pub const ALL: [Self; 163] = [
+    pub const ALL: [Self; 165] = [
         Self::FlowSurface,
         Self::FlowDivider,
         Self::FlowInk,
@@ -428,6 +432,8 @@ impl Token {
         Self::TabIdleOutline,
         Self::TabBand,
         Self::HomeGlow,
+        Self::TabChangeUp,
+        Self::TabChangeDown,
         Self::AxisInk,
         Self::PriceAxisRule,
         Self::TimeAxisRule,
@@ -501,6 +507,8 @@ impl Token {
             Self::TabIdleOutline => "tab_idle_outline",
             Self::TabBand => "tab_band",
             Self::HomeGlow => "home_glow",
+            Self::TabChangeUp => "tab_change_up",
+            Self::TabChangeDown => "tab_change_down",
             Self::AxisInk => "axis_ink",
             Self::PriceAxisRule => "price_axis_rule",
             Self::TimeAxisRule => "time_axis_rule",

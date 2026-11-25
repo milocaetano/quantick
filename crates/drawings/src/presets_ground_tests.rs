@@ -18,7 +18,7 @@ fn a_default_saved_on_one_ground_never_reaches_the_other() {
         .into_iter()
         .find(|tool| tool.id() == "trend-line")
         .unwrap();
-    let (light, dark) = (ChartSurface::Paper, ChartSurface::Flow);
+    let (light, dark) = (ChartSurface::Paper.into(), ChartSurface::Flow.into());
     let built_in_dark = new_drawing_from_defaults(&store, dark, line).style;
     let mut drawings = crate::Drawings::default();
     assert!(!drawings.place(line, crate::ChartPoint::at(1.0, 100.0)));

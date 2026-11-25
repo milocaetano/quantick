@@ -30,6 +30,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 mod bar_rules;
+mod revert;
+pub use revert::RevertOutcome;
 
 #[path = "workspace_book_manage.rs"]
 mod manage;
@@ -63,8 +65,6 @@ pub enum WorkspaceRefusal {
     /// The tab's panes are still being built, so there is nothing to read an
     /// empty recipe from yet.
     TabOpening(u64),
-    /// `workspace.revert` is gone: edits are kept by Save to or by autosave.
-    RevertRemoved,
     /// Neither a preset's name nor `#RRGGBB`.
     ColourInvalid(String),
     /// Another workspace holds an identical colour: no swap was asked, or
@@ -87,7 +87,6 @@ impl WorkspaceRefusal {
             Self::CreationInvalid => "workspace.creation_invalid",
             Self::UnknownTab(_) => "workspace.unknown_tab",
             Self::TabOpening(_) => "workspace.tab_not_ready",
-            Self::RevertRemoved => "workspace.revert_removed",
             Self::ColourInvalid(_) => "workspace.colour_invalid",
             Self::ColourTaken(_) => "workspace.colour_taken",
             Self::UndoExpired(_) => "workspace.undo_expired",
@@ -116,10 +115,6 @@ impl std::fmt::Display for WorkspaceRefusal {
             Self::TabOpening(tab) => {
                 write!(f, "tab {tab} is still opening; retry once its charts stand")
             }
-            Self::RevertRemoved => f.write_str(
-                "workspace.revert was removed: keep edits with workspace.save_to, or turn on \
-                 workspace.autosave.set; switching the workspace drops held edits",
-            ),
             Self::ColourInvalid(word) => write!(
                 f,
                 "{word:?} is no colour: name a preset (sky, slate, ...) or give #RRGGBB"
@@ -188,6 +183,9 @@ struct TabWorkspace {
     /// showed when its panes last settled clean, so an edit undone by hand
     /// reads clean again, as on any other workspace.
     opened: Option<WorkspaceRecipe>,
+    /// What the tab showed when its panes last settled on its workspace: the
+    /// bar rules the workspace names none for are told from it.
+    settled: Option<WorkspaceRecipe>,
 }
 
 impl TabWorkspace {
@@ -196,6 +194,7 @@ impl TabWorkspace {
             workspace: workspace.to_owned(),
             copy,
             opened: None,
+            settled: None,
         }
     }
 }
@@ -343,6 +342,13 @@ pub struct WorkspaceBook {
     /// The deletes an Undo can still take back: the window's, never a file's.
     #[serde(skip)]
     deleted: BTreeMap<String, manage::Deleted>,
+    /// The edits each tab's last revert dropped: the window's, never a file's.
+    #[serde(skip)]
+    reverted: BTreeMap<u64, revert::Reverted>,
+    /// Each restored tab's settled reading, as its desk kept it, until the
+    /// tab is brought back ([`Self::restore_tab`]).
+    #[serde(skip)]
+    restored_settled: BTreeMap<u64, WorkspaceRecipe>,
 }
 
 /// Why a tab's copy differs from its workspace with autosave on. Either way
@@ -404,6 +410,8 @@ impl Default for WorkspaceBook {
             unsynced: BTreeMap::new(),
             active: None,
             deleted: BTreeMap::new(),
+            reverted: BTreeMap::new(),
+            restored_settled: BTreeMap::new(),
         }
     }
 }
@@ -908,14 +916,34 @@ impl WorkspaceBook {
     /// Answers whether the copy changed.
     pub fn discard_edits(&mut self, tab: u64) -> bool {
         self.unsynced.remove(&tab);
-        let Some(base) = self.tabs.get(&tab).and_then(|state| self.baseline(state)) else {
+        let Some(copy) = self.saved_copy(tab) else {
             return false;
         };
-        let base = base.clone();
-        let state = self.tabs.get_mut(&tab).expect("found above");
-        let changed = state.copy != base;
-        state.copy = base;
+        let state = self.tabs.get_mut(&tab).expect("saved_copy found it");
+        let changed = state.copy != copy;
+        state.copy = copy;
         changed
+    }
+
+    /// What a discard lays on the tab: its workspace as saved, each bar rule
+    /// the workspace names none for as the tab settled on it.
+    fn saved_copy(&self, tab: u64) -> Option<WorkspaceRecipe> {
+        let state = self.tabs.get(&tab)?;
+        let mut copy = self.baseline(state)?.clone();
+        // The factory `Default` names no bar rule and tells none as an edit:
+        // its tab keeps the ones it shows.
+        let factory = self
+            .recipes
+            .get(&state.workspace)
+            .is_some_and(WorkspaceRecipe::is_factory);
+        let own = (factory && state.settled.is_none()).then_some(&state.copy);
+        if let Some(rules) = state.settled.as_ref().or(own) {
+            // Only the panes the workspace keeps: a chart added since goes.
+            let panes = copy.context_panes.len();
+            copy.take_inherited_bars(rules);
+            copy.context_panes.truncate(panes);
+        }
+        Some(copy)
     }
 
     /// Whether edits are written through as they are made.
@@ -984,7 +1012,7 @@ impl WorkspaceBook {
             .baseline(state)
             .filter(|_| self.is_modified(tab, state)))
         .map(|base| {
-            let mut shown = base.masked(&state.copy);
+            let mut shown = bar_rules::read(state, base, &state.copy);
             if self.held_capture(tab) {
                 shown.take_inherited_bars(&state.copy);
             }
@@ -1014,7 +1042,7 @@ impl WorkspaceBook {
 
     fn is_modified(&self, tab: u64, state: &TabWorkspace) -> bool {
         self.baseline(state)
-            .is_none_or(|base| !base.holds(&state.copy))
+            .is_none_or(|base| *base != bar_rules::read(state, base, &state.copy))
             || self.held_capture(tab)
     }
 
@@ -1057,31 +1085,11 @@ impl WorkspaceBook {
     /// A tab closed: nothing of it stays. Its edits go with it.
     pub fn close_tab(&mut self, tab: u64) {
         self.tabs.remove(&tab);
+        self.reverted.remove(&tab);
+        self.restored_settled.remove(&tab);
         self.forget_parked_tab(tab);
         self.drawings.remove(&tab);
         self.unsynced.remove(&tab);
-    }
-
-    /// A tab the desk brought back, following a rename since. A workspace the
-    /// book no longer has hands it to `Default`, keeping the copy it is given,
-    /// marked; the window gives what the tab shows when the desk kept none, so
-    /// a lost workspace never lays `Default` over the tab. With autosave on a
-    /// copy that differs did not reach its workspace before the restart: it
-    /// is [`Unsynced::Outvoted`], marked and never written unasked.
-    pub fn restore_tab(&mut self, tab: u64, workspace: &str, copy: Option<WorkspaceRecipe>) {
-        let name = self
-            .resolve(workspace)
-            .unwrap_or(DEFAULT_WORKSPACE)
-            .to_owned();
-        let held_copy = copy.is_some();
-        let mut copy = copy.unwrap_or_else(|| self.recipes.get(&name).cloned().unwrap_or_default());
-        copy.adopt_legacy_bars();
-        self.tabs.insert(tab, TabWorkspace::on(&name, copy));
-        self.unsynced.remove(&tab);
-        if self.autosave && (self.differs(tab) || (held_copy && self.captures_inherited_bars(tab)))
-        {
-            self.unsynced.insert(tab, Unsynced::Outvoted);
-        }
     }
 
     /// The first run: one workspace per open tab, named after the layout the
@@ -1171,6 +1179,7 @@ impl WorkspaceBook {
             TabWorkspace::on(name, parked.clone().unwrap_or(recipe)),
         );
         self.unsynced.remove(&tab);
+        self.reverted.remove(&tab);
         if parked.is_some() && (self.differs(tab) || self.captures_inherited_bars(tab)) {
             self.unsynced.insert(tab, Unsynced::Outvoted);
         }
@@ -1201,7 +1210,9 @@ impl WorkspaceBook {
             return false;
         };
         let base = self.baseline(state);
-        let rest = base.is_none_or(|base| !base.holds(&with_sets_of(&state.copy, base)));
+        let rest = base.is_none_or(|base| {
+            *base != bar_rules::read(state, base, &with_sets_of(&state.copy, base))
+        });
         let sets = base.is_none_or(|base| !same_sets(&state.copy, base));
         let mut others = (self.tabs.iter()).filter(|(other, _)| **other != tab);
         let shared = others.any(|(_, held)| {
@@ -1349,6 +1360,7 @@ impl WorkspaceBook {
                 state.workspace.clone_from(&cleaned);
             }
         }
+        self.revert_renamed(name, &cleaned);
         for copies in self.parked.values_mut() {
             if let Some(copy) = copies.remove(name) {
                 copies.insert(cleaned.clone(), copy);
@@ -1454,6 +1466,9 @@ pub fn capture_recipe(
 #[path = "workspace_book_tests.rs"]
 mod workspace_book_tests;
 
+#[cfg(test)]
+#[path = "workspace_book/revert_tests.rs"]
+mod revert_tests;
 #[cfg(test)]
 #[path = "workspace_book_colour_tests.rs"]
 mod workspace_book_colour_tests;

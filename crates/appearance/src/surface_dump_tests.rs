@@ -16,8 +16,8 @@ const ADDED: [&str; 5] = [
     "readout_edge",
 ];
 /// The settings panels' tokens came later still, then the folded pane's
-/// rail, each under one prefix.
-const ADDED_PREFIXES: [&str; 2] = ["panel_", "rail_"];
+/// rail, then the open tab's day change, each under one prefix.
+const ADDED_PREFIXES: [&str; 3] = ["panel_", "rail_", "tab_change_"];
 
 fn dump(name: &str, theme: &ResolvedTheme, out: &mut String) {
     writeln!(out, "[{name}]").unwrap();

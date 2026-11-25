@@ -12,6 +12,7 @@ fn note() -> (FakePane, TextTarget) {
         |tool| quantick_drawings::NewDrawing {
             style: tool.default_style(),
             payload: tool.default_payload(),
+            look: Default::default(),
         },
     );
     let id = pane.drawings.items()[0].id.0;

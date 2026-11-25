@@ -21,12 +21,19 @@ pub mod palette;
 pub use quantick_workspace::workspace_recipe::{ContextPaneRecipe, WorkspaceRecipe};
 pub use quantick_workspace::workspace_sync::{TabAdoption, TabRecipeSync};
 
-/// The capsule's fill on `theme`: its control fill tinted toward the
-/// workspace's colour, which the name keeps 4.5:1 on for every preset.
+/// A toolbar workspace button's fill on `theme`: its control fill tinted
+/// toward the workspace's colour, deeper while `lit` (hovered or open). The
+/// name keeps 4.5:1 on both for every preset; the border's 3:1 holds at rest
+/// only, as a deeper tint closes on the colour.
 #[must_use]
-pub fn capsule_fill(colour: WorkspaceColour, theme: &ResolvedTheme) -> [u8; 4] {
+pub fn capsule_fill(colour: WorkspaceColour, theme: &ResolvedTheme, lit: bool) -> [u8; 4] {
     let base = theme.color(Token::Control).to_array();
-    tab_strip::workspace_tint(base, colour.rgb(theme.dark))
+    let share = if lit {
+        tab_strip::WORKSPACE_HOVER_TINT
+    } else {
+        tab_strip::WORKSPACE_TINT
+    };
+    tab_strip::workspace_tint(base, colour.rgb(theme.dark), share)
 }
 
 /// The open tab's symbol ink on `theme`: the workspace's colour while it keeps

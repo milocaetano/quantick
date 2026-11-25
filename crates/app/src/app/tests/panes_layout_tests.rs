@@ -818,6 +818,7 @@ fn unsharing_removes_the_copy_from_the_other_pane() {
         |tool| drawings::NewDrawing {
             style: drawings::DrawingStyle::default(),
             payload: tool.default_payload(),
+            look: Default::default(),
         },
     );
     app.active_tab_mut()
@@ -1745,6 +1746,7 @@ fn a_new_tab_takes_the_feeds_declared_defaults_over_inheritance() {
         asset_aliases: Default::default(),
         symbol_asset_modes: Default::default(),
         symbol_widgets: Default::default(),
+        symbol_icons: Default::default(),
         contract_rolls: Default::default(),
         default_layout: Some(crate::config::DeclaredLayout::TimeAndFlow),
         default_bars: Some("tick:7".to_string()),

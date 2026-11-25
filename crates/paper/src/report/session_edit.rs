@@ -26,6 +26,8 @@ pub const DELETED_DIR: &str = ".deleted";
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SessionEditError {
     DayNotInSession(quantick_civil::CivilDate),
+    /// A day or tag report, titled, that admits no trade.
+    EmptyScope(String),
     /// The key is not an optionally broker-prefixed `<symbol>/<file>.csv`.
     InvalidKey(String),
     /// No such session file.
@@ -50,6 +52,7 @@ impl SessionEditError {
     pub fn code(&self) -> &'static str {
         match self {
             Self::DayNotInSession(_) => "day_not_in_session",
+            Self::EmptyScope(_) => "no_trades_in_scope",
             Self::InvalidKey(_) => "invalid_session",
             Self::NotFound(_) => "session_not_found",
             Self::LiveSession(_) => "live_session",
@@ -72,6 +75,7 @@ impl std::fmt::Display for SessionEditError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::DayNotInSession(day) => write!(f, "the session has no trade on {}", day.iso()),
+            Self::EmptyScope(title) => write!(f, "no trade in {title}"),
             Self::InvalidKey(key) => write!(
                 f,
                 "`{key}` is not a session - send `<symbol>/<file>.csv` or `broker/<symbol>/<file>.csv` as listed"

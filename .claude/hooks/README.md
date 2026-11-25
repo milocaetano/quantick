@@ -305,15 +305,8 @@ that number and the largest files the branch pulls in *by reference alone* —
 the ones it never edits and a reader still has to open, which is the only part
 of the number detaching something would lower.
 
-It carries the ledger's other half as well. Each pull request records its own
-row — `main` takes pull requests only, so no workflow can push one there — and
-a `gh pr ready` or `gh pr merge` that names a pull request with no row is told
-the command that writes it. That half is not about the ceiling, costs no
-measurement, and so reaches every branch prefix.
-
-Both are printed as `systemMessage` and `additionalContext`, never as a
-permission decision, so neither can deny, ask or delay anything. A draft
-`gh pr create` is deliberately included: that is the last point where moving a
+The advice is printed as `systemMessage` and `additionalContext`, never as a
+permission decision. A draft `gh pr create` is included while detaching a
 reference is cheap. When the gate denies, the denial is what the caller sees;
 the advice returns on the attempt that passes.
 
@@ -332,12 +325,11 @@ Microsoft Store alias, which resolves, prints "Python was not found" and exits
 49, so the hook takes the first name that actually runs rather than the first
 it finds.
 
-CI does the rest: `.github/workflows/ci.yml` posts the same measurement as one
-sticky comment on every pull request — asking for the row while it is missing
-— and, after a merge, annotates the run when the merged pull request left
-none. The ceiling moves only when a person moves it, in its own pull request;
-`python tools/read_cost/ledger.py median` prints what the rows currently
-suggest.
+CI posts the measurement as one sticky PR comment. After main pushes, the
+existing `read-cost-ledger` job generates rows from main history and uploads
+the ledger as an artifact for a separate maintenance PR. Feature PRs never
+owe a ledger row. The ceiling moves only in its own deliberate change;
+`python tools/read_cost/ledger.py median` prints what the rows suggest.
 
 ## Fail-open by design
 

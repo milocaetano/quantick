@@ -15,10 +15,11 @@ use tracing::{error, info, warn};
 
 use quantick_engine::Trade;
 use quantick_feed_binance::{
-    Backoff, BinanceHttp, BinanceKlineHttp, BinanceMarket, agg_trade_url,
+    Backoff, BinanceHttp, BinanceKlineHttp, BinanceMarket, KLINE_INTERVAL_1D, agg_trade_url,
     backfill_before_with_boundary, backfill_with_boundary,
     depth::{
-        BinanceDepthHttp, DepthEvent, DepthSessionConfig, MAX_DEPTH_LIMIT, run_depth_with_reconnect,
+        BinanceDepthHttp, DepthEvent, DepthSessionConfig, DepthSnapshotSource as _,
+        MAX_DEPTH_LIMIT, run_depth_with_reconnect,
     },
     fetch_history, run_with_reconnect,
 };
@@ -143,6 +144,32 @@ pub(crate) async fn feed_task(
     // websocket read loop behind it stalls, and pongs stop going out. The task
     // sends its result back here and the loop keeps turning meanwhile.
     let (ohlcv_tx, mut ohlcv_rx) = mpsc::channel::<OhlcvReply>(1);
+    let day_open = {
+        let (klines, symbol) = (BinanceKlineHttp::for_market(market), symbol.clone());
+        crate::day_reference::spawn_daily_open(tx.clone(), move |day_start, now| {
+            let (klines, symbol) = (klines.clone(), symbol.clone());
+            async move {
+                let daily = crate::OHLCV_DAILY_INTERVAL_MS;
+                let day = fetch_history(&klines, &symbol, KLINE_INTERVAL_1D, daily, day_start, now);
+                day.await.bars
+            }
+        })
+    };
+    // The venue's own price precision, once a session: its PRICE_FILTER tick.
+    let decimals = {
+        let (depth, symbol, tx) = (
+            BinanceDepthHttp::for_market(market),
+            symbol.clone(),
+            tx.clone(),
+        );
+        tokio::spawn(async move {
+            if let Ok(Some(tick)) = depth.fetch_price_step(&symbol).await {
+                let _ = tx
+                    .send(FeedEvent::PriceDecimals(decimals_of_tick(tick)))
+                    .await;
+            }
+        })
+    };
     let mut feed = BinanceLoop {
         // Candles come off a different endpoint with a different paging rule,
         // so they get their own client rather than overloading the aggTrade one.
@@ -189,6 +216,8 @@ pub(crate) async fn feed_task(
         }
     }
     reconnect.abort();
+    day_open.abort();
+    decimals.abort();
     let _ = reconnect.await;
     feed.shutdown().await;
 }
@@ -723,9 +752,23 @@ fn withdraw_paging(capabilities: &watch::Sender<FeedCapabilities>, symbol: &str)
     });
 }
 
+/// The decimals a price tick is written in: `0.01000000` is two.
+fn decimals_of_tick(tick: rust_decimal::Decimal) -> u32 {
+    tick.normalize().scale()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_price_filter_tick_names_the_decimals_without_its_padding() {
+        let tick = |text: &str| decimals_of_tick(text.parse().unwrap());
+        assert_eq!(tick("0.01000000"), 2);
+        assert_eq!(tick("0.10000000"), 1);
+        assert_eq!(tick("1.00000000"), 0);
+        assert_eq!(tick("0.00001000"), 5);
+    }
 
     #[tokio::test]
     async fn a_known_retention_boundary_answers_retries_without_another_http_request() {

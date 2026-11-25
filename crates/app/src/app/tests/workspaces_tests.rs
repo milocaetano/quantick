@@ -146,6 +146,7 @@ fn opening_a_workspace_replaces_the_tab_strip_instead_of_growing_it() {
                 protected_default: false,
                 workspace_parked: Default::default(),
                 workspace_copy: None,
+                workspace_settled: None,
                 orderflow_panel: Default::default(),
             }],
             None,
@@ -550,6 +551,7 @@ fn switching_to_a_feed_with_a_declared_preset_applies_it_then() {
         asset_aliases: Default::default(),
         symbol_asset_modes: Default::default(),
         symbol_widgets: Default::default(),
+        symbol_icons: Default::default(),
         contract_rolls: Default::default(),
         default_layout: None,
         default_bars: None,
@@ -677,6 +679,7 @@ fn a_restored_workspace_puts_the_window_back() {
                 protected_default: false,
                 workspace_parked: Default::default(),
                 workspace_copy: None,
+                workspace_settled: None,
                 orderflow_panel: Default::default(),
             }],
             Some(ui_state::SavedChrome {

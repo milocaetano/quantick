@@ -47,8 +47,8 @@ struct LiveTradeOwners<'a> {
     context: &'a mut [crate::pane::ChartPane],
     observer: &'a mut dyn super::alerts::Observer,
     received_at_ms: i64,
-    /// The tag of the market this print closes bars on.
-    alarm_tag: u64,
+    /// Tags each pane's closes with this print's market and that pane's bars.
+    alarms: quantick_stores::script_alarms::Tagger<'a>,
 }
 
 /// The effect sink for [`quantick_session::market::TabMarket::execute_live_trade`].
@@ -66,7 +66,7 @@ impl live_trade::LiveTradeOwners for LiveTradeOwners<'_> {
             Some(at) => &mut self.context[at],
         };
         let mut fold = PaneFold::new(pane.id);
-        let tag = self.alarm_tag;
+        let tag = self.alarms.tag(*pane.series.state.spec());
         pane.ingest_live_trade_observed(trade, tag, &mut |_, closed, slot| {
             fold.close(&closed.bar, closed.poc, slot);
         });
@@ -155,10 +155,9 @@ impl Tab {
     /// Allocate a capture generation well above all reconnect generations from
     /// the previous UI capture epoch.
     pub fn next_book_generation(&mut self) -> u64 {
-        self.link.book_capture_epoch = self.link.book_capture_epoch.saturating_add(1);
-        self.link
-            .book_capture_epoch
-            .saturating_mul(BOOK_GENERATION_STRIDE)
+        let book = &mut self.link.book;
+        book.capture_epoch = book.capture_epoch.saturating_add(1);
+        book.capture_epoch.saturating_mul(BOOK_GENERATION_STRIDE)
     }
 
     /// Keep the recorder running for any feed that can stream depth.
@@ -733,6 +732,8 @@ impl Tab {
                     }
                 }
                 Ok(FeedEvent::DealCounter(sample)) => self.observe_deal_counter(sample),
+                Ok(FeedEvent::DayReference(day)) => self.link.quote.hold_day(day),
+                Ok(FeedEvent::PriceDecimals(digits)) => self.link.quote.decimals = Some(digits),
                 Ok(FeedEvent::RefillStatus(fill)) => {
                     self.link.feed_integrity.last_refill = Some(fill)
                 }
@@ -888,15 +889,14 @@ impl Tab {
         observer: &mut dyn super::alerts::Observer,
     ) {
         super::alerts::observe_alert_lifecycle(self, observer);
-        self.link
-            .observe_live_trade(received_at_ms, trade.timestamp_ms);
+        self.link.observe_live_trade(received_at_ms, trade);
         // The simulator taps the same per-trade point the bar engine does, so
         // paper trading works identically on a live feed and a replay — and on
         // a tab the user is not looking at, whose position keeps marking
         // against its own tape.
         let source = Self::alert_source(&self.link, &self.active);
         let mut owners = LiveTradeOwners {
-            alarm_tag: self.alarm_labels.tag(source, &self.symbol),
+            alarms: self.alarm_labels.on(source, &self.symbol),
             paper: &mut self.paper,
             flow: &mut self.flow_pane,
             context: &mut self.time_panes,
@@ -926,7 +926,7 @@ impl Tab {
                 }
                 Err(mpsc::error::TryRecvError::Empty) => break,
                 Err(mpsc::error::TryRecvError::Disconnected) => {
-                    if self.tape().enabled() && !self.link.book_channel_closed_reported {
+                    if self.tape().enabled() && !self.link.book.channel_closed_reported {
                         tracing::warn!(
                             target: "quantick::app",
                             schema_version = 1_u8,
@@ -935,7 +935,7 @@ impl Tab {
                             action = "retain_last_book_and_wait_for_feed_switch",
                             "depth event channel closed"
                         );
-                        self.link.book_channel_closed_reported = true;
+                        self.link.book.channel_closed_reported = true;
                     }
                     break;
                 }
@@ -1203,15 +1203,19 @@ impl Tab {
         };
         self.history_trades += trades.len();
         self.link.latest_trade_ms = Some(last.timestamp_ms);
-        let source = Self::alert_source(&self.link, &self.active);
-        let tag = self.alarm_labels.tag(source, &self.symbol);
         let Self {
             flow_pane,
             time_panes,
             market: crate::strategy_anchors::TabMarket { strategies, .. },
+            alarm_labels,
+            link,
+            active,
+            symbol,
             ..
         } = self;
+        let mut alarms = alarm_labels.on(Self::alert_source(link, active), symbol);
         for pane in std::iter::once(flow_pane).chain(time_panes.iter_mut()) {
+            let tag = alarms.tag(*pane.series.state.spec());
             for trade in trades {
                 pane.ingest_live_trade_observed(trade, tag, &mut |pane, closed, slot| {
                     strategies.queue_closed(pane.id, &closed.bar, closed.poc, slot, to_strategies);

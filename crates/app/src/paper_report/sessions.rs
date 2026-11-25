@@ -14,6 +14,7 @@ use quantick_paper::report::fit::fit_session_head;
 use quantick_paper::report::ledger_state::{
     LedgerEdit, LedgerViewChange, SessionPress, complete_tag, tag_suggestions,
 };
+use quantick_paper::report::scope::ReportRequest;
 use quantick_paper::report::session_edit::JournalEdit;
 use quantick_paper::report::sessions::{SessionKey, TradeRef, title_span};
 use quantick_sim::history::SessionSource;
@@ -259,23 +260,27 @@ pub(super) fn draw_session_head(ui: &mut egui::Ui, head: &SessionHead) -> Option
         if head.folded { "open it" } else { "fold it" }
     ));
     response.context_menu(|ui| {
-        for (label, day) in [("Session report", None), ("Day report", Some(head.day))] {
-            if ui.button(label).clicked() {
-                press = Some(SessionPress::Report(
-                    quantick_paper::report::scope::ReportRequest {
-                        session: head.key.clone(),
-                        day,
-                    },
-                ));
-                ui.close_menu();
-            }
-        }
+        report_buttons(ui, ReportRequest::sessions(&head.key, head.day), &mut press);
         ui.separator();
         if let Some(menu) = session_menu(ui, &head.key, &head.title, head.count, head.live) {
             press = Some(menu);
         }
     });
     press
+}
+
+/// One context-menu button per report scope; a click sets `press`.
+pub(super) fn report_buttons(
+    ui: &mut egui::Ui,
+    requests: impl IntoIterator<Item = ReportRequest>,
+    press: &mut Option<SessionPress>,
+) {
+    for request in requests {
+        if ui.button(request.menu_label()).clicked() {
+            *press = Some(SessionPress::Report(request));
+            ui.close_menu();
+        }
+    }
 }
 
 /// Rename and delete, as a session's or a trade's context menu offers them.

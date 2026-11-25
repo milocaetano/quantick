@@ -135,7 +135,7 @@ fn ledger_rows_open_a_new_day_caption_when_the_day_changes() {
     push_plain(&mut rows, &plain, tz, &std::collections::BTreeSet::new());
     assert_eq!(rows.len(), 5, "two day captions over three trades");
     match &rows[0] {
-        LedgerRow::Day(date, count, net, folded) => {
+        LedgerRow::Day(date, count, net, folded, _) => {
             assert_eq!(*date, day.offset_days(1));
             assert_eq!(*count, 1);
             assert_eq!(net.0, Decimal::from(8));
@@ -145,7 +145,7 @@ fn ledger_rows_open_a_new_day_caption_when_the_day_changes() {
     }
     assert!(matches!(rows[1], LedgerRow::Earlier(..)));
     match &rows[2] {
-        LedgerRow::Day(date, count, net, _) => {
+        LedgerRow::Day(date, count, net, _, _) => {
             assert_eq!(*date, day);
             assert_eq!(*count, 2, "both of the 17th's trades");
             assert_eq!(net.0, Decimal::from(114), "and what the day netted");
@@ -163,7 +163,7 @@ fn ledger_rows_open_a_new_day_caption_when_the_day_changes() {
     push_plain(&mut rows, &plain, tz, &folded_days);
     assert_eq!(rows.len(), 3, "two captions and only the open day's row");
     match &rows[2] {
-        LedgerRow::Day(date, count, net, folded) => {
+        LedgerRow::Day(date, count, net, folded, _) => {
             assert_eq!(*date, day);
             assert!(*folded, "and it says it is folded");
             assert_eq!(*count, 2, "a folded day still counts its trades");
@@ -234,7 +234,7 @@ fn two_sessions_nest_in_their_day_card_and_a_folded_day_closes_its_own() {
         ..trade_at(day + closed * minute, pnl)
     };
     let early = SessionKey::parse("WINZ26/early.csv").unwrap();
-    let late = SessionKey::parse("WINZ26/late.csv").unwrap();
+    let late = SessionKey::parse("WINZ26/late.csv").unwrap().for_broker();
     let older = SessionKey::parse("WINZ26/older.csv").unwrap();
     // Newest first: the late session, the early one, then a day before.
     let trades = [
@@ -302,6 +302,19 @@ fn two_sessions_nest_in_their_day_card_and_a_folded_day_closes_its_own() {
     assert_eq!(
         titles[1].0, labels[&early].text,
         "the header writes the label the search and the delete confirm read"
+    );
+    use crate::report::scope::ReportOrigin::{Broker, Simulator};
+    let origins: Vec<&[_]> = rows
+        .iter()
+        .filter_map(|row| match row {
+            LedgerRow::Day(.., origins) => Some(origins.as_slice()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        origins,
+        [&[Simulator, Broker][..], &[Simulator][..]],
+        "each day offers a report per origin it holds, folded or not"
     );
 
     let ends = |opens, closes| Some([opens, closes]);

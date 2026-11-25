@@ -127,6 +127,7 @@ impl AnnotatePort for FakeWindow {
         NewDrawing {
             style: tool.default_style(),
             payload: tool.default_payload(),
+            look: Default::default(),
         }
     }
     fn pane_mut(&mut self, _index: usize, _side: PaneSide) -> &mut dyn AnnotatedPane {

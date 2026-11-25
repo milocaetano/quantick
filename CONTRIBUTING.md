@@ -65,7 +65,13 @@ A ratchet raise is a new file in the baseline's `.d/` directory named for the
 branch (`crates/guards/app-lines-baseline.d/<branch>.txt` holding
 `crates/app +N`, `!budget +N` and a comment saying why), never an edit to the
 baseline, so two open branches cannot conflict on it; `--tighten` writes its
-cuts there the same way. Update a branch with
+cuts there the same way. PR aggregate guards compare measured growth with the
+merge base through `python tools/ci/ratchet_delta.py --base origin/main`.
+Shrinking aggregates need no baseline edit. Existing fragments cannot be edited;
+`cargo run -p quantick-guards -- --tighten --fold` consolidates them into
+downward baselines and deletes the consumed fragments. Folding is a plain rewrite;
+restore affected baseline and fragment files from Git after an interrupted write.
+The per-file size ceiling and context budget remain absolute. Update a branch with
 `sh tools/merge_main.sh`: it regenerates the hook registry instead of leaving
 it for a hand merge.
 

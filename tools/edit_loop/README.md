@@ -86,22 +86,45 @@ when nothing at all was restored, so a branch that changes the workflow still
 gets a warm second run. A missing cache costs one cold build, about twelve
 minutes, and changes no sample: the warm-up is never timed.
 
-## Fixed budgets and failure evidence
+## Timing policy and retained evidence
 
-Before first calibration, `budgets.json` is explicitly **uncalibrated**. The initial hosted run
-collects all valid samples and then fails the budget gate; it is calibration
-evidence, never a passing scheduled check. Download its entire artifact and
-inspect it against the source commit available in Git:
+PRs validate every raw sample, executed test, exact source ranking, artifact
+hash and restoration record, then report timings without timing failures.
+Main fails timing only when a crate's median of its five complete loops is
+strictly greater than twice the rolling median of its last ten comparable
+main run medians. Equality passes. At least three prior runs are required;
+missing history, a new representative, or fewer samples produces an explicit
+`cold-start` or `insufficient-history` advisory, never a fixed-budget fallback.
+
+Comparison identity is host class, toolchain, jobs, root profile hash, protocol
+hash, and crate/package/representative path. Source commits intentionally may
+differ. Incompatible runs are excluded before validation, so a protocol
+change never fails on rows recorded under older rules. Malformed compatible
+evidence, non-main history, duplicate SHAs and timestamps more than five
+minutes after the current run fail validation, in either context; a row ahead
+by less (runner clock skew) is skipped. A rerun excludes its
+own SHA. The last 100 complete reports are retained in a main-only cache;
+uncancelled main runs serialize publication. Cache eviction is a reported cold
+start. PRs read main history but cannot publish it. Regression measurements
+remain in history once complete, preserving the observed rolling series.
+
+`run` and `check` accept `--context pr|main` (default `pr`) and `--history PATH`.
+For `run`, history must live outside the source, worktree, target and evidence
+directories so publishing history cannot mutate measured inputs or evidence.
+The report includes comparison SHAs, sample count, median, threshold and result.
+Historical `budgets.json` remains an input artifact; it no longer gates timing
+or crate-selection drift. `propose` still prints the historical fixed-budget
+formula for inspecting retained artifacts; it changes no files. Measurement
+errors and test failures remain failures in either context.
 
 ```powershell
 python tools/edit_loop/measure.py propose C:/bench/run-001-evidence/report.json --repo .
 ```
 
-The automatic proposal does not modify budgets. Per selected crate it applies
-`ceil(1.25 * max(all five loops) * 1000) / 1000`: 25% above the slowest
-retained loop, rounded upward to the millisecond, with no additive allowance.
-The margin is an explicit operational policy, not a measured confidence
-interval or cross-run noise bound.
+### Historical fixed-budget policy
+
+The following calibration history documents the superseded fixed limits.
+The historical proposal used `ceil(1.25 * max(all five loops) * 1000) / 1000`.
 
 ### Seven-minute protocol calibration (2026-10-10)
 
