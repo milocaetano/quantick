@@ -152,33 +152,33 @@ def git(*args, cwd):
     ).stdout
 
 
-def main(argv=None):
-    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("--base", required=True, help="the PR's base commit")
-    parser.add_argument("--head", default="HEAD")
-    parser.add_argument("--cargo-args", action="store_true", help="print -p flags")
-    args = parser.parse_args(argv)
-
-    metadata = json.loads(subprocess.run(
+def metadata_workspace():
+    """`workspace()` over this checkout's `cargo metadata --no-deps`."""
+    return workspace(json.loads(subprocess.run(
         ("cargo", "metadata", "--format-version", "1", "--no-deps"),
         check=True, capture_output=True, text=True,
-    ).stdout)
-    root, packages = workspace(metadata)
+    ).stdout))
 
+
+def changed_paths(root, base, head):
+    """The paths `base...head` touches."""
     # --no-renames reports both sides of a move: the crate that lost the file is
     # affected as much as the one that gained it. -z keeps a path with a space
     # or a non-ASCII byte whole and unquoted.
-    changed = [p for p in git(
-        "diff", "--name-only", "-z", "--no-renames", f"{args.base}...{args.head}", cwd=root
+    return [p for p in git(
+        "diff", "--name-only", "-z", "--no-renames", f"{base}...{head}", cwd=root
     ).split("\0") if p]
 
+
+def git_referrers(root, head):
+    """The `referrers` `select` takes: one search of the crates at `head`."""
     def referrers(wanted):
         if not wanted:
             return []
         # One pass for every needle. -o prints each match, -z ends the path
         # with NUL, and `git grep <rev>` prefixes it with `<rev>:`.
         result = subprocess.run(
-            ("git", "grep", "-o", "-F", "-z", "-f", "-", args.head, "--", "crates/"),
+            ("git", "grep", "-o", "-F", "-z", "-f", "-", head, "--", "crates/"),
             cwd=root, input="\n".join(wanted) + "\n", capture_output=True, text=True,
         )
         if result.returncode not in (0, 1):
@@ -188,6 +188,19 @@ def main(argv=None):
             location, _, needle = line.partition("\0")
             found.add((location.split(":", 1)[1], needle))
         return sorted(found)
+    return referrers
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    parser.add_argument("--base", required=True, help="the PR's base commit")
+    parser.add_argument("--head", default="HEAD")
+    parser.add_argument("--cargo-args", action="store_true", help="print -p flags")
+    args = parser.parse_args(argv)
+
+    root, packages = metadata_workspace()
+    changed = changed_paths(root, args.base, args.head)
+    referrers = git_referrers(root, args.head)
 
     selected = affected(changed, packages, referrers)
     for name in sorted(selected):

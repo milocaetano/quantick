@@ -209,7 +209,7 @@ fn check_retry_matrix(root: &Path, findings: &mut Vec<Finding>) {
 
 /// The rows of a generated table with exactly `width` columns whose first
 /// cell is a backticked identifier — the shape both generators write their
-/// capability rows in, and a shape no heading or summary row has.
+/// capability rows in, and a shape no heading row has.
 fn table_rows(document: &str, width: usize) -> impl Iterator<Item = Vec<&str>> {
     document.lines().filter_map(move |line| {
         let columns: Vec<&str> = line.trim_matches('|').split('|').collect();
@@ -364,27 +364,19 @@ fn check_inventory(root: &Path, findings: &mut Vec<Finding>) {
         }
     }
 
-    // A hand edit that adds or deletes a row usually leaves the footer behind,
-    // and the footer is cheap to check. It catches the edit the set comparison
-    // above cannot: a row whose identifier is right and whose other columns
-    // were rewritten by hand still moves the count if a row was duplicated.
-    //
-    // Rows, not identifiers: a capability registers one row per version, and
-    // `layout.*` was the first to register two.
-    let rows = document
-        .lines()
-        .filter(|line| line.starts_with("| `"))
-        .count();
-    if let Some(claimed) = footer_count(&document)
-        && claimed != rows
-    {
-        findings.push(Finding::new(
-            format!(
-                "{INVENTORY_PATH}: the footer claims {claimed} capabilities but the \
-                 table has {rows} rows"
-            ),
-            REMEDY_REGENERATE,
-        ));
+    // The set comparison above cannot see a row duplicated by hand: the
+    // identifier is still documented once as far as a set is concerned. The
+    // generator writes one row per capability and version — `layout.*` was the
+    // first to register two versions — so a repeated pair is a hand edit. A
+    // deleted or invented version row is the app's byte-for-byte test's to find.
+    let mut seen = BTreeSet::new();
+    for (line, id, version) in documented_rows(&document) {
+        if !seen.insert((id, version)) {
+            findings.push(Finding::new(
+                format!("{INVENTORY_PATH}:{line}: `{id}` version {version} has a second row"),
+                REMEDY_REGENERATE,
+            ));
+        }
     }
 }
 
@@ -690,21 +682,10 @@ fn hook_names(text: &str) -> BTreeSet<String> {
 
 /// The identifiers the committed table claims, with the line each is on.
 fn documented_capabilities(document: &str) -> BTreeMap<String, usize> {
-    let mut out = BTreeMap::new();
-    for (index, line) in document.lines().enumerate() {
-        let trimmed = line.trim_start();
-        if !trimmed.starts_with("| `") {
-            continue;
-        }
-        if let Some(id) = trimmed
-            .strip_prefix("| `")
-            .and_then(|rest| rest.split('`').next())
-            && is_capability_id(id)
-        {
-            out.insert(id.to_owned(), index + 1);
-        }
-    }
-    out
+    documented_rows(document)
+        .into_iter()
+        .map(|(line, id, _)| (id.to_owned(), line))
+        .collect()
 }
 
 /// The identifiers the sources declare, with the `path:line` each sits at.
@@ -766,12 +747,18 @@ fn is_capability_id(candidate: &str) -> bool {
         })
 }
 
-/// The count the generated footer states, if the footer is intact.
-fn footer_count(document: &str) -> Option<usize> {
+/// Each capability row's line, identifier and version cell, in document order.
+fn documented_rows(document: &str) -> Vec<(usize, &str, &str)> {
     document
         .lines()
-        .find_map(|line| line.strip_suffix(" capabilities registered."))
-        .and_then(|count| count.trim().parse().ok())
+        .enumerate()
+        .filter_map(|(index, line)| {
+            let mut cells = line.trim_start().strip_prefix('|')?.split('|');
+            let id = cells.next()?.trim().strip_prefix('`')?.strip_suffix('`')?;
+            let version = cells.next()?.trim();
+            is_capability_id(id).then_some((index + 1, id, version))
+        })
+        .collect()
 }
 
 fn collect_rust_files(directory: &Path, out: &mut Vec<std::path::PathBuf>) {
@@ -1026,13 +1013,11 @@ fn also_real() -> bool {
 | Capability | Version | Module | Read-only | Permissions |
 | --- | --- | --- | --- | --- |
 | `trade.order.place` | 1 | `trade` | no | `trade` |
-
-1 capabilities registered.
 ";
         let documented = documented_capabilities(document);
         assert_eq!(documented.len(), 1);
         assert!(documented.contains_key("trade.order.place"));
-        assert_eq!(footer_count(document), Some(1));
+        assert_eq!(documented_rows(document), [(3, "trade.order.place", "1")]);
     }
 
     /// The header row must not be mistaken for a capability. It is the one
