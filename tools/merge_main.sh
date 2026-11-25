@@ -39,11 +39,10 @@ generated() {
 if [ "${1:-}" != "--continue" ]; then
     git fetch origin
     git merge --no-commit --no-ff origin/main || true
-    # Up to date, or refused: nothing was merged, so nothing to regenerate.
+    # The marker outlives the merge: a merge committed by hand before
+    # regeneration leaves it, and the next run regenerates below.
     if git rev-parse -q --verify MERGE_HEAD >/dev/null; then
         : >"$marker"
-    else
-        rm -f "$marker"
     fi
 fi
 

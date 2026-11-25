@@ -68,7 +68,7 @@ if [ "$local_stages" = 1 ]; then
         report "tests: none affected"
     else
         # shellcheck disable=SC2086 # one -p flag per word
-        if env -u QUANTICK_BUBBLES cargo test $packages >"$logs/tests.log" 2>&1; then
+        if env -u QUANTICK_BUBBLES cargo test --no-fail-fast $packages >"$logs/tests.log" 2>&1; then
             passed=$(grep -cE '^test result: ok' "$logs/tests.log")
             report "tests: pass ($passed test runs; $packages)"
         else
