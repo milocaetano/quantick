@@ -10,8 +10,8 @@
 
 use std::fmt::Write as _;
 
-use super::registry::{NOT_A_BEHAVIOUR, PENDING_ISSUE, UI_BEHAVIOURS};
-use super::{Mapping, Source};
+use super::registry::{NOT_A_BEHAVIOUR, PENDING_ISSUE};
+use super::{Mapping, Source, UiBehaviour};
 
 /// The banner the generated file opens with.
 ///
@@ -23,17 +23,18 @@ pub const GENERATED_MARKER: &str =
 
 /// The committed contents of `docs/control-plane/ui-behaviour-matrix.md`.
 ///
-/// Deterministic by construction: it is a `const` slice rendered in its own
-/// order, so two runs on the same tree cannot disagree and the committed copy
-/// can be compared byte for byte instead of parsed.
-pub fn ui_behaviour_matrix_markdown() -> String {
+/// Deterministic by construction: `behaviours` is the joined `const` table
+/// (`quantick_control_schema::ui_behaviours::UI_BEHAVIOURS`) rendered in its
+/// own order, so two runs on the same tree cannot disagree and the committed
+/// copy can be compared byte for byte instead of parsed.
+pub fn ui_behaviour_matrix_markdown(behaviours: &[UiBehaviour]) -> String {
     let mut out = String::new();
     out.push_str("# Supported UI behaviour matrix\n\n");
     out.push_str(GENERATED_MARKER);
     out.push_str("\n\n");
     out.push_str(&preamble());
-    out.push_str(&rows());
-    out.push_str(&appendix());
+    out.push_str(&rows(behaviours));
+    out.push_str(&appendix(behaviours));
     out
 }
 
@@ -54,9 +55,10 @@ fn preamble() -> String {
         "```\n",
         "\n",
         "The rows live one file per family under\n",
-        "`crates/operability/src/registry/`, joined by `FAMILIES` in\n",
-        "`registry.rs`; the guard that compares them against the interface\n",
-        "and against the capability registry lives beside them, and runs as\n",
+        "`crates/operability/src/registry/`, or in the `ui` entry of a declared\n",
+        "control call, joined by `FAMILIES` in\n",
+        "`crates/control-schema/src/ui_behaviours.rs`; the guard that compares\n",
+        "them against the interface and against the capability registry runs as\n",
         "`cargo test -p quantick-app operability`.\n",
         "\n",
         "**Reach** names every door into the behaviour — a toolbar button, a menu\n",
@@ -85,8 +87,8 @@ fn preamble() -> String {
 /// Read off the declaration rather than inferred from an empty key list: those
 /// are different things, and conflating them let a forgotten key present itself
 /// to a reader as a deliberate gesture.
-fn authored_rows() -> Vec<(&'static str, &'static str)> {
-    UI_BEHAVIOURS
+fn authored_rows(behaviours: &[UiBehaviour]) -> Vec<(&'static str, &'static str)> {
+    behaviours
         .iter()
         .filter_map(|behaviour| {
             behaviour
@@ -98,7 +100,7 @@ fn authored_rows() -> Vec<(&'static str, &'static str)> {
         .collect()
 }
 
-fn rows() -> String {
+fn rows(behaviours: &[UiBehaviour]) -> String {
     let mut out = String::new();
     out.push_str("## Behaviours\n\n");
     let _ = writeln!(
@@ -106,7 +108,7 @@ fn rows() -> String {
         "| Behaviour | What it does | Reach | Capability | Exclusion |"
     );
     let _ = writeln!(out, "| --- | --- | --- | --- | --- |");
-    for behaviour in UI_BEHAVIOURS {
+    for behaviour in behaviours {
         let (capability, exclusion) = match behaviour.mapping {
             Mapping::Capabilities(ids) => (
                 ids.iter()
@@ -129,7 +131,7 @@ fn rows() -> String {
     out
 }
 
-fn appendix() -> String {
+fn appendix(behaviours: &[UiBehaviour]) -> String {
     let mut out = String::new();
     out.push_str("## Appendix: sources the guard walks\n\n");
     out.push_str(concat!(
@@ -152,7 +154,7 @@ fn appendix() -> String {
     ));
     let _ = writeln!(out, "| Behaviour | Why nothing registers it |");
     let _ = writeln!(out, "| --- | --- |");
-    for (id, reason) in authored_rows() {
+    for (id, reason) in authored_rows(behaviours) {
         let _ = writeln!(out, "| `{id}` | {reason} |");
     }
     out.push('\n');
@@ -179,121 +181,6 @@ mod tests {
 
     use super::super::{Drift, ExclusionClass, Registered, drift};
     use super::*;
-
-    fn committed_path() -> std::path::PathBuf {
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .and_then(std::path::Path::parent)
-            .expect("crates/operability sits two levels below the workspace root")
-            .join("docs/control-plane/ui-behaviour-matrix.md")
-    }
-
-    /// The authoritative check on the document: the committed file is what the
-    /// generator emits today, byte for byte.
-    #[test]
-    fn the_committed_matrix_is_what_the_generator_emits() {
-        let path = committed_path();
-        let committed = std::fs::read_to_string(&path)
-            .unwrap_or_else(|error| panic!("cannot read {}: {error}", path.display()));
-        assert_eq!(
-            committed,
-            ui_behaviour_matrix_markdown(),
-            "the committed UI behaviour matrix is stale. Regenerate it:\n  \
-             cargo run -p quantick-app -- --dump-ui-behaviour-matrix > \
-             docs/control-plane/ui-behaviour-matrix.md"
-        );
-    }
-
-    /// Every row is legible on its own: an identifier that reads like a
-    /// capability id, a title, a reach, and — where it is excluded — a reason
-    /// long enough to argue with.
-    ///
-    /// A generator that dropped a column would still pass the byte comparison
-    /// above, because that test regenerates the file it compares against.
-    #[test]
-    fn every_row_carries_an_identifier_a_title_a_reach_and_a_reason() {
-        for behaviour in UI_BEHAVIOURS {
-            assert!(
-                !behaviour.id.is_empty()
-                    && behaviour
-                        .id
-                        .chars()
-                        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || "._-".contains(c)),
-                "behaviour id is not a dotted lowercase identifier: {}",
-                behaviour.id
-            );
-            assert!(!behaviour.title.is_empty(), "{} has no title", behaviour.id);
-            assert!(!behaviour.reach.is_empty(), "{} has no reach", behaviour.id);
-            if let Mapping::Excluded { reason, .. } = behaviour.mapping {
-                assert!(
-                    reason.len() > 40,
-                    "{}'s exclusion reason is too short to argue with: {reason}",
-                    behaviour.id
-                );
-            }
-        }
-    }
-
-    /// The rendered document carries the marker, the regeneration command and
-    /// a row for every behaviour.
-    #[test]
-    fn the_rendered_matrix_carries_the_marker_and_every_row() {
-        let markdown = ui_behaviour_matrix_markdown();
-        assert!(markdown.contains(GENERATED_MARKER), "no generated marker");
-        assert!(
-            markdown.contains("--dump-ui-behaviour-matrix"),
-            "the document does not say how to regenerate itself"
-        );
-        for behaviour in UI_BEHAVIOURS {
-            assert!(
-                markdown.contains(&format!("| `{}` |", behaviour.id)),
-                "{} has no row in the rendered matrix",
-                behaviour.id
-            );
-        }
-    }
-
-    /// The tape header's window selector and `chart.tape_view.set` with `file`
-    /// are one act, and the row says that flag is what makes them one.
-    #[test]
-    fn the_tape_window_selector_maps_to_the_tape_view_call() {
-        let window = UI_BEHAVIOURS
-            .iter()
-            .find(|behaviour| behaviour.id == "chart.tape.window")
-            .expect("the selector has a row");
-        assert!(
-            matches!(window.mapping, Mapping::Capabilities(ids) if ids == ["chart.tape_view.set"])
-        );
-        assert!(window.reach.contains("selector"), "{}", window.reach);
-        assert!(window.reach.contains("`file`"), "{}", window.reach);
-    }
-
-    /// The toolbar's market button and `tab.market.set` are one act: an
-    /// operator reading the matrix finds the capability behind the button, and
-    /// is not told the picker is the only door to a market.
-    #[test]
-    fn the_market_button_maps_to_the_switch_capability() {
-        let source = UI_BEHAVIOURS
-            .iter()
-            .find(|behaviour| {
-                matches!(behaviour.mapping, Mapping::Capabilities(ids) if ids.contains(&"tab.market.set"))
-            })
-            .expect("a row maps tab.market.set");
-        assert!(
-            source.reach.contains("market button"),
-            "{} names the market button: {}",
-            source.id,
-            source.reach
-        );
-        let open = UI_BEHAVIOURS
-            .iter()
-            .find(|behaviour| behaviour.id == "tab.market.open")
-            .expect("opening a tab has a row");
-        assert!(
-            matches!(open.mapping, Mapping::Capabilities(ids) if ids == ["market.palette.open"]),
-            "+ and Ctrl+T open the palette, the same door market.palette.open opens"
-        );
-    }
 
     /// A hygiene check the drift function performs and nothing else would:
     /// two rows may not claim the same registry entry, and a row may not claim

@@ -1,0 +1,36 @@
+{
+  "$defs": {
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "What a recovery call did.",
+  "properties": {
+    "respawned": {
+      "description": "Whether the feed was actually respawned. `false` is a real answer, not\na failure: a tab playing a recorded session has no transport to\nrecover, and says so here rather than pretending to have acted.",
+      "type": "boolean"
+    },
+    "symbol": {
+      "description": "The market it is showing.",
+      "type": "string"
+    },
+    "tab_id": {
+      "$ref": "#/$defs/WireU64",
+      "description": "The tab the call acted on."
+    },
+    "timeline_kept": {
+      "description": "Whether the chart's timeline survived the call.",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "tab_id",
+    "symbol",
+    "respawned",
+    "timeline_kept"
+  ],
+  "title": "RecoveryResult",
+  "type": "object"
+}

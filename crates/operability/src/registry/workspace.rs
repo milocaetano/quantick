@@ -14,8 +14,9 @@ const AUTHORITY_ARBITRARY_PATH: Mapping = Mapping::Excluded {
              dialog is the ceiling's other side, not a gap in it",
 };
 
-/// Every row this family owns.
-pub(super) const ROWS: &[UiBehaviour] = &[
+/// The desk's rows, read before the doors a workspace-book call performs:
+/// those are that call's `ui` entry in `quantick_control_schema::workspace_book`.
+pub const DESK: &[UiBehaviour] = &[
     UiBehaviour {
         id: "alerts.list",
         title: "List local alerts and manage their definitions, monitoring and history",
@@ -91,79 +92,10 @@ pub(super) const ROWS: &[UiBehaviour] = &[
         keys: &[(Source::MenuEntry, "Reset startup desk")],
         mapping: Mapping::Capabilities(&["desk.forget"]),
     },
-    UiBehaviour {
-        id: "tab.workspace.set",
-        title: "Put a tab on a saved workspace",
-        reach: "the capsule's workspace name, Ctrl+Shift+O",
-        keys: &[
-            (Source::Hotkey, "WORKSPACE_MENU_SHORTCUT"),
-            (Source::ToolbarAction, "ToggleWorkspaceMenu"),
-        ],
-        mapping: Mapping::Capabilities(&["tab.workspace.set"]),
-    },
-    UiBehaviour {
-        id: "workspace.save_to",
-        title: "Save a tab's edits to its workspace",
-        reach: "the capsule's floppy, its workspace menu, window menu, Save to, Ctrl+S",
-        keys: &[
-            (Source::ToolbarAction, "SaveWorkspace"),
-            (Source::MenuEntry, "Save to workspace"),
-            (Source::Hotkey, "SAVE_TO_WORKSPACE_SHORTCUT"),
-        ],
-        mapping: Mapping::Capabilities(&["workspace.save_to"]),
-    },
-    UiBehaviour {
-        id: "workspace.revert",
-        title: "Discard a tab's unsaved layout edits, back to its workspace as saved",
-        reach: "the capsule's revert arrow, right of the floppy, while the tab holds edits",
-        keys: &[(Source::ToolbarAction, "RevertWorkspace")],
-        mapping: Mapping::Capabilities(&["workspace.revert"]),
-    },
-    UiBehaviour {
-        id: "workspace.revert.undo",
-        title: "Bring back the edits a revert dropped, until a save or a switch",
-        reach: "the capsule's restore arrow, in the revert's slot after a revert",
-        keys: &[(Source::ToolbarAction, "UndoRevertWorkspace")],
-        mapping: Mapping::Capabilities(&["workspace.revert.undo"]),
-    },
-    UiBehaviour {
-        id: "workspace.save_as",
-        title: "Save a tab as a new workspace",
-        reach: "window menu, Workspace, Save as new, or the capsule's workspace menu, Save as\u{2026}: \
-                its dialog suggests a name and holds the palette on the next free colour",
-        keys: &[
-            (Source::MenuEntry, "Save as new\u{2026}"),
-            (
-                Source::Authored,
-                "the dialog's name field, palette and Save are marks the dialog paints: listed \
-                 in the scene as toolbar.name_dialog.colour.<key>",
-            ),
-        ],
-        mapping: Mapping::Capabilities(&["workspace.dialog.open", "workspace.save_as"]),
-    },
-    UiBehaviour {
-        id: "workspace.new",
-        title: "Make a new, empty workspace for a tab",
-        reach: "the capsule's workspace menu, New workspace\u{2026}, or Manage workspaces' footer: \
-                its dialog suggests a name and holds the palette on the next free colour",
-        keys: &[(Source::MenuEntry, "New workspace\u{2026}")],
-        mapping: Mapping::Capabilities(&["workspace.dialog.open", "workspace.new"]),
-    },
-    UiBehaviour {
-        id: "workspace.autosave.set",
-        title: "Turn auto save layout changes on or off",
-        reach: "the capsule's workspace menu, Auto save",
-        keys: &[(Source::MenuEntry, "Auto save layout changes")],
-        mapping: Mapping::Capabilities(&["workspace.autosave.set"]),
-    },
-    UiBehaviour {
-        id: "workspace.rename",
-        title: "Rename a workspace",
-        reach: "window menu, Workspace, Rename, the capsule's workspace menu, Rename\u{2026}, or \
-                inline in a Manage workspaces row (pencil, F2 or a double click)",
-        keys: &[(Source::MenuEntry, "Rename workspace\u{2026}")],
-        mapping: Mapping::Capabilities(&["workspace.rename"]),
-    },
+];
+
+/// Manage workspaces and the colour popover, read after the book's calls.
+pub const MANAGE: &[UiBehaviour] = &[
     UiBehaviour {
         id: "workspace.manage",
         title: "Open Manage workspaces: every workspace with its colour, name, tab count, \
@@ -217,16 +149,6 @@ pub(super) const ROWS: &[UiBehaviour] = &[
         mapping: Mapping::Capabilities(&["workspace.delete.undo"]),
     },
     UiBehaviour {
-        id: "workspace.colour.set",
-        title: "Give a workspace a colour, swapping with its holder only when asked",
-        reach: "the capsule's workspace menu, the header swatch, or a row's chip in Manage workspaces",
-        keys: &[(
-            Source::Authored,
-            "the header swatch's popover is marks the workspace menu paints: each swatch, Apply and Swap is listed in the scene as toolbar.workspace_menu.colour.<key>",
-        )],
-        mapping: Mapping::Capabilities(&["workspace.colour.set"]),
-    },
-    UiBehaviour {
         id: "workspace.colour.palette",
         title: "Read a workspace's palette: the presets, who holds each, the last custom colour",
         reach: "the capsule's workspace menu, the header swatch's popover",
@@ -245,12 +167,5 @@ pub(super) const ROWS: &[UiBehaviour] = &[
             "a press on the header swatch, a swatch, Custom\u{2026}, Apply, Swap or Cancel; arrows, Enter and Esc in the popover",
         )],
         mapping: Mapping::Capabilities(&["workspace.colour.popover"]),
-    },
-    UiBehaviour {
-        id: "workspace.list",
-        title: "List the workspaces and the tabs using each",
-        reach: "window menu, Workspace, whose list names each workspace",
-        keys: &[(Source::MenuEntry, "Workspace")],
-        mapping: Mapping::Capabilities(&["workspace.list"]),
     },
 ];

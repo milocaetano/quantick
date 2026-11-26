@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "How far the ruler walks the projected bracket from an aimed entry.",
+  "properties": {
+    "ticks": {
+      "description": "Distance in ticks, the same on both sides. Zero puts the ruler away\nand leaves the next order bare.",
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "ticks"
+  ],
+  "title": "SetRulerInput",
+  "type": "object"
+}

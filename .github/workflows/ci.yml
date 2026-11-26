@@ -215,7 +215,7 @@ jobs:
         # own generated files (capability inventory, retry matrix, hook
         # registry) are compared byte for byte by its tests in the full jobs;
         # the guard tests above see their drift first.
-        run: cargo test -p quantick-control -p quantick-operability
+        run: cargo test -p quantick-control -p quantick-operability -p quantick-control-schema
       - name: Workflow policy
         # Who runs when, evaluated from this file's own expressions.
         run: python3 tools/ci/test_workflow_policy.py

@@ -266,8 +266,8 @@ fn the_scene_lists_the_kebab_beside_drag_and_the_window_buttons() {
 
 #[test]
 fn every_menu_row_names_a_behaviour_of_the_table() {
+    use quantick_control_schema::ui_behaviours::UI_BEHAVIOURS;
     use quantick_control_schema::window_menu::ROWS;
-    use quantick_operability::registry::UI_BEHAVIOURS;
     for row in ROWS {
         assert!(
             UI_BEHAVIOURS.iter().any(|known| known.id == row.behaviour),

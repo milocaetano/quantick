@@ -8,7 +8,7 @@ use super::{Mapping, Source, UiBehaviour};
 
 /// The script-order controls behind a script row's action chip; one call
 /// sets all of them.
-pub(super) const ROWS: &[UiBehaviour] = &[
+pub const ROWS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "strategy.script.action.set",
         title: "Switch an armed script between ringing an alarm and placing paper orders",
@@ -44,19 +44,12 @@ pub(super) const ROWS: &[UiBehaviour] = &[
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::registry::UI_BEHAVIOURS;
 
     #[test]
     fn script_order_controls_map_to_named_calls() {
-        let controls: Vec<_> = (UI_BEHAVIOURS.iter())
-            .filter(|row| row.id.starts_with("strategy.script."))
-            .collect();
-        assert_eq!(
-            controls.len(),
-            ROWS.len(),
-            "every script-order control joins the table"
-        );
-        for control in controls {
+        assert!(!ROWS.is_empty(), "the action chip declares its controls");
+        for control in ROWS {
+            assert!(control.id.starts_with("strategy.script."), "{}", control.id);
             let Mapping::Capabilities(calls) = control.mapping else {
                 panic!("{} is excluded or pending", control.id);
             };

@@ -1,0 +1,32 @@
+{
+  "$defs": {
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Focus one pane: the chart the chrome speaks for and commands land on.",
+  "properties": {
+    "pane": {
+      "$ref": "#/$defs/WireU64",
+      "description": "The pane's address. `0` is the flow pane."
+    },
+    "tab_id": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/WireU64"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "The tab's id, as `observe.workspace` reports it."
+    }
+  },
+  "required": [
+    "pane"
+  ],
+  "title": "FocusInput",
+  "type": "object"
+}

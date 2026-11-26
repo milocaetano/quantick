@@ -1,0 +1,39 @@
+{
+  "$defs": {
+    "SettingsSection": {
+      "description": "A section of the panel, as a call names it.",
+      "enum": [
+        "l2",
+        "bubbles"
+      ],
+      "type": "string"
+    },
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "section": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/SettingsSection"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Expand this section and scroll it into view."
+    },
+    "tab_id": {
+      "$ref": "#/$defs/WireU64"
+    }
+  },
+  "required": [
+    "tab_id"
+  ],
+  "title": "SettingsOpenInput",
+  "type": "object"
+}

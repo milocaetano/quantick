@@ -15,7 +15,7 @@ const PENDING_HISTORY: Mapping = Mapping::Excluded {
 };
 
 /// The canvas.
-pub(super) const CANVAS: &[UiBehaviour] = &[
+pub const CANVAS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "chart.drawings.autosave.set",
         title: "Save drawing changes independently of workspace configuration",
@@ -315,7 +315,7 @@ pub(super) const CANVAS: &[UiBehaviour] = &[
 const GRIP: &str = "the grip of a floating chart or the ⋯ of a docked one, a drag whose drop the canvas model's `drop_target` decides";
 
 /// History.
-pub(super) const HISTORY: &[UiBehaviour] = &[
+pub const HISTORY: &[UiBehaviour] = &[
     UiBehaviour {
         id: "history.candles.load_older",
         title: "Fetch another span of older venue candles",

@@ -1,0 +1,25 @@
+{
+  "$defs": {
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Which tab a call is about. Omitted means the one the trader is looking at —\nthe same default the chrome's own commands take.",
+  "properties": {
+    "tab_id": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/WireU64"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "The tab's id, as `observe.workspace` reports it."
+    }
+  },
+  "title": "TabTarget",
+  "type": "object"
+}

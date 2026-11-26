@@ -1,0 +1,86 @@
+{
+  "$defs": {
+    "CanonicalDecimal": {
+      "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+      "type": "string"
+    },
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Edit or inspect one position. Omit every optional field to inspect.",
+  "properties": {
+    "drawing_id": {
+      "$ref": "#/$defs/WireU64"
+    },
+    "pane_id": {
+      "$ref": "#/$defs/WireU64",
+      "description": "The pane holding the drawing; a drawing id is unique only within it."
+    },
+    "ratio": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CanonicalDecimal"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Reward per unit of risk, 0.1 through 20, as a canonical decimal:\n`\"2\"` is risk 1 : reward 2. Only the target moves."
+    },
+    "stop_color": {
+      "default": null,
+      "description": "Stop zone colour, `#RRGGBB`.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "tab_id": {
+      "$ref": "#/$defs/WireU64",
+      "description": "The tab holding the drawing, as `analysis.drawings` lists it."
+    },
+    "target_color": {
+      "default": null,
+      "description": "Target zone colour, `#RRGGBB`.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "width_bars": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CanonicalDecimal"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Drawn width in bars, 14 through 100000. The right-hand anchor moves\nin market time at the anchors' own pace; the left edge and every price\nhold. Refused when the anchors share a bar or carry no market time."
+    },
+    "zone_opacity_pct": {
+      "default": null,
+      "description": "Both zones' fill opacity, 0 through 100 percent.",
+      "format": "uint8",
+      "maximum": 100,
+      "minimum": 0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "tab_id",
+    "pane_id",
+    "drawing_id"
+  ],
+  "title": "PositionSetInput",
+  "type": "object"
+}

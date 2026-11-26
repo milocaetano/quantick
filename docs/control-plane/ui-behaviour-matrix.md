@@ -16,9 +16,10 @@ cargo run -p quantick-app -- --dump-ui-behaviour-matrix \
 ```
 
 The rows live one file per family under
-`crates/operability/src/registry/`, joined by `FAMILIES` in
-`registry.rs`; the guard that compares them against the interface
-and against the capability registry lives beside them, and runs as
+`crates/operability/src/registry/`, or in the `ui` entry of a declared
+control call, joined by `FAMILIES` in
+`crates/control-schema/src/ui_behaviours.rs`; the guard that compares
+them against the interface and against the capability registry runs as
 `cargo test -p quantick-app operability`.
 
 **Reach** names every door into the behaviour — a toolbar button, a menu
@@ -231,15 +232,15 @@ The three exclusion classes are closed:
 | `workspace.new` | Make a new, empty workspace for a tab | the capsule's workspace menu, New workspace…, or Manage workspaces' footer: its dialog suggests a name and holds the palette on the next free colour | `workspace.dialog.open`, `workspace.new` | — |
 | `workspace.autosave.set` | Turn auto save layout changes on or off | the capsule's workspace menu, Auto save | `workspace.autosave.set` | — |
 | `workspace.rename` | Rename a workspace | window menu, Workspace, Rename, the capsule's workspace menu, Rename…, or inline in a Manage workspaces row (pencil, F2 or a double click) | `workspace.rename` | — |
+| `workspace.colour.set` | Give a workspace a colour, swapping with its holder only when asked | the capsule's workspace menu, the header swatch, or a row's chip in Manage workspaces | `workspace.colour.set` | — |
+| `workspace.list` | List the workspaces and the tabs using each | window menu, Workspace, whose list names each workspace | `workspace.list` | — |
 | `workspace.manage` | Open Manage workspaces: every workspace with its colour, name, tab count, rename and delete | window menu, Workspace, Manage workspaces…, or the capsule's workspace menu | `workspace.dialog.open`, `workspace.list` | — |
 | `workspace.manage.colour` | Recolour any workspace from its Manage row, swapping with the holder when asked | Manage workspaces, a row's colour chip or C on the chosen row | `workspace.colour.set`, `workspace.colour.palette` | — |
 | `workspace.manage.rename` | Rename a workspace in its Manage row: Enter saves, Esc cancels | Manage workspaces, a row's pencil, F2 on the chosen row, or a double click on the name | `workspace.rename` | — |
 | `workspace.manage.delete` | Delete a workspace, confirmed in its row naming the tabs that go back to Default | Manage workspaces, a row's trash or Del on the chosen row, then Delete or Enter | `workspace.delete` | — |
 | `workspace.manage.undo` | Undo a workspace delete for 10 seconds: the workspace, its colour and its tabs | Manage workspaces, the deleted row's Undo or Ctrl+Z | `workspace.delete.undo` | — |
-| `workspace.colour.set` | Give a workspace a colour, swapping with its holder only when asked | the capsule's workspace menu, the header swatch, or a row's chip in Manage workspaces | `workspace.colour.set` | — |
 | `workspace.colour.palette` | Read a workspace's palette: the presets, who holds each, the last custom colour | the capsule's workspace menu, the header swatch's popover | `workspace.colour.palette` | — |
 | `workspace.colour.popover` | Open the colour popover, pick a swatch, type a Custom colour and answer the swap question | the capsule's workspace menu, the header swatch | `workspace.colour.popover` | — |
-| `workspace.list` | List the workspaces and the tabs using each | window menu, Workspace, whose list names each workspace | `workspace.list` | — |
 | `window.menu.open` | Open the window menu | the kebab button on the title strip, F10 | — | `ui_only_by_decision` — the menu holds rows, and every row names its own behaviour; an operator calls those directly, and a transient popup is not state worth driving |
 | `settings.open` | Open the Settings window on a section | window menu, Ctrl+Comma, the status-bar clock; the Agent on pill opens the section a call is refused | `settings.open` | — |
 | `window.help.open` | Read a help page: keyboard shortcuts, workspaces, the version | window menu, Help | — | `ui_only_by_decision` — reference text for a human; the shortcuts and the workspace rules are the contract an operator already reads |
@@ -373,11 +374,11 @@ declares nothing here is a guard failure.
 | `drawing.hide` | Alt+H is read per frame by `app/drawing_controller/input.rs`; the Hide and Show buttons on the menu and manager rows are widgets, not hotkey registry entries |
 | `drawing.clear_all` | a menu entry and a manager button that ask the same question |
 | `workspace.save_as` | the dialog's name field, palette and Save are marks the dialog paints: listed in the scene as toolbar.name_dialog.colour.<key> |
+| `workspace.colour.set` | the header swatch's popover is marks the workspace menu paints: each swatch, Apply and Swap is listed in the scene as toolbar.workspace_menu.colour.<key> |
 | `workspace.manage.colour` | the chip and the palette under the row are marks the dialog paints: listed in the scene as toolbar.manage_workspaces.<workspace>.chip and toolbar.manage_workspaces.<workspace>.colour.<key> |
 | `workspace.manage.rename` | the pencil and the field are marks the dialog paints: toolbar.manage_workspaces.<workspace>.rename and .name |
 | `workspace.manage.delete` | the trash, Delete and Keep are marks the dialog paints: toolbar.manage_workspaces.<workspace>.delete, .confirm and .keep |
 | `workspace.manage.undo` | the Undo row is marks the dialog paints: toolbar.manage_workspaces.<workspace>.undo |
-| `workspace.colour.set` | the header swatch's popover is marks the workspace menu paints: each swatch, Apply and Swap is listed in the scene as toolbar.workspace_menu.colour.<key> |
 | `workspace.colour.palette` | the popover is drawn from this model; its swatches are scene entries toolbar.workspace_menu.colour.<key> |
 | `workspace.colour.popover` | a press on the header swatch, a swatch, Custom…, Apply, Swap or Cancel; arrows, Enter and Esc in the popover |
 
