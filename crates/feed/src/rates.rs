@@ -103,8 +103,12 @@ fn write(path: &Path, fetched: &[(RatePair, Vec<Bar>)]) {
         .and_then(|()| std::fs::write(&temp, store.to_text()))
         .and_then(|()| std::fs::rename(&temp, path));
     match written {
-        Ok(()) => tracing::info!(target: "quantick::feed", event_code = "RATES_FETCH", path = %path.display(), days, "rates store refreshed"),
-        Err(error) => tracing::warn!(target: "quantick::feed", event_code = "RATES_FETCH", path = %path.display(), %error, "rates store not written"),
+        Ok(()) => {
+            tracing::info!(target: "quantick::feed", event_code = "RATES_FETCH", path = %path.display(), days, "rates store refreshed")
+        }
+        Err(error) => {
+            tracing::warn!(target: "quantick::feed", event_code = "RATES_FETCH", path = %path.display(), %error, "rates store not written")
+        }
     }
 }
 
@@ -143,16 +147,19 @@ mod tests {
         let path = scratch.path().join("rates.csv");
         // 2026-11-20 and 2026-11-21 at 00:00 UTC.
         let day = 20_777 * DAY_MS;
-        write(&path, &[(pair(), vec![bar(day, 581), bar(day + DAY_MS, 579)])]);
+        write(
+            &path,
+            &[(pair(), vec![bar(day, 581), bar(day + DAY_MS, 579)])],
+        );
         assert_eq!(
             std::fs::read_to_string(&path).unwrap(),
             "# quantick-rates v1\n2026-11-20,USDT,BRL,5.81\n2026-11-21,USDT,BRL,5.79\n"
         );
         write(&path, &[(pair(), vec![bar(day + 2 * DAY_MS, 580)])]);
         assert!(
-            std::fs::read_to_string(&path).unwrap().ends_with(
-                "2026-11-21,USDT,BRL,5.79\n2026-11-22,USDT,BRL,5.8\n"
-            ),
+            std::fs::read_to_string(&path)
+                .unwrap()
+                .ends_with("2026-11-21,USDT,BRL,5.79\n2026-11-22,USDT,BRL,5.8\n"),
             "a later fetch adds its days"
         );
         std::fs::write(&path, "not a store").unwrap();

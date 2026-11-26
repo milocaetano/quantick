@@ -136,9 +136,15 @@ impl World {
             rules: self.catalog.currencies(),
             store: &self.store,
         };
-        ReportView::cut(&history, ReportPeriod::All, SourceFilter::All, &Default::default(), UTC)
-            .with_pnl(self.reader())
-            .merged(target.map(code), self.reader(), &rates)
+        ReportView::cut(
+            &history,
+            ReportPeriod::All,
+            SourceFilter::All,
+            &Default::default(),
+            UTC,
+        )
+        .with_pnl(self.reader())
+        .merged(target.map(code), self.reader(), &rates)
     }
 }
 
@@ -158,7 +164,11 @@ fn plot(view: &ReportView) -> Vec<Decimal> {
 fn brl_and_usdt_merge_in_brl_at_the_days_rate() {
     let world = World::new(PnlPrimary::Money);
     let per_asset = world.view(brl_and_usdt(), None);
-    assert_eq!(per_asset.equity.walks().len(), 2, "per asset: a curve per currency");
+    assert_eq!(
+        per_asset.equity.walks().len(),
+        2,
+        "per asset: a curve per currency"
+    );
     assert_eq!(per_asset.merge.per_asset_walks, 2);
     assert_eq!(per_asset.merge.currencies, vec![code("BRL"), code("USD")]);
     assert!(per_asset.merge.readout.is_none());
@@ -168,7 +178,10 @@ fn brl_and_usdt_merge_in_brl_at_the_days_rate() {
     assert_eq!(plot(&view), vec![d("0"), d("80"), d("380")]);
     assert_eq!(view.equity.walks()[0].unit, "BRL");
     assert_eq!(view.net_text.0, "+380.00 BRL");
-    assert_eq!(view.net_text.1, "+80.00 BRL / +60.00 USDT", "the native sums behind it");
+    assert_eq!(
+        view.net_text.1, "+80.00 BRL / +60.00 USDT",
+        "the native sums behind it"
+    );
     let readout = view.merge.readout.as_ref().expect("merged");
     assert_eq!(readout.net, d("380"));
     assert_eq!(
@@ -253,7 +266,10 @@ fn win_alone_reads_in_usd_when_asked() {
     let world = World::new(PnlPrimary::Money);
     let rows = vec![row("WINZ26", "2026-11-20", "400", false)];
     let own = world.view(rows.clone(), None);
-    assert_eq!(own.merge.per_asset_walks, 1, "one walk: no Per asset | Merge all switch");
+    assert_eq!(
+        own.merge.per_asset_walks, 1,
+        "one walk: no Per asset | Merge all switch"
+    );
     assert_eq!(own.merge.own, Some(code("BRL")));
     assert_eq!(own.merge.currencies, vec![code("BRL"), code("USD")]);
     let usd = world.view(rows, Some("USD"));
@@ -269,13 +285,21 @@ fn points_merge_one_instrument_across_sources_and_never_two_instruments() {
         row("WIN$N", "2026-11-20", "-100", true),
     ];
     let view = world.view(win.clone(), None);
-    assert_eq!(view.equity.walks().len(), 1, "sim and broker WIN: one points curve");
+    assert_eq!(
+        view.equity.walks().len(),
+        1,
+        "sim and broker WIN: one points curve"
+    );
     assert_eq!(plot(&view), vec![d("0"), d("400"), d("300")]);
 
     let mut mixed = win;
     mixed.push(row("BTCUSDT", "2026-11-20", "60", false));
     let view = world.view(mixed, Some("BRL"));
-    assert_eq!(view.equity.walks().len(), 2, "WIN and BTC points stay apart");
+    assert_eq!(
+        view.equity.walks().len(),
+        2,
+        "WIN and BTC points stay apart"
+    );
     assert!(view.merge.readout.is_none(), "Merge all is money only");
     assert_eq!(view.merge.note, Some(POINTS_APART));
 }

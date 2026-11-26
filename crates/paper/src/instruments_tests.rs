@@ -234,7 +234,14 @@ fn the_shipped_catalog_reads_stablecoins_as_usd_and_keeps_usdt_brl_rates() {
     let pairs: Vec<_> = rules
         .pairs()
         .iter()
-        .map(|pair| (pair.from.code(), pair.to.code(), pair.venue.as_str(), pair.symbol.as_str()))
+        .map(|pair| {
+            (
+                pair.from.code(),
+                pair.to.code(),
+                pair.venue.as_str(),
+                pair.symbol.as_str(),
+            )
+        })
         .collect();
     assert_eq!(pairs, vec![("USDT", "BRL", "binance", "USDTBRL")]);
     let overlay = "version = 1
@@ -244,6 +251,10 @@ same = { DAI = \"USD\" }
     let (layered, warning) = InstrumentCatalog::layered(SHIPPED, Some(overlay));
     assert_eq!(warning, None);
     assert_eq!(layered.currencies().canonical(&code("DAI")), &code("USD"));
-    assert_eq!(layered.currencies().canonical(&code("USDT")), &code("USD"), "added to, not replaced");
+    assert_eq!(
+        layered.currencies().canonical(&code("USDT")),
+        &code("USD"),
+        "added to, not replaced"
+    );
     assert_eq!(layered.currencies().pairs().len(), 1);
 }

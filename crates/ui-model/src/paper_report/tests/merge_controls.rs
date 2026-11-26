@@ -79,16 +79,30 @@ fn report(world: &World, symbols: &[&str]) -> State {
 fn the_symbol_multi_select_loads_the_ticked_symbols_and_empty_reads_all() {
     let mut state = State::default();
     let open = Model::update(&mut state, Intent::Open("WINZ26".to_owned()));
-    assert_eq!(open.load, Some(Load::Report(BTreeSet::from(["WINZ26".to_owned()]))));
+    assert_eq!(
+        open.load,
+        Some(Load::Report(BTreeSet::from(["WINZ26".to_owned()])))
+    );
     let tick = Model::update(&mut state, Intent::ToggleSymbol("BTCUSDT".to_owned()));
     assert_eq!(
         tick.load,
-        Some(Load::Report(BTreeSet::from(["BTCUSDT".to_owned(), "WINZ26".to_owned()])))
+        Some(Load::Report(BTreeSet::from([
+            "BTCUSDT".to_owned(),
+            "WINZ26".to_owned()
+        ])))
     );
-    assert_eq!(state.report_symbol(), None, "two symbols name no single one");
+    assert_eq!(
+        state.report_symbol(),
+        None,
+        "two symbols name no single one"
+    );
     Model::update(&mut state, Intent::ToggleSymbol("BTCUSDT".to_owned()));
     let untick = Model::update(&mut state, Intent::ToggleSymbol("WINZ26".to_owned()));
-    assert_eq!(untick.load, Some(Load::Report(BTreeSet::new())), "none ticked reads all");
+    assert_eq!(
+        untick.load,
+        Some(Load::Report(BTreeSet::new())),
+        "none ticked reads all"
+    );
     assert!(state.filters_narrowed("WINZ26"));
 
     let world = World::new(None);
@@ -118,19 +132,38 @@ fn the_switch_shows_only_for_more_than_one_walk_and_merge_all_defaults_to_the_ch
     let controls = two.merge_controls(world.pnl(), "BTCUSDT");
     assert_eq!(controls.switch, Some(false), "per asset");
     assert_eq!(controls.currency, None, "no combo until merged");
-    assert_eq!(controls.default, code("USD"), "the chart symbol's currency, USDT read as USD");
-    assert_eq!(two.merge_controls(world.pnl(), "WINZ26").default, code("BRL"));
+    assert_eq!(
+        controls.default,
+        code("USD"),
+        "the chart symbol's currency, USDT read as USD"
+    );
+    assert_eq!(
+        two.merge_controls(world.pnl(), "WINZ26").default,
+        code("BRL")
+    );
 
     let merge = Model::update(&mut two, Intent::Merge(Some(code("BRL"))));
-    assert_eq!(merge.load, Some(Load::Report(BTreeSet::new())), "rates read again");
+    assert_eq!(
+        merge.load,
+        Some(Load::Report(BTreeSet::new())),
+        "rates read again"
+    );
     assert_eq!(merge.pnl_pick, None, "the switch persists nothing");
     two.ensure_report_view(TzOffset::new(0), world.pnl());
     let controls = two.merge_controls(world.pnl(), "WINZ26");
     assert_eq!(controls.switch, Some(true));
-    assert_eq!(controls.currency, Some((code("BRL"), vec![code("BRL"), code("USD")])));
+    assert_eq!(
+        controls.currency,
+        Some((code("BRL"), vec![code("BRL"), code("USD")]))
+    );
     let view = two.report_view().as_ref().expect("cut");
     assert_eq!(view.equity.walks().len(), 1, "one merged curve");
-    assert!(view.merge.caption().expect("captioned").starts_with("Merged in BRL"));
+    assert!(
+        view.merge
+            .caption()
+            .expect("captioned")
+            .starts_with("Merged in BRL")
+    );
 
     let last = World::new(Some("USD"));
     assert_eq!(
@@ -146,7 +179,11 @@ fn a_currency_pick_is_persisted_and_the_one_assets_own_reads_per_asset() {
     let mut one = report(&world, &["WINZ26"]);
     let usd = Model::update(&mut one, Intent::MergeCurrency(code("USD")));
     assert_eq!(usd.pnl_pick, Some(PnlPick::MergeCurrency(code("USD"))));
-    assert_eq!(one.report_merge(), Some(&code("USD")), "WIN alone, shown in USD");
+    assert_eq!(
+        one.report_merge(),
+        Some(&code("USD")),
+        "WIN alone, shown in USD"
+    );
     one.ensure_report_view(TzOffset::new(0), world.pnl());
     let back = Model::update(&mut one, Intent::MergeCurrency(code("BRL")));
     assert_eq!(back.pnl_pick, Some(PnlPick::MergeCurrency(code("BRL"))));

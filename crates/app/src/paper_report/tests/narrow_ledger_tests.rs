@@ -552,6 +552,7 @@ fn paper_values_and_actions_fit_narrow_panels_report_tiles() {
                         sessions: Default::default(),
                     },
                     symbols: Vec::new(),
+                    rates: Default::default(),
                 },
             ));
             state.ensure_report_view(TzOffset::new(0), PnlReader::plain());
@@ -595,6 +596,7 @@ fn measured_report_warm_frames_only_format_visible_rows() {
                     sessions: Default::default(),
                 },
                 symbols: Vec::new(),
+                rates: Default::default(),
             },
         ));
         state.ensure_report_view(TzOffset::new(0), PnlReader::plain());

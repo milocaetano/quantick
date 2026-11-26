@@ -98,7 +98,8 @@ fn open<H: PaperHost + ?Sized, A: NotifyAccess>(
             let before = desk.report_change(None, tz).merge.request;
             let currency = Currency::new(&code);
             let view = desk.report_change(Some(ReportChange::Merge(currency.clone())), tz);
-            let Some(currency) = currency.filter(|currency| view.merge.currencies.contains(currency))
+            let Some(currency) =
+                currency.filter(|currency| view.merge.currencies.contains(currency))
             else {
                 desk.report_change(Some(ReportChange::Merge(before)), tz);
                 let offered: Vec<&str> = view.merge.currencies.iter().map(Currency::code).collect();
@@ -239,7 +240,11 @@ fn readout(view: ReportReadout, action: &str, tz: quantick_civil::TzOffset) -> R
             .request
             .as_ref()
             .map(|currency| currency.code().to_owned()),
-        merged: view.merge.readout.as_ref().map(merged),
+        merged: view
+            .merge
+            .readout
+            .as_ref()
+            .map(|readout| Box::new(merged(readout))),
         merge_note: view.merge.note.map(str::to_owned),
         sources,
         open: view.open,

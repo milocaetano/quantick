@@ -426,7 +426,10 @@ impl State {
     }
     /// The multi-select's head: `All 4 symbols`, `2 of 4 symbols`.
     pub fn symbols_summary(&self) -> String {
-        let (chosen, all) = (self.report_symbols_chosen().len(), self.report_symbols.len());
+        let (chosen, all) = (
+            self.report_symbols_chosen().len(),
+            self.report_symbols.len(),
+        );
         if chosen == 0 {
             format!("All {all} symbols")
         } else {
@@ -468,8 +471,8 @@ impl State {
             };
         };
         let offered = &view.merge.currencies;
-        let chart = (pnl.book.money(chart_symbol))
-            .map(|money| rules.canonical(&money.currency).clone());
+        let chart =
+            (pnl.book.money(chart_symbol)).map(|money| rules.canonical(&money.currency).clone());
         let default = [pnl.settings.merge_currency.clone(), chart]
             .into_iter()
             .flatten()
@@ -847,6 +850,15 @@ impl crate::Model for Model {
             }
             Intent::InstallReport(receipt) if receipt.revision == revision => {
                 state.report_view = receipt.view.map(|view| *view);
+                if let Some(snapshot) = state.snapshot() {
+                    tracing::info!(target: "quantick::app", schema_version = 1_u8,
+                        event_code = "PAPER_REPORT_CUT", symbol = snapshot.symbol.unwrap_or("*"),
+                        source = snapshot.source.label(), window = %snapshot.window.label(),
+                        trades = snapshot.rows.len(), hidden_outside = snapshot.hidden_outside,
+                        hidden_by_source_or_scope = snapshot.hidden_by_source_or_scope,
+                        net_points = %snapshot.report.net_points,
+                        "the trading performance report was re-cut");
+                }
                 state.report_layout_revision = state.report_layout_revision.wrapping_add(1);
                 if let Some((days, key)) = receipt.days {
                     // No history clears the day index without moving an explicitly shown month.

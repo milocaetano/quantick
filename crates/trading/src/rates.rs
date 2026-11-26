@@ -56,7 +56,12 @@ impl RateStore {
             if line.is_empty() || line.starts_with('#') {
                 continue;
             }
-            let bad = || format!("line {}: expected day,from,to,rate, got {line:?}", index + 1);
+            let bad = || {
+                format!(
+                    "line {}: expected day,from,to,rate, got {line:?}",
+                    index + 1
+                )
+            };
             let mut cells = line.split(',').map(str::trim);
             let (Some(day), Some(from), Some(to), Some(rate), None) = (
                 cells.next(),
@@ -68,7 +73,10 @@ impl RateStore {
                 return Err(bad());
             };
             let day = parse_iso_date(day).ok_or_else(bad)?;
-            let (from, to) = (Currency::new(from).ok_or_else(bad)?, Currency::new(to).ok_or_else(bad)?);
+            let (from, to) = (
+                Currency::new(from).ok_or_else(bad)?,
+                Currency::new(to).ok_or_else(bad)?,
+            );
             let rate = Decimal::from_str_exact(rate).map_err(|_| bad())?;
             if !store.insert(from, to, day, rate) {
                 return Err(bad());
@@ -90,7 +98,12 @@ impl RateStore {
 
     /// Record a venue's daily candle for `pair`: its close is the rate of
     /// the UTC day the candle opened on, as the venue cuts its days.
-    pub fn record_daily_close(&mut self, pair: &RatePair, open_time_ms: i64, close: Decimal) -> bool {
+    pub fn record_daily_close(
+        &mut self,
+        pair: &RatePair,
+        open_time_ms: i64,
+        close: Decimal,
+    ) -> bool {
         let day = CivilDate::from_ms(open_time_ms, TzOffset::new(0));
         self.insert(pair.from.clone(), pair.to.clone(), day, close)
     }
@@ -142,17 +155,32 @@ mod tests {
     fn a_store_round_trips_through_its_text_in_order() {
         let mut store = RateStore::default();
         let day = parse_iso_date("2026-11-20").expect("day");
-        assert!(store.insert(code("USDT"), code("BRL"), day.offset_days(1), Decimal::new(58, 1)));
-        assert!(store.insert(code("USDT"), code("BRL"), day, Decimal::new(581_23, 4)));
+        assert!(store.insert(
+            code("USDT"),
+            code("BRL"),
+            day.offset_days(1),
+            Decimal::new(58, 1)
+        ));
+        assert!(store.insert(code("USDT"), code("BRL"), day, Decimal::new(58_123, 4)));
         let text = store.to_text();
         assert_eq!(
             text,
             "# quantick-rates v1\n2026-11-20,USDT,BRL,5.8123\n2026-11-21,USDT,BRL,5.8\n"
         );
         assert_eq!(RateStore::parse(&text), Ok(store.clone()));
-        assert_eq!(store.get(&code("USDT"), &code("BRL"), day), Some(Decimal::new(581_23, 4)));
-        assert_eq!(store.get(&code("BRL"), &code("USDT"), day), None, "never inverted here");
-        assert_eq!(store.get(&code("USDT"), &code("BRL"), day.offset_days(2)), None);
+        assert_eq!(
+            store.get(&code("USDT"), &code("BRL"), day),
+            Some(Decimal::new(58_123, 4))
+        );
+        assert_eq!(
+            store.get(&code("BRL"), &code("USDT"), day),
+            None,
+            "never inverted here"
+        );
+        assert_eq!(
+            store.get(&code("USDT"), &code("BRL"), day.offset_days(2)),
+            None
+        );
     }
 
     #[test]

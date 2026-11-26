@@ -40,6 +40,7 @@ fn enlarged_populated_report_footer_is_reached_by_wheel_input() {
             sessions: Default::default(),
         },
         symbols: Vec::new(),
+        rates: Default::default(),
     }));
     let env = ReportEnv {
         symbol: "TEST",

@@ -37,7 +37,10 @@ fn scoped_open_replaces_stale_filters_and_reloads_keep_the_exact_session() {
     rows[0].session = Some(key.clone());
     rows[1].session = Some(SessionKey::parse("X/other.csv").unwrap());
     let mut state = State::default();
-    Model::update(&mut state, Intent::Symbols(BTreeSet::from(["X".to_owned()])));
+    Model::update(
+        &mut state,
+        Intent::Symbols(BTreeSet::from(["X".to_owned()])),
+    );
     Model::update(&mut state, Intent::Source(SourceFilter::Replay.into()));
     Model::update(&mut state, Intent::Days(DaySet::single(day.offset_days(1))));
     let scoped = |rows| {
@@ -140,7 +143,9 @@ fn delivered_effects_keep_import_and_latest_present_outputs_after_local_loads() 
         start_import: true,
         toast: Some("first".to_owned()),
         ledger: Some(LedgerAction::OpenTicket),
-        pnl_pick: Some(quantick_paper::pnl::PnlPick::Primary(quantick_paper::pnl::PnlPrimary::Money)),
+        pnl_pick: Some(quantick_paper::pnl::PnlPick::Primary(
+            quantick_paper::pnl::PnlPrimary::Money,
+        )),
     });
     output.append_delivered(Effects::default());
     assert_eq!(
@@ -149,7 +154,9 @@ fn delivered_effects_keep_import_and_latest_present_outputs_after_local_loads() 
             start_import: true,
             toast: Some("first".to_owned()),
             ledger: Some(LedgerAction::OpenTicket),
-            pnl_pick: Some(quantick_paper::pnl::PnlPick::Primary(quantick_paper::pnl::PnlPrimary::Money)),
+            pnl_pick: Some(quantick_paper::pnl::PnlPick::Primary(
+                quantick_paper::pnl::PnlPrimary::Money
+            )),
             ..Default::default()
         }
     );
@@ -164,7 +171,9 @@ fn delivered_effects_keep_import_and_latest_present_outputs_after_local_loads() 
             start_import: true,
             toast: Some("latest".to_owned()),
             ledger: Some(LedgerAction::Navigate(10, 20)),
-            pnl_pick: Some(quantick_paper::pnl::PnlPick::Primary(quantick_paper::pnl::PnlPrimary::Money)),
+            pnl_pick: Some(quantick_paper::pnl::PnlPick::Primary(
+                quantick_paper::pnl::PnlPrimary::Money
+            )),
             ..Default::default()
         }
     );
@@ -559,7 +568,10 @@ fn an_empty_report_names_why_and_offers_clear_only_when_narrowed() {
     let tz = TzOffset::new(0);
     let day = CivilDate::from_ymd(2026, 8, 12);
     let mut state = State::default();
-    Model::update(&mut state, Intent::Symbols(BTreeSet::from(["X".to_owned()])));
+    Model::update(
+        &mut state,
+        Intent::Symbols(BTreeSet::from(["X".to_owned()])),
+    );
     Model::update(&mut state, Intent::Period(ReportPeriod::All));
     assert!(
         !state.filters_narrowed("X"),

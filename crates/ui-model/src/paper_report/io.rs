@@ -1,6 +1,6 @@
 //! Synchronous journal loads shared by native and headless report hosts.
-use quantick_paper::report::snapshot::{ReportChange, ReportEnv, ReportReadout};
 use quantick_paper::rates;
+use quantick_paper::report::snapshot::{ReportChange, ReportEnv, ReportReadout};
 use quantick_paper::report::{journals, scope};
 
 use super::{Effects, Intent, Load, LoadedLedger, LoadedReport};

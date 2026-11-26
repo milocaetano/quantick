@@ -427,12 +427,21 @@ fn symbols_and_merge_calls_set_the_selection_and_the_currency_and_refuse_the_unk
         dir: scratch.path().to_owned(),
     };
     let mut access = FakeAccess::with_budget(0);
-    let mut call = |host: &mut Host, input| open(host, &mut access, &FakeWindow::assistant(), &input);
-    let chosen = call(&mut host, json!({"action":"symbols", "symbols":["WINZ26", "BTCUSDT"]})).unwrap();
+    let mut call =
+        |host: &mut Host, input| open(host, &mut access, &FakeWindow::assistant(), &input);
+    let chosen = call(
+        &mut host,
+        json!({"action":"symbols", "symbols":["WINZ26", "BTCUSDT"]}),
+    )
+    .unwrap();
     assert_eq!(chosen["symbols"], json!(["BTCUSDT", "WINZ26"]));
     assert_eq!(chosen["currencies"], json!(["BRL", "USD"]));
     assert_eq!(chosen["merge"], Value::Null, "per asset until asked");
-    let error = call(&mut host, json!({"action":"symbols", "symbols":["ETHUSDT"]})).unwrap_err();
+    let error = call(
+        &mut host,
+        json!({"action":"symbols", "symbols":["ETHUSDT"]}),
+    )
+    .unwrap_err();
     let details = error.context.details.unwrap();
     assert_eq!(details["code"], "unknown_symbol");
     assert_eq!(details["symbols"], json!(["BTCUSDT", "WINZ26"]));
@@ -448,10 +457,19 @@ fn symbols_and_merge_calls_set_the_selection_and_the_currency_and_refuse_the_unk
     );
     assert_eq!(wire["rate_count"], "1");
     assert_eq!(wire["net"], "58");
-    assert!(wire["caption"].as_str().unwrap().starts_with("Merged in BRL"));
+    assert!(
+        wire["caption"]
+            .as_str()
+            .unwrap()
+            .starts_with("Merged in BRL")
+    );
     let desk = host.desk.as_ref().unwrap();
     assert_eq!(
-        desk.account.pnl_settings().merge_currency.as_ref().map(|c| c.code()),
+        desk.account
+            .pnl_settings()
+            .merge_currency
+            .as_ref()
+            .map(|c| c.code()),
         Some("BRL"),
         "the pick becomes Merge all's default"
     );
@@ -472,5 +490,8 @@ fn symbols_and_merge_calls_set_the_selection_and_the_currency_and_refuse_the_unk
         "a refused currency leaves the merge in force"
     );
     let apart = call(&mut host, json!({"action":"merge", "currency":null})).unwrap();
-    assert_eq!((apart["merge"].clone(), apart["merged"].clone()), (Value::Null, Value::Null));
+    assert_eq!(
+        (apart["merge"].clone(), apart["merged"].clone()),
+        (Value::Null, Value::Null)
+    );
 }

@@ -165,7 +165,7 @@ pub enum ReportOutput {
         /// The merge in force; null reads per asset.
         merge: Option<String>,
         /// What the merge converted; null per asset or in points.
-        merged: Option<MergedWire>,
+        merged: Option<Box<MergedWire>>,
         /// Why a merge asked of a points report kept one curve per instrument.
         merge_note: Option<String>,
         scope: Option<String>,

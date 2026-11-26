@@ -72,9 +72,15 @@ impl CurrencyRules {
         };
         let mut same = BTreeMap::new();
         for (alias, currency) in &currencies.same {
-            let (alias, currency) = (code("currencies.same", alias)?, code("currencies.same", currency)?);
+            let (alias, currency) = (
+                code("currencies.same", alias)?,
+                code("currencies.same", currency)?,
+            );
             if alias == currency {
-                return Err(format!("currencies.same: {} counts as itself", alias.code()));
+                return Err(format!(
+                    "currencies.same: {} counts as itself",
+                    alias.code()
+                ));
             }
             same.insert(alias, currency);
         }

@@ -120,9 +120,16 @@ impl PnlSettings {
 
     /// [`Self::load`] with every display choice the paper sidecar stored.
     #[must_use]
-    pub fn restored(shipped: &str, trader_file: Option<&Path>, state: &crate::state::PaperState) -> Self {
+    pub fn restored(
+        shipped: &str,
+        trader_file: Option<&Path>,
+        state: &crate::state::PaperState,
+    ) -> Self {
         Self {
-            merge_currency: state.report_merge_currency.as_deref().and_then(Currency::new),
+            merge_currency: state
+                .report_merge_currency
+                .as_deref()
+                .and_then(Currency::new),
             ..Self::load(shipped, trader_file, state.pnl_primary.as_deref())
         }
     }

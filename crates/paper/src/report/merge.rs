@@ -17,8 +17,8 @@ use quantick_civil::CivilDate;
 use quantick_trading::Currency;
 use rust_decimal::Decimal;
 
-use super::readout::{EquityWalk, EquityWalks};
 use super::ReportView;
+use super::readout::{EquityWalk, EquityWalks};
 use crate::pnl::{PnlPrimary, PnlReader, fmt_amount};
 use crate::rates::{RateSource, USD};
 
@@ -124,7 +124,9 @@ impl MergeReadout {
             let high = used.iter().map(|rate| rate.rate).max().unwrap_or_default();
             let span = match used.as_slice() {
                 [one] => format!("{} on {}", low.round_dp(4).normalize(), one.day.iso()),
-                _ if low == high => format!("{} on {} days", low.round_dp(4).normalize(), used.len()),
+                _ if low == high => {
+                    format!("{} on {} days", low.round_dp(4).normalize(), used.len())
+                }
                 _ => format!(
                     "{} to {} over {} days",
                     low.round_dp(4).normalize(),
@@ -140,12 +142,25 @@ impl MergeReadout {
                 .unconverted
                 .iter()
                 .take(3)
-                .map(|entry| format!("{} {} {}", entry.symbol, entry.day.iso(), entry.why_text(&self.currency)))
+                .map(|entry| {
+                    format!(
+                        "{} {} {}",
+                        entry.symbol,
+                        entry.day.iso(),
+                        entry.why_text(&self.currency)
+                    )
+                })
                 .collect::<Vec<_>>()
                 .join(", ");
             let more = self.unconverted.len().saturating_sub(3);
-            let more = if more > 0 { format!(" +{more} more") } else { String::new() };
-            caption.push_str(&format!(" · not converted: {trades} trade(s) - {listed}{more}"));
+            let more = if more > 0 {
+                format!(" +{more} more")
+            } else {
+                String::new()
+            };
+            caption.push_str(&format!(
+                " · not converted: {trades} trade(s) - {listed}{more}"
+            ));
         }
         caption
     }
@@ -167,7 +182,12 @@ impl ReportView {
     /// leaves it per asset. Call after [`Self::with_pnl`]: the per-asset
     /// walks it replaces are what the controls are offered from.
     #[must_use]
-    pub fn merged(mut self, target: Option<Currency>, pnl: PnlReader<'_>, rates: &dyn RateSource) -> Self {
+    pub fn merged(
+        mut self,
+        target: Option<Currency>,
+        pnl: PnlReader<'_>,
+        rates: &dyn RateSource,
+    ) -> Self {
         let rules = pnl.settings.catalog.currencies();
         let walks = self.equity.walks();
         let money = walks
@@ -186,8 +206,9 @@ impl ReportView {
             note: None,
             per_asset_walks: walks.len(),
             own: match walks {
-                [walk] if walk.primary == PnlPrimary::Money => Currency::new(&walk.unit)
-                    .map(|currency| rules.canonical(&currency).clone()),
+                [walk] if walk.primary == PnlPrimary::Money => {
+                    Currency::new(&walk.unit).map(|currency| rules.canonical(&currency).clone())
+                }
                 _ => None,
             },
             currencies: currencies.into_iter().collect(),
@@ -199,17 +220,14 @@ impl ReportView {
             self.merge.note = (walks.len() > 1).then_some(POINTS_APART);
             return self;
         }
-        let readout = self.convert(&target, pnl, rates);
-        let mut walk = EquityWalk::walk(
+        let (readout, values) = self.convert(&target, pnl, rates);
+        let walk = EquityWalk::walk(values, PnlPrimary::Money, target.code().to_owned());
+        self.equity = EquityWalks::single(walk);
+        let total = pnl.sum(
             self.rows
                 .iter()
-                .map(|row| self.converted(row, &target, pnl, rates).map_or(Decimal::ZERO, |(amount, _)| amount)),
-            PnlPrimary::Money,
-            target.code().to_owned(),
+                .map(|row| (row.symbol.as_str(), &row.trade)),
         );
-        walk.label.clear();
-        self.equity = EquityWalks::single(walk);
-        let total = pnl.sum(self.rows.iter().map(|row| (row.symbol.as_str(), &row.trade)));
         self.net_text = (
             fmt_amount(readout.net, PnlPrimary::Money, target.code()),
             total.fmt(PnlPrimary::Money),
@@ -237,18 +255,26 @@ impl ReportView {
             .rate(&money.currency, target, day)
             .ok_or_else(|| Unconvertible::NoRate(money.currency.clone()))?;
         let rules = pnl.settings.catalog.currencies();
-        let used = (rules.canonical(&money.currency) != rules.canonical(target)).then(|| RateUsed {
-            day,
-            from: money.currency.clone(),
-            to: target.clone(),
-            rate,
-        });
+        let used =
+            (rules.canonical(&money.currency) != rules.canonical(target)).then(|| RateUsed {
+                day,
+                from: money.currency.clone(),
+                to: target.clone(),
+                rate,
+            });
         Ok((amount.saturating_mul(rate), used))
     }
 
-    /// Every row converted: the net, the rates used and what was left out.
-    fn convert(&self, target: &Currency, pnl: PnlReader<'_>, rates: &dyn RateSource) -> MergeReadout {
+    /// Every row converted: the net, the rates used and what was left out,
+    /// and each row's amount in `target` (zero where it could not be).
+    fn convert(
+        &self,
+        target: &Currency,
+        pnl: PnlReader<'_>,
+        rates: &dyn RateSource,
+    ) -> (MergeReadout, Vec<Decimal>) {
         let mut net = Decimal::ZERO;
+        let mut values = Vec::with_capacity(self.rows.len());
         let mut assets: BTreeMap<String, Currency> = BTreeMap::new();
         let mut used: BTreeMap<(CivilDate, Currency), RateUsed> = BTreeMap::new();
         let mut left: BTreeMap<(String, CivilDate, Unconvertible), usize> = BTreeMap::new();
@@ -256,6 +282,7 @@ impl ReportView {
             match self.converted(row, target, pnl, rates) {
                 Ok((amount, rate)) => {
                     net = net.saturating_add(amount);
+                    values.push(amount);
                     if let Some(money) = pnl.book.money(&row.symbol) {
                         assets.insert(row.symbol.clone(), money.currency.clone());
                     }
@@ -264,12 +291,13 @@ impl ReportView {
                     }
                 }
                 Err(why) => {
+                    values.push(Decimal::ZERO);
                     let day = CivilDate::from_ms(row.trade.closed_ms, self.tz);
                     *left.entry((row.symbol.clone(), day, why)).or_default() += 1;
                 }
             }
         }
-        MergeReadout {
+        let readout = MergeReadout {
             currency: target.clone(),
             assets: assets.into_iter().collect(),
             rates: used.into_values().collect(),
@@ -283,7 +311,8 @@ impl ReportView {
                 })
                 .collect(),
             net,
-        }
+        };
+        (readout, values)
     }
 }
 

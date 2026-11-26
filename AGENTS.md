@@ -40,7 +40,7 @@ and `.agents/skills/`.
 | `replay` | civil, engine | Recorded sessions, playback clock; told the time. Test support: `replay::test_support`. |
 | `paper` | sim, trading, replay, workspace, civil, engine | Paper account, risk, journal and report. |
 | `sim` | trading, engine | `TradingVenue` impl; fills only on tape, never quotes. |
-| `trading` | civil, engine | Venue-neutral order vocabulary, the `TradingVenue` port and the rates store. |
+| `trading` | civil, engine | Venue-neutral orders, `TradingVenue` port, rates. |
 | `broker-mt5` | trading, engine | MT5 broker `TradingVenue`; owns one socket. |
 | `feed` | feed-*, control-local, sources, replay, operability, orderbook, engine | `FeedEvent`/`FeedCommand`, adapters; owns runtimes, threads, clock |
 | `feed-binance`, `feed-hyperliquid`, `feed-mt5` | engine, orderbook; binance also sources | Produce trades. |
