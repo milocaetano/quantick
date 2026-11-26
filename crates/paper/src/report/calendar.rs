@@ -292,9 +292,10 @@ impl DaySet {
         runs
     }
 
-    /// `Nov 24 → Nov 25 · 2 days` for one span; `Nov 12, Nov 24, Nov 25 ·
-    /// 3 days` for a sparse set, with longer spans inside it arrowed. The
-    /// year is spelled only when the set does not sit in one year.
+    /// `Nov 24 to Nov 25 · 2 days` for one span; `Nov 12, Nov 24, Nov 25 ·
+    /// 3 days` for a sparse set, with longer spans inside it joined by `to`
+    /// (the proportional font has no arrow glyph). The year is spelled only
+    /// when the set does not sit in one year.
     pub fn label(&self) -> String {
         let (Some(first), Some(last)) = (self.first(), self.last()) else {
             return "no days".to_owned();
@@ -314,14 +315,14 @@ impl DaySet {
             match run.days() {
                 1 => parts.push(name(run.start)),
                 2 => parts.extend([name(run.start), name(run.end)]),
-                _ => parts.push(format!("{} → {}", name(run.start), name(run.end))),
+                _ => parts.push(format!("{} to {}", name(run.start), name(run.end))),
             }
         }
         if runs.len() > LABEL_RUNS {
             parts.push("…".to_owned());
         }
         let separator = if runs.len() == 1 && runs[0].days() == 2 {
-            " → "
+            " to "
         } else {
             ", "
         };
@@ -336,7 +337,9 @@ impl DaySet {
     /// Read a list of `YYYY-MM-DD` days. A day that is not a real date in
     /// exactly that spelling refuses the whole list — a typo must never
     /// select the wrong day — and so do more than [`MAX_LISTED_DAYS`]
-    /// distinct days. Duplicates collapse; order does not matter.
+    /// distinct days, refused as soon as the set passes the cap, so the
+    /// work is bounded whatever the list's length. Duplicates collapse;
+    /// order does not matter.
     pub fn parse_list<S: AsRef<str>>(days: &[S]) -> Result<Self, DayListError> {
         let mut set = Self::default();
         for text in days {
@@ -348,9 +351,9 @@ impl DaySet {
                 .filter(|day| day.iso() == text)
                 .ok_or_else(|| DayListError::NotADate(text.to_owned()))?;
             set.days.insert(day.day_number());
-        }
-        if set.len() > MAX_LISTED_DAYS {
-            return Err(DayListError::TooMany(set.len()));
+            if set.len() > MAX_LISTED_DAYS {
+                return Err(DayListError::TooMany);
+            }
         }
         Ok(set)
     }
@@ -365,7 +368,8 @@ pub enum DayListError {
     NotADate(String),
     /// An entry longer than [`ISO_DATE_LEN`] bytes, by its length alone.
     TooLong(usize),
-    TooMany(usize),
+    /// More than [`MAX_LISTED_DAYS`] distinct days.
+    TooMany,
 }
 
 impl std::fmt::Display for DayListError {
@@ -376,9 +380,9 @@ impl std::fmt::Display for DayListError {
                 f,
                 "an entry of {bytes} bytes is not a YYYY-MM-DD date (at most {ISO_DATE_LEN})"
             ),
-            Self::TooMany(count) => write!(
+            Self::TooMany => write!(
                 f,
-                "{count} days named; at most {MAX_LISTED_DAYS} - use a period for a longer window"
+                "more than {MAX_LISTED_DAYS} days named - use a period for a longer window"
             ),
         }
     }
@@ -708,14 +712,14 @@ mod tests {
     }
 
     #[test]
-    fn the_label_arrows_a_span_and_lists_a_sparse_set() {
+    fn the_label_joins_a_span_with_to_and_lists_a_sparse_set() {
         assert_eq!(
             DaySet::span(nov(24), nov(25)).label(),
-            "Nov 24 → Nov 25 · 2 days"
+            "Nov 24 to Nov 25 · 2 days"
         );
         assert_eq!(
             DaySet::span(nov(20), nov(25)).label(),
-            "Nov 20 → Nov 25 · 6 days"
+            "Nov 20 to Nov 25 · 6 days"
         );
         assert_eq!(DaySet::single(nov(24)).label(), "Nov 24 · 1 day");
         let mut sparse = DaySet::span(nov(24), nov(25));
@@ -725,12 +729,12 @@ mod tests {
         for day in [10, 12, 14, 16] {
             long.toggle(nov(day));
         }
-        assert_eq!(long.label(), "Nov 2 → Nov 6, Nov 10, Nov 12, … · 9 days");
+        assert_eq!(long.label(), "Nov 2 to Nov 6, Nov 10, Nov 12, … · 9 days");
         let across = DaySet::span(
             CivilDate::from_ymd(2026, 12, 31),
             CivilDate::from_ymd(2027, 1, 1),
         );
-        assert_eq!(across.label(), "Dec 31 2026 → Jan 1 2027 · 2 days");
+        assert_eq!(across.label(), "Dec 31 2026 to Jan 1 2027 · 2 days");
     }
 
     #[test]
@@ -765,11 +769,15 @@ mod tests {
         let many: Vec<String> = (0..=MAX_LISTED_DAYS as i64)
             .map(|i| nov(1).offset_days(i).iso())
             .collect();
-        assert_eq!(
-            DaySet::parse_list(&many),
-            Err(DayListError::TooMany(MAX_LISTED_DAYS + 1))
-        );
+        assert_eq!(DaySet::parse_list(&many), Err(DayListError::TooMany));
         assert!(DaySet::parse_list(&many[..MAX_LISTED_DAYS]).is_ok());
+        let mut past_the_cap = many.clone();
+        past_the_cap.push("not a day".to_owned());
+        assert_eq!(
+            DaySet::parse_list(&past_the_cap),
+            Err(DayListError::TooMany),
+            "the read stops at the cap, before the entries after it"
+        );
     }
 
     /// The cap counts days, not entries: a retry that names a day twice

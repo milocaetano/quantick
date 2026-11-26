@@ -218,7 +218,7 @@ fn the_scope_line_accounts_for_every_hidden_trade() {
     );
     assert_eq!(
         range.scope_line(),
-        "Applied: Jan 6 → Jan 11 · 6 days · closes in UTC · Sim live · 2 trade(s) - 1 saved trade(s) outside these dates \
+        "Applied: Jan 6 to Jan 11 · 6 days · closes in UTC · Sim live · 2 trade(s) - 1 saved trade(s) outside these dates \
          - 1 trade(s) outside the selected source or report scope"
     );
     let none = ReportView::cut(

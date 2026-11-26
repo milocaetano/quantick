@@ -505,7 +505,7 @@ fn a_picked_calendar_range_cuts_the_report_and_the_pills_stand_down() {
         .ensure_report_view(tz, PnlReader::plain());
     let view = paper.report_state().report_view.as_ref().expect("a view");
     assert_eq!(view.rows.len(), 3, "both ends of the span are inside");
-    assert_eq!(view.days.label(), "Aug 12 → Aug 17 · 6 days");
+    assert_eq!(view.days.label(), "Aug 12 to Aug 17 · 6 days");
     assert_eq!(view.hidden_outside, 1, "only the 18th sits outside");
     assert_eq!(view.report.net_points, Decimal::from(10));
 

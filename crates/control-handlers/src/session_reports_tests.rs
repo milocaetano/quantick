@@ -33,6 +33,7 @@ fn sources_call_normalizes_unions_and_rejects_invalid_input_without_success_even
     assert_eq!(dates["timezone"], "UTC-03:00");
     assert_eq!(dates["applied_days"], json!([]));
     assert_eq!(dates["applied_day_count"], "0");
+    let input_schema = quantick_control_schema::session_reports::descriptor().input_schema;
     let first = quantick_civil::CivilDate::from_ymd(2026, 11, 1);
     let too_many: Vec<String> = (0..=MAX_LISTED_DAYS as i64)
         .map(|offset| first.offset_days(offset).iso())
@@ -56,7 +57,12 @@ fn sources_call_normalizes_unions_and_rejects_invalid_input_without_success_even
             "invalid_period",
         ),
     ] {
+        // The schema admits every day list, so the gateway hands each one to
+        // the handler and the refusal carries its code.
+        quantick_control::schema::validate_instance(&input_schema, &input).unwrap();
         let error = open(&mut host, &mut access, &FakeWindow::assistant(), &input).unwrap_err();
+        let wire = serde_json::to_string(&error).unwrap();
+        assert!(!wire.contains("9999"), "no echo of the long entry: {wire}");
         assert_eq!(error.context.details.unwrap()["code"], code);
     }
     assert!(access.events.is_empty());
@@ -367,6 +373,15 @@ fn days_call_sets_the_picked_days_idempotently_and_clear_dates_empties_them() {
     )
     .unwrap();
     assert_eq!(emptied["applied_days"], json!([]));
+    let copies = json!({"action":"days", "days":vec!["2026-11-24"; MAX_LISTED_DAYS + 1]});
+    let input_schema = quantick_control_schema::session_reports::descriptor().input_schema;
+    quantick_control::schema::validate_instance(&input_schema, &copies).unwrap();
+    let one = open(&mut host, &mut access, &FakeWindow::assistant(), &copies).unwrap();
+    assert_eq!(
+        one["applied_days"],
+        json!(["2026-11-24"]),
+        "copies collapse"
+    );
 }
 
 /// A pick longer than the readback lists its newest days; the count

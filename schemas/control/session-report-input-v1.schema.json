@@ -69,7 +69,7 @@
     },
     {
       "additionalProperties": false,
-      "description": "Set the picked days outright: YYYY-MM-DD civil days in the display\ntimezone, any order, contiguous or not. An empty list clears them.",
+      "description": "Set the picked days outright: YYYY-MM-DD civil days in the display\ntimezone, any order, contiguous or not. An empty list clears them.\nDuplicates collapse; more than 92 distinct days, or an entry that is\nnot a YYYY-MM-DD date, refuses the call with `invalid_dates`.",
       "properties": {
         "action": {
           "const": "days",
@@ -77,10 +77,8 @@
         },
         "days": {
           "items": {
-            "maxLength": 10,
             "type": "string"
           },
-          "maxItems": 92,
           "type": "array"
         }
       },

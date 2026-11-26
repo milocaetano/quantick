@@ -16,8 +16,9 @@ pub enum ReportInput {
     Inspect {},
     /// Set the picked days outright: YYYY-MM-DD civil days in the display
     /// timezone, any order, contiguous or not. An empty list clears them.
+    /// Duplicates collapse; more than 92 distinct days, or an entry that is
+    /// not a YYYY-MM-DD date, refuses the call with `invalid_dates`.
     Days {
-        #[schemars(length(max = 92), inner(length(max = 10)))]
         days: Vec<String>,
     },
     ClearDates {},
