@@ -303,7 +303,7 @@ shell_statements() {
             if (!inplace && b ~ /^(cat|head|tail|less|more|ls|stat|wc|grep|egrep|fgrep|rg|test|\[|file|md5sum|sha1sum|sha256sum|rm|diff|cmp|echo|printf|sed)$/) return 0
             text = b == "git" || (b == "gh" && tolower(unquote(words[k + 1])) ~ /^(pr|issue|release|gist)$/)
             for (j = k + 1; j <= nw; j++)
-                if (names_marker(words[j]) && (!text || words[j] ~ /^-/ || words[j - 1] ~ /^(-o|--output)$/)) return 1
+                if (names_marker(words[j]) && (!text || words[j] ~ /^(--output=|-o.)/ || words[j - 1] ~ /^(-o|--output)$/)) return 1
             return 0
         }
         # The words after words[j] as one script, for an unwrapped wrapper.
@@ -409,7 +409,7 @@ shell_statements() {
             # A gh group gh does not ship is an alias or an extension, either
             # of which may run `pr merge`; `gh alias` and `gh extension`
             # define them. None can be read here.
-            if (cmd == "gh" && rest !~ /^gh( --?[a-z]|$)/ && (rest !~ /^gh (auth|browse|codespace|gist|issue|org|pr|project|release|repo|cache|run|workflow|label|secret|variable|ssh-key|gpg-key|api|search|status|config|completion|help|version|ruleset|attestation)( |$)/))
+            if (cmd == "gh" && rest !~ /^gh( --?[a-z]|$)/ && (rest !~ /^gh (auth|browse|codespace|gist|issue|org|pr|project|release|repo|cache|run|workflow|label|secret|variable|ssh-key|gpg-key|api|search|status|config|completion|help|version|ruleset|attestation|preview|agent-task)( |$)/))
                 print "#unknown"
             print rest
         }
