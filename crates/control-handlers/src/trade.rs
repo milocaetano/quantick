@@ -42,15 +42,13 @@ pub use quantick_control_schema::trade::*;
 use quantick_civil::TzOffset;
 use quantick_control::{error::ControlError, registry::RegistryError, wire::ActorContext};
 use quantick_control_host::journal::NewEvent;
-use quantick_engine::Side;
 use quantick_paper::report::ledger_state::{LedgerView, LedgerViewChange};
 use quantick_paper::report::session_edit::{
     JournalEdit, JournalEditOutcome, JournalScope, SessionEditError,
 };
 use quantick_paper::{PaperAccount, format::PositionSummary, risk_sizing::RiskState};
 use quantick_session::paper::{SharedChange, TradeCommand, TradeOutcome, TradeRefusal};
-use quantick_sim::{Bracket, EntryKind, Order, OrderId, OrderIntent, VenueEvent};
-use rust_decimal::Decimal;
+use quantick_sim::{Order, VenueEvent};
 use serde_json::{Value, json};
 
 use crate::JournalAccess;
@@ -82,8 +80,6 @@ pub trait TradeDesk {
     /// Run one trade command exactly as the tab's own surfaces run it:
     /// `quantick_session::paper::TabPaper::execute`.
     fn execute(&mut self, command: TradeCommand) -> TradeOutcome;
-    /// The last mark price, if the account has seen a print.
-    fn mark_price(&self) -> Option<Decimal>;
     /// The resting orders.
     fn working_orders(&self) -> &[Order];
     /// The risk sizing's state and whether it blocks an entry, asked once.
@@ -156,48 +152,10 @@ pub trait PaperHost {
     fn paper(&mut self) -> Box<dyn PaperOwner + '_>;
 }
 
-/// Turn the venue's answer into the result, whatever the call was.
-fn answer(paper: &dyn PaperOwner, events: &[VenueEvent]) -> TradeResult {
-    let rejected_because = events.iter().find_map(|event| match event {
-        VenueEvent::Rejected(reason) => Some(reason.to_string()),
-        _ => None,
-    });
-    let order_id = events.iter().find_map(|event| match event {
-        VenueEvent::Placed(order) | VenueEvent::Updated(order) => Some(order.id.0),
-        VenueEvent::Cancelled { order, .. } => Some(order.id.0),
-        _ => None,
-    });
-    let desk = paper.active_desk();
-    TradeResult {
-        selected_strategy: desk
-            .and_then(|desk| desk.account().selected_order_strategy())
-            .map(|strategy| strategy.name.clone()),
-        ruler_ticks: desk.map_or(0, TradeDesk::ruler_ticks),
-        accepted: rejected_because.is_none(),
-        rejected_because,
-        order_id,
-        mark_price: desk
-            .and_then(TradeDesk::mark_price)
-            .map(|price| price.to_string()),
-        working_orders: desk
-            .map(TradeDesk::working_orders)
-            .unwrap_or_default()
-            .iter()
-            .map(|order| WorkingOrderView {
-                order_id: order.id.0,
-                side: match order.side {
-                    Side::Buy => "buy".to_owned(),
-                    Side::Sell => "sell".to_owned(),
-                },
-                kind: order.kind.as_str().to_owned(),
-                price: order.price.map(|price| price.to_string()),
-                quantity: order.quantity.to_string(),
-                stop_loss: order.bracket.stop_loss().map(|level| level.to_string()),
-                take_profit: order.bracket.take_profit().map(|level| level.to_string()),
-            })
-            .collect(),
-        simulated: true,
-    }
+/// The active desk's answer to `events`, whatever the call was.
+fn answer(paper: &dyn PaperOwner, events: &[VenueEvent]) -> Result<TradeResult, ControlError> {
+    let desk = paper.active_desk().ok_or_else(no_chart_open)?;
+    Ok(TradeResult::of(desk.account(), desk.ruler_ticks(), events))
 }
 
 /// Append one journal event naming who asked and what the venue answered.
@@ -225,60 +183,19 @@ fn journal<A: JournalAccess>(
     access.record_event(NewEvent::by(TRADE_MODULE_ID, kind, actor, payload));
 }
 
-fn place_order<H: PaperHost + ?Sized, A: JournalAccess>(
+/// Every order and position call, one adapter: decode the owner's input,
+/// take the command it states, and run it where a click runs it.
+fn trade_call<C: TradeCall, H: PaperHost + ?Sized, A: JournalAccess>(
     host: &mut H,
     access: &mut A,
     actor: &ActorContext,
     input: &Value,
 ) -> Result<Value, ControlError> {
     let mut owner = host.paper();
-    let paper = &mut *owner;
-    let asked = input.clone();
-    let input: PlaceInput = serde_json::from_value(input.clone())
+    let call: C = serde_json::from_value(input.clone())
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
-    let quantity = parse_price("quantity", &input.quantity)?;
-    let side = input.side.into_engine();
-    let price = input
-        .price
-        .as_deref()
-        .map(|text| parse_price("price", text))
-        .transpose()?;
-    let intent = match (input.kind.into_engine(), price) {
-        (EntryKind::Market, None) => OrderIntent::market(side, quantity),
-        (EntryKind::Limit, Some(price)) => OrderIntent::limit(side, quantity, price),
-        (EntryKind::Stop, Some(trigger)) => OrderIntent::stop(side, quantity, trigger),
-        (EntryKind::Market, Some(_)) => {
-            return Err(ControlError::invalid_request(
-                "a market order has no price of its own - drop `price`, or ask for a limit or a stop"
-                    .to_owned(),
-            ));
-        }
-        (EntryKind::Limit | EntryKind::Stop, None) => {
-            return Err(ControlError::invalid_request(
-                "a limit or stop needs the price it rests at".to_owned(),
-            ));
-        }
-    };
-    let named = Bracket::whole(
-        input
-            .stop_loss
-            .as_deref()
-            .map(|text| parse_price("stop_loss", text))
-            .transpose()?,
-        input
-            .take_profit
-            .as_deref()
-            .map(|text| parse_price("take_profit", text))
-            .transpose()?,
-    );
-    // The armed bracket, the risk per trade and the ruler are the tab's
-    // decisions, made where a click makes them. A refusal comes back as an
-    // error carrying the sentence the ticket shows, never as an empty
-    // answer the caller has to interpret.
-    let command = TradeCommand::Place {
-        intent: Box::new(intent.with_bracket(named)),
-    };
-    run(paper, access, actor, command, PLACE_EVENT_KIND, asked)
+    let command = call.command().map_err(ControlError::invalid_request)?;
+    run(&mut *owner, access, actor, command, C::EVENT_KIND, input.clone())
 }
 
 /// Run `command` on the active desk, refuse what the tab refused, and
@@ -306,7 +223,7 @@ fn run<A: JournalAccess>(
             TradeRefusal::Ticket(sentence) => ControlError::invalid_request(sentence),
         });
     }
-    let result = answer(paper, &outcome.events);
+    let result = answer(paper, &outcome.events)?;
     journal(access, actor, kind, &result, asked);
     to_value(result)
 }
@@ -328,98 +245,6 @@ fn paused_error(gate: &quantick_sources::sync::Desync) -> ControlError {
         quantick_control_schema::recovery::RECONNECT_CAPABILITY_ID
     )];
     error
-}
-
-fn bracket_order<H: PaperHost + ?Sized, A: JournalAccess>(
-    host: &mut H,
-    access: &mut A,
-    actor: &ActorContext,
-    input: &Value,
-) -> Result<Value, ControlError> {
-    let mut owner = host.paper();
-    let paper = &mut *owner;
-    let asked = input.clone();
-    let input: BracketInput = serde_json::from_value(input.clone())
-        .map_err(|error| ControlError::invalid_request(error.to_string()))?;
-    let bracket = Bracket::whole(
-        input
-            .stop_loss
-            .as_deref()
-            .map(|text| parse_price("stop_loss", text))
-            .transpose()?,
-        input
-            .take_profit
-            .as_deref()
-            .map(|text| parse_price("take_profit", text))
-            .transpose()?,
-    );
-    let command = TradeCommand::Amend {
-        id: OrderId(input.order_id),
-        bracket: Box::new(bracket),
-    };
-    run(paper, access, actor, command, BRACKET_EVENT_KIND, asked)
-}
-
-fn cancel_order<H: PaperHost + ?Sized, A: JournalAccess>(
-    host: &mut H,
-    access: &mut A,
-    actor: &ActorContext,
-    input: &Value,
-) -> Result<Value, ControlError> {
-    let mut owner = host.paper();
-    let paper = &mut *owner;
-    let asked = input.clone();
-    let input: CancelInput = serde_json::from_value(input.clone())
-        .map_err(|error| ControlError::invalid_request(error.to_string()))?;
-    let command = TradeCommand::Cancel {
-        id: OrderId(input.order_id),
-    };
-    run(paper, access, actor, command, CANCEL_EVENT_KIND, asked)
-}
-
-/// Close the position and cancel every working order in one call.
-fn flatten_position<H: PaperHost + ?Sized, A: JournalAccess>(
-    host: &mut H,
-    access: &mut A,
-    actor: &ActorContext,
-    input: &Value,
-) -> Result<Value, ControlError> {
-    let mut owner = host.paper();
-    let paper = &mut *owner;
-    let _: PositionInput = serde_json::from_value(input.clone())
-        .map_err(|error| ControlError::invalid_request(error.to_string()))?;
-    let asked = input.clone();
-    run(
-        paper,
-        access,
-        actor,
-        TradeCommand::Flatten,
-        FLATTEN_EVENT_KIND,
-        asked,
-    )
-}
-
-/// Flip the open position in one call; refused while flat, by the tab,
-/// because a reversal of nothing is a caller working from a stale read.
-fn reverse_position<H: PaperHost + ?Sized, A: JournalAccess>(
-    host: &mut H,
-    access: &mut A,
-    actor: &ActorContext,
-    input: &Value,
-) -> Result<Value, ControlError> {
-    let mut owner = host.paper();
-    let paper = &mut *owner;
-    let _: PositionInput = serde_json::from_value(input.clone())
-        .map_err(|error| ControlError::invalid_request(error.to_string()))?;
-    let asked = input.clone();
-    run(
-        paper,
-        access,
-        actor,
-        TradeCommand::Reverse,
-        REVERSE_EVENT_KIND,
-        asked,
-    )
 }
 
 fn select_strategy<H: PaperHost + ?Sized, A: JournalAccess>(
@@ -445,7 +270,7 @@ fn select_strategy<H: PaperHost + ?Sized, A: JournalAccess>(
     desk.account_mut()
         .set_order_strategies(strategies, input.name.as_deref());
     paper.persist(SharedChange::OrderStrategies);
-    let result = answer(paper, &[]);
+    let result = answer(paper, &[])?;
     journal(access, actor, TICKET_EVENT_KIND, &result, asked);
     to_value(result)
 }
@@ -465,7 +290,7 @@ fn set_ruler<H: PaperHost + ?Sized, A: JournalAccess>(
         .active_desk_mut()
         .ok_or_else(no_chart_open)?
         .set_ruler_ticks(input.ticks);
-    let result = answer(paper, &[]);
+    let result = answer(paper, &[])?;
     journal(access, actor, TICKET_EVENT_KIND, &result, asked);
     to_value(result)
 }
@@ -488,7 +313,7 @@ fn set_risk<H: PaperHost + ?Sized, A: JournalAccess>(
         .account_mut()
         .apply_risk_edit(edit);
     paper.persist(SharedChange::RiskSettings);
-    let result = answer(paper, &[]);
+    let result = answer(paper, &[])?;
     journal(access, actor, TICKET_EVENT_KIND, &result, asked);
     to_value(result)
 }
@@ -507,7 +332,7 @@ fn set_instrument_money<H: PaperHost + ?Sized, A: JournalAccess>(
     let desk = paper.active_desk_mut().ok_or_else(no_chart_open)?;
     crate::ticket_money::declare_money(desk.account_mut(), &input)?;
     paper.persist(SharedChange::RiskSettings);
-    let result = answer(paper, &[]);
+    let result = answer(paper, &[])?;
     journal(access, actor, TICKET_EVENT_KIND, &result, asked);
     to_value(result)
 }
@@ -527,11 +352,11 @@ where
         set_instrument_money_descriptor(),
         set_instrument_money::<H, A>,
     )?;
-    registry.register(place_descriptor(), place_order::<H, A>)?;
-    registry.register(bracket_descriptor(), bracket_order::<H, A>)?;
-    registry.register(cancel_descriptor(), cancel_order::<H, A>)?;
-    registry.register(flatten_descriptor(), flatten_position::<H, A>)?;
-    registry.register(reverse_descriptor(), reverse_position::<H, A>)?;
+    registry.register(place_descriptor(), trade_call::<PlaceInput, H, A>)?;
+    registry.register(bracket_descriptor(), trade_call::<BracketInput, H, A>)?;
+    registry.register(cancel_descriptor(), trade_call::<CancelInput, H, A>)?;
+    registry.register(flatten_descriptor(), trade_call::<FlattenInput, H, A>)?;
+    registry.register(reverse_descriptor(), trade_call::<ReverseInput, H, A>)?;
     crate::trade_account::register(registry)
 }
 

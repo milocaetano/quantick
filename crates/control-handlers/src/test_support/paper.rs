@@ -99,16 +99,14 @@ impl<T: PaperOwner + ?Sized> PaperOwner for &mut T {
 }
 
 /// One paper desk, as a window hands the active tab's over: the tab's own
-/// paper (an account and the desk's ruler and ticket around it), the Trades
-/// ledger's view, and every outcome a control call ran through it, for a
-/// parity test to hold against the tab's own surfaces.
+/// paper (an account and the desk's ruler and ticket around it) and the
+/// Trades ledger's view.
 pub(crate) struct PaperDesk {
     pub reports: Vec<quantick_paper::report::scope::ReportReceipt>,
     /// The days the last `ReportChange::Days` set, read back as applied.
     pub report_days: quantick_paper::report::calendar::DaySet,
     pub paper: TabPaper,
     pub view: LedgerView,
-    pub outcomes: Vec<TradeOutcome>,
 }
 
 impl PaperDesk {
@@ -118,7 +116,6 @@ impl PaperDesk {
             report_days: Default::default(),
             paper: TabPaper::new(account),
             view: LedgerView::default(),
-            outcomes: Vec::new(),
         }
     }
 }
@@ -184,12 +181,7 @@ impl TradeDesk for PaperDesk {
         self.paper.desk.ruler.set_ticks(ticks);
     }
     fn execute(&mut self, command: TradeCommand) -> TradeOutcome {
-        let outcome = self.paper.execute(command);
-        self.outcomes.push(outcome.clone());
-        outcome
-    }
-    fn mark_price(&self) -> Option<Decimal> {
-        self.account.mark_price()
+        self.paper.execute(command)
     }
     fn working_orders(&self) -> &[Order] {
         self.account.working_orders()
@@ -206,5 +198,42 @@ impl TradeDesk for PaperDesk {
     fn ledger_view(&mut self, change: &LedgerViewChange) -> (LedgerView, bool) {
         let moved = self.view.apply(change);
         (self.view.clone(), moved)
+    }
+}
+
+/// A window whose active tab holds `desk`, and every shared setting a call
+/// asked it to persist.
+pub(crate) struct DeskWindow {
+    pub desk: PaperDesk,
+    pub persisted: Vec<SharedChange>,
+}
+
+impl DeskWindow {
+    pub fn new(account: PaperAccount) -> Self {
+        Self {
+            desk: PaperDesk::new(account),
+            persisted: Vec::new(),
+        }
+    }
+}
+
+impl PaperOwner for DeskWindow {
+    fn active_desk(&self) -> Option<&dyn TradeDesk> {
+        Some(&self.desk)
+    }
+    fn active_desk_mut(&mut self) -> Option<&mut dyn TradeDesk> {
+        Some(&mut self.desk)
+    }
+    fn persist(&mut self, change: SharedChange) {
+        self.persisted.push(change);
+    }
+    fn journal_scope(&self) -> JournalScope {
+        NoDesk.journal_scope()
+    }
+    fn journal_timezone(&self) -> TzOffset {
+        NoDesk.journal_timezone()
+    }
+    fn edit_journal(&mut self, edit: &JournalEdit) -> Result<JournalEditOutcome, SessionEditError> {
+        NoDesk.edit_journal(edit)
     }
 }

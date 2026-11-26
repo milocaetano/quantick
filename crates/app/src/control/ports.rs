@@ -47,9 +47,6 @@ impl TradeDesk for PaperTrading {
     fn execute(&mut self, command: TradeCommand) -> TradeOutcome {
         (**self).execute(command)
     }
-    fn mark_price(&self) -> Option<rust_decimal::Decimal> {
-        (**self).mark_price()
-    }
     fn working_orders(&self) -> &[quantick_sim::Order] {
         (**self).working_orders()
     }
