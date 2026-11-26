@@ -969,7 +969,7 @@ fn changing_feed_falls_back_to_a_valid_symbol() {
                 record_deals: false,
                 short_name: None,
                 sync: Default::default(),
-                idle_timeout_secs: crate::config::DEFAULT_IDLE_TIMEOUT_SECS,
+                idle_timeout_secs: 30,
             },
             FeedConfig {
                 id: "b".to_string(),
@@ -990,7 +990,7 @@ fn changing_feed_falls_back_to_a_valid_symbol() {
                 record_deals: false,
                 short_name: None,
                 sync: Default::default(),
-                idle_timeout_secs: crate::config::DEFAULT_IDLE_TIMEOUT_SECS,
+                idle_timeout_secs: 30,
             },
         ],
         broker: Default::default(),

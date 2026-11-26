@@ -96,7 +96,7 @@ impl FakeWindow {
                     record_deals: false,
                     short_name: None,
                     sync: Default::default(),
-                    idle_timeout_secs: crate::config::DEFAULT_IDLE_TIMEOUT_SECS,
+                    idle_timeout_secs: 30,
                 }],
                 broker: Default::default(),
                 metatrader: Default::default(),

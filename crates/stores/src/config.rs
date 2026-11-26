@@ -171,17 +171,15 @@ pub struct FeedConfig {
     #[serde(default)]
     pub sync: quantick_sources::sync::SyncLimits,
     /// Seconds a websocket venue's trade stream may deliver no frame at all
-    /// before it is dropped and reconnected: `idle_timeout_secs = 30`.
-    /// Absent, [`DEFAULT_IDLE_TIMEOUT_SECS`].
-    /// Read once at launch; MetaTrader feeds ignore it.
+    /// before it is dropped and reconnected, 1 to
+    /// [`MAX_IDLE_TIMEOUT_SECS`](quantick_sources::reconnect::MAX_IDLE_TIMEOUT_SECS).
+    /// Absent, [`DEFAULT_IDLE_TIMEOUT_SECS`](quantick_sources::reconnect::DEFAULT_IDLE_TIMEOUT_SECS).
     #[serde(default = "default_idle_timeout_secs")]
     pub idle_timeout_secs: u64,
 }
 
-pub use quantick_sources::reconnect::DEFAULT_IDLE_TIMEOUT_SECS;
-
 fn default_idle_timeout_secs() -> u64 {
-    DEFAULT_IDLE_TIMEOUT_SECS
+    quantick_sources::reconnect::DEFAULT_IDLE_TIMEOUT_SECS
 }
 
 /// The most characters a venue code made of a name's initials takes.
@@ -857,10 +855,13 @@ impl AppConfig {
             feed.validate_costs()?;
             feed.validate_icons()?;
             feed.sync.validate(&feed.id)?;
-            if feed.idle_timeout_secs == 0 {
+            let idle_range = 1..=quantick_sources::reconnect::MAX_IDLE_TIMEOUT_SECS;
+            if !idle_range.contains(&feed.idle_timeout_secs) {
                 return Err(format!(
-                    "feed '{}' sets idle_timeout_secs to 0 - a stream would reconnect                      before its first frame",
-                    feed.id
+                    "feed '{}' sets idle_timeout_secs to {} - it must be 1 to {}",
+                    feed.id,
+                    feed.idle_timeout_secs,
+                    idle_range.end()
                 ));
             }
             for (symbol, preset) in &feed.symbol_bubble_presets {

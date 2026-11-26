@@ -19,7 +19,7 @@ use quantick_feed_binance::{BinanceHttp, BinanceMarket, depth::DepthEvent};
 use quantick_sources::history_reach::{
     Campaign, CampaignEnd, CampaignStart, CampaignStep, HistoryReach, ReachBounds, TapeFacts,
 };
-use quantick_sources::reconnect::{Backoff, DEFAULT_IDLE_TIMEOUT};
+use quantick_sources::reconnect::Backoff;
 use quantick_sources::trade_admission::RECONNECT_ID_WINDOW;
 use tokio::{
     io::{AsyncReadExt as _, AsyncWriteExt as _},
@@ -172,7 +172,7 @@ impl Host {
                 http: BinanceHttp::with_market_base(market, rest_url),
                 url,
                 backoff: Backoff::new(Duration::from_millis(1), Duration::from_millis(1), 7),
-                idle_timeout: DEFAULT_IDLE_TIMEOUT,
+                idle_timeout: Duration::from_secs(30),
             },
         ));
         Self {

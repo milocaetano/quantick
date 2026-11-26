@@ -68,7 +68,7 @@ async fn binance_automatic_reconnect_reports_loss_on_the_host_channel() {
                 Duration::from_millis(1),
                 7,
             ),
-            idle_timeout: quantick_sources::reconnect::DEFAULT_IDLE_TIMEOUT,
+            idle_timeout: Duration::from_secs(30),
         },
     ));
     // Bound the whole production host run, including its initial REST boundary.

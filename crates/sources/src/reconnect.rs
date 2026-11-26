@@ -13,8 +13,9 @@ use std::time::Duration;
 /// `idle_timeout_secs`.
 pub const DEFAULT_IDLE_TIMEOUT_SECS: u64 = 30;
 
-/// [`DEFAULT_IDLE_TIMEOUT_SECS`] as a duration.
-pub const DEFAULT_IDLE_TIMEOUT: Duration = Duration::from_secs(DEFAULT_IDLE_TIMEOUT_SECS);
+/// The longest `idle_timeout_secs` a feed may set: an hour of silence is
+/// already a dead feed, and a bound keeps the deadline arithmetic finite.
+pub const MAX_IDLE_TIMEOUT_SECS: u64 = 3_600;
 
 /// Exponential backoff with equal jitter, deterministic given a seed.
 ///

@@ -539,7 +539,7 @@ fn switching_to_a_feed_with_a_declared_preset_applies_it_then() {
         record_deals: false,
         short_name: None,
         sync: Default::default(),
-        idle_timeout_secs: crate::config::DEFAULT_IDLE_TIMEOUT_SECS,
+        idle_timeout_secs: 30,
     });
     let mut app = app_on(config, "binance", "TESTUSDT");
     let opened_with = app.active_tab().tape().active_preset_for_test().to_string();

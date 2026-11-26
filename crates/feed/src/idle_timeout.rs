@@ -10,12 +10,12 @@ use std::sync::OnceLock;
 use std::time::Duration;
 
 use quantick_sources::config::ProviderKind;
-use quantick_sources::reconnect::DEFAULT_IDLE_TIMEOUT;
+use quantick_sources::reconnect::DEFAULT_IDLE_TIMEOUT_SECS;
 
 static IDLE_TIMEOUTS: OnceLock<Vec<(ProviderKind, Duration)>> = OnceLock::new();
 
 /// Set the per-provider idle timeouts, once, from the configured feeds.
-/// Never configured, every provider uses [`DEFAULT_IDLE_TIMEOUT`].
+/// Never configured, every provider uses [`DEFAULT_IDLE_TIMEOUT_SECS`].
 pub fn configure_idle_timeouts(feeds: impl IntoIterator<Item = (ProviderKind, Duration)>) {
     let _ = IDLE_TIMEOUTS.set(feeds.into_iter().collect());
 }
@@ -31,7 +31,7 @@ fn resolve(declared: &[(ProviderKind, Duration)], provider: ProviderKind) -> Dur
         .filter(|(kind, _)| *kind == provider)
         .map(|(_, timeout)| *timeout)
         .min()
-        .unwrap_or(DEFAULT_IDLE_TIMEOUT)
+        .unwrap_or(Duration::from_secs(DEFAULT_IDLE_TIMEOUT_SECS))
 }
 
 #[cfg(test)]
@@ -50,7 +50,7 @@ mod tests {
         assert_eq!(resolve(&declared, ProviderKind::Hyperliquid), secs(45));
         assert_eq!(
             resolve(&declared, ProviderKind::BinanceFutures),
-            DEFAULT_IDLE_TIMEOUT
+            secs(DEFAULT_IDLE_TIMEOUT_SECS)
         );
     }
 }

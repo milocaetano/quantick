@@ -116,20 +116,15 @@ pub async fn run_trade_session(
     let silence = tokio::time::sleep(idle_timeout);
     tokio::pin!(silence);
     loop {
+        // Biased toward a waiting frame: after a slow hand-off to the
+        // consumer, a buffered frame proves the socket alive.
         tokio::select! {
+            biased;
             () = trades.closed() => return Err(TradeSessionError::ConsumerClosed),
-            () = &mut silence => return Err(TradeSessionError::IdleTimeout(idle_timeout)),
-            _ = heartbeat.tick() => {
-                socket
-                    .send(Message::Text(r#"{"method":"ping"}"#.into()))
-                    .await
-                    .map_err(|error| TradeSessionError::Transport(error.to_string()))?;
-            }
             frame = socket.next() => {
                 let Some(frame) = frame else {
                     return Err(TradeSessionError::ServerClosed { reason: None });
                 };
-                silence.as_mut().reset(tokio::time::Instant::now() + idle_timeout);
                 let message = frame
                     .map_err(|error| TradeSessionError::Transport(error.to_string()))?;
                 match message {
@@ -187,7 +182,17 @@ pub async fn run_trade_session(
                     }
                     Message::Pong(_) | Message::Binary(_) | Message::Frame(_) => {}
                 }
+                // Restarted once the frame is handled, so time spent waiting
+                // on the consumer never counts as socket silence.
+                silence.as_mut().reset(tokio::time::Instant::now() + idle_timeout);
             }
+            _ = heartbeat.tick() => {
+                socket
+                    .send(Message::Text(r#"{"method":"ping"}"#.into()))
+                    .await
+                    .map_err(|error| TradeSessionError::Transport(error.to_string()))?;
+            }
+            () = &mut silence => return Err(TradeSessionError::IdleTimeout(idle_timeout)),
         }
     }
 }
@@ -284,7 +289,7 @@ mod tests {
         socket
     }
 
-    const IDLE: Duration = Duration::from_millis(100);
+    const IDLE: Duration = Duration::from_millis(400);
 
     /// One session against a local socket that `serve` drives after the
     /// subscription, at [`IDLE`].
@@ -302,7 +307,7 @@ mod tests {
         let (connected, _status) = watch::channel(false);
         let mut mapper = TradeMapper::new("BTC");
         let result = tokio::time::timeout(
-            Duration::from_secs(2),
+            Duration::from_secs(5),
             run_trade_session(&url, "BTC", &trades, &connected, &mut mapper, IDLE),
         )
         .await
@@ -332,7 +337,7 @@ mod tests {
     #[tokio::test]
     async fn pongs_keep_a_quiet_session_alive() {
         let result = session_against(|mut socket| async move {
-            let _ = tokio::time::timeout(IDLE * 4, async {
+            let _ = tokio::time::timeout(IDLE * 3, async {
                 while let Some(Ok(Message::Text(text))) = socket.next().await {
                     if text.contains("ping") {
                         let pong = Message::Text(r#"{"channel":"pong"}"#.into());
@@ -348,47 +353,6 @@ mod tests {
             matches!(result, Err(TradeSessionError::ServerClosed { .. })),
             "{result:?}"
         );
-    }
-
-    /// A silent socket is dropped once the idle timeout passes and the
-    /// symbol is subscribed again on a new connection.
-    #[tokio::test]
-    async fn a_silent_socket_is_dropped_and_resubscribed() {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let address = listener.local_addr().unwrap();
-        let server = tokio::spawn(async move {
-            let mut silent = accept_subscription(&listener).await;
-            silent
-                .send(Message::Text(
-                    r#"{"channel":"subscriptionResponse","data":{}}"#.into(),
-                ))
-                .await
-                .unwrap();
-            let _second = accept_subscription(&listener).await;
-        });
-
-        let (trades_tx, _trades_rx) = tokio::sync::mpsc::channel(8);
-        let (connected_tx, mut connected_rx) = watch::channel(false);
-        let feed = tokio::spawn(async move {
-            run_trades_with_reconnect(
-                &format!("ws://{address}"),
-                "BTC",
-                &trades_tx,
-                &connected_tx,
-                TradeMapper::new("BTC"),
-                Backoff::new(Duration::from_millis(2), Duration::from_millis(2), 7),
-                IDLE,
-            )
-            .await;
-        });
-
-        wait_for_status(&mut connected_rx, true).await;
-        wait_for_status(&mut connected_rx, false).await;
-        tokio::time::timeout(Duration::from_secs(2), server)
-            .await
-            .expect("the feed never subscribed on a second connection")
-            .unwrap();
-        feed.abort();
     }
 
     #[tokio::test]

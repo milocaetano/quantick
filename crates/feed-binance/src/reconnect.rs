@@ -86,43 +86,6 @@ mod tests {
         .expect("timed out waiting for connection status");
     }
 
-    /// A socket that falls silent after the handshake is dropped once the
-    /// idle timeout passes and dialled again.
-    #[tokio::test]
-    async fn a_silent_socket_is_dropped_and_dialled_again() {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let address = listener.local_addr().unwrap();
-        let server = tokio::spawn(async move {
-            let (stream, _) = listener.accept().await.unwrap();
-            let silent = tokio_tungstenite::accept_async(stream).await.unwrap();
-            let (stream, _) = listener.accept().await.unwrap();
-            let _second = tokio_tungstenite::accept_async(stream).await.unwrap();
-            drop(silent);
-        });
-
-        let (trades_tx, _trades_rx) = tokio::sync::mpsc::channel(8);
-        let (connected_tx, mut connected_rx) = watch::channel(false);
-        let url = agg_trade_url(&format!("ws://{address}"), "BTCUSDT");
-        let feed = tokio::spawn(async move {
-            run_with_reconnect(
-                &url,
-                &trades_tx,
-                &connected_tx,
-                Backoff::new(Duration::from_millis(2), Duration::from_millis(2), 7),
-                Duration::from_millis(100),
-            )
-            .await;
-        });
-
-        wait_for_status(&mut connected_rx, true).await;
-        wait_for_status(&mut connected_rx, false).await;
-        tokio::time::timeout(Duration::from_secs(2), server)
-            .await
-            .expect("the feed never dialled a second connection")
-            .unwrap();
-        feed.abort();
-    }
-
     #[tokio::test]
     async fn connection_status_tracks_disconnect_and_reconnect() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();

@@ -47,7 +47,7 @@ fn a_feeds_sync_limits_load_over_the_defaults() {
 }
 
 /// A feed's trade-stream idle timeout defaults to 30 s, takes an override,
-/// and refuses zero at load.
+/// and refuses zero or more than an hour at load.
 #[test]
 fn a_feeds_idle_timeout_loads_over_the_default() {
     let load = |line: &str| {
@@ -73,6 +73,8 @@ fn a_feeds_idle_timeout_loads_over_the_default() {
     assert_eq!(idle(&absent), Some(std::time::Duration::from_secs(30)));
     let set = load("idle_timeout_secs = 90").expect("an override");
     assert_eq!(idle(&set), Some(std::time::Duration::from_secs(90)));
-    let zero = load("idle_timeout_secs = 0").expect_err("zero");
-    assert!(zero.to_string().contains("idle_timeout_secs"), "{zero}");
+    for refused in ["0", "3601", "18446744073709551615"] {
+        let error = load(&format!("idle_timeout_secs = {refused}")).expect_err(refused);
+        assert!(error.to_string().contains("idle_timeout_secs"), "{error}");
+    }
 }

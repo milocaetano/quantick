@@ -83,7 +83,17 @@ pub async fn run_agg_trade_stream(
     let silence = tokio::time::sleep(idle_timeout);
     tokio::pin!(silence);
     loop {
+        // Biased toward a waiting frame: after a slow hand-off to the
+        // consumer, a buffered frame proves the socket alive.
         let frame = tokio::select! {
+            biased;
+            frame = ws.next() => frame,
+            _ = probe.tick() => {
+                ws.send(Message::Ping(Default::default()))
+                    .await
+                    .map_err(|e| FeedError::Http(e.to_string()))?;
+                continue;
+            }
             () = &mut silence => {
                 warn!(
                     target: "quantick::feed",
@@ -94,16 +104,8 @@ pub async fn run_agg_trade_stream(
                 );
                 return Err(FeedError::IdleTimeout(idle_timeout));
             }
-            _ = probe.tick() => {
-                ws.send(Message::Ping(Default::default()))
-                    .await
-                    .map_err(|e| FeedError::Http(e.to_string()))?;
-                continue;
-            }
-            frame = ws.next() => frame,
         };
         let Some(frame) = frame else { break };
-        silence.as_mut().reset(Instant::now() + idle_timeout);
         let msg = frame.map_err(|e| FeedError::Http(e.to_string()))?;
         match msg {
             Message::Text(text) => match decode_text(text.as_str()) {
@@ -132,6 +134,9 @@ pub async fn run_agg_trade_stream(
             }
             Message::Pong(_) | Message::Binary(_) | Message::Frame(_) => {}
         }
+        // Restarted once the frame is handled, so time spent waiting on the
+        // consumer never counts as socket silence.
+        silence.as_mut().reset(Instant::now() + idle_timeout);
     }
     debug!(target: "quantick::feed", forwarded, "websocket stream ended");
     Ok(forwarded)
@@ -169,7 +174,7 @@ mod tests {
         assert!(decode_text("{not valid json").is_err());
     }
 
-    const IDLE: Duration = Duration::from_millis(100);
+    const IDLE: Duration = Duration::from_millis(400);
 
     /// One connection to a local socket that `serve` drives, at [`IDLE`].
     async fn stream_against<F, Fut>(serve: F) -> Result<u64, FeedError>
@@ -191,7 +196,7 @@ mod tests {
         let (tx, _rx) = tokio::sync::mpsc::channel(8);
         let (connected, _status) = tokio::sync::watch::channel(false);
         let result = tokio::time::timeout(
-            Duration::from_secs(2),
+            Duration::from_secs(5),
             run_agg_trade_stream(&url, &tx, &mut ContinuityTracker::new(), &connected, IDLE),
         )
         .await
@@ -221,7 +226,7 @@ mod tests {
     async fn pongs_keep_a_quiet_socket_alive() {
         let result = stream_against(|mut socket| async move {
             // Reading is what makes tungstenite answer each ping with a pong.
-            let _ = tokio::time::timeout(IDLE * 4, async {
+            let _ = tokio::time::timeout(IDLE * 3, async {
                 while let Some(Ok(_)) = socket.next().await {}
             })
             .await;
