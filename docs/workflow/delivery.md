@@ -79,7 +79,7 @@ Progress or exhaustion never waives a finding. Use explicit user decisions or
 standing delegation for bounded retry renewals and retrospective process
 exceptions; record the grant, decision, evidence and preserved counters instead
 of asking again. Without that authority, escalate. A delegated exception cannot
-waive current tests/reviews, product requirements or score criteria, fabricate
+waive current tests/reviews or product requirements, fabricate
 history, or grant main merge.
 
 ### Durable review record

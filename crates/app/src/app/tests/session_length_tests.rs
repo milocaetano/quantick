@@ -1,4 +1,4 @@
-//! Hot-path work against session length — SE6's regression check.
+//! Hot-path work against session length: the regression check that it stays flat.
 //!
 //! One pane's live paths, each run after a *short* and a *long* session of
 //! dense prints, then driven through the same window of live work; the work
