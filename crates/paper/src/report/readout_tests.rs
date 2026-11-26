@@ -221,7 +221,8 @@ fn the_equity_walk_follows_the_chosen_figure() {
         let world = World::new(Some(primary));
         let reader = world.reader();
         let total = reader.sum(rows.iter().map(|row| (row.symbol.as_str(), &row.trade)));
-        let walk = EquityWalk::read(&rows, reader, &total);
+        let walks = EquityWalks::read(&rows, reader, &total);
+        let walk = &walks.walks()[0];
         let expected: Vec<Decimal> = points.iter().map(|text| d(text)).collect();
         assert_eq!(walk.points, expected, "{primary:?}");
         assert_eq!(walk.primary, primary);
@@ -243,7 +244,8 @@ fn the_equity_walk_falls_back_to_grouped_points_and_says_why() {
     let reader = world.reader();
     let rows = vec![row("XYZ", 1_000, "5", "1"), row("XYZ", 2_000, "-3", "1")];
     let total = reader.sum(rows.iter().map(|row| (row.symbol.as_str(), &row.trade)));
-    let walk = EquityWalk::read(&rows, reader, &total);
+    let walks = EquityWalks::read(&rows, reader, &total);
+    let walk = &walks.walks()[0];
     assert_eq!(walk.primary, PnlPrimary::PointsTimesQty);
     assert_eq!(walk.fallback, Some("pt value unset"));
     assert_eq!(walk.points, vec![d("0"), d("5"), d("2")]);
@@ -254,50 +256,82 @@ fn the_equity_walk_falls_back_to_grouped_points_and_says_why() {
     );
 }
 
-/// No money to plot and points worth different things: no curve, no
-/// drawdown and no equity cells — never a sum of index points and tether.
-#[test]
-fn a_walk_over_mixed_units_without_money_plots_nothing() {
-    let world = World::new(Some(PnlPrimary::Money));
+fn walks_of(rows: &[HistoryRow], world: &World) -> EquityWalks {
     let reader = world.reader();
-    for rows in [
-        vec![
-            row("WINZ26", 1_000, "400", "2"),
-            row("BTCUSDT", 2_000, "60", "0.5"),
-        ],
-        vec![
-            row("WINZ26", 1_000, "400", "2"),
-            row("XYZ", 2_000, "-500", "1"),
-        ],
-        vec![row("ABC", 1_000, "5", "1"), row("XYZ", 2_000, "-9", "1")],
-    ] {
-        let total = reader.sum(rows.iter().map(|row| (row.symbol.as_str(), &row.trade)));
-        let walk = EquityWalk::read(&rows, reader, &total);
-        assert!(!walk.plotted());
-        assert!(walk.points.is_empty() && walk.plot.is_empty());
-        assert_eq!(walk.drawdown, None, "no chip on a curve not drawn");
-        assert_eq!(walk.text(0), "");
-        assert_eq!(walk.text(rows.len()), "", "no EQUITY cell value");
-        assert_eq!(walk.caption(), "REALIZED EQUITY (mixed units — no curve)");
-    }
+    let total = reader.sum(rows.iter().map(|row| (row.symbol.as_str(), &row.trade)));
+    EquityWalks::read(rows, reader, &total)
 }
 
-/// Points chosen outright, not fallen back to, still never sum across
-/// instruments: index points and tether moves are worth different things.
+/// Mini index in reais and bitcoin in tether: one curve per currency, each
+/// over the whole trade axis, flat where the other's trade closes — never a
+/// sum across them, never no curve at all.
 #[test]
-fn a_walk_in_chosen_points_over_mixed_units_plots_nothing() {
-    for chosen in [PnlPrimary::PointsTimesQty, PnlPrimary::PointsPerContract] {
-        let world = World::new(Some(chosen));
-        let reader = world.reader();
-        let rows = vec![
-            row("WINZ26", 1_000, "400", "2"),
-            row("BTCUSDT", 2_000, "60", "0.5"),
-        ];
-        let total = reader.sum(rows.iter().map(|row| (row.symbol.as_str(), &row.trade)));
-        let walk = EquityWalk::read(&rows, reader, &total);
-        assert!(!walk.plotted(), "{chosen:?} plotted a sum across units");
-        assert_eq!(walk.drawdown, None, "no chip on a curve not drawn");
-        assert_eq!(walk.text(rows.len()), "", "no EQUITY cell value");
+fn a_walk_over_mixed_currencies_plots_one_curve_per_currency() {
+    let rows = vec![
+        row("WINZ26", 1_000, "400", "2"),
+        row("BTCUSDT", 2_000, "60", "0.5"),
+        row("WINZ26", 3_000, "-100", "1"),
+    ];
+    let walks = walks_of(&rows, &World::new(Some(PnlPrimary::Money)));
+    let [brl, usdt] = walks.walks() else {
+        panic!("two currencies, two walks");
+    };
+    assert_eq!(brl.points, vec![d("0"), d("80"), d("80"), d("60")]);
+    assert_eq!(brl.caption(), "REALIZED EQUITY · BRL");
+    assert_eq!(usdt.points, vec![d("0"), d("0"), d("60"), d("60")]);
+    assert_eq!(usdt.caption(), "REALIZED EQUITY · USDT");
+    assert_eq!(
+        walks.text(2),
+        "+60.00 USDT",
+        "a cell reads its own trade's walk"
+    );
+    assert_eq!(walks.text(3), "+60.00 BRL");
+    assert_eq!(walks.value(3), d("60"));
+    assert_eq!(walks.ends_text(), "+60.00 BRL / +60.00 USDT");
+}
+
+/// Money asked of a trade nobody priced: the priced trades keep their
+/// money curve, the unpriced instrument walks its points, named, and says
+/// why.
+#[test]
+fn an_unpriced_instrument_walks_its_points_beside_the_money() {
+    let rows = vec![
+        row("WINZ26", 1_000, "400", "2"),
+        row("XYZ", 2_000, "-500", "1"),
+    ];
+    let walks = walks_of(&rows, &World::new(Some(PnlPrimary::Money)));
+    let [brl, xyz] = walks.walks() else {
+        panic!("money and one unpriced instrument, two walks");
+    };
+    assert_eq!(brl.points.last(), Some(&d("80")));
+    assert_eq!(xyz.points, vec![d("0"), d("0"), d("-500")]);
+    assert_eq!(
+        xyz.caption(),
+        "REALIZED EQUITY · XYZ · pts (pt value unset)"
+    );
+    assert_eq!(walks.ends_text(), "+80.00 BRL / -500 pts XYZ");
+}
+
+/// Points chosen outright still never sum across instruments: index
+/// points and tether moves each get their own named curve.
+#[test]
+fn a_walk_in_chosen_points_plots_one_curve_per_instrument() {
+    let rows = vec![
+        row("WINZ26", 1_000, "400", "2"),
+        row("BTCUSDT", 2_000, "60", "0.5"),
+    ];
+    for (chosen, win) in [
+        (PnlPrimary::PointsTimesQty, "+400 pts WIN*"),
+        (PnlPrimary::PointsPerContract, "+200 pts/ct WIN*"),
+    ] {
+        let walks = walks_of(&rows, &World::new(Some(chosen)));
+        assert_eq!(walks.walks().len(), 2, "{chosen:?}");
+        assert!(walks.walks().iter().all(|walk| walk.fallback.is_none()));
+        assert!(
+            walks.ends_text().starts_with(&format!("{win} / ")),
+            "{chosen:?}: {}",
+            walks.ends_text()
+        );
     }
 }
 
@@ -345,7 +379,7 @@ fn a_worded_view_leads_each_row_and_the_net_with_the_chosen_figure() {
         view.net_text,
         ("+70.00 BRL".to_owned(), "+150 pts/ct".to_owned())
     );
-    assert_eq!(view.equity.unit, "BRL");
+    assert_eq!(view.equity.walks()[0].unit, "BRL");
     assert!(view.worded_by(world.reader()));
 
     let grouped = World::new(Some(PnlPrimary::PointsTimesQty));
@@ -408,5 +442,63 @@ fn saved_totals_are_summed_again_when_the_money_changes() {
         totals.net.money(),
         Some(&four_hundred),
         "a declared point value re-sums the saved half"
+    );
+}
+
+/// The simulator's and the broker's trades of one market add up, in money
+/// and in points alike: one curve, one net.
+#[test]
+fn sim_and_broker_trades_of_one_market_share_one_walk() {
+    let mut rows = win_rows();
+    rows[1].source = Some(history::SessionSource::Broker(
+        quantick_trading::TradeMode::Real,
+    ));
+    rows[2].source = Some(history::SessionSource::Live);
+    for (primary, end) in [
+        (PnlPrimary::Money, "+70.00 BRL"),
+        (PnlPrimary::PointsTimesQty, "+350 pts"),
+    ] {
+        let walks = walks_of(&rows, &World::new(Some(primary)));
+        assert_eq!(walks.walks().len(), 1, "{primary:?}");
+        assert_eq!(walks.ends_text(), end);
+    }
+}
+
+/// Units that never add up: the NET tile leads with each walk's end, the
+/// other figure behind it, coloured only where every end agrees.
+#[test]
+fn a_view_over_units_that_never_add_up_leads_with_each_end() {
+    let history = LoadedHistory {
+        rows: vec![
+            row("WINZ26", 1_000, "400", "2"),
+            row("BTCUSDT", 2_000, "-60", "0.5"),
+        ],
+        files: 1,
+        unreadable_files: 0,
+        problem_rows: 0,
+        sessions: BTreeMap::new(),
+    };
+    let cut = || {
+        ReportView::cut(
+            &history,
+            ReportPeriod::All,
+            SourceFilter::All,
+            &Default::default(),
+            TzOffset::new(0),
+        )
+    };
+    let money = cut().with_pnl(World::new(Some(PnlPrimary::Money)).reader());
+    assert_eq!(money.net_text.0, "+80.00 BRL / -60.00 USDT");
+    assert_eq!(
+        money.net_tint,
+        Decimal::ZERO,
+        "a gain and a loss: no colour"
+    );
+    let points = World::new(Some(PnlPrimary::PointsTimesQty));
+    let view = cut().with_pnl(points.reader());
+    assert!(view.net_text.0.starts_with("+400 pts WIN* / "));
+    assert_eq!(
+        view.net_text.1, "+80.00 BRL / -60.00 USDT",
+        "money behind the points"
     );
 }

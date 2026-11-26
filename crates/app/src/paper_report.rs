@@ -43,6 +43,7 @@ fn draw_history_warning(ui: &mut egui::Ui, history: &LoadedHistory) {
 pub(crate) struct ReportResponse {
     pub start_import: bool,
     pub toast: Option<String>,
+    pub pnl_primary: Option<quantick_paper::pnl::PnlPrimary>,
 }
 
 #[derive(Default)]
@@ -199,6 +200,7 @@ impl ReportAdapter {
         ReportResponse {
             start_import: effects.start_import,
             toast: effects.toast,
+            pnl_primary: effects.pnl_primary,
         }
     }
     pub(crate) fn draw_trades_tab(

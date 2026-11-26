@@ -48,8 +48,7 @@ impl PaperAccount {
     /// reads as its currency code.
     #[must_use]
     pub fn pnl_modes(&self) -> [(PnlPrimary, String); 3] {
-        let currency = self.symbol_money().map(|money| &money.currency);
-        PnlPrimary::ALL.map(|primary| (primary, primary.label(currency)))
+        self.pnl_reader().modes(&self.symbol)
     }
 
     /// One closed trade of this chart's symbol, as a row reads it.

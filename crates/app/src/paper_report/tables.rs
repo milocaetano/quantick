@@ -10,7 +10,6 @@ use eframe::egui;
 use egui_phosphor::regular as icons;
 use quantick_paper::report::metric_rows::{metric_rows, side_rows};
 use quantick_sim::{PerformanceReport, history};
-use rust_decimal::Decimal;
 
 use super::rows::text_width;
 use super::{HEADLINE_FONT_PX, REPORT_LIST_MAX_H_PX, ReportView, TILE_GUTTER_PX};
@@ -327,12 +326,7 @@ fn trade_cells(
     let row = &view.rows[ordinal];
     let trade = &row.trade;
     let index = ordinal + 1;
-    let equity = view
-        .equity
-        .points
-        .get(index)
-        .copied()
-        .unwrap_or(Decimal::ZERO);
+    let equity = view.equity.value(index);
     let muted = palette.text_muted();
     [
         (format!("{}", ordinal + 1), palette.text_faint()),

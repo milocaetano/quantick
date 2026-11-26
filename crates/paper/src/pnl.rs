@@ -122,6 +122,14 @@ impl PnlReader<'_> {
             .primary(self.book.units(symbol).money.is_some())
     }
 
+    /// The P&L switch's choices, labelled for `symbol`: money reads as its
+    /// currency code.
+    #[must_use]
+    pub fn modes(&self, symbol: &str) -> [(PnlPrimary, String); 3] {
+        let currency = self.book.money(symbol).map(|money| &money.currency);
+        PnlPrimary::ALL.map(|primary| (primary, primary.label(currency)))
+    }
+
     /// One stored figure of `symbol` (move × quantity) as a row reads it:
     /// the primary figure, then the one that keeps it honest.
     #[must_use]

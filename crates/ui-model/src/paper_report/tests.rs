@@ -139,6 +139,7 @@ fn delivered_effects_keep_import_and_latest_present_outputs_after_local_loads() 
         start_import: true,
         toast: Some("first".to_owned()),
         ledger: Some(LedgerAction::OpenTicket),
+        pnl_primary: Some(quantick_paper::pnl::PnlPrimary::Money),
     });
     output.append_delivered(Effects::default());
     assert_eq!(
@@ -147,6 +148,7 @@ fn delivered_effects_keep_import_and_latest_present_outputs_after_local_loads() 
             start_import: true,
             toast: Some("first".to_owned()),
             ledger: Some(LedgerAction::OpenTicket),
+            pnl_primary: Some(quantick_paper::pnl::PnlPrimary::Money),
             ..Default::default()
         }
     );
@@ -161,6 +163,7 @@ fn delivered_effects_keep_import_and_latest_present_outputs_after_local_loads() 
             start_import: true,
             toast: Some("latest".to_owned()),
             ledger: Some(LedgerAction::Navigate(10, 20)),
+            pnl_primary: Some(quantick_paper::pnl::PnlPrimary::Money),
             ..Default::default()
         }
     );
