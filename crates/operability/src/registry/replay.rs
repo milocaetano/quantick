@@ -6,7 +6,7 @@
 use super::{ExclusionClass, Mapping, PENDING_SURFACE, Source, UiBehaviour};
 
 /// Every row this family owns.
-pub(super) const ROWS: &[UiBehaviour] = &[
+pub const ROWS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "replay.browser.open",
         title: "Open the market replay browser",

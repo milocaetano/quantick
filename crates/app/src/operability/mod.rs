@@ -13,7 +13,6 @@
 #[path = "tests/sources.rs"]
 pub(crate) mod sources;
 
-pub(crate) use quantick_operability::matrix;
 #[cfg(test)]
 pub(crate) use quantick_operability::{Registered, Source};
 

@@ -19,7 +19,7 @@ const PENDING_DRAWING_TOOL: Mapping = Mapping::Excluded {
 };
 
 /// The tool rail.
-pub(super) const TOOL_RAIL: &[UiBehaviour] = &[
+pub const TOOL_RAIL: &[UiBehaviour] = &[
     UiBehaviour {
         id: "toolrail.dock.set",
         title: "Park the drawing rail on the left, top or bottom edge",
@@ -244,7 +244,7 @@ pub(super) const TOOL_RAIL: &[UiBehaviour] = &[
 ];
 
 /// Objects already on the chart.
-pub(super) const OBJECTS: &[UiBehaviour] = &[
+pub const OBJECTS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "drawing.text.properties",
         title: "Edit a note's words, font, size, color, background, border and wrapping",

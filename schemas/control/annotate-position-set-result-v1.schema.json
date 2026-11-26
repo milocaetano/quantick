@@ -1,0 +1,105 @@
+{
+  "$defs": {
+    "CanonicalDecimal": {
+      "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+      "type": "string"
+    },
+    "PositionLook": {
+      "description": "A position's look: what its bar shows and a saved default carries.",
+      "properties": {
+        "custom": {
+          "description": "Whether the ratio is none of the menu's presets (1, 2, 3).",
+          "type": "boolean"
+        },
+        "ratio": {
+          "$ref": "#/$defs/CanonicalDecimal",
+          "description": "Reward per unit of risk."
+        },
+        "ratio_text": {
+          "description": "The bar button's words, risk first: `R/R 1:2`, `Custom · R/R 1:1.3`.",
+          "type": "string"
+        },
+        "stop_color": {
+          "type": "string"
+        },
+        "target_color": {
+          "type": "string"
+        },
+        "zone_opacity_pct": {
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "target_color",
+        "stop_color",
+        "zone_opacity_pct",
+        "ratio",
+        "custom",
+        "ratio_text"
+      ],
+      "type": "object"
+    },
+    "PositionSideDto": {
+      "enum": [
+        "long",
+        "short"
+      ],
+      "type": "string"
+    },
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "changed": {
+      "description": "Whether the call changed the drawing; `false` for an inspection or\nvalues already standing.",
+      "type": "boolean"
+    },
+    "drawing_id": {
+      "$ref": "#/$defs/WireU64"
+    },
+    "entry": {
+      "$ref": "#/$defs/CanonicalDecimal"
+    },
+    "look": {
+      "$ref": "#/$defs/PositionLook"
+    },
+    "pane_id": {
+      "$ref": "#/$defs/WireU64"
+    },
+    "side": {
+      "$ref": "#/$defs/PositionSideDto"
+    },
+    "stop": {
+      "$ref": "#/$defs/CanonicalDecimal"
+    },
+    "tab_id": {
+      "$ref": "#/$defs/WireU64"
+    },
+    "target": {
+      "$ref": "#/$defs/CanonicalDecimal"
+    },
+    "width_bars": {
+      "$ref": "#/$defs/CanonicalDecimal"
+    }
+  },
+  "required": [
+    "tab_id",
+    "pane_id",
+    "drawing_id",
+    "side",
+    "look",
+    "entry",
+    "stop",
+    "target",
+    "width_bars",
+    "changed"
+  ],
+  "title": "PositionSetResult",
+  "type": "object"
+}

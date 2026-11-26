@@ -1,0 +1,228 @@
+{
+  "$defs": {
+    "AnnotationAuthor": {
+      "description": "Who placed an object, as the interface shows it.",
+      "properties": {
+        "actor_kind": {
+          "description": "The actor kind on the wire: `agent`, `automation`, `human_ui`.",
+          "type": "string"
+        },
+        "client_name": {
+          "description": "The client's own name from its handshake.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "actor_kind",
+        "client_name"
+      ],
+      "type": "object"
+    },
+    "AnnotationBand": {
+      "description": "Which value axis of the pane an annotation's anchor prices are read on.\nOmitted: the candles' price axis, so every call written before indicator\nbands existed means what it always meant.",
+      "oneOf": [
+        {
+          "const": "price",
+          "description": "The candles' price axis.",
+          "type": "string"
+        },
+        {
+          "additionalProperties": false,
+          "description": "One indicator pane's own value axis, named by the `kind` and `ordinal`\nthe pane's indicators snapshot reports (`native.cvd`, `0`). Anchor\n`price` is then that indicator's value: a CVD level, not a price.",
+          "properties": {
+            "indicator": {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "type": "string"
+                },
+                "ordinal": {
+                  "format": "uint32",
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "kind",
+                "ordinal"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "indicator"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "CanonicalDecimal": {
+      "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+      "type": "string"
+    },
+    "ChartAnnotationResult": {
+      "properties": {
+        "anchors": {
+          "items": {
+            "$ref": "#/$defs/ChartResolvedAnchor"
+          },
+          "type": "array"
+        },
+        "annotation_id": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "author": {
+          "$ref": "#/$defs/AnnotationAuthor"
+        },
+        "band": {
+          "$ref": "#/$defs/AnnotationBand",
+          "description": "The band the object landed on. Omitted: the price band."
+        },
+        "label": {
+          "type": "string"
+        },
+        "pane_id": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "pane_side": {
+          "$ref": "#/$defs/PaneSideDto"
+        },
+        "position": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PositionPlanResult"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "A position plan's three prices, as placed. Omitted for every other\ntool."
+        },
+        "tab_id": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "tool_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "annotation_id",
+        "tab_id",
+        "pane_id",
+        "pane_side",
+        "tool_id",
+        "anchors",
+        "author",
+        "label"
+      ],
+      "type": "object"
+    },
+    "ChartResolvedAnchor": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ResolvedAnchor"
+        },
+        {
+          "properties": {
+            "bar_position": {
+              "$ref": "#/$defs/CanonicalDecimal"
+            },
+            "price": {
+              "$ref": "#/$defs/CanonicalDecimal"
+            }
+          },
+          "required": [
+            "bar_position",
+            "price"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "PaneSideDto": {
+      "enum": [
+        "flow",
+        "time"
+      ],
+      "type": "string"
+    },
+    "PositionLeg": {
+      "enum": [
+        "stop",
+        "target"
+      ],
+      "type": "string"
+    },
+    "PositionPlanResult": {
+      "additionalProperties": false,
+      "description": "Where a position plan's legs landed: the projected one follows the\ntrader's saved risk/reward, which the call cannot otherwise see.",
+      "properties": {
+        "entry": {
+          "$ref": "#/$defs/CanonicalDecimal"
+        },
+        "measured": {
+          "$ref": "#/$defs/PositionLeg",
+          "description": "The leg the second anchor set; the other one was projected."
+        },
+        "ratio": {
+          "$ref": "#/$defs/CanonicalDecimal",
+          "description": "Target distance over stop distance from the entry."
+        },
+        "stop": {
+          "$ref": "#/$defs/CanonicalDecimal"
+        },
+        "target": {
+          "$ref": "#/$defs/CanonicalDecimal"
+        }
+      },
+      "required": [
+        "entry",
+        "stop",
+        "target",
+        "ratio",
+        "measured"
+      ],
+      "type": "object"
+    },
+    "ResolvedAnchor": {
+      "properties": {
+        "price": {
+          "$ref": "#/$defs/CanonicalDecimal"
+        },
+        "slot": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "time_unix_ms": {
+          "format": "int64",
+          "type": "integer",
+          "x-unit": "unix_milliseconds"
+        }
+      },
+      "required": [
+        "slot",
+        "time_unix_ms",
+        "price"
+      ],
+      "type": "object"
+    },
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "One call that places several objects, in placement order.",
+  "properties": {
+    "annotations": {
+      "items": {
+        "$ref": "#/$defs/ChartAnnotationResult"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "annotations"
+  ],
+  "title": "ChartAnnotationSetResult",
+  "type": "object"
+}

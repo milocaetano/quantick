@@ -1,0 +1,89 @@
+{
+  "$defs": {
+    "PnlDisplayMode": {
+      "description": "Which figure a paper P&L readout leads with; the other always follows.",
+      "oneOf": [
+        {
+          "const": "money",
+          "description": "Money in the instrument's own currency.",
+          "type": "string"
+        },
+        {
+          "const": "points_per_contract",
+          "description": "The move one contract made, with the quantity beside it.",
+          "type": "string"
+        },
+        {
+          "const": "points_times_qty",
+          "description": "The move times the quantity — the stored figure.",
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "What the paper P&L readouts now mean: both figures and their units.",
+  "properties": {
+    "changed": {
+      "description": "Whether this call moved the choice; `false` for a read or a repeat.",
+      "type": "boolean"
+    },
+    "chosen": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/PnlDisplayMode"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "The trader's choice; null defers to the catalog's default (money\nwhere a point value is known, else points per contract)."
+    },
+    "currency": {
+      "description": "The money's currency; null when no point value is known.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "money_source": {
+      "description": "Where the point value came from: `declared` or `config`.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "point_value": {
+      "description": "What one point is worth per unit held, as a decimal string.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "primary": {
+      "$ref": "#/$defs/PnlDisplayMode",
+      "description": "The figure readouts of the chart's symbol lead with."
+    },
+    "primary_unit": {
+      "description": "The primary figure's unit, e.g. `BRL`, `pts per contract`.",
+      "type": "string"
+    },
+    "secondary_unit": {
+      "description": "The figure that always follows it, and its unit.",
+      "type": "string"
+    },
+    "symbol": {
+      "description": "The chart symbol the units below were resolved for.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "primary",
+    "symbol",
+    "primary_unit",
+    "secondary_unit",
+    "changed"
+  ],
+  "title": "PnlDisplayResult",
+  "type": "object"
+}

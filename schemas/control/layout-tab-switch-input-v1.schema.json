@@ -1,0 +1,54 @@
+{
+  "$defs": {
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Put a layout on one pane.",
+  "properties": {
+    "layout_id": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/WireU64"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "The layout's id, as `observe.workspace` reports it."
+    },
+    "name": {
+      "description": "The layout's name, as the strip shows it.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "pane": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/WireU64"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "The pane's address (`0` the flow pane, `1..` the context stack).\nOmitted: the focused pane — the pane the strip's own click switches."
+    },
+    "tab_id": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/WireU64"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Which tab's pane changes layout. Omitted: the active tab."
+    }
+  },
+  "title": "SwitchLayoutTabInput",
+  "type": "object"
+}

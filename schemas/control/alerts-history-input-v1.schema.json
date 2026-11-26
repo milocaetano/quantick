@@ -1,0 +1,16 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "after": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "limit": {
+      "maximum": 32,
+      "minimum": 1,
+      "type": "integer"
+    }
+  },
+  "required": [],
+  "type": "object"
+}

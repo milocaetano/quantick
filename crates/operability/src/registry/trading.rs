@@ -6,7 +6,7 @@
 use super::{Mapping, Source, UiBehaviour};
 
 /// Every row this family owns.
-pub(super) const ROWS: &[UiBehaviour] = &[
+pub const ROWS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "trade.account.route",
         title: "Choose where orders go: the simulator or the broker account",
