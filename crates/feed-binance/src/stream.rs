@@ -231,6 +231,10 @@ mod tests {
             })
             .await;
             socket.close(None).await.unwrap();
+            // Hold the socket until the client answers the close: dropping
+            // it first resets the connection on Windows before the client
+            // reads the close frame.
+            while socket.next().await.is_some() {}
         })
         .await;
         assert!(matches!(result, Ok(0)), "{result:?}");
