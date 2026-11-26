@@ -47,12 +47,6 @@ use quantick_control::{
     schema::generated_schema,
 };
 
-use quantick_engine::Side;
-
-use quantick_trading::EntryKind;
-
-use rust_decimal::Decimal;
-
 use schemars::JsonSchema;
 
 use serde::{Deserialize, Serialize};
@@ -61,16 +55,6 @@ use crate::readback::{Readback, journal, snapshot};
 use crate::session::PAPER_SCOPE_ID;
 use quantick_control::registry::IdempotencyPolicy::{Forbidden, Optional};
 use serde_json::Value;
-
-/// The journal kinds each action appends. An order that something other
-/// than the trader's own hand asked for has to be distinguishable from one
-/// they placed themselves — the same data-honesty rule that labels an
-/// inferred aggressor side, applied to authorship.
-pub const PLACE_EVENT_KIND: &str = "trade.order.placed";
-
-pub const BRACKET_EVENT_KIND: &str = "trade.order.bracketed";
-
-pub const CANCEL_EVENT_KIND: &str = "trade.order.cancelled";
 
 pub const PLACE_CAPABILITY_ID: &str = "trade.order.place";
 
@@ -91,182 +75,21 @@ pub const SET_INSTRUMENT_MONEY_CAPABILITY_ID: &str = "trade.instrument.set_money
 
 pub const CANCEL_CAPABILITY_ID: &str = "trade.order.cancel";
 
-/// The two one-shot position calls: what they journal under and their ids.
-pub const FLATTEN_EVENT_KIND: &str = "trade.position.flattened";
-
-pub const REVERSE_EVENT_KIND: &str = "trade.position.reversed";
-
+/// The two one-shot position calls.
 pub const FLATTEN_CAPABILITY_ID: &str = "trade.position.flatten";
 
 pub const REVERSE_CAPABILITY_ID: &str = "trade.position.reverse";
 
-/// How an entry meets the market, stated rather than inferred.
-///
-/// The chart's aim infers the kind from where the pointer sits relative to
-/// the last price. An action has no pointer, and an action whose meaning
-/// depends on the market at the instant it lands is one nobody can replay —
-/// so here the caller says which order they mean, and a kind that cannot
-/// rest at the given price is refused with the venue's own words.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ActionEntryKind {
-    /// Fill at the next print, whatever it is. Takes no price.
-    Market,
-    /// Rest at `price` until the market trades at or through it.
-    Limit,
-    /// Arm at `price` until the market trades at or through it.
-    Stop,
-}
+/// The order vocabulary the trade calls state, from its owner.
+pub use quantick_trading::{ActionEntryKind, ActionSide};
 
-impl ActionEntryKind {
-    /// The simulator's entry kind.
-    #[must_use]
-    pub fn into_engine(self) -> EntryKind {
-        match self {
-            Self::Market => EntryKind::Market,
-            Self::Limit => EntryKind::Limit,
-            Self::Stop => EntryKind::Stop,
-        }
-    }
-}
-
-/// Which way the order goes.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ActionSide {
-    Buy,
-    Sell,
-}
-
-impl ActionSide {
-    /// The engine's side.
-    #[must_use]
-    pub fn into_engine(self) -> Side {
-        match self {
-            Self::Buy => Side::Buy,
-            Self::Sell => Side::Sell,
-        }
-    }
-}
-
-/// Prices arrive as strings, not as JSON numbers.
-///
-/// A price is a decimal, and a decimal that has been through an IEEE double
-/// is not the decimal that was sent — 0.1 + 0.2 is the classic, but on a
-/// tick grid it shows up as an order resting one tick from where it was
-/// asked for. The whole engine is `Decimal` for this reason; the wire
-/// keeps it.
-pub fn parse_price(field: &str, text: &str) -> Result<Decimal, ControlError> {
-    text.trim()
-        .parse::<Decimal>()
-        .map_err(|error| ControlError::invalid_request(format!("{field}: {error}")))
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct PlaceInput {
-    pub side: ActionSide,
-    pub kind: ActionEntryKind,
-    /// Size, as a decimal string.
-    pub quantity: String,
-    /// Limit price or stop trigger, as a decimal string. Required for
-    /// `limit` and `stop`; refused for `market`, which has no price of its
-    /// own by definition.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub price: Option<String>,
-    /// Protective stop to attach to the fill, as a decimal string.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub stop_loss: Option<String>,
-    /// Protective target to attach to the fill, as a decimal string.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub take_profit: Option<String>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct BracketInput {
-    /// The working order to amend.
-    pub order_id: u64,
-    /// New protective stop, as a decimal string. Absent clears that leg —
-    /// the amendment replaces both wholesale, exactly as the chart's drag
-    /// does.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub stop_loss: Option<String>,
-    /// New protective target; see `stop_loss`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub take_profit: Option<String>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CancelInput {
-    pub order_id: u64,
-}
-
-/// The one-shot position calls take nothing: the position is the account's.
-#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct PositionInput {}
-
-/// What every `trade.*` action answers with.
-///
-/// `accepted` is the one field a caller must read. A refusal is not an
-/// error return here for the same reason it is not one in the venue port:
-/// the venue's messages are written to teach, and a result that carried
-/// only a status code would throw away the sentence that says what to do
-/// instead.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct TradeResult {
-    /// Whether the venue took the request.
-    pub accepted: bool,
-    /// The venue's own words when it did not. Absent when it did.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub rejected_because: Option<String>,
-    /// The order this call is about, once the venue has named it.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub order_id: Option<u64>,
-    /// Every order working after the call, so a caller never has to guess
-    /// what the account looks like now.
-    pub working_orders: Vec<WorkingOrderView>,
-    /// The last price the venue had been shown when this call landed.
-    ///
-    /// Every refusal in this family is a statement about a price relative to
-    /// the market, so a caller that got one needs the market to understand
-    /// it — and a caller that got an acceptance needs it to know what its
-    /// order is resting away from. Absent before the first print, which is
-    /// also when nothing can be placed.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub mark_price: Option<String>,
-    /// The named exit ladder the ticket is set to, if any. Every call in
-    /// this family reports it, because it is what the *next* order will
-    /// carry and a caller that placed one needs to know which ladder it
-    /// just armed.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub selected_strategy: Option<String>,
-    /// How far the aim's ruler stands from an entry, in ticks; zero when it
-    /// is not in use.
-    pub ruler_ticks: u32,
-    /// A reminder in every result: these fills are simulated.
-    pub simulated: bool,
-}
-
-/// One working order, as a caller reads it back.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct WorkingOrderView {
-    pub order_id: u64,
-    pub side: String,
-    pub kind: String,
-    /// Resting price, absent only for an order that has none.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub price: Option<String>,
-    pub quantity: String,
-    /// The protective stop riding this order, armed on its fill.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub stop_loss: Option<String>,
-    /// The protective target riding this order; see `stop_loss`.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub take_profit: Option<String>,
-}
+/// Each call's input and the one result are the paper desk's own types: the
+/// owner's words are the wire.
+pub use quantick_session::paper::{
+    BRACKET_EVENT_KIND, BracketInput, CANCEL_EVENT_KIND, CancelInput, FLATTEN_EVENT_KIND,
+    FlattenInput, PLACE_EVENT_KIND, PlaceInput, REVERSE_EVENT_KIND, ReverseInput, TradeCall,
+    TradeResult, WorkingOrderView,
+};
 
 /// The refusal every action gives when there is no chart to trade on.
 ///
@@ -385,7 +208,7 @@ pub fn flatten_descriptor() -> CapabilityDescriptor {
         FLATTEN_CAPABILITY_ID,
         "Go flat: close the position and cancel every working order",
         "Exits the open position at the next print and removes every working order, in one call, so the account is never half-flat between two calls. Risk-reducing: it only ever takes exposure off. Flat with nothing working, it changes nothing.",
-        generated_schema::<PositionInput>(),
+        generated_schema::<FlattenInput>(),
         true,
         "Names no order and no size: it flattens whatever the account holds when it lands, so a caller working from a stale read still ends flat.",
     )
@@ -396,7 +219,7 @@ pub fn reverse_descriptor() -> CapabilityDescriptor {
         REVERSE_CAPABILITY_ID,
         "Reverse the simulated position",
         "Flips the open position in one market order for twice its size, protected by the ticket's offsets for the new side. The opening leg is measured by the risk per trade like any entry and refused with its sentence. Refused while flat: there is nothing to reverse.",
-        generated_schema::<PositionInput>(),
+        generated_schema::<ReverseInput>(),
         false,
         "The size is the account's at the moment the call lands, never a size the caller read earlier. Not safe to retry: a second reversal flips the position back.",
     )
