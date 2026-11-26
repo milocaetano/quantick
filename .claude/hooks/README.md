@@ -308,29 +308,48 @@ the behaviour is covered by tests.
 
 `shell_statements` decodes the payload's JSON escapes and splits the command
 into the statements the shell would run, outside quotes, on `&&`, `||`, `;`,
-`|`, `&`, `(`, `)`, a backtick and a line break. From each it strips `{`, `!`,
-`time`, `nohup`, `exec`, `command`, `builtin`, `sudo`, `env` with its options
-and `VAR=value` words, reduces a command word spelled as a path or with `.exe`
-to its name, and unwraps `bash -c` / `sh -lc` (any shell, any option cluster
-holding `c`) and `eval`, splitting their script the same way. `runs_command`
-and `gh_statement` match the gated command at the start of one of those
-statements, so a pipe, a newline, a wrapper or a nested shell reaches the gate,
-and a quoted commit message naming `gh pr merge` does not.
+`|`, `&`, `(`, `)`, a backtick and a line break (never inside `$((…))`).
+From each it strips control-flow keywords (`if`, `then`, `else`, `elif`, `do`,
+`while`, `until`), `{`, `!`, the wrappers `time`, `nohup`, `winpty`, `exec`,
+`command`, `builtin`, `sudo`, `env`, `timeout`, `nice` and `stdbuf` with their
+options, option arguments and duration, and `VAR=value` words. It reduces a
+command word spelled with quotes, `$'…'`, a path or `.exe` to its lower-case
+name, moves `gh`'s flags behind its subcommand, and unwraps `bash -c` /
+`sh -lc` (any shell, any option cluster holding `c`), `env -S` and `eval`,
+splitting their script the same way. `runs_command` and `gh_statement` match
+the gated command at the start of one of those statements, so a pipe, a
+newline, a wrapper, a loop or a nested shell reaches the gate, and a quoted
+commit message naming `gh pr merge` does not.
 
-A heredoc body is data and is dropped (`git commit -F - <<'EOF'` may name any
-command, and an apostrophe in it no longer unbalances the draft flag's quote
-count), unless a shell named on the same line could read it as a script.
+A heredoc body is data and is dropped, inside `"$(cat <<'EOF' …)"` too
+(`git commit -F - <<'EOF'` may name any command, and an apostrophe or quote in
+it no longer unbalances anything), unless a shell or `source` named unquoted
+on the same line could read it as a script.
+
+An agent's write of `code-review-ok` is denied: a stdout redirect to it, a
+file-writing tool or interpreter naming it (`tee`, `cp`, `mv`, `install`,
+`ln`, `touch`, `dd`, `truncate`, `rsync`, `sed -i`, `python`, `perl`, `ruby`,
+`node`, `pwsh`, `cmd`), or an assignment naming it. The name is compared
+unquoted and case-insensitively (NTFS ignores case), and a glob on the
+`code-review` stem counts. Reading it, `2>/dev/null` included, and removing it
+stay allowed.
 
 `gh api` reaches the same endpoints with none of the flags the gate reads, so
-a `gh api` statement on `pulls/<n>/merge`, on `pulls/<n>` naming `draft` or
-sending `--input`, or running the GraphQL merge, auto-merge, enqueue or
-ready-for-review mutations is denied outright.
+it is denied outright for a PUT to `pulls/<n>/merge`, a `draft=` field or a
+PATCH with `--input` on `pulls/<n>`, and a GraphQL call naming the merge,
+auto-merge, enqueue or ready-for-review mutations or reading its query from
+`--input` or `query=@file`. Reads stay ungated.
+
+A merge under an `agent-merge-grant` must be the head-pinned form, run alone,
+on this branch's own PR into the granted target (`mission_base.sh check-pr`).
 
 Still not detected, by design: a program read from a file, piped into a shell
 (`echo … | sh`) or run by another interpreter (`python -c`, `xargs`), a
-command substitution inside double quotes, and aliases or functions. The
-markers are workflow evidence, not a security boundary; GitHub's protections
-own enforcement.
+command substitution inside double quotes, a command word or marker name built
+by expansion (`G=gh; $G pr merge`, `$'\x67h'`), aliases and functions, and
+anything run through the PowerShell tool, which pr-gate does not match (see
+the PowerShell note in `guardrails_test.sh`). The markers are workflow
+evidence, not a security boundary; GitHub's protections own enforcement.
 
 A merge whose branch targets `main` is refused before any marker read or
 network call: the hook runs under a 10 s timeout, and a hook that times out
@@ -484,10 +503,10 @@ denominator.
 The `pr-gate` cases assert the text of the denial, not only that it denied:
 missing, stale, corrupt and borrowed markers each name what is wrong.
 
-Each spelling the splitter claims to see has a case: a pipe, a newline, `bash
--c`, `sh -lc`, `env`, `VAR=value`, `eval`, a path to `gh.exe`, the `gh api`
-merge and draft forms, an agent's write of the marker, and a merge to `main`
-refused with no `gh` on `PATH`. A spelling listed above as not detected has no
+Each separator, keyword, wrapper, unwrapping, `gh api` form, marker-write
+tool and read listed above has its own case, as do the commit messages that
+must pass and a merge to `main` refused while a `gh` on `PATH` would hang
+(the case also proves it never ran). A spelling listed as not detected has no
 case, because a documented coverage claim is read as coverage.
 
 ### What the last block actually proves

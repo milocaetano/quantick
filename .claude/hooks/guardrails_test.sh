@@ -673,7 +673,32 @@ for spelling in \
     "/c/tools/GH.exe pr create --fill" \
     "{ gh pr create --fill; }" \
     "x=\$(gh pr create --fill)" \
-    "bash <<'EOF'\\ngh pr create --fill\\nEOF"; do
+    "echo \`gh pr create --fill\`" \
+    "sleep 1 & gh pr create --fill" \
+    "false || gh pr create --fill" \
+    "! gh pr create --fill" \
+    "if true; then gh pr create --fill; fi" \
+    "for i in 1; do gh pr create --fill; done" \
+    "while false; do :; done; until gh pr create --fill; do :; done" \
+    "time -p gh pr create --fill" \
+    "nohup gh pr create --fill" \
+    "exec -a x gh pr create --fill" \
+    "command -p gh pr create --fill" \
+    "builtin gh pr create --fill" \
+    "sudo -u me gh pr create --fill" \
+    "env -i -u HOME gh pr create --fill" \
+    "env -C /tmp gh pr create --fill" \
+    "env -S 'gh pr create --fill'" \
+    "timeout -s KILL 60 gh pr create --fill" \
+    "nice -n 5 gh pr create --fill" \
+    "stdbuf -o L gh pr create --fill" \
+    "winpty gh pr create --fill" \
+    "\\\"gh\\\" 'pr' create --fill" \
+    "\$'gh' pr create --fill" \
+    "gh -R o/r pr create --fill" \
+    "echo \$((1<<1))\\ngh pr create --fill" \
+    "bash <<'EOF'\\ngh pr create --fill\\nEOF" \
+    "source /dev/stdin <<'EOF'\\ngh pr create --fill\\nEOF"; do
     run "the gate sees: $spelling" \
         pr-gate "$(json_bash "$root/wt" "$spelling")" deny "code-review-ok"
 done
@@ -687,7 +712,10 @@ run "a draft inside bash -c is still a draft" \
 for message in \
     "git commit -m 'first line\\ngh pr merge 42 is the user'\\\\''s'" \
     "git commit -F - <<'EOF'\\nfix: thing\\ngh pr merge 42\\nit's fine\\nEOF" \
-    "git commit -m \\\"see \\\\\\\"gh pr create\\\\\\\" && gh pr ready\\\""; do
+    "git commit -m \\\"see \\\\\\\"gh pr create\\\\\\\" && gh pr ready\\\"" \
+    "git commit -m \\\"use sh for hooks\\\" -F - <<'EOF'\\ngh pr merge 42\\nEOF" \
+    "git commit -m \\\"\$(cat <<'EOF'\\nfix: one \\\" quote\\ngh pr merge 42\\nEOF\\n)\\\"" \
+    "git commit -m \\\"shift a << b\\\" -m \\\"gh pr merge 42\\\""; do
     run "a commit message is not a statement: $message" \
         pr-gate "$(json_bash "$root/wt" "$message")" silent
 done
@@ -700,11 +728,23 @@ for api in \
     "gh api -X PATCH repos/o/r/pulls/42 --input body.json" \
     "gh api graphql -f query='mutation { markPullRequestReadyForReview(input: {pullRequestId: 1}) { clientMutationId } }'" \
     "gh api graphql -f query='mutation { enablePullRequestAutoMerge(input: {pullRequestId: 1}) { clientMutationId } }'" \
+    "gh api graphql -f query='mutation { mergePullRequest(input: {pullRequestId: 1}) { clientMutationId } }'" \
+    "gh api graphql -f query='mutation { enqueuePullRequest(input: {pullRequestId: 1}) { clientMutationId } }'" \
+    "gh api graphql --input q.json" \
+    "gh api graphql -F query=@merge.graphql" \
+    "gh api -XPUT repos/o/r/pulls/42/merge" \
+    "gh api repos/o/r/pulls/42 -X PATCH --field draft=false" \
+    "gh api repos/o/r/pulls/42 -X PATCH --raw-field 'draft=false'" \
+    "gh api repos/o/r/pulls/42 -X PATCH -f draft=false" \
     "bash -c 'gh api -X PUT repos/o/r/pulls/42/merge'"; do
     run "gh api cannot ship a PR: $api" \
         pr-gate "$(json_bash "$root/wt" "$api")" deny "gh api"
 done
-for api in "gh api repos/o/r/pulls/42" "gh api repos/o/r/pulls/42/comments -f body=draft"; do
+for api in \
+    "gh api repos/o/r/pulls/42" \
+    "gh api repos/o/r/pulls/42 --jq .draft" \
+    "gh api repos/o/r/pulls/42/merge" \
+    "gh api repos/o/r/pulls/42/comments -f body=draft"; do
     run "gh api reads are not gated: $api" \
         pr-gate "$(json_bash "$root/wt" "$api")" silent
 done
@@ -717,11 +757,29 @@ for write in \
     "cp key.txt $wt_git_dir/code-review-ok" \
     "python -c \\\"open('$wt_git_dir/code-review-ok', 'w')\\\"" \
     "f=code-review-ok" \
-    "bash -c 'echo x > code-review-ok'"; do
+    "bash -c 'echo x > code-review-ok'" \
+    "echo x > $wt_git_dir/code-review-\\\"ok\\\"" \
+    "echo x > $wt_git_dir/CODE-REVIEW-OK" \
+    "echo x >$wt_git_dir/code-review-o?" \
+    "printf x >> $wt_git_dir/code-review-ok" \
+    "mv key.txt $wt_git_dir/code-review-ok" \
+    "install key.txt $wt_git_dir/code-review-ok" \
+    "ln -s key.txt $wt_git_dir/code-review-ok" \
+    "touch $wt_git_dir/code-review-ok" \
+    "dd if=key.txt of=$wt_git_dir/code-review-ok" \
+    "truncate -s 0 $wt_git_dir/code-review-ok" \
+    "sed -i s/a/b/ $wt_git_dir/code-review-ok" \
+    "perl -e 1 $wt_git_dir/code-review-ok" \
+    "node -e 1 $wt_git_dir/code-review-ok" \
+    "pwsh -c 1 $wt_git_dir/code-review-ok"; do
     run "an agent cannot write the marker: $write" \
         pr-gate "$(json_bash "$root/wt" "$write")" deny "An agent never writes it"
 done
-for read in "cat $wt_git_dir/code-review-ok" "rm -f $wt_git_dir/code-review-ok"; do
+for read in \
+    "cat $wt_git_dir/code-review-ok" \
+    "cat $wt_git_dir/code-review-ok 2>/dev/null || echo none" \
+    "sed -n p $wt_git_dir/code-review-ok" \
+    "rm -f $wt_git_dir/code-review-ok"; do
     run "reading or removing the marker is allowed: $read" \
         pr-gate "$(json_bash "$root/wt" "$read")" silent
 done
@@ -910,8 +968,11 @@ GUARDRAILS_UNDER_TEST="$root/hooks/guardrails.sh"
 mkdir -p "$root/bin" "$root/grant"
 cat > "$root/bin/gh" <<'STUB'
 #!/bin/sh
-[ "${1:-} ${2:-}" = "pr checks" ] || exit 64
-cat "${QUANTICK_GRANT_FIXTURE:?}/checks"
+case "${1:-} ${2:-}" in
+    'pr checks') cat "${QUANTICK_GRANT_FIXTURE:?}/checks" ;;
+    'pr view') cat "${QUANTICK_GRANT_FIXTURE:?}/identity" ;;
+    *) exit 64 ;;
+esac
 STUB
 chmod +x "$root/bin/gh"
 git -C "$root/mainco" worktree add -q -b feature/demo "$root/feat" origin/main >/dev/null 2>&1
@@ -930,19 +991,31 @@ merge_grant="$(git -C "$root/granted" rev-parse --path-format=absolute --git-com
 grant_path=$PATH
 PATH="$root/bin:$PATH"
 export QUANTICK_GRANT_FIXTURE="$root/grant"
+granted_head=$(git -C "$root/granted" rev-parse HEAD)
+granted_merge="gh pr merge 42 --squash --match-head-commit $granted_head"
+# What `gh pr view 42` answers: this branch's PR into the granted target.
+printf 'feature/demo feat/granted %s OPEN false false %s CLEAN\n' "$granted_head" \
+    "$(git -C "$root/granted" rev-parse origin/feature/demo)" > "$root/grant/identity"
 run "an ungranted feature target leaves the merge to the user" \
-    pr-gate "$(json_bash "$root/granted" "gh pr merge 42 --squash")" deny "reserved exclusively for the user"
+    pr-gate "$(json_bash "$root/granted" "$granted_merge")" deny "reserved exclusively for the user"
 printf 'feature/other\nfeature/demo\n' > "$merge_grant"
 printf 'pass\nskipping\n' > "$root/grant/checks"
 run "a granted feature target merges on passing checks" \
-    pr-gate "$(json_bash "$root/granted" "gh pr merge 42 --squash")" silent
+    pr-gate "$(json_bash "$root/granted" "$granted_merge")" silent
 printf 'pass\nfail\n' > "$root/grant/checks"
 run "a granted merge still waits for every check" \
-    pr-gate "$(json_bash "$root/granted" "gh pr merge 42 --squash")" deny "waits for every PR check"
+    pr-gate "$(json_bash "$root/granted" "$granted_merge")" deny "waits for every PR check"
 printf 'feature/demo-old\n' > "$merge_grant"
 printf 'pass\n' > "$root/grant/checks"
 run "a grant names its target exactly" \
-    pr-gate "$(json_bash "$root/granted" "gh pr merge 42 --squash")" deny "reserved exclusively for the user"
+    pr-gate "$(json_bash "$root/granted" "$granted_merge")" deny "reserved exclusively for the user"
+printf 'pass\n' > "$root/grant/checks"
+printf 'feature/demo\n' > "$merge_grant"
+run "a granted merge must be the head-pinned form" \
+    pr-gate "$(json_bash "$root/granted" "gh pr merge 42 --admin")" deny "Granted merges run alone"
+printf 'main feat/granted %s OPEN false false %s CLEAN\n' "$granted_head" "$head_sha" > "$root/grant/identity"
+run "a grant cannot merge a PR into another base" \
+    pr-gate "$(json_bash "$root/granted" "$granted_merge")" deny "whose base is feature/demo"
 rm -f "$merge_grant"
 unset QUANTICK_GRANT_FIXTURE
 PATH=$grant_path
