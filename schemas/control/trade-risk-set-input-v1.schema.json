@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "What one trade may lose, and whether an entry over it is refused.",
+  "properties": {
+    "amount": {
+      "description": "The fixed amount one trade may lose, as a decimal string.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "basis": {
+      "description": "`off` leaves the size to whoever types it; `amount` reads `amount`;\n`percent` reads `percent` against the capital declared for the\ninstrument's own currency.",
+      "type": "string"
+    },
+    "capital": {
+      "description": "Declare the capital for `currency`. Both or neither: a capital with\nno currency has nothing to be keyed by, and nothing here converts\nbetween currencies.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "currency": {
+      "description": "The currency `capital` is in.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "lock": {
+      "description": "Whether an entry over the risk per trade is refused. Left out, the\nlock stays as it is.",
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "percent": {
+      "description": "The share of declared capital one trade may lose.",
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "basis"
+  ],
+  "title": "SetRiskInput",
+  "type": "object"
+}

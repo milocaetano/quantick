@@ -1,0 +1,51 @@
+{
+  "$defs": {
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "The panel after a call, whichever one it was.",
+  "properties": {
+    "asset": {
+      "description": "The asset whose sections these are.",
+      "type": "string"
+    },
+    "bubbles_open": {
+      "type": "boolean"
+    },
+    "changed": {
+      "type": "boolean"
+    },
+    "l2_open": {
+      "type": "boolean"
+    },
+    "lights_on": {
+      "default": false,
+      "description": "The flow pane paints lit now: the lights are saved on and the theme\nauthors a lit surface (Light).",
+      "type": "boolean"
+    },
+    "lights_saved": {
+      "default": false,
+      "description": "The lights as saved with the tab, whatever the theme paints.",
+      "type": "boolean"
+    },
+    "open": {
+      "type": "boolean"
+    },
+    "tab_id": {
+      "$ref": "#/$defs/WireU64"
+    }
+  },
+  "required": [
+    "tab_id",
+    "asset",
+    "open",
+    "l2_open",
+    "bubbles_open",
+    "changed"
+  ],
+  "title": "SettingsResult",
+  "type": "object"
+}

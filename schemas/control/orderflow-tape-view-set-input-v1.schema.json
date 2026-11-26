@@ -1,0 +1,48 @@
+{
+  "$defs": {
+    "TapeView": {
+      "description": "What the flow pane shows: names the side shown.",
+      "oneOf": [
+        {
+          "const": "beside",
+          "description": "Candles and tape side by side at the tape's width share.",
+          "type": "string"
+        },
+        {
+          "const": "candles",
+          "description": "The candles alone; the tape is switched off.",
+          "type": "string"
+        },
+        {
+          "const": "tape",
+          "description": "The tape alone; no candle is drawn.",
+          "type": "string"
+        }
+      ]
+    },
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "pane_id": {
+      "$ref": "#/$defs/WireU64"
+    },
+    "tab_id": {
+      "$ref": "#/$defs/WireU64"
+    },
+    "view": {
+      "$ref": "#/$defs/TapeView"
+    }
+  },
+  "required": [
+    "tab_id",
+    "pane_id",
+    "view"
+  ],
+  "title": "TapeViewSetInput",
+  "type": "object"
+}

@@ -1,0 +1,57 @@
+{
+  "$defs": {
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "What every layout call answers with: the arrangement as it now stands.\n\nEchoed back rather than assumed, so a client never has to guess whether a\ncall it made is the reason the canvas looks the way it does.",
+  "properties": {
+    "changed": {
+      "description": "Whether the call changed anything. `false` is a real answer: applying\nthe layout that is already showing is a no-op, not a failure.",
+      "type": "boolean"
+    },
+    "collapsed": {
+      "description": "Whether the context column is collapsed to its rail.",
+      "type": "boolean"
+    },
+    "flow_collapsed": {
+      "description": "Whether the flow pane is folded against the right rail.",
+      "type": "boolean"
+    },
+    "focused_pane": {
+      "$ref": "#/$defs/WireU64",
+      "description": "The focused pane's address."
+    },
+    "fraction": {
+      "description": "The context column's share of the canvas.",
+      "format": "double",
+      "type": "number"
+    },
+    "pane_count": {
+      "$ref": "#/$defs/WireU64",
+      "description": "How many panes it draws."
+    },
+    "preset_id": {
+      "description": "The preset the canvas now matches.",
+      "type": "string"
+    },
+    "tab_id": {
+      "$ref": "#/$defs/WireU64",
+      "description": "The tab that changed."
+    }
+  },
+  "required": [
+    "tab_id",
+    "preset_id",
+    "pane_count",
+    "focused_pane",
+    "fraction",
+    "collapsed",
+    "flow_collapsed",
+    "changed"
+  ],
+  "title": "LayoutResult",
+  "type": "object"
+}
