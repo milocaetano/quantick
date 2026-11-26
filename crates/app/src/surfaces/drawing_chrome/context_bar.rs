@@ -242,7 +242,7 @@ pub(crate) fn draw(
         chrome.emit(super::Intent::SelectionChanged { changed: false });
     }
     if let Some(PositionAsk::Default(action)) = intent.position {
-        ask_position_default(&mut ask, env.presets, env.canvas, drawing, action);
+        ask_position_default(&mut ask, env.presets, drawing, action);
     }
     ask.duplicate |= intent.duplicate;
     if intent.draw_again {

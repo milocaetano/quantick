@@ -4,7 +4,6 @@ use crate::app::arrangement_host::ArrangementHost;
 use crate::drawings;
 use crate::pane::{ChartPane, PaneSide};
 use crate::surfaces::drawing_chrome::DrawingChromeExt as _;
-use quantick_appearance::PaneCanvas;
 use quantick_drawings::TextSpacing;
 
 pub(crate) struct DrawingReadAccess<'a> {
@@ -58,7 +57,6 @@ pub(super) struct ChromeFacts {
     pub tab: u64,
     pub side: PaneSide,
     pub pane_id: u64,
-    pub canvas: PaneCanvas,
     pub chart_area: Option<eframe::egui::Rect>,
     pub focused_chart_area: Option<eframe::egui::Rect>,
     pub candles_right: Option<f32>,
@@ -105,7 +103,6 @@ impl DrawingReadAccess<'_> {
             tab: self.tabs.active_id(),
             side: self.tabs[self.tabs.active_index()].drawing_side(),
             pane_id: pane.id,
-            canvas: pane.drawings.canvas(),
             chart_area: pane.frame.chart_area,
             focused_chart_area: self.focused().frame.chart_area,
             candles_right: pane.frame.candles_right,
@@ -137,10 +134,12 @@ impl<'a> DrawingAccess<'a> {
         let active = self.tabs.active_index();
         self.tabs.runtime_mut(active)
     }
-    pub(super) fn canvas_of(&self, tab: u64, side: PaneSide) -> PaneCanvas {
+    /// The saved-defaults context of `side` on `tab`, to be put `on` the
+    /// bank: a tab that is gone answers the default canvas's.
+    pub(super) fn presets_of(&self, tab: u64, side: PaneSide) -> drawings::PresetContext<()> {
         self.tabs
             .by_id(tab)
-            .map(|tab| tab.pane(side).drawings.canvas())
+            .map(|tab| tab.pane(side).drawings.preset_context(()))
             .unwrap_or_default()
     }
     pub(super) fn target(&self) -> (u64, PaneSide) {

@@ -8,7 +8,7 @@ use quantick_appearance::{
 use crate::presets::{PRESETS_FILE, PresetStore};
 use crate::{
     ChartPoint, DRAWING_TOOLS, DrawingBand, DrawingId, DrawingStyle, DrawingTool, Drawings,
-    PresetHost, SavedDrawingExt, TextPayload, ToolCatalog, new_drawing_from_defaults,
+    PresetContext, PresetHost, SavedDrawingExt, TextPayload, ToolCatalog,
 };
 use quantick_workspace::layout_document::SavedDrawing;
 
@@ -42,14 +42,14 @@ fn open(
         #[allow(clippy::cast_precision_loss)]
         let point = ChartPoint::at(1.0 + 4.0 * slot as f32, 100.0 + slot as f64);
         drawings.place_with(tool, &DrawingBand::Price, point, |tool| {
-            new_drawing_from_defaults(host, canvas, tool)
+            PresetContext::new(host, canvas).new_drawing(tool)
         });
     }
     assert!(drawings.draft().is_none(), "{} finished", tool.id());
 }
 
 fn style_on(host: &dyn PresetHost, canvas: PaneCanvas, tool: DrawingTool) -> DrawingStyle {
-    new_drawing_from_defaults(host, canvas, tool).style
+    PresetContext::new(host, canvas).new_drawing(tool).style
 }
 
 /// The factory ink of `tool` on `canvas`: what a factory-look mark wears
@@ -141,24 +141,22 @@ fn a_saved_default_never_reaches_a_mark_on_the_chart() {
 
     let mut saved = drawings.items()[0].clone();
     saved.style = blue;
-    crate::save_tool_default(&mut store, paper, &saved);
+    PresetContext::new(&mut store, paper).save_tool_default(&saved);
     let mut stroke = drawings.items()[0].clone();
     stroke.tool = pencil;
     let mut restroked = stroke.clone();
     restroked.style = red();
-    assert!(crate::remember_last_style(
-        &mut store, paper, &stroke, &restroked
-    ));
+    assert!(PresetContext::new(&mut store, paper).remember_last_style(&stroke, &restroked));
     let mut repeated = drawings.items()[1].clone();
     repeated.style = red();
-    crate::prepare_repeat(&mut store, paper, &repeated);
+    PresetContext::new(&mut store, paper).prepare_repeat(&repeated);
     store.set_default_style(line.id(), Ground::Dark, Some(red()));
     assert!(!drawings.follow_ground(&store, paper), "a save is no move");
     for (mark, ink) in drawings.items().iter().zip(light) {
         assert_eq!((mark.style, mark.look), (ink, Inheritance::Theme));
     }
     for tool in [line, note, pencil] {
-        let opening = new_drawing_from_defaults(&store, paper, tool);
+        let opening = PresetContext::new(&store, paper).new_drawing(tool);
         assert_eq!(opening.look, Inheritance::Explicit, "{}", tool.id());
     }
     open(&mut drawings, &store, paper, line);
@@ -273,7 +271,7 @@ fn a_time_chart_made_dark_reads_the_dark_bank_and_the_dark_ink() {
     };
     let (line, profile) = (tool("trend-line"), tool(crate::frvp::TOOL_ID));
     store.set_default_style(line.id(), Ground::Dark, Some(red()));
-    assert_eq!(crate::defaults_ground(&store, made_dark), Ground::Dark);
+    assert_eq!(PresetContext::new(&store, made_dark).ground(), Ground::Dark);
     assert_eq!(style_on(&store, made_dark, line), red());
     assert_eq!(
         style_on(&store, made_dark, profile),
@@ -369,7 +367,7 @@ fn a_shared_mark_wears_each_chart_s_ground_and_never_flips_the_set() {
 
     let point = ChartPoint::at_time(1.0, 100.0, Some(1_700_000_000_000));
     time.place_with(line, &DrawingBand::Price, point, |tool| {
-        new_drawing_from_defaults(&store, paper, tool)
+        PresetContext::new(&store, paper).new_drawing(tool)
     });
     time.selected_mut().expect("just placed").scope = crate::DrawingScope::AllCharts;
     let write = persist_pane(

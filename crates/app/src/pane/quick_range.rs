@@ -43,7 +43,8 @@ pub(super) struct QuickRangeView<'a> {
     /// series revision and the layout it shows.
     pub(super) owner: QuickRangeOwner,
     pub(super) projection: DrawingProjection<'a>,
-    pub(super) canvas: quantick_appearance::PaneCanvas,
+    /// The pane's saved-defaults context, put on the chrome's bank.
+    pub(super) presets: drawings::PresetContext<()>,
 }
 
 impl QuickRangeView<'_> {
@@ -56,7 +57,7 @@ impl QuickRangeView<'_> {
         magnet: bool,
         chrome: &mut PaneChrome<'_>,
     ) {
-        let (owner, canvas) = (self.owner, self.canvas);
+        let (owner, pane) = (self.owner, self.presets);
         let mut quick = chrome.drawing_chrome.quick_range();
         quick.reconcile(Some(owner));
         // A range whose band went with its pane (hidden, removed, collapsed)
@@ -150,7 +151,7 @@ impl QuickRangeView<'_> {
                         range_threshold_px,
                         // Levels the ruler; `primary_button.rs` keeps it from trading.
                         shift,
-                        || drawings::new_drawing_from_defaults(chrome.presets, canvas, measure),
+                        || pane.on(chrome.presets).new_drawing(measure),
                     );
                 }
             }
@@ -171,7 +172,7 @@ impl QuickRangeView<'_> {
         let owner = self.owner;
         chrome.drawing_chrome.quick_range().reconcile(Some(owner));
         #[cfg(any(feature = "quick-range-harness", test))]
-        let canvas = self.canvas;
+        let pane = self.presets;
         #[cfg(any(feature = "quick-range-harness", test))]
         if chrome.side == super::PaneSide::Flow {
             chrome
@@ -207,7 +208,7 @@ impl QuickRangeView<'_> {
                                 point(start, band.rect.center().y + band.rect.height() * 0.12),
                                 point(end, band.rect.center().y - band.rect.height() * 0.12),
                             ],
-                            drawings::new_drawing_from_defaults(chrome.presets, canvas, measure),
+                            pane.on(chrome.presets).new_drawing(measure),
                         )
                     }))
                 });

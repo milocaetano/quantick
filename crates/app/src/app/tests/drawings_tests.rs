@@ -1947,7 +1947,9 @@ fn a_theme_switch_reaches_the_marks_through_the_painted_canvas() {
         .canvas(&app.runtime.style, theme, pane.surface());
     assert_eq!(pane.drawings.canvas(), painted);
     let tool = pane.drawings.items()[0].tool;
-    let dark = drawings::new_drawing_from_defaults(&app.drawings.presets, painted, tool).style;
+    let dark = crate::drawings::PresetContext::new(&app.drawings.presets, painted)
+        .new_drawing(tool)
+        .style;
     assert_eq!(pane.drawings.items()[0].style, dark);
     assert_ne!(dark, light, "the two themes ink a line differently");
 }

@@ -74,6 +74,14 @@ impl<T: ToolCatalog> Drawings<T> {
         self.canvas
     }
 
+    /// This pane's saved defaults, read and written through `host`: the one
+    /// value every path that opens, saves or resets a default for this pane
+    /// holds.
+    #[must_use]
+    pub fn preset_context<H>(&self, host: H) -> crate::PresetContext<H> {
+        crate::PresetContext::new(host, self.canvas)
+    }
+
     /// The palette of this pane's ground, from the last
     /// [`Self::follow_ground`]: what its marks paint their theme tokens
     /// with (a profile's casing and POC), so a time chart made dark paints

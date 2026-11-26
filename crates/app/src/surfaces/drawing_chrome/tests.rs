@@ -54,12 +54,14 @@ fn catalog_passes_commit_original_inline_target_once_before_queued_menu() {
         selected_band: None,
         tab: 8,
         side: PaneSide::Flow,
-        canvas: quantick_appearance::ChartSurface::Flow.into(),
         drawing_tool_armed: false,
         toolbox_dock: ToolboxDock::default(),
         authored_objects: 0,
         manager_rows: &[],
-        presets: &presets,
+        presets: crate::drawings::PresetContext::new(
+            &presets,
+            quantick_appearance::ChartSurface::Flow.into(),
+        ),
     };
     let ctx = egui::Context::default();
     let mut effects = DrawingChromeAsk::default();
@@ -135,12 +137,14 @@ pub(crate) fn pinned_inspector_borrowed_dispatch_shares_the_floating_owner() {
         selected_band: None,
         tab: 7,
         side: PaneSide::Flow,
-        canvas: quantick_appearance::ChartSurface::Flow.into(),
         drawing_tool_armed: false,
         toolbox_dock: ToolboxDock::default(),
         authored_objects: 0,
         manager_rows: &[],
-        presets: &presets,
+        presets: crate::drawings::PresetContext::new(
+            &presets,
+            quantick_appearance::ChartSurface::Flow.into(),
+        ),
     };
     let ctx = egui::Context::default();
     let pass = |surfaces: &mut Surfaces, env: &DrawingEnv<'_>| {

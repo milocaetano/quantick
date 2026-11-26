@@ -185,12 +185,14 @@ fn borrowed_domain_rows_reborrow_in_catalog_order() {
         selected_band: None,
         tab: 0,
         side: crate::pane::PaneSide::Flow,
-        canvas: quantick_appearance::ChartSurface::Flow.into(),
         drawing_tool_armed: false,
         toolbox_dock: Default::default(),
         authored_objects: 0,
         manager_rows: &[],
-        presets: &presets,
+        presets: crate::drawings::PresetContext::new(
+            &presets,
+            quantick_appearance::ChartSurface::Flow.into(),
+        ),
     };
     let mut wrong = BorrowedSurfaceEnv::Drawings(&drawings);
     for env in [None, Some(&mut wrong)] {

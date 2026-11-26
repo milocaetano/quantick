@@ -22,8 +22,7 @@ use crate::drawings::DrawingPayload;
 pub(in crate::drawings) fn draw_levels_tab(
     ui: &mut egui::Ui,
     drawing: &mut Drawing,
-    host: &mut dyn PresetHost,
-    canvas: quantick_appearance::PaneCanvas,
+    presets: &mut crate::drawings::PresetContext<&mut dyn PresetHost>,
 ) -> bool {
     let tool_id = drawing.tool.id();
     let anchor_prices: Vec<f64> = drawing.points.iter().map(|point| point.price).collect();
@@ -37,7 +36,7 @@ pub(in crate::drawings) fn draw_levels_tab(
     .show(ui);
     edited |= CustomPresetRows {
         payload: &mut *payload,
-        host: &mut *host,
+        host: presets.host_mut(),
         tool_id,
     }
     .show(ui);
@@ -70,7 +69,7 @@ pub(in crate::drawings) fn draw_levels_tab(
     // asking; sending them to another tab for it is how this ended up being
     // redone every single session.
     ui.separator();
-    NewObjectDefaults { drawing, host }.show(ui, canvas);
+    NewObjectDefaults { drawing, presets }.show(ui);
 
     edited
 }
@@ -470,14 +469,14 @@ impl DisplayOptions<'_> {
 }
 
 /// "Save as default" / "Reset to factory" for the tool's new objects.
-struct NewObjectDefaults<'a> {
+struct NewObjectDefaults<'a, 'p> {
     drawing: &'a Drawing,
-    host: &'a mut dyn PresetHost,
+    presets: &'a mut crate::drawings::PresetContext<&'p mut dyn PresetHost>,
 }
 
-impl NewObjectDefaults<'_> {
-    fn show(self, ui: &mut egui::Ui, canvas: quantick_appearance::PaneCanvas) {
-        let Self { drawing, host } = self;
+impl NewObjectDefaults<'_, '_> {
+    fn show(self, ui: &mut egui::Ui) {
+        let Self { drawing, presets } = self;
         ui.horizontal(|ui| {
             // Named, because "Set as default" sits four rows up and means the
             // neighbouring thing: that one promotes a preset the trader
@@ -492,9 +491,9 @@ impl NewObjectDefaults<'_> {
                 )
                 .clicked()
             {
-                crate::drawings::save_tool_default(host, canvas, drawing);
+                presets.save_tool_default(drawing);
             }
-            if crate::drawings::has_saved_default(host, canvas, drawing.tool)
+            if presets.has_saved_default(drawing.tool)
                 && ui
                     .small_button("Reset to factory")
                     .on_hover_text(concat!(
@@ -503,7 +502,7 @@ impl NewObjectDefaults<'_> {
                     ))
                     .clicked()
             {
-                crate::drawings::reset_tool_default(host, canvas, drawing.tool);
+                presets.reset_tool_default(drawing.tool);
             }
         });
     }

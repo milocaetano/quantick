@@ -3,13 +3,12 @@
 //! width, each applied to a copy of the drawing the host stores as one
 //! undo step. The bar's risk/reward menu is read from here too.
 
-pub use quantick_appearance::{Ground, PaneCanvas};
+pub use quantick_appearance::Ground;
 
 use crate::position_text::{RatioButton, custom_row, preset_rows, ratio_button};
 use crate::{
-    Drawing, DrawingTool, PositionPayload, PositionRefusal, PositionSide, PresetHost, Rgb,
-    new_drawing_from_defaults, position_plan, position_preset_of, position_side,
-    reset_tool_default, save_tool_default, set_plan_ratio,
+    Drawing, DrawingTool, PositionPayload, PositionRefusal, PositionSide, PresetContext,
+    PresetHost, Rgb, position_plan, position_preset_of, position_side, set_plan_ratio,
 };
 
 /// Which zone a colour edit paints.
@@ -171,17 +170,20 @@ pub enum PositionAsk {
     Default(PositionDefault),
 }
 
-/// Apply `action` to `drawing`'s tool on `canvas`'s ground through the
+/// Apply `action` to `drawing`'s tool on the pane's ground through the
 /// existing per-tool default. Drawings already placed never change.
 ///
 /// # Errors
 /// A drawing of any other tool.
-pub fn apply_position_default(
-    host: &mut dyn PresetHost,
-    canvas: PaneCanvas,
+pub fn apply_position_default<H>(
+    presets: &mut PresetContext<H>,
     drawing: &Drawing<DrawingTool>,
     action: PositionDefault,
-) -> Result<(), PositionEditRefusal> {
+) -> Result<(), PositionEditRefusal>
+where
+    H: std::ops::DerefMut,
+    H::Target: PresetHost,
+{
     let (_, payload) = position_of(drawing)?;
     match action {
         // The ratio the bar shows — the plan's prices — not a stored one an
@@ -193,21 +195,21 @@ pub fn apply_position_default(
                 payload.ratio = ratio.clamp(crate::POSITION_MIN_RATIO, crate::POSITION_MAX_RATIO);
             }
             shown.payload = Box::new(payload);
-            save_tool_default(host, canvas, &shown);
+            presets.save_tool_default(&shown);
         }
-        PositionDefault::Reset => reset_tool_default(host, canvas, drawing.tool),
+        PositionDefault::Reset => presets.reset_tool_default(drawing.tool),
     }
     Ok(())
 }
 
-/// The payload a new position of `tool` opens with on `canvas`.
+/// The payload a new position of `tool` opens with on the pane.
 #[must_use]
-pub fn opening_position(
-    host: &dyn PresetHost,
-    canvas: PaneCanvas,
-    tool: DrawingTool,
-) -> Option<PositionPayload> {
-    let opening = new_drawing_from_defaults(host, canvas, tool);
+pub fn opening_position<H>(presets: &PresetContext<H>, tool: DrawingTool) -> Option<PositionPayload>
+where
+    H: std::ops::Deref,
+    H::Target: PresetHost,
+{
+    let opening = presets.new_drawing(tool);
     let payload = opening.payload.as_any().downcast_ref::<PositionPayload>();
     payload.cloned()
 }

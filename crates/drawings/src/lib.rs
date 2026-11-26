@@ -61,11 +61,7 @@ pub use color::{RgbaExt, TRANSPARENT, WHITE, opaque, rgba_premultiplied, rgba_un
 pub use context::{AxisLevels, DrawContext, Handles, ValueUnit};
 #[cfg(any(test, feature = "test-support"))]
 pub use defaults::NullPresetHost;
-pub use defaults::{
-    PresetHost, defaults_ground, has_saved_default, new_drawing_from_defaults, prepare_repeat,
-    remember_last_style, repeat_opening, reset_tool_default, save_style_on_every_tool,
-    save_tool_default,
-};
+pub use defaults::{PresetContext, PresetHost, repeat_opening};
 pub use family::{
     AnchorSnap, BodySnap, Constrain, IconDots, IconLetter, IconStrokes, ToolFamily, ToolShortcut,
 };
@@ -121,7 +117,7 @@ pub trait ToolCatalog: Copy + PartialEq + std::fmt::Debug {
         self.default_style()
     }
     /// Whether editing a mark's look also sets the look the next mark of
-    /// this tool opens with. See [`remember_last_style`].
+    /// this tool opens with. See [`PresetContext::remember_last_style`].
     fn remembers_last_style(self) -> bool {
         false
     }
