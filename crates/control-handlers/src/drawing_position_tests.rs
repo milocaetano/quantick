@@ -247,6 +247,8 @@ fn the_default_call_saves_resets_and_reads_per_tool() {
     let reset = default(&mut bank, canvas, &drawing, DefaultAction::Reset).unwrap();
     assert!(!reset.saved);
     assert_eq!(reset.opening.target_color, "#388E3C");
+    assert_eq!(reset.opening.stop_color, "#000000");
+    assert_eq!(reset.opening.zone_opacity_pct, 25);
     assert_eq!(reset.opening.ratio_text, "Risk/reward 1:1");
 }
 

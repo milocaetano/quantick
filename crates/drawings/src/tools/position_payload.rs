@@ -27,8 +27,6 @@ pub const FACTORY_STOP_RGB: Rgb = [0x00, 0x00, 0x00];
 pub const FACTORY_STOP_RGB_ON_DARK: Rgb = [0xB2, 0xB5, 0xBE];
 /// Factory zone opacity, in percent: one for both zones.
 pub const FACTORY_ZONE_OPACITY_PCT: u8 = 25;
-/// The least contrast black keeps on a canvas that counts as a light ground.
-const LIGHT_GROUND_CONTRAST: f32 = 3.0;
 /// The most a zone may be filled, in percent: a solid zone hides the bars.
 pub const MAX_ZONE_OPACITY_PCT: u8 = 100;
 /// Two ratios this close are one preset.
@@ -94,12 +92,12 @@ pub(super) fn valid_ratio(ratio: f64) -> bool {
     (MIN_RATIO..=MAX_RATIO).contains(&ratio)
 }
 
-/// Whether black reads on `theme`'s canvas: a light ground.
+/// Whether `theme`, a pane's drawing palette, paints on a light ground: the
+/// ground its saved defaults are read from too.
 #[must_use]
 pub fn light_ground(theme: &quantick_appearance::ResolvedTheme) -> bool {
-    let black = crate::rgba_unmultiplied(0, 0, 0, u8::MAX);
-    let canvas = theme.color(quantick_appearance::Token::Canvas);
-    quantick_appearance::contrast::contrast_ratio(black, canvas) >= LIGHT_GROUND_CONTRAST
+    use quantick_appearance::{Ground, Token};
+    Ground::of_canvas(theme.color(Token::ChartCanvas)) == Ground::Light
 }
 
 /// The stop colour a fresh position takes on `theme`.
@@ -274,21 +272,23 @@ impl PositionPayload {
             zone_opacity_pct: Some(self.zone_opacity_pct),
         }
     }
-    /// The look `data` states, or `None` for one this version cannot read.
-    fn read_look(data: &PresetData) -> Option<(f64, Rgb, Rgb, u8)> {
-        let colour = |text: &Option<String>, factory| match text {
+    /// The look `data` states, or `None` for one this version cannot read. A
+    /// field it never wrote keeps this payload's, which opened on the pane's
+    /// ground: a dark pane's stop, not black.
+    fn read_look(&self, data: &PresetData) -> Option<(f64, Rgb, Rgb, u8)> {
+        let colour = |text: &Option<String>, held| match text {
             Some(text) => parse_rgb_hex(text),
-            None => Some(factory),
+            None => Some(held),
         };
-        let opacity = data.zone_opacity_pct.unwrap_or(FACTORY_ZONE_OPACITY_PCT);
+        let opacity = data.zone_opacity_pct.unwrap_or(self.zone_opacity_pct);
         (data.version == FORMAT_VERSION
             && valid_ratio(data.ratio)
             && opacity <= MAX_ZONE_OPACITY_PCT)
             .then_some(())?;
         Some((
             data.ratio,
-            colour(&data.target_color, FACTORY_TARGET_RGB)?,
-            colour(&data.stop_color, FACTORY_STOP_RGB)?,
+            colour(&data.target_color, self.target_rgb)?,
+            colour(&data.stop_color, self.stop_rgb)?,
             opacity,
         ))
     }
@@ -301,8 +301,13 @@ impl PositionPayload {
 }
 
 impl DrawingPayload for PositionPayload {
+    /// A mark that keeps the factory look has no colour or opacity of the
+    /// trader's (an edit to one makes the look the trader's), so it wears the whole
+    /// factory look of its ground; its ratio is the plan's, never reset.
     fn apply_theme_defaults(&mut self, theme: &quantick_appearance::ResolvedTheme) {
+        self.target_rgb = FACTORY_TARGET_RGB;
         self.stop_rgb = factory_stop_rgb(theme);
+        self.zone_opacity_pct = FACTORY_ZONE_OPACITY_PCT;
     }
     fn clone_box(&self) -> Box<dyn DrawingPayload> {
         Box::new(self.clone())
@@ -327,7 +332,7 @@ impl DrawingPayload for PositionPayload {
     fn import_preset(&mut self, value: &toml::Value) -> bool {
         let Some(look) = PresetData::deserialize(value.clone())
             .ok()
-            .and_then(|data| Self::read_look(&data))
+            .and_then(|data| self.read_look(&data))
         else {
             return false;
         };
@@ -345,7 +350,7 @@ impl DrawingPayload for PositionPayload {
         let Ok(data) = SavedData::deserialize(value.clone()) else {
             return false;
         };
-        let Some(look) = Self::read_look(&data.look) else {
+        let Some(look) = self.read_look(&data.look) else {
             return false;
         };
         if data

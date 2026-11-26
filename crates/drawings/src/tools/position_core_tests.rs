@@ -643,6 +643,39 @@ fn the_plates_are_centred_on_the_box() {
     );
 }
 
+/// A box running off the pane's edge keeps its plan plate on the pane.
+#[test]
+fn the_plan_plate_stays_on_the_pane() {
+    let payload = two_to_one();
+    let scale = scale();
+    let anchors = [ChartPoint::at(10.0, 100.0), ChartPoint::at(30.0, 90.0)];
+    let points = screen(&scale, &anchors);
+    let ctxt = context(&payload, &anchors, &scale);
+    let mut scene = MarkScene::default();
+    // The box spans x 100 to 300; the pane ends at 150.
+    let chart = PxRect::from_min_max(pos2(0.0, 0.0), pos2(150.0, 2000.0));
+    paint(
+        &mut scene,
+        chart,
+        DrawingStyle::default(),
+        &points,
+        &ctxt,
+        Side::Long,
+    );
+    let plan = scene
+        .shapes
+        .iter()
+        .filter_map(|shape| match shape {
+            crate::MarkShape::Rect {
+                rect, rounding_px, ..
+            } if *rounding_px > 0.0 => Some(*rect),
+            _ => None,
+        })
+        .last()
+        .unwrap();
+    assert!(plan.right <= 150.0 && plan.left >= 0.0, "{plan:?}");
+}
+
 /// The factory look on each ground: on Light a black stop, black entry line
 /// and white words on every plate; on Dark a light grey stop whose plate
 /// takes the theme's ink, and the entry line in the theme's text ink.
@@ -735,7 +768,7 @@ fn the_factory_stop_shows_on_every_ground() {
         let [r, g, b] = crate::tools::position_payload::factory_stop_rgb(theme);
         let stop = crate::rgba_unmultiplied(r, g, b, u8::MAX);
         assert!(
-            contrast_ratio(stop, theme.color(Token::Canvas)) >= 3.0,
+            contrast_ratio(stop, theme.color(Token::ChartCanvas)) >= 3.0,
             "dark {dark}: the stop reads on the canvas"
         );
     }

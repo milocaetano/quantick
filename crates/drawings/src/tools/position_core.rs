@@ -380,10 +380,19 @@ pub(super) fn paint(
         Stroke::new(EDGE_PX, entry_ink(ctxt.appearance)),
     );
     paint_leg_plates(painter, chart_rect, &frame, &legs, ctxt, &payload);
-    // Centred on the entry line, in the target's colour; the handles paint
-    // over it at the line's ends.
+    // Centred on the entry line, in the target's colour, held on the pane
+    // when the box sits at its edge; the handles paint over it.
     let tag = plan_plate(side, legs.ratio(), legs.entry);
-    let at = pos2((left + right) / 2.0, frame.entry_y);
+    let font = FontSpec::themed(ctxt.appearance, FontRole::Monospace, LABEL_TEXT_PX);
+    let half = ctxt.text.size(&tag, font).x / 2.0 + LABEL_PAD_X_PX;
+    let (low, high) = (chart_rect.left() + half, chart_rect.right() - half);
+    let center = (left + right) / 2.0;
+    let x = if low <= high {
+        center.clamp(low, high)
+    } else {
+        center
+    };
+    let at = pos2(x, frame.entry_y);
     let plate = ink(payload.target_rgb, u8::MAX);
     label(painter, ctxt, at, Align2::CENTER_CENTER, &tag, plate);
 }
