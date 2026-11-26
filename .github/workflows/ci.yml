@@ -737,14 +737,12 @@ jobs:
   # single name. It runs whatever its needs concluded, prose-only and draft
   # heads included, and asks `full_ci.sh verify`, the rule the gate's ready
   # flip uses, `rust-skip` excuse and all. A failed need in its own run fails
-  # it even when an earlier run at the head was green. Its `if:` adds `gate`'s
-  # guard: an unrelated label and a superseded, cancelled run post no verdict.
+  # it even when an earlier run at the head was green. It never skips, because
+  # a branch rule reads a skipped job as passing: an unrelated label reports
+  # the head's earlier verdict, and a cancelled run reports red.
   ci-ok:
-    needs: [gate, ci, linux-tests, harness-app, harness-combined, harness-scenario, windows, windows-tests, windows-heavy-tests, windows-app-tests, rust-skip]
-    if: >-
-      (github.event_name != 'pull_request' ||
-       github.event.action != 'labeled' || github.event.label.name == 'full-ci') &&
-      !cancelled()
+    needs: [classify, gate, ci, linux-tests, harness-app, harness-combined, harness-scenario, windows, windows-tests, windows-heavy-tests, windows-app-tests, rust-skip]
+    if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
