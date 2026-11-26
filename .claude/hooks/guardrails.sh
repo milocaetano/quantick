@@ -284,6 +284,16 @@ shell_statements() {
             return w ~ /code-review-ok/ || w ~ /code-review[^ ]*[*?[]/
         }
         function is_redirect(w) { return w ~ /^[0-9]*(&?>>?|>[|&]|<&?|<>|&>>?)/ }
+        # True when option word `o` carries message text: `-m`, `-b`, `-t`,
+        # `-n`, or any prefix git or gh accepts of `--message`, `--body`,
+        # `--title` or `--notes`.
+        function msg_opt(o,    n) {
+            n = unquote(o); sub(/=.*/, "", n)
+            if (n ~ /^-[mbtn]$/) return 1
+            if (n !~ /^--./) return 0
+            n = substr(n, 3)
+            return index("message", n) == 1 || index("body", n) == 1 || index("title", n) == 1 || index("notes", n) == 1
+        }
         # True when words[k..nw] write the marker.
         function writes_marker(k, nw,    j, w, u, p, tgt, b, text, inplace) {
             for (j = k; j <= nw; j++) {
@@ -297,13 +307,16 @@ shell_statements() {
             }
             # Any program naming the marker may write it, unless it is a known
             # reader. `git` and `gh pr|issue|release|gist` carry messages, so
-            # for them only an option value (`--output=...`, `-o ...`) counts.
+            # for them an option naming it counts, attached (`--out=...`) or as
+            # the next word, unless that option carries message text.
             b = base(unquote(words[k]))
             for (j = k + 1; j <= nw; j++) if (b == "sed" && words[j] ~ /^(-[a-z]*i|--in-place)/) inplace = 1
             if (!inplace && b ~ /^(cat|head|tail|less|more|ls|stat|wc|grep|egrep|fgrep|rg|test|\[|file|md5sum|sha1sum|sha256sum|rm|diff|cmp|echo|printf|sed)$/) return 0
             text = b == "git" || (b == "gh" && tolower(unquote(words[k + 1])) ~ /^(pr|issue|release|gist)$/)
             for (j = k + 1; j <= nw; j++)
-                if (names_marker(words[j]) && (!text || words[j] ~ /^(--output=|-o.)/ || words[j - 1] ~ /^(-o|--output)$/)) return 1
+                if (names_marker(words[j]) && (!text ||
+                    (words[j] ~ /^-/ && !msg_opt(words[j])) ||
+                    (words[j - 1] ~ /^-[^=]*$/ && !msg_opt(words[j - 1])))) return 1
             return 0
         }
         # The words after words[j] as one script, for an unwrapped wrapper.

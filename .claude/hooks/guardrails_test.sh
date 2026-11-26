@@ -871,8 +871,16 @@ for message in 'git commit -m "record code-review-ok later"' \
     run "a message may name the marker: $message" \
         pr-gate "$(json_cmd "$root/wt" "$message")" silent
 done
-run "git -o naming the marker writes it" \
-    pr-gate "$(json_cmd "$root/wt" "git diff -o$wt_git_dir/code-review-ok")" deny "An agent never writes it"
+for write in "git diff -o$wt_git_dir/code-review-ok" "git diff --out=$wt_git_dir/code-review-ok" \
+    "git diff --outp $wt_git_dir/code-review-ok"; do
+    run "a git output option naming the marker writes it: $write" \
+        pr-gate "$(json_cmd "$root/wt" "$write")" deny "An agent never writes it"
+done
+for message in 'git commit --mess="record code-review-ok"' 'gh pr create --draft -b "code-review-ok"' \
+    'gh pr create --draft --title "code-review-ok"'; do
+    run "a message option may name the marker: $message" \
+        pr-gate "$(json_cmd "$root/wt" "$message")" silent
+done
 run "gh api with a quoted method still moves a branch" \
     pr-gate "$(json_cmd "$root/wt" "gh api -X 'DELETE' repos/o/r/git/refs/heads/main")" deny "gh api"
 run "grep reads the marker" \

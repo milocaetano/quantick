@@ -337,8 +337,10 @@ to it, an assignment naming it, or any program naming it that is not a known
 reader (`cat`, `head`, `tail`, `less`, `more`, `ls`, `stat`, `wc`, `grep`,
 `rg`, `test`, `[`, `file`, the `*sum` tools, `rm`, `diff`, `cmp`, `echo`,
 `printf`, `sed` without `-i`). `git` and `gh pr|issue|release|gist` carry
-messages, so for them only an option value (`--output=…`, `-o …`) naming it
-counts. The name is compared unquoted, without braces and case-insensitively
+messages, so for them an option naming it counts, attached or as the next
+word, unless the option carries message text (`-m`, `-b`, `-t`, `-n`, or a
+prefix of `--message`, `--body`, `--title`, `--notes`); git accepts
+`--out=` for `--output=`. The name is compared unquoted, without braces and case-insensitively
 (NTFS ignores case), and a glob on the `code-review` stem counts.
 
 `gh api` reaches the same endpoints with none of the flags the gate reads, so
