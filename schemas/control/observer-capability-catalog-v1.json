@@ -13678,8 +13678,15 @@
                 "type": "string"
               },
               "fees_points": {
-                "$ref": "#/$defs/CanonicalDecimal",
-                "description": "Commission both sides of the round trip paid, never negative; zero\non a free fill model and on rows journaled before fees existed.",
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Commission both sides of the round trip paid, never negative; zero\non a free fill model and on rows journaled before fees existed.\nOptional in v1 only because servers before the fee model omit it.",
                 "x-unit": "points"
               },
               "maximum_adverse_excursion_points": {
@@ -13719,7 +13726,6 @@
               "opened_unix_ms",
               "closed_unix_ms",
               "pnl_points",
-              "fees_points",
               "exit_reason"
             ],
             "type": "object"

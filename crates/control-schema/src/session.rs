@@ -265,8 +265,10 @@ pub struct PaperClosedTradeSnapshot {
     pub pnl_points: CanonicalDecimal,
     /// Commission both sides of the round trip paid, never negative; zero
     /// on a free fill model and on rows journaled before fees existed.
+    /// Optional in v1 only because servers before the fee model omit it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(extend("x-unit" = "points"))]
-    pub fees_points: CanonicalDecimal,
+    pub fees_points: Option<CanonicalDecimal>,
     pub exit_reason: String,
     /// Aggregate ids of the prints that opened and closed the position — the
     /// audit trail back to the tape. Absent only on rows loaded from a
@@ -313,7 +315,7 @@ pub fn closed_trade_snapshot(trade: &ClosedTrade) -> PaperClosedTradeSnapshot {
         opened_unix_ms: trade.opened_ms,
         closed_unix_ms: trade.closed_ms,
         pnl_points: canonical_decimal(trade.pnl_points),
-        fees_points: canonical_decimal(trade.fees_points),
+        fees_points: Some(canonical_decimal(trade.fees_points)),
         exit_reason: trade.exit_reason.as_str().to_owned(),
         entry_aggregate_id: trade.entry_agg_id.map(WireU64::new),
         exit_aggregate_id: trade.exit_agg_id.map(WireU64::new),
